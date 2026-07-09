@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS photos (
   shoot_id          TEXT REFERENCES shoots(id) ON DELETE SET NULL,
   file_hash         TEXT,
   file_path         TEXT NOT NULL,
+  file_size         INTEGER,        -- bytes at last scan; with date_updated, the stat quick-check (§9.1)
   width             INTEGER NOT NULL,
   height            INTEGER NOT NULL,
   orientation       INTEGER NOT NULL DEFAULT 0,
@@ -88,6 +89,15 @@ CREATE TABLE IF NOT EXISTS album_banners (
 CREATE INDEX IF NOT EXISTS idx_album_banners_photo ON album_banners(photo_id);
 `;
 
+function ensureColumn(db: Database, table: string, column: string, definition: string): void {
+  const cols = db.query(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  if (!cols.some((c) => c.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
+}
+
 export function runMigrations(db: Database): void {
   db.exec(SCHEMA);
+  // Additive column for DBs created before the stat quick-check (§9.1).
+  ensureColumn(db, 'photos', 'file_size', 'INTEGER');
 }

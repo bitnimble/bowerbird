@@ -185,6 +185,7 @@ CREATE TABLE photos (
   shoot_id          TEXT REFERENCES shoots(id) ON DELETE SET NULL,
   file_hash         TEXT,
   file_path         TEXT NOT NULL,  -- relative to library root
+  file_size         INTEGER,        -- bytes at last scan; with date_updated, the sync stat quick-check (§9.1)
   width             INTEGER NOT NULL,  -- display (upright) pixel width, post-orientation
   height            INTEGER NOT NULL,  -- display (upright) pixel height, post-orientation
   orientation       INTEGER NOT NULL DEFAULT 0,  -- LibRaw flip orientation code; informational + hash input only, NOT to be applied to thumbnails (§11)
@@ -641,23 +642,26 @@ For each library:
    - The data directory (`.bowerbird/` or custom `data_path` if it's under `root_path`).
    - Any hidden directories (starting with `.`).
    - Any directory named `Bin` (the deletion bins that live inside shoot folders, §12.2), so soft-deleted files are never re-imported.
-3. Filter to supported extensions only (`.arw`).
-4. For each file, compute the **file hash** (see §9.2).
-5. Query the database for all non-deleted photo records in this library.
-6. Build the diff:
+3. Filter to supported extensions only (`.arw`). This yields the set of **present** file paths.
+4. Query the database for all non-deleted photo records in this library (each carries its stored `date_updated` = last-seen mtime and `file_size`).
+5. **Stat quick-check (avoid opening unchanged files).** For each present file, `stat` it (cheap; no open). If a DB record exists at that path **and** its stored `date_updated` and `file_size` both match the current mtime and size, the file is **unchanged**: reuse its stored hash and do **not** open it. Only files that are new, or whose mtime/size differ, are opened to extract metadata (§11) and compute the **file hash** (§9.2). Call this opened subset **changed**. A no-op sync therefore performs zero LibRaw opens. (Like rsync's default quick-check, this misses a content change that preserves *both* mtime and size, which is rare in practice; a forced full re-hash is the escape hatch if ever needed.)
+6. Build the diff from the present set and the changed set:
 
 ```
-DB records keyed by file_path  →  db_map: Map<file_path, PhotoRecord>
-Disk files keyed by file_path  →  disk_map: Map<file_path, { hash: string, metadata: FileMetadata }>
+present  : Set<file_path>                       (every supported file on disk)
+changed  : Map<file_path, { hash, metadata }>   (only new / mtime-or-size-changed files, i.e. opened)
+db_map   : Map<file_path, PhotoRecord>          (non-deleted records)
 
 For each entry in db_map:
-  if file_path NOT in disk_map → mark as REMOVED
-  if file_path in disk_map AND hash differs → mark as MODIFIED
-  if file_path in disk_map AND hash equal AND record.is_missing → mark as REAPPEARED
+  if file_path NOT in present → mark as REMOVED
+  else if file_path in changed AND changed.hash differs from record.hash → mark as MODIFIED
+  else if record.is_missing → mark as REAPPEARED   (present, unchanged, was missing)
 
-For each entry in disk_map:
+For each entry in changed:
   if file_path NOT in db_map → mark as ADDED
 ```
+
+Unchanged files (present but not in `changed`) produce no diff entry, so they are never opened and never re-hashed.
 
 The REAPPEARED case matters: a file that went missing and returns **at its original path with the same content** is neither modified nor moved, so without this it would stay flagged `is_missing = 1` forever. (Reappearance at a *different* path is handled by move detection.)
 

@@ -25,6 +25,7 @@ export interface SyncInsert {
   date_taken: string | null;
   date_added: string;
   date_updated: string | null;
+  file_size: number;
   latitude: number | null;
   longitude: number | null;
 }
@@ -36,8 +37,19 @@ export interface SyncModification {
   orientation: number;
   date_taken: string | null;
   date_updated: string | null;
+  file_size: number;
   latitude: number | null;
   longitude: number | null;
+}
+
+// Fields the scan quick-check needs to decide whether to re-open a file (§9.1).
+export interface SyncDbPhoto {
+  id: string;
+  file_path: string;
+  file_hash: string | null;
+  is_missing: boolean;
+  date_updated: string | null;
+  file_size: number | null;
 }
 
 export interface PendingPhoto {
@@ -241,11 +253,25 @@ export class PhotosRepository {
 
   // --- sync (DESIGN §9) ---
 
-  listForSync(libraryId: string): { id: string; file_path: string; file_hash: string | null; is_missing: boolean }[] {
+  listForSync(libraryId: string): SyncDbPhoto[] {
     const rows = this.db
-      .query('SELECT id, file_path, file_hash, is_missing FROM photos WHERE library_id = ? AND is_deleted = 0')
-      .all(libraryId) as { id: string; file_path: string; file_hash: string | null; is_missing: number }[];
-    return rows.map((r) => ({ id: r.id, file_path: r.file_path, file_hash: r.file_hash, is_missing: r.is_missing === 1 }));
+      .query('SELECT id, file_path, file_hash, is_missing, date_updated, file_size FROM photos WHERE library_id = ? AND is_deleted = 0')
+      .all(libraryId) as {
+      id: string;
+      file_path: string;
+      file_hash: string | null;
+      is_missing: number;
+      date_updated: string | null;
+      file_size: number | null;
+    }[];
+    return rows.map((r) => ({
+      id: r.id,
+      file_path: r.file_path,
+      file_hash: r.file_hash,
+      is_missing: r.is_missing === 1,
+      date_updated: r.date_updated,
+      file_size: r.file_size,
+    }));
   }
 
   transaction<T>(fn: () => T): T {
@@ -256,10 +282,10 @@ export class PhotosRepository {
     this.db
       .query(
         `INSERT INTO photos
-          (id, library_id, shoot_id, file_hash, file_path, width, height, orientation,
+          (id, library_id, shoot_id, file_hash, file_path, file_size, width, height, orientation,
            is_missing, is_deleted, date_taken, date_added, date_updated, needs_processing,
            latitude, longitude, rating, selected)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, 1, ?, ?, 0, 0)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, 1, ?, ?, 0, 0)`,
       )
       .run(
         record.id,
@@ -267,6 +293,7 @@ export class PhotosRepository {
         record.shoot_id,
         record.file_hash,
         record.file_path,
+        record.file_size,
         record.width,
         record.height,
         record.orientation,
@@ -288,7 +315,7 @@ export class PhotosRepository {
     this.db
       .query(
         `UPDATE photos SET file_hash = ?, width = ?, height = ?, orientation = ?, date_taken = ?,
-          date_updated = ?, latitude = ?, longitude = ?, needs_processing = 1, is_missing = 0 WHERE id = ?`,
+          date_updated = ?, file_size = ?, latitude = ?, longitude = ?, needs_processing = 1, is_missing = 0 WHERE id = ?`,
       )
       .run(
         fields.file_hash,
@@ -297,6 +324,7 @@ export class PhotosRepository {
         fields.orientation,
         fields.date_taken,
         fields.date_updated,
+        fields.file_size,
         fields.latitude,
         fields.longitude,
         photoId,

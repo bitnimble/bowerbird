@@ -11,6 +11,7 @@ import { LibrariesRepository } from '../../src/services/libraries/libraries_repo
 import { PhotosRepository } from '../../src/services/photos/photos_repository';
 import { ShootsRepository } from '../../src/services/shoots/shoots_repository';
 import { SyncService } from '../../src/services/sync/sync_service';
+import { extractMetadata } from '../../src/services/processing/metadata';
 
 const FIXTURE = path.join(import.meta.dir, '../fixtures/DSC02981.ARW');
 const LIB = '00000000-0000-4000-8000-000000000001';
@@ -21,6 +22,7 @@ let db: ReturnType<typeof createDatabase>;
 let photos: PhotosRepository;
 let sync: SyncService;
 let photoId: string;
+let opens = 0; // counts LibRaw opens so we can assert the stat quick-check skips them
 
 const abs = (rel: string) => path.join(root, rel);
 const row = (filePath: string) =>
@@ -37,9 +39,18 @@ beforeAll(() => {
   photos = new PhotosRepository(db);
   // No-op processing trigger: this suite exercises scan/diff detection with real
   // metadata, not thumbnail generation (validated separately).
-  sync = new SyncService(photos, new LibrariesRepository(db), new AlbumsRepository(db), new ShootsRepository(db), {
-    processUnprocessed() {},
-  });
+  const countingExtract = async (p: string) => {
+    opens++;
+    return extractMetadata(p);
+  };
+  sync = new SyncService(
+    photos,
+    new LibrariesRepository(db),
+    new AlbumsRepository(db),
+    new ShootsRepository(db),
+    { processUnprocessed() {} },
+    countingExtract,
+  );
   copyFileSync(FIXTURE, abs('photo1.arw'));
 });
 
@@ -61,6 +72,13 @@ test('initial sync indexes the file with real LibRaw metadata', async () => {
   expect(p.width).toBe(4024);
   expect(p.height).toBe(6024);
   expect(p.date_taken).toBe('2020-12-06T12:46:35.000Z');
+  expect(opens).toBe(1); // the one new file was opened
+});
+
+test('a re-sync with nothing changed opens zero files (stat quick-check)', async () => {
+  const before = opens;
+  await sync.syncLibrary(LIB);
+  expect(opens).toBe(before); // unchanged file is not re-opened
 });
 
 test('rename is a move: same record, new path, no add/remove', async () => {

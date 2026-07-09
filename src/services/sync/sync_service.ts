@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { stat } from 'node:fs/promises';
 import { AppError } from '../../errors';
 import type { LibrarySyncStatus } from '../../schemas/libraries';
 import { listSupportedFiles } from '../../utils/files';
@@ -7,7 +8,7 @@ import { getDataPath } from '../../utils/paths';
 import { mostSpecificShoot } from '../../utils/shoots';
 import type { AlbumsRepository } from '../albums/albums_repository';
 import type { LibrariesRepository } from '../libraries/libraries_repository';
-import type { PhotosRepository } from '../photos/photos_repository';
+import type { PhotosRepository, SyncDbPhoto } from '../photos/photos_repository';
 import type { ShootsRepository } from '../shoots/shoots_repository';
 import { extractMetadata, type FileMetadata } from '../processing/metadata';
 import { buildDiff, detectMoves, type DiskFile } from './sync_algorithm';
@@ -66,8 +67,9 @@ export class SyncService {
     try {
       this.statuses.set(libraryId, idle(libraryId, 'scanning'));
 
-      const diskFiles = await this.scan(library.root_path, getDataPath(library));
-      const diff = buildDiff(this.photos.listForSync(libraryId), diskFiles);
+      const dbPhotos = this.photos.listForSync(libraryId);
+      const { present, changed } = await this.scan(library.root_path, getDataPath(library), dbPhotos);
+      const diff = buildDiff(dbPhotos, present, changed);
       const result = detectMoves(diff, (id) => this.albums.getAlbumIdsForPhoto(id).length > 0);
 
       const shoots = this.shoots.listByLibrary(libraryId);
@@ -92,6 +94,7 @@ export class SyncService {
             orientation: md.metadata.orientation,
             date_taken: md.metadata.dateTaken,
             date_updated: md.metadata.mtime,
+            file_size: md.metadata.fileSize,
             latitude: md.metadata.latitude,
             longitude: md.metadata.longitude,
           });
@@ -110,6 +113,7 @@ export class SyncService {
             date_taken: ad.metadata.dateTaken,
             date_added: nowUtc,
             date_updated: ad.metadata.mtime,
+            file_size: ad.metadata.fileSize,
             latitude: ad.metadata.latitude,
             longitude: ad.metadata.longitude,
           });
@@ -125,7 +129,7 @@ export class SyncService {
       const status: LibrarySyncStatus = {
         library_id: libraryId,
         status: 'processing',
-        photos_scanned: diskFiles.length,
+        photos_scanned: present.size,
         photos_added: added,
         photos_removed: removed,
         photos_moved: moved,
@@ -150,13 +154,31 @@ export class SyncService {
     return this.statuses.get(libraryId) ?? idle(libraryId);
   }
 
-  private async scan(rootPath: string, dataPath: string): Promise<DiskFile[]> {
+  // Lists every supported file (readdir + stat only) and opens/hashes ONLY the
+  // ones that are new or whose mtime+size changed vs the stored record (§9.1).
+  // Unchanged files are never opened, so a no-op sync does zero LibRaw work.
+  private async scan(
+    rootPath: string,
+    dataPath: string,
+    dbPhotos: readonly SyncDbPhoto[],
+  ): Promise<{ present: Set<string>; changed: DiskFile[] }> {
+    const dbByPath = new Map(dbPhotos.map((p) => [p.file_path, p]));
     const files = await listSupportedFiles(rootPath, dataPath);
-    const diskFiles: DiskFile[] = [];
+    const present = new Set<string>();
+    const changed: DiskFile[] = [];
+
     for (const file of files) {
+      present.add(file.relPath);
+      const stats = await stat(file.absPath);
+      const record = dbByPath.get(file.relPath);
+      const unchanged =
+        record != null && record.date_updated === stats.mtime.toISOString() && record.file_size === stats.size;
+      if (unchanged) continue;
+
       const metadata = await this.extract(file.absPath);
-      diskFiles.push({ filePath: file.relPath, hash: computeFileHash(file.absPath, metadata), metadata });
+      changed.push({ filePath: file.relPath, hash: computeFileHash(file.absPath, metadata), metadata });
     }
-    return diskFiles;
+
+    return { present, changed };
   }
 }

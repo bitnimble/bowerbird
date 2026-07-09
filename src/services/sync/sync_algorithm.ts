@@ -61,11 +61,18 @@ export interface MoveResult {
   modified: ModifiedEntry[]; // applied in place
 }
 
-// Phase 1 diff: compare DB records against the current disk listing (DESIGN §9.1).
-// Already-missing records whose file is still gone reappear in `removed` so a
-// delayed move can still match them; they are not re-counted (§9.4 step 5).
-export function buildDiff(dbPhotos: readonly DbPhoto[], diskFiles: readonly DiskFile[]): LibraryDiff {
-  const diskByPath = new Map(diskFiles.map((f) => [f.filePath, f]));
+// Phase 1 diff (DESIGN §9.1). `presentPaths` is every supported file on disk
+// (cheap: readdir + stat). `changed` is only the files that are new or whose
+// stat changed, i.e. the ones actually opened + re-hashed; unchanged files are
+// omitted from `changed` and only appear in `presentPaths`, so they are never
+// opened. Already-missing records still on disk reappear in `removed` so a
+// delayed move can match them; they are not re-counted (§9.4 step 5).
+export function buildDiff(
+  dbPhotos: readonly DbPhoto[],
+  presentPaths: ReadonlySet<string>,
+  changed: readonly DiskFile[],
+): LibraryDiff {
+  const changedByPath = new Map(changed.map((f) => [f.filePath, f]));
   const dbByPath = new Map(dbPhotos.map((p) => [p.file_path, p]));
 
   const removed: RemovedEntry[] = [];
@@ -73,24 +80,27 @@ export function buildDiff(dbPhotos: readonly DbPhoto[], diskFiles: readonly Disk
   const reappeared: ReappearedEntry[] = [];
 
   for (const db of dbPhotos) {
-    const disk = diskByPath.get(db.file_path);
-    if (!disk) {
+    if (!presentPaths.has(db.file_path)) {
       removed.push({ photoId: db.id, filePath: db.file_path, fileHash: db.file_hash, wasMissing: db.is_missing });
-    } else if (disk.hash !== db.file_hash) {
+      continue;
+    }
+    const change = changedByPath.get(db.file_path);
+    if (change && change.hash !== db.file_hash) {
       modified.push({
         photoId: db.id,
         filePath: db.file_path,
         oldHash: db.file_hash,
-        newHash: disk.hash,
-        metadata: disk.metadata,
+        newHash: change.hash,
+        metadata: change.metadata,
         wasMissing: db.is_missing,
       });
     } else if (db.is_missing) {
+      // present at its path, unchanged (or re-hashed identical): reappearance.
       reappeared.push({ photoId: db.id });
     }
   }
 
-  const added: AddedEntry[] = diskFiles
+  const added: AddedEntry[] = changed
     .filter((f) => !dbByPath.has(f.filePath))
     .map((f) => ({ filePath: f.filePath, fileHash: f.hash, metadata: f.metadata }));
 
