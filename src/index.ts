@@ -6,6 +6,11 @@ import { AppError } from './errors';
 import { LibrariesApi } from './api/libraries/libraries_api';
 import { LibrariesService } from './services/libraries/libraries_service';
 import { LibrariesRepository } from './services/libraries/libraries_repository';
+import { PhotosApi } from './api/photos/photos_api';
+import { PhotosService } from './services/photos/photos_service';
+import { PhotosRepository } from './services/photos/photos_repository';
+import { ShootsRepository } from './services/shoots/shoots_repository';
+import { AlbumsRepository } from './services/albums/albums_repository';
 
 const DB_PATH = process.env.DB_PATH ?? './bowerbird.db';
 const PORT = Number(process.env.PORT ?? 3000);
@@ -14,11 +19,19 @@ const HOST = process.env.HOST ?? '0.0.0.0';
 const db = createDatabase(DB_PATH);
 
 const librariesRepo = new LibrariesRepository(db);
+const photosRepo = new PhotosRepository(db);
+const shootsRepo = new ShootsRepository(db);
+const albumsRepo = new AlbumsRepository(db);
+
 const librariesService = new LibrariesService(librariesRepo);
+const photosService = new PhotosService(photosRepo, albumsRepo, shootsRepo, librariesRepo);
+
 const librariesApi = new LibrariesApi(librariesService);
+const photosApi = new PhotosApi(photosService);
 
 const app = new Hono();
 app.route('/api/libraries', librariesApi.routes);
+app.route('/api', photosApi.routes);
 
 app.onError((err, c) => {
   if (err instanceof AppError) {
