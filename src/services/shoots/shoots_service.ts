@@ -3,6 +3,7 @@ import { mkdir, rename } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { AppError } from '../../errors';
+import { isUniqueViolation } from '../../db/constraints';
 import type { CreateShootRequest, Shoot, UpdateShootRequest } from '../../schemas/shoots';
 import type { Library } from '../../schemas/libraries';
 import { moveIntoDir } from '../../utils/files';
@@ -40,15 +41,22 @@ export class ShootsService {
     await this.ensureDir(absFolder);
 
     const id = randomUUID();
-    this.shoots.insert({
-      id,
-      parent_id: request.parent_id ?? null,
-      library_id: library.id,
-      folder_path: folderPath,
-      name: request.name,
-      description: request.description ?? null,
-      ordering: request.ordering,
-    });
+    try {
+      this.shoots.insert({
+        id,
+        parent_id: request.parent_id ?? null,
+        library_id: library.id,
+        folder_path: folderPath,
+        name: request.name,
+        description: request.description ?? null,
+        ordering: request.ordering,
+      });
+    } catch (err) {
+      // getByName above catches the common case; a concurrent create with the
+      // same name can still pass it before either commits and lose the race here.
+      if (isUniqueViolation(err)) throw new AppError('CONFLICT', `shoot name already used in library: ${request.name}`);
+      throw err;
+    }
 
     if (existed) this.adoptExistingPhotos(library.id, id, folderPath);
 
@@ -116,7 +124,18 @@ export class ShootsService {
       await this.rename(shoot, updates.name);
     }
     this.shoots.updateFields(shootId, { description: updates.description, ordering: updates.ordering });
-    if ('banner_photo_id' in updates) this.shoots.setBanner(shootId, updates.banner_photo_id ?? null);
+    if ('banner_photo_id' in updates) {
+      const bannerId = updates.banner_photo_id ?? null;
+      if (bannerId != null) {
+        // Validate up front: the banner FK would otherwise surface as a raw 500.
+        const [photo] = this.photos.getBasicByIds([bannerId]);
+        if (!photo) throw new AppError('VALIDATION_ERROR', `banner photo not found: ${bannerId}`);
+        if (photo.library_id !== shoot.library_id) {
+          throw new AppError('VALIDATION_ERROR', `banner photo is not in this shoot's library: ${bannerId}`);
+        }
+      }
+      this.shoots.setBanner(shootId, bannerId);
+    }
 
     return this.get(shootId);
   }
@@ -159,6 +178,9 @@ export class ShootsService {
       await rename(newAbs, oldAbs).catch((rollbackErr) =>
         console.error(`shoot rename rollback failed (${newAbs} -> ${oldAbs}): ${(rollbackErr as Error).message}`),
       );
+      // getByName above catches the common case; a concurrent rename to the same
+      // name can still pass it before either commits and hit UNIQUE here.
+      if (isUniqueViolation(err)) throw new AppError('CONFLICT', `shoot name already used in library: ${newName}`);
       throw err;
     }
   }

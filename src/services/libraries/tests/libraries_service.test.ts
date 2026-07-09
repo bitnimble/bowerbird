@@ -65,6 +65,19 @@ describe('LibrariesService.create', () => {
     }
   });
 
+  it('maps a UNIQUE violation lost to a create race to CONFLICT (not a raw 500)', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'bb-'));
+    const insert = jest.fn(() => {
+      throw Object.assign(new Error('UNIQUE constraint failed: libraries.root_path'), { code: 'SQLITE_CONSTRAINT_UNIQUE' });
+    });
+    try {
+      const service = new LibrariesService(mockRepo({ getByRootPath: jest.fn(() => null), insert }));
+      await expect(service.create({ root_path: root, ordering: 'taken_desc' })).rejects.toMatchObject({ code: 'CONFLICT' });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('inserts and creates the data directory structure on the happy path', async () => {
     const root = mkdtempSync(path.join(tmpdir(), 'bb-'));
     const insert = jest.fn();

@@ -3,6 +3,7 @@ import { mkdir } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { AppError } from '../../errors';
+import { isUniqueViolation } from '../../db/constraints';
 import type { CreateLibraryRequest, Library } from '../../schemas/libraries';
 import { getDataPath } from '../../utils/paths';
 import type { LibrariesRepository } from './libraries_repository';
@@ -45,7 +46,14 @@ export class LibrariesService {
       throw new AppError('IO_ERROR', `failed to create data directory at ${dataPath}: ${(err as Error).message}`);
     }
 
-    this.repo.insert(library);
+    try {
+      this.repo.insert(library);
+    } catch (err) {
+      // getByRootPath above catches the common case; a concurrent create with the
+      // same root_path can still pass it before either commits and hit UNIQUE here.
+      if (isUniqueViolation(err)) throw new AppError('CONFLICT', `library root already registered: ${request.root_path}`);
+      throw err;
+    }
     for (const listener of this.listeners) listener.onLibraryCreated(library);
     return library;
   }

@@ -30,7 +30,7 @@ const processingService = new ProcessingService(photosRepo, config);
 
 const librariesService = new LibrariesService(librariesRepo);
 const photosService = new PhotosService(photosRepo, albumsRepo, shootsRepo, librariesRepo);
-const albumsService = new AlbumsService(albumsRepo);
+const albumsService = new AlbumsService(albumsRepo, photosRepo);
 const shootsService = new ShootsService(shootsRepo, photosRepo, librariesRepo);
 const syncService = new SyncService(photosRepo, librariesRepo, albumsRepo, shootsRepo, processingService);
 

@@ -77,6 +77,41 @@ describe('ShootsService.create', () => {
     const service = new ShootsService(mockShoots({ getByName: jest.fn(() => shoot) }), mockPhotos(), mockLibs(root));
     await expect(service.create({ library_id: 'lib', name: 'Trip', ordering: 'taken_desc' })).rejects.toThrow(/already used/);
   }));
+
+  it('maps a UNIQUE violation lost to a create race to CONFLICT (not a raw 500)', withRoot(async (root) => {
+    const insert = jest.fn(() => {
+      throw Object.assign(new Error('UNIQUE constraint failed: shoots.name'), { code: 'SQLITE_CONSTRAINT_UNIQUE' });
+    });
+    const service = new ShootsService(mockShoots({ getByName: jest.fn(() => null), insert }), mockPhotos(), mockLibs(root));
+    await expect(service.create({ library_id: 'lib', name: 'Trip', ordering: 'taken_desc' })).rejects.toMatchObject({ code: 'CONFLICT' });
+  }));
+});
+
+describe('ShootsService.update (banner)', () => {
+  it('rejects a banner photo that does not exist (400, not a raw 500)', withRoot(async (root) => {
+    const setBanner = jest.fn();
+    const service = new ShootsService(mockShoots({ getById: jest.fn(() => shoot), setBanner }), mockPhotos(), mockLibs(root));
+    await expect(service.update('sh', { banner_photo_id: 'ghost' })).rejects.toThrow(/banner photo not found/);
+    expect(setBanner).not.toHaveBeenCalled();
+  }));
+
+  it('rejects a banner photo from another library', withRoot(async (root) => {
+    const setBanner = jest.fn();
+    const photos = mockPhotos({ getBasicByIds: jest.fn(() => [{ id: 'p1', library_id: 'other', file_path: 'p1.arw', shoot_id: null }]) });
+    const service = new ShootsService(mockShoots({ getById: jest.fn(() => shoot), setBanner }), photos, mockLibs(root));
+    await expect(service.update('sh', { banner_photo_id: 'p1' })).rejects.toThrow(/not in this shoot's library/);
+    expect(setBanner).not.toHaveBeenCalled();
+  }));
+
+  it('sets a valid same-library banner and clears on null', withRoot(async (root) => {
+    const setBanner = jest.fn();
+    const photos = mockPhotos({ getBasicByIds: jest.fn(() => [{ id: 'p1', library_id: 'lib', file_path: 'p1.arw', shoot_id: null }]) });
+    const service = new ShootsService(mockShoots({ getById: jest.fn(() => shoot), setBanner }), photos, mockLibs(root));
+    await service.update('sh', { banner_photo_id: 'p1' });
+    expect(setBanner).toHaveBeenCalledWith('sh', 'p1');
+    await service.update('sh', { banner_photo_id: null });
+    expect(setBanner).toHaveBeenCalledWith('sh', null);
+  }));
 });
 
 describe('ShootsService.addPhotos', () => {

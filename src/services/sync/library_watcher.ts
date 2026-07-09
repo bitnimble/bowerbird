@@ -131,9 +131,12 @@ export class LibraryWatcher implements LibraryLifecycleListener {
     try {
       await this.sync.syncLibrary(libraryId);
     } catch (err) {
-      if (!(err instanceof AppError && err.code === 'SYNC_IN_PROGRESS')) {
-        console.error(`auto-sync failed for library ${libraryId}: ${(err as Error).message}`);
-      }
+      const code = err instanceof AppError ? err.code : null;
+      // Lost the lock race to an external/manual sync whose scan may predate our
+      // change: re-arm so the change isn't dropped once the lock frees.
+      if (code === 'SYNC_IN_PROGRESS') this.dirty.add(libraryId);
+      // NOT_FOUND = library deleted mid-flight (benign, no retry). Anything else is real.
+      else if (code !== 'NOT_FOUND') console.error(`auto-sync failed for library ${libraryId}: ${(err as Error).message}`);
     } finally {
       this.syncing.delete(libraryId);
       if (this.dirty.delete(libraryId)) this.schedule(libraryId);

@@ -85,6 +85,12 @@ export class SyncService {
       let moved = 0;
       let modified = 0;
 
+      // The library can be deleted during the (async) scan above; its photos are
+      // then cascade-gone and inserting against the dead library_id would raise an
+      // FK violation. Re-check here, no await between this and the synchronous
+      // transaction, so the delete can't interleave, and abort cleanly.
+      if (!this.libraries.getById(libraryId)) throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
+
       this.photos.transaction(() => {
         for (const mv of result.moves) {
           this.photos.applyMove(mv.photoId, mv.newFilePath, shootFor(mv.newFilePath));
