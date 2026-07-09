@@ -5,15 +5,12 @@ import path from 'node:path';
 import { AppError } from '../../errors';
 import type { CreateShootRequest, Shoot, UpdateShootRequest } from '../../schemas/shoots';
 import type { Library } from '../../schemas/libraries';
-import { uniqueDestPath } from '../../utils/files';
+import { moveIntoDir } from '../../utils/files';
+import { toLibraryRelative } from '../../utils/paths';
 import { mostSpecificShoot } from '../../utils/shoots';
 import type { LibrariesRepository } from '../libraries/libraries_repository';
 import type { PhotosRepository } from '../photos/photos_repository';
 import type { ShootsRepository } from './shoots_repository';
-
-function toRel(root: string, abs: string): string {
-  return path.relative(root, abs).split(path.sep).join('/');
-}
 
 export class ShootsService {
   constructor(
@@ -83,9 +80,8 @@ export class ShootsService {
         if (photo.shoot_id !== shootId) this.photos.setShoot(photo.id, shootId);
         continue;
       }
-      const dest = uniqueDestPath(destDir, path.basename(photo.file_path));
-      await this.move(from, dest);
-      this.photos.setFilePathAndShoot(photo.id, toRel(library.root_path, dest), shootId);
+      const dest = await this.moveInto(from, destDir, path.basename(photo.file_path));
+      this.photos.setFilePathAndShoot(photo.id, toLibraryRelative(library.root_path, dest), shootId);
     }
   }
 
@@ -96,9 +92,8 @@ export class ShootsService {
     for (const photo of this.photos.getBasicByIds(photoIds)) {
       if (photo.shoot_id !== shootId) continue;
       const from = path.join(library.root_path, photo.file_path);
-      const dest = uniqueDestPath(library.root_path, path.basename(photo.file_path));
-      await this.move(from, dest);
-      this.photos.setFilePathAndShoot(photo.id, toRel(library.root_path, dest), null);
+      const dest = await this.moveInto(from, library.root_path, path.basename(photo.file_path));
+      this.photos.setFilePathAndShoot(photo.id, toLibraryRelative(library.root_path, dest), null);
     }
   }
 
@@ -128,22 +123,32 @@ export class ShootsService {
     const slash = oldFolder.lastIndexOf('/');
     const newFolder = (slash >= 0 ? oldFolder.slice(0, slash + 1) : '') + newName;
 
-    await this.move(path.join(library.root_path, oldFolder), path.join(library.root_path, newFolder));
+    const oldAbs = path.join(library.root_path, oldFolder);
+    const newAbs = path.join(library.root_path, newFolder);
+    await this.move(oldAbs, newAbs);
 
     // Rewrite this shoot, descendant shoots, and contained photos to the new
     // prefix atomically (§8.5): a partial rewrite would break folder membership.
-    // The fs move already happened; if this throws, sync reconciles the move.
-    this.shoots.transaction(() => {
-      this.shoots.updateFields(shoot.id, { name: newName, folder_path: newFolder });
-      for (const descendant of this.shoots.listByLibrary(library.id)) {
-        if (descendant.folder_path.startsWith(`${oldFolder}/`)) {
-          this.shoots.updateFields(descendant.id, { folder_path: newFolder + descendant.folder_path.slice(oldFolder.length) });
+    // The fs move already happened; if the DB transaction throws (e.g. a
+    // concurrent rename hits UNIQUE(library_id, name)), roll the folder back so
+    // disk and DB stay consistent instead of leaving a shoot that points at a
+    // nonexistent folder.
+    try {
+      this.shoots.transaction(() => {
+        this.shoots.updateFields(shoot.id, { name: newName, folder_path: newFolder });
+        for (const descendant of this.shoots.listByLibrary(library.id)) {
+          if (descendant.folder_path.startsWith(`${oldFolder}/`)) {
+            this.shoots.updateFields(descendant.id, { folder_path: newFolder + descendant.folder_path.slice(oldFolder.length) });
+          }
         }
-      }
-      for (const photo of this.photos.listUnderFolder(library.id, oldFolder)) {
-        this.photos.setFilePath(photo.id, newFolder + photo.file_path.slice(oldFolder.length));
-      }
-    });
+        for (const photo of this.photos.listUnderFolder(library.id, oldFolder)) {
+          this.photos.setFilePath(photo.id, newFolder + photo.file_path.slice(oldFolder.length));
+        }
+      });
+    } catch (err) {
+      await rename(newAbs, oldAbs).catch(() => {});
+      throw err;
+    }
   }
 
   private adoptExistingPhotos(libraryId: string, shootId: string, folderPath: string): void {
@@ -160,6 +165,14 @@ export class ShootsService {
       await rename(from, to);
     } catch (err) {
       throw new AppError('IO_ERROR', `failed to move ${from} -> ${to}: ${(err as Error).message}`);
+    }
+  }
+
+  private async moveInto(from: string, dir: string, filename: string): Promise<string> {
+    try {
+      return await moveIntoDir(from, dir, filename);
+    } catch (err) {
+      throw new AppError('IO_ERROR', `failed to move ${from} into ${dir}: ${(err as Error).message}`);
     }
   }
 

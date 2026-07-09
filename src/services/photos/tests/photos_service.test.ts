@@ -27,6 +27,8 @@ function build(over: {
     listByShoot: jest.fn(() => emptyResult),
     listByAlbum: jest.fn(() => emptyResult),
     update: jest.fn(() => true),
+    setFilePath: jest.fn(),
+    markDeleted: jest.fn(),
     ...over.photos,
   } as unknown as PhotosRepository;
   const libraries = { getById: jest.fn(() => null), ...over.libraries } as unknown as LibrariesRepository;

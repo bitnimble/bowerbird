@@ -21,3 +21,8 @@ export function getBinPath(library: Library): string {
 export function getOriginalPath(library: Library, filePath: string): string {
   return path.join(library.root_path, filePath);
 }
+
+// A file_path value (root-relative, forward slashes) for an absolute path.
+export function toLibraryRelative(rootPath: string, absPath: string): string {
+  return path.relative(rootPath, absPath).split(path.sep).join('/');
+}

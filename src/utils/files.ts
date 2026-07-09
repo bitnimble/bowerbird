@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { readdir, realpath, stat } from 'node:fs/promises';
+import { copyFile, link, readdir, realpath, stat, unlink } from 'node:fs/promises';
 import path from 'node:path';
 
 const SUPPORTED_EXTENSIONS = new Set(['.arw']);
@@ -81,4 +81,32 @@ export function uniqueDestPath(dir: string, filename: string): string {
     candidate = path.join(dir, `${base}_${n}${ext}`);
   }
   return candidate;
+}
+
+// Atomically moves `from` into `dir` with a collision-free name, returning the
+// absolute destination. link()+unlink() makes name selection and the move a
+// single step, so two concurrent moves of the same basename can't overwrite each
+// other the way existsSync()+rename() could. Falls back to a (non-atomic) copy
+// when the destination is on a different filesystem (a custom data dir).
+export async function moveIntoDir(from: string, dir: string, filename: string): Promise<string> {
+  const ext = path.extname(filename);
+  const base = path.basename(filename, ext);
+  for (let n = 0; ; n++) {
+    const candidate = path.join(dir, n === 0 ? filename : `${base}_${n}${ext}`);
+    try {
+      await link(from, candidate);
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === 'EEXIST') continue; // name taken (possibly by a concurrent move)
+      if (code === 'EXDEV') {
+        const dest = uniqueDestPath(dir, filename);
+        await copyFile(from, dest);
+        await unlink(from);
+        return dest;
+      }
+      throw err;
+    }
+    await unlink(from);
+    return candidate;
+  }
 }

@@ -1,12 +1,12 @@
 import { existsSync } from 'node:fs';
-import { mkdir, rename, rm } from 'node:fs/promises';
+import { mkdir, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { AppError } from '../../errors';
 import type { Pagination, ScopedListQuery } from '../../schemas/common';
 import type { Library } from '../../schemas/libraries';
 import type { PhotoDetail, PhotoListQuery, PhotoListResponse, UpdatePhotoRequest } from '../../schemas/photos';
-import { getBinPath, getFullThumbnailPath, getOriginalPath, getSmallThumbnailPath } from '../../utils/paths';
-import { uniqueDestPath } from '../../utils/files';
+import { getBinPath, getFullThumbnailPath, getOriginalPath, getSmallThumbnailPath, toLibraryRelative } from '../../utils/paths';
+import { moveIntoDir } from '../../utils/files';
 import type { AlbumsRepository } from '../albums/albums_repository';
 import type { LibrariesRepository } from '../libraries/libraries_repository';
 import type { ShootsRepository } from '../shoots/shoots_repository';
@@ -98,7 +98,9 @@ export class PhotosService {
         if (existsSync(from)) {
           const binDir = this.binDir(library, photo.shoot_id);
           await this.ensureDir(binDir);
-          await this.move(from, uniqueDestPath(binDir, path.basename(photo.file_path)));
+          const dest = await this.moveInto(from, binDir, path.basename(photo.file_path));
+          // Record the file's true (Bin) location so file_path never mispoints.
+          this.photos.setFilePath(photo.id, toLibraryRelative(library.root_path, dest));
         }
 
         this.photos.markDeleted(photo.id);
@@ -124,9 +126,9 @@ export class PhotosService {
     }
   }
 
-  private async move(from: string, to: string): Promise<void> {
+  private async moveInto(from: string, dir: string, filename: string): Promise<string> {
     try {
-      await rename(from, to);
+      return await moveIntoDir(from, dir, filename);
     } catch (err) {
       throw new AppError('IO_ERROR', `failed to move ${from} to Bin: ${(err as Error).message}`);
     }
