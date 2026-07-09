@@ -61,7 +61,7 @@ describe('ProcessingService.processUnprocessed', () => {
     expect(markProcessed).toHaveBeenCalledTimes(3);
   });
 
-  it('on a worker crash: marks the job failed and deletes its stale thumbnails', async () => {
+  it('on a worker crash of a present file: marks it failed and deletes stale thumbnails', async () => {
     const smallDir = path.join(root, '.bowerbird', 'thumbnails', 'small');
     const fullDir = path.join(root, '.bowerbird', 'thumbnails', 'full');
     mkdirSync(smallDir, { recursive: true });
@@ -70,6 +70,7 @@ describe('ProcessingService.processUnprocessed', () => {
     const staleFull = path.join(fullDir, `${CRASH}.webp`);
     writeFileSync(staleSmall, 'stale');
     writeFileSync(staleFull, 'stale');
+    writeFileSync(path.join(root, `${CRASH}.arw`), ''); // source still present -> real failure
 
     const markProcessingFailed = jest.fn();
     const markProcessed = jest.fn();
@@ -81,14 +82,48 @@ describe('ProcessingService.processUnprocessed', () => {
 
     await new ProcessingService(repo, config).processUnprocessed('lib');
 
-    expect(markProcessed).toHaveBeenCalledWith('ok', expect.any(String));
     expect(markProcessingFailed).toHaveBeenCalledWith(CRASH, expect.stringContaining('crashed'));
-    // thumbnail cleanup is best-effort (fire-and-forget); let it settle
     for (let i = 0; i < 25 && (existsSync(staleSmall) || existsSync(staleFull)); i++) {
       await new Promise((r) => setTimeout(r, 20));
     }
     expect(existsSync(staleSmall)).toBe(false);
     expect(existsSync(staleFull)).toBe(false);
+  });
+
+  it('a crash whose source file has moved/gone is NOT marked failed (left for retry)', async () => {
+    // No `${CRASH}.arw` created: the source is gone, so the failure is transient.
+    const markProcessingFailed = jest.fn();
+    const repo = {
+      listPendingProcessing: jest.fn(() => [pending(CRASH)]),
+      markProcessed: jest.fn(),
+      markProcessingFailed,
+    } as unknown as PhotosRepository;
+
+    await new ProcessingService(repo, config).processUnprocessed('lib');
+
+    expect(markProcessingFailed).not.toHaveBeenCalled();
+  });
+
+  it('drains work that becomes pending while a batch is already running (rerun)', async () => {
+    const markProcessed = jest.fn();
+    let call = 0;
+    const listPendingProcessing = jest.fn(() => {
+      call += 1;
+      if (call === 1) return [pending('a')];
+      if (call === 2) return [pending('b')];
+      return [];
+    });
+    const repo = { listPendingProcessing, markProcessed, markProcessingFailed: jest.fn() } as unknown as PhotosRepository;
+    const service = new ProcessingService(repo, config);
+
+    // second call coalesces into the first and flags a rerun; both drain.
+    const first = service.processUnprocessed('lib');
+    const second = service.processUnprocessed('lib');
+    expect(second).toBe(first); // same in-flight promise
+    await Promise.all([first, second]);
+
+    expect(markProcessed).toHaveBeenCalledWith('a', expect.any(String));
+    expect(markProcessed).toHaveBeenCalledWith('b', expect.any(String));
   });
 
   it('does nothing when there is no pending work', async () => {

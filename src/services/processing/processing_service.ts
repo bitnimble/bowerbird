@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
 import type { Config } from '../../config';
@@ -14,22 +15,35 @@ function dataDir(pending: PendingPhoto): string {
 // Workers decode + encode; the main thread owns all DB writes so bun:sqlite is
 // only ever touched from one thread.
 export class ProcessingService {
-  private readonly inFlight = new Set<string>();
+  // Per-scope in-flight batch. A concurrent call returns the SAME promise (so an
+  // awaiter genuinely waits for completion) and flags a rerun so work queued
+  // during the batch is drained before the promise resolves.
+  private readonly inFlight = new Map<string, Promise<void>>();
+  private readonly rerun = new Set<string>();
 
   constructor(
     private readonly photos: PhotosRepository,
     private readonly config: Config,
   ) {}
 
-  async processUnprocessed(libraryId?: string): Promise<void> {
+  processUnprocessed(libraryId?: string): Promise<void> {
     const key = libraryId ?? '*';
-    if (this.inFlight.has(key)) return; // a batch for this scope is already running
-    this.inFlight.add(key);
-    try {
+    const existing = this.inFlight.get(key);
+    if (existing) {
+      this.rerun.add(key); // pick up work added since the running batch started
+      return existing;
+    }
+    const run = this.drain(libraryId, key).finally(() => this.inFlight.delete(key));
+    this.inFlight.set(key, run);
+    return run;
+  }
+
+  private async drain(libraryId: string | undefined, key: string): Promise<void> {
+    for (;;) {
+      this.rerun.delete(key);
       const jobs = this.photos.listPendingProcessing(libraryId).map((p) => this.toJob(p));
       if (jobs.length > 0) await this.runPool(jobs);
-    } finally {
-      this.inFlight.delete(key);
+      if (!this.rerun.has(key)) return; // no new work requested during this pass
     }
   }
 
@@ -51,9 +65,16 @@ export class ProcessingService {
     };
   }
 
-  private applyResult(result: ProcessingResult): void {
-    if (result.success) this.photos.markProcessed(result.photoId, new Date().toISOString());
-    else this.photos.markProcessingFailed(result.photoId, result.error);
+  private applyResult(result: ProcessingResult, job: ProcessingJob): void {
+    if (result.success) {
+      this.photos.markProcessed(result.photoId, new Date().toISOString());
+      return;
+    }
+    // If the source file moved/was deleted since the job was queued (a move that
+    // landed before the worker ran), don't burn it as a terminal failure: leave
+    // needs_processing=1 so a later sync reprocesses it at its current path.
+    if (!existsSync(job.rawFilePath)) return;
+    this.photos.markProcessingFailed(result.photoId, result.error);
   }
 
   private runPool(jobs: ProcessingJob[]): Promise<void> {
@@ -79,7 +100,7 @@ export class ProcessingService {
         };
 
         worker.onmessage = (event: MessageEvent<ProcessingResult>) => {
-          this.applyResult(event.data);
+          if (current != null) this.applyResult(event.data, current);
           assignNext();
         };
         // Bun kills the worker thread after onerror fires, so the worker can't be
@@ -90,7 +111,7 @@ export class ProcessingService {
           if (current != null) {
             void rm(current.smallOutputPath, { force: true }).catch(() => {});
             void rm(current.fullOutputPath, { force: true }).catch(() => {});
-            this.applyResult({ photoId: current.photoId, success: false, error: `worker crashed: ${event.message}` });
+            this.applyResult({ photoId: current.photoId, success: false, error: `worker crashed: ${event.message}` }, current);
           }
           worker.terminate();
           live--;
