@@ -36,7 +36,13 @@ export function acquireSyncLock(rootPath: string): string {
     if (pid != null && pidAlive(pid)) {
       throw new AppError('SYNC_IN_PROGRESS', `a sync is already running for this library (pid ${pid})`);
     }
-    unlinkSync(lockPath); // stale
+    try {
+      unlinkSync(lockPath); // stale
+    } catch (err) {
+      // A racer may have reclaimed it first; that's fine, openSync('wx') below
+      // settles who wins. Any other error is real.
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+    }
   }
 
   let fd: number;

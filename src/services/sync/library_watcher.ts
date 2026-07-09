@@ -18,6 +18,7 @@ export class LibraryWatcher implements LibraryLifecycleListener {
   private readonly retryTimers = new Map<string, Timer>();
   private readonly syncing = new Set<string>();
   private readonly dirty = new Set<string>();
+  private stopped = false;
 
   constructor(
     private readonly libraries: LibrariesRepository,
@@ -26,10 +27,14 @@ export class LibraryWatcher implements LibraryLifecycleListener {
   ) {}
 
   start(): void {
+    this.stopped = false;
     for (const library of this.libraries.list()) this.watchLibrary(library);
   }
 
   stop(): void {
+    // Set before clearing so an in-flight run()'s finally can't reschedule a sync
+    // (or a retry timer fire and re-establish a watcher) after teardown.
+    this.stopped = true;
     for (const watcher of this.watchers.values()) watcher.close();
     for (const timer of this.timers.values()) clearTimeout(timer);
     for (const timer of this.retryTimers.values()) clearTimeout(timer);
@@ -53,7 +58,7 @@ export class LibraryWatcher implements LibraryLifecycleListener {
   }
 
   private watchLibrary(library: Library): void {
-    if (this.watchers.has(library.id)) return;
+    if (this.stopped || this.watchers.has(library.id)) return;
     const dataDir = path.resolve(getDataPath(library));
     try {
       const watcher = watch(library.root_path, { recursive: true }, (_event, filename) => {
@@ -65,17 +70,27 @@ export class LibraryWatcher implements LibraryLifecycleListener {
         // A watch error (e.g. inotify ENOSPC) kills this watcher; drop it and try
         // to re-establish after a delay, else auto-sync silently stops for good.
         console.error(`watcher error for library ${library.id}: ${err.message}; will re-attempt`);
-        this.dropWatcher(library.id);
-        const timer = setTimeout(() => {
-          this.retryTimers.delete(library.id);
-          this.watchLibrary(library);
-        }, this.debounceMs);
-        this.retryTimers.set(library.id, timer);
+        this.scheduleRetry(library);
       });
       this.watchers.set(library.id, watcher);
     } catch (err) {
-      console.error(`could not watch library ${library.id} (${library.root_path}): ${(err as Error).message}`);
+      // watch() itself failed (incl. a synchronous failure of a retry attempt);
+      // keep retrying so one bad attempt doesn't stop auto-sync for good.
+      console.error(`could not watch library ${library.id} (${library.root_path}): ${(err as Error).message}; will re-attempt`);
+      this.scheduleRetry(library);
     }
+  }
+
+  private scheduleRetry(library: Library): void {
+    this.dropWatcher(library.id);
+    const existing = this.retryTimers.get(library.id);
+    if (existing) clearTimeout(existing);
+    if (this.stopped) return;
+    const timer = setTimeout(() => {
+      this.retryTimers.delete(library.id);
+      this.watchLibrary(library);
+    }, this.debounceMs);
+    this.retryTimers.set(library.id, timer);
   }
 
   private dropWatcher(libraryId: string): void {
@@ -93,6 +108,7 @@ export class LibraryWatcher implements LibraryLifecycleListener {
   }
 
   private schedule(libraryId: string): void {
+    if (this.stopped) return;
     const existing = this.timers.get(libraryId);
     if (existing) clearTimeout(existing);
     this.timers.set(

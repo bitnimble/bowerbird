@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { constants as fsConstants } from 'node:fs';
 import { copyFile, link, readdir, realpath, stat, unlink } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -66,18 +66,6 @@ export async function listSupportedFiles(rootPath: string, dataPath: string): Pr
   return results;
 }
 
-// Non-colliding destination in `dir` for `filename`, appending _1, _2, ... before
-// the extension if needed (DESIGN §12.1). Returns an absolute path.
-export function uniqueDestPath(dir: string, filename: string): string {
-  const ext = path.extname(filename);
-  const base = path.basename(filename, ext);
-  let candidate = path.join(dir, filename);
-  for (let n = 1; existsSync(candidate); n++) {
-    candidate = path.join(dir, `${base}_${n}${ext}`);
-  }
-  return candidate;
-}
-
 // Atomically moves `from` into `dir` with a collision-free name, returning the
 // absolute destination. link()+unlink() makes name selection and the move a
 // single step, so two concurrent moves of the same basename can't overwrite each
@@ -93,12 +81,27 @@ export async function moveIntoDir(from: string, dir: string, filename: string): 
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
       if (code === 'EEXIST') continue; // name taken (possibly by a concurrent move)
-      if (code === 'EXDEV') {
-        const dest = uniqueDestPath(dir, filename);
-        await copyFile(from, dest);
-        await unlink(from);
-        return dest;
-      }
+      if (code === 'EXDEV') return moveCrossDevice(from, dir, filename);
+      throw err;
+    }
+    await unlink(from);
+    return candidate;
+  }
+}
+
+// Cross-filesystem move (link() can't span devices). COPYFILE_EXCL claims each
+// candidate name atomically, it fails EEXIST rather than clobbering, so two
+// concurrent moves of the same basename can't overwrite each other the way
+// existsSync()+copyFile() could.
+async function moveCrossDevice(from: string, dir: string, filename: string): Promise<string> {
+  const ext = path.extname(filename);
+  const base = path.basename(filename, ext);
+  for (let n = 0; ; n++) {
+    const candidate = path.join(dir, n === 0 ? filename : `${base}_${n}${ext}`);
+    try {
+      await copyFile(from, candidate, fsConstants.COPYFILE_EXCL);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'EEXIST') continue;
       throw err;
     }
     await unlink(from);
