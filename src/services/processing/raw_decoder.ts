@@ -1,4 +1,4 @@
-import { dlopen, FFIType, ptr, toArrayBuffer } from 'bun:ffi';
+import { dlopen, FFIType, ptr, toArrayBuffer, type Pointer } from 'bun:ffi';
 
 // LibRaw is loaded at runtime via FFI (the container ships libraw-dev). The C API
 // (libraw/libraw_c_api.h) exposes plain functions + accessors, avoiding most
@@ -102,9 +102,21 @@ export function decodeRaw(filePath: string): DecodedImage {
 export interface RawHeader {
   width: number; // display/upright (post flip-adjust)
   height: number;
+  orientation: number; // LibRaw sizes.flip code (0/3/5/6); 0 if unreadable
   dateTaken: string | null;
   latitude: number | null;
   longitude: number | null;
+}
+
+// libraw_data_t (x86-64): ushort(*image)[4] (8B) then libraw_image_sizes_t at
+// offset 8. Within sizes: ushorts raw_h/raw_w/h/w/top/left/ih/iw (16B), u32
+// raw_pitch (@16), double pixel_aspect (@24), int flip (@32). So flip is at
+// proc + 8 + 32 = 40. Validated against a real ARW; guarded to a plausible range.
+const FLIP_OFFSET = 40;
+
+function readFlip(proc: Pointer): number {
+  const flip = new DataView(toArrayBuffer(proc, FLIP_OFFSET, 4)).getInt32(0, true);
+  return flip >= 0 && flip <= 8 ? flip : 0;
 }
 
 // libraw_imgother_t (LibRaw 0.21, x86-64): float iso,shutter,aperture,focal (16B),
@@ -128,6 +140,7 @@ export function readRawHeader(filePath: string): RawHeader {
   if (!proc) throw new Error('libraw_init failed');
   try {
     check(L, L.libraw_open_file(proc, cpath(filePath)), 'open_file');
+    const orientation = readFlip(proc); // sizes.flip is set at open; read before adjust
     L.libraw_adjust_sizes_info_only(proc);
     const width = L.libraw_get_iwidth(proc);
     const height = L.libraw_get_iheight(proc);
@@ -150,7 +163,7 @@ export function readRawHeader(filePath: string): RawHeader {
       }
     }
 
-    return { width, height, dateTaken, latitude, longitude };
+    return { width, height, orientation, dateTaken, latitude, longitude };
   } finally {
     L.libraw_recycle(proc);
     L.libraw_close(proc);

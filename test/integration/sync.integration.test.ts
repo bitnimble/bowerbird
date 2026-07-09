@@ -62,15 +62,17 @@ afterAll(() => {
 test('initial sync indexes the file with real LibRaw metadata', async () => {
   const status = await sync.syncLibrary(LIB);
   expect(status.photos_added).toBe(1);
-  const p = db.query('SELECT id, width, height, date_taken FROM photos').get() as {
+  const p = db.query('SELECT id, width, height, orientation, date_taken FROM photos').get() as {
     id: string;
     width: number;
     height: number;
+    orientation: number;
     date_taken: string;
   };
   photoId = p.id;
   expect(p.width).toBe(4024);
   expect(p.height).toBe(6024);
+  expect(p.orientation).toBe(5); // LibRaw flip code for the rotated fixture
   expect(p.date_taken).toBe('2020-12-06T12:46:35.000Z');
   expect(opens).toBe(1); // the one new file was opened
 });

@@ -26,10 +26,10 @@ async function extractArwMetadata(filePath: string): Promise<FileMetadata> {
   return {
     width: header.width,
     height: header.height,
-    // LibRaw processes to sRGB by default; display dims already encode the flip,
-    // so orientation is retained only as informational + a stable hash input.
+    // LibRaw processes to sRGB by default. Display dims already encode the flip;
+    // orientation is the raw LibRaw flip code, kept as informational + hash input.
     colorSpace: 'sRGB',
-    orientation: 0,
+    orientation: header.orientation,
     dateTaken: header.dateTaken,
     latitude: header.latitude,
     longitude: header.longitude,
