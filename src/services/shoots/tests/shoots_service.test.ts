@@ -123,3 +123,91 @@ describe('ShootsService.delete', () => {
     expect(() => service.delete('sh')).toThrow(AppError);
   });
 });
+
+describe('ShootsService.removePhotos', () => {
+  it('moves the file back to the library root and clears shoot_id', withRoot(async (root) => {
+    mkdirSync(path.join(root, 'Trip'), { recursive: true });
+    writeFileSync(path.join(root, 'Trip', 'a.arw'), '');
+    const setFilePathAndShoot = jest.fn();
+    const photos = mockPhotos({
+      getBasicByIds: jest.fn(() => [{ id: 'p1', library_id: 'lib', file_path: 'Trip/a.arw', shoot_id: 'sh' }]),
+      setFilePathAndShoot,
+    });
+    const service = new ShootsService(mockShoots({ getById: jest.fn(() => shoot) }), photos, mockLibs(root));
+
+    await service.removePhotos('sh', ['p1']);
+
+    expect(existsSync(path.join(root, 'a.arw'))).toBe(true);
+    expect(existsSync(path.join(root, 'Trip', 'a.arw'))).toBe(false);
+    expect(setFilePathAndShoot).toHaveBeenCalledWith('p1', 'a.arw', null);
+  }));
+
+  it('skips photos that are not in the shoot', withRoot(async (root) => {
+    const setFilePathAndShoot = jest.fn();
+    const photos = mockPhotos({
+      getBasicByIds: jest.fn(() => [{ id: 'p1', library_id: 'lib', file_path: 'x.arw', shoot_id: 'other' }]),
+      setFilePathAndShoot,
+    });
+    const service = new ShootsService(mockShoots({ getById: jest.fn(() => shoot) }), photos, mockLibs(root));
+    await service.removePhotos('sh', ['p1']);
+    expect(setFilePathAndShoot).not.toHaveBeenCalled();
+  }));
+});
+
+describe('ShootsService.update (rename cascade)', () => {
+  it('renames the folder and rewrites descendant shoots + contained photos', withRoot(async (root) => {
+    mkdirSync(path.join(root, 'Trip', 'Day1'), { recursive: true });
+    const descendant: Shoot = { ...shoot, id: 'd1', parent_id: 'sh', folder_path: 'Trip/Day1', name: 'Day1' };
+    const updateFields = jest.fn();
+    const setFilePath = jest.fn();
+    const shoots = mockShoots({
+      getById: jest.fn(() => shoot),
+      getByName: jest.fn(() => null),
+      listByLibrary: jest.fn(() => [shoot, descendant]),
+      updateFields,
+    });
+    const photos = mockPhotos({
+      listUnderFolder: jest.fn(() => [
+        { id: 'p1', library_id: 'lib', file_path: 'Trip/a.arw', shoot_id: 'sh' },
+        { id: 'p2', library_id: 'lib', file_path: 'Trip/Day1/b.arw', shoot_id: 'd1' },
+      ]),
+      setFilePath,
+    });
+    const service = new ShootsService(shoots, photos, mockLibs(root));
+
+    await service.update('sh', { name: 'Vacation' });
+
+    expect(existsSync(path.join(root, 'Vacation'))).toBe(true);
+    expect(existsSync(path.join(root, 'Trip'))).toBe(false);
+    expect(updateFields).toHaveBeenCalledWith('sh', { name: 'Vacation', folder_path: 'Vacation' });
+    expect(updateFields).toHaveBeenCalledWith('d1', { folder_path: 'Vacation/Day1' });
+    expect(setFilePath).toHaveBeenCalledWith('p1', 'Vacation/a.arw');
+    expect(setFilePath).toHaveBeenCalledWith('p2', 'Vacation/Day1/b.arw');
+  }));
+});
+
+describe('ShootsService.create (adoption)', () => {
+  it('adopts photos already under a pre-existing folder', withRoot(async (root) => {
+    mkdirSync(path.join(root, 'Existing'), { recursive: true });
+    let insertedId = '';
+    const insert = jest.fn((s: { id: string }) => {
+      insertedId = s.id;
+    });
+    const setShoot = jest.fn();
+    const shoots = mockShoots({
+      insert,
+      getByName: jest.fn(() => null),
+      getById: jest.fn(() => shoot),
+      listByLibrary: jest.fn(() => (insertedId ? [{ ...shoot, id: insertedId, folder_path: 'Existing', name: 'Existing' }] : [])),
+    });
+    const photos = mockPhotos({
+      listUnderFolder: jest.fn(() => [{ id: 'p1', library_id: 'lib', file_path: 'Existing/c.arw', shoot_id: null }]),
+      setShoot,
+    });
+    const service = new ShootsService(shoots, photos, mockLibs(root));
+
+    await service.create({ library_id: 'lib', name: 'Existing', ordering: 'taken_desc' });
+
+    expect(setShoot).toHaveBeenCalledWith('p1', insertedId);
+  }));
+});
