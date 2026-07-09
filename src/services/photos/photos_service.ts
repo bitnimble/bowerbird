@@ -81,30 +81,54 @@ export class PhotosService {
     return this.albums.getAlbumIdsForPhoto(photoId);
   }
 
-  // Soft-delete: remove thumbnails, move the RAW to a Bin, flag is_deleted (§12).
+  // Soft-delete: move the RAW to a Bin, flag is_deleted, then remove thumbnails
+  // (§12). The Bin move happens before anything destructive, and each photo is
+  // isolated so one failure neither abandons the rest of the batch nor leaves an
+  // active photo with its thumbnails already gone.
   async delete(photoIds: string[]): Promise<void> {
+    const failures: string[] = [];
     for (const id of photoIds) {
-      const photo = this.photos.getById(id);
-      if (!photo || photo.is_deleted) continue;
-      const library = this.libraries.getById(photo.library_id);
-      if (!library) continue;
+      try {
+        const photo = this.photos.getById(id);
+        if (!photo || photo.is_deleted) continue;
+        const library = this.libraries.getById(photo.library_id);
+        if (!library) continue;
 
-      await rm(getSmallThumbnailPath(library, photo.id), { force: true });
-      await rm(getFullThumbnailPath(library, photo.id), { force: true });
-
-      const from = getOriginalPath(library, photo.file_path);
-      if (existsSync(from)) {
-        const binDir = this.binDir(library, photo.shoot_id);
-        await mkdir(binDir, { recursive: true });
-        const dest = uniqueDestPath(binDir, path.basename(photo.file_path));
-        try {
-          await rename(from, dest);
-        } catch (err) {
-          throw new AppError('IO_ERROR', `failed to move ${from} to Bin: ${(err as Error).message}`);
+        const from = getOriginalPath(library, photo.file_path);
+        if (existsSync(from)) {
+          const binDir = this.binDir(library, photo.shoot_id);
+          await this.ensureDir(binDir);
+          await this.move(from, uniqueDestPath(binDir, path.basename(photo.file_path)));
         }
-      }
 
-      this.photos.markDeleted(photo.id);
+        this.photos.markDeleted(photo.id);
+
+        // Best-effort thumbnail cleanup: the photo is already flagged deleted, so
+        // a stale thumbnail is harmless (endpoints 404 on deleted photos).
+        await rm(getSmallThumbnailPath(library, photo.id), { force: true }).catch(() => {});
+        await rm(getFullThumbnailPath(library, photo.id), { force: true }).catch(() => {});
+      } catch (err) {
+        failures.push(`${id}: ${(err as Error).message}`);
+      }
+    }
+    if (failures.length > 0) {
+      throw new AppError('IO_ERROR', `failed to delete ${failures.length} photo(s): ${failures.join('; ')}`);
+    }
+  }
+
+  private async ensureDir(dir: string): Promise<void> {
+    try {
+      await mkdir(dir, { recursive: true });
+    } catch (err) {
+      throw new AppError('IO_ERROR', `failed to create directory ${dir}: ${(err as Error).message}`);
+    }
+  }
+
+  private async move(from: string, to: string): Promise<void> {
+    try {
+      await rename(from, to);
+    } catch (err) {
+      throw new AppError('IO_ERROR', `failed to move ${from} to Bin: ${(err as Error).message}`);
     }
   }
 
