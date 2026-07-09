@@ -56,30 +56,52 @@ export class ProcessingService {
   }
 
   private runPool(jobs: ProcessingJob[]): Promise<void> {
+    const poolSize = Math.min(this.config.processingConcurrency, jobs.length);
     return new Promise((resolve) => {
       let next = 0;
       let live = 0;
 
-      const feed = (worker: Worker): void => {
-        if (next < jobs.length) {
-          worker.postMessage(jobs[next++]);
-        } else {
-          worker.terminate();
-          if (--live === 0) resolve();
-        }
-      };
-
-      const poolSize = Math.min(this.config.processingConcurrency, jobs.length);
-      for (let i = 0; i < poolSize; i++) {
-        const worker = new Worker(WORKER_URL);
+      const launch = (): void => {
         live++;
+        const worker = new Worker(WORKER_URL);
+        let current: ProcessingJob | undefined;
+
+        const assignNext = (): void => {
+          if (next >= jobs.length) {
+            worker.terminate();
+            live--;
+            if (live === 0) resolve();
+            return;
+          }
+          current = jobs[next++];
+          worker.postMessage(current);
+        };
+
         worker.onmessage = (event: MessageEvent<ProcessingResult>) => {
           this.applyResult(event.data);
-          feed(worker);
+          assignNext();
         };
-        worker.onerror = () => feed(worker); // worker crashed: free the slot, move on
-        worker.postMessage(jobs[next++]);
+        // Bun kills the worker thread after onerror fires, so the worker can't be
+        // reused. Record the in-flight job's failure, drop this worker, and launch
+        // a replacement so the pool keeps draining (never leaves runPool unresolved).
+        worker.onerror = (event: ErrorEvent) => {
+          if (current != null) {
+            this.applyResult({ photoId: current.photoId, success: false, error: `worker crashed: ${event.message}` });
+          }
+          worker.terminate();
+          live--;
+          if (next < jobs.length) launch();
+          else if (live === 0) resolve();
+        };
+
+        assignNext();
+      };
+
+      if (!(poolSize > 0)) {
+        resolve(); // no jobs, or a non-positive/NaN concurrency slipped through
+        return;
       }
+      for (let i = 0; i < poolSize; i++) launch();
     });
   }
 }
