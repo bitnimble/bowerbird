@@ -100,6 +100,20 @@ describe('ShootsService.addPhotos', () => {
     expect(setShoot).not.toHaveBeenCalled(); // membership already correct
   }));
 
+  it('rejects a photo from another library before moving anything', withRoot(async (root) => {
+    writeFileSync(path.join(root, 'a.arw'), '');
+    const setFilePathAndShoot = jest.fn();
+    const photos = mockPhotos({
+      getBasicByIds: jest.fn(() => [{ id: 'p1', library_id: 'other-lib', file_path: 'a.arw', shoot_id: null }]),
+      setFilePathAndShoot,
+    });
+    const service = new ShootsService(mockShoots({ getById: jest.fn(() => shoot) }), photos, mockLibs(root));
+
+    await expect(service.addPhotos('sh', ['p1'])).rejects.toThrow(/not in this shoot's library/);
+    expect(setFilePathAndShoot).not.toHaveBeenCalled();
+    expect(existsSync(path.join(root, 'a.arw'))).toBe(true); // untouched
+  }));
+
   it('moves a photo into the shoot folder and updates its path + shoot', withRoot(async (root) => {
     writeFileSync(path.join(root, 'a.arw'), '');
     const setFilePathAndShoot = jest.fn();
@@ -166,13 +180,12 @@ describe('ShootsService.update (rename cascade)', () => {
       listByLibrary: jest.fn(() => [shoot, descendant]),
       updateFields,
     });
-    const photos = mockPhotos({
-      listUnderFolder: jest.fn(() => [
-        { id: 'p1', library_id: 'lib', file_path: 'Trip/a.arw', shoot_id: 'sh' },
-        { id: 'p2', library_id: 'lib', file_path: 'Trip/Day1/b.arw', shoot_id: 'd1' },
-      ]),
-      setFilePath,
-    });
+    const listUnderFolder = jest.fn(() => [
+      { id: 'p1', library_id: 'lib', file_path: 'Trip/a.arw', shoot_id: 'sh' },
+      { id: 'p2', library_id: 'lib', file_path: 'Trip/Day1/b.arw', shoot_id: 'd1' },
+      { id: 'p3', library_id: 'lib', file_path: 'Trip/Bin/c.arw', shoot_id: 'sh' }, // soft-deleted
+    ]);
+    const photos = mockPhotos({ listUnderFolder, setFilePath });
     const service = new ShootsService(shoots, photos, mockLibs(root));
 
     await service.update('sh', { name: 'Vacation' });
@@ -183,6 +196,10 @@ describe('ShootsService.update (rename cascade)', () => {
     expect(updateFields).toHaveBeenCalledWith('d1', { folder_path: 'Vacation/Day1' });
     expect(setFilePath).toHaveBeenCalledWith('p1', 'Vacation/a.arw');
     expect(setFilePath).toHaveBeenCalledWith('p2', 'Vacation/Day1/b.arw');
+    // soft-deleted photos in the shoot Bin move with the folder, so their path
+    // must be rewritten too (listUnderFolder called with includeDeleted=true).
+    expect(listUnderFolder).toHaveBeenCalledWith('lib', 'Trip', true);
+    expect(setFilePath).toHaveBeenCalledWith('p3', 'Vacation/Bin/c.arw');
   }));
 });
 

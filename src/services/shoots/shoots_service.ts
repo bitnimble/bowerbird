@@ -69,9 +69,17 @@ export class ShootsService {
     const shoot = this.get(shootId);
     const library = this.requireLibrary(shoot.library_id);
     const destDir = path.join(library.root_path, shoot.folder_path);
+    const photos = this.photos.getBasicByIds(photoIds);
+    // Validate up front so a cross-library id can't leave a partially-applied
+    // batch (each move commits before the next runs).
+    for (const photo of photos) {
+      if (photo.library_id !== shoot.library_id) {
+        throw new AppError('VALIDATION_ERROR', `photo ${photo.id} is not in this shoot's library`);
+      }
+    }
     await this.ensureDir(destDir);
 
-    for (const photo of this.photos.getBasicByIds(photoIds)) {
+    for (const photo of photos) {
       const from = path.join(library.root_path, photo.file_path);
       const naturalDest = path.join(destDir, path.basename(photo.file_path));
       // Already sitting in this folder: just set membership, never move (which
@@ -90,7 +98,7 @@ export class ShootsService {
     const library = this.requireLibrary(shoot.library_id);
 
     for (const photo of this.photos.getBasicByIds(photoIds)) {
-      if (photo.shoot_id !== shootId) continue;
+      if (photo.shoot_id !== shootId || photo.library_id !== shoot.library_id) continue;
       const from = path.join(library.root_path, photo.file_path);
       const dest = await this.moveInto(from, library.root_path, path.basename(photo.file_path));
       this.photos.setFilePathAndShoot(photo.id, toLibraryRelative(library.root_path, dest), null);
@@ -141,12 +149,16 @@ export class ShootsService {
             this.shoots.updateFields(descendant.id, { folder_path: newFolder + descendant.folder_path.slice(oldFolder.length) });
           }
         }
-        for (const photo of this.photos.listUnderFolder(library.id, oldFolder)) {
+        // includeDeleted: soft-deleted photos live in <folder>/Bin and physically
+        // move with the folder, so their file_path must be rewritten too.
+        for (const photo of this.photos.listUnderFolder(library.id, oldFolder, true)) {
           this.photos.setFilePath(photo.id, newFolder + photo.file_path.slice(oldFolder.length));
         }
       });
     } catch (err) {
-      await rename(newAbs, oldAbs).catch(() => {});
+      await rename(newAbs, oldAbs).catch((rollbackErr) =>
+        console.error(`shoot rename rollback failed (${newAbs} -> ${oldAbs}): ${(rollbackErr as Error).message}`),
+      );
       throw err;
     }
   }

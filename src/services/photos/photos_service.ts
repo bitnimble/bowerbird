@@ -95,15 +95,20 @@ export class PhotosService {
         if (!library) continue;
 
         const from = getOriginalPath(library, photo.file_path);
+        let binRelPath: string | null = null;
         if (existsSync(from)) {
           const binDir = this.binDir(library, photo.shoot_id);
           await this.ensureDir(binDir);
           const dest = await this.moveInto(from, binDir, path.basename(photo.file_path));
-          // Record the file's true (Bin) location so file_path never mispoints.
-          this.photos.setFilePath(photo.id, toLibraryRelative(library.root_path, dest));
+          binRelPath = toLibraryRelative(library.root_path, dest);
         }
 
-        this.photos.markDeleted(photo.id);
+        // Commit the Bin path and the deleted flag atomically: a crash between
+        // them would otherwise leave an active photo whose file is in the Bin.
+        this.photos.transaction(() => {
+          if (binRelPath != null) this.photos.setFilePath(photo.id, binRelPath);
+          this.photos.markDeleted(photo.id);
+        });
 
         // Best-effort thumbnail cleanup: the photo is already flagged deleted, so
         // a stale thumbnail is harmless (endpoints 404 on deleted photos).

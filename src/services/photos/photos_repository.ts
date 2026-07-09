@@ -232,12 +232,15 @@ export class PhotosRepository {
       .all(...ids) as BasicPhoto[];
   }
 
-  // Non-deleted photos whose file_path is under `folderPath` (any depth).
-  listUnderFolder(libraryId: string, folderPath: string): BasicPhoto[] {
+  // Photos whose file_path is under `folderPath` (any depth). Excludes
+  // soft-deleted photos unless includeDeleted (the shoot-rename cascade needs
+  // them: they live in <folder>/Bin and physically move with the folder).
+  listUnderFolder(libraryId: string, folderPath: string, includeDeleted = false): BasicPhoto[] {
     const [lo, hi] = folderRange(folderPath);
+    const deletedClause = includeDeleted ? '' : 'AND is_deleted = 0 ';
     return this.db
       .query(
-        'SELECT id, library_id, file_path, shoot_id FROM photos WHERE library_id = ? AND is_deleted = 0 AND file_path >= ? AND file_path < ?',
+        `SELECT id, library_id, file_path, shoot_id FROM photos WHERE library_id = ? ${deletedClause}AND file_path >= ? AND file_path < ?`,
       )
       .all(libraryId, lo, hi) as BasicPhoto[];
   }

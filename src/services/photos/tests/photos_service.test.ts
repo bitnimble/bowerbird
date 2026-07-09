@@ -29,6 +29,7 @@ function build(over: {
     update: jest.fn(() => true),
     setFilePath: jest.fn(),
     markDeleted: jest.fn(),
+    transaction: (fn: () => unknown) => fn(),
     ...over.photos,
   } as unknown as PhotosRepository;
   const libraries = { getById: jest.fn(() => null), ...over.libraries } as unknown as LibrariesRepository;
