@@ -13,6 +13,33 @@ export interface PhotoListResult {
   total: number;
 }
 
+export interface SyncInsert {
+  id: string;
+  library_id: string;
+  shoot_id: string | null;
+  file_hash: string;
+  file_path: string;
+  width: number;
+  height: number;
+  orientation: number;
+  date_taken: string | null;
+  date_added: string;
+  date_updated: string | null;
+  latitude: number | null;
+  longitude: number | null;
+}
+
+export interface SyncModification {
+  file_hash: string;
+  width: number;
+  height: number;
+  orientation: number;
+  date_taken: string | null;
+  date_updated: string | null;
+  latitude: number | null;
+  longitude: number | null;
+}
+
 // Minimal shape for file/shoot bookkeeping (moves, adoption, reconciliation).
 export interface BasicPhoto {
   id: string;
@@ -203,6 +230,78 @@ export class PhotosRepository {
 
   markDeleted(id: string): void {
     this.db.query('UPDATE photos SET is_deleted = 1, needs_processing = 0 WHERE id = ?').run(id);
+  }
+
+  // --- sync (DESIGN §9) ---
+
+  listForSync(libraryId: string): { id: string; file_path: string; file_hash: string | null; is_missing: boolean }[] {
+    const rows = this.db
+      .query('SELECT id, file_path, file_hash, is_missing FROM photos WHERE library_id = ? AND is_deleted = 0')
+      .all(libraryId) as { id: string; file_path: string; file_hash: string | null; is_missing: number }[];
+    return rows.map((r) => ({ id: r.id, file_path: r.file_path, file_hash: r.file_hash, is_missing: r.is_missing === 1 }));
+  }
+
+  transaction<T>(fn: () => T): T {
+    return this.db.transaction(fn)();
+  }
+
+  insertFromSync(record: SyncInsert): void {
+    this.db
+      .query(
+        `INSERT INTO photos
+          (id, library_id, shoot_id, file_hash, file_path, width, height, orientation,
+           is_missing, is_deleted, date_taken, date_added, date_updated, needs_processing,
+           latitude, longitude, rating, selected)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, 1, ?, ?, 0, 0)`,
+      )
+      .run(
+        record.id,
+        record.library_id,
+        record.shoot_id,
+        record.file_hash,
+        record.file_path,
+        record.width,
+        record.height,
+        record.orientation,
+        record.date_taken,
+        record.date_added,
+        record.date_updated,
+        record.latitude,
+        record.longitude,
+      );
+  }
+
+  applyMove(photoId: string, newFilePath: string, shootId: string | null): void {
+    this.db
+      .query('UPDATE photos SET file_path = ?, shoot_id = ?, is_missing = 0 WHERE id = ?')
+      .run(newFilePath, shootId, photoId);
+  }
+
+  applyModification(photoId: string, fields: SyncModification): void {
+    this.db
+      .query(
+        `UPDATE photos SET file_hash = ?, width = ?, height = ?, orientation = ?, date_taken = ?,
+          date_updated = ?, latitude = ?, longitude = ?, needs_processing = 1, is_missing = 0 WHERE id = ?`,
+      )
+      .run(
+        fields.file_hash,
+        fields.width,
+        fields.height,
+        fields.orientation,
+        fields.date_taken,
+        fields.date_updated,
+        fields.latitude,
+        fields.longitude,
+        photoId,
+      );
+  }
+
+  clearMissing(photoId: string): void {
+    this.db.query('UPDATE photos SET is_missing = 0 WHERE id = ?').run(photoId);
+  }
+
+  setMissing(photoId: string): void {
+    this.db.query('UPDATE photos SET is_missing = 1 WHERE id = ?').run(photoId);
   }
 
   private list(
