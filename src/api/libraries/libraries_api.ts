@@ -1,0 +1,27 @@
+import { Hono } from 'hono';
+import { CreateLibraryRequestSchema } from '../../schemas/libraries';
+import type { LibrariesService } from '../../services/libraries/libraries_service';
+
+export class LibrariesApi {
+  readonly routes: Hono;
+
+  constructor(private readonly service: LibrariesService) {
+    const app = new Hono();
+
+    app.post('/', async (c) => {
+      const body = CreateLibraryRequestSchema.parse(await c.req.json());
+      return c.json(await this.service.create(body), 201);
+    });
+
+    app.get('/', (c) => c.json(this.service.list()));
+
+    app.get('/:id', (c) => c.json(this.service.get(c.req.param('id'))));
+
+    app.delete('/:id', (c) => {
+      this.service.delete(c.req.param('id'));
+      return c.body(null, 204);
+    });
+
+    this.routes = app;
+  }
+}
