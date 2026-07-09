@@ -93,6 +93,25 @@ describe('detectMoves', () => {
     expect(result.modified.map((m) => m.photoId)).toEqual(['pA']);
   });
 
+  it('reserves only one added entry per modified file, pairing the rest as moves', () => {
+    // P1 modified h1->h2; two files carry h1: one is the relocated original (a new
+    // photo), the other is the move destination of removed P2.
+    const diff: LibraryDiff = {
+      removed: [{ photoId: 'p2', filePath: 'gone.arw', fileHash: 'h1', wasMissing: false }],
+      added: [
+        { filePath: 'B.arw', fileHash: 'h1', metadata: META },
+        { filePath: 'C.arw', fileHash: 'h1', metadata: META },
+      ],
+      modified: [{ photoId: 'p1', filePath: 'A.arw', oldHash: 'h1', newHash: 'h2', metadata: META, wasMissing: false }],
+      reappeared: [],
+    };
+    const result = detectMoves(diff, noAlbums);
+    expect(result.moves).toHaveLength(1);
+    expect(result.moves[0]!.photoId).toBe('p2');
+    expect(result.added).toHaveLength(1); // exactly one addition reserved as a new photo
+    expect(result.removed).toHaveLength(0);
+  });
+
   it('matches a previously-missing record against a reappearance at a new path', () => {
     const diff = buildDiff([db('p1', 'old.arw', 'h1', true)], present('new.arw'), [disk('new.arw', 'h1')]);
     const result = detectMoves(diff, noAlbums);

@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { readdir, stat } from 'node:fs/promises';
+import { readdir, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 const SUPPORTED_EXTENSIONS = new Set(['.arw']);
@@ -27,16 +27,34 @@ export interface ScannedFile {
 export async function listSupportedFiles(rootPath: string, dataPath: string): Promise<ScannedFile[]> {
   const results: ScannedFile[] = [];
   const resolvedData = path.resolve(dataPath);
+  const visitedDirs = new Set<string>(); // real paths, to stop symlink cycles
 
   async function walk(absDir: string): Promise<void> {
     const entries = await readdir(absDir, { withFileTypes: true });
     for (const entry of entries) {
       const abs = path.join(absDir, entry.name);
-      if (entry.isDirectory()) {
+
+      // dirent flags describe the link itself; follow symlinks to classify them.
+      let isDir = entry.isDirectory();
+      let isFile = entry.isFile();
+      if (entry.isSymbolicLink()) {
+        try {
+          const target = await stat(abs);
+          isDir = target.isDirectory();
+          isFile = target.isFile();
+        } catch {
+          continue; // broken symlink
+        }
+      }
+
+      if (isDir) {
         if (isExcludedDir(entry.name)) continue;
         if (path.resolve(abs) === resolvedData) continue;
+        const real = await realpath(abs).catch(() => abs);
+        if (visitedDirs.has(real)) continue;
+        visitedDirs.add(real);
         await walk(abs);
-      } else if (entry.isFile() && isSupportedFile(entry.name)) {
+      } else if (isFile && isSupportedFile(entry.name)) {
         const rel = path.relative(rootPath, abs).split(path.sep).join('/');
         results.push({ relPath: rel, absPath: abs });
       }

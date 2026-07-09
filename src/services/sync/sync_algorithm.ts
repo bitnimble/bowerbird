@@ -125,19 +125,21 @@ export function detectMoves(diff: LibraryDiff, isInAlbum: (photoId: string) => b
   const removedByHash = groupByHash(diff.removed);
 
   // A modified file's old hash reappearing as an addition is the relocated
-  // original: that addition becomes a new photo, so its hash is not a move source.
-  const reservedHashes = new Set(
-    diff.modified.map((m) => m.oldHash).filter((h): h is string => h != null && addedByHash.has(h)),
-  );
+  // original (§9.3): reserve ONE such addition per modified file (it becomes a new
+  // photo, not a move source), but leave any other same-hash additions available
+  // to pair as moves with their own removed counterparts.
+  for (const m of diff.modified) {
+    if (m.oldHash == null) continue;
+    addedByHash.get(m.oldHash)?.shift();
+  }
 
   const moves: MoveEntry[] = [];
   const usedAdded = new Set<AddedEntry>();
   const usedRemoved = new Set<RemovedEntry>();
 
   for (const [hash, removedList] of removedByHash) {
-    if (reservedHashes.has(hash)) continue;
     const addedList = addedByHash.get(hash);
-    if (!addedList) continue;
+    if (!addedList || addedList.length === 0) continue;
 
     // Album members first, so the excess (kept as removals) are non-album photos.
     const orderedRemoved = [...removedList].sort(

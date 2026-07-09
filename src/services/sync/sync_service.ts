@@ -53,8 +53,11 @@ export class SyncService {
       try {
         await this.syncLibrary(library.id);
       } catch (err) {
-        if (err instanceof AppError && err.code === 'SYNC_IN_PROGRESS') continue; // another sync owns it
-        throw err;
+        // Never let one library abort the batch (§9.7): skip locked ones silently,
+        // log anything else, and move on to the remaining libraries.
+        if (!(err instanceof AppError && err.code === 'SYNC_IN_PROGRESS')) {
+          console.error(`syncAll: library ${library.id} failed: ${(err as Error).message}`);
+        }
       }
     }
   }
@@ -168,15 +171,27 @@ export class SyncService {
     const changed: DiskFile[] = [];
 
     for (const file of files) {
+      let stats;
+      try {
+        stats = await stat(file.absPath);
+      } catch {
+        continue; // vanished between readdir and stat: treat as not present (a race)
+      }
       present.add(file.relPath);
-      const stats = await stat(file.absPath);
+
       const record = dbByPath.get(file.relPath);
       const unchanged =
         record != null && record.date_updated === stats.mtime.toISOString() && record.file_size === stats.size;
       if (unchanged) continue;
 
-      const metadata = await this.extract(file.absPath);
-      changed.push({ filePath: file.relPath, hash: computeFileHash(file.absPath, metadata), metadata });
+      try {
+        const metadata = await this.extract(file.absPath);
+        changed.push({ filePath: file.relPath, hash: computeFileHash(file.absPath, metadata), metadata });
+      } catch (err) {
+        // Unreadable/corrupt file: leave it in `present` (so an existing record is
+        // preserved rather than marked missing) but skip indexing it this pass.
+        console.error(`sync: could not read ${file.absPath}: ${(err as Error).message}`);
+      }
     }
 
     return { present, changed };
