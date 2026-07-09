@@ -16,27 +16,24 @@ import { AlbumsApi } from './api/albums/albums_api';
 import { AlbumsService } from './services/albums/albums_service';
 import { AlbumsRepository } from './services/albums/albums_repository';
 import { ImageApi } from './api/image/image_api';
-import { SyncService, type ProcessingTrigger } from './services/sync/sync_service';
+import { SyncService } from './services/sync/sync_service';
+import { ProcessingService } from './services/processing/processing_service';
+import { config } from './config';
 
-const DB_PATH = process.env.DB_PATH ?? './bowerbird.db';
-const PORT = Number(process.env.PORT ?? 3000);
-const HOST = process.env.HOST ?? '0.0.0.0';
-
-const db = createDatabase(DB_PATH);
+const db = createDatabase(config.dbPath);
 
 const librariesRepo = new LibrariesRepository(db);
 const photosRepo = new PhotosRepository(db);
 const shootsRepo = new ShootsRepository(db);
 const albumsRepo = new AlbumsRepository(db);
 
-// TODO: replace with ProcessingService once the LibRaw/worker pipeline lands.
-const processingTrigger: ProcessingTrigger = { processUnprocessed: () => {} };
+const processingService = new ProcessingService(photosRepo, config);
 
 const librariesService = new LibrariesService(librariesRepo);
 const photosService = new PhotosService(photosRepo, albumsRepo, shootsRepo, librariesRepo);
 const albumsService = new AlbumsService(albumsRepo);
 const shootsService = new ShootsService(shootsRepo, photosRepo, librariesRepo);
-const syncService = new SyncService(photosRepo, librariesRepo, albumsRepo, shootsRepo, processingTrigger);
+const syncService = new SyncService(photosRepo, librariesRepo, albumsRepo, shootsRepo, processingService);
 
 const librariesApi = new LibrariesApi(librariesService, syncService);
 const photosApi = new PhotosApi(photosService);
@@ -65,4 +62,4 @@ app.onError((err, c) => {
   return c.json({ error: { code: 'INTERNAL_ERROR', message: 'Unexpected error' } }, 500);
 });
 
-export default { port: PORT, hostname: HOST, fetch: app.fetch };
+export default { port: config.port, hostname: config.host, fetch: app.fetch };

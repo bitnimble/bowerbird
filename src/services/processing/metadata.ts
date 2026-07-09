@@ -1,9 +1,8 @@
-// Per-format metadata extraction. Stage 1 dispatches every supported file to
-// the LibRaw header parser. See DESIGN §11.
-//
-// The LibRaw FFI implementation lands with the RAW decoder (raw_decoder.ts) and
-// runs only where libraw.so is present (the container). Until then the reader is
-// stubbed so the rest of the graph type-checks.
+import { stat } from 'node:fs/promises';
+import { readRawHeader } from './raw_decoder';
+
+// Per-format metadata extraction. Stage 1 dispatches every supported file to the
+// LibRaw header parser (no pixel decode). See DESIGN §11.
 
 export interface FileMetadata {
   width: number; // display/upright width (post-flip)
@@ -21,6 +20,20 @@ export async function extractMetadata(filePath: string): Promise<FileMetadata> {
   return extractArwMetadata(filePath);
 }
 
-async function extractArwMetadata(_filePath: string): Promise<FileMetadata> {
-  throw new Error('extractArwMetadata not yet implemented (pending LibRaw FFI, DESIGN §11.1)');
+async function extractArwMetadata(filePath: string): Promise<FileMetadata> {
+  const stats = await stat(filePath);
+  const header = readRawHeader(filePath);
+  return {
+    width: header.width,
+    height: header.height,
+    // LibRaw processes to sRGB by default; display dims already encode the flip,
+    // so orientation is retained only as informational + a stable hash input.
+    colorSpace: 'sRGB',
+    orientation: 0,
+    dateTaken: header.dateTaken,
+    latitude: header.latitude,
+    longitude: header.longitude,
+    mtime: stats.mtime.toISOString(),
+    fileSize: stats.size,
+  };
 }

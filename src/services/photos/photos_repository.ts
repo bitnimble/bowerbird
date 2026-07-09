@@ -40,6 +40,13 @@ export interface SyncModification {
   longitude: number | null;
 }
 
+export interface PendingPhoto {
+  photo_id: string;
+  file_path: string;
+  root_path: string;
+  data_path: string | null;
+}
+
 // Minimal shape for file/shoot bookkeeping (moves, adoption, reconciliation).
 export interface BasicPhoto {
   id: string;
@@ -302,6 +309,41 @@ export class PhotosRepository {
 
   setMissing(photoId: string): void {
     this.db.query('UPDATE photos SET is_missing = 1 WHERE id = ?').run(photoId);
+  }
+
+  // --- processing (DESIGN §10) ---
+
+  // Photos awaiting thumbnails, joined with their library paths. is_missing is
+  // excluded so a photo whose file vanished mid-queue is not failed against it.
+  listPendingProcessing(libraryId?: string): PendingPhoto[] {
+    const where = libraryId ? 'AND p.library_id = ?' : '';
+    const params = libraryId ? [libraryId] : [];
+    return this.db
+      .query(
+        `SELECT p.id AS photo_id, p.file_path, l.root_path, l.data_path
+         FROM photos p JOIN libraries l ON l.id = p.library_id
+         WHERE p.needs_processing = 1 AND p.is_missing = 0 AND p.is_deleted = 0 ${where}`,
+      )
+      .all(...params) as PendingPhoto[];
+  }
+
+  markProcessed(id: string, reprocessedAtIso: string): void {
+    this.db
+      .query('UPDATE photos SET needs_processing = 0, date_reprocessed = ?, processing_error = NULL WHERE id = ?')
+      .run(reprocessedAtIso, id);
+  }
+
+  markProcessingFailed(id: string, error: string): void {
+    this.db.query('UPDATE photos SET needs_processing = 0, processing_error = ? WHERE id = ?').run(error, id);
+  }
+
+  countPendingProcessing(libraryId?: string): number {
+    const where = libraryId ? 'AND library_id = ?' : '';
+    const params = libraryId ? [libraryId] : [];
+    const row = this.db
+      .query(`SELECT COUNT(*) AS n FROM photos WHERE needs_processing = 1 AND is_deleted = 0 ${where}`)
+      .get(...params) as { n: number };
+    return row.n;
   }
 
   private list(
