@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -49,4 +50,16 @@ export async function listSupportedFiles(rootPath: string, dataPath: string): Pr
 export async function fileMtimeIso(absPath: string): Promise<string> {
   const s = await stat(absPath);
   return s.mtime.toISOString();
+}
+
+// Non-colliding destination in `dir` for `filename`, appending _1, _2, ... before
+// the extension if needed (DESIGN §12.1). Returns an absolute path.
+export function uniqueDestPath(dir: string, filename: string): string {
+  const ext = path.extname(filename);
+  const base = path.basename(filename, ext);
+  let candidate = path.join(dir, filename);
+  for (let n = 1; existsSync(candidate); n++) {
+    candidate = path.join(dir, `${base}_${n}${ext}`);
+  }
+  return candidate;
 }

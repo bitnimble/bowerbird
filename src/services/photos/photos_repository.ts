@@ -13,6 +13,21 @@ export interface PhotoListResult {
   total: number;
 }
 
+// Minimal shape for file/shoot bookkeeping (moves, adoption, reconciliation).
+export interface BasicPhoto {
+  id: string;
+  library_id: string;
+  file_path: string;
+  shoot_id: string | null;
+}
+
+// Bounds selecting exactly the file_paths under `folderPath` (prefix + '/').
+// '0' (0x30) is the character right after '/' (0x2F), so [P+'/', P+'0') is the
+// half-open range of all strings beginning with P+'/', index-friendly on file_path.
+function folderRange(folderPath: string): [string, string] {
+  return [`${folderPath}/`, `${folderPath}0`];
+}
+
 // Qualified with `photos.` because listByAlbum joins album_photos, which also has
 // a date_added column (bare names would be ambiguous).
 const SUMMARY_COLS =
@@ -154,6 +169,36 @@ export class PhotosRepository {
     if (sets.length === 0) return this.db.query('SELECT 1 FROM photos WHERE id = ?').get(id) != null;
     params.push(id);
     return this.db.query(`UPDATE photos SET ${sets.join(', ')} WHERE id = ?`).run(...params).changes > 0;
+  }
+
+  getBasicByIds(ids: string[]): BasicPhoto[] {
+    if (ids.length === 0) return [];
+    const placeholders = ids.map(() => '?').join(', ');
+    return this.db
+      .query(`SELECT id, library_id, file_path, shoot_id FROM photos WHERE id IN (${placeholders})`)
+      .all(...ids) as BasicPhoto[];
+  }
+
+  // Non-deleted photos whose file_path is under `folderPath` (any depth).
+  listUnderFolder(libraryId: string, folderPath: string): BasicPhoto[] {
+    const [lo, hi] = folderRange(folderPath);
+    return this.db
+      .query(
+        'SELECT id, library_id, file_path, shoot_id FROM photos WHERE library_id = ? AND is_deleted = 0 AND file_path >= ? AND file_path < ?',
+      )
+      .all(libraryId, lo, hi) as BasicPhoto[];
+  }
+
+  setShoot(photoId: string, shootId: string | null): void {
+    this.db.query('UPDATE photos SET shoot_id = ? WHERE id = ?').run(shootId, photoId);
+  }
+
+  setFilePathAndShoot(photoId: string, filePath: string, shootId: string | null): void {
+    this.db.query('UPDATE photos SET file_path = ?, shoot_id = ? WHERE id = ?').run(filePath, shootId, photoId);
+  }
+
+  setFilePath(photoId: string, filePath: string): void {
+    this.db.query('UPDATE photos SET file_path = ? WHERE id = ?').run(filePath, photoId);
   }
 
   private list(
