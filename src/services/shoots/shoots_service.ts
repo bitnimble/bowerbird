@@ -109,7 +109,7 @@ export class ShootsService {
   async update(shootId: string, updates: UpdateShootRequest): Promise<Shoot> {
     const shoot = this.get(shootId);
 
-    if (updates.name !== undefined && updates.name !== shoot.name) {
+    if (updates.name != null && updates.name !== shoot.name) {
       await this.rename(shoot, updates.name);
     }
     this.shoots.updateFields(shootId, { description: updates.description, ordering: updates.ordering });

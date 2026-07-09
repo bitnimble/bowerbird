@@ -48,7 +48,7 @@ export class AlbumsRepository {
     const sets: string[] = [];
     const params: string[] = [];
     for (const [col, val] of Object.entries(fields)) {
-      if (val === undefined) continue;
+      if (val == null) continue;
       sets.push(`${col} = ?`);
       params.push(val as string);
     }

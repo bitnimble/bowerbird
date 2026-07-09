@@ -79,9 +79,13 @@ function folderRange(folderPath: string): [string, string] {
 const SUMMARY_COLS =
   'photos.id, photos.library_id, photos.shoot_id, photos.width, photos.height, photos.date_taken, photos.date_added, photos.selected, photos.rating, photos.is_missing, photos.is_deleted';
 
-const DETAIL_COLS = `id, library_id, shoot_id, width, height, orientation, file_path, file_hash,
-  date_taken, date_added, date_updated, date_reprocessed, needs_processing, processing_error,
-  latitude, longitude, rating, selected, is_missing, is_deleted, notes`;
+// Qualified: getById joins libraries to resolve ordering_date, so `id` etc. would
+// otherwise be ambiguous.
+const DETAIL_COLS = `photos.id, photos.library_id, photos.shoot_id, photos.width, photos.height,
+  photos.orientation, photos.file_path, photos.file_hash, photos.date_taken, photos.date_added,
+  photos.date_updated, photos.date_reprocessed, photos.needs_processing, photos.processing_error,
+  photos.latitude, photos.longitude, photos.rating, photos.selected, photos.is_missing,
+  photos.is_deleted, photos.notes`;
 
 interface SummaryRow {
   id: string;
@@ -108,6 +112,7 @@ interface DetailRow extends SummaryRow {
   latitude: number | null;
   longitude: number | null;
   notes: string | null;
+  lib_ordering: string; // the owning library's ordering, for ordering_date
 }
 
 // `date_taken IS NULL` first keeps NULL capture dates last in both directions (DESIGN §5.1).
@@ -150,7 +155,7 @@ function toDetail(row: DetailRow): PhotoDetail {
     shoot_id: row.shoot_id,
     width: row.width,
     height: row.height,
-    ordering_date: row.date_taken ?? row.date_added,
+    ordering_date: orderingDate(row.lib_ordering as Ordering, row),
     orientation: row.orientation,
     file_path: row.file_path,
     file_hash: row.file_hash,
@@ -174,7 +179,9 @@ export class PhotosRepository {
   constructor(private readonly db: Database) {}
 
   getById(id: string): PhotoDetail | null {
-    const row = this.db.query(`SELECT ${DETAIL_COLS} FROM photos WHERE id = ?`).get(id) as DetailRow | null;
+    const row = this.db
+      .query(`SELECT ${DETAIL_COLS}, l.ordering AS lib_ordering FROM photos JOIN libraries l ON l.id = photos.library_id WHERE photos.id = ?`)
+      .get(id) as DetailRow | null;
     return row ? toDetail(row) : null;
   }
 
@@ -200,15 +207,15 @@ export class PhotosRepository {
   update(id: string, fields: { rating?: number; selected?: boolean; notes?: string | null }): boolean {
     const sets: string[] = [];
     const params: (string | number | null)[] = [];
-    if (fields.rating !== undefined) {
+    if (fields.rating != null) {
       sets.push('rating = ?');
       params.push(fields.rating);
     }
-    if (fields.selected !== undefined) {
+    if (fields.selected != null) {
       sets.push('selected = ?');
       params.push(fields.selected ? 1 : 0);
     }
-    if (fields.notes !== undefined) {
+    if (fields.notes != null) {
       sets.push('notes = ?');
       params.push(fields.notes);
     }
@@ -385,11 +392,11 @@ export class PhotosRepository {
     const clauses: string[] = [];
     const params: (string | number)[] = [...baseParams];
     if (!filters.includeDeleted) clauses.push('is_deleted = 0');
-    if (filters.isMissing !== undefined) {
+    if (filters.isMissing != null) {
       clauses.push('is_missing = ?');
       params.push(filters.isMissing ? 1 : 0);
     }
-    if (filters.needsProcessing !== undefined) {
+    if (filters.needsProcessing != null) {
       clauses.push('needs_processing = ?');
       params.push(filters.needsProcessing ? 1 : 0);
     }

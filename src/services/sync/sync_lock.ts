@@ -33,7 +33,7 @@ export function acquireSyncLock(rootPath: string): string {
 
   if (existsSync(lockPath)) {
     const pid = ownerPid(lockPath);
-    if (pid !== null && pidAlive(pid)) {
+    if (pid != null && pidAlive(pid)) {
       throw new AppError('SYNC_IN_PROGRESS', `a sync is already running for this library (pid ${pid})`);
     }
     unlinkSync(lockPath); // stale

@@ -1,3 +1,5 @@
+import type { ContentfulStatusCode } from 'hono/utils/http-status';
+
 // Application error taxonomy. Services throw AppError with one of these codes;
 // the API layer maps code -> HTTP status and the standard envelope (DESIGN §14).
 export type ErrorCode =
@@ -8,7 +10,7 @@ export type ErrorCode =
   | 'SYNC_IN_PROGRESS'
   | 'INTERNAL_ERROR';
 
-const STATUS: Record<ErrorCode, number> = {
+const STATUS: Record<ErrorCode, ContentfulStatusCode> = {
   NOT_FOUND: 404,
   VALIDATION_ERROR: 400,
   CONFLICT: 409,
@@ -26,7 +28,7 @@ export class AppError extends Error {
     this.name = 'AppError';
   }
 
-  get status(): number {
+  get status(): ContentfulStatusCode {
     return STATUS[this.code];
   }
 }

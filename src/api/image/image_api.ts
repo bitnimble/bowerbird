@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
+import { AppError } from '../../errors';
 import { getFullThumbnailPath, getOriginalPath, getSmallThumbnailPath } from '../../utils/paths';
 import type { LibrariesService } from '../../services/libraries/libraries_service';
 import type { PhotosService } from '../../services/photos/photos_service';
@@ -28,11 +29,13 @@ export class ImageApi {
     this.routes = app;
   }
 
+  // 404s go through AppError (not c.notFound()) so every not-available response
+  // shares the standard JSON envelope. this.photos.get already throws NOT_FOUND.
   private async serve(c: Context, kind: Kind): Promise<Response> {
     const photoId = c.req.param('photoId');
-    if (!photoId) return c.notFound();
+    if (photoId == null) throw new AppError('NOT_FOUND', 'photo not found');
     const photo = this.photos.get(photoId);
-    if (photo.is_deleted) return c.notFound();
+    if (photo.is_deleted) throw new AppError('NOT_FOUND', `photo not found: ${photoId}`);
 
     const library = this.libraries.get(photo.library_id);
     const filePath =
@@ -43,7 +46,7 @@ export class ImageApi {
           : getOriginalPath(library, photo.file_path);
 
     const file = Bun.file(filePath);
-    if (!(await file.exists())) return c.notFound();
+    if (!(await file.exists())) throw new AppError('NOT_FOUND', `image not found on disk: ${photoId}`);
 
     return new Response(file, { headers: { 'Content-Type': CONTENT_TYPE[kind] } });
   }

@@ -1,5 +1,4 @@
 import { Hono } from 'hono';
-import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import { z } from 'zod';
 import { createDatabase } from './db/connection';
 import { AppError } from './errors';
@@ -58,7 +57,7 @@ if (config.watchEnabled) {
 
 app.onError((err, c) => {
   if (err instanceof AppError) {
-    return c.json({ error: { code: err.code, message: err.message } }, err.status as ContentfulStatusCode);
+    return c.json({ error: { code: err.code, message: err.message } }, err.status);
   }
   if (err instanceof z.ZodError) {
     return c.json({ error: { code: 'VALIDATION_ERROR', message: 'Request validation failed', details: err.issues } }, 400);
