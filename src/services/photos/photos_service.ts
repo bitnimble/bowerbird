@@ -1,6 +1,12 @@
+import { existsSync } from 'node:fs';
+import { mkdir, rename, rm } from 'node:fs/promises';
+import path from 'node:path';
 import { AppError } from '../../errors';
 import type { Pagination, ScopedListQuery } from '../../schemas/common';
+import type { Library } from '../../schemas/libraries';
 import type { PhotoDetail, PhotoListQuery, PhotoListResponse, UpdatePhotoRequest } from '../../schemas/photos';
+import { getBinPath, getFullThumbnailPath, getOriginalPath, getSmallThumbnailPath } from '../../utils/paths';
+import { uniqueDestPath } from '../../utils/files';
 import type { AlbumsRepository } from '../albums/albums_repository';
 import type { LibrariesRepository } from '../libraries/libraries_repository';
 import type { ShootsRepository } from '../shoots/shoots_repository';
@@ -73,6 +79,42 @@ export class PhotosService {
 
   getAlbumMemberships(photoId: string): string[] {
     return this.albums.getAlbumIdsForPhoto(photoId);
+  }
+
+  // Soft-delete: remove thumbnails, move the RAW to a Bin, flag is_deleted (§12).
+  async delete(photoIds: string[]): Promise<void> {
+    for (const id of photoIds) {
+      const photo = this.photos.getById(id);
+      if (!photo || photo.is_deleted) continue;
+      const library = this.libraries.getById(photo.library_id);
+      if (!library) continue;
+
+      await rm(getSmallThumbnailPath(library, photo.id), { force: true });
+      await rm(getFullThumbnailPath(library, photo.id), { force: true });
+
+      const from = getOriginalPath(library, photo.file_path);
+      if (existsSync(from)) {
+        const binDir = this.binDir(library, photo.shoot_id);
+        await mkdir(binDir, { recursive: true });
+        const dest = uniqueDestPath(binDir, path.basename(photo.file_path));
+        try {
+          await rename(from, dest);
+        } catch (err) {
+          throw new AppError('IO_ERROR', `failed to move ${from} to Bin: ${(err as Error).message}`);
+        }
+      }
+
+      this.photos.markDeleted(photo.id);
+    }
+  }
+
+  // Bin lives inside the shoot folder for shoot photos, else the library data dir.
+  private binDir(library: Library, shootId: string | null): string {
+    if (shootId) {
+      const shoot = this.shoots.getById(shootId);
+      if (shoot) return path.join(library.root_path, shoot.folder_path, 'Bin');
+    }
+    return getBinPath(library);
   }
 
   private respond(result: PhotoListResult, offset: number, limit: number): PhotoListResponse {

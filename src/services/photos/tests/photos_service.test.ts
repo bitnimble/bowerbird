@@ -1,4 +1,7 @@
 import { jest } from '@jest/globals';
+import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { AppError } from '../../../errors';
 import type { Album } from '../../../schemas/albums';
 import type { Library } from '../../../schemas/libraries';
@@ -93,6 +96,46 @@ describe('PhotosService scoped listing uses the owner ordering', () => {
     const { service, photos } = build({ albums: { getById: jest.fn(() => album), getAlbumIdsForPhoto: jest.fn(() => []) } });
     service.listByAlbum('al', { offset: 0, limit: 100, include_deleted: false });
     expect(photos.listByAlbum).toHaveBeenCalledWith('al', 'taken_desc', 0, 100, { includeDeleted: false });
+  });
+});
+
+describe('PhotosService.delete', () => {
+  it('removes thumbnails, moves the RAW into the library Bin, and flags is_deleted', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'bb-'));
+    try {
+      const dataDir = path.join(root, '.bowerbird');
+      mkdirSync(path.join(dataDir, 'thumbnails', 'small'), { recursive: true });
+      mkdirSync(path.join(dataDir, 'thumbnails', 'full'), { recursive: true });
+      writeFileSync(path.join(root, 'a.arw'), '');
+      writeFileSync(path.join(dataDir, 'thumbnails', 'small', 'p1.webp'), '');
+      writeFileSync(path.join(dataDir, 'thumbnails', 'full', 'p1.webp'), '');
+
+      const lib: Library = { id: 'lib', root_path: root, data_path: null, ordering: 'added_asc' };
+      const markDeleted = jest.fn();
+      const photo = { id: 'p1', library_id: 'lib', shoot_id: null, file_path: 'a.arw', is_deleted: false } as PhotoDetail;
+      const { service } = build({
+        photos: { getById: jest.fn(() => photo), markDeleted },
+        libraries: { getById: jest.fn(() => lib) },
+      });
+
+      await service.delete(['p1']);
+
+      expect(existsSync(path.join(root, 'a.arw'))).toBe(false);
+      expect(existsSync(path.join(dataDir, 'bin', 'a.arw'))).toBe(true);
+      expect(existsSync(path.join(dataDir, 'thumbnails', 'small', 'p1.webp'))).toBe(false);
+      expect(existsSync(path.join(dataDir, 'thumbnails', 'full', 'p1.webp'))).toBe(false);
+      expect(markDeleted).toHaveBeenCalledWith('p1');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('skips already-deleted photos', async () => {
+    const markDeleted = jest.fn();
+    const photo = { id: 'p1', is_deleted: true } as PhotoDetail;
+    const { service } = build({ photos: { getById: jest.fn(() => photo), markDeleted } });
+    await service.delete(['p1']);
+    expect(markDeleted).not.toHaveBeenCalled();
   });
 });
 

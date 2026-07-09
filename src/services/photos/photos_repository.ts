@@ -201,6 +201,10 @@ export class PhotosRepository {
     this.db.query('UPDATE photos SET file_path = ? WHERE id = ?').run(filePath, photoId);
   }
 
+  markDeleted(id: string): void {
+    this.db.query('UPDATE photos SET is_deleted = 1, needs_processing = 0 WHERE id = ?').run(id);
+  }
+
   private list(
     fromWhere: string,
     baseParams: string[],

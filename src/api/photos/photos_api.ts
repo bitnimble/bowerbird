@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { PaginationSchema } from '../../schemas/common';
+import { PaginationSchema, PhotoIdListSchema } from '../../schemas/common';
 import { PhotoListQuerySchema, UpdatePhotoRequestSchema } from '../../schemas/photos';
 import type { PhotosService } from '../../services/photos/photos_service';
 
@@ -20,6 +20,12 @@ export class PhotosApi {
     app.get('/libraries/:libraryId/photos', (c) => {
       const query = PhotoListQuerySchema.parse(c.req.query());
       return c.json(this.service.listByLibrary(c.req.param('libraryId'), query));
+    });
+
+    app.post('/photos/delete', async (c) => {
+      const { photo_ids } = PhotoIdListSchema.parse(await c.req.json());
+      await this.service.delete(photo_ids);
+      return c.body(null, 204);
     });
 
     app.get('/photos/:id', (c) => c.json(this.service.get(c.req.param('id'))));
