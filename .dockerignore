@@ -1,0 +1,10 @@
+node_modules
+.git
+.gitignore
+*.md
+Dockerfile
+.dockerignore
+bowerbird.db
+bowerbird.db-*
+**/.bowerbird
+coverage
