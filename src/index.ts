@@ -1,7 +1,6 @@
 import { Hono } from 'hono';
-import { z } from 'zod';
 import { createDatabase } from './db/connection';
-import { AppError } from './errors';
+import { applyErrorHandler } from './api/error_handler';
 import { LibrariesApi } from './api/libraries/libraries_api';
 import { LibrariesService } from './services/libraries/libraries_service';
 import { LibrariesRepository } from './services/libraries/libraries_repository';
@@ -55,18 +54,6 @@ if (config.watchEnabled) {
   console.log(`Filesystem watching enabled (debounce ${config.watchDebounceMs}ms)`);
 }
 
-app.onError((err, c) => {
-  if (err instanceof AppError) {
-    return c.json({ error: { code: err.code, message: err.message } }, err.status);
-  }
-  if (err instanceof z.ZodError) {
-    return c.json({ error: { code: 'VALIDATION_ERROR', message: 'Request validation failed', details: err.issues } }, 400);
-  }
-  if (err instanceof SyntaxError) {
-    return c.json({ error: { code: 'VALIDATION_ERROR', message: 'Invalid JSON body' } }, 400);
-  }
-  console.error(err);
-  return c.json({ error: { code: 'INTERNAL_ERROR', message: 'Unexpected error' } }, 500);
-});
+applyErrorHandler(app);
 
 export default { port: config.port, hostname: config.host, fetch: app.fetch };
