@@ -15,6 +15,7 @@ type Timer = ReturnType<typeof setTimeout>;
 export class LibraryWatcher implements LibraryLifecycleListener {
   private readonly watchers = new Map<string, FSWatcher>();
   private readonly timers = new Map<string, Timer>();
+  private readonly retryTimers = new Map<string, Timer>();
   private readonly syncing = new Set<string>();
   private readonly dirty = new Set<string>();
 
@@ -31,8 +32,10 @@ export class LibraryWatcher implements LibraryLifecycleListener {
   stop(): void {
     for (const watcher of this.watchers.values()) watcher.close();
     for (const timer of this.timers.values()) clearTimeout(timer);
+    for (const timer of this.retryTimers.values()) clearTimeout(timer);
     this.watchers.clear();
     this.timers.clear();
+    this.retryTimers.clear();
   }
 
   onLibraryCreated(library: Library): void {
@@ -40,11 +43,13 @@ export class LibraryWatcher implements LibraryLifecycleListener {
   }
 
   onLibraryDeleted(libraryId: string): void {
-    this.watchers.get(libraryId)?.close();
-    this.watchers.delete(libraryId);
+    this.dropWatcher(libraryId);
     const timer = this.timers.get(libraryId);
     if (timer) clearTimeout(timer);
     this.timers.delete(libraryId);
+    const retry = this.retryTimers.get(libraryId);
+    if (retry) clearTimeout(retry);
+    this.retryTimers.delete(libraryId);
   }
 
   private watchLibrary(library: Library): void {
@@ -56,11 +61,26 @@ export class LibraryWatcher implements LibraryLifecycleListener {
           this.schedule(library.id);
         }
       });
-      watcher.on('error', (err) => console.error(`watcher error for library ${library.id}: ${err.message}`));
+      watcher.on('error', (err) => {
+        // A watch error (e.g. inotify ENOSPC) kills this watcher; drop it and try
+        // to re-establish after a delay, else auto-sync silently stops for good.
+        console.error(`watcher error for library ${library.id}: ${err.message}; will re-attempt`);
+        this.dropWatcher(library.id);
+        const timer = setTimeout(() => {
+          this.retryTimers.delete(library.id);
+          this.watchLibrary(library);
+        }, this.debounceMs);
+        this.retryTimers.set(library.id, timer);
+      });
       this.watchers.set(library.id, watcher);
     } catch (err) {
       console.error(`could not watch library ${library.id} (${library.root_path}): ${(err as Error).message}`);
     }
+  }
+
+  private dropWatcher(libraryId: string): void {
+    this.watchers.get(libraryId)?.close();
+    this.watchers.delete(libraryId);
   }
 
   // Ignore the data dir (thumbnails/bin, where processing writes, so watching it

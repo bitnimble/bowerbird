@@ -1,3 +1,4 @@
+import { rm } from 'node:fs/promises';
 import path from 'node:path';
 import type { Config } from '../../config';
 import type { PendingPhoto, PhotosRepository } from '../photos/photos_repository';
@@ -82,10 +83,13 @@ export class ProcessingService {
           assignNext();
         };
         // Bun kills the worker thread after onerror fires, so the worker can't be
-        // reused. Record the in-flight job's failure, drop this worker, and launch
-        // a replacement so the pool keeps draining (never leaves runPool unresolved).
+        // reused. A native crash (segfault in LibRaw/sharp) skips the worker's own
+        // catch, so clean up the in-flight job's partial/stale output here too,
+        // record the failure, drop this worker, and launch a replacement.
         worker.onerror = (event: ErrorEvent) => {
           if (current != null) {
+            void rm(current.smallOutputPath, { force: true }).catch(() => {});
+            void rm(current.fullOutputPath, { force: true }).catch(() => {});
             this.applyResult({ photoId: current.photoId, success: false, error: `worker crashed: ${event.message}` });
           }
           worker.terminate();

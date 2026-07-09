@@ -67,6 +67,7 @@ export class SyncService {
     if (!library) throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
 
     const lockPath = acquireSyncLock(library.root_path);
+    let syncedStatus: LibrarySyncStatus | null = null;
     try {
       this.statuses.set(libraryId, idle(libraryId, 'scanning'));
 
@@ -141,14 +142,19 @@ export class SyncService {
         photos_processed: 0,
       };
       this.statuses.set(libraryId, status);
-
-      await this.processing.processUnprocessed(libraryId);
-
-      const done = { ...status, status: 'idle' as const };
-      this.statuses.set(libraryId, done);
-      return done;
+      syncedStatus = status;
+      return status;
     } finally {
+      // Release the lock as soon as scan+apply is done. Thumbnail generation runs
+      // detached (§9.5/§9.6: background work, client polls status), so POST /sync
+      // returns promptly and re-syncs aren't blocked for the whole processing run.
       releaseSyncLock(lockPath);
+      if (syncedStatus != null) {
+        const finalStatus = syncedStatus;
+        void Promise.resolve(this.processing.processUnprocessed(libraryId))
+          .then(() => this.statuses.set(libraryId, { ...finalStatus, status: 'idle' }))
+          .catch((err) => console.error(`processing failed for library ${libraryId}: ${(err as Error).message}`));
+      }
     }
   }
 
