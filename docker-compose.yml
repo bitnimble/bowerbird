@@ -1,0 +1,38 @@
+services:
+  bowerbird:
+    build: .
+    image: bowerbird:latest
+    container_name: bowerbird
+    restart: unless-stopped
+    ports:
+      - "${HOST_PORT:-3000}:3000"
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3000
+      # SQLite DB persists on the named volume below (not in the image).
+      DB_PATH: /data/bowerbird.db
+      PROCESSING_CONCURRENCY: ${PROCESSING_CONCURRENCY:-4}
+      SMALL_THUMBNAIL_SIZE: ${SMALL_THUMBNAIL_SIZE:-800}
+      FULL_THUMBNAIL_SIZE: ${FULL_THUMBNAIL_SIZE:-3840}
+      SMALL_THUMBNAIL_QUALITY: ${SMALL_THUMBNAIL_QUALITY:-80}
+      FULL_THUMBNAIL_QUALITY: ${FULL_THUMBNAIL_QUALITY:-90}
+    volumes:
+      # Your photo library. Create libraries via the API with a root_path under
+      # /photos (e.g. {"root_path": "/photos"}). Mounted read-write: sync moves
+      # files, and thumbnails/bin live in <root>/.bowerbird. The host directory
+      # must be writable by the container user (uid 1000).
+      - "${PHOTOS_DIR:-./photos}:/photos"
+      - bowerbird-db:/data
+    healthcheck:
+      test:
+        - CMD
+        - bun
+        - -e
+        - "fetch('http://127.0.0.1:3000/api/libraries').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+volumes:
+  bowerbird-db:
