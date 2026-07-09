@@ -55,6 +55,10 @@ export class LibraryWatcher implements LibraryLifecycleListener {
     const retry = this.retryTimers.get(libraryId);
     if (retry) clearTimeout(retry);
     this.retryTimers.delete(libraryId);
+    // Clear dirty so an in-flight run()'s finally can't re-arm a debounce for a
+    // library that no longer exists (which would then fail with NOT_FOUND).
+    this.syncing.delete(libraryId);
+    this.dirty.delete(libraryId);
   }
 
   private watchLibrary(library: Library): void {

@@ -83,9 +83,18 @@ export class ProcessingService {
       let next = 0;
       let live = 0;
 
-      const launch = (): void => {
+      // Returns false if the worker couldn't be spawned (e.g. OS thread
+      // exhaustion when several libraries process at once). Callers leave the
+      // unstarted jobs pending (needs_processing stays 1) for the next sync.
+      const launch = (): boolean => {
+        let worker: Worker;
+        try {
+          worker = new Worker(WORKER_URL);
+        } catch (err) {
+          console.error(`could not spawn processing worker: ${(err as Error).message}`);
+          return false;
+        }
         live++;
-        const worker = new Worker(WORKER_URL);
         let current: ProcessingJob | undefined;
 
         const assignNext = (): void => {
@@ -115,18 +124,21 @@ export class ProcessingService {
           }
           worker.terminate();
           live--;
-          if (next < jobs.length) launch();
-          else if (live === 0) resolve();
+          if (next < jobs.length && launch()) return; // replacement running
+          if (live === 0) resolve();
         };
 
         assignNext();
+        return true;
       };
 
       if (!(poolSize > 0)) {
         resolve(); // no jobs, or a non-positive/NaN concurrency slipped through
         return;
       }
-      for (let i = 0; i < poolSize; i++) launch();
+      let started = 0;
+      for (let i = 0; i < poolSize; i++) if (launch()) started++;
+      if (started === 0) resolve(); // nothing could spawn; jobs stay pending
     });
   }
 }

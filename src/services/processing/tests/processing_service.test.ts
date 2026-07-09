@@ -126,6 +126,24 @@ describe('ProcessingService.processUnprocessed', () => {
     expect(markProcessed).toHaveBeenCalledWith('b', expect.any(String));
   });
 
+  it('leaves jobs pending (no hang, no throw) when a worker cannot be spawned', async () => {
+    class ThrowingWorker {
+      constructor(_url: string) {
+        throw new Error('EAGAIN: thread exhaustion');
+      }
+    }
+    (globalThis as { Worker?: unknown }).Worker = ThrowingWorker;
+    const markProcessed = jest.fn();
+    const repo = {
+      listPendingProcessing: jest.fn(() => [pending('a'), pending('b')]),
+      markProcessed,
+      markProcessingFailed: jest.fn(),
+    } as unknown as PhotosRepository;
+
+    await expect(new ProcessingService(repo, config).processUnprocessed('lib')).resolves.toBeUndefined();
+    expect(markProcessed).not.toHaveBeenCalled(); // untouched -> still needs_processing=1
+  });
+
   it('does nothing when there is no pending work', async () => {
     const repo = { listPendingProcessing: jest.fn(() => []) } as unknown as PhotosRepository;
     await expect(new ProcessingService(repo, config).processUnprocessed('lib')).resolves.toBeUndefined();
