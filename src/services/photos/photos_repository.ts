@@ -224,11 +224,14 @@ export class PhotosRepository {
     return this.db.query(`UPDATE photos SET ${sets.join(', ')} WHERE id = ?`).run(...params).changes > 0;
   }
 
+  // Excludes soft-deleted photos: the only caller is shoot membership ops, and a
+  // Bin-resident deleted photo must not be moved out of its Bin (it would escape
+  // the Bin while still flagged is_deleted and get re-imported as a duplicate).
   getBasicByIds(ids: string[]): BasicPhoto[] {
     if (ids.length === 0) return [];
     const placeholders = ids.map(() => '?').join(', ');
     return this.db
-      .query(`SELECT id, library_id, file_path, shoot_id FROM photos WHERE id IN (${placeholders})`)
+      .query(`SELECT id, library_id, file_path, shoot_id FROM photos WHERE id IN (${placeholders}) AND is_deleted = 0`)
       .all(...ids) as BasicPhoto[];
   }
 
