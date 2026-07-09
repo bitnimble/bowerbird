@@ -61,6 +61,7 @@ export async function listSupportedFiles(rootPath: string, dataPath: string): Pr
     }
   }
 
+  visitedDirs.add(await realpath(rootPath).catch(() => path.resolve(rootPath))); // so a symlink back to root can't re-walk the tree
   await walk(rootPath);
   return results;
 }

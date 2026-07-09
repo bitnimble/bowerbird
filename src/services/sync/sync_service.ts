@@ -71,8 +71,8 @@ export class SyncService {
       this.statuses.set(libraryId, idle(libraryId, 'scanning'));
 
       const dbPhotos = this.photos.listForSync(libraryId);
-      const { present, changed } = await this.scan(library.root_path, getDataPath(library), dbPhotos);
-      const diff = buildDiff(dbPhotos, present, changed);
+      const { present, changed, failed } = await this.scan(library.root_path, getDataPath(library), dbPhotos);
+      const diff = buildDiff(dbPhotos, present, changed, failed);
       const result = detectMoves(diff, (id) => this.albums.getAlbumIdsForPhoto(id).length > 0);
 
       const shoots = this.shoots.listByLibrary(libraryId);
@@ -164,11 +164,12 @@ export class SyncService {
     rootPath: string,
     dataPath: string,
     dbPhotos: readonly SyncDbPhoto[],
-  ): Promise<{ present: Set<string>; changed: DiskFile[] }> {
+  ): Promise<{ present: Set<string>; changed: DiskFile[]; failed: Set<string> }> {
     const dbByPath = new Map(dbPhotos.map((p) => [p.file_path, p]));
     const files = await listSupportedFiles(rootPath, dataPath);
     const present = new Set<string>();
     const changed: DiskFile[] = [];
+    const failed = new Set<string>();
 
     for (const file of files) {
       let stats;
@@ -188,12 +189,13 @@ export class SyncService {
         const metadata = await this.extract(file.absPath);
         changed.push({ filePath: file.relPath, hash: computeFileHash(file.absPath, metadata), metadata });
       } catch (err) {
-        // Unreadable/corrupt file: leave it in `present` (so an existing record is
-        // preserved rather than marked missing) but skip indexing it this pass.
+        // Unreadable/corrupt file: record it as failed so buildDiff leaves any
+        // existing record untouched (not marked missing, and not falsely reappeared).
+        failed.add(file.relPath);
         console.error(`sync: could not read ${file.absPath}: ${(err as Error).message}`);
       }
     }
 
-    return { present, changed };
+    return { present, changed, failed };
   }
 }

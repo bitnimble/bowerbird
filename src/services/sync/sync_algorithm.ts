@@ -71,6 +71,7 @@ export function buildDiff(
   dbPhotos: readonly DbPhoto[],
   presentPaths: ReadonlySet<string>,
   changed: readonly DiskFile[],
+  failedPaths: ReadonlySet<string> = new Set(),
 ): LibraryDiff {
   const changedByPath = new Map(changed.map((f) => [f.filePath, f]));
   const dbByPath = new Map(dbPhotos.map((p) => [p.file_path, p]));
@@ -84,6 +85,10 @@ export function buildDiff(
       removed.push({ photoId: db.id, filePath: db.file_path, fileHash: db.file_hash, wasMissing: db.is_missing });
       continue;
     }
+    // Present but unreadable (stat ok, extract threw): we never confirmed its
+    // content, so leave the record untouched -- do NOT treat it as a reappearance.
+    if (failedPaths.has(db.file_path)) continue;
+
     const change = changedByPath.get(db.file_path);
     if (change && change.hash !== db.file_hash) {
       modified.push({

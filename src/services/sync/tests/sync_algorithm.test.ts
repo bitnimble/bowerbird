@@ -34,6 +34,13 @@ describe('buildDiff', () => {
     expect(diff.removed).toEqual([]);
     expect(diff.modified).toEqual([]);
   });
+
+  it('leaves a present-but-unreadable (extract-failed) missing file untouched, not reappeared', () => {
+    const diff = buildDiff([db('p1', 'a.arw', 'h1', true)], present('a.arw'), [], new Set(['a.arw']));
+    expect(diff.reappeared).toEqual([]);
+    expect(diff.removed).toEqual([]);
+    expect(diff.modified).toEqual([]);
+  });
 });
 
 describe('detectMoves', () => {
