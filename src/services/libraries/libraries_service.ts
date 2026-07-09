@@ -7,8 +7,19 @@ import type { CreateLibraryRequest, Library } from '../../schemas/libraries';
 import { getDataPath } from '../../utils/paths';
 import type { LibrariesRepository } from './libraries_repository';
 
+export interface LibraryLifecycleListener {
+  onLibraryCreated(library: Library): void;
+  onLibraryDeleted(libraryId: string): void;
+}
+
 export class LibrariesService {
+  private readonly listeners: LibraryLifecycleListener[] = [];
+
   constructor(private readonly repo: LibrariesRepository) {}
+
+  addLifecycleListener(listener: LibraryLifecycleListener): void {
+    this.listeners.push(listener);
+  }
 
   async create(request: CreateLibraryRequest): Promise<Library> {
     if (!existsSync(request.root_path) || !statSync(request.root_path).isDirectory()) {
@@ -35,6 +46,7 @@ export class LibrariesService {
     }
 
     this.repo.insert(library);
+    for (const listener of this.listeners) listener.onLibraryCreated(library);
     return library;
   }
 
@@ -52,5 +64,6 @@ export class LibrariesService {
     if (!this.repo.delete(libraryId)) {
       throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
     }
+    for (const listener of this.listeners) listener.onLibraryDeleted(libraryId);
   }
 }

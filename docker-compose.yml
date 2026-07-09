@@ -11,6 +11,8 @@ services:
       PORT: 3000
       # SQLite DB persists on the named volume below (not in the image).
       DB_PATH: /data/bowerbird.db
+      WATCH_ENABLED: ${WATCH_ENABLED:-true}
+      WATCH_DEBOUNCE_MS: ${WATCH_DEBOUNCE_MS:-2000}
       PROCESSING_CONCURRENCY: ${PROCESSING_CONCURRENCY:-4}
       SMALL_THUMBNAIL_SIZE: ${SMALL_THUMBNAIL_SIZE:-800}
       FULL_THUMBNAIL_SIZE: ${FULL_THUMBNAIL_SIZE:-3840}

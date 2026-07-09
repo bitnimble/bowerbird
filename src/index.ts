@@ -17,6 +17,7 @@ import { AlbumsService } from './services/albums/albums_service';
 import { AlbumsRepository } from './services/albums/albums_repository';
 import { ImageApi } from './api/image/image_api';
 import { SyncService } from './services/sync/sync_service';
+import { LibraryWatcher } from './services/sync/library_watcher';
 import { ProcessingService } from './services/processing/processing_service';
 import { config } from './config';
 
@@ -47,6 +48,13 @@ app.route('/api', photosApi.routes);
 app.route('/api', shootsApi.routes);
 app.route('/api/albums', albumsApi.routes);
 app.route('/image', imageApi.routes);
+
+if (config.watchEnabled) {
+  const watcher = new LibraryWatcher(librariesRepo, syncService, config.watchDebounceMs);
+  librariesService.addLifecycleListener(watcher);
+  watcher.start();
+  console.log(`Filesystem watching enabled (debounce ${config.watchDebounceMs}ms)`);
+}
 
 app.onError((err, c) => {
   if (err instanceof AppError) {
