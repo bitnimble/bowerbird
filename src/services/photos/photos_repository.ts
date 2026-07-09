@@ -13,8 +13,10 @@ export interface PhotoListResult {
   total: number;
 }
 
+// Qualified with `photos.` because listByAlbum joins album_photos, which also has
+// a date_added column (bare names would be ambiguous).
 const SUMMARY_COLS =
-  'id, library_id, shoot_id, width, height, date_taken, date_added, selected, rating, is_missing, is_deleted';
+  'photos.id, photos.library_id, photos.shoot_id, photos.width, photos.height, photos.date_taken, photos.date_added, photos.selected, photos.rating, photos.is_missing, photos.is_deleted';
 
 const DETAIL_COLS = `id, library_id, shoot_id, width, height, orientation, file_path, file_hash,
   date_taken, date_added, date_updated, date_reprocessed, needs_processing, processing_error,
@@ -51,13 +53,13 @@ interface DetailRow extends SummaryRow {
 function orderByClause(ordering: Ordering): string {
   switch (ordering) {
     case 'added_asc':
-      return 'date_added ASC, id ASC';
+      return 'photos.date_added ASC, photos.id ASC';
     case 'added_desc':
-      return 'date_added DESC, id ASC';
+      return 'photos.date_added DESC, photos.id ASC';
     case 'taken_asc':
-      return 'date_taken IS NULL, date_taken ASC, id ASC';
+      return 'photos.date_taken IS NULL, photos.date_taken ASC, photos.id ASC';
     case 'taken_desc':
-      return 'date_taken IS NULL, date_taken DESC, id ASC';
+      return 'photos.date_taken IS NULL, photos.date_taken DESC, photos.id ASC';
   }
 }
 

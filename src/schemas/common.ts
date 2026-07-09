@@ -25,3 +25,7 @@ export const PhotoIdListSchema = z.object({
   photo_ids: z.array(UuidSchema).min(1),
 });
 export type PhotoIdList = z.infer<typeof PhotoIdListSchema>;
+
+// Query for the shoot/album photo-listing endpoints: pagination + soft-delete.
+export const ScopedListQuerySchema = PaginationSchema.extend(SoftDeleteFilterSchema.shape);
+export type ScopedListQuery = z.infer<typeof ScopedListQuerySchema>;

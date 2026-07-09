@@ -10,6 +10,8 @@ import { PhotosApi } from './api/photos/photos_api';
 import { PhotosService } from './services/photos/photos_service';
 import { PhotosRepository } from './services/photos/photos_repository';
 import { ShootsRepository } from './services/shoots/shoots_repository';
+import { AlbumsApi } from './api/albums/albums_api';
+import { AlbumsService } from './services/albums/albums_service';
 import { AlbumsRepository } from './services/albums/albums_repository';
 
 const DB_PATH = process.env.DB_PATH ?? './bowerbird.db';
@@ -25,13 +27,16 @@ const albumsRepo = new AlbumsRepository(db);
 
 const librariesService = new LibrariesService(librariesRepo);
 const photosService = new PhotosService(photosRepo, albumsRepo, shootsRepo, librariesRepo);
+const albumsService = new AlbumsService(albumsRepo);
 
 const librariesApi = new LibrariesApi(librariesService);
 const photosApi = new PhotosApi(photosService);
+const albumsApi = new AlbumsApi(albumsService, photosService);
 
 const app = new Hono();
 app.route('/api/libraries', librariesApi.routes);
 app.route('/api', photosApi.routes);
+app.route('/api/albums', albumsApi.routes);
 
 app.onError((err, c) => {
   if (err instanceof AppError) {

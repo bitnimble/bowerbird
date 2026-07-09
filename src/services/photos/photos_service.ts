@@ -1,12 +1,10 @@
 import { AppError } from '../../errors';
-import type { Pagination } from '../../schemas/common';
+import type { Pagination, ScopedListQuery } from '../../schemas/common';
 import type { PhotoDetail, PhotoListQuery, PhotoListResponse, UpdatePhotoRequest } from '../../schemas/photos';
 import type { AlbumsRepository } from '../albums/albums_repository';
 import type { LibrariesRepository } from '../libraries/libraries_repository';
 import type { ShootsRepository } from '../shoots/shoots_repository';
 import type { PhotoListFilters, PhotoListResult, PhotosRepository } from './photos_repository';
-
-export type ScopedListQuery = Pagination & { include_deleted: boolean };
 
 export class PhotosService {
   constructor(
