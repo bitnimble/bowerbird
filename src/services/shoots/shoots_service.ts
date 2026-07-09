@@ -40,11 +40,7 @@ export class ShootsService {
 
     const absFolder = path.join(library.root_path, folderPath);
     const existed = existsSync(absFolder);
-    try {
-      await mkdir(absFolder, { recursive: true });
-    } catch (err) {
-      throw new AppError('IO_ERROR', `failed to create shoot folder ${absFolder}: ${(err as Error).message}`);
-    }
+    await this.ensureDir(absFolder);
 
     const id = randomUUID();
     this.shoots.insert({
@@ -76,10 +72,17 @@ export class ShootsService {
     const shoot = this.get(shootId);
     const library = this.requireLibrary(shoot.library_id);
     const destDir = path.join(library.root_path, shoot.folder_path);
-    await mkdir(destDir, { recursive: true });
+    await this.ensureDir(destDir);
 
     for (const photo of this.photos.getBasicByIds(photoIds)) {
       const from = path.join(library.root_path, photo.file_path);
+      const naturalDest = path.join(destDir, path.basename(photo.file_path));
+      // Already sitting in this folder: just set membership, never move (which
+      // would collide the file with itself and grow a "_1" suffix each call).
+      if (path.resolve(from) === path.resolve(naturalDest)) {
+        if (photo.shoot_id !== shootId) this.photos.setShoot(photo.id, shootId);
+        continue;
+      }
       const dest = uniqueDestPath(destDir, path.basename(photo.file_path));
       await this.move(from, dest);
       this.photos.setFilePathAndShoot(photo.id, toRel(library.root_path, dest), shootId);
@@ -127,16 +130,20 @@ export class ShootsService {
 
     await this.move(path.join(library.root_path, oldFolder), path.join(library.root_path, newFolder));
 
-    // Rewrite this shoot, descendant shoots, and contained photos to the new prefix.
-    this.shoots.updateFields(shoot.id, { name: newName, folder_path: newFolder });
-    for (const descendant of this.shoots.listByLibrary(library.id)) {
-      if (descendant.folder_path.startsWith(`${oldFolder}/`)) {
-        this.shoots.updateFields(descendant.id, { folder_path: newFolder + descendant.folder_path.slice(oldFolder.length) });
+    // Rewrite this shoot, descendant shoots, and contained photos to the new
+    // prefix atomically (§8.5): a partial rewrite would break folder membership.
+    // The fs move already happened; if this throws, sync reconciles the move.
+    this.shoots.transaction(() => {
+      this.shoots.updateFields(shoot.id, { name: newName, folder_path: newFolder });
+      for (const descendant of this.shoots.listByLibrary(library.id)) {
+        if (descendant.folder_path.startsWith(`${oldFolder}/`)) {
+          this.shoots.updateFields(descendant.id, { folder_path: newFolder + descendant.folder_path.slice(oldFolder.length) });
+        }
       }
-    }
-    for (const photo of this.photos.listUnderFolder(library.id, oldFolder)) {
-      this.photos.setFilePath(photo.id, newFolder + photo.file_path.slice(oldFolder.length));
-    }
+      for (const photo of this.photos.listUnderFolder(library.id, oldFolder)) {
+        this.photos.setFilePath(photo.id, newFolder + photo.file_path.slice(oldFolder.length));
+      }
+    });
   }
 
   private adoptExistingPhotos(libraryId: string, shootId: string, folderPath: string): void {
@@ -153,6 +160,14 @@ export class ShootsService {
       await rename(from, to);
     } catch (err) {
       throw new AppError('IO_ERROR', `failed to move ${from} -> ${to}: ${(err as Error).message}`);
+    }
+  }
+
+  private async ensureDir(dir: string): Promise<void> {
+    try {
+      await mkdir(dir, { recursive: true });
+    } catch (err) {
+      throw new AppError('IO_ERROR', `failed to create directory ${dir}: ${(err as Error).message}`);
     }
   }
 

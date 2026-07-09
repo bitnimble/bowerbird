@@ -43,6 +43,10 @@ export interface NewShoot {
 export class ShootsRepository {
   constructor(private readonly db: Database) {}
 
+  transaction<T>(fn: () => T): T {
+    return this.db.transaction(fn)();
+  }
+
   insert(shoot: NewShoot): void {
     this.db
       .query(
