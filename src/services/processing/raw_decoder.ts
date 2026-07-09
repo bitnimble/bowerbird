@@ -19,7 +19,6 @@ const SYMBOLS = {
   libraw_get_iwidth: { args: [FFIType.ptr], returns: FFIType.i32 },
   libraw_get_iheight: { args: [FFIType.ptr], returns: FFIType.i32 },
   libraw_get_imgother: { args: [FFIType.ptr], returns: FFIType.ptr },
-  libraw_version: { args: [], returns: FFIType.cstring },
   libraw_strerror: { args: [FFIType.i32], returns: FFIType.cstring },
 } as const;
 
@@ -39,10 +38,6 @@ function lib(): LibRaw {
     }
   }
   throw new Error(`could not load LibRaw (${LIB_CANDIDATES.join(', ')}): ${String(lastErr)}`);
-}
-
-export function librawVersion(): string {
-  return lib().libraw_version()?.toString() ?? 'unknown';
 }
 
 function cpath(p: string): Uint8Array {

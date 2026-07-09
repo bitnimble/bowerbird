@@ -80,6 +80,13 @@ describe('PhotosApi', () => {
     expect(del).toHaveBeenCalledWith([PID]);
   });
 
+  it('returns the JSON envelope for an unmatched route', async () => {
+    const { app } = buildApp();
+    const res = await app.request('/api/nope/route');
+    expect(res.status).toBe(404);
+    expect(await res.json()).toMatchObject({ error: { code: 'NOT_FOUND' } });
+  });
+
   it('parses stringbool + numeric query filters', async () => {
     const listByLibrary = jest.fn(() => emptyList);
     const { app } = buildApp({ listByLibrary });

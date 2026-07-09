@@ -5,6 +5,9 @@ import { AppError } from '../errors';
 // Central error -> HTTP envelope mapping (DESIGN §14). Shared by the server and
 // API tests so both exercise the same behavior.
 export function applyErrorHandler(app: Hono): void {
+  // Unmatched route / method -> the same JSON envelope, not Hono's plain-text 404.
+  app.notFound((c) => c.json({ error: { code: 'NOT_FOUND', message: 'not found' } }, 404));
+
   app.onError((err, c) => {
     if (err instanceof AppError) {
       return c.json({ error: { code: err.code, message: err.message } }, err.status);
