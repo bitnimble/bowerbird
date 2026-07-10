@@ -96,19 +96,35 @@ export class PhotosService {
 
         const from = getOriginalPath(library, photo.file_path);
         let binRelPath: string | null = null;
+        let movedToBin: string | null = null;
         if (existsSync(from)) {
           const binDir = this.binDir(library, photo.shoot_id);
           await this.ensureDir(binDir);
           const dest = await this.moveInto(from, binDir, path.basename(photo.file_path));
+          movedToBin = dest;
           binRelPath = toLibraryRelative(library.root_path, dest);
         }
 
         // Commit the Bin path and the deleted flag atomically: a crash between
         // them would otherwise leave an active photo whose file is in the Bin.
-        this.photos.transaction(() => {
-          if (binRelPath != null) this.photos.setFilePath(photo.id, binRelPath);
-          this.photos.markDeleted(photo.id);
-        });
+        try {
+          this.photos.transaction(() => {
+            if (binRelPath != null) this.photos.setFilePath(photo.id, binRelPath);
+            this.photos.markDeleted(photo.id);
+          });
+        } catch (dbErr) {
+          // The DB write failed AFTER the file was moved into the Bin. Unlike the
+          // shoot move-ops (whose destination is scanned, so a later sync
+          // move-detects and self-heals), the Bin is excluded from scanning, so a
+          // photo left is_deleted=0 with its file in the Bin is orphaned forever.
+          // Move it back out so state stays consistent (as if delete never ran).
+          if (movedToBin != null) {
+            await moveIntoDir(movedToBin, path.dirname(from), path.basename(from)).catch((e) =>
+              console.error(`failed to roll back Bin move for ${photo.id}: ${(e as Error).message}`),
+            );
+          }
+          throw dbErr;
+        }
 
         // Best-effort thumbnail cleanup: the photo is already flagged deleted, so
         // a stale thumbnail is harmless (endpoints 404 on deleted photos).

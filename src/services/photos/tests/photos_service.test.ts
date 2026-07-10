@@ -133,6 +133,32 @@ describe('PhotosService.delete', () => {
     }
   });
 
+  it('rolls the Bin move back to the original path when the DB write fails', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'bb-del-'));
+    try {
+      writeFileSync(path.join(root, 'a.arw'), 'raw');
+      const lib: Library = { id: 'lib', root_path: root, data_path: null, ordering: 'added_asc' };
+      const photo = { id: 'p1', library_id: 'lib', shoot_id: null, file_path: 'a.arw', is_deleted: false } as PhotoDetail;
+      const { service } = build({
+        photos: {
+          getById: jest.fn(() => photo),
+          transaction: () => {
+            throw new Error('SQLITE_FULL: database or disk is full');
+          },
+        },
+        libraries: { getById: jest.fn(() => lib) },
+      });
+
+      await expect(service.delete(['p1'])).rejects.toThrow(/failed to delete/);
+
+      // File is back at its original path, not orphaned in the (unscanned) Bin.
+      expect(existsSync(path.join(root, 'a.arw'))).toBe(true);
+      expect(existsSync(path.join(root, '.bowerbird', 'bin', 'a.arw'))).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('skips already-deleted photos', async () => {
     const markDeleted = jest.fn();
     const photo = { id: 'p1', is_deleted: true } as PhotoDetail;
