@@ -181,10 +181,14 @@ export class SyncService {
   ): Promise<{ present: Set<string>; changed: DiskFile[]; failed: Set<string> }> {
     const dbByPath = new Map(dbPhotos.map((p) => [p.file_path, p]));
     const files = await listSupportedFiles(rootPath, dataPath);
-    const present = new Set<string>();
-    const changed: DiskFile[] = [];
-    const failed = new Set<string>();
 
+    // Stat everything, collapsing hardlink pairs (same dev+ino) to a single path.
+    // A concurrent non-atomic move (moveIntoDir does link() then unlink()) briefly
+    // exposes both the old and new path pointing at one inode; without this, the
+    // new path would be scanned as a brand-new file and insertFromSync'd as a
+    // permanent duplicate row. Prefer whichever path matches an existing record.
+    type Scanned = { relPath: string; absPath: string; stats: Awaited<ReturnType<typeof stat>> };
+    const byInode = new Map<string, Scanned>();
     for (const file of files) {
       let stats;
       try {
@@ -192,11 +196,23 @@ export class SyncService {
       } catch {
         continue; // vanished between readdir and stat: treat as not present (a race)
       }
+      const key = `${stats.dev}:${stats.ino}`;
+      const existing = byInode.get(key);
+      if (existing == null || (!dbByPath.has(existing.relPath) && dbByPath.has(file.relPath))) {
+        byInode.set(key, { relPath: file.relPath, absPath: file.absPath, stats });
+      }
+    }
+
+    const present = new Set<string>();
+    const changed: DiskFile[] = [];
+    const failed = new Set<string>();
+
+    for (const file of byInode.values()) {
       present.add(file.relPath);
 
       const record = dbByPath.get(file.relPath);
       const unchanged =
-        record != null && record.date_updated === stats.mtime.toISOString() && record.file_size === stats.size;
+        record != null && record.date_updated === file.stats.mtime.toISOString() && record.file_size === file.stats.size;
       if (unchanged) continue;
 
       try {
