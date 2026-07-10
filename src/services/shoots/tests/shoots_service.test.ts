@@ -29,6 +29,7 @@ function mockPhotos(over: Partial<PhotosRepository> = {}): PhotosRepository {
     listUnderFolder: jest.fn(() => [] as BasicPhoto[]),
     setShoot: jest.fn(),
     setFilePath: jest.fn(),
+    rewriteFilePath: jest.fn(),
     setFilePathAndShoot: jest.fn(),
     ...over,
   } as unknown as PhotosRepository;
@@ -227,7 +228,7 @@ describe('ShootsService.update (rename cascade)', () => {
     mkdirSync(path.join(root, 'Trip', 'Day1'), { recursive: true });
     const descendant: Shoot = { ...shoot, id: 'd1', parent_id: 'sh', folder_path: 'Trip/Day1', name: 'Day1' };
     const updateFields = jest.fn();
-    const setFilePath = jest.fn();
+    const rewriteFilePath = jest.fn();
     const shoots = mockShoots({
       getById: jest.fn(() => shoot),
       getByName: jest.fn(() => null),
@@ -239,7 +240,7 @@ describe('ShootsService.update (rename cascade)', () => {
       { id: 'p2', library_id: 'lib', file_path: 'Trip/Day1/b.arw', shoot_id: 'd1' },
       { id: 'p3', library_id: 'lib', file_path: 'Trip/Bin/c.arw', shoot_id: 'sh' }, // soft-deleted
     ]);
-    const photos = mockPhotos({ listUnderFolder, setFilePath });
+    const photos = mockPhotos({ listUnderFolder, rewriteFilePath });
     const service = new ShootsService(shoots, photos, mockLibs(root));
 
     await service.update('sh', { name: 'Vacation' });
@@ -248,12 +249,13 @@ describe('ShootsService.update (rename cascade)', () => {
     expect(existsSync(path.join(root, 'Trip'))).toBe(false);
     expect(updateFields).toHaveBeenCalledWith('sh', { name: 'Vacation', folder_path: 'Vacation' });
     expect(updateFields).toHaveBeenCalledWith('d1', { folder_path: 'Vacation/Day1' });
-    expect(setFilePath).toHaveBeenCalledWith('p1', 'Vacation/a.arw');
-    expect(setFilePath).toHaveBeenCalledWith('p2', 'Vacation/Day1/b.arw');
+    // rewriteFilePath (not setFilePath): a rename must preserve each photo's is_missing.
+    expect(rewriteFilePath).toHaveBeenCalledWith('p1', 'Vacation/a.arw');
+    expect(rewriteFilePath).toHaveBeenCalledWith('p2', 'Vacation/Day1/b.arw');
     // soft-deleted photos in the shoot Bin move with the folder, so their path
     // must be rewritten too (listUnderFolder called with includeDeleted=true).
     expect(listUnderFolder).toHaveBeenCalledWith('lib', 'Trip', true);
-    expect(setFilePath).toHaveBeenCalledWith('p3', 'Vacation/Bin/c.arw');
+    expect(rewriteFilePath).toHaveBeenCalledWith('p3', 'Vacation/Bin/c.arw');
   }));
 });
 

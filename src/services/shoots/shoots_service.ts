@@ -186,7 +186,9 @@ export class ShootsService {
         // includeDeleted: soft-deleted photos live in <folder>/Bin and physically
         // move with the folder, so their file_path must be rewritten too.
         for (const photo of this.photos.listUnderFolder(library.id, oldFolder, true)) {
-          this.photos.setFilePath(photo.id, newFolder + photo.file_path.slice(oldFolder.length));
+          // rewriteFilePath, not setFilePath: preserve is_missing, a folder rename
+          // doesn't recreate a file for a photo that was already missing.
+          this.photos.rewriteFilePath(photo.id, newFolder + photo.file_path.slice(oldFolder.length));
         }
       });
     } catch (err) {

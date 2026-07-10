@@ -253,16 +253,24 @@ export class PhotosRepository {
     this.db.query('UPDATE photos SET shoot_id = ? WHERE id = ?').run(shootId, photoId);
   }
 
-  // Both clear is_missing: they run only after a successful physical move, so the
-  // file provably exists at the new path. Without this, a concurrent sync whose
-  // setMissing landed just before the move committed would leave the (present)
-  // photo stuck is_missing=1 until the next sync (mirrors applyMove).
+  // Both clear is_missing: they run only after a successful physical move of a
+  // specific file, so it provably exists at the new path. Without this, a
+  // concurrent sync whose setMissing landed just before the move committed would
+  // leave the (present) photo stuck is_missing=1 until the next sync (mirrors
+  // applyMove). NOT for bulk path-prefix rewrites, see rewriteFilePath.
   setFilePathAndShoot(photoId: string, filePath: string, shootId: string | null): void {
     this.db.query('UPDATE photos SET file_path = ?, shoot_id = ?, is_missing = 0 WHERE id = ?').run(filePath, shootId, photoId);
   }
 
   setFilePath(photoId: string, filePath: string): void {
     this.db.query('UPDATE photos SET file_path = ?, is_missing = 0 WHERE id = ?').run(filePath, photoId);
+  }
+
+  // Path-prefix rewrite for a shoot-folder rename: preserves is_missing, since a
+  // folder rename moves nothing for a photo that was already missing (its file
+  // doesn't exist), so it must stay missing at the rewritten path.
+  rewriteFilePath(photoId: string, filePath: string): void {
+    this.db.query('UPDATE photos SET file_path = ? WHERE id = ?').run(filePath, photoId);
   }
 
   markDeleted(id: string): void {

@@ -16,6 +16,13 @@ function insertPhoto(id: string, isDeleted: number): void {
   ).run(id, LIB, `${id}.arw`, isDeleted);
 }
 
+function insertMissing(id: string): void {
+  db.query(
+    `INSERT INTO photos (id, library_id, file_path, width, height, date_added, is_missing)
+     VALUES (?, ?, ?, 100, 100, '2024-01-01T00:00:00.000Z', 1)`,
+  ).run(id, LIB, `${id}.arw`);
+}
+
 beforeAll(() => {
   db = createDatabase(':memory:');
   db.query('INSERT INTO libraries (id, root_path, ordering) VALUES (?, ?, ?)').run(LIB, '/tmp/bb-repo-test', 'taken_desc');
@@ -50,11 +57,22 @@ test('setMissing marks missing only when file_path still matches the scanned pat
 // must clear is_missing; else a concurrent sync's setMissing landing just before
 // leaves the present photo stuck missing until the next sync.
 test('setFilePath / setFilePathAndShoot clear is_missing', () => {
-  insertPhoto('rel', 1);
+  insertMissing('rel');
   photos.setFilePath('rel', 'rel-moved.arw');
   expect(missingOf('rel')).toBe(0);
 
-  insertPhoto('rel2', 1);
+  insertMissing('rel2');
   photos.setFilePathAndShoot('rel2', 'rel2-moved.arw', null);
   expect(missingOf('rel2')).toBe(0);
+});
+
+// Regression: the shoot-rename cascade rewrites paths but must PRESERVE is_missing
+// (a folder rename recreates no file for an already-missing photo).
+test('rewriteFilePath preserves is_missing', () => {
+  insertMissing('rw');
+  photos.rewriteFilePath('rw', 'renamed/rw.arw');
+  expect(missingOf('rw')).toBe(1); // still missing: a folder rename recreates no file
+  insertPhoto('rw0', 0);
+  photos.rewriteFilePath('rw0', 'renamed/rw0.arw');
+  expect(missingOf('rw0')).toBe(0);
 });
