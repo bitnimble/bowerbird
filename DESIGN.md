@@ -82,9 +82,7 @@ bowerbird/
 │   │   │   └── tests/
 │   │   │       └── albums_api.test.ts
 │   │   └── image/
-│   │       ├── image_api.ts        # Static-path image streaming endpoints
-│   │       └── tests/
-│   │           └── image_api.test.ts
+│   │       └── image_api.ts        # Static-path image streaming endpoints (integration-tested; needs Bun.file)
 │   ├── schemas/
 │   │   ├── libraries.ts
 │   │   ├── photos.ts
@@ -113,21 +111,24 @@ bowerbird/
 │   │   │   └── tests/
 │   │   │       └── albums_service.test.ts
 │   │   ├── sync/
-│   │   │   ├── sync_service.ts     # Library sync algorithm
+│   │   │   ├── sync_service.ts     # Library sync algorithm (integration-tested; needs bun:sqlite + LibRaw)
 │   │   │   └── tests/
-│   │   │       └── sync_service.test.ts
+│   │   │       ├── sync_algorithm.test.ts  # pure diff / move-detection (host jest)
+│   │   │       └── sync_lock.test.ts       # lock-file module (host jest)
 │   │   └── processing/
 │   │       ├── processing_service.ts  # Thumbnail generation orchestrator
 │   │       ├── processing_worker.ts   # Bun worker thread for image processing
 │   │       ├── raw_decoder.ts         # LibRaw FFI bindings
 │   │       ├── metadata.ts            # Per-format metadata extraction (LibRaw header parse for ARW)
 │   │       └── tests/
-│   │           ├── processing_service.test.ts
-│   │           └── metadata.test.ts
+│   │           └── processing_service.test.ts   # (raw_decoder/metadata: integration-tested via LibRaw)
 │   └── utils/
 │       ├── hash.ts                 # File hash computation
 │       ├── files.ts                # File system helpers (recursive listing, etc.)
 │       └── paths.ts                # Path computation helpers (thumbnail paths, bin paths)
+├── test/
+│   ├── integration/               # bun:test suites needing real bun:sqlite + LibRaw (run in-container)
+│   └── fixtures/                  # a real Sony ARW for decode/metadata tests
 ├── DESIGN.md
 ├── package.json
 ├── tsconfig.json
@@ -1110,15 +1111,21 @@ The server is configured via environment variables:
 
 ## 16. Testing Strategy
 
-### 16.1 Unit Tests
+Two tiers, split by whether a module can run under Node (host jest) or needs Bun-native APIs (`bun:sqlite`, `bun:ffi`/LibRaw, `Bun.file`).
 
-All services and API handlers have unit tests. Dependencies are mocked via constructor injection.
+### 16.1 Unit Tests (host jest)
+
+Services and API handlers whose dependencies can be mocked are unit-tested under jest, with dependencies supplied via constructor injection.
 
 **Repository mocks:** Each repository interface is mocked to return predetermined data, allowing service logic to be tested in isolation without touching SQLite.
 
 **Service mocks:** API handler tests mock the service layer to test request validation, response formatting, and HTTP status codes.
 
+**Exceptions covered by integration tests instead (§16.3):** `SyncService`, the image-streaming API, and repository DB behaviour are *not* unit-tested; `SyncService` and the repositories exercise real SQL (mocking a repository well enough to test the sync algorithm would test the mock, not the SQL), and image streaming depends on `Bun.file`. These run against a real in-memory `bun:sqlite` DB and the LibRaw FFI in the container integration suite, which is the authoritative coverage for scan/diff/apply, the move/rename/delete races, the sync generation token, inode dedup, and image responses.
+
 ### 16.2 Key Test Cases
+
+The sync-service, photo-deletion, and image-streaming cases below run in the integration suite (§16.3); the rest are host-jest unit tests.
 
 **Sync service:**
 - Basic add/remove/modify detection
@@ -1133,6 +1140,7 @@ All services and API handlers have unit tests. Dependencies are mocked via const
 - Move into a known shoot folder sets `shoot_id`; move out to root clears it (§9.4 step 1)
 - mtime change (e.g. in-place edit) marks a file MODIFIED and re-processes it (§9.2)
 - Sync lock: a second concurrent sync of the *same* library throws `SYNC_IN_PROGRESS`; two *different* libraries sync concurrently; a stale lock (dead PID) is reclaimed (§9.7)
+- Concurrency vs. a user mutation mid-scan: an in-flight move's hardlink pair (link+unlink) is collapsed by inode so no duplicate row is inserted; a library deleted mid-scan aborts `NOT_FOUND` (no FK crash); a stale sync generation's detached processing tail doesn't stomp a newer sync's status
 
 **Photo deletion:**
 - Thumbnails are removed
@@ -1153,11 +1161,22 @@ All services and API handlers have unit tests. Dependencies are mocked via const
 
 ### 16.3 Running Tests
 
+Host unit tests (jest, runs anywhere):
+
 ```bash
 bun run test
 ```
 
-`bun run test` runs the `test` npm script, which invokes `jest`. Jest is configured with `ts-jest` for TypeScript transformation. (Note: this is Jest, not Bun's built-in `bun test` runner; do not confuse the two.) Test files follow the `*.test.ts` naming convention.
+`bun run test` runs the `test` npm script, which invokes `jest`. Jest is configured with `ts-jest` for TypeScript transformation. (Note: this is Jest, not Bun's built-in `bun test` runner; do not confuse the two.) Host-jest files follow `*.test.ts`.
+
+Integration tests (`bun:test`, need real `bun:sqlite` + LibRaw, so they run in the container):
+
+```bash
+docker compose -f docker-compose.dev.yml up -d
+docker exec -w /app bowerbird-dev bun test test/integration
+```
+
+These live in `test/integration/*.integration.test.ts` and cover the sync engine, image streaming, and repository DB behaviour end-to-end against a real Sony ARW fixture.
 
 ---
 
