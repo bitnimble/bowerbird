@@ -77,10 +77,6 @@ export class PhotosService {
     return this.get(photoId);
   }
 
-  getAlbumMemberships(photoId: string): string[] {
-    return this.albums.getAlbumIdsForPhoto(photoId);
-  }
-
   // Soft-delete: move the RAW to a Bin, flag is_deleted, then remove thumbnails
   // (§12). The Bin move happens before anything destructive, and each photo is
   // isolated so one failure neither abandons the rest of the batch nor leaves an
