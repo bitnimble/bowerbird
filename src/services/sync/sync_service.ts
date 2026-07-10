@@ -38,6 +38,11 @@ function idle(libraryId: string, status: Status = 'idle'): LibrarySyncStatus {
 
 export class SyncService {
   private readonly statuses = new Map<string, LibrarySyncStatus>();
+  // Identity token per in-flight sync generation. The lock is released before the
+  // detached processing runs, so a newer sync can start while the old one's
+  // processing tail is still going; the token lets a stale tail skip its status
+  // write instead of stomping the newer generation's status.
+  private readonly generation = new Map<string, object>();
 
   constructor(
     private readonly photos: PhotosRepository,
@@ -67,6 +72,8 @@ export class SyncService {
     if (!library) throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
 
     const lockPath = acquireSyncLock(library.root_path);
+    const token = {};
+    this.generation.set(libraryId, token);
     let syncedStatus: LibrarySyncStatus | null = null;
     try {
       this.statuses.set(libraryId, idle(libraryId, 'scanning'));
@@ -160,7 +167,10 @@ export class SyncService {
       if (syncedStatus != null) {
         const finalStatus = syncedStatus;
         void Promise.resolve(this.processing.processUnprocessed(libraryId))
-          .then(() => this.statuses.set(libraryId, { ...finalStatus, status: 'idle' }))
+          .then(() => {
+            // Skip if a newer sync generation started meanwhile, don't stomp its status.
+            if (this.generation.get(libraryId) === token) this.statuses.set(libraryId, { ...finalStatus, status: 'idle' });
+          })
           .catch((err) => console.error(`processing failed for library ${libraryId}: ${(err as Error).message}`));
       }
     }

@@ -45,3 +45,16 @@ test('setMissing marks missing only when file_path still matches the scanned pat
   expect(photos.setMissing('mv', 'mv.arw')).toBe(true); // matches -> genuinely missing
   expect(missingOf('mv')).toBe(1);
 });
+
+// Regression: a move-op runs only after the file exists at the new path, so it
+// must clear is_missing; else a concurrent sync's setMissing landing just before
+// leaves the present photo stuck missing until the next sync.
+test('setFilePath / setFilePathAndShoot clear is_missing', () => {
+  insertPhoto('rel', 1);
+  photos.setFilePath('rel', 'rel-moved.arw');
+  expect(missingOf('rel')).toBe(0);
+
+  insertPhoto('rel2', 1);
+  photos.setFilePathAndShoot('rel2', 'rel2-moved.arw', null);
+  expect(missingOf('rel2')).toBe(0);
+});
