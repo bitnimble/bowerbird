@@ -67,7 +67,17 @@ describe('AlbumsService', () => {
   it('addPhotos requires the album to exist, then delegates', () => {
     expect(() => new AlbumsService(mockRepo(), mockPhotos()).addPhotos('a1', ['p'])).toThrow(/not found/);
     const addPhotos = jest.fn();
-    new AlbumsService(mockRepo({ getById: jest.fn(() => album), addPhotos }), mockPhotos()).addPhotos('a1', ['p1']);
+    const photos = mockPhotos({ getBasicByIds: jest.fn(() => [photo]) });
+    new AlbumsService(mockRepo({ getById: jest.fn(() => album), addPhotos }), photos).addPhotos('a1', ['p1']);
     expect(addPhotos).toHaveBeenCalledWith('a1', ['p1'], expect.any(String));
+  });
+
+  it('addPhotos rejects a nonexistent photo id (400, not a raw FK 500)', () => {
+    const addPhotos = jest.fn();
+    // getBasicByIds returns only p1; ghost is absent -> reject before insert.
+    const photos = mockPhotos({ getBasicByIds: jest.fn(() => [photo]) });
+    const service = new AlbumsService(mockRepo({ getById: jest.fn(() => album), addPhotos }), photos);
+    expect(() => service.addPhotos('a1', ['p1', 'ghost'])).toThrow(/photos not found/);
+    expect(addPhotos).not.toHaveBeenCalled();
   });
 });

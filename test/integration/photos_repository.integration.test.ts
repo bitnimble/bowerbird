@@ -33,3 +33,15 @@ test('getBasicByIds excludes soft-deleted photos', () => {
   const result = photos.getBasicByIds(['active', 'deleted']);
   expect(result.map((p) => p.id)).toEqual(['active']);
 });
+
+const missingOf = (id: string) => (db.query('SELECT is_missing FROM photos WHERE id = ?').get(id) as { is_missing: number }).is_missing;
+
+// Regression: setMissing is path-guarded so a photo relocated by a concurrent
+// shoot rename/move during a sync scan isn't spuriously flagged missing.
+test('setMissing marks missing only when file_path still matches the scanned path', () => {
+  insertPhoto('mv', 0);
+  expect(photos.setMissing('mv', 'nope.arw')).toBe(false); // path moved out from under the scan
+  expect(missingOf('mv')).toBe(0);
+  expect(photos.setMissing('mv', 'mv.arw')).toBe(true); // matches -> genuinely missing
+  expect(missingOf('mv')).toBe(1);
+});

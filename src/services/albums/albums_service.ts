@@ -28,6 +28,11 @@ export class AlbumsService {
 
   addPhotos(albumId: string, photoIds: string[]): void {
     this.get(albumId);
+    // Validate up front: album_photos.photo_id is an FK and INSERT OR IGNORE does
+    // NOT suppress FK violations, so a bad id would otherwise surface as a raw 500.
+    const found = new Set(this.photos.getBasicByIds(photoIds).map((p) => p.id));
+    const missing = photoIds.filter((id) => !found.has(id));
+    if (missing.length > 0) throw new AppError('VALIDATION_ERROR', `photos not found: ${missing.join(', ')}`);
     this.repo.addPhotos(albumId, photoIds, new Date().toISOString());
   }
 

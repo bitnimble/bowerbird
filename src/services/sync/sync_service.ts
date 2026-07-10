@@ -131,8 +131,10 @@ export class SyncService {
         }
         for (const rp of diff.reappeared) this.photos.clearMissing(rp.photoId);
         for (const rm of result.removed) {
-          this.photos.setMissing(rm.photoId);
-          if (!rm.wasMissing) removed++; // per-sync delta only (§9.4 step 5)
+          // Skips if a concurrent rename/move relocated the photo during the scan
+          // (its file_path no longer matches what we scanned); it isn't missing.
+          const marked = this.photos.setMissing(rm.photoId, rm.filePath);
+          if (marked && !rm.wasMissing) removed++; // per-sync delta only (§9.4 step 5)
         }
       });
 

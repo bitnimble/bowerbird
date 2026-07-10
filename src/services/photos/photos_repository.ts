@@ -224,9 +224,10 @@ export class PhotosRepository {
     return this.db.query(`UPDATE photos SET ${sets.join(', ')} WHERE id = ?`).run(...params).changes > 0;
   }
 
-  // Excludes soft-deleted photos: the only caller is shoot membership ops, and a
-  // Bin-resident deleted photo must not be moved out of its Bin (it would escape
-  // the Bin while still flagged is_deleted and get re-imported as a duplicate).
+  // Excludes soft-deleted photos. Callers are shoot/album membership ops and
+  // banner validation; a Bin-resident deleted photo must not be movable/settable
+  // via these paths (it would escape the Bin while still flagged is_deleted and
+  // get re-imported as a duplicate).
   getBasicByIds(ids: string[]): BasicPhoto[] {
     if (ids.length === 0) return [];
     const placeholders = ids.map(() => '?').join(', ');
@@ -348,8 +349,11 @@ export class PhotosRepository {
     this.db.query('UPDATE photos SET is_missing = 0 WHERE id = ?').run(photoId);
   }
 
-  setMissing(photoId: string): void {
-    this.db.query('UPDATE photos SET is_missing = 1 WHERE id = ?').run(photoId);
+  // Guarded on the path the sync scanned: if a concurrent move/soft-delete
+  // changed file_path during the (async) scan, the row is no longer "missing at
+  // that path", so this is a no-op. Returns whether it actually marked missing.
+  setMissing(photoId: string, expectedFilePath: string): boolean {
+    return this.db.query('UPDATE photos SET is_missing = 1 WHERE id = ? AND file_path = ?').run(photoId, expectedFilePath).changes > 0;
   }
 
   // --- processing (DESIGN §10) ---
