@@ -136,6 +136,21 @@ describe('ShootsService.addPhotos', () => {
     expect(setShoot).not.toHaveBeenCalled(); // membership already correct
   }));
 
+  it('rejects an unknown/soft-deleted photo id (400) instead of silently dropping it', withRoot(async (root) => {
+    writeFileSync(path.join(root, 'a.arw'), '');
+    const setFilePathAndShoot = jest.fn();
+    const photos = mockPhotos({
+      // 'ghost' is absent from the result (unknown or soft-deleted).
+      getBasicByIds: jest.fn(() => [{ id: 'p1', library_id: 'lib', file_path: 'a.arw', shoot_id: null }]),
+      setFilePathAndShoot,
+    });
+    const service = new ShootsService(mockShoots({ getById: jest.fn(() => shoot) }), photos, mockLibs(root));
+
+    await expect(service.addPhotos('sh', ['p1', 'ghost'])).rejects.toThrow(/photos not found/);
+    expect(setFilePathAndShoot).not.toHaveBeenCalled();
+    expect(existsSync(path.join(root, 'a.arw'))).toBe(true); // nothing moved
+  }));
+
   it('rejects a photo from another library before moving anything', withRoot(async (root) => {
     writeFileSync(path.join(root, 'a.arw'), '');
     const setFilePathAndShoot = jest.fn();

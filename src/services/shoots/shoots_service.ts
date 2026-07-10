@@ -78,8 +78,12 @@ export class ShootsService {
     const library = this.requireLibrary(shoot.library_id);
     const destDir = path.join(library.root_path, shoot.folder_path);
     const photos = this.photos.getBasicByIds(photoIds);
-    // Validate up front so a cross-library id can't leave a partially-applied
-    // batch (each move commits before the next runs).
+    // Validate up front so a cross-library or unknown id can't leave a
+    // partially-applied batch (each move commits before the next runs). Reject
+    // unknown/soft-deleted ids rather than silently dropping them (matches albums).
+    const found = new Set(photos.map((p) => p.id));
+    const missing = photoIds.filter((id) => !found.has(id));
+    if (missing.length > 0) throw new AppError('VALIDATION_ERROR', `photos not found: ${missing.join(', ')}`);
     for (const photo of photos) {
       if (photo.library_id !== shoot.library_id) {
         throw new AppError('VALIDATION_ERROR', `photo ${photo.id} is not in this shoot's library`);

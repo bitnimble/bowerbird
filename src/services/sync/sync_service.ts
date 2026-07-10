@@ -159,6 +159,12 @@ export class SyncService {
       this.statuses.set(libraryId, status);
       syncedStatus = status;
       return status;
+    } catch (err) {
+      // Scan/apply threw (e.g. root unmounted, DB error): reset status so the API
+      // doesn't report 'scanning' forever. Still our generation here (the lock,
+      // released in finally, blocks a newer one), but guard for consistency.
+      if (this.generation.get(libraryId) === token) this.statuses.set(libraryId, idle(libraryId));
+      throw err;
     } finally {
       // Release the lock as soon as scan+apply is done. Thumbnail generation runs
       // detached (§9.5/§9.6: background work, client polls status), so POST /sync
@@ -171,7 +177,12 @@ export class SyncService {
             // Skip if a newer sync generation started meanwhile, don't stomp its status.
             if (this.generation.get(libraryId) === token) this.statuses.set(libraryId, { ...finalStatus, status: 'idle' });
           })
-          .catch((err) => console.error(`processing failed for library ${libraryId}: ${(err as Error).message}`));
+          .catch((err) => {
+            // Processing failed: don't leave status stuck at 'processing'. Same
+            // generation guard as the success path (a newer sync may have started).
+            console.error(`processing failed for library ${libraryId}: ${(err as Error).message}`);
+            if (this.generation.get(libraryId) === token) this.statuses.set(libraryId, { ...finalStatus, status: 'idle' });
+          });
       }
     }
   }
