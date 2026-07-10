@@ -149,6 +149,25 @@ describe('ShootsService.addPhotos', () => {
     expect(existsSync(path.join(root, 'a.arw'))).toBe(true); // untouched
   }));
 
+  it('aborts with CONFLICT (not a raw FK 500) if the shoot is deleted mid-move, keeping DB consistent with disk', withRoot(async (root) => {
+    writeFileSync(path.join(root, 'a.arw'), '');
+    let calls = 0;
+    const getById = jest.fn(() => (calls++ === 0 ? shoot : null)); // exists at entry, gone by the re-check
+    const setFilePath = jest.fn();
+    const setFilePathAndShoot = jest.fn();
+    const photos = mockPhotos({
+      getBasicByIds: jest.fn(() => [{ id: 'p1', library_id: 'lib', file_path: 'a.arw', shoot_id: null }]),
+      setFilePath,
+      setFilePathAndShoot,
+    });
+    const service = new ShootsService(mockShoots({ getById }), photos, mockLibs(root));
+
+    await expect(service.addPhotos('sh', ['p1'])).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(setFilePathAndShoot).not.toHaveBeenCalled();
+    expect(setFilePath).toHaveBeenCalledWith('p1', 'Trip/a.arw'); // real location recorded, no desync
+    expect(existsSync(path.join(root, 'Trip', 'a.arw'))).toBe(true);
+  }));
+
   it('moves a photo into the shoot folder and updates its path + shoot', withRoot(async (root) => {
     writeFileSync(path.join(root, 'a.arw'), '');
     const setFilePathAndShoot = jest.fn();

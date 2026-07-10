@@ -93,12 +93,27 @@ export class ShootsService {
       // Already sitting in this folder: just set membership, never move (which
       // would collide the file with itself and grow a "_1" suffix each call).
       if (path.resolve(from) === path.resolve(naturalDest)) {
-        if (photo.shoot_id !== shootId) this.photos.setShoot(photo.id, shootId);
+        if (photo.shoot_id !== shootId) {
+          this.requireShootExists(shootId); // no await before the FK write -> race-tight
+          this.photos.setShoot(photo.id, shootId);
+        }
         continue;
       }
       const dest = await this.moveInto(from, destDir, path.basename(photo.file_path));
-      this.photos.setFilePathAndShoot(photo.id, toLibraryRelative(library.root_path, dest), shootId);
+      const relDest = toLibraryRelative(library.root_path, dest);
+      // The shoot can be deleted during the (awaited) move; writing shoot_id then
+      // hits the FK (raw 500). Re-check with no await before the write. The file
+      // already moved, so record its new path to keep the DB consistent with disk.
+      if (!this.shoots.getById(shootId)) {
+        this.photos.setFilePath(photo.id, relDest);
+        throw new AppError('CONFLICT', `shoot was deleted during the operation: ${shootId}`);
+      }
+      this.photos.setFilePathAndShoot(photo.id, relDest, shootId);
     }
+  }
+
+  private requireShootExists(shootId: string): void {
+    if (!this.shoots.getById(shootId)) throw new AppError('CONFLICT', `shoot was deleted during the operation: ${shootId}`);
   }
 
   async removePhotos(shootId: string, photoIds: string[]): Promise<void> {
