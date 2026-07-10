@@ -61,6 +61,22 @@ describe('ProcessingService.processUnprocessed', () => {
     expect(markProcessed).toHaveBeenCalledTimes(3);
   });
 
+  it('a DB write failure in applyResult does not hang the pool', async () => {
+    const markProcessed = jest.fn(() => {
+      throw new Error('SQLITE_FULL: database or disk is full');
+    });
+    const repo = {
+      listPendingProcessing: jest.fn(() => [pending('a'), pending('b')]),
+      markProcessed,
+      markProcessingFailed: jest.fn(),
+    } as unknown as PhotosRepository;
+
+    // Must resolve (not hang): applyResult swallows the throw so the pool's
+    // assignNext/terminate bookkeeping still runs for every job.
+    await expect(new ProcessingService(repo, config).processUnprocessed('lib')).resolves.toBeUndefined();
+    expect(markProcessed).toHaveBeenCalledTimes(2);
+  });
+
   it('on a worker crash of a present file: marks it failed and deletes stale thumbnails', async () => {
     const smallDir = path.join(root, '.bowerbird', 'thumbnails', 'small');
     const fullDir = path.join(root, '.bowerbird', 'thumbnails', 'full');

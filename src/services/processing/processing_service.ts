@@ -66,15 +66,22 @@ export class ProcessingService {
   }
 
   private applyResult(result: ProcessingResult, job: ProcessingJob): void {
-    if (result.success) {
-      this.photos.markProcessed(result.photoId, new Date().toISOString());
-      return;
+    // Never throw: this runs inside a worker's onmessage/onerror, and a throw here
+    // would skip the pool's assignNext/terminate/live-- bookkeeping and hang the
+    // batch forever. On a DB write failure, log and leave needs_processing=1.
+    try {
+      if (result.success) {
+        this.photos.markProcessed(result.photoId, new Date().toISOString());
+        return;
+      }
+      // If the source file moved/was deleted since the job was queued (a move that
+      // landed before the worker ran), don't burn it as a terminal failure: leave
+      // needs_processing=1 so a later sync reprocesses it at its current path.
+      if (!existsSync(job.rawFilePath)) return;
+      this.photos.markProcessingFailed(result.photoId, result.error);
+    } catch (err) {
+      console.error(`applyResult failed for photo ${result.photoId}: ${(err as Error).message}`);
     }
-    // If the source file moved/was deleted since the job was queued (a move that
-    // landed before the worker ran), don't burn it as a terminal failure: leave
-    // needs_processing=1 so a later sync reprocesses it at its current path.
-    if (!existsSync(job.rawFilePath)) return;
-    this.photos.markProcessingFailed(result.photoId, result.error);
   }
 
   private runPool(jobs: ProcessingJob[]): Promise<void> {
