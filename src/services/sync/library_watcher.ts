@@ -63,6 +63,10 @@ export class LibraryWatcher implements LibraryLifecycleListener {
 
   private watchLibrary(library: Library): void {
     if (this.stopped || this.watchers.has(library.id)) return;
+    // A queued watch-error retry can land after the library was deleted; without
+    // this, watchLibrary would re-create a live FSWatcher (leaked inotify handle +
+    // spurious syncs) that onLibraryDeleted can never tear down again.
+    if (!this.libraries.getById(library.id)) return;
     const dataDir = path.resolve(getDataPath(library));
     try {
       const watcher = watch(library.root_path, { recursive: true }, (_event, filename) => {

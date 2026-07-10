@@ -1,13 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { stat } from 'node:fs/promises';
 import { AppError } from '../../errors';
-import type { LibrarySyncStatus } from '../../schemas/libraries';
+import type { Library, LibrarySyncStatus } from '../../schemas/libraries';
 import { listSupportedFiles } from '../../utils/files';
 import { computeFileHash } from '../../utils/hash';
 import { getDataPath } from '../../utils/paths';
 import { mostSpecificShoot } from '../../utils/shoots';
 import type { AlbumsRepository } from '../albums/albums_repository';
 import type { LibrariesRepository } from '../libraries/libraries_repository';
+import type { LibraryLifecycleListener } from '../libraries/libraries_service';
 import type { PhotosRepository, SyncDbPhoto } from '../photos/photos_repository';
 import type { ShootsRepository } from '../shoots/shoots_repository';
 import { extractMetadata, type FileMetadata } from '../processing/metadata';
@@ -36,7 +37,7 @@ function idle(libraryId: string, status: Status = 'idle'): LibrarySyncStatus {
   };
 }
 
-export class SyncService {
+export class SyncService implements LibraryLifecycleListener {
   private readonly statuses = new Map<string, LibrarySyncStatus>();
   // Identity token per in-flight sync generation. The lock is released before the
   // detached processing runs, so a newer sync can start while the old one's
@@ -52,6 +53,17 @@ export class SyncService {
     private readonly processing: ProcessingTrigger,
     private readonly extract: MetadataExtractor = extractMetadata,
   ) {}
+
+  onLibraryCreated(_library: Library): void {
+    // No action: sync is triggered on demand (POST /sync) or by the watcher.
+  }
+
+  // Drop the deleted library's in-memory status/generation so those maps don't
+  // grow unbounded across create/delete cycles (mirrors the watcher's teardown).
+  onLibraryDeleted(libraryId: string): void {
+    this.statuses.delete(libraryId);
+    this.generation.delete(libraryId);
+  }
 
   async syncAll(): Promise<void> {
     for (const library of this.libraries.list()) {

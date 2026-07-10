@@ -33,6 +33,8 @@ const photosService = new PhotosService(photosRepo, albumsRepo, shootsRepo, libr
 const albumsService = new AlbumsService(albumsRepo, photosRepo);
 const shootsService = new ShootsService(shootsRepo, photosRepo, librariesRepo);
 const syncService = new SyncService(photosRepo, librariesRepo, albumsRepo, shootsRepo, processingService);
+// Prune sync's per-library in-memory state when a library is deleted (unbounded otherwise).
+librariesService.addLifecycleListener(syncService);
 
 const librariesApi = new LibrariesApi(librariesService, syncService);
 const photosApi = new PhotosApi(photosService);
