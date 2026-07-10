@@ -1,4 +1,6 @@
-import { SoftDeleteFilterSchema, PaginationSchema, OrderingSchema } from '../common';
+import { SoftDeleteFilterSchema, PaginationSchema, OrderingSchema, PhotoIdListSchema } from '../common';
+
+const uuid = '11111111-1111-4111-8111-111111111111';
 
 describe('SoftDeleteFilterSchema', () => {
   it('parses the string "false" as false and defaults to false', () => {
@@ -14,6 +16,15 @@ describe('PaginationSchema', () => {
     expect(PaginationSchema.parse({ offset: '20', limit: '50' })).toEqual({ offset: 20, limit: 50 });
     expect(() => PaginationSchema.parse({ limit: '501' })).toThrow();
     expect(() => PaginationSchema.parse({ limit: '0' })).toThrow();
+  });
+});
+
+describe('PhotoIdListSchema', () => {
+  it('requires 1-1000 valid UUIDs', () => {
+    expect(PhotoIdListSchema.parse({ photo_ids: [uuid] }).photo_ids).toEqual([uuid]);
+    expect(() => PhotoIdListSchema.parse({ photo_ids: [] })).toThrow();
+    expect(() => PhotoIdListSchema.parse({ photo_ids: ['not-a-uuid'] })).toThrow();
+    expect(() => PhotoIdListSchema.parse({ photo_ids: Array(1001).fill(uuid) })).toThrow();
   });
 });
 

@@ -21,8 +21,11 @@ export const SoftDeleteFilterSchema = z.object({
 });
 export type SoftDeleteFilter = z.infer<typeof SoftDeleteFilterSchema>;
 
+// max bounds per-request work (each id can drive a file move / delete) and keeps
+// the IN(...) placeholder count well under SQLite's variable limit. A client with
+// a larger selection chunks it. 400 on overflow beats a 500 or a stalled request.
 export const PhotoIdListSchema = z.object({
-  photo_ids: z.array(UuidSchema).min(1),
+  photo_ids: z.array(UuidSchema).min(1).max(1000),
 });
 export type PhotoIdList = z.infer<typeof PhotoIdListSchema>;
 
