@@ -4,7 +4,7 @@
 // is NOT re-detected (it doesn't bump the dir mtime).
 //   docker exec bowerbird-dev bun test test/integration
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, utimesSync } from 'node:fs';
+import { copyFileSync, linkSync, mkdirSync, mkdtempSync, rmSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createDatabase } from '../../src/db/connection';
@@ -24,6 +24,7 @@ let sync: SyncService;
 
 const abs = (rel: string) => path.join(root, rel);
 const row = (filePath: string) => db.query('SELECT id FROM photos WHERE file_path = ?').get(filePath) as { id: string } | null;
+const count = () => (db.query('SELECT COUNT(*) AS n FROM photos').get() as { n: number }).n;
 const updatedAt = (filePath: string) =>
   (db.query('SELECT date_updated FROM photos WHERE file_path = ?').get(filePath) as { date_updated: string }).date_updated;
 
@@ -69,4 +70,22 @@ test('an in-place edit in an UNCHANGED directory is skipped under pruning (docum
   utimesSync(abs('Trip/x.arw'), future, future); // file mtime changes; Trip's dir mtime does not
   await sync.syncLibrary(LIB);
   expect(updatedAt('Trip/x.arw')).toBe(before); // pruned: Trip skipped, edit not re-detected
+});
+
+// The cache must be refreshed each cycle, else a dir stays "changed" (or "unchanged")
+// forever after the first structural change.
+test('a structural change in a later cycle is still detected', async () => {
+  copyFileSync(FIXTURE, abs('Trip/y.arw')); // bumps Trip's mtime this time
+  await sync.syncLibrary(LIB);
+  expect(row('Trip/y.arw')).not.toBeNull();
+});
+
+// A hardlink adds a directory entry, so the dir can't be pruned; both names get
+// stat'd and the inode dedup collapses them (no duplicate row).
+test('an in-flight-move hardlink pair does not duplicate under pruning', async () => {
+  const before = count();
+  linkSync(abs('a.arw'), abs('a-link.arw'));
+  await sync.syncLibrary(LIB);
+  expect(count()).toBe(before);
+  expect(row('a-link.arw')).toBeNull();
 });
