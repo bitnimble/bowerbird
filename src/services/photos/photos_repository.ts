@@ -298,15 +298,21 @@ export class PhotosRepository {
   }
 
   // Sync rows at specific paths, the candidate set a scoped (watcher-driven) sync
-  // reconciles, instead of the whole library (§9 scoped sync).
+  // reconciles, instead of the whole library (§9 scoped sync). Chunked so a scoped
+  // sync over many discovered files can't exceed SQLite's bound-variable limit.
   listForSyncByPaths(libraryId: string, paths: readonly string[]): SyncDbPhoto[] {
-    if (paths.length === 0) return [];
-    const placeholders = paths.map(() => '?').join(', ');
-    return this.mapSyncRows(
-      this.db
-        .query(`SELECT ${SYNC_COLUMNS} FROM photos WHERE library_id = ? AND is_deleted = 0 AND file_path IN (${placeholders})`)
-        .all(libraryId, ...paths) as SyncRow[],
-    );
+    const CHUNK = 900; // safely under SQLITE_MAX_VARIABLE_NUMBER (999 on old builds)
+    const rows: SyncRow[] = [];
+    for (let i = 0; i < paths.length; i += CHUNK) {
+      const batch = paths.slice(i, i + CHUNK);
+      const placeholders = batch.map(() => '?').join(', ');
+      rows.push(
+        ...(this.db
+          .query(`SELECT ${SYNC_COLUMNS} FROM photos WHERE library_id = ? AND is_deleted = 0 AND file_path IN (${placeholders})`)
+          .all(libraryId, ...batch) as SyncRow[]),
+      );
+    }
+    return this.mapSyncRows(rows);
   }
 
   // Already-missing rows; the move-source pool a scoped sync pairs new files

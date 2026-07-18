@@ -41,6 +41,16 @@ test('getBasicByIds excludes soft-deleted photos', () => {
   expect(result.map((p) => p.id)).toEqual(['active']);
 });
 
+// Regression: a scoped sync can pass thousands of discovered paths; the chunked
+// IN(...) must not exceed SQLite's variable limit (would throw and drop the change).
+test('listForSyncByPaths handles a path count over the variable limit', () => {
+  insertPhoto('bulk', 0); // file_path = 'bulk.arw'
+  const manyPaths = [...Array(5000)].map((_, i) => `ghost-${i}.arw`);
+  manyPaths.push('bulk.arw');
+  const result = photos.listForSyncByPaths(LIB, manyPaths);
+  expect(result.map((p) => p.file_path)).toContain('bulk.arw');
+});
+
 const missingOf = (id: string) => (db.query('SELECT is_missing FROM photos WHERE id = ?').get(id) as { is_missing: number }).is_missing;
 
 // Regression: setMissing is path-guarded so a photo relocated by a concurrent
