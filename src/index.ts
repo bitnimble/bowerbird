@@ -17,7 +17,6 @@ import { ImageApi } from './api/image/image_api';
 import { SyncService } from './services/sync/sync_service';
 import { LibraryWatcher } from './services/sync/library_watcher';
 import { PeriodicSync } from './services/sync/periodic_sync';
-import { extractMetadata } from './services/processing/metadata';
 import { ProcessingService } from './services/processing/processing_service';
 import { config } from './config';
 
@@ -34,15 +33,7 @@ const librariesService = new LibrariesService(librariesRepo);
 const photosService = new PhotosService(photosRepo, albumsRepo, shootsRepo, librariesRepo);
 const albumsService = new AlbumsService(albumsRepo, photosRepo);
 const shootsService = new ShootsService(shootsRepo, photosRepo, librariesRepo);
-const syncService = new SyncService(
-  photosRepo,
-  librariesRepo,
-  albumsRepo,
-  shootsRepo,
-  processingService,
-  extractMetadata,
-  config.syncPruneUnchangedDirs,
-);
+const syncService = new SyncService(photosRepo, librariesRepo, albumsRepo, shootsRepo, processingService);
 // Prune sync's per-library in-memory state when a library is deleted (unbounded otherwise).
 librariesService.addLifecycleListener(syncService);
 
