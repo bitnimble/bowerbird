@@ -66,6 +66,75 @@ export async function listSupportedFiles(rootPath: string, dataPath: string): Pr
   return results;
 }
 
+export interface PrunedScan {
+  // Files in directories whose mtime is unchanged since the last scan: their set
+  // can't have changed (add/remove/rename bumps dir mtime), so they're present and
+  // need no re-stat. Caveat: an in-place content edit doesn't bump dir mtime, so
+  // it is NOT detected here (see config.syncPruneUnchangedDirs).
+  unchangedFiles: ScannedFile[];
+  // Files in new or structurally-changed directories: still need a stat/quick-check.
+  changedFiles: ScannedFile[];
+  // relDir -> mtimeMs for every walked directory, to feed the next scan.
+  dirMtimes: Map<string, number>;
+}
+
+// Like listSupportedFiles, but splits files by whether their directory's mtime
+// changed since `priorMtimes`, so an unchanged directory's files can skip the
+// per-file stat. Still descends every directory (a subdir's contents may change
+// without bumping its parent's mtime).
+export async function listSupportedFilesPruned(
+  rootPath: string,
+  dataPath: string,
+  priorMtimes: ReadonlyMap<string, number>,
+): Promise<PrunedScan> {
+  const unchangedFiles: ScannedFile[] = [];
+  const changedFiles: ScannedFile[] = [];
+  const dirMtimes = new Map<string, number>();
+  const resolvedData = path.resolve(dataPath);
+  const visitedDirs = new Set<string>();
+
+  async function walk(absDir: string, relDir: string): Promise<void> {
+    let mtimeMs: number;
+    try {
+      mtimeMs = (await stat(absDir)).mtimeMs;
+    } catch {
+      return; // directory vanished mid-walk
+    }
+    dirMtimes.set(relDir, mtimeMs);
+    const dirUnchanged = priorMtimes.get(relDir) === mtimeMs;
+    const entries = await readdir(absDir, { withFileTypes: true });
+    for (const entry of entries) {
+      const abs = path.join(absDir, entry.name);
+      let isDir = entry.isDirectory();
+      let isFile = entry.isFile();
+      if (entry.isSymbolicLink()) {
+        try {
+          const target = await stat(abs);
+          isDir = target.isDirectory();
+          isFile = target.isFile();
+        } catch {
+          continue;
+        }
+      }
+      if (isDir) {
+        if (isExcludedDir(entry.name)) continue;
+        if (path.resolve(abs) === resolvedData) continue;
+        const real = await realpath(abs).catch(() => abs);
+        if (visitedDirs.has(real)) continue;
+        visitedDirs.add(real);
+        await walk(abs, relDir ? `${relDir}/${entry.name}` : entry.name);
+      } else if (isFile && isSupportedFile(entry.name)) {
+        const rel = path.relative(rootPath, abs).split(path.sep).join('/');
+        (dirUnchanged ? unchangedFiles : changedFiles).push({ relPath: rel, absPath: abs });
+      }
+    }
+  }
+
+  visitedDirs.add(await realpath(rootPath).catch(() => path.resolve(rootPath)));
+  await walk(rootPath, '');
+  return { unchangedFiles, changedFiles, dirMtimes };
+}
+
 // Atomically moves `from` into `dir` with a collision-free name, returning the
 // absolute destination. link()+unlink() makes name selection and the move a
 // single step, so two concurrent moves of the same basename can't overwrite each

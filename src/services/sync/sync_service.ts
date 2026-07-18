@@ -3,7 +3,7 @@ import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { AppError } from '../../errors';
 import type { Library, LibrarySyncStatus } from '../../schemas/libraries';
-import { isSupportedFile, listSupportedFiles, type ScannedFile } from '../../utils/files';
+import { isSupportedFile, listSupportedFiles, listSupportedFilesPruned, type ScannedFile } from '../../utils/files';
 import { computeFileHash } from '../../utils/hash';
 import { getDataPath } from '../../utils/paths';
 import { mostSpecificShoot } from '../../utils/shoots';
@@ -45,6 +45,8 @@ export class SyncService implements LibraryLifecycleListener {
   // processing tail is still going; the token lets a stale tail skip its status
   // write instead of stomping the newer generation's status.
   private readonly generation = new Map<string, object>();
+  // Per-library relDir -> mtimeMs from the last full scan, for dir-mtime pruning.
+  private readonly dirMtimes = new Map<string, Map<string, number>>();
 
   constructor(
     private readonly photos: PhotosRepository,
@@ -53,6 +55,7 @@ export class SyncService implements LibraryLifecycleListener {
     private readonly shoots: ShootsRepository,
     private readonly processing: ProcessingTrigger,
     private readonly extract: MetadataExtractor = extractMetadata,
+    private readonly pruneUnchangedDirs = false,
   ) {}
 
   onLibraryCreated(_library: Library): void {
@@ -64,6 +67,7 @@ export class SyncService implements LibraryLifecycleListener {
   onLibraryDeleted(libraryId: string): void {
     this.statuses.delete(libraryId);
     this.generation.delete(libraryId);
+    this.dirMtimes.delete(libraryId);
   }
 
   async syncAll(): Promise<void> {
@@ -99,21 +103,22 @@ export class SyncService implements LibraryLifecycleListener {
 
       const dataPath = getDataPath(library);
       let dbPhotos: SyncDbPhoto[];
-      let files: readonly ScannedFile[];
+      let scan: { present: Set<string>; changed: DiskFile[]; failed: Set<string> };
       if (scopePaths != null) {
         // Bun's fs.watch delivers only one event for a rename (the old name), so
         // readdir the changed paths' directories to also discover the move target
         // (a sibling). Reconcile only those directories' current files against the
         // rows at the changed + discovered paths, plus the missing move-source pool.
-        files = await this.scopedFiles(library.root_path, dataPath, this.scopeDirs(scopePaths));
+        const files = await this.scopedFiles(library.root_path, dataPath, this.scopeDirs(scopePaths));
         const known = new Set<string>(scopePaths);
         for (const f of files) known.add(f.relPath);
         dbPhotos = this.scopedDbPhotos(libraryId, [...known]);
+        scan = await this.scanFiles(files, dbPhotos);
       } else {
         dbPhotos = this.photos.listForSync(libraryId);
-        files = await listSupportedFiles(library.root_path, dataPath);
+        scan = await this.fullScan(libraryId, library.root_path, dataPath, dbPhotos);
       }
-      const { present, changed, failed } = await this.scanFiles(files, dbPhotos);
+      const { present, changed, failed } = scan;
       const diff = buildDiff(dbPhotos, present, changed, failed);
       const result = detectMoves(diff, (id) => this.albums.getAlbumIdsForPhoto(id).length > 0);
 
@@ -224,6 +229,27 @@ export class SyncService implements LibraryLifecycleListener {
   getSyncStatus(libraryId: string): LibrarySyncStatus {
     if (!this.libraries.getById(libraryId)) throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
     return this.statuses.get(libraryId) ?? idle(libraryId);
+  }
+
+  // Full-library scan. With pruning off, stats every file. With pruning on, files
+  // in directories whose mtime is unchanged since the last full scan are taken as
+  // present-and-unchanged (no stat), catching add/remove/rename but not an in-place
+  // content edit (which the watcher catches live). See config.syncPruneUnchangedDirs.
+  private async fullScan(
+    libraryId: string,
+    rootPath: string,
+    dataPath: string,
+    dbPhotos: readonly SyncDbPhoto[],
+  ): Promise<{ present: Set<string>; changed: DiskFile[]; failed: Set<string> }> {
+    if (!this.pruneUnchangedDirs) {
+      return this.scanFiles(await listSupportedFiles(rootPath, dataPath), dbPhotos);
+    }
+    const prior = this.dirMtimes.get(libraryId) ?? new Map<string, number>();
+    const { unchangedFiles, changedFiles, dirMtimes } = await listSupportedFilesPruned(rootPath, dataPath, prior);
+    this.dirMtimes.set(libraryId, dirMtimes);
+    const scan = await this.scanFiles(changedFiles, dbPhotos);
+    for (const f of unchangedFiles) scan.present.add(f.relPath); // present, and not re-hashed
+    return scan;
   }
 
   // The rows a scoped sync reconciles: those at the changed + discovered paths

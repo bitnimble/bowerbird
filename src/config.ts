@@ -23,6 +23,12 @@ export const config = {
   // (scoped, lossy-event-driven) syncs missed; dropped events, cross-dir moves,
   // external edits. 0 disables it. Default 15 min.
   fullSyncIntervalMs: envNumber('SYNC_FULL_INTERVAL_MS', 15 * 60 * 1000),
+  // Full-scan optimization: skip stat-ing files in directories whose mtime is
+  // unchanged since the last full scan. Big speedup on large libraries, but a
+  // pruned scan detects add/remove/rename (which bump dir mtime), NOT an in-place
+  // content edit of an existing file (which doesn't). Live edits are still caught
+  // by the watcher; only enable if RAWs are effectively immutable. Default off.
+  syncPruneUnchangedDirs: (process.env.SYNC_PRUNE_UNCHANGED_DIRS ?? 'false') === 'true',
   processingConcurrency: envNumber('PROCESSING_CONCURRENCY', 4),
   smallThumbnailSize: envNumber('SMALL_THUMBNAIL_SIZE', 800),
   fullThumbnailSize: envNumber('FULL_THUMBNAIL_SIZE', 3840),
