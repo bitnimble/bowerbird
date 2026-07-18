@@ -16,7 +16,7 @@ import { AlbumsRepository } from './services/albums/albums_repository';
 import { ImageApi } from './api/image/image_api';
 import { SyncService } from './services/sync/sync_service';
 import { LibraryWatcher } from './services/sync/library_watcher';
-import { PeriodicSync } from './services/sync/periodic_sync';
+import { DailySync } from './services/sync/daily_sync';
 import { ProcessingService } from './services/processing/processing_service';
 import { config } from './config';
 
@@ -57,9 +57,9 @@ if (config.watchEnabled) {
   console.log(`Filesystem watching enabled (debounce ${config.watchDebounceMs}ms)`);
 }
 
-if (config.fullSyncIntervalMs > 0) {
-  new PeriodicSync(syncService, config.fullSyncIntervalMs).start();
-  console.log(`Periodic full reconcile every ${Math.round(config.fullSyncIntervalMs / 1000)}s`);
+if (config.fullSyncAt !== '') {
+  new DailySync(syncService, config.fullSyncAt).start();
+  console.log(`Daily full reconcile at ${config.fullSyncAt}`);
 }
 
 applyErrorHandler(app);

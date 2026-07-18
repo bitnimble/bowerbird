@@ -14,6 +14,7 @@ import type { PhotosRepository, SyncDbPhoto } from '../photos/photos_repository'
 import type { ShootsRepository } from '../shoots/shoots_repository';
 import { extractMetadata, type FileMetadata } from '../processing/metadata';
 import { buildDiff, detectMoves, type DiskFile } from './sync_algorithm';
+import { libraryMutex } from './library_mutex';
 import { acquireSyncLock, releaseSyncLock } from './sync_lock';
 
 export interface ProcessingTrigger {
@@ -95,6 +96,10 @@ export class SyncService implements LibraryLifecycleListener {
     this.generation.set(libraryId, token);
     let syncedStatus: LibrarySyncStatus | null = null;
     try {
+      // Inside the mutex, outside the file lock: file lock first keeps sync-vs-sync
+      // fail-fast (409), while the mutex makes file-moving mutations queue behind
+      // this scan instead of invalidating its snapshot mid-flight.
+      const synced = await libraryMutex.run(libraryId, async () => {
       this.statuses.set(libraryId, idle(libraryId, 'scanning'));
 
       const dataPath = getDataPath(library);
@@ -192,8 +197,10 @@ export class SyncService implements LibraryLifecycleListener {
         photos_processed: 0,
       };
       this.statuses.set(libraryId, status);
-      syncedStatus = status;
       return status;
+      });
+      syncedStatus = synced;
+      return synced;
     } catch (err) {
       // Scan/apply threw (e.g. root unmounted, DB error): reset status so the API
       // doesn't report 'scanning' forever. Still our generation here (the lock,

@@ -10,6 +10,7 @@ import { moveIntoDir } from '../../utils/files';
 import type { AlbumsRepository } from '../albums/albums_repository';
 import type { LibrariesRepository } from '../libraries/libraries_repository';
 import type { ShootsRepository } from '../shoots/shoots_repository';
+import { libraryMutex } from '../sync/library_mutex';
 import type { PhotoListFilters, PhotoListResult, PhotosRepository } from './photos_repository';
 
 export class PhotosService {
@@ -90,6 +91,9 @@ export class PhotosService {
         const library = this.libraries.getById(photo.library_id);
         if (!library) continue;
 
+        // Queue behind any in-flight sync of this library: the Bin move would
+        // otherwise invalidate its mid-scan snapshot.
+        await libraryMutex.run(photo.library_id, async () => {
         const from = getOriginalPath(library, photo.file_path);
         let binRelPath: string | null = null;
         let movedToBin: string | null = null;
@@ -126,6 +130,7 @@ export class PhotosService {
         // a stale thumbnail is harmless (endpoints 404 on deleted photos).
         await rm(getSmallThumbnailPath(library, photo.id), { force: true }).catch(() => {});
         await rm(getFullThumbnailPath(library, photo.id), { force: true }).catch(() => {});
+        });
       } catch (err) {
         failures.push(`${id}: ${(err as Error).message}`);
       }

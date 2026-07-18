@@ -794,7 +794,7 @@ Sync is locked **per library**, so two different libraries can sync concurrently
 
 The in-memory `SyncStatus` (§9.6) is process-local and lost on restart; the per-library lock file is the cross-process source of truth for "is this library syncing".
 
-### 9.8 Sync Triggers: Manual, Scoped Watcher, Periodic Backstop
+### 9.8 Sync Triggers: Manual, Scoped Watcher, Daily Backstop
 
 `syncLibrary` runs in three ways:
 
@@ -802,7 +802,15 @@ The in-memory `SyncStatus` (§9.6) is process-local and lost on restart; the per
 2. **Scoped (watcher)**, the `LibraryWatcher` accumulates the changed relative paths in each debounce window and calls `syncLibrary(id, scopePaths)`. A scoped sync **does not walk the tree**: it `readdir`s only the changed paths' *parent directories* and reconciles their current files against the DB rows at the changed + discovered paths, plus every already-missing row (the move-source pool). This is cheap and its cost scales with the number of changed directories, not library size.
    - **Why directory-scoped, not file-scoped:** Bun's recursive `fs.watch` delivers only **one** event for a rename (the old name), so a file-scoped sync could never see the move target. Reading the changed path's directory surfaces the target as a sibling, so an intra-directory rename still resolves to a move (§9.3). A cross-directory move (whose target event was dropped) marks the old path missing, then reunites with the original row via the missing pool on a later scoped sync of the target directory, or on the periodic full sync.
    - A debounce window with more than 256 distinct changed paths (bulk import) falls back to a full sync.
-3. **Periodic full reconcile**, `PeriodicSync` runs `syncAll()` every `SYNC_FULL_INTERVAL_MS` (default 15 min, 0 disables), overlap-guarded. This is the correctness **backstop** for anything the scoped, event-driven watcher missed: `fs.watch` events Bun coalesced/dropped, cross-directory moves whose target event never arrived, and edits made while the server was down.
+3. **Daily full reconcile**, `DailySync` runs `syncAll()` once a day at `SYNC_FULL_AT` (local `HH:MM`, default `03:00`, `""` disables), overlap-guarded and re-scheduled each day so it holds its wall-clock time across DST. This is the correctness **backstop** for anything the scoped, event-driven watcher missed: `fs.watch` events Bun coalesced/dropped, cross-directory moves whose target event never arrived, and edits made while the server was down. It's overnight by default because a full scan holds the library mutex (§9.9) for its whole duration.
+
+### 9.9 Library Mutex
+
+Sync snapshots the DB, then scans **asynchronously**, then applies. A user mutation that moves files (shoot add/remove/rename, photo delete) landing mid-scan would make that snapshot stale. `libraryMutex` (one process-global instance) serializes those mutations against sync **per library**: whoever arrives second queues rather than failing, since these are interactive requests.
+
+- `syncLibrary` takes the sync **lock file first, then the mutex**. Lock-first keeps sync-vs-sync fail-fast (`SYNC_IN_PROGRESS`, 409, §9.7); the mutex only makes *mutations* wait. Mutations never take the lock file, so there is no cycle to deadlock on.
+- The mutex is acquired at exactly one level per operation (e.g. in `rename`, not its caller `update`), since it is not re-entrant.
+- This closes the mutation-vs-scan race class at the source, rather than guarding each symptom. The per-write guards it supersedes are kept anyway (path-guarded `setMissing`, the `(dev, ino)` collapse, the re-checks before FK writes) because they also cover the cross-process case the in-memory mutex cannot.
 
 **Why the full scan stats every file.** Skipping the stat for files in directories whose mtime is unchanged was tried and removed: the stat is the *only* cost it saves (the mtime+size quick-check already skips the expensive decode for unchanged files), and skipping it also skips the `(dev, ino)` collapse that `moveIntoDir`'s non-atomic `link()`-then-`unlink()` window depends on. A cross-directory move bumps only the destination directory's mtime, so the source stays "unchanged" and is pruned; the destination is then inserted as a new photo while the source row survives, leaving a duplicate. Making it safe means restoring the stat, which leaves no saving.
 

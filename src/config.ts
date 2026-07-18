@@ -12,6 +12,20 @@ function envNumber(name: string, fallback: number): number {
   return value;
 }
 
+// Parses a local time-of-day env var as "HH:MM", or "" to disable. Fails fast
+// rather than silently never firing.
+function envTimeOfDay(name: string, fallback: string): string {
+  const raw = process.env[name] ?? fallback;
+  if (raw === '') return '';
+  const match = /^(\d{1,2}):(\d{2})$/.exec(raw);
+  const hours = match ? Number(match[1]) : NaN;
+  const minutes = match ? Number(match[2]) : NaN;
+  if (!(hours >= 0 && hours < 24 && minutes >= 0 && minutes < 60)) {
+    throw new Error(`Invalid ${name}: "${raw}" is not a time of day (expected HH:MM, or "" to disable)`);
+  }
+  return raw;
+}
+
 export const config = {
   port: envNumber('PORT', 3000),
   host: process.env.HOST ?? '0.0.0.0',
@@ -19,10 +33,11 @@ export const config = {
   // Filesystem watching: auto-sync a library when its files change on disk.
   watchEnabled: (process.env.WATCH_ENABLED ?? 'true') !== 'false',
   watchDebounceMs: envNumber('WATCH_DEBOUNCE_MS', 2000),
-  // Periodic full reconcile: the backstop that catches changes the watcher's
+  // Daily full reconcile: the backstop that catches changes the watcher's
   // (scoped, lossy-event-driven) syncs missed; dropped events, cross-dir moves,
-  // external edits. 0 disables it. Default 15 min.
-  fullSyncIntervalMs: envNumber('SYNC_FULL_INTERVAL_MS', 15 * 60 * 1000),
+  // edits made while the server was down. Local "HH:MM"; "" disables. A full scan
+  // holds the library mutex, so the default is overnight, out of the way.
+  fullSyncAt: envTimeOfDay('SYNC_FULL_AT', '03:00'),
   processingConcurrency: envNumber('PROCESSING_CONCURRENCY', 4),
   smallThumbnailSize: envNumber('SMALL_THUMBNAIL_SIZE', 800),
   fullThumbnailSize: envNumber('FULL_THUMBNAIL_SIZE', 3840),

@@ -10,6 +10,7 @@ import { moveIntoDir } from '../../utils/files';
 import { toLibraryRelative } from '../../utils/paths';
 import { mostSpecificShoot } from '../../utils/shoots';
 import type { LibrariesRepository } from '../libraries/libraries_repository';
+import { libraryMutex } from '../sync/library_mutex';
 import type { PhotosRepository } from '../photos/photos_repository';
 import type { ShootsRepository } from './shoots_repository';
 
@@ -91,6 +92,9 @@ export class ShootsService {
     }
     await this.ensureDir(destDir);
 
+    // Queue behind any in-flight sync of this library: these moves would otherwise
+    // invalidate its mid-scan snapshot.
+    await libraryMutex.run(shoot.library_id, async () => {
     for (const photo of photos) {
       const from = path.join(library.root_path, photo.file_path);
       const naturalDest = path.join(destDir, path.basename(photo.file_path));
@@ -114,6 +118,7 @@ export class ShootsService {
       }
       this.photos.setFilePathAndShoot(photo.id, relDest, shootId);
     }
+    });
   }
 
   private requireShootExists(shootId: string): void {
@@ -124,12 +129,14 @@ export class ShootsService {
     const shoot = this.get(shootId);
     const library = this.requireLibrary(shoot.library_id);
 
+    await libraryMutex.run(shoot.library_id, async () => {
     for (const photo of this.photos.getBasicByIds(photoIds)) {
       if (photo.shoot_id !== shootId || photo.library_id !== shoot.library_id) continue;
       const from = path.join(library.root_path, photo.file_path);
       const dest = await this.moveInto(from, library.root_path, path.basename(photo.file_path));
       this.photos.setFilePathAndShoot(photo.id, toLibraryRelative(library.root_path, dest), null);
     }
+    });
   }
 
   delete(shootId: string): void {
@@ -168,6 +175,8 @@ export class ShootsService {
     const oldFolder = shoot.folder_path;
     const slash = oldFolder.lastIndexOf('/');
     const newFolder = (slash >= 0 ? oldFolder.slice(0, slash + 1) : '') + newName;
+    // Taken here, not in update(), so it isn't acquired twice (that would deadlock).
+    return libraryMutex.run(shoot.library_id, async () => {
 
     const oldAbs = path.join(library.root_path, oldFolder);
     const newAbs = path.join(library.root_path, newFolder);
@@ -204,6 +213,7 @@ export class ShootsService {
       if (isUniqueViolation(err)) throw new AppError('CONFLICT', `shoot name already used in library: ${newName}`);
       throw err;
     }
+    });
   }
 
   private adoptExistingPhotos(libraryId: string, shootId: string, folderPath: string): void {
