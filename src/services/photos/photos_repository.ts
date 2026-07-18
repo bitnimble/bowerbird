@@ -79,6 +79,16 @@ function folderRange(folderPath: string): [string, string] {
 const SUMMARY_COLS =
   'photos.id, photos.library_id, photos.shoot_id, photos.width, photos.height, photos.date_taken, photos.date_added, photos.selected, photos.rating, photos.is_missing, photos.is_deleted';
 
+const SYNC_COLUMNS = 'id, file_path, file_hash, is_missing, date_updated, file_size';
+interface SyncRow {
+  id: string;
+  file_path: string;
+  file_hash: string | null;
+  is_missing: number;
+  date_updated: string | null;
+  file_size: number | null;
+}
+
 // Qualified: getById joins libraries to resolve ordering_date, so `id` etc. would
 // otherwise be ambiguous.
 const DETAIL_COLS = `photos.id, photos.library_id, photos.shoot_id, photos.width, photos.height,
@@ -280,16 +290,36 @@ export class PhotosRepository {
   // --- sync (DESIGN §9) ---
 
   listForSync(libraryId: string): SyncDbPhoto[] {
-    const rows = this.db
-      .query('SELECT id, file_path, file_hash, is_missing, date_updated, file_size FROM photos WHERE library_id = ? AND is_deleted = 0')
-      .all(libraryId) as {
-      id: string;
-      file_path: string;
-      file_hash: string | null;
-      is_missing: number;
-      date_updated: string | null;
-      file_size: number | null;
-    }[];
+    return this.mapSyncRows(
+      this.db
+        .query(`SELECT ${SYNC_COLUMNS} FROM photos WHERE library_id = ? AND is_deleted = 0`)
+        .all(libraryId) as SyncRow[],
+    );
+  }
+
+  // Sync rows at specific paths, the candidate set a scoped (watcher-driven) sync
+  // reconciles, instead of the whole library (§9 scoped sync).
+  listForSyncByPaths(libraryId: string, paths: readonly string[]): SyncDbPhoto[] {
+    if (paths.length === 0) return [];
+    const placeholders = paths.map(() => '?').join(', ');
+    return this.mapSyncRows(
+      this.db
+        .query(`SELECT ${SYNC_COLUMNS} FROM photos WHERE library_id = ? AND is_deleted = 0 AND file_path IN (${placeholders})`)
+        .all(libraryId, ...paths) as SyncRow[],
+    );
+  }
+
+  // Already-missing rows; the move-source pool a scoped sync pairs new files
+  // against by hash, so a relocation still resolves to a move across syncs (§9.3).
+  listMissingForSync(libraryId: string): SyncDbPhoto[] {
+    return this.mapSyncRows(
+      this.db
+        .query(`SELECT ${SYNC_COLUMNS} FROM photos WHERE library_id = ? AND is_deleted = 0 AND is_missing = 1`)
+        .all(libraryId) as SyncRow[],
+    );
+  }
+
+  private mapSyncRows(rows: SyncRow[]): SyncDbPhoto[] {
     return rows.map((r) => ({
       id: r.id,
       file_path: r.file_path,

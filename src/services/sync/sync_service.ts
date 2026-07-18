@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import { stat } from 'node:fs/promises';
+import { readdir, stat } from 'node:fs/promises';
+import path from 'node:path';
 import { AppError } from '../../errors';
 import type { Library, LibrarySyncStatus } from '../../schemas/libraries';
-import { listSupportedFiles } from '../../utils/files';
+import { isSupportedFile, listSupportedFiles, type ScannedFile } from '../../utils/files';
 import { computeFileHash } from '../../utils/hash';
 import { getDataPath } from '../../utils/paths';
 import { mostSpecificShoot } from '../../utils/shoots';
@@ -79,7 +80,13 @@ export class SyncService implements LibraryLifecycleListener {
     }
   }
 
-  async syncLibrary(libraryId: string): Promise<LibrarySyncStatus> {
+  // A full sync (scopePaths omitted) walks the whole tree. A scoped sync (from the
+  // watcher) reconciles only the given changed paths against their DB rows plus the
+  // already-missing move-source pool, cheap, and move-detection still resolves a
+  // relocation because both the removed old path and the added new path land in one
+  // debounce batch, or pair across syncs via the missing pool (§9.3). The periodic
+  // full sync (syncAll) is the backstop for events the watcher dropped.
+  async syncLibrary(libraryId: string, scopePaths?: readonly string[]): Promise<LibrarySyncStatus> {
     const library = this.libraries.getById(libraryId);
     if (!library) throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
 
@@ -90,8 +97,23 @@ export class SyncService implements LibraryLifecycleListener {
     try {
       this.statuses.set(libraryId, idle(libraryId, 'scanning'));
 
-      const dbPhotos = this.photos.listForSync(libraryId);
-      const { present, changed, failed } = await this.scan(library.root_path, getDataPath(library), dbPhotos);
+      const dataPath = getDataPath(library);
+      let dbPhotos: SyncDbPhoto[];
+      let files: readonly ScannedFile[];
+      if (scopePaths != null) {
+        // Bun's fs.watch delivers only one event for a rename (the old name), so
+        // readdir the changed paths' directories to also discover the move target
+        // (a sibling). Reconcile only those directories' current files against the
+        // rows at the changed + discovered paths, plus the missing move-source pool.
+        files = await this.scopedFiles(library.root_path, dataPath, this.scopeDirs(scopePaths));
+        const known = new Set<string>(scopePaths);
+        for (const f of files) known.add(f.relPath);
+        dbPhotos = this.scopedDbPhotos(libraryId, [...known]);
+      } else {
+        dbPhotos = this.photos.listForSync(libraryId);
+        files = await listSupportedFiles(library.root_path, dataPath);
+      }
+      const { present, changed, failed } = await this.scanFiles(files, dbPhotos);
       const diff = buildDiff(dbPhotos, present, changed, failed);
       const result = detectMoves(diff, (id) => this.albums.getAlbumIdsForPhoto(id).length > 0);
 
@@ -204,16 +226,60 @@ export class SyncService implements LibraryLifecycleListener {
     return this.statuses.get(libraryId) ?? idle(libraryId);
   }
 
-  // Lists every supported file (readdir + stat only) and opens/hashes ONLY the
-  // ones that are new or whose mtime+size changed vs the stored record (§9.1).
-  // Unchanged files are never opened, so a no-op sync does zero LibRaw work.
-  private async scan(
-    rootPath: string,
-    dataPath: string,
+  // The rows a scoped sync reconciles: those at the changed + discovered paths
+  // (candidates for remove/modify/reappear/add) plus every already-missing row (so
+  // a new file can still hash-pair into a move across syncs). Deduped by id.
+  private scopedDbPhotos(libraryId: string, knownPaths: readonly string[]): SyncDbPhoto[] {
+    const byId = new Map<string, SyncDbPhoto>();
+    for (const p of this.photos.listForSyncByPaths(libraryId, knownPaths)) byId.set(p.id, p);
+    for (const p of this.photos.listMissingForSync(libraryId)) byId.set(p.id, p);
+    return [...byId.values()];
+  }
+
+  // Unique parent directories of the changed paths ('' = library root).
+  private scopeDirs(scopePaths: readonly string[]): string[] {
+    const dirs = new Set<string>();
+    for (const p of scopePaths) {
+      const slash = p.lastIndexOf('/');
+      dirs.add(slash < 0 ? '' : p.slice(0, slash));
+    }
+    return [...dirs];
+  }
+
+  // readdir each scoped directory (non-recursive) for its current RAW files,
+  // dropping non-RAW, excluded-dir, and data-dir entries. A directory that's gone
+  // just yields nothing, so its DB rows fall through to `removed`.
+  private async scopedFiles(rootPath: string, dataPath: string, dirs: readonly string[]): Promise<ScannedFile[]> {
+    const resolvedData = path.resolve(dataPath);
+    const files: ScannedFile[] = [];
+    for (const dir of dirs) {
+      if (dir.split('/').some((s) => s.startsWith('.') || s === 'Bin')) continue;
+      const absDir = path.join(rootPath, dir);
+      let entries;
+      try {
+        entries = await readdir(absDir, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+      for (const entry of entries) {
+        if (entry.isDirectory() || !isSupportedFile(entry.name)) continue;
+        const absPath = path.join(absDir, entry.name);
+        const resolved = path.resolve(absPath);
+        if (resolved === resolvedData || resolved.startsWith(`${resolvedData}${path.sep}`)) continue;
+        files.push({ relPath: dir ? `${dir}/${entry.name}` : entry.name, absPath });
+      }
+    }
+    return files;
+  }
+
+  // Stats each file and opens/hashes ONLY the ones that are new or whose mtime+size
+  // changed vs the stored record (§9.1). Unchanged files are never opened, so a
+  // no-op sync does zero LibRaw work. Shared by the full and scoped paths.
+  private async scanFiles(
+    files: readonly ScannedFile[],
     dbPhotos: readonly SyncDbPhoto[],
   ): Promise<{ present: Set<string>; changed: DiskFile[]; failed: Set<string> }> {
     const dbByPath = new Map(dbPhotos.map((p) => [p.file_path, p]));
-    const files = await listSupportedFiles(rootPath, dataPath);
 
     // Stat everything, collapsing hardlink pairs (same dev+ino) to a single path.
     // A concurrent non-atomic move (moveIntoDir does link() then unlink()) briefly

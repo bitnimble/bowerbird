@@ -9,6 +9,11 @@ import type { SyncService } from './sync_service';
 
 type Timer = ReturnType<typeof setTimeout>;
 
+// Above this many distinct changed paths in one debounce window, a scoped sync's
+// IN(...) clause and per-path work stop being cheaper than a full walk (a bulk
+// import), so fall back to a full sync.
+const MAX_SCOPE = 256;
+
 // Watches each library root and triggers a debounced sync when its files change
 // on disk. Reactive counterpart to the on-demand POST /sync (DESIGN §9). Change
 // detection stays with sync; the watcher only decides *when* to run it.
@@ -18,6 +23,9 @@ export class LibraryWatcher implements LibraryLifecycleListener {
   private readonly retryTimers = new Map<string, Timer>();
   private readonly syncing = new Set<string>();
   private readonly dirty = new Set<string>();
+  // Changed relative paths accumulated per library during the debounce window; the
+  // next run() reconciles just these (scoped sync) instead of the whole library.
+  private readonly pending = new Map<string, Set<string>>();
   private stopped = false;
 
   constructor(
@@ -41,6 +49,7 @@ export class LibraryWatcher implements LibraryLifecycleListener {
     this.watchers.clear();
     this.timers.clear();
     this.retryTimers.clear();
+    this.pending.clear();
   }
 
   onLibraryCreated(library: Library): void {
@@ -59,6 +68,7 @@ export class LibraryWatcher implements LibraryLifecycleListener {
     // library that no longer exists (which would then fail with NOT_FOUND).
     this.syncing.delete(libraryId);
     this.dirty.delete(libraryId);
+    this.pending.delete(libraryId);
   }
 
   private watchLibrary(library: Library): void {
@@ -70,7 +80,10 @@ export class LibraryWatcher implements LibraryLifecycleListener {
     const dataDir = path.resolve(getDataPath(library));
     try {
       const watcher = watch(library.root_path, { recursive: true }, (_event, filename) => {
-        if (filename != null && this.isRelevant(library.root_path, dataDir, filename.toString())) {
+        if (filename == null) return;
+        const relPath = filename.toString().split(path.sep).join('/');
+        if (this.isRelevant(library.root_path, dataDir, relPath)) {
+          this.record(library.id, relPath);
           this.schedule(library.id);
         }
       });
@@ -115,6 +128,15 @@ export class LibraryWatcher implements LibraryLifecycleListener {
     return abs !== dataDir && !abs.startsWith(`${dataDir}${path.sep}`);
   }
 
+  private record(libraryId: string, relPath: string): void {
+    let set = this.pending.get(libraryId);
+    if (set == null) {
+      set = new Set();
+      this.pending.set(libraryId, set);
+    }
+    set.add(relPath);
+  }
+
   private schedule(libraryId: string): void {
     if (this.stopped) return;
     const existing = this.timers.get(libraryId);
@@ -128,17 +150,27 @@ export class LibraryWatcher implements LibraryLifecycleListener {
   private async run(libraryId: string): Promise<void> {
     this.timers.delete(libraryId);
     if (this.syncing.has(libraryId)) {
-      this.dirty.add(libraryId); // change arrived mid-sync: re-run afterwards
+      this.dirty.add(libraryId); // change arrived mid-sync: re-run afterwards (pending keeps accumulating)
       return;
     }
+    // Consume the accumulated paths. A large batch (bulk import) or an empty set
+    // (a dirty re-run that raced its own consume) falls back to a full sync.
+    const paths = this.pending.get(libraryId) ?? new Set<string>();
+    this.pending.delete(libraryId);
+    const scope = paths.size > 0 && paths.size <= MAX_SCOPE ? [...paths] : undefined;
+
     this.syncing.add(libraryId);
     try {
-      await this.sync.syncLibrary(libraryId);
+      await this.sync.syncLibrary(libraryId, scope);
     } catch (err) {
       const code = err instanceof AppError ? err.code : null;
       // Lost the lock race to an external/manual sync whose scan may predate our
-      // change: re-arm so the change isn't dropped once the lock frees.
-      if (code === 'SYNC_IN_PROGRESS') this.dirty.add(libraryId);
+      // change: re-queue the paths and re-arm so the change isn't dropped (and stays
+      // scoped) once the lock frees.
+      if (code === 'SYNC_IN_PROGRESS') {
+        for (const p of paths) this.record(libraryId, p);
+        this.dirty.add(libraryId);
+      }
       // NOT_FOUND = library deleted mid-flight (benign, no retry). Anything else is real.
       else if (code !== 'NOT_FOUND') console.error(`auto-sync failed for library ${libraryId}: ${(err as Error).message}`);
     } finally {
