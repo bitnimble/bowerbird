@@ -794,6 +794,18 @@ Sync is locked **per library**, so two different libraries can sync concurrently
 
 The in-memory `SyncStatus` (§9.6) is process-local and lost on restart; the per-library lock file is the cross-process source of truth for "is this library syncing".
 
+### 9.8 Sync Triggers: Manual, Scoped Watcher, Periodic Backstop
+
+`syncLibrary` runs in three ways:
+
+1. **Manual**, `POST /api/libraries/:id/sync`. A full scan (whole tree).
+2. **Scoped (watcher)**, the `LibraryWatcher` accumulates the changed relative paths in each debounce window and calls `syncLibrary(id, scopePaths)`. A scoped sync **does not walk the tree**: it `readdir`s only the changed paths' *parent directories* and reconciles their current files against the DB rows at the changed + discovered paths, plus every already-missing row (the move-source pool). This is cheap and its cost scales with the number of changed directories, not library size.
+   - **Why directory-scoped, not file-scoped:** Bun's recursive `fs.watch` delivers only **one** event for a rename (the old name), so a file-scoped sync could never see the move target. Reading the changed path's directory surfaces the target as a sibling, so an intra-directory rename still resolves to a move (§9.3). A cross-directory move (whose target event was dropped) marks the old path missing, then reunites with the original row via the missing pool on a later scoped sync of the target directory, or on the periodic full sync.
+   - A debounce window with more than 256 distinct changed paths (bulk import) falls back to a full sync.
+3. **Periodic full reconcile**, `PeriodicSync` runs `syncAll()` every `SYNC_FULL_INTERVAL_MS` (default 15 min, 0 disables), overlap-guarded. This is the correctness **backstop** for anything the scoped, event-driven watcher missed: `fs.watch` events Bun coalesced/dropped, cross-directory moves whose target event never arrived, and edits made while the server was down.
+
+**Dir-mtime pruning (`SYNC_PRUNE_UNCHANGED_DIRS`, default off).** A full scan can skip stat-ing files in directories whose mtime is unchanged since the last full scan (kept in a per-library in-memory `relDir → mtime` map), treating them as present-and-unchanged. This detects add/remove/rename (which bump a directory's mtime) but **not** an in-place content edit of an existing file (which doesn't); so it's off by default and the modification-detection guarantee (§9.2) holds unless opted in. Live in-place edits are still caught by the watcher (the file's own change event), so pruning only skips in-place edits made while the server was down.
+
 ---
 
 ## 10. Processing Pipeline
