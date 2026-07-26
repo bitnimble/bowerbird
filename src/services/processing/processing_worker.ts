@@ -46,11 +46,12 @@ async function thumbnails(job: ProcessingJob): Promise<ThumbnailSource> {
 // an unprofiled PNG is read as sRGB, which is what the decode targets.
 async function lossless(job: LosslessJob): Promise<void> {
   const image = decodeRaw(job.rawFilePath, 16);
-  await sharp(image.data, {
-    // `depth` is missing from sharp's Raw typings but supported since 0.33;
-    // without it the 16-bit buffer is read as twice as many 8-bit pixels.
-    raw: { width: image.width, height: image.height, channels: image.channels, depth: 'ushort' },
-  } as sharp.SharpOptions)
+  // A Uint16Array view, not the Buffer. sharp infers sample depth from the typed
+  // array's type; passing a Buffer with `raw.depth: 'ushort'` is accepted and
+  // then ignored, and the 16-bit data gets read as 8-bit samples, which produces
+  // a plausible-looking file of the right dimensions and entirely wrong pixels.
+  const samples = new Uint16Array(image.data.buffer, image.data.byteOffset, image.width * image.height * image.channels);
+  await sharp(samples, { raw: { width: image.width, height: image.height, channels: image.channels } })
     // sharp downconverts to 8-bit on write unless the pipeline is explicitly in
     // a 16-bit space, which silently throws away the depth just decoded.
     .toColourspace('rgb16')
