@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { Config } from '../../../config';
 import type { PendingPhoto, PhotosRepository } from '../../photos/photos_repository';
+import type { SettingsRepository } from '../../settings/settings_repository';
 import { ProcessingService } from '../processing_service';
 import type { ProcessingJob, ProcessingResult } from '../processing_types';
 
@@ -18,11 +19,14 @@ class MockWorker {
   postMessage(job: ProcessingJob): void {
     queueMicrotask(() => {
       if (job.photoId === CRASH) this.onerror?.({ message: 'segfault' });
-      else this.onmessage?.({ data: { photoId: job.photoId, success: true } });
+      else this.onmessage?.({ data: { photoId: job.photoId, success: true, source: job.source } });
     });
   }
   terminate(): void {}
 }
+
+// Every fixture names its own source, so the default is never consulted here.
+const settings = { getThumbnailSource: () => 'render' as const } as SettingsRepository;
 
 const config = {
   processingConcurrency: 2,
@@ -45,7 +49,7 @@ describe('ProcessingService.processUnprocessed', () => {
   });
 
   function pending(photoId: string): PendingPhoto {
-    return { photo_id: photoId, file_path: `${photoId}.arw`, root_path: root, data_path: null };
+    return { photo_id: photoId, file_path: `${photoId}.arw`, root_path: root, data_path: null, thumbnail_source: 'render' };
   }
 
   it('marks each photo processed and drains the pool without hanging', async () => {
@@ -56,7 +60,7 @@ describe('ProcessingService.processUnprocessed', () => {
       markProcessingFailed: jest.fn(),
     } as unknown as PhotosRepository;
 
-    await new ProcessingService(repo, config).processUnprocessed('lib');
+    await new ProcessingService(repo, config, settings).processUnprocessed('lib');
 
     expect(markProcessed).toHaveBeenCalledTimes(3);
   });
@@ -73,7 +77,7 @@ describe('ProcessingService.processUnprocessed', () => {
 
     // Must resolve (not hang): applyResult swallows the throw so the pool's
     // assignNext/terminate bookkeeping still runs for every job.
-    await expect(new ProcessingService(repo, config).processUnprocessed('lib')).resolves.toBeUndefined();
+    await expect(new ProcessingService(repo, config, settings).processUnprocessed('lib')).resolves.toBeUndefined();
     expect(markProcessed).toHaveBeenCalledTimes(2);
   });
 
@@ -96,7 +100,7 @@ describe('ProcessingService.processUnprocessed', () => {
       markProcessingFailed,
     } as unknown as PhotosRepository;
 
-    await new ProcessingService(repo, config).processUnprocessed('lib');
+    await new ProcessingService(repo, config, settings).processUnprocessed('lib');
 
     expect(markProcessingFailed).toHaveBeenCalledWith(CRASH, expect.stringContaining('crashed'));
     for (let i = 0; i < 25 && (existsSync(staleSmall) || existsSync(staleFull)); i++) {
@@ -115,7 +119,7 @@ describe('ProcessingService.processUnprocessed', () => {
       markProcessingFailed,
     } as unknown as PhotosRepository;
 
-    await new ProcessingService(repo, config).processUnprocessed('lib');
+    await new ProcessingService(repo, config, settings).processUnprocessed('lib');
 
     expect(markProcessingFailed).not.toHaveBeenCalled();
   });
@@ -130,7 +134,7 @@ describe('ProcessingService.processUnprocessed', () => {
       return [];
     });
     const repo = { listPendingProcessing, markProcessed, markProcessingFailed: jest.fn() } as unknown as PhotosRepository;
-    const service = new ProcessingService(repo, config);
+    const service = new ProcessingService(repo, config, settings);
 
     // second call coalesces into the first and flags a rerun; both drain.
     const first = service.processUnprocessed('lib');
@@ -138,8 +142,8 @@ describe('ProcessingService.processUnprocessed', () => {
     expect(second).toBe(first); // same in-flight promise
     await Promise.all([first, second]);
 
-    expect(markProcessed).toHaveBeenCalledWith('a', expect.any(String));
-    expect(markProcessed).toHaveBeenCalledWith('b', expect.any(String));
+    expect(markProcessed).toHaveBeenCalledWith('a', expect.any(String), 'render');
+    expect(markProcessed).toHaveBeenCalledWith('b', expect.any(String), 'render');
   });
 
   it('leaves jobs pending (no hang, no throw) when a worker cannot be spawned', async () => {
@@ -156,12 +160,12 @@ describe('ProcessingService.processUnprocessed', () => {
       markProcessingFailed: jest.fn(),
     } as unknown as PhotosRepository;
 
-    await expect(new ProcessingService(repo, config).processUnprocessed('lib')).resolves.toBeUndefined();
+    await expect(new ProcessingService(repo, config, settings).processUnprocessed('lib')).resolves.toBeUndefined();
     expect(markProcessed).not.toHaveBeenCalled(); // untouched -> still needs_processing=1
   });
 
   it('does nothing when there is no pending work', async () => {
     const repo = { listPendingProcessing: jest.fn(() => []) } as unknown as PhotosRepository;
-    await expect(new ProcessingService(repo, config).processUnprocessed('lib')).resolves.toBeUndefined();
+    await expect(new ProcessingService(repo, config, settings).processUnprocessed('lib')).resolves.toBeUndefined();
   });
 });

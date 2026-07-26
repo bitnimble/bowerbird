@@ -1,10 +1,14 @@
 import { z } from 'zod';
-import { OrderingSchema, PaginationSchema, SoftDeleteFilterSchema, UuidSchema } from './common';
+import { OrderingSchema, PaginationSchema, PhotoIdListSchema, SoftDeleteFilterSchema, UuidSchema } from './common';
 
 // The cull verdict. 'untriaged' is the wire spelling of a NULL column: a photo
 // the user has not judged yet, which is the set they most often want to see.
 export const TriageSchema = z.enum(['untriaged', 'picked', 'rejected']);
 export type Triage = z.infer<typeof TriageSchema>;
+
+// 'embedded' = the camera's own JPEG lifted out of the RAW, 'render' = a full
+// demosaic. See §10.3 for the trade-off.
+export const ThumbnailSourceSchema = z.enum(['embedded', 'render']);
 
 export const PhotoSummarySchema = z.object({
   id: UuidSchema,
@@ -49,6 +53,8 @@ export const PhotoDetailSchema = PhotoSummarySchema.extend({
   camera_make: z.string().nullable(),
   camera_model: z.string().nullable(),
   lens_model: z.string().nullable(),
+  // Which pixels the thumbnails were built from; NULL before first processing.
+  thumbnail_source: ThumbnailSourceSchema.nullable(),
   // Albums this photo belongs to. On the detail only: it needs a second query,
   // and a grid of 100 tiles has no use for it.
   album_ids: z.array(UuidSchema),
@@ -62,6 +68,11 @@ export const PhotoListResponseSchema = z.object({
   limit: z.number().int(),
 });
 export type PhotoListResponse = z.infer<typeof PhotoListResponseSchema>;
+
+export const ReprocessRequestSchema = PhotoIdListSchema.extend({
+  source: ThumbnailSourceSchema,
+});
+export type ReprocessRequest = z.infer<typeof ReprocessRequestSchema>;
 
 export const UpdatePhotoRequestSchema = z.object({
   rating: z.number().int().min(0).max(5).optional(),

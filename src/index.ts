@@ -20,6 +20,7 @@ import { SyncService } from './services/sync/sync_service';
 import { LibraryWatcher } from './services/sync/library_watcher';
 import { DailySync } from './services/sync/daily_sync';
 import { ProcessingService } from './services/processing/processing_service';
+import { SettingsRepository } from './services/settings/settings_repository';
 import { config } from './config';
 
 const db = createDatabase(config.dbPath);
@@ -29,7 +30,8 @@ const photosRepo = new PhotosRepository(db);
 const shootsRepo = new ShootsRepository(db);
 const albumsRepo = new AlbumsRepository(db);
 
-const processingService = new ProcessingService(photosRepo, config);
+const settingsRepo = new SettingsRepository(db);
+const processingService = new ProcessingService(photosRepo, config, settingsRepo);
 
 const librariesService = new LibrariesService(librariesRepo);
 const photosService = new PhotosService(photosRepo, albumsRepo, shootsRepo, librariesRepo);
@@ -40,7 +42,7 @@ const syncService = new SyncService(photosRepo, librariesRepo, albumsRepo, shoot
 librariesService.addLifecycleListener(syncService);
 
 const librariesApi = new LibrariesApi(librariesService, syncService);
-const photosApi = new PhotosApi(photosService);
+const photosApi = new PhotosApi(photosService, processingService);
 const albumsApi = new AlbumsApi(albumsService, photosService);
 const shootsApi = new ShootsApi(shootsService, photosService);
 const imageApi = new ImageApi(photosService, librariesService);
@@ -73,7 +75,7 @@ app.use(
     exposeHeaders: ['Content-Length', 'Content-Range', 'Accept-Ranges'],
   }),
 );
-app.route('/api/config', new ConfigApi(config).routes);
+app.route('/api/config', new ConfigApi(config, settingsRepo).routes);
 app.route('/api/libraries', librariesApi.routes);
 app.route('/api', photosApi.routes);
 app.route('/api', shootsApi.routes);

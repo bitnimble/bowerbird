@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
+import sharp from 'sharp';
 import { AppError } from '../../errors';
 import { getFullThumbnailPath, getOriginalPath, getSmallThumbnailPath } from '../../utils/paths';
 import type { LibrariesService } from '../../services/libraries/libraries_service';
@@ -12,6 +13,8 @@ const CONTENT_TYPE: Record<Kind, string> = {
   full: 'image/webp',
   original: 'image/x-sony-arw',
 };
+
+const JPEG_QUALITY = 92;
 
 // Streams straight from disk via Bun.file (no buffering); Bun.serve applies Range
 // handling to the BunFile body for 206 partial content (DESIGN §13.5).
@@ -26,7 +29,31 @@ export class ImageApi {
     app.get('/:photoId/small.webp', (c) => this.serve(c, 'small'));
     app.get('/:photoId/full.webp', (c) => this.serve(c, 'full'));
     app.get('/:photoId/original.arw', (c) => this.serve(c, 'original'));
+    app.get('/:photoId/full.jpg', (c) => this.serveJpeg(c));
     this.routes = app;
+  }
+
+  // A JPEG of the full-size thumbnail, transcoded on request. Nothing is stored:
+  // a download is occasional, and a third derivative per photo on disk would cost
+  // more than the transcode does. Downloading the RAW is the other route.
+  private async serveJpeg(c: Context): Promise<Response> {
+    const photoId = c.req.param('photoId');
+    if (photoId == null) throw new AppError('NOT_FOUND', 'photo not found');
+    const photo = this.photos.get(photoId);
+    const library = this.libraries.get(photo.library_id);
+
+    const file = Bun.file(getFullThumbnailPath(library, photo.id));
+    if (!(await file.exists())) throw new AppError('NOT_FOUND', `image not found on disk: ${photoId}`);
+
+    const jpeg = await sharp(await file.arrayBuffer()).jpeg({ quality: JPEG_QUALITY }).toBuffer();
+    const name = (photo.file_path.split('/').pop() ?? photo.id).replace(/\.[^.]+$/, '');
+    return new Response(new Uint8Array(jpeg), {
+      headers: {
+        'Content-Type': 'image/jpeg',
+        'Content-Disposition': `attachment; filename="${name}.jpg"`,
+        'Cache-Control': 'no-cache',
+      },
+    });
   }
 
   // 404s go through AppError (not c.notFound()) so every not-available response
@@ -51,10 +78,22 @@ export class ImageApi {
     const file = Bun.file(filePath);
     if (!(await file.exists())) throw new AppError('NOT_FOUND', `image not found on disk: ${photoId}`);
 
-    // Bun.serve answers Range requests against a BunFile body but doesn't advertise
-    // it; without this header a client has no way to know it can seek a 25MB RAW.
-    return new Response(file, {
-      headers: { 'Content-Type': CONTENT_TYPE[kind], 'Accept-Ranges': 'bytes' },
-    });
+    // Thumbnails are regenerated in place under a stable URL, so the response has
+    // to carry a validator or a client keeps showing the old picture: with no
+    // ETag, no Last-Modified and no Cache-Control the browser caches
+    // heuristically and has nothing to revalidate against. `no-cache` still
+    // caches, it just always asks first, which is a 304 in the common case.
+    const etag = `"${file.size}-${Math.floor(file.lastModified)}"`;
+    const headers = {
+      'Content-Type': CONTENT_TYPE[kind],
+      // Bun.serve answers Range requests against a BunFile body but doesn't
+      // advertise it; without this a client can't know it may seek a 25MB RAW.
+      'Accept-Ranges': 'bytes',
+      'Cache-Control': 'no-cache',
+      ETag: etag,
+    };
+    if (c.req.header('if-none-match') === etag) return new Response(null, { status: 304, headers });
+
+    return new Response(file, { headers });
   }
 }

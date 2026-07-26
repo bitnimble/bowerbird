@@ -4,6 +4,7 @@ import { AppError } from '../../../errors';
 import { applyErrorHandler } from '../../error_handler';
 import type { PhotoListResponse } from '../../../schemas/photos';
 import type { PhotosService } from '../../../services/photos/photos_service';
+import type { ProcessingService } from '../../../services/processing/processing_service';
 import { PhotosApi } from '../photos_api';
 
 const emptyList: PhotoListResponse = { photos: [], total: 0, offset: 0, limit: 100 };
@@ -19,8 +20,9 @@ function buildApp(over: Partial<PhotosService> = {}) {
     delete: jest.fn(async () => {}),
     ...over,
   } as unknown as PhotosService;
+  const processing = { reprocess: jest.fn(async () => 0) } as unknown as ProcessingService;
   const app = new Hono();
-  app.route('/api', new PhotosApi(service).routes);
+  app.route('/api', new PhotosApi(service, processing).routes);
   applyErrorHandler(app);
   return { app, service };
 }

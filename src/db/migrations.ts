@@ -58,7 +58,10 @@ CREATE TABLE IF NOT EXISTS photos (
   -- Cull verdict. NULL means untriaged, which is a real third state: "not yet
   -- judged" is what a photographer filters on, and a boolean cannot say it.
   triage            TEXT CHECK (triage IN ('picked', 'rejected')),
-  notes             TEXT
+  notes             TEXT,
+  -- Which pixels the thumbnails were built from (§10.3). Set to the requested
+  -- source when work is queued, corrected to what was actually used on success.
+  thumbnail_source  TEXT CHECK (thumbnail_source IN ('embedded', 'render'))
 );
 CREATE INDEX IF NOT EXISTS idx_photos_library ON photos(library_id);
 CREATE INDEX IF NOT EXISTS idx_photos_shoot ON photos(shoot_id);
@@ -98,6 +101,13 @@ CREATE TABLE IF NOT EXISTS album_banners (
   photo_id  TEXT NOT NULL REFERENCES photos(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_album_banners_photo ON album_banners(photo_id);
+
+-- Runtime settings the user can change from the app, as opposed to the
+-- deployment config in environment variables (§15).
+CREATE TABLE IF NOT EXISTS settings (
+  key    TEXT PRIMARY KEY,
+  value  TEXT NOT NULL
+);
 `;
 
 function columnNames(db: Database, table: string): Set<string> {
@@ -133,6 +143,7 @@ export function runMigrations(db: Database): void {
   ensureColumn(db, 'photos', 'camera_make', 'TEXT');
   ensureColumn(db, 'photos', 'camera_model', 'TEXT');
   ensureColumn(db, 'photos', 'lens_model', 'TEXT');
+  ensureColumn(db, 'photos', 'thumbnail_source', 'TEXT'); // §10.3
   ensureColumn(db, 'photos', 'deleted_from_path', 'TEXT'); // Bin restore (§12.2)
   ensureColumn(db, 'libraries', 'last_synced_at', 'TEXT'); // §9.6
   migrateSelectedToTriage(db);

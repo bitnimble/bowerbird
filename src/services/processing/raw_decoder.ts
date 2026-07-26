@@ -12,6 +12,8 @@ const SYMBOLS = {
   libraw_unpack: { args: [FFIType.ptr], returns: FFIType.i32 },
   libraw_dcraw_process: { args: [FFIType.ptr], returns: FFIType.i32 },
   libraw_dcraw_make_mem_image: { args: [FFIType.ptr, FFIType.ptr], returns: FFIType.ptr },
+  libraw_unpack_thumb: { args: [FFIType.ptr], returns: FFIType.i32 },
+  libraw_dcraw_make_mem_thumb: { args: [FFIType.ptr, FFIType.ptr], returns: FFIType.ptr },
   libraw_dcraw_clear_mem: { args: [FFIType.ptr], returns: FFIType.void },
   libraw_recycle: { args: [FFIType.ptr], returns: FFIType.void },
   libraw_close: { args: [FFIType.ptr], returns: FFIType.void },
@@ -58,7 +60,41 @@ export interface DecodedImage {
 }
 
 // libraw_processed_image_t: int type; u16 height,width,colors,bits; u32 data_size; u8 data[].
-const IMG = { height: 4, width: 6, colors: 8, bits: 10, dataSize: 12, data: 16 } as const;
+const IMG = { type: 0, height: 4, width: 6, colors: 8, bits: 10, dataSize: 12, data: 16 } as const;
+const LIBRAW_IMAGE_JPEG = 1;
+
+// The camera's own JPEG rendering, embedded in the RAW. Extracting it needs no
+// demosaic, so it is far faster than a render and carries the maker's colour
+// treatment; the trade-off is whatever resolution the body chose to embed.
+// Returns null when the file has no JPEG preview (some bodies embed a bitmap).
+export function readEmbeddedJpeg(filePath: string): Buffer | null {
+  const L = lib();
+  const proc = L.libraw_init(0);
+  if (!proc) throw new Error('libraw_init failed');
+
+  try {
+    check(L, L.libraw_open_file(proc, cpath(filePath)), 'open_file');
+    if (L.libraw_unpack_thumb(proc) !== 0) return null;
+
+    const err = new Int32Array(1);
+    const thumb = L.libraw_dcraw_make_mem_thumb(proc, ptr(err));
+    if (!thumb || err[0] !== 0) return null;
+
+    try {
+      const head = new DataView(toArrayBuffer(thumb, 0, IMG.data));
+      if (head.getInt32(IMG.type, true) !== LIBRAW_IMAGE_JPEG) return null;
+      const size = head.getUint32(IMG.dataSize, true);
+      if (size === 0) return null;
+      // Copy out of LibRaw-owned memory before it is freed.
+      return Buffer.from(toArrayBuffer(thumb, IMG.data, size).slice(0));
+    } finally {
+      L.libraw_dcraw_clear_mem(thumb);
+    }
+  } finally {
+    L.libraw_recycle(proc);
+    L.libraw_close(proc);
+  }
+}
 
 // Decodes a RAW file to an upright 8-bit RGB bitmap. Every LibRaw allocation is
 // freed on all paths (mem-image, unpacked data, processor) per DESIGN §10.4.

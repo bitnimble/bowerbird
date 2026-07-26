@@ -4,7 +4,8 @@ import path from 'node:path';
 import type { Config } from '../../config';
 import { dataPathFor } from '../../utils/paths';
 import type { PendingPhoto, PhotosRepository } from '../photos/photos_repository';
-import type { ProcessingJob, ProcessingResult } from './processing_types';
+import type { SettingsRepository } from '../settings/settings_repository';
+import type { ProcessingJob, ProcessingResult, ThumbnailSource } from './processing_types';
 
 const WORKER_URL = new URL('./processing_worker.ts', import.meta.url).href;
 
@@ -21,7 +22,16 @@ export class ProcessingService {
   constructor(
     private readonly photos: PhotosRepository,
     private readonly config: Config,
+    private readonly settings: SettingsRepository,
   ) {}
+
+  // Rebuilds thumbnails for specific photos from the given source. Returns how
+  // many were queued; ids that are missing or binned have no file to read.
+  async reprocess(photoIds: string[], source: ThumbnailSource): Promise<number> {
+    const queued = this.photos.queueReprocess(photoIds, source);
+    if (queued > 0) await this.processUnprocessed();
+    return queued;
+  }
 
   processUnprocessed(libraryId?: string): Promise<void> {
     const key = libraryId ?? '*';
@@ -55,6 +65,9 @@ export class ProcessingService {
       fullSize: this.config.fullThumbnailSize,
       smallQuality: this.config.smallThumbnailQuality,
       fullQuality: this.config.fullThumbnailQuality,
+      // NULL for rows queued before the setting existed, and for anything the
+      // sync inserted without naming one.
+      source: pending.thumbnail_source ?? this.settings.getThumbnailSource(),
     };
   }
 
@@ -64,7 +77,9 @@ export class ProcessingService {
     // batch forever. On a DB write failure, log and leave needs_processing=1.
     try {
       if (result.success) {
-        this.photos.markProcessed(result.photoId, new Date().toISOString());
+        // The worker reports what it actually used, which differs from the
+        // request when a file has no embedded preview to lift.
+        this.photos.markProcessed(result.photoId, new Date().toISOString(), result.source);
         return;
       }
       // If the source file moved/was deleted since the job was queued (a move that

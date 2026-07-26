@@ -1,6 +1,7 @@
 import type { Database } from 'bun:sqlite';
 import type { Ordering } from '../../schemas/common';
 import type { PhotoDetail, PhotoSummary, Triage } from '../../schemas/photos';
+import type { ThumbnailSource } from '../processing/processing_types';
 
 export interface PhotoListFilters {
   includeDeleted: boolean;
@@ -87,6 +88,9 @@ export interface PendingPhoto {
   file_path: string;
   root_path: string;
   data_path: string | null;
+  // The source requested for this photo; NULL for rows queued before the setting
+  // existed, which the service resolves to the configured default.
+  thumbnail_source: ThumbnailSource | null;
 }
 
 // Minimal shape for file/shoot bookkeeping (moves, adoption, reconciliation).
@@ -126,7 +130,7 @@ const DETAIL_COLS = `photos.id, photos.library_id, photos.shoot_id, photos.width
   photos.date_updated, photos.date_reprocessed, photos.needs_processing, photos.processing_error,
   photos.latitude, photos.longitude, photos.rating, photos.triage, photos.is_missing,
   photos.is_deleted, photos.notes, photos.file_size, photos.iso, photos.shutter_speed, photos.aperture,
-  photos.focal_length, photos.camera_make, photos.camera_model, photos.lens_model`;
+  photos.focal_length, photos.camera_make, photos.camera_model, photos.lens_model, photos.thumbnail_source`;
 
 interface SummaryRow {
   id: string;
@@ -162,6 +166,7 @@ interface DetailRow extends SummaryRow {
   camera_make: string | null;
   camera_model: string | null;
   lens_model: string | null;
+  thumbnail_source: ThumbnailSource | null;
   lib_ordering: string; // the owning library's ordering, for ordering_date
 }
 
@@ -236,6 +241,7 @@ function toDetail(row: DetailRow, albumIds: string[]): PhotoDetail {
     camera_make: row.camera_make,
     camera_model: row.camera_model,
     lens_model: row.lens_model,
+    thumbnail_source: row.thumbnail_source,
     album_ids: albumIds,
   };
 }
@@ -505,17 +511,33 @@ export class PhotosRepository {
     const params = libraryId ? [libraryId] : [];
     return this.db
       .query(
-        `SELECT p.id AS photo_id, p.file_path, l.root_path, l.data_path
+        `SELECT p.id AS photo_id, p.file_path, p.thumbnail_source, l.root_path, l.data_path
          FROM photos p JOIN libraries l ON l.id = p.library_id
          WHERE p.needs_processing = 1 AND p.is_missing = 0 AND p.is_deleted = 0 ${where}`,
       )
       .all(...params) as PendingPhoto[];
   }
 
-  markProcessed(id: string, reprocessedAtIso: string): void {
+  markProcessed(id: string, reprocessedAtIso: string, source: ThumbnailSource): void {
     this.db
-      .query('UPDATE photos SET needs_processing = 0, date_reprocessed = ?, processing_error = NULL WHERE id = ?')
-      .run(reprocessedAtIso, id);
+      .query(
+        `UPDATE photos SET needs_processing = 0, date_reprocessed = ?, processing_error = NULL,
+          thumbnail_source = ? WHERE id = ?`,
+      )
+      .run(reprocessedAtIso, source, id);
+  }
+
+  // Queues thumbnails to be rebuilt from `source`. Returns how many rows were
+  // actually queued, so a request naming missing or binned photos reports it.
+  queueReprocess(photoIds: string[], source: ThumbnailSource): number {
+    if (photoIds.length === 0) return 0;
+    const placeholders = photoIds.map(() => '?').join(', ');
+    return this.db
+      .query(
+        `UPDATE photos SET needs_processing = 1, processing_error = NULL, thumbnail_source = ?
+         WHERE id IN (${placeholders}) AND is_missing = 0 AND is_deleted = 0`,
+      )
+      .run(source, ...photoIds).changes;
   }
 
   markProcessingFailed(id: string, error: string): void {

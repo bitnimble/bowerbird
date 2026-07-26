@@ -1,14 +1,22 @@
 import { Hono } from 'hono';
+import { z } from 'zod';
 import type { Config } from '../../config';
+import { ThumbnailSourceSchema } from '../../schemas/photos';
+import type { SettingsRepository } from '../../services/settings/settings_repository';
 
-// Server-side settings a client needs to describe what it is showing. The
-// thumbnail box on the photo view reports the format and quality it was encoded
-// at, which only the server knows.
+const UpdateSettingsSchema = z.object({
+  thumbnail_source: ThumbnailSourceSchema,
+});
+
+// Two different things share this mount: `config` is fixed by the deployment
+// (thumbnail encoding, so a client can state what it is rendering), `settings`
+// is what the user can change from the app.
 export class ConfigApi {
   readonly routes: Hono;
 
-  constructor(config: Config) {
+  constructor(config: Config, settings: SettingsRepository) {
     const app = new Hono();
+
     app.get('/', (c) =>
       c.json({
         thumbnails: {
@@ -19,6 +27,18 @@ export class ConfigApi {
         },
       }),
     );
+
+    app.get('/settings', (c) => c.json({ thumbnail_source: settings.getThumbnailSource() }));
+
+    // Applies to photos indexed from here on. Existing thumbnails are untouched:
+    // rebuilding them is the explicit reprocess action, not a side effect of
+    // changing a preference.
+    app.put('/settings', async (c) => {
+      const body = UpdateSettingsSchema.parse(await c.req.json());
+      settings.setThumbnailSource(body.thumbnail_source);
+      return c.json({ thumbnail_source: settings.getThumbnailSource() });
+    });
+
     this.routes = app;
   }
 }
