@@ -2,7 +2,7 @@
 
 ## 1. Overview
 
-Bowerbird is a high-performance RAW photo management and cataloguing backend designed to run on a server or NAS where photos are stored on local spinning disks. It exposes a REST API that a thin client (desktop, mobile, or web) can consume over the network.
+Bowerbird is a high-performance RAW photo management and cataloguing backend designed to run on a server or NAS where photos are stored on local spinning disks. It exposes a REST API that a thin client (desktop, mobile, or web) can consume over the network. The web client that ships in this repo is one such consumer; it is a separate app with its own build and dev server, and is described in §18.
 
 **Stage 1 scope:**
 
@@ -28,7 +28,7 @@ Bowerbird is a high-performance RAW photo management and cataloguing backend des
 | Image processing | sharp (WebP encoding/resizing) |
 | RAW decoding | Per-format dispatch (header sniff → fastest reader); Sony ARW via LibRaw `bun:ffi` |
 | Metadata extraction | LibRaw header parse (no pixel decode), per-format dispatch |
-| Testing | Jest (run via `bun run test`) |
+| Testing | Bun's built-in test runner (`bun test`, run via `bun run test`) |
 | Logging | `console.log` / `console.info` / `console.error` |
 | Package manager | `bun install` (no npm/pnpm/yarn) |
 
@@ -43,9 +43,8 @@ Bowerbird is a high-performance RAW photo management and cataloguing backend des
 | `hono` | Web server and routing |
 | `zod` | Schema validation (v4) |
 | `sharp` | Image resizing and WebP encoding (operates on decoded RGB buffers, never on RAW files directly) |
-| `jest` | Unit testing |
-| `@types/jest` | Jest type definitions |
-| `ts-jest` | Jest TypeScript transformer |
+
+Testing uses Bun's built-in `bun test` runner, so there is no test-framework dependency.
 
 Entity IDs (UUID v4) are generated with the runtime built-in `crypto.randomUUID()`, no third-party UUID package.
 
@@ -113,8 +112,8 @@ bowerbird/
 │   │   ├── sync/
 │   │   │   ├── sync_service.ts     # Library sync algorithm (integration-tested; needs bun:sqlite + LibRaw)
 │   │   │   └── tests/
-│   │   │       ├── sync_algorithm.test.ts  # pure diff / move-detection (host jest)
-│   │   │       └── sync_lock.test.ts       # lock-file module (host jest)
+│   │   │       ├── sync_algorithm.test.ts  # pure diff / move-detection
+│   │   │       └── sync_lock.test.ts       # lock-file module
 │   │   └── processing/
 │   │       ├── processing_service.ts  # Thumbnail generation orchestrator
 │   │       ├── processing_worker.ts   # Bun worker thread for image processing
@@ -129,10 +128,15 @@ bowerbird/
 ├── test/
 │   ├── integration/               # bun:test suites needing real bun:sqlite + LibRaw (run in-container)
 │   └── fixtures/                  # a real Sony ARW for decode/metadata tests
+├── web/                          # the web client: separate app, own build (§18)
+│   ├── e2e/                      # Playwright specs + throwaway library fixture
+│   └── src/
+│       ├── api/                  # typed client over the REST API
+│       ├── app/                  # shell, routing, per-store contexts, styles
+│       └── features/             # one folder per domain: store + presenter + components
 ├── DESIGN.md
 ├── package.json
 ├── tsconfig.json
-├── jest.config.ts
 └── bunfig.toml
 ```
 
@@ -200,8 +204,16 @@ CREATE TABLE photos (
   processing_error  TEXT,  -- last thumbnail-generation error; NULL if none/succeeded (§10.2)
   latitude          REAL,
   longitude         REAL,
+  -- Shooting metadata off the RAW header (§11.1). shutter_speed is seconds.
+  iso               INTEGER,
+  shutter_speed     REAL,
+  aperture          REAL,
+  focal_length      REAL,
+  camera_make       TEXT,
+  camera_model      TEXT,
+  lens_model        TEXT,
   rating            INTEGER NOT NULL DEFAULT 0 CHECK (rating >= 0 AND rating <= 5),
-  selected          INTEGER NOT NULL DEFAULT 0,
+  triage            TEXT CHECK (triage IN ('picked', 'rejected')),  -- NULL = untriaged (§5.3)
   notes             TEXT
 );
 
@@ -223,7 +235,7 @@ CREATE INDEX idx_photos_is_deleted ON photos(library_id, is_deleted) WHERE is_de
 - `file_path` — relative to the library `root_path`. Uses forward slashes as separator regardless of OS.
 - `is_missing` — set to 1 when the file is not found on disk during sync.
 - `is_deleted` — set to 1 when the user requests deletion (file moved to Bin).
-- `selected` — "selected for triage" flag.
+- `triage`, the cull verdict: `picked`, `rejected`, or NULL for untriaged. Three states rather than a boolean, because "not yet judged" is the set a photographer filters on most and a two-state flag cannot tell it apart from "judged and rejected". This replaced the old `selected` column: the migration turns every `selected = 1` row into `picked` and then drops the column, so the two can never disagree.
 
 ### 4.3 `shoots` table
 
@@ -333,7 +345,7 @@ export const SoftDeleteFilterSchema = z.object({
 export type SoftDeleteFilter = z.infer<typeof SoftDeleteFilterSchema>;
 
 export const PhotoIdListSchema = z.object({
-  photo_ids: z.array(UuidSchema).min(1),
+  photo_ids: z.array(UuidSchema).min(1).max(1000),  // max bounds per-request file moves and keeps IN(...) under SQLite's variable limit
 });
 ```
 
@@ -376,7 +388,7 @@ export const PhotoSummarySchema = z.object({
   width: z.number().int().positive(),   // display/upright dims, match the served thumbnail
   height: z.number().int().positive(),
   ordering_date: z.string().nullable(),  // ISO datetime, resolved based on library/shoot/album ordering; NULL for a taken_* ordering when date_taken is NULL (sorts last, §5.1)
-  selected: z.boolean(),
+  triage: TriageSchema,
   rating: z.number().int().min(0).max(5),
   is_missing: z.boolean(),
   is_deleted: z.boolean(),
@@ -394,6 +406,13 @@ export const PhotoDetailSchema = PhotoSummarySchema.extend({
   processing_error: z.string().nullable(),
   latitude: z.number().nullable(),
   longitude: z.number().nullable(),
+  iso: z.number().nullable(),
+  shutter_speed: z.number().nullable(),
+  aperture: z.number().nullable(),
+  focal_length: z.number().nullable(),
+  camera_make: z.string().nullable(),
+  camera_model: z.string().nullable(),
+  lens_model: z.string().nullable(),
   notes: z.string().nullable(),
 });
 
@@ -406,7 +425,7 @@ export const PhotoListResponseSchema = z.object({
 
 export const UpdatePhotoRequestSchema = z.object({
   rating: z.number().int().min(0).max(5).optional(),
-  selected: z.boolean().optional(),
+  triage: TriageSchema.optional(),
   notes: z.string().optional(),
 });
 
@@ -566,8 +585,8 @@ function isSupportedFile(filename: string): boolean {
 | `listByShoot(shootId, pagination, filters?)` | Returns paginated `PhotoSummary` list for a shoot. Accepts the same `include_deleted` filter (§13.2), excluding soft-deleted by default. |
 | `listByAlbum(albumId, pagination, filters?)` | Returns paginated `PhotoSummary` list for an album. Accepts the same `include_deleted` filter, excluding soft-deleted by default. |
 | `listMissing(libraryId, pagination)` | Convenience method: calls `listByLibrary` with `is_missing: true` filter. |
-| `update(photoId, updates)` | Updates mutable fields: `rating`, `selected`, `notes`. |
-| `delete(photoIds)` | Soft-deletes photos: moves RAW files to Bin, deletes thumbnails, sets `is_deleted = 1`. See §12. |
+| `update(photoId, updates)` | Updates mutable fields: `rating`, `triage`, `notes`. |
+| `delete(photoIds)` | Soft-deletes photos: moves RAW files to Bin, sets `is_deleted = 1`. Thumbnails are kept so the Bin stays browsable. See §12. |
 | `getAlbumMemberships(photoId)` | Returns list of album IDs the photo belongs to. |
 
 ### 8.3 Sync Service (`sync_service.ts`)
@@ -673,7 +692,7 @@ interface LibraryDiff {
   removed: Array<{ filePath: string; photoId: string; fileHash: string }>;
   added: Array<{ filePath: string; fileHash: string; metadata: FileMetadata }>;
   modified: Array<{ filePath: string; photoId: string; oldHash: string; newHash: string; metadata: FileMetadata }>;
-  reappeared: Array<{ photoId: string }>;  // present at original path, currently is_missing
+  reappeared: string[];  // photo ids present at their original path, currently is_missing
 }
 ```
 
@@ -755,7 +774,7 @@ Process in this order within a database transaction:
    - `is_missing = 0`
    - `is_deleted = 0`
    - `rating = 0`
-   - `selected = 0`
+   - `triage = NULL`
 4. **Reappearances:** Clear `is_missing = 0` for each reappeared photo. No other change (content and path are unchanged).
 5. **Removals:** Set `is_missing = 1` for each removed photo. Do not delete files or records. Count only photos that transition `is_missing` from `0` to `1` toward `photos_removed`; a record already at `is_missing = 1` reappears in the removed list every scan (so delayed move-matching in §9.3 can still pair it), but it is not a new removal and must not be re-counted. This keeps `photos_removed` a per-sync delta consistent with `photos_added`/`photos_moved`/`photos_modified`.
 
@@ -908,17 +927,30 @@ interface FileMetadata {
   dateTaken: string | null;  // ISO datetime
   latitude: number | null;
   longitude: number | null;
+  iso: number | null;
+  shutterSpeed: number | null;  // seconds; 1/250s is 0.004
+  aperture: number | null;      // f-number
+  focalLength: number | null;   // mm
+  cameraMake: string | null;
+  cameraModel: string | null;
+  lensModel: string | null;
   mtime: string;   // filesystem mtime, ISO datetime; hash input (§9.2) and date_updated source (§9.4)
   fileSize: number;  // bytes; hash input (§9.2)
 }
 
-// Dispatches on header; Stage 1 has a single ARW reader.
+// Stage 1: one ARW reader. A second format adds a header sniff here.
 async function extractMetadata(filePath: string): Promise<FileMetadata> {
-  return extractArwMetadata(filePath);  // LibRaw header parse, no unpack
+  // stat() + LibRaw header parse, no unpack
 }
 ```
 
+Body and lens come from `libraw_get_iparams()` (`normalized_make`/`normalized_model`, falling back to the raw `make`/`model`) and `libraw_get_lensinfo()` (`Lens`). LibRaw leaves the lens blank or `---` on fixed-lens bodies, and both spellings are stored as NULL: "unknown" rather than a lens named `---`.
+
+**Sensor crop.** Some bodies (the ILCE-7CR among them) report masked border columns as part of LibRaw's "visible" area, `sizes.width`/`height` equal `raw_width`/`raw_height` with zero margins, while the file separately states the real picture in `sizes.raw_inset_crops[0]`. Decoding the visible area verbatim then bakes black bars down two edges of every thumbnail. Both the header read and the decode therefore crop to that inset when the file states a usable one (an origin of `65535` means "not stated", and a crop that does not fit the raw frame means the struct layout drifted; either way, no crop). `dcraw_process` emits an upright image, so the sensor-space margins are rotated by the same flip before being applied. The two paths must agree: the stored `width`/`height` describe the picture the thumbnail shows.
+
 The processor is opened header-only and closed (`libraw_close`/`libraw_recycle`) immediately after reading the fields; the memory-leak audit note in §10.4 applies here too.
+
+These struct reads are at hand-computed byte offsets validated against real ARWs from four bodies, so a LibRaw upgrade that reorders a field would degrade to plausible garbage rather than an error. `raw_header.integration.test.ts` pins the known-correct values for the checked-in fixture.
 
 ### 11.2 Hash Computation (`hash.ts`)
 
@@ -952,9 +984,7 @@ When a user requests deletion of one or more photos:
 
 For each photo:
 
-1. **Delete thumbnails on disk:**
-   - Remove `<data_path>/thumbnails/small/<photo_uuid>.webp` if it exists.
-   - Remove `<data_path>/thumbnails/full/<photo_uuid>.webp` if it exists.
+1. **Keep the thumbnails.** They are *not* removed. The Bin is a view the user browses to find something to restore, and it is useless if every frame in it is a grey placeholder. The two WebPs are roughly 1% of the size of the RAW the Bin is already retaining, so deleting them saves almost nothing and costs the feature. They are removed only when a photo is permanently purged.
 
 2. **Move RAW file to Bin:**
    - Determine the bin path:
@@ -968,7 +998,16 @@ For each photo:
    - Set `needs_processing = 0`.
    - Do **not** delete the record.
 
-### 12.2 Bin Folder
+### 12.2 Restore
+
+`POST /api/photos/restore` is the undo of a soft-delete. Delete records the pre-Bin `file_path` in `deleted_from_path`, and restore moves the RAW back to exactly that path, clears `is_deleted` and blanks the column.
+
+- Shoot and album membership need no restoring: soft-delete never touches `shoot_id` or `album_photos`, so both survive the round trip.
+- If something else occupies the original path by then, the move takes a numeric suffix rather than overwriting a live photo.
+- A row predating the column restores to the library root; the next sync reconciles its shoot from the path.
+- Restore is what the client's undo toast calls, so binning is always reversible from the UI.
+
+### 12.3 Bin Folder
 
 The Bin folder for shoots lives at `<shoot_folder>/Bin/` (inside the shoot folder itself). The Bin folder for non-shoot photos lives at `<data_path>/bin/`.
 
@@ -996,6 +1035,7 @@ All endpoints return JSON. Error responses use a standard envelope:
 | `POST` | `/api/libraries` | Create a library |
 | `GET` | `/api/libraries` | List all libraries |
 | `GET` | `/api/libraries/:id` | Get a library |
+| `PATCH` | `/api/libraries/:id` | Update a library (default ordering) |
 | `DELETE` | `/api/libraries/:id` | Delete a library |
 | `POST` | `/api/libraries/:id/sync` | Trigger sync for a library |
 | `GET` | `/api/libraries/:id/sync/status` | Get sync/processing status |
@@ -1007,8 +1047,10 @@ All endpoints return JSON. Error responses use a standard envelope:
 | `GET` | `/api/libraries/:libraryId/photos` | List photos in a library (paginated, filterable) |
 | `GET` | `/api/libraries/:libraryId/photos/missing` | List missing photos in a library |
 | `GET` | `/api/photos/:id` | Get full photo detail |
-| `PATCH` | `/api/photos/:id` | Update photo metadata (rating, selected, notes) |
+| `PATCH` | `/api/photos/:id` | Update photo metadata (rating, triage, notes) |
 | `POST` | `/api/photos/delete` | Soft-delete photos (body: `{ photo_ids: string[] }`) |
+| `GET` | `/api/config` | Thumbnail format, sizes and qualities, so a client can state what it is rendering |
+| `POST` | `/api/photos/restore` | Restore soft-deleted photos to where they were deleted from (§12.2) |
 
 Query parameters for listing (`PhotoListQuerySchema`, §5.3):
 - `offset` (int, default 0)
@@ -1016,6 +1058,25 @@ Query parameters for listing (`PhotoListQuerySchema`, §5.3):
 - `is_missing` (boolean, optional filter)
 - `needs_processing` (boolean, optional filter)
 - `include_deleted` (boolean, default false)
+- `is_deleted` (boolean, optional filter)
+- `rated` (boolean, optional: `true` = at least one star, `false` = unrated)
+- `triage` (optional, comma-separated verdicts to include, e.g. `triage=untriaged,picked` for the default gallery view that hides rejects)
+- `ordering` (optional, overrides the collection's stored ordering for this request only, so a client sort control does not edit the library)
+- `q` (optional, case-insensitive substring of `file_path`)
+- `taken_from` / `taken_to` (optional `YYYY-MM-DD`, inclusive bounds)
+- `match` (optional, `all` (default) or `any`)
+
+The same schema serves the library, shoot and album listings, so a filter behaves identically wherever the user is.
+
+`rated` is a "has any rating" test rather than an equality one, because the question during a cull is "what have I not judged yet".
+
+`match` selects how `rated`, `triage`, `is_missing` and `needs_processing` combine. `all` intersects them; `any` unions them, which is what a "show me anything still needing attention" filter means; as an intersection, "picks and unrated and missing" is almost always empty. It applies only to those four: scope (soft-delete, `q`, the date range) always intersects, so narrowing by filename or date still narrows a union.
+
+The date range filters on `COALESCE(date_taken, date_added)`; the same date the listing sorts and labels by; so a file the camera never dated stays reachable. `taken_to` is inclusive of the whole closing day (the column is a timestamp, the bound is a date).
+
+Library, shoot and album responses each carry a `photo_count` (excluding binned photos), and libraries carry `last_synced_at`, so a client can show how large and how stale a collection is without a second request per row.
+
+`include_deleted` and `is_deleted` do different jobs: the former lifts the default "hide soft-deleted rows" clause, the latter selects on the flag. The Bin view is `include_deleted=true&is_deleted=true`; without the pair a client could ask for "live and deleted together" but never for "deleted alone".
 
 All boolean query params are parsed with `z.stringbool()`, so `?is_missing=false` correctly parses as `false` (a `z.coerce.boolean()` would turn the string `"false"` into `true`).
 
@@ -1060,8 +1121,8 @@ These endpoints:
 - Stream the file directly from disk using Bun's file streaming (no buffering into memory).
 - Set appropriate `Content-Type` headers (`image/webp` or `image/x-sony-arw`).
 - Set `Content-Length` from file stats.
-- Return 404 if the file does not exist on disk or the photo is deleted.
-- Support `Range` requests for partial content (HTTP 206), enabling seeking for large files.
+- Return 404 if the file does not exist on disk. Soft-deleted photos **are** served: the row and both files still exist, and the Bin view depends on being able to render them (§12.1).
+- Support `Range` requests for partial content (HTTP 206), enabling seeking for large files. `Bun.serve` answers these against a `BunFile` body (including `Content-Range` and a 416 for an unsatisfiable range) but does not advertise the capability, so the handler sets `Accept-Ranges: bytes` itself.
 
 The served thumbnails are already rotated to display orientation (baked in during processing, §10.4), and the `width`/`height` in photo responses are the matching upright dimensions. Clients render them as-is and must **not** apply the photo's `orientation` value to them.
 
@@ -1069,7 +1130,7 @@ Implementation approach:
 ```typescript
 app.get('/image/:photoId/small.webp', async (c) => {
   const photo = await photosService.get(c.req.param('photoId'));
-  if (!photo || photo.is_deleted) return c.notFound();
+  if (!photo) return c.notFound();
   
   const library = await librariesService.get(photo.library_id);
   const filePath = getSmallThumbnailPath(library, photo.id);
@@ -1126,16 +1187,20 @@ The server is configured via environment variables:
 | `FULL_THUMBNAIL_QUALITY` | `90` | WebP quality for full thumbnails (1-100) |
 | `SMALL_THUMBNAIL_SIZE` | `800` | Longest edge in pixels for small thumbnails |
 | `FULL_THUMBNAIL_SIZE` | `3840` | Longest edge in pixels for full thumbnails |
+| `WATCH_ENABLED` | `true` | Auto-sync a library when its files change on disk (§9.8) |
+| `WATCH_DEBOUNCE_MS` | `2000` | Debounce window for coalescing filesystem events (§9.8) |
+| `SYNC_FULL_AT` | `03:00` | Local `HH:MM` for the daily full reconcile; `""` disables (§9.8) |
+| `CORS_ORIGINS` | *(unset)* | Comma-separated origins allowed to call the API, or `*`. Unset means "any port on whatever host the request arrived at", so the client works on loopback and over the LAN without hardcoding an address, while an unrelated site on the internet is still refused. |
 
 ---
 
 ## 16. Testing Strategy
 
-Two tiers, split by whether a module can run under Node (host jest) or needs Bun-native APIs (`bun:sqlite`, `bun:ffi`/LibRaw, `Bun.file`).
+Two tiers, both run by `bun test`, split by whether a module needs the container's native dependencies (`bun:ffi`/LibRaw, an on-disk photo tree) or can run anywhere against mocks.
 
-### 16.1 Unit Tests (host jest)
+### 16.1 Unit Tests
 
-Services and API handlers whose dependencies can be mocked are unit-tested under jest, with dependencies supplied via constructor injection.
+Services and API handlers whose dependencies can be mocked are unit-tested with dependencies supplied via constructor injection.
 
 **Repository mocks:** Each repository interface is mocked to return predetermined data, allowing service logic to be tested in isolation without touching SQLite.
 
@@ -1145,7 +1210,7 @@ Services and API handlers whose dependencies can be mocked are unit-tested under
 
 ### 16.2 Key Test Cases
 
-The sync-service, photo-deletion, and image-streaming cases below run in the integration suite (§16.3); the rest are host-jest unit tests.
+The sync-service, photo-deletion, and image-streaming cases below run in the integration suite (§16.3); the rest are unit tests.
 
 **Sync service:**
 - Basic add/remove/modify detection
@@ -1163,7 +1228,7 @@ The sync-service, photo-deletion, and image-streaming cases below run in the int
 - Concurrency vs. a user mutation mid-scan: an in-flight move's hardlink pair (link+unlink) is collapsed by inode so no duplicate row is inserted; a library deleted mid-scan aborts `NOT_FOUND` (no FK crash); a stale sync generation's detached processing tail doesn't stomp a newer sync's status
 
 **Photo deletion:**
-- Thumbnails are removed
+- Thumbnails are kept, so the Bin can be browsed
 - RAW file is moved to correct Bin location (shoot vs library)
 - DB record is marked `is_deleted = 1`, not removed
 - Filename collision in Bin (numeric suffix)
@@ -1181,15 +1246,15 @@ The sync-service, photo-deletion, and image-streaming cases below run in the int
 
 ### 16.3 Running Tests
 
-Host unit tests (jest, runs anywhere):
+Unit tests (mocked dependencies, run anywhere):
 
 ```bash
 bun run test
 ```
 
-`bun run test` runs the `test` npm script, which invokes `jest`. Jest is configured with `ts-jest` for TypeScript transformation. (Note: this is Jest, not Bun's built-in `bun test` runner; do not confuse the two.) Host-jest files follow `*.test.ts`.
+That runs `bun test src`, covering `src/**/tests/*.test.ts`. Test helpers (`describe`, `expect`, `jest.fn`, …) are imported from `bun:test`.
 
-Integration tests (`bun:test`, need real `bun:sqlite` + LibRaw, so they run in the container):
+Integration tests (need real `bun:sqlite` + LibRaw, so they run in the container):
 
 ```bash
 docker compose -f docker-compose.dev.yml up -d
@@ -1204,7 +1269,7 @@ These live in `test/integration/*.integration.test.ts` and cover the sync engine
 
 The following order respects dependency chains — each step depends on the steps above it.
 
-1. **Project scaffolding**: `package.json`, `tsconfig.json`, `jest.config.ts`, directory structure.
+1. **Project scaffolding**: `package.json`, `tsconfig.json`, directory structure.
 2. **Database**: `connection.ts` (opens the DB and sets `PRAGMA foreign_keys = ON`), `migrations.ts` (create all tables including `shoot_banners`/`album_banners`, plus indexes).
 3. **Schemas**: All Zod schemas in `src/schemas/`.
 4. **Utils**: `hash.ts`, `files.ts`, `paths.ts`.
@@ -1220,3 +1285,110 @@ The following order respects dependency chains — each step depends on the step
 14. **Image streaming API**: Static-path file streaming endpoints.
 15. **Deletion flow**: Soft-delete with Bin and thumbnail cleanup.
 16. **Integration wiring**: `index.ts` — dependency injection, Hono app setup, server start.
+
+---
+
+## 18. Web Client (`web/`)
+
+A separate Vite + React app with its own `package.json`, dev server and build. It is a pure API consumer: it holds no photo logic of its own and talks to the server over HTTP from a different origin, which is why the API carries CORS (§15).
+
+### 18.1 Stack
+
+| Concern | Choice |
+|---|---|
+| Build / dev server | Vite 5 (port 5174, bound to `0.0.0.0`) |
+| UI | React 18 |
+| State | MobX 6 with standard (TC39) decorators |
+| Routing | React Router 6 |
+| Components | Base UI (unstyled primitives), wrapped once in `src/ui/ui.tsx` |
+| Icons | lucide-react |
+| Calendar | react-day-picker, restyled through its CSS variables |
+| E2E | Playwright, driving the real API and a temp library |
+
+Every control on screen comes from `src/ui/ui.tsx`, and each variant list is short on purpose: four button variants, four text roles, two heading levels. Uniformity is enforced in code rather than by discipline; `Button`, the segmented filter chips, `Select`, `TextField` and the menu triggers all carry the same `.ui-btn` class, so height, type size and icon size cannot drift between a filter and a toolbar button. A new fifth colour should mean rethinking the screen, not adding a variant.
+
+The one deliberate exception: a link styled as a button is not routed through Base UI's `Button`, which would relabel the anchor `role="button"` and cost it the link role and open-in-new-tab. `Button` clones the passed element instead.
+
+Standard decorators (`@observable accessor x`), not `experimentalDecorators`: MobX wires them up without a `makeObservable` call. They must be lowered before Rollup sees them, so `esbuild.target` and `build.target` are pinned to `es2022` in `vite.config.ts`; at `esnext` esbuild passes the `accessor` keyword straight through and the production build fails to parse.
+
+Request and response types are `import type`-ed directly from `src/schemas/*` (the server's Zod schemas). The client therefore cannot drift from the API, and because the imports are type-only they are erased at build time, so no server code or Zod runtime reaches the bundle.
+
+### 18.2 Layer split
+
+Strict three layers per feature folder, no barrel files:
+
+- **Stores** (`*_store.ts`) hold observables and computeds only, one per domain: libraries, photos, shoots, albums, sync. There is no aggregate root store; each is provided through its own React context.
+- **Presenters** (`*_presenter.ts`) are the only writers. Every mutation, reaction and in-flight `AbortController` lives here. Cross-domain work goes presenter-to-presenter: `PhotosPresenter` bulk actions call `ShootsPresenter.addPhotos` / `AlbumsPresenter.addPhotos` rather than writing a sibling's store.
+- **Components** read stores and bind presenter methods to callbacks.
+
+MobX strict mode is on, so a mutation attempted outside an action warns in the console: the single-writer rule is enforced at runtime, not just by convention.
+
+### 18.3 Screens
+
+`/settings` (add / remove libraries, per-library ordering and sync), `/libraries/:id` (grid, filters, selection, bulk actions), `/libraries/:id/shoots` (tree + create), `/libraries/:id/bin`, `/shoots/:id`, `/albums`, `/albums/:id`, `/photos/:id`.
+
+Every registered library is listed permanently in the rail, and the active one expands to its sections. There is no "choose a library" screen: adding one is a setup step that belongs in Settings, not a gate you pass through on each visit. Syncing lives in Settings for the same reason: it is maintenance on the library, and the gallery is for looking at photos. Settings and the shortcut sheet sit together at the foot of the rail, apart from the catalogue links, because they are about the app rather than the photographs.
+
+There is no title bar. It only ever restated the library the rail already highlights, and the vertical space is worth more to the photographs.
+
+Only `/libraries/*` names the library in the URL. Shoot and photo routes resolve it from the loaded entity so the rail keeps its context on a deep link, instead of blanking out. The photo route resolves it through a `@computed`, and the detail is not cleared while the next one loads, so stepping between photos in one library re-renders nothing in the shell.
+
+### 18.3.1 Gallery controls
+
+Five named views (Active, Untriaged, Picks, Rejects, All) answer the questions asked constantly and cost one click. Everything rarer lives behind a **Custom** menu of checkboxes that sends `match=any`, so ticking several means "any of these" rather than an empty intersection. A calendar range, a filename search, a sort and a thumbnail-size slider complete the row.
+
+There is no "clear filters" button and no "default order" entry: All is the clear, and the sort always shows the concrete ordering in effect rather than an indirection through the collection's stored default.
+
+### 18.4 Culling
+
+Rating a shoot is the daily job, so it must not require opening each frame. The grid holds a keyboard cursor (distinct from the selection) and binds:
+
+| Key | Action |
+|---|---|
+| `← → ↑ ↓` | Move the cursor |
+| `0`–`5` | Set rating |
+| `C` | Pick (again to clear) |
+| `X` | Reject (again to clear) |
+| `Del` | Move to Bin |
+| `Space` | Add to the selection |
+| `F` | Fullscreen, in the photo view |
+| `Esc` | Clear the selection |
+| `?` | Shortcut overlay |
+
+`C` and `X` are deliberately adjacent: the left hand rests on them while the right drives the arrows. `X` for reject also matches the convention photographers already have from Lightroom. Both keys toggle, so the same key that sets a verdict clears it.
+
+Rejecting is not deleting. A reject stays in the catalogue and leaves the default "Active" view (untriaged + picked), which is what makes it useful during a pass; binning is the separate, undoable action on `Del`.
+
+### 18.5 The photo view
+
+The metadata panels sit beside a portrait frame and beneath a landscape one, so the image always gets the axis it needs. The page is a flex column filling the viewport and the stage takes every pixel the chrome is not already using. The stage supports fit/zoom (click, the magnifier button, or the wheel), drag-to-pan while zoomed, and a fullscreen mode whose only chrome is a bar that fades in on pointer movement.
+
+The stage has no border or backdrop. A photo's aspect almost never matches the space it is given, so a framed, filled stage always showed dead margin on one axis and read as bars around the image; without the box there is nothing for the photo to fail to fill.
+
+Clicking and scrolling zoom **about the pointer**, not the centre: with `transform-origin` at the centre and `d = pointer - centre`, the offset that pins the point under the cursor is `d - (next/current) * (d - offset)`. Scale and pan are a single piece of state, because that formula needs the current offset to compute the next one; doing it by calling `setOffset` from inside a `setScale` updater made the maths run about twice over (React re-invokes updaters; a side effect in one is a bug regardless), landing the photo at roughly double the intended offset. The layout read happens in the handler and the resulting `DOMRect` is passed in, so the updater itself stays pure.
+
+The image is absolutely positioned inside the stage. As a normal grid item its intrinsic height sized the grid row, so `height: 100%` resolved against the photo rather than the viewport and tall frames were cropped instead of fitted.
+
+Panning is clamped so the photo cannot be dragged away from the viewport edge. The limit is derived from the `object-fit: contain` geometry (the fit scale times the zoom), not from the natural size, and it is re-applied when zooming out too, since shrinking the image shrinks the legal offset.
+
+The stage's `src` is keyed off the route rather than the loaded detail, and the image stays hidden until that src decodes. The store deliberately keeps the previous detail while the next loads (so the rail does not collapse), which otherwise means the stage paints the frame *before* the one the URL asks for.
+
+A "Thumbnail on screen" panel reports what is actually being displayed (WebP, its pixel dimensions, colour space and encode quality) separately from the original RAW's size and dimensions, because the two are easy to confuse and only one of them is what you are judging sharpness on.
+
+Destructive actions split by reversibility. Binning is undoable, so it just happens and reports with an undo toast wired to `POST /api/photos/restore`. Deleting a library, shoot or album is not undoable, so each asks first via a native `confirm()` that names the specific consequence (removing a library keeps the RAW files but destroys every rating, note, pick and membership).
+
+### 18.6 Thumbnails and the sync strip
+
+Thumbnails are generated asynchronously, so a tile's first request can 404 while processing is still writing the file. A tile records *which list generation* its request failed on rather than a bare boolean; `PhotosStore.reloadToken` advances on every completed list fetch, which clears the failure and re-requests with a cache-busting query param. Without this the grid stays blank until a manual page reload.
+
+The sync status bar renders one cell per photo queued by the current run, filling as `photos_processed` climbs (§9.6). It stops polling as soon as the library reports idle.
+
+### 18.7 Running and testing
+
+```bash
+cd web && bun install
+bun run dev                       # http://localhost:5174, expects the API on :3000
+bun run test:e2e                  # Playwright; starts its own API + Vite on :3111/:5199
+```
+
+`bun run test:e2e` builds a throwaway library under `/tmp/bowerbird-e2e` from the ARW fixture and drives the real stack, so it needs LibRaw present. `VITE_API_URL` points the client at a non-default API origin.
