@@ -526,6 +526,12 @@ export class PhotosRepository {
       );
   }
 
+  // Every id in the catalogue, including soft-deleted rows: a binned photo still
+  // has its thumbnails, which is what makes the Bin browsable (§12.1).
+  allIds(): string[] {
+    return (this.db.query('SELECT id FROM photos').all() as { id: string }[]).map((r) => r.id);
+  }
+
   clearMissing(photoId: string): void {
     this.db.query('UPDATE photos SET is_missing = 0 WHERE id = ?').run(photoId);
   }

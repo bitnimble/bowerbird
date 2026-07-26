@@ -30,8 +30,8 @@ export class LibrariesApi {
       return c.json(this.service.update(c.req.param('id'), body));
     });
 
-    app.delete('/:id', (c) => {
-      this.service.delete(c.req.param('id'));
+    app.delete('/:id', async (c) => {
+      await this.service.delete(c.req.param('id'));
       return c.body(null, 204);
     });
 

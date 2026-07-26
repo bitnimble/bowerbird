@@ -56,6 +56,10 @@ export const config = {
   // edits made while the server was down. Local "HH:MM"; "" disables. A full scan
   // holds the library mutex, so the default is overnight, out of the way.
   fullSyncAt: envTimeOfDay('SYNC_FULL_AT', '03:00'),
+  // Sweep for generated files whose photo no longer exists (§10.6). Weekly
+  // because it only has anything to do after a library is removed or a
+  // catalogue is rebuilt, and it reads every thumbnail directory. 0 disables.
+  pruneEveryDays: envNumber('PRUNE_EVERY_DAYS', 7),
   processingConcurrency: envNumber('PROCESSING_CONCURRENCY', 4),
   smallThumbnailSize: envNumber('SMALL_THUMBNAIL_SIZE', 800),
   fullThumbnailSize: envNumber('FULL_THUMBNAIL_SIZE', 3840),

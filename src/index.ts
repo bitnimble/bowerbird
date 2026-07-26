@@ -19,6 +19,7 @@ import { ConfigApi } from './api/config/config_api';
 import { SyncService } from './services/sync/sync_service';
 import { LibraryWatcher } from './services/sync/library_watcher';
 import { DailySync } from './services/sync/daily_sync';
+import { PruneService, ScheduledPrune } from './services/maintenance/prune_service';
 import { ProcessingService } from './services/processing/processing_service';
 import { SettingsRepository } from './services/settings/settings_repository';
 import { config } from './config';
@@ -92,6 +93,11 @@ if (config.watchEnabled) {
 if (config.fullSyncAt !== '') {
   new DailySync(syncService, config.fullSyncAt).start();
   console.log(`Daily full reconcile at ${config.fullSyncAt}`);
+}
+
+if (config.pruneEveryDays > 0) {
+  new ScheduledPrune(new PruneService(librariesRepo, photosRepo), config.pruneEveryDays).start();
+  console.log(`Orphaned-file prune every ${config.pruneEveryDays} day(s)`);
 }
 
 applyErrorHandler(app);

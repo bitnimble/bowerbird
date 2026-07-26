@@ -880,14 +880,6 @@ Each worker:
 
 The embedded JPEG carries its own EXIF orientation, so it is passed through `sharp().rotate()`; a render is already baked upright by the decoder (§11.1) and must not be rotated again. A file with no JPEG preview (some bodies embed a bitmap, or nothing) is a property of the file rather than an error, so an `embedded` request falls back to a render. The result reports what was **actually** used and `photos.thumbnail_source` records it, so the client can state which pixels are on screen instead of leaving the user to guess.
 
-### 10.5 Lossless export
-
-`POST /api/photos/:id/lossless` renders one photo at full resolution, 16-bit, into a PNG kept beside the thumbnails. It exists because a WebP preview is not what you check focus or gradients on, and it is opt-in per photo because the output runs to tens or hundreds of megabytes and takes real time to build. The file is the cache: a second request finds it already there, and `PhotoDetail.has_lossless` is a `stat` rather than a column, so it cannot disagree with the disk.
-
-PNG rather than TIFF: it is the only lossless format a browser will display, which is the point of the feature. The depth needs two deliberate steps that are each silently lossy if missed, `libraw_set_output_bps(16)` on the decode and `toColourspace('rgb16')` before the encode, without which sharp writes 8-bit from a 16-bit buffer. `libraw_set_output_color` pins sRGB, which is what an unprofiled PNG is read as anyway.
-
-The default for newly indexed photos is the `import.thumbnail_source` setting (§13.6). Changing it is deliberately not retroactive: rebuilding an existing catalogue is a job the user asks for explicitly, not something a preference does to thousands of files in the background. `POST /api/photos/reprocess` is that explicit request.
-
 ### 10.4 LibRaw FFI Bindings (`raw_decoder.ts`)
 
 Minimal FFI bindings for LibRaw:
@@ -920,6 +912,25 @@ The decoder function:
 **Memory-leak audit:** every LibRaw allocation must be paired with its free on all paths, including errors. The three owners are the mem-image (`libraw_dcraw_clear_mem`), the unpacked data (`libraw_recycle`), and the processor (`libraw_close`). The implementing agent should audit the full FFI lifecycle, not just these calls.
 
 This buffer is then passed to sharp as `sharp(data, { raw: { width, height, channels: 3 } })`.
+
+### 10.5 Lossless export
+
+`POST /api/photos/:id/lossless` renders one photo at full resolution, 16-bit, into a PNG kept beside the thumbnails. It exists because a WebP preview is not what you check focus or gradients on, and it is opt-in per photo because the output runs to tens or hundreds of megabytes and takes real time to build. The file is the cache: a second request finds it already there, and `PhotoDetail.has_lossless` is a `stat` rather than a column, so it cannot disagree with the disk.
+
+PNG rather than TIFF: it is the only lossless format a browser will display, which is the point of the feature. The depth needs two deliberate steps that are each silently lossy if missed, `libraw_set_output_bps(16)` on the decode and `toColourspace('rgb16')` before the encode, without which sharp writes 8-bit from a 16-bit buffer. `libraw_set_output_color` pins sRGB, which is what an unprofiled PNG is read as anyway.
+
+The default for newly indexed photos is the `import.thumbnail_source` setting (§13.6). Changing it is deliberately not retroactive: rebuilding an existing catalogue is a job the user asks for explicitly, not something a preference does to thousands of files in the background. `POST /api/photos/reprocess` is that explicit request.
+
+### 10.6 Orphaned files
+
+Generated files are named `<photoId>.<ext>`, and photo ids are minted per insert, so a catalogue rebuilt over the same folder gives every file a new id and strands the old ones. Nothing in the normal write path notices: processing rewrites thumbnails in place, and the only unlink is a failed job cleaning up its own partial output.
+
+Two things close that off:
+
+- **Removing a library removes its data directory.** Re-adding the same folder can never reuse the thumbnails (new ids), so keeping them is dead weight. The RAW files are not ours and are left alone. `data_path` is user-supplied, so a library configured to keep its data alongside or above the photographs is skipped with a warning rather than having that directory removed: losing thumbnails is recoverable, losing originals is not.
+- **A scheduled sweep** (`PRUNE_EVERY_DAYS`, default 7, 0 disables) walks each library's `thumbnails/small`, `thumbnails/full` and `lossless` and deletes any file whose id has no row. Only those three: the Bin holds RAWs named by filename, and the sync lock is not keyed by photo id at all. Ids are checked against the whole `photos` table, not one library's, because the id space is global and two libraries may share a data directory. Soft-deleted rows count as live, since their thumbnails are what make the Bin browsable (§12.1).
+
+It runs on an interval rather than at startup: a restart is no evidence anything was orphaned, and in development that would sweep on every reload.
 
 ---
 
@@ -1225,6 +1236,7 @@ The server is configured via environment variables:
 | `WATCH_ENABLED` | `true` | Auto-sync a library when its files change on disk (§9.8) |
 | `WATCH_DEBOUNCE_MS` | `2000` | Debounce window for coalescing filesystem events (§9.8) |
 | `SYNC_FULL_AT` | `03:00` | Local `HH:MM` for the daily full reconcile; `""` disables (§9.8) |
+| `PRUNE_EVERY_DAYS` | `7` | Interval for the orphaned-file sweep; `0` disables (§10.6) |
 | `CORS_ORIGINS` | *(unset)* | Comma-separated origins allowed to call the API, or `*`. Unset means "any port on whatever host the request arrived at", so the client works on loopback and over the LAN without hardcoding an address, while an unrelated site on the internet is still refused. |
 
 ---
