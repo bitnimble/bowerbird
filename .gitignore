@@ -140,5 +140,15 @@ vite.config.ts.timestamp-*
 
 # Bowerbird
 /photos/
+/.photos/
 bowerbird.db
 bowerbird.db-*
+
+# Playwright / E2E
+web/test-results/
+web/playwright-report/
+.playwright-mcp/
+
+# Screenshots taken while driving the app
+*.png
+*.jpg
