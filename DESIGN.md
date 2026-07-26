@@ -869,7 +869,18 @@ Each worker:
 4. Generates small thumbnail: `sharp(buffer, { raw: { width, height, channels: 3 } }).resize({ width: smallSize, height: smallSize, fit: 'inside' }).webp({ quality: smallQuality }).toFile(smallOutputPath)`.
 5. Generates full thumbnail: `sharp(buffer, { raw: { width, height, channels: 3 } }).resize({ width: fullSize, height: fullSize, fit: 'inside' }).webp({ quality: fullQuality }).toFile(fullOutputPath)`.
 6. On any failure in steps 2-5 (e.g. the full resize/encode throws after the small write already succeeded), delete `smallOutputPath` and `fullOutputPath` if present (best-effort unlink) before reporting, so a failed job leaves no partial thumbnail and a failed reprocess does not leave the prior run's stale thumbnails on disk (both share the UUID-keyed path). This upholds the §10.2 no-thumbnail invariant.
-7. Sends back `{ photoId, success: true }` or `{ photoId, success: false, error: string }`.
+7. Sends back `{ photoId, success: true, source }` or `{ photoId, success: false, error: string }`.
+
+**Thumbnail source.** The job names where the pixels come from:
+
+| Source | What it does | Trade-off |
+|---|---|---|
+| `render` | Demosaics the RAW (steps 2-3 above) | Full sensor resolution, slow |
+| `embedded` | Lifts the camera's own JPEG out of the file (`libraw_unpack_thumb` + `libraw_dcraw_make_mem_thumb`) | Much faster, the maker's colour treatment, but only as large as the body embedded, which ranges from 640×480 to the full sensor |
+
+The embedded JPEG carries its own EXIF orientation, so it is passed through `sharp().rotate()`; a render is already baked upright by the decoder (§11.1) and must not be rotated again. A file with no JPEG preview (some bodies embed a bitmap, or nothing) is a property of the file rather than an error, so an `embedded` request falls back to a render. The result reports what was **actually** used and `photos.thumbnail_source` records it, so the client can state which pixels are on screen instead of leaving the user to guess.
+
+The default for newly indexed photos is the `import.thumbnail_source` setting (§13.6). Changing it is deliberately not retroactive: rebuilding an existing catalogue is a job the user asks for explicitly, not something a preference does to thousands of files in the background. `POST /api/photos/reprocess` is that explicit request.
 
 ### 10.4 LibRaw FFI Bindings (`raw_decoder.ts`)
 
@@ -1115,6 +1126,11 @@ All boolean query params are parsed with `z.stringbool()`, so `?is_missing=false
 | `GET` | `/image/:photoId/small.webp` | Stream small thumbnail |
 | `GET` | `/image/:photoId/full.webp` | Stream full thumbnail |
 | `GET` | `/image/:photoId/original.arw` | Stream original RAW file |
+| `GET` | `/image/:photoId/full.jpg` | The full thumbnail transcoded to JPEG, as an attachment |
+
+`full.jpg` is transcoded per request and never stored: a download is occasional, and a third derivative per photo on disk would cost more than the transcode does.
+
+**Caching.** Thumbnails are rebuilt in place under a stable URL, so every image response carries an `ETag` (file size + mtime) and `Cache-Control: no-cache`. Without a validator the browser caches heuristically with nothing to revalidate against, and keeps showing the pre-rebuild picture; `no-cache` still caches, it just always asks first, which is a 304 in the common case. `If-None-Match` is answered directly.
 
 These endpoints:
 - Resolve the file path from the photo record and library configuration.
@@ -1142,7 +1158,17 @@ app.get('/image/:photoId/small.webp', async (c) => {
 });
 ```
 
-`Bun.file()` returns a lazy reference that streams from disk when consumed as a `Response` body — no full read into memory.
+`Bun.file()` returns a lazy reference that streams from disk when consumed as a `Response` body, no full read into memory.
+
+### 13.6 Config and settings
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/config` | Thumbnail format, sizes and qualities, so a client can state what it is rendering |
+| `GET` | `/api/config/settings` | User-editable preferences |
+| `PUT` | `/api/config/settings` | Update them |
+
+Two different things share the mount: `config` is fixed by the deployment (environment variables, §15), `settings` is what the user can change from the app and lives in a `settings` key/value table. The only one so far is `import.thumbnail_source` (§10.3). It is a table rather than a column per setting because they are read one at a time and never queried across.
 
 ---
 
@@ -1339,6 +1365,10 @@ Five named views (Active, Untriaged, Picks, Rejects, All) answer the questions a
 
 There is no "clear filters" button and no "default order" entry: All is the clear, and the sort always shows the concrete ordering in effect rather than an indirection through the collection's stored default.
 
+The bulk action bar sits directly under the filters, where the selection was made, rather than at the foot of a grid the user has scrolled away from. Its actions include rebuilding thumbnails for the selection from either source (§10.3). While a selection exists the keyboard cursor's ring is suppressed: two different rings on one tile only invites "why is this one different".
+
+Rebuilt thumbnails change behind a URL that does not, so the client appends a version to image URLs once a rebuild has happened in the session. The server's `ETag` covers a fresh page load; this covers an image already decoded in the current one.
+
 ### 18.4 Culling
 
 Rating a shoot is the daily job, so it must not require opening each frame. The grid holds a keyboard cursor (distinct from the selection) and binds:
@@ -1373,7 +1403,11 @@ Panning is clamped so the photo cannot be dragged away from the viewport edge. T
 
 The stage's `src` is keyed off the route rather than the loaded detail, and the image stays hidden until that src decodes. The store deliberately keeps the previous detail while the next loads (so the rail does not collapse), which otherwise means the stage paints the frame *before* the one the URL asks for.
 
-A "Thumbnail on screen" panel reports what is actually being displayed (WebP, its pixel dimensions, colour space and encode quality) separately from the original RAW's size and dimensions, because the two are easy to confuse and only one of them is what you are judging sharpness on.
+A "Thumbnail on screen" panel reports what is actually being displayed (its source, pixel dimensions, format, colour space and encode quality) separately from the original RAW's size and dimensions, because the two are easy to confuse and only one of them is what you are judging sharpness on.
+
+Every metadata panel shows its two most important rows and hides the rest behind a same-size toggle, so each costs the same three lines however much a camera recorded. Download (RAW or JPEG), the rebuild actions and Bin live in the page header beside the prev/next controls, which keeps every action on the photo in one place rather than buried at the bottom of a panel column.
+
+Landing straight on `/photos/:id` used to leave prev/next dead: the neighbours come from the loaded collection, and a deep link has none. Opening the detail with no collection loaded now opens the photo's library as well.
 
 Destructive actions split by reversibility. Binning is undoable, so it just happens and reports with an undo toast wired to `POST /api/photos/restore`. Deleting a library, shoot or album is not undoable, so each asks first via a native `confirm()` that names the specific consequence (removing a library keeps the RAW files but destroys every rating, note, pick and membership).
 

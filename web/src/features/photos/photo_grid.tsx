@@ -33,9 +33,13 @@ const Tile = observer(function Tile({ photo, index }: { photo: PhotoSummary; ind
   const [failedAt, setFailedAt] = useState<number | null>(null);
   const token = store.reloadToken;
   const failed = failedAt === token;
-  const src = failedAt == null ? thumbnailUrl(photo.id, 'small') : `${thumbnailUrl(photo.id, 'small')}?r=${token}`;
+  // A failed request retries against the current list generation; a rebuild
+  // changes the file behind the same URL and needs its own version.
+  const src = failedAt == null ? thumbnailUrl(photo.id, 'small', store.rebuiltAt) : `${thumbnailUrl(photo.id, 'small')}?r=${token}`;
   const selected = store.selected.has(photo.id);
-  const focused = store.focusIndex === index;
+  // The keyboard cursor is meaningless once a selection is being assembled by
+  // mouse: two rings on the same tile only raises "why is this one different".
+  const focused = store.focusIndex === index && !store.hasSelection;
   const ref = useRef<HTMLDivElement>(null);
 
   // Keep the keyboard cursor on screen when it walks off the visible rows.

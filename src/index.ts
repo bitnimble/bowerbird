@@ -71,7 +71,7 @@ app.use(
   '*',
   cors({
     origin: config.corsOrigins ?? sameHostOrigin,
-    allowMethods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     exposeHeaders: ['Content-Length', 'Content-Range', 'Accept-Ranges'],
   }),
 );

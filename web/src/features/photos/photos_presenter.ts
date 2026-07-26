@@ -1,5 +1,13 @@
 import { action, runInAction } from 'mobx';
-import { ApiError, api, type Ordering, type PhotoListParams, type PhotoListResponse, type Triage } from '../../api/client';
+import {
+  ApiError,
+  api,
+  type Ordering,
+  type PhotoListParams,
+  type PhotoListResponse,
+  type ThumbnailSource,
+  type Triage,
+} from '../../api/client';
 import type { AlbumsPresenter } from '../albums/albums_presenter';
 import type { ShootsPresenter } from '../shoots/shoots_presenter';
 import type { ToastsPresenter } from '../toasts/toasts_presenter';
@@ -11,6 +19,10 @@ function message(err: unknown): string {
 
 function plural(n: number, one: string, many: string): string {
   return `${n} ${n === 1 ? one : many}`;
+}
+
+export function sourceLabel(source: ThumbnailSource): string {
+  return source === 'embedded' ? 'embedded JPEG' : 'RAW render';
 }
 
 export class PhotosPresenter {
@@ -75,6 +87,10 @@ export class PhotosPresenter {
         this.store.detail = detail;
         this.store.detailLoading = false;
       });
+      // Landing straight on a photo URL leaves no collection loaded, so the
+      // neighbours are unknown and prev/next are dead. Open the photo's library
+      // so stepping works from a deep link as well as from the grid.
+      if (this.store.source == null) await this.open({ kind: 'library', libraryId: detail.library_id });
     } catch (err) {
       runInAction(() => {
         this.store.detailLoading = false;
@@ -210,6 +226,32 @@ export class PhotosPresenter {
   async restoreSelected(): Promise<void> {
     const ids = this.store.selectedIds;
     await this.bulk(() => api.restorePhotos(ids), `Restored ${plural(ids.length, 'photo', 'photos')}`);
+  }
+
+  async reprocessSelected(source: ThumbnailSource): Promise<void> {
+    await this.reprocess(this.store.selectedIds, source);
+    this.clearSelection();
+  }
+
+  // Rebuilding is queued server-side, so this reports that the work started
+  // rather than that it finished; the grid picks up the new files as they land.
+  async reprocess(photoIds: string[], source: ThumbnailSource): Promise<void> {
+    if (photoIds.length === 0) return;
+    try {
+      const { queued } = await api.reprocessPhotos(photoIds, source);
+      runInAction(() => (this.store.rebuiltAt = Date.now()));
+      await this.refreshDetail();
+      this.toasts.show(`Rebuilding ${plural(queued, 'thumbnail', 'thumbnails')} from the ${sourceLabel(source)}`);
+    } catch (err) {
+      runInAction(() => (this.store.error = message(err)));
+    }
+  }
+
+  private async refreshDetail(): Promise<void> {
+    const open = this.store.detail;
+    if (open == null) return;
+    const detail = await api.getPhoto(open.id).catch(() => null);
+    if (detail != null) runInAction(() => (this.store.detail = detail));
   }
 
   // Binning is reversible, so it reports with an undo rather than asking first.

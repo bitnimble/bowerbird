@@ -28,8 +28,8 @@ export const ShootPhotosPage = observer(function ShootPhotosPage(): JSX.Element 
 
       <ErrorBanner message={store.error} onDismiss={photos.clearError} />
       <GridControls />
-      <PhotoGrid emptyHint="Select photos in the library view and add them to this shoot." />
       <BulkBar removeFrom={shoot == null ? undefined : { kind: 'shoot', id: shoot.id, name: shoot.name }} />
+      <PhotoGrid emptyHint="Select photos in the library view and add them to this shoot." />
     </div>
   );
 });

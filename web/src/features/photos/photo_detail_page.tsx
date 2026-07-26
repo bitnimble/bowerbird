@@ -1,19 +1,40 @@
 import { observer } from 'mobx-react-lite';
 import { Fragment, useEffect, useState } from 'react';
-import { ArrowLeft, ChevronLeft, ChevronRight, Download, Trash2 } from 'lucide-react';
+import { ArrowLeft, ChevronLeft, ChevronRight, Download, FileImage, FileType, RefreshCw, Sparkles, Trash2, Wand2 } from 'lucide-react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { originalUrl, thumbnailUrl } from '../../api/client';
+import { jpegUrl, originalUrl, thumbnailUrl, type ThumbnailSource } from '../../api/client';
 import { useAlbumsStore, usePhotosStore, usePresenters, useServerConfigStore, useShootsStore } from '../../app/stores_context';
-import { Button, ICON, Text, TextArea } from '../../ui/ui';
+import { ActionMenu, Button, ICON, MoreLess, type Option, Text, TextArea } from '../../ui/ui';
+import { sourceLabel } from './photos_presenter';
 import { PhotoStage } from './photo_stage';
 import { TriageControl } from './triage_control';
 
-function Field({ label, children }: { label: string; children: React.ReactNode }): JSX.Element {
+type Row = [label: string, value: React.ReactNode];
+
+// Two rows visible, the rest one click away. Every panel then costs the same
+// three lines, so the column stays scannable however much a camera recorded.
+const VISIBLE_ROWS = 2;
+
+function MetaPanel({ title, rows }: { title: string; rows: Row[] }): JSX.Element {
+  const [open, setOpen] = useState(false);
+  const shown = open ? rows : rows.slice(0, VISIBLE_ROWS);
+  const hidden = rows.length - VISIBLE_ROWS;
+
   return (
-    <>
-      <dt>{label}</dt>
-      <dd>{children}</dd>
-    </>
+    <div className="panel">
+      <Text variant="label" as="div" className="panel__title">
+        {title}
+      </Text>
+      <dl className="meta">
+        {shown.map(([name, value]) => (
+          <Fragment key={name}>
+            <dt>{name}</dt>
+            <dd>{value}</dd>
+          </Fragment>
+        ))}
+      </dl>
+      {hidden > 0 && <MoreLess count={hidden} open={open} onToggle={() => setOpen((v) => !v)} />}
+    </div>
   );
 }
 
@@ -44,6 +65,16 @@ function fileSizeLabel(bytes: number): string {
   const mb = bytes / (1024 * 1024);
   return mb >= 1 ? `${mb.toFixed(1)} MB` : `${Math.round(bytes / 1024)} KB`;
 }
+
+const DOWNLOADS: Option<'raw' | 'jpeg'>[] = [
+  { value: 'raw', label: 'Original RAW', icon: <FileType size={ICON} /> },
+  { value: 'jpeg', label: 'JPEG', icon: <FileImage size={ICON} /> },
+];
+
+const REBUILDS: Option<ThumbnailSource>[] = [
+  { value: 'render', label: 'Rebuild from RAW', icon: <Wand2 size={ICON} /> },
+  { value: 'embedded', label: 'Use embedded JPEG', icon: <Sparkles size={ICON} /> },
+];
 
 export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element {
   const { photoId = '' } = useParams();
@@ -134,13 +165,43 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
           <ChevronRight size={ICON} />
         </Button>
         <Text variant="mono">{photo?.file_path ?? ''}</Text>
+
+        <div className="spacer" />
+
+        <ActionMenu
+          trigger={
+            <>
+              <Download size={ICON} />
+              Download
+            </>
+          }
+          options={DOWNLOADS}
+          onSelect={(kind) => {
+            window.location.href = kind === 'raw' ? originalUrl(photoId) : jpegUrl(photoId);
+          }}
+        />
+        <ActionMenu
+          trigger={
+            <>
+              <RefreshCw size={ICON} />
+              Actions
+            </>
+          }
+          options={REBUILDS}
+          onSelect={(source) => void photos.reprocess([photoId], source)}
+        />
+        {photo != null && !photo.is_deleted && (
+          <Button variant="danger" iconOnly aria-label="Move to Bin" onClick={() => void photos.deletePhotos([photo.id])}>
+            <Trash2 size={ICON} />
+          </Button>
+        )}
       </div>
 
       <div className={landscape ? 'detail detail--below' : 'detail detail--beside'}>
         {/* Keyed off the route, not the loaded detail, so the photo on screen is
             always the one the URL asks for. */}
         <PhotoStage
-          src={thumbnailUrl(photoId, 'full')}
+          src={thumbnailUrl(photoId, 'full', store.rebuiltAt)}
           alt={filename}
           filename={filename}
           onImageLoad={(width, height) => setThumbSize({ width, height })}
@@ -183,73 +244,63 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
                 <Text variant="mono">{notesDirty ? 'unsaved' : store.notesSavedAt != null ? 'saved' : ''}</Text>
               </Panel>
 
-              <Panel title="Camera">
-                <dl className="meta">
-                  <Field label="Body">{bodyLabel(photo.camera_make, photo.camera_model)}</Field>
-                  <Field label="Lens">{photo.lens_model ?? 'not recorded'}</Field>
-                  <Field label="ISO">{photo.iso ?? 'not recorded'}</Field>
-                  <Field label="Shutter">{photo.shutter_speed == null ? 'not recorded' : shutterLabel(photo.shutter_speed)}</Field>
-                  <Field label="Aperture">{photo.aperture == null ? 'not recorded' : `f/${photo.aperture.toFixed(1)}`}</Field>
-                  <Field label="Focal length">
-                    {photo.focal_length == null ? 'not recorded' : `${Math.round(photo.focal_length)}mm`}
-                  </Field>
-                  <Field label="Taken">{photo.date_taken ?? 'not recorded'}</Field>
-                  <Field label="GPS">
-                    {photo.latitude == null || photo.longitude == null
+              <MetaPanel
+                title="Camera"
+                rows={[
+                  ['Body', bodyLabel(photo.camera_make, photo.camera_model)],
+                  ['Lens', photo.lens_model ?? 'not recorded'],
+                  ['ISO', photo.iso ?? 'not recorded'],
+                  ['Shutter', photo.shutter_speed == null ? 'not recorded' : shutterLabel(photo.shutter_speed)],
+                  ['Aperture', photo.aperture == null ? 'not recorded' : `f/${photo.aperture.toFixed(1)}`],
+                  ['Focal length', photo.focal_length == null ? 'not recorded' : `${Math.round(photo.focal_length)}mm`],
+                  ['Taken', photo.date_taken ?? 'not recorded'],
+                  [
+                    'GPS',
+                    photo.latitude == null || photo.longitude == null
                       ? 'not recorded'
-                      : `${photo.latitude.toFixed(5)}, ${photo.longitude.toFixed(5)}`}
-                  </Field>
-                </dl>
-              </Panel>
+                      : `${photo.latitude.toFixed(5)}, ${photo.longitude.toFixed(5)}`,
+                  ],
+                ]}
+              />
 
-              <Panel title="Thumbnail on screen">
-                <dl className="meta">
-                  <Field label="Format">{thumbs?.format.toUpperCase() ?? 'WEBP'}</Field>
-                  <Field label="Resolution">{thumbSize == null ? 'loading' : `${thumbSize.width} × ${thumbSize.height}`}</Field>
-                  <Field label="Colour space">{thumbs?.color_space ?? 'sRGB'}</Field>
-                  <Field label="Quality">
-                    {thumbs == null ? 'unknown' : `${thumbs.full.quality} (longest edge ${thumbs.full.size}px)`}
-                  </Field>
-                </dl>
-              </Panel>
+              <MetaPanel
+                title="Thumbnail on screen"
+                rows={[
+                  // Null on rows thumbnailed before the column existed, which is
+                  // "not recorded" rather than "not built".
+                  ['Source', photo.thumbnail_source == null ? 'unknown' : sourceLabel(photo.thumbnail_source)],
+                  ['Resolution', thumbSize == null ? 'loading' : `${thumbSize.width} × ${thumbSize.height}`],
+                  ['Format', thumbs?.format.toUpperCase() ?? 'WEBP'],
+                  ['Colour space', thumbs?.color_space ?? 'sRGB'],
+                  ['Quality', thumbs == null ? 'unknown' : `${thumbs.full.quality} (longest edge ${thumbs.full.size}px)`],
+                ]}
+              />
 
-              <Panel title="Original RAW">
-                <dl className="meta">
-                  <Field label="File size">{photo.file_size == null ? 'unknown' : fileSizeLabel(photo.file_size)}</Field>
-                  <Field label="Dimensions">
-                    {photo.width} × {photo.height}
-                  </Field>
-                  <Field label="Added">{photo.date_added}</Field>
-                  <Field label="Shoot">{shoot == null ? 'none' : <Link to={`/shoots/${shoot.id}`}>{shoot.folder_path}</Link>}</Field>
-                  <Field label="Albums">
-                    {photoAlbums.length === 0
+              <MetaPanel
+                title="Original RAW"
+                rows={[
+                  ['File size', photo.file_size == null ? 'unknown' : fileSizeLabel(photo.file_size)],
+                  ['Dimensions', `${photo.width} × ${photo.height}`],
+                  ['Added', photo.date_added],
+                  ['Shoot', shoot == null ? 'none' : <Link to={`/shoots/${shoot.id}`}>{shoot.folder_path}</Link>],
+                  [
+                    'Albums',
+                    photoAlbums.length === 0
                       ? 'none'
                       : photoAlbums.map((a, i) => (
                           <Fragment key={a.id}>
                             {i > 0 && ', '}
                             <Link to={`/albums/${a.id}`}>{a.name}</Link>
                           </Fragment>
-                        ))}
-                  </Field>
-                  <Field label="State">
-                    {photo.is_missing ? 'missing' : photo.is_deleted ? 'binned' : 'ok'}
-                    {photo.needs_processing ? ' · thumbnailing' : ''}
-                  </Field>
-                  {photo.processing_error != null && <Field label="Error">{photo.processing_error}</Field>}
-                </dl>
-                <div className="row detail__actions">
-                  <Button render={<a href={originalUrl(photo.id)} />}>
-                    <Download size={ICON} />
-                    Download RAW
-                  </Button>
-                  {!photo.is_deleted && (
-                    <Button variant="danger" onClick={() => void photos.deletePhotos([photo.id])}>
-                      <Trash2 size={ICON} />
-                      Bin
-                    </Button>
-                  )}
-                </div>
-              </Panel>
+                        )),
+                  ],
+                  [
+                    'State',
+                    `${photo.is_missing ? 'missing' : photo.is_deleted ? 'binned' : 'ok'}${photo.needs_processing ? ' · thumbnailing' : ''}`,
+                  ],
+                  ...(photo.processing_error != null ? ([['Error', photo.processing_error]] as Row[]) : []),
+                ]}
+              />
             </>
           )}
         </div>

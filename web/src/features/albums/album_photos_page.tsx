@@ -25,8 +25,8 @@ export const AlbumPhotosPage = observer(function AlbumPhotosPage(): JSX.Element 
 
       <ErrorBanner message={store.error} onDismiss={photos.clearError} />
       <GridControls />
-      <PhotoGrid emptyHint="Select photos in the library view and add them to this album." />
       <BulkBar removeFrom={album == null ? undefined : { kind: 'album', id: album.id, name: album.name }} />
+      <PhotoGrid emptyHint="Select photos in the library view and add them to this album." />
     </div>
   );
 });

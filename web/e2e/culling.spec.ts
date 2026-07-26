@@ -162,10 +162,18 @@ test('the detail view shows shooting metadata, the triage control and steps betw
   await openLibrary(page, CULL_PHOTOS_DIR);
   await page.locator('.tile__hit').first().click();
 
+  // Body and lens lead the camera panel; everything else is one click away, so
+  // each panel costs the same few lines however much the camera recorded.
+  const camera = page.locator('.panel', { hasText: 'CAMERA' });
+  await expect(camera.locator('.meta dt')).toHaveCount(2);
+  await expect(camera.getByText('Body', { exact: true })).toBeVisible();
+  await expect(camera.getByText('Lens', { exact: true })).toBeVisible();
+
   // ISO/shutter/aperture/focal are read from the RAW header; the fixture has them.
-  await expect(page.getByText('ISO', { exact: true })).toBeVisible();
-  await expect(page.getByText('Shutter', { exact: true })).toBeVisible();
-  await expect(page.getByText('Aperture', { exact: true })).toBeVisible();
+  await camera.getByRole('button', { name: /more/ }).click();
+  await expect(camera.getByText('ISO', { exact: true })).toBeVisible();
+  await expect(camera.getByText('Shutter', { exact: true })).toBeVisible();
+  await expect(camera.getByText('Aperture', { exact: true })).toBeVisible();
 
   // Three-way triage, not a checkbox: "undecided" has to be expressible.
   const triage = page.locator('.ui-seg--stretch');
@@ -173,13 +181,33 @@ test('the detail view shows shooting metadata, the triage control and steps betw
   await expect(triage.getByRole('button', { name: 'Undecided' })).toBeVisible();
   await expect(triage.getByRole('button', { name: 'Pick' })).toBeVisible();
 
-  // The served thumbnail reports its own encoding, not the RAW's.
-  await expect(page.getByText('WEBP')).toBeVisible();
+  // The served thumbnail reports where its pixels came from and how it was encoded.
+  const thumbnail = page.locator('.panel', { hasText: 'THUMBNAIL ON SCREEN' });
+  await expect(thumbnail.getByText('Source', { exact: true })).toBeVisible();
+  await thumbnail.getByRole('button', { name: /more/ }).click();
+  await expect(thumbnail.getByText('WEBP')).toBeVisible();
 
   const path = page.locator('.detail__nav .ui-text--mono');
   const first = await path.innerText();
   await page.getByRole('button', { name: 'Next photo' }).click();
   await expect(path).not.toHaveText(first);
+});
+
+test('a selection can be rebuilt from the embedded JPEG', async ({ page }) => {
+  await page.goto('/settings');
+  await openLibrary(page, CULL_PHOTOS_DIR);
+  await expect(page.locator('.tile')).toHaveCount(PHOTO_NAMES.length);
+
+  await page.getByRole('button', { name: 'Select photo' }).first().click();
+  await page.getByRole('button', { name: 'Rebuild thumbnails' }).click();
+  await page.getByRole('menuitem', { name: 'From the embedded JPEG' }).click();
+  await expect(page.getByText(/Rebuilding 1 thumbnail from the embedded JPEG/)).toBeVisible();
+
+  // The source is recorded per photo, so the detail view can say which pixels are
+  // on screen rather than leaving the user to guess.
+  await page.locator('.tile__hit').first().click();
+  const thumbnail = page.locator('.panel', { hasText: 'THUMBNAIL ON SCREEN' });
+  await expect(thumbnail.getByText('embedded JPEG')).toBeVisible({ timeout: 30_000 });
 });
 
 test('the stage never shows the previous photo after navigating to another one', async ({ page }) => {

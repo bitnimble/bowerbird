@@ -25,8 +25,8 @@ export const BinPage = observer(function BinPage(): JSX.Element {
 
       <ErrorBanner message={store.error} onDismiss={photos.clearError} />
       <GridControls />
-      <PhotoGrid emptyHint="Nothing has been deleted from this library." />
       <BulkBar />
+      <PhotoGrid emptyHint="Nothing has been deleted from this library." />
     </div>
   );
 });

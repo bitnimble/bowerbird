@@ -27,8 +27,8 @@ export const LibraryPhotosPage = observer(function LibraryPhotosPage(): JSX.Elem
     <div className="pad">
       <ErrorBanner message={store.error} onDismiss={photos.clearError} />
       <GridControls />
-      <PhotoGrid emptyHint="Sync this library from Settings to index the RAW files in its folder." />
       <BulkBar />
+      <PhotoGrid emptyHint="Sync this library from Settings to index the RAW files in its folder." />
     </div>
   );
 });

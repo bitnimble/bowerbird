@@ -1,9 +1,9 @@
 import { observer } from 'mobx-react-lite';
 import { useEffect, useState } from 'react';
-import { FolderPlus, RefreshCw, Trash2 } from 'lucide-react';
-import type { Ordering } from '../../api/client';
-import { useLibrariesStore, usePresenters, useSyncStore } from '../../app/stores_context';
-import { Button, Heading, ICON, type Option, Select, Text, TextField } from '../../ui/ui';
+import { FolderPlus, RefreshCw, Sparkles, Trash2, Wand2 } from 'lucide-react';
+import type { Ordering, ThumbnailSource } from '../../api/client';
+import { useLibrariesStore, usePresenters, useServerConfigStore, useSyncStore } from '../../app/stores_context';
+import { Button, Heading, ICON, type Option, SegmentedControl, Select, Text, TextField } from '../../ui/ui';
 import { SyncStrip } from '../sync/sync_strip';
 
 const ORDERINGS: Option<Ordering>[] = [
@@ -78,6 +78,41 @@ const LibrarySettings = observer(function LibrarySettings(): JSX.Element {
   );
 });
 
+const SOURCES: Option<ThumbnailSource>[] = [
+  { value: 'render', label: 'Render the RAW', icon: <Wand2 size={ICON} /> },
+  { value: 'embedded', label: 'Camera JPEG', icon: <Sparkles size={ICON} /> },
+];
+
+// Which pixels new photos get thumbnailed from. Deliberately not retroactive:
+// rebuilding an existing catalogue is a job you ask for explicitly from the
+// grid, not something a preference does to thousands of files behind your back.
+const ImportSettings = observer(function ImportSettings(): JSX.Element {
+  const store = useServerConfigStore();
+  const { serverConfig } = usePresenters();
+
+  useEffect(() => {
+    void serverConfig.loadSettings();
+  }, [serverConfig]);
+
+  return (
+    <div className="panel">
+      <div className="row">
+        <SegmentedControl
+          label="Thumbnail source for new photos"
+          options={SOURCES}
+          value={store.settings?.thumbnail_source ?? null}
+          onChange={(source) => void serverConfig.setThumbnailSource(source)}
+        />
+        {store.saving && <Text variant="mono">saving…</Text>}
+      </div>
+      <Text variant="mono" as="p">
+        Rendering demosaics the RAW at full resolution. The camera JPEG is much faster and carries the maker&apos;s colour, but is only
+        as large as the body embedded. Applies to photos indexed from now on; existing thumbnails are left alone.
+      </Text>
+    </div>
+  );
+});
+
 export const SettingsPage = observer(function SettingsPage(): JSX.Element {
   const store = useLibrariesStore();
   const { libraries } = usePresenters();
@@ -133,6 +168,11 @@ export const SettingsPage = observer(function SettingsPage(): JSX.Element {
       ) : (
         <LibrarySettings />
       )}
+
+      <Text variant="label" as="div" className="panel__title settings__group">
+        Import
+      </Text>
+      <ImportSettings />
     </div>
   );
 });

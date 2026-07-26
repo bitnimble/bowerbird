@@ -277,6 +277,35 @@ export function CheckMenu<T extends string>({
   );
 }
 
+// A menu of one-shot actions, as opposed to CheckMenu's independent toggles.
+export function ActionMenu<T extends string>({
+  trigger,
+  options,
+  onSelect,
+}: {
+  trigger: ReactNode;
+  options: Option<T>[];
+  onSelect: (value: T) => void;
+}): JSX.Element {
+  return (
+    <Menu.Root>
+      <Menu.Trigger className="ui-btn ui-btn--default">{trigger}</Menu.Trigger>
+      <Menu.Portal>
+        <Menu.Positioner sideOffset={4}>
+          <Menu.Popup className="ui-popup">
+            {options.map((option) => (
+              <Menu.Item key={option.value} className="ui-item ui-item--action" onClick={() => onSelect(option.value)}>
+                {option.icon}
+                {option.label}
+              </Menu.Item>
+            ))}
+          </Menu.Popup>
+        </Menu.Positioner>
+      </Menu.Portal>
+    </Menu.Root>
+  );
+}
+
 export function PopoverButton({
   trigger,
   active = false,
@@ -338,6 +367,17 @@ export function ErrorBanner({ message, onDismiss }: { message: string | null; on
         Dismiss
       </Button>
     </div>
+  );
+}
+
+// Keeps a panel to a few lines: the rest is one click away, at the same type
+// size, so nothing reads as a different level of importance than it is.
+export function MoreLess({ count, open, onToggle }: { count: number; open: boolean; onToggle: () => void }): JSX.Element {
+  return (
+    <button type="button" className="ui-more" aria-expanded={open} onClick={onToggle}>
+      <ChevronDown size={12} className={open ? 'ui-more__chevron is-open' : 'ui-more__chevron'} />
+      {open ? 'Show less' : `${count} more`}
+    </button>
   );
 }
 

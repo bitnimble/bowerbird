@@ -9,6 +9,12 @@ import type { ServerConfig } from '../features/settings/server_config_store';
 export type { Album, Library, LibrarySyncStatus, PhotoDetail, PhotoListResponse, Shoot, Triage };
 export type PhotoSummary = PhotoListResponse['photos'][number];
 export type Ordering = Library['ordering'];
+// NonNullable: the column is null until a photo has been processed once.
+export type ThumbnailSource = NonNullable<PhotoDetail['thumbnail_source']>;
+
+export interface AppSettings {
+  thumbnail_source: ThumbnailSource;
+}
 
 // Default to the API on the same host the page was served from. Hardcoding
 // localhost only works when the browser runs on the server; reached over the
@@ -103,6 +109,11 @@ export const api = {
   updatePhoto: (id: string, body: UpdatePhotoRequest): Promise<PhotoDetail> => request('PATCH', `/api/photos/${id}`, body),
   deletePhotos: (photoIds: string[]): Promise<void> => request('POST', '/api/photos/delete', { photo_ids: photoIds }),
   restorePhotos: (photoIds: string[]): Promise<void> => request('POST', '/api/photos/restore', { photo_ids: photoIds }),
+  reprocessPhotos: (photoIds: string[], source: ThumbnailSource): Promise<{ queued: number }> =>
+    request('POST', '/api/photos/reprocess', { photo_ids: photoIds, source }),
+
+  getSettings: (): Promise<AppSettings> => request('GET', '/api/config/settings'),
+  updateSettings: (body: AppSettings): Promise<AppSettings> => request('PUT', '/api/config/settings', body),
 
   listShoots: (libraryId: string): Promise<Shoot[]> => request('GET', `/api/libraries/${libraryId}/shoots`),
   getShoot: (id: string): Promise<Shoot> => request('GET', `/api/shoots/${id}`),
@@ -128,10 +139,18 @@ export const api = {
     request('GET', `/api/albums/${id}/photos${query(params)}`),
 };
 
-export function thumbnailUrl(photoId: string, size: 'small' | 'full'): string {
-  return `${BASE}/image/${photoId}/${size}.webp`;
+// `version` is appended only once thumbnails have been rebuilt in this session:
+// the file changes behind a stable URL, and an image already decoded in the page
+// is never re-requested without it.
+export function thumbnailUrl(photoId: string, size: 'small' | 'full', version = 0): string {
+  const url = `${BASE}/image/${photoId}/${size}.webp`;
+  return version === 0 ? url : `${url}?v=${version}`;
 }
 
 export function originalUrl(photoId: string): string {
   return `${BASE}/image/${photoId}/original.arw`;
+}
+
+export function jpegUrl(photoId: string): string {
+  return `${BASE}/image/${photoId}/full.jpg`;
 }

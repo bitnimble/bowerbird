@@ -60,6 +60,11 @@ export class PhotosStore {
   // image is worth requesting again.
   @observable accessor reloadToken = 0;
 
+  // Bumped when thumbnails are rebuilt. The file changes behind a URL that does
+  // not, so images already decoded in the page would otherwise never be
+  // re-requested; appending this defeats that without polluting normal URLs.
+  @observable accessor rebuiltAt = 0;
+
   @observable.ref accessor detail: PhotoDetail | null = null;
   @observable accessor detailLoading = false;
   @observable accessor notesSavedAt: number | null = null;

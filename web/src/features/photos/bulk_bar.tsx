@@ -1,7 +1,13 @@
 import { observer } from 'mobx-react-lite';
-import { FolderInput, Images, RotateCcw, Trash2, X } from 'lucide-react';
+import { FolderInput, Images, RefreshCw, RotateCcw, Sparkles, Trash2, Wand2, X } from 'lucide-react';
+import type { ThumbnailSource } from '../../api/client';
 import { useAlbumsStore, usePhotosStore, usePresenters, useShootsStore } from '../../app/stores_context';
-import { Button, CheckMenu, ICON, Text } from '../../ui/ui';
+import { ActionMenu, Button, CheckMenu, ICON, type Option, Text } from '../../ui/ui';
+
+const REBUILDS: Option<ThumbnailSource>[] = [
+  { value: 'render', label: 'From the RAW', icon: <Wand2 size={ICON} /> },
+  { value: 'embedded', label: 'From the embedded JPEG', icon: <Sparkles size={ICON} /> },
+];
 
 interface Props {
   // Set on a shoot or album page so the selection can be removed from it, not
@@ -70,6 +76,17 @@ export const BulkBar = observer(function BulkBar({ removeFrom }: Props): JSX.Ele
               onToggle={(albumId) => void photos.addSelectedToAlbum(albumId)}
             />
           )}
+
+          <ActionMenu
+            trigger={
+              <>
+                <RefreshCw size={ICON} />
+                Rebuild thumbnails
+              </>
+            }
+            options={REBUILDS}
+            onSelect={(source) => void photos.reprocessSelected(source)}
+          />
 
           {removeFrom != null && (
             <Button

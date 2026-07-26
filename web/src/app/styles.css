@@ -304,6 +304,11 @@ p.ui-text--mono {
   color: var(--glass);
 }
 
+/* No checkbox column: these fire and close rather than toggling. */
+.ui-item--action {
+  padding-left: 9px;
+}
+
 .ui-backdrop {
   position: fixed;
   inset: 0;
@@ -530,6 +535,10 @@ p.ui-text--mono {
 .panel__title {
   display: block;
   margin-bottom: 8px;
+}
+
+.settings__group {
+  margin-top: 18px;
 }
 
 .error {
@@ -876,14 +885,17 @@ p.ui-text--mono {
   position: absolute;
   right: 6px;
   top: 6px;
-  width: 17px;
-  height: 17px;
+  width: 18px;
+  height: 18px;
+  padding: 0;
   border-radius: 3px;
   border: 1px solid #545a66;
   background: rgba(10, 12, 16, 0.75);
-  display: grid;
-  place-items: center;
-  font-size: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* The button's own line-height would otherwise offset the glyph inside the box. */
+  line-height: 0;
   color: transparent;
 }
 
@@ -895,10 +907,13 @@ p.ui-text--mono {
 
 /* ---------- selection bar ---------- */
 
+/* Directly under the filters, where the selection was made, rather than at the
+   foot of a grid the user has scrolled away from. */
 .bulkbar {
   position: sticky;
-  bottom: 0;
-  margin-top: 10px;
+  top: 0;
+  z-index: 5;
+  margin-bottom: 10px;
   background: var(--slate-soft);
   border: 1px solid var(--slate);
   border-radius: 6px;
@@ -1091,6 +1106,34 @@ p.ui-text--mono {
 .meta dd {
   margin: 0;
   word-break: break-all;
+}
+
+/* Same size and family as the rows it hides, so it reads as part of the list
+   rather than as a control competing with it. */
+.ui-more {
+  background: none;
+  border: 0;
+  padding: 6px 0 0;
+  margin: 0;
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--bone-dim);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.ui-more:hover {
+  color: var(--bone);
+}
+
+.ui-more__chevron {
+  transition: transform 120ms ease;
+}
+
+.ui-more__chevron.is-open {
+  transform: rotate(180deg);
 }
 
 .stars {

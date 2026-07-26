@@ -96,6 +96,13 @@ const LibraryNav = observer(function LibraryNav({ activeId }: { activeId: string
 
 const Rail = observer(function Rail(): JSX.Element {
   const libraryId = useCurrentLibraryId();
+  // Sections stay open on the library you were last in. Collapsing them the
+  // moment you visit Albums or Settings means losing your place in the rail and
+  // having to click back into the library to get it back.
+  const [lastLibraryId, setLastLibraryId] = useState<string | null>(libraryId);
+  useEffect(() => {
+    if (libraryId != null) setLastLibraryId(libraryId);
+  }, [libraryId]);
 
   return (
     <nav className="rail">
@@ -108,7 +115,7 @@ const Rail = observer(function Rail(): JSX.Element {
         </div>
       </div>
 
-      <LibraryNav activeId={libraryId} />
+      <LibraryNav activeId={libraryId ?? lastLibraryId} />
 
       <div className="rail__section">
         <Text variant="label" as="div">
