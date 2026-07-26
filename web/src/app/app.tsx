@@ -1,0 +1,218 @@
+import { observer } from 'mobx-react-lite';
+import { Fragment, useEffect, useState } from 'react';
+import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { Images, Keyboard, Layers, Library, Settings, Trash2 } from 'lucide-react';
+import { AlbumPhotosPage } from '../features/albums/album_photos_page';
+import { AlbumsPage } from '../features/albums/albums_page';
+import { BinPage } from '../features/photos/bin_page';
+import { LibraryPhotosPage } from '../features/photos/library_photos_page';
+import { PhotoDetailPage } from '../features/photos/photo_detail_page';
+import { SettingsPage } from '../features/settings/settings_page';
+import { ShootPhotosPage } from '../features/shoots/shoot_photos_page';
+import { ShootsPage } from '../features/shoots/shoots_page';
+import { Toasts } from '../features/toasts/toasts';
+import { ICON, Modal, Text } from '../ui/ui';
+import { useLibrariesStore, usePhotosStore, usePresenters, useShootsStore } from './stores_context';
+
+// Which library the user is inside. Only /libraries/* names it in the URL; shoot
+// and photo routes resolve it from the loaded entity, so the rail keeps its
+// context instead of blanking out as soon as you open a shoot or a photo.
+function useCurrentLibraryId(): string | null {
+  const { pathname } = useLocation();
+  const shoots = useShootsStore();
+  const photos = usePhotosStore();
+
+  const library = /^\/libraries\/([^/]+)/.exec(pathname);
+  if (library?.[1] != null) return library[1];
+
+  const shoot = /^\/shoots\/([^/]+)/.exec(pathname);
+  if (shoot?.[1] != null) return shoots.byId.get(shoot[1])?.library_id ?? null;
+
+  // detailLibraryId is a computed, so navigating between photos in one library
+  // produces the same value and re-renders nothing here.
+  if (/^\/photos\//.test(pathname)) return photos.detailLibraryId;
+
+  return null;
+}
+
+const railClass = ({ isActive }: { isActive: boolean }): string => `rail__link${isActive ? ' rail__link--active' : ''}`;
+
+// Every registered library is always listed, and the active one expands to its
+// sections. There is no "pick a library first" screen: adding a library is a
+// setup step, not something you navigate through on every visit.
+const LibraryNav = observer(function LibraryNav({ activeId }: { activeId: string | null }): JSX.Element {
+  const libraries = useLibrariesStore();
+
+  if (libraries.libraries.length === 0) {
+    return (
+      <div className="rail__section">
+        <Text variant="label" as="div">
+          Libraries
+        </Text>
+        <NavLink to="/settings" className={railClass}>
+          <Settings size={ICON} />
+          Add a library
+        </NavLink>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rail__section">
+      <Text variant="label" as="div">
+        Libraries
+      </Text>
+      {libraries.libraries.map((library) => {
+        const active = library.id === activeId;
+        return (
+          <div key={library.id}>
+            <NavLink end to={`/libraries/${library.id}`} className={railClass} title={library.root_path}>
+              <Library size={ICON} />
+              <span className="rail__text">{library.root_path.split('/').pop() ?? library.root_path}</span>
+              <span className="rail__count">{library.photo_count}</span>
+            </NavLink>
+            {active && (
+              <div className="rail__sub">
+                <NavLink end to={`/libraries/${library.id}`} className={railClass}>
+                  <Images size={ICON} />
+                  Photos
+                </NavLink>
+                <NavLink to={`/libraries/${library.id}/shoots`} className={railClass}>
+                  <Layers size={ICON} />
+                  Shoots
+                </NavLink>
+                <NavLink to={`/libraries/${library.id}/bin`} className={railClass}>
+                  <Trash2 size={ICON} />
+                  Bin
+                </NavLink>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+});
+
+const Rail = observer(function Rail(): JSX.Element {
+  const libraryId = useCurrentLibraryId();
+
+  return (
+    <nav className="rail">
+      <div className="brand">
+        <div className="brand__mark">Bowerbird</div>
+        <div className="brand__bower" aria-hidden="true">
+          <i />
+          <i />
+          <i />
+        </div>
+      </div>
+
+      <LibraryNav activeId={libraryId} />
+
+      <div className="rail__section">
+        <Text variant="label" as="div">
+          Catalogue
+        </Text>
+        <NavLink to="/albums" className={railClass}>
+          <Images size={ICON} />
+          Albums
+        </NavLink>
+      </div>
+
+      {/* Settings and the shortcut sheet are both "about the app" rather than
+          about the photographs, so they sit together, away from the catalogue. */}
+      <div className="rail__section rail__section--app">
+        <NavLink to="/settings" className={railClass}>
+          <Settings size={ICON} />
+          Settings
+        </NavLink>
+        <ShortcutHelp />
+      </div>
+    </nav>
+  );
+});
+
+// Library-scoped routes are reachable by deep link, and the rail lists libraries
+// on every screen, so the list must load regardless of where the user landed.
+const EnsureLibraries = observer(function EnsureLibraries(): null {
+  const libraries = useLibrariesStore();
+  const { libraries: presenter } = usePresenters();
+  useEffect(() => {
+    if (libraries.libraries.length === 0) void presenter.load();
+  }, [libraries, presenter]);
+  return null;
+});
+
+// One place that states the cull keybindings, reachable with ? from anywhere.
+// C and X are neighbours so the left hand can pick and reject without moving
+// while the right hand drives the arrow keys.
+const SHORTCUTS: [string, string][] = [
+  ['← → ↑ ↓', 'Move between photos'],
+  ['0 – 5', 'Set rating'],
+  ['C', 'Pick / clear'],
+  ['X', 'Reject'],
+  ['Del', 'Move to Bin'],
+  ['Space', 'Add to selection'],
+  ['F', 'Fullscreen (photo view)'],
+  ['Esc', 'Clear selection, or leave a photo'],
+];
+
+function ShortcutHelp(): JSX.Element {
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent): void {
+      const target = e.target as HTMLElement | null;
+      if (target != null && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
+      if (e.key === '?') setOpen((v) => !v);
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  return (
+    <>
+      <button className="rail__link rail__help" onClick={() => setOpen(true)}>
+        <Keyboard size={ICON} />
+        Shortcuts
+        <span className="rail__count">?</span>
+      </button>
+      <Modal open={open} onOpenChange={setOpen} title="Keyboard shortcuts">
+        <dl className="meta">
+          {SHORTCUTS.map(([keys, what]) => (
+            <Fragment key={keys}>
+              <dt>{keys}</dt>
+              <dd>{what}</dd>
+            </Fragment>
+          ))}
+        </dl>
+      </Modal>
+    </>
+  );
+}
+
+export function App(): JSX.Element {
+  return (
+    <div className="shell">
+      <EnsureLibraries />
+      <Rail />
+      <div className="main">
+        <Toasts />
+        <div className="content">
+          <Routes>
+            <Route path="/" element={<Navigate to="/settings" replace />} />
+            <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/libraries/:libraryId" element={<LibraryPhotosPage />} />
+            <Route path="/libraries/:libraryId/shoots" element={<ShootsPage />} />
+            <Route path="/libraries/:libraryId/bin" element={<BinPage />} />
+            <Route path="/shoots/:shootId" element={<ShootPhotosPage />} />
+            <Route path="/albums" element={<AlbumsPage />} />
+            <Route path="/albums/:albumId" element={<AlbumPhotosPage />} />
+            <Route path="/photos/:photoId" element={<PhotoDetailPage />} />
+          </Routes>
+        </div>
+      </div>
+    </div>
+  );
+}

@@ -1,0 +1,1198 @@
+/* Bowerbird, a bower is a collection arranged by colour, so the chrome stays
+   near-black and desaturated and the only saturated things on screen are the
+   photographs and the small collected-blue accents. */
+
+@import 'react-day-picker/style.css';
+
+:root {
+  --ink: #14161a; /* app surround */
+  --bower: #0b0d11; /* the bed the grid sits on, deeper than the chrome */
+  --slate: #232833; /* panel edges, dividers */
+  --slate-soft: #1a1e26; /* raised panel */
+  --satin: #4c7df0; /* satin bowerbird blue: primary action */
+  --glass: #7fd4e8; /* sea-glass: selection */
+  --bone: #e8e4da; /* primary text */
+  --bone-dim: #8b8f99; /* secondary text */
+  --ochre: #d98a3a; /* the one warm note: missing / warning */
+  --rose: #e2685f; /* destructive, and the reject verdict */
+  --moss: #5fb87a; /* the pick verdict; traffic-light semantics beat palette purity here */
+
+  --display: 'Space Grotesk', 'Trebuchet MS', sans-serif;
+  --body: 'IBM Plex Sans', system-ui, -apple-system, sans-serif;
+  --mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  --rail: 208px;
+
+  /* Every control is this tall and this size, with no per-component override.
+     A filter chip and a toolbar button are the same object wearing different
+     paint, so they must not drift apart. */
+  --control-h: 30px;
+  --control-text: 13px;
+  --radius: 4px;
+
+  /* Chrome above and below the photo stage: the .pad box plus the nav row. */
+  --detail-chrome: 84px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--ink);
+  color: var(--bone);
+  font-family: var(--body);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--glass);
+  outline-offset: 2px;
+}
+
+/* ---------- typography ---------- */
+
+.ui-h {
+  font-family: var(--display);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin: 0 0 8px;
+}
+
+.ui-h--1 {
+  font-size: 20px;
+}
+
+.ui-h--2 {
+  font-size: 17px;
+}
+
+.ui-text--muted {
+  color: var(--bone-dim);
+}
+
+.ui-text--mono {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--bone-dim);
+}
+
+p.ui-text--mono {
+  margin: 0 0 10px;
+}
+
+.ui-text--label {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--bone-dim);
+}
+
+/* ---------- controls ---------- */
+
+.ui-btn {
+  height: var(--control-h);
+  font-size: var(--control-text);
+  line-height: 1;
+  background: var(--slate-soft);
+  border: 1px solid var(--slate);
+  border-radius: var(--radius);
+  padding: 0 10px;
+  cursor: pointer;
+  color: var(--bone);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.ui-btn:hover:not(:disabled) {
+  border-color: #39404f;
+  color: var(--bone);
+}
+
+.ui-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.ui-btn--icon {
+  padding: 0;
+  width: var(--control-h);
+  justify-content: center;
+}
+
+.ui-btn--primary {
+  background: var(--satin);
+  border-color: var(--satin);
+  color: #08111f;
+  font-weight: 600;
+}
+
+.ui-btn--primary:hover:not(:disabled) {
+  background: #6791f4;
+}
+
+.ui-btn--danger {
+  color: var(--rose);
+}
+
+.ui-btn--ghost {
+  background: none;
+  border-color: transparent;
+  color: var(--bone-dim);
+}
+
+.ui-btn__caret {
+  display: inline-flex;
+  margin-left: auto;
+  color: var(--bone-dim);
+}
+
+/* Segmented items: same metrics, joined into one block. */
+.ui-seg {
+  display: inline-flex;
+  border: 1px solid var(--slate);
+  border-radius: var(--radius);
+  overflow: hidden;
+  flex: 0 0 auto;
+}
+
+.ui-seg--stretch {
+  display: flex;
+  width: 100%;
+}
+
+.ui-btn--seg {
+  border: 0;
+  border-right: 1px solid var(--slate);
+  border-radius: 0;
+  color: var(--bone-dim);
+}
+
+.ui-seg--stretch .ui-btn--seg {
+  flex: 1;
+  justify-content: center;
+  padding: 0 6px;
+}
+
+.ui-seg > .ui-btn--seg:last-child {
+  border-right: 0;
+}
+
+.ui-btn--seg[data-pressed] {
+  background: var(--satin);
+  color: #08111f;
+  font-weight: 600;
+}
+
+.ui-btn--pick[data-pressed] {
+  background: var(--moss);
+  color: #04180b;
+}
+
+.ui-btn--reject[data-pressed] {
+  background: var(--rose);
+  color: #200807;
+}
+
+.ui-input {
+  height: var(--control-h);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #0f1319;
+  border: 1px solid var(--slate);
+  border-radius: var(--radius);
+  padding: 0 9px;
+  color: var(--bone-dim);
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.ui-input--grow {
+  flex: 1 1 200px;
+}
+
+.ui-input input {
+  background: none;
+  border: 0;
+  outline: none;
+  min-width: 0;
+  width: 100%;
+  font-size: var(--control-text);
+  color: var(--bone);
+}
+
+.ui-input input::placeholder {
+  color: #5c626e;
+}
+
+.ui-textarea {
+  width: 100%;
+  min-height: 60px;
+  resize: vertical;
+  background: #0f1319;
+  border: 1px solid var(--slate);
+  border-radius: var(--radius);
+  padding: 7px 9px;
+  font-size: var(--control-text);
+}
+
+/* Menus, selects and popovers share one surface. */
+.ui-popup {
+  background: var(--slate-soft);
+  border: 1px solid var(--slate);
+  border-radius: 6px;
+  padding: 4px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
+  max-height: 60vh;
+  overflow: auto;
+  z-index: 60;
+}
+
+.ui-popup--pad {
+  padding: 10px;
+}
+
+.ui-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: var(--control-h);
+  padding: 0 9px 0 4px;
+  border-radius: var(--radius);
+  font-size: var(--control-text);
+  cursor: pointer;
+  color: var(--bone-dim);
+  outline: none;
+  user-select: none;
+}
+
+.ui-item[data-highlighted] {
+  background: var(--slate);
+  color: var(--bone);
+}
+
+.ui-item__check {
+  width: 16px;
+  display: inline-flex;
+  justify-content: center;
+  color: var(--glass);
+}
+
+.ui-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(6, 8, 11, 0.72);
+  z-index: 50;
+}
+
+.ui-modal {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: var(--slate-soft);
+  border: 1px solid var(--slate);
+  border-radius: 8px;
+  padding: 16px;
+  min-width: 320px;
+  z-index: 51;
+}
+
+.ui-modal__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.ui-slider {
+  width: 110px;
+  display: flex;
+  align-items: center;
+  height: var(--control-h);
+}
+
+.ui-slider__control {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  height: var(--control-h);
+  cursor: pointer;
+}
+
+.ui-slider__track {
+  position: relative;
+  width: 100%;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--slate);
+}
+
+.ui-slider__fill {
+  position: absolute;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--satin);
+}
+
+.ui-slider__thumb {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--bone);
+}
+
+/* ---------- shell ---------- */
+
+.shell {
+  display: grid;
+  grid-template-columns: var(--rail) 1fr;
+  height: 100%;
+}
+
+.rail {
+  background: var(--bower);
+  border-right: 1px solid var(--slate);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: auto;
+}
+
+.brand {
+  padding: 12px 12px 10px;
+  border-bottom: 1px solid var(--slate);
+}
+
+.brand__mark {
+  font-family: var(--display);
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+/* Three collected objects, arranged by colour, the bower, in miniature. */
+.brand__bower {
+  display: flex;
+  gap: 3px;
+  margin-top: 5px;
+}
+
+.brand__bower i {
+  width: 12px;
+  height: 3px;
+  background: var(--satin);
+}
+
+.brand__bower i:nth-child(2) {
+  background: var(--glass);
+  width: 6px;
+}
+
+.brand__bower i:nth-child(3) {
+  background: var(--slate);
+  width: 20px;
+}
+
+.rail__section {
+  padding: 10px 8px 2px;
+}
+
+/* Settings and the shortcut sheet: pushed to the bottom, away from the
+   catalogue, because they are about the app rather than the photographs. */
+.rail__section--app {
+  margin-top: auto;
+  padding-bottom: 10px;
+  border-top: 1px solid var(--slate);
+  padding-top: 8px;
+}
+
+.rail__section > .ui-text--label {
+  padding: 0 6px 5px;
+}
+
+.rail__link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 8px;
+  border-radius: var(--radius);
+  color: var(--bone-dim);
+  font-size: 13px;
+}
+
+.rail__text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rail__link .rail__count {
+  margin-left: auto;
+}
+
+/* Sections of the active library, indented under it. */
+.rail__sub {
+  margin: 2px 0 4px 9px;
+  padding-left: 7px;
+  border-left: 1px solid var(--slate);
+}
+
+.rail__link:hover {
+  background: var(--slate-soft);
+  color: var(--bone);
+}
+
+.rail__link--active {
+  background: var(--slate-soft);
+  color: var(--bone);
+  box-shadow: inset 2px 0 0 var(--satin);
+}
+
+.rail__count {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--bone-dim);
+}
+
+.rail__help {
+  background: none;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+}
+
+.main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.content {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+}
+
+.pad {
+  padding: 12px 14px 20px;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.panel {
+  background: var(--slate-soft);
+  border: 1px solid var(--slate);
+  border-radius: 6px;
+  padding: 10px;
+  margin-bottom: 10px;
+}
+
+.panel__title {
+  display: block;
+  margin-bottom: 8px;
+}
+
+.error {
+  border: 1px solid #4a2a2a;
+  background: #1e1315;
+  color: #f0a9a3;
+  border-radius: var(--radius);
+  padding: 6px 10px;
+  margin-bottom: 10px;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.empty {
+  padding: 40px 16px;
+  text-align: center;
+  color: var(--bone-dim);
+}
+
+.empty__title {
+  font-family: var(--display);
+  font-size: 15px;
+  color: var(--bone);
+  margin-bottom: 5px;
+}
+
+/* ---------- collection strip: the signature element ----------
+   One cell per photo queued by the current sync run, filling as thumbnails
+   land. Reads photos_processed / photos_processing straight off the status
+   endpoint, so it is a picture of the actual queue draining. */
+
+.strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.strip__cells {
+  display: flex;
+  gap: 2px;
+}
+
+.strip__cell {
+  width: 5px;
+  height: 14px;
+  background: var(--slate);
+}
+
+.strip__cell--done {
+  background: var(--satin);
+}
+
+.strip__cell--active {
+  background: var(--glass);
+  animation: pulse 1s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.strip__label {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--bone-dim);
+  white-space: nowrap;
+}
+
+.status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--bone-dim);
+  flex: 0 0 auto;
+}
+
+.status-dot--scanning {
+  background: var(--glass);
+  animation: pulse 1s ease-in-out infinite;
+}
+
+.status-dot--processing {
+  background: var(--satin);
+  animation: pulse 1s ease-in-out infinite;
+}
+
+/* ---------- toasts ---------- */
+
+.toasts {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.toast {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--slate-soft);
+  border: 1px solid var(--slate);
+  border-left: 2px solid var(--satin);
+  border-radius: 5px;
+  padding: 8px 10px;
+  min-width: 300px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+.toast__undo {
+  margin-left: auto;
+}
+
+/* ---------- view controls ---------- */
+
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+/* The zoom slider belongs to the grid, not to the filters, so it sits apart at
+   the far end of the row. */
+.controls__zoom {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+}
+
+.pager {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* ---------- calendar ---------- */
+
+.rdp-root {
+  --rdp-accent-color: var(--satin);
+  --rdp-accent-background-color: #1f2a3f;
+  --rdp-today-color: var(--glass);
+  --rdp-day-height: 30px;
+  --rdp-day-width: 30px;
+  --rdp-day_button-height: 28px;
+  --rdp-day_button-width: 28px;
+  --rdp-day_button-border-radius: var(--radius);
+  --rdp-range_middle-background-color: #1a2333;
+  --rdp-range_middle-color: var(--bone);
+  font-family: var(--body);
+  font-size: var(--control-text);
+  margin-bottom: 8px;
+}
+
+.rdp-weekday {
+  font-family: var(--mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  color: var(--bone-dim);
+}
+
+.rdp-caption_label,
+.rdp-month_caption {
+  font-family: var(--display);
+  font-size: 14px;
+}
+
+/* ---------- grid ---------- */
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(var(--tile, 240px), 1fr));
+  gap: 3px;
+  background: var(--bower);
+  padding: 3px;
+  border: 1px solid var(--slate);
+  border-radius: 6px;
+}
+
+.tile {
+  position: relative;
+  aspect-ratio: 3 / 2;
+  background: #090b0e;
+  overflow: hidden;
+  cursor: pointer;
+  display: block;
+  border: 0;
+  padding: 0;
+}
+
+/* Covers the tile so a click anywhere opens the photo; the checkbox and badges
+   sit above it. */
+.tile__hit {
+  position: absolute;
+  inset: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+
+.tile img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  opacity: 0;
+  transition: opacity 220ms ease;
+}
+
+.tile img.is-loaded {
+  opacity: 1;
+}
+
+/* Rings are drawn by an overlay rather than an inset shadow: the thumbnail is a
+   child element and paints over any shadow the tile itself casts inward. */
+.tile--selected::after,
+.tile--focused::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.tile--selected::after {
+  box-shadow: inset 0 0 0 2px var(--glass);
+}
+
+/* The keyboard cursor. Distinct from selection (glass) so you can see where the
+   cull is up to even while a different set is selected. */
+.tile--focused::after {
+  box-shadow: inset 0 0 0 3px var(--satin);
+}
+
+.tile--focused.tile--selected::after {
+  box-shadow:
+    inset 0 0 0 3px var(--satin),
+    inset 0 0 0 5px var(--glass);
+}
+
+.tile__name {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: #b9bcc4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tile__pending {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: #4a505c;
+  text-transform: uppercase;
+}
+
+.tile__badges {
+  position: absolute;
+  left: 6px;
+  top: 6px;
+  display: flex;
+  gap: 4px;
+}
+
+.badge {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 2px 5px;
+  border-radius: 2px;
+  background: rgba(10, 12, 16, 0.82);
+  color: var(--bone-dim);
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.badge--missing {
+  color: var(--ochre);
+}
+
+.badge--pick {
+  color: var(--moss);
+}
+
+.badge--reject {
+  color: var(--rose);
+}
+
+/* A rejected frame stays visible when explicitly filtered to, but reads as set
+   aside rather than as part of the working set. */
+.tile[data-triage='rejected'] img {
+  opacity: 0.55;
+}
+
+.badge--deleted {
+  color: var(--rose);
+}
+
+.tile__foot {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 14px 7px 5px;
+  background: linear-gradient(transparent, rgba(6, 8, 11, 0.9));
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.rating {
+  display: flex;
+  gap: 2px;
+}
+
+.rating i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #464c58;
+}
+
+.rating i.on {
+  background: var(--glass);
+}
+
+.tile__check {
+  position: absolute;
+  right: 6px;
+  top: 6px;
+  width: 17px;
+  height: 17px;
+  border-radius: 3px;
+  border: 1px solid #545a66;
+  background: rgba(10, 12, 16, 0.75);
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  color: transparent;
+}
+
+.tile--selected .tile__check {
+  background: var(--glass);
+  border-color: var(--glass);
+  color: #08131a;
+}
+
+/* ---------- selection bar ---------- */
+
+.bulkbar {
+  position: sticky;
+  bottom: 0;
+  margin-top: 10px;
+  background: var(--slate-soft);
+  border: 1px solid var(--slate);
+  border-radius: 6px;
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.bulkbar__count {
+  color: var(--glass);
+}
+
+/* ---------- detail ---------- */
+/* The panel sits beside a portrait photo and beneath a landscape one, so the
+   image gets the axis it actually needs, and the stage takes every pixel the
+   viewport is not already spending on chrome. */
+
+.detail-page {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.detail__nav {
+  margin-bottom: 8px;
+  flex: 0 0 auto;
+}
+
+.detail {
+  display: grid;
+  gap: 10px;
+  flex: 1;
+  min-height: 0;
+}
+
+.detail--beside {
+  grid-template-columns: minmax(0, 1fr) 260px;
+}
+
+.detail--below {
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+
+.detail__panels {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+  overflow: auto;
+  min-height: 0;
+}
+
+.detail--below .detail__panels {
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  max-height: 34vh;
+}
+
+.detail--below .panel,
+.detail--beside .panel {
+  margin-bottom: 0;
+}
+
+.detail__rating {
+  justify-content: space-between;
+  margin-top: 10px;
+}
+
+.detail__actions {
+  margin-top: 10px;
+}
+
+/* ---------- photo stage ---------- */
+
+/* No frame and no backdrop. A photo's aspect almost never matches the space it
+   is given, so a bordered, filled stage always showed black margins on one axis
+   and read as bars around the image. Without the box there is nothing to fail to
+   fill: the photo sits on the page like everything else. */
+.stage {
+  position: relative;
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* The image is absolutely positioned so its intrinsic size never contributes to
+   layout. As a grid item it grew the row to the photo's full height, which made
+   `height: 100%` resolve against that and cropped tall frames. */
+.stage__viewport {
+  position: relative;
+  height: 100%;
+  overflow: hidden;
+  touch-action: none;
+}
+
+/* object-fit rather than max-width/max-height: a percentage max-height on a grid
+   item does not reliably clamp, and a portrait frame then overflowed the stage
+   and got cropped instead of fitted. */
+.stage__viewport img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  cursor: zoom-in;
+  transform-origin: center center;
+  user-select: none;
+  -webkit-user-drag: none;
+  opacity: 0;
+}
+
+/* Held hidden until this src decodes, so navigating never shows the frame
+   before it. */
+.stage__viewport img.is-ready {
+  opacity: 1;
+}
+
+.stage--zoomed .stage__viewport img {
+  cursor: grab;
+}
+
+.stage--zoomed .stage__viewport:active img {
+  cursor: grabbing;
+}
+
+.stage__tools {
+  position: absolute;
+  right: 8px;
+  top: 8px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(10, 12, 16, 0.7);
+  border-radius: var(--radius);
+  padding: 2px;
+}
+
+.stage__scale {
+  padding: 0 5px;
+}
+
+/* Fullscreen: the photo and nothing else. The bar fades in on pointer movement
+   so the filename and the exit are reachable without being on screen. */
+.stage--fullscreen {
+  background: #000;
+}
+
+.stage--fullscreen .stage__viewport {
+  height: 100vh;
+}
+
+.stage__bar {
+  position: absolute;
+  left: 50%;
+  bottom: 22px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 12px;
+  border-radius: 6px;
+  background: rgba(14, 16, 20, 0.72);
+  backdrop-filter: blur(6px);
+  border: 1px solid rgba(232, 228, 218, 0.14);
+  opacity: 0;
+  transition: opacity 160ms ease;
+  pointer-events: none;
+}
+
+.stage__bar.is-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.meta {
+  display: grid;
+  grid-template-columns: 92px 1fr;
+  gap: 5px 10px;
+  font-family: var(--mono);
+  font-size: 11px;
+  margin: 0;
+}
+
+.meta dt {
+  color: var(--bone-dim);
+}
+
+.meta dd {
+  margin: 0;
+  word-break: break-all;
+}
+
+.stars {
+  display: flex;
+  gap: 4px;
+}
+
+.star {
+  background: none;
+  border: 0;
+  cursor: pointer;
+  padding: 0;
+  font-size: 16px;
+  line-height: 1;
+  color: #464c58;
+}
+
+.star.on {
+  color: var(--glass);
+}
+
+/* ---------- shoots / albums lists ---------- */
+
+.list {
+  border: 1px solid var(--slate);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.list__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--slate);
+  background: var(--slate-soft);
+}
+
+.list__row:last-child {
+  border-bottom: 0;
+}
+
+.list__body {
+  flex: 1;
+  min-width: 0;
+}
+
+.list__name {
+  font-weight: 500;
+}
+
+.list__banner {
+  width: 48px;
+  height: 32px;
+  flex: 0 0 auto;
+  background: var(--bower);
+  border-radius: 3px;
+  overflow: hidden;
+  display: block;
+}
+
+.list__banner img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.list__banner--none {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: repeating-linear-gradient(45deg, #14171d, #14171d 4px, #191d24 4px, #191d24 8px);
+}
+
+/* Depth marker for nested shoots: a rule whose length is the nesting level,
+   so the hierarchy is readable without indent-guessing. */
+.depth {
+  display: inline-block;
+  height: 1px;
+  background: var(--slate);
+  margin-right: 8px;
+  vertical-align: middle;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+@media (max-width: 860px) {
+  .shell {
+    grid-template-columns: 1fr;
+  }
+
+  .rail {
+    display: none;
+  }
+
+  .detail--beside {
+    grid-template-columns: 1fr;
+  }
+}
