@@ -36,15 +36,11 @@ export interface ModifiedEntry {
   wasMissing: boolean;
 }
 
-export interface ReappearedEntry {
-  photoId: string;
-}
-
 export interface LibraryDiff {
   removed: RemovedEntry[];
   added: AddedEntry[];
   modified: ModifiedEntry[];
-  reappeared: ReappearedEntry[];
+  reappeared: string[]; // photo ids
 }
 
 export interface MoveEntry {
@@ -78,7 +74,7 @@ export function buildDiff(
 
   const removed: RemovedEntry[] = [];
   const modified: ModifiedEntry[] = [];
-  const reappeared: ReappearedEntry[] = [];
+  const reappeared: string[] = [];
 
   for (const db of dbPhotos) {
     if (!presentPaths.has(db.file_path)) {
@@ -101,7 +97,7 @@ export function buildDiff(
       });
     } else if (db.is_missing) {
       // present at its path, unchanged (or re-hashed identical): reappearance.
-      reappeared.push({ photoId: db.id });
+      reappeared.push(db.id);
     }
   }
 

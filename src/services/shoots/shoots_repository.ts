@@ -11,10 +11,12 @@ interface ShootRow {
   description: string | null;
   ordering: string;
   banner_photo_id: string | null;
+  photo_count: number;
 }
 
 const SELECT = `SELECT s.id, s.parent_id, s.library_id, s.folder_path, s.name, s.description, s.ordering,
-  b.photo_id AS banner_photo_id
+  b.photo_id AS banner_photo_id,
+  (SELECT COUNT(*) FROM photos p WHERE p.shoot_id = s.id AND p.is_deleted = 0) AS photo_count
   FROM shoots s LEFT JOIN shoot_banners b ON b.shoot_id = s.id`;
 
 function mapRow(row: ShootRow): Shoot {
@@ -27,6 +29,7 @@ function mapRow(row: ShootRow): Shoot {
     description: row.description,
     banner_photo_id: row.banner_photo_id,
     ordering: row.ordering as Ordering,
+    photo_count: row.photo_count,
   };
 }
 

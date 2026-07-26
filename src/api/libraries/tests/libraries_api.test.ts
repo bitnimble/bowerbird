@@ -1,4 +1,4 @@
-import { jest } from '@jest/globals';
+import { describe, it, expect, jest } from 'bun:test';
 import { Hono } from 'hono';
 import { AppError } from '../../../errors';
 import { applyErrorHandler } from '../../error_handler';
@@ -7,7 +7,7 @@ import type { LibrariesService } from '../../../services/libraries/libraries_ser
 import type { SyncService } from '../../../services/sync/sync_service';
 import { LibrariesApi } from '../libraries_api';
 
-const library: Library = { id: 'l1', root_path: '/r', data_path: null, ordering: 'taken_desc' };
+const library: Library = { id: 'l1', root_path: '/r', data_path: null, ordering: 'taken_desc', last_synced_at: null, photo_count: 0 };
 const status = { library_id: 'l1', status: 'processing', photos_added: 3 } as LibrarySyncStatus;
 
 function buildApp(lib: Partial<LibrariesService> = {}, sync: Partial<SyncService> = {}) {

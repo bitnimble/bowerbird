@@ -7,9 +7,12 @@ interface AlbumRow {
   name: string;
   ordering: string;
   banner_photo_id: string | null;
+  photo_count: number;
 }
 
-const SELECT = `SELECT a.id, a.name, a.ordering, b.photo_id AS banner_photo_id
+const SELECT = `SELECT a.id, a.name, a.ordering, b.photo_id AS banner_photo_id,
+  (SELECT COUNT(*) FROM album_photos ap JOIN photos p ON p.id = ap.photo_id
+    WHERE ap.album_id = a.id AND p.is_deleted = 0) AS photo_count
   FROM albums a LEFT JOIN album_banners b ON b.album_id = a.id`;
 
 function mapRow(row: AlbumRow): Album {
@@ -18,6 +21,7 @@ function mapRow(row: AlbumRow): Album {
     name: row.name,
     ordering: row.ordering as Ordering,
     banner_photo_id: row.banner_photo_id,
+    photo_count: row.photo_count,
   };
 }
 

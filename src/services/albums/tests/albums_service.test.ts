@@ -1,4 +1,4 @@
-import { jest } from '@jest/globals';
+import { describe, it, expect, jest } from 'bun:test';
 import { AppError } from '../../../errors';
 import type { Album } from '../../../schemas/albums';
 import type { BasicPhoto, PhotosRepository } from '../../photos/photos_repository';
@@ -24,7 +24,7 @@ function mockPhotos(over: Partial<PhotosRepository> = {}): PhotosRepository {
   return { getBasicByIds: jest.fn(() => [] as BasicPhoto[]), ...over } as unknown as PhotosRepository;
 }
 
-const album: Album = { id: 'a1', name: 'Faves', ordering: 'taken_desc', banner_photo_id: null };
+const album: Album = { id: 'a1', name: 'Faves', ordering: 'taken_desc', banner_photo_id: null, photo_count: 0 };
 const photo: BasicPhoto = { id: 'p1', library_id: 'lib', file_path: 'p1.arw', shoot_id: null };
 
 describe('AlbumsService', () => {

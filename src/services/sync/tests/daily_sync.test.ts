@@ -1,4 +1,4 @@
-import { jest } from '@jest/globals';
+import { describe, it, expect, beforeEach, afterEach, jest } from 'bun:test';
 import { DailySync, msUntil } from '../daily_sync';
 import type { SyncService } from '../sync_service';
 
@@ -30,20 +30,20 @@ describe('DailySync', () => {
     expect(syncAll).not.toHaveBeenCalled();
   });
 
-  it('fires at the configured time and again the next day, until stopped', async () => {
+  it('fires at the configured time and again the next day, until stopped', () => {
     jest.setSystemTime(at('2026-07-18T02:00:00'));
     const syncAll = jest.fn(() => Promise.resolve());
     const daily = new DailySync(withSync(syncAll), '03:00');
     daily.start();
 
-    await jest.advanceTimersByTimeAsync(60 * 60 * 1000); // 03:00
+    jest.advanceTimersByTime(60 * 60 * 1000); // 03:00
     expect(syncAll).toHaveBeenCalledTimes(1);
 
-    await jest.advanceTimersByTimeAsync(24 * 60 * 60 * 1000); // next 03:00
+    jest.advanceTimersByTime(24 * 60 * 60 * 1000); // next 03:00
     expect(syncAll).toHaveBeenCalledTimes(2);
 
     daily.stop();
-    await jest.advanceTimersByTimeAsync(24 * 60 * 60 * 1000);
+    jest.advanceTimersByTime(24 * 60 * 60 * 1000);
     expect(syncAll).toHaveBeenCalledTimes(2);
   });
 });

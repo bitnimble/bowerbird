@@ -1,6 +1,7 @@
 import { constants as fsConstants } from 'node:fs';
-import { copyFile, link, readdir, realpath, stat, unlink } from 'node:fs/promises';
+import { copyFile, link, mkdir, readdir, realpath, stat, unlink } from 'node:fs/promises';
 import path from 'node:path';
+import { AppError } from '../errors';
 
 const SUPPORTED_EXTENSIONS = new Set(['.arw']);
 
@@ -67,44 +68,38 @@ export async function listSupportedFiles(rootPath: string, dataPath: string): Pr
 }
 
 // Atomically moves `from` into `dir` with a collision-free name, returning the
-// absolute destination. link()+unlink() makes name selection and the move a
-// single step, so two concurrent moves of the same basename can't overwrite each
-// other the way existsSync()+rename() could. Falls back to a (non-atomic) copy
-// when the destination is on a different filesystem (a custom data dir).
+// absolute destination. Claiming the name (link, or COPYFILE_EXCL across
+// devices) IS the move, so two concurrent moves of the same basename can't
+// overwrite each other the way existsSync()+rename() could.
 export async function moveIntoDir(from: string, dir: string, filename: string): Promise<string> {
   const ext = path.extname(filename);
   const base = path.basename(filename, ext);
+  let claim = (to: string): Promise<void> => link(from, to);
   for (let n = 0; ; n++) {
     const candidate = path.join(dir, n === 0 ? filename : `${base}_${n}${ext}`);
     try {
-      await link(from, candidate);
+      await claim(candidate);
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
       if (code === 'EEXIST') continue; // name taken (possibly by a concurrent move)
-      if (code === 'EXDEV') return moveCrossDevice(from, dir, filename);
-      throw err;
+      // link() can't span devices (a custom data dir): retry this same candidate
+      // with a (non-atomic) copy, which COPYFILE_EXCL still makes collision-safe.
+      if (code === 'EXDEV') {
+        claim = (to) => copyFile(from, to, fsConstants.COPYFILE_EXCL);
+        n--;
+        continue;
+      }
+      throw new AppError('IO_ERROR', `failed to move ${from} into ${dir}: ${(err as Error).message}`);
     }
     await unlink(from);
     return candidate;
   }
 }
 
-// Cross-filesystem move (link() can't span devices). COPYFILE_EXCL claims each
-// candidate name atomically, it fails EEXIST rather than clobbering, so two
-// concurrent moves of the same basename can't overwrite each other the way
-// existsSync()+copyFile() could.
-async function moveCrossDevice(from: string, dir: string, filename: string): Promise<string> {
-  const ext = path.extname(filename);
-  const base = path.basename(filename, ext);
-  for (let n = 0; ; n++) {
-    const candidate = path.join(dir, n === 0 ? filename : `${base}_${n}${ext}`);
-    try {
-      await copyFile(from, candidate, fsConstants.COPYFILE_EXCL);
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'EEXIST') continue;
-      throw err;
-    }
-    await unlink(from);
-    return candidate;
+export async function ensureDir(dir: string): Promise<void> {
+  try {
+    await mkdir(dir, { recursive: true });
+  } catch (err) {
+    throw new AppError('IO_ERROR', `failed to create directory ${dir}: ${(err as Error).message}`);
   }
 }

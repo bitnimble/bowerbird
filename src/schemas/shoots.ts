@@ -37,5 +37,6 @@ export const ShootSchema = z.object({
   description: z.string().nullable(),
   banner_photo_id: UuidSchema.nullable(),
   ordering: OrderingSchema,
+  photo_count: z.number().int(),
 });
 export type Shoot = z.infer<typeof ShootSchema>;

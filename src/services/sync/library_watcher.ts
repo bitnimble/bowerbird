@@ -14,6 +14,10 @@ type Timer = ReturnType<typeof setTimeout>;
 // import), so fall back to a full sync.
 const MAX_SCOPE = 256;
 
+// Ceiling for the watch-retry backoff (§9.8): long enough that a permanently
+// absent root costs nothing, short enough to pick a returning drive up promptly.
+const MAX_RETRY_MS = 5 * 60 * 1000;
+
 // Watches each library root and triggers a debounced sync when its files change
 // on disk. Reactive counterpart to the on-demand POST /sync (DESIGN §9). Change
 // detection stays with sync; the watcher only decides *when* to run it.
@@ -21,6 +25,7 @@ export class LibraryWatcher implements LibraryLifecycleListener {
   private readonly watchers = new Map<string, FSWatcher>();
   private readonly timers = new Map<string, Timer>();
   private readonly retryTimers = new Map<string, Timer>();
+  private readonly retryDelays = new Map<string, number>();
   private readonly syncing = new Set<string>();
   private readonly dirty = new Set<string>();
   // Changed relative paths accumulated per library during the debounce window; the
@@ -49,6 +54,7 @@ export class LibraryWatcher implements LibraryLifecycleListener {
     this.watchers.clear();
     this.timers.clear();
     this.retryTimers.clear();
+    this.retryDelays.clear();
     this.pending.clear();
   }
 
@@ -64,6 +70,7 @@ export class LibraryWatcher implements LibraryLifecycleListener {
     const retry = this.retryTimers.get(libraryId);
     if (retry) clearTimeout(retry);
     this.retryTimers.delete(libraryId);
+    this.retryDelays.delete(libraryId);
     // Clear dirty so an in-flight run()'s finally can't re-arm a debounce for a
     // library that no longer exists (which would then fail with NOT_FOUND).
     this.syncing.delete(libraryId);
@@ -94,6 +101,7 @@ export class LibraryWatcher implements LibraryLifecycleListener {
         this.scheduleRetry(library);
       });
       this.watchers.set(library.id, watcher);
+      this.retryDelays.delete(library.id); // watching again: next failure starts from the short delay
     } catch (err) {
       // watch() itself failed (incl. a synchronous failure of a retry attempt);
       // keep retrying so one bad attempt doesn't stop auto-sync for good.
@@ -102,15 +110,20 @@ export class LibraryWatcher implements LibraryLifecycleListener {
     }
   }
 
+  // Backs off exponentially up to MAX_RETRY_MS. A root that is gone for good (an
+  // unmounted drive) would otherwise re-attempt every debounce window forever and
+  // fill the log; the cap keeps re-attaching cheap once the drive comes back.
   private scheduleRetry(library: Library): void {
     this.dropWatcher(library.id);
     const existing = this.retryTimers.get(library.id);
     if (existing) clearTimeout(existing);
     if (this.stopped) return;
+    const delay = Math.min(this.retryDelays.get(library.id) ?? this.debounceMs, MAX_RETRY_MS);
+    this.retryDelays.set(library.id, Math.min(delay * 2, MAX_RETRY_MS));
     const timer = setTimeout(() => {
       this.retryTimers.delete(library.id);
       this.watchLibrary(library);
-    }, this.debounceMs);
+    }, delay);
     this.retryTimers.set(library.id, timer);
   }
 

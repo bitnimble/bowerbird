@@ -1,14 +1,22 @@
 import { z } from 'zod';
-import { PaginationSchema, SoftDeleteFilterSchema, UuidSchema } from './common';
+import { OrderingSchema, PaginationSchema, SoftDeleteFilterSchema, UuidSchema } from './common';
+
+// The cull verdict. 'untriaged' is the wire spelling of a NULL column: a photo
+// the user has not judged yet, which is the set they most often want to see.
+export const TriageSchema = z.enum(['untriaged', 'picked', 'rejected']);
+export type Triage = z.infer<typeof TriageSchema>;
 
 export const PhotoSummarySchema = z.object({
   id: UuidSchema,
   library_id: UuidSchema,
   shoot_id: UuidSchema.nullable(),
+  // Included in the summary because a grid tile is identified by its filename;
+  // without it every client would have to fetch the detail of every row.
+  file_path: z.string(),
   width: z.number().int().positive(),
   height: z.number().int().positive(),
   ordering_date: z.string().nullable(),
-  selected: z.boolean(),
+  triage: TriageSchema,
   rating: z.number().int().min(0).max(5),
   is_missing: z.boolean(),
   is_deleted: z.boolean(),
@@ -28,6 +36,22 @@ export const PhotoDetailSchema = PhotoSummarySchema.extend({
   latitude: z.number().nullable(),
   longitude: z.number().nullable(),
   notes: z.string().nullable(),
+  // Size of the original RAW on disk, in bytes.
+  file_size: z.number().int().nullable(),
+  // Shooting metadata off the RAW header (§11.1); null when the camera did not
+  // record it. shutter_speed is in seconds, so 1/250s is 0.004.
+  iso: z.number().nullable(),
+  shutter_speed: z.number().nullable(),
+  aperture: z.number().nullable(),
+  focal_length: z.number().nullable(),
+  // Body and lens, off the RAW header. LibRaw's normalized names where it has
+  // them; null when the camera recorded nothing (fixed-lens bodies report no lens).
+  camera_make: z.string().nullable(),
+  camera_model: z.string().nullable(),
+  lens_model: z.string().nullable(),
+  // Albums this photo belongs to. On the detail only: it needs a second query,
+  // and a grid of 100 tiles has no use for it.
+  album_ids: z.array(UuidSchema),
 });
 export type PhotoDetail = z.infer<typeof PhotoDetailSchema>;
 
@@ -41,7 +65,7 @@ export type PhotoListResponse = z.infer<typeof PhotoListResponseSchema>;
 
 export const UpdatePhotoRequestSchema = z.object({
   rating: z.number().int().min(0).max(5).optional(),
-  selected: z.boolean().optional(),
+  triage: TriageSchema.optional(),
   notes: z.string().optional(),
 });
 export type UpdatePhotoRequest = z.infer<typeof UpdatePhotoRequestSchema>;
@@ -50,7 +74,33 @@ export type UpdatePhotoRequest = z.infer<typeof UpdatePhotoRequestSchema>;
 export const PhotoListQuerySchema = PaginationSchema
   .extend(SoftDeleteFilterSchema.shape)
   .extend({
+    // Overrides the collection's stored ordering for this request only, so the
+    // client can offer a sort control without mutating the library's default.
+    ordering: OrderingSchema.optional(),
+    // Case-insensitive substring match on file_path: how a photographer looks a
+    // frame up, by filename.
+    q: z.string().min(1).optional(),
+    rated: z.stringbool().optional(),
+    // Comma-separated verdicts to include, e.g. `triage=untriaged,picked` for the
+    // default gallery view that hides rejects. Omitted means all three.
+    triage: z
+      .string()
+      .transform((s) => s.split(',').map((v) => v.trim()))
+      .pipe(z.array(TriageSchema).min(1))
+      .optional(),
     is_missing: z.stringbool().optional(),
     needs_processing: z.stringbool().optional(),
+    // Selects *only* (or only non-) soft-deleted rows, where include_deleted just
+    // widens the default exclusion. `include_deleted=true&is_deleted=true` is the
+    // Bin view; without this pair a client can ask for "deleted and live" but
+    // never for "deleted alone".
+    is_deleted: z.stringbool().optional(),
+    // Inclusive YYYY-MM-DD bounds on when the photo was taken.
+    taken_from: z.iso.date().optional(),
+    taken_to: z.iso.date().optional(),
+    // How rated/triage/is_missing/needs_processing combine. 'any' is what makes a
+    // custom filter like "picks, unrated or missing" mean a union rather than an
+    // intersection, which as an intersection is almost always empty.
+    match: z.enum(['all', 'any']).optional(),
   });
 export type PhotoListQuery = z.infer<typeof PhotoListQuerySchema>;

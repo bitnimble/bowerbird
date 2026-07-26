@@ -1,11 +1,27 @@
 import type { Database } from 'bun:sqlite';
 import type { Ordering } from '../../schemas/common';
-import type { PhotoDetail, PhotoSummary } from '../../schemas/photos';
+import type { PhotoDetail, PhotoSummary, Triage } from '../../schemas/photos';
 
 export interface PhotoListFilters {
   includeDeleted: boolean;
   isMissing?: boolean;
   needsProcessing?: boolean;
+  // Only meaningful together with includeDeleted, which lifts the blanket
+  // is_deleted = 0 clause this then narrows back down (the Bin view).
+  isDeleted?: boolean;
+  // true = rated at all (>= 1 star), false = unrated. Culling is mostly "show me
+  // what I haven't judged yet", which a rating-equals filter can't express.
+  rated?: boolean;
+  // Verdicts to include; omitted means all three.
+  triage?: Triage[];
+  // Case-insensitive substring of file_path.
+  search?: string;
+  // Inclusive YYYY-MM-DD bounds on when the photo was taken.
+  takenFrom?: string;
+  takenTo?: string;
+  // 'any' unions the rated/triage/isMissing/needsProcessing filters instead of
+  // intersecting them. Scope (deleted, search, dates) always intersects.
+  match?: 'all' | 'any';
 }
 
 export interface PhotoListResult {
@@ -28,6 +44,13 @@ export interface SyncInsert {
   file_size: number;
   latitude: number | null;
   longitude: number | null;
+  iso: number | null;
+  shutter_speed: number | null;
+  aperture: number | null;
+  focal_length: number | null;
+  camera_make: string | null;
+  camera_model: string | null;
+  lens_model: string | null;
 }
 
 export interface SyncModification {
@@ -40,6 +63,13 @@ export interface SyncModification {
   file_size: number;
   latitude: number | null;
   longitude: number | null;
+  iso: number | null;
+  shutter_speed: number | null;
+  aperture: number | null;
+  focal_length: number | null;
+  camera_make: string | null;
+  camera_model: string | null;
+  lens_model: string | null;
 }
 
 // Fields the scan quick-check needs to decide whether to re-open a file (§9.1).
@@ -77,7 +107,7 @@ function folderRange(folderPath: string): [string, string] {
 // Qualified with `photos.` because listByAlbum joins album_photos, which also has
 // a date_added column (bare names would be ambiguous).
 const SUMMARY_COLS =
-  'photos.id, photos.library_id, photos.shoot_id, photos.width, photos.height, photos.date_taken, photos.date_added, photos.selected, photos.rating, photos.is_missing, photos.is_deleted';
+  'photos.id, photos.library_id, photos.shoot_id, photos.file_path, photos.width, photos.height, photos.date_taken, photos.date_added, photos.triage, photos.rating, photos.is_missing, photos.is_deleted';
 
 const SYNC_COLUMNS = 'id, file_path, file_hash, is_missing, date_updated, file_size';
 interface SyncRow {
@@ -94,18 +124,20 @@ interface SyncRow {
 const DETAIL_COLS = `photos.id, photos.library_id, photos.shoot_id, photos.width, photos.height,
   photos.orientation, photos.file_path, photos.file_hash, photos.date_taken, photos.date_added,
   photos.date_updated, photos.date_reprocessed, photos.needs_processing, photos.processing_error,
-  photos.latitude, photos.longitude, photos.rating, photos.selected, photos.is_missing,
-  photos.is_deleted, photos.notes`;
+  photos.latitude, photos.longitude, photos.rating, photos.triage, photos.is_missing,
+  photos.is_deleted, photos.notes, photos.file_size, photos.iso, photos.shutter_speed, photos.aperture,
+  photos.focal_length, photos.camera_make, photos.camera_model, photos.lens_model`;
 
 interface SummaryRow {
   id: string;
   library_id: string;
   shoot_id: string | null;
+  file_path: string;
   width: number;
   height: number;
   date_taken: string | null;
   date_added: string;
-  selected: number;
+  triage: string | null;
   rating: number;
   is_missing: number;
   is_deleted: number;
@@ -122,6 +154,14 @@ interface DetailRow extends SummaryRow {
   latitude: number | null;
   longitude: number | null;
   notes: string | null;
+  file_size: number | null;
+  iso: number | null;
+  shutter_speed: number | null;
+  aperture: number | null;
+  focal_length: number | null;
+  camera_make: string | null;
+  camera_model: string | null;
+  lens_model: string | null;
   lib_ordering: string; // the owning library's ordering, for ordering_date
 }
 
@@ -139,6 +179,11 @@ function orderByClause(ordering: Ordering): string {
   }
 }
 
+// NULL in the column is the untriaged state on the wire.
+function toTriage(value: string | null): Triage {
+  return value === 'picked' || value === 'rejected' ? value : 'untriaged';
+}
+
 function orderingDate(ordering: Ordering, row: SummaryRow): string | null {
   return ordering === 'taken_asc' || ordering === 'taken_desc' ? row.date_taken : row.date_added;
 }
@@ -148,17 +193,18 @@ function toSummary(row: SummaryRow, ordering: Ordering): PhotoSummary {
     id: row.id,
     library_id: row.library_id,
     shoot_id: row.shoot_id,
+    file_path: row.file_path,
     width: row.width,
     height: row.height,
     ordering_date: orderingDate(ordering, row),
-    selected: row.selected === 1,
+    triage: toTriage(row.triage),
     rating: row.rating,
     is_missing: row.is_missing === 1,
     is_deleted: row.is_deleted === 1,
   };
 }
 
-function toDetail(row: DetailRow): PhotoDetail {
+function toDetail(row: DetailRow, albumIds: string[]): PhotoDetail {
   return {
     id: row.id,
     library_id: row.library_id,
@@ -178,10 +224,19 @@ function toDetail(row: DetailRow): PhotoDetail {
     latitude: row.latitude,
     longitude: row.longitude,
     rating: row.rating,
-    selected: row.selected === 1,
+    triage: toTriage(row.triage),
     is_missing: row.is_missing === 1,
     is_deleted: row.is_deleted === 1,
     notes: row.notes,
+    file_size: row.file_size,
+    iso: row.iso,
+    shutter_speed: row.shutter_speed,
+    aperture: row.aperture,
+    focal_length: row.focal_length,
+    camera_make: row.camera_make,
+    camera_model: row.camera_model,
+    lens_model: row.lens_model,
+    album_ids: albumIds,
   };
 }
 
@@ -192,7 +247,12 @@ export class PhotosRepository {
     const row = this.db
       .query(`SELECT ${DETAIL_COLS}, l.ordering AS lib_ordering FROM photos JOIN libraries l ON l.id = photos.library_id WHERE photos.id = ?`)
       .get(id) as DetailRow | null;
-    return row ? toDetail(row) : null;
+    if (row == null) return null;
+    const albums = this.db.query('SELECT album_id FROM album_photos WHERE photo_id = ?').all(id) as { album_id: string }[];
+    return toDetail(
+      row,
+      albums.map((a) => a.album_id),
+    );
   }
 
   listByLibrary(libraryId: string, ordering: Ordering, offset: number, limit: number, filters: PhotoListFilters): PhotoListResult {
@@ -214,16 +274,17 @@ export class PhotosRepository {
     );
   }
 
-  update(id: string, fields: { rating?: number; selected?: boolean; notes?: string | null }): boolean {
+  update(id: string, fields: { rating?: number; triage?: Triage; notes?: string | null }): boolean {
     const sets: string[] = [];
     const params: (string | number | null)[] = [];
     if (fields.rating != null) {
       sets.push('rating = ?');
       params.push(fields.rating);
     }
-    if (fields.selected != null) {
-      sets.push('selected = ?');
-      params.push(fields.selected ? 1 : 0);
+    if (fields.triage != null) {
+      sets.push('triage = ?');
+      // 'untriaged' is stored as NULL, so clearing a verdict is a real update.
+      params.push(fields.triage === 'untriaged' ? null : fields.triage);
     }
     if (fields.notes != null) {
       sets.push('notes = ?');
@@ -263,11 +324,11 @@ export class PhotosRepository {
     this.db.query('UPDATE photos SET shoot_id = ? WHERE id = ?').run(shootId, photoId);
   }
 
-  // Both clear is_missing: they run only after a successful physical move of a
-  // specific file, so it provably exists at the new path. Without this, a
-  // concurrent sync whose setMissing landed just before the move committed would
-  // leave the (present) photo stuck is_missing=1 until the next sync (mirrors
-  // applyMove). NOT for bulk path-prefix rewrites, see rewriteFilePath.
+  // Clears is_missing: callers (a user move, or sync applying a detected move)
+  // run only after a specific file provably exists at the new path. Without this,
+  // a concurrent sync whose setMissing landed just before the move committed
+  // would leave the present photo stuck is_missing=1 until the next sync.
+  // NOT for bulk path-prefix rewrites, see rewriteFilePath.
   setFilePathAndShoot(photoId: string, filePath: string, shootId: string | null): void {
     this.db.query('UPDATE photos SET file_path = ?, shoot_id = ?, is_missing = 0 WHERE id = ?').run(filePath, shootId, photoId);
   }
@@ -283,8 +344,28 @@ export class PhotosRepository {
     this.db.query('UPDATE photos SET file_path = ? WHERE id = ?').run(filePath, photoId);
   }
 
-  markDeleted(id: string): void {
-    this.db.query('UPDATE photos SET is_deleted = 1, needs_processing = 0 WHERE id = ?').run(id);
+  // Records where the file was before the Bin move so restore can put it back
+  // exactly there (§12.3). shoot_id and album membership are deliberately left
+  // alone, so those survive the round trip without any extra bookkeeping.
+  markDeleted(id: string, deletedFromPath: string): void {
+    this.db
+      .query('UPDATE photos SET is_deleted = 1, needs_processing = 0, deleted_from_path = ? WHERE id = ?')
+      .run(deletedFromPath, id);
+  }
+
+  // The path this photo was at when it was binned, or null if it predates the
+  // column (restore then falls back to the library root).
+  getDeletedFromPath(id: string): string | null {
+    const row = this.db.query('SELECT deleted_from_path FROM photos WHERE id = ?').get(id) as
+      | { deleted_from_path: string | null }
+      | null;
+    return row?.deleted_from_path ?? null;
+  }
+
+  markRestored(id: string, filePath: string): void {
+    this.db
+      .query('UPDATE photos SET is_deleted = 0, file_path = ?, deleted_from_path = NULL, is_missing = 0 WHERE id = ?')
+      .run(filePath, id);
   }
 
   // --- sync (DESIGN §9) ---
@@ -346,8 +427,9 @@ export class PhotosRepository {
         `INSERT INTO photos
           (id, library_id, shoot_id, file_hash, file_path, file_size, width, height, orientation,
            is_missing, is_deleted, date_taken, date_added, date_updated, needs_processing,
-           latitude, longitude, rating, selected)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, 1, ?, ?, 0, 0)`,
+           latitude, longitude, iso, shutter_speed, aperture, focal_length,
+           camera_make, camera_model, lens_model, rating)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
       )
       .run(
         record.id,
@@ -364,20 +446,23 @@ export class PhotosRepository {
         record.date_updated,
         record.latitude,
         record.longitude,
+        record.iso,
+        record.shutter_speed,
+        record.aperture,
+        record.focal_length,
+        record.camera_make,
+        record.camera_model,
+        record.lens_model,
       );
-  }
-
-  applyMove(photoId: string, newFilePath: string, shootId: string | null): void {
-    this.db
-      .query('UPDATE photos SET file_path = ?, shoot_id = ?, is_missing = 0 WHERE id = ?')
-      .run(newFilePath, shootId, photoId);
   }
 
   applyModification(photoId: string, fields: SyncModification): void {
     this.db
       .query(
         `UPDATE photos SET file_hash = ?, width = ?, height = ?, orientation = ?, date_taken = ?,
-          date_updated = ?, file_size = ?, latitude = ?, longitude = ?, needs_processing = 1, is_missing = 0 WHERE id = ?`,
+          date_updated = ?, file_size = ?, latitude = ?, longitude = ?, iso = ?, shutter_speed = ?,
+          aperture = ?, focal_length = ?, camera_make = ?, camera_model = ?, lens_model = ?,
+          needs_processing = 1, is_missing = 0 WHERE id = ?`,
       )
       .run(
         fields.file_hash,
@@ -389,6 +474,13 @@ export class PhotosRepository {
         fields.file_size,
         fields.latitude,
         fields.longitude,
+        fields.iso,
+        fields.shutter_speed,
+        fields.aperture,
+        fields.focal_length,
+        fields.camera_make,
+        fields.camera_model,
+        fields.lens_model,
         photoId,
       );
   }
@@ -447,17 +539,60 @@ export class PhotosRepository {
     limit: number,
     filters: PhotoListFilters,
   ): PhotoListResult {
-    const clauses: string[] = [];
-    const params: (string | number)[] = [...baseParams];
-    if (!filters.includeDeleted) clauses.push('is_deleted = 0');
+    // Scope says which rows are in play at all; user holds the filter chips. They
+    // are built separately because only the chips honour `match`.
+    const scope: string[] = [];
+    const scopeParams: (string | number)[] = [];
+    const user: string[] = [];
+    const userParams: (string | number)[] = [];
+
+    if (!filters.includeDeleted) scope.push('is_deleted = 0');
+    if (filters.isDeleted != null) {
+      scope.push('is_deleted = ?');
+      scopeParams.push(filters.isDeleted ? 1 : 0);
+    }
+    if (filters.search != null) {
+      // LIKE is case-insensitive for ASCII in SQLite, which is what filenames are.
+      scope.push('file_path LIKE ?');
+      scopeParams.push(`%${filters.search}%`);
+    }
+    // COALESCE rather than date_taken alone: a file the camera never dated still
+    // has to be reachable, and this is the same date the grid sorts and labels by.
+    if (filters.takenFrom != null) {
+      scope.push('COALESCE(photos.date_taken, photos.date_added) >= ?');
+      scopeParams.push(filters.takenFrom);
+    }
+    if (filters.takenTo != null) {
+      // The bound is a whole day but the column is a timestamp, so compare against
+      // the start of the next one.
+      scope.push(`COALESCE(photos.date_taken, photos.date_added) < date(?, '+1 day')`);
+      scopeParams.push(filters.takenTo);
+    }
+
     if (filters.isMissing != null) {
-      clauses.push('is_missing = ?');
-      params.push(filters.isMissing ? 1 : 0);
+      user.push('is_missing = ?');
+      userParams.push(filters.isMissing ? 1 : 0);
     }
     if (filters.needsProcessing != null) {
-      clauses.push('needs_processing = ?');
-      params.push(filters.needsProcessing ? 1 : 0);
+      user.push('needs_processing = ?');
+      userParams.push(filters.needsProcessing ? 1 : 0);
     }
+    if (filters.rated != null) user.push(filters.rated ? 'rating > 0' : 'rating = 0');
+    if (filters.triage != null && filters.triage.length > 0) {
+      // NULL is the untriaged bucket, so it needs an IS NULL arm rather than an IN.
+      const wanted = filters.triage.filter((t) => t !== 'untriaged');
+      const arms: string[] = [];
+      if (filters.triage.includes('untriaged')) arms.push('triage IS NULL');
+      if (wanted.length > 0) {
+        arms.push(`triage IN (${wanted.map(() => '?').join(', ')})`);
+        userParams.push(...wanted);
+      }
+      user.push(`(${arms.join(' OR ')})`);
+    }
+
+    const combined = filters.match === 'any' && user.length > 1 ? [`(${user.join(' OR ')})`] : user;
+    const clauses = [...scope, ...combined];
+    const params: (string | number)[] = [...baseParams, ...scopeParams, ...userParams];
     const where = clauses.length ? `${fromWhere} AND ${clauses.join(' AND ')}` : fromWhere;
 
     const total = (this.db.query(`SELECT COUNT(*) AS n ${where}`).get(...params) as { n: number }).n;

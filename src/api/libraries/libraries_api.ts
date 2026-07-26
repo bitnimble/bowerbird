@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { CreateLibraryRequestSchema } from '../../schemas/libraries';
+import { CreateLibraryRequestSchema, UpdateLibraryRequestSchema } from '../../schemas/libraries';
 import type { LibrariesService } from '../../services/libraries/libraries_service';
 import type { SyncService } from '../../services/sync/sync_service';
 
@@ -24,6 +24,11 @@ export class LibrariesApi {
     app.get('/:id/sync/status', (c) => c.json(this.sync.getSyncStatus(c.req.param('id'))));
 
     app.get('/:id', (c) => c.json(this.service.get(c.req.param('id'))));
+
+    app.patch('/:id', async (c) => {
+      const body = UpdateLibraryRequestSchema.parse(await c.req.json());
+      return c.json(this.service.update(c.req.param('id'), body));
+    });
 
     app.delete('/:id', (c) => {
       this.service.delete(c.req.param('id'));

@@ -1,10 +1,10 @@
 import { existsSync, statSync } from 'node:fs';
-import { mkdir } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { AppError } from '../../errors';
 import { isUniqueViolation } from '../../db/constraints';
-import type { CreateLibraryRequest, Library } from '../../schemas/libraries';
+import type { CreateLibraryRequest, Library, UpdateLibraryRequest } from '../../schemas/libraries';
+import { ensureDir } from '../../utils/files';
 import { getDataPath } from '../../utils/paths';
 import type { LibrariesRepository } from './libraries_repository';
 
@@ -35,16 +35,14 @@ export class LibrariesService {
       root_path: request.root_path,
       data_path: request.data_path ?? null,
       ordering: request.ordering,
+      last_synced_at: null,
+      photo_count: 0,
     };
 
     const dataPath = getDataPath(library);
-    try {
-      await mkdir(path.join(dataPath, 'thumbnails', 'small'), { recursive: true });
-      await mkdir(path.join(dataPath, 'thumbnails', 'full'), { recursive: true });
-      await mkdir(path.join(dataPath, 'bin'), { recursive: true });
-    } catch (err) {
-      throw new AppError('IO_ERROR', `failed to create data directory at ${dataPath}: ${(err as Error).message}`);
-    }
+    await ensureDir(path.join(dataPath, 'thumbnails', 'small'));
+    await ensureDir(path.join(dataPath, 'thumbnails', 'full'));
+    await ensureDir(path.join(dataPath, 'bin'));
 
     try {
       this.repo.insert(library);
@@ -66,6 +64,13 @@ export class LibrariesService {
 
   list(): Library[] {
     return this.repo.list();
+  }
+
+  update(libraryId: string, updates: UpdateLibraryRequest): Library {
+    if (!this.repo.setOrdering(libraryId, updates.ordering)) {
+      throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
+    }
+    return this.get(libraryId);
   }
 
   delete(libraryId: string): void {

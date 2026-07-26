@@ -19,7 +19,6 @@ export const UuidSchema = z.uuid();
 export const SoftDeleteFilterSchema = z.object({
   include_deleted: z.stringbool().default(false),
 });
-export type SoftDeleteFilter = z.infer<typeof SoftDeleteFilterSchema>;
 
 // max bounds per-request work (each id can drive a file move / delete) and keeps
 // the IN(...) placeholder count well under SQLite's variable limit. A client with
@@ -27,8 +26,3 @@ export type SoftDeleteFilter = z.infer<typeof SoftDeleteFilterSchema>;
 export const PhotoIdListSchema = z.object({
   photo_ids: z.array(UuidSchema).min(1).max(1000),
 });
-export type PhotoIdList = z.infer<typeof PhotoIdListSchema>;
-
-// Query for the shoot/album photo-listing endpoints: pagination + soft-delete.
-export const ScopedListQuerySchema = PaginationSchema.extend(SoftDeleteFilterSchema.shape);
-export type ScopedListQuery = z.infer<typeof ScopedListQuerySchema>;

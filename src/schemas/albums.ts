@@ -19,5 +19,6 @@ export const AlbumSchema = z.object({
   name: z.string(),
   ordering: OrderingSchema,
   banner_photo_id: UuidSchema.nullable(),
+  photo_count: z.number().int(),
 });
 export type Album = z.infer<typeof AlbumSchema>;

@@ -31,11 +31,14 @@ export class ImageApi {
 
   // 404s go through AppError (not c.notFound()) so every not-available response
   // shares the standard JSON envelope. this.photos.get already throws NOT_FOUND.
+  //
+  // Soft-deleted photos are served, not hidden: the Bin is a browsable view that
+  // a user restores from, and it is unusable if every frame in it is a grey box.
+  // The row and both files still exist, so there is nothing to withhold.
   private async serve(c: Context, kind: Kind): Promise<Response> {
     const photoId = c.req.param('photoId');
     if (photoId == null) throw new AppError('NOT_FOUND', 'photo not found');
     const photo = this.photos.get(photoId);
-    if (photo.is_deleted) throw new AppError('NOT_FOUND', `photo not found: ${photoId}`);
 
     const library = this.libraries.get(photo.library_id);
     const filePath =
@@ -48,6 +51,10 @@ export class ImageApi {
     const file = Bun.file(filePath);
     if (!(await file.exists())) throw new AppError('NOT_FOUND', `image not found on disk: ${photoId}`);
 
-    return new Response(file, { headers: { 'Content-Type': CONTENT_TYPE[kind] } });
+    // Bun.serve answers Range requests against a BunFile body but doesn't advertise
+    // it; without this header a client has no way to know it can seek a 25MB RAW.
+    return new Response(file, {
+      headers: { 'Content-Type': CONTENT_TYPE[kind], 'Accept-Ranges': 'bytes' },
+    });
   }
 }

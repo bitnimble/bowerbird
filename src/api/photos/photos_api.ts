@@ -28,6 +28,12 @@ export class PhotosApi {
       return c.body(null, 204);
     });
 
+    app.post('/photos/restore', async (c) => {
+      const { photo_ids } = PhotoIdListSchema.parse(await c.req.json());
+      await this.service.restore(photo_ids);
+      return c.body(null, 204);
+    });
+
     app.get('/photos/:id', (c) => c.json(this.service.get(c.req.param('id'))));
 
     app.patch('/photos/:id', async (c) => {

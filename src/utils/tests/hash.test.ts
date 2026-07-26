@@ -1,3 +1,4 @@
+import { describe, it, expect } from 'bun:test';
 import { computeFileHash } from '../hash';
 import type { FileMetadata } from '../../services/processing/metadata';
 
@@ -9,6 +10,13 @@ const meta: FileMetadata = {
   dateTaken: null,
   latitude: null,
   longitude: null,
+  iso: null,
+  shutterSpeed: null,
+  aperture: null,
+  focalLength: null,
+  cameraMake: null,
+  cameraModel: null,
+  lensModel: null,
   mtime: '2024-01-01T00:00:00.000Z',
   fileSize: 1234,
 };

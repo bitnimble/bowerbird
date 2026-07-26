@@ -1,12 +1,12 @@
 import { existsSync } from 'node:fs';
-import { mkdir, rename } from 'node:fs/promises';
+import { rename } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { AppError } from '../../errors';
 import { isUniqueViolation } from '../../db/constraints';
 import type { CreateShootRequest, Shoot, UpdateShootRequest } from '../../schemas/shoots';
 import type { Library } from '../../schemas/libraries';
-import { moveIntoDir } from '../../utils/files';
+import { ensureDir, moveIntoDir } from '../../utils/files';
 import { toLibraryRelative } from '../../utils/paths';
 import { mostSpecificShoot } from '../../utils/shoots';
 import type { LibrariesRepository } from '../libraries/libraries_repository';
@@ -39,7 +39,7 @@ export class ShootsService {
 
     const absFolder = path.join(library.root_path, folderPath);
     const existed = existsSync(absFolder);
-    await this.ensureDir(absFolder);
+    await ensureDir(absFolder);
 
     const id = randomUUID();
     try {
@@ -90,7 +90,7 @@ export class ShootsService {
         throw new AppError('VALIDATION_ERROR', `photo ${photo.id} is not in this shoot's library`);
       }
     }
-    await this.ensureDir(destDir);
+    await ensureDir(destDir);
 
     // Queue behind any in-flight sync of this library: these moves would otherwise
     // invalidate its mid-scan snapshot.
@@ -107,7 +107,7 @@ export class ShootsService {
         }
         continue;
       }
-      const dest = await this.moveInto(from, destDir, path.basename(photo.file_path));
+      const dest = await moveIntoDir(from, destDir, path.basename(photo.file_path));
       const relDest = toLibraryRelative(library.root_path, dest);
       // The shoot can be deleted during the (awaited) move; writing shoot_id then
       // hits the FK (raw 500). Re-check with no await before the write. The file
@@ -133,7 +133,7 @@ export class ShootsService {
     for (const photo of this.photos.getBasicByIds(photoIds)) {
       if (photo.shoot_id !== shootId || photo.library_id !== shoot.library_id) continue;
       const from = path.join(library.root_path, photo.file_path);
-      const dest = await this.moveInto(from, library.root_path, path.basename(photo.file_path));
+      const dest = await moveIntoDir(from, library.root_path, path.basename(photo.file_path));
       this.photos.setFilePathAndShoot(photo.id, toLibraryRelative(library.root_path, dest), null);
     }
     });
@@ -230,22 +230,6 @@ export class ShootsService {
       await rename(from, to);
     } catch (err) {
       throw new AppError('IO_ERROR', `failed to move ${from} -> ${to}: ${(err as Error).message}`);
-    }
-  }
-
-  private async moveInto(from: string, dir: string, filename: string): Promise<string> {
-    try {
-      return await moveIntoDir(from, dir, filename);
-    } catch (err) {
-      throw new AppError('IO_ERROR', `failed to move ${from} into ${dir}: ${(err as Error).message}`);
-    }
-  }
-
-  private async ensureDir(dir: string): Promise<void> {
-    try {
-      await mkdir(dir, { recursive: true });
-    } catch (err) {
-      throw new AppError('IO_ERROR', `failed to create directory ${dir}: ${(err as Error).message}`);
     }
   }
 

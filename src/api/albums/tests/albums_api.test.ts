@@ -1,4 +1,4 @@
-import { jest } from '@jest/globals';
+import { describe, it, expect, jest } from 'bun:test';
 import { Hono } from 'hono';
 import { AppError } from '../../../errors';
 import { applyErrorHandler } from '../../error_handler';
@@ -9,7 +9,7 @@ import type { PhotosService } from '../../../services/photos/photos_service';
 import { AlbumsApi } from '../albums_api';
 
 const PID = '11111111-1111-4111-8111-111111111111';
-const album: Album = { id: 'a1', name: 'Faves', ordering: 'taken_desc', banner_photo_id: null };
+const album: Album = { id: 'a1', name: 'Faves', ordering: 'taken_desc', banner_photo_id: null, photo_count: 0 };
 const emptyList: PhotoListResponse = { photos: [], total: 0, offset: 0, limit: 100 };
 
 function buildApp(albums: Partial<AlbumsService> = {}, photos: Partial<PhotosService> = {}) {

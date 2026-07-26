@@ -1,4 +1,4 @@
-import { jest } from '@jest/globals';
+import { describe, it, expect, jest } from 'bun:test';
 import { Hono } from 'hono';
 import { AppError } from '../../../errors';
 import { applyErrorHandler } from '../../error_handler';

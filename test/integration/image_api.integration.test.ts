@@ -65,10 +65,12 @@ test('returns a 404 envelope for an unknown photo', withRoot(async (root) => {
   expect(await res.json()).toMatchObject({ error: { code: 'NOT_FOUND' } });
 }));
 
-test('returns a 404 envelope for a deleted photo', withRoot(async (root) => {
+test('still serves a soft-deleted photo, so the Bin can be browsed', withRoot(async (root) => {
+  mkdirSync(path.join(root, '.bowerbird', 'thumbnails', 'small'), { recursive: true });
+  writeFileSync(path.join(root, '.bowerbird', 'thumbnails', 'small', 'p1.webp'), 'WEBPDATA');
   const res = await buildApp(root, photo({ is_deleted: true })).request('/image/p1/small.webp');
-  expect(res.status).toBe(404);
-  expect(await res.json()).toMatchObject({ error: { code: 'NOT_FOUND' } });
+  expect(res.status).toBe(200);
+  expect(await res.text()).toBe('WEBPDATA');
 }));
 
 test('returns a 404 envelope when the file is missing on disk', withRoot(async (root) => {

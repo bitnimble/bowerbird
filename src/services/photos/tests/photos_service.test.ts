@@ -1,4 +1,4 @@
-import { jest } from '@jest/globals';
+import { describe, it, expect, jest } from 'bun:test';
 import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -38,9 +38,9 @@ function build(over: {
   return { service: new PhotosService(photos, albums, shoots, libraries), photos, libraries, shoots, albums };
 }
 
-const library: Library = { id: 'lib', root_path: '/r', data_path: null, ordering: 'added_asc' };
-const shoot: Shoot = { id: 'sh', parent_id: null, library_id: 'lib', folder_path: 'Trip', name: 'Trip', description: null, banner_photo_id: null, ordering: 'taken_asc' };
-const album: Album = { id: 'al', name: 'Faves', ordering: 'taken_desc', banner_photo_id: null };
+const library: Library = { id: 'lib', root_path: '/r', data_path: null, ordering: 'added_asc', last_synced_at: null, photo_count: 0 };
+const shoot: Shoot = { id: 'sh', parent_id: null, library_id: 'lib', folder_path: 'Trip', name: 'Trip', description: null, banner_photo_id: null, ordering: 'taken_asc', photo_count: 0 };
+const album: Album = { id: 'al', name: 'Faves', ordering: 'taken_desc', banner_photo_id: null, photo_count: 0 };
 const detail = { id: 'p1' } as PhotoDetail;
 
 describe('PhotosService.get', () => {
@@ -103,7 +103,7 @@ describe('PhotosService scoped listing uses the owner ordering', () => {
 });
 
 describe('PhotosService.delete', () => {
-  it('removes thumbnails, moves the RAW into the library Bin, and flags is_deleted', async () => {
+  it('moves the RAW into the library Bin, flags is_deleted, and keeps the thumbnails', async () => {
     const root = mkdtempSync(path.join(tmpdir(), 'bb-'));
     try {
       const dataDir = path.join(root, '.bowerbird');
@@ -113,7 +113,7 @@ describe('PhotosService.delete', () => {
       writeFileSync(path.join(dataDir, 'thumbnails', 'small', 'p1.webp'), '');
       writeFileSync(path.join(dataDir, 'thumbnails', 'full', 'p1.webp'), '');
 
-      const lib: Library = { id: 'lib', root_path: root, data_path: null, ordering: 'added_asc' };
+      const lib: Library = { id: 'lib', root_path: root, data_path: null, ordering: 'added_asc', last_synced_at: null, photo_count: 0 };
       const markDeleted = jest.fn();
       const photo = { id: 'p1', library_id: 'lib', shoot_id: null, file_path: 'a.arw', is_deleted: false } as PhotoDetail;
       const { service } = build({
@@ -125,9 +125,12 @@ describe('PhotosService.delete', () => {
 
       expect(existsSync(path.join(root, 'a.arw'))).toBe(false);
       expect(existsSync(path.join(dataDir, 'bin', 'a.arw'))).toBe(true);
-      expect(existsSync(path.join(dataDir, 'thumbnails', 'small', 'p1.webp'))).toBe(false);
-      expect(existsSync(path.join(dataDir, 'thumbnails', 'full', 'p1.webp'))).toBe(false);
-      expect(markDeleted).toHaveBeenCalledWith('p1');
+      // Kept, not deleted: the Bin is browsable and restorable only if the
+      // binned photos can still be seen.
+      expect(existsSync(path.join(dataDir, 'thumbnails', 'small', 'p1.webp'))).toBe(true);
+      expect(existsSync(path.join(dataDir, 'thumbnails', 'full', 'p1.webp'))).toBe(true);
+      // The pre-delete path is recorded so restore can put the file back there.
+      expect(markDeleted).toHaveBeenCalledWith('p1', 'a.arw');
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -137,7 +140,7 @@ describe('PhotosService.delete', () => {
     const root = mkdtempSync(path.join(tmpdir(), 'bb-del-'));
     try {
       writeFileSync(path.join(root, 'a.arw'), 'raw');
-      const lib: Library = { id: 'lib', root_path: root, data_path: null, ordering: 'added_asc' };
+      const lib: Library = { id: 'lib', root_path: root, data_path: null, ordering: 'added_asc', last_synced_at: null, photo_count: 0 };
       const photo = { id: 'p1', library_id: 'lib', shoot_id: null, file_path: 'a.arw', is_deleted: false } as PhotoDetail;
       const { service } = build({
         photos: {

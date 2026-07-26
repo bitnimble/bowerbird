@@ -2,14 +2,11 @@ import { existsSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
 import type { Config } from '../../config';
+import { dataPathFor } from '../../utils/paths';
 import type { PendingPhoto, PhotosRepository } from '../photos/photos_repository';
 import type { ProcessingJob, ProcessingResult } from './processing_types';
 
 const WORKER_URL = new URL('./processing_worker.ts', import.meta.url).href;
-
-function dataDir(pending: PendingPhoto): string {
-  return pending.data_path ?? path.join(pending.root_path, '.bowerbird');
-}
 
 // Orchestrates thumbnail generation across a pool of Bun workers (DESIGN §10.2).
 // Workers decode + encode; the main thread owns all DB writes so bun:sqlite is
@@ -47,12 +44,8 @@ export class ProcessingService {
     }
   }
 
-  getProcessingStatus(libraryId: string): { library_id: string; pending: number } {
-    return { library_id: libraryId, pending: this.photos.countPendingProcessing(libraryId) };
-  }
-
   private toJob(pending: PendingPhoto): ProcessingJob {
-    const thumbs = path.join(dataDir(pending), 'thumbnails');
+    const thumbs = path.join(dataPathFor(pending.root_path, pending.data_path), 'thumbnails');
     return {
       photoId: pending.photo_id,
       rawFilePath: path.join(pending.root_path, pending.file_path),

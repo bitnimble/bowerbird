@@ -1,4 +1,5 @@
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
+import { cors } from 'hono/cors';
 import { createDatabase } from './db/connection';
 import { applyErrorHandler } from './api/error_handler';
 import { LibrariesApi } from './api/libraries/libraries_api';
@@ -14,6 +15,7 @@ import { AlbumsApi } from './api/albums/albums_api';
 import { AlbumsService } from './services/albums/albums_service';
 import { AlbumsRepository } from './services/albums/albums_repository';
 import { ImageApi } from './api/image/image_api';
+import { ConfigApi } from './api/config/config_api';
 import { SyncService } from './services/sync/sync_service';
 import { LibraryWatcher } from './services/sync/library_watcher';
 import { DailySync } from './services/sync/daily_sync';
@@ -43,7 +45,35 @@ const albumsApi = new AlbumsApi(albumsService, photosService);
 const shootsApi = new ShootsApi(shootsService, photosService);
 const imageApi = new ImageApi(photosService, librariesService);
 
+// With no configured allowlist, mirror back any origin on the same host the
+// request arrived at (plus loopback). That lets the web client work on
+// localhost and over the LAN without knowing the server's address in advance,
+// while still refusing an arbitrary site on the internet.
+function sameHostOrigin(origin: string, c: Context): string | null {
+  if (origin === '') return null;
+  let originHost: string;
+  try {
+    originHost = new URL(origin).hostname;
+  } catch {
+    return null;
+  }
+  if (originHost === 'localhost' || originHost === '127.0.0.1' || originHost === '::1') return origin;
+  const requestHost = (c.req.header('host') ?? '').replace(/:\d+$/, '');
+  return originHost === requestHost ? origin : null;
+}
+
 const app = new Hono();
+// Before the routes so preflights are answered too. Expose the range/length
+// headers the image endpoints set, else a cross-origin client can't read them.
+app.use(
+  '*',
+  cors({
+    origin: config.corsOrigins ?? sameHostOrigin,
+    allowMethods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
+    exposeHeaders: ['Content-Length', 'Content-Range', 'Accept-Ranges'],
+  }),
+);
+app.route('/api/config', new ConfigApi(config).routes);
 app.route('/api/libraries', librariesApi.routes);
 app.route('/api', photosApi.routes);
 app.route('/api', shootsApi.routes);

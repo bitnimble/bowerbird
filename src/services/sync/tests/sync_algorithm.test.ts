@@ -1,3 +1,4 @@
+import { describe, it, expect } from 'bun:test';
 import type { FileMetadata } from '../../processing/metadata';
 import { buildDiff, detectMoves } from '../sync_algorithm';
 import type { DbPhoto, DiskFile, LibraryDiff } from '../sync_algorithm';
@@ -30,7 +31,7 @@ describe('buildDiff', () => {
 
   it('flags a present-but-unchanged file that was missing as reappeared (not re-opened)', () => {
     const diff = buildDiff([db('p1', 'a.arw', 'h1', true)], present('a.arw'), []);
-    expect(diff.reappeared).toEqual([{ photoId: 'p1' }]);
+    expect(diff.reappeared).toEqual(['p1']);
     expect(diff.removed).toEqual([]);
     expect(diff.modified).toEqual([]);
   });

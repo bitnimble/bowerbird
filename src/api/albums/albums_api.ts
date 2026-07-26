@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { CreateAlbumRequestSchema, UpdateAlbumRequestSchema } from '../../schemas/albums';
-import { PhotoIdListSchema, ScopedListQuerySchema } from '../../schemas/common';
+import { PhotoIdListSchema } from '../../schemas/common';
+import { PhotoListQuerySchema } from '../../schemas/photos';
 import type { AlbumsService } from '../../services/albums/albums_service';
 import type { PhotosService } from '../../services/photos/photos_service';
 
@@ -39,7 +40,7 @@ export class AlbumsApi {
     });
 
     app.get('/:id/photos', (c) => {
-      const query = ScopedListQuerySchema.parse(c.req.query());
+      const query = PhotoListQuerySchema.parse(c.req.query());
       return c.json(this.photos.listByAlbum(c.req.param('id'), query));
     });
 

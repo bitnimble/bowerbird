@@ -1,4 +1,4 @@
-import { jest } from '@jest/globals';
+import { describe, it, expect, jest } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -35,7 +35,7 @@ function mockPhotos(over: Partial<PhotosRepository> = {}): PhotosRepository {
   } as unknown as PhotosRepository;
 }
 function library(root: string): Library {
-  return { id: 'lib', root_path: root, data_path: null, ordering: 'taken_desc' };
+  return { id: 'lib', root_path: root, data_path: null, ordering: 'taken_desc', last_synced_at: null, photo_count: 0 };
 }
 function mockLibs(root: string): LibrariesRepository {
   return { getById: jest.fn(() => library(root)) } as unknown as LibrariesRepository;
@@ -50,6 +50,7 @@ const shoot: Shoot = {
   description: null,
   banner_photo_id: null,
   ordering: 'taken_desc',
+  photo_count: 0,
 };
 
 function withRoot(run: (root: string) => Promise<void> | void) {

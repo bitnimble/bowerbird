@@ -13,8 +13,15 @@ export const LibrarySchema = z.object({
   root_path: z.string(),
   data_path: z.string().nullable(),
   ordering: OrderingSchema,
+  last_synced_at: z.string().nullable(),
+  photo_count: z.number().int(),
 });
 export type Library = z.infer<typeof LibrarySchema>;
+
+export const UpdateLibraryRequestSchema = z.object({
+  ordering: OrderingSchema,
+});
+export type UpdateLibraryRequest = z.infer<typeof UpdateLibraryRequestSchema>;
 
 export const LibrarySyncStatusSchema = z.object({
   library_id: UuidSchema,

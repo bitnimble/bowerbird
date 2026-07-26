@@ -13,7 +13,7 @@ export class AlbumsService {
   create(request: CreateAlbumRequest): Album {
     const id = randomUUID();
     this.repo.insert({ id, name: request.name, ordering: request.ordering });
-    return { id, name: request.name, ordering: request.ordering, banner_photo_id: null };
+    return { id, name: request.name, ordering: request.ordering, banner_photo_id: null, photo_count: 0 };
   }
 
   get(albumId: string): Album {

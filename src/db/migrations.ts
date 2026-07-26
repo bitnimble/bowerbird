@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS libraries (
   id          TEXT PRIMARY KEY,
   root_path   TEXT NOT NULL UNIQUE,
   data_path   TEXT,
+  last_synced_at TEXT,          -- ISO datetime of the last completed sync; NULL if never synced
   ordering    TEXT NOT NULL DEFAULT 'taken_desc'
     CHECK (ordering IN ('taken_asc', 'taken_desc', 'added_asc', 'added_desc'))
 );
@@ -45,8 +46,18 @@ CREATE TABLE IF NOT EXISTS photos (
   processing_error  TEXT,
   latitude          REAL,
   longitude         REAL,
+  iso               INTEGER,        -- shooting metadata, read from the RAW header (§11.1)
+  shutter_speed     REAL,           -- seconds; 1/250s is stored as 0.004
+  aperture          REAL,           -- f-number
+  focal_length      REAL,           -- mm
+  camera_make       TEXT,
+  camera_model      TEXT,
+  lens_model        TEXT,
+  deleted_from_path TEXT,           -- file_path before the Bin move, so restore can put it back (§12.3)
   rating            INTEGER NOT NULL DEFAULT 0 CHECK (rating >= 0 AND rating <= 5),
-  selected          INTEGER NOT NULL DEFAULT 0,
+  -- Cull verdict. NULL means untriaged, which is a real third state: "not yet
+  -- judged" is what a photographer filters on, and a boolean cannot say it.
+  triage            TEXT CHECK (triage IN ('picked', 'rejected')),
   notes             TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_photos_library ON photos(library_id);
@@ -89,15 +100,40 @@ CREATE TABLE IF NOT EXISTS album_banners (
 CREATE INDEX IF NOT EXISTS idx_album_banners_photo ON album_banners(photo_id);
 `;
 
+function columnNames(db: Database, table: string): Set<string> {
+  return new Set((db.query(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((c) => c.name));
+}
+
 function ensureColumn(db: Database, table: string, column: string, definition: string): void {
-  const cols = db.query(`PRAGMA table_info(${table})`).all() as { name: string }[];
-  if (!cols.some((c) => c.name === column)) {
+  if (!columnNames(db, table).has(column)) {
     db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
   }
 }
 
+// `selected` was a two-state pick flag; triage adds "rejected" as a first-class
+// verdict. Every previously picked photo keeps its pick, and the old column goes
+// so there is one source of truth rather than two that can disagree.
+function migrateSelectedToTriage(db: Database): void {
+  const cols = columnNames(db, 'photos');
+  if (!cols.has('selected')) return;
+  if (!cols.has('triage')) db.exec("ALTER TABLE photos ADD COLUMN triage TEXT");
+  db.exec("UPDATE photos SET triage = 'picked' WHERE selected = 1 AND triage IS NULL");
+  db.exec('ALTER TABLE photos DROP COLUMN selected');
+}
+
 export function runMigrations(db: Database): void {
   db.exec(SCHEMA);
-  // Additive column for DBs created before the stat quick-check (§9.1).
-  ensureColumn(db, 'photos', 'file_size', 'INTEGER');
+  // Additive columns, for DBs created before each feature landed. CREATE TABLE
+  // above already has them, so these are no-ops on a fresh database.
+  ensureColumn(db, 'photos', 'file_size', 'INTEGER'); // stat quick-check (§9.1)
+  ensureColumn(db, 'photos', 'iso', 'INTEGER'); // shooting metadata (§11.1)
+  ensureColumn(db, 'photos', 'shutter_speed', 'REAL');
+  ensureColumn(db, 'photos', 'aperture', 'REAL');
+  ensureColumn(db, 'photos', 'focal_length', 'REAL');
+  ensureColumn(db, 'photos', 'camera_make', 'TEXT');
+  ensureColumn(db, 'photos', 'camera_model', 'TEXT');
+  ensureColumn(db, 'photos', 'lens_model', 'TEXT');
+  ensureColumn(db, 'photos', 'deleted_from_path', 'TEXT'); // Bin restore (§12.2)
+  ensureColumn(db, 'libraries', 'last_synced_at', 'TEXT'); // §9.6
+  migrateSelectedToTriage(db);
 }

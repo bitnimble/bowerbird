@@ -1,4 +1,4 @@
-import { jest } from '@jest/globals';
+import { describe, it, expect, jest } from 'bun:test';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -20,7 +20,7 @@ function mockRepo(overrides: Partial<LibrariesRepository> = {}): LibrariesReposi
   } as unknown as LibrariesRepository;
 }
 
-const sample: Library = { id: 'id-1', root_path: '/x', data_path: null, ordering: 'taken_desc' };
+const sample: Library = { id: 'id-1', root_path: '/x', data_path: null, ordering: 'taken_desc', last_synced_at: null, photo_count: 0 };
 
 describe('LibrariesService.get', () => {
   it('returns the library when present', () => {

@@ -1,8 +1,8 @@
 import { stat } from 'node:fs/promises';
 import { readRawHeader } from './raw_decoder';
 
-// Per-format metadata extraction. Stage 1 dispatches every supported file to the
-// LibRaw header parser (no pixel decode). See DESIGN §11.
+// Stage 1 reads every supported file with the LibRaw header parser (no pixel
+// decode). See DESIGN §11.
 
 export interface FileMetadata {
   width: number; // display/upright width (post-flip)
@@ -12,15 +12,18 @@ export interface FileMetadata {
   dateTaken: string | null; // ISO datetime, UTC-normalized
   latitude: number | null;
   longitude: number | null;
+  iso: number | null;
+  shutterSpeed: number | null; // seconds
+  aperture: number | null; // f-number
+  focalLength: number | null; // mm
+  cameraMake: string | null;
+  cameraModel: string | null;
+  lensModel: string | null;
   mtime: string; // filesystem mtime, ISO datetime
   fileSize: number; // bytes
 }
 
 export async function extractMetadata(filePath: string): Promise<FileMetadata> {
-  return extractArwMetadata(filePath);
-}
-
-async function extractArwMetadata(filePath: string): Promise<FileMetadata> {
   const stats = await stat(filePath);
   const header = readRawHeader(filePath);
   return {
@@ -34,6 +37,13 @@ async function extractArwMetadata(filePath: string): Promise<FileMetadata> {
     dateTaken: header.dateTaken,
     latitude: header.latitude,
     longitude: header.longitude,
+    iso: header.iso,
+    shutterSpeed: header.shutterSpeed,
+    aperture: header.aperture,
+    focalLength: header.focalLength,
+    cameraMake: header.cameraMake,
+    cameraModel: header.cameraModel,
+    lensModel: header.lensModel,
     mtime: stats.mtime.toISOString(),
     fileSize: stats.size,
   };

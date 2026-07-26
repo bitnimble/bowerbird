@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
-import { PhotoIdListSchema, ScopedListQuerySchema } from '../../schemas/common';
+import { PhotoIdListSchema } from '../../schemas/common';
+import { PhotoListQuerySchema } from '../../schemas/photos';
 import { CreateShootRequestSchema, UpdateShootRequestSchema } from '../../schemas/shoots';
 import type { PhotosService } from '../../services/photos/photos_service';
 import type { ShootsService } from '../../services/shoots/shoots_service';
@@ -39,7 +40,7 @@ export class ShootsApi {
     });
 
     app.get('/shoots/:id/photos', (c) => {
-      const query = ScopedListQuerySchema.parse(c.req.query());
+      const query = PhotoListQuerySchema.parse(c.req.query());
       return c.json(this.photos.listByShoot(c.req.param('id'), query));
     });
 

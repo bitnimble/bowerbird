@@ -1,3 +1,4 @@
+import { describe, it, expect } from 'bun:test';
 import { mostSpecificShoot, shootContains } from '../shoots';
 
 describe('shootContains', () => {

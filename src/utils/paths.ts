@@ -1,8 +1,13 @@
 import path from 'node:path';
 import type { Library } from '../schemas/libraries';
 
+// Column-level variant, for callers holding a joined row rather than a Library.
+export function dataPathFor(rootPath: string, dataPath: string | null): string {
+  return dataPath ?? path.join(rootPath, '.bowerbird');
+}
+
 export function getDataPath(library: Library): string {
-  return library.data_path ?? path.join(library.root_path, '.bowerbird');
+  return dataPathFor(library.root_path, library.data_path);
 }
 
 export function getSmallThumbnailPath(library: Library, photoId: string): string {

@@ -1,3 +1,4 @@
+import { describe, it, expect } from 'bun:test';
 import { libraryMutex } from '../library_mutex';
 
 const defer = () => {

@@ -41,6 +41,10 @@ function idle(libraryId: string, status: Status = 'idle'): LibrarySyncStatus {
 
 export class SyncService implements LibraryLifecycleListener {
   private readonly statuses = new Map<string, LibrarySyncStatus>();
+  // Photos this library's current run queued for thumbnailing. Held so
+  // getSyncStatus can report processed = queued - still-pending without any
+  // background bookkeeping: the live pending count comes from the DB on read.
+  private readonly queuedForProcessing = new Map<string, number>();
   // Identity token per in-flight sync generation. The lock is released before the
   // detached processing runs, so a newer sync can start while the old one's
   // processing tail is still going; the token lets a stale tail skip its status
@@ -65,6 +69,7 @@ export class SyncService implements LibraryLifecycleListener {
   onLibraryDeleted(libraryId: string): void {
     this.statuses.delete(libraryId);
     this.generation.delete(libraryId);
+    this.queuedForProcessing.delete(libraryId);
   }
 
   async syncAll(): Promise<void> {
@@ -140,7 +145,7 @@ export class SyncService implements LibraryLifecycleListener {
 
       this.photos.transaction(() => {
         for (const mv of result.moves) {
-          this.photos.applyMove(mv.photoId, mv.newFilePath, shootFor(mv.newFilePath));
+          this.photos.setFilePathAndShoot(mv.photoId, mv.newFilePath, shootFor(mv.newFilePath));
           moved++;
         }
         for (const md of result.modified) {
@@ -154,6 +159,13 @@ export class SyncService implements LibraryLifecycleListener {
             file_size: md.metadata.fileSize,
             latitude: md.metadata.latitude,
             longitude: md.metadata.longitude,
+            iso: md.metadata.iso,
+            shutter_speed: md.metadata.shutterSpeed,
+            aperture: md.metadata.aperture,
+            focal_length: md.metadata.focalLength,
+            camera_make: md.metadata.cameraMake,
+            camera_model: md.metadata.cameraModel,
+            lens_model: md.metadata.lensModel,
           });
           modified++;
         }
@@ -173,10 +185,17 @@ export class SyncService implements LibraryLifecycleListener {
             file_size: ad.metadata.fileSize,
             latitude: ad.metadata.latitude,
             longitude: ad.metadata.longitude,
+            iso: ad.metadata.iso,
+            shutter_speed: ad.metadata.shutterSpeed,
+            aperture: ad.metadata.aperture,
+            focal_length: ad.metadata.focalLength,
+            camera_make: ad.metadata.cameraMake,
+            camera_model: ad.metadata.cameraModel,
+            lens_model: ad.metadata.lensModel,
           });
           added++;
         }
-        for (const rp of diff.reappeared) this.photos.clearMissing(rp.photoId);
+        for (const photoId of diff.reappeared) this.photos.clearMissing(photoId);
         for (const rm of result.removed) {
           // Skips if a concurrent rename/move relocated the photo during the scan
           // (its file_path no longer matches what we scanned); it isn't missing.
@@ -184,6 +203,15 @@ export class SyncService implements LibraryLifecycleListener {
           if (marked && !rm.wasMissing) removed++; // per-sync delta only (§9.4 step 5)
         }
       });
+
+      // Survives a restart, unlike the in-memory status, so the UI can always say
+      // how stale the catalogue is (§9.6).
+      this.libraries.setLastSyncedAt(libraryId, nowUtc);
+
+      // Read after the transaction commits, so rows this sync inserted/modified
+      // are counted (§9.6). This is the denominator for processing progress.
+      const queued = this.photos.countPendingProcessing(libraryId);
+      this.queuedForProcessing.set(libraryId, queued);
 
       const status: LibrarySyncStatus = {
         library_id: libraryId,
@@ -193,7 +221,7 @@ export class SyncService implements LibraryLifecycleListener {
         photos_removed: removed,
         photos_moved: moved,
         photos_modified: modified,
-        photos_processing: 0,
+        photos_processing: queued,
         photos_processed: 0,
       };
       this.statuses.set(libraryId, status);
@@ -214,24 +242,40 @@ export class SyncService implements LibraryLifecycleListener {
       releaseSyncLock(lockPath);
       if (syncedStatus != null) {
         const finalStatus = syncedStatus;
+        // Runs on both success and failure: processing throwing must not leave the
+        // status stuck at 'processing'. Skipped if a newer sync generation started
+        // meanwhile, so a stale tail can't stomp the newer run's status.
+        const settle = (): void => {
+          if (this.generation.get(libraryId) !== token) return;
+          const stillPending = this.photos.countPendingProcessing(libraryId);
+          this.statuses.set(libraryId, {
+            ...finalStatus,
+            status: 'idle',
+            photos_processing: stillPending,
+            photos_processed: Math.max(0, finalStatus.photos_processing - stillPending),
+          });
+        };
         void Promise.resolve(this.processing.processUnprocessed(libraryId))
-          .then(() => {
-            // Skip if a newer sync generation started meanwhile, don't stomp its status.
-            if (this.generation.get(libraryId) === token) this.statuses.set(libraryId, { ...finalStatus, status: 'idle' });
-          })
+          .then(settle)
           .catch((err) => {
-            // Processing failed: don't leave status stuck at 'processing'. Same
-            // generation guard as the success path (a newer sync may have started).
             console.error(`processing failed for library ${libraryId}: ${(err as Error).message}`);
-            if (this.generation.get(libraryId) === token) this.statuses.set(libraryId, { ...finalStatus, status: 'idle' });
+            settle();
           });
       }
     }
   }
 
+  // While thumbnailing runs (detached, §9.5), the counts are computed live from the
+  // DB rather than pushed from the worker pool: one COUNT per poll, no cross-thread
+  // progress plumbing.
   getSyncStatus(libraryId: string): LibrarySyncStatus {
     if (!this.libraries.getById(libraryId)) throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
-    return this.statuses.get(libraryId) ?? idle(libraryId);
+    const status = this.statuses.get(libraryId) ?? idle(libraryId);
+    if (status.status !== 'processing') return status;
+
+    const stillPending = this.photos.countPendingProcessing(libraryId);
+    const queued = this.queuedForProcessing.get(libraryId) ?? stillPending;
+    return { ...status, photos_processing: stillPending, photos_processed: Math.max(0, queued - stillPending) };
   }
 
   // The rows a scoped sync reconciles: those at the changed + discovered paths
