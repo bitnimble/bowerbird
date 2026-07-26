@@ -1,7 +1,7 @@
 import { observer } from 'mobx-react-lite';
 import { Fragment, useEffect, useState } from 'react';
 import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom';
-import { Images, Keyboard, Layers, Library, Settings, Trash2 } from 'lucide-react';
+import { Image, Images, Keyboard, Layers, Library, PanelLeftClose, PanelLeftOpen, Settings, Trash2 } from 'lucide-react';
 import { AlbumPhotosPage } from '../features/albums/album_photos_page';
 import { AlbumsPage } from '../features/albums/albums_page';
 import { BinPage } from '../features/photos/bin_page';
@@ -73,8 +73,9 @@ const LibraryNav = observer(function LibraryNav({ activeId }: { activeId: string
             </NavLink>
             {active && (
               <div className="rail__sub">
+                {/* One picture, because Albums is the stacked icon. */}
                 <NavLink end to={`/libraries/${library.id}`} className={railClass}>
-                  <Images size={ICON} />
+                  <Image size={ICON} />
                   Photos
                 </NavLink>
                 <NavLink to={`/libraries/${library.id}/shoots`} className={railClass}>
@@ -199,12 +200,34 @@ function ShortcutHelp(): JSX.Element {
   );
 }
 
+const RAIL_KEY = 'bowerbird.rail.collapsed';
+
 export function App(): JSX.Element {
+  // Remembered, because the rail is chrome: having to re-hide it on every visit
+  // is the same annoyance as it never collapsing at all.
+  const [collapsed, setCollapsed] = useState(() => localStorage.getItem(RAIL_KEY) === '1');
+
+  function toggleRail(): void {
+    setCollapsed((was) => {
+      const next = !was;
+      localStorage.setItem(RAIL_KEY, next ? '1' : '0');
+      return next;
+    });
+  }
+
   return (
-    <div className="shell">
+    <div className={`shell${collapsed ? ' shell--collapsed' : ''}`}>
       <EnsureLibraries />
-      <Rail />
+      {!collapsed && <Rail />}
       <div className="main">
+        <button
+          className="rail__toggle"
+          aria-label={collapsed ? 'Show sidebar' : 'Hide sidebar'}
+          aria-expanded={!collapsed}
+          onClick={toggleRail}
+        >
+          {collapsed ? <PanelLeftOpen size={ICON} /> : <PanelLeftClose size={ICON} />}
+        </button>
         <Toasts />
         <div className="content">
           <Routes>

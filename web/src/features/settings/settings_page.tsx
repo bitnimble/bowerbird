@@ -1,17 +1,10 @@
 import { observer } from 'mobx-react-lite';
 import { useEffect, useState } from 'react';
 import { FolderPlus, RefreshCw, Sparkles, Trash2, Wand2 } from 'lucide-react';
-import type { Ordering, ThumbnailSource } from '../../api/client';
+import type { ThumbnailSource } from '../../api/client';
 import { useLibrariesStore, usePresenters, useServerConfigStore, useSyncStore } from '../../app/stores_context';
-import { Button, Heading, ICON, type Option, SegmentedControl, Select, Text, TextField } from '../../ui/ui';
+import { Button, Heading, ICON, type Option, SegmentedControl, Text, TextField } from '../../ui/ui';
 import { SyncStrip } from '../sync/sync_strip';
-
-const ORDERINGS: Option<Ordering>[] = [
-  { value: 'taken_desc', label: 'Newest taken first' },
-  { value: 'taken_asc', label: 'Oldest taken first' },
-  { value: 'added_desc', label: 'Newest added first' },
-  { value: 'added_asc', label: 'Oldest added first' },
-];
 
 // "3 minutes ago" answers "is my catalogue stale?" at a glance; a timestamp does not.
 function relativeTime(iso: string): string {
@@ -43,13 +36,6 @@ const LibrarySettings = observer(function LibrarySettings(): JSX.Element {
             </Text>
             {sync.libraryId === library.id && <SyncStrip />}
           </div>
-
-          <Select
-            label={`Default ordering for ${library.root_path}`}
-            options={ORDERINGS}
-            value={library.ordering}
-            onChange={(next) => void libraries.setOrdering(library.id, next)}
-          />
 
           <Button disabled={sync.isBusy && sync.libraryId === library.id} onClick={() => void syncPresenter.trigger(library.id)}>
             <RefreshCw size={ICON} />
@@ -117,7 +103,6 @@ export const SettingsPage = observer(function SettingsPage(): JSX.Element {
   const store = useLibrariesStore();
   const { libraries } = usePresenters();
   const [rootPath, setRootPath] = useState('');
-  const [ordering, setOrdering] = useState<Ordering>('taken_desc');
 
   useEffect(() => {
     void libraries.load();
@@ -126,7 +111,9 @@ export const SettingsPage = observer(function SettingsPage(): JSX.Element {
   async function submit(e: React.FormEvent): Promise<void> {
     e.preventDefault();
     if (rootPath.trim() === '') return;
-    if (await libraries.create(rootPath.trim(), ordering)) setRootPath('');
+    // Sort order is a per-view choice made in the gallery, not a property of the
+    // library, so adding one asks for a path and nothing else.
+    if (await libraries.create(rootPath.trim(), 'taken_desc')) setRootPath('');
   }
 
   return (
@@ -147,7 +134,6 @@ export const SettingsPage = observer(function SettingsPage(): JSX.Element {
       <div className="panel">
         <form className="row" onSubmit={(e) => void submit(e)}>
           <TextField grow label="Library root path" placeholder="/photos" value={rootPath} onChange={setRootPath} />
-          <Select label="Default ordering" options={ORDERINGS} value={ordering} onChange={setOrdering} />
           <Button variant="primary" type="submit" disabled={store.loading}>
             <FolderPlus size={ICON} />
             Add library

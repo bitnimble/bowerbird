@@ -18,6 +18,8 @@ const SYMBOLS = {
   libraw_recycle: { args: [FFIType.ptr], returns: FFIType.void },
   libraw_close: { args: [FFIType.ptr], returns: FFIType.void },
   libraw_adjust_sizes_info_only: { args: [FFIType.ptr], returns: FFIType.i32 },
+  libraw_set_output_bps: { args: [FFIType.ptr, FFIType.i32], returns: FFIType.void },
+  libraw_set_output_color: { args: [FFIType.ptr, FFIType.i32], returns: FFIType.void },
   libraw_get_iwidth: { args: [FFIType.ptr], returns: FFIType.i32 },
   libraw_get_iheight: { args: [FFIType.ptr], returns: FFIType.i32 },
   libraw_get_imgother: { args: [FFIType.ptr], returns: FFIType.ptr },
@@ -56,8 +58,12 @@ export interface DecodedImage {
   width: number;
   height: number;
   channels: 3;
-  data: Buffer; // interleaved 8-bit RGB, already rotated to display orientation
+  // 8 for thumbnails, 16 for a full-depth export. sharp needs to be told which.
+  depth: 8 | 16;
+  data: Buffer; // interleaved RGB, already rotated to display orientation
 }
+
+const LIBRAW_COLORSPACE_SRGB = 1;
 
 // libraw_processed_image_t: int type; u16 height,width,colors,bits; u32 data_size; u8 data[].
 const IMG = { type: 0, height: 4, width: 6, colors: 8, bits: 10, dataSize: 12, data: 16 } as const;
@@ -98,7 +104,7 @@ export function readEmbeddedJpeg(filePath: string): Buffer | null {
 
 // Decodes a RAW file to an upright 8-bit RGB bitmap. Every LibRaw allocation is
 // freed on all paths (mem-image, unpacked data, processor) per DESIGN §10.4.
-export function decodeRaw(filePath: string): DecodedImage {
+export function decodeRaw(filePath: string, depth: 8 | 16 = 8): DecodedImage {
   const L = lib();
   const proc = L.libraw_init(0);
   if (!proc) throw new Error('libraw_init failed');
@@ -107,6 +113,10 @@ export function decodeRaw(filePath: string): DecodedImage {
     check(L, L.libraw_open_file(proc, cpath(filePath)), 'open_file');
     // Read before unpack/process, which overwrite the size fields.
     const insets = rotateInsets(readCropInsets(proc), readFlip(proc));
+    // A browser can only display a known space, and a PNG with no profile is
+    // taken as sRGB, so both depths render into it.
+    L.libraw_set_output_color(proc, LIBRAW_COLORSPACE_SRGB);
+    L.libraw_set_output_bps(proc, depth);
     check(L, L.libraw_unpack(proc), 'unpack');
     check(L, L.libraw_dcraw_process(proc), 'dcraw_process');
 
@@ -121,10 +131,10 @@ export function decodeRaw(filePath: string): DecodedImage {
       const colors = head.getUint16(IMG.colors, true);
       const bits = head.getUint16(IMG.bits, true);
       const dataSize = head.getUint32(IMG.dataSize, true);
-      if (colors !== 3 || bits !== 8) throw new Error(`unexpected image format: colors=${colors} bits=${bits}`);
+      if (colors !== 3 || bits !== depth) throw new Error(`unexpected image format: colors=${colors} bits=${bits}`);
       // Copy out of LibRaw-owned memory before it is freed.
       const data = Buffer.from(toArrayBuffer(image, IMG.data, dataSize).slice(0));
-      return cropRgb({ width, height, channels: 3, data }, insets);
+      return cropRgb({ width, height, channels: 3, depth, data }, insets);
     } finally {
       L.libraw_dcraw_clear_mem(image);
     }
@@ -238,13 +248,14 @@ function cropRgb(image: DecodedImage, insets: Insets): DecodedImage {
   const height = image.height - insets.top - insets.bottom;
   if (width <= 0 || height <= 0 || (insets.left | insets.top | insets.right | insets.bottom) === 0) return image;
 
-  const stride = image.width * 3;
-  const out = Buffer.allocUnsafe(width * height * 3);
+  const pixel = 3 * (image.depth / 8);
+  const stride = image.width * pixel;
+  const out = Buffer.allocUnsafe(width * height * pixel);
   for (let row = 0; row < height; row++) {
-    const from = (row + insets.top) * stride + insets.left * 3;
-    image.data.copy(out, row * width * 3, from, from + width * 3);
+    const from = (row + insets.top) * stride + insets.left * pixel;
+    image.data.copy(out, row * width * pixel, from, from + width * pixel);
   }
-  return { width, height, channels: 3, data: out };
+  return { width, height, channels: 3, depth: image.depth, data: out };
 }
 
 // libraw_imgother_t (LibRaw 0.21, x86-64): float iso,shutter,aperture,focal (16B),

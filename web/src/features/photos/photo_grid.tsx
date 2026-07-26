@@ -2,6 +2,7 @@ import { observer } from 'mobx-react-lite';
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Check, ChevronLeft, ChevronRight, ThumbsDown, ThumbsUp } from 'lucide-react';
+import { localDateTime } from '../../api/dates';
 import { thumbnailUrl, type PhotoSummary } from '../../api/client';
 import { usePhotosStore, usePresenters } from '../../app/stores_context';
 import { Button, ICON, Text } from '../../ui/ui';
@@ -10,13 +11,60 @@ function filename(filePath: string, id: string): string {
   return filePath.split('/').pop() ?? id.slice(0, 8);
 }
 
-// Split out so a rating change repaints five dots, not the whole tile.
-const Rating = observer(function Rating({ value }: { value: number }): JSX.Element {
+// Rating and verdict are set straight from the tile: a cull is mostly these two
+// decisions, and making them cost a round trip through the detail view is what
+// turns a ten-minute pass into an hour.
+const Rating = observer(function Rating({ photo }: { photo: PhotoSummary }): JSX.Element {
+  const { photos } = usePresenters();
   return (
-    <span className="rating" aria-label={`rating ${value} of 5`}>
+    <span className="rating" role="group" aria-label="Rating">
       {[1, 2, 3, 4, 5].map((n) => (
-        <i key={n} className={n <= value ? 'on' : undefined} />
+        <button
+          key={n}
+          type="button"
+          className={n <= photo.rating ? 'on' : undefined}
+          aria-label={`Set rating to ${n}`}
+          aria-pressed={n <= photo.rating}
+          onClick={(e) => {
+            e.stopPropagation();
+            // Clicking the star a photo already sits on clears the rating, so one
+            // control both sets and unsets without a separate "no rating" target.
+            void photos.setRating(photo.id, n === photo.rating ? 0 : n);
+          }}
+        />
       ))}
+    </span>
+  );
+});
+
+const TriageButtons = observer(function TriageButtons({ photo }: { photo: PhotoSummary }): JSX.Element {
+  const { photos } = usePresenters();
+  return (
+    <span className="verdict">
+      <button
+        type="button"
+        className={`verdict__btn${photo.triage === 'rejected' ? ' is-on verdict__btn--reject' : ''}`}
+        aria-label={photo.triage === 'rejected' ? 'Clear reject' : 'Reject'}
+        aria-pressed={photo.triage === 'rejected'}
+        onClick={(e) => {
+          e.stopPropagation();
+          void photos.toggleTriage(photo.id, 'rejected');
+        }}
+      >
+        <ThumbsDown size={12} />
+      </button>
+      <button
+        type="button"
+        className={`verdict__btn${photo.triage === 'picked' ? ' is-on verdict__btn--pick' : ''}`}
+        aria-label={photo.triage === 'picked' ? 'Clear pick' : 'Pick'}
+        aria-pressed={photo.triage === 'picked'}
+        onClick={(e) => {
+          e.stopPropagation();
+          void photos.toggleTriage(photo.id, 'picked');
+        }}
+      >
+        <ThumbsUp size={12} />
+      </button>
     </span>
   );
 });
@@ -41,6 +89,7 @@ const Tile = observer(function Tile({ photo, index }: { photo: PhotoSummary; ind
   // mouse: two rings on the same tile only raises "why is this one different".
   const focused = store.focusIndex === index && !store.hasSelection;
   const ref = useRef<HTMLDivElement>(null);
+  const list = store.mode === 'list';
 
   // Keep the keyboard cursor on screen when it walks off the visible rows.
   useEffect(() => {
@@ -81,16 +130,6 @@ const Tile = observer(function Tile({ photo, index }: { photo: PhotoSummary; ind
       </button>
 
       <div className="tile__badges">
-        {photo.triage === 'picked' && (
-          <span className="badge badge--pick">
-            <ThumbsUp size={9} /> pick
-          </span>
-        )}
-        {photo.triage === 'rejected' && (
-          <span className="badge badge--reject">
-            <ThumbsDown size={9} /> rej
-          </span>
-        )}
         {photo.is_missing && <span className="badge badge--missing">missing</span>}
         {photo.is_deleted && <span className="badge badge--deleted">binned</span>}
       </div>
@@ -109,7 +148,11 @@ const Tile = observer(function Tile({ photo, index }: { photo: PhotoSummary; ind
         <span className="tile__name" title={photo.file_path}>
           {filename(photo.file_path, photo.id)}
         </span>
-        <Rating value={photo.rating} />
+        {list && <Text variant="mono">{localDateTime(photo.ordering_date) ?? 'no date'}</Text>}
+        <span className="tile__marks">
+          <TriageButtons photo={photo} />
+          <Rating photo={photo} />
+        </span>
       </div>
     </div>
   );
@@ -175,6 +218,9 @@ const GridKeys = observer(function GridKeys(): null {
         case 'ArrowUp':
           photos.moveFocus(-columns);
           break;
+        case 'z':
+          void photos.setFocusedTriage('untriaged');
+          break;
         case 'c':
           void photos.togglePickFocused();
           break;
@@ -223,16 +269,13 @@ export const PhotoGrid = observer(function PhotoGrid({ emptyHint }: { emptyHint:
   return (
     <>
       <GridKeys />
-      <div className="grid" style={{ '--tile': `${store.thumbSize}px` } as React.CSSProperties}>
+      <div className={`grid grid--${store.mode}`} style={{ '--tile': `${store.thumbSize}px` } as React.CSSProperties}>
         {store.photos.map((p, i) => (
           <Tile key={p.id} photo={p} index={i} />
         ))}
       </div>
 
       <div className="row" style={{ marginTop: 10 }}>
-        <Text variant="mono">
-          {store.pageStart}–{store.pageEnd} of {store.total}
-        </Text>
         <div className="spacer" />
         <Pager />
       </div>

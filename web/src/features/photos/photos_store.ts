@@ -10,6 +10,10 @@ export type PhotoSource =
   | { kind: 'bin'; libraryId: string }
   | { kind: 'missing'; libraryId: string };
 
+// grid crops every tile to one aspect so rows line up and the eye can scan;
+// masonry keeps each photo's own shape; list trades density for metadata.
+export type ViewMode = 'grid' | 'masonry' | 'list';
+
 // What the user narrowed the view to. Separate from PhotoSource: the source is
 // which collection, this is which slice of it.
 export interface PhotoFilters {
@@ -47,6 +51,7 @@ export class PhotosStore {
 
   // Minimum tile width in px, driven by the grid's zoom slider.
   @observable accessor thumbSize = 240;
+  @observable accessor mode: ViewMode = 'grid';
 
   @observable accessor selected = new Set<string>();
   // Anchor for shift-click range selection: the last photo toggled on its own.
@@ -64,6 +69,11 @@ export class PhotosStore {
   // not, so images already decoded in the page would otherwise never be
   // re-requested; appending this defeats that without polluting normal URLs.
   @observable accessor rebuiltAt = 0;
+
+  // The full-resolution render is opt-in per photo: it is built on request and
+  // shown only while the user asks for it, because it is a very large download.
+  @observable accessor buildingLossless = false;
+  @observable accessor showingLossless = false;
 
   @observable.ref accessor detail: PhotoDetail | null = null;
   @observable accessor detailLoading = false;

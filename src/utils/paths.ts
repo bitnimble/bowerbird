@@ -18,6 +18,12 @@ export function getFullThumbnailPath(library: Library, photoId: string): string 
   return path.join(getDataPath(library), 'thumbnails', 'full', `${photoId}.webp`);
 }
 
+// Full-resolution lossless export, built only on request (§10.5). Kept beside
+// the thumbnails so removing a library's data directory takes it too.
+export function getLosslessPath(library: Library, photoId: string): string {
+  return path.join(getDataPath(library), 'lossless', `${photoId}.png`);
+}
+
 export function getBinPath(library: Library): string {
   return path.join(getDataPath(library), 'bin');
 }

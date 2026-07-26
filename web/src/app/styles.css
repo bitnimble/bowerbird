@@ -172,9 +172,12 @@ p.ui-text--mono {
   color: var(--bone-dim);
 }
 
-/* Segmented items: same metrics, joined into one block. */
+/* Segmented items: same metrics, joined into one block. The group carries the
+   border, so its buttons must lose their own height or the group ends up 2px
+   taller than every standalone button beside it. */
 .ui-seg {
   display: inline-flex;
+  height: var(--control-h);
   border: 1px solid var(--slate);
   border-radius: var(--radius);
   overflow: hidden;
@@ -187,10 +190,20 @@ p.ui-text--mono {
 }
 
 .ui-btn--seg {
+  height: 100%;
   border: 0;
   border-right: 1px solid var(--slate);
   border-radius: 0;
-  color: var(--bone-dim);
+  /* Same ink as every other button: dimming these made the filter row read as a
+     different, lesser class of control. */
+  color: var(--bone);
+}
+
+.ui-btn__hint {
+  font-family: var(--mono);
+  font-size: 10px;
+  opacity: 0.55;
+  margin-left: 1px;
 }
 
 .ui-seg--stretch .ui-btn--seg {
@@ -381,6 +394,43 @@ p.ui-text--mono {
   height: 100%;
 }
 
+.shell--collapsed {
+  grid-template-columns: 1fr;
+}
+
+/* Sits over the content's top-left corner rather than taking a row of its own,
+   so hiding the rail actually returns the space to the photographs. */
+.rail__toggle {
+  position: absolute;
+  left: 6px;
+  top: 8px;
+  z-index: 20;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius);
+  background: none;
+  color: var(--bone-dim);
+  cursor: pointer;
+}
+
+.rail__toggle:hover {
+  background: var(--slate-soft);
+  color: var(--bone);
+}
+
+.shell:not(.shell--collapsed) .rail__toggle {
+  left: calc(var(--rail) - 32px);
+}
+
+/* Clear of the toggle, which floats over this corner. */
+.shell--collapsed .pad {
+  padding-left: 40px;
+}
+
 .rail {
   background: var(--bower);
   border-right: 1px solid var(--slate);
@@ -497,6 +547,7 @@ p.ui-text--mono {
 }
 
 .main {
+  position: relative;
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -668,12 +719,17 @@ p.ui-text--mono {
   margin-bottom: 10px;
 }
 
-/* The zoom slider belongs to the grid, not to the filters, so it sits apart at
-   the far end of the row. */
+/* View mode, zoom and the count belong to the grid rather than to the filters,
+   so they sit together at the far end of the row. */
 .controls__zoom {
   margin-left: auto;
   display: inline-flex;
   align-items: center;
+  gap: 10px;
+}
+
+.controls__count {
+  white-space: nowrap;
 }
 
 .pager {
@@ -716,13 +772,87 @@ p.ui-text--mono {
 /* ---------- grid ---------- */
 
 .grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(var(--tile, 240px), 1fr));
   gap: 3px;
   background: var(--bower);
   padding: 3px;
   border: 1px solid var(--slate);
   border-radius: 6px;
+}
+
+/* Uniform cells, so rows line up and the eye scans without snagging. */
+.grid--grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(var(--tile, 240px), 100%), 1fr));
+}
+
+/* Each photo keeps its own shape. CSS columns rather than a grid: a masonry
+   grid needs either JS measurement or `grid-template-rows: masonry`, which is
+   not shipping yet. */
+.grid--masonry {
+  column-width: var(--tile, 240px);
+  column-gap: 3px;
+}
+
+.grid--masonry .tile {
+  aspect-ratio: auto;
+  break-inside: avoid;
+  margin-bottom: 3px;
+}
+
+/* The hit target is absolutely positioned in the grid, where the cell's aspect
+   sets the height. Masonry has no such cell: the photo itself has to be in flow
+   or the tile collapses to nothing. */
+.grid--masonry .tile__hit {
+  position: static;
+  display: block;
+  width: 100%;
+}
+
+.grid--masonry .tile img,
+.grid--list .tile img {
+  position: static;
+  height: auto;
+}
+
+.grid--list {
+  display: flex;
+  flex-direction: column;
+}
+
+/* A row per photo: the thumbnail shrinks to a fixed strip and the foot spreads
+   out, trading density for legible filenames and dates. */
+.grid--list .tile {
+  aspect-ratio: auto;
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  min-height: 62px;
+}
+
+.grid--list .tile__hit {
+  position: static;
+  height: 56px;
+}
+
+.grid--list .tile__foot {
+  position: static;
+  background: none;
+  padding: 0 10px 0 0;
+  align-items: center;
+  gap: 14px;
+}
+
+.grid--list .tile__name {
+  flex: 1;
+  font-size: 12px;
+}
+
+.grid--list .tile__check {
+  top: 50%;
+  right: auto;
+  left: 4px;
+  transform: translateY(-50%);
 }
 
 .tile {
@@ -747,10 +877,12 @@ p.ui-text--mono {
   cursor: pointer;
 }
 
+/* contain, not cover: cropping a portrait frame to a landscape cell hides the
+   part of the picture you are judging it by. */
 .tile img {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
   display: block;
   opacity: 0;
   transition: opacity 220ms ease;
@@ -865,20 +997,69 @@ p.ui-text--mono {
   gap: 6px;
 }
 
+/* Rating and verdict live together at the foot of every tile, always visible and
+   always clickable: a cull is mostly these two decisions. */
+.tile__marks {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
 .rating {
+  display: flex;
+  gap: 3px;
+}
+
+.rating button {
+  width: 8px;
+  height: 8px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: #464c58;
+  cursor: pointer;
+}
+
+.rating button:hover {
+  background: #6d7788;
+}
+
+.rating button.on {
+  background: var(--glass);
+}
+
+.verdict {
   display: flex;
   gap: 2px;
 }
 
-.rating i {
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
-  background: #464c58;
+.verdict__btn {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: rgba(10, 12, 16, 0.7);
+  color: #7d8492;
+  cursor: pointer;
+  line-height: 0;
 }
 
-.rating i.on {
-  background: var(--glass);
+.verdict__btn:hover {
+  color: var(--bone);
+}
+
+.verdict__btn--pick.is-on {
+  background: var(--moss);
+  color: #04180b;
+}
+
+.verdict__btn--reject.is-on {
+  background: var(--rose);
+  color: #200807;
 }
 
 .tile__check {

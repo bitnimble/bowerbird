@@ -6,6 +6,9 @@ import {
   CircleDashed,
   ImageOff,
   Layers,
+  LayoutDashboard,
+  LayoutGrid,
+  List,
   Search,
   SlidersHorizontal,
   SquareCheck,
@@ -16,8 +19,8 @@ import {
 } from 'lucide-react';
 import type { Ordering } from '../../api/client';
 import { usePhotosStore, usePresenters } from '../../app/stores_context';
-import { Button, CheckMenu, ICON, type Option, PopoverButton, SegmentedControl, Select, Slider, TextField } from '../../ui/ui';
-import { activeFilters, type PhotoFilters } from './photos_store';
+import { Button, CheckMenu, ICON, type Option, PopoverButton, SegmentedControl, Select, Slider, Text, TextField } from '../../ui/ui';
+import { activeFilters, type PhotoFilters, type ViewMode } from './photos_store';
 
 const ORDERINGS: Option<Ordering>[] = [
   { value: 'taken_desc', label: 'Newest first' },
@@ -67,8 +70,20 @@ function customToFilters(keys: CustomKey[]): PhotoFilters {
   };
 }
 
+// Which Custom options a set of filters corresponds to. The presets are just
+// named points in the same space, so selecting one shows its constituents
+// already ticked in Custom rather than leaving the menu looking untouched.
+function customKeys(filters: PhotoFilters): CustomKey[] {
+  return [
+    ...(filters.triage ?? []),
+    ...(filters.rated === true ? (['rated'] as const) : []),
+    ...(filters.rated === false ? (['unrated'] as const) : []),
+    ...(filters.isMissing === true ? (['missing'] as const) : []),
+    ...(filters.needsProcessing === true ? (['pending'] as const) : []),
+  ];
+}
+
 function activeView(filters: PhotoFilters): ViewKey | null {
-  if (filters.match === 'any') return null;
   const triage = filters.triage ?? [];
   const narrowed = filters.rated != null || filters.isMissing != null || filters.needsProcessing != null;
   if (narrowed) return null;
@@ -170,16 +185,7 @@ const CustomFilter = observer(function CustomFilter(): JSX.Element {
   const store = usePhotosStore();
   const { photos } = usePresenters();
   const f = store.filters;
-  const on: CustomKey[] =
-    f.match !== 'any'
-      ? []
-      : [
-          ...(f.triage ?? []),
-          ...(f.rated === true ? (['rated'] as const) : []),
-          ...(f.rated === false ? (['unrated'] as const) : []),
-          ...(f.isMissing === true ? (['missing'] as const) : []),
-          ...(f.needsProcessing === true ? (['pending'] as const) : []),
-        ];
+  const on = customKeys(f);
 
   return (
     <CheckMenu
@@ -201,14 +207,34 @@ const CustomFilter = observer(function CustomFilter(): JSX.Element {
   );
 });
 
+// The top of the range is one photo across, which is how you look closely at a
+// frame without leaving the grid.
+const MAX_TILE = 1600;
+
 const TileZoom = observer(function TileZoom(): JSX.Element {
   const store = usePhotosStore();
   const { photos } = usePresenters();
   return (
     <span className="controls__zoom">
-      <Slider label="Thumbnail size" min={120} max={420} step={20} value={store.thumbSize} onChange={photos.setThumbSize} />
+      <ViewModes />
+      <Slider label="Thumbnail size" min={120} max={MAX_TILE} step={20} value={store.thumbSize} onChange={photos.setThumbSize} />
+      <Text variant="mono" className="controls__count">
+        {store.total === 0 ? 'none' : `${store.pageStart}–${store.pageEnd} of ${store.total}`}
+      </Text>
     </span>
   );
+});
+
+const MODES: Option<ViewMode>[] = [
+  { value: 'grid', label: 'Grid', icon: <LayoutGrid size={ICON} />, iconOnly: true },
+  { value: 'masonry', label: 'Masonry', icon: <LayoutDashboard size={ICON} />, iconOnly: true },
+  { value: 'list', label: 'List', icon: <List size={ICON} />, iconOnly: true },
+];
+
+const ViewModes = observer(function ViewModes(): JSX.Element {
+  const store = usePhotosStore();
+  const { photos } = usePresenters();
+  return <SegmentedControl label="View mode" options={MODES} value={store.mode} onChange={photos.setMode} />;
 });
 
 export const GridControls = observer(function GridControls(): JSX.Element {

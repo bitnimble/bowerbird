@@ -111,6 +111,9 @@ export const api = {
   restorePhotos: (photoIds: string[]): Promise<void> => request('POST', '/api/photos/restore', { photo_ids: photoIds }),
   reprocessPhotos: (photoIds: string[], source: ThumbnailSource): Promise<{ queued: number }> =>
     request('POST', '/api/photos/reprocess', { photo_ids: photoIds, source }),
+  refreshMetadata: (photoIds: string[]): Promise<{ updated: number }> =>
+    request('POST', '/api/photos/refresh-metadata', { photo_ids: photoIds }),
+  buildLossless: (photoId: string): Promise<void> => request('POST', `/api/photos/${photoId}/lossless`),
 
   getSettings: (): Promise<AppSettings> => request('GET', '/api/config/settings'),
   updateSettings: (body: AppSettings): Promise<AppSettings> => request('PUT', '/api/config/settings', body),
@@ -153,4 +156,8 @@ export function originalUrl(photoId: string): string {
 
 export function jpegUrl(photoId: string): string {
   return `${BASE}/image/${photoId}/full.jpg`;
+}
+
+export function losslessUrl(photoId: string): string {
+  return `${BASE}/image/${photoId}/lossless.png`;
 }

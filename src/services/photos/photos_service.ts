@@ -4,10 +4,12 @@ import { AppError } from '../../errors';
 import type { Pagination } from '../../schemas/common';
 import type { Library } from '../../schemas/libraries';
 import type { PhotoDetail, PhotoListQuery, PhotoListResponse, UpdatePhotoRequest } from '../../schemas/photos';
-import { getBinPath, getOriginalPath, toLibraryRelative } from '../../utils/paths';
+import { getBinPath, getLosslessPath, getOriginalPath, toLibraryRelative } from '../../utils/paths';
 import { ensureDir, moveIntoDir } from '../../utils/files';
+import { extractMetadata, type FileMetadata } from '../processing/metadata';
 import type { AlbumsRepository } from '../albums/albums_repository';
 import type { LibrariesRepository } from '../libraries/libraries_repository';
+import type { ProcessingService } from '../processing/processing_service';
 import type { ShootsRepository } from '../shoots/shoots_repository';
 import { libraryMutex } from '../sync/library_mutex';
 import type { PhotoListFilters, PhotoListResult, PhotosRepository } from './photos_repository';
@@ -33,12 +35,19 @@ export class PhotosService {
     private readonly albums: AlbumsRepository,
     private readonly shoots: ShootsRepository,
     private readonly libraries: LibrariesRepository,
+    private readonly processing: ProcessingService,
+    // Defaulted rather than required, matching SyncService: a seam for tests
+    // that must not pull LibRaw in, without every caller having to wire it.
+    private readonly extract: (filePath: string) => Promise<FileMetadata> = extractMetadata,
   ) {}
 
   get(photoId: string): PhotoDetail {
     const photo = this.photos.getById(photoId);
     if (!photo) throw new AppError('NOT_FOUND', `photo not found: ${photoId}`);
-    return photo;
+    const library = this.libraries.getById(photo.library_id);
+    // One stat, on a single-photo read only. The file is the cache, so asking
+    // the filesystem beats a column that can disagree with what is on disk.
+    return { ...photo, has_lossless: library != null && existsSync(getLosslessPath(library, photo.id)) };
   }
 
   listByLibrary(libraryId: string, query: PhotoListQuery): PhotoListResponse {
@@ -79,6 +88,63 @@ export class PhotosService {
       query.offset,
       query.limit,
     );
+  }
+
+  // Re-reads the RAW header and updates the stored metadata. Sync only re-opens
+  // a file whose stat changed, so photos catalogued before a metadata field
+  // existed keep NULLs forever without this. Thumbnails are untouched: nothing
+  // about the pixels changed.
+  async refreshMetadata(photoIds: string[]): Promise<number> {
+    let updated = 0;
+    for (const photoId of photoIds) {
+      const photo = this.photos.getById(photoId);
+      if (!photo || photo.is_missing) continue;
+      const library = this.libraries.getById(photo.library_id);
+      if (!library) continue;
+
+      const filePath = getOriginalPath(library, photo.file_path);
+      if (!existsSync(filePath)) continue;
+      try {
+        const metadata = await this.extract(filePath);
+        this.photos.updateMetadata(photoId, {
+          width: metadata.width,
+          height: metadata.height,
+          orientation: metadata.orientation,
+          date_taken: metadata.dateTaken,
+          latitude: metadata.latitude,
+          longitude: metadata.longitude,
+          iso: metadata.iso,
+          shutter_speed: metadata.shutterSpeed,
+          aperture: metadata.aperture,
+          focal_length: metadata.focalLength,
+          camera_make: metadata.cameraMake,
+          camera_model: metadata.cameraModel,
+          lens_model: metadata.lensModel,
+        });
+        updated++;
+      } catch (err) {
+        // One unreadable file must not abandon the rest of the selection.
+        console.error(`metadata refresh failed for ${photo.file_path}: ${(err as Error).message}`);
+      }
+    }
+    return updated;
+  }
+
+  // Full-resolution 16-bit PNG of one photo, cached on disk. Minutes of work and
+  // hundreds of megabytes, so it happens only on request and only once.
+  async buildLossless(photoId: string): Promise<void> {
+    const photo = this.get(photoId);
+    const library = this.libraries.getById(photo.library_id);
+    if (!library) throw new AppError('NOT_FOUND', `library not found: ${photo.library_id}`);
+
+    const output = getLosslessPath(library, photo.id);
+    if (existsSync(output)) return; // already built; this is a cache, not a rebuild
+
+    // A photo whose file is gone has nothing to render from, and LibRaw's
+    // "Input/output error" surfaces as a 500 that says nothing useful.
+    const source = getOriginalPath(library, photo.file_path);
+    if (!existsSync(source)) throw new AppError('NOT_FOUND', `original file not found: ${photo.file_path}`);
+    await this.processing.renderLossless(source, output, photo.id);
   }
 
   update(photoId: string, updates: UpdatePhotoRequest): PhotoDetail {

@@ -1,13 +1,28 @@
 import { observer } from 'mobx-react-lite';
 import { Fragment, useEffect, useState } from 'react';
-import { ArrowLeft, ChevronLeft, ChevronRight, Download, FileImage, FileType, RefreshCw, Sparkles, Trash2, Wand2 } from 'lucide-react';
+import {
+  ArrowLeft,
+  ChevronLeft,
+  ChevronRight,
+  Download,
+  FileImage,
+  FileType,
+  Maximize2,
+  Minimize2,
+  RefreshCw,
+  RotateCw,
+  Sparkles,
+  Trash2,
+  Wand2,
+} from 'lucide-react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { jpegUrl, originalUrl, thumbnailUrl, type ThumbnailSource } from '../../api/client';
+import { jpegUrl, losslessUrl, originalUrl, thumbnailUrl, type ThumbnailSource } from '../../api/client';
+import { localDateTime } from '../../api/dates';
 import { useAlbumsStore, usePhotosStore, usePresenters, useServerConfigStore, useShootsStore } from '../../app/stores_context';
 import { ActionMenu, Button, ICON, MoreLess, type Option, Text, TextArea } from '../../ui/ui';
 import { sourceLabel } from './photos_presenter';
 import { PhotoStage } from './photo_stage';
-import { TriageControl } from './triage_control';
+import { TRIAGE_KEYS, TriageControl } from './triage_control';
 
 type Row = [label: string, value: React.ReactNode];
 
@@ -71,9 +86,13 @@ const DOWNLOADS: Option<'raw' | 'jpeg'>[] = [
   { value: 'jpeg', label: 'JPEG', icon: <FileImage size={ICON} /> },
 ];
 
-const REBUILDS: Option<ThumbnailSource>[] = [
+type PhotoAction = ThumbnailSource | 'metadata' | 'lossless';
+
+const ACTIONS: Option<PhotoAction>[] = [
   { value: 'render', label: 'Rebuild from RAW', icon: <Wand2 size={ICON} /> },
   { value: 'embedded', label: 'Use embedded JPEG', icon: <Sparkles size={ICON} /> },
+  { value: 'metadata', label: 'Refresh metadata', icon: <RotateCw size={ICON} /> },
+  { value: 'lossless', label: 'View original', icon: <Maximize2 size={ICON} /> },
 ];
 
 export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element {
@@ -112,12 +131,25 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   const nextId = store.nextPhotoId;
   const libraryId = store.detailLibraryId;
 
-  // Stepping through frames is the whole point of a detail view during a cull.
+  // Building takes a while and the file is enormous, so the render is requested
+  // once and then shown; a second visit finds it already on disk.
+  async function showOriginal(): Promise<void> {
+    if (!(store.detail?.has_lossless ?? false)) await photos.buildLossless(photoId);
+    photos.showLossless(true);
+  }
+
+  // Stepping through frames and judging them is the whole point of a detail view
+  // during a cull, so the verdict keys work here exactly as they do in the grid.
   useEffect(() => {
     function onKey(e: KeyboardEvent): void {
       const target = e.target as HTMLElement | null;
       if (target != null && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
-      if (e.key === 'ArrowLeft' && prevId != null) navigate(`/photos/${prevId}`);
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+      const verdict = TRIAGE_KEYS[e.key];
+      if (verdict != null) void photos.setTriage(photoId, verdict);
+      else if (/^[0-5]$/.test(e.key)) void photos.setRating(photoId, Number(e.key));
+      else if (e.key === 'ArrowLeft' && prevId != null) navigate(`/photos/${prevId}`);
       else if (e.key === 'ArrowRight' && nextId != null) navigate(`/photos/${nextId}`);
       else if (e.key === 'Escape' && document.fullscreenElement == null && libraryId != null) navigate(`/libraries/${libraryId}`);
       else return;
@@ -125,7 +157,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [prevId, nextId, navigate, libraryId]);
+  }, [prevId, nextId, navigate, libraryId, photoId, photos]);
 
   if (photo == null && !store.detailLoading) {
     return (
@@ -187,9 +219,19 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
               Actions
             </>
           }
-          options={REBUILDS}
-          onSelect={(source) => void photos.reprocess([photoId], source)}
+          options={ACTIONS}
+          onSelect={(action) => {
+            if (action === 'metadata') void photos.refreshMetadata([photoId]);
+            else if (action === 'lossless') void showOriginal();
+            else void photos.reprocess([photoId], action);
+          }}
         />
+        {store.showingLossless && (
+          <Button onClick={() => photos.showLossless(false)}>
+            <Minimize2 size={ICON} />
+            Back to preview
+          </Button>
+        )}
         {photo != null && !photo.is_deleted && (
           <Button variant="danger" iconOnly aria-label="Move to Bin" onClick={() => void photos.deletePhotos([photo.id])}>
             <Trash2 size={ICON} />
@@ -201,7 +243,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
         {/* Keyed off the route, not the loaded detail, so the photo on screen is
             always the one the URL asks for. */}
         <PhotoStage
-          src={thumbnailUrl(photoId, 'full', store.rebuiltAt)}
+          src={store.showingLossless ? losslessUrl(photoId) : thumbnailUrl(photoId, 'full', store.rebuiltAt)}
           alt={filename}
           filename={filename}
           onImageLoad={(width, height) => setThumbSize({ width, height })}
@@ -253,7 +295,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
                   ['Shutter', photo.shutter_speed == null ? 'not recorded' : shutterLabel(photo.shutter_speed)],
                   ['Aperture', photo.aperture == null ? 'not recorded' : `f/${photo.aperture.toFixed(1)}`],
                   ['Focal length', photo.focal_length == null ? 'not recorded' : `${Math.round(photo.focal_length)}mm`],
-                  ['Taken', photo.date_taken ?? 'not recorded'],
+                  ['Taken', localDateTime(photo.date_taken) ?? 'not recorded'],
                   [
                     'GPS',
                     photo.latitude == null || photo.longitude == null
@@ -281,7 +323,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
                 rows={[
                   ['File size', photo.file_size == null ? 'unknown' : fileSizeLabel(photo.file_size)],
                   ['Dimensions', `${photo.width} × ${photo.height}`],
-                  ['Added', photo.date_added],
+                  ['Added', localDateTime(photo.date_added) ?? photo.date_added],
                   ['Shoot', shoot == null ? 'none' : <Link to={`/shoots/${shoot.id}`}>{shoot.folder_path}</Link>],
                   [
                     'Albums',

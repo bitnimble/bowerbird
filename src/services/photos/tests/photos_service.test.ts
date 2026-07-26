@@ -9,6 +9,7 @@ import type { PhotoDetail } from '../../../schemas/photos';
 import type { Shoot } from '../../../schemas/shoots';
 import type { AlbumsRepository } from '../../albums/albums_repository';
 import type { LibrariesRepository } from '../../libraries/libraries_repository';
+import type { ProcessingService } from '../../processing/processing_service';
 import type { ShootsRepository } from '../../shoots/shoots_repository';
 import { PhotosService } from '../photos_service';
 import type { PhotoListResult, PhotosRepository } from '../photos_repository';
@@ -35,7 +36,9 @@ function build(over: {
   const libraries = { getById: jest.fn(() => null), ...over.libraries } as unknown as LibrariesRepository;
   const shoots = { getById: jest.fn(() => null), ...over.shoots } as unknown as ShootsRepository;
   const albums = { getById: jest.fn(() => null), getAlbumIdsForPhoto: jest.fn(() => []), ...over.albums } as unknown as AlbumsRepository;
-  return { service: new PhotosService(photos, albums, shoots, libraries), photos, libraries, shoots, albums };
+  // These tests never render, so a stub keeps LibRaw and worker threads out.
+  const processing = { renderLossless: jest.fn(async () => {}) } as unknown as ProcessingService;
+  return { service: new PhotosService(photos, albums, shoots, libraries, processing), photos, libraries, shoots, albums };
 }
 
 const library: Library = { id: 'lib', root_path: '/r', data_path: null, ordering: 'added_asc', last_synced_at: null, photo_count: 0 };
@@ -50,7 +53,9 @@ describe('PhotosService.get', () => {
   });
   it('returns the detail when present', () => {
     const { service } = build({ photos: { getById: jest.fn(() => detail) } });
-    expect(service.get('p1')).toBe(detail);
+    // Not toBe: get() decorates the row with has_lossless, which the repository
+    // cannot know because it does not touch the filesystem.
+    expect(service.get('p1')).toMatchObject({ ...detail, has_lossless: false });
   });
 });
 
@@ -178,6 +183,6 @@ describe('PhotosService.update', () => {
   });
   it('returns the refreshed detail on success', () => {
     const { service } = build({ photos: { update: jest.fn(() => true), getById: jest.fn(() => detail) } });
-    expect(service.update('p1', { rating: 5 })).toBe(detail);
+    expect(service.update('p1', { rating: 5 })).toMatchObject({ ...detail, has_lossless: false });
   });
 });

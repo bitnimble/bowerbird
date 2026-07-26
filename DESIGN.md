@@ -880,6 +880,12 @@ Each worker:
 
 The embedded JPEG carries its own EXIF orientation, so it is passed through `sharp().rotate()`; a render is already baked upright by the decoder (§11.1) and must not be rotated again. A file with no JPEG preview (some bodies embed a bitmap, or nothing) is a property of the file rather than an error, so an `embedded` request falls back to a render. The result reports what was **actually** used and `photos.thumbnail_source` records it, so the client can state which pixels are on screen instead of leaving the user to guess.
 
+### 10.5 Lossless export
+
+`POST /api/photos/:id/lossless` renders one photo at full resolution, 16-bit, into a PNG kept beside the thumbnails. It exists because a WebP preview is not what you check focus or gradients on, and it is opt-in per photo because the output runs to tens or hundreds of megabytes and takes real time to build. The file is the cache: a second request finds it already there, and `PhotoDetail.has_lossless` is a `stat` rather than a column, so it cannot disagree with the disk.
+
+PNG rather than TIFF: it is the only lossless format a browser will display, which is the point of the feature. The depth needs two deliberate steps that are each silently lossy if missed, `libraw_set_output_bps(16)` on the decode and `toColourspace('rgb16')` before the encode, without which sharp writes 8-bit from a 16-bit buffer. `libraw_set_output_color` pins sRGB, which is what an unprofiled PNG is read as anyway.
+
 The default for newly indexed photos is the `import.thumbnail_source` setting (§13.6). Changing it is deliberately not retroactive: rebuilding an existing catalogue is a job the user asks for explicitly, not something a preference does to thousands of files in the background. `POST /api/photos/reprocess` is that explicit request.
 
 ### 10.4 LibRaw FFI Bindings (`raw_decoder.ts`)
@@ -1062,6 +1068,9 @@ All endpoints return JSON. Error responses use a standard envelope:
 | `POST` | `/api/photos/delete` | Soft-delete photos (body: `{ photo_ids: string[] }`) |
 | `GET` | `/api/config` | Thumbnail format, sizes and qualities, so a client can state what it is rendering |
 | `POST` | `/api/photos/restore` | Restore soft-deleted photos to where they were deleted from (§12.2) |
+| `POST` | `/api/photos/reprocess` | Rebuild thumbnails for a selection from a named source (§10.3) |
+| `POST` | `/api/photos/refresh-metadata` | Re-read the RAW headers for a selection |
+| `POST` | `/api/photos/:id/lossless` | Build the full-resolution lossless render (§10.5) |
 
 Query parameters for listing (`PhotoListQuerySchema`, §5.3):
 - `offset` (int, default 0)
@@ -1365,6 +1374,16 @@ Five named views (Active, Untriaged, Picks, Rejects, All) answer the questions a
 
 There is no "clear filters" button and no "default order" entry: All is the clear, and the sort always shows the concrete ordering in effect rather than an indirection through the collection's stored default.
 
+Presets are named points in the same space as Custom, so selecting one shows its constituents already ticked there rather than leaving the menu looking untouched.
+
+Three view modes share the same tiles: **grid** crops nothing but gives every photo a uniform cell so rows line up, **masonry** lets each keep its own shape (CSS columns, since `grid-template-rows: masonry` is not shipping), **list** trades density for filename and date. The zoom slider runs from many-across to a single photo filling the width.
+
+Sort, filter, tile size and view mode are remembered per collection in `localStorage`, so returning to a shoot finds it as you left it. The filename search and the date range deliberately are not: those are questions asked in the moment, not preferences.
+
+Rating and verdict sit on every tile, always visible and clickable, because a cull is mostly those two decisions and routing them through the detail view is what turns a ten-minute pass into an hour. Clicking the verdict a photo already has, or the star it already sits on, clears it.
+
+A verdict or rating can move a photo out of the slice being viewed, so a change re-reads the page when a triage or rating filter is active. Filtering locally instead would mean a second copy of the server's filter logic, free to drift.
+
 The bulk action bar sits directly under the filters, where the selection was made, rather than at the foot of a grid the user has scrolled away from. Its actions include rebuilding thumbnails for the selection from either source (§10.3). While a selection exists the keyboard cursor's ring is suppressed: two different rings on one tile only invites "why is this one different".
 
 Rebuilt thumbnails change behind a URL that does not, so the client appends a version to image URLs once a rebuild has happened in the session. The server's `ETag` covers a fresh page load; this covers an image already decoded in the current one.
@@ -1377,6 +1396,7 @@ Rating a shoot is the daily job, so it must not require opening each frame. The 
 |---|---|
 | `← → ↑ ↓` | Move the cursor |
 | `0`–`5` | Set rating |
+| `Z` | Undecided |
 | `C` | Pick (again to clear) |
 | `X` | Reject (again to clear) |
 | `Del` | Move to Bin |
@@ -1385,7 +1405,7 @@ Rating a shoot is the daily job, so it must not require opening each frame. The 
 | `Esc` | Clear the selection |
 | `?` | Shortcut overlay |
 
-`C` and `X` are deliberately adjacent: the left hand rests on them while the right drives the arrows. `X` for reject also matches the convention photographers already have from Lightroom. Both keys toggle, so the same key that sets a verdict clears it.
+`Z`, `X` and `C` are deliberately adjacent, in that order left to right, matching the Undecided / Reject / Pick order of the control: the left hand rests on them while the right drives the arrows. Each button shows its key, so the shortcut is learned from the control rather than from a help sheet. They work in the photo view as well as the grid, because that is where a close look leads to a verdict. `X` for reject also matches the convention photographers already have from Lightroom. Both keys toggle, so the same key that sets a verdict clears it.
 
 Rejecting is not deleting. A reject stays in the catalogue and leaves the default "Active" view (untriaged + picked), which is what makes it useful during a pass; binning is the separate, undoable action on `Del`.
 

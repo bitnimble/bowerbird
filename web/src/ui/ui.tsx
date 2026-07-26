@@ -83,6 +83,11 @@ export interface Option<T extends string> {
   // Colours the pressed state. Used only by the triage verdicts, where
   // traffic-light semantics beat palette purity.
   tone?: 'pick' | 'reject';
+  // Keyboard shortcut, shown dimmed after the label.
+  hint?: string;
+  // Show the icon alone. The label still names the control for screen readers
+  // and as a tooltip, so an icon-only button is never anonymous.
+  iconOnly?: boolean;
 }
 
 // One-of-N. The buttons are `.ui-btn`s like any other, so a filter chip and a
@@ -116,10 +121,15 @@ export function SegmentedControl<T extends string>({
         <Toggle
           key={option.value}
           value={option.value}
-          className={`ui-btn ui-btn--seg${option.tone == null ? '' : ` ui-btn--${option.tone}`}`}
+          aria-label={option.iconOnly === true ? option.label : undefined}
+          title={option.iconOnly === true ? option.label : undefined}
+          className={`ui-btn ui-btn--seg${option.tone == null ? '' : ` ui-btn--${option.tone}`}${
+            option.iconOnly === true ? ' ui-btn--icon' : ''
+          }`}
         >
           {option.icon}
-          {option.label}
+          {option.iconOnly === true ? null : option.label}
+          {option.hint != null && <span className="ui-btn__hint">{option.hint}</span>}
         </Toggle>
       ))}
     </ToggleGroup>

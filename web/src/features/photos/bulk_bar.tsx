@@ -1,12 +1,13 @@
 import { observer } from 'mobx-react-lite';
-import { FolderInput, Images, RefreshCw, RotateCcw, Sparkles, Trash2, Wand2, X } from 'lucide-react';
+import { FolderInput, Images, RefreshCw, RotateCcw, RotateCw, Sparkles, Trash2, Wand2, X } from 'lucide-react';
 import type { ThumbnailSource } from '../../api/client';
 import { useAlbumsStore, usePhotosStore, usePresenters, useShootsStore } from '../../app/stores_context';
 import { ActionMenu, Button, CheckMenu, ICON, type Option, Text } from '../../ui/ui';
 
-const REBUILDS: Option<ThumbnailSource>[] = [
-  { value: 'render', label: 'From the RAW', icon: <Wand2 size={ICON} /> },
-  { value: 'embedded', label: 'From the embedded JPEG', icon: <Sparkles size={ICON} /> },
+const REBUILDS: Option<ThumbnailSource | 'metadata'>[] = [
+  { value: 'render', label: 'Thumbnails from the RAW', icon: <Wand2 size={ICON} /> },
+  { value: 'embedded', label: 'Thumbnails from the embedded JPEG', icon: <Sparkles size={ICON} /> },
+  { value: 'metadata', label: 'Metadata from the RAW header', icon: <RotateCw size={ICON} /> },
 ];
 
 interface Props {
@@ -81,11 +82,14 @@ export const BulkBar = observer(function BulkBar({ removeFrom }: Props): JSX.Ele
             trigger={
               <>
                 <RefreshCw size={ICON} />
-                Rebuild thumbnails
+                Rebuild
               </>
             }
             options={REBUILDS}
-            onSelect={(source) => void photos.reprocessSelected(source)}
+            onSelect={(action) => {
+              if (action === 'metadata') void photos.refreshMetadataForSelection();
+              else void photos.reprocessSelected(action);
+            }}
           />
 
           {removeFrom != null && (

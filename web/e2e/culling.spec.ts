@@ -26,13 +26,36 @@ test('rating and picking work from the grid without opening a photo', async ({ p
   await page.keyboard.press('4');
   await page.keyboard.press('c');
 
-  await expect(page.locator('.tile').first().locator('.badge--pick')).toBeVisible();
-  await expect(page.locator('.tile').first().locator('.rating i.on')).toHaveCount(4);
+  const first = page.locator('.tile').first();
+  await expect(first.locator('.verdict__btn--pick.is-on')).toBeVisible();
+  await expect(first.locator('.rating button.on')).toHaveCount(4);
 
   // The verdict survives a reload, so it was persisted rather than only shown.
   await page.reload();
-  await expect(page.locator('.tile').first().locator('.rating i.on')).toHaveCount(4);
-  await expect(page.locator('.tile').first().locator('.badge--pick')).toBeVisible();
+  await expect(first.locator('.rating button.on')).toHaveCount(4);
+  await expect(first.locator('.verdict__btn--pick.is-on')).toBeVisible();
+});
+
+test('the verdict and rating on a tile are clickable, and clicking again clears them', async ({ page }) => {
+  await page.goto('/settings');
+  await openLibrary(page, CULL_PHOTOS_DIR);
+  await expect(page.locator('.tile')).toHaveCount(PHOTO_NAMES.length);
+  const tile = page.locator('.tile').nth(1);
+
+  // Setting a verdict from the grid must not open the photo: these controls are
+  // the whole reason a cull does not need the detail view.
+  await tile.getByRole('button', { name: 'Pick' }).click();
+  await expect(tile.locator('.verdict__btn--pick.is-on')).toBeVisible();
+  expect(page.url()).not.toContain('/photos/');
+
+  await tile.getByRole('button', { name: 'Clear pick' }).click();
+  await expect(tile.locator('.verdict__btn--pick.is-on')).toHaveCount(0);
+
+  await tile.getByRole('button', { name: 'Set rating to 3' }).click();
+  await expect(tile.locator('.rating button.on')).toHaveCount(3);
+  // Clicking the star it already sits on is how a rating is removed.
+  await tile.getByRole('button', { name: 'Set rating to 3' }).click();
+  await expect(tile.locator('.rating button.on')).toHaveCount(0);
 });
 
 test('rejecting removes a photo from the default working set', async ({ page }) => {
@@ -49,7 +72,7 @@ test('rejecting removes a photo from the default working set', async ({ page }) 
 
   await page.getByRole('button', { name: 'Rejects', exact: true }).click();
   await expect(page.locator('.tile')).toHaveCount(1);
-  await expect(page.locator('.badge--reject')).toHaveCount(1);
+  await expect(page.locator('.verdict__btn--reject.is-on')).toHaveCount(1);
 
   // Undo the reject so later tests see the full set again.
   await page.keyboard.press('ArrowRight');
@@ -100,15 +123,36 @@ test('the Custom filter unions its options instead of intersecting them', async 
   await openLibrary(page, CULL_PHOTOS_DIR);
   await expect(page.locator('.tile')).toHaveCount(PHOTO_NAMES.length);
 
+  // A preset is a named point in the same space as Custom, so it arrives with
+  // its own options already ticked. Start from All, which ticks nothing, or the
+  // clicks below would be toggling the Active preset's boxes off.
+  await page.getByRole('button', { name: 'All', exact: true }).click();
+  await page.getByRole('button', { name: /^Custom/ }).click();
+  await expect(page.getByRole('menuitemcheckbox', { checked: true })).toHaveCount(0);
+
   // One photo is picked and rated by an earlier test; the rest are neither. As an
   // intersection "picks AND unrated" is empty, so a union is the only reading
   // that returns the whole set.
-  await page.getByRole('button', { name: /^Custom/ }).click();
   await page.getByRole('menuitemcheckbox', { name: 'Picks' }).click();
   await page.getByRole('menuitemcheckbox', { name: 'Unrated' }).click();
   await page.keyboard.press('Escape');
 
   await expect(page.locator('.tile')).toHaveCount(PHOTO_NAMES.length);
+});
+
+test('a preset filter arrives with its options already ticked in Custom', async ({ page }) => {
+  await page.goto('/settings');
+  await openLibrary(page, CULL_PHOTOS_DIR);
+  await expect(page.locator('.tile')).toHaveCount(PHOTO_NAMES.length);
+
+  // Active is untriaged + picked, so Custom must show exactly those two ticked
+  // rather than looking as though no filter were applied.
+  await page.getByRole('button', { name: 'Active', exact: true }).click();
+  await page.getByRole('button', { name: /^Custom/ }).click();
+  await expect(page.getByRole('menuitemcheckbox', { name: 'Untriaged', checked: true })).toBeVisible();
+  await expect(page.getByRole('menuitemcheckbox', { name: 'Picks', checked: true })).toBeVisible();
+  await expect(page.getByRole('menuitemcheckbox', { name: 'Rejects', checked: true })).toHaveCount(0);
+  await page.keyboard.press('Escape');
 });
 
 test('Delete bins the focused photo and the toast undoes it', async ({ page }) => {
@@ -199,8 +243,8 @@ test('a selection can be rebuilt from the embedded JPEG', async ({ page }) => {
   await expect(page.locator('.tile')).toHaveCount(PHOTO_NAMES.length);
 
   await page.getByRole('button', { name: 'Select photo' }).first().click();
-  await page.getByRole('button', { name: 'Rebuild thumbnails' }).click();
-  await page.getByRole('menuitem', { name: 'From the embedded JPEG' }).click();
+  await page.getByRole('button', { name: 'Rebuild' }).click();
+  await page.getByRole('menuitem', { name: 'Thumbnails from the embedded JPEG' }).click();
   await expect(page.getByText(/Rebuilding 1 thumbnail from the embedded JPEG/)).toBeVisible();
 
   // The source is recorded per photo, so the detail view can say which pixels are

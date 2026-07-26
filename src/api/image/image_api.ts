@@ -2,16 +2,17 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import sharp from 'sharp';
 import { AppError } from '../../errors';
-import { getFullThumbnailPath, getOriginalPath, getSmallThumbnailPath } from '../../utils/paths';
+import { getFullThumbnailPath, getLosslessPath, getOriginalPath, getSmallThumbnailPath } from '../../utils/paths';
 import type { LibrariesService } from '../../services/libraries/libraries_service';
 import type { PhotosService } from '../../services/photos/photos_service';
 
-type Kind = 'small' | 'full' | 'original';
+type Kind = 'small' | 'full' | 'original' | 'lossless';
 
 const CONTENT_TYPE: Record<Kind, string> = {
   small: 'image/webp',
   full: 'image/webp',
   original: 'image/x-sony-arw',
+  lossless: 'image/png',
 };
 
 const JPEG_QUALITY = 92;
@@ -30,6 +31,7 @@ export class ImageApi {
     app.get('/:photoId/full.webp', (c) => this.serve(c, 'full'));
     app.get('/:photoId/original.arw', (c) => this.serve(c, 'original'));
     app.get('/:photoId/full.jpg', (c) => this.serveJpeg(c));
+    app.get('/:photoId/lossless.png', (c) => this.serve(c, 'lossless'));
     this.routes = app;
   }
 
@@ -73,7 +75,9 @@ export class ImageApi {
         ? getSmallThumbnailPath(library, photo.id)
         : kind === 'full'
           ? getFullThumbnailPath(library, photo.id)
-          : getOriginalPath(library, photo.file_path);
+          : kind === 'lossless'
+            ? getLosslessPath(library, photo.id)
+            : getOriginalPath(library, photo.file_path);
 
     const file = Bun.file(filePath);
     if (!(await file.exists())) throw new AppError('NOT_FOUND', `image not found on disk: ${photoId}`);

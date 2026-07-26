@@ -1,11 +1,11 @@
 import { existsSync } from 'node:fs';
-import { rm } from 'node:fs/promises';
+import { mkdir, rm } from 'node:fs/promises';
 import path from 'node:path';
 import type { Config } from '../../config';
 import { dataPathFor } from '../../utils/paths';
 import type { PendingPhoto, PhotosRepository } from '../photos/photos_repository';
 import type { SettingsRepository } from '../settings/settings_repository';
-import type { ProcessingJob, ProcessingResult, ThumbnailSource } from './processing_types';
+import type { LosslessJob, ProcessingJob, ProcessingResult, ThumbnailSource } from './processing_types';
 
 const WORKER_URL = new URL('./processing_worker.ts', import.meta.url).href;
 
@@ -33,6 +33,25 @@ export class ProcessingService {
     return queued;
   }
 
+  // One photo, on demand, outside the pending queue: this is a single explicit
+  // request the user is waiting on, not background work to batch.
+  async renderLossless(rawFilePath: string, outputPath: string, photoId: string): Promise<void> {
+    await mkdir(path.dirname(outputPath), { recursive: true });
+    const worker = new Worker(WORKER_URL);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        worker.onmessage = (event: MessageEvent<ProcessingResult>) => {
+          if (event.data.success) resolve();
+          else reject(new Error(event.data.error));
+        };
+        worker.onerror = (event: ErrorEvent) => reject(new Error(`worker crashed: ${event.message}`));
+        worker.postMessage({ kind: 'lossless', photoId, rawFilePath, outputPath } satisfies LosslessJob);
+      });
+    } finally {
+      worker.terminate();
+    }
+  }
+
   processUnprocessed(libraryId?: string): Promise<void> {
     const key = libraryId ?? '*';
     const existing = this.inFlight.get(key);
@@ -57,6 +76,7 @@ export class ProcessingService {
   private toJob(pending: PendingPhoto): ProcessingJob {
     const thumbs = path.join(dataPathFor(pending.root_path, pending.data_path), 'thumbnails');
     return {
+      kind: 'thumbnails',
       photoId: pending.photo_id,
       rawFilePath: path.join(pending.root_path, pending.file_path),
       smallOutputPath: path.join(thumbs, 'small', `${pending.photo_id}.webp`),

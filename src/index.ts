@@ -34,7 +34,7 @@ const settingsRepo = new SettingsRepository(db);
 const processingService = new ProcessingService(photosRepo, config, settingsRepo);
 
 const librariesService = new LibrariesService(librariesRepo);
-const photosService = new PhotosService(photosRepo, albumsRepo, shootsRepo, librariesRepo);
+const photosService = new PhotosService(photosRepo, albumsRepo, shootsRepo, librariesRepo, processingService);
 const albumsService = new AlbumsService(albumsRepo, photosRepo);
 const shootsService = new ShootsService(shootsRepo, photosRepo, librariesRepo);
 const syncService = new SyncService(photosRepo, librariesRepo, albumsRepo, shootsRepo, processingService);

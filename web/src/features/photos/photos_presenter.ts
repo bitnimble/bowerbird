@@ -11,7 +11,8 @@ import {
 import type { AlbumsPresenter } from '../albums/albums_presenter';
 import type { ShootsPresenter } from '../shoots/shoots_presenter';
 import type { ToastsPresenter } from '../toasts/toasts_presenter';
-import { activeFilters, type PhotoFilters, type PhotoSource, type PhotosStore } from './photos_store';
+import { activeFilters, type PhotoFilters, type PhotoSource, type PhotosStore, type ViewMode } from './photos_store';
+import { loadViewState, saveViewState } from './view_state';
 
 function message(err: unknown): string {
   return err instanceof ApiError ? err.message : (err as Error).message;
@@ -62,6 +63,56 @@ export class PhotosPresenter {
   @action.bound
   setThumbSize(px: number): void {
     this.store.thumbSize = px;
+    this.remember();
+  }
+
+  @action.bound
+  setMode(mode: ViewMode): void {
+    this.store.mode = mode;
+    this.remember();
+  }
+
+  // Sets a verdict straight from a grid tile, and pressing the verdict a photo
+  // already has clears it, so one control covers all three states.
+  async toggleTriage(photoId: string, verdict: Exclude<Triage, 'untriaged'>): Promise<void> {
+    const photo = this.store.photos.find((p) => p.id === photoId) ?? this.store.detail;
+    if (photo == null) return;
+    await this.setTriage(photoId, photo.triage === verdict ? 'untriaged' : verdict);
+  }
+
+  async refreshMetadata(photoIds: string[]): Promise<void> {
+    if (photoIds.length === 0) return;
+    try {
+      const { updated } = await api.refreshMetadata(photoIds);
+      await this.refreshDetail();
+      this.toasts.show(`Refreshed metadata for ${plural(updated, 'photo', 'photos')}`);
+    } catch (err) {
+      runInAction(() => (this.store.error = message(err)));
+    }
+  }
+
+  async refreshMetadataForSelection(): Promise<void> {
+    await this.refreshMetadata(this.store.selectedIds);
+    this.clearSelection();
+  }
+
+  // Renders the full-resolution lossless copy. Minutes of work on a big sensor,
+  // so the caller gets a busy flag rather than a silent wait.
+  async buildLossless(photoId: string): Promise<void> {
+    runInAction(() => (this.store.buildingLossless = true));
+    try {
+      await api.buildLossless(photoId);
+      await this.refreshDetail();
+    } catch (err) {
+      runInAction(() => (this.store.error = message(err)));
+    } finally {
+      runInAction(() => (this.store.buildingLossless = false));
+    }
+  }
+
+  @action.bound
+  showLossless(show: boolean): void {
+    this.store.showingLossless = show;
   }
 
   async goToPage(index: number): Promise<void> {
@@ -132,6 +183,12 @@ export class PhotosPresenter {
     const photo = this.store.focusedPhoto;
     if (photo == null) return;
     await this.setRating(photo.id, rating);
+  }
+
+  async setFocusedTriage(triage: Triage): Promise<void> {
+    const photo = this.store.focusedPhoto;
+    if (photo == null) return;
+    await this.setTriage(photo.id, triage);
   }
 
   async togglePickFocused(): Promise<void> {
@@ -300,6 +357,12 @@ export class PhotosPresenter {
           p.id === photoId ? { ...p, rating: updated.rating, triage: updated.triage } : p,
         );
       });
+      // A verdict or rating can move a photo out of the slice being viewed, and
+      // the point of rejecting from the Active view is that the frame leaves it.
+      // Re-read rather than filtering locally, which would mean a second copy of
+      // the server's filter logic to drift out of step.
+      const f = this.store.filters;
+      if (f.triage != null || f.rated != null) await this.fetchPage();
     } catch (err) {
       runInAction(() => (this.store.error = message(err)));
     }
@@ -382,18 +445,38 @@ export class PhotosPresenter {
     this.store.filters = source.kind === 'library' || source.kind === 'shoot' || source.kind === 'album' ? activeFilters() : {};
     this.store.ordering = 'taken_desc';
     this.store.error = null;
+
+    // Anything the user chose last time they were here wins over those defaults.
+    const saved = loadViewState(source);
+    if (saved?.ordering != null) this.store.ordering = saved.ordering;
+    if (saved?.filters != null) this.store.filters = saved.filters;
+    if (saved?.thumbSize != null) this.store.thumbSize = saved.thumbSize;
+    if (saved?.mode != null) this.store.mode = saved.mode;
+  }
+
+  private remember(): void {
+    const source = this.store.source;
+    if (source == null) return;
+    saveViewState(source, {
+      ordering: this.store.ordering,
+      filters: this.store.filters,
+      thumbSize: this.store.thumbSize,
+      mode: this.store.mode,
+    });
   }
 
   @action.bound
   private applyFilters(filters: PhotoFilters): void {
     this.store.filters = filters;
     this.store.offset = 0;
+    this.remember();
   }
 
   @action.bound
   private applyOrdering(ordering: Ordering): void {
     this.store.ordering = ordering;
     this.store.offset = 0;
+    this.remember();
   }
 
   // Deliberately keeps the previous detail on screen while the next one loads.

@@ -73,6 +73,10 @@ export interface SyncModification {
   lens_model: string | null;
 }
 
+// Everything a re-read of the RAW header can refresh: no hash, no timestamps of
+// our own, nothing that says the file changed.
+export type PhotoMetadataFields = Omit<SyncModification, 'file_hash' | 'file_size' | 'date_updated'>;
+
 // Fields the scan quick-check needs to decide whether to re-open a file (§9.1).
 export interface SyncDbPhoto {
   id: string;
@@ -242,6 +246,9 @@ function toDetail(row: DetailRow, albumIds: string[]): PhotoDetail {
     camera_model: row.camera_model,
     lens_model: row.lens_model,
     thumbnail_source: row.thumbnail_source,
+    // Resolved by the service, which knows the library's data directory; the
+    // repository has no business stat-ing files.
+    has_lossless: false,
     album_ids: albumIds,
   };
 }
@@ -478,6 +485,34 @@ export class PhotosRepository {
         fields.date_taken,
         fields.date_updated,
         fields.file_size,
+        fields.latitude,
+        fields.longitude,
+        fields.iso,
+        fields.shutter_speed,
+        fields.aperture,
+        fields.focal_length,
+        fields.camera_make,
+        fields.camera_model,
+        fields.lens_model,
+        photoId,
+      );
+  }
+
+  // Header fields only. Deliberately does not touch file_hash, date_updated or
+  // needs_processing: re-reading metadata is not a content change, so it must not
+  // look like one to the next sync or trigger a thumbnail rebuild.
+  updateMetadata(photoId: string, fields: PhotoMetadataFields): void {
+    this.db
+      .query(
+        `UPDATE photos SET width = ?, height = ?, orientation = ?, date_taken = ?, latitude = ?,
+          longitude = ?, iso = ?, shutter_speed = ?, aperture = ?, focal_length = ?,
+          camera_make = ?, camera_model = ?, lens_model = ? WHERE id = ?`,
+      )
+      .run(
+        fields.width,
+        fields.height,
+        fields.orientation,
+        fields.date_taken,
         fields.latitude,
         fields.longitude,
         fields.iso,

@@ -45,6 +45,20 @@ export class PhotosApi {
       return c.json({ queued: await this.processing.reprocess(photo_ids, source) });
     });
 
+    // Re-reads the RAW headers. Sync only re-opens a file whose stat changed, so
+    // photos catalogued before a field existed need an explicit nudge.
+    app.post('/photos/refresh-metadata', async (c) => {
+      const { photo_ids } = PhotoIdListSchema.parse(await c.req.json());
+      return c.json({ updated: await this.service.refreshMetadata(photo_ids) });
+    });
+
+    // Builds the full-resolution lossless render. Slow and large by design, so it
+    // is one photo at a time and only when asked for.
+    app.post('/photos/:id/lossless', async (c) => {
+      await this.service.buildLossless(c.req.param('id'));
+      return c.body(null, 204);
+    });
+
     app.get('/photos/:id', (c) => c.json(this.service.get(c.req.param('id'))));
 
     app.patch('/photos/:id', async (c) => {
