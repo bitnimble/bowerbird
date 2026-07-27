@@ -915,7 +915,7 @@ This buffer is then passed to sharp as `sharp(data, { raw: { width, height, chan
 
 ### 10.5 Lossless export
 
-`POST /api/photos/:id/lossless` renders one photo at full resolution, 16-bit, into a PNG kept beside the thumbnails. It exists because a WebP preview is not what you check focus or gradients on, and it is opt-in per photo because the output runs to tens or hundreds of megabytes and takes real time to build. The file is the cache: a second request finds it already there, and `PhotoDetail.has_lossless` is a `stat` rather than a column, so it cannot disagree with the disk.
+`POST /api/photos/:id/lossless` renders one photo at full resolution, 16-bit, into a JPEG XL kept beside the thumbnails. It exists because a WebP preview is not what you check focus or gradients on, and it is opt-in per photo because the output runs to tens or hundreds of megabytes and takes real time to build. The file is the cache: a second request finds it already there, and `PhotoDetail.has_lossless` is a `stat` rather than a column, so it cannot disagree with the disk.
 
 **Format.** Measured on a 24MP frame against the same 16-bit decode: PNG 16-bit 111 MB, JPEG XL lossless 74 MB, AVIF lossless 12-bit 66 MB, JXL at distance 0.3 **9.4 MB in half a second**. JXL also keeps 16 bits where AVIF tops out at 12, and carries HDR (BT.2020 primaries, PQ or HLG transfer, an intensity target in nits). `LOSSLESS_DISTANCE` defaults to 0.3 rather than libjxl's "visually lossless" 1.0 because this view exists to be pixel-peeped; 0 is available and is bit-exact, at roughly 50s and 80 MB.
 
@@ -923,11 +923,15 @@ PSNR reads low on these renders (33-37 dB across distances) and barely moves wit
 
 **Encoding.** sharp/libvips has no JXL encoder, so this shells out to `cjxl` (libjxl-tools, installed in the image). cjxl will not read stdin, so the pixels go via a 16-bit PPM: a header plus the samples, `swap16` in place on a buffer we already own, and no compression pass on the way in. `libraw_set_output_bps(16)` on the decode is what makes it 16-bit in the first place.
 
-**Display.** No browser decodes JPEG XL natively (Chrome 149's `ImageDecoder.isTypeSupported('image/jxl')` is false), so the client carries jxl-oxide as wasm (~1.7 MB, code-split, fetched on first use) and transcodes to a PNG blob for an `<img>`. Measured end to end on a 20MP render: about six seconds.
+**Display.** Two paths, chosen by feature detection. Where the browser decodes JPEG XL itself the `<img>` takes the `.jxl` straight from the server; otherwise the client falls back to jxl-oxide as wasm (~1.7 MB, code-split) and transcodes to a PNG blob. On a 24MP render: **0.7s native against 5.9s through wasm**.
+
+Native support is real but off by default in both engines as of Chrome 151 / Firefox 153. Chrome behind `chrome://flags/#enable-jxl-image-format` (`--enable-features=JXLImageFormat`, a Rust decoder since Chrome 145), Firefox behind `image.jxl.enabled`. Detection loads a 1x1 data-URI JXL in an `<img>` rather than calling `ImageDecoder.isTypeSupported`, because that is the path the viewer actually uses and Safari decodes JXL without implementing `ImageDecoder`. The wasm glue is imported dynamically, so a browser that needs none of it downloads neither the 9 kB shim nor the module.
 
 An `<img>` rather than a canvas, because a canvas cannot be HDR: neither 2D nor WebGL2 accepts a `rec2100-*` colour space, only `srgb` and `display-p3`, and `configureHighDynamicRange` is absent. An `<img>` keeps the browser's own colour management, HDR compositing, zoom and pan.
 
-HDR signalling rides on a PNG **cICP** chunk (9/16/0/1 = BT.2020 + PQ), inserted after IHDR without touching IDAT. Chrome honours it: the same pixel bytes tagged cICP-PQ render differently from the same bytes tagged sRGB, with an untagged control matching sRGB exactly. The tag is applied only when the decoded ICC profile actually declares PQ or HLG, since tagging an SDR image would stretch it into HDR range.
+On the wasm path HDR signalling rides on a PNG **cICP** chunk (9/16/0/1 = BT.2020 + PQ), inserted after IHDR without touching IDAT; on the native path the tagging already inside the JXL does the same job. Chrome honours both identically: a flat 50% grey reads 128 untagged and 131 tagged, the same shift through the cICP PNG and through a PQ-tagged JXL. A neutral patch is what isolates this, since a primaries change is identity on the achromatic axis and an earlier test against a coloured gradient could not tell colour management from encoder noise. The PNG tag is applied only when the decoded ICC profile actually declares PQ or HLG, since tagging an SDR image would stretch it into HDR range.
+
+**Firefox ignores HDR image tagging entirely**; that same grey reads 128 both tagged and untagged, through cICP PNG and through native JXL alike. Encoding the render as a single-keyframe HDR video to borrow the HDR video pipeline does not rescue it: Firefox 153 exposes no `VideoEncoder` at all, so there is nothing to encode with on the client, and `VideoFrame` rejects every 10-bit pixel format (`I420P10 is unsupported`), so HDR pixels could not be fed in even if there were. A server-side encode would clear that bar, but a PQ-tagged AV1 still shows the same flat-grey value as a BT.709-tagged one in Firefox, so the tag buys nothing today. Untested on an actual HDR display: this machine reports `(dynamic-range: high)` false, and a virtual display advertises no HDR EDID, so only signalling can be verified here, never output.
 
 `libraw_set_output_color` currently pins sRGB, so nothing produced today is HDR: the delivery path is ready for it, the decode is not.
 
@@ -1363,7 +1367,7 @@ A separate Vite + React app with its own `package.json`, dev server and build. I
 | Routing | React Router 6 |
 | Components | Base UI (unstyled primitives), wrapped once in `src/ui/ui.tsx` |
 | Icons | lucide-react |
-| JPEG XL decode | jxl-oxide-wasm, for the full-resolution view (§10.5) |
+| JPEG XL decode | the browser where it can, else jxl-oxide-wasm, for the full-resolution view (§10.5) |
 | Calendar | react-day-picker, restyled through its CSS variables |
 | E2E | Playwright, driving the real API and a temp library |
 
