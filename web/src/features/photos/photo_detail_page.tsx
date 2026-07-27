@@ -187,14 +187,11 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
       : previewUrl(photoId, store.previewSource, store.rebuiltAt));
 
   // Firefox renders an HDR still dark - it applies a PQ transfer to nothing but
-  // video - so there it gets the one-frame video of the same render instead
-  // (§10.7). Only for the photo's own preview: a chosen rendition or the
-  // full-resolution view is what was explicitly asked for.
-  // Every rendition is the same picture at a different quality, so each has an
-  // HDR video twin where one applies and Firefox gets that instead of the dark
-  // still (§10.7). The embedded rendition is the exception, and not a gap: an
-  // embedded JPEG is 8-bit SDR, so its still is already right.
-  const showingRender = store.previewSource === 'render' || (store.previewSource == null && photo?.thumbnail_source === 'render');
+  // video - so it gets the one-frame video of whichever rendition is showing
+  // instead (§10.7). Every rendition is the same picture at a different quality,
+  // so each has a twin where HDR applies; the embedded one never does, being an
+  // 8-bit SDR JPEG, so its still is already right.
+  const showingRender = store.previewSource === 'render' || (store.previewSource == null && photo?.thumbnail_hdr === true);
   const hdrVideo =
     needsHdrVideo() &&
     (store.lossless != null ? photo?.has_lossless_video === true : photo?.preview_hdr_video === true && showingRender);

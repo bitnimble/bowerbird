@@ -18,7 +18,7 @@ class MockWorker {
   postMessage(job: ProcessingJob): void {
     queueMicrotask(() => {
       if (job.photoId === CRASH) this.onerror?.({ message: 'segfault' });
-      else this.onmessage?.({ data: { photoId: job.photoId, success: true, source: job.source } });
+      else this.onmessage?.({ data: { photoId: job.photoId, success: true, source: job.source, hdr: job.hdr } });
     });
   }
   terminate(): void {}
@@ -147,8 +147,8 @@ describe('ProcessingService.processUnprocessed', () => {
     expect(second).toBe(first); // same in-flight promise
     await Promise.all([first, second]);
 
-    expect(markProcessed).toHaveBeenCalledWith('a', expect.any(String), 'render');
-    expect(markProcessed).toHaveBeenCalledWith('b', expect.any(String), 'render');
+    expect(markProcessed).toHaveBeenCalledWith('a', expect.any(String), 'render', false);
+    expect(markProcessed).toHaveBeenCalledWith('b', expect.any(String), 'render', false);
   });
 
   it('leaves jobs pending (no hang, no throw) when a worker cannot be spawned', async () => {

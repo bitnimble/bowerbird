@@ -1,3 +1,5 @@
+import { mkdir } from 'node:fs/promises';
+import path from 'node:path';
 import sharp from 'sharp';
 import { encodeHdr } from './hdr_media';
 import { decodeRaw, readEmbeddedJpeg } from './raw_decoder';
@@ -71,7 +73,7 @@ async function preview(job: PreviewJob): Promise<void> {
   await toAvif(sharp(image.data, raw), job.size, job.quality, job.effort).toFile(job.outputPath);
 }
 
-async function thumbnails(job: ProcessingJob): Promise<ThumbnailSource> {
+async function thumbnails(job: ProcessingJob): Promise<{ source: ThumbnailSource; hdr: boolean }> {
   const { make, source } = pipeline(job);
 
   await toAvif(make(), job.smallSize, job.smallQuality, job.effort).toFile(job.smallOutputPath);
@@ -90,11 +92,11 @@ async function thumbnails(job: ProcessingJob): Promise<ThumbnailSource> {
     if (job.hdrVideo) {
       await encodeHdr(image, { ...common, variant: 'pq', medium: 'video', outputPath: job.videoOutputPath });
     }
-    return source;
+    return { source, hdr: true };
   }
 
   await toAvif(make(), job.fullSize, job.fullQuality, job.effort).toFile(job.fullOutputPath);
-  return source;
+  return { source, hdr: false };
 }
 
 // Full-resolution AVIF at the tightest quality that stays under the size budget,
@@ -138,28 +140,41 @@ async function hdr(job: HdrJob): Promise<void> {
   });
 }
 
+// Every writer here fails on a missing directory rather than creating one, and
+// ffmpeg fails the whole job rather than the one output, so this runs before any
+// of them. Here rather than at the call site because the outputs are the job's,
+// and each new rendition otherwise adds a directory somebody has to remember.
+async function ensureOutputDirs(job: WorkerJob): Promise<void> {
+  const outputs = job.kind === 'thumbnails' ? [job.smallOutputPath, job.fullOutputPath] : [job.outputPath];
+  if (job.kind !== 'hdr' && job.hdrVideo) outputs.push(job.videoOutputPath);
+  for (const dir of new Set(outputs.map((output) => path.dirname(output)))) {
+    await mkdir(dir, { recursive: true });
+  }
+}
+
 self.onmessage = async (event) => {
   const job = event.data;
   try {
+    await ensureOutputDirs(job);
     if (job.kind === 'lossless') {
       await lossless(job);
-      self.postMessage({ photoId: job.photoId, success: true, source: 'render' });
+      self.postMessage({ photoId: job.photoId, success: true, source: 'render', hdr: job.hdr });
       return;
     }
     if (job.kind === 'hdr') {
       await hdr(job);
-      self.postMessage({ photoId: job.photoId, success: true, source: 'render' });
+      self.postMessage({ photoId: job.photoId, success: true, source: 'render', hdr: true });
       return;
     }
     if (job.kind === 'preview') {
       await preview(job);
-      self.postMessage({ photoId: job.photoId, success: true, source: job.source });
+      self.postMessage({ photoId: job.photoId, success: true, source: job.source, hdr: job.hdr });
       return;
     }
-    self.postMessage({ photoId: job.photoId, success: true, source: await thumbnails(job) });
+    self.postMessage({ photoId: job.photoId, success: true, ...(await thumbnails(job)) });
   } catch (err) {
     const outputs = job.kind === 'thumbnails' ? [job.smallOutputPath, job.fullOutputPath] : [job.outputPath];
-    for (const path of outputs) await Bun.file(path).delete().catch(() => {});
+    for (const output of outputs) await Bun.file(output).delete().catch(() => {});
     self.postMessage({ photoId: job.photoId, success: false, error: (err as Error).message });
   }
 };

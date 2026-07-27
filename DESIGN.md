@@ -863,6 +863,10 @@ Two encoder settings were measured rather than inherited, and both defaults were
 
 With `preview_hdr_video` also set, the worker writes `previews/video/<photo_uuid>.mp4` alongside it: a one-frame AV1 off the same decode. Firefox applies a PQ transfer to nothing but video and renders an HDR still dark, so that file is the only rendition reaching an HDR display there, and the client serves it in place of the AVIF on Firefox alone (§10.7). It is a separate opt-in rather than implied by HDR because it is a second encode per photo - roughly another second - for a file no other browser ever reads. The on-demand "From RAW" rendition obeys the same setting, so choosing it in Firefox does not land on the dark still. `PhotoDetail.preview_hdr_video` is a `stat` rather than the setting: a photo imported before the toggle was turned on has no video, and the settings are not retroactive.
 
+**The on-demand preview is cached under everything that decides its pixels**, `previews/<source>/` and `previews/<source>-hdr/`, and the photo's own `thumbnail_hdr` records which of the two its full thumbnail is. Only the source used to be part of that key, and the file is the cache, so a render built while the library was SDR was handed back forever: turning HDR on and picking "From RAW" returned the old sRGB AVIF and nothing ever rebuilt it. Both halves are compared before the photo's own thumbnail is substituted for a preview, since a library switched to HDR after the import still has SDR thumbnails.
+
+Every writer on this path fails on a missing directory rather than creating one, and ffmpeg fails the whole job rather than the one output, so the worker creates the directory for each of its job's outputs before it runs. At the call site instead, each new rendition is a directory somebody has to remember, and the one that was forgotten (`previews/video/`) took the still down with it.
+
 ### 10.2 Concurrency Model
 
 Processing uses **Bun worker threads** for parallelism. The concurrency level is configurable (default: 4 workers).

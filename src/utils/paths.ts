@@ -27,10 +27,12 @@ export function getFullThumbnailPath(library: Library, photoId: string): string 
 
 // A full-size preview from a source other than the one the photo's own
 // thumbnails were built from, so the detail view can switch between renditions
-// without rebuilding one every time. One directory per source, so every
-// generated file stays `<photoId>.<ext>` for the orphan sweep.
-export function getPreviewPath(library: Library, photoId: string, source: ThumbnailSource): string {
-  return path.join(getDataPath(library), 'previews', source, `${photoId}.avif`);
+// without rebuilding one every time. One directory per source *and* per dynamic
+// range: the file is the cache, so a preview built before HDR was turned on
+// would otherwise be served forever under the same name. Every generated file
+// stays `<photoId>.<ext>` for the orphan sweep.
+export function getPreviewPath(library: Library, photoId: string, source: ThumbnailSource, hdr: boolean): string {
+  return path.join(getDataPath(library), 'previews', hdr ? `${source}-hdr` : source, `${photoId}.avif`);
 }
 
 // The same HDR preview as a one-frame video, built alongside it when a library

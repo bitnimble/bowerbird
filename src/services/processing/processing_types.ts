@@ -99,8 +99,10 @@ export type WorkerJob = ProcessingJob | PreviewJob | LosslessJob | HdrJob;
 
 export type ProcessingResult =
   // `source` is what was actually used: an embedded request falls back to a
-  // render when the file has no JPEG preview.
-  | { photoId: string; success: true; source: ThumbnailSource }
+  // render when the file has no JPEG preview. `hdr` likewise reports what the
+  // full thumbnail actually is, which is false for an embedded one however the
+  // library is set.
+  | { photoId: string; success: true; source: ThumbnailSource; hdr: boolean }
   | { photoId: string; success: false; error: string };
 
 export type LosslessResult = { photoId: string; success: true } | { photoId: string; success: false; error: string };

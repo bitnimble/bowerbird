@@ -47,7 +47,7 @@ export class ImageApi {
     app.get('/:photoId/preview/:source', (c) => {
       const source = c.req.param('source') ?? '';
       if (!isThumbnailSource(source)) throw new AppError('NOT_FOUND', `unknown preview source: ${source}`);
-      return this.serve(c, AVIF, (lib, photo) => this.photos.previewPath(lib, photo, source));
+      return this.serve(c, AVIF, (lib, photo) => this.photos.previewPath(lib, photo, source, lib.preview_hdr && source === 'render'));
     });
     // The HDR preview as a one-frame video, for Firefox (§10.7).
     app.get('/:photoId/lossless-video', (c) => this.serve(c, 'video/mp4', (lib, photo) => getLosslessVideoPath(lib, photo.id)));

@@ -20,7 +20,9 @@ function generatedDirs(library: Library): Array<{ dir: string; ext: string }> {
     getLosslessPath,
     getLosslessVideoPath,
     getPreviewVideoPath,
-    ...THUMBNAIL_SOURCES.map((source) => (lib: Library, id: string) => getPreviewPath(lib, id, source)),
+    ...THUMBNAIL_SOURCES.flatMap((source) =>
+      [false, true].map((hdr) => (lib: Library, id: string) => getPreviewPath(lib, id, source, hdr)),
+    ),
     ...HDR_MEDIA.flatMap((medium) =>
       HDR_VARIANTS.map((variant) => (lib: Library, id: string) => getHdrPath(lib, id, medium, variant)),
     ),

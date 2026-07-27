@@ -111,7 +111,6 @@ export class ProcessingService {
   // render that takes seconds cannot occupy a pool slot the thumbnail queue
   // needs.
   private async runOneOff(job: PreviewJob | LosslessJob | HdrJob): Promise<void> {
-    await mkdir(path.dirname(job.outputPath), { recursive: true });
     const worker = new Worker(WORKER_URL);
     try {
       await new Promise<void>((resolve, reject) => {
@@ -154,7 +153,9 @@ export class ProcessingService {
   private dropCachedPreviews(job: ProcessingJob): void {
     const previews = path.join(path.dirname(job.fullOutputPath), '..', '..', 'previews');
     for (const source of THUMBNAIL_SOURCES) {
-      void rm(path.join(previews, source, `${job.photoId}.avif`), { force: true }).catch(() => {});
+      for (const dir of [source, `${source}-hdr`]) {
+        void rm(path.join(previews, dir, `${job.photoId}.avif`), { force: true }).catch(() => {});
+      }
     }
   }
 
@@ -191,7 +192,7 @@ export class ProcessingService {
       if (result.success) {
         // The worker reports what it actually used, which differs from the
         // request when a file has no embedded preview to lift.
-        this.photos.markProcessed(result.photoId, new Date().toISOString(), result.source);
+        this.photos.markProcessed(result.photoId, new Date().toISOString(), result.source, result.hdr);
         // A photo is only reprocessed because its pixels changed: the sync saw a
         // new stat, or the user asked for a rebuild. Either way the on-demand
         // previews cached beside it are of the old file, and nothing else would

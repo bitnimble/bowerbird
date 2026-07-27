@@ -157,6 +157,9 @@ export function runMigrations(db: Database): void {
   ensureColumn(db, 'photos', 'camera_model', 'TEXT');
   ensureColumn(db, 'photos', 'lens_model', 'TEXT');
   ensureColumn(db, 'photos', 'thumbnail_source', 'TEXT'); // §10.3
+  // What the full thumbnail actually is, not what the library is set to now:
+  // an on-demand preview is only interchangeable with it when both match (§10.2).
+  ensureColumn(db, 'photos', 'thumbnail_hdr', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'photos', 'deleted_from_path', 'TEXT'); // Bin restore (§12.2)
   ensureColumn(db, 'libraries', 'last_synced_at', 'TEXT'); // §9.6
   // Per-library preview settings, replacing the global import.thumbnail_source

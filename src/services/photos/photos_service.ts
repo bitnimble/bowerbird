@@ -161,14 +161,14 @@ export class PhotosService {
     const library = this.libraries.getById(photo.library_id);
     if (!library) throw new AppError('NOT_FOUND', `library not found: ${photo.library_id}`);
 
-    const output = this.previewPath(library, photo, source);
+    // HDR only ever applies to a render; the embedded rendition is an 8-bit SDR
+    // JPEG whatever the library setting says.
+    const hdr = library.preview_hdr && source === 'render';
+    const output = this.previewPath(library, photo, source, hdr);
     if (existsSync(output)) return;
 
     const raw = getOriginalPath(library, photo.file_path);
     if (!existsSync(raw)) throw new AppError('NOT_FOUND', `original file not found: ${photo.file_path}`);
-    // HDR only ever applies to a render; the embedded rendition is an 8-bit SDR
-    // JPEG whatever the library setting says.
-    const hdr = library.preview_hdr && source === 'render';
     await this.processing.renderPreview(
       raw,
       output,
@@ -181,11 +181,14 @@ export class PhotosService {
   }
 
   // The photo's own full thumbnail already *is* the preview for the source it was
-  // built from, so that rendition is free and never stored twice.
-  previewPath(library: Library, photo: PhotoDetail, source: ThumbnailSource): string {
-    return photo.thumbnail_source === source
+  // built from, so that rendition is free and never stored twice. Both halves of
+  // what makes it that rendition have to match: a library switched to HDR after
+  // the import has SDR thumbnails, and handing one back for an HDR request is
+  // exactly the stale render this key exists to avoid.
+  previewPath(library: Library, photo: PhotoDetail, source: ThumbnailSource, hdr: boolean): string {
+    return photo.thumbnail_source === source && photo.thumbnail_hdr === hdr
       ? getFullThumbnailPath(library, photo.id)
-      : getPreviewPath(library, photo.id, source);
+      : getPreviewPath(library, photo.id, source, hdr);
   }
 
   // Full-resolution AVIF of one photo, cached on disk. Seconds of work and tens

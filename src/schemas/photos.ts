@@ -55,6 +55,7 @@ export const PhotoDetailSchema = PhotoSummarySchema.extend({
   lens_model: z.string().nullable(),
   // Which pixels the thumbnails were built from; NULL before first processing.
   thumbnail_source: ThumbnailSourceSchema.nullable(),
+  thumbnail_hdr: z.boolean(),
   // Whether the full-resolution lossless render has been built (§10.5). A disk
   // check rather than a column: the file is the cache, so it is the truth.
   has_lossless: z.boolean(),

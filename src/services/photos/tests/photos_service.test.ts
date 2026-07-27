@@ -195,3 +195,20 @@ describe('PhotosService.update', () => {
     expect(service.update('p1', { rating: 5 })).toMatchObject({ ...detail, has_lossless: false });
   });
 });
+
+describe('PhotosService.previewPath', () => {
+  const rendered = { id: 'p1', thumbnail_source: 'render', thumbnail_hdr: false } as PhotoDetail;
+
+  it('serves the photo\'s own full thumbnail when both source and range match', () => {
+    const { service } = build({});
+    expect(service.previewPath(library, rendered, 'render', false)).toContain(path.join('thumbnails', 'full'));
+  });
+
+  it('keeps HDR and SDR renders apart, so one built before the setting changed is not served for the other', () => {
+    const { service } = build({});
+    const sdr = service.previewPath(library, rendered, 'render', false);
+    const hdr = service.previewPath(library, rendered, 'render', true);
+    expect(hdr).not.toBe(sdr);
+    expect(hdr).toContain('render-hdr');
+  });
+});
