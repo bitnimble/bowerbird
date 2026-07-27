@@ -3,7 +3,7 @@ import path from 'node:path';
 import sharp from 'sharp';
 import { encodeHdr } from './hdr_media';
 import { applyMatchProfile, fitMatchProfile, type MatchProfile } from './jpeg_match';
-import { decodeRaw, readEmbeddedJpeg } from './raw_decoder';
+import { decodeRaw, readEmbeddedJpeg, type DecodedImage } from './raw_decoder';
 import type {
   HdrJob,
   ProcessingResult,
@@ -59,6 +59,7 @@ async function toMatchedAvif(image: sharp.Sharp, target: RenditionTarget, profil
 async function writeSdr(
   job: RenditionJob,
   target: RenditionTarget,
+  decode: () => DecodedImage,
   profile: MatchProfile | null,
 ): Promise<ThumbnailSource> {
   if (target.source === 'embedded') {
@@ -68,10 +69,7 @@ async function writeSdr(
       return 'embedded';
     }
   }
-  // An 8-bit decode deliberately: sharp's AVIF output is 8-bit whatever goes in,
-  // and asking for 16 would reintroduce the trap that `raw.depth` is ignored on a
-  // Buffer, so the samples get read as 8-bit anyway and the picture is wrong.
-  const image = decodeRaw(job.rawFilePath, 8);
+  const image = decode();
   const raw = { raw: { width: image.width, height: image.height, channels: image.channels } };
   if (profile == null) await toAvif(sharp(image.data, raw), target).toFile(target.outputPath);
   else await toMatchedAvif(sharp(image.data, raw), target, profile);
@@ -128,20 +126,37 @@ async function ensureOutputDirs(job: WorkerJob): Promise<void> {
 
 async function renditions(job: RenditionJob): Promise<ThumbnailSource | undefined> {
   let used: ThumbnailSource | undefined;
-  // Fitted once for the whole job, before anything is written: every SDR rendition
-  // of one photo has to get the same transform or the grid tile and the full view
-  // will not match each other. Null when the setting is off, when nothing in the
-  // job renders, or when the fit found no match worth applying - and in every one
-  // of those cases the renders below are simply untransformed.
-  const rendersSdr = job.targets.some((target) => !target.hdr);
-  const profile = job.matchEmbeddedJpeg && rendersSdr ? await fitMatchProfile(job.rawFilePath) : null;
+
+  // One decode for the whole job, shared by the fit and by every SDR rendition.
+  // A 60MP frame takes about two seconds to demosaic, and a `render` import builds
+  // both the grid tile and the full view from the identical pixels, so decoding per
+  // rendition paid for the same work twice - and asking the fit to decode as well
+  // made it three times. Lazy because an embedded-source job may never need one.
+  //
+  // 8-bit deliberately: sharp's AVIF output is 8-bit whatever goes in, and asking
+  // for 16 would reintroduce the trap that `raw.depth` is ignored on a Buffer, so
+  // the samples get read as 8-bit anyway and the picture is silently wrong.
+  let decoded: DecodedImage | null = null;
+  const decode = (): DecodedImage => (decoded ??= decodeRaw(job.rawFilePath, 8));
+
+  // Fitted once, before anything is written: every SDR rendition of one photo has
+  // to get the same transform or the grid tile and the full view will not match
+  // each other. Null when the setting is off, when nothing in the job renders, or
+  // when the fit found no match worth applying - in each case the renders below are
+  // simply untransformed.
+  // Gated on a target that actually demosaics: an embedded-source grid already has
+  // the camera's look, so fitting for it would decode a 60MP frame to transform
+  // nothing. A file with no embedded JPEG needs no gate here - there is then also
+  // nothing to match against, so the fit declines on its own.
+  const rendersSdr = job.targets.some((target) => !target.hdr && target.source === 'render');
+  const profile = job.matchEmbeddedJpeg && rendersSdr ? await fitMatchProfile(job.rawFilePath, decode()) : null;
 
   for (const target of job.targets) {
     if (target.hdr) {
       await writeHdr(job, target);
       continue;
     }
-    const source = await writeSdr(job, target, profile);
+    const source = await writeSdr(job, target, decode, profile);
     // Only the grid is ever built from the embedded JPEG, so it is the only
     // target whose fallback the row needs to hear about.
     if (job.reportSource && target.rendition === 'grid') used = source;

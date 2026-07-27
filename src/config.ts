@@ -117,11 +117,10 @@ export const config = {
   // renditions built from a render: an embedded-sourced grid already has the look,
   // and an 8-bit SDR JPEG cannot teach the HDR path what to do above diffuse white.
   //
-  // Off by default because it is not free - the fit costs seconds on a body that
-  // recorded no lens correction, where the geometry has to be searched rather than
-  // read. Turn it on for a catalogue where matching the camera matters more than
-  // import throughput.
-  matchEmbeddedJpeg: (process.env.MATCH_EMBEDDED_JPEG ?? 'false') !== 'false',
+  // On by default: a render that does not look like the camera's own JPEG is the
+  // wrong picture, and the cost is a fraction of the decode it rides along with.
+  // Set MATCH_EMBEDDED_JPEG=false for an import where throughput matters more.
+  matchEmbeddedJpeg: (process.env.MATCH_EMBEDDED_JPEG ?? 'true') !== 'false',
 } as const;
 
 export type Config = typeof config;

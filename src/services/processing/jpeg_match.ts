@@ -525,11 +525,17 @@ async function resolveGeometry(source: Plane, jpeg: Plane, rawBytes: Uint8Array)
  * still too far off to be worth applying - in which case the caller renders
  * untransformed rather than shipping a bad grade.
  */
-export async function fitMatchProfile(rawFilePath: string): Promise<MatchProfile | null> {
+/**
+ * `render` is the caller's own 8-bit sRGB decode of the same file. Pass it
+ * whenever one is already in hand: decoding a 60MP frame costs about two seconds,
+ * which is a large share of the whole fit, and doing it again here would be for an
+ * identical result.
+ */
+export async function fitMatchProfile(rawFilePath: string, render?: DecodedImage): Promise<MatchProfile | null> {
   const jpegBytes = readEmbeddedJpeg(rawFilePath);
   if (!jpegBytes) return null;
   const rawBytes = new Uint8Array(await Bun.file(rawFilePath).arrayBuffer());
-  return fitProfileFor(decodeRaw(rawFilePath, 8, 'srgb'), jpegBytes, rawBytes);
+  return fitProfileFor(render ?? decodeRaw(rawFilePath, 8, 'srgb'), jpegBytes, rawBytes);
 }
 
 /**
