@@ -17,7 +17,7 @@ import {
   Wand2,
 } from 'lucide-react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { jpegUrl, needsHdrVideo, originalUrl, previewUrl, previewVideoUrl, thumbnailUrl, type ThumbnailSource } from '../../api/client';
+import { jpegUrl, losslessVideoUrl, needsHdrVideo, originalUrl, previewUrl, previewVideoUrl, thumbnailUrl, type ThumbnailSource } from '../../api/client';
 import { localDateTime } from '../../api/dates';
 import { useAlbumsStore, usePhotosStore, usePresenters, useServerConfigStore, useShootsStore } from '../../app/stores_context';
 import { ActionMenu, type ActionGroup, Button, ICON, MoreLess, type Option, Text, TextArea } from '../../ui/ui';
@@ -190,11 +190,14 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   // video - so there it gets the one-frame video of the same render instead
   // (§10.7). Only for the photo's own preview: a chosen rendition or the
   // full-resolution view is what was explicitly asked for.
-  // Both the photo's own preview and a chosen "From RAW" are HDR renders with a
-  // video beside them; the embedded rendition never is. The full-resolution view
-  // has no video at all, so it always stays a still.
+  // Every rendition is the same picture at a different quality, so each has an
+  // HDR video twin where one applies and Firefox gets that instead of the dark
+  // still (§10.7). The embedded rendition is the exception, and not a gap: an
+  // embedded JPEG is 8-bit SDR, so its still is already right.
   const showingRender = store.previewSource === 'render' || (store.previewSource == null && photo?.thumbnail_source === 'render');
-  const hdrVideo = photo?.preview_hdr_video === true && showingRender && needsHdrVideo() && store.lossless == null;
+  const hdrVideo =
+    needsHdrVideo() &&
+    (store.lossless != null ? photo?.has_lossless_video === true : photo?.preview_hdr_video === true && showingRender);
 
   const shoot = photo?.shoot_id == null ? null : shoots.byId.get(photo.shoot_id);
   const photoAlbums = photo == null ? [] : albums.albums.filter((a) => photo.album_ids.includes(a.id));
@@ -269,7 +272,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
         {/* Keyed off the route, not the loaded detail, so the photo on screen is
             always the one the URL asks for. */}
         <PhotoStage
-          src={hdrVideo ? previewVideoUrl(photoId, store.rebuiltAt) : stillSrc}
+          src={hdrVideo ? (store.lossless != null ? losslessVideoUrl(photoId) : previewVideoUrl(photoId, store.rebuiltAt)) : stillSrc}
           video={hdrVideo}
           alt={filename}
           filename={filename}

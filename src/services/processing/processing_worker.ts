@@ -105,15 +105,13 @@ async function thumbnails(job: ProcessingJob): Promise<ThumbnailSource> {
 async function lossless(job: LosslessJob): Promise<void> {
   if (job.hdr) {
     const image = decodeRaw(job.rawFilePath, 16, 'rec2020-linear');
-    await encodeHdr(image, {
-      variant: 'pq',
-      medium: 'still',
-      outputPath: job.outputPath,
-      peakNits: job.peakNits,
-      crf: job.quantizer,
-      preset: job.preset,
-      maxEdge: Number.POSITIVE_INFINITY,
-    });
+    const common = { peakNits: job.peakNits, crf: job.quantizer, preset: job.preset, maxEdge: Number.POSITIVE_INFINITY } as const;
+    await encodeHdr(image, { ...common, variant: 'pq', medium: 'still', outputPath: job.outputPath });
+    // The same view for Firefox. Unlike the still it cannot stay at native size:
+    // the encoder caps height at 8704, so a tall frame is fitted to it.
+    if (job.hdrVideo) {
+      await encodeHdr(image, { ...common, variant: 'pq', medium: 'video', outputPath: job.videoOutputPath });
+    }
     return;
   }
   // An 8-bit decode deliberately: sharp's AVIF output is 8-bit whatever goes in,

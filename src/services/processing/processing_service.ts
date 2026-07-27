@@ -67,12 +67,21 @@ export class ProcessingService {
     });
   }
 
-  renderLossless(rawFilePath: string, outputPath: string, photoId: string, hdr: boolean): Promise<void> {
+  renderLossless(
+    rawFilePath: string,
+    outputPath: string,
+    photoId: string,
+    hdr: boolean,
+    hdrVideo: boolean,
+    videoOutputPath: string,
+  ): Promise<void> {
     return this.runOneOff({
       kind: 'lossless',
       photoId,
       rawFilePath,
       outputPath,
+      hdrVideo,
+      videoOutputPath,
       quality: this.config.losslessQuality,
       effort: this.config.thumbnailEffort,
       quantizer: this.config.losslessQuantizer,

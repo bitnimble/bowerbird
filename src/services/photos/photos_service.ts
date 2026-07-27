@@ -9,6 +9,7 @@ import {
   getFullThumbnailPath,
   getHdrPath,
   getLosslessPath,
+  getLosslessVideoPath,
   getOriginalPath,
   getPreviewPath,
   getPreviewVideoPath,
@@ -67,6 +68,7 @@ export class PhotosService {
       // client asking for a file that was never built would leave Firefox on a
       // retrying 404 rather than the still it could have shown.
       preview_hdr_video: library != null && existsSync(getPreviewVideoPath(library, photo.id)),
+      has_lossless_video: library != null && existsSync(getLosslessVideoPath(library, photo.id)),
     };
   }
 
@@ -203,7 +205,14 @@ export class PhotosService {
     // The full-resolution view follows the library's HDR setting: it is the same
     // render from the same RAW, and dropping it to SDR here would make "view
     // original" the one rendition that disagrees with everything else.
-    await this.processing.renderLossless(source, output, photo.id, library.preview_hdr);
+    await this.processing.renderLossless(
+      source,
+      output,
+      photo.id,
+      library.preview_hdr,
+      library.preview_hdr && library.preview_hdr_video,
+      getLosslessVideoPath(library, photo.id),
+    );
   }
 
   // Builds every rendition at once, both media and including the SDR

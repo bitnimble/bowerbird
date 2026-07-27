@@ -932,7 +932,7 @@ This buffer is then passed to sharp as `sharp(data, { raw: { width, height, chan
 
 `POST /api/photos/:id/lossless` renders one photo at full resolution into an AVIF kept beside the thumbnails. It exists because a 3840px preview is not what you check focus or gradients on, and it is opt-in per photo because it takes real time to build. Unlike every other rendition it is never fitted to a maximum edge: this is the view that gets pixel-peeped. The file is the cache: a second request finds it already there, and `PhotoDetail.has_lossless` is a `stat` rather than a column, so it cannot disagree with the disk.
 
-It follows the library's HDR setting, since it is the same render from the same RAW and it would be odd for "view original" to be the one rendition that disagrees with the rest.
+It follows the library's HDR setting, since it is the same render from the same RAW and it would be odd for "view original" to be the one rendition that disagrees with the rest. That includes the Firefox video twin (§10.7): every rendition is the same picture at a different quality level, and they are interchangeable, so each has a video beside it wherever HDR applies. Only this one cannot stay at native size, SVT-AV1 refuses a source taller than 8704, so the video alone is fitted to that ceiling while the still stays full resolution.
 
 **Format.** This was JPEG XL, and the swap to AVIF cost bit depth to buy simplicity. JXL keeps 16 bits where AVIF tops out at 10 here, and at matched quality the files are comparable: 3.42 MB against 2.97 MB on a 24MP frame, 0.34s against 0.48s. What decided it was delivery. No browser decodes JXL without a 1.6 MB wasm module, and the transcode that module needs to hand an `<img>` something it accepts cost more than the entire encode:
 
@@ -988,6 +988,8 @@ So `POST /api/photos/:id/hdr` builds **six** renditions of one photo: a 4:4:4 AV
 | AV1 video, Firefox | yes | yes | yes |
 
 Chrome refuses Profile 1 and 2 video outright (`MEDIA_ERR_SRC_NOT_SUPPORTED`), and `canPlayType` in Firefox reports `"no"` for them while playing them anyway - dav1d decodes every profile in software. Since the video exists only for Firefox, Chrome's refusal costs nothing: Chrome is served by the still. Not VP9, whose colour signalling does not survive this ffmpeg build and which has no metadata bitstream filter to put it back; not HEVC, which Firefox would not play at 4:4:4 at all.
+
+**SVT-AV1 caps height at 8704 and does not cap width.** Measured, not read off a spec: 16384x4096 and 12288x4096 both encode, 6336x9504 does not, and the encoder says why in its own words, `Source Height must be less than or equal to 8704`. Only the full-resolution video (§10.5) is large enough to meet it, and it is fitted to that height rather than rotated to spend the free width. Rotating buys 9% linear resolution on a 3:2 frame, and the natural way to signal it back, the MP4 display matrix, is on Firefox 153's own list of things that stop a video being shown as HDR, so it would have to come back as a CSS transform in the one browser this file exists for.
 
 Moving off SVT-AV1 gives up the **mastering-display and content-light metadata**, which reaches the file through `-svtav1-params` and has no libaom equivalent. Those are tone-mapping hints, and Firefox 153 does no tone mapping, so nothing that consumes this file reads them. The load-bearing signalling is the CICP, which survives.
 

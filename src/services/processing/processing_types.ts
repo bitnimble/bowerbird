@@ -73,6 +73,9 @@ export interface LosslessJob {
   quantizer: number;
   preset: number;
   hdr: boolean;
+  /** Also write the one-frame AV1 twin, for Firefox (§10.7). */
+  hdrVideo: boolean;
+  videoOutputPath: string;
   peakNits: number;
 }
 

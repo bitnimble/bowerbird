@@ -152,6 +152,10 @@ export function thumbnailUrl(photoId: string, size: 'small' | 'full', version = 
 // transfer to nothing but video, so it renders an HDR still dark (§10.7).
 // Everything else takes the AVIF, which is better in every way that matters -
 // no video element, no autoplay rules, and it decodes as an image.
+export function losslessVideoUrl(photoId: string): string {
+  return `${BASE}/image/${photoId}/lossless-video`;
+}
+
 export function previewVideoUrl(photoId: string, version = 0): string {
   const url = `${BASE}/image/${photoId}/preview-video`;
   return version === 0 ? url : `${url}?v=${version}`;

@@ -69,18 +69,34 @@ export interface HdrEncodeOptions {
   maxEdge: number;
 }
 
-// SVT-AV1 has a maximum frame height, below what a current sensor produces in
-// portrait: 9504x6336 encodes, the same 60MP frame as 6336x9504 fails with
-// "code: -22 (Invalid argument)" and writes nothing. It is the encoder's limit,
-// not AV1's - libaom takes either orientation, and avifenc uses it, which is why
-// the still has no such problem. Fitting is kept for both regardless: the output
-// is meant to be looked at on a monitor, and the lossless export (§10.5) is what
-// exists for pixel-peeping. yuv420 needs both edges even.
+// yuv420 has no odd dimensions.
+function even(n: number): number {
+  return Math.max(2, Math.round(n / 2) * 2);
+}
+
 export function fitted(width: number, height: number, maxEdge: number): { width: number; height: number } {
   const scale = Math.min(1, maxEdge / Math.max(width, height));
   if (scale === 1) return { width, height };
-  const even = (n: number): number => Math.max(2, Math.round(n / 2) * 2);
   return { width: even(width * scale), height: even(height * scale) };
+}
+
+// SVT-AV1's constraint, stated in its own words: "Source Height must be less
+// than or equal to 8704". There is no matching width limit - 12288 wide encodes
+// fine - so it is portrait frames that hit it, and a 60MP one does: 6336x9504
+// fails while the same frame landscape does not.
+//
+// The asymmetry means a tall frame could be encoded rotated and turned back in
+// the client, which would keep the last 9% of its height. Not done: it is 9% of
+// linear resolution on a view already past any display's row count, and the
+// obvious way to signal the rotation - the MP4 display matrix - is exactly what
+// Firefox 153 lists as "not shown as HDR", so it would have to be CSS on the
+// one browser this file exists for.
+const MAX_VIDEO_HEIGHT = 8704;
+
+export function fittedForVideo(width: number, height: number, maxEdge: number): { width: number; height: number } {
+  const first = fitted(width, height, maxEdge);
+  if (first.height <= MAX_VIDEO_HEIGHT) return first;
+  return { width: even(first.width * (MAX_VIDEO_HEIGHT / first.height)), height: MAX_VIDEO_HEIGHT };
 }
 
 // Transfer, matrix and primaries as CICP numbers (AV1 spec 6.4.2, and the same
@@ -177,7 +193,11 @@ function filterChain(options: HdrEncodeOptions, size: { width: number; height: n
 export function ffmpegArgs(image: { width: number; height: number }, options: HdrEncodeOptions): string[] {
   const { variant, medium, peakNits, outputPath } = options;
   const target = targetFor(variant, medium);
-  const size = fitted(image.width, image.height, options.maxEdge);
+  // Video has an encoder ceiling on top of the requested edge; a still does not.
+  const size =
+    medium === 'video'
+      ? fittedForVideo(image.width, image.height, options.maxEdge)
+      : fitted(image.width, image.height, options.maxEdge);
   const resize = size.width === image.width && size.height === image.height ? null : size;
 
   const input = [

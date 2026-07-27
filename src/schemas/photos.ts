@@ -61,6 +61,8 @@ export const PhotoDetailSchema = PhotoSummarySchema.extend({
   // Whether an HDR video rendition of this photo's preview exists, so the client
   // knows it may reach for it on a browser that needs one (§10.7).
   preview_hdr_video: z.boolean(),
+  // The same, for the full-resolution view (§10.5).
+  has_lossless_video: z.boolean(),
   // Albums this photo belongs to. On the detail only: it needs a second query,
   // and a grid of 100 tiles has no use for it.
   album_ids: z.array(UuidSchema),

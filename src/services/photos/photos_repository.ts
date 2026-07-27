@@ -256,6 +256,7 @@ function toDetail(row: DetailRow, albumIds: string[]): PhotoDetail {
     // business doing either.
     has_lossless: false,
     preview_hdr_video: false,
+    has_lossless_video: false,
     album_ids: albumIds,
   };
 }

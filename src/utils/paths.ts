@@ -41,6 +41,15 @@ export function getPreviewVideoPath(library: Library, photoId: string): string {
   return path.join(getDataPath(library), 'previews', 'video', `${photoId}.mp4`);
 }
 
+// The full-resolution view as a one-frame video, for Firefox (§10.7). Fitted to
+// the encoder's height ceiling rather than left at native size, unlike the still
+// it accompanies. Its own directory rather than a `video` subdirectory of
+// `lossless`: the orphan sweep reads every name in a generated directory as a
+// photo id, so a subdirectory would be a name it tried to unlink on every pass.
+export function getLosslessVideoPath(library: Library, photoId: string): string {
+  return path.join(getDataPath(library), 'lossless-video', `${photoId}.mp4`);
+}
+
 // Full-resolution export, built only on request (§10.5). Kept beside the
 // thumbnails so removing a library's data directory takes it too.
 export function getLosslessPath(library: Library, photoId: string): string {
