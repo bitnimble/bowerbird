@@ -36,7 +36,8 @@ Bowerbird is a high-performance RAW photo management and cataloguing backend des
 
 - **LibRaw**, must be installed on the host system. The Bun process loads `libraw.so` / `libraw.dylib` via FFI. On Debian/Ubuntu: `apt install libraw-dev`. On macOS: `brew install libraw`.
 - **libjxl-tools**, `cjxl` encodes the full-resolution export (§10.5); sharp/libvips has no JXL encoder.
-- **ffmpeg**, encodes the HDR stills (§10.7). Needs libsvtav1 for AV1 and libzimg for the `zscale` filter, which is what applies the PQ or HLG transfer; a build missing either cannot produce them.
+- **ffmpeg**, applies the PQ/HLG transfer and encodes the HDR video (§10.7). Needs **libaom** for AV1 and libzimg for the `zscale` filter; a build missing either cannot produce them. libsvtav1 is not enough: it implements AV1 Profile 0 only and silently downsamples 4:4:4 to 4:2:0.
+- **libavif-bin**, `avifenc` encodes the HDR still. ffmpeg's own avif muxer writes no `colr` box, so it cannot tag one as HDR at all.
 
 ### NPM Dependencies
 
@@ -258,7 +259,7 @@ CREATE INDEX idx_shoots_library ON shoots(library_id);
 CREATE INDEX idx_shoots_parent ON shoots(parent_id);
 ```
 
-- `folder_path` is the **full** path from the library root to this shoot's folder (forward slashes), e.g. `Weddings/2024/Smith`. It is *not* parent-relative: storing the full path lets sync reconciliation (§9.4) and create-adoption (§8.5) test membership with a `file_path` prefix check, and lets the most-specific (longest matching) shoot win for nested folders. On create it is computed as `parent ? parent.folder_path + '/' + name : name`. A parent rename (§8.5 `update`) therefore cascade-updates every descendant's `folder_path` within the same transaction.
+- `folder_path` is the **full** path from the library root to this shoot's folder (forward slashes), e.g. `Weddings/2024/Smith`. It is *not* parent-relative: storing the full path lets sync reconciliation (§9.4) and create-adoption (§8.5) test membership with a `file_path` prefix check, and lets the most-specific (longest matching) shoot win for nested folders. On create it is computed as `parent ? parent.folder_path + '/' + name : name`, and it is **immutable thereafter**: `name` seeds the folder once and is a label from then on, so renaming a shoot never moves a file (§8.5).
 - **Membership test (used everywhere "a file falls under a shoot" is checked):** a file belongs to a shoot iff `file_path` starts with `folder_path + '/'`; the trailing separator is required so shoot `NYC` (`folder_path` `NYC`) does not capture files in sibling shoot `NYC2`. "Directly under" a shoot means the remainder after that prefix contains no further `/` (deeper files belong to a descendant shoot). Among all matching shoots, the one with the longest `folder_path` wins.
 - When a photo is added to a shoot, its file is physically moved on disk into the shoot's folder.
 - Shoot names are **unique library-wide** (`UNIQUE (library_id, name)`), a deliberate simplification rather than the minimum needed. On-disk folder collisions are only possible between shoots sharing a parent (a shoot's folder is named after its `name`, created under the parent's folder), so a `(library_id, parent_id, name)` constraint would be the tight fit, but SQLite treats `NULL`s as distinct in UNIQUE constraints, so it would fail to catch collisions between root-level shoots (`parent_id IS NULL`). Library-wide uniqueness is a strict superset that closes that hole and keeps names unambiguous. Tradeoff: it disallows the same name under different parents (e.g. "Day1" under both "NYC" and "LA"). A create/rename to a name already used by any shoot in the library returns `CONFLICT`.
@@ -631,7 +632,7 @@ This service handles the full sync algorithm. See §9 for the detailed algorithm
 | `addPhotos(shootId, photoIds)` | Moves photo files on disk into the shoot's folder. Updates each photo's `file_path` and `shoot_id` in the DB. A photo can only belong to one shoot; if it already belongs to another, it is moved out of the old shoot folder. If a file with the same name already exists in the destination folder, append a numeric suffix (e.g. `IMG_0001_1.ARW`, `IMG_0001_2.ARW`) so no existing file is overwritten and no two records share a `file_path` (§12.1). |
 | `removePhotos(shootId, photoIds)` | Moves photo files back to the library root. Updates each photo's `file_path` and clears its `shoot_id`. If a file with the same name already exists in the library root, append a numeric suffix (e.g. `IMG_0001_1.ARW`, `IMG_0001_2.ARW`) so no existing file is overwritten and no two records share a `file_path` (§12.1). |
 | `delete(shootId)` | Deletes the shoot record only. **No files or folders on disk are touched** (see principle above): photos keep their `file_path` and remain physically in the (now-orphaned) folder, which the next sync treats as an ordinary subfolder. Their `shoot_id` is cleared via `ON DELETE SET NULL`, and child shoots cascade-delete as records (their photos' folders likewise untouched). |
-| `update(shootId, updates)` | Updates mutable fields: `name`, `description`, `ordering`. A **name change** renames the folder on disk and, in the same DB transaction, rewrites this shoot's `folder_path`, every descendant shoot's `folder_path`, and the `file_path` of every photo under the folder (all are root-relative and contain the renamed segment). A rename to a name already used by any shoot in the same library returns `CONFLICT` (names are unique library-wide, §4.3). Setting `banner_photo_id` upserts the `shoot_banners` row; clearing it (null) deletes that row; it is not a column on `shoots` (§4.6). |
+| `update(shootId, updates)` | Updates mutable fields: `name`, `description`, `ordering`. A **name change is metadata only**: the name is a label, so nothing moves on disk and no `folder_path` or `file_path` is rewritten. A rename to a name already used by any shoot in the same library returns `CONFLICT` (names are unique library-wide, §4.3). Setting `banner_photo_id` upserts the `shoot_banners` row; clearing it (null) deletes that row; it is not a column on `shoots` (§4.6). |
 
 ### 8.6 Albums Service (`albums_service.ts`)
 
@@ -950,22 +951,43 @@ Two things close that off:
 
 It runs on an interval rather than at startup: a restart is no evidence anything was orphaned, and in development that would sweep on every reload.
 
-### 10.7 HDR stills
+### 10.7 HDR renditions
 
-Firefox honours no HDR image tagging at all: a flat 50% grey reads 128 whether it carries a PQ cICP chunk or nothing, through a PNG and through a natively decoded JXL alike (§10.5). Its **video** pipeline does composite HDR, on Windows, by passing the frame through to the compositor and the monitor. So the only way to get an HDR still in front of it is to encode the still as a one-frame video.
+Two browsers, two answers. **Chrome** renders HDR stills, on desktop and on Android 14+, from a PQ- or HLG-tagged image. **Firefox** honours no HDR image tagging at all: a flat 50% grey reads 128 whether it carries a PQ cICP chunk or nothing, through a PNG and through a natively decoded JXL alike (§10.5). Its **video** pipeline does composite HDR, on Windows only, by passing the frame through to the compositor and the monitor. The underlying reason is the same for images on every platform and for video on most of them: Gecko's compositor is still 32-bit SDR, and RGBA16F framebuffers (bug 1889288) gate all of it.
 
-That cannot be done in the browser. Firefox 153 exposes no `VideoEncoder`, and `VideoFrame` rejects every 10-bit pixel format (`I420P10 is unsupported`), so there is neither an encoder to call nor a way to hand it HDR pixels. `POST /api/photos/:id/hdr` therefore builds them server-side, three variants at once: **PQ**, **HLG** and an **SDR reference** to compare against. The comparison is the point; a single HDR file on an unknown display proves nothing.
+So `POST /api/photos/:id/hdr` builds **six** renditions of one photo: an AVIF still and a one-frame AV1 video, each as **PQ**, **HLG** and an **SDR reference**. The comparison is the point; a single HDR file on an unknown display proves nothing. Encoding client-side was ruled out. Firefox 153 exposes no `VideoEncoder`, and `VideoFrame` rejects every 10-bit pixel format (`I420P10 is unsupported`), so there is neither an encoder to call nor a way to hand it HDR pixels.
 
 **Decode.** This is the path that makes anything HDR, and until it existed nothing the server produced was. `decodeRaw(..., 'rec2020-linear')` asks LibRaw for Rec.2020 primaries (`output_color=8`), an identity gamma curve, and `no_auto_bright`. The last one matters most: auto-brightening normalises exposure, which spends exactly the headroom above diffuse white that carries the HDR. The result is scene-referred, so a normally exposed frame's mean sits far below the sRGB render's; which is what the integration test asserts, since a decode that quietly stopped applying these would still produce a plausible-looking file.
 
-**Encode.** AV1 via ffmpeg. Not VP9, whose colour signalling does not survive this ffmpeg build and which has no metadata bitstream filter to put it back; not HEVC, which Firefox only decodes through a platform decoder. `HDR_PEAK_NITS` (default 1000) is both the exposure control and the declared peak: the decode is linear, so this is what a fully exposed sensor sample is worth in nits, and 1000 puts a normal frame's diffuse white near the 203-nit reference with highlights above it.
+**Encode.** One `zscale` call applies the transfer for both media, then they diverge. Both are AV1 via **libaom**, at **4:4:4 10-bit**. The still is muxed by **avifenc** rather than ffmpeg, because ffmpeg's avif muxer writes no `colr` box and AVIF has no equivalent of the bitstream filter to repair one; `--jobs all` matters more than any other flag, since avifenc is single-threaded by default and that alone is 9.6s against 0.5s on a 24MP frame.
 
-Two traps, both silent:
+**4:4:4 is not a setting, it is an AV1 profile**, and that decides the encoder. Profile 0 is 4:2:0, Profile 1 is 4:4:4, Profile 2 is 4:2:2. SVT-AV1 implements Profile 0 only and *converts silently* - asking it for 4:4:4 or 4:2:2 yields 4:2:0 with no error - so it cannot be used here at all. libaom and rav1e implement all three. Measured decoder support:
+
+| | 4:2:0 | 4:2:2 | 4:4:4 |
+|---|---|---|---|
+| AVIF still, Chrome and Firefox | yes | yes | yes |
+| AV1 video, Chrome | yes | no | no |
+| AV1 video, Firefox | yes | yes | yes |
+
+Chrome refuses Profile 1 and 2 video outright (`MEDIA_ERR_SRC_NOT_SUPPORTED`), and `canPlayType` in Firefox reports `"no"` for them while playing them anyway - dav1d decodes every profile in software. Since the video exists only for Firefox, Chrome's refusal costs nothing: Chrome is served by the still. Not VP9, whose colour signalling does not survive this ffmpeg build and which has no metadata bitstream filter to put it back; not HEVC, which Firefox would not play at 4:4:4 at all.
+
+Moving off SVT-AV1 gives up the **mastering-display and content-light metadata**, which reaches the file through `-svtav1-params` and has no libaom equivalent. Those are tone-mapping hints, and Firefox 153 does no tone mapping, so nothing that consumes this file reads them. The load-bearing signalling is the CICP, which survives.
+
+`HDR_PEAK_NITS` (default 1000) is both the exposure control and the declared peak: the decode is linear, so this is what a fully exposed sensor sample is worth in nits, and 1000 puts a normal frame's diffuse white near the 203-nit reference with highlights above it. It is not interpreted the same everywhere. Chromium renders HDR stills relative to SDR white and caps headroom at 4 stops, while Firefox 153 does no tone mapping at all; so it is a knob to set against a display, not a value that transfers.
+
+Three traps, all silent:
 
 - **SVT-AV1 discards the primaries and transfer** however the `-color_*` options are set, producing a file that reports `color_primaries=unknown`. The `av1_metadata` bitstream filter writes them back into the sequence header. Without it the encode succeeds and the result is not HDR, which is why a unit test pins the exact CICP numbers.
-- **AV1 cannot encode a current sensor at native size.** 8192x4352 works; a 6336x9504 60MP frame fails with `code: -22 (Invalid argument)` and writes nothing. Frames are fitted to `HDR_MAX_EDGE` (default 3840) inside the same `zscale` call, so the resampling happens in linear light; resizing after the transfer would average PQ code values and darken the result. The check page reports each variant's actual dimensions rather than implying full resolution.
+- **Frames are fitted to `HDR_MAX_EDGE`** (default 3840), inside the same `zscale` call so the resampling happens in linear light; resizing after the transfer would average PQ code values and darken the result. The check page reports each rendition's actual dimensions rather than implying full resolution. This also sidesteps a limit that only SVT-AV1 had: a maximum frame height, so 9504x6336 encoded while the same 60MP frame as 6336x9504 failed with `code: -22`. libaom takes either orientation.
+- **Six renditions outlast a request.** `Bun.serve` idles a connection out after 10s by default and the client sees a closed socket rather than an error, which reads as a crash. `idleTimeout` is raised to Bun's 255s maximum; the lossless render (§10.5) was already close to the old limit on a large frame.
 
-**Verification stops at the signalling.** `ffprobe` confirms BT.2020/PQ/BT.2020-ncl and 10-bit, and that the SDR reference is BT.709 throughout. Whether any of it lights up a panel is not observable from script: the frame goes to the compositor, and anything read back through a canvas has already been tone-mapped. `GET /hdr-check/:photoId` serves a page putting the three side by side, for looking at on real hardware. It is served by the API rather than the web client because the HDR machine may not be the one running the UI.
+The SDR still is tagged sRGB where the SDR video is tagged BT.709: they share primaries, but BT.709's transfer is a camera OETF and a browser renders an untagged still against sRGB, so sRGB is what makes the control look like an ordinary picture. Stills are 10-bit for every variant, so the control differs from the HDR ones in transfer alone; the SDR video stays 8-bit, which is what an SDR video is.
+
+**Confirmed on a real HDR Android display**, Chrome: both the AVIF still and the one-frame video render visibly brighter than their SDR references, so both paths work. Two things worth keeping from that run. `dynamic-range` reported `high` while `video-dynamic-range` reported `standard`, and the video was plainly HDR regardless: the video-plane query describes bi-plane devices like TVs, cannot be answered without knowing whether a given frame reaches a hardware overlay, and is not something to gate on. And the video looked sharper than the still until `image-rendering: pixelated` was applied to both, at which point they matched. That is Chrome's scaler, not the encode: measured against the frame both were encoded from, the still scores *better* (SSIM 0.9932 against 0.9923) at twice the bitrate. The `<img>` path filters a downscale properly; the video plane scales more cheaply and the resulting aliasing reads as detail.
+
+**A blank video row is usually the codec, not the tagging.** Firefox on Android ships `media.av1.enabled` off for battery, and Safari has no software AV1 decoder at all; it plays AV1 only where the hardware does, so Intel Macs, M1/M2 Macs and iPhones before the 15 Pro cannot, however current their Safari. Both fail all three videos identically, SDR included, which is the tell: an HDR problem would spare the SDR reference. The page prints what the browser claims for AV1 before loading anything and marks a failed panel rather than leaving it blank. Neither gap is worth working around, because both of those browsers decode the AVIF stills, which is the path that matters on their platforms; if an Apple video path were ever wanted it would be HEVC 10-bit, hardware-decoded on every Apple device.
+
+**Verification stops at the signalling.** `ffprobe` confirms BT.2020/PQ/BT.2020-ncl and 10-bit on both media, and that each SDR reference is tagged as intended. Whether any of it lights up a panel is not observable from script: the frame goes to the compositor, and anything read back through a canvas has already been tone-mapped. `GET /hdr-check/:photoId` serves a page putting all six side by side, for looking at on real hardware. It is served by the API rather than the web client because the HDR machine may not be the one running the UI.
 
 ---
 
@@ -1117,7 +1139,7 @@ All endpoints return JSON. Error responses use a standard envelope:
 | `POST` | `/api/photos/reprocess` | Rebuild thumbnails for a selection from a named source (§10.3) |
 | `POST` | `/api/photos/refresh-metadata` | Re-read the RAW headers for a selection |
 | `POST` | `/api/photos/:id/lossless` | Build the full-resolution lossless render (§10.5) |
-| `POST` | `/api/photos/:id/hdr` | Build the HDR stills, all variants (§10.7) |
+| `POST` | `/api/photos/:id/hdr` | Build the HDR renditions, both media, all variants (§10.7) |
 
 Query parameters for listing (`PhotoListQuerySchema`, §5.3):
 - `offset` (int, default 0)
@@ -1276,9 +1298,9 @@ The server is configured via environment variables:
 | `LOSSLESS_DISTANCE` | `0.3` | libjxl butteraugli distance for the full-resolution export; `0` is bit-exact (§10.5) |
 | `LOSSLESS_EFFORT` | `4` | cjxl effort for the same (§10.5) |
 | `HDR_PEAK_NITS` | `1000` | What a fully exposed sensor sample is worth in nits, and the declared mastering peak (§10.7) |
-| `HDR_CRF` | `20` | SVT-AV1 quality for the HDR stills; lower is better (§10.7) |
-| `HDR_PRESET` | `8` | SVT-AV1 speed preset, 0 slowest to 13 fastest (§10.7) |
-| `HDR_MAX_EDGE` | `3840` | Longest edge of an HDR still; AV1 cannot encode a full-size sensor frame (§10.7) |
+| `HDR_CRF` | `20` | Encoder quality for the HDR renditions; lower is better (§10.7) |
+| `HDR_PRESET` | `8` | Encoder speed; libaom `-cpu-used` 0-8 and avifenc `--speed` 0-10, both clamped (§10.7) |
+| `HDR_MAX_EDGE` | `3840` | Longest edge of an HDR rendition; AV1 cannot encode a full-size sensor frame (§10.7) |
 | `CORS_ORIGINS` | *(unset)* | Comma-separated origins allowed to call the API, or `*`. Unset means "any port on whatever host the request arrived at", so the client works on loopback and over the LAN without hardcoding an address, while an unrelated site on the internet is still refused. |
 
 ---

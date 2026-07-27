@@ -1,5 +1,4 @@
 import { existsSync } from 'node:fs';
-import { rename } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { AppError } from '../../errors';
@@ -143,11 +142,25 @@ export class ShootsService {
     if (!this.shoots.delete(shootId)) throw new AppError('NOT_FOUND', `shoot not found: ${shootId}`);
   }
 
+  // A shoot's name is a label, not its folder: renaming one touches nothing on
+  // disk. The folder is chosen once, at create, and keeps whatever name it has; // which also means a shoot can be named freely without reshuffling a catalogue,
+  // and that a folder renamed outside the app is a mismatch to repair rather than
+  // a rename to mirror.
   async update(shootId: string, updates: UpdateShootRequest): Promise<Shoot> {
     const shoot = this.get(shootId);
 
     if (updates.name != null && updates.name !== shoot.name) {
-      await this.rename(shoot, updates.name);
+      if (this.shoots.getByName(shoot.library_id, updates.name)) {
+        throw new AppError('CONFLICT', `shoot name already used in library: ${updates.name}`);
+      }
+      try {
+        this.shoots.updateFields(shootId, { name: updates.name });
+      } catch (err) {
+        // getByName above catches the common case; a concurrent rename to the same
+        // name can still pass it before either commits and hit UNIQUE here.
+        if (isUniqueViolation(err)) throw new AppError('CONFLICT', `shoot name already used in library: ${updates.name}`);
+        throw err;
+      }
     }
     this.shoots.updateFields(shootId, { description: updates.description, ordering: updates.ordering });
     if ('banner_photo_id' in updates) {
@@ -166,70 +179,12 @@ export class ShootsService {
     return this.get(shootId);
   }
 
-  private async rename(shoot: Shoot, newName: string): Promise<void> {
-    const library = this.requireLibrary(shoot.library_id);
-    if (this.shoots.getByName(library.id, newName)) {
-      throw new AppError('CONFLICT', `shoot name already used in library: ${newName}`);
-    }
-
-    const oldFolder = shoot.folder_path;
-    const slash = oldFolder.lastIndexOf('/');
-    const newFolder = (slash >= 0 ? oldFolder.slice(0, slash + 1) : '') + newName;
-    // Taken here, not in update(), so it isn't acquired twice (that would deadlock).
-    return libraryMutex.run(shoot.library_id, async () => {
-
-    const oldAbs = path.join(library.root_path, oldFolder);
-    const newAbs = path.join(library.root_path, newFolder);
-    await this.move(oldAbs, newAbs);
-
-    // Rewrite this shoot, descendant shoots, and contained photos to the new
-    // prefix atomically (§8.5): a partial rewrite would break folder membership.
-    // The fs move already happened; if the DB transaction throws (e.g. a
-    // concurrent rename hits UNIQUE(library_id, name)), roll the folder back so
-    // disk and DB stay consistent instead of leaving a shoot that points at a
-    // nonexistent folder.
-    try {
-      this.shoots.transaction(() => {
-        this.shoots.updateFields(shoot.id, { name: newName, folder_path: newFolder });
-        for (const descendant of this.shoots.listByLibrary(library.id)) {
-          if (descendant.folder_path.startsWith(`${oldFolder}/`)) {
-            this.shoots.updateFields(descendant.id, { folder_path: newFolder + descendant.folder_path.slice(oldFolder.length) });
-          }
-        }
-        // includeDeleted: soft-deleted photos live in <folder>/Bin and physically
-        // move with the folder, so their file_path must be rewritten too.
-        for (const photo of this.photos.listUnderFolder(library.id, oldFolder, true)) {
-          // rewriteFilePath, not setFilePath: preserve is_missing, a folder rename
-          // doesn't recreate a file for a photo that was already missing.
-          this.photos.rewriteFilePath(photo.id, newFolder + photo.file_path.slice(oldFolder.length));
-        }
-      });
-    } catch (err) {
-      await rename(newAbs, oldAbs).catch((rollbackErr) =>
-        console.error(`shoot rename rollback failed (${newAbs} -> ${oldAbs}): ${(rollbackErr as Error).message}`),
-      );
-      // getByName above catches the common case; a concurrent rename to the same
-      // name can still pass it before either commits and hit UNIQUE here.
-      if (isUniqueViolation(err)) throw new AppError('CONFLICT', `shoot name already used in library: ${newName}`);
-      throw err;
-    }
-    });
-  }
-
   private adoptExistingPhotos(libraryId: string, shootId: string, folderPath: string): void {
     const shoots = this.shoots.listByLibrary(libraryId);
     for (const photo of this.photos.listUnderFolder(libraryId, folderPath)) {
       if (mostSpecificShoot(photo.file_path, shoots)?.id === shootId) {
         this.photos.setShoot(photo.id, shootId);
       }
-    }
-  }
-
-  private async move(from: string, to: string): Promise<void> {
-    try {
-      await rename(from, to);
-    } catch (err) {
-      throw new AppError('IO_ERROR', `failed to move ${from} -> ${to}: ${(err as Error).message}`);
     }
   }
 

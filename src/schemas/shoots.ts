@@ -1,9 +1,10 @@
 import { z } from 'zod';
 import { OrderingSchema, UuidSchema } from './common';
 
-// A shoot name becomes a single on-disk folder segment (§4.3), so it must not
-// contain path separators or be a relative-path token; otherwise `path.join`
-// could escape the library root (path traversal) or create phantom folders.
+// A shoot name seeds its folder at create time (§4.3), so it must be a single
+// on-disk segment: otherwise `path.join` could escape the library root (path
+// traversal) or create phantom folders. Renaming never touches the folder, so
+// this only has to hold for the name a shoot is created with.
 export const ShootNameSchema = z
   .string()
   .min(1)

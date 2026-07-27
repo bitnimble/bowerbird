@@ -76,13 +76,3 @@ test('setFilePath / setFilePathAndShoot clear is_missing', () => {
   expect(missingOf('rel2')).toBe(0);
 });
 
-// Regression: the shoot-rename cascade rewrites paths but must PRESERVE is_missing
-// (a folder rename recreates no file for an already-missing photo).
-test('rewriteFilePath preserves is_missing', () => {
-  insertMissing('rw');
-  photos.rewriteFilePath('rw', 'renamed/rw.arw');
-  expect(missingOf('rw')).toBe(1); // still missing: a folder rename recreates no file
-  insertPhoto('rw0', 0);
-  photos.rewriteFilePath('rw0', 'renamed/rw0.arw');
-  expect(missingOf('rw0')).toBe(0);
-});

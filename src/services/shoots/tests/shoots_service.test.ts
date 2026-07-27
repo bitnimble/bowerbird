@@ -29,13 +29,14 @@ function mockPhotos(over: Partial<PhotosRepository> = {}): PhotosRepository {
     listUnderFolder: jest.fn(() => [] as BasicPhoto[]),
     setShoot: jest.fn(),
     setFilePath: jest.fn(),
-    rewriteFilePath: jest.fn(),
     setFilePathAndShoot: jest.fn(),
     ...over,
   } as unknown as PhotosRepository;
 }
 function library(root: string): Library {
-  return { id: 'lib', root_path: root, data_path: null, ordering: 'taken_desc', last_synced_at: null, photo_count: 0 };
+  return { id: 'lib', root_path: root, data_path: null, ordering: 'taken_desc',
+  preview_source: 'embedded' as const,
+  preview_hdr: false, last_synced_at: null, photo_count: 0 };
 }
 function mockLibs(root: string): LibrariesRepository {
   return { getById: jest.fn(() => library(root)) } as unknown as LibrariesRepository;
@@ -239,39 +240,42 @@ describe('ShootsService.removePhotos', () => {
   }));
 });
 
-describe('ShootsService.update (rename cascade)', () => {
-  it('renames the folder and rewrites descendant shoots + contained photos', withRoot(async (root) => {
+describe('ShootsService.update (rename)', () => {
+  it('renames the shoot without touching the folder, its descendants or any photo', withRoot(async (root) => {
     mkdirSync(path.join(root, 'Trip', 'Day1'), { recursive: true });
     const descendant: Shoot = { ...shoot, id: 'd1', parent_id: 'sh', folder_path: 'Trip/Day1', name: 'Day1' };
     const updateFields = jest.fn();
-    const rewriteFilePath = jest.fn();
+    const setFilePathAndShoot = jest.fn();
     const shoots = mockShoots({
       getById: jest.fn(() => shoot),
       getByName: jest.fn(() => null),
       listByLibrary: jest.fn(() => [shoot, descendant]),
       updateFields,
     });
-    const listUnderFolder = jest.fn(() => [
-      { id: 'p1', library_id: 'lib', file_path: 'Trip/a.arw', shoot_id: 'sh' },
-      { id: 'p2', library_id: 'lib', file_path: 'Trip/Day1/b.arw', shoot_id: 'd1' },
-      { id: 'p3', library_id: 'lib', file_path: 'Trip/Bin/c.arw', shoot_id: 'sh' }, // soft-deleted
-    ]);
-    const photos = mockPhotos({ listUnderFolder, rewriteFilePath });
+    const listUnderFolder = jest.fn(() => []);
+    const photos = mockPhotos({ listUnderFolder, setFilePathAndShoot });
     const service = new ShootsService(shoots, photos, mockLibs(root));
 
     await service.update('sh', { name: 'Vacation' });
 
-    expect(existsSync(path.join(root, 'Vacation'))).toBe(true);
-    expect(existsSync(path.join(root, 'Trip'))).toBe(false);
-    expect(updateFields).toHaveBeenCalledWith('sh', { name: 'Vacation', folder_path: 'Vacation' });
-    expect(updateFields).toHaveBeenCalledWith('d1', { folder_path: 'Vacation/Day1' });
-    // rewriteFilePath (not setFilePath): a rename must preserve each photo's is_missing.
-    expect(rewriteFilePath).toHaveBeenCalledWith('p1', 'Vacation/a.arw');
-    expect(rewriteFilePath).toHaveBeenCalledWith('p2', 'Vacation/Day1/b.arw');
-    // soft-deleted photos in the shoot Bin move with the folder, so their path
-    // must be rewritten too (listUnderFolder called with includeDeleted=true).
-    expect(listUnderFolder).toHaveBeenCalledWith('lib', 'Trip', true);
-    expect(rewriteFilePath).toHaveBeenCalledWith('p3', 'Vacation/Bin/c.arw');
+    // The name is a label: the folder keeps the name it was created with.
+    expect(existsSync(path.join(root, 'Trip'))).toBe(true);
+    expect(existsSync(path.join(root, 'Vacation'))).toBe(false);
+    expect(updateFields).toHaveBeenCalledWith('sh', { name: 'Vacation' });
+    // No folder moved, so nothing downstream of a path can have changed.
+    expect(updateFields).not.toHaveBeenCalledWith('d1', expect.anything());
+    expect(setFilePathAndShoot).not.toHaveBeenCalled();
+    expect(listUnderFolder).not.toHaveBeenCalled();
+  }));
+
+  it('still rejects a name already used in the library', withRoot(async (root) => {
+    const shoots = mockShoots({
+      getById: jest.fn(() => shoot),
+      getByName: jest.fn(() => ({ ...shoot, id: 'other', name: 'Vacation' })),
+    });
+    const service = new ShootsService(shoots, mockPhotos({}), mockLibs(root));
+
+    await expect(service.update('sh', { name: 'Vacation' })).rejects.toMatchObject({ code: 'CONFLICT' });
   }));
 });
 

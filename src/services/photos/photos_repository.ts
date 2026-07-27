@@ -93,8 +93,12 @@ export interface PendingPhoto {
   root_path: string;
   data_path: string | null;
   // The source requested for this photo; NULL for rows queued before the setting
-  // existed, which the service resolves to the configured default.
+  // existed, which the service resolves to the library's default.
   thumbnail_source: ThumbnailSource | null;
+  // The library's preview settings, carried along so the pool needs no second
+  // lookup per job (§10.2).
+  preview_source: ThumbnailSource;
+  preview_hdr: number;
 }
 
 // Minimal shape for file/shoot bookkeeping (moves, adoption, reconciliation).
@@ -341,20 +345,12 @@ export class PhotosRepository {
   // run only after a specific file provably exists at the new path. Without this,
   // a concurrent sync whose setMissing landed just before the move committed
   // would leave the present photo stuck is_missing=1 until the next sync.
-  // NOT for bulk path-prefix rewrites, see rewriteFilePath.
   setFilePathAndShoot(photoId: string, filePath: string, shootId: string | null): void {
     this.db.query('UPDATE photos SET file_path = ?, shoot_id = ?, is_missing = 0 WHERE id = ?').run(filePath, shootId, photoId);
   }
 
   setFilePath(photoId: string, filePath: string): void {
     this.db.query('UPDATE photos SET file_path = ?, is_missing = 0 WHERE id = ?').run(filePath, photoId);
-  }
-
-  // Path-prefix rewrite for a shoot-folder rename: preserves is_missing, since a
-  // folder rename moves nothing for a photo that was already missing (its file
-  // doesn't exist), so it must stay missing at the rewritten path.
-  rewriteFilePath(photoId: string, filePath: string): void {
-    this.db.query('UPDATE photos SET file_path = ? WHERE id = ?').run(filePath, photoId);
   }
 
   // Records where the file was before the Bin move so restore can put it back
@@ -552,7 +548,8 @@ export class PhotosRepository {
     const params = libraryId ? [libraryId] : [];
     return this.db
       .query(
-        `SELECT p.id AS photo_id, p.file_path, p.thumbnail_source, l.root_path, l.data_path
+        `SELECT p.id AS photo_id, p.file_path, p.thumbnail_source, l.root_path, l.data_path,
+                l.preview_source, l.preview_hdr
          FROM photos p JOIN libraries l ON l.id = p.library_id
          WHERE p.needs_processing = 1 AND p.is_missing = 0 AND p.is_deleted = 0 ${where}`,
       )
