@@ -12,8 +12,7 @@ import { AppError } from '../../src/errors';
 import { applyErrorHandler } from '../../src/api/error_handler';
 import { ImageApi } from '../../src/api/image/image_api';
 import type { Library } from '../../src/schemas/libraries';
-import type { PhotoDetail } from '../../src/schemas/photos';
-import type { LibrariesService } from '../../src/services/libraries/libraries_service';
+import type { BasicPhoto } from '../../src/services/photos/photos_repository';
 import type { PhotosService } from '../../src/services/photos/photos_service';
 
 const BODY = '0123456789ABCDEF'; // 16 bytes, so byte offsets are readable
@@ -28,18 +27,29 @@ beforeAll(() => {
   writeFileSync(path.join(root, '.bowerbird', 'renditions', 'grid', 'p1.avif'), BODY);
   writeFileSync(path.join(root, 'a.arw'), BODY);
 
-  const detail = { id: 'p1', library_id: 'lib', file_path: 'a.arw', is_deleted: false } as PhotoDetail;
+  const library: Library = {
+    id: 'lib',
+    root_path: root,
+    data_path: null,
+    ordering: 'taken_desc',
+    preview_source: 'render',
+    preview_hdr: false,
+    preview_hdr_video: false,
+    last_synced_at: null,
+    photo_count: 1,
+  };
+  const basic: BasicPhoto = { id: 'p1', library_id: 'lib', file_path: 'a.arw', shoot_id: null };
+  // `locate`, not `get`: serving bytes wants three columns, not the detail payload
+  // and a stat per rendition (§8.2).
   const photos = {
-    get(id: string): PhotoDetail {
+    locate(id: string): { photo: BasicPhoto; library: Library } {
       if (id !== 'p1') throw new AppError('NOT_FOUND', `photo not found: ${id}`);
-      return detail;
+      return { photo: basic, library };
     },
   } as unknown as PhotosService;
-  const library: Library = { id: 'lib', root_path: root, data_path: null, ordering: 'taken_desc' };
-  const libraries = { get: () => library } as unknown as LibrariesService;
 
   const app = new Hono();
-  app.route('/image', new ImageApi(photos, libraries).routes);
+  app.route('/image', new ImageApi(photos).routes);
   applyErrorHandler(app);
 
   server = Bun.serve({ port: 0, fetch: app.fetch });

@@ -11,6 +11,7 @@ import { AlbumsRepository } from '../../src/services/albums/albums_repository';
 import { LibrariesRepository } from '../../src/services/libraries/libraries_repository';
 import { PhotosRepository } from '../../src/services/photos/photos_repository';
 import { PhotosService } from '../../src/services/photos/photos_service';
+import type { ProcessingService } from '../../src/services/processing/processing_service';
 import { ShootsRepository } from '../../src/services/shoots/shoots_repository';
 
 const LIB = '00000000-0000-4000-8000-0000000000ba';
@@ -57,7 +58,16 @@ beforeEach(() => {
   );
 
   photos = new PhotosRepository(db);
-  service = new PhotosService(photos, new AlbumsRepository(db), new ShootsRepository(db), new LibrariesRepository(db));
+  // Deleting and restoring never renders, so a stub keeps LibRaw and worker
+  // threads out of these tests.
+  const processing = { renderLossless: async () => {} } as unknown as ProcessingService;
+  service = new PhotosService(
+    photos,
+    new AlbumsRepository(db),
+    new ShootsRepository(db),
+    new LibrariesRepository(db),
+    processing,
+  );
 });
 
 afterEach(() => {

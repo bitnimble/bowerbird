@@ -55,7 +55,7 @@ test('processing counts track thumbnail progress, then settle when the tail fini
 
   // Simulate the worker pool finishing one photo: the live count must follow.
   const [first] = photos.listPendingProcessing(LIB);
-  photos.markProcessed(first!.photo_id, new Date().toISOString());
+  photos.markProcessed(first!.photo_id, new Date().toISOString(), 'render');
   expect(sync.getSyncStatus(LIB).photos_processing).toBe(2);
   expect(sync.getSyncStatus(LIB).photos_processed).toBe(1);
 

@@ -152,7 +152,7 @@ describe('fitMatchProfile', () => {
       // should not. This is the check on that reasoning.
       const profile = (await fitMatchProfile(FIXTURE))!;
       const render = decodeRaw(FIXTURE, 8, 'srgb');
-      const raw = { raw: { width: render.width, height: render.height, channels: 3 } };
+      const raw = { raw: { width: render.width, height: render.height, channels: 3 as const } };
       const SIZE = 800;
 
       const applied = await applyMatchProfile(render, profile);
