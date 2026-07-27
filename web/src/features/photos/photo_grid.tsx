@@ -92,7 +92,6 @@ const Tile = observer(function Tile({
   // (the query param defeats the browser's cache of the 404).
   const [failedAt, setFailedAt] = useState<number | null>(null);
   const token = store.reloadToken;
-  const failed = failedAt === token;
   // A failed request retries against the current list generation; a rebuild
   // changes the file behind the same URL and needs its own version.
   const src = failedAt == null ? thumbnailUrl(photo.id, 'small', store.rebuiltAt) : `${thumbnailUrl(photo.id, 'small')}?r=${token}`;
@@ -124,18 +123,19 @@ const Tile = observer(function Tile({
         }}
         aria-label={`photo ${filename(photo.file_path, photo.id)}`}
       >
-        {failed ? (
-          <span className="tile__pending">no thumbnail yet</span>
-        ) : (
-          <img
-            src={src}
-            alt=""
-            loading="lazy"
-            className={loaded ? 'is-loaded' : undefined}
-            onLoad={() => setLoaded(true)}
-            onError={() => setFailedAt(token)}
-          />
-        )}
+        {/* The image is always mounted and the placeholder sits behind it until
+            something decodes. Swapping the two on every retry made each list
+            refresh blink every un-thumbnailed tile: the placeholder came down,
+            the request 404'd again, and it went back up. */}
+        <img
+          src={src}
+          alt=""
+          loading="lazy"
+          className={loaded ? 'is-loaded' : undefined}
+          onLoad={() => setLoaded(true)}
+          onError={() => setFailedAt(token)}
+        />
+        {!loaded && <span className="tile__pending">{failedAt == null ? null : 'no thumbnail yet'}</span>}
       </button>
 
       <div className="tile__badges">

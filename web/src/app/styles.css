@@ -897,6 +897,16 @@ p.ui-text--mono {
   opacity: 1;
 }
 
+/* Until it decodes, the image is a probe sitting behind the placeholder, so it
+   must contribute no height: in masonry the row takes its height from the image,
+   and a tile whose thumbnail is missing would collapse to nothing. Declared
+   after the masonry and list overrides, which it ties with on specificity. */
+.tile img:not(.is-loaded) {
+  position: absolute;
+  inset: 0;
+  height: 100%;
+}
+
 /* Rings are drawn by an overlay rather than an inset shadow: the thumbnail is a
    child element and paints over any shadow the tile itself casts inward. */
 .tile--selected::after,

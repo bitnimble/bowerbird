@@ -231,7 +231,7 @@ test('the detail view shows shooting metadata, the triage control and steps betw
   const preview = page.locator('.panel', { hasText: 'IMAGE PREVIEW DETAILS' });
   await expect(preview.getByText('Source', { exact: true })).toBeVisible();
   await preview.getByRole('button', { name: /more/ }).click();
-  await expect(preview.getByText('WEBP')).toBeVisible();
+  await expect(preview.getByText('AVIF')).toBeVisible();
 
   const path = page.locator('.detail__nav .ui-text--mono');
   const first = await path.innerText();
@@ -268,7 +268,7 @@ test('opening a photo with no preview builds one instead of reporting it missing
 
   const photoId = new URL(page.url()).pathname.split('/').pop() ?? '';
   const thumbnails = path.join(CULL_PHOTOS_DIR, '.bowerbird', 'thumbnails');
-  for (const size of ['small', 'full']) rmSync(path.join(thumbnails, size, `${photoId}.webp`), { force: true });
+  for (const size of ['small', 'full']) rmSync(path.join(thumbnails, size, `${photoId}.avif`), { force: true });
 
   await page.reload();
   await expect(page.getByText(/Rebuilt 1 thumbnail from the embedded JPEG/)).toBeVisible({ timeout: 30_000 });
@@ -301,7 +301,7 @@ test('a chosen preview rendition is cached on disk, and dropped when the photo i
 
   // The photo's own thumbnails are the embedded rendition, so only the render had
   // to be built and stored; the embedded one is served from what already existed.
-  const cached = path.join(CULL_PHOTOS_DIR, '.bowerbird', 'previews', 'render', `${photoId}.webp`);
+  const cached = path.join(CULL_PHOTOS_DIR, '.bowerbird', 'previews', 'render', `${photoId}.avif`);
   expect(existsSync(cached)).toBe(true);
 
   await showRendition('Embedded JPEG');

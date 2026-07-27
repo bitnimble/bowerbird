@@ -6,10 +6,10 @@ import {
   type Ordering,
   type PhotoListParams,
   type PhotoListResponse,
+  type PhotoSummary,
   type ThumbnailSource,
   type Triage,
 } from '../../api/client';
-import { decodeLossless } from './lossless_image';
 import type { AlbumsPresenter } from '../albums/albums_presenter';
 import type { ShootsPresenter } from '../shoots/shoots_presenter';
 import type { ToastsPresenter } from '../toasts/toasts_presenter';
@@ -131,9 +131,10 @@ export class PhotosPresenter {
     this.store.previewSource = null;
   }
 
-  // Builds the full-resolution render if it does not exist yet, then decodes it
-  // here: no browser reads JPEG XL natively, so the bytes have to be turned into
-  // something an <img> accepts before anything can be shown.
+  // Builds the full-resolution render if it does not exist yet, then hands the
+  // URL straight to the <img>. It used to be decoded here, because no browser
+  // read JPEG XL without a wasm module and a PNG transcode; it is AVIF now, so
+  // the browser does all of it (§10.5).
   async showLossless(photoId: string): Promise<void> {
     runInAction(() => (this.store.buildingLossless = true));
     try {
@@ -141,11 +142,7 @@ export class PhotosPresenter {
         await api.buildLossless(photoId);
         await this.refreshDetail();
       }
-      const image = await decodeLossless(losslessUrl(photoId));
-      runInAction(() => {
-        this.store.lossless?.revoke();
-        this.store.lossless = image;
-      });
+      runInAction(() => (this.store.lossless = losslessUrl(photoId)));
     } catch (err) {
       this.fail(err);
     } finally {
@@ -153,11 +150,8 @@ export class PhotosPresenter {
     }
   }
 
-  // Frees the object URL: a full-resolution PNG blob is hundreds of megabytes,
-  // and leaving it attached keeps that alive for the life of the document.
   @action.bound
   hideLossless(): void {
-    this.store.lossless?.revoke();
     this.store.lossless = null;
   }
 
@@ -420,15 +414,33 @@ export class PhotosPresenter {
           row.triage = updated.triage;
         }
       });
-      // A verdict or rating can move a photo out of the slice being viewed, and
-      // the point of rejecting from the Active view is that the frame leaves it.
+      // Only the field that changed can move a photo out of the slice being
+      // viewed: a rating cannot change triage membership, and a note changes
+      // neither. Testing the filters alone re-read the whole page every time a
+      // star or a note was touched in the Active view, which is the default.
       // Re-read rather than filtering locally, which would mean a second copy of
       // the server's filter logic to drift out of step.
       const f = this.store.filters;
-      if (f.triage != null || f.rated != null) await this.fetchPage();
+      const mayLeaveView =
+        (fields.triage !== undefined && f.triage != null) || (fields.rating !== undefined && f.rated != null);
+      if (mayLeaveView) await this.fetchPage();
     } catch (err) {
       this.fail(err);
     }
+  }
+
+  // Keeps the observable row object for any id the page still contains, writing
+  // the server's fields into it. Handing back fresh objects would invalidate
+  // every tile's observable on a refetch, so rejecting one photo re-rendered the
+  // whole grid; mobx notifies only for the fields that actually differ.
+  private reconcile(rows: PhotoSummary[]): PhotoSummary[] {
+    const current = new Map(this.store.photos.map((p) => [p.id, p]));
+    return rows.map((row) => {
+      const existing = current.get(row.id);
+      if (existing == null) return row;
+      Object.assign(existing, row);
+      return existing;
+    });
   }
 
   private async fetchPage(): Promise<void> {
@@ -462,7 +474,7 @@ export class PhotosPresenter {
       const page = await this.fetchFor(source, params);
       if (controller.signal.aborted) return;
       runInAction(() => {
-        this.store.photos = page.photos;
+        this.store.photos = this.reconcile(page.photos);
         this.store.total = page.total;
         this.store.loading = false;
         this.store.reloadToken++;
