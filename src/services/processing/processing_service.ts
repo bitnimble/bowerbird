@@ -7,6 +7,7 @@ import type { PendingPhoto, PhotosRepository } from '../photos/photos_repository
 import type { HdrMedium, HdrVariant } from './hdr_media';
 import {
   THUMBNAIL_SOURCES,
+  type HdrGrade,
   type HdrJob,
   type LosslessJob,
   type PreviewJob,
@@ -61,7 +62,7 @@ export class ProcessingService {
       effort: this.config.thumbnailEffort,
       source,
       hdr,
-      peakNits: this.config.hdrPeakNits,
+      grade: this.grade(),
       crf: this.config.hdrCrf,
       preset: this.config.hdrPreset,
     });
@@ -87,7 +88,7 @@ export class ProcessingService {
       quantizer: this.config.losslessQuantizer,
       preset: this.config.hdrPreset,
       hdr,
-      peakNits: this.config.hdrPeakNits,
+      grade: this.grade(),
     });
   }
 
@@ -99,11 +100,19 @@ export class ProcessingService {
       outputPath,
       variant,
       medium,
-      peakNits: this.config.hdrPeakNits,
+      grade: this.grade(),
       crf: this.config.hdrCrf,
       preset: this.config.hdrPreset,
       maxEdge: this.config.hdrMaxEdge,
     });
+  }
+
+  private grade(): HdrGrade {
+    return {
+      peakNits: this.config.hdrPeakNits,
+      referenceWhiteNits: this.config.hdrReferenceWhiteNits,
+      whiteQuantile: this.config.hdrWhiteQuantile,
+    };
   }
 
   // One photo, on demand, outside the pending queue: a single explicit request
@@ -178,7 +187,7 @@ export class ProcessingService {
       source: pending.thumbnail_source ?? pending.preview_source,
       hdr: pending.preview_hdr === 1,
       hdrVideo: pending.preview_hdr_video === 1,
-      peakNits: this.config.hdrPeakNits,
+      grade: this.grade(),
       crf: this.config.hdrCrf,
       preset: this.config.hdrPreset,
     };

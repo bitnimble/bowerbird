@@ -2,7 +2,7 @@ import { observer } from 'mobx-react-lite';
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Check, ChevronLeft, ChevronRight, ThumbsDown, ThumbsUp } from 'lucide-react';
-import { localDateTime } from '../../api/dates';
+import { captureDateTime, localDateTime } from '../../api/dates';
 import { thumbnailUrl, type PhotoSummary } from '../../api/client';
 import { usePhotosStore, usePresenters } from '../../app/stores_context';
 import { Button, ICON, Text } from '../../ui/ui';
@@ -98,6 +98,9 @@ const Tile = observer(function Tile({
   const selected = store.selected.has(photo.id);
   const ref = useRef<HTMLDivElement>(null);
   const list = store.mode === 'list';
+  // ordering_date is date_taken under a taken_* ordering and date_added otherwise,
+  // and those are not the same kind of timestamp (§11.1).
+  const orderingDate = store.ordering.startsWith('taken_') ? captureDateTime(photo.ordering_date) : localDateTime(photo.ordering_date);
 
   // Keep the keyboard cursor on screen when it walks off the visible rows.
   useEffect(() => {
@@ -157,7 +160,7 @@ const Tile = observer(function Tile({
         <span className="tile__name" title={photo.file_path}>
           {filename(photo.file_path, photo.id)}
         </span>
-        {list && <Text variant="mono">{localDateTime(photo.ordering_date) ?? 'no date'}</Text>}
+        {list && <Text variant="mono">{orderingDate ?? 'no date'}</Text>}
         <span className="tile__marks">
           <TriageButtons photo={photo} />
           <Rating photo={photo} />

@@ -206,10 +206,13 @@ p.ui-text--mono {
   margin-left: 1px;
 }
 
-/* min-width: 0 so the labels can be clipped rather than forcing the group wider
-   than the panel it sits in. */
+/* `auto` basis rather than 0: equal thirds sized the widest label ("Undecided")
+   by the narrowest, so it clipped while its neighbours sat in whitespace. Each
+   segment now takes its content plus an equal share of what is left over.
+   min-width: 0 so the labels still clip rather than forcing the group wider than
+   the panel it sits in. */
 .ui-seg--stretch .ui-btn--seg {
-  flex: 1;
+  flex: 1 1 auto;
   justify-content: center;
   padding: 0 6px;
   min-width: 0;
@@ -279,6 +282,14 @@ p.ui-text--mono {
   font-size: var(--control-text);
 }
 
+/* The z-index belongs on the positioner, not the popup: base-ui positions with a
+   transform, so the positioner is a stacking context and anything set inside it
+   cannot lift the menu above the page. Unset, it painted under any chrome with a
+   z-index of its own - the stage's zoom and fullscreen buttons. */
+.ui-positioner {
+  z-index: 60;
+}
+
 /* Menus, selects and popovers share one surface. */
 .ui-popup {
   background: var(--slate-soft);
@@ -288,7 +299,6 @@ p.ui-text--mono {
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
   max-height: 60vh;
   overflow: auto;
-  z-index: 60;
 }
 
 .ui-popup--pad {
@@ -1157,8 +1167,10 @@ p.ui-text--mono {
   min-height: 0;
 }
 
+/* Wide enough for the triage control at its natural width: at 288px "Undecided"
+   was clipped by a few pixels. */
 .detail--beside {
-  grid-template-columns: minmax(0, 1fr) 288px;
+  grid-template-columns: minmax(0, 1fr) 320px;
 }
 
 .detail--below {
@@ -1221,7 +1233,7 @@ p.ui-text--mono {
 /* object-fit rather than max-width/max-height: a percentage max-height on a grid
    item does not reliably clamp, and a portrait frame then overflowed the stage
    and got cropped instead of fitted. */
-.stage__viewport img {
+.stage__viewport .stage__content {
   position: absolute;
   inset: 0;
   width: 100%;
@@ -1237,15 +1249,15 @@ p.ui-text--mono {
 
 /* Held hidden until this src decodes, so navigating never shows the frame
    before it. */
-.stage__viewport img.is-ready {
+.stage__viewport .stage__content.is-ready {
   opacity: 1;
 }
 
-.stage--zoomed .stage__viewport img {
+.stage--zoomed .stage__viewport .stage__content {
   cursor: grab;
 }
 
-.stage--zoomed .stage__viewport:active img {
+.stage--zoomed .stage__viewport:active .stage__content {
   cursor: grabbing;
 }
 

@@ -1001,7 +1001,22 @@ Chrome refuses Profile 1 and 2 video outright (`MEDIA_ERR_SRC_NOT_SUPPORTED`), a
 
 Moving off SVT-AV1 gives up the **mastering-display and content-light metadata**, which reaches the file through `-svtav1-params` and has no libaom equivalent. Those are tone-mapping hints, and Firefox 153 does no tone mapping, so nothing that consumes this file reads them. The load-bearing signalling is the CICP, which survives.
 
-`HDR_PEAK_NITS` (default 1000) is both the exposure control and the declared peak: the decode is linear, so this is what a fully exposed sensor sample is worth in nits, and 1000 puts a normal frame's diffuse white near the 203-nit reference with highlights above it. It is not interpreted the same everywhere. Chromium renders HDR stills relative to SDR white and caps headroom at 4 stops, while Firefox 153 does no tone mapping at all; so it is a knob to set against a display, not a value that transfers.
+### 10.7.1 Grading scene-linear to display-referred
+
+The decode is scene-referred, and scene-referred data carries no exposure: LibRaw scales sensor saturation to full range whatever was metered. Tying linear 1.0 straight to the display peak therefore made brightness a function of the exposure rather than of the subject - measured over eight bodies, a 9.3x spread in mean brightness, with every clipped frame flat against the peak. `src/services/processing/tone_map.ts` grades the buffer before it reaches ffmpeg, and the same eight frames come out within 2.5x with nothing clipping.
+
+Two ITU standards do the work, so no look had to be invented:
+
+- **ITU-R BT.2408** puts diffuse white at **203 nits** (`HDR_REFERENCE_WHITE_NITS`), the value that makes HDR read at the same brightness as the SDR beside it.
+- **ITU-R BT.2390** §5.4.1 supplies the **EETF**, a Hermite roll-off applied in PQ space that compresses everything above the display's peak into it rather than clipping.
+
+Neither standard says *which* sample is diffuse white, because a camera takes that from the metered exposure and a raw file has no rendering intent. `HDR_WHITE_QUANTILE` (default 0.99) picks it from a histogram - the same heuristic dcraw's auto-bright uses - and is the knob to reach for if a library renders consistently dark or hot.
+
+The **peak is read off the frame, not off sensor saturation**, and that is what makes the grade exposure-invariant: both the white level and the peak scale with exposure, so their ratio, and therefore how much roll-off the highlights get, is a property of the scene. Anchoring the peak at sensor clip instead would give a frame shot two stops down four times the compression for the same subject.
+
+The curve is baked into a 65536-entry lookup table, because a 60MP frame is 180M samples and `pow()` that many times is not free. The grade runs per variant rather than once, since the **SDR reference is graded with its peak equal to its reference**: the roll-off then lands diffuse white on display white, so it renders identically to the HDR one everywhere below that and differs only above it, which is what makes it a control rather than a second picture.
+
+`HDR_PEAK_NITS` (default 1000) is now only the declared mastering peak and the roll-off target - no longer the exposure control - so it sets how much headroom sits above diffuse white. It is not interpreted the same everywhere: Chromium renders HDR stills relative to SDR white and caps headroom at 4 stops, while Firefox 153 does no tone mapping at all, so it is a knob to set against a display rather than a value that transfers.
 
 Three traps, all silent:
 
@@ -1326,7 +1341,9 @@ The server is configured via environment variables:
 | `PRUNE_EVERY_DAYS` | `7` | Interval for the orphaned-file sweep; `0` disables (§10.6) |
 | `LOSSLESS_QUALITY` | `88` | sharp AVIF quality for the SDR full-resolution export (§10.5) |
 | `LOSSLESS_QUANTIZER` | `8` | avifenc max quantizer for the HDR one; lower is better (§10.5) |
-| `HDR_PEAK_NITS` | `1000` | What a fully exposed sensor sample is worth in nits, and the declared mastering peak (§10.7) |
+| `HDR_PEAK_NITS` | `1000` | Display peak the BT.2390 roll-off targets, and the declared mastering peak (§10.7.1) |
+| `HDR_REFERENCE_WHITE_NITS` | `203` | ITU-R BT.2408 HDR Reference White; what diffuse white is graded to (§10.7.1) |
+| `HDR_WHITE_QUANTILE` | `0.99` | Quantile of the frame taken as diffuse white (§10.7.1) |
 | `HDR_CRF` | `20` | Encoder quality for the HDR renditions; lower is better (§10.7) |
 | `HDR_PRESET` | `8` | Encoder speed; libaom `-cpu-used` 0-8 and avifenc `--speed` 0-10, both clamped (§10.7) |
 | `HDR_MAX_EDGE` | `3840` | Longest edge of an HDR rendition; AV1 cannot encode a full-size sensor frame (§10.7) |

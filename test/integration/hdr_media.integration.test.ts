@@ -41,7 +41,7 @@ async function encoded(medium: HdrMedium, variant: HdrVariant, run: (file: strin
     // extensionFor, not a local guess: `still-baseline` is an AVIF too, and a
     // hand-rolled check that only knew about 'still' wrote it as .mp4.
     const outputPath = path.join(dir, `${variant}${extensionFor(medium)}`);
-    await encodeHdr(image, { variant, medium, outputPath, peakNits: 1000, crf: 40, preset: 12, maxEdge: 640 });
+    await encodeHdr(image, { variant, medium, outputPath, peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.99, crf: 40, preset: 12, maxEdge: 640 });
     run(outputPath);
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -129,7 +129,7 @@ test('the still leaves no intermediate behind', async () => {
   try {
     const image = decodeRaw(FIXTURE, 16, 'rec2020-linear');
     const outputPath = path.join(dir, 'pq.avif');
-    await encodeHdr(image, { variant: 'pq', medium: 'still', outputPath, peakNits: 1000, crf: 40, preset: 12, maxEdge: 640 });
+    await encodeHdr(image, { variant: 'pq', medium: 'still', outputPath, peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.99, crf: 40, preset: 12, maxEdge: 640 });
     // The y4m is uncompressed 10-bit, so a leaked one is tens of megabytes per
     // photo sitting next to the output that replaced it.
     expect(await Bun.file(`${outputPath}.y4m`).exists()).toBe(false);
@@ -146,6 +146,8 @@ test('an 8-bit decode is refused rather than encoded as something HDR-shaped', a
       medium: 'still',
       outputPath: '/tmp/never.avif',
       peakNits: 1000,
+      referenceWhiteNits: 203,
+      whiteQuantile: 0.99,
       crf: 40,
       preset: 12,
       maxEdge: 640,

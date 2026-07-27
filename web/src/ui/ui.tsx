@@ -162,7 +162,7 @@ export function Select<T extends string>({
         </BaseSelect.Icon>
       </BaseSelect.Trigger>
       <BaseSelect.Portal>
-        <BaseSelect.Positioner sideOffset={4}>
+        <BaseSelect.Positioner className="ui-positioner" sideOffset={4}>
           <BaseSelect.Popup className="ui-popup">
             {options.map((option) => (
               <BaseSelect.Item key={option.value} value={option.value} className="ui-item">
@@ -264,7 +264,7 @@ export function CheckMenu<T extends string>({
         {trigger}
       </Menu.Trigger>
       <Menu.Portal>
-        <Menu.Positioner sideOffset={4}>
+        <Menu.Positioner className="ui-positioner" sideOffset={4}>
           <Menu.Popup className="ui-popup">
             {options.map((option) => (
               <Menu.CheckboxItem
@@ -319,7 +319,7 @@ export function ActionMenu<T extends string>({
         <ChevronDown size={ICON} className="ui-btn__caret" />
       </Menu.Trigger>
       <Menu.Portal>
-        <Menu.Positioner sideOffset={4}>
+        <Menu.Positioner className="ui-positioner" sideOffset={4}>
           <Menu.Popup className="ui-popup">
             {options.map((option) =>
               'options' in option ? (
@@ -330,7 +330,7 @@ export function ActionMenu<T extends string>({
                     <ChevronRight size={ICON} className="ui-item__more" />
                   </Menu.SubmenuTrigger>
                   <Menu.Portal>
-                    <Menu.Positioner sideOffset={4} align="start">
+                    <Menu.Positioner className="ui-positioner" sideOffset={4} align="start">
                       <Menu.Popup className="ui-popup">{option.options.map(item)}</Menu.Popup>
                     </Menu.Positioner>
                   </Menu.Portal>
@@ -361,7 +361,7 @@ export function PopoverButton({
         {trigger}
       </Popover.Trigger>
       <Popover.Portal>
-        <Popover.Positioner sideOffset={4}>
+        <Popover.Positioner className="ui-positioner" sideOffset={4}>
           <Popover.Popup className="ui-popup ui-popup--pad">{children}</Popover.Popup>
         </Popover.Positioner>
       </Popover.Portal>

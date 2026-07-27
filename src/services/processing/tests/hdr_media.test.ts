@@ -16,6 +16,8 @@ const OPTIONS = {
   medium: 'video' as const,
   outputPath: '/tmp/out.mp4',
   peakNits: 1000,
+  referenceWhiteNits: 203,
+  whiteQuantile: 0.99,
   crf: 20,
   preset: 8,
   maxEdge: 8192,

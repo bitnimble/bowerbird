@@ -1,4 +1,5 @@
 import type { DecodedImage } from './raw_decoder';
+import { grade } from './tone_map';
 
 // HDR renditions of one photo, in the two containers a browser will apply a PQ
 // transfer to (DESIGN §10.7).
@@ -59,8 +60,12 @@ export interface HdrEncodeOptions {
   variant: HdrVariant;
   medium: HdrMedium;
   outputPath: string;
-  /** Nits that a fully exposed sensor sample maps to. Ignored by 'sdr'. */
+  /** Display peak the grade rolls highlights into, and the declared mastering peak. */
   peakNits: number;
+  /** Nits diffuse white maps to (BT.2408 HDR Reference White). */
+  referenceWhiteNits: number;
+  /** Quantile of the frame taken as diffuse white. */
+  whiteQuantile: number;
   /** Constant-quality level; lower is better and slower. */
   crf: number;
   /** Encoder speed, 0 slowest. Clamped per encoder: libaom 0-8, avifenc 0-10. */
@@ -171,10 +176,10 @@ function pixelFormat(variant: HdrVariant, medium: HdrMedium): string {
   return variant === 'sdr' ? 'yuv420p' : 'yuv420p10le';
 }
 
-// The decode hands back scene-linear Rec.2020 at full range, so the input side of
-// the conversion has to say so: zscale reads the frame's tags, and rawvideo
-// carries none. npl is what ties linear 1.0 to an absolute brightness, and so is
-// the one number that decides how bright the result looks.
+// The grade hands back display-referred Rec.2020 linear at full range, so the
+// input side of the conversion has to say so: zscale reads the frame's tags, and
+// rawvideo carries none. npl ties linear 1.0 to absolute brightness, and the
+// grade has already put the display's peak there.
 function filterChain(options: HdrEncodeOptions, size: { width: number; height: number } | null): string {
   const { variant, medium, peakNits } = options;
   const target = targetFor(variant, medium);
@@ -305,14 +310,24 @@ async function run(args: string[]): Promise<void> {
 export async function encodeHdr(image: DecodedImage, options: HdrEncodeOptions): Promise<void> {
   if (image.depth !== 16) throw new Error(`HDR encode needs a 16-bit decode, got ${image.depth}`);
 
+  const graded = grade(image, {
+    referenceWhiteNits: options.referenceWhiteNits,
+    whiteQuantile: options.whiteQuantile,
+    // The SDR reference has no headroom above white, so its peak is its
+    // reference: the roll-off then lands diffuse white on display white, and it
+    // renders identically to the HDR one everywhere below that. Differing only
+    // above diffuse white is what makes it a control.
+    peakNits: options.variant === 'sdr' ? options.referenceWhiteNits : options.peakNits,
+  });
+
   if (options.medium === 'video') {
-    await pipeTo(ffmpegArgs(image, options), image.data);
+    await pipeTo(ffmpegArgs(graded, options), graded.data);
     return;
   }
 
   const y4mPath = `${options.outputPath}.y4m`;
   try {
-    await pipeTo(ffmpegArgs(image, { ...options, outputPath: y4mPath }), image.data);
+    await pipeTo(ffmpegArgs(graded, { ...options, outputPath: y4mPath }), graded.data);
     await run(avifencArgs(options, y4mPath));
   } finally {
     await Bun.file(y4mPath).delete().catch(() => {});

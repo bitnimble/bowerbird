@@ -59,7 +59,7 @@ async function preview(job: PreviewJob): Promise<void> {
   // embedded JPEG is 8-bit SDR and has no headroom to carry.
   if (job.hdr) {
     const image = decodeRaw(job.rawFilePath, 16, 'rec2020-linear');
-    const common = { peakNits: job.peakNits, crf: job.crf, preset: job.preset, maxEdge: job.size } as const;
+    const common = { ...job.grade, crf: job.crf, preset: job.preset, maxEdge: job.size } as const;
     await encodeHdr(image, { ...common, variant: 'pq', medium: 'still', outputPath: job.outputPath });
     // The chosen rendition obeys the library setting exactly as an imported one
     // does, or picking "From RAW" in Firefox would show the dark still.
@@ -84,7 +84,7 @@ async function thumbnails(job: ProcessingJob): Promise<{ source: ThumbnailSource
   // call (§10.2).
   if (job.hdr && source === 'render') {
     const image = decodeRaw(job.rawFilePath, 16, 'rec2020-linear');
-    const common = { peakNits: job.peakNits, crf: job.crf, preset: job.preset, maxEdge: job.fullSize } as const;
+    const common = { ...job.grade, crf: job.crf, preset: job.preset, maxEdge: job.fullSize } as const;
     await encodeHdr(image, { ...common, variant: 'pq', medium: 'still', outputPath: job.fullOutputPath });
     // And again as a video, off the same decode, when the library asks for it.
     // Opt-in because it is a second encode per photo for a file only Firefox
@@ -107,7 +107,7 @@ async function thumbnails(job: ProcessingJob): Promise<{ source: ThumbnailSource
 async function lossless(job: LosslessJob): Promise<void> {
   if (job.hdr) {
     const image = decodeRaw(job.rawFilePath, 16, 'rec2020-linear');
-    const common = { peakNits: job.peakNits, crf: job.quantizer, preset: job.preset, maxEdge: Number.POSITIVE_INFINITY } as const;
+    const common = { ...job.grade, crf: job.quantizer, preset: job.preset, maxEdge: Number.POSITIVE_INFINITY } as const;
     await encodeHdr(image, { ...common, variant: 'pq', medium: 'still', outputPath: job.outputPath });
     // The same view for Firefox. Unlike the still it cannot stay at native size:
     // the encoder caps height at 8704, so a tall frame is fitted to it.
@@ -133,7 +133,7 @@ async function hdr(job: HdrJob): Promise<void> {
     variant: job.variant,
     medium: job.medium,
     outputPath: job.outputPath,
-    peakNits: job.peakNits,
+    ...job.grade,
     crf: job.crf,
     preset: job.preset,
     maxEdge: job.maxEdge,

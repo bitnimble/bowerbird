@@ -71,12 +71,16 @@ export const config = {
   // 60MP frame.
   losslessQuality: envNumber('LOSSLESS_QUALITY', 88),
   losslessQuantizer: envNumber('LOSSLESS_QUANTIZER', 8),
-  // HDR still, encoded as a one-frame video (§10.7). This is the exposure
-  // control as much as the peak: the decode is scene-linear, so this is what a
-  // fully exposed sensor sample is worth in nits, and it is also what the file
-  // declares as its mastering peak. 1000 puts a normally exposed frame's
-  // diffuse white near the 203-nit reference and leaves highlights above it.
+  // Display peak the BT.2390 roll-off targets, and what the file declares as its
+  // mastering peak. No longer the exposure control: the grade anchors diffuse
+  // white independently, so this only sets how much headroom sits above it.
   hdrPeakNits: envNumber('HDR_PEAK_NITS', 1000),
+  // ITU-R BT.2408 HDR Reference White, and the quantile of the frame taken to be
+  // diffuse white. Between them these decide how bright a photo renders, so they
+  // are the pair to reach for if a library comes out consistently dark or hot.
+  // 0.99 is high enough that speculars stay above it and land in the headroom.
+  hdrReferenceWhiteNits: envNumber('HDR_REFERENCE_WHITE_NITS', 203),
+  hdrWhiteQuantile: envNumber('HDR_WHITE_QUANTILE', 0.99),
   // SVT-AV1 quality and speed. A still is looked at rather than streamed, so
   // this is tighter than a video default; 24MP takes about 2.5s at preset 8.
   hdrCrf: envNumber('HDR_CRF', 20),

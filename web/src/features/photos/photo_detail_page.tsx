@@ -27,8 +27,15 @@ import {
   thumbnailUrl,
   type PreviewRendition,
 } from '../../api/client';
-import { localDateTime } from '../../api/dates';
-import { useAlbumsStore, usePhotosStore, usePresenters, useServerConfigStore, useShootsStore } from '../../app/stores_context';
+import { captureDateTime, localDateTime } from '../../api/dates';
+import {
+  useAlbumsStore,
+  useLibrariesStore,
+  usePhotosStore,
+  usePresenters,
+  useServerConfigStore,
+  useShootsStore,
+} from '../../app/stores_context';
 import { ActionMenu, type ActionGroup, Button, ICON, MoreLess, type Option, Text, TextArea } from '../../ui/ui';
 import { renditionLabel } from './photos_presenter';
 import { PhotoStage } from './photo_stage';
@@ -40,8 +47,11 @@ type Row = [label: string, value: React.ReactNode];
 // three lines, so the column stays scannable however much a camera recorded.
 const VISIBLE_ROWS = 2;
 
-function MetaPanel({ title, rows }: { title: string; rows: Row[] }): JSX.Element {
-  const [open, setOpen] = useState(false);
+function MetaPanel({ title, rows, defaultOpen }: { title: string; rows: Row[]; defaultOpen: boolean }): JSX.Element {
+  // Null until the user has an opinion, so the panel follows the layout's default
+  // when the next photo changes it and stops following the moment they toggle it.
+  const [toggled, setToggled] = useState<boolean | null>(null);
+  const open = toggled ?? defaultOpen;
   const shown = open ? rows : rows.slice(0, VISIBLE_ROWS);
   const hidden = rows.length - VISIBLE_ROWS;
 
@@ -58,7 +68,7 @@ function MetaPanel({ title, rows }: { title: string; rows: Row[] }): JSX.Element
           </Fragment>
         ))}
       </dl>
-      {hidden > 0 && <MoreLess count={hidden} open={open} onToggle={() => setOpen((v) => !v)} />}
+      {hidden > 0 && <MoreLess count={hidden} open={open} onToggle={() => setToggled(!open)} />}
     </div>
   );
 }
@@ -124,6 +134,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   const store = usePhotosStore();
   const shoots = useShootsStore();
   const albums = useAlbumsStore();
+  const libraries = useLibrariesStore();
   const serverConfig = useServerConfigStore();
   const { photos, serverConfig: configPresenter, appSettings } = usePresenters();
   const navigate = useNavigate();
@@ -212,6 +223,12 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   const showingRender = rendition === 'render' || (rendition == null && photo?.thumbnail_hdr === true);
   const hdrVideo = needsHdrVideo() && (maxQuality ? photo?.has_lossless_video === true : photo?.preview_hdr_video === true && showingRender);
 
+  // HDR only ever applies to a render, and only the library decides whether its
+  // renders get it; the photo's own thumbnail carries what it was actually built
+  // with, which is not the same thing once the setting has been changed since.
+  const library = libraryId == null ? null : libraries.byId.get(libraryId);
+  const hdr = showing !== 'embedded' && (rendition == null ? photo?.thumbnail_hdr === true : library?.preview_hdr === true);
+
   const shoot = photo?.shoot_id == null ? null : shoots.byId.get(photo.shoot_id);
   const photoAlbums = photo == null ? [] : albums.albums.filter((a) => photo.album_ids.includes(a.id));
   const notesDirty = notes !== (photo?.notes ?? '');
@@ -221,6 +238,9 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   // one wastes vertical space if the panel sits under it. Put the panel on
   // whichever edge leaves the photo biggest.
   const landscape = photo == null || photo.width >= photo.height;
+  // Beside a portrait the column runs the full height of the page, so every row
+  // fits without scrolling; under a landscape it is a 34vh strip and does not.
+  const expanded = !landscape;
   const filename = photo?.file_path.split('/').pop() ?? photoId;
 
   return (
@@ -327,6 +347,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
 
               <MetaPanel
                 title="Camera"
+                defaultOpen={expanded}
                 rows={[
                   ['Body', bodyLabel(photo.camera_make, photo.camera_model)],
                   ['Lens', photo.lens_model ?? 'not recorded'],
@@ -334,7 +355,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
                   ['Shutter', photo.shutter_speed == null ? 'not recorded' : shutterLabel(photo.shutter_speed)],
                   ['Aperture', photo.aperture == null ? 'not recorded' : `f/${photo.aperture.toFixed(1)}`],
                   ['Focal length', photo.focal_length == null ? 'not recorded' : `${Math.round(photo.focal_length)}mm`],
-                  ['Taken', localDateTime(photo.date_taken) ?? 'not recorded'],
+                  ['Taken', captureDateTime(photo.date_taken) ?? 'not recorded'],
                   [
                     'GPS',
                     photo.latitude == null || photo.longitude == null
@@ -346,6 +367,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
 
               <MetaPanel
                 title="Image preview details"
+                defaultOpen={expanded}
                 rows={[
                   // Reports the rendition actually on screen, which is the chosen
                   // one when the user has switched away from the photo's own.
@@ -354,13 +376,16 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
                   ['Source', rendition == null && photo.thumbnail_source == null ? 'unknown' : renditionLabel(showing)],
                   ['Resolution', thumbSize == null ? 'loading' : `${thumbSize.width} × ${thumbSize.height}`],
                   ['Format', thumbs?.format.toUpperCase() ?? 'WEBP'],
-                  ['Colour space', thumbs?.color_space ?? 'sRGB'],
+                  // The server config reports the SDR pipeline's output space; an
+                  // HDR render leaves it for Rec.2020 primaries and a PQ transfer.
+                  ['Colour space', hdr ? 'Rec.2020 PQ' : (thumbs?.color_space ?? 'sRGB')],
                   ['Quality', thumbs == null ? 'unknown' : `${thumbs.full.quality} (longest edge ${thumbs.full.size}px)`],
                 ]}
               />
 
               <MetaPanel
                 title="Original RAW"
+                defaultOpen={expanded}
                 rows={[
                   ['File size', photo.file_size == null ? 'unknown' : fileSizeLabel(photo.file_size)],
                   ['Dimensions', `${photo.width} × ${photo.height}`],

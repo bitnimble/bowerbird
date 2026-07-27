@@ -208,18 +208,18 @@ test('the detail view shows shooting metadata, the triage control and steps betw
   await openLibrary(page, CULL_PHOTOS_DIR);
   await page.locator('.tile__hit').first().click();
 
-  // Body and lens lead the camera panel; everything else is one click away, so
-  // each panel costs the same few lines however much the camera recorded.
+  // The fixture is portrait, so the panels sit in the full-height column beside
+  // it and open on every row. ISO/shutter/aperture are read from the RAW header.
   const camera = page.locator('.panel', { hasText: 'CAMERA' });
-  await expect(camera.locator('.meta dt')).toHaveCount(2);
   await expect(camera.getByText('Body', { exact: true })).toBeVisible();
   await expect(camera.getByText('Lens', { exact: true })).toBeVisible();
-
-  // ISO/shutter/aperture/focal are read from the RAW header; the fixture has them.
-  await camera.getByRole('button', { name: /more/ }).click();
   await expect(camera.getByText('ISO', { exact: true })).toBeVisible();
   await expect(camera.getByText('Shutter', { exact: true })).toBeVisible();
   await expect(camera.getByText('Aperture', { exact: true })).toBeVisible();
+
+  // Collapsing leaves the same two leading rows every panel keeps.
+  await camera.getByRole('button', { name: /less/ }).click();
+  await expect(camera.locator('.meta dt')).toHaveCount(2);
 
   // Three-way triage, not a checkbox: "undecided" has to be expressible.
   const triage = page.locator('.ui-seg--stretch');
@@ -230,7 +230,6 @@ test('the detail view shows shooting metadata, the triage control and steps betw
   // The served preview reports where its pixels came from and how it was encoded.
   const preview = page.locator('.panel', { hasText: 'IMAGE PREVIEW DETAILS' });
   await expect(preview.getByText('Source', { exact: true })).toBeVisible();
-  await preview.getByRole('button', { name: /more/ }).click();
   await expect(preview.getByText('AVIF')).toBeVisible();
 
   const path = page.locator('.detail__nav .ui-text--mono');

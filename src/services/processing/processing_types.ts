@@ -11,6 +11,16 @@ export function isThumbnailSource(value: string): value is ThumbnailSource {
   return (THUMBNAIL_SOURCES as readonly string[]).includes(value);
 }
 
+// How a scene-linear decode is graded to display-referred (§10.7). The three
+// travel together because none of them means anything alone: the quantile picks
+// diffuse white, the reference says what it is worth in nits, and the peak is
+// where the roll-off above it lands.
+export interface HdrGrade {
+  peakNits: number;
+  referenceWhiteNits: number;
+  whiteQuantile: number;
+}
+
 export interface ProcessingJob {
   kind: 'thumbnails';
   photoId: string;
@@ -30,7 +40,7 @@ export interface ProcessingJob {
   hdr: boolean;
   /** Also encode the HDR preview as a one-frame AV1, for Firefox (§10.7). */
   hdrVideo: boolean;
-  peakNits: number;
+  grade: HdrGrade;
   crf: number;
   preset: number;
 }
@@ -52,7 +62,7 @@ export interface PreviewJob {
   /** Also write the one-frame AV1 twin, for Firefox (§10.7). */
   hdrVideo: boolean;
   videoOutputPath: string;
-  peakNits: number;
+  grade: HdrGrade;
   crf: number;
   preset: number;
 }
@@ -76,7 +86,7 @@ export interface LosslessJob {
   /** Also write the one-frame AV1 twin, for Firefox (§10.7). */
   hdrVideo: boolean;
   videoOutputPath: string;
-  peakNits: number;
+  grade: HdrGrade;
 }
 
 // One HDR rendition: an AVIF still for Chrome, or a one-frame video for
@@ -89,7 +99,7 @@ export interface HdrJob {
   outputPath: string;
   variant: HdrVariant;
   medium: HdrMedium;
-  peakNits: number;
+  grade: HdrGrade;
   crf: number;
   preset: number;
   maxEdge: number;

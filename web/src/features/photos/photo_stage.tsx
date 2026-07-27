@@ -269,7 +269,7 @@ export function PhotoStage({ src, alt, filename, video, onImageLoad, onImageMiss
             loop
             muted
             playsInline
-            className={ready ? 'is-ready' : undefined}
+            className={ready ? 'is-ready stage__content' : 'stage__content'}
             style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}
             onError={() => {
               setFailed(true);
@@ -286,7 +286,7 @@ export function PhotoStage({ src, alt, filename, video, onImageLoad, onImageMiss
             src={shownSrc}
             alt={alt}
             draggable={false}
-            className={ready ? 'is-ready' : undefined}
+            className={ready ? 'is-ready stage__content' : 'stage__content'}
             style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}
             onError={() => {
               setFailed(true);
