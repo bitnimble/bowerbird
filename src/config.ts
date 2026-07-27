@@ -78,9 +78,14 @@ export const config = {
   // ITU-R BT.2408 HDR Reference White, and the quantile of the frame taken to be
   // diffuse white. Between them these decide how bright a photo renders, so they
   // are the pair to reach for if a library comes out consistently dark or hot.
-  // 0.99 is high enough that speculars stay above it and land in the headroom.
+  //
+  // A lower quantile renders *brighter*: it places diffuse white further down the
+  // histogram, so everything above it scales up. 0.99 was too high on a landscape
+  // - half sky means the brightest 1% is sky and speculars rather than a lit white
+  // surface - and capped a daylight frame at 470 nits with its greenery at 40.
+  // 0.90 puts the same frame's peak at 823 and its greenery at 70.
   hdrReferenceWhiteNits: envNumber('HDR_REFERENCE_WHITE_NITS', 203),
-  hdrWhiteQuantile: envNumber('HDR_WHITE_QUANTILE', 0.99),
+  hdrWhiteQuantile: envNumber('HDR_WHITE_QUANTILE', 0.9),
   // SVT-AV1 quality and speed. A still is looked at rather than streamed, so
   // this is tighter than a video default; 24MP takes about 2.5s at preset 8.
   hdrCrf: envNumber('HDR_CRF', 20),

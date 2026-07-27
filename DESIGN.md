@@ -1022,7 +1022,11 @@ Two ITU standards do the work, so no look had to be invented:
 - **ITU-R BT.2408** puts diffuse white at **203 nits** (`HDR_REFERENCE_WHITE_NITS`), the value that makes HDR read at the same brightness as the SDR beside it.
 - **ITU-R BT.2390** §5.4.1 supplies the **EETF**, a Hermite roll-off applied in PQ space that compresses everything above the display's peak into it rather than clipping.
 
-Neither standard says *which* sample is diffuse white, because a camera takes that from the metered exposure and a raw file has no rendering intent. `HDR_WHITE_QUANTILE` (default 0.99) picks it from a histogram - the same heuristic dcraw's auto-bright uses - and is the knob to reach for if a library renders consistently dark or hot.
+Neither standard says *which* sample is diffuse white, because a camera takes that from the metered exposure and a raw file has no rendering intent. `HDR_WHITE_QUANTILE` (default 0.90) picks it from a histogram - the same heuristic dcraw's auto-bright uses - and is the knob to reach for if a library renders consistently dark or hot.
+
+**A lower quantile renders brighter**, which is the opposite of the obvious reading: it places diffuse white further down the histogram, so everything above it scales up. The default was 0.99 and it was too high for landscape work. On a daylight frame that is half sky, the brightest 1% *is* sky and specular cloud edges rather than a lit white surface, so the anchor sat where the headroom should have started: peak 470 nits, greenery at 40. Measured on that frame, only **0.002% of pixels** are within a whisker of sensor saturation - a genuine specular tail of ~4,600 out of 60M - while p99 sits a full 1.21 stops below it. At 0.90 the same frame peaks at 823 with its greenery at 70.
+
+The alternative would be normalising the brightest sample to the display peak, and that is precisely what the grade exists to avoid: it makes a photo's brightness depend on whether one glint happened to clip, which is what produced the 9.3x spread in the first place. Place diffuse white correctly and the tail lands wherever the scene actually put it.
 
 The **peak is read off the frame, not off sensor saturation**, and that is what makes the grade exposure-invariant: both the white level and the peak scale with exposure, so their ratio, and therefore how much roll-off the highlights get, is a property of the scene. Anchoring the peak at sensor clip instead would give a frame shot two stops down four times the compression for the same subject.
 
@@ -1358,7 +1362,7 @@ The server is configured via environment variables:
 | `LOSSLESS_QUANTIZER` | `8` | avifenc max quantizer for the HDR one; lower is better (§10.5) |
 | `HDR_PEAK_NITS` | `1000` | Display peak the BT.2390 roll-off targets, and the declared mastering peak (§10.7.1) |
 | `HDR_REFERENCE_WHITE_NITS` | `203` | ITU-R BT.2408 HDR Reference White; what diffuse white is graded to (§10.7.1) |
-| `HDR_WHITE_QUANTILE` | `0.99` | Quantile of the frame taken as diffuse white (§10.7.1) |
+| `HDR_WHITE_QUANTILE` | `0.90` | Quantile of the frame taken as diffuse white (§10.7.1) |
 | `HDR_CRF` | `20` | Encoder quality for the HDR renditions; lower is better (§10.7) |
 | `HDR_PRESET` | `8` | Encoder speed; libaom `-cpu-used` 0-8 and avifenc `--speed` 0-10, both clamped (§10.7) |
 | `HDR_MAX_EDGE` | `3840` | Longest edge of an HDR rendition; AV1 cannot encode a full-size sensor frame (§10.7) |
