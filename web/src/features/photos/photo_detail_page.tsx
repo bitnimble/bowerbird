@@ -138,7 +138,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   const [notes, setNotes] = useState('');
   // Actual pixels of the served thumbnail, so the panel reports what is on
   // screen rather than the RAW's dimensions.
-  const [thumbSize, setThumbSize] = useState<{ width: number; height: number } | null>(null);
+  const [shownImage, setShownImage] = useState<{ width: number; height: number; bytes: number | null } | null>(null);
 
   useEffect(() => {
     // Settings first: they decide which rendition this photo opens at, and it
@@ -148,7 +148,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
     // Cleared on the route change rather than when the detail arrives: the panel
     // must stop claiming the previous photo's resolution the moment we navigate,
     // and the new image can take a while to decode.
-    setThumbSize(null);
+    setShownImage(null);
   }, [photoId, photos, configPresenter, appSettings]);
 
   // The store deliberately keeps the previous detail while the next loads, so
@@ -301,7 +301,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
           alt={filename}
           filename={filename}
           preloadSrc={preloadSrc}
-          onImageLoad={(width, height) => setThumbSize({ width, height })}
+          onImageLoad={(width, height, bytes) => setShownImage({ width, height, bytes })}
           // Only the library's default is built on sight, and only when it is a
           // stored rendition: the camera's JPEG comes out of the RAW, so a 404
           // there means the RAW is gone, which building cannot fix. A chosen
@@ -385,15 +385,25 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
                   ['Source', rendition == null && photo.rendition_source == null ? 'unknown' : renditionLabel(showing)],
                   // Named and ordered as in Original RAW below, so the same fact
                   // about two files reads the same way in both panels.
-                  ['Dimensions', thumbSize == null ? 'loading' : `${thumbSize.width} × ${thumbSize.height}`],
-                  // No size and nothing built is a rendition not made yet; no size
-                  // with `built` set is the camera JPEG's RAW having gone missing.
-                  ['File size', shownFile?.size != null ? fileSizeLabel(shownFile.size) : shownFile?.built ? 'unknown' : 'not built yet'],
-                  ['Format', thumbs?.format.toUpperCase() ?? 'WEBP'],
+                  // Both rows describe what actually arrived rather than what a
+                  // column claims: the pixels come off the decoded image, the
+                  // weight off the response that carried it.
+                  ['Dimensions', shownImage == null ? 'loading' : `${shownImage.width} × ${shownImage.height}`],
+                  ['File size', shownImage == null ? 'loading' : shownImage.bytes == null ? 'unknown' : fileSizeLabel(shownImage.bytes)],
+                  // The camera's JPEG is passed through untouched, so the encoder
+                  // settings the other two are built with say nothing about it.
+                  ['Format', showing === 'embedded' ? 'JPEG' : (thumbs?.format.toUpperCase() ?? 'WEBP')],
                   // The server config reports the SDR pipeline's output space; an
                   // HDR render leaves it for Rec.2020 primaries and a PQ transfer.
                   ['Colour space', hdr ? 'Rec.2020 PQ' : (thumbs?.color_space ?? 'sRGB')],
-                  ['Quality', thumbs == null ? 'unknown' : `${thumbs.full.quality} (longest edge ${thumbs.full.size}px)`],
+                  [
+                    'Quality',
+                    showing === 'embedded'
+                      ? 'as the camera wrote it'
+                      : thumbs == null
+                        ? 'unknown'
+                        : `${thumbs.full.quality} (longest edge ${thumbs.full.size}px)`,
+                  ],
                   ['Path', shownFile?.path ?? 'unknown'],
                 ]}
               />

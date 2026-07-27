@@ -208,9 +208,13 @@ test('the detail view shows shooting metadata, the triage control and steps betw
   await openLibrary(page, CULL_PHOTOS_DIR);
   await page.locator('.tile__hit').first().click();
 
+  // Located by title rather than by any text the panel holds: row values mention
+  // the camera too ("as the camera wrote it"), which matches more than one panel.
+  const panel = (title: string) => page.locator('.panel', { has: page.locator('.panel__title', { hasText: title }) });
+
   // The fixture is portrait, so the panels sit in the full-height column beside
   // it and open on every row. ISO/shutter/aperture are read from the RAW header.
-  const camera = page.locator('.panel', { hasText: 'CAMERA' });
+  const camera = panel('CAMERA');
   await expect(camera.getByText('Body', { exact: true })).toBeVisible();
   await expect(camera.getByText('Lens', { exact: true })).toBeVisible();
   await expect(camera.getByText('ISO', { exact: true })).toBeVisible();
@@ -228,14 +232,17 @@ test('the detail view shows shooting metadata, the triage control and steps betw
   await expect(triage.getByRole('button', { name: 'Pick' })).toBeVisible();
 
   // The served preview reports where its pixels came from and how it was encoded.
-  const preview = page.locator('.panel', { hasText: 'IMAGE PREVIEW DETAILS' });
+  // This library serves the camera's JPEG, which is passed through untouched, so
+  // the encoder settings the built renditions carry do not describe it.
+  const preview = panel('IMAGE PREVIEW DETAILS');
   await expect(preview.getByText('Source', { exact: true })).toBeVisible();
-  await expect(preview.getByText('AVIF', { exact: true })).toBeVisible();
+  await expect(preview.getByText('JPEG', { exact: true })).toBeVisible();
+  await expect(preview.getByText('as the camera wrote it')).toBeVisible();
 
   // Both panels name the file on the server they are describing. This library
   // serves the camera's JPEG, so the photo opens at the RAW's own bytes rather
   // than at a stored rendition - which is what makes them the same path here.
-  const raw = page.locator('.panel', { hasText: 'ORIGINAL RAW' });
+  const raw = panel('ORIGINAL RAW');
   const navPath = page.locator('.detail__nav .ui-text--mono');
   const relative = await navPath.innerText();
   await expect(raw.getByText(path.join(CULL_PHOTOS_DIR, relative))).toBeVisible();

@@ -329,6 +329,13 @@ export class PhotosRepository {
     return this.db.query(`UPDATE photos SET ${sets.join(', ')} WHERE id = ?`).run(...params).changes > 0;
   }
 
+  // One row, three columns, no joins: what the byte-serving paths need, as
+  // opposed to getById's detail payload. Soft-deleted rows included, unlike
+  // getBasicByIds below - the Bin is a browsable view and its images are served.
+  getBasicById(id: string): BasicPhoto | null {
+    return this.db.query('SELECT id, library_id, file_path, shoot_id FROM photos WHERE id = ?').get(id) as BasicPhoto | null;
+  }
+
   // Excludes soft-deleted photos. Callers are shoot/album membership ops and
   // banner validation; a Bin-resident deleted photo must not be movable/settable
   // via these paths (it would escape the Bin while still flagged is_deleted and

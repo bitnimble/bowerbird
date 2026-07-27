@@ -15,7 +15,7 @@ interface Props {
   src: string;
   alt: string;
   filename: string;
-  onImageLoad: (width: number, height: number) => void;
+  onImageLoad: (width: number, height: number, bytes: number | null) => void;
   // Render a <video> rather than an <img>: the HDR rendition Firefox needs.
   video?: boolean;
   // The frame to warm the cache with once this one is up. Undefined when there is
@@ -71,6 +71,16 @@ function zoomAbout(view: View, next: number, box: DOMRect | null, point: { x: nu
   const dy = point.y - (box.top + box.height / 2);
   const ratio = scale / view.scale;
   return { scale, x: dx - ratio * (dx - view.x), y: dy - ratio * (dy - view.y) };
+}
+
+// The weight of what the browser actually pulled for this src. The camera's JPEG
+// has no file on disk to stat - the server extracts it out of the RAW to serve it
+// - so the size is read back off the response that already arrived rather than
+// asked for separately. Survives a revalidation: a 304 transfers no body but
+// still reports the cached one's size.
+function transferredBytes(src: string): number | null {
+  const entry = performance.getEntriesByName(new URL(src, window.location.href).href).at(-1) as PerformanceResourceTiming | undefined;
+  return entry != null && entry.encodedBodySize > 0 ? entry.encodedBodySize : null;
 }
 
 // The image viewport: fit/zoom, wheel zoom, drag-to-pan and fullscreen. All of
@@ -292,7 +302,7 @@ export function PhotoStage({ src, alt, filename, video, preloadSrc, onImageLoad,
             onLoadedMetadata={(e) => {
               setNatural({ width: e.currentTarget.videoWidth, height: e.currentTarget.videoHeight });
               setReady(true);
-              onImageLoad(e.currentTarget.videoWidth, e.currentTarget.videoHeight);
+              onImageLoad(e.currentTarget.videoWidth, e.currentTarget.videoHeight, transferredBytes(shownSrc));
             }}
           />
         ) : (
@@ -311,7 +321,7 @@ export function PhotoStage({ src, alt, filename, video, preloadSrc, onImageLoad,
             onLoad={(e) => {
               setNatural({ width: e.currentTarget.naturalWidth, height: e.currentTarget.naturalHeight });
               setReady(true);
-              onImageLoad(e.currentTarget.naturalWidth, e.currentTarget.naturalHeight);
+              onImageLoad(e.currentTarget.naturalWidth, e.currentTarget.naturalHeight, transferredBytes(shownSrc));
             }}
           />
         )}

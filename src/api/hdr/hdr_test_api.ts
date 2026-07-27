@@ -31,7 +31,7 @@ export class HdrTestApi {
     // Through the catalogue, not straight from the URL: the id is interpolated
     // into the page's markup and script, so reflecting the parameter verbatim
     // would be reflected XSS. What gets rendered is the id the database holds.
-    app.get('/:photoId', (c) => c.html(page(this.photos.get(c.req.param('photoId') ?? '').id, this.photoIds())));
+    app.get('/:photoId', (c) => c.html(page(this.photos.locate(c.req.param('photoId') ?? '').photo.id, this.photoIds())));
     this.routes = app;
   }
 

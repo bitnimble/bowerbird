@@ -81,11 +81,6 @@ export const PhotoDetailSchema = PhotoSummarySchema.extend({
       z.object({
         path: z.string(),
         built: z.boolean(),
-        // Bytes of the file at `path`, or null when there is no file there. For
-        // the embedded rendition that is the RAW carrying the JPEG, not the JPEG
-        // itself: reading its length means a LibRaw thumb unpack, and this is on
-        // the path every image request takes.
-        size: z.number().int().nullable(),
         hdr: z.boolean(),
         // Whether the one-frame AV1 twin exists, so a client on Firefox knows it
         // may reach for it instead of a still it would render dark (§10.7).

@@ -1,4 +1,4 @@
-import { existsSync, statSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { AppError } from '../../errors';
 import type { Pagination } from '../../schemas/common';
@@ -14,17 +14,7 @@ import type { LibrariesRepository } from '../libraries/libraries_repository';
 import type { ProcessingService } from '../processing/processing_service';
 import type { ShootsRepository } from '../shoots/shoots_repository';
 import { libraryMutex } from '../sync/library_mutex';
-import type { PhotoListFilters, PhotoListResult, PhotosRepository } from './photos_repository';
-
-// Bytes on disk, or null when the file is not there. One syscall answers both
-// questions, so a rendition's size costs nothing over asking whether it exists.
-function fileSize(filePath: string): number | null {
-  try {
-    return statSync(filePath).size;
-  } catch {
-    return null;
-  }
-}
+import type { BasicPhoto, PhotoListFilters, PhotoListResult, PhotosRepository } from './photos_repository';
 
 function toFilters(query: PhotoListQuery): PhotoListFilters {
   return {
@@ -69,6 +59,19 @@ export class PhotosService {
     };
   }
 
+  // The photo and its library, and nothing else. Everything that serves bytes or
+  // builds a file wants these three columns; `get` above assembles the detail
+  // view's payload - a second query for album membership, a stat per rendition,
+  // a join for the ordering date - and used to be what every image request went
+  // through to read them. A grid page of 100 tiles paid for all of it 100 times.
+  locate(photoId: string): { photo: BasicPhoto; library: Library } {
+    const photo = this.photos.getBasicById(photoId);
+    if (!photo) throw new AppError('NOT_FOUND', `photo not found: ${photoId}`);
+    const library = this.libraries.getById(photo.library_id);
+    if (!library) throw new AppError('NOT_FOUND', `library not found: ${photo.library_id}`);
+    return { photo, library };
+  }
+
   // Answered from disk rather than from a column, because settings are not
   // retroactive: a library switched to HDR after an import has SDR renditions,
   // and a client asking for a file that was never built would sit on a retrying
@@ -77,22 +80,17 @@ export class PhotosService {
     const hdr = library.preview_hdr;
     const stored = (rendition: Rendition) => {
       const file = getRenditionPath(library, photoId, rendition, hdr);
-      const size = fileSize(file);
       return {
         path: file,
-        built: size != null,
-        size,
+        built: existsSync(file),
         hdr,
         video: hdr && existsSync(getRenditionPath(library, photoId, rendition, hdr, true)),
       };
     };
-    const original = getOriginalPath(library, filePath);
     return {
       // The camera's JPEG is the RAW's own bytes, so it is always available and
-      // never built (§10.2) - `built` says there is no build step, not that the
-      // file is there, which is what is_missing is for. Both other fields describe
-      // the RAW that carries it, so a size of null here means the original is gone.
-      embedded: { path: original, built: true, size: fileSize(original), hdr: false, video: false },
+      // never built (§10.2).
+      embedded: { path: getOriginalPath(library, filePath), built: true, hdr: false, video: false },
       full: stored('full'),
       max: stored('max'),
     };
@@ -185,9 +183,7 @@ export class PhotosService {
   // one is seconds of work and tens of megabytes, which is why none of this
   // happens at import.
   async buildRendition(photoId: string, rendition: Rendition): Promise<void> {
-    const photo = this.get(photoId);
-    const library = this.libraries.getById(photo.library_id);
-    if (!library) throw new AppError('NOT_FOUND', `library not found: ${photo.library_id}`);
+    const { photo, library } = this.locate(photoId);
 
     // Both renditions follow the library's HDR setting: they are the same render
     // from the same RAW, and dropping one to SDR would make it the odd one out.
@@ -206,9 +202,7 @@ export class PhotosService {
   // and a browser that does one may not do the other. Sequential rather than
   // parallel because each is a full-resolution decode and encode.
   async buildHdr(photoId: string): Promise<void> {
-    const photo = this.get(photoId);
-    const library = this.libraries.getById(photo.library_id);
-    if (!library) throw new AppError('NOT_FOUND', `library not found: ${photo.library_id}`);
+    const { photo, library } = this.locate(photoId);
 
     const source = getOriginalPath(library, photo.file_path);
     if (!existsSync(source)) throw new AppError('NOT_FOUND', `original file not found: ${photo.file_path}`);

@@ -37,7 +37,7 @@ export class QualityCheckApi {
     // into the page's markup and script, so reflecting the parameter verbatim
     // would be reflected XSS. What gets rendered is the id the database holds,
     // and an unknown one is a 404 rather than a page that fails on every image.
-    app.get('/:photoId', (c) => c.html(page(this.photos.get(c.req.param('photoId') ?? '').id)));
+    app.get('/:photoId', (c) => c.html(page(this.photos.locate(c.req.param('photoId') ?? '').photo.id)));
 
     app.get('/img/:photoId/:quality', async (c) => {
       const quality = Number(c.req.param('quality'));
@@ -47,7 +47,7 @@ export class QualityCheckApi {
       // Resolved before it reaches a path, for the same reason as above: the id
       // names a cache file, and a `..` in the parameter would name someone
       // else's.
-      const photo = this.photos.get(c.req.param('photoId') ?? '');
+      const { photo, library } = this.photos.locate(c.req.param('photoId') ?? '');
 
       const file = path.join(CACHE, `${photo.id}-${quality}.avif`);
       let encodeMs = 0;
@@ -56,7 +56,6 @@ export class QualityCheckApi {
         // Created here rather than once at startup: this lives in the temp
         // directory, which something else is entitled to clean at any time.
         mkdirSync(CACHE, { recursive: true });
-        const library = this.libraries.get(photo.library_id);
         const image = decodeRaw(getOriginalPath(library, photo.file_path), 8);
         const raw = { raw: { width: image.width, height: image.height, channels: image.channels } };
         // Timed from here, not from the decode: the RAW decode is the same work

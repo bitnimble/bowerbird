@@ -3,20 +3,31 @@ import type { Context } from 'hono';
 import sharp from 'sharp';
 import { AppError } from '../../errors';
 import type { Library } from '../../schemas/libraries';
-import type { PhotoDetail } from '../../schemas/photos';
 import { getHdrPath, getOriginalPath, getRenditionPath } from '../../utils/paths';
 import { readEmbeddedJpeg } from '../../services/processing/raw_decoder';
-import type { LibrariesService } from '../../services/libraries/libraries_service';
 import { contentTypeFor, isHdrMedium, isHdrVariant } from '../../services/processing/hdr_media';
 import { isRendition, renditionContentType } from '../../services/processing/renditions';
+import type { BasicPhoto } from '../../services/photos/photos_repository';
 import type { PhotosService } from '../../services/photos/photos_service';
 
 // Where a variant's bytes live, given the photo it belongs to. Passing this in
 // keeps `serve` about HTTP: adding a variant is a route, not another branch in
 // a path-resolving conditional.
-type PathFor = (library: Library, photo: PhotoDetail) => string;
+//
+// A BasicPhoto, not a PhotoDetail: serving bytes needs an id, a library and a
+// file path, and asking for the detail payload put a second query and a stat per
+// rendition on every thumbnail in the grid (§8.2 `locate`).
+type PathFor = (library: Library, photo: BasicPhoto) => string;
 
 const JPEG_QUALITY = 92;
+
+// The viewer reports the weight of the rendition it is showing, and reads it off
+// the response it already received rather than asking for a number the server
+// would have to compute a second time (the camera's JPEG has no file on disk to
+// stat, so its size is only known by extracting it, which is what serving it
+// does anyway). Resource Timing hides body sizes cross-origin without this, and
+// the app and the API are different origins in development.
+const TIMING_ALLOW_ORIGIN = { 'Timing-Allow-Origin': '*' };
 
 // Every stored rendition is AVIF now (§10.2).
 const AVIF = 'image/avif';
@@ -26,10 +37,7 @@ const AVIF = 'image/avif';
 export class ImageApi {
   readonly routes: Hono;
 
-  constructor(
-    private readonly photos: PhotosService,
-    private readonly libraries: LibrariesService,
-  ) {
+  constructor(private readonly photos: PhotosService) {
     const app = new Hono();
     // One route for every stored rendition, named rather than spelled out per
     // size: `grid`, `full`, `max`, optionally `/video` for the one-frame AV1 twin
@@ -69,13 +77,12 @@ export class ImageApi {
   private async serveEmbedded(c: Context): Promise<Response> {
     const photoId = c.req.param('photoId');
     if (photoId == null) throw new AppError('NOT_FOUND', 'photo not found');
-    const photo = this.photos.get(photoId);
-    const library = this.libraries.get(photo.library_id);
+    const { photo, library } = this.photos.locate(photoId);
 
     const jpeg = readEmbeddedJpeg(getOriginalPath(library, photo.file_path));
     if (jpeg == null) throw new AppError('NOT_FOUND', `this file has no embedded JPEG preview: ${photoId}`);
     return new Response(new Uint8Array(jpeg), {
-      headers: { 'Content-Type': 'image/jpeg', 'Cache-Control': 'no-cache' },
+      headers: { 'Content-Type': 'image/jpeg', 'Cache-Control': 'no-cache', ...TIMING_ALLOW_ORIGIN },
     });
   }
 
@@ -85,8 +92,7 @@ export class ImageApi {
   private async serveJpeg(c: Context): Promise<Response> {
     const photoId = c.req.param('photoId');
     if (photoId == null) throw new AppError('NOT_FOUND', 'photo not found');
-    const photo = this.photos.get(photoId);
-    const library = this.libraries.get(photo.library_id);
+    const { photo, library } = this.photos.locate(photoId);
 
     const file = Bun.file(getRenditionPath(library, photo.id, 'full', library.preview_hdr));
     if (!(await file.exists())) throw new AppError('NOT_FOUND', `image not found on disk: ${photoId}`);
@@ -103,7 +109,7 @@ export class ImageApi {
   }
 
   // 404s go through AppError (not c.notFound()) so every not-available response
-  // shares the standard JSON envelope. this.photos.get already throws NOT_FOUND.
+  // shares the standard JSON envelope. this.photos.locate already throws NOT_FOUND.
   //
   // Soft-deleted photos are served, not hidden: the Bin is a browsable view that
   // a user restores from, and it is unusable if every frame in it is a grey box.
@@ -111,9 +117,8 @@ export class ImageApi {
   private async serve(c: Context, contentType: string, pathFor: PathFor): Promise<Response> {
     const photoId = c.req.param('photoId');
     if (photoId == null) throw new AppError('NOT_FOUND', 'photo not found');
-    const photo = this.photos.get(photoId);
+    const { photo, library } = this.photos.locate(photoId);
 
-    const library = this.libraries.get(photo.library_id);
     const file = Bun.file(pathFor(library, photo));
     if (!(await file.exists())) throw new AppError('NOT_FOUND', `image not found on disk: ${photoId}`);
 
@@ -130,6 +135,7 @@ export class ImageApi {
       'Accept-Ranges': 'bytes',
       'Cache-Control': 'no-cache',
       ETag: etag,
+      ...TIMING_ALLOW_ORIGIN,
     };
     if (c.req.header('if-none-match') === etag) return new Response(null, { status: 304, headers });
 
