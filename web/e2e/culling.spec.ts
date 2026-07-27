@@ -2,7 +2,7 @@ import { existsSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
 import { CULL_PHOTOS_DIR, PHOTO_NAMES } from './fixture_library';
-import { addLibrary, openLibrary, syncLibrary, viewOriginal } from './helpers';
+import { addLibrary, openLibrary, syncLibrary, viewMaxQuality } from './helpers';
 
 // This spec has its own library root, so binning and rejecting here cannot
 // disturb the counts the other spec asserts.
@@ -304,9 +304,14 @@ test('a chosen preview rendition is cached on disk, and dropped when the photo i
   const cached = path.join(CULL_PHOTOS_DIR, '.bowerbird', 'previews', 'render', `${photoId}.avif`);
   expect(existsSync(cached)).toBe(true);
 
-  await showRendition('Embedded JPEG');
-  await expect(preview.getByText('embedded JPEG')).toBeVisible();
-  await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
+  // The camera's JPEG is not offered once a render is on screen: it is the one
+  // step down the quality ladder, and the menu drops it (§10.2).
+  await page.getByRole('button', { name: 'Actions' }).click();
+  await page.getByRole('menuitem', { name: 'Image preview' }).focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(page.getByRole('menuitem', { name: 'Embedded JPEG', exact: true })).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Escape');
 
   // Rebuilding is what a changed RAW triggers too, and it must take the cached
   // renditions with it or they would show the previous file forever.
@@ -318,23 +323,17 @@ test('a chosen preview rendition is cached on disk, and dropped when the photo i
   await expect.poll(() => existsSync(cached), { timeout: 15_000 }).toBe(false);
 });
 
-// Playwright's stock Chromium has JPEG XL compiled in but switched off, which is
-// what every browser without native support looks like to the viewer. The
-// native path is covered by native_jxl.spec.ts, which needs its own worker.
-test('View original decodes the JXL with wasm where the browser has no native support', async ({ page }) => {
-  await viewOriginal(page, CULL_PHOTOS_DIR);
+// The max-quality rendition goes straight to an <img>: AVIF decodes natively in
+// every browser, which is why it replaced the JXL that needed a wasm module and
+// a PNG transcode first (§10.5).
+test('the max-quality rendition is served as a full-resolution AVIF', async ({ page }) => {
+  test.setTimeout(240_000);
+  await viewMaxQuality(page, CULL_PHOTOS_DIR);
 
-  // The stage can only show this if the wasm decode and the PNG transcode both
-  // worked: the src becomes a blob.
   const shown = page.locator('.stage__viewport img');
-  expect(await shown.evaluate((i: HTMLImageElement) => i.src.startsWith('blob:'))).toBe(true);
+  expect(await shown.evaluate((i: HTMLImageElement) => i.src)).toContain('/lossless.avif');
   // Full resolution, not the 3840-edge preview it replaced.
   expect(await shown.evaluate((i: HTMLImageElement) => i.naturalWidth)).toBeGreaterThan(3840);
-
-  // Leaving the view must release the blob; a full-resolution PNG is hundreds of
-  // megabytes and an object URL keeps it alive for the life of the document.
-  await page.getByRole('button', { name: 'Back to preview' }).click();
-  await expect(shown).toHaveAttribute('src', /^http/);
 });
 
 test('the stage never shows the previous photo after navigating to another one', async ({ page }) => {

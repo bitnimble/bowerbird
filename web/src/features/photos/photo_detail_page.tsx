@@ -9,7 +9,6 @@ import {
   FileType,
   Image as ImageIcon,
   Maximize2,
-  Minimize2,
   RefreshCw,
   RotateCw,
   Sparkles,
@@ -17,11 +16,21 @@ import {
   Wand2,
 } from 'lucide-react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { jpegUrl, losslessVideoUrl, needsHdrVideo, originalUrl, previewUrl, previewVideoUrl, thumbnailUrl, type ThumbnailSource } from '../../api/client';
+import {
+  jpegUrl,
+  losslessUrl,
+  losslessVideoUrl,
+  needsHdrVideo,
+  originalUrl,
+  previewUrl,
+  previewVideoUrl,
+  thumbnailUrl,
+  type PreviewRendition,
+} from '../../api/client';
 import { localDateTime } from '../../api/dates';
 import { useAlbumsStore, usePhotosStore, usePresenters, useServerConfigStore, useShootsStore } from '../../app/stores_context';
 import { ActionMenu, type ActionGroup, Button, ICON, MoreLess, type Option, Text, TextArea } from '../../ui/ui';
-import { sourceLabel } from './photos_presenter';
+import { renditionLabel } from './photos_presenter';
 import { PhotoStage } from './photo_stage';
 import { TRIAGE_KEYS, TriageControl } from './triage_control';
 
@@ -87,22 +96,28 @@ const DOWNLOADS: Option<'raw' | 'jpeg'>[] = [
   { value: 'jpeg', label: 'JPEG', icon: <FileImage size={ICON} /> },
 ];
 
-type PhotoAction = ThumbnailSource | 'metadata' | 'lossless';
+type PhotoAction = PreviewRendition | 'metadata';
+
+const RENDITIONS: Option<PhotoAction>[] = [
+  { value: 'embedded', label: 'Embedded JPEG', icon: <Sparkles size={ICON} /> },
+  { value: 'render', label: 'From RAW', icon: <Wand2 size={ICON} /> },
+  { value: 'max', label: 'From RAW (max quality)', icon: <Maximize2 size={ICON} /> },
+];
 
 // Renditions of the same frame rather than commands: each is built once and
 // cached, so these read as "which one am I looking at", not "rebuild it now".
-const ACTIONS: (Option<PhotoAction> | ActionGroup<PhotoAction>)[] = [
-  { value: 'metadata', label: 'Refresh metadata', icon: <RotateCw size={ICON} /> },
-  {
-    label: 'Image preview',
-    icon: <ImageIcon size={ICON} />,
-    options: [
-      { value: 'embedded', label: 'Embedded JPEG', icon: <Sparkles size={ICON} /> },
-      { value: 'render', label: 'From RAW', icon: <Wand2 size={ICON} /> },
-      { value: 'lossless', label: 'From RAW (max quality)', icon: <Maximize2 size={ICON} /> },
-    ],
-  },
-];
+// The camera's JPEG is dropped once a render is on screen: it is the only step
+// down the quality ladder, and nobody goes back to it having seen the RAW.
+function actions(showing: PreviewRendition): (Option<PhotoAction> | ActionGroup<PhotoAction>)[] {
+  return [
+    { value: 'metadata', label: 'Refresh metadata', icon: <RotateCw size={ICON} /> },
+    {
+      label: 'Image preview',
+      icon: <ImageIcon size={ICON} />,
+      options: showing === 'embedded' ? RENDITIONS : RENDITIONS.filter((option) => option.value !== 'embedded'),
+    },
+  ];
+}
 
 export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element {
   const { photoId = '' } = useParams();
@@ -110,7 +125,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   const shoots = useShootsStore();
   const albums = useAlbumsStore();
   const serverConfig = useServerConfigStore();
-  const { photos, serverConfig: configPresenter } = usePresenters();
+  const { photos, serverConfig: configPresenter, appSettings } = usePresenters();
   const navigate = useNavigate();
   const [notes, setNotes] = useState('');
   // Actual pixels of the served thumbnail, so the panel reports what is on
@@ -118,13 +133,15 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   const [thumbSize, setThumbSize] = useState<{ width: number; height: number } | null>(null);
 
   useEffect(() => {
-    void photos.openDetail(photoId);
+    // Settings first: they decide which rendition this photo opens at, and it
+    // is fetched once per session, so only the first photo pays for it.
+    void appSettings.load().then(() => photos.openDetail(photoId));
     void configPresenter.load();
     // Cleared on the route change rather than when the detail arrives: the panel
     // must stop claiming the previous photo's resolution the moment we navigate,
     // and the new image can take a while to decode.
     setThumbSize(null);
-  }, [photoId, photos, configPresenter]);
+  }, [photoId, photos, configPresenter, appSettings]);
 
   // The store deliberately keeps the previous detail while the next loads, so
   // the rail doesn't collapse on every next/prev. Everything driven by *this*
@@ -139,12 +156,6 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   const prevId = store.prevPhotoId;
   const nextId = store.nextPhotoId;
   const libraryId = store.detailLibraryId;
-
-  // The render is built once and cached server-side; a second visit only pays
-  // for the download and the wasm decode.
-  async function showOriginal(): Promise<void> {
-    await photos.showLossless(photoId);
-  }
 
   // Stepping through frames and judging them is the whole point of a detail view
   // during a cull, so the verdict keys work here exactly as they do in the grid.
@@ -180,21 +191,26 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
     );
   }
 
+  // Null is the photo's own thumbnail, which is already one of the three: the
+  // rendition its library builds on import. Naming it keeps the menu and the
+  // panel honest about what is on screen without a fourth state to reason about.
+  const rendition = store.rendition;
+  const showing: PreviewRendition = rendition ?? photo?.thumbnail_source ?? 'embedded';
+  const maxQuality = rendition === 'max';
   const stillSrc =
-    store.lossless ??
-    (store.previewSource == null
-      ? thumbnailUrl(photoId, 'full', store.rebuiltAt)
-      : previewUrl(photoId, store.previewSource, store.rebuiltAt));
+    rendition === 'max'
+      ? losslessUrl(photoId)
+      : rendition == null
+        ? thumbnailUrl(photoId, 'full', store.rebuiltAt)
+        : previewUrl(photoId, rendition, store.rebuiltAt);
 
   // Firefox renders an HDR still dark - it applies a PQ transfer to nothing but
   // video - so it gets the one-frame video of whichever rendition is showing
   // instead (§10.7). Every rendition is the same picture at a different quality,
   // so each has a twin where HDR applies; the embedded one never does, being an
   // 8-bit SDR JPEG, so its still is already right.
-  const showingRender = store.previewSource === 'render' || (store.previewSource == null && photo?.thumbnail_hdr === true);
-  const hdrVideo =
-    needsHdrVideo() &&
-    (store.lossless != null ? photo?.has_lossless_video === true : photo?.preview_hdr_video === true && showingRender);
+  const showingRender = rendition === 'render' || (rendition == null && photo?.thumbnail_hdr === true);
+  const hdrVideo = needsHdrVideo() && (maxQuality ? photo?.has_lossless_video === true : photo?.preview_hdr_video === true && showingRender);
 
   const shoot = photo?.shoot_id == null ? null : shoots.byId.get(photo.shoot_id);
   const photoAlbums = photo == null ? [] : albums.albums.filter((a) => photo.album_ids.includes(a.id));
@@ -231,11 +247,10 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
               Actions
             </>
           }
-          options={ACTIONS}
+          options={actions(showing)}
           onSelect={(action) => {
             if (action === 'metadata') void photos.refreshMetadata([photoId]);
-            else if (action === 'lossless') void showOriginal();
-            else void photos.showPreview(photoId, action);
+            else void photos.chooseRendition(photoId, action);
           }}
         />
         <ActionMenu
@@ -250,13 +265,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
             window.location.href = kind === 'raw' ? originalUrl(photoId) : jpegUrl(photoId);
           }}
         />
-        {(store.buildingLossless || store.buildingPreview) && <Text variant="mono">building…</Text>}
-        {(store.lossless != null || store.previewSource != null) && (
-          <Button onClick={store.lossless != null ? photos.hideLossless : photos.resetPreview}>
-            <Minimize2 size={ICON} />
-            Back to preview
-          </Button>
-        )}
+        {store.buildingRendition && <Text variant="mono">building…</Text>}
         {photo != null && !photo.is_deleted && (
           <Button variant="danger" onClick={() => void photos.deletePhotos([photo.id])}>
             <Trash2 size={ICON} />
@@ -269,14 +278,14 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
         {/* Keyed off the route, not the loaded detail, so the photo on screen is
             always the one the URL asks for. */}
         <PhotoStage
-          src={hdrVideo ? (store.lossless != null ? losslessVideoUrl(photoId) : previewVideoUrl(photoId, store.rebuiltAt)) : stillSrc}
+          src={hdrVideo ? (maxQuality ? losslessVideoUrl(photoId) : previewVideoUrl(photoId, store.rebuiltAt)) : stillSrc}
           video={hdrVideo}
           alt={filename}
           filename={filename}
           onImageLoad={(width, height) => setThumbSize({ width, height })}
           // Only the photo's own preview is built on sight. A chosen rendition was
           // built before it was shown, so a 404 there is a real fault, not a gap.
-          onImageMissing={store.previewSource != null ? undefined : () => void photos.buildMissingPreview(photoId)}
+          onImageMissing={rendition != null ? undefined : () => void photos.buildMissingPreview(photoId)}
         />
 
         <div className="detail__panels">
@@ -342,16 +351,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
                   // one when the user has switched away from the photo's own.
                   // Null on rows thumbnailed before the column existed, which is
                   // "not recorded" rather than "not built".
-                  [
-                    'Source',
-                    store.lossless != null
-                      ? 'RAW render (max quality)'
-                      : store.previewSource != null
-                        ? sourceLabel(store.previewSource)
-                        : photo.thumbnail_source == null
-                          ? 'unknown'
-                          : sourceLabel(photo.thumbnail_source),
-                  ],
+                  ['Source', rendition == null && photo.thumbnail_source == null ? 'unknown' : renditionLabel(showing)],
                   ['Resolution', thumbSize == null ? 'loading' : `${thumbSize.width} × ${thumbSize.height}`],
                   ['Format', thumbs?.format.toUpperCase() ?? 'WEBP'],
                   ['Colour space', thumbs?.color_space ?? 'sRGB'],

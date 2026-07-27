@@ -9,7 +9,6 @@ export const E2E_ROOT = '/tmp/bowerbird-e2e';
 // see each other's changes and depend on file order.
 export const PHOTOS_DIR = path.join(E2E_ROOT, 'photos');
 export const CULL_PHOTOS_DIR = path.join(E2E_ROOT, 'cull-photos');
-export const NATIVE_PHOTOS_DIR = path.join(E2E_ROOT, 'native-photos');
 export const DB_PATH = path.join(E2E_ROOT, 'e2e.db');
 export const API_PORT = 3111;
 export const WEB_PORT = 5199;
@@ -26,7 +25,7 @@ export const PHOTO_NAMES = ['alpha.arw', 'beta.arw'];
 // until this directory exists.
 export function prepareFixture(): void {
   rmSync(E2E_ROOT, { recursive: true, force: true });
-  for (const dir of [PHOTOS_DIR, CULL_PHOTOS_DIR, NATIVE_PHOTOS_DIR]) {
+  for (const dir of [PHOTOS_DIR, CULL_PHOTOS_DIR]) {
     mkdirSync(dir, { recursive: true });
     for (const name of PHOTO_NAMES) copyFileSync(FIXTURE, path.join(dir, name));
   }

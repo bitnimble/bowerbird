@@ -1,8 +1,8 @@
 import { observer } from 'mobx-react-lite';
 import { useEffect, useState } from 'react';
-import { FolderPlus, RefreshCw, Sparkles, Trash2, Wand2 } from 'lucide-react';
-import type { Library, PreviewSource } from '../../api/client';
-import { useLibrariesStore, usePresenters, useSyncStore } from '../../app/stores_context';
+import { FolderPlus, History, Maximize2, RefreshCw, Sparkles, Trash2, Wand2 } from 'lucide-react';
+import type { Library, PreviewRenditionMode, PreviewSource } from '../../api/client';
+import { useAppSettingsStore, useLibrariesStore, usePresenters, useSyncStore } from '../../app/stores_context';
 import { Button, Heading, ICON, type Option, SegmentedControl, Text, TextField } from '../../ui/ui';
 import { SyncStrip } from '../sync/sync_strip';
 
@@ -144,14 +144,51 @@ const PreviewSettings = observer(function PreviewSettings({ library }: { library
   );
 });
 
+const RENDITION_MODES: Option<PreviewRenditionMode>[] = [
+  { value: 'embedded', label: 'Camera JPEG', icon: <Sparkles size={ICON} /> },
+  { value: 'render', label: 'From RAW', icon: <Wand2 size={ICON} /> },
+  { value: 'max', label: 'Max quality', icon: <Maximize2 size={ICON} /> },
+  { value: 'remember', label: 'Last used', icon: <History size={ICON} /> },
+  { value: 'remember_per_photo', label: 'Last used per photo', icon: <History size={ICON} /> },
+];
+
+// Global rather than per library: it is about how you look at photos, not about
+// what a catalogue holds, and the renditions are interchangeable views of the
+// same frame (§10.2). Server-side rather than in this browser, because the same
+// catalogue gets opened from a phone and a desktop and "where I left off" is
+// worth nothing if it only holds on one of them.
+const ViewingSettings = observer(function ViewingSettings(): JSX.Element {
+  const settings = useAppSettingsStore();
+  const { appSettings } = usePresenters();
+
+  return (
+    <div className="panel">
+      <SegmentedControl
+        label="Open photos at"
+        options={RENDITION_MODES}
+        value={settings.previewRenditionMode}
+        onChange={(mode) => void appSettings.setPreviewRenditionMode(mode)}
+      />
+      <Text variant="mono" as="p">
+        The same picture at three quality levels: the camera&apos;s own JPEG, a render of the RAW, and a full-resolution render. Each is
+        built the first time it is asked for and cached, so anything above the one your library builds on import costs a wait the first
+        time you open a photo.
+      </Text>
+    </div>
+  );
+});
+
 export const SettingsPage = observer(function SettingsPage(): JSX.Element {
   const store = useLibrariesStore();
   const { libraries } = usePresenters();
   const [rootPath, setRootPath] = useState('');
 
+  const { appSettings } = usePresenters();
+
   useEffect(() => {
     void libraries.load();
-  }, [libraries]);
+    void appSettings.load();
+  }, [libraries, appSettings]);
 
   async function submit(e: React.FormEvent): Promise<void> {
     e.preventDefault();
@@ -199,6 +236,11 @@ export const SettingsPage = observer(function SettingsPage(): JSX.Element {
       ) : (
         <LibrarySettings />
       )}
+
+      <Text variant="label" as="div" className="panel__title settings__group">
+        Viewing
+      </Text>
+      <ViewingSettings />
 
       <Text variant="label" as="div" className="panel__title settings__group">
         Import

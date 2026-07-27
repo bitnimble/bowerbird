@@ -2,15 +2,18 @@ import { action, runInAction } from 'mobx';
 import {
   ApiError,
   api,
-  losslessUrl,
   type Ordering,
+  type PhotoDetail,
   type PhotoListParams,
   type PhotoListResponse,
   type PhotoSummary,
+  type PreviewRendition,
   type ThumbnailSource,
   type Triage,
 } from '../../api/client';
 import type { AlbumsPresenter } from '../albums/albums_presenter';
+import type { AppSettingsPresenter } from '../settings/app_settings_presenter';
+import type { AppSettingsStore } from '../settings/app_settings_store';
 import type { ShootsPresenter } from '../shoots/shoots_presenter';
 import type { ToastsPresenter } from '../toasts/toasts_presenter';
 import { activeFilters, type PhotoFilters, type PhotoSource, type PhotosStore, type ViewMode } from './photos_store';
@@ -35,6 +38,11 @@ export function sourceLabel(source: ThumbnailSource): string {
   return source === 'embedded' ? 'embedded JPEG' : 'RAW render';
 }
 
+export function renditionLabel(rendition: PreviewRendition): string {
+  if (rendition === 'embedded') return 'embedded JPEG';
+  return rendition === 'render' ? 'RAW render' : 'RAW render (max quality)';
+}
+
 export class PhotosPresenter {
   // Only the newest list request may write to the store; an older one that
   // resolves late (slow page of a big library) would otherwise overwrite it.
@@ -49,6 +57,8 @@ export class PhotosPresenter {
     private readonly shoots: ShootsPresenter,
     private readonly albums: AlbumsPresenter,
     private readonly toasts: ToastsPresenter,
+    private readonly settings: AppSettingsStore,
+    private readonly settingsPresenter: AppSettingsPresenter,
   ) {}
 
   async open(source: PhotoSource): Promise<void> {
@@ -109,54 +119,52 @@ export class PhotosPresenter {
     this.clearSelection();
   }
 
-  // Switches the detail view to the preview built from `source`, building it the
-  // first time and serving the cached file every time after. The lossless render
-  // is the same idea one step further up in quality, so it is hidden here rather
-  // than left on screen underneath a rendition the user just chose instead.
-  async showPreview(photoId: string, source: ThumbnailSource): Promise<void> {
-    this.hideLossless();
-    runInAction(() => (this.store.buildingPreview = true));
+  // The rendition the user asked for, which is also the one to reopen at: which
+  // of those two memories it lands in is the setting's business, not this one's
+  // (§10.2).
+  async chooseRendition(photoId: string, rendition: PreviewRendition): Promise<void> {
+    await this.showRendition(photoId, rendition);
+    if (this.store.rendition !== rendition) return; // the build failed; nothing to remember
+    if (this.settings.previewRenditionMode === 'remember_per_photo') await this.patch(photoId, { preview_rendition: rendition });
+    else await this.settingsPresenter.rememberRendition(rendition);
+  }
+
+  // Builds the rendition the first time and serves the cached file every time
+  // after. The photo's own thumbnail already is one of the three, so asking for
+  // that one costs a round trip the server answers from a `stat` (§10.2).
+  private async showRendition(photoId: string, rendition: PreviewRendition): Promise<void> {
+    runInAction(() => (this.store.buildingRendition = true));
     try {
-      await api.buildPreview(photoId, source);
+      if (rendition === 'max') {
+        if (this.store.detail?.id === photoId && !this.store.detail.has_lossless) await api.buildLossless(photoId);
+      } else {
+        await api.buildPreview(photoId, rendition);
+      }
       // The build may have written an HDR video beside the still, and only the
       // detail knows whether one exists. Without this, Firefox keeps showing the
       // dark still until the page is reloaded (§10.7).
       await this.refreshDetail();
-      runInAction(() => (this.store.previewSource = source));
+      runInAction(() => (this.store.rendition = rendition));
     } catch (err) {
       this.fail(err);
     } finally {
-      runInAction(() => (this.store.buildingPreview = false));
+      runInAction(() => (this.store.buildingRendition = false));
     }
   }
 
-  @action.bound
-  resetPreview(): void {
-    this.store.previewSource = null;
-  }
-
-  // Builds the full-resolution render if it does not exist yet, then hands the
-  // URL straight to the <img>. It used to be decoded here, because no browser
-  // read JPEG XL without a wasm module and a PNG transcode; it is AVIF now, so
-  // the browser does all of it (§10.5).
-  async showLossless(photoId: string): Promise<void> {
-    runInAction(() => (this.store.buildingLossless = true));
-    try {
-      if (this.store.detail?.id === photoId && !this.store.detail.has_lossless) {
-        await api.buildLossless(photoId);
-        await this.refreshDetail();
-      }
-      runInAction(() => (this.store.lossless = losslessUrl(photoId)));
-    } catch (err) {
-      this.fail(err);
-    } finally {
-      runInAction(() => (this.store.buildingLossless = false));
-    }
-  }
-
-  @action.bound
-  hideLossless(): void {
-    this.store.lossless = null;
+  // What to open a photo at. Null means its own thumbnail: either nothing has
+  // been chosen yet for the remembering modes to remember, or the choice is the
+  // rendition the thumbnail already is, and building a second copy of a picture
+  // that is already on disk would be a slow way to show the same thing.
+  private openingRendition(detail: PhotoDetail): PreviewRendition | null {
+    const mode = this.settings.previewRenditionMode;
+    const target =
+      mode === 'remember'
+        ? this.settings.lastPreviewRendition
+        : mode === 'remember_per_photo'
+          ? detail.preview_rendition
+          : mode;
+    return target === detail.thumbnail_source ? null : target;
   }
 
   async goToPage(index: number): Promise<void> {
@@ -186,6 +194,8 @@ export class PhotosPresenter {
       // neighbours are unknown and prev/next are dead. Open the photo's library
       // so stepping works from a deep link as well as from the grid.
       if (this.store.source == null) await this.open({ kind: 'library', libraryId: detail.library_id });
+      const opening = this.openingRendition(detail);
+      if (opening != null) await this.showRendition(photoId, opening);
     } catch (err) {
       runInAction(() => {
         this.store.detailLoading = false;
@@ -568,7 +578,8 @@ export class PhotosPresenter {
     this.store.error = null;
     // Per photo, not sticky: the next photo may have no preview cached for the
     // rendition this one was showing, which would be a 404 rather than a picture.
-    this.store.previewSource = null;
+    // Reopening it there is the setting's job, and it builds first.
+    this.store.rendition = null;
   }
 
   @action.bound

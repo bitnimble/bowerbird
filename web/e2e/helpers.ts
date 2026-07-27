@@ -26,7 +26,7 @@ export async function openLibrary(page: Page, rootPath: string): Promise<void> {
 
 // Opens the first photo and swaps the preview for the full-resolution render,
 // which the server builds on first request.
-export async function viewOriginal(page: Page, rootPath: string): Promise<void> {
+export async function viewMaxQuality(page: Page, rootPath: string): Promise<void> {
   await page.goto('/settings');
   await openLibrary(page, rootPath);
   await page.locator('.tile__hit').first().click();
@@ -38,5 +38,7 @@ export async function viewOriginal(page: Page, rootPath: string): Promise<void> 
   await page.getByRole('menuitem', { name: 'Image preview' }).focus();
   await page.keyboard.press('ArrowRight');
   await page.getByRole('menuitem', { name: 'From RAW (max quality)' }).click();
-  await expect(page.getByRole('button', { name: 'Back to preview' })).toBeVisible({ timeout: 180_000 });
+  await expect(page.locator('.panel', { hasText: 'IMAGE PREVIEW DETAILS' }).getByText('RAW render (max quality)')).toBeVisible({
+    timeout: 180_000,
+  });
 }

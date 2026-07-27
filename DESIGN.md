@@ -863,6 +863,10 @@ Two encoder settings were measured rather than inherited, and both defaults were
 
 With `preview_hdr_video` also set, the worker writes `previews/video/<photo_uuid>.mp4` alongside it: a one-frame AV1 off the same decode. Firefox applies a PQ transfer to nothing but video and renders an HDR still dark, so that file is the only rendition reaching an HDR display there, and the client serves it in place of the AVIF on Firefox alone (§10.7). It is a separate opt-in rather than implied by HDR because it is a second encode per photo - roughly another second - for a file no other browser ever reads. The on-demand "From RAW" rendition obeys the same setting, so choosing it in Firefox does not land on the dark still. `PhotoDetail.preview_hdr_video` is a `stat` rather than the setting: a photo imported before the toggle was turned on has no video, and the settings are not retroactive.
 
+**The three renditions are one quality ladder**, the camera's JPEG, a render fitted to the preview size, and a full-resolution render (§10.5). They are the same picture at different costs, so the viewer treats them as interchangeable and `preview_rendition_mode` (§13.6) decides which one a photo opens at: pinned to one of the three, or reopened at whatever was chosen last, either across the catalogue (`remember`) or for that photo (`remember_per_photo`, stored on `photos.preview_rendition`). Server-side rather than in the browser because the same catalogue is opened from a phone, a laptop and whatever is plugged into the good monitor, and "where I left off" is worth nothing if it only holds on one of them.
+
+Whichever it resolves to, a photo whose own thumbnail already *is* that rendition opens on the thumbnail: it is on disk, and building a second copy of a picture that already exists would be a slow way to show the same thing. Only the step down to the camera's JPEG is missing from the viewer's menu once a render is on screen; nobody goes back to it having seen the RAW, and every other step stays available in both directions.
+
 **The on-demand preview is cached under everything that decides its pixels**, `previews/<source>/` and `previews/<source>-hdr/`, and the photo's own `thumbnail_hdr` records which of the two its full thumbnail is. Only the source used to be part of that key, and the file is the cache, so a render built while the library was SDR was handed back forever: turning HDR on and picking "From RAW" returned the old sRGB AVIF and nothing ever rebuilt it. Both halves are compared before the photo's own thumbnail is substituted for a preview, since a library switched to HDR after the import still has SDR thumbnails.
 
 Every writer on this path fails on a missing directory rather than creating one, and ffmpeg fails the whole job rather than the one output, so the worker creates the directory for each of its job's outputs before it runs. At the call site instead, each new rendition is a directory somebody has to remember, and the one that was forgotten (`previews/video/`) took the still down with it.
@@ -1267,10 +1271,10 @@ app.get('/image/:photoId/small.avif', async (c) => {
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/api/config` | Thumbnail format, sizes and qualities, so a client can state what it is rendering |
-| `GET` | `/api/config/settings` | User-editable preferences |
-| `PUT` | `/api/config/settings` | Update them |
+| `GET` | `/api/settings` | App-wide preferences |
+| `PATCH` | `/api/settings` | Update them |
 
-Two different things share the mount: `config` is fixed by the deployment (environment variables, §15), `settings` is what the user can change from the app and lives in a `settings` key/value table. The only one so far is `import.thumbnail_source` (§10.3). It is a table rather than a column per setting because they are read one at a time and never queried across.
+Three different things, by how far their scope reaches: `config` is fixed by the deployment (environment variables, §15); the `libraries` row holds what belongs to one catalogue (the preview source and HDR, §10.2); `settings` is app-wide and lives in a key/value table, holding `preview_rendition_mode` and the rendition `remember` remembers. A table rather than a column per setting because they are read one at a time and never queried across, and adding one should not need a migration. A value the build no longer understands reads as its default rather than failing the request: these are preferences, and the viewer has to open with or without them.
 
 ---
 

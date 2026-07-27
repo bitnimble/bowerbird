@@ -1,5 +1,5 @@
 import { computed, observable } from 'mobx';
-import type { Ordering, PhotoDetail, PhotoSummary, ThumbnailSource, Triage } from '../../api/client';
+import type { Ordering, PhotoDetail, PhotoSummary, PreviewRendition, Triage } from '../../api/client';
 
 // Which collection the grid is showing. One store serves the library, shoot,
 // album, bin and missing views because they differ only in the fetch call.
@@ -77,17 +77,12 @@ export class PhotosStore {
   // re-requested; appending this defeats that without polluting normal URLs.
   @observable accessor rebuiltAt = 0;
 
-  // Which rendition the detail view is showing. Null is the photo's own
-  // thumbnails; either source is the cached preview built from it on request.
-  @observable accessor previewSource: ThumbnailSource | null = null;
-  @observable accessor buildingPreview = false;
-
-  // The full-resolution render is opt-in per photo: it is built on request and
-  // shown only while the user asks for it, because it is a very large download.
-  @observable accessor buildingLossless = false;
-  // Non-null while the decoded render is on screen; holds the object URL that
-  // has to be revoked when it leaves.
-  @observable accessor lossless: string | null = null;
+  // Which rendition the detail view is showing: the same picture at one of three
+  // quality levels, each built on request and cached (§10.2). Null is the photo's
+  // own thumbnail, which is whichever of the first two the library builds on
+  // import, and is the only one that costs nothing to show.
+  @observable accessor rendition: PreviewRendition | null = null;
+  @observable accessor buildingRendition = false;
 
   @observable.ref accessor detail: PhotoDetail | null = null;
   @observable accessor detailLoading = false;

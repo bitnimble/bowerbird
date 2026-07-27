@@ -1,12 +1,25 @@
 import type { Album, CreateAlbumRequest, UpdateAlbumRequest } from '../../../src/schemas/albums';
 import type { CreateLibraryRequest, Library, LibrarySyncStatus, UpdateLibraryRequest } from '../../../src/schemas/libraries';
 import type { PhotoDetail, PhotoListResponse, Triage, UpdatePhotoRequest } from '../../../src/schemas/photos';
+import type { PreviewRendition, PreviewRenditionMode, Settings, UpdateSettingsRequest } from '../../../src/schemas/settings';
 import type { CreateShootRequest, Shoot, UpdateShootRequest } from '../../../src/schemas/shoots';
 import type { ServerConfig } from '../features/settings/server_config_store';
 
 // Types come straight from the server's Zod schemas as type-only imports, so the
 // client can never drift from the API and nothing is added to the bundle.
-export type { Album, Library, LibrarySyncStatus, PhotoDetail, PhotoListResponse, Shoot, Triage, UpdateLibraryRequest };
+export type {
+  Album,
+  Library,
+  LibrarySyncStatus,
+  PhotoDetail,
+  PhotoListResponse,
+  PreviewRendition,
+  PreviewRenditionMode,
+  Settings,
+  Shoot,
+  Triage,
+  UpdateLibraryRequest,
+};
 export type PhotoSummary = PhotoListResponse['photos'][number];
 export type Ordering = Library['ordering'];
 export type PreviewSource = Library['preview_source'];
@@ -90,6 +103,8 @@ function query(params: PhotoListParams): string {
 
 export const api = {
   getConfig: (): Promise<ServerConfig> => request('GET', '/api/config'),
+  getSettings: (): Promise<Settings> => request('GET', '/api/settings'),
+  updateSettings: (body: UpdateSettingsRequest): Promise<Settings> => request('PATCH', '/api/settings', body),
   listLibraries: (): Promise<Library[]> => request('GET', '/api/libraries'),
   getLibrary: (id: string): Promise<Library> => request('GET', `/api/libraries/${id}`),
   createLibrary: (body: CreateLibraryRequest): Promise<Library> => request('POST', '/api/libraries', body),

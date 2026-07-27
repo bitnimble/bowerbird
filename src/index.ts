@@ -18,6 +18,8 @@ import { ImageApi } from './api/image/image_api';
 import { HdrTestApi } from './api/hdr/hdr_test_api';
 import { QualityCheckApi } from './api/quality/quality_check_api';
 import { ConfigApi } from './api/config/config_api';
+import { SettingsApi } from './api/settings/settings_api';
+import { SettingsRepository } from './services/settings/settings_repository';
 import { SyncService } from './services/sync/sync_service';
 import { LibraryWatcher } from './services/sync/library_watcher';
 import { DailySync } from './services/sync/daily_sync';
@@ -85,6 +87,7 @@ app.use('*', async (c, next) => {
   c.header('X-Content-Type-Options', 'nosniff');
 });
 app.route('/api/config', new ConfigApi(config).routes);
+app.route('/api/settings', new SettingsApi(new SettingsRepository(db)).routes);
 app.route('/api/libraries', librariesApi.routes);
 app.route('/api', photosApi.routes);
 app.route('/api', shootsApi.routes);

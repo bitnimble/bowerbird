@@ -1,6 +1,7 @@
 import type { Database } from 'bun:sqlite';
 import type { Ordering } from '../../schemas/common';
 import type { PhotoDetail, PhotoSummary, Triage } from '../../schemas/photos';
+import type { PreviewRendition } from '../../schemas/settings';
 import type { ThumbnailSource } from '../processing/processing_types';
 
 export interface PhotoListFilters {
@@ -139,7 +140,7 @@ const DETAIL_COLS = `photos.id, photos.library_id, photos.shoot_id, photos.width
   photos.date_updated, photos.date_reprocessed, photos.needs_processing, photos.processing_error,
   photos.latitude, photos.longitude, photos.rating, photos.triage, photos.is_missing,
   photos.is_deleted, photos.notes, photos.file_size, photos.iso, photos.shutter_speed, photos.aperture,
-  photos.focal_length, photos.camera_make, photos.camera_model, photos.lens_model, photos.thumbnail_source, photos.thumbnail_hdr`;
+  photos.focal_length, photos.camera_make, photos.camera_model, photos.lens_model, photos.thumbnail_source, photos.thumbnail_hdr, photos.preview_rendition`;
 
 interface SummaryRow {
   id: string;
@@ -177,6 +178,7 @@ interface DetailRow extends SummaryRow {
   lens_model: string | null;
   thumbnail_source: ThumbnailSource | null;
   thumbnail_hdr: number;
+  preview_rendition: PreviewRendition | null;
   lib_ordering: string; // the owning library's ordering, for ordering_date
 }
 
@@ -253,6 +255,7 @@ function toDetail(row: DetailRow, albumIds: string[]): PhotoDetail {
     lens_model: row.lens_model,
     thumbnail_source: row.thumbnail_source,
     thumbnail_hdr: row.thumbnail_hdr === 1,
+    preview_rendition: row.preview_rendition,
     // Both resolved by the service, which knows the library: one needs its data
     // directory to stat, the other its preview settings. The repository has no
     // business doing either.
@@ -297,7 +300,7 @@ export class PhotosRepository {
     );
   }
 
-  update(id: string, fields: { rating?: number; triage?: Triage; notes?: string | null }): boolean {
+  update(id: string, fields: { rating?: number; triage?: Triage; notes?: string | null; preview_rendition?: PreviewRendition }): boolean {
     const sets: string[] = [];
     const params: (string | number | null)[] = [];
     if (fields.rating != null) {
@@ -312,6 +315,10 @@ export class PhotosRepository {
     if (fields.notes != null) {
       sets.push('notes = ?');
       params.push(fields.notes);
+    }
+    if (fields.preview_rendition != null) {
+      sets.push('preview_rendition = ?');
+      params.push(fields.preview_rendition);
     }
     if (sets.length === 0) return this.db.query('SELECT 1 FROM photos WHERE id = ?').get(id) != null;
     params.push(id);

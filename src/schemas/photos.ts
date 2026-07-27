@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { OrderingSchema, PaginationSchema, PhotoIdListSchema, SoftDeleteFilterSchema, UuidSchema } from './common';
+import { PreviewRenditionSchema } from './settings';
 
 // The cull verdict. 'untriaged' is the wire spelling of a NULL column: a photo
 // the user has not judged yet, which is the set they most often want to see.
@@ -56,6 +57,9 @@ export const PhotoDetailSchema = PhotoSummarySchema.extend({
   // Which pixels the thumbnails were built from; NULL before first processing.
   thumbnail_source: ThumbnailSourceSchema.nullable(),
   thumbnail_hdr: z.boolean(),
+  // The rendition this photo was last viewed in, remembered only for the mode
+  // that reopens it there; null until then.
+  preview_rendition: PreviewRenditionSchema.nullable(),
   // Whether the full-resolution lossless render has been built (§10.5). A disk
   // check rather than a column: the file is the cache, so it is the truth.
   has_lossless: z.boolean(),
@@ -90,6 +94,9 @@ export const UpdatePhotoRequestSchema = z.object({
   rating: z.number().int().min(0).max(5).optional(),
   triage: TriageSchema.optional(),
   notes: z.string().optional(),
+  // Which rendition this photo was last looked at in, for the viewer setting
+  // that reopens it there (§10.2).
+  preview_rendition: PreviewRenditionSchema.optional(),
 });
 export type UpdatePhotoRequest = z.infer<typeof UpdatePhotoRequestSchema>;
 

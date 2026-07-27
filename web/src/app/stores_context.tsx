@@ -9,6 +9,8 @@ import { ShootsPresenter } from '../features/shoots/shoots_presenter';
 import { ShootsStore } from '../features/shoots/shoots_store';
 import { SyncPresenter } from '../features/sync/sync_presenter';
 import { SyncStore } from '../features/sync/sync_store';
+import { AppSettingsPresenter } from '../features/settings/app_settings_presenter';
+import { AppSettingsStore } from '../features/settings/app_settings_store';
 import { ServerConfigPresenter } from '../features/settings/server_config_presenter';
 import { ServerConfigStore } from '../features/settings/server_config_store';
 import { ToastsPresenter } from '../features/toasts/toasts_presenter';
@@ -23,6 +25,7 @@ const AlbumsStoreContext = createContext<AlbumsStore | null>(null);
 const SyncStoreContext = createContext<SyncStore | null>(null);
 const ToastsStoreContext = createContext<ToastsStore | null>(null);
 const ServerConfigStoreContext = createContext<ServerConfigStore | null>(null);
+const AppSettingsStoreContext = createContext<AppSettingsStore | null>(null);
 
 interface Presenters {
   libraries: LibrariesPresenter;
@@ -32,6 +35,7 @@ interface Presenters {
   sync: SyncPresenter;
   toasts: ToastsPresenter;
   serverConfig: ServerConfigPresenter;
+  appSettings: AppSettingsPresenter;
 }
 
 const PresentersContext = createContext<Presenters | null>(null);
@@ -45,6 +49,7 @@ function build(): { stores: Stores; presenters: Presenters } {
     sync: new SyncStore(),
     toasts: new ToastsStore(),
     serverConfig: new ServerConfigStore(),
+    appSettings: new AppSettingsStore(),
   };
 
   // Wiring order encodes the dependency direction: shoots/albums presenters know
@@ -52,7 +57,8 @@ function build(): { stores: Stores; presenters: Presenters } {
   const toasts = new ToastsPresenter(stores.toasts);
   const shoots = new ShootsPresenter(stores.shoots);
   const albums = new AlbumsPresenter(stores.albums);
-  const photos = new PhotosPresenter(stores.photos, shoots, albums, toasts);
+  const appSettings = new AppSettingsPresenter(stores.appSettings);
+  const photos = new PhotosPresenter(stores.photos, shoots, albums, toasts, stores.appSettings, appSettings);
   const presenters: Presenters = {
     libraries: new LibrariesPresenter(stores.libraries),
     photos,
@@ -61,6 +67,7 @@ function build(): { stores: Stores; presenters: Presenters } {
     sync: new SyncPresenter(stores.sync, photos),
     toasts,
     serverConfig: new ServerConfigPresenter(stores.serverConfig),
+    appSettings,
   };
   return { stores, presenters };
 }
@@ -73,6 +80,7 @@ interface Stores {
   sync: SyncStore;
   toasts: ToastsStore;
   serverConfig: ServerConfigStore;
+  appSettings: AppSettingsStore;
 }
 
 export function StoresProvider({ children }: { children: ReactNode }): JSX.Element {
@@ -85,7 +93,9 @@ export function StoresProvider({ children }: { children: ReactNode }): JSX.Eleme
             <AlbumsStoreContext.Provider value={stores.albums}>
               <SyncStoreContext.Provider value={stores.sync}>
                 <ToastsStoreContext.Provider value={stores.toasts}>
-                  <ServerConfigStoreContext.Provider value={stores.serverConfig}>{children}</ServerConfigStoreContext.Provider>
+                  <ServerConfigStoreContext.Provider value={stores.serverConfig}>
+                    <AppSettingsStoreContext.Provider value={stores.appSettings}>{children}</AppSettingsStoreContext.Provider>
+                  </ServerConfigStoreContext.Provider>
                 </ToastsStoreContext.Provider>
               </SyncStoreContext.Provider>
             </AlbumsStoreContext.Provider>
@@ -108,4 +118,5 @@ export const useAlbumsStore = (): AlbumsStore => required(useContext(AlbumsStore
 export const useSyncStore = (): SyncStore => required(useContext(SyncStoreContext), 'SyncStore');
 export const useToastsStore = (): ToastsStore => required(useContext(ToastsStoreContext), 'ToastsStore');
 export const useServerConfigStore = (): ServerConfigStore => required(useContext(ServerConfigStoreContext), 'ServerConfigStore');
+export const useAppSettingsStore = (): AppSettingsStore => required(useContext(AppSettingsStoreContext), 'AppSettingsStore');
 export const usePresenters = (): Presenters => required(useContext(PresentersContext), 'Presenters');
