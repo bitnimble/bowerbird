@@ -118,6 +118,10 @@ export class PhotosPresenter {
     runInAction(() => (this.store.buildingPreview = true));
     try {
       await api.buildPreview(photoId, source);
+      // The build may have written an HDR video beside the still, and only the
+      // detail knows whether one exists. Without this, Firefox keeps showing the
+      // dark still until the page is reloaded (§10.7).
+      await this.refreshDetail();
       runInAction(() => (this.store.previewSource = source));
     } catch (err) {
       this.fail(err);

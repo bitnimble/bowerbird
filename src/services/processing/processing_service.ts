@@ -46,12 +46,16 @@ export class ProcessingService {
     photoId: string,
     source: ThumbnailSource,
     hdr: boolean,
+    hdrVideo: boolean,
+    videoOutputPath: string,
   ): Promise<void> {
     return this.runOneOff({
       kind: 'preview',
       photoId,
       rawFilePath,
       outputPath,
+      hdrVideo,
+      videoOutputPath,
       size: this.config.fullThumbnailSize,
       quality: this.config.fullThumbnailQuality,
       effort: this.config.thumbnailEffort,

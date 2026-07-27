@@ -11,6 +11,7 @@ import {
   getLosslessPath,
   getOriginalPath,
   getPreviewPath,
+  getPreviewVideoPath,
   toLibraryRelative,
 } from '../../utils/paths';
 import { ensureDir, moveIntoDir } from '../../utils/files';
@@ -60,10 +61,12 @@ export class PhotosService {
     return {
       ...photo,
       has_lossless: library != null && existsSync(getLosslessPath(library, photo.id)),
-      // Only a render carries HDR, and the video is a separate opt-in: the client
-      // must not reach for a file the library never built.
-      preview_hdr_video:
-        library?.preview_hdr === true && library.preview_hdr_video && photo.thumbnail_source === 'render',
+      // Whether an HDR video actually exists for this photo, not whether the
+      // library is configured to build one. A photo imported before the setting
+      // was turned on has none - the settings are not retroactive - and the
+      // client asking for a file that was never built would leave Firefox on a
+      // retrying 404 rather than the still it could have shown.
+      preview_hdr_video: library != null && existsSync(getPreviewVideoPath(library, photo.id)),
     };
   }
 
@@ -163,7 +166,16 @@ export class PhotosService {
     if (!existsSync(raw)) throw new AppError('NOT_FOUND', `original file not found: ${photo.file_path}`);
     // HDR only ever applies to a render; the embedded rendition is an 8-bit SDR
     // JPEG whatever the library setting says.
-    await this.processing.renderPreview(raw, output, photo.id, source, library.preview_hdr && source === 'render');
+    const hdr = library.preview_hdr && source === 'render';
+    await this.processing.renderPreview(
+      raw,
+      output,
+      photo.id,
+      source,
+      hdr,
+      hdr && library.preview_hdr_video,
+      getPreviewVideoPath(library, photo.id),
+    );
   }
 
   // The photo's own full thumbnail already *is* the preview for the source it was

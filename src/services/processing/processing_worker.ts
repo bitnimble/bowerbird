@@ -57,15 +57,13 @@ async function preview(job: PreviewJob): Promise<void> {
   // embedded JPEG is 8-bit SDR and has no headroom to carry.
   if (job.hdr) {
     const image = decodeRaw(job.rawFilePath, 16, 'rec2020-linear');
-    await encodeHdr(image, {
-      variant: 'pq',
-      medium: 'still',
-      outputPath: job.outputPath,
-      peakNits: job.peakNits,
-      crf: job.crf,
-      preset: job.preset,
-      maxEdge: job.size,
-    });
+    const common = { peakNits: job.peakNits, crf: job.crf, preset: job.preset, maxEdge: job.size } as const;
+    await encodeHdr(image, { ...common, variant: 'pq', medium: 'still', outputPath: job.outputPath });
+    // The chosen rendition obeys the library setting exactly as an imported one
+    // does, or picking "From RAW" in Firefox would show the dark still.
+    if (job.hdrVideo) {
+      await encodeHdr(image, { ...common, variant: 'pq', medium: 'video', outputPath: job.videoOutputPath });
+    }
     return;
   }
   const image = decodeRaw(job.rawFilePath);

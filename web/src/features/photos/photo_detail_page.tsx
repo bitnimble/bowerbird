@@ -190,7 +190,11 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   // video - so there it gets the one-frame video of the same render instead
   // (§10.7). Only for the photo's own preview: a chosen rendition or the
   // full-resolution view is what was explicitly asked for.
-  const hdrVideo = photo?.preview_hdr_video === true && needsHdrVideo() && store.lossless == null && store.previewSource == null;
+  // Both the photo's own preview and a chosen "From RAW" are HDR renders with a
+  // video beside them; the embedded rendition never is. The full-resolution view
+  // has no video at all, so it always stays a still.
+  const showingRender = store.previewSource === 'render' || (store.previewSource == null && photo?.thumbnail_source === 'render');
+  const hdrVideo = photo?.preview_hdr_video === true && showingRender && needsHdrVideo() && store.lossless == null;
 
   const shoot = photo?.shoot_id == null ? null : shoots.byId.get(photo.shoot_id);
   const photoAlbums = photo == null ? [] : albums.albums.filter((a) => photo.album_ids.includes(a.id));
