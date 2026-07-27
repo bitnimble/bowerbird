@@ -40,20 +40,22 @@ export class QualityCheckApi {
     app.get('/:photoId', (c) => c.html(page(this.photos.get(c.req.param('photoId') ?? '').id)));
 
     app.get('/img/:photoId/:quality', async (c) => {
-      const photoId = c.req.param('photoId') ?? '';
       const quality = Number(c.req.param('quality'));
       if (!QUALITIES.includes(quality as (typeof QUALITIES)[number])) {
         throw new AppError('NOT_FOUND', `not one of the compared qualities: ${quality}`);
       }
+      // Resolved before it reaches a path, for the same reason as above: the id
+      // names a cache file, and a `..` in the parameter would name someone
+      // else's.
+      const photo = this.photos.get(c.req.param('photoId') ?? '');
 
-      const file = path.join(CACHE, `${photoId}-${quality}.avif`);
+      const file = path.join(CACHE, `${photo.id}-${quality}.avif`);
       let encodeMs = 0;
 
       if (!(await Bun.file(file).exists())) {
         // Created here rather than once at startup: this lives in the temp
         // directory, which something else is entitled to clean at any time.
         mkdirSync(CACHE, { recursive: true });
-        const photo = this.photos.get(photoId);
         const library = this.libraries.get(photo.library_id);
         const image = decodeRaw(getOriginalPath(library, photo.file_path), 8);
         const raw = { raw: { width: image.width, height: image.height, channels: image.channels } };
