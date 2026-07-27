@@ -2,7 +2,9 @@ import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import sharp from 'sharp';
 import { encodeHdr } from './hdr_media';
+import { fitHdrColour, type HdrColour } from './hdr_match';
 import { applyMatchProfile, fitMatchProfile, type MatchProfile } from './jpeg_match';
+import { diffuseWhite } from './tone_map';
 import { decodeRaw, readEmbeddedJpeg, type DecodedImage } from './raw_decoder';
 import type {
   HdrJob,
@@ -79,10 +81,16 @@ async function writeSdr(
 // Scene-linear and wide-gamut rather than display-referred: the transfer is
 // applied by the encoder after the grade, and auto-brightening would flatten away
 // the highlight headroom that carries the HDR (§10.7).
-async function writeHdr(job: RenditionJob, target: RenditionTarget): Promise<void> {
-  const image = decodeRaw(job.rawFilePath, 16, 'rec2020-linear');
+async function writeHdr(
+  job: RenditionJob,
+  target: RenditionTarget,
+  linear: () => DecodedImage,
+  match: HdrColour | null,
+): Promise<void> {
+  const image = linear();
   const common = {
     ...job.grade,
+    match,
     crf: target.quantizer,
     preset: target.preset,
     // The still is never fitted past what was asked for; the video is, because
@@ -139,21 +147,39 @@ async function renditions(job: RenditionJob): Promise<ThumbnailSource | undefine
   let decoded: DecodedImage | null = null;
   const decode = (): DecodedImage => (decoded ??= decodeRaw(job.rawFilePath, 8));
 
-  // Fitted once, before anything is written: every SDR rendition of one photo has
-  // to get the same transform or the grid tile and the full view will not match
-  // each other. Null when the setting is off, when nothing in the job renders, or
-  // when the fit found no match worth applying - in each case the renders below are
+  // The scene-linear decode, shared the same way. An HDR job builds a still and
+  // its video twin from one of these, and the colour fit needs the same pixels
+  // again.
+  let decodedLinear: DecodedImage | null = null;
+  const linear = (): DecodedImage => (decodedLinear ??= decodeRaw(job.rawFilePath, 16, 'rec2020-linear'));
+
+  // Fitted once, before anything is written: every rendition of one photo has to
+  // get the same transform or the grid tile and the full view will not match each
+  // other. Null when the setting is off, when nothing in the job renders, or when
+  // the fit found no match worth applying - in each case the renders below are
   // simply untransformed.
   // Gated on a target that actually demosaics: an embedded-source grid already has
   // the camera's look, so fitting for it would decode a 60MP frame to transform
   // nothing. A file with no embedded JPEG needs no gate here - there is then also
   // nothing to match against, so the fit declines on its own.
   const rendersSdr = job.targets.some((target) => !target.hdr && target.source === 'render');
-  const profile = job.matchEmbeddedJpeg && rendersSdr ? await fitMatchProfile(job.rawFilePath, decode()) : null;
+  const rendersHdr = job.targets.some((target) => target.hdr);
+  const profile =
+    job.matchEmbeddedJpeg && (rendersSdr || rendersHdr) ? await fitMatchProfile(job.rawFilePath, decode()) : null;
+
+  // The SDR profile's colour cannot be reused for HDR - its curves are 8-bit sRGB
+  // and stop at display white, where the HDR grade needs a domain it can carry
+  // past diffuse white (§10.8). The geometry is a property of the lens, so that
+  // half *is* reused, and it is the expensive half.
+  const jpegBytes = profile != null && rendersHdr ? readEmbeddedJpeg(job.rawFilePath) : null;
+  const hdrColour =
+    profile != null && jpegBytes != null
+      ? await fitHdrColour(linear(), diffuseWhite(linear(), job.grade.whiteQuantile), jpegBytes, profile)
+      : null;
 
   for (const target of job.targets) {
     if (target.hdr) {
-      await writeHdr(job, target);
+      await writeHdr(job, target, linear, hdrColour);
       continue;
     }
     const source = await writeSdr(job, target, decode, profile);

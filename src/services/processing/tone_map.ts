@@ -1,3 +1,4 @@
+import { applyHdrColour, applyToneStage, toneChannel, TRUST_CEILING, type HdrColour } from './hdr_match';
 import type { DecodedImage } from './raw_decoder';
 
 // Scene-referred sensor data carries no exposure. LibRaw scales sensor
@@ -20,6 +21,9 @@ import type { DecodedImage } from './raw_decoder';
 // knob worth tuning if a library renders consistently dark or hot.
 
 const MAX = 65535;
+
+// Rec.2020 luma, matching the chroma blend the match was fitted with.
+const LUMA = [0.2627, 0.678, 0.0593] as const;
 
 // SMPTE ST 2084.
 const M1 = 2610 / 16384;
@@ -103,6 +107,17 @@ export interface GradeOptions {
   peakNits: number;
   /** Quantile of the frame's brightest component taken as diffuse white. */
   whiteQuantile: number;
+  /**
+   * The camera's own colour treatment, fitted from its embedded JPEG (§10.8).
+   * Omitted, the render keeps LibRaw's neutral rendering.
+   */
+  match?: HdrColour | null;
+}
+
+/** Where diffuse white sits in a decode, on its own so a fit can share it. */
+export function diffuseWhite(image: DecodedImage, quantile: number): number {
+  const source = new Uint16Array(image.data.buffer, image.data.byteOffset, image.data.byteLength / 2);
+  return levels(source, quantile).white;
 }
 
 /**
@@ -120,19 +135,114 @@ export function grade(image: DecodedImage, options: GradeOptions): DecodedImage 
   // dividing by zero.
   if (white === 0) return image;
 
-  const { referenceWhiteNits: reference, peakNits: peak } = options;
-  const sourcePeakNits = (sourceLevel / white) * reference;
-
-  // One curve covers all 65536 possible inputs, so the per-sample work is a
-  // lookup. A 60MP frame is 180M samples, and pow() that many times is not free.
-  const lut = new Uint16Array(MAX + 1);
-  for (let level = 0; level <= MAX; level += 1) {
-    const nits = eetf((level / white) * reference, sourcePeakNits, peak);
-    lut[level] = Math.round(Math.min(1, nits / peak) * MAX);
-  }
-
+  const { referenceWhiteNits: reference, peakNits: peak, match } = options;
   const data = Buffer.allocUnsafe(image.data.byteLength);
   const out = new Uint16Array(data.buffer, data.byteOffset, data.byteLength / 2);
-  for (let i = 0; i < source.length; i += 1) out[i] = lut[source[i]!]!;
+
+  // The roll-off is a function of nits alone, so it is a lookup whichever path
+  // produced them. Resolution is in nits rather than input level because the
+  // matched path has no single input level to key on.
+  const ROLL_BINS = 4096;
+  const roll = (nits: number, sourcePeakNits: number, table: Float64Array): number => {
+    const t = (nits / sourcePeakNits) * (ROLL_BINS - 1);
+    const lo = Math.min(ROLL_BINS - 2, Math.max(0, Math.floor(t)));
+    return table[lo]! + (table[lo + 1]! - table[lo]!) * (t - lo);
+  };
+
+  if (match == null) {
+    const sourcePeakNits = (sourceLevel / white) * reference;
+    // One curve covers all 65536 possible inputs, so the per-sample work is a
+    // lookup. A 60MP frame is 180M samples, and pow() that many times is not free.
+    const lut = new Uint16Array(MAX + 1);
+    for (let level = 0; level <= MAX; level += 1) {
+      const nits = eetf((level / white) * reference, sourcePeakNits, peak);
+      lut[level] = Math.round(Math.min(1, nits / peak) * MAX);
+    }
+    for (let i = 0; i < source.length; i += 1) out[i] = lut[source[i]!]!;
+    return { ...image, data };
+  }
+
+  // Matched: the transform is cross-channel, so there is no per-input-level table
+  // to build and the scene peak has to be measured after it rather than read off
+  // the input's histogram.
+  //
+  // The peak comes from the same subsample the anchor does. Keeping every pixel's
+  // nits to find the exact maximum wanted a Float32Array the size of the frame -
+  // 720MB on a 60MP photo - to save clamping a handful of specular samples that
+  // the roll-off was compressing into the peak anyway.
+  let scenePeak = 0;
+  for (let i = 0; i + 2 < source.length; i += 3 * QUANTILE_STRIDE) {
+    const [r, g, b] = applyHdrColour(match, source[i]! / white, source[i + 1]! / white, source[i + 2]! / white);
+    scenePeak = Math.max(scenePeak, r, g, b);
+  }
+  scenePeak *= reference;
+  if (!(scenePeak > 0)) return image;
+
+  const table = new Float64Array(ROLL_BINS);
+  for (let i = 0; i < ROLL_BINS; i += 1) table[i] = eetf((i / (ROLL_BINS - 1)) * scenePeak, scenePeak, peak);
+
+  // Below the ceiling the shared gain is 1 and the tone stage is separable, so it
+  // is a lookup on the input level. That is nearly every pixel of a photograph;
+  // only the highlights take the general path, where the gain depends on all
+  // three channels at once. Interpolating a curve per channel per pixel instead
+  // cost about seven seconds on a 60MP frame, twice per HDR rendition.
+  const ceiling = TRUST_CEILING * white;
+  const curveLut = [0, 1, 2].map((c) => {
+    const lut = new Float32Array(MAX + 1);
+    for (let level = 0; level <= MAX; level += 1) lut[level] = toneChannel(match, c, level / white);
+    return lut;
+  });
+
+  // Flat and scalar on purpose. Written with the tuple-returning helpers it was
+  // three array allocations per pixel, 180M on a 60MP frame, and the collector
+  // cost more than all the arithmetic put together - the lookup above bought
+  // almost nothing until this went with it.
+  const m = match.matrix;
+  const [m00, m01, m02] = [m[0]![0]!, m[0]![1]!, m[0]![2]!];
+  const [m10, m11, m12] = [m[1]![0]!, m[1]![1]!, m[1]![2]!];
+  const [m20, m21, m22] = [m[2]![0]!, m[2]![1]!, m[2]![2]!];
+  const sat = match.saturation;
+  const [lr, lg, lb] = LUMA;
+  const [lutR, lutG, lutB] = curveLut as [Float32Array, Float32Array, Float32Array];
+  const scale = (ROLL_BINS - 1) / scenePeak;
+
+  for (let i = 0; i + 2 < source.length; i += 3) {
+    const r = source[i]!;
+    const g = source[i + 1]!;
+    const b = source[i + 2]!;
+
+    let tr: number;
+    let tg: number;
+    let tb: number;
+    if (r <= ceiling && g <= ceiling && b <= ceiling) {
+      tr = lutR[r]!;
+      tg = lutG[g]!;
+      tb = lutB[b]!;
+    } else {
+      const t = applyToneStage(match, r / white, g / white, b / white);
+      tr = t[0];
+      tg = t[1];
+      tb = t[2];
+    }
+
+    let or = m00 * tr + m01 * tg + m02 * tb;
+    let og = m10 * tr + m11 * tg + m12 * tb;
+    let ob = m20 * tr + m21 * tg + m22 * tb;
+    if (sat !== 1) {
+      const l = lr * or + lg * og + lb * ob;
+      or = l + (or - l) * sat;
+      og = l + (og - l) * sat;
+      ob = l + (ob - l) * sat;
+    }
+
+    for (let c = 0; c < 3; c += 1) {
+      const raw = c === 0 ? or : c === 1 ? og : ob;
+      const nits = Math.min(scenePeak, raw > 0 ? raw * reference : 0);
+      const t = nits * scale;
+      const lo = Math.min(ROLL_BINS - 2, Math.max(0, Math.floor(t)));
+      const rolled = table[lo]! + (table[lo + 1]! - table[lo]!) * (t - lo);
+      out[i + c] = Math.round(Math.min(1, rolled / peak) * MAX);
+    }
+  }
   return { ...image, data };
 }

@@ -65,6 +65,8 @@ interface Plane {
   data: Buffer; // interleaved RGB8
 }
 
+type ArrayConstructorOf<T> = new (length: number) => T;
+
 interface Pair {
   src: [number, number, number];
   dst: [number, number, number];
@@ -103,9 +105,28 @@ async function renderSource(image: DecodedImage, fitWidth: number): Promise<Plan
   return { width, height, data };
 }
 
-/** Bilinear resample of `source` onto a `width`x`height` grid through a radial model. */
-function warp(source: Plane, width: number, height: number, knots: readonly number[], crop: number): Plane {
-  const out = Buffer.allocUnsafe(width * height * 3);
+/**
+ * Bilinear resample of `source` onto a `width`x`height` grid through a radial
+ * model.
+ *
+ * Generic over the sample width so the HDR fit can put a 16-bit scene-linear
+ * frame through the same geometry (§10.8): the arithmetic is identical, only the
+ * container differs, and two copies of a warp is two places for a sign to be
+ * wrong in.
+ */
+export function warp<T extends Uint8Array | Uint16Array | Float64Array>(
+  source: { width: number; height: number; data: T },
+  width: number,
+  height: number,
+  knots: readonly number[],
+  crop: number,
+): { width: number; height: number; data: T } {
+  const count = width * height * 3;
+  // Not `new source.data.constructor(...)`: for the SDR path that is `Buffer`,
+  // whose constructor is deprecated and refuses to allocate.
+  const out = (
+    Buffer.isBuffer(source.data) ? Buffer.allocUnsafe(count) : new (source.data.constructor as ArrayConstructorOf<T>)(count)
+  ) as T;
   const half = Math.hypot(width / 2, height / 2);
   const scaleX = source.width / width;
   const scaleY = source.height / height;
