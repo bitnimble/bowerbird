@@ -9,6 +9,7 @@ import {
   getHdrPath,
   getLosslessPath,
   getOriginalPath,
+  getPreviewVideoPath,
   getSmallThumbnailPath,
 } from '../../utils/paths';
 import type { LibrariesService } from '../../services/libraries/libraries_service';
@@ -47,6 +48,8 @@ export class ImageApi {
       if (!isThumbnailSource(source)) throw new AppError('NOT_FOUND', `unknown preview source: ${source}`);
       return this.serve(c, AVIF, (lib, photo) => this.photos.previewPath(lib, photo, source));
     });
+    // The HDR preview as a one-frame video, for Firefox (§10.7).
+    app.get('/:photoId/preview-video', (c) => this.serve(c, 'video/mp4', (lib, photo) => getPreviewVideoPath(lib, photo.id)));
     app.get('/:photoId/original.arw', (c) => this.serve(c, 'image/x-sony-arw', (lib, photo) => getOriginalPath(lib, photo.file_path)));
     app.get('/:photoId/full.jpg', (c) => this.serveJpeg(c));
     // Full-resolution, and AVIF like everything else: every current browser

@@ -57,7 +57,13 @@ export class PhotosService {
     const library = this.libraries.getById(photo.library_id);
     // One stat, on a single-photo read only. The file is the cache, so asking
     // the filesystem beats a column that can disagree with what is on disk.
-    return { ...photo, has_lossless: library != null && existsSync(getLosslessPath(library, photo.id)) };
+    return {
+      ...photo,
+      has_lossless: library != null && existsSync(getLosslessPath(library, photo.id)),
+      // Only a render carries HDR, so a photo thumbnailed from the embedded JPEG
+      // is SDR however the library is set.
+      preview_hdr: library?.preview_hdr === true && photo.thumbnail_source === 'render',
+    };
   }
 
   listByLibrary(libraryId: string, query: PhotoListQuery): PhotoListResponse {

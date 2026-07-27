@@ -250,9 +250,11 @@ function toDetail(row: DetailRow, albumIds: string[]): PhotoDetail {
     camera_model: row.camera_model,
     lens_model: row.lens_model,
     thumbnail_source: row.thumbnail_source,
-    // Resolved by the service, which knows the library's data directory; the
-    // repository has no business stat-ing files.
+    // Both resolved by the service, which knows the library: one needs its data
+    // directory to stat, the other its preview settings. The repository has no
+    // business doing either.
     has_lossless: false,
+    preview_hdr: false,
     album_ids: albumIds,
   };
 }

@@ -84,15 +84,12 @@ async function thumbnails(job: ProcessingJob): Promise<ThumbnailSource> {
   // call (§10.2).
   if (job.hdr && source === 'render') {
     const image = decodeRaw(job.rawFilePath, 16, 'rec2020-linear');
-    await encodeHdr(image, {
-      variant: 'pq',
-      medium: 'still',
-      outputPath: job.fullOutputPath,
-      peakNits: job.peakNits,
-      crf: job.crf,
-      preset: job.preset,
-      maxEdge: job.fullSize,
-    });
+    const common = { peakNits: job.peakNits, crf: job.crf, preset: job.preset, maxEdge: job.fullSize } as const;
+    await encodeHdr(image, { ...common, variant: 'pq', medium: 'still', outputPath: job.fullOutputPath });
+    // And again as a video, off the same decode. Firefox honours no HDR image
+    // tagging at all, so without this it is the one browser that gets a dark
+    // picture rather than an HDR one (§10.7).
+    await encodeHdr(image, { ...common, variant: 'pq', medium: 'video', outputPath: job.videoOutputPath });
     return source;
   }
 

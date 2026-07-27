@@ -58,6 +58,9 @@ export const PhotoDetailSchema = PhotoSummarySchema.extend({
   // Whether the full-resolution lossless render has been built (§10.5). A disk
   // check rather than a column: the file is the cache, so it is the truth.
   has_lossless: z.boolean(),
+  // Whether this photo's full-size preview was rendered as HDR, so the client
+  // knows to reach for the video rendition on a browser that needs it (§10.7).
+  preview_hdr: z.boolean(),
   // Albums this photo belongs to. On the detail only: it needs a second query,
   // and a grid of 100 tiles has no use for it.
   album_ids: z.array(UuidSchema),

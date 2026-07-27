@@ -6,15 +6,12 @@ import type { ServerConfig } from '../features/settings/server_config_store';
 
 // Types come straight from the server's Zod schemas as type-only imports, so the
 // client can never drift from the API and nothing is added to the bundle.
-export type { Album, Library, LibrarySyncStatus, PhotoDetail, PhotoListResponse, Shoot, Triage };
+export type { Album, Library, LibrarySyncStatus, PhotoDetail, PhotoListResponse, Shoot, Triage, UpdateLibraryRequest };
 export type PhotoSummary = PhotoListResponse['photos'][number];
 export type Ordering = Library['ordering'];
+export type PreviewSource = Library['preview_source'];
 // NonNullable: the column is null until a photo has been processed once.
 export type ThumbnailSource = NonNullable<PhotoDetail['thumbnail_source']>;
-
-export interface AppSettings {
-  thumbnail_source: ThumbnailSource;
-}
 
 // Default to the API on the same host the page was served from. Hardcoding
 // localhost only works when the browser runs on the server; reached over the
@@ -117,9 +114,6 @@ export const api = {
     request('POST', `/api/photos/${photoId}/preview`, { source }),
   buildLossless: (photoId: string): Promise<void> => request('POST', `/api/photos/${photoId}/lossless`),
 
-  getSettings: (): Promise<AppSettings> => request('GET', '/api/config/settings'),
-  updateSettings: (body: AppSettings): Promise<AppSettings> => request('PUT', '/api/config/settings', body),
-
   listShoots: (libraryId: string): Promise<Shoot[]> => request('GET', `/api/libraries/${libraryId}/shoots`),
   getShoot: (id: string): Promise<Shoot> => request('GET', `/api/shoots/${id}`),
   createShoot: (body: CreateShootRequest): Promise<Shoot> => request('POST', '/api/shoots', body),
@@ -154,6 +148,24 @@ export function thumbnailUrl(photoId: string, size: 'small' | 'full', version = 
 
 // The full-size preview built from one named source, as opposed to whichever one
 // this photo's own thumbnails came from.
+// The HDR preview as a one-frame video. Only Firefox needs it: it applies a PQ
+// transfer to nothing but video, so it renders an HDR still dark (§10.7).
+// Everything else takes the AVIF, which is better in every way that matters -
+// no video element, no autoplay rules, and it decodes as an image.
+export function previewVideoUrl(photoId: string, version = 0): string {
+  const url = `${BASE}/image/${photoId}/preview-video`;
+  return version === 0 ? url : `${url}?v=${version}`;
+}
+
+// Firefox is the only engine with no HDR image path at all. Sniffing the engine
+// is normally the wrong tool, but there is nothing to feature-detect here: the
+// failure is that Firefox renders a PQ still *wrongly* rather than refusing it,
+// so nothing in the page can observe it.
+export function needsHdrVideo(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  return navigator.userAgent.includes('Firefox');
+}
+
 export function previewUrl(photoId: string, source: ThumbnailSource, version = 0): string {
   const url = `${BASE}/image/${photoId}/preview/${source}`;
   return version === 0 ? url : `${url}?v=${version}`;

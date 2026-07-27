@@ -1,5 +1,4 @@
 import { observable } from 'mobx';
-import type { AppSettings } from '../../api/client';
 
 export interface ThumbnailProfile {
   size: number;
@@ -20,6 +19,4 @@ export interface ServerConfig {
 // preferences that live server-side because processing reads them.
 export class ServerConfigStore {
   @observable.ref accessor config: ServerConfig | null = null;
-  @observable.ref accessor settings: AppSettings | null = null;
-  @observable accessor saving = false;
 }

@@ -17,7 +17,7 @@ import {
   Wand2,
 } from 'lucide-react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { jpegUrl, originalUrl, previewUrl, thumbnailUrl, type ThumbnailSource } from '../../api/client';
+import { jpegUrl, needsHdrVideo, originalUrl, previewUrl, previewVideoUrl, thumbnailUrl, type ThumbnailSource } from '../../api/client';
 import { localDateTime } from '../../api/dates';
 import { useAlbumsStore, usePhotosStore, usePresenters, useServerConfigStore, useShootsStore } from '../../app/stores_context';
 import { ActionMenu, type ActionGroup, Button, ICON, MoreLess, type Option, Text, TextArea } from '../../ui/ui';
@@ -180,6 +180,18 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
     );
   }
 
+  const stillSrc =
+    store.lossless ??
+    (store.previewSource == null
+      ? thumbnailUrl(photoId, 'full', store.rebuiltAt)
+      : previewUrl(photoId, store.previewSource, store.rebuiltAt));
+
+  // Firefox renders an HDR still dark - it applies a PQ transfer to nothing but
+  // video - so there it gets the one-frame video of the same render instead
+  // (§10.7). Only for the photo's own preview: a chosen rendition or the
+  // full-resolution view is what was explicitly asked for.
+  const hdrVideo = photo?.preview_hdr === true && needsHdrVideo() && store.lossless == null && store.previewSource == null;
+
   const shoot = photo?.shoot_id == null ? null : shoots.byId.get(photo.shoot_id);
   const photoAlbums = photo == null ? [] : albums.albums.filter((a) => photo.album_ids.includes(a.id));
   const notesDirty = notes !== (photo?.notes ?? '');
@@ -253,12 +265,8 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
         {/* Keyed off the route, not the loaded detail, so the photo on screen is
             always the one the URL asks for. */}
         <PhotoStage
-          src={
-            store.lossless ??
-            (store.previewSource == null
-              ? thumbnailUrl(photoId, 'full', store.rebuiltAt)
-              : previewUrl(photoId, store.previewSource, store.rebuiltAt))
-          }
+          src={hdrVideo ? previewVideoUrl(photoId, store.rebuiltAt) : stillSrc}
+          video={hdrVideo}
           alt={filename}
           filename={filename}
           onImageLoad={(width, height) => setThumbSize({ width, height })}

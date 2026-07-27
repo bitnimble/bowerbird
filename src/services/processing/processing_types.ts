@@ -17,6 +17,8 @@ export interface ProcessingJob {
   rawFilePath: string;
   smallOutputPath: string;
   fullOutputPath: string;
+  /** The HDR video twin of the full preview, written only when hdr is set. */
+  videoOutputPath: string;
   smallSize: number;
   fullSize: number;
   smallQuality: number;

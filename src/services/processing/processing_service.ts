@@ -153,6 +153,7 @@ export class ProcessingService {
       rawFilePath: path.join(pending.root_path, pending.file_path),
       smallOutputPath: path.join(thumbs, 'small', `${pending.photo_id}.avif`),
       fullOutputPath: path.join(thumbs, 'full', `${pending.photo_id}.avif`),
+      videoOutputPath: path.join(dataPathFor(pending.root_path, pending.data_path), 'previews', 'video', `${pending.photo_id}.mp4`),
       smallSize: this.config.smallThumbnailSize,
       fullSize: this.config.fullThumbnailSize,
       smallQuality: this.config.smallThumbnailQuality,

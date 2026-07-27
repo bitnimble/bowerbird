@@ -1,7 +1,7 @@
 import { readdir, stat, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import type { Library } from '../../schemas/libraries';
-import { getFullThumbnailPath, getHdrPath, getLosslessPath, getPreviewPath, getSmallThumbnailPath } from '../../utils/paths';
+import { getFullThumbnailPath, getHdrPath, getLosslessPath, getPreviewPath, getPreviewVideoPath, getSmallThumbnailPath } from '../../utils/paths';
 import { HDR_MEDIA, HDR_VARIANTS } from '../processing/hdr_media';
 import { THUMBNAIL_SOURCES } from '../processing/processing_types';
 import type { LibrariesRepository } from '../libraries/libraries_repository';
@@ -18,6 +18,7 @@ function generatedDirs(library: Library): Array<{ dir: string; ext: string }> {
     getSmallThumbnailPath,
     getFullThumbnailPath,
     getLosslessPath,
+    getPreviewVideoPath,
     ...THUMBNAIL_SOURCES.map((source) => (lib: Library, id: string) => getPreviewPath(lib, id, source)),
     ...HDR_MEDIA.flatMap((medium) =>
       HDR_VARIANTS.map((variant) => (lib: Library, id: string) => getHdrPath(lib, id, medium, variant)),

@@ -1,8 +1,8 @@
 import { observer } from 'mobx-react-lite';
 import { useEffect, useState } from 'react';
 import { FolderPlus, RefreshCw, Sparkles, Trash2, Wand2 } from 'lucide-react';
-import type { ThumbnailSource } from '../../api/client';
-import { useLibrariesStore, usePresenters, useServerConfigStore, useSyncStore } from '../../app/stores_context';
+import type { Library, PreviewSource } from '../../api/client';
+import { useLibrariesStore, usePresenters, useSyncStore } from '../../app/stores_context';
 import { Button, Heading, ICON, type Option, SegmentedControl, Text, TextField } from '../../ui/ui';
 import { SyncStrip } from '../sync/sync_strip';
 
@@ -35,6 +35,7 @@ const LibrarySettings = observer(function LibrarySettings(): JSX.Element {
               {library.last_synced_at == null ? 'never synced' : `synced ${relativeTime(library.last_synced_at)}`}
             </Text>
             {sync.libraryId === library.id && <SyncStrip />}
+            <PreviewSettings library={library} />
           </div>
 
           <Button disabled={sync.isBusy && sync.libraryId === library.id} onClick={() => void syncPresenter.trigger(library.id)}>
@@ -64,37 +65,61 @@ const LibrarySettings = observer(function LibrarySettings(): JSX.Element {
   );
 });
 
-const SOURCES: Option<ThumbnailSource>[] = [
-  { value: 'render', label: 'Render the RAW', icon: <Wand2 size={ICON} /> },
+const SOURCES: Option<PreviewSource>[] = [
   { value: 'embedded', label: 'Camera JPEG', icon: <Sparkles size={ICON} /> },
+  { value: 'render', label: 'Render the RAW', icon: <Wand2 size={ICON} /> },
 ];
 
-// Which pixels new photos get thumbnailed from. Deliberately not retroactive:
-// rebuilding an existing catalogue is a job you ask for explicitly from the
-// grid, not something a preference does to thousands of files behind your back.
-const ImportSettings = observer(function ImportSettings(): JSX.Element {
-  const store = useServerConfigStore();
-  const { serverConfig } = usePresenters();
+// What this browser and display say they can do. Reported, never enforced: HDR
+// support is negotiated between the browser, the compositor and the monitor's
+// EDID, and a wrong "no" here should not stop anyone building HDR previews for
+// a machine they will open them on later.
+function hdrCapability(): string {
+  if (typeof window === 'undefined' || window.matchMedia == null) return 'unknown';
+  return window.matchMedia('(dynamic-range: high)').matches ? 'this display reports HDR' : 'this display reports SDR only';
+}
 
-  useEffect(() => {
-    void serverConfig.loadSettings();
-  }, [serverConfig]);
+// Per library, because one catalogue may be scanned JPEGs where the camera's
+// rendering is the point and another RAWs worth demosaicing. Deliberately not
+// retroactive: it decides what gets built next, and rebuilding an existing
+// catalogue is a job you ask for explicitly, not something a preference does to
+// thousands of files behind your back.
+const PreviewSettings = observer(function PreviewSettings({ library }: { library: Library }): JSX.Element {
+  const { libraries } = usePresenters();
 
   return (
     <div className="panel">
-      <div className="row">
-        <SegmentedControl
-          label="Thumbnail source for new photos"
-          options={SOURCES}
-          value={store.settings?.thumbnail_source ?? null}
-          onChange={(source) => void serverConfig.setThumbnailSource(source)}
-        />
-        {store.saving && <Text variant="mono">saving…</Text>}
-      </div>
+      <SegmentedControl
+        label="Thumbnails and previews from"
+        options={SOURCES}
+        value={library.preview_source}
+        onChange={(source) => void libraries.setPreviewSource(library.id, source)}
+      />
       <Text variant="mono" as="p">
-        Rendering demosaics the RAW at full resolution. The camera JPEG is much faster and carries the maker&apos;s colour, but is only
-        as large as the body embedded. Applies to photos indexed from now on; existing thumbnails are left alone.
+        The camera JPEG needs no demosaic, so it is much faster, and carries the maker&apos;s colour, but is only as large as the body
+        embedded. Rendering demosaics the RAW at full resolution.
       </Text>
+
+      {/* Only offered for a render: an embedded JPEG is 8-bit SDR, so there is
+          no headroom in it to carry however the setting is left. */}
+      {library.preview_source === 'render' && (
+        <label className="row">
+          <input
+            type="checkbox"
+            checked={library.preview_hdr}
+            onChange={(e) => void libraries.setPreviewHdr(library.id, e.currentTarget.checked)}
+          />
+          <span>
+            HDR previews <Text variant="mono">({hdrCapability()})</Text>
+          </span>
+        </label>
+      )}
+      {library.preview_source === 'render' && (
+        <Text variant="mono" as="p">
+          Renders the full-size preview as PQ HDR. Chrome and Safari display it; Firefox does not, and shows it dark. The grid stays
+          SDR either way. Nothing checks your display first, so you can build HDR here and look at it somewhere else.
+        </Text>
+      )}
     </div>
   );
 });
@@ -158,7 +183,6 @@ export const SettingsPage = observer(function SettingsPage(): JSX.Element {
       <Text variant="label" as="div" className="panel__title settings__group">
         Import
       </Text>
-      <ImportSettings />
     </div>
   );
 });

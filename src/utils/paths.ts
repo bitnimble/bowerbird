@@ -33,6 +33,14 @@ export function getPreviewPath(library: Library, photoId: string, source: Thumbn
   return path.join(getDataPath(library), 'previews', source, `${photoId}.avif`);
 }
 
+// The same HDR preview as a one-frame video, built alongside it when a library
+// renders HDR. Firefox applies a PQ transfer to nothing else - it shows an HDR
+// still dark - so this is the only rendition that reaches an HDR display there
+// (§10.7). One per photo, not per source: only a render is ever HDR.
+export function getPreviewVideoPath(library: Library, photoId: string): string {
+  return path.join(getDataPath(library), 'previews', 'video', `${photoId}.mp4`);
+}
+
 // Full-resolution export, built only on request (§10.5). Kept beside the
 // thumbnails so removing a library's data directory takes it too.
 export function getLosslessPath(library: Library, photoId: string): string {
