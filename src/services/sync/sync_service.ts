@@ -6,14 +6,14 @@ import type { Library, LibrarySyncStatus } from '../../schemas/libraries';
 import { isSupportedFile, listSupportedFiles, type ScannedFile } from '../../utils/files';
 import { computeFileHash } from '../../utils/hash';
 import { getDataPath } from '../../utils/paths';
-import { mostSpecificShoot } from '../../utils/shoots';
+import { mostSpecificShoot, shootContains } from '../../utils/shoots';
 import type { AlbumsRepository } from '../albums/albums_repository';
 import type { LibrariesRepository } from '../libraries/libraries_repository';
 import type { LibraryLifecycleListener } from '../libraries/libraries_service';
 import type { PhotosRepository, SyncDbPhoto } from '../photos/photos_repository';
 import type { ShootsRepository } from '../shoots/shoots_repository';
 import { extractMetadata, type FileMetadata } from '../processing/metadata';
-import { buildDiff, detectMoves, type DiskFile } from './sync_algorithm';
+import { buildDiff, detectMoves, detectShootRelocations, type DiskFile } from './sync_algorithm';
 import { libraryMutex } from './library_mutex';
 import { acquireSyncLock, releaseSyncLock } from './sync_lock';
 
@@ -128,13 +128,34 @@ export class SyncService implements LibraryLifecycleListener {
       const diff = buildDiff(dbPhotos, present, changed, failed);
       const result = detectMoves(diff, (id) => this.albums.getAlbumIdsForPhoto(id).length > 0);
 
+      // Whole-folder moves are resolved before anything per-photo. A shoot folder
+      // renamed outside the app shows up as one move per frame it holds, and
+      // relocating the shoot answers all of them at once: the photos keep their
+      // position inside the folder, so their paths shift by a prefix and their
+      // shoot membership does not change at all. What is left is the moves that
+      // are genuinely about individual files.
       const shoots = this.shoots.listByLibrary(libraryId);
+      const relocations = detectShootRelocations(shoots, result.moves, dbPhotos);
+      const relocatedFolders = relocations.map((r) => r.oldFolderPath);
+      const moves = result.moves.filter((mv) => !relocatedFolders.some((folder) => shootContains(folder, mv.oldFilePath)));
+
+      // shootFor has to read the post-relocation paths, or every relocated photo
+      // would be tested against a folder its shoot no longer claims.
+      for (const r of relocations) {
+        for (const shoot of shoots) {
+          if (shoot.folder_path === r.oldFolderPath) shoot.folder_path = r.newFolderPath;
+          else if (shootContains(r.oldFolderPath, shoot.folder_path)) {
+            shoot.folder_path = r.newFolderPath + shoot.folder_path.slice(r.oldFolderPath.length);
+          }
+        }
+      }
       const shootFor = (relPath: string): string | null => mostSpecificShoot(relPath, shoots)?.id ?? null;
       const nowUtc = new Date().toISOString();
 
       let added = 0;
       let removed = 0;
-      let moved = 0;
+      // The relocated photos moved too, they were just answered in bulk.
+      let moved = result.moves.length - moves.length;
       let modified = 0;
 
       // The library can be deleted during the (async) scan above; its photos are
@@ -144,7 +165,12 @@ export class SyncService implements LibraryLifecycleListener {
       if (!this.libraries.getById(libraryId)) throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
 
       this.photos.transaction(() => {
-        for (const mv of result.moves) {
+        // First, so the per-photo work below is only ever the remainder.
+        for (const r of relocations) {
+          this.shoots.relocate(r.shootId, r.oldFolderPath, r.newFolderPath);
+          this.photos.rewritePathPrefix(libraryId, r.oldFolderPath, r.newFolderPath);
+        }
+        for (const mv of moves) {
           this.photos.setFilePathAndShoot(mv.photoId, mv.newFilePath, shootFor(mv.newFilePath));
           moved++;
         }

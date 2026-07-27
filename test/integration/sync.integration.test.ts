@@ -137,3 +137,35 @@ test('moving a file into a known shoot folder reconciles shoot_id', async () => 
   await sync.syncLibrary(LIB);
   expect(row('ShootFolder/renamed.arw')?.shoot_id).toBe('sh1');
 });
+
+// A shoot folder renamed outside the app. The photos are the only evidence the
+// folder moved rather than vanished, so this exercises the whole chain: scan ->
+// per-file move detection -> whole-folder inference -> bulk prefix rewrite.
+test('a shoot folder renamed on disk relocates the shoot instead of orphaning its photos', async () => {
+  const folderPath = () => (db.query('SELECT folder_path FROM shoots WHERE id = ?').get('sh1') as { folder_path: string }).folder_path;
+  // A soft-deleted photo in the shoot's Bin. Sync never scans these, so nothing
+  // in the move detection can speak for them; only the prefix rewrite can.
+  db.query(
+    `INSERT INTO photos (id, library_id, shoot_id, file_path, file_hash, width, height, orientation,
+       date_added, file_size, is_deleted) VALUES (?, ?, ?, ?, 'h', 1, 1, 1, '2024-01-01', 1, 1)`,
+  ).run('binned', LIB, 'sh1', 'ShootFolder/Bin/old.arw');
+
+  renameSync(abs('ShootFolder'), abs('Renamed'));
+  const status = await sync.syncLibrary(LIB);
+
+  expect(folderPath()).toBe('Renamed');
+  // Membership never had to be recomputed: the shoot moved with the photo.
+  expect(row('Renamed/renamed.arw')?.shoot_id).toBe('sh1');
+  expect(row('ShootFolder/renamed.arw')).toBeNull();
+  expect(row('Renamed/renamed.arw')?.is_missing).toBe(0);
+  // The binned photo travelled with the folder, and stayed binned.
+  const binned = db.query('SELECT file_path, is_deleted FROM photos WHERE id = ?').get('binned') as {
+    file_path: string;
+    is_deleted: number;
+  };
+  expect(binned).toEqual({ file_path: 'Renamed/Bin/old.arw', is_deleted: 1 });
+  // Counted as moved, and emphatically not as removed-and-added.
+  expect(status.photos_moved).toBe(1);
+  expect(status.photos_removed).toBe(0);
+  expect(status.photos_added).toBe(0);
+});

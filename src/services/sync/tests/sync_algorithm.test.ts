@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'bun:test';
 import type { FileMetadata } from '../../processing/metadata';
-import { buildDiff, detectMoves } from '../sync_algorithm';
-import type { DbPhoto, DiskFile, LibraryDiff } from '../sync_algorithm';
+import { buildDiff, detectMoves, detectShootRelocations } from '../sync_algorithm';
+import type { DbPhoto, DiskFile, LibraryDiff, MoveEntry } from '../sync_algorithm';
 
 const META = {} as FileMetadata;
 const disk = (filePath: string, hash: string): DiskFile => ({ filePath, hash, metadata: META });
@@ -124,5 +124,110 @@ describe('detectMoves', () => {
     const diff = buildDiff([db('p1', 'old.arw', 'h1', true)], present('new.arw'), [disk('new.arw', 'h1')]);
     const result = detectMoves(diff, noAlbums);
     expect(result.moves).toEqual([{ photoId: 'p1', oldFilePath: 'old.arw', newFilePath: 'new.arw', fileHash: 'h1' }]);
+  });
+});
+
+describe('detectShootRelocations', () => {
+  const shoot = (id: string, folder_path: string) => ({ id, folder_path });
+  const move = (oldFilePath: string, newFilePath: string): MoveEntry => ({
+    photoId: oldFilePath,
+    oldFilePath,
+    newFilePath,
+    fileHash: 'h',
+  });
+  const photos = (...paths: string[]) => paths.map((file_path) => ({ file_path }));
+
+  it('infers the new folder when every photo under it moved, keeping its position', () => {
+    const relocations = detectShootRelocations(
+      [shoot('s1', 'NYC')],
+      [move('NYC/a.arw', 'NewYork/a.arw'), move('NYC/b.arw', 'NewYork/b.arw')],
+      photos('NYC/a.arw', 'NYC/b.arw'),
+    );
+    expect(relocations).toEqual([{ shootId: 's1', oldFolderPath: 'NYC', newFolderPath: 'NewYork' }]);
+  });
+
+  it('infers a move to a different depth, not just a rename in place', () => {
+    const relocations = detectShootRelocations(
+      [shoot('s1', 'NYC')],
+      [move('NYC/a.arw', 'Archive/2024/NYC/a.arw')],
+      photos('NYC/a.arw'),
+    );
+    expect(relocations).toEqual([{ shootId: 's1', oldFolderPath: 'NYC', newFolderPath: 'Archive/2024/NYC' }]);
+  });
+
+  // The whole point of the all-or-nothing rule: a partial move is ambiguous, so
+  // the shoot is left alone for the user to resolve rather than guessed at.
+  it('declines when one photo stayed behind', () => {
+    const relocations = detectShootRelocations(
+      [shoot('s1', 'NYC')],
+      [move('NYC/a.arw', 'NewYork/a.arw')],
+      photos('NYC/a.arw', 'NYC/b.arw'),
+    );
+    expect(relocations).toEqual([]);
+  });
+
+  it('declines when the photos scattered to different folders', () => {
+    const relocations = detectShootRelocations(
+      [shoot('s1', 'NYC')],
+      [move('NYC/a.arw', 'NewYork/a.arw'), move('NYC/b.arw', 'Elsewhere/b.arw')],
+      photos('NYC/a.arw', 'NYC/b.arw'),
+    );
+    expect(relocations).toEqual([]);
+  });
+
+  // Not a reshuffle: the folder holding every photo is now NewYork/sub, which is
+  // exactly what a move into a subfolder looks like from the photos' side.
+  it('treats a move deeper as a move, when every photo goes with it', () => {
+    const relocations = detectShootRelocations(
+      [shoot('s1', 'NYC')],
+      [move('NYC/a.arw', 'NewYork/sub/a.arw'), move('NYC/b.arw', 'NewYork/sub/b.arw')],
+      photos('NYC/a.arw', 'NYC/b.arw'),
+    );
+    expect(relocations).toEqual([{ shootId: 's1', oldFolderPath: 'NYC', newFolderPath: 'NewYork/sub' }]);
+  });
+
+  it('declines when the photos landed at different depths, which is a reshuffle', () => {
+    const relocations = detectShootRelocations(
+      [shoot('s1', 'NYC')],
+      [move('NYC/a.arw', 'NewYork/a.arw'), move('NYC/b.arw', 'NewYork/sub/b.arw')],
+      photos('NYC/a.arw', 'NYC/b.arw'),
+    );
+    expect(relocations).toEqual([]);
+  });
+
+  it('declines a target another shoot already owns', () => {
+    const relocations = detectShootRelocations(
+      [shoot('s1', 'NYC'), shoot('s2', 'NewYork')],
+      [move('NYC/a.arw', 'NewYork/a.arw')],
+      photos('NYC/a.arw'),
+    );
+    expect(relocations).toEqual([]);
+  });
+
+  it('says nothing about an empty shoot, which offers no evidence either way', () => {
+    expect(detectShootRelocations([shoot('s1', 'NYC')], [], [])).toEqual([]);
+  });
+
+  // A nested shoot's own photos prove its own move, so each is inferred
+  // independently and lands at the right place without a cascade.
+  it('relocates a parent and its nested shoot from their own photos', () => {
+    const relocations = detectShootRelocations(
+      [shoot('s1', 'Trip'), shoot('s2', 'Trip/Day1')],
+      [move('Trip/a.arw', 'Vacation/a.arw'), move('Trip/Day1/b.arw', 'Vacation/Day1/b.arw')],
+      photos('Trip/a.arw', 'Trip/Day1/b.arw'),
+    );
+    expect(relocations).toEqual([
+      { shootId: 's1', oldFolderPath: 'Trip', newFolderPath: 'Vacation' },
+      { shootId: 's2', oldFolderPath: 'Trip/Day1', newFolderPath: 'Vacation/Day1' },
+    ]);
+  });
+
+  it('does not mistake a sibling folder for the shoot (NYC2 is not under NYC)', () => {
+    const relocations = detectShootRelocations(
+      [shoot('s1', 'NYC')],
+      [move('NYC2/a.arw', 'Other/a.arw')],
+      photos('NYC/keep.arw', 'NYC2/a.arw'),
+    );
+    expect(relocations).toEqual([]);
   });
 });

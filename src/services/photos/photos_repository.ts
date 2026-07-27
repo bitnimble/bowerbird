@@ -139,7 +139,7 @@ const DETAIL_COLS = `photos.id, photos.library_id, photos.shoot_id, photos.width
   photos.date_updated, photos.date_reprocessed, photos.needs_processing, photos.processing_error,
   photos.latitude, photos.longitude, photos.rating, photos.triage, photos.is_missing,
   photos.is_deleted, photos.notes, photos.file_size, photos.iso, photos.shutter_speed, photos.aperture,
-  photos.focal_length, photos.camera_make, photos.camera_model, photos.lens_model, photos.thumbnail_source`;
+  photos.focal_length, photos.camera_make, photos.camera_model, photos.lens_model, photos.thumbnail_source, photos.thumbnail_hdr`;
 
 interface SummaryRow {
   id: string;
@@ -176,6 +176,7 @@ interface DetailRow extends SummaryRow {
   camera_model: string | null;
   lens_model: string | null;
   thumbnail_source: ThumbnailSource | null;
+  thumbnail_hdr: number;
   lib_ordering: string; // the owning library's ordering, for ordering_date
 }
 
@@ -251,6 +252,7 @@ function toDetail(row: DetailRow, albumIds: string[]): PhotoDetail {
     camera_model: row.camera_model,
     lens_model: row.lens_model,
     thumbnail_source: row.thumbnail_source,
+    thumbnail_hdr: row.thumbnail_hdr === 1,
     // Both resolved by the service, which knows the library: one needs its data
     // directory to stat, the other its preview settings. The repository has no
     // business doing either.
@@ -339,6 +341,32 @@ export class PhotosRepository {
         `SELECT id, library_id, file_path, shoot_id FROM photos WHERE library_id = ? ${deletedClause}AND file_path >= ? AND file_path < ?`,
       )
       .all(libraryId, lo, hi) as BasicPhoto[];
+  }
+
+  // Bulk prefix rewrite for a shoot folder that moved on disk (§9.5). Two
+  // statements rather than one UPDATE per photo: a folder move is the one case
+  // where every path beneath it changes the same way, and a shoot can hold
+  // thousands of frames.
+  //
+  // The non-deleted rows are provably present at the new prefix; the move is
+  // only inferred when every one of them was found there; so is_missing clears.
+  // The soft-deleted ones live in <folder>/Bin and were never scanned, so their
+  // path travels with the folder but their state is left alone.
+  rewritePathPrefix(libraryId: string, oldFolderPath: string, newFolderPath: string): void {
+    const [lo, hi] = folderRange(oldFolderPath);
+    const tailFrom = oldFolderPath.length + 1; // 1-based: first char after the old prefix
+    this.db
+      .query(
+        `UPDATE photos SET file_path = ? || substr(file_path, ?), is_missing = 0
+           WHERE library_id = ? AND is_deleted = 0 AND file_path >= ? AND file_path < ?`,
+      )
+      .run(newFolderPath, tailFrom, libraryId, lo, hi);
+    this.db
+      .query(
+        `UPDATE photos SET file_path = ? || substr(file_path, ?)
+           WHERE library_id = ? AND is_deleted = 1 AND file_path >= ? AND file_path < ?`,
+      )
+      .run(newFolderPath, tailFrom, libraryId, lo, hi);
   }
 
   setShoot(photoId: string, shootId: string | null): void {
@@ -560,13 +588,13 @@ export class PhotosRepository {
       .all(...params) as PendingPhoto[];
   }
 
-  markProcessed(id: string, reprocessedAtIso: string, source: ThumbnailSource): void {
+  markProcessed(id: string, reprocessedAtIso: string, source: ThumbnailSource, hdr: boolean): void {
     this.db
       .query(
         `UPDATE photos SET needs_processing = 0, date_reprocessed = ?, processing_error = NULL,
-          thumbnail_source = ? WHERE id = ?`,
+          thumbnail_source = ?, thumbnail_hdr = ? WHERE id = ?`,
       )
-      .run(reprocessedAtIso, source, id);
+      .run(reprocessedAtIso, source, hdr ? 1 : 0, id);
   }
 
   // Queues thumbnails to be rebuilt from `source`. Returns how many rows were

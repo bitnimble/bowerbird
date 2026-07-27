@@ -86,6 +86,21 @@ export class ShootsRepository {
     this.db.query(`UPDATE shoots SET ${sets.join(', ')} WHERE id = ?`).run(...params);
   }
 
+  // Points a shoot at the folder it was found at, taking its descendants with it:
+  // a descendant's folder_path is this one's plus a suffix, so the whole subtree
+  // shifts by the same prefix swap (§9.5). The name is untouched; only where the
+  // shoot lives on disk changed.
+  relocate(shootId: string, oldFolderPath: string, newFolderPath: string): void {
+    this.db
+      .query(
+        `UPDATE shoots SET folder_path = ? || substr(folder_path, ?)
+           WHERE library_id = (SELECT library_id FROM shoots WHERE id = ?)
+             AND folder_path >= ? AND folder_path < ?`,
+      )
+      .run(newFolderPath, oldFolderPath.length + 1, shootId, `${oldFolderPath}/`, `${oldFolderPath}0`);
+    this.db.query('UPDATE shoots SET folder_path = ? WHERE id = ?').run(newFolderPath, shootId);
+  }
+
   delete(id: string): boolean {
     return this.db.query('DELETE FROM shoots WHERE id = ?').run(id).changes > 0;
   }

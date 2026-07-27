@@ -1,3 +1,4 @@
+import { shootContains } from '../../utils/shoots';
 import type { FileMetadata } from '../processing/metadata';
 
 // Prior state (DB) and current state (disk) for one library.
@@ -162,4 +163,59 @@ export function detectMoves(diff: LibraryDiff, isInAlbum: (photoId: string) => b
     removed: diff.removed.filter((r) => !usedRemoved.has(r)),
     modified: diff.modified,
   };
+}
+
+export interface ShootRelocation {
+  shootId: string;
+  oldFolderPath: string;
+  newFolderPath: string;
+}
+
+// A shoot folder renamed outside the app (DESIGN §9.5). Nothing on disk says a
+// folder was renamed rather than deleted and another created, and the watcher is
+// no help: the kernel pairs the two halves of a rename with a cookie, but no
+// portable JS watcher exposes it. The photos are the evidence instead. If every
+// file that was under A/ is now under B/, each keeping its position within the
+// folder, then A became B and nothing else explains it.
+//
+// Deliberately all-or-nothing. A partial match means files were also added,
+// removed or reshuffled, so the folder's identity is genuinely ambiguous; the
+// shoot is left pointing at a folder that is gone, for the user to resolve,
+// rather than guessed at, a wrong guess silently adopts someone else's folder.
+export function detectShootRelocations(
+  shoots: readonly { id: string; folder_path: string }[],
+  moves: readonly MoveEntry[],
+  dbPhotos: readonly { file_path: string }[],
+): ShootRelocation[] {
+  const movedTo = new Map<string, string>();
+  for (const m of moves) movedTo.set(m.oldFilePath, m.newFilePath);
+
+  const relocations: ShootRelocation[] = [];
+  const claimed = new Set<string>();
+
+  for (const shoot of shoots) {
+    const under = dbPhotos.filter((p) => shootContains(shoot.folder_path, p.file_path));
+    if (under.length === 0) continue; // nothing to reason from
+
+    let target: string | null = null;
+    const wholeFolderMoved = under.every((photo) => {
+      const to = movedTo.get(photo.file_path);
+      if (to == null) return false; // this one stayed put: not a whole-folder move
+      const tail = photo.file_path.slice(shoot.folder_path.length); // leading '/' included
+      if (!to.endsWith(tail)) return false; // moved, but to a different position in the tree
+      const folder = to.slice(0, to.length - tail.length);
+      target ??= folder;
+      return folder === target;
+    });
+    if (!wholeFolderMoved || target == null || target === shoot.folder_path) continue;
+
+    // Two shoots cannot occupy one folder, and a target another shoot already
+    // owns means this is something other than a plain rename.
+    const targetPath: string = target;
+    if (claimed.has(targetPath) || shoots.some((s) => s.id !== shoot.id && s.folder_path === targetPath)) continue;
+    claimed.add(targetPath);
+    relocations.push({ shootId: shoot.id, oldFolderPath: shoot.folder_path, newFolderPath: targetPath });
+  }
+
+  return relocations;
 }
