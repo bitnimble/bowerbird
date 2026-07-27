@@ -53,6 +53,7 @@ describe('ProcessingService.processUnprocessed', () => {
       thumbnail_source: 'render',
       preview_source: 'embedded',
       preview_hdr: 0,
+      preview_hdr_video: 0,
     };
   }
 

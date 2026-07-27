@@ -120,6 +120,26 @@ const PreviewSettings = observer(function PreviewSettings({ library }: { library
           SDR either way. Nothing checks your display first, so you can build HDR here and look at it somewhere else.
         </Text>
       )}
+
+      {/* Nested under HDR because it is a second encode of the same render, and
+          meaningless without one. */}
+      {library.preview_source === 'render' && library.preview_hdr && (
+        <>
+          <label className="row">
+            <input
+              type="checkbox"
+              checked={library.preview_hdr_video}
+              onChange={(e) => void libraries.setPreviewHdrVideo(library.id, e.currentTarget.checked)}
+            />
+            <span>Also encode for Firefox on Windows</span>
+          </label>
+          <Text variant="mono" as="p">
+            Writes a second copy of each HDR preview as a one-frame video, which is the only form Firefox will display in HDR. Costs
+            roughly another second per photo on import, for a file no other browser ever reads, so leave it off unless you use
+            Firefox on an HDR display.
+          </Text>
+        </>
+      )}
     </div>
   );
 });

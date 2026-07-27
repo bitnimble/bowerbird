@@ -36,7 +36,8 @@ function mockPhotos(over: Partial<PhotosRepository> = {}): PhotosRepository {
 function library(root: string): Library {
   return { id: 'lib', root_path: root, data_path: null, ordering: 'taken_desc',
   preview_source: 'embedded' as const,
-  preview_hdr: false, last_synced_at: null, photo_count: 0 };
+  preview_hdr: false,
+  preview_hdr_video: false, last_synced_at: null, photo_count: 0 };
 }
 function mockLibs(root: string): LibrariesRepository {
   return { getById: jest.fn(() => library(root)) } as unknown as LibrariesRepository;

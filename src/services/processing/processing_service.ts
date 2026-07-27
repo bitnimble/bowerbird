@@ -163,6 +163,7 @@ export class ProcessingService {
       // sync inserted without naming one; the library's default answers both.
       source: pending.thumbnail_source ?? pending.preview_source,
       hdr: pending.preview_hdr === 1,
+      hdrVideo: pending.preview_hdr_video === 1,
       peakNits: this.config.hdrPeakNits,
       crf: this.config.hdrCrf,
       preset: this.config.hdrPreset,

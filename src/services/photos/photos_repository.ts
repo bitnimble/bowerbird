@@ -99,6 +99,7 @@ export interface PendingPhoto {
   // lookup per job (§10.2).
   preview_source: ThumbnailSource;
   preview_hdr: number;
+  preview_hdr_video: number;
 }
 
 // Minimal shape for file/shoot bookkeeping (moves, adoption, reconciliation).
@@ -254,7 +255,7 @@ function toDetail(row: DetailRow, albumIds: string[]): PhotoDetail {
     // directory to stat, the other its preview settings. The repository has no
     // business doing either.
     has_lossless: false,
-    preview_hdr: false,
+    preview_hdr_video: false,
     album_ids: albumIds,
   };
 }
@@ -551,7 +552,7 @@ export class PhotosRepository {
     return this.db
       .query(
         `SELECT p.id AS photo_id, p.file_path, p.thumbnail_source, l.root_path, l.data_path,
-                l.preview_source, l.preview_hdr
+                l.preview_source, l.preview_hdr, l.preview_hdr_video
          FROM photos p JOIN libraries l ON l.id = p.library_id
          WHERE p.needs_processing = 1 AND p.is_missing = 0 AND p.is_deleted = 0 ${where}`,
       )

@@ -60,9 +60,10 @@ export class PhotosService {
     return {
       ...photo,
       has_lossless: library != null && existsSync(getLosslessPath(library, photo.id)),
-      // Only a render carries HDR, so a photo thumbnailed from the embedded JPEG
-      // is SDR however the library is set.
-      preview_hdr: library?.preview_hdr === true && photo.thumbnail_source === 'render',
+      // Only a render carries HDR, and the video is a separate opt-in: the client
+      // must not reach for a file the library never built.
+      preview_hdr_video:
+        library?.preview_hdr === true && library.preview_hdr_video && photo.thumbnail_source === 'render',
     };
   }
 

@@ -8,7 +8,8 @@ import type { SyncService } from '../sync_service';
 // way a permanently unmounted drive would.
 const library: Library = { id: 'lib', root_path: '/definitely/not/a/real/root', data_path: null, ordering: 'taken_desc',
   preview_source: 'embedded' as const,
-  preview_hdr: false, last_synced_at: null, photo_count: 0 };
+  preview_hdr: false,
+  preview_hdr_video: false, last_synced_at: null, photo_count: 0 };
 const DEBOUNCE = 1000;
 const TEN_MINUTES = 10 * 60 * 1000;
 

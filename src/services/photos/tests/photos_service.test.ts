@@ -43,7 +43,8 @@ function build(over: {
 
 const library: Library = { id: 'lib', root_path: '/r', data_path: null, ordering: 'added_asc',
   preview_source: 'embedded' as const,
-  preview_hdr: false, last_synced_at: null, photo_count: 0 };
+  preview_hdr: false,
+  preview_hdr_video: false, last_synced_at: null, photo_count: 0 };
 const shoot: Shoot = { id: 'sh', parent_id: null, library_id: 'lib', folder_path: 'Trip', name: 'Trip', description: null, banner_photo_id: null, ordering: 'taken_asc', photo_count: 0 };
 const album: Album = { id: 'al', name: 'Faves', ordering: 'taken_desc', banner_photo_id: null, photo_count: 0 };
 const detail = { id: 'p1' } as PhotoDetail;
@@ -122,7 +123,8 @@ describe('PhotosService.delete', () => {
 
       const lib: Library = { id: 'lib', root_path: root, data_path: null, ordering: 'added_asc',
   preview_source: 'embedded' as const,
-  preview_hdr: false, last_synced_at: null, photo_count: 0 };
+  preview_hdr: false,
+  preview_hdr_video: false, last_synced_at: null, photo_count: 0 };
       const markDeleted = jest.fn();
       const photo = { id: 'p1', library_id: 'lib', shoot_id: null, file_path: 'a.arw', is_deleted: false } as PhotoDetail;
       const { service } = build({
@@ -151,7 +153,8 @@ describe('PhotosService.delete', () => {
       writeFileSync(path.join(root, 'a.arw'), 'raw');
       const lib: Library = { id: 'lib', root_path: root, data_path: null, ordering: 'added_asc',
   preview_source: 'embedded' as const,
-  preview_hdr: false, last_synced_at: null, photo_count: 0 };
+  preview_hdr: false,
+  preview_hdr_video: false, last_synced_at: null, photo_count: 0 };
       const photo = { id: 'p1', library_id: 'lib', shoot_id: null, file_path: 'a.arw', is_deleted: false } as PhotoDetail;
       const { service } = build({
         photos: {

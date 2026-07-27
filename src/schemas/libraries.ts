@@ -21,6 +21,7 @@ export const LibrarySchema = z.object({
   ordering: OrderingSchema,
   preview_source: PreviewSourceSchema,
   preview_hdr: z.boolean(),
+  preview_hdr_video: z.boolean(),
   last_synced_at: z.string().nullable(),
   photo_count: z.number().int(),
 });
@@ -32,6 +33,7 @@ export const UpdateLibraryRequestSchema = z.object({
   ordering: OrderingSchema.optional(),
   preview_source: PreviewSourceSchema.optional(),
   preview_hdr: z.boolean().optional(),
+  preview_hdr_video: z.boolean().optional(),
 });
 export type UpdateLibraryRequest = z.infer<typeof UpdateLibraryRequestSchema>;
 

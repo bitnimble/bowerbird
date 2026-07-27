@@ -22,7 +22,8 @@ function mockRepo(overrides: Partial<LibrariesRepository> = {}): LibrariesReposi
 
 const sample: Library = { id: 'id-1', root_path: '/x', data_path: null, ordering: 'taken_desc',
   preview_source: 'embedded' as const,
-  preview_hdr: false, last_synced_at: null, photo_count: 0 };
+  preview_hdr: false,
+  preview_hdr_video: false, last_synced_at: null, photo_count: 0 };
 
 describe('LibrariesService.get', () => {
   it('returns the library when present', () => {

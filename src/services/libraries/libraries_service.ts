@@ -60,6 +60,7 @@ export class LibrariesService {
       // HDR is opt-in because it only applies to a render.
       preview_source: 'embedded',
       preview_hdr: false,
+      preview_hdr_video: false,
       last_synced_at: null,
       photo_count: 0,
     };
@@ -100,6 +101,7 @@ export class LibrariesService {
     if (updates.ordering != null) this.repo.setOrdering(libraryId, updates.ordering);
     if (updates.preview_source != null) this.repo.setPreviewSource(libraryId, updates.preview_source);
     if (updates.preview_hdr != null) this.repo.setPreviewHdr(libraryId, updates.preview_hdr);
+    if (updates.preview_hdr_video != null) this.repo.setPreviewHdrVideo(libraryId, updates.preview_hdr_video);
     return this.get(libraryId);
   }
 

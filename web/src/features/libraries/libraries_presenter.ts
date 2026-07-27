@@ -49,6 +49,10 @@ export class LibrariesPresenter {
     await this.update(libraryId, { preview_hdr });
   }
 
+  async setPreviewHdrVideo(libraryId: string, preview_hdr_video: boolean): Promise<void> {
+    await this.update(libraryId, { preview_hdr_video });
+  }
+
   private async update(libraryId: string, body: UpdateLibraryRequest): Promise<void> {
     try {
       await api.updateLibrary(libraryId, body);

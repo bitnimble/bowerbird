@@ -18,7 +18,11 @@ CREATE TABLE IF NOT EXISTS libraries (
     CHECK (preview_source IN ('embedded', 'render')),
   -- Only meaningful with 'render': an embedded JPEG is 8-bit SDR, so there is no
   -- headroom in it to carry.
-  preview_hdr INTEGER NOT NULL DEFAULT 0
+  preview_hdr INTEGER NOT NULL DEFAULT 0,
+  -- Also encode the HDR preview as a one-frame AV1. Off by default: it is a
+  -- second encode per photo for a file only Firefox on Windows ever reads, and
+  -- most installs never serve one.
+  preview_hdr_video INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS shoots (
@@ -159,5 +163,6 @@ export function runMigrations(db: Database): void {
   // (§10.2). The default matches what that setting shipped with.
   ensureColumn(db, 'libraries', 'preview_source', "TEXT NOT NULL DEFAULT 'embedded'");
   ensureColumn(db, 'libraries', 'preview_hdr', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(db, 'libraries', 'preview_hdr_video', 'INTEGER NOT NULL DEFAULT 0');
   migrateSelectedToTriage(db);
 }

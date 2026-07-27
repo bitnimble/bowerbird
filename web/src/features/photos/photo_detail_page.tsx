@@ -190,7 +190,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   // video - so there it gets the one-frame video of the same render instead
   // (§10.7). Only for the photo's own preview: a chosen rendition or the
   // full-resolution view is what was explicitly asked for.
-  const hdrVideo = photo?.preview_hdr === true && needsHdrVideo() && store.lossless == null && store.previewSource == null;
+  const hdrVideo = photo?.preview_hdr_video === true && needsHdrVideo() && store.lossless == null && store.previewSource == null;
 
   const shoot = photo?.shoot_id == null ? null : shoots.byId.get(photo.shoot_id);
   const photoAlbums = photo == null ? [] : albums.albums.filter((a) => photo.album_ids.includes(a.id));

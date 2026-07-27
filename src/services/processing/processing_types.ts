@@ -17,7 +17,7 @@ export interface ProcessingJob {
   rawFilePath: string;
   smallOutputPath: string;
   fullOutputPath: string;
-  /** The HDR video twin of the full preview, written only when hdr is set. */
+  /** The HDR video twin of the full preview, written only when hdrVideo is set. */
   videoOutputPath: string;
   smallSize: number;
   fullSize: number;
@@ -28,6 +28,8 @@ export interface ProcessingJob {
   // HDR applies to the full-size rendition only, and only when the source is a
   // render: an embedded JPEG is 8-bit SDR (§10.2).
   hdr: boolean;
+  /** Also encode the HDR preview as a one-frame AV1, for Firefox (§10.7). */
+  hdrVideo: boolean;
   peakNits: number;
   crf: number;
   preset: number;
