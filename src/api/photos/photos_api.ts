@@ -1,6 +1,8 @@
 import { Hono } from 'hono';
 import { PaginationSchema, PhotoIdListSchema } from '../../schemas/common';
-import { PhotoListQuerySchema, PreviewRequestSchema, ReprocessRequestSchema, UpdatePhotoRequestSchema } from '../../schemas/photos';
+import { PhotoListQuerySchema, ReprocessRequestSchema, UpdatePhotoRequestSchema } from '../../schemas/photos';
+import { AppError } from '../../errors';
+import { isRendition } from '../../services/processing/renditions';
 import type { PhotosService } from '../../services/photos/photos_service';
 import type { ProcessingService } from '../../services/processing/processing_service';
 
@@ -52,18 +54,15 @@ export class PhotosApi {
       return c.json({ updated: await this.service.refreshMetadata(photo_ids) });
     });
 
-    // Ensures a full-size preview from one source exists. Returns at once when it
-    // is already cached, which is the common case after the first look.
-    app.post('/photos/:id/preview', async (c) => {
-      const { source } = PreviewRequestSchema.parse(await c.req.json());
-      await this.service.buildPreview(c.req.param('id'), source);
-      return c.body(null, 204);
-    });
-
-    // Builds the full-resolution lossless render. Slow and large by design, so it
-    // is one photo at a time and only when asked for.
-    app.post('/photos/:id/lossless', async (c) => {
-      await this.service.buildLossless(c.req.param('id'));
+    // Ensures one rendition exists. Returns at once when it is already cached,
+    // which is the common case after the first look. The max-resolution one is
+    // slow and large by design, so this is one photo at a time and only on ask.
+    app.post('/photos/:id/renditions/:rendition', async (c) => {
+      const rendition = c.req.param('rendition') ?? '';
+      if (!isRendition(rendition) || rendition === 'grid') {
+        throw new AppError('NOT_FOUND', `not a rendition the viewer can build: ${rendition}`);
+      }
+      await this.service.buildRendition(c.req.param('id'), rendition);
       return c.body(null, 204);
     });
 

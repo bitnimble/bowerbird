@@ -1,4 +1,4 @@
-# Bowerbird — Design Document
+| `POST` | `/api/photos/:id/renditions/:rendition` | Build one rendition on demand: `full` or `max` (§10.1) |# Bowerbird — Design Document
 
 ## 1. Overview
 
@@ -161,7 +161,7 @@ const photosApi = new PhotosApi(photosService);
 
 ## 4. Database Schema
 
-All `datetime` columns are stored as TEXT in normalized UTC ISO 8601 format with a `Z` suffix (e.g. `2024-06-15T04:30:00.000Z`). Normalizing to UTC means lexicographic (byte) comparison equals chronological order, so the `date_added`/`date_taken` ordering indexes (§4.2) sort correctly regardless of the originating offset (camera timezone for `date_taken`, server offset shifting across DST for `date_added`).
+All `datetime` columns are stored as TEXT in ISO 8601 format with a `Z` suffix (e.g. `2024-06-15T04:30:00.000Z`), so lexicographic (byte) comparison equals chronological order and the `date_added`/`date_taken` ordering indexes (§4.2) sort correctly. `date_added` is a true instant, normalized to UTC from the server's offset (which shifts across DST). `date_taken` is not an instant: EXIF records a naive wall clock, so §11.1 stores that wall clock re-encoded as UTC and the client formats it back in UTC (`captureDateTime`), leaving a capture time reading as the camera wrote it on any machine in any zone.
 
 All UUIDs are v4, stored as TEXT.
 
@@ -503,13 +503,16 @@ Each library has a **data directory** for generated files. By default, this is `
 
 ```
 <data_path>/
-├── thumbnails/
-│   ├── small/          # 800px longest-edge AVIF thumbnails
-│   │   ├── <photo_uuid>.avif
-│   │   └── ...
-│   └── full/           # 3840px longest-edge AVIF thumbnails
-│       ├── <photo_uuid>.avif
-│       └── ...
+├── renditions/         # Derived copies of a photo (§10.1)
+│   ├── grid/           # 800px AVIF, the library grid; always SDR
+│   ├── full/           # 3840px AVIF, the photo view
+│   ├── full-hdr/       # the same, PQ
+│   ├── full-hdr-video/ # one-frame AV1 twin, for Firefox (§10.7)
+│   ├── max/            # native-resolution AVIF (§10.5)
+│   ├── max-hdr/
+│   └── max-hdr-video/
+│       └── <photo_uuid>.avif   # every rendition is named by photo id
+├── hdr/                # the HDR check page's renditions (§10.7)
 └── bin/                # Deleted original RAW files
     └── ...
 ```
@@ -841,14 +844,21 @@ Sync snapshots the DB, then scans **asynchronously**, then applies. A user mutat
 
 ### 10.1 Overview
 
-Processing converts RAW files into **AVIF** thumbnails at two sizes:
+Processing converts RAW files into **renditions**: derived copies of one photo, each existing for a stated reason.
 
-| Size | Constraint | Output path |
-|---|---|---|
-| small | Longest edge = `SMALL_THUMBNAIL_SIZE` (default 800px), preserve aspect ratio | `<data_path>/thumbnails/small/<photo_uuid>.avif` |
-| full | Longest edge = `FULL_THUMBNAIL_SIZE` (default 3840px), preserve aspect ratio | `<data_path>/thumbnails/full/<photo_uuid>.avif` |
+| Rendition | Constraint | Why it exists | Output path |
+|---|---|---|---|
+| `grid` | Longest edge = `SMALL_THUMBNAIL_SIZE` (default 800px) | The library grid. Always SDR | `<data_path>/renditions/grid/<photo_uuid>.avif` |
+| `full` | Longest edge = `FULL_THUMBNAIL_SIZE` (default 3840px) | The photo view | `<data_path>/renditions/full[-hdr]/<photo_uuid>.avif` |
+| `max` | Native resolution, never fitted | Pixel-peeping (§10.5) | `<data_path>/renditions/max[-hdr]/<photo_uuid>.avif` |
 
 Sizes and quality come from configuration (§15). Nothing in the pipeline hardcodes them.
+
+These were three trees under three names - `thumbnails/`, `previews/` and `lossless/` - with the vocabulary to match, which read backwards in both directions: `thumbnails/full` was a 3840px image the viewer showed *by default*, and `previews/` was the one thing it did *not*. They are the same idea at different sizes and dynamic ranges, so building any of them is one job type over a list of targets rather than three that differed mostly in what they called their output path.
+
+**The camera's embedded JPEG is deliberately not a rendition.** It is the original bytes, served straight out of the RAW like the RAW itself (`GET /image/:id/embedded.jpg`), never resized into HDR or transcoded into AVIF and cached as a copy of its own. The one exception is the grid tile, which cannot be a 9504px preview and so is re-encoded to 800px whatever its source.
+
+**Dynamic range is in the directory, not the filename**, because the file is the cache: a copy built while the library was SDR would otherwise be handed back forever, so turning HDR on and asking for the full-size view returned the old sRGB AVIF and nothing ever rebuilt it. HDR is stored *beside* the SDR copy rather than replacing it, so turning the setting off does not throw away work that turning it back on would redo. The video twin gets its own `-hdr-video` directory: the orphan sweep keys on the one extension a directory is supposed to hold, and two in one directory would have it delete the video as a superseded format on every pass (§10.6).
 
 **Everything is AVIF**, thumbnails, previews, the full-resolution export (§10.5) and the HDR renditions (§10.7). It decodes natively in every current browser with no polyfill, it is the only format here that carries HDR to Chrome and Safari alike, and at matched quality it is smaller than the WebP it replaced: the full-size rendition is 375 kB at q60 against 1019 kB for WebP q90. Nothing migrates existing files; the orphan sweep keys on the extension a directory is supposed to hold, so stranded WebP is collected on the next pass (§10.6).
 
@@ -859,17 +869,19 @@ Two encoder settings were measured rather than inherited, and both defaults were
 
 **Where the pixels come from is per library**, not per server: `preview_source` (`embedded` or `render`), `preview_hdr` and `preview_hdr_video` on the `libraries` row. One catalogue may be scanned JPEGs where the camera's rendering is the point and another RAWs worth demosaicing. `embedded` is the default because it needs no demosaic. Changing either is deliberately **not retroactive**; it decides what gets built next, and rebuilding a catalogue is an explicit action.
 
-**HDR applies to the full-size rendition only.** The grid stays SDR: a wall of HDR thumbnails is punishing to look at, and it would put a LibRaw linear decode and two encoder passes on every photo in an import rather than one sharp call. It also only applies to a `render`, an embedded JPEG is 8-bit SDR and has no headroom to carry, whatever the setting says.
+**Only `full` and `max` are ever HDR.** The grid stays SDR whatever the library says: a wall of HDR tiles is punishing to look at, and it would put a LibRaw linear decode and two encoder passes on every photo in an import rather than one sharp call.
 
-With `preview_hdr_video` also set, the worker writes `previews/video/<photo_uuid>.mp4` alongside it: a one-frame AV1 off the same decode. Firefox applies a PQ transfer to nothing but video and renders an HDR still dark, so that file is the only rendition reaching an HDR display there, and the client serves it in place of the AVIF on Firefox alone (§10.7). It is a separate opt-in rather than implied by HDR because it is a second encode per photo - roughly another second - for a file no other browser ever reads. The on-demand "From RAW" rendition obeys the same setting, so choosing it in Firefox does not land on the dark still. `PhotoDetail.preview_hdr_video` is a `stat` rather than the setting: a photo imported before the toggle was turned on has no video, and the settings are not retroactive.
+**An import builds `grid` always, and `full` only when the library renders.** A library serving the camera's JPEG has nothing to build for the photo view - it hands over the RAW's own bytes - so it pays one small encode per photo and no demosaic at all. `max` is never built at import: it is native resolution and tens of megabytes, so it happens on request and only once.
 
-**The three renditions are one quality ladder**, the camera's JPEG, a render fitted to the preview size, and a full-resolution render (§10.5). They are the same picture at different costs, so the viewer treats them as interchangeable and `preview_rendition_mode` (§13.6) decides which one a photo opens at: pinned to one of the three, or reopened at whatever was chosen last, either across the catalogue (`remember`) or for that photo (`remember_per_photo`, stored on `photos.preview_rendition`). Server-side rather than in the browser because the same catalogue is opened from a phone, a laptop and whatever is plugged into the good monitor, and "where I left off" is worth nothing if it only holds on one of them.
+With `preview_hdr_video` also set, the worker writes the one-frame AV1 twin off the same decode. Firefox applies a PQ transfer to nothing but video and renders an HDR still dark, so that file is the only rendition reaching an HDR display there, and the client serves it in place of the AVIF on Firefox alone (§10.7). It is a separate opt-in rather than implied by HDR because it is a second encode per photo - roughly another second - for a file no other browser ever reads.
 
-Whichever it resolves to, a photo whose own thumbnail already *is* that rendition opens on the thumbnail: it is on disk, and building a second copy of a picture that already exists would be a slow way to show the same thing. Only the step down to the camera's JPEG is missing from the viewer's menu once a render is on screen; nobody goes back to it having seen the RAW, and every other step stays available in both directions.
+**The viewer sees a three-step quality ladder**: the camera's JPEG, `full`, and `max`. They are the same picture at different costs, so it treats them as interchangeable and `preview_rendition_mode` (§13.6) decides which one a photo opens at: pinned to one of the three, or reopened at whatever was chosen last, either across the catalogue (`remember`) or for that photo (`remember_per_photo`, stored on `photos.preview_rendition`). Server-side rather than in the browser because the same catalogue is opened from a phone, a laptop and whatever is plugged into the good monitor, and "where I left off" is worth nothing if it only holds on one of them. All three stay on offer whichever is showing, the step back down to the camera's JPEG included: comparing a render against it is a reason to switch.
 
-**The on-demand preview is cached under everything that decides its pixels**, `previews/<source>/` and `previews/<source>-hdr/`, and the photo's own `thumbnail_hdr` records which of the two its full thumbnail is. Only the source used to be part of that key, and the file is the cache, so a render built while the library was SDR was handed back forever: turning HDR on and picking "From RAW" returned the old sRGB AVIF and nothing ever rebuilt it. Both halves are compared before the photo's own thumbnail is substituted for a preview, since a library switched to HDR after the import still has SDR thumbnails.
+`PhotoDetail.renditions` answers the client's questions from **disk rather than from a column** - what each one's path is, whether it is built, whether it is HDR, whether a video twin exists - because settings are not retroactive and a library switched to HDR after an import still has SDR files. `default_rendition` is what the viewer opens at when nothing has been chosen, so the client never has to re-derive it from what happened to be built.
 
-Every writer on this path fails on a missing directory rather than creating one, and ffmpeg fails the whole job rather than the one output, so the worker creates the directory for each of its job's outputs before it runs. At the call site instead, each new rendition is a directory somebody has to remember, and the one that was forgotten (`previews/video/`) took the still down with it.
+**Reprocessing clears every rendition it does not itself rewrite.** A photo is only reprocessed because its pixels changed, so the copies beside it are of the old file and nothing else would ever notice - the max-resolution export in particular would be served forever. The ones the job is about to write are exempt, or the sweep would delete what it just made.
+
+Every writer on this path fails on a missing directory rather than creating one, and ffmpeg fails the whole job rather than the one output, so the worker creates the directory for each of its job's outputs before it runs. At the call site instead, each new rendition is a directory somebody has to remember, and the one that was forgotten took the still down with it.
 
 ### 10.2 Concurrency Model
 
@@ -901,7 +913,7 @@ Each worker:
 | `render` | Demosaics the RAW (steps 2-3 above) | Full sensor resolution, slow |
 | `embedded` | Lifts the camera's own JPEG out of the file (`libraw_unpack_thumb` + `libraw_dcraw_make_mem_thumb`) | Much faster, the maker's colour treatment, but only as large as the body embedded, which ranges from 640×480 to the full sensor |
 
-The embedded JPEG carries its own EXIF orientation, so it is passed through `sharp().rotate()`; a render is already baked upright by the decoder (§11.1) and must not be rotated again. A file with no JPEG preview (some bodies embed a bitmap, or nothing) is a property of the file rather than an error, so an `embedded` request falls back to a render. The result reports what was **actually** used and `photos.thumbnail_source` records it, so the client can state which pixels are on screen instead of leaving the user to guess.
+The embedded JPEG carries its own EXIF orientation, so it is passed through `sharp().rotate()`; a render is already baked upright by the decoder (§11.1) and must not be rotated again. A file with no JPEG preview (some bodies embed a bitmap, or nothing) is a property of the file rather than an error, so an `embedded` request falls back to a render. The result reports what was **actually** used and `photos.rendition_source` records it, so the client can state which pixels are on screen instead of leaving the user to guess.
 
 ### 10.4 LibRaw FFI Bindings (`raw_decoder.ts`)
 
@@ -938,7 +950,7 @@ This buffer is then passed to sharp as `sharp(data, { raw: { width, height, chan
 
 ### 10.5 Lossless export
 
-`POST /api/photos/:id/lossless` renders one photo at full resolution into an AVIF kept beside the thumbnails. It exists because a 3840px preview is not what you check focus or gradients on, and it is opt-in per photo because it takes real time to build. Unlike every other rendition it is never fitted to a maximum edge: this is the view that gets pixel-peeped. The file is the cache: a second request finds it already there, and `PhotoDetail.has_lossless` is a `stat` rather than a column, so it cannot disagree with the disk.
+`POST /api/photos/:id/lossless` renders one photo at full resolution into an AVIF kept beside the thumbnails. It exists because a 3840px preview is not what you check focus or gradients on, and it is opt-in per photo because it takes real time to build. Unlike every other rendition it is never fitted to a maximum edge: this is the view that gets pixel-peeped. The file is the cache: a second request finds it already there, and `PhotoDetail.renditions.max.built` is a `stat` rather than a column, so it cannot disagree with the disk.
 
 It follows the library's HDR setting, since it is the same render from the same RAW and it would be odd for "view original" to be the one rendition that disagrees with the rest. That includes the Firefox video twin (§10.7): every rendition is the same picture at a different quality level, and they are interchangeable, so each has a video beside it wherever HDR applies. Only this one cannot stay at native size, SVT-AV1 refuses a source taller than 8704, so the video alone is fitted to that ceiling while the still stays full resolution.
 
@@ -964,7 +976,7 @@ On the wasm path HDR signalling rides on a PNG **cICP** chunk (9/16/0/1 = BT.202
 
 `libraw_set_output_color` currently pins sRGB, so nothing produced today is HDR: the delivery path is ready for it, the decode is not.
 
-The default for newly indexed photos is the `import.thumbnail_source` setting (§13.6). Changing it is deliberately not retroactive: rebuilding an existing catalogue is a job the user asks for explicitly, not something a preference does to thousands of files in the background. `POST /api/photos/reprocess` is that explicit request.
+The default for newly indexed photos is the library's `preview_source` (§10.1). Changing it is deliberately not retroactive: rebuilding an existing catalogue is a job the user asks for explicitly, not something a preference does to thousands of files in the background. `POST /api/photos/reprocess` is that explicit request.
 
 ### 10.6 Orphaned files
 
@@ -1042,7 +1054,7 @@ Used during sync to populate photo records and compute file hashes.
 
 Metadata is read via the same per-format dispatch as decoding (§10): sniff the header, route to the format's reader. `sharp`/libvips is **not** used for RAW metadata, as its prebuilt builds have no RAW loader and, when coaxed to open an ARW as a generic TIFF, report the embedded preview's dimensions rather than the full-res sensor values.
 
-For Sony ARW, metadata comes from **LibRaw's header parse**: `libraw_init` then `libraw_open_file` populates `imgdata.sizes` (dimensions and `flip` orientation), `imgdata.other` (capture `timestamp`, parsed GPS), and `imgdata.color` (color space), followed by `libraw_adjust_sizes_info_only` to flip-adjust `sizes.iwidth`/`iheight` (see below), all **without** calling `libraw_unpack`/`libraw_dcraw_process`, so no pixel data is decoded. This is the fast path used per file during scan. `colorSpace` in Stage 1 is the constant `sRGB` output space: LibRaw exposes no stable accessor for the camera's source color-space EXIF tag, and the decode pipeline always outputs sRGB, so this field is fixed (informational + a stable, non-varying hash input) rather than read per file. (`imgdata.color` holds calibration/profile data, not a simple source-space identifier.) The EXIF capture time is naive (the tag carries no zone). LibRaw exposes it only as a pre-computed `time_t` in `imgdata.other.timestamp` (derived by interpreting the naive `DateTimeOriginal` as the process's local timezone), with no accessor for the EXIF `OffsetTimeOriginal` tag. Stage 1 therefore takes that `time_t` as-is and stores it as a `Z` UTC ISO string (§4): capture times are correct when the server runs in the camera's timezone, but a mismatch (or a photo shot in a different zone) skews `date_taken` by the offset delta. Reading `OffsetTimeOriginal` for true per-photo zone resolution needs a raw EXIF parse outside LibRaw and is deferred past Stage 1 (like `colorSpace` above). The reader also `stat`s the file to fill `mtime`/`fileSize`, so the scan-time result carries them all the way to Phase 3 apply (§9.4) without a second `stat` inside the transaction.
+For Sony ARW, metadata comes from **LibRaw's header parse**: `libraw_init` then `libraw_open_file` populates `imgdata.sizes` (dimensions and `flip` orientation), `imgdata.other` (capture `timestamp`, parsed GPS), and `imgdata.color` (color space), followed by `libraw_adjust_sizes_info_only` to flip-adjust `sizes.iwidth`/`iheight` (see below), all **without** calling `libraw_unpack`/`libraw_dcraw_process`, so no pixel data is decoded. This is the fast path used per file during scan. `colorSpace` in Stage 1 is the constant `sRGB` output space: LibRaw exposes no stable accessor for the camera's source color-space EXIF tag, and the decode pipeline always outputs sRGB, so this field is fixed (informational + a stable, non-varying hash input) rather than read per file. (`imgdata.color` holds calibration/profile data, not a simple source-space identifier.) The EXIF capture time is naive (the tag carries no zone). LibRaw exposes it only as a pre-computed `time_t` in `imgdata.other.timestamp` (derived by interpreting the naive `DateTimeOriginal` as the process's local timezone), with no accessor for the EXIF `OffsetTimeOriginal` tag. Stage 1 therefore reads that `time_t` back through the same local zone `mktime` used and re-encodes those components as a `Z` UTC ISO string (§4), which stores the camera's wall clock verbatim whatever the server's zone is; taking the `time_t` as an instant instead would slide every capture date by the server's offset. The stored value is a wall clock rather than an instant, so the client formats it in UTC (`captureDateTime`) rather than in the viewer's zone, which would slide it a second time. The zone itself comes from a second, direct read of the file: `exif_zone.ts` walks the TIFF header the RAW already is, IFD0 into the Exif IFD, and returns `OffsetTimeOriginal` (0x9011), falling back to `OffsetTime` (0x9010), into the `date_taken_offset` column. Bounded to the first 256KB, so it costs a page or two rather than a read of a 25MB file, and null when a pointer leads past that window. The tags arrived in EXIF 2.31 (2016), so older bodies record nothing and the column stays NULL: a Sony ILCE-7CR writes `+11:00`, an ILCE-6300 writes no offset at all. Blank and malformed values ("      ", `+1100`) are read as absent rather than as UTC. It is deliberately not a hash input (§9.2), for the same reason `dateTaken` is not: the hash is a change detector for a file the scan has already decided to open, which only happens once mtime or size differs (§9.1), and mtime is itself hashed. Descriptive metadata therefore adds no detection the hash does not already have. Rewriting the zone tag in place while preserving mtime and size defeats the quick-check before a hash is ever computed, so hashing it would not catch that case either. `date_taken` stays the wall clock either way, so ordering and the date filters are unaffected by whether a body recorded a zone; the offset is what the viewer shows beside the time and what a true instant would be derived from. The reader also `stat`s the file to fill `mtime`/`fileSize`, so the scan-time result carries them all the way to Phase 3 apply (§9.4) without a second `stat` inside the transaction.
 
 `width`/`height` are the **display (upright) dimensions**, i.e. after the orientation flip is applied. At `open_file` time LibRaw's `sizes.iwidth`/`iheight` are still in **sensor orientation** (the 90°/270° swap is applied only by `dcraw_process` or by an explicit `libraw_adjust_sizes_info_only()` call), so the reader must call `libraw_adjust_sizes_info_only()` after `open_file` and then read the now flip-adjusted `iwidth`/`iheight`. This is deliberate: the generated thumbnails are baked upright (§10.4), so storing upright dimensions means `width`/`height` always match the served thumbnail's aspect. `orientation` is retained separately (as the LibRaw flip orientation code) only as informational metadata and as a file-hash input (§9.2); **clients must not apply it to the served thumbnails, which are already upright** (doing so would double-rotate).
 
@@ -1244,12 +1256,15 @@ All boolean query params are parsed with `z.stringbool()`, so `?is_missing=false
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/image/:photoId/small.avif` | Stream small thumbnail |
-| `GET` | `/image/:photoId/full.avif` | Stream full thumbnail |
+| `GET` | `/image/:photoId/renditions/:rendition` | Stream one rendition: `grid`, `full` or `max` (§10.1) |
+| `GET` | `/image/:photoId/renditions/:rendition/video` | The one-frame AV1 twin of an HDR rendition (§10.7) |
+| `GET` | `/image/:photoId/embedded.jpg` | The camera's own JPEG, lifted out of the RAW unchanged |
 | `GET` | `/image/:photoId/original.arw` | Stream original RAW file |
-| `GET` | `/image/:photoId/full.jpg` | The full thumbnail transcoded to JPEG, as an attachment |
+| `GET` | `/image/:photoId/full.jpg` | The full rendition transcoded to JPEG, as an attachment |
 
-`full.jpg` is transcoded per request and never stored: a download is occasional, and a third derivative per photo on disk would cost more than the transcode does.
+**Dynamic range is not in the URL.** The library decides it, so a client naming `full-hdr` would be guessing at a file that may never have been built; the route resolves it from `preview_hdr` instead, and `PhotoDetail.renditions` tells the client what it is looking at.
+
+`embedded.jpg` and `full.jpg` are produced per request and never stored: extraction is a header read plus a copy, a download is occasional, and another derivative per photo on disk would cost more than either does.
 
 **Caching.** Thumbnails are rebuilt in place under a stable URL, so every image response carries an `ETag` (file size + mtime) and `Cache-Control: no-cache`. Without a validator the browser caches heuristically with nothing to revalidate against, and keeps showing the pre-rebuild picture; `no-cache` still caches, it just always asks first, which is a 304 in the common case. `If-None-Match` is answered directly.
 
@@ -1265,12 +1280,12 @@ The served thumbnails are already rotated to display orientation (baked in durin
 
 Implementation approach:
 ```typescript
-app.get('/image/:photoId/small.avif', async (c) => {
+app.get('/image/:photoId/renditions/:rendition', async (c) => {
   const photo = await photosService.get(c.req.param('photoId'));
   if (!photo) return c.notFound();
   
   const library = await librariesService.get(photo.library_id);
-  const filePath = getSmallThumbnailPath(library, photo.id);
+  const filePath = getRenditionPath(library, photo.id, rendition, library.preview_hdr);
   
   const file = Bun.file(filePath);
   if (!await file.exists()) return c.notFound();

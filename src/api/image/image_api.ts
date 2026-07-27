@@ -4,18 +4,11 @@ import sharp from 'sharp';
 import { AppError } from '../../errors';
 import type { Library } from '../../schemas/libraries';
 import type { PhotoDetail } from '../../schemas/photos';
-import {
-  getFullThumbnailPath,
-  getHdrPath,
-  getLosslessPath,
-  getLosslessVideoPath,
-  getOriginalPath,
-  getPreviewVideoPath,
-  getSmallThumbnailPath,
-} from '../../utils/paths';
+import { getHdrPath, getOriginalPath, getRenditionPath } from '../../utils/paths';
+import { readEmbeddedJpeg } from '../../services/processing/raw_decoder';
 import type { LibrariesService } from '../../services/libraries/libraries_service';
 import { contentTypeFor, isHdrMedium, isHdrVariant } from '../../services/processing/hdr_media';
-import { isThumbnailSource } from '../../services/processing/processing_types';
+import { isRendition, renditionContentType } from '../../services/processing/renditions';
 import type { PhotosService } from '../../services/photos/photos_service';
 
 // Where a variant's bytes live, given the photo it belongs to. Passing this in
@@ -38,25 +31,26 @@ export class ImageApi {
     private readonly libraries: LibrariesService,
   ) {
     const app = new Hono();
-    app.get('/:photoId/small.avif', (c) => this.serve(c, AVIF, (lib, photo) => getSmallThumbnailPath(lib, photo.id)));
-    app.get('/:photoId/full.avif', (c) => this.serve(c, AVIF, (lib, photo) => getFullThumbnailPath(lib, photo.id)));
-    // The same full-size preview, but from a named source rather than whichever
-    // one this photo's thumbnails happen to have been built from. No extension:
-    // Hono reads `:source.avif` as a parameter named "source.avif", so the value
-    // would never come back under the name the handler asks for.
-    app.get('/:photoId/preview/:source', (c) => {
-      const source = c.req.param('source') ?? '';
-      if (!isThumbnailSource(source)) throw new AppError('NOT_FOUND', `unknown preview source: ${source}`);
-      return this.serve(c, AVIF, (lib, photo) => this.photos.previewPath(lib, photo, source, lib.preview_hdr && source === 'render'));
+    // One route for every stored rendition, named rather than spelled out per
+    // size: `grid`, `full`, `max`, optionally `/video` for the one-frame AV1 twin
+    // an HDR rendition carries for Firefox (§10.7). Dynamic range is not in the
+    // URL - the library decides it, and a client guessing would ask for a file
+    // that was never built.
+    app.get('/:photoId/renditions/:rendition/:video?', (c) => {
+      const rendition = c.req.param('rendition') ?? '';
+      const suffix = c.req.param('video');
+      if (!isRendition(rendition)) throw new AppError('NOT_FOUND', `unknown rendition: ${rendition}`);
+      if (suffix != null && suffix !== 'video') throw new AppError('NOT_FOUND', `unknown rendition form: ${suffix}`);
+      const video = suffix === 'video';
+      return this.serve(c, renditionContentType(video), (lib, photo) =>
+        getRenditionPath(lib, photo.id, rendition, lib.preview_hdr, video),
+      );
     });
-    // The HDR preview as a one-frame video, for Firefox (§10.7).
-    app.get('/:photoId/lossless-video', (c) => this.serve(c, 'video/mp4', (lib, photo) => getLosslessVideoPath(lib, photo.id)));
-    app.get('/:photoId/preview-video', (c) => this.serve(c, 'video/mp4', (lib, photo) => getPreviewVideoPath(lib, photo.id)));
+    // Served as the camera wrote it, never resized or transcoded into a rendition
+    // of its own (§10.2). The RAW itself goes the same way.
+    app.get('/:photoId/embedded.jpg', (c) => this.serveEmbedded(c));
     app.get('/:photoId/original.arw', (c) => this.serve(c, 'image/x-sony-arw', (lib, photo) => getOriginalPath(lib, photo.file_path)));
     app.get('/:photoId/full.jpg', (c) => this.serveJpeg(c));
-    // Full-resolution, and AVIF like everything else: every current browser
-    // decodes it natively, so there is no polyfill on this path any more (§10.5).
-    app.get('/:photoId/lossless.avif', (c) => this.serve(c, AVIF, (lib, photo) => getLosslessPath(lib, photo.id)));
     // HDR renditions: an AVIF still and a one-frame video, one per transfer,
     // each with an SDR reference (§10.7).
     app.get('/:photoId/hdr/:medium/:variant', (c) => {
@@ -69,7 +63,23 @@ export class ImageApi {
     this.routes = app;
   }
 
-  // A JPEG of the full-size thumbnail, transcoded on request. Nothing is stored:
+  // The camera's own JPEG, lifted out of the RAW and handed over unchanged. No
+  // demosaic and nothing cached: extraction is a header read plus a copy, which
+  // is cheaper than the disk a fourth derivative per photo would cost.
+  private async serveEmbedded(c: Context): Promise<Response> {
+    const photoId = c.req.param('photoId');
+    if (photoId == null) throw new AppError('NOT_FOUND', 'photo not found');
+    const photo = this.photos.get(photoId);
+    const library = this.libraries.get(photo.library_id);
+
+    const jpeg = readEmbeddedJpeg(getOriginalPath(library, photo.file_path));
+    if (jpeg == null) throw new AppError('NOT_FOUND', `this file has no embedded JPEG preview: ${photoId}`);
+    return new Response(new Uint8Array(jpeg), {
+      headers: { 'Content-Type': 'image/jpeg', 'Cache-Control': 'no-cache' },
+    });
+  }
+
+  // A JPEG of the full-size rendition, transcoded on request. Nothing is stored:
   // a download is occasional, and a third derivative per photo on disk would cost
   // more than the transcode does. Downloading the RAW is the other route.
   private async serveJpeg(c: Context): Promise<Response> {
@@ -78,7 +88,7 @@ export class ImageApi {
     const photo = this.photos.get(photoId);
     const library = this.libraries.get(photo.library_id);
 
-    const file = Bun.file(getFullThumbnailPath(library, photo.id));
+    const file = Bun.file(getRenditionPath(library, photo.id, 'full', library.preview_hdr));
     if (!(await file.exists())) throw new AppError('NOT_FOUND', `image not found on disk: ${photoId}`);
 
     const jpeg = await sharp(await file.arrayBuffer()).jpeg({ quality: JPEG_QUALITY }).toBuffer();

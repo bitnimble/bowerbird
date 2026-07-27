@@ -57,14 +57,14 @@ test('prune removes generated files whose photo is gone and keeps the rest', asy
   insertPhoto(LIVE);
   insertPhoto(BINNED, true);
 
-  const keptSmall = seedFile('thumbnails/small', `${LIVE}.avif`);
-  const keptFull = seedFile('thumbnails/full', `${LIVE}.avif`);
+  const keptSmall = seedFile('renditions/grid', `${LIVE}.avif`);
+  const keptFull = seedFile('renditions/full', `${LIVE}.avif`);
   // A binned photo keeps its row, and its thumbnails are what make the Bin
   // browsable, so it must survive.
-  const keptBin = seedFile('thumbnails/small', `${BINNED}.avif`);
-  const orphanSmall = seedFile('thumbnails/small', `${GONE}.avif`);
-  const orphanFull = seedFile('thumbnails/full', `${GONE}.avif`);
-  const orphanLossless = seedFile('lossless', `${GONE}.png`);
+  const keptBin = seedFile('renditions/grid', `${BINNED}.avif`);
+  const orphanSmall = seedFile('renditions/grid', `${GONE}.avif`);
+  const orphanFull = seedFile('renditions/full', `${GONE}.avif`);
+  const orphanLossless = seedFile('renditions/max', `${GONE}.png`);
   // The Bin holds RAW files named by filename, not photo id: never ours to touch.
   const raw = seedFile('bin', 'DSC00001.ARW');
 
@@ -83,9 +83,9 @@ test('prune removes a live photo’s render left behind by an earlier output for
   // writes a new file rather than replacing the old one, so without this the
   // superseded renders sit there forever - and it is what sweeps the WebP
   // thumbnails left by the move to AVIF, with no migration step to run.
-  const supersededPng = seedFile('lossless', `${LIVE}.png`);
-  const supersededJxl = seedFile('lossless', `${LIVE}.jxl`);
-  const current = seedFile('lossless', `${LIVE}.avif`);
+  const supersededPng = seedFile('renditions/max', `${LIVE}.png`);
+  const supersededJxl = seedFile('renditions/max', `${LIVE}.jxl`);
+  const current = seedFile('renditions/max', `${LIVE}.avif`);
 
   const result = await new PruneService(libraries, photos).prune();
 
@@ -97,14 +97,14 @@ test('prune removes a live photo’s render left behind by an earlier output for
 
 test('prune is a no-op when nothing is orphaned', async () => {
   insertPhoto(LIVE);
-  seedFile('thumbnails/small', `${LIVE}.avif`);
+  seedFile('renditions/grid', `${LIVE}.avif`);
 
   expect((await new PruneService(libraries, photos).prune()).removed).toBe(0);
 });
 
 test('removing a library takes its data directory but not the photographs', async () => {
   const service = new LibrariesService(libraries);
-  seedFile('thumbnails/small', `${LIVE}.avif`);
+  seedFile('renditions/grid', `${LIVE}.avif`);
   const rawPhoto = path.join(root, 'DSC00001.ARW');
   writeFileSync(rawPhoto, 'raw');
 

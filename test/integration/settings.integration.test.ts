@@ -21,8 +21,8 @@ test('an untouched catalogue opens photos wherever they were left', () => {
 test('each setting is written and read back independently', () => {
   const { settings, db } = repo();
   settings.update({ preview_rendition_mode: 'max' });
-  settings.update({ last_preview_rendition: 'render' });
-  expect(settings.get()).toEqual({ preview_rendition_mode: 'max', last_preview_rendition: 'render' });
+  settings.update({ last_preview_rendition: 'full' });
+  expect(settings.get()).toEqual({ preview_rendition_mode: 'max', last_preview_rendition: 'full' });
   db.close();
 });
 

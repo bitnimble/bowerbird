@@ -1,36 +1,30 @@
 import { readdir, stat, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import type { Library } from '../../schemas/libraries';
-import { getFullThumbnailPath, getHdrPath, getLosslessPath, getLosslessVideoPath, getPreviewPath, getPreviewVideoPath, getSmallThumbnailPath } from '../../utils/paths';
+import { getDataPath, getHdrPath } from '../../utils/paths';
 import { HDR_MEDIA, HDR_VARIANTS } from '../processing/hdr_media';
-import { THUMBNAIL_SOURCES } from '../processing/processing_types';
+import { renditionDirs } from '../processing/renditions';
 import type { LibrariesRepository } from '../libraries/libraries_repository';
 import type { PhotosRepository } from '../photos/photos_repository';
 
 // The directories holding files named `<photoId>.<ext>`, each with the one
-// extension it is supposed to contain. Both are taken from the helpers that
+// extension it is supposed to contain. Both are taken from the same helpers that
 // write the files, so changing an output format cannot leave the sweep looking
 // in the wrong place or keeping the superseded files. Everything else under the
 // data directory (the Bin, the sync lock) is keyed by something other than a
 // photo id and must not be touched.
 function generatedDirs(library: Library): Array<{ dir: string; ext: string }> {
-  const pathFors = [
-    getSmallThumbnailPath,
-    getFullThumbnailPath,
-    getLosslessPath,
-    getLosslessVideoPath,
-    getPreviewVideoPath,
-    ...THUMBNAIL_SOURCES.flatMap((source) =>
-      [false, true].map((hdr) => (lib: Library, id: string) => getPreviewPath(lib, id, source, hdr)),
-    ),
-    ...HDR_MEDIA.flatMap((medium) =>
-      HDR_VARIANTS.map((variant) => (lib: Library, id: string) => getHdrPath(lib, id, medium, variant)),
-    ),
-  ];
-  return pathFors.map((pathFor) => {
-    const sample = pathFor(library, 'id');
-    return { dir: path.dirname(sample), ext: path.extname(sample) };
-  });
+  const renditions = renditionDirs().map(({ dir, extension }) => ({
+    dir: path.join(getDataPath(library), 'renditions', dir),
+    ext: extension,
+  }));
+  const hdrChecks = HDR_MEDIA.flatMap((medium) =>
+    HDR_VARIANTS.map((variant) => {
+      const sample = getHdrPath(library, 'id', medium, variant);
+      return { dir: path.dirname(sample), ext: path.extname(sample) };
+    }),
+  );
+  return [...renditions, ...hdrChecks];
 }
 
 export interface PruneResult {

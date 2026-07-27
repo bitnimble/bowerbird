@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Images, Pencil, Trash2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { thumbnailUrl } from '../api/client';
+import { renditionUrl } from '../api/client';
 import { Button, ICON, Text, TextField } from '../ui/ui';
 
 interface Props {
@@ -43,7 +43,7 @@ export function CollectionRow({
       <span className="depth" style={{ width: indent * 16 }} />
 
       <span className="list__banner" aria-hidden="true">
-        {bannerPhotoId == null ? <span className="list__banner--none" /> : <img src={thumbnailUrl(bannerPhotoId, 'small')} alt="" />}
+        {bannerPhotoId == null ? <span className="list__banner--none" /> : <img src={renditionUrl(bannerPhotoId, 'grid')} alt="" />}
       </span>
 
       <div className="list__body">

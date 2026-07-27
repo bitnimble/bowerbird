@@ -8,6 +8,7 @@ const meta: FileMetadata = {
   colorSpace: 'sRGB',
   orientation: 0,
   dateTaken: null,
+  dateTakenOffset: null,
   latitude: null,
   longitude: null,
   iso: null,
@@ -41,5 +42,8 @@ describe('computeFileHash', () => {
     const base = computeFileHash('/l/a.arw', meta);
     expect(computeFileHash('/l/a.arw', { ...meta, latitude: 12.3, longitude: 45.6 })).toBe(base);
     expect(computeFileHash('/l/a.arw', { ...meta, dateTaken: '2020-01-01T00:00:00.000Z' })).toBe(base);
+    // Descriptive metadata stays out: a file is only hashed once mtime or size
+    // already differ, and mtime is hashed, so these add no detection.
+    expect(computeFileHash('/l/a.arw', { ...meta, dateTakenOffset: '+11:00' })).toBe(base);
   });
 });

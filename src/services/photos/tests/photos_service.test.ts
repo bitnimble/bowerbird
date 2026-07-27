@@ -47,7 +47,7 @@ const library: Library = { id: 'lib', root_path: '/r', data_path: null, ordering
   preview_hdr_video: false, last_synced_at: null, photo_count: 0 };
 const shoot: Shoot = { id: 'sh', parent_id: null, library_id: 'lib', folder_path: 'Trip', name: 'Trip', description: null, banner_photo_id: null, ordering: 'taken_asc', photo_count: 0 };
 const album: Album = { id: 'al', name: 'Faves', ordering: 'taken_desc', banner_photo_id: null, photo_count: 0 };
-const detail = { id: 'p1' } as PhotoDetail;
+const detail = { id: 'p1', file_path: 'a.arw' } as PhotoDetail;
 
 describe('PhotosService.get', () => {
   it('throws NOT_FOUND when the photo is absent', () => {
@@ -56,9 +56,9 @@ describe('PhotosService.get', () => {
   });
   it('returns the detail when present', () => {
     const { service } = build({ photos: { getById: jest.fn(() => detail) } });
-    // Not toBe: get() decorates the row with has_lossless, which the repository
-    // cannot know because it does not touch the filesystem.
-    expect(service.get('p1')).toMatchObject({ ...detail, has_lossless: false });
+    // Not toBe: get() decorates the row with rendition state the repository
+    // cannot answer, so it is a new object rather than the row itself.
+    expect(service.get('p1')).toMatchObject(detail);
   });
 });
 
@@ -192,23 +192,38 @@ describe('PhotosService.update', () => {
   });
   it('returns the refreshed detail on success', () => {
     const { service } = build({ photos: { update: jest.fn(() => true), getById: jest.fn(() => detail) } });
-    expect(service.update('p1', { rating: 5 })).toMatchObject({ ...detail, has_lossless: false });
+    expect(service.update('p1', { rating: 5 })).toMatchObject(detail);
   });
 });
 
-describe('PhotosService.previewPath', () => {
-  const rendered = { id: 'p1', thumbnail_source: 'render', thumbnail_hdr: false } as PhotoDetail;
+describe('PhotosService renditions', () => {
+  function detailFor(lib: Library) {
+    const { service } = build({
+      photos: { getById: jest.fn(() => detail) },
+      libraries: { getById: jest.fn(() => lib) },
+    });
+    return service.get('p1');
+  }
 
-  it('serves the photo\'s own full thumbnail when both source and range match', () => {
-    const { service } = build({});
-    expect(service.previewPath(library, rendered, 'render', false)).toContain(path.join('thumbnails', 'full'));
+  it('serves the camera JPEG as the RAW itself rather than a stored rendition', () => {
+    const got = detailFor(library);
+    expect(got.renditions?.embedded.path).toBe(path.join('/r', detail.file_path));
+    expect(got.renditions?.embedded.built).toBe(true);
   });
 
-  it('keeps HDR and SDR renders apart, so one built before the setting changed is not served for the other', () => {
-    const { service } = build({});
-    const sdr = service.previewPath(library, rendered, 'render', false);
-    const hdr = service.previewPath(library, rendered, 'render', true);
-    expect(hdr).not.toBe(sdr);
-    expect(hdr).toContain('render-hdr');
+  it('opens at the camera JPEG for a library that serves it, and at the full render otherwise', () => {
+    expect(detailFor(library).default_rendition).toBe('embedded');
+    expect(detailFor({ ...library, preview_source: 'render' }).default_rendition).toBe('full');
+  });
+
+  // The file is the cache, so an SDR copy built before the setting was turned on
+  // must not answer an HDR request under the same name.
+  it('keeps HDR and SDR apart', () => {
+    const sdr = detailFor(library).renditions?.full;
+    const hdr = detailFor({ ...library, preview_hdr: true }).renditions?.full;
+    expect(hdr?.path).not.toBe(sdr?.path);
+    expect(hdr?.path).toContain('full-hdr');
+    expect(hdr?.hdr).toBe(true);
+    expect(sdr?.hdr).toBe(false);
   });
 });

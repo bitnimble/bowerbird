@@ -2,19 +2,19 @@ import { existsSync } from 'node:fs';
 import { mkdir, rm } from 'node:fs/promises';
 import path from 'node:path';
 import type { Config } from '../../config';
-import { dataPathFor } from '../../utils/paths';
+import type { Library } from '../../schemas/libraries';
+import { dataPathFor, getDataPath, renditionPathFor } from '../../utils/paths';
 import type { PendingPhoto, PhotosRepository } from '../photos/photos_repository';
 import type { HdrMedium, HdrVariant } from './hdr_media';
-import {
-  THUMBNAIL_SOURCES,
-  type HdrGrade,
-  type HdrJob,
-  type LosslessJob,
-  type PreviewJob,
-  type ProcessingJob,
-  type ProcessingResult,
-  type ThumbnailSource,
+import type {
+  HdrGrade,
+  HdrJob,
+  ProcessingResult,
+  RenditionJob,
+  RenditionTarget,
+  ThumbnailSource,
 } from './processing_types';
+import { renditionDirs, type Rendition } from './renditions';
 
 const WORKER_URL = new URL('./processing_worker.ts', import.meta.url).href;
 
@@ -41,55 +41,54 @@ export class ProcessingService {
     return queued;
   }
 
-  renderPreview(
-    rawFilePath: string,
-    outputPath: string,
-    photoId: string,
-    source: ThumbnailSource,
-    hdr: boolean,
-    hdrVideo: boolean,
-    videoOutputPath: string,
-  ): Promise<void> {
+  // One rendition, on demand: the detail view asking for a size or a range it
+  // does not have yet. Always a render, never the embedded JPEG, which is served
+  // as itself rather than built (§10.2).
+  renderOne(rawFilePath: string, photoId: string, library: Library, rendition: Rendition, hdr: boolean): Promise<void> {
     return this.runOneOff({
-      kind: 'preview',
+      kind: 'rendition',
       photoId,
       rawFilePath,
-      outputPath,
-      hdrVideo,
-      videoOutputPath,
-      size: this.config.fullThumbnailSize,
-      quality: this.config.fullThumbnailQuality,
-      effort: this.config.thumbnailEffort,
-      source,
-      hdr,
+      dataPath: getDataPath(library),
+      targets: [this.target(getDataPath(library), library.preview_hdr_video, photoId, rendition, hdr, 'render')],
       grade: this.grade(),
-      crf: this.config.hdrCrf,
-      preset: this.config.hdrPreset,
+      reportSource: false,
     });
   }
 
-  renderLossless(
-    rawFilePath: string,
-    outputPath: string,
-    photoId: string,
-    hdr: boolean,
+  // Size, quality and encoder settings for one rendition. The grid and the
+  // full-size view share the thumbnail settings; the max-resolution one is native
+  // size at the tighter lossless quality, because it exists to be pixel-peeped.
+  private target(
+    dataPath: string,
     hdrVideo: boolean,
-    videoOutputPath: string,
-  ): Promise<void> {
-    return this.runOneOff({
-      kind: 'lossless',
-      photoId,
-      rawFilePath,
-      outputPath,
-      hdrVideo,
-      videoOutputPath,
-      quality: this.config.losslessQuality,
-      effort: this.config.thumbnailEffort,
-      quantizer: this.config.losslessQuantizer,
-      preset: this.config.hdrPreset,
+    photoId: string,
+    rendition: Rendition,
+    hdr: boolean,
+    source: ThumbnailSource,
+  ): RenditionTarget {
+    const sizes: Record<Rendition, number> = {
+      grid: this.config.smallThumbnailSize,
+      full: this.config.fullThumbnailSize,
+      max: 0,
+    };
+    const qualities: Record<Rendition, number> = {
+      grid: this.config.smallThumbnailQuality,
+      full: this.config.fullThumbnailQuality,
+      max: this.config.losslessQuality,
+    };
+    return {
+      rendition,
       hdr,
-      grade: this.grade(),
-    });
+      source,
+      outputPath: renditionPathFor(dataPath, photoId, rendition, hdr),
+      videoOutputPath: hdr && hdrVideo ? renditionPathFor(dataPath, photoId, rendition, hdr, true) : null,
+      size: sizes[rendition],
+      quality: qualities[rendition],
+      quantizer: rendition === 'max' ? this.config.losslessQuantizer : this.config.hdrCrf,
+      effort: this.config.thumbnailEffort,
+      preset: this.config.hdrPreset,
+    };
   }
 
   renderHdr(rawFilePath: string, outputPath: string, photoId: string, medium: HdrMedium, variant: HdrVariant): Promise<void> {
@@ -119,7 +118,7 @@ export class ProcessingService {
   // the user is waiting on, not background work to batch. Its own worker, so a
   // render that takes seconds cannot occupy a pool slot the thumbnail queue
   // needs.
-  private async runOneOff(job: PreviewJob | LosslessJob | HdrJob): Promise<void> {
+  private async runOneOff(job: RenditionJob | HdrJob): Promise<void> {
     const worker = new Worker(WORKER_URL);
     try {
       await new Promise<void>((resolve, reject) => {
@@ -156,44 +155,48 @@ export class ProcessingService {
     }
   }
 
-  // Derived from the job's own output path rather than a Library, because the
-  // pool only ever holds jobs: `<data>/thumbnails/full/<id>.avif` sits two levels
-  // under the data directory the previews live in.
-  private dropCachedPreviews(job: ProcessingJob): void {
-    const previews = path.join(path.dirname(job.fullOutputPath), '..', '..', 'previews');
-    for (const source of THUMBNAIL_SOURCES) {
-      for (const dir of [source, `${source}-hdr`]) {
-        void rm(path.join(previews, dir, `${job.photoId}.avif`), { force: true }).catch(() => {});
-      }
+  // A photo is only reprocessed because its pixels changed: the sync saw a new
+  // stat, or the user asked for a rebuild. Every derived copy is then of the old
+  // file, and the ones this job does not itself rewrite - the other dynamic
+  // range, the max-resolution export - would be served forever with nothing to
+  // notice. Cheaper to clear the lot and let them be rebuilt on request.
+  private dropStaleRenditions(job: RenditionJob): void {
+    const fresh = new Set(
+      job.targets.flatMap((t) => (t.videoOutputPath == null ? [t.outputPath] : [t.outputPath, t.videoOutputPath])),
+    );
+    for (const { dir, extension } of renditionDirs()) {
+      const file = path.join(job.dataPath, 'renditions', dir, `${job.photoId}${extension}`);
+      if (fresh.has(file)) continue;
+      void rm(file, { force: true }).catch(() => {});
     }
   }
 
-  private toJob(pending: PendingPhoto): ProcessingJob {
-    const thumbs = path.join(dataPathFor(pending.root_path, pending.data_path), 'thumbnails');
+  // What an import builds: the grid tile always, and the full-size view only when
+  // the library renders. A library set to the camera's JPEG serves that JPEG
+  // directly for the photo view, so there is nothing to build for it (§10.2).
+  private toJob(pending: PendingPhoto): RenditionJob {
+    const dataPath = dataPathFor(pending.root_path, pending.data_path);
+    // NULL for rows queued before the setting existed, and for anything the sync
+    // inserted without naming one; the library's default answers both.
+    const source = pending.rendition_source ?? pending.preview_source;
+    const hdrVideo = pending.preview_hdr_video === 1;
+    const photoId = pending.photo_id;
+    const targets = [this.target(dataPath, hdrVideo, photoId, 'grid', false, source)];
+    if (source === 'render') {
+      targets.push(this.target(dataPath, hdrVideo, photoId, 'full', pending.preview_hdr === 1, 'render'));
+    }
     return {
-      kind: 'thumbnails',
-      photoId: pending.photo_id,
+      kind: 'rendition',
+      photoId,
       rawFilePath: path.join(pending.root_path, pending.file_path),
-      smallOutputPath: path.join(thumbs, 'small', `${pending.photo_id}.avif`),
-      fullOutputPath: path.join(thumbs, 'full', `${pending.photo_id}.avif`),
-      videoOutputPath: path.join(dataPathFor(pending.root_path, pending.data_path), 'previews', 'video', `${pending.photo_id}.mp4`),
-      smallSize: this.config.smallThumbnailSize,
-      fullSize: this.config.fullThumbnailSize,
-      smallQuality: this.config.smallThumbnailQuality,
-      fullQuality: this.config.fullThumbnailQuality,
-      effort: this.config.thumbnailEffort,
-      // NULL for rows queued before the setting existed, and for anything the
-      // sync inserted without naming one; the library's default answers both.
-      source: pending.thumbnail_source ?? pending.preview_source,
-      hdr: pending.preview_hdr === 1,
-      hdrVideo: pending.preview_hdr_video === 1,
+      dataPath,
+      targets,
       grade: this.grade(),
-      crf: this.config.hdrCrf,
-      preset: this.config.hdrPreset,
+      reportSource: true,
     };
   }
 
-  private applyResult(result: ProcessingResult, job: ProcessingJob): void {
+  private applyResult(result: ProcessingResult, job: RenditionJob): void {
     // Never throw: this runs inside a worker's onmessage/onerror, and a throw here
     // would skip the pool's assignNext/terminate/live-- bookkeeping and hang the
     // batch forever. On a DB write failure, log and leave needs_processing=1.
@@ -201,13 +204,8 @@ export class ProcessingService {
       if (result.success) {
         // The worker reports what it actually used, which differs from the
         // request when a file has no embedded preview to lift.
-        this.photos.markProcessed(result.photoId, new Date().toISOString(), result.source, result.hdr);
-        // A photo is only reprocessed because its pixels changed: the sync saw a
-        // new stat, or the user asked for a rebuild. Either way the on-demand
-        // previews cached beside it are of the old file, and nothing else would
-        // ever notice. Same trigger as the thumbnails themselves, so a preview
-        // cannot outlive the RAW it was made from.
-        this.dropCachedPreviews(job);
+        this.photos.markProcessed(result.photoId, new Date().toISOString(), result.source ?? 'render');
+        this.dropStaleRenditions(job);
         return;
       }
       // If the source file moved/was deleted since the job was queued (a move that
@@ -220,7 +218,7 @@ export class ProcessingService {
     }
   }
 
-  private runPool(jobs: ProcessingJob[]): Promise<void> {
+  private runPool(jobs: RenditionJob[]): Promise<void> {
     const poolSize = Math.min(this.config.processingConcurrency, jobs.length);
     return new Promise((resolve) => {
       let next = 0;
@@ -238,7 +236,7 @@ export class ProcessingService {
           return false;
         }
         live++;
-        let current: ProcessingJob | undefined;
+        let current: RenditionJob | undefined;
 
         const assignNext = (): void => {
           if (next >= jobs.length) {
@@ -261,8 +259,10 @@ export class ProcessingService {
         // record the failure, drop this worker, and launch a replacement.
         worker.onerror = (event: ErrorEvent) => {
           if (current != null) {
-            void rm(current.smallOutputPath, { force: true }).catch(() => {});
-            void rm(current.fullOutputPath, { force: true }).catch(() => {});
+            for (const target of current.targets) {
+              void rm(target.outputPath, { force: true }).catch(() => {});
+              if (target.videoOutputPath != null) void rm(target.videoOutputPath, { force: true }).catch(() => {});
+            }
             this.applyResult({ photoId: current.photoId, success: false, error: `worker crashed: ${event.message}` }, current);
           }
           worker.terminate();

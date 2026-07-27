@@ -7,8 +7,26 @@ import { mkdtempSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import sharp from 'sharp';
+import type { Library } from '../../src/schemas/libraries';
 import { ProcessingService } from '../../src/services/processing/processing_service';
 import { decodeRaw } from '../../src/services/processing/raw_decoder';
+import { getRenditionPath } from '../../src/utils/paths';
+
+// The output path is the library's business now, so the test asks for it the
+// same way the server does rather than naming a file of its own.
+function library(dataPath: string, hdr: boolean): Library {
+  return {
+    id: 'lib',
+    root_path: dataPath,
+    data_path: dataPath,
+    ordering: 'added_desc',
+    preview_source: 'render',
+    preview_hdr: hdr,
+    preview_hdr_video: false,
+    last_synced_at: null,
+    photo_count: 0,
+  };
+}
 
 const FIXTURE = `${import.meta.dir}/../fixtures/DSC02981.ARW`;
 
@@ -39,9 +57,10 @@ test('a 16-bit decode yields twice the bytes of an 8-bit one', () => {
 // buffer misread as 8-bit, which only the shipped path can catch.
 test('the SDR render the service produces decodes back to the image that went in', async () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'bb-lossless-'));
-  const output = path.join(dir, 'out.avif');
+  const lib = library(dir, false);
+  const output = getRenditionPath(lib, 'test-photo', 'max', false);
   try {
-    await service().renderLossless(FIXTURE, output, 'test-photo', false);
+    await service().renderOne(FIXTURE, 'test-photo', lib, 'max', false);
 
     const expected = decodeRaw(FIXTURE, 8);
     const meta = await sharp(output).metadata();
@@ -70,9 +89,10 @@ test('the SDR render the service produces decodes back to the image that went in
 
 test('the HDR render is 10-bit PQ at full resolution', async () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'bb-lossless-hdr-'));
-  const output = path.join(dir, 'out.avif');
+  const lib = library(dir, true);
+  const output = getRenditionPath(lib, 'test-photo', 'max', true);
   try {
-    await service().renderLossless(FIXTURE, output, 'test-photo', true);
+    await service().renderOne(FIXTURE, 'test-photo', lib, 'max', true);
 
     const proc = Bun.spawnSync([
       'ffprobe', '-hide_banner', '-loglevel', 'error',

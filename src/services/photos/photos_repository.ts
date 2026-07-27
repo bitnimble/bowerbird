@@ -41,6 +41,7 @@ export interface SyncInsert {
   height: number;
   orientation: number;
   date_taken: string | null;
+  date_taken_offset: string | null;
   date_added: string;
   date_updated: string | null;
   file_size: number;
@@ -61,6 +62,7 @@ export interface SyncModification {
   height: number;
   orientation: number;
   date_taken: string | null;
+  date_taken_offset: string | null;
   date_updated: string | null;
   file_size: number;
   latitude: number | null;
@@ -95,7 +97,7 @@ export interface PendingPhoto {
   data_path: string | null;
   // The source requested for this photo; NULL for rows queued before the setting
   // existed, which the service resolves to the library's default.
-  thumbnail_source: ThumbnailSource | null;
+  rendition_source: ThumbnailSource | null;
   // The library's preview settings, carried along so the pool needs no second
   // lookup per job (§10.2).
   preview_source: ThumbnailSource;
@@ -136,11 +138,11 @@ interface SyncRow {
 // Qualified: getById joins libraries to resolve ordering_date, so `id` etc. would
 // otherwise be ambiguous.
 const DETAIL_COLS = `photos.id, photos.library_id, photos.shoot_id, photos.width, photos.height,
-  photos.orientation, photos.file_path, photos.file_hash, photos.date_taken, photos.date_added,
+  photos.orientation, photos.file_path, photos.file_hash, photos.date_taken, photos.date_taken_offset, photos.date_added,
   photos.date_updated, photos.date_reprocessed, photos.needs_processing, photos.processing_error,
   photos.latitude, photos.longitude, photos.rating, photos.triage, photos.is_missing,
   photos.is_deleted, photos.notes, photos.file_size, photos.iso, photos.shutter_speed, photos.aperture,
-  photos.focal_length, photos.camera_make, photos.camera_model, photos.lens_model, photos.thumbnail_source, photos.thumbnail_hdr, photos.preview_rendition`;
+  photos.focal_length, photos.camera_make, photos.camera_model, photos.lens_model, photos.rendition_source, photos.preview_rendition`;
 
 interface SummaryRow {
   id: string;
@@ -161,6 +163,9 @@ interface DetailRow extends SummaryRow {
   orientation: number;
   file_path: string;
   file_hash: string | null;
+  // Detail only: a grid tile is labelled with a wall clock, and a zone per tile
+  // would be noise on 100 of them.
+  date_taken_offset: string | null;
   date_updated: string | null;
   date_reprocessed: string | null;
   needs_processing: number;
@@ -176,8 +181,7 @@ interface DetailRow extends SummaryRow {
   camera_make: string | null;
   camera_model: string | null;
   lens_model: string | null;
-  thumbnail_source: ThumbnailSource | null;
-  thumbnail_hdr: number;
+  rendition_source: ThumbnailSource | null;
   preview_rendition: PreviewRendition | null;
   lib_ordering: string; // the owning library's ordering, for ordering_date
 }
@@ -233,6 +237,7 @@ function toDetail(row: DetailRow, albumIds: string[]): PhotoDetail {
     file_path: row.file_path,
     file_hash: row.file_hash,
     date_taken: row.date_taken,
+    date_taken_offset: row.date_taken_offset,
     date_added: row.date_added,
     date_updated: row.date_updated,
     date_reprocessed: row.date_reprocessed,
@@ -253,15 +258,14 @@ function toDetail(row: DetailRow, albumIds: string[]): PhotoDetail {
     camera_make: row.camera_make,
     camera_model: row.camera_model,
     lens_model: row.lens_model,
-    thumbnail_source: row.thumbnail_source,
-    thumbnail_hdr: row.thumbnail_hdr === 1,
+    rendition_source: row.rendition_source,
     preview_rendition: row.preview_rendition,
-    // Both resolved by the service, which knows the library: one needs its data
-    // directory to stat, the other its preview settings. The repository has no
-    // business doing either.
-    has_lossless: false,
-    preview_hdr_video: false,
-    has_lossless_video: false,
+    // All resolved by the service, which knows the library: they need its data
+    // directory to stat or to build a path from, and its preview settings. The
+    // repository has no business doing either.
+    original_path: null,
+    default_rendition: 'embedded',
+    renditions: null,
     album_ids: albumIds,
   };
 }
@@ -474,10 +478,10 @@ export class PhotosRepository {
       .query(
         `INSERT INTO photos
           (id, library_id, shoot_id, file_hash, file_path, file_size, width, height, orientation,
-           is_missing, is_deleted, date_taken, date_added, date_updated, needs_processing,
+           is_missing, is_deleted, date_taken, date_taken_offset, date_added, date_updated, needs_processing,
            latitude, longitude, iso, shutter_speed, aperture, focal_length,
            camera_make, camera_model, lens_model, rating)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
       )
       .run(
         record.id,
@@ -490,6 +494,7 @@ export class PhotosRepository {
         record.height,
         record.orientation,
         record.date_taken,
+        record.date_taken_offset,
         record.date_added,
         record.date_updated,
         record.latitude,
@@ -507,7 +512,7 @@ export class PhotosRepository {
   applyModification(photoId: string, fields: SyncModification): void {
     this.db
       .query(
-        `UPDATE photos SET file_hash = ?, width = ?, height = ?, orientation = ?, date_taken = ?,
+        `UPDATE photos SET file_hash = ?, width = ?, height = ?, orientation = ?, date_taken = ?, date_taken_offset = ?,
           date_updated = ?, file_size = ?, latitude = ?, longitude = ?, iso = ?, shutter_speed = ?,
           aperture = ?, focal_length = ?, camera_make = ?, camera_model = ?, lens_model = ?,
           needs_processing = 1, is_missing = 0 WHERE id = ?`,
@@ -518,6 +523,7 @@ export class PhotosRepository {
         fields.height,
         fields.orientation,
         fields.date_taken,
+        fields.date_taken_offset,
         fields.date_updated,
         fields.file_size,
         fields.latitude,
@@ -539,7 +545,7 @@ export class PhotosRepository {
   updateMetadata(photoId: string, fields: PhotoMetadataFields): void {
     this.db
       .query(
-        `UPDATE photos SET width = ?, height = ?, orientation = ?, date_taken = ?, latitude = ?,
+        `UPDATE photos SET width = ?, height = ?, orientation = ?, date_taken = ?, date_taken_offset = ?, latitude = ?,
           longitude = ?, iso = ?, shutter_speed = ?, aperture = ?, focal_length = ?,
           camera_make = ?, camera_model = ?, lens_model = ? WHERE id = ?`,
       )
@@ -548,6 +554,7 @@ export class PhotosRepository {
         fields.height,
         fields.orientation,
         fields.date_taken,
+        fields.date_taken_offset,
         fields.latitude,
         fields.longitude,
         fields.iso,
@@ -587,7 +594,7 @@ export class PhotosRepository {
     const params = libraryId ? [libraryId] : [];
     return this.db
       .query(
-        `SELECT p.id AS photo_id, p.file_path, p.thumbnail_source, l.root_path, l.data_path,
+        `SELECT p.id AS photo_id, p.file_path, p.rendition_source, l.root_path, l.data_path,
                 l.preview_source, l.preview_hdr, l.preview_hdr_video
          FROM photos p JOIN libraries l ON l.id = p.library_id
          WHERE p.needs_processing = 1 AND p.is_missing = 0 AND p.is_deleted = 0 ${where}`,
@@ -595,13 +602,13 @@ export class PhotosRepository {
       .all(...params) as PendingPhoto[];
   }
 
-  markProcessed(id: string, reprocessedAtIso: string, source: ThumbnailSource, hdr: boolean): void {
+  markProcessed(id: string, reprocessedAtIso: string, source: ThumbnailSource): void {
     this.db
       .query(
         `UPDATE photos SET needs_processing = 0, date_reprocessed = ?, processing_error = NULL,
-          thumbnail_source = ?, thumbnail_hdr = ? WHERE id = ?`,
+          rendition_source = ? WHERE id = ?`,
       )
-      .run(reprocessedAtIso, source, hdr ? 1 : 0, id);
+      .run(reprocessedAtIso, source, id);
   }
 
   // Queues thumbnails to be rebuilt from `source`. Returns how many rows were
@@ -611,7 +618,7 @@ export class PhotosRepository {
     const placeholders = photoIds.map(() => '?').join(', ');
     return this.db
       .query(
-        `UPDATE photos SET needs_processing = 1, processing_error = NULL, thumbnail_source = ?
+        `UPDATE photos SET needs_processing = 1, processing_error = NULL, rendition_source = ?
          WHERE id IN (${placeholders}) AND is_missing = 0 AND is_deleted = 0`,
       )
       .run(source, ...photoIds).changes;

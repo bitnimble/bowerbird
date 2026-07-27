@@ -8,6 +8,7 @@ import {
   type PhotoListResponse,
   type PhotoSummary,
   type PreviewRendition,
+  type Rendition,
   type ThumbnailSource,
   type Triage,
 } from '../../api/client';
@@ -40,7 +41,7 @@ export function sourceLabel(source: ThumbnailSource): string {
 
 export function renditionLabel(rendition: PreviewRendition): string {
   if (rendition === 'embedded') return 'embedded JPEG';
-  return rendition === 'render' ? 'RAW render' : 'RAW render (max quality)';
+  return rendition === 'full' ? 'RAW render' : 'RAW render (max quality)';
 }
 
 export class PhotosPresenter {
@@ -130,15 +131,12 @@ export class PhotosPresenter {
   }
 
   // Builds the rendition the first time and serves the cached file every time
-  // after. The photo's own thumbnail already is one of the three, so asking for
-  // that one costs a round trip the server answers from a `stat` (§10.2).
+  // after. The camera's JPEG is never built: it is the RAW's own bytes (§10.2).
   private async showRendition(photoId: string, rendition: PreviewRendition): Promise<void> {
     runInAction(() => (this.store.buildingRendition = true));
     try {
-      if (rendition === 'max') {
-        if (this.store.detail?.id === photoId && !this.store.detail.has_lossless) await api.buildLossless(photoId);
-      } else {
-        await api.buildPreview(photoId, rendition);
+      if (rendition !== 'embedded' && this.store.detail?.renditions?.[rendition]?.built !== true) {
+        await api.buildRendition(photoId, rendition);
       }
       // The build may have written an HDR video beside the still, and only the
       // detail knows whether one exists. Without this, Firefox keeps showing the
@@ -152,10 +150,10 @@ export class PhotosPresenter {
     }
   }
 
-  // What to open a photo at. Null means its own thumbnail: either nothing has
-  // been chosen yet for the remembering modes to remember, or the choice is the
-  // rendition the thumbnail already is, and building a second copy of a picture
-  // that is already on disk would be a slow way to show the same thing.
+  // What to open a photo at. Null means the library's own default, which is
+  // already built: either nothing has been chosen yet for the remembering modes
+  // to remember, or the choice is that default, and asking for it explicitly
+  // would be a round trip to learn it is already on disk.
   private openingRendition(detail: PhotoDetail): PreviewRendition | null {
     const mode = this.settings.previewRenditionMode;
     const target =
@@ -164,7 +162,7 @@ export class PhotosPresenter {
         : mode === 'remember_per_photo'
           ? detail.preview_rendition
           : mode;
-    return target === detail.thumbnail_source ? null : target;
+    return target === detail.default_rendition ? null : target;
   }
 
   async goToPage(index: number): Promise<void> {
@@ -357,14 +355,22 @@ export class PhotosPresenter {
     }
   }
 
-  // A photo whose processing never ran, or failed, has no preview to serve and
+  // A photo whose processing never ran, or failed, has no rendition to serve and
   // nothing queued to change that, so the detail view would sit on "no preview
-  // yet" indefinitely. The embedded JPEG is the cheap source: it needs no RAW
-  // decode, so the wait is a copy rather than a render.
-  async buildMissingPreview(photoId: string): Promise<void> {
-    if (this.previewBuilds.has(photoId)) return;
-    this.previewBuilds.add(photoId);
-    await this.reprocess([photoId], 'embedded');
+  // yet" indefinitely. Builds the one that is actually missing rather than
+  // reprocessing from the embedded JPEG: that rebuilds the grid tile, which is
+  // not what the viewer is asking for, so a library that renders would ask again
+  // on the next paint and never stop.
+  async buildMissingRendition(photoId: string, rendition: Rendition): Promise<void> {
+    const key = `${photoId}:${rendition}`;
+    if (this.previewBuilds.has(key)) return;
+    this.previewBuilds.add(key);
+    try {
+      await api.buildRendition(photoId, rendition);
+      await this.refreshDetail();
+    } catch (err) {
+      this.fail(err);
+    }
   }
 
   private async refreshDetail(): Promise<void> {

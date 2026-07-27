@@ -146,7 +146,7 @@ const PreviewSettings = observer(function PreviewSettings({ library }: { library
 
 const RENDITION_MODES: Option<PreviewRenditionMode>[] = [
   { value: 'embedded', label: 'Camera JPEG', icon: <Sparkles size={ICON} /> },
-  { value: 'render', label: 'From RAW', icon: <Wand2 size={ICON} /> },
+  { value: 'full', label: 'From RAW', icon: <Wand2 size={ICON} /> },
   { value: 'max', label: 'Max quality', icon: <Maximize2 size={ICON} /> },
   { value: 'remember', label: 'Last used', icon: <History size={ICON} /> },
   { value: 'remember_per_photo', label: 'Last used per photo', icon: <History size={ICON} /> },

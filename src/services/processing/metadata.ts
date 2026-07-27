@@ -1,4 +1,5 @@
 import { stat } from 'node:fs/promises';
+import { readCaptureOffset } from './exif_zone';
 import { readRawHeader } from './raw_decoder';
 
 // Stage 1 reads every supported file with the LibRaw header parser (no pixel
@@ -9,7 +10,10 @@ export interface FileMetadata {
   height: number; // display/upright height (post-flip)
   colorSpace: string;
   orientation: number; // LibRaw flip orientation code; informational + hash input only
-  dateTaken: string | null; // ISO datetime, UTC-normalized
+  dateTaken: string | null; // the camera's wall clock, as a Z string (§11.1)
+  // What zone that wall clock was written in, "+11:00", or null from a body that
+  // recorded none. Read straight from EXIF: LibRaw does not expose it.
+  dateTakenOffset: string | null;
   latitude: number | null;
   longitude: number | null;
   iso: number | null;
@@ -26,6 +30,10 @@ export interface FileMetadata {
 export async function extractMetadata(filePath: string): Promise<FileMetadata> {
   const stats = await stat(filePath);
   const header = readRawHeader(filePath);
+  // A second read of the same file, because the two answers come from different
+  // places: LibRaw for everything it parses, the raw EXIF for the one tag it
+  // does not expose. Bounded to the header, so it costs a page or two.
+  const dateTakenOffset = await readCaptureOffset(filePath);
   return {
     width: header.width,
     height: header.height,
@@ -35,6 +43,7 @@ export async function extractMetadata(filePath: string): Promise<FileMetadata> {
     colorSpace: 'sRGB',
     orientation: header.orientation,
     dateTaken: header.dateTaken,
+    dateTakenOffset,
     latitude: header.latitude,
     longitude: header.longitude,
     iso: header.iso,

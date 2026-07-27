@@ -5,7 +5,7 @@ import path from 'node:path';
 import type { Config } from '../../../config';
 import type { PendingPhoto, PhotosRepository } from '../../photos/photos_repository';
 import { ProcessingService } from '../processing_service';
-import type { ProcessingJob, ProcessingResult } from '../processing_types';
+import type { RenditionJob, ProcessingResult } from '../processing_types';
 
 const CRASH = 'crash-photo';
 
@@ -15,10 +15,10 @@ class MockWorker {
   onmessage: ((event: { data: ProcessingResult }) => void) | null = null;
   onerror: ((event: { message: string }) => void) | null = null;
   constructor(_url: string) {}
-  postMessage(job: ProcessingJob): void {
+  postMessage(job: RenditionJob): void {
     queueMicrotask(() => {
       if (job.photoId === CRASH) this.onerror?.({ message: 'segfault' });
-      else this.onmessage?.({ data: { photoId: job.photoId, success: true, source: job.source, hdr: job.hdr } });
+      else this.onmessage?.({ data: { photoId: job.photoId, success: true, source: job.targets[0]?.source } });
     });
   }
   terminate(): void {}
@@ -50,8 +50,8 @@ describe('ProcessingService.processUnprocessed', () => {
       file_path: `${photoId}.arw`,
       root_path: root,
       data_path: null,
-      thumbnail_source: 'render',
-      preview_source: 'embedded',
+      rendition_source: 'render',
+      preview_source: 'render',
       preview_hdr: 0,
       preview_hdr_video: 0,
     };
@@ -86,12 +86,12 @@ describe('ProcessingService.processUnprocessed', () => {
     expect(markProcessed).toHaveBeenCalledTimes(2);
   });
 
-  it('on a worker crash of a present file: marks it failed and deletes stale thumbnails', async () => {
-    const smallDir = path.join(root, '.bowerbird', 'thumbnails', 'small');
-    const fullDir = path.join(root, '.bowerbird', 'thumbnails', 'full');
-    mkdirSync(smallDir, { recursive: true });
+  it('on a worker crash of a present file: marks it failed and deletes stale renditions', async () => {
+    const gridDir = path.join(root, '.bowerbird', 'renditions', 'grid');
+    const fullDir = path.join(root, '.bowerbird', 'renditions', 'full');
+    mkdirSync(gridDir, { recursive: true });
     mkdirSync(fullDir, { recursive: true });
-    const staleSmall = path.join(smallDir, `${CRASH}.avif`);
+    const staleSmall = path.join(gridDir, `${CRASH}.avif`);
     const staleFull = path.join(fullDir, `${CRASH}.avif`);
     writeFileSync(staleSmall, 'stale');
     writeFileSync(staleFull, 'stale');
@@ -147,8 +147,8 @@ describe('ProcessingService.processUnprocessed', () => {
     expect(second).toBe(first); // same in-flight promise
     await Promise.all([first, second]);
 
-    expect(markProcessed).toHaveBeenCalledWith('a', expect.any(String), 'render', false);
-    expect(markProcessed).toHaveBeenCalledWith('b', expect.any(String), 'render', false);
+    expect(markProcessed).toHaveBeenCalledWith('a', expect.any(String), 'render');
+    expect(markProcessed).toHaveBeenCalledWith('b', expect.any(String), 'render');
   });
 
   it('leaves jobs pending (no hang, no throw) when a worker cannot be spawned', async () => {

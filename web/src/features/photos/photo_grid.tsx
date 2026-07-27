@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Check, ChevronLeft, ChevronRight, ThumbsDown, ThumbsUp } from 'lucide-react';
 import { captureDateTime, localDateTime } from '../../api/dates';
-import { thumbnailUrl, type PhotoSummary } from '../../api/client';
+import { renditionUrl, type PhotoSummary } from '../../api/client';
 import { usePhotosStore, usePresenters } from '../../app/stores_context';
 import { Button, ICON, Text } from '../../ui/ui';
 
@@ -94,7 +94,7 @@ const Tile = observer(function Tile({
   const token = store.reloadToken;
   // A failed request retries against the current list generation; a rebuild
   // changes the file behind the same URL and needs its own version.
-  const src = failedAt == null ? thumbnailUrl(photo.id, 'small', store.rebuiltAt) : `${thumbnailUrl(photo.id, 'small')}?r=${token}`;
+  const src = failedAt == null ? renditionUrl(photo.id, 'grid', store.rebuiltAt) : `${renditionUrl(photo.id, 'grid')}?r=${token}`;
   const selected = store.selected.has(photo.id);
   const ref = useRef<HTMLDivElement>(null);
   const list = store.mode === 'list';

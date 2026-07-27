@@ -1,16 +1,18 @@
 import { z } from 'zod';
 
-// The renditions of one photo, in quality order. Each is the same picture at a
-// different cost: the camera's own JPEG, a demosaiced render fitted to the
-// preview size, and a full-resolution render (§10.5).
-export const PREVIEW_RENDITIONS = ['embedded', 'render', 'max'] as const;
+// What the viewer can show, in quality order. `full` and `max` are renditions in
+// the storage sense (§10.2) - a demosaiced render fitted to the preview size, and
+// one at native resolution. `embedded` is not: it is the camera's own JPEG,
+// served straight out of the RAW rather than resized into HDR or transcoded into
+// AVIF and cached as a rendition of its own.
+export const PREVIEW_RENDITIONS = ['embedded', 'full', 'max'] as const;
 export const PreviewRenditionSchema = z.enum(PREVIEW_RENDITIONS);
 export type PreviewRendition = z.infer<typeof PreviewRenditionSchema>;
 
 // Which of them the viewer opens a photo at. The first three pin it; the last
 // two follow whatever was chosen last, either across the catalogue or for the
 // photo being opened.
-export const PreviewRenditionModeSchema = z.enum(['embedded', 'render', 'max', 'remember', 'remember_per_photo']);
+export const PreviewRenditionModeSchema = z.enum(['embedded', 'full', 'max', 'remember', 'remember_per_photo']);
 export type PreviewRenditionMode = z.infer<typeof PreviewRenditionModeSchema>;
 
 export const SettingsSchema = z.object({

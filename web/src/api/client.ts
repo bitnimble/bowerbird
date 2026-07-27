@@ -3,6 +3,7 @@ import type { CreateLibraryRequest, Library, LibrarySyncStatus, UpdateLibraryReq
 import type { PhotoDetail, PhotoListResponse, Triage, UpdatePhotoRequest } from '../../../src/schemas/photos';
 import type { PreviewRendition, PreviewRenditionMode, Settings, UpdateSettingsRequest } from '../../../src/schemas/settings';
 import type { CreateShootRequest, Shoot, UpdateShootRequest } from '../../../src/schemas/shoots';
+import type { Rendition } from '../../../src/services/processing/renditions';
 import type { ServerConfig } from '../features/settings/server_config_store';
 
 // Types come straight from the server's Zod schemas as type-only imports, so the
@@ -21,10 +22,11 @@ export type {
   UpdateLibraryRequest,
 };
 export type PhotoSummary = PhotoListResponse['photos'][number];
+export type { Rendition };
 export type Ordering = Library['ordering'];
 export type PreviewSource = Library['preview_source'];
 // NonNullable: the column is null until a photo has been processed once.
-export type ThumbnailSource = NonNullable<PhotoDetail['thumbnail_source']>;
+export type ThumbnailSource = NonNullable<PhotoDetail['rendition_source']>;
 
 // Default to the API on the same host the page was served from. Hardcoding
 // localhost only works when the browser runs on the server; reached over the
@@ -125,9 +127,8 @@ export const api = {
     request('POST', '/api/photos/reprocess', { photo_ids: photoIds, source }),
   refreshMetadata: (photoIds: string[]): Promise<{ updated: number }> =>
     request('POST', '/api/photos/refresh-metadata', { photo_ids: photoIds }),
-  buildPreview: (photoId: string, source: ThumbnailSource): Promise<void> =>
-    request('POST', `/api/photos/${photoId}/preview`, { source }),
-  buildLossless: (photoId: string): Promise<void> => request('POST', `/api/photos/${photoId}/lossless`),
+  buildRendition: (photoId: string, rendition: Rendition): Promise<void> =>
+    request('POST', `/api/photos/${photoId}/renditions/${rendition}`),
 
   listShoots: (libraryId: string): Promise<Shoot[]> => request('GET', `/api/libraries/${libraryId}/shoots`),
   getShoot: (id: string): Promise<Shoot> => request('GET', `/api/shoots/${id}`),
@@ -156,23 +157,20 @@ export const api = {
 // `version` is appended only once thumbnails have been rebuilt in this session:
 // the file changes behind a stable URL, and an image already decoded in the page
 // is never re-requested without it.
-export function thumbnailUrl(photoId: string, size: 'small' | 'full', version = 0): string {
-  const url = `${BASE}/image/${photoId}/${size}.avif`;
+// One URL shape for every stored rendition, and `video` for the one-frame AV1
+// twin an HDR one carries. Dynamic range is not in the URL: the library decides
+// it, so a client guessing would ask for a file that was never built (§10.2).
+export function renditionUrl(photoId: string, rendition: Rendition, version = 0): string {
+  const url = `${BASE}/image/${photoId}/renditions/${rendition}`;
   return version === 0 ? url : `${url}?v=${version}`;
 }
 
-// The full-size preview built from one named source, as opposed to whichever one
-// this photo's own thumbnails came from.
-// The HDR preview as a one-frame video. Only Firefox needs it: it applies a PQ
-// transfer to nothing but video, so it renders an HDR still dark (§10.7).
-// Everything else takes the AVIF, which is better in every way that matters -
-// no video element, no autoplay rules, and it decodes as an image.
-export function losslessVideoUrl(photoId: string): string {
-  return `${BASE}/image/${photoId}/lossless-video`;
-}
-
-export function previewVideoUrl(photoId: string, version = 0): string {
-  const url = `${BASE}/image/${photoId}/preview-video`;
+// Only Firefox needs this: it applies a PQ transfer to nothing but video, so it
+// renders an HDR still dark (§10.7). Everything else takes the AVIF, which is
+// better in every way that matters - no video element, no autoplay rules, and it
+// decodes as an image.
+export function renditionVideoUrl(photoId: string, rendition: Rendition, version = 0): string {
+  const url = `${BASE}/image/${photoId}/renditions/${rendition}/video`;
   return version === 0 ? url : `${url}?v=${version}`;
 }
 
@@ -185,9 +183,9 @@ export function needsHdrVideo(): boolean {
   return navigator.userAgent.includes('Firefox');
 }
 
-export function previewUrl(photoId: string, source: ThumbnailSource, version = 0): string {
-  const url = `${BASE}/image/${photoId}/preview/${source}`;
-  return version === 0 ? url : `${url}?v=${version}`;
+// The camera's own JPEG, handed over as the camera wrote it (§10.2).
+export function embeddedUrl(photoId: string): string {
+  return `${BASE}/image/${photoId}/embedded.jpg`;
 }
 
 export function originalUrl(photoId: string): string {
@@ -198,6 +196,8 @@ export function jpegUrl(photoId: string): string {
   return `${BASE}/image/${photoId}/full.jpg`;
 }
 
-export function losslessUrl(photoId: string): string {
-  return `${BASE}/image/${photoId}/lossless.avif`;
+// What the viewer shows for one of its three choices: the camera's JPEG served
+// directly, or a stored rendition.
+export function viewerUrl(photoId: string, rendition: PreviewRendition, version = 0): string {
+  return rendition === 'embedded' ? embeddedUrl(photoId) : renditionUrl(photoId, rendition, version);
 }

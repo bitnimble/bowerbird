@@ -51,7 +51,8 @@ CREATE TABLE IF NOT EXISTS photos (
   orientation       INTEGER NOT NULL DEFAULT 0,
   is_missing        INTEGER NOT NULL DEFAULT 0,
   is_deleted        INTEGER NOT NULL DEFAULT 0,
-  date_taken        TEXT,
+  date_taken        TEXT,           -- the camera's wall clock, stored as a Z string (§4, §11.1)
+  date_taken_offset TEXT,           -- its UTC offset, "+11:00", where the body recorded one
   date_added        TEXT NOT NULL,
   date_updated      TEXT,
   date_reprocessed  TEXT,
@@ -72,9 +73,9 @@ CREATE TABLE IF NOT EXISTS photos (
   -- judged" is what a photographer filters on, and a boolean cannot say it.
   triage            TEXT CHECK (triage IN ('picked', 'rejected')),
   notes             TEXT,
-  -- Which pixels the thumbnails were built from (§10.3). Set to the requested
+  -- Which pixels the grid tile was built from (§10.2). Set to the requested
   -- source when work is queued, corrected to what was actually used on success.
-  thumbnail_source  TEXT CHECK (thumbnail_source IN ('embedded', 'render'))
+  rendition_source  TEXT CHECK (rendition_source IN ('embedded', 'render'))
 );
 CREATE INDEX IF NOT EXISTS idx_photos_library ON photos(library_id);
 CREATE INDEX IF NOT EXISTS idx_photos_shoot ON photos(shoot_id);
@@ -144,6 +145,25 @@ function migrateSelectedToTriage(db: Database): void {
   db.exec('ALTER TABLE photos DROP COLUMN selected');
 }
 
+// `thumbnails/`, `previews/` and `lossless/` became one `renditions/` tree, so
+// the columns describing them follow (§10.2). `thumbnail_hdr` goes without a
+// replacement: it recorded what the full-size copy was, which is now answered by
+// asking whether the HDR file exists.
+//
+// The per-photo viewer memory holds one of the same names, so 'render' is
+// rewritten to 'full' or the viewer reopens a photo at a rendition that no
+// longer exists.
+function migrateThumbnailsToRenditions(db: Database): void {
+  const cols = columnNames(db, 'photos');
+  if (cols.has('thumbnail_source')) {
+    db.exec('UPDATE photos SET rendition_source = thumbnail_source WHERE rendition_source IS NULL');
+    db.exec('ALTER TABLE photos DROP COLUMN thumbnail_source');
+  }
+  if (cols.has('thumbnail_hdr')) db.exec('ALTER TABLE photos DROP COLUMN thumbnail_hdr');
+  db.exec("UPDATE photos SET preview_rendition = 'full' WHERE preview_rendition = 'render'");
+  db.exec("UPDATE settings SET value = 'full' WHERE value = 'render' AND key IN ('preview_rendition_mode', 'last_preview_rendition')");
+}
+
 export function runMigrations(db: Database): void {
   db.exec(SCHEMA);
   // Additive columns, for DBs created before each feature landed. CREATE TABLE
@@ -156,11 +176,13 @@ export function runMigrations(db: Database): void {
   ensureColumn(db, 'photos', 'camera_make', 'TEXT');
   ensureColumn(db, 'photos', 'camera_model', 'TEXT');
   ensureColumn(db, 'photos', 'lens_model', 'TEXT');
-  ensureColumn(db, 'photos', 'thumbnail_source', 'TEXT'); // §10.3
-  // What the full thumbnail actually is, not what the library is set to now:
-  // an on-demand preview is only interchangeable with it when both match (§10.2).
-  ensureColumn(db, 'photos', 'thumbnail_hdr', 'INTEGER NOT NULL DEFAULT 0');
+  // The camera's UTC offset for date_taken ("+11:00"), where the body wrote one
+  // (§11.1). NULL for every row imported before this landed, and for every body
+  // older than EXIF 2.31; a re-read of the header fills it in.
+  ensureColumn(db, 'photos', 'date_taken_offset', 'TEXT');
+  ensureColumn(db, 'photos', 'rendition_source', 'TEXT'); // §10.2
   ensureColumn(db, 'photos', 'preview_rendition', 'TEXT'); // per-photo viewer memory (§10.2)
+  migrateThumbnailsToRenditions(db);
   ensureColumn(db, 'photos', 'deleted_from_path', 'TEXT'); // Bin restore (§12.2)
   ensureColumn(db, 'libraries', 'last_synced_at', 'TEXT'); // §9.6
   // Per-library preview settings, replacing the global import.thumbnail_source

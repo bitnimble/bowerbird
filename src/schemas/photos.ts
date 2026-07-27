@@ -33,6 +33,10 @@ export const PhotoDetailSchema = PhotoSummarySchema.extend({
   file_hash: z.string().nullable(),
   orientation: z.number().int(),
   date_taken: z.string().nullable(),
+  // The zone that capture time was written in, "+11:00". EXIF 2.31 and later, so
+  // null from an older body; date_taken stays the camera's wall clock either way
+  // (§11.1), and this says what that clock was set to.
+  date_taken_offset: z.string().nullable(),
   date_added: z.string(),
   date_updated: z.string().nullable(),
   date_reprocessed: z.string().nullable(),
@@ -54,20 +58,41 @@ export const PhotoDetailSchema = PhotoSummarySchema.extend({
   camera_make: z.string().nullable(),
   camera_model: z.string().nullable(),
   lens_model: z.string().nullable(),
-  // Which pixels the thumbnails were built from; NULL before first processing.
-  thumbnail_source: ThumbnailSourceSchema.nullable(),
-  thumbnail_hdr: z.boolean(),
+  // Which pixels the grid tile was built from; NULL before first processing.
+  rendition_source: ThumbnailSourceSchema.nullable(),
   // The rendition this photo was last viewed in, remembered only for the mode
   // that reopens it there; null until then.
   preview_rendition: PreviewRenditionSchema.nullable(),
-  // Whether the full-resolution lossless render has been built (§10.5). A disk
-  // check rather than a column: the file is the cache, so it is the truth.
-  has_lossless: z.boolean(),
-  // Whether an HDR video rendition of this photo's preview exists, so the client
-  // knows it may reach for it on a browser that needs one (§10.7).
-  preview_hdr_video: z.boolean(),
-  // The same, for the full-resolution view (§10.5).
-  has_lossless_video: z.boolean(),
+  // Where the bytes actually live on the server, so the detail panel can name the
+  // file it is showing. Resolved by the service, which holds the library: null on
+  // the repository's own read, and for a photo whose library has gone.
+  original_path: z.string().nullable(),
+  // What the viewer opens this photo at when nothing has been picked: the camera's
+  // JPEG for a library that serves it directly, the full-size rendition otherwise.
+  default_rendition: PreviewRenditionSchema,
+  // One entry per rendition the viewer can show rather than one for whichever is
+  // on screen, because the server does not know which that is and each is a
+  // different file. Every field is answered from disk rather than from a column:
+  // the file is the cache, so it is the truth, and a library switched to HDR
+  // after an import has renditions that predate the setting (§10.2).
+  renditions: z
+    .record(
+      PreviewRenditionSchema,
+      z.object({
+        path: z.string(),
+        built: z.boolean(),
+        // Bytes of the file at `path`, or null when there is no file there. For
+        // the embedded rendition that is the RAW carrying the JPEG, not the JPEG
+        // itself: reading its length means a LibRaw thumb unpack, and this is on
+        // the path every image request takes.
+        size: z.number().int().nullable(),
+        hdr: z.boolean(),
+        // Whether the one-frame AV1 twin exists, so a client on Firefox knows it
+        // may reach for it instead of a still it would render dark (§10.7).
+        video: z.boolean(),
+      }),
+    )
+    .nullable(),
   // Albums this photo belongs to. On the detail only: it needs a second query,
   // and a grid of 100 tiles has no use for it.
   album_ids: z.array(UuidSchema),
@@ -87,8 +112,6 @@ export const ReprocessRequestSchema = PhotoIdListSchema.extend({
 });
 export type ReprocessRequest = z.infer<typeof ReprocessRequestSchema>;
 
-export const PreviewRequestSchema = z.object({ source: ThumbnailSourceSchema });
-export type PreviewRequest = z.infer<typeof PreviewRequestSchema>;
 
 export const UpdatePhotoRequestSchema = z.object({
   rating: z.number().int().min(0).max(5).optional(),

@@ -1,6 +1,7 @@
 import type { HdrMedium, HdrVariant } from './hdr_media';
+import type { Rendition } from './renditions';
 
-// Where a thumbnail's pixels come from. 'embedded' lifts the camera's own JPEG
+// Where a rendition's pixels come from. 'embedded' lifts the camera's own JPEG
 // out of the RAW: no demosaic, so it is much faster and carries the maker's
 // colour treatment, but it is only as large as the body chose to embed (anything
 // from 640x480 to full sensor). 'render' demosaics the RAW at full resolution.
@@ -21,72 +22,47 @@ export interface HdrGrade {
   whiteQuantile: number;
 }
 
-export interface ProcessingJob {
-  kind: 'thumbnails';
-  photoId: string;
-  rawFilePath: string;
-  smallOutputPath: string;
-  fullOutputPath: string;
-  /** The HDR video twin of the full preview, written only when hdrVideo is set. */
-  videoOutputPath: string;
-  smallSize: number;
-  fullSize: number;
-  smallQuality: number;
-  fullQuality: number;
-  effort: number;
-  source: ThumbnailSource;
-  // HDR applies to the full-size rendition only, and only when the source is a
-  // render: an embedded JPEG is 8-bit SDR (§10.2).
+// One rendition to write. Building the grid and the full-size copy at import, or
+// either of them plus the max-resolution one on demand, is the same work at
+// different settings, so it is one shape rather than three job types that
+// differed mostly in what they called their output path.
+export interface RenditionTarget {
+  rendition: Rendition;
   hdr: boolean;
-  /** Also encode the HDR preview as a one-frame AV1, for Firefox (§10.7). */
-  hdrVideo: boolean;
-  grade: HdrGrade;
-  crf: number;
-  preset: number;
-}
-
-// One full-size preview, from one source, built on demand so the detail view can
-// switch renditions. Unlike a thumbnail job this never falls back: a request for
-// the embedded JPEG of a file that has none is answered as such, rather than
-// silently caching a render under the embedded source's name.
-export interface PreviewJob {
-  kind: 'preview';
-  photoId: string;
-  rawFilePath: string;
   outputPath: string;
+  /** The one-frame AV1 twin, for Firefox (§10.7). Null when it is not wanted. */
+  videoOutputPath: string | null;
+  /** Longest edge, or 0 for native resolution. */
   size: number;
-  quality: number;
-  effort: number;
+  // Which pixels to start from. Only the grid is ever built from the camera's
+  // JPEG, and only because a 9504px preview cannot be a 800px tile; everywhere
+  // else the embedded JPEG is served as itself rather than rendered into a
+  // rendition (§10.2).
   source: ThumbnailSource;
-  hdr: boolean;
-  /** Also write the one-frame AV1 twin, for Firefox (§10.7). */
-  hdrVideo: boolean;
-  videoOutputPath: string;
-  grade: HdrGrade;
-  crf: number;
-  preset: number;
-}
-
-// A full-resolution, 16-bit, losslessly compressed render of one photo, produced
-// only when the user explicitly asks for it: the output runs to hundreds of
-// megabytes, so it is never part of routine processing.
-export interface LosslessJob {
-  kind: 'lossless';
-  photoId: string;
-  rawFilePath: string;
-  outputPath: string;
   /** sharp AVIF quality, 1-100, for the SDR path. */
   quality: number;
-  /** sharp AVIF effort, 0-9. See config: the default of 4 is a pure loss. */
-  effort: number;
   /** avifenc max quantizer, 0-63 and lower is better, for the HDR path. */
   quantizer: number;
+  /** sharp AVIF effort, 0-9. See config: the default of 4 is a pure loss. */
+  effort: number;
+  /** Encoder speed for the HDR path. */
   preset: number;
-  hdr: boolean;
-  /** Also write the one-frame AV1 twin, for Firefox (§10.7). */
-  hdrVideo: boolean;
-  videoOutputPath: string;
+}
+
+export interface RenditionJob {
+  kind: 'rendition';
+  photoId: string;
+  rawFilePath: string;
+  /** The library's generated-data directory, which the targets sit under. */
+  dataPath: string;
+  targets: RenditionTarget[];
   grade: HdrGrade;
+  /**
+   * Report back which source the grid ended up using. Set for an import, where a
+   * file with no embedded JPEG falls back to a render and the row has to record
+   * that; unset on demand, where a rendition was asked for by name.
+   */
+  reportSource: boolean;
 }
 
 // One HDR rendition: an AVIF still for Chrome, or a one-frame video for
@@ -105,14 +81,11 @@ export interface HdrJob {
   maxEdge: number;
 }
 
-export type WorkerJob = ProcessingJob | PreviewJob | LosslessJob | HdrJob;
+export type WorkerJob = RenditionJob | HdrJob;
 
+// `source` is what was actually used rather than what was asked for: a file with
+// no embedded JPEG falls back to a render, and the row has to record that or the
+// next sync rebuilds it forever. Absent when the job did not ask to report one.
 export type ProcessingResult =
-  // `source` is what was actually used: an embedded request falls back to a
-  // render when the file has no JPEG preview. `hdr` likewise reports what the
-  // full thumbnail actually is, which is false for an embedded one however the
-  // library is set.
-  | { photoId: string; success: true; source: ThumbnailSource; hdr: boolean }
+  | { photoId: string; success: true; source?: ThumbnailSource }
   | { photoId: string; success: false; error: string };
-
-export type LosslessResult = { photoId: string; success: true } | { photoId: string; success: false; error: string };

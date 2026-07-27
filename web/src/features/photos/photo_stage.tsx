@@ -18,6 +18,9 @@ interface Props {
   onImageLoad: (width: number, height: number) => void;
   // Render a <video> rather than an <img>: the HDR rendition Firefox needs.
   video?: boolean;
+  // The frame to warm the cache with once this one is up. Undefined when there is
+  // no next photo, or when what it will open at is not knowable from here.
+  preloadSrc?: string;
   // The preview does not exist yet. Called once per src, before the retries
   // start, so the caller can build the thing the retries are waiting for.
   onImageMissing?: () => void;
@@ -73,7 +76,7 @@ function zoomAbout(view: View, next: number, box: DOMRect | null, point: { x: nu
 // The image viewport: fit/zoom, wheel zoom, drag-to-pan and fullscreen. All of
 // this is ephemeral view state, so it stays local rather than going through a
 // store; nothing outside this component needs to know the pan offset.
-export function PhotoStage({ src, alt, filename, video, onImageLoad, onImageMissing }: Props): JSX.Element {
+export function PhotoStage({ src, alt, filename, video, preloadSrc, onImageLoad, onImageMissing }: Props): JSX.Element {
   const stageRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
   const [view, setView] = useState<View>(FITTED);
@@ -115,6 +118,17 @@ export function PhotoStage({ src, alt, filename, video, onImageLoad, onImageMiss
     }, delay);
     return () => clearTimeout(timer);
   }, [failed, attempt, src]);
+
+  // Only once this photo has decoded: started any earlier the two frames compete
+  // for the connection, and the one being waited on is this one. Decoded as well
+  // as fetched: a 2566x3840 AVIF thumbnail costs ~50ms to decode on a fast
+  // desktop, which is paid at paint time otherwise.
+  useEffect(() => {
+    if (!ready || preloadSrc == null) return;
+    const next = new Image();
+    next.src = preloadSrc;
+    void next.decode().catch(() => {});
+  }, [ready, preloadSrc]);
 
   // The browser caches the 404, so a retry needs a URL it has not seen.
   const shownSrc = attempt === 0 ? src : `${src}${src.includes('?') ? '&' : '?'}retry=${attempt}`;

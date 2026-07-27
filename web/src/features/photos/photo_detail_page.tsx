@@ -18,19 +18,16 @@ import {
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   jpegUrl,
-  losslessUrl,
-  losslessVideoUrl,
   needsHdrVideo,
   originalUrl,
-  previewUrl,
-  previewVideoUrl,
-  thumbnailUrl,
+  renditionUrl,
+  renditionVideoUrl,
+  viewerUrl,
   type PreviewRendition,
 } from '../../api/client';
 import { captureDateTime, localDateTime } from '../../api/dates';
 import {
   useAlbumsStore,
-  useLibrariesStore,
   usePhotosStore,
   usePresenters,
   useServerConfigStore,
@@ -101,6 +98,13 @@ function fileSizeLabel(bytes: number): string {
   return mb >= 1 ? `${mb.toFixed(1)} MB` : `${Math.round(bytes / 1024)} KB`;
 }
 
+// "+11:00" reads as UTC+11 to anyone who has not just been staring at EXIF.
+function takenLabel(iso: string | null, offset: string | null): string {
+  const wallClock = captureDateTime(iso);
+  if (wallClock == null) return 'not recorded';
+  return offset == null ? wallClock : `${wallClock} (UTC${offset.replace(/:00$/, '')})`;
+}
+
 const DOWNLOADS: Option<'raw' | 'jpeg'>[] = [
   { value: 'raw', label: 'Original RAW', icon: <FileType size={ICON} /> },
   { value: 'jpeg', label: 'JPEG', icon: <FileImage size={ICON} /> },
@@ -110,31 +114,24 @@ type PhotoAction = PreviewRendition | 'metadata';
 
 const RENDITIONS: Option<PhotoAction>[] = [
   { value: 'embedded', label: 'Embedded JPEG', icon: <Sparkles size={ICON} /> },
-  { value: 'render', label: 'From RAW', icon: <Wand2 size={ICON} /> },
+  { value: 'full', label: 'From RAW', icon: <Wand2 size={ICON} /> },
   { value: 'max', label: 'From RAW (max quality)', icon: <Maximize2 size={ICON} /> },
 ];
 
 // Renditions of the same frame rather than commands: each is built once and
 // cached, so these read as "which one am I looking at", not "rebuild it now".
-// The camera's JPEG is dropped once a render is on screen: it is the only step
-// down the quality ladder, and nobody goes back to it having seen the RAW.
-function actions(showing: PreviewRendition): (Option<PhotoAction> | ActionGroup<PhotoAction>)[] {
-  return [
-    { value: 'metadata', label: 'Refresh metadata', icon: <RotateCw size={ICON} /> },
-    {
-      label: 'Image preview',
-      icon: <ImageIcon size={ICON} />,
-      options: showing === 'embedded' ? RENDITIONS : RENDITIONS.filter((option) => option.value !== 'embedded'),
-    },
-  ];
-}
+// All three stay on offer whichever is showing, including the step back down to
+// the camera's JPEG: comparing a render against it is a reason to switch.
+const ACTIONS: (Option<PhotoAction> | ActionGroup<PhotoAction>)[] = [
+  { value: 'metadata', label: 'Refresh metadata', icon: <RotateCw size={ICON} /> },
+  { label: 'Image preview', icon: <ImageIcon size={ICON} />, options: RENDITIONS },
+];
 
 export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element {
   const { photoId = '' } = useParams();
   const store = usePhotosStore();
   const shoots = useShootsStore();
   const albums = useAlbumsStore();
-  const libraries = useLibrariesStore();
   const serverConfig = useServerConfigStore();
   const { photos, serverConfig: configPresenter, appSettings } = usePresenters();
   const navigate = useNavigate();
@@ -202,32 +199,33 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
     );
   }
 
-  // Null is the photo's own thumbnail, which is already one of the three: the
-  // rendition its library builds on import. Naming it keeps the menu and the
-  // panel honest about what is on screen without a fourth state to reason about.
+  // Null means the library's default, which the server names: a catalogue that
+  // serves the camera's JPEG opens there, one that renders opens at the full-size
+  // rendition. Resolving it here keeps the menu and the panel honest about what
+  // is on screen without a fourth state to reason about.
   const rendition = store.rendition;
-  const showing: PreviewRendition = rendition ?? photo?.thumbnail_source ?? 'embedded';
-  const maxQuality = rendition === 'max';
-  const stillSrc =
-    rendition === 'max'
-      ? losslessUrl(photoId)
-      : rendition == null
-        ? thumbnailUrl(photoId, 'full', store.rebuiltAt)
-        : previewUrl(photoId, rendition, store.rebuiltAt);
+  const showing: PreviewRendition = rendition ?? photo?.default_rendition ?? 'embedded';
+  // Every field comes from the same entry, so what is on screen, whether it is
+  // HDR and where its bytes live can no longer disagree (§10.2).
+  const shownFile = photo?.renditions?.[showing];
+  const stillSrc = viewerUrl(photoId, showing, store.rebuiltAt);
+  const hdr = shownFile?.hdr === true;
 
   // Firefox renders an HDR still dark - it applies a PQ transfer to nothing but
   // video - so it gets the one-frame video of whichever rendition is showing
-  // instead (§10.7). Every rendition is the same picture at a different quality,
-  // so each has a twin where HDR applies; the embedded one never does, being an
-  // 8-bit SDR JPEG, so its still is already right.
-  const showingRender = rendition === 'render' || (rendition == null && photo?.thumbnail_hdr === true);
-  const hdrVideo = needsHdrVideo() && (maxQuality ? photo?.has_lossless_video === true : photo?.preview_hdr_video === true && showingRender);
+  // instead (§10.7). The embedded one never has a twin, being an 8-bit SDR JPEG
+  // with no headroom to carry, so its still is already right.
+  const hdrVideo = needsHdrVideo() && shownFile?.video === true;
 
-  // HDR only ever applies to a render, and only the library decides whether its
-  // renders get it; the photo's own thumbnail carries what it was actually built
-  // with, which is not the same thing once the setting has been changed since.
-  const library = libraryId == null ? null : libraries.byId.get(libraryId);
-  const hdr = showing !== 'embedded' && (rendition == null ? photo?.thumbnail_hdr === true : library?.preview_hdr === true);
+  // Stepping through frames is the whole job, so the next one is fetched and
+  // decoded while this one is being looked at and paints on arrival. Only for the
+  // default rendition: a chosen one is built on request, so asking for the next
+  // photo's copy before anything has built it is a 404, and the video twin is a
+  // poor guess at what the next photo needs.
+  const preloadSrc =
+    nextId == null || rendition != null || hdrVideo || showing === 'embedded'
+      ? undefined
+      : renditionUrl(nextId, showing, store.rebuiltAt);
 
   const shoot = photo?.shoot_id == null ? null : shoots.byId.get(photo.shoot_id);
   const photoAlbums = photo == null ? [] : albums.albums.filter((a) => photo.album_ids.includes(a.id));
@@ -267,7 +265,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
               Actions
             </>
           }
-          options={actions(showing)}
+          options={ACTIONS}
           onSelect={(action) => {
             if (action === 'metadata') void photos.refreshMetadata([photoId]);
             else void photos.chooseRendition(photoId, action);
@@ -298,14 +296,22 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
         {/* Keyed off the route, not the loaded detail, so the photo on screen is
             always the one the URL asks for. */}
         <PhotoStage
-          src={hdrVideo ? (maxQuality ? losslessVideoUrl(photoId) : previewVideoUrl(photoId, store.rebuiltAt)) : stillSrc}
+          src={hdrVideo && showing !== 'embedded' ? renditionVideoUrl(photoId, showing, store.rebuiltAt) : stillSrc}
           video={hdrVideo}
           alt={filename}
           filename={filename}
+          preloadSrc={preloadSrc}
           onImageLoad={(width, height) => setThumbSize({ width, height })}
-          // Only the photo's own preview is built on sight. A chosen rendition was
-          // built before it was shown, so a 404 there is a real fault, not a gap.
-          onImageMissing={rendition != null ? undefined : () => void photos.buildMissingPreview(photoId)}
+          // Only the library's default is built on sight, and only when it is a
+          // stored rendition: the camera's JPEG comes out of the RAW, so a 404
+          // there means the RAW is gone, which building cannot fix. A chosen
+          // rendition was built before it was shown, so a 404 there is a real
+          // fault rather than a gap.
+          onImageMissing={
+            rendition != null || showing === 'embedded'
+              ? undefined
+              : () => void photos.buildMissingRendition(photoId, showing)
+          }
         />
 
         <div className="detail__panels">
@@ -355,7 +361,10 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
                   ['Shutter', photo.shutter_speed == null ? 'not recorded' : shutterLabel(photo.shutter_speed)],
                   ['Aperture', photo.aperture == null ? 'not recorded' : `f/${photo.aperture.toFixed(1)}`],
                   ['Focal length', photo.focal_length == null ? 'not recorded' : `${Math.round(photo.focal_length)}mm`],
-                  ['Taken', captureDateTime(photo.date_taken) ?? 'not recorded'],
+                  // The camera's own clock, with the zone it was set to where the
+                  // body recorded one: without that, 5pm in Sydney and 5pm in
+                  // London are the same string on a trip that spanned both.
+                  ['Taken', takenLabel(photo.date_taken, photo.date_taken_offset)],
                   [
                     'GPS',
                     photo.latitude == null || photo.longitude == null
@@ -373,13 +382,19 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
                   // one when the user has switched away from the photo's own.
                   // Null on rows thumbnailed before the column existed, which is
                   // "not recorded" rather than "not built".
-                  ['Source', rendition == null && photo.thumbnail_source == null ? 'unknown' : renditionLabel(showing)],
-                  ['Resolution', thumbSize == null ? 'loading' : `${thumbSize.width} × ${thumbSize.height}`],
+                  ['Source', rendition == null && photo.rendition_source == null ? 'unknown' : renditionLabel(showing)],
+                  // Named and ordered as in Original RAW below, so the same fact
+                  // about two files reads the same way in both panels.
+                  ['Dimensions', thumbSize == null ? 'loading' : `${thumbSize.width} × ${thumbSize.height}`],
+                  // No size and nothing built is a rendition not made yet; no size
+                  // with `built` set is the camera JPEG's RAW having gone missing.
+                  ['File size', shownFile?.size != null ? fileSizeLabel(shownFile.size) : shownFile?.built ? 'unknown' : 'not built yet'],
                   ['Format', thumbs?.format.toUpperCase() ?? 'WEBP'],
                   // The server config reports the SDR pipeline's output space; an
                   // HDR render leaves it for Rec.2020 primaries and a PQ transfer.
                   ['Colour space', hdr ? 'Rec.2020 PQ' : (thumbs?.color_space ?? 'sRGB')],
                   ['Quality', thumbs == null ? 'unknown' : `${thumbs.full.quality} (longest edge ${thumbs.full.size}px)`],
+                  ['Path', shownFile?.path ?? 'unknown'],
                 ]}
               />
 
@@ -387,8 +402,8 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
                 title="Original RAW"
                 defaultOpen={expanded}
                 rows={[
-                  ['File size', photo.file_size == null ? 'unknown' : fileSizeLabel(photo.file_size)],
                   ['Dimensions', `${photo.width} × ${photo.height}`],
+                  ['File size', photo.file_size == null ? 'unknown' : fileSizeLabel(photo.file_size)],
                   ['Added', localDateTime(photo.date_added) ?? photo.date_added],
                   ['Shoot', shoot == null ? 'none' : <Link to={`/shoots/${shoot.id}`}>{shoot.folder_path}</Link>],
                   [
@@ -407,6 +422,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
                     `${photo.is_missing ? 'missing' : photo.is_deleted ? 'binned' : 'ok'}${photo.needs_processing ? ' · thumbnailing' : ''}`,
                   ],
                   ...(photo.processing_error != null ? ([['Error', photo.processing_error]] as Row[]) : []),
+                  ['Path', photo.original_path ?? photo.file_path],
                 ]}
               />
             </>

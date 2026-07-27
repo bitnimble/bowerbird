@@ -1,23 +1,13 @@
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { AppError } from '../../errors';
 import type { Pagination } from '../../schemas/common';
 import type { Library } from '../../schemas/libraries';
 import type { PhotoDetail, PhotoListQuery, PhotoListResponse, UpdatePhotoRequest } from '../../schemas/photos';
-import {
-  getBinPath,
-  getFullThumbnailPath,
-  getHdrPath,
-  getLosslessPath,
-  getLosslessVideoPath,
-  getOriginalPath,
-  getPreviewPath,
-  getPreviewVideoPath,
-  toLibraryRelative,
-} from '../../utils/paths';
+import { getBinPath, getHdrPath, getOriginalPath, getRenditionPath, toLibraryRelative } from '../../utils/paths';
 import { ensureDir, moveIntoDir } from '../../utils/files';
 import { HDR_MEDIA, HDR_VARIANTS } from '../processing/hdr_media';
-import type { ThumbnailSource } from '../processing/processing_types';
+import type { Rendition } from '../processing/renditions';
 import { extractMetadata, type FileMetadata } from '../processing/metadata';
 import type { AlbumsRepository } from '../albums/albums_repository';
 import type { LibrariesRepository } from '../libraries/libraries_repository';
@@ -25,6 +15,16 @@ import type { ProcessingService } from '../processing/processing_service';
 import type { ShootsRepository } from '../shoots/shoots_repository';
 import { libraryMutex } from '../sync/library_mutex';
 import type { PhotoListFilters, PhotoListResult, PhotosRepository } from './photos_repository';
+
+// Bytes on disk, or null when the file is not there. One syscall answers both
+// questions, so a rendition's size costs nothing over asking whether it exists.
+function fileSize(filePath: string): number | null {
+  try {
+    return statSync(filePath).size;
+  } catch {
+    return null;
+  }
+}
 
 function toFilters(query: PhotoListQuery): PhotoListFilters {
   return {
@@ -61,14 +61,40 @@ export class PhotosService {
     // the filesystem beats a column that can disagree with what is on disk.
     return {
       ...photo,
-      has_lossless: library != null && existsSync(getLosslessPath(library, photo.id)),
-      // Whether an HDR video actually exists for this photo, not whether the
-      // library is configured to build one. A photo imported before the setting
-      // was turned on has none - the settings are not retroactive - and the
-      // client asking for a file that was never built would leave Firefox on a
-      // retrying 404 rather than the still it could have shown.
-      preview_hdr_video: library != null && existsSync(getPreviewVideoPath(library, photo.id)),
-      has_lossless_video: library != null && existsSync(getLosslessVideoPath(library, photo.id)),
+      original_path: library == null ? null : getOriginalPath(library, photo.file_path),
+      // A library that serves the camera's JPEG has no full-size rendition built,
+      // so opening at one would mean waiting for a render nobody asked for.
+      default_rendition: library?.preview_source === 'embedded' ? 'embedded' : 'full',
+      renditions: library == null ? null : this.renditionsOf(library, photo.id, photo.file_path),
+    };
+  }
+
+  // Answered from disk rather than from a column, because settings are not
+  // retroactive: a library switched to HDR after an import has SDR renditions,
+  // and a client asking for a file that was never built would sit on a retrying
+  // 404 rather than showing what is actually there.
+  private renditionsOf(library: Library, photoId: string, filePath: string): PhotoDetail['renditions'] {
+    const hdr = library.preview_hdr;
+    const stored = (rendition: Rendition) => {
+      const file = getRenditionPath(library, photoId, rendition, hdr);
+      const size = fileSize(file);
+      return {
+        path: file,
+        built: size != null,
+        size,
+        hdr,
+        video: hdr && existsSync(getRenditionPath(library, photoId, rendition, hdr, true)),
+      };
+    };
+    const original = getOriginalPath(library, filePath);
+    return {
+      // The camera's JPEG is the RAW's own bytes, so it is always available and
+      // never built (§10.2) - `built` says there is no build step, not that the
+      // file is there, which is what is_missing is for. Both other fields describe
+      // the RAW that carries it, so a size of null here means the original is gone.
+      embedded: { path: original, built: true, size: fileSize(original), hdr: false, video: false },
+      full: stored('full'),
+      max: stored('max'),
     };
   }
 
@@ -133,6 +159,7 @@ export class PhotosService {
           height: metadata.height,
           orientation: metadata.orientation,
           date_taken: metadata.dateTaken,
+          date_taken_offset: metadata.dateTakenOffset,
           latitude: metadata.latitude,
           longitude: metadata.longitude,
           iso: metadata.iso,
@@ -152,70 +179,26 @@ export class PhotosService {
     return updated;
   }
 
-  // A full-size preview from one specific source, cached on disk exactly as the
-  // lossless render is: the file is the cache, and processing deletes it when the
-  // RAW changes, so switching renditions in the detail view costs one build each
-  // and nothing after that.
-  async buildPreview(photoId: string, source: ThumbnailSource): Promise<void> {
+  // One rendition of one photo, cached on disk: the file is the cache, and
+  // processing clears it when the RAW changes, so switching renditions in the
+  // detail view costs one build each and nothing after that. The full-resolution
+  // one is seconds of work and tens of megabytes, which is why none of this
+  // happens at import.
+  async buildRendition(photoId: string, rendition: Rendition): Promise<void> {
     const photo = this.get(photoId);
     const library = this.libraries.getById(photo.library_id);
     if (!library) throw new AppError('NOT_FOUND', `library not found: ${photo.library_id}`);
 
-    // HDR only ever applies to a render; the embedded rendition is an 8-bit SDR
-    // JPEG whatever the library setting says.
-    const hdr = library.preview_hdr && source === 'render';
-    const output = this.previewPath(library, photo, source, hdr);
-    if (existsSync(output)) return;
-
-    const raw = getOriginalPath(library, photo.file_path);
-    if (!existsSync(raw)) throw new AppError('NOT_FOUND', `original file not found: ${photo.file_path}`);
-    await this.processing.renderPreview(
-      raw,
-      output,
-      photo.id,
-      source,
-      hdr,
-      hdr && library.preview_hdr_video,
-      getPreviewVideoPath(library, photo.id),
-    );
-  }
-
-  // The photo's own full thumbnail already *is* the preview for the source it was
-  // built from, so that rendition is free and never stored twice. Both halves of
-  // what makes it that rendition have to match: a library switched to HDR after
-  // the import has SDR thumbnails, and handing one back for an HDR request is
-  // exactly the stale render this key exists to avoid.
-  previewPath(library: Library, photo: PhotoDetail, source: ThumbnailSource, hdr: boolean): string {
-    return photo.thumbnail_source === source && photo.thumbnail_hdr === hdr
-      ? getFullThumbnailPath(library, photo.id)
-      : getPreviewPath(library, photo.id, source, hdr);
-  }
-
-  // Full-resolution AVIF of one photo, cached on disk. Seconds of work and tens
-  // of megabytes, so it happens only on request and only once.
-  async buildLossless(photoId: string): Promise<void> {
-    const photo = this.get(photoId);
-    const library = this.libraries.getById(photo.library_id);
-    if (!library) throw new AppError('NOT_FOUND', `library not found: ${photo.library_id}`);
-
-    const output = getLosslessPath(library, photo.id);
-    if (existsSync(output)) return; // already built; this is a cache, not a rebuild
+    // Both renditions follow the library's HDR setting: they are the same render
+    // from the same RAW, and dropping one to SDR would make it the odd one out.
+    const hdr = library.preview_hdr;
+    if (existsSync(getRenditionPath(library, photo.id, rendition, hdr))) return;
 
     // A photo whose file is gone has nothing to render from, and LibRaw's
     // "Input/output error" surfaces as a 500 that says nothing useful.
-    const source = getOriginalPath(library, photo.file_path);
-    if (!existsSync(source)) throw new AppError('NOT_FOUND', `original file not found: ${photo.file_path}`);
-    // The full-resolution view follows the library's HDR setting: it is the same
-    // render from the same RAW, and dropping it to SDR here would make "view
-    // original" the one rendition that disagrees with everything else.
-    await this.processing.renderLossless(
-      source,
-      output,
-      photo.id,
-      library.preview_hdr,
-      library.preview_hdr && library.preview_hdr_video,
-      getLosslessVideoPath(library, photo.id),
-    );
+    const raw = getOriginalPath(library, photo.file_path);
+    if (!existsSync(raw)) throw new AppError('NOT_FOUND', `original file not found: ${photo.file_path}`);
+    await this.processing.renderOne(raw, photo.id, library, rendition, hdr);
   }
 
   // Builds every rendition at once, both media and including the SDR
