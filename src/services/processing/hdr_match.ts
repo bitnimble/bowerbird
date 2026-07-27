@@ -83,6 +83,47 @@ export interface HdrColour {
   deltaE: number;
 }
 
+/**
+ * The whole transform, geometry and colour together.
+ *
+ * One object rather than two arguments because they are one thing: the colour
+ * was fitted from pairs that only correspond *through* this geometry, so
+ * applying the colour without the warp gives a photo the camera's colour and
+ * LibRaw's shape - which is what shipped first, and it made the HDR rendition
+ * disagree with its own SDR twin about where everything in the frame was.
+ */
+export interface HdrMatch {
+  /** Radial knots in `SPLINE_UNIT`s, or null when no correction is needed. */
+  distortion: number[] | null;
+  /** Overall rescale accompanying the distortion. */
+  crop: number;
+  colour: HdrColour;
+}
+
+/**
+ * The geometry half, applied to a decode. Resolution-independent - the model is
+ * in radii normalised to the half-diagonal - so this is cheapest after any
+ * fit-to-size, exactly as the SDR path applies it after the resize.
+ */
+export function applyHdrGeometry(image: DecodedImage, match: HdrMatch): DecodedImage {
+  if (match.distortion == null) return image;
+  if (image.depth !== 16) throw new Error(`applyHdrGeometry needs a 16-bit decode, got ${image.depth}`);
+  const warped = warp(
+    { width: image.width, height: image.height, data: samples(image) },
+    image.width,
+    image.height,
+    match.distortion,
+    match.crop,
+  );
+  return {
+    width: warped.width,
+    height: warped.height,
+    channels: 3,
+    depth: 16,
+    data: Buffer.from(warped.data.buffer, warped.data.byteOffset, warped.data.byteLength),
+  };
+}
+
 interface Plane {
   width: number;
   height: number;
@@ -457,13 +498,13 @@ function measure(colour: HdrColour, render: Plane, jpeg: Plane, bits: Uint8Array
  * same thing whatever the exposure. Returns null when there are too few usable
  * pairs to fit from, in which case the caller grades untransformed.
  */
-export async function fitHdrColour(
+export async function fitHdrMatch(
   linear: DecodedImage,
   anchor: number,
   jpegBytes: Buffer,
   geometry: Pick<MatchProfile, 'distortion' | 'crop'>,
-): Promise<HdrColour | null> {
-  if (linear.depth !== 16) throw new Error(`fitHdrColour needs a 16-bit decode, got ${linear.depth}`);
+): Promise<HdrMatch | null> {
+  if (linear.depth !== 16) throw new Error(`fitHdrMatch needs a 16-bit decode, got ${linear.depth}`);
   if (!(anchor > 0)) return null;
 
   // The embedded JPEG carries its own EXIF orientation, unlike a render, which
@@ -516,7 +557,10 @@ export async function fitHdrColour(
   };
   blurPlane(render, FIT_BLUR_RADIUS);
 
-  return fitColour(render, jpeg);
+  const colour = fitColour(render, jpeg);
+  // The geometry travels with the colour, never beside it: these pairs only
+  // correspond through that warp, so the two are one transform.
+  return colour == null ? null : { distortion: geometry.distortion, crop: geometry.crop, colour };
 }
 
 function samples(image: DecodedImage): Uint16Array {

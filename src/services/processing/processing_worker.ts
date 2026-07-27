@@ -2,7 +2,7 @@ import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import sharp from 'sharp';
 import { encodeHdr } from './hdr_media';
-import { fitHdrColour, type HdrColour } from './hdr_match';
+import { fitHdrMatch, type HdrMatch } from './hdr_match';
 import { applyMatchProfile, fitMatchProfile, type MatchProfile } from './jpeg_match';
 import { diffuseWhite } from './tone_map';
 import { decodeRaw, readEmbeddedJpeg, type DecodedImage } from './raw_decoder';
@@ -85,7 +85,7 @@ async function writeHdr(
   job: RenditionJob,
   target: RenditionTarget,
   linear: () => DecodedImage,
-  match: HdrColour | null,
+  match: HdrMatch | null,
 ): Promise<void> {
   const image = linear();
   const common = {
@@ -110,6 +110,10 @@ async function hdr(job: HdrJob): Promise<void> {
     variant: job.variant,
     medium: job.medium,
     outputPath: job.outputPath,
+    // The check page renders the neutral grade on purpose: it exists to judge
+    // the tone mapping, and the camera's colour on top would be one more
+    // variable in the comparison.
+    match: null,
     ...job.grade,
     crf: job.crf,
     preset: job.preset,
@@ -172,14 +176,14 @@ async function renditions(job: RenditionJob): Promise<ThumbnailSource | undefine
   // past diffuse white (§10.8). The geometry is a property of the lens, so that
   // half *is* reused, and it is the expensive half.
   const jpegBytes = profile != null && rendersHdr ? readEmbeddedJpeg(job.rawFilePath) : null;
-  const hdrColour =
+  const hdrMatch =
     profile != null && jpegBytes != null
-      ? await fitHdrColour(linear(), diffuseWhite(linear(), job.grade.whiteQuantile), jpegBytes, profile)
+      ? await fitHdrMatch(linear(), diffuseWhite(linear(), job.grade.whiteQuantile), jpegBytes, profile)
       : null;
 
   for (const target of job.targets) {
     if (target.hdr) {
-      await writeHdr(job, target, linear, hdrColour);
+      await writeHdr(job, target, linear, hdrMatch);
       continue;
     }
     const source = await writeSdr(job, target, decode, profile);

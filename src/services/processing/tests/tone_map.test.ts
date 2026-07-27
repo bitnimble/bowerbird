@@ -3,7 +3,7 @@ import type { DecodedImage } from '../raw_decoder';
 import { grade } from '../tone_map';
 
 const MAX = 65535;
-const OPTIONS = { referenceWhiteNits: 203, peakNits: 1000, whiteQuantile: 0.99 };
+const OPTIONS = { referenceWhiteNits: 203, peakNits: 1000, whiteQuantile: 0.99, match: null };
 
 // A ramp from black to `top`, which puts its 99th percentile just under `top`
 // and its peak at it - a stand-in for a scene with a diffuse-white subject and a

@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { applyHdrColour, TRUST_CEILING, type HdrColour } from '../hdr_match';
+import { applyHdrColour, applyHdrGeometry, TRUST_CEILING, type HdrColour } from '../hdr_match';
+import type { DecodedImage } from '../raw_decoder';
 
 const BINS = 256;
 
@@ -24,6 +25,56 @@ function profile(gains: [number, number, number], saturation = 1): HdrColour {
     deltaE: 0,
   };
 }
+
+// A horizontal ramp with no wrap, so a value difference reads directly as a
+// horizontal displacement rather than as an artefact of the pattern repeating.
+function frame(width: number, height: number): DecodedImage {
+  const data = Buffer.allocUnsafe(width * height * 3 * 2);
+  const view = new Uint16Array(data.buffer, data.byteOffset, data.byteLength / 2);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      for (let c = 0; c < 3; c += 1) view[(y * width + x) * 3 + c] = x * 500;
+    }
+  }
+  return { width, height, channels: 3, depth: 16, data };
+}
+
+function sample(image: DecodedImage, x: number, y: number): number {
+  const view = new Uint16Array(image.data.buffer, image.data.byteOffset, image.data.byteLength / 2);
+  return view[(y * image.width + x) * 3]!;
+}
+
+// The colour was fitted from pairs that only correspond through the warp, so
+// shipping one without the other gives a photo the camera's colour and LibRaw's
+// shape. That is what happened: the geometry was used to build the fit and then
+// never applied to the output, so the HDR rendition disagreed with its own SDR
+// twin about where everything in the frame was.
+describe('applyHdrGeometry', () => {
+  const colour = { curves: [], matrix: [], saturation: 1, deltaE: 0 } as unknown as HdrColour;
+
+  test('moves the pixels when the camera recorded a correction', () => {
+    const image = frame(64, 48);
+    const warped = applyHdrGeometry(image, { distortion: [0, 400], crop: 1.02, colour });
+    expect(Buffer.compare(image.data, warped.data)).not.toBe(0);
+    expect(warped.width).toBe(image.width);
+    expect(warped.height).toBe(image.height);
+  });
+
+  // Even dimensions on purpose: at 65 wide the centre falls at 32.5, between
+  // samples, so no pixel sits at radius zero and the claim would be about the
+  // sampling grid rather than about the model.
+  test('displaces nothing at the centre and most at the corner, as a radial model must', () => {
+    const image = frame(64, 48);
+    const warped = applyHdrGeometry(image, { distortion: [0, 400], crop: 1, colour });
+    expect(sample(warped, 32, 24)).toBe(sample(image, 32, 24));
+    expect(Math.abs(sample(warped, 2, 2) - sample(image, 2, 2))).toBeGreaterThan(0);
+  });
+
+  test('is the identity when nothing was recorded and nothing fitted', () => {
+    const image = frame(32, 32);
+    expect(applyHdrGeometry(image, { distortion: null, crop: 1, colour })).toBe(image);
+  });
+});
 
 describe('applyHdrColour', () => {
   test('is the per-channel curves below diffuse white', () => {

@@ -322,6 +322,59 @@ function cropRgb(image: DecodedImage, insets: Insets): DecodedImage {
   return { width, height, channels: 3, depth: image.depth, data: out };
 }
 
+/**
+ * Box-average downscale, in whatever light the samples are already in.
+ *
+ * On a scene-linear decode that means averaging light, which is the only correct
+ * way to shrink one: averaging after a transfer curve has been applied averages
+ * code values instead, and darkens. Every source pixel contributes exactly once,
+ * so there is no ringing either.
+ *
+ * Only downscales; asking for a larger size returns the image untouched, since
+ * this exists to avoid work rather than to invent detail.
+ */
+export function resizeRgb(image: DecodedImage, width: number, height: number): DecodedImage {
+  if (width >= image.width || height >= image.height) return image;
+
+  const wide = image.depth === 16;
+  const src = wide
+    ? new Uint16Array(image.data.buffer, image.data.byteOffset, image.data.byteLength / 2)
+    : new Uint8Array(image.data.buffer, image.data.byteOffset, image.data.byteLength);
+  const out = Buffer.allocUnsafe(width * height * 3 * (image.depth / 8));
+  const dst = wide
+    ? new Uint16Array(out.buffer, out.byteOffset, out.byteLength / 2)
+    : new Uint8Array(out.buffer, out.byteOffset, out.byteLength);
+
+  const xs = image.width / width;
+  const ys = image.height / height;
+  for (let dy = 0; dy < height; dy += 1) {
+    const y0 = Math.floor(dy * ys);
+    const y1 = Math.max(y0 + 1, Math.floor((dy + 1) * ys));
+    for (let dx = 0; dx < width; dx += 1) {
+      const x0 = Math.floor(dx * xs);
+      const x1 = Math.max(x0 + 1, Math.floor((dx + 1) * xs));
+      let r = 0;
+      let g = 0;
+      let b = 0;
+      for (let y = y0; y < y1; y += 1) {
+        const row = y * image.width;
+        for (let x = x0; x < x1; x += 1) {
+          const i = (row + x) * 3;
+          r += src[i]!;
+          g += src[i + 1]!;
+          b += src[i + 2]!;
+        }
+      }
+      const n = (y1 - y0) * (x1 - x0);
+      const o = (dy * width + dx) * 3;
+      dst[o] = Math.round(r / n);
+      dst[o + 1] = Math.round(g / n);
+      dst[o + 2] = Math.round(b / n);
+    }
+  }
+  return { width, height, channels: 3, depth: image.depth, data: out };
+}
+
 // libraw_imgother_t (LibRaw 0.21, x86-64): float iso,shutter,aperture,focal (16B),
 // time_t timestamp (8B @16), u32 shot_order (@24), u32 gpsdata[32] (@28),
 // libraw_gps_info_t parsed_gps (@156). Within parsed_gps: float latitude[3] @0,

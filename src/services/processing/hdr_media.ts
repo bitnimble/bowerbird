@@ -1,5 +1,6 @@
-import type { DecodedImage } from './raw_decoder';
-import { grade } from './tone_map';
+import { applyHdrGeometry, type HdrMatch } from './hdr_match';
+import { resizeRgb, type DecodedImage } from './raw_decoder';
+import { grade, measureLevels } from './tone_map';
 
 // HDR renditions of one photo, in the two containers a browser will apply a PQ
 // transfer to (DESIGN §10.7).
@@ -66,6 +67,17 @@ export interface HdrEncodeOptions {
   referenceWhiteNits: number;
   /** Quantile of the frame taken as diffuse white. */
   whiteQuantile: number;
+  /**
+   * The camera's own rendering, geometry and colour, fitted from its embedded
+   * JPEG (§10.8.1). Null keeps LibRaw's.
+   *
+   * Required rather than optional, and that is the point: these options are built
+   * by spread, TypeScript does not excess-check a spread, and an *optional* field
+   * a caller forgets is dropped in silence. It was, and the product rendered
+   * unmatched while a unit test calling `grade` directly went on passing. Written
+   * `| null`, every call site has to say which it means.
+   */
+  match: HdrMatch | null;
   /** Constant-quality level; lower is better and slower. */
   crf: number;
   /** Encoder speed, 0 slowest. Clamped per encoder: libaom 0-8, avifenc 0-10. */
@@ -195,14 +207,20 @@ function filterChain(options: HdrEncodeOptions, size: { width: number; height: n
   ].join('');
 }
 
+/** What this rendition ends up as. Video has an encoder ceiling on top of the requested edge; a still does not. */
+export function targetSize(
+  image: { width: number; height: number },
+  options: Pick<HdrEncodeOptions, 'medium' | 'maxEdge'>,
+): { width: number; height: number } {
+  return options.medium === 'video'
+    ? fittedForVideo(image.width, image.height, options.maxEdge)
+    : fitted(image.width, image.height, options.maxEdge);
+}
+
 export function ffmpegArgs(image: { width: number; height: number }, options: HdrEncodeOptions): string[] {
   const { variant, medium, peakNits, outputPath } = options;
   const target = targetFor(variant, medium);
-  // Video has an encoder ceiling on top of the requested edge; a still does not.
-  const size =
-    medium === 'video'
-      ? fittedForVideo(image.width, image.height, options.maxEdge)
-      : fitted(image.width, image.height, options.maxEdge);
+  const size = targetSize(image, options);
   const resize = size.width === image.width && size.height === image.height ? null : size;
 
   const input = [
@@ -310,9 +328,29 @@ async function run(args: string[]): Promise<void> {
 export async function encodeHdr(image: DecodedImage, options: HdrEncodeOptions): Promise<void> {
   if (image.depth !== 16) throw new Error(`HDR encode needs a 16-bit decode, got ${image.depth}`);
 
-  const graded = grade(image, {
+  // Fit before grading, not after. zscale would have done the same resize in the
+  // same linear light, but only once the whole frame had been graded - so a 61MP
+  // decode was tone-mapped in full to produce a 3840px rendition and 15/16 of
+  // that work was thrown away. Costly enough to matter only since the colour
+  // match made the grade cross-channel and took it from ~1s to ~6s.
+  //
+  // The levels come from the decode rather than the fitted copy: averaging pulls
+  // a specular peak in, so measuring after the resize would give the full-size
+  // rendition and the max-resolution one different anchors for the same photo.
+  const size = targetSize(image, options);
+  const fittedImage = resizeRgb(image, size.width, size.height);
+
+  // Geometry before the grade and after the resize. Before the grade because the
+  // colour was fitted from pairs that only correspond through this warp; after
+  // the resize because the model is in normalised radii, so warping 61MP to make
+  // a 3840px rendition is the same picture for sixteen times the work.
+  const shaped = options.match == null ? fittedImage : applyHdrGeometry(fittedImage, options.match);
+
+  const graded = grade(shaped, {
     referenceWhiteNits: options.referenceWhiteNits,
     whiteQuantile: options.whiteQuantile,
+    levels: measureLevels(image, options.whiteQuantile),
+    match: options.match?.colour ?? null,
     // The SDR reference has no headroom above white, so its peak is its
     // reference: the roll-off then lands diffuse white on display white, and it
     // renders identically to the HDR one everywhere below that. Differing only

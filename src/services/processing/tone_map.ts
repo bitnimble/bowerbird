@@ -108,16 +108,40 @@ export interface GradeOptions {
   /** Quantile of the frame's brightest component taken as diffuse white. */
   whiteQuantile: number;
   /**
-   * The camera's own colour treatment, fitted from its embedded JPEG (§10.8).
-   * Omitted, the render keeps LibRaw's neutral rendering.
+   * The camera's own colour treatment, fitted from its embedded JPEG (§10.8.1).
+   * Null keeps LibRaw's neutral rendering.
+   *
+   * The colour half only. Its geometry is applied by the caller before this runs,
+   * since a warp is a resize concern rather than a tone one - see `encodeHdr`.
    */
-  match?: HdrColour | null;
+  match: HdrColour | null;
+  /**
+   * Where diffuse white and the scene peak sit, when they have already been
+   * measured on a different image.
+   *
+   * The caller passing this is the one that downscales before grading: measured
+   * on the downscaled copy the answers drift, because averaging pulls a specular
+   * peak in, so the full-size rendition and the max-resolution one would grade to
+   * different brightnesses for the same photo. Measured once on the decode and
+   * shared, they cannot.
+   */
+  levels?: Levels;
+}
+
+export interface Levels {
+  white: number;
+  peak: number;
+}
+
+/** Diffuse white and the scene peak, on their own so a caller can share them. */
+export function measureLevels(image: DecodedImage, quantile: number): Levels {
+  const source = new Uint16Array(image.data.buffer, image.data.byteOffset, image.data.byteLength / 2);
+  return levels(source, quantile);
 }
 
 /** Where diffuse white sits in a decode, on its own so a fit can share it. */
 export function diffuseWhite(image: DecodedImage, quantile: number): number {
-  const source = new Uint16Array(image.data.buffer, image.data.byteOffset, image.data.byteLength / 2);
-  return levels(source, quantile).white;
+  return measureLevels(image, quantile).white;
 }
 
 /**
@@ -130,7 +154,7 @@ export function grade(image: DecodedImage, options: GradeOptions): DecodedImage 
   if (image.depth !== 16) throw new Error(`grade needs a 16-bit decode, got ${image.depth}`);
   const source = new Uint16Array(image.data.buffer, image.data.byteOffset, image.data.byteLength / 2);
 
-  const { white, peak: sourceLevel } = levels(source, options.whiteQuantile);
+  const { white, peak: sourceLevel } = options.levels ?? levels(source, options.whiteQuantile);
   // A frame with nothing in it has no exposure to read; leaving it alone beats
   // dividing by zero.
   if (white === 0) return image;

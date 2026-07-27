@@ -18,6 +18,7 @@ const OPTIONS = {
   peakNits: 1000,
   referenceWhiteNits: 203,
   whiteQuantile: 0.99,
+  match: null,
   crf: 20,
   preset: 8,
   maxEdge: 8192,
