@@ -45,10 +45,10 @@ function withRoot(run: (root: string) => Promise<void>) {
 
 test('serves a thumbnail with the webp content-type', withRoot(async (root) => {
   mkdirSync(path.join(root, '.bowerbird', 'thumbnails', 'small'), { recursive: true });
-  writeFileSync(path.join(root, '.bowerbird', 'thumbnails', 'small', 'p1.webp'), 'WEBPDATA');
-  const res = await buildApp(root, photo({})).request('/image/p1/small.webp');
+  writeFileSync(path.join(root, '.bowerbird', 'thumbnails', 'small', 'p1.avif'), 'WEBPDATA');
+  const res = await buildApp(root, photo({})).request('/image/p1/small.avif');
   expect(res.status).toBe(200);
-  expect(res.headers.get('content-type')).toBe('image/webp');
+  expect(res.headers.get('content-type')).toBe('image/avif');
   expect(await res.text()).toBe('WEBPDATA');
 }));
 
@@ -60,21 +60,21 @@ test('serves the original with the arw content-type', withRoot(async (root) => {
 }));
 
 test('returns a 404 envelope for an unknown photo', withRoot(async (root) => {
-  const res = await buildApp(root, null).request('/image/nope/small.webp');
+  const res = await buildApp(root, null).request('/image/nope/small.avif');
   expect(res.status).toBe(404);
   expect(await res.json()).toMatchObject({ error: { code: 'NOT_FOUND' } });
 }));
 
 test('still serves a soft-deleted photo, so the Bin can be browsed', withRoot(async (root) => {
   mkdirSync(path.join(root, '.bowerbird', 'thumbnails', 'small'), { recursive: true });
-  writeFileSync(path.join(root, '.bowerbird', 'thumbnails', 'small', 'p1.webp'), 'WEBPDATA');
-  const res = await buildApp(root, photo({ is_deleted: true })).request('/image/p1/small.webp');
+  writeFileSync(path.join(root, '.bowerbird', 'thumbnails', 'small', 'p1.avif'), 'WEBPDATA');
+  const res = await buildApp(root, photo({ is_deleted: true })).request('/image/p1/small.avif');
   expect(res.status).toBe(200);
   expect(await res.text()).toBe('WEBPDATA');
 }));
 
 test('returns a 404 envelope when the file is missing on disk', withRoot(async (root) => {
-  const res = await buildApp(root, photo({})).request('/image/p1/full.webp');
+  const res = await buildApp(root, photo({})).request('/image/p1/full.avif');
   expect(res.status).toBe(404);
   expect(await res.json()).toMatchObject({ error: { code: 'NOT_FOUND' } });
 }));

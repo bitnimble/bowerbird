@@ -56,6 +56,10 @@ export class LibrariesService {
       root_path: request.root_path,
       data_path: request.data_path ?? null,
       ordering: request.ordering,
+      // Matching the column defaults: the embedded JPEG needs no demosaic, and
+      // HDR is opt-in because it only applies to a render.
+      preview_source: 'embedded',
+      preview_hdr: false,
       last_synced_at: null,
       photo_count: 0,
     };
@@ -87,10 +91,15 @@ export class LibrariesService {
     return this.repo.list();
   }
 
+  // A partial update: the settings UI changes one control at a time, and every
+  // field left out keeps its stored value. Changing a preview setting does not
+  // touch existing photos - it is the default for what gets built next, and for
+  // an explicit rebuild (§10.2).
   update(libraryId: string, updates: UpdateLibraryRequest): Library {
-    if (!this.repo.setOrdering(libraryId, updates.ordering)) {
-      throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
-    }
+    if (this.repo.getById(libraryId) == null) throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
+    if (updates.ordering != null) this.repo.setOrdering(libraryId, updates.ordering);
+    if (updates.preview_source != null) this.repo.setPreviewSource(libraryId, updates.preview_source);
+    if (updates.preview_hdr != null) this.repo.setPreviewHdr(libraryId, updates.preview_hdr);
     return this.get(libraryId);
   }
 

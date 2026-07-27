@@ -4,9 +4,16 @@ import path from 'node:path';
 import type { Config } from '../../config';
 import { dataPathFor } from '../../utils/paths';
 import type { PendingPhoto, PhotosRepository } from '../photos/photos_repository';
-import type { SettingsRepository } from '../settings/settings_repository';
-import type { HdrVariant } from './hdr_video';
-import type { HdrVideoJob, LosslessJob, ProcessingJob, ProcessingResult, ThumbnailSource } from './processing_types';
+import type { HdrMedium, HdrVariant } from './hdr_media';
+import {
+  THUMBNAIL_SOURCES,
+  type HdrJob,
+  type LosslessJob,
+  type PreviewJob,
+  type ProcessingJob,
+  type ProcessingResult,
+  type ThumbnailSource,
+} from './processing_types';
 
 const WORKER_URL = new URL('./processing_worker.ts', import.meta.url).href;
 
@@ -23,7 +30,6 @@ export class ProcessingService {
   constructor(
     private readonly photos: PhotosRepository,
     private readonly config: Config,
-    private readonly settings: SettingsRepository,
   ) {}
 
   // Rebuilds thumbnails for specific photos from the given source. Returns how
@@ -34,24 +40,52 @@ export class ProcessingService {
     return queued;
   }
 
-  renderLossless(rawFilePath: string, outputPath: string, photoId: string): Promise<void> {
+  renderPreview(
+    rawFilePath: string,
+    outputPath: string,
+    photoId: string,
+    source: ThumbnailSource,
+    hdr: boolean,
+  ): Promise<void> {
+    return this.runOneOff({
+      kind: 'preview',
+      photoId,
+      rawFilePath,
+      outputPath,
+      size: this.config.fullThumbnailSize,
+      quality: this.config.fullThumbnailQuality,
+      effort: this.config.thumbnailEffort,
+      source,
+      hdr,
+      peakNits: this.config.hdrPeakNits,
+      crf: this.config.hdrCrf,
+      preset: this.config.hdrPreset,
+    });
+  }
+
+  renderLossless(rawFilePath: string, outputPath: string, photoId: string, hdr: boolean): Promise<void> {
     return this.runOneOff({
       kind: 'lossless',
       photoId,
       rawFilePath,
       outputPath,
-      distance: this.config.losslessDistance,
-      effort: this.config.losslessEffort,
+      quality: this.config.losslessQuality,
+      effort: this.config.thumbnailEffort,
+      quantizer: this.config.losslessQuantizer,
+      preset: this.config.hdrPreset,
+      hdr,
+      peakNits: this.config.hdrPeakNits,
     });
   }
 
-  renderHdrVideo(rawFilePath: string, outputPath: string, photoId: string, variant: HdrVariant): Promise<void> {
+  renderHdr(rawFilePath: string, outputPath: string, photoId: string, medium: HdrMedium, variant: HdrVariant): Promise<void> {
     return this.runOneOff({
-      kind: 'hdr-video',
+      kind: 'hdr',
       photoId,
       rawFilePath,
       outputPath,
       variant,
+      medium,
       peakNits: this.config.hdrPeakNits,
       crf: this.config.hdrCrf,
       preset: this.config.hdrPreset,
@@ -63,7 +97,7 @@ export class ProcessingService {
   // the user is waiting on, not background work to batch. Its own worker, so a
   // render that takes seconds cannot occupy a pool slot the thumbnail queue
   // needs.
-  private async runOneOff(job: LosslessJob | HdrVideoJob): Promise<void> {
+  private async runOneOff(job: PreviewJob | LosslessJob | HdrJob): Promise<void> {
     await mkdir(path.dirname(job.outputPath), { recursive: true });
     const worker = new Worker(WORKER_URL);
     try {
@@ -101,21 +135,36 @@ export class ProcessingService {
     }
   }
 
+  // Derived from the job's own output path rather than a Library, because the
+  // pool only ever holds jobs: `<data>/thumbnails/full/<id>.avif` sits two levels
+  // under the data directory the previews live in.
+  private dropCachedPreviews(job: ProcessingJob): void {
+    const previews = path.join(path.dirname(job.fullOutputPath), '..', '..', 'previews');
+    for (const source of THUMBNAIL_SOURCES) {
+      void rm(path.join(previews, source, `${job.photoId}.avif`), { force: true }).catch(() => {});
+    }
+  }
+
   private toJob(pending: PendingPhoto): ProcessingJob {
     const thumbs = path.join(dataPathFor(pending.root_path, pending.data_path), 'thumbnails');
     return {
       kind: 'thumbnails',
       photoId: pending.photo_id,
       rawFilePath: path.join(pending.root_path, pending.file_path),
-      smallOutputPath: path.join(thumbs, 'small', `${pending.photo_id}.webp`),
-      fullOutputPath: path.join(thumbs, 'full', `${pending.photo_id}.webp`),
+      smallOutputPath: path.join(thumbs, 'small', `${pending.photo_id}.avif`),
+      fullOutputPath: path.join(thumbs, 'full', `${pending.photo_id}.avif`),
       smallSize: this.config.smallThumbnailSize,
       fullSize: this.config.fullThumbnailSize,
       smallQuality: this.config.smallThumbnailQuality,
       fullQuality: this.config.fullThumbnailQuality,
+      effort: this.config.thumbnailEffort,
       // NULL for rows queued before the setting existed, and for anything the
-      // sync inserted without naming one.
-      source: pending.thumbnail_source ?? this.settings.getThumbnailSource(),
+      // sync inserted without naming one; the library's default answers both.
+      source: pending.thumbnail_source ?? pending.preview_source,
+      hdr: pending.preview_hdr === 1,
+      peakNits: this.config.hdrPeakNits,
+      crf: this.config.hdrCrf,
+      preset: this.config.hdrPreset,
     };
   }
 
@@ -128,6 +177,12 @@ export class ProcessingService {
         // The worker reports what it actually used, which differs from the
         // request when a file has no embedded preview to lift.
         this.photos.markProcessed(result.photoId, new Date().toISOString(), result.source);
+        // A photo is only reprocessed because its pixels changed: the sync saw a
+        // new stat, or the user asked for a rebuild. Either way the on-demand
+        // previews cached beside it are of the old file, and nothing else would
+        // ever notice. Same trigger as the thumbnails themselves, so a preview
+        // cannot outlive the RAW it was made from.
+        this.dropCachedPreviews(job);
         return;
       }
       // If the source file moved/was deleted since the job was queued (a move that

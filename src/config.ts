@@ -64,8 +64,13 @@ export const config = {
   // mathematically lossless but ~50s and 80MB on a 24MP frame, where 0.3 is
   // half a second and 9MB. Deliberately tighter than libjxl's "visually
   // lossless" 1.0, because this view exists to be pixel-peeped.
-  losslessDistance: envNumber('LOSSLESS_DISTANCE', 0.3),
-  losslessEffort: envNumber('LOSSLESS_EFFORT', 4),
+  // Full-resolution export (§10.5), AVIF. `quality` is sharp's 1-100 scale for
+  // the SDR path; `quantizer` is avifenc's 0-63 (lower is better) for the HDR
+  // one. Both are set tight rather than "visually lossless", because this is the
+  // view that exists to be pixel-peeped, and kept inside a ~20MB budget on a
+  // 60MP frame.
+  losslessQuality: envNumber('LOSSLESS_QUALITY', 88),
+  losslessQuantizer: envNumber('LOSSLESS_QUANTIZER', 8),
   // HDR still, encoded as a one-frame video (§10.7). This is the exposure
   // control as much as the peak: the decode is scene-linear, so this is what a
   // fully exposed sensor sample is worth in nits, and it is also what the file
@@ -84,8 +89,20 @@ export const config = {
   processingConcurrency: envNumber('PROCESSING_CONCURRENCY', 4),
   smallThumbnailSize: envNumber('SMALL_THUMBNAIL_SIZE', 800),
   fullThumbnailSize: envNumber('FULL_THUMBNAIL_SIZE', 3840),
+  // AVIF quality, which is not WebP's scale: on a 24MP frame the full-size
+  // rendition is 375 kB at q60 against 1019 kB for the WebP q90 it replaces, and
+  // q90 here would be 2551 kB. The full preview is the one actually looked at,
+  // so it gets the headroom.
+  // q60 and q70 visibly lose shadow detail on real frames, which is where a RAW
+  // has the most to give. q80 is 1361 kB on a 24MP frame against the 1019 kB of
+  // the WebP q90 it replaces, and encodes in 713ms at effort 0.
   smallThumbnailQuality: envNumber('SMALL_THUMBNAIL_QUALITY', 80),
-  fullThumbnailQuality: envNumber('FULL_THUMBNAIL_QUALITY', 90),
+  fullThumbnailQuality: envNumber('FULL_THUMBNAIL_QUALITY', 80),
+  // sharp's AVIF effort, 0-9, and 0 because speed matters more here than size.
+  // The default of 4 is pathological either way: 13.6s for a 3840px frame
+  // against 0.6s at effort 0, for a file only ~15% smaller. This is also what
+  // the quality-check page encodes at, so what gets judged there is what ships.
+  thumbnailEffort: envNumber('THUMBNAIL_EFFORT', 0),
 } as const;
 
 export type Config = typeof config;

@@ -8,18 +8,30 @@ export const CreateLibraryRequestSchema = z.object({
 });
 export type CreateLibraryRequest = z.infer<typeof CreateLibraryRequestSchema>;
 
+// Where thumbnails and previews get their pixels (§10.2). 'embedded' lifts the
+// camera's own JPEG out of the RAW, which needs no demosaic; 'render' demosaics
+// at full resolution and is the only source with the headroom for HDR.
+export const PreviewSourceSchema = z.enum(['embedded', 'render']);
+export type PreviewSource = z.infer<typeof PreviewSourceSchema>;
+
 export const LibrarySchema = z.object({
   id: UuidSchema,
   root_path: z.string(),
   data_path: z.string().nullable(),
   ordering: OrderingSchema,
+  preview_source: PreviewSourceSchema,
+  preview_hdr: z.boolean(),
   last_synced_at: z.string().nullable(),
   photo_count: z.number().int(),
 });
 export type Library = z.infer<typeof LibrarySchema>;
 
+// Every field optional: the settings UI changes one control at a time, and a
+// partial update must not reset the others to their defaults.
 export const UpdateLibraryRequestSchema = z.object({
-  ordering: OrderingSchema,
+  ordering: OrderingSchema.optional(),
+  preview_source: PreviewSourceSchema.optional(),
+  preview_hdr: z.boolean().optional(),
 });
 export type UpdateLibraryRequest = z.infer<typeof UpdateLibraryRequestSchema>;
 

@@ -4,7 +4,6 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { Config } from '../../../config';
 import type { PendingPhoto, PhotosRepository } from '../../photos/photos_repository';
-import type { SettingsRepository } from '../../settings/settings_repository';
 import { ProcessingService } from '../processing_service';
 import type { ProcessingJob, ProcessingResult } from '../processing_types';
 
@@ -24,9 +23,6 @@ class MockWorker {
   }
   terminate(): void {}
 }
-
-// Every fixture names its own source, so the default is never consulted here.
-const settings = { getThumbnailSource: () => 'render' as const } as SettingsRepository;
 
 const config = {
   processingConcurrency: 2,
@@ -49,7 +45,15 @@ describe('ProcessingService.processUnprocessed', () => {
   });
 
   function pending(photoId: string): PendingPhoto {
-    return { photo_id: photoId, file_path: `${photoId}.arw`, root_path: root, data_path: null, thumbnail_source: 'render' };
+    return {
+      photo_id: photoId,
+      file_path: `${photoId}.arw`,
+      root_path: root,
+      data_path: null,
+      thumbnail_source: 'render',
+      preview_source: 'embedded',
+      preview_hdr: 0,
+    };
   }
 
   it('marks each photo processed and drains the pool without hanging', async () => {
@@ -60,7 +64,7 @@ describe('ProcessingService.processUnprocessed', () => {
       markProcessingFailed: jest.fn(),
     } as unknown as PhotosRepository;
 
-    await new ProcessingService(repo, config, settings).processUnprocessed('lib');
+    await new ProcessingService(repo, config).processUnprocessed('lib');
 
     expect(markProcessed).toHaveBeenCalledTimes(3);
   });
@@ -77,7 +81,7 @@ describe('ProcessingService.processUnprocessed', () => {
 
     // Must resolve (not hang): applyResult swallows the throw so the pool's
     // assignNext/terminate bookkeeping still runs for every job.
-    await expect(new ProcessingService(repo, config, settings).processUnprocessed('lib')).resolves.toBeUndefined();
+    await expect(new ProcessingService(repo, config).processUnprocessed('lib')).resolves.toBeUndefined();
     expect(markProcessed).toHaveBeenCalledTimes(2);
   });
 
@@ -86,8 +90,8 @@ describe('ProcessingService.processUnprocessed', () => {
     const fullDir = path.join(root, '.bowerbird', 'thumbnails', 'full');
     mkdirSync(smallDir, { recursive: true });
     mkdirSync(fullDir, { recursive: true });
-    const staleSmall = path.join(smallDir, `${CRASH}.webp`);
-    const staleFull = path.join(fullDir, `${CRASH}.webp`);
+    const staleSmall = path.join(smallDir, `${CRASH}.avif`);
+    const staleFull = path.join(fullDir, `${CRASH}.avif`);
     writeFileSync(staleSmall, 'stale');
     writeFileSync(staleFull, 'stale');
     writeFileSync(path.join(root, `${CRASH}.arw`), ''); // source still present -> real failure
@@ -100,7 +104,7 @@ describe('ProcessingService.processUnprocessed', () => {
       markProcessingFailed,
     } as unknown as PhotosRepository;
 
-    await new ProcessingService(repo, config, settings).processUnprocessed('lib');
+    await new ProcessingService(repo, config).processUnprocessed('lib');
 
     expect(markProcessingFailed).toHaveBeenCalledWith(CRASH, expect.stringContaining('crashed'));
     for (let i = 0; i < 25 && (existsSync(staleSmall) || existsSync(staleFull)); i++) {
@@ -119,7 +123,7 @@ describe('ProcessingService.processUnprocessed', () => {
       markProcessingFailed,
     } as unknown as PhotosRepository;
 
-    await new ProcessingService(repo, config, settings).processUnprocessed('lib');
+    await new ProcessingService(repo, config).processUnprocessed('lib');
 
     expect(markProcessingFailed).not.toHaveBeenCalled();
   });
@@ -134,7 +138,7 @@ describe('ProcessingService.processUnprocessed', () => {
       return [];
     });
     const repo = { listPendingProcessing, markProcessed, markProcessingFailed: jest.fn() } as unknown as PhotosRepository;
-    const service = new ProcessingService(repo, config, settings);
+    const service = new ProcessingService(repo, config);
 
     // second call coalesces into the first and flags a rerun; both drain.
     const first = service.processUnprocessed('lib');
@@ -160,12 +164,12 @@ describe('ProcessingService.processUnprocessed', () => {
       markProcessingFailed: jest.fn(),
     } as unknown as PhotosRepository;
 
-    await expect(new ProcessingService(repo, config, settings).processUnprocessed('lib')).resolves.toBeUndefined();
+    await expect(new ProcessingService(repo, config).processUnprocessed('lib')).resolves.toBeUndefined();
     expect(markProcessed).not.toHaveBeenCalled(); // untouched -> still needs_processing=1
   });
 
   it('does nothing when there is no pending work', async () => {
     const repo = { listPendingProcessing: jest.fn(() => []) } as unknown as PhotosRepository;
-    await expect(new ProcessingService(repo, config, settings).processUnprocessed('lib')).resolves.toBeUndefined();
+    await expect(new ProcessingService(repo, config).processUnprocessed('lib')).resolves.toBeUndefined();
   });
 });

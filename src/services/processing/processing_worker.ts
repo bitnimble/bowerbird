@@ -1,7 +1,15 @@
 import sharp from 'sharp';
-import { encodeHdrVideo } from './hdr_video';
+import { encodeHdr } from './hdr_media';
 import { decodeRaw, readEmbeddedJpeg } from './raw_decoder';
-import type { HdrVideoJob, LosslessJob, ProcessingJob, ProcessingResult, ThumbnailSource, WorkerJob } from './processing_types';
+import type {
+  HdrJob,
+  LosslessJob,
+  PreviewJob,
+  ProcessingJob,
+  ProcessingResult,
+  ThumbnailSource,
+  WorkerJob,
+} from './processing_types';
 
 // Bun worker thread (DESIGN §10.3). Produces both WebP thumbnails from either the
 // camera's embedded JPEG or a full RAW render, or a one-off lossless export. On
@@ -27,57 +35,106 @@ function pipeline(job: ProcessingJob): { make: () => sharp.Sharp; source: Thumbn
   return { make: () => sharp(image.data, raw), source: 'render' };
 }
 
+// 4:4:4, because these are photographs: 4:2:0 keeps luma at full resolution but
+// drops chroma to a quarter of the samples, smearing the saturated edges a photo
+// is judged on. sharp's AVIF is 8-bit whatever the input depth, which is why the
+// HDR path below cannot go through sharp at all (§10.2).
+function toAvif(image: sharp.Sharp, size: number, quality: number, effort: number): sharp.Sharp {
+  return image.resize({ width: size, height: size, fit: 'inside' }).avif({ quality, effort, chromaSubsampling: '4:4:4' });
+}
+
+// No fallback, unlike `pipeline`: the output is cached under the source that was
+// asked for, so quietly substituting a render would leave a render on disk
+// labelled as the camera's own JPEG and never corrected.
+async function preview(job: PreviewJob): Promise<void> {
+  if (job.source === 'embedded') {
+    const jpeg = readEmbeddedJpeg(job.rawFilePath);
+    if (jpeg == null) throw new Error('this file has no embedded JPEG preview');
+    await toAvif(sharp(jpeg).rotate(), job.size, job.quality, job.effort).toFile(job.outputPath);
+    return;
+  }
+  // HDR is a property of the render, so it can only apply to this branch: an
+  // embedded JPEG is 8-bit SDR and has no headroom to carry.
+  if (job.hdr) {
+    const image = decodeRaw(job.rawFilePath, 16, 'rec2020-linear');
+    await encodeHdr(image, {
+      variant: 'pq',
+      medium: 'still',
+      outputPath: job.outputPath,
+      peakNits: job.peakNits,
+      crf: job.crf,
+      preset: job.preset,
+      maxEdge: job.size,
+    });
+    return;
+  }
+  const image = decodeRaw(job.rawFilePath);
+  const raw = { raw: { width: image.width, height: image.height, channels: image.channels } };
+  await toAvif(sharp(image.data, raw), job.size, job.quality, job.effort).toFile(job.outputPath);
+}
+
 async function thumbnails(job: ProcessingJob): Promise<ThumbnailSource> {
   const { make, source } = pipeline(job);
 
-  await make()
-    .resize({ width: job.smallSize, height: job.smallSize, fit: 'inside' })
-    .webp({ quality: job.smallQuality })
-    .toFile(job.smallOutputPath);
+  await toAvif(make(), job.smallSize, job.smallQuality, job.effort).toFile(job.smallOutputPath);
 
-  await make()
-    .resize({ width: job.fullSize, height: job.fullSize, fit: 'inside' })
-    .webp({ quality: job.fullQuality })
-    .toFile(job.fullOutputPath);
+  // Only the full-size rendition goes HDR; the grid stays SDR. A wall of HDR
+  // thumbnails is punishing to look at, and it would put a LibRaw linear decode
+  // and two encoder passes on every photo in an import rather than one sharp
+  // call (§10.2).
+  if (job.hdr && source === 'render') {
+    const image = decodeRaw(job.rawFilePath, 16, 'rec2020-linear');
+    await encodeHdr(image, {
+      variant: 'pq',
+      medium: 'still',
+      outputPath: job.fullOutputPath,
+      peakNits: job.peakNits,
+      crf: job.crf,
+      preset: job.preset,
+      maxEdge: job.fullSize,
+    });
+    return source;
+  }
 
+  await toAvif(make(), job.fullSize, job.fullQuality, job.effort).toFile(job.fullOutputPath);
   return source;
 }
 
-// Full-resolution 16-bit JPEG XL at libjxl's "visually lossless" distance.
-// Measured on a 20MP frame: 1.4 MB, against 111 MB for the equivalent 16-bit PNG
-// and 8.4 MB for AVIF at comparable quality, and it is the only candidate that
-// keeps more than 12 bits. No browser decodes it natively yet, so the client
-// carries a wasm decoder (DESIGN §10.5).
-//
-// sharp/libvips has no JXL encoder, and cjxl will not read stdin, so the pixels
-// go via a 16-bit PPM: a header plus the samples, with no compression pass to
-// pay for on the way.
+// Full-resolution AVIF at the tightest quality that stays under the size budget,
+// native everywhere with no polyfill (§10.5). It was JPEG XL, which keeps 16
+// bits where this keeps 10; the 10 bits won because no browser decodes JXL
+// without a 1.6MB wasm module and a PNG transcode that cost more than the whole
+// encode. Full resolution, never fitted: this is the view that gets pixel-peeped.
 async function lossless(job: LosslessJob): Promise<void> {
-  const image = decodeRaw(job.rawFilePath, 16);
-  const ppmPath = `${job.outputPath}.ppm`;
-  try {
-    // PPM samples are big-endian; LibRaw gave us native order. swap16 is in
-    // place on a buffer we own, so this costs no copy of the ~115 MB.
-    image.data.swap16();
-    await Bun.write(ppmPath, new Blob([`P6\n${image.width} ${image.height}\n65535\n`, image.data]));
-
-    const result = Bun.spawnSync(['cjxl', ppmPath, job.outputPath, '-d', String(job.distance), '-e', String(job.effort)]);
-    if (result.exitCode !== 0) {
-      const stderr = result.stderr.toString().trim();
-      throw new Error(`cjxl failed (${result.exitCode}): ${stderr.split('\n').slice(-1)[0] ?? 'no output'}`);
-    }
-  } finally {
-    await Bun.file(ppmPath).delete().catch(() => {});
+  if (job.hdr) {
+    const image = decodeRaw(job.rawFilePath, 16, 'rec2020-linear');
+    await encodeHdr(image, {
+      variant: 'pq',
+      medium: 'still',
+      outputPath: job.outputPath,
+      peakNits: job.peakNits,
+      crf: job.quantizer,
+      preset: job.preset,
+      maxEdge: Number.POSITIVE_INFINITY,
+    });
+    return;
   }
+  // An 8-bit decode deliberately: sharp's AVIF output is 8-bit whatever goes in,
+  // and asking for 16 would reintroduce the trap that `raw.depth` is ignored on
+  // a Buffer, so the samples get read as 8-bit anyway and the picture is wrong.
+  const image = decodeRaw(job.rawFilePath, 8);
+  const raw = { raw: { width: image.width, height: image.height, channels: image.channels } };
+  await sharp(image.data, raw).avif({ quality: job.quality, effort: job.effort, chromaSubsampling: '4:4:4' }).toFile(job.outputPath);
 }
 
 // The decode is scene-linear and wide-gamut rather than display-referred: the
 // transfer is applied by the encoder, and auto-brightening would flatten away
 // the highlight headroom that carries the HDR (DESIGN §10.7).
-async function hdrVideo(job: HdrVideoJob): Promise<void> {
+async function hdr(job: HdrJob): Promise<void> {
   const image = decodeRaw(job.rawFilePath, 16, 'rec2020-linear');
-  await encodeHdrVideo(image, {
+  await encodeHdr(image, {
     variant: job.variant,
+    medium: job.medium,
     outputPath: job.outputPath,
     peakNits: job.peakNits,
     crf: job.crf,
@@ -94,15 +151,19 @@ self.onmessage = async (event) => {
       self.postMessage({ photoId: job.photoId, success: true, source: 'render' });
       return;
     }
-    if (job.kind === 'hdr-video') {
-      await hdrVideo(job);
+    if (job.kind === 'hdr') {
+      await hdr(job);
       self.postMessage({ photoId: job.photoId, success: true, source: 'render' });
+      return;
+    }
+    if (job.kind === 'preview') {
+      await preview(job);
+      self.postMessage({ photoId: job.photoId, success: true, source: job.source });
       return;
     }
     self.postMessage({ photoId: job.photoId, success: true, source: await thumbnails(job) });
   } catch (err) {
-    const outputs =
-      job.kind === 'lossless' || job.kind === 'hdr-video' ? [job.outputPath] : [job.smallOutputPath, job.fullOutputPath];
+    const outputs = job.kind === 'thumbnails' ? [job.smallOutputPath, job.fullOutputPath] : [job.outputPath];
     for (const path of outputs) await Bun.file(path).delete().catch(() => {});
     self.postMessage({ photoId: job.photoId, success: false, error: (err as Error).message });
   }

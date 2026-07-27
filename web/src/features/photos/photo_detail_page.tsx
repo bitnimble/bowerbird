@@ -254,7 +254,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
             always the one the URL asks for. */}
         <PhotoStage
           src={
-            store.lossless?.url ??
+            store.lossless ??
             (store.previewSource == null
               ? thumbnailUrl(photoId, 'full', store.rebuiltAt)
               : previewUrl(photoId, store.previewSource, store.rebuiltAt))

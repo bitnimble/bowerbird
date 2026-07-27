@@ -1,6 +1,5 @@
 import { computed, observable } from 'mobx';
 import type { Ordering, PhotoDetail, PhotoSummary, ThumbnailSource, Triage } from '../../api/client';
-import type { LosslessImage } from './lossless_image';
 
 // Which collection the grid is showing. One store serves the library, shoot,
 // album, bin and missing views because they differ only in the fetch call.
@@ -88,7 +87,7 @@ export class PhotosStore {
   @observable accessor buildingLossless = false;
   // Non-null while the decoded render is on screen; holds the object URL that
   // has to be revoked when it leaves.
-  @observable.ref accessor lossless: LosslessImage | null = null;
+  @observable accessor lossless: string | null = null;
 
   @observable.ref accessor detail: PhotoDetail | null = null;
   @observable accessor detailLoading = false;

@@ -10,11 +10,15 @@ WORKDIR /app
 # sharp/libvips has no JXL encoder, so this is a real runtime dependency rather
 # than a build-time convenience.
 #
-# ffmpeg encodes the HDR stills (§10.7). It needs libsvtav1 for AV1 and libzimg
-# for the zscale filter, which is what applies the PQ or HLG transfer; a build
-# without either cannot produce them.
+# ffmpeg applies the PQ/HLG transfer and encodes the HDR video (§10.7). It needs
+# libaom for AV1 and libzimg for the zscale filter; a build without either
+# cannot produce them. libsvtav1 is not a substitute: it implements AV1 Profile
+# 0 only, so it silently downsamples the 4:4:4 renditions to 4:2:0.
+#
+# libavif-bin provides avifenc, which encodes the HDR still. ffmpeg's own avif
+# muxer writes no colr box, so it cannot tag one as HDR at all.
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends libraw-dev libjxl-tools ffmpeg \
+  && apt-get install -y --no-install-recommends libraw-dev libjxl-tools ffmpeg libavif-bin \
   && rm -rf /var/lib/apt/lists/*
 
 # Dependencies as a cacheable layer.

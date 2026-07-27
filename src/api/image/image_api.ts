@@ -6,13 +6,14 @@ import type { Library } from '../../schemas/libraries';
 import type { PhotoDetail } from '../../schemas/photos';
 import {
   getFullThumbnailPath,
-  getHdrVideoPath,
+  getHdrPath,
   getLosslessPath,
   getOriginalPath,
   getSmallThumbnailPath,
 } from '../../utils/paths';
 import type { LibrariesService } from '../../services/libraries/libraries_service';
-import { isHdrVariant } from '../../services/processing/hdr_video';
+import { contentTypeFor, isHdrMedium, isHdrVariant } from '../../services/processing/hdr_media';
+import { isThumbnailSource } from '../../services/processing/processing_types';
 import type { PhotosService } from '../../services/photos/photos_service';
 
 // Where a variant's bytes live, given the photo it belongs to. Passing this in
@@ -21,6 +22,9 @@ import type { PhotosService } from '../../services/photos/photos_service';
 type PathFor = (library: Library, photo: PhotoDetail) => string;
 
 const JPEG_QUALITY = 92;
+
+// Every stored rendition is AVIF now (§10.2).
+const AVIF = 'image/avif';
 
 // Streams straight from disk via Bun.file (no buffering); Bun.serve applies Range
 // handling to the BunFile body for 206 partial content (DESIGN §13.5).
@@ -32,18 +36,30 @@ export class ImageApi {
     private readonly libraries: LibrariesService,
   ) {
     const app = new Hono();
-    app.get('/:photoId/small.webp', (c) => this.serve(c, 'image/webp', (lib, photo) => getSmallThumbnailPath(lib, photo.id)));
-    app.get('/:photoId/full.webp', (c) => this.serve(c, 'image/webp', (lib, photo) => getFullThumbnailPath(lib, photo.id)));
+    app.get('/:photoId/small.avif', (c) => this.serve(c, AVIF, (lib, photo) => getSmallThumbnailPath(lib, photo.id)));
+    app.get('/:photoId/full.avif', (c) => this.serve(c, AVIF, (lib, photo) => getFullThumbnailPath(lib, photo.id)));
+    // The same full-size preview, but from a named source rather than whichever
+    // one this photo's thumbnails happen to have been built from. No extension:
+    // Hono reads `:source.avif` as a parameter named "source.avif", so the value
+    // would never come back under the name the handler asks for.
+    app.get('/:photoId/preview/:source', (c) => {
+      const source = c.req.param('source') ?? '';
+      if (!isThumbnailSource(source)) throw new AppError('NOT_FOUND', `unknown preview source: ${source}`);
+      return this.serve(c, AVIF, (lib, photo) => this.photos.previewPath(lib, photo, source));
+    });
     app.get('/:photoId/original.arw', (c) => this.serve(c, 'image/x-sony-arw', (lib, photo) => getOriginalPath(lib, photo.file_path)));
     app.get('/:photoId/full.jpg', (c) => this.serveJpeg(c));
-    // Browsers that decode JPEG XL take this directly; the rest go through the
-    // client's wasm decoder (§10.5).
-    app.get('/:photoId/lossless.jxl', (c) => this.serve(c, 'image/jxl', (lib, photo) => getLosslessPath(lib, photo.id)));
-    // One-frame HDR stills, one per transfer, plus an SDR reference (§10.7).
-    app.get('/:photoId/hdr/:variant', (c) => {
-      const variant = c.req.param('variant');
+    // Full-resolution, and AVIF like everything else: every current browser
+    // decodes it natively, so there is no polyfill on this path any more (§10.5).
+    app.get('/:photoId/lossless.avif', (c) => this.serve(c, AVIF, (lib, photo) => getLosslessPath(lib, photo.id)));
+    // HDR renditions: an AVIF still and a one-frame video, one per transfer,
+    // each with an SDR reference (§10.7).
+    app.get('/:photoId/hdr/:medium/:variant', (c) => {
+      const medium = c.req.param('medium') ?? '';
+      const variant = c.req.param('variant') ?? '';
+      if (!isHdrMedium(medium)) throw new AppError('NOT_FOUND', `unknown HDR medium: ${medium}`);
       if (!isHdrVariant(variant)) throw new AppError('NOT_FOUND', `unknown HDR variant: ${variant}`);
-      return this.serve(c, 'video/mp4', (lib, photo) => getHdrVideoPath(lib, photo.id, variant));
+      return this.serve(c, contentTypeFor(medium), (lib, photo) => getHdrPath(lib, photo.id, medium, variant));
     });
     this.routes = app;
   }

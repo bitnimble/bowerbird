@@ -4,9 +4,18 @@ import { AppError } from '../../errors';
 import type { Pagination } from '../../schemas/common';
 import type { Library } from '../../schemas/libraries';
 import type { PhotoDetail, PhotoListQuery, PhotoListResponse, UpdatePhotoRequest } from '../../schemas/photos';
-import { getBinPath, getHdrVideoPath, getLosslessPath, getOriginalPath, toLibraryRelative } from '../../utils/paths';
+import {
+  getBinPath,
+  getFullThumbnailPath,
+  getHdrPath,
+  getLosslessPath,
+  getOriginalPath,
+  getPreviewPath,
+  toLibraryRelative,
+} from '../../utils/paths';
 import { ensureDir, moveIntoDir } from '../../utils/files';
-import { HDR_VARIANTS } from '../processing/hdr_video';
+import { HDR_MEDIA, HDR_VARIANTS } from '../processing/hdr_media';
+import type { ThumbnailSource } from '../processing/processing_types';
 import { extractMetadata, type FileMetadata } from '../processing/metadata';
 import type { AlbumsRepository } from '../albums/albums_repository';
 import type { LibrariesRepository } from '../libraries/libraries_repository';
@@ -131,8 +140,35 @@ export class PhotosService {
     return updated;
   }
 
-  // Full-resolution 16-bit PNG of one photo, cached on disk. Minutes of work and
-  // hundreds of megabytes, so it happens only on request and only once.
+  // A full-size preview from one specific source, cached on disk exactly as the
+  // lossless render is: the file is the cache, and processing deletes it when the
+  // RAW changes, so switching renditions in the detail view costs one build each
+  // and nothing after that.
+  async buildPreview(photoId: string, source: ThumbnailSource): Promise<void> {
+    const photo = this.get(photoId);
+    const library = this.libraries.getById(photo.library_id);
+    if (!library) throw new AppError('NOT_FOUND', `library not found: ${photo.library_id}`);
+
+    const output = this.previewPath(library, photo, source);
+    if (existsSync(output)) return;
+
+    const raw = getOriginalPath(library, photo.file_path);
+    if (!existsSync(raw)) throw new AppError('NOT_FOUND', `original file not found: ${photo.file_path}`);
+    // HDR only ever applies to a render; the embedded rendition is an 8-bit SDR
+    // JPEG whatever the library setting says.
+    await this.processing.renderPreview(raw, output, photo.id, source, library.preview_hdr && source === 'render');
+  }
+
+  // The photo's own full thumbnail already *is* the preview for the source it was
+  // built from, so that rendition is free and never stored twice.
+  previewPath(library: Library, photo: PhotoDetail, source: ThumbnailSource): string {
+    return photo.thumbnail_source === source
+      ? getFullThumbnailPath(library, photo.id)
+      : getPreviewPath(library, photo.id, source);
+  }
+
+  // Full-resolution AVIF of one photo, cached on disk. Seconds of work and tens
+  // of megabytes, so it happens only on request and only once.
   async buildLossless(photoId: string): Promise<void> {
     const photo = this.get(photoId);
     const library = this.libraries.getById(photo.library_id);
@@ -145,13 +181,17 @@ export class PhotosService {
     // "Input/output error" surfaces as a 500 that says nothing useful.
     const source = getOriginalPath(library, photo.file_path);
     if (!existsSync(source)) throw new AppError('NOT_FOUND', `original file not found: ${photo.file_path}`);
-    await this.processing.renderLossless(source, output, photo.id);
+    // The full-resolution view follows the library's HDR setting: it is the same
+    // render from the same RAW, and dropping it to SDR here would make "view
+    // original" the one rendition that disagrees with everything else.
+    await this.processing.renderLossless(source, output, photo.id, library.preview_hdr);
   }
 
-  // Builds every variant of the HDR still, including the SDR reference: the
-  // point of the exercise is comparing them on a real HDR display, and one
-  // decode feeding three encodes costs less than three separate requests.
-  async buildHdrVideos(photoId: string): Promise<void> {
+  // Builds every rendition at once, both media and including the SDR
+  // references: the point of the exercise is comparing them on real hardware,
+  // and a browser that does one may not do the other. Sequential rather than
+  // parallel because each is a full-resolution decode and encode.
+  async buildHdr(photoId: string): Promise<void> {
     const photo = this.get(photoId);
     const library = this.libraries.getById(photo.library_id);
     if (!library) throw new AppError('NOT_FOUND', `library not found: ${photo.library_id}`);
@@ -159,10 +199,12 @@ export class PhotosService {
     const source = getOriginalPath(library, photo.file_path);
     if (!existsSync(source)) throw new AppError('NOT_FOUND', `original file not found: ${photo.file_path}`);
 
-    for (const variant of HDR_VARIANTS) {
-      const output = getHdrVideoPath(library, photo.id, variant);
-      if (existsSync(output)) continue; // the file is the cache, as with the lossless render
-      await this.processing.renderHdrVideo(source, output, photo.id, variant);
+    for (const medium of HDR_MEDIA) {
+      for (const variant of HDR_VARIANTS) {
+        const output = getHdrPath(library, photo.id, medium, variant);
+        if (existsSync(output)) continue; // the file is the cache, as with the lossless render
+        await this.processing.renderHdr(source, output, photo.id, medium, variant);
+      }
     }
   }
 

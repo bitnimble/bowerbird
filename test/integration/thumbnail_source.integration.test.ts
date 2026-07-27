@@ -6,7 +6,7 @@ import { expect, test } from 'bun:test';
 import sharp from 'sharp';
 import { createDatabase } from '../../src/db/connection';
 import { readEmbeddedJpeg } from '../../src/services/processing/raw_decoder';
-import { SettingsRepository } from '../../src/services/settings/settings_repository';
+import { LibrariesRepository } from '../../src/services/libraries/libraries_repository';
 
 const FIXTURE = `${import.meta.dir}/../fixtures/DSC02981.ARW`;
 
@@ -30,21 +30,27 @@ test('the embedded preview carries its own EXIF orientation', async () => {
   expect(upright.info.height).toBeGreaterThan(upright.info.width);
 });
 
-test('the import setting round-trips and falls back to a render', () => {
+test('the preview settings live on the library and round-trip', () => {
   const db = createDatabase(':memory:');
-  const settings = new SettingsRepository(db);
+  const libraries = new LibrariesRepository(db);
+  const id = '00000000-0000-4000-8000-0000000000c1';
   try {
-    expect(settings.getThumbnailSource()).toBe('render');
+    db.query('INSERT INTO libraries (id, root_path, ordering) VALUES (?, ?, ?)').run(id, '/tmp/x', 'added_desc');
 
-    settings.setThumbnailSource('embedded');
-    expect(settings.getThumbnailSource()).toBe('embedded');
+    // The default is the embedded JPEG, which needs no demosaic, and HDR is off
+    // because it only means anything for a render.
+    const created = libraries.getById(id)!;
+    expect(created.preview_source).toBe('embedded');
+    expect(created.preview_hdr).toBe(false);
 
-    settings.setThumbnailSource('render');
-    expect(settings.getThumbnailSource()).toBe('render');
+    libraries.setPreviewSource(id, 'render');
+    libraries.setPreviewHdr(id, true);
+    const updated = libraries.getById(id)!;
+    expect(updated.preview_source).toBe('render');
+    expect(updated.preview_hdr).toBe(true);
 
-    // A value written by hand or by a newer version must not break every scan.
-    db.query('UPDATE settings SET value = ?').run('something-else');
-    expect(settings.getThumbnailSource()).toBe('render');
+    // Stored as an integer, so it has to come back a boolean rather than 1.
+    expect(typeof updated.preview_hdr).toBe('boolean');
   } finally {
     db.close();
   }

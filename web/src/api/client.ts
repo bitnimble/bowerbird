@@ -148,7 +148,7 @@ export const api = {
 // the file changes behind a stable URL, and an image already decoded in the page
 // is never re-requested without it.
 export function thumbnailUrl(photoId: string, size: 'small' | 'full', version = 0): string {
-  const url = `${BASE}/image/${photoId}/${size}.webp`;
+  const url = `${BASE}/image/${photoId}/${size}.avif`;
   return version === 0 ? url : `${url}?v=${version}`;
 }
 
@@ -168,5 +168,5 @@ export function jpegUrl(photoId: string): string {
 }
 
 export function losslessUrl(photoId: string): string {
-  return `${BASE}/image/${photoId}/lossless.jxl`;
+  return `${BASE}/image/${photoId}/lossless.avif`;
 }

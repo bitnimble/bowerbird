@@ -25,7 +25,7 @@ let origin: string;
 beforeAll(() => {
   root = mkdtempSync(path.join(tmpdir(), 'bb-range-'));
   mkdirSync(path.join(root, '.bowerbird', 'thumbnails', 'small'), { recursive: true });
-  writeFileSync(path.join(root, '.bowerbird', 'thumbnails', 'small', 'p1.webp'), BODY);
+  writeFileSync(path.join(root, '.bowerbird', 'thumbnails', 'small', 'p1.avif'), BODY);
   writeFileSync(path.join(root, 'a.arw'), BODY);
 
   const detail = { id: 'p1', library_id: 'lib', file_path: 'a.arw', is_deleted: false } as PhotoDetail;
@@ -52,7 +52,7 @@ afterAll(() => {
 });
 
 test('a full thumbnail response carries Content-Length and advertises range support', async () => {
-  const res = await fetch(`${origin}/image/p1/small.webp`);
+  const res = await fetch(`${origin}/image/p1/small.avif`);
   expect(res.status).toBe(200);
   expect(res.headers.get('content-length')).toBe(String(BODY.length));
   expect(res.headers.get('accept-ranges')).toBe('bytes');

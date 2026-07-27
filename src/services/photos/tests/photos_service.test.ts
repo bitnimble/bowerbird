@@ -41,7 +41,9 @@ function build(over: {
   return { service: new PhotosService(photos, albums, shoots, libraries, processing), photos, libraries, shoots, albums };
 }
 
-const library: Library = { id: 'lib', root_path: '/r', data_path: null, ordering: 'added_asc', last_synced_at: null, photo_count: 0 };
+const library: Library = { id: 'lib', root_path: '/r', data_path: null, ordering: 'added_asc',
+  preview_source: 'embedded' as const,
+  preview_hdr: false, last_synced_at: null, photo_count: 0 };
 const shoot: Shoot = { id: 'sh', parent_id: null, library_id: 'lib', folder_path: 'Trip', name: 'Trip', description: null, banner_photo_id: null, ordering: 'taken_asc', photo_count: 0 };
 const album: Album = { id: 'al', name: 'Faves', ordering: 'taken_desc', banner_photo_id: null, photo_count: 0 };
 const detail = { id: 'p1' } as PhotoDetail;
@@ -118,7 +120,9 @@ describe('PhotosService.delete', () => {
       writeFileSync(path.join(dataDir, 'thumbnails', 'small', 'p1.webp'), '');
       writeFileSync(path.join(dataDir, 'thumbnails', 'full', 'p1.webp'), '');
 
-      const lib: Library = { id: 'lib', root_path: root, data_path: null, ordering: 'added_asc', last_synced_at: null, photo_count: 0 };
+      const lib: Library = { id: 'lib', root_path: root, data_path: null, ordering: 'added_asc',
+  preview_source: 'embedded' as const,
+  preview_hdr: false, last_synced_at: null, photo_count: 0 };
       const markDeleted = jest.fn();
       const photo = { id: 'p1', library_id: 'lib', shoot_id: null, file_path: 'a.arw', is_deleted: false } as PhotoDetail;
       const { service } = build({
@@ -145,7 +149,9 @@ describe('PhotosService.delete', () => {
     const root = mkdtempSync(path.join(tmpdir(), 'bb-del-'));
     try {
       writeFileSync(path.join(root, 'a.arw'), 'raw');
-      const lib: Library = { id: 'lib', root_path: root, data_path: null, ordering: 'added_asc', last_synced_at: null, photo_count: 0 };
+      const lib: Library = { id: 'lib', root_path: root, data_path: null, ordering: 'added_asc',
+  preview_source: 'embedded' as const,
+  preview_hdr: false, last_synced_at: null, photo_count: 0 };
       const photo = { id: 'p1', library_id: 'lib', shoot_id: null, file_path: 'a.arw', is_deleted: false } as PhotoDetail;
       const { service } = build({
         photos: {

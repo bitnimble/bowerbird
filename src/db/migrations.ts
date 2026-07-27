@@ -9,7 +9,16 @@ CREATE TABLE IF NOT EXISTS libraries (
   data_path   TEXT,
   last_synced_at TEXT,          -- ISO datetime of the last completed sync; NULL if never synced
   ordering    TEXT NOT NULL DEFAULT 'taken_desc'
-    CHECK (ordering IN ('taken_asc', 'taken_desc', 'added_asc', 'added_desc'))
+    CHECK (ordering IN ('taken_asc', 'taken_desc', 'added_asc', 'added_desc')),
+  -- Where thumbnails and previews get their pixels, and whether the full-size
+  -- render is HDR (§10.2). Per library rather than global: one catalogue may be
+  -- scanned JPEGs where the camera's rendering is the point, another RAWs worth
+  -- demosaicing. 'embedded' is the default because it needs no demosaic.
+  preview_source TEXT NOT NULL DEFAULT 'embedded'
+    CHECK (preview_source IN ('embedded', 'render')),
+  -- Only meaningful with 'render': an embedded JPEG is 8-bit SDR, so there is no
+  -- headroom in it to carry.
+  preview_hdr INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS shoots (
@@ -146,5 +155,9 @@ export function runMigrations(db: Database): void {
   ensureColumn(db, 'photos', 'thumbnail_source', 'TEXT'); // §10.3
   ensureColumn(db, 'photos', 'deleted_from_path', 'TEXT'); // Bin restore (§12.2)
   ensureColumn(db, 'libraries', 'last_synced_at', 'TEXT'); // §9.6
+  // Per-library preview settings, replacing the global import.thumbnail_source
+  // (§10.2). The default matches what that setting shipped with.
+  ensureColumn(db, 'libraries', 'preview_source', "TEXT NOT NULL DEFAULT 'embedded'");
+  ensureColumn(db, 'libraries', 'preview_hdr', 'INTEGER NOT NULL DEFAULT 0');
   migrateSelectedToTriage(db);
 }
