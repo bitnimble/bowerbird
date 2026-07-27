@@ -23,3 +23,18 @@ export async function syncLibrary(page: Page, rootPath: string): Promise<void> {
 export async function openLibrary(page: Page, rootPath: string): Promise<void> {
   await page.locator(`.rail__link[title="${rootPath}"]`).click();
 }
+
+// Opens the first photo and swaps the preview for the full-resolution render,
+// which the server builds on first request.
+export async function viewOriginal(page: Page, rootPath: string): Promise<void> {
+  await page.goto('/settings');
+  await openLibrary(page, rootPath);
+  await page.locator('.tile__hit').first().click();
+  // The full-size preview is built by the background queue after a sync, so a
+  // freshly synced library can wait on a real decode here.
+  await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
+
+  await page.getByRole('button', { name: 'Actions' }).click();
+  await page.getByRole('menuitem', { name: 'View original' }).click();
+  await expect(page.getByRole('button', { name: 'Back to preview' })).toBeVisible({ timeout: 180_000 });
+}

@@ -76,6 +76,22 @@ test('prune removes generated files whose photo is gone and keeps the rest', asy
   for (const file of [keptSmall, keptFull, keptBin, raw]) expect(existsSync(file)).toBe(true);
 });
 
+test('prune removes a live photo’s render left behind by an earlier output format', async () => {
+  insertPhoto(LIVE);
+
+  // The full-resolution view used to be written as PNG. Switching it to JPEG XL
+  // writes a new file rather than replacing the old one, so without this the
+  // superseded render sits there forever: ~100MB per photo ever opened.
+  const superseded = seedFile('lossless', `${LIVE}.png`);
+  const current = seedFile('lossless', `${LIVE}.jxl`);
+
+  const result = await new PruneService(libraries, photos).prune();
+
+  expect(result.removed).toBe(1);
+  expect(existsSync(superseded)).toBe(false);
+  expect(existsSync(current)).toBe(true);
+});
+
 test('prune is a no-op when nothing is orphaned', async () => {
   insertPhoto(LIVE);
   seedFile('thumbnails/small', `${LIVE}.webp`);

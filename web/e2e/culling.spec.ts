@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { CULL_PHOTOS_DIR, PHOTO_NAMES } from './fixture_library';
-import { addLibrary, openLibrary, syncLibrary } from './helpers';
+import { addLibrary, openLibrary, syncLibrary, viewOriginal } from './helpers';
 
 // This spec has its own library root, so binning and rejecting here cannot
 // disturb the counts the other spec asserts.
@@ -254,20 +254,15 @@ test('a selection can be rebuilt from the embedded JPEG', async ({ page }) => {
   await expect(thumbnail.getByText('embedded JPEG')).toBeVisible({ timeout: 30_000 });
 });
 
-test('View original builds a JXL and decodes it in the browser for display', async ({ page }) => {
-  await page.goto('/settings');
-  await openLibrary(page, CULL_PHOTOS_DIR);
-  await page.locator('.tile__hit').first().click();
-  await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible();
+// Playwright's stock Chromium has JPEG XL compiled in but switched off, which is
+// what every browser without native support looks like to the viewer. The
+// native path is covered by native_jxl.spec.ts, which needs its own worker.
+test('View original decodes the JXL with wasm where the browser has no native support', async ({ page }) => {
+  await viewOriginal(page, CULL_PHOTOS_DIR);
 
-  // No browser decodes JPEG XL natively, so the stage can only show this if the
-  // wasm decode and the PNG transcode both worked: the src becomes a blob.
-  await page.getByRole('button', { name: 'Actions' }).click();
-  await page.getByRole('menuitem', { name: 'View original' }).click();
-  await expect(page.getByRole('button', { name: 'Back to preview' })).toBeVisible({ timeout: 180_000 });
-
+  // The stage can only show this if the wasm decode and the PNG transcode both
+  // worked: the src becomes a blob.
   const shown = page.locator('.stage__viewport img');
-  await expect(shown).toHaveJSProperty('naturalWidth', await shown.evaluate((i: HTMLImageElement) => i.naturalWidth));
   expect(await shown.evaluate((i: HTMLImageElement) => i.src.startsWith('blob:'))).toBe(true);
   // Full resolution, not the 3840-edge preview it replaced.
   expect(await shown.evaluate((i: HTMLImageElement) => i.naturalWidth)).toBeGreaterThan(3840);

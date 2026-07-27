@@ -1,18 +1,19 @@
-import init, { JxlImage } from 'jxl-oxide-wasm';
 // `?url` so Vite emits the wasm as an asset and hands back its real path. Left
 // to itself the loader resolves a relative URL that the dev server answers with
 // index.html, and instantiation fails on the HTML it gets back. The subpath is
 // `./module.wasm`, which is what the package's exports map publishes.
 import wasmUrl from 'jxl-oxide-wasm/module.wasm?url';
 
-// No browser decodes JPEG XL natively yet (Chrome 149's
-// `ImageDecoder.isTypeSupported('image/jxl')` is false), so the full-resolution
-// export is decoded here and handed to an <img> as a PNG blob.
+// Chrome 145+ decodes JPEG XL natively, behind chrome://flags/#enable-jxl-image-format
+// until it goes on by default. Where that exists the <img> takes the .jxl
+// straight from the server: 0.7s on a 24MP frame against 5.9s through the wasm
+// decoder below, and the browser's own colour management honours the file's
+// BT.2020/PQ tagging.
 //
-// The transcode exists rather than painting to a canvas because an <img> keeps
-// the browser's own colour management, HDR compositing and zoom/pan. A canvas
-// would flatten to SDR: neither 2D nor WebGL2 accepts a rec2100-* colour space,
-// only sRGB and display-p3.
+// Everywhere else the wasm decoder transcodes to a PNG blob. That is a PNG
+// rather than a canvas because an <img> keeps colour management, HDR
+// compositing and zoom/pan. A canvas would flatten to SDR: neither 2D nor
+// WebGL2 accepts a rec2100-* colour space, only sRGB and display-p3.
 
 // PNG cICP: colour primaries, transfer characteristics, matrix coefficients,
 // full-range flag. 9/16/0/1 is BT.2020 + PQ, which Chrome honours - verified by
@@ -20,12 +21,18 @@ import wasmUrl from 'jxl-oxide-wasm/module.wasm?url';
 // different values.
 const CICP_BT2020_PQ = new Uint8Array([9, 16, 0, 1]);
 
-let ready: Promise<unknown> | null = null;
+type JxlModule = typeof import('jxl-oxide-wasm');
 
-// One instantiation per page. The wasm is ~1.6MB, so it is fetched on first use
-// rather than at startup: most sessions never open a full-resolution view.
-function load(): Promise<unknown> {
-  ready ??= init({ module_or_path: wasmUrl });
+let ready: Promise<JxlModule> | null = null;
+
+// One instantiation per page, imported dynamically on first use: the wasm is
+// ~1.6MB and a browser that decodes JXL itself never touches it, nor does a
+// session that opens no full-resolution view.
+function load(): Promise<JxlModule> {
+  ready ??= import('jxl-oxide-wasm').then(async (mod) => {
+    await mod.default({ module_or_path: wasmUrl });
+    return mod;
+  });
   return ready;
 }
 
@@ -73,9 +80,35 @@ export interface LosslessImage {
   url: string;
   width: number;
   height: number;
-  /** Whether the source declared an HDR transfer, so the PNG was tagged for it. */
-  hdr: boolean;
+  /** Releases the blob, if this decode allocated one. No-op on the native path. */
   revoke: () => void;
+}
+
+// A 1x1 red JXL. Feature detection goes through <img> rather than
+// ImageDecoder.isTypeSupported because that is the path the viewer actually
+// uses, and Safari decodes JXL in <img> without implementing ImageDecoder.
+const PROBE_JXL = 'data:image/jxl;base64,/woAEBBQXAgIAgEAPABLEqVChSTWyO0bDwDfrwM=';
+
+let nativeSupport: Promise<boolean> | null = null;
+
+function supportsNativeJxl(): Promise<boolean> {
+  nativeSupport ??= new Promise<boolean>((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve(img.naturalWidth === 1);
+    img.onerror = () => resolve(false);
+    img.src = PROBE_JXL;
+  });
+  return nativeSupport;
+}
+
+async function decodeNative(url: string, signal?: AbortSignal): Promise<LosslessImage> {
+  const img = new Image();
+  img.src = url;
+  // decode() rather than onload so the caller's progress state covers the
+  // decode too, not just the download.
+  await img.decode();
+  signal?.throwIfAborted();
+  return { url, width: img.naturalWidth, height: img.naturalHeight, revoke: () => {} };
 }
 
 // True when the ICC profile describes a PQ or HLG transfer. jxl-oxide hands back
@@ -89,7 +122,9 @@ function isHdrProfile(icc: Uint8Array): boolean {
 }
 
 export async function decodeLossless(url: string, signal?: AbortSignal): Promise<LosslessImage> {
-  await load();
+  if (await supportsNativeJxl()) return decodeNative(url, signal);
+
+  const { JxlImage } = await load();
   const response = await fetch(url, { signal });
   if (!response.ok) throw new Error(`could not fetch the full-resolution render (${response.status})`);
   const bytes = new Uint8Array(await response.arrayBuffer());
@@ -111,7 +146,7 @@ export async function decodeLossless(url: string, signal?: AbortSignal): Promise
       const png = render.encodeToPng();
       const tagged = hdr ? withCicp(png, CICP_BT2020_PQ) : png;
       const objectUrl = URL.createObjectURL(new Blob([tagged as BlobPart], { type: 'image/png' }));
-      return { url: objectUrl, width, height, hdr, revoke: () => URL.revokeObjectURL(objectUrl) };
+      return { url: objectUrl, width, height, revoke: () => URL.revokeObjectURL(objectUrl) };
     } finally {
       // Already consumed by encodeToPng on the success path; free() is safe to
       // call again and matters when the encode threw.

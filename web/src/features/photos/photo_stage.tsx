@@ -6,6 +6,11 @@ const MIN_SCALE = 1; // 1 = fitted to the stage
 const MAX_SCALE = 8;
 const WHEEL_SENSITIVITY = 0.0015;
 
+// Full-size renders are built by the background queue, so opening a photo just
+// after a sync can 404. The grid recovers on its next list refetch; the detail
+// view has no such loop, so it retries on its own before giving up.
+const RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 15000, 30000];
+
 interface Props {
   src: string;
   alt: string;
@@ -71,6 +76,7 @@ export function PhotoStage({ src, alt, filename, onImageLoad }: Props): JSX.Elem
   const [fullscreen, setFullscreen] = useState(false);
   const [toolbarVisible, setToolbarVisible] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
   // Held back until this src has decoded. Without it the previous photo stays on
   // screen for a beat after navigating, which reads as a flash of the wrong frame.
   const [ready, setReady] = useState(false);
@@ -89,7 +95,24 @@ export function PhotoStage({ src, alt, filename, onImageLoad }: Props): JSX.Elem
     reset();
     setFailed(false);
     setReady(false);
+    setAttempt(0);
   }, [src, reset]);
+
+  useEffect(() => {
+    // A blob URL is decoded from bytes already in hand; it will not start
+    // working later.
+    if (!failed || src.startsWith('blob:')) return;
+    const delay = RETRY_DELAYS_MS[attempt];
+    if (delay == null) return;
+    const timer = setTimeout(() => {
+      setFailed(false);
+      setAttempt((a) => a + 1);
+    }, delay);
+    return () => clearTimeout(timer);
+  }, [failed, attempt, src]);
+
+  // The browser caches the 404, so a retry needs a URL it has not seen.
+  const shownSrc = attempt === 0 ? src : `${src}${src.includes('?') ? '&' : '?'}retry=${attempt}`;
 
   // Measures here, outside the updater, so the updater itself stays pure.
   const zoomBy = useCallback(
@@ -232,7 +255,7 @@ export function PhotoStage({ src, alt, filename, onImageLoad }: Props): JSX.Elem
           <span className="tile__pending">no thumbnail yet</span>
         ) : (
           <img
-            src={src}
+            src={shownSrc}
             alt={alt}
             draggable={false}
             className={ready ? 'is-ready' : undefined}

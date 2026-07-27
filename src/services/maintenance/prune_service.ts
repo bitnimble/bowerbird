@@ -1,13 +1,22 @@
 import { readdir, stat, unlink } from 'node:fs/promises';
 import path from 'node:path';
-import { getDataPath } from '../../utils/paths';
+import type { Library } from '../../schemas/libraries';
+import { getFullThumbnailPath, getLosslessPath, getSmallThumbnailPath } from '../../utils/paths';
 import type { LibrariesRepository } from '../libraries/libraries_repository';
 import type { PhotosRepository } from '../photos/photos_repository';
 
-// Directories of files named `<photoId>.<ext>`, relative to a library's data
-// directory. Everything else under there (the Bin, the sync lock) is keyed by
-// something other than a photo id and must not be touched.
-const GENERATED_DIRS = ['thumbnails/small', 'thumbnails/full', 'lossless'];
+// The directories holding files named `<photoId>.<ext>`, each with the one
+// extension it is supposed to contain. Both are taken from the helpers that
+// write the files, so changing an output format cannot leave the sweep looking
+// in the wrong place or keeping the superseded files. Everything else under the
+// data directory (the Bin, the sync lock) is keyed by something other than a
+// photo id and must not be touched.
+function generatedDirs(library: Library): Array<{ dir: string; ext: string }> {
+  return [getSmallThumbnailPath, getFullThumbnailPath, getLosslessPath].map((pathFor) => {
+    const sample = pathFor(library, 'id');
+    return { dir: path.dirname(sample), ext: path.extname(sample) };
+  });
+}
 
 export interface PruneResult {
   removed: number;
@@ -34,18 +43,20 @@ export class PruneService {
     let bytes = 0;
 
     for (const library of this.libraries.list()) {
-      for (const dir of GENERATED_DIRS) {
-        const full = path.join(getDataPath(library), dir);
+      for (const { dir, ext } of generatedDirs(library)) {
         let files: string[];
         try {
-          files = await readdir(full);
+          files = await readdir(dir);
         } catch {
           continue; // never created, or the whole data directory is gone
         }
         for (const file of files) {
           const id = file.replace(/\.[^.]+$/, '');
-          if (live.has(id)) continue;
-          const target = path.join(full, file);
+          // A live photo still leaves a file behind when the output format
+          // changes: the render is rewritten under the new extension and the
+          // old one is never touched again.
+          if (live.has(id) && path.extname(file) === ext) continue;
+          const target = path.join(dir, file);
           try {
             bytes += (await stat(target)).size;
             await unlink(target);
