@@ -1,13 +1,13 @@
-// The HDR still is a third decode path (scene-linear, Rec.2020, no auto-bright)
-// feeding ffmpeg. Whether it is actually HDR is invisible until it reaches a
-// display, so what is checkable here is that the pixels are scene-referred and
-// that the file says what it must say (§10.7).
+// The HDR renditions are a third decode path (scene-linear, Rec.2020, no
+// auto-bright) feeding two encoders. Whether the result is actually HDR is
+// invisible until it reaches a display, so what is checkable here is that the
+// pixels are scene-referred and that the files say what they must say (§10.7).
 //   docker exec bowerbird-dev bun test test/integration
 import { expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { encodeHdrVideo } from '../../src/services/processing/hdr_video';
+import { type HdrMedium, type HdrVariant, encodeHdr, extensionFor } from '../../src/services/processing/hdr_media';
 import { decodeRaw } from '../../src/services/processing/raw_decoder';
 
 const FIXTURE = `${import.meta.dir}/../fixtures/DSC02981.ARW`;
@@ -30,6 +30,22 @@ function probe(file: string): Probe {
   ]);
   if (result.exitCode !== 0) throw new Error(`ffprobe failed: ${result.stderr.toString()}`);
   return JSON.parse(result.stdout.toString()).streams[0] as Probe;
+}
+
+// Small and fast: these assert tagging, which is independent of resolution, and
+// a full-size encode would put ~10s per case on the suite.
+async function encoded(medium: HdrMedium, variant: HdrVariant, run: (file: string) => void): Promise<void> {
+  const dir = mkdtempSync(path.join(tmpdir(), 'bb-hdr-'));
+  try {
+    const image = decodeRaw(FIXTURE, 16, 'rec2020-linear');
+    // extensionFor, not a local guess: `still-baseline` is an AVIF too, and a
+    // hand-rolled check that only knew about 'still' wrote it as .mp4.
+    const outputPath = path.join(dir, `${variant}${extensionFor(medium)}`);
+    await encodeHdr(image, { variant, medium, outputPath, peakNits: 1000, crf: 40, preset: 12, maxEdge: 640 });
+    run(outputPath);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 test('a scene-linear decode keeps the highlight headroom an sRGB one spends', () => {
@@ -57,34 +73,66 @@ test('a scene-linear decode keeps the highlight headroom an sRGB one spends', ()
   expect(meanOf(scene)).toBeLessThan(meanOf(display) / 2);
 });
 
-test('the encoded still declares BT.2020 and PQ, which no encoder option alone achieves', async () => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'bb-hdr-'));
-  try {
-    const image = decodeRaw(FIXTURE, 16, 'rec2020-linear');
-    const outputPath = path.join(dir, 'pq.mp4');
-    await encodeHdrVideo(image, { variant: 'pq', outputPath, peakNits: 1000, crf: 40, preset: 12, maxEdge: 3840 });
-
-    const stream = probe(outputPath);
+test('the video declares BT.2020 and PQ, which no encoder option alone achieves', async () => {
+  await encoded('video', 'pq', (file) => {
+    const stream = probe(file);
     expect(stream.color_primaries).toBe('bt2020');
     expect(stream.color_transfer).toBe('smpte2084');
     expect(stream.color_space).toBe('bt2020nc');
-    // 8-bit would band visibly in the shadows a PQ curve stretches.
+    // 8-bit would band visibly in the shadows a PQ curve stretches. 4:2:0 is
+    // deliberate: it is AV1 Profile 0, the only profile a hardware decoder and
+    // an HDR overlay will take, and 4:4:4 rendered washed out on Firefox.
     expect(stream.pix_fmt).toBe('yuv420p10le');
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
+  });
 });
 
-test('the SDR reference is tagged BT.709 so it can be compared against', async () => {
+test('the still declares BT.2020 and PQ, which ffmpeg cannot mux into an AVIF at all', async () => {
+  // ffmpeg's avif muxer writes no colr box, so this is what proves the detour
+  // through avifenc is doing its job.
+  await encoded('still', 'pq', (file) => {
+    const stream = probe(file);
+    expect(stream.color_primaries).toBe('bt2020');
+    expect(stream.color_transfer).toBe('smpte2084');
+    expect(stream.color_space).toBe('bt2020nc');
+    expect(stream.pix_fmt).toBe('yuv444p10le');
+  });
+});
+
+test('the baseline control is the same picture at 4:2:0, differing in chroma alone', async () => {
+  // It exists to isolate one variable on a decoder that may implement only
+  // AVIF Baseline: same transfer, same primaries, quarter the chroma samples.
+  await encoded('still-baseline', 'pq', (file) => {
+    const stream = probe(file);
+    expect(stream.pix_fmt).toBe('yuv420p10le');
+    expect(stream.color_transfer).toBe('smpte2084');
+    expect(stream.color_primaries).toBe('bt2020');
+  });
+});
+
+test('the SDR references are tagged so they can be compared against', async () => {
+  await encoded('video', 'sdr', (file) => {
+    const stream = probe(file);
+    expect(stream.color_primaries).toBe('bt709');
+    expect(stream.color_transfer).toBe('bt709');
+  });
+  // A still control is sRGB rather than BT.709: same primaries, but a browser
+  // renders an untagged still against sRGB.
+  await encoded('still', 'sdr', (file) => {
+    const stream = probe(file);
+    expect(stream.color_primaries).toBe('bt709');
+    expect(stream.color_transfer).toBe('iec61966-2-1');
+  });
+});
+
+test('the still leaves no intermediate behind', async () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'bb-hdr-'));
   try {
     const image = decodeRaw(FIXTURE, 16, 'rec2020-linear');
-    const outputPath = path.join(dir, 'sdr.mp4');
-    await encodeHdrVideo(image, { variant: 'sdr', outputPath, peakNits: 1000, crf: 40, preset: 12, maxEdge: 3840 });
-
-    const stream = probe(outputPath);
-    expect(stream.color_primaries).toBe('bt709');
-    expect(stream.color_transfer).toBe('bt709');
+    const outputPath = path.join(dir, 'pq.avif');
+    await encodeHdr(image, { variant: 'pq', medium: 'still', outputPath, peakNits: 1000, crf: 40, preset: 12, maxEdge: 640 });
+    // The y4m is uncompressed 10-bit, so a leaked one is tens of megabytes per
+    // photo sitting next to the output that replaced it.
+    expect(await Bun.file(`${outputPath}.y4m`).exists()).toBe(false);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -93,6 +141,14 @@ test('the SDR reference is tagged BT.709 so it can be compared against', async (
 test('an 8-bit decode is refused rather than encoded as something HDR-shaped', async () => {
   const image = decodeRaw(FIXTURE, 8);
   await expect(
-    encodeHdrVideo(image, { variant: 'pq', outputPath: '/tmp/never.mp4', peakNits: 1000, crf: 40, preset: 12, maxEdge: 3840 }),
+    encodeHdr(image, {
+      variant: 'pq',
+      medium: 'still',
+      outputPath: '/tmp/never.avif',
+      peakNits: 1000,
+      crf: 40,
+      preset: 12,
+      maxEdge: 640,
+    }),
   ).rejects.toThrow('16-bit');
 });

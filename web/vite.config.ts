@@ -14,5 +14,16 @@ export default defineConfig({
     port: 5174,
     strictPort: true,
     host: true,
+    // The client talks to the API directly on its own origin, so these are not
+    // for the app. They exist so the API's own pages are reachable from a device
+    // that can only see this port: the HDR check (§10.7) has to be opened on a
+    // phone or an HDR desktop, and it pulls its renditions from /image and
+    // builds them through /api.
+    proxy: Object.fromEntries(
+      ['/hdr-check', '/quality-check', '/api', '/image'].map((path) => [
+        path,
+        { target: process.env.VITE_API_URL ?? 'http://127.0.0.1:3000', changeOrigin: true },
+      ]),
+    ),
   },
 });

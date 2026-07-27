@@ -57,13 +57,13 @@ test('prune removes generated files whose photo is gone and keeps the rest', asy
   insertPhoto(LIVE);
   insertPhoto(BINNED, true);
 
-  const keptSmall = seedFile('thumbnails/small', `${LIVE}.webp`);
-  const keptFull = seedFile('thumbnails/full', `${LIVE}.webp`);
+  const keptSmall = seedFile('thumbnails/small', `${LIVE}.avif`);
+  const keptFull = seedFile('thumbnails/full', `${LIVE}.avif`);
   // A binned photo keeps its row, and its thumbnails are what make the Bin
   // browsable, so it must survive.
-  const keptBin = seedFile('thumbnails/small', `${BINNED}.webp`);
-  const orphanSmall = seedFile('thumbnails/small', `${GONE}.webp`);
-  const orphanFull = seedFile('thumbnails/full', `${GONE}.webp`);
+  const keptBin = seedFile('thumbnails/small', `${BINNED}.avif`);
+  const orphanSmall = seedFile('thumbnails/small', `${GONE}.avif`);
+  const orphanFull = seedFile('thumbnails/full', `${GONE}.avif`);
   const orphanLossless = seedFile('lossless', `${GONE}.png`);
   // The Bin holds RAW files named by filename, not photo id: never ours to touch.
   const raw = seedFile('bin', 'DSC00001.ARW');
@@ -79,29 +79,32 @@ test('prune removes generated files whose photo is gone and keeps the rest', asy
 test('prune removes a live photo’s render left behind by an earlier output format', async () => {
   insertPhoto(LIVE);
 
-  // The full-resolution view used to be written as PNG. Switching it to JPEG XL
+  // The full-resolution view has been PNG, then JPEG XL, now AVIF. Each switch
   // writes a new file rather than replacing the old one, so without this the
-  // superseded render sits there forever: ~100MB per photo ever opened.
-  const superseded = seedFile('lossless', `${LIVE}.png`);
-  const current = seedFile('lossless', `${LIVE}.jxl`);
+  // superseded renders sit there forever - and it is what sweeps the WebP
+  // thumbnails left by the move to AVIF, with no migration step to run.
+  const supersededPng = seedFile('lossless', `${LIVE}.png`);
+  const supersededJxl = seedFile('lossless', `${LIVE}.jxl`);
+  const current = seedFile('lossless', `${LIVE}.avif`);
 
   const result = await new PruneService(libraries, photos).prune();
 
-  expect(result.removed).toBe(1);
-  expect(existsSync(superseded)).toBe(false);
+  expect(result.removed).toBe(2);
+  expect(existsSync(supersededJxl)).toBe(false);
+  expect(existsSync(supersededPng)).toBe(false);
   expect(existsSync(current)).toBe(true);
 });
 
 test('prune is a no-op when nothing is orphaned', async () => {
   insertPhoto(LIVE);
-  seedFile('thumbnails/small', `${LIVE}.webp`);
+  seedFile('thumbnails/small', `${LIVE}.avif`);
 
   expect((await new PruneService(libraries, photos).prune()).removed).toBe(0);
 });
 
 test('removing a library takes its data directory but not the photographs', async () => {
   const service = new LibrariesService(libraries);
-  seedFile('thumbnails/small', `${LIVE}.webp`);
+  seedFile('thumbnails/small', `${LIVE}.avif`);
   const rawPhoto = path.join(root, 'DSC00001.ARW');
   writeFileSync(rawPhoto, 'raw');
 

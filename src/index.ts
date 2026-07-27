@@ -16,13 +16,13 @@ import { AlbumsService } from './services/albums/albums_service';
 import { AlbumsRepository } from './services/albums/albums_repository';
 import { ImageApi } from './api/image/image_api';
 import { HdrTestApi } from './api/hdr/hdr_test_api';
+import { QualityCheckApi } from './api/quality/quality_check_api';
 import { ConfigApi } from './api/config/config_api';
 import { SyncService } from './services/sync/sync_service';
 import { LibraryWatcher } from './services/sync/library_watcher';
 import { DailySync } from './services/sync/daily_sync';
 import { PruneService, ScheduledPrune } from './services/maintenance/prune_service';
 import { ProcessingService } from './services/processing/processing_service';
-import { SettingsRepository } from './services/settings/settings_repository';
 import { config } from './config';
 
 const db = createDatabase(config.dbPath);
@@ -32,8 +32,7 @@ const photosRepo = new PhotosRepository(db);
 const shootsRepo = new ShootsRepository(db);
 const albumsRepo = new AlbumsRepository(db);
 
-const settingsRepo = new SettingsRepository(db);
-const processingService = new ProcessingService(photosRepo, config, settingsRepo);
+const processingService = new ProcessingService(photosRepo, config);
 
 const librariesService = new LibrariesService(librariesRepo);
 const photosService = new PhotosService(photosRepo, albumsRepo, shootsRepo, librariesRepo, processingService);
@@ -77,7 +76,15 @@ app.use(
     exposeHeaders: ['Content-Length', 'Content-Range', 'Accept-Ranges'],
   }),
 );
-app.route('/api/config', new ConfigApi(config, settingsRepo).routes);
+// Error bodies echo the id that was not found, and the diagnostic pages are
+// served as HTML from the same origin. Both are safe as they stand - a JSON
+// body is never parsed as markup - but only while the declared type is
+// believed, so say it is not to be sniffed.
+app.use('*', async (c, next) => {
+  await next();
+  c.header('X-Content-Type-Options', 'nosniff');
+});
+app.route('/api/config', new ConfigApi(config).routes);
 app.route('/api/libraries', librariesApi.routes);
 app.route('/api', photosApi.routes);
 app.route('/api', shootsApi.routes);
@@ -85,7 +92,9 @@ app.route('/api/albums', albumsApi.routes);
 app.route('/image', imageApi.routes);
 // Served by the API rather than the web client because it has to be opened
 // directly on an HDR machine, which may not be the one running the UI (§10.7).
-app.route('/hdr-check', new HdrTestApi(photosService).routes);
+app.route('/hdr-check', new HdrTestApi(photosService, librariesService).routes);
+// Which AVIF quality to ship at: a diagnostic, same reasoning as the HDR check.
+app.route('/quality-check', new QualityCheckApi(photosService, librariesService, config).routes);
 
 if (config.watchEnabled) {
   const watcher = new LibraryWatcher(librariesRepo, syncService, config.watchDebounceMs);
@@ -106,4 +115,11 @@ if (config.pruneEveryDays > 0) {
 
 applyErrorHandler(app);
 
-export default { port: config.port, hostname: config.host, fetch: app.fetch };
+// Bun.serve idles a request out after 10s by default, which is shorter than the
+// work some endpoints are synchronously waiting on: a full-resolution lossless
+// render, and the six HDR renditions, both run to tens of seconds on a 60MP
+// frame. The client sees the socket closed rather than an error, so this looks
+// like a crash rather than a timeout. 255 is Bun's maximum.
+const IDLE_TIMEOUT_SECONDS = 255;
+
+export default { port: config.port, hostname: config.host, idleTimeout: IDLE_TIMEOUT_SECONDS, fetch: app.fetch };
