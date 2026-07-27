@@ -12,7 +12,9 @@ const CONTENT_TYPE: Record<Kind, string> = {
   small: 'image/webp',
   full: 'image/webp',
   original: 'image/x-sony-arw',
-  lossless: 'image/png',
+  // No browser decodes JXL natively yet; the client carries a wasm decoder and
+  // transcodes for display (§10.5).
+  lossless: 'image/jxl',
 };
 
 const JPEG_QUALITY = 92;
@@ -31,7 +33,7 @@ export class ImageApi {
     app.get('/:photoId/full.webp', (c) => this.serve(c, 'full'));
     app.get('/:photoId/original.arw', (c) => this.serve(c, 'original'));
     app.get('/:photoId/full.jpg', (c) => this.serveJpeg(c));
-    app.get('/:photoId/lossless.png', (c) => this.serve(c, 'lossless'));
+    app.get('/:photoId/lossless.jxl', (c) => this.serve(c, 'lossless'));
     this.routes = app;
   }
 

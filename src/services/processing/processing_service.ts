@@ -45,7 +45,14 @@ export class ProcessingService {
           else reject(new Error(event.data.error));
         };
         worker.onerror = (event: ErrorEvent) => reject(new Error(`worker crashed: ${event.message}`));
-        worker.postMessage({ kind: 'lossless', photoId, rawFilePath, outputPath } satisfies LosslessJob);
+        worker.postMessage({
+          kind: 'lossless',
+          photoId,
+          rawFilePath,
+          outputPath,
+          distance: this.config.losslessDistance,
+          effort: this.config.losslessEffort,
+        } satisfies LosslessJob);
       });
     } finally {
       worker.terminate();

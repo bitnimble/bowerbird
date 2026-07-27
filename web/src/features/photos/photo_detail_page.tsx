@@ -16,10 +16,10 @@ import {
   Wand2,
 } from 'lucide-react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { jpegUrl, losslessUrl, originalUrl, thumbnailUrl, type ThumbnailSource } from '../../api/client';
+import { jpegUrl, originalUrl, thumbnailUrl, type ThumbnailSource } from '../../api/client';
 import { localDateTime } from '../../api/dates';
 import { useAlbumsStore, usePhotosStore, usePresenters, useServerConfigStore, useShootsStore } from '../../app/stores_context';
-import { ActionMenu, Button, ICON, MoreLess, type Option, Text, TextArea } from '../../ui/ui';
+import { ActionMenu, Button, ErrorBanner, ICON, MoreLess, type Option, Text, TextArea } from '../../ui/ui';
 import { sourceLabel } from './photos_presenter';
 import { PhotoStage } from './photo_stage';
 import { TRIAGE_KEYS, TriageControl } from './triage_control';
@@ -131,11 +131,10 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   const nextId = store.nextPhotoId;
   const libraryId = store.detailLibraryId;
 
-  // Building takes a while and the file is enormous, so the render is requested
-  // once and then shown; a second visit finds it already on disk.
+  // The render is built once and cached server-side; a second visit only pays
+  // for the download and the wasm decode.
   async function showOriginal(): Promise<void> {
-    if (!(store.detail?.has_lossless ?? false)) await photos.buildLossless(photoId);
-    photos.showLossless(true);
+    await photos.showLossless(photoId);
   }
 
   // Stepping through frames and judging them is the whole point of a detail view
@@ -185,6 +184,9 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
 
   return (
     <div className="pad detail-page">
+      {/* The page had no error surface at all, so a failed render or metadata
+          refresh set store.error and then showed nothing. */}
+      <ErrorBanner message={store.error} onDismiss={photos.clearError} />
       <div className="row detail__nav">
         <Button render={<Link to={libraryId == null ? '/' : `/libraries/${libraryId}`} />}>
           <ArrowLeft size={ICON} />
@@ -226,8 +228,9 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
             else void photos.reprocess([photoId], action);
           }}
         />
-        {store.showingLossless && (
-          <Button onClick={() => photos.showLossless(false)}>
+        {store.buildingLossless && <Text variant="mono">building…</Text>}
+        {store.lossless != null && (
+          <Button onClick={photos.hideLossless}>
             <Minimize2 size={ICON} />
             Back to preview
           </Button>
@@ -243,7 +246,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
         {/* Keyed off the route, not the loaded detail, so the photo on screen is
             always the one the URL asks for. */}
         <PhotoStage
-          src={store.showingLossless ? losslessUrl(photoId) : thumbnailUrl(photoId, 'full', store.rebuiltAt)}
+          src={store.lossless?.url ?? thumbnailUrl(photoId, 'full', store.rebuiltAt)}
           alt={filename}
           filename={filename}
           onImageLoad={(width, height) => setThumbSize({ width, height })}

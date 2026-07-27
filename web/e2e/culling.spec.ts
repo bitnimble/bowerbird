@@ -254,6 +254,30 @@ test('a selection can be rebuilt from the embedded JPEG', async ({ page }) => {
   await expect(thumbnail.getByText('embedded JPEG')).toBeVisible({ timeout: 30_000 });
 });
 
+test('View original builds a JXL and decodes it in the browser for display', async ({ page }) => {
+  await page.goto('/settings');
+  await openLibrary(page, CULL_PHOTOS_DIR);
+  await page.locator('.tile__hit').first().click();
+  await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible();
+
+  // No browser decodes JPEG XL natively, so the stage can only show this if the
+  // wasm decode and the PNG transcode both worked: the src becomes a blob.
+  await page.getByRole('button', { name: 'Actions' }).click();
+  await page.getByRole('menuitem', { name: 'View original' }).click();
+  await expect(page.getByRole('button', { name: 'Back to preview' })).toBeVisible({ timeout: 180_000 });
+
+  const shown = page.locator('.stage__viewport img');
+  await expect(shown).toHaveJSProperty('naturalWidth', await shown.evaluate((i: HTMLImageElement) => i.naturalWidth));
+  expect(await shown.evaluate((i: HTMLImageElement) => i.src.startsWith('blob:'))).toBe(true);
+  // Full resolution, not the 3840-edge preview it replaced.
+  expect(await shown.evaluate((i: HTMLImageElement) => i.naturalWidth)).toBeGreaterThan(3840);
+
+  // Leaving the view must release the blob; a full-resolution PNG is hundreds of
+  // megabytes and an object URL keeps it alive for the life of the document.
+  await page.getByRole('button', { name: 'Back to preview' }).click();
+  await expect(shown).toHaveAttribute('src', /^http/);
+});
+
 test('the stage never shows the previous photo after navigating to another one', async ({ page }) => {
   await page.goto('/settings');
   await openLibrary(page, CULL_PHOTOS_DIR);

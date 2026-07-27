@@ -60,6 +60,12 @@ export const config = {
   // because it only has anything to do after a library is removed or a
   // catalogue is rebuilt, and it reads every thumbnail directory. 0 disables.
   pruneEveryDays: envNumber('PRUNE_EVERY_DAYS', 7),
+  // Full-resolution export (§10.5). libjxl butteraugli distance: 0 is
+  // mathematically lossless but ~50s and 80MB on a 24MP frame, where 0.3 is
+  // half a second and 9MB. Deliberately tighter than libjxl's "visually
+  // lossless" 1.0, because this view exists to be pixel-peeped.
+  losslessDistance: envNumber('LOSSLESS_DISTANCE', 0.3),
+  losslessEffort: envNumber('LOSSLESS_EFFORT', 4),
   processingConcurrency: envNumber('PROCESSING_CONCURRENCY', 4),
   smallThumbnailSize: envNumber('SMALL_THUMBNAIL_SIZE', 800),
   fullThumbnailSize: envNumber('FULL_THUMBNAIL_SIZE', 3840),

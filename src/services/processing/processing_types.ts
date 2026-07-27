@@ -26,6 +26,9 @@ export interface LosslessJob {
   photoId: string;
   rawFilePath: string;
   outputPath: string;
+  // libjxl butteraugli distance. 0 is mathematically lossless.
+  distance: number;
+  effort: number;
 }
 
 export type WorkerJob = ProcessingJob | LosslessJob;

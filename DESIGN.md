@@ -917,7 +917,19 @@ This buffer is then passed to sharp as `sharp(data, { raw: { width, height, chan
 
 `POST /api/photos/:id/lossless` renders one photo at full resolution, 16-bit, into a PNG kept beside the thumbnails. It exists because a WebP preview is not what you check focus or gradients on, and it is opt-in per photo because the output runs to tens or hundreds of megabytes and takes real time to build. The file is the cache: a second request finds it already there, and `PhotoDetail.has_lossless` is a `stat` rather than a column, so it cannot disagree with the disk.
 
-PNG rather than TIFF: it is the only lossless format a browser will display, which is the point of the feature. The depth needs two deliberate steps that are each silently lossy if missed, `libraw_set_output_bps(16)` on the decode and `toColourspace('rgb16')` before the encode, without which sharp writes 8-bit from a 16-bit buffer. `libraw_set_output_color` pins sRGB, which is what an unprofiled PNG is read as anyway.
+**Format.** Measured on a 24MP frame against the same 16-bit decode: PNG 16-bit 111 MB, JPEG XL lossless 74 MB, AVIF lossless 12-bit 66 MB, JXL at distance 0.3 **9.4 MB in half a second**. JXL also keeps 16 bits where AVIF tops out at 12, and carries HDR (BT.2020 primaries, PQ or HLG transfer, an intensity target in nits). `LOSSLESS_DISTANCE` defaults to 0.3 rather than libjxl's "visually lossless" 1.0 because this view exists to be pixel-peeped; 0 is available and is bit-exact, at roughly 50s and 80 MB.
+
+PSNR reads low on these renders (33-37 dB across distances) and barely moves with quality. That is sensor noise, which a lossy encoder discards first and which PSNR punishes but butteraugli, what cjxl actually optimises, does not. The regression test asserts a floor well below the measured value, because its job is to catch a wrong-pixels bug rather than to grade the codec.
+
+**Encoding.** sharp/libvips has no JXL encoder, so this shells out to `cjxl` (libjxl-tools, installed in the image). cjxl will not read stdin, so the pixels go via a 16-bit PPM: a header plus the samples, `swap16` in place on a buffer we already own, and no compression pass on the way in. `libraw_set_output_bps(16)` on the decode is what makes it 16-bit in the first place.
+
+**Display.** No browser decodes JPEG XL natively (Chrome 149's `ImageDecoder.isTypeSupported('image/jxl')` is false), so the client carries jxl-oxide as wasm (~1.7 MB, code-split, fetched on first use) and transcodes to a PNG blob for an `<img>`. Measured end to end on a 20MP render: about six seconds.
+
+An `<img>` rather than a canvas, because a canvas cannot be HDR: neither 2D nor WebGL2 accepts a `rec2100-*` colour space, only `srgb` and `display-p3`, and `configureHighDynamicRange` is absent. An `<img>` keeps the browser's own colour management, HDR compositing, zoom and pan.
+
+HDR signalling rides on a PNG **cICP** chunk (9/16/0/1 = BT.2020 + PQ), inserted after IHDR without touching IDAT. Chrome honours it: the same pixel bytes tagged cICP-PQ render differently from the same bytes tagged sRGB, with an untagged control matching sRGB exactly. The tag is applied only when the decoded ICC profile actually declares PQ or HLG, since tagging an SDR image would stretch it into HDR range.
+
+`libraw_set_output_color` currently pins sRGB, so nothing produced today is HDR: the delivery path is ready for it, the decode is not.
 
 The default for newly indexed photos is the `import.thumbnail_source` setting (§13.6). Changing it is deliberately not retroactive: rebuilding an existing catalogue is a job the user asks for explicitly, not something a preference does to thousands of files in the background. `POST /api/photos/reprocess` is that explicit request.
 
@@ -1237,6 +1249,8 @@ The server is configured via environment variables:
 | `WATCH_DEBOUNCE_MS` | `2000` | Debounce window for coalescing filesystem events (§9.8) |
 | `SYNC_FULL_AT` | `03:00` | Local `HH:MM` for the daily full reconcile; `""` disables (§9.8) |
 | `PRUNE_EVERY_DAYS` | `7` | Interval for the orphaned-file sweep; `0` disables (§10.6) |
+| `LOSSLESS_DISTANCE` | `0.3` | libjxl butteraugli distance for the full-resolution export; `0` is bit-exact (§10.5) |
+| `LOSSLESS_EFFORT` | `4` | cjxl effort for the same (§10.5) |
 | `CORS_ORIGINS` | *(unset)* | Comma-separated origins allowed to call the API, or `*`. Unset means "any port on whatever host the request arrived at", so the client works on loopback and over the LAN without hardcoding an address, while an unrelated site on the internet is still refused. |
 
 ---
@@ -1349,6 +1363,7 @@ A separate Vite + React app with its own `package.json`, dev server and build. I
 | Routing | React Router 6 |
 | Components | Base UI (unstyled primitives), wrapped once in `src/ui/ui.tsx` |
 | Icons | lucide-react |
+| JPEG XL decode | jxl-oxide-wasm, for the full-resolution view (§10.5) |
 | Calendar | react-day-picker, restyled through its CSS variables |
 | E2E | Playwright, driving the real API and a temp library |
 

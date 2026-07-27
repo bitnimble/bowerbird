@@ -1,9 +1,9 @@
-// The lossless export is a second decode path: 16-bit output, its own colour
-// space call, and a sharp pipeline that silently downconverts unless told not
-// to. All of that is invisible until someone opens the file (§10.5).
+// The full-resolution export is a second decode path (16-bit, its own colour
+// space call) feeding an encoder that lives outside sharp entirely. None of that
+// is visible until someone opens the file (§10.5).
 //   docker exec bowerbird-dev bun test test/integration
 import { expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import sharp from 'sharp';
@@ -11,6 +11,32 @@ import { ProcessingService } from '../../src/services/processing/processing_serv
 import { decodeRaw } from '../../src/services/processing/raw_decoder';
 
 const FIXTURE = `${import.meta.dir}/../fixtures/DSC02981.ARW`;
+
+// P6 header, then big-endian 16-bit samples: the same shape the worker writes.
+function ppmOf(image: ReturnType<typeof decodeRaw>): Buffer {
+  const body = Buffer.from(image.data);
+  body.swap16();
+  return Buffer.concat([Buffer.from(`P6\n${image.width} ${image.height}\n65535\n`, 'ascii'), body]);
+}
+
+// Skips the magic plus the three whitespace-delimited header fields.
+function samplesOf(buf: Buffer): Buffer {
+  let offset = 2;
+  let fields = 0;
+  const isSpace = (i: number): boolean => /\s/.test(String.fromCharCode(buf[i]!));
+  while (fields < 3) {
+    while (offset < buf.length && isSpace(offset)) offset++;
+    while (offset < buf.length && !isSpace(offset)) offset++;
+    fields++;
+  }
+  return buf.subarray(offset + 1);
+}
+
+function service(): ProcessingService {
+  return new ProcessingService({} as never, { processingConcurrency: 1, losslessDistance: 0.3, losslessEffort: 4 } as never, {
+    getThumbnailSource: () => "render",
+  } as never);
+}
 
 test('a 16-bit decode yields twice the bytes of an 8-bit one', () => {
   const eight = decodeRaw(FIXTURE, 8);
@@ -24,55 +50,57 @@ test('a 16-bit decode yields twice the bytes of an 8-bit one', () => {
   expect(sixteen.data.length).toBe(eight.data.length * 2);
 });
 
-test('the 16-bit decode survives the PNG encode at full depth', async () => {
-  const image = decodeRaw(FIXTURE, 16);
-  const samples = new Uint16Array(image.data.buffer, image.data.byteOffset, image.width * image.height * image.channels);
-  const png = await sharp(samples, { raw: { width: image.width, height: image.height, channels: image.channels } })
-    .toColourspace('rgb16')
-    .png({ compressionLevel: 1, effort: 1 })
-    .toBuffer();
-
-  // Read the IHDR directly: sharp's own metadata has reported `uchar` for a file
-  // that really was 16-bit, so the bytes are the only trustworthy answer.
-  expect(png[24]).toBe(16); // bit depth
-  expect(png[25]).toBe(2); // colour type 2 = truecolour RGB
-
-  const meta = await sharp(png).metadata();
-  expect(meta.width).toBe(image.width);
-  expect(meta.height).toBe(image.height);
-});
-
-// Goes through the real worker, not a copy of its logic. The bug this pins wrote
-// a file of exactly the right dimensions and bit depth whose pixels were the
-// 16-bit buffer misread as 8-bit samples, so only the shipped path, compared
-// pixel by pixel, catches it.
-test('the render the service produces is the image that was decoded', async () => {
+// Goes through the real worker, not a copy of its logic: the previous bug here
+// wrote a file of exactly the right dimensions whose pixels were the 16-bit
+// buffer misread as 8-bit, which only the shipped path can catch.
+test('the render the service produces decodes back to the image that went in', async () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'bb-lossless-'));
-  const output = path.join(dir, 'out.png');
+  const output = path.join(dir, 'out.jxl');
   try {
-    const service = new ProcessingService(
-      {} as never,
-      { processingConcurrency: 1 } as never,
-      { getThumbnailSource: () => 'render' } as never,
-    );
-    await service.renderLossless(FIXTURE, output, 'test-photo');
+    await service().renderLossless(FIXTURE, output, 'test-photo');
 
+    // A JXL, not a PNG: the first two bytes of a bare codestream are ff 0a, and
+    // a container-wrapped one starts with a JXL box signature.
+    const head = Buffer.from(await Bun.file(output).arrayBuffer().then((b) => b.slice(0, 12)));
+    const bare = head[0] === 0xff && head[1] === 0x0a;
+    const boxed = head.subarray(4, 8).toString('ascii') === 'JXL ';
+    expect(bare || boxed).toBe(true);
+
+    // Far smaller than the 16-bit PNG it replaces, which is the whole point.
     const image = decodeRaw(FIXTURE, 16);
-    const samples = new Uint16Array(image.data.buffer, image.data.byteOffset, image.width * image.height * image.channels);
-    const expected = await sharp(samples, { raw: { width: image.width, height: image.height, channels: image.channels } })
-      .raw()
-      .toBuffer();
-    const actual = await sharp(output).raw().toBuffer();
+    expect(statSync(output).size).toBeLessThan(image.data.length / 4);
 
-    expect(Buffer.compare(expected, actual)).toBe(0);
+    // Decode back to PPM, not PNG. djxl tags its PNG with an ICC profile and
+    // sharp then colour-manages it, which shifts every value and reads as ~30 dB
+    // of codec loss that isn't there. PPM carries no profile, so this compares
+    // the pixels themselves.
+    const roundTrip = path.join(dir, 'back.ppm');
+    expect(Bun.spawnSync(['djxl', output, roundTrip]).exitCode).toBe(0);
+
+    const expected = samplesOf(ppmOf(image));
+    const actual = samplesOf(readFileSync(roundTrip));
+    expect(actual.length).toBe(expected.length);
+
+    let sum = 0;
+    const n = expected.length / 2;
+    for (let i = 0; i < n; i++) {
+      const a = (expected[i * 2]! << 8) | expected[i * 2 + 1]!;
+      const b = (actual[i * 2]! << 8) | actual[i * 2 + 1]!;
+      sum += (a - b) ** 2;
+    }
+    // Sensor noise is what a lossy encoder discards first, so PSNR runs low on
+    // RAW-derived pixels even when the result is perceptually identical. The
+    // bound is set to catch a wrong-pixels bug, which lands far below this.
+    const psnr = 10 * Math.log10(65535 ** 2 / (sum / n));
+    expect(psnr).toBeGreaterThan(30);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
-}, 120_000);
+}, 180_000);
 
 // sharp infers sample depth from the typed array's type. Passing a Buffer with
 // `raw.depth: 'ushort'` is accepted and then ignored, which is exactly how the
-// render came to be silently wrong.
+// render came to be silently wrong once already.
 test('a Buffer with raw.depth is NOT read as 16-bit, which is why a typed array is used', async () => {
   const px = new Uint16Array([65535, 0, 0, 0, 65535, 0, 0, 0, 65535, 32768, 32768, 32768]);
   const raw = { raw: { width: 2, height: 2, channels: 3 } };

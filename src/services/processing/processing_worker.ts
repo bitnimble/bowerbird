@@ -11,6 +11,7 @@ declare const self: {
   postMessage: (message: ProcessingResult) => void;
 };
 
+
 // The embedded JPEG carries its own EXIF orientation, so it needs rotating;
 // a render is already baked upright by the decoder (§11.1).
 function pipeline(job: ProcessingJob): { make: () => sharp.Sharp; source: ThumbnailSource } {
@@ -41,24 +42,32 @@ async function thumbnails(job: ProcessingJob): Promise<ThumbnailSource> {
   return source;
 }
 
-// 16-bit sRGB PNG: lossless, full resolution, and the only lossless format a
-// browser will actually display (TIFF is not). PNG carries no profile here, and
-// an unprofiled PNG is read as sRGB, which is what the decode targets.
+// Full-resolution 16-bit JPEG XL at libjxl's "visually lossless" distance.
+// Measured on a 20MP frame: 1.4 MB, against 111 MB for the equivalent 16-bit PNG
+// and 8.4 MB for AVIF at comparable quality, and it is the only candidate that
+// keeps more than 12 bits. No browser decodes it natively yet, so the client
+// carries a wasm decoder (DESIGN §10.5).
+//
+// sharp/libvips has no JXL encoder, and cjxl will not read stdin, so the pixels
+// go via a 16-bit PPM: a header plus the samples, with no compression pass to
+// pay for on the way.
 async function lossless(job: LosslessJob): Promise<void> {
   const image = decodeRaw(job.rawFilePath, 16);
-  // A Uint16Array view, not the Buffer. sharp infers sample depth from the typed
-  // array's type; passing a Buffer with `raw.depth: 'ushort'` is accepted and
-  // then ignored, and the 16-bit data gets read as 8-bit samples, which produces
-  // a plausible-looking file of the right dimensions and entirely wrong pixels.
-  const samples = new Uint16Array(image.data.buffer, image.data.byteOffset, image.width * image.height * image.channels);
-  await sharp(samples, { raw: { width: image.width, height: image.height, channels: image.channels } })
-    // sharp downconverts to 8-bit on write unless the pipeline is explicitly in
-    // a 16-bit space, which silently throws away the depth just decoded.
-    .toColourspace('rgb16')
-    // A full-resolution 16-bit PNG is enormous, and this runs while the user
-    // waits, so trade compression ratio for time.
-    .png({ compressionLevel: 6, effort: 1 })
-    .toFile(job.outputPath);
+  const ppmPath = `${job.outputPath}.ppm`;
+  try {
+    // PPM samples are big-endian; LibRaw gave us native order. swap16 is in
+    // place on a buffer we own, so this costs no copy of the ~115 MB.
+    image.data.swap16();
+    await Bun.write(ppmPath, new Blob([`P6\n${image.width} ${image.height}\n65535\n`, image.data]));
+
+    const result = Bun.spawnSync(['cjxl', ppmPath, job.outputPath, '-d', String(job.distance), '-e', String(job.effort)]);
+    if (result.exitCode !== 0) {
+      const stderr = result.stderr.toString().trim();
+      throw new Error(`cjxl failed (${result.exitCode}): ${stderr.split('\n').slice(-1)[0] ?? 'no output'}`);
+    }
+  } finally {
+    await Bun.file(ppmPath).delete().catch(() => {});
+  }
 }
 
 self.onmessage = async (event) => {

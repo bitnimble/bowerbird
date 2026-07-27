@@ -2,12 +2,14 @@ import { action, runInAction } from 'mobx';
 import {
   ApiError,
   api,
+  losslessUrl,
   type Ordering,
   type PhotoListParams,
   type PhotoListResponse,
   type ThumbnailSource,
   type Triage,
 } from '../../api/client';
+import { decodeLossless } from './lossless_image';
 import type { AlbumsPresenter } from '../albums/albums_presenter';
 import type { ShootsPresenter } from '../shoots/shoots_presenter';
 import type { ToastsPresenter } from '../toasts/toasts_presenter';
@@ -96,13 +98,21 @@ export class PhotosPresenter {
     this.clearSelection();
   }
 
-  // Renders the full-resolution lossless copy. Minutes of work on a big sensor,
-  // so the caller gets a busy flag rather than a silent wait.
-  async buildLossless(photoId: string): Promise<void> {
+  // Builds the full-resolution render if it does not exist yet, then decodes it
+  // here: no browser reads JPEG XL natively, so the bytes have to be turned into
+  // something an <img> accepts before anything can be shown.
+  async showLossless(photoId: string): Promise<void> {
     runInAction(() => (this.store.buildingLossless = true));
     try {
-      await api.buildLossless(photoId);
-      await this.refreshDetail();
+      if (this.store.detail?.id === photoId && !this.store.detail.has_lossless) {
+        await api.buildLossless(photoId);
+        await this.refreshDetail();
+      }
+      const image = await decodeLossless(losslessUrl(photoId));
+      runInAction(() => {
+        this.store.lossless?.revoke();
+        this.store.lossless = image;
+      });
     } catch (err) {
       runInAction(() => (this.store.error = message(err)));
     } finally {
@@ -110,9 +120,12 @@ export class PhotosPresenter {
     }
   }
 
+  // Frees the object URL: a full-resolution PNG blob is hundreds of megabytes,
+  // and leaving it attached keeps that alive for the life of the document.
   @action.bound
-  showLossless(show: boolean): void {
-    this.store.showingLossless = show;
+  hideLossless(): void {
+    this.store.lossless?.revoke();
+    this.store.lossless = null;
   }
 
   async goToPage(index: number): Promise<void> {

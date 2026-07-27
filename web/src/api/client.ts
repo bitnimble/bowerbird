@@ -159,5 +159,5 @@ export function jpegUrl(photoId: string): string {
 }
 
 export function losslessUrl(photoId: string): string {
-  return `${BASE}/image/${photoId}/lossless.png`;
+  return `${BASE}/image/${photoId}/lossless.jxl`;
 }
