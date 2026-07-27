@@ -9,7 +9,7 @@ Bowerbird is a high-performance RAW photo management and cataloguing backend des
 - Library management (create, sync)
 - Photo listing, filtering, and metadata
 - Shoots and albums
-- Thumbnail generation (small + full-size WebP)
+- Thumbnail generation (small + full-size AVIF)
 - Streaming access to thumbnails and original RAW files
 - Deletion with soft-delete and Bin folder
 - Missing file detection
@@ -25,7 +25,7 @@ Bowerbird is a high-performance RAW photo management and cataloguing backend des
 | Web framework | Hono |
 | Validation | Zod v4 |
 | Database | SQLite via `bun:sqlite` |
-| Image processing | sharp (WebP encoding/resizing) |
+| Image processing | sharp (AVIF encoding/resizing) |
 | RAW decoding | Per-format dispatch (header sniff → fastest reader); Sony ARW via LibRaw `bun:ffi` |
 | Metadata extraction | LibRaw header parse (no pixel decode), per-format dispatch |
 | Testing | Bun's built-in test runner (`bun test`, run via `bun run test`) |
@@ -35,8 +35,7 @@ Bowerbird is a high-performance RAW photo management and cataloguing backend des
 ### System Dependencies
 
 - **LibRaw**, must be installed on the host system. The Bun process loads `libraw.so` / `libraw.dylib` via FFI. On Debian/Ubuntu: `apt install libraw-dev`. On macOS: `brew install libraw`.
-- **libjxl-tools**, `cjxl` encodes the full-resolution export (§10.5); sharp/libvips has no JXL encoder.
-- **ffmpeg**, applies the PQ/HLG transfer and encodes the HDR video (§10.7). Needs **libaom** for AV1 and libzimg for the `zscale` filter; a build missing either cannot produce them. libsvtav1 is not enough: it implements AV1 Profile 0 only and silently downsamples 4:4:4 to 4:2:0.
+- **ffmpeg**, applies the PQ transfer and encodes the HDR video (§10.7). Needs libzimg for the `zscale` filter and **libsvtav1** for the video; a build missing either cannot produce them. SVT-AV1 implementing AV1 Profile 0 only is the point rather than a limitation: 4:4:4 is Profile 1, which no hardware decoder takes, and the video exists to reach a hardware HDR path.
 - **libavif-bin**, `avifenc` encodes the HDR still. ffmpeg's own avif muxer writes no `colr` box, so it cannot tag one as HDR at all.
 
 ### NPM Dependencies
@@ -45,7 +44,7 @@ Bowerbird is a high-performance RAW photo management and cataloguing backend des
 |---|---|
 | `hono` | Web server and routing |
 | `zod` | Schema validation (v4) |
-| `sharp` | Image resizing and WebP encoding (operates on decoded RGB buffers, never on RAW files directly) |
+| `sharp` | Image resizing and AVIF encoding (operates on decoded RGB buffers, never on RAW files directly) |
 
 Testing uses Bun's built-in `bun test` runner, so there is no test-framework dependency.
 
@@ -505,11 +504,11 @@ Each library has a **data directory** for generated files. By default, this is `
 ```
 <data_path>/
 ├── thumbnails/
-│   ├── small/          # 800px longest-edge WebP thumbnails
-│   │   ├── <photo_uuid>.webp
+│   ├── small/          # 800px longest-edge AVIF thumbnails
+│   │   ├── <photo_uuid>.avif
 │   │   └── ...
-│   └── full/           # 3840px longest-edge WebP thumbnails
-│       ├── <photo_uuid>.webp
+│   └── full/           # 3840px longest-edge AVIF thumbnails
+│       ├── <photo_uuid>.avif
 │       └── ...
 └── bin/                # Deleted original RAW files
     └── ...
@@ -523,11 +522,11 @@ function getDataPath(library: Library): string {
 }
 
 function getSmallThumbnailPath(library: Library, photoId: string): string {
-  return path.join(getDataPath(library), 'thumbnails', 'small', `${photoId}.webp`);
+  return path.join(getDataPath(library), 'thumbnails', 'small', `${photoId}.avif`);
 }
 
 function getFullThumbnailPath(library: Library, photoId: string): string {
-  return path.join(getDataPath(library), 'thumbnails', 'full', `${photoId}.webp`);
+  return path.join(getDataPath(library), 'thumbnails', 'full', `${photoId}.avif`);
 }
 
 function getBinPath(library: Library): string {
@@ -842,14 +841,27 @@ Sync snapshots the DB, then scans **asynchronously**, then applies. A user mutat
 
 ### 10.1 Overview
 
-Processing converts RAW files into WebP thumbnails at two sizes:
+Processing converts RAW files into **AVIF** thumbnails at two sizes:
 
 | Size | Constraint | Output path |
 |---|---|---|
-| small | Longest edge = `SMALL_THUMBNAIL_SIZE` (default 800px), preserve aspect ratio | `<data_path>/thumbnails/small/<photo_uuid>.webp` |
-| full | Longest edge = `FULL_THUMBNAIL_SIZE` (default 3840px), preserve aspect ratio | `<data_path>/thumbnails/full/<photo_uuid>.webp` |
+| small | Longest edge = `SMALL_THUMBNAIL_SIZE` (default 800px), preserve aspect ratio | `<data_path>/thumbnails/small/<photo_uuid>.avif` |
+| full | Longest edge = `FULL_THUMBNAIL_SIZE` (default 3840px), preserve aspect ratio | `<data_path>/thumbnails/full/<photo_uuid>.avif` |
 
-Thumbnail sizes and WebP quality come from configuration (§15): `SMALL_THUMBNAIL_SIZE`/`SMALL_THUMBNAIL_QUALITY` and `FULL_THUMBNAIL_SIZE`/`FULL_THUMBNAIL_QUALITY`. Nothing in the pipeline hardcodes these values.
+Sizes and quality come from configuration (§15). Nothing in the pipeline hardcodes them.
+
+**Everything is AVIF**, thumbnails, previews, the full-resolution export (§10.5) and the HDR renditions (§10.7). It decodes natively in every current browser with no polyfill, it is the only format here that carries HDR to Chrome and Safari alike, and at matched quality it is smaller than the WebP it replaced: the full-size rendition is 375 kB at q60 against 1019 kB for WebP q90. Nothing migrates existing files; the orphan sweep keys on the extension a directory is supposed to hold, so stranded WebP is collected on the next pass (§10.6).
+
+Two encoder settings were measured rather than inherited, and both defaults were wrong:
+
+- **`effort` is the expensive knob, not quality.** sharp defaults to 4, which is 13.6s for a 3840px frame against 0.6s at effort 0, for a file only ~15% smaller. `THUMBNAIL_EFFORT` is 0.
+- **AVIF quality is not WebP's scale.** Carrying the old 90 across would have produced 2551 kB thumbnails, 2.5x larger than what they replace. q80 is where shadow detail stops visibly degrading on real frames; q60 and q70 lose it. Quality is nearly free once effort is 0 (596ms at q60 against 898ms at q85), so this is chosen on appearance, not cost.
+
+**Where the pixels come from is per library**, not per server: `preview_source` (`embedded` or `render`) and `preview_hdr` on the `libraries` row. One catalogue may be scanned JPEGs where the camera's rendering is the point and another RAWs worth demosaicing. `embedded` is the default because it needs no demosaic. Changing either is deliberately **not retroactive**; it decides what gets built next, and rebuilding a catalogue is an explicit action.
+
+**HDR applies to the full-size rendition only.** The grid stays SDR: a wall of HDR thumbnails is punishing to look at, and it would put a LibRaw linear decode and two encoder passes on every photo in an import rather than one sharp call. It also only applies to a `render`, an embedded JPEG is 8-bit SDR and has no headroom to carry, whatever the setting says.
+
+An HDR library additionally writes `previews/video/<photo_uuid>.mp4`, a one-frame AV1 of the same decode. Firefox applies a PQ transfer to nothing but video and renders an HDR still dark, so that file is the only rendition that reaches an HDR display there; the client serves it in place of the AVIF on Firefox alone (§10.7).
 
 ### 10.2 Concurrency Model
 
@@ -869,8 +881,8 @@ Each worker:
 1. Receives a message with `{ photoId, rawFilePath, smallOutputPath, fullOutputPath, smallSize, fullSize, smallQuality, fullQuality }` (sizes/qualities passed in from config).
 2. Sniffs the file header and dispatches to the format's decoder (Stage 1: LibRaw for ARW) → produces an in-memory RGB bitmap buffer, **already rotated to display orientation** (see §10.4, the decoder applies the EXIF flip; the raw buffer carries no EXIF for sharp to auto-rotate from).
 3. Passes the bitmap buffer to sharp.
-4. Generates small thumbnail: `sharp(buffer, { raw: { width, height, channels: 3 } }).resize({ width: smallSize, height: smallSize, fit: 'inside' }).webp({ quality: smallQuality }).toFile(smallOutputPath)`.
-5. Generates full thumbnail: `sharp(buffer, { raw: { width, height, channels: 3 } }).resize({ width: fullSize, height: fullSize, fit: 'inside' }).webp({ quality: fullQuality }).toFile(fullOutputPath)`.
+4. Generates small thumbnail: `sharp(buffer, { raw: { width, height, channels: 3 } }).resize({ width: smallSize, height: smallSize, fit: 'inside' }).avif({ quality: smallQuality, effort, chromaSubsampling: '4:4:4' }).toFile(smallOutputPath)`.
+5. Generates full thumbnail: `sharp(buffer, { raw: { width, height, channels: 3 } }).resize({ width: fullSize, height: fullSize, fit: 'inside' }).avif({ quality: fullQuality, effort, chromaSubsampling: '4:4:4' }).toFile(fullOutputPath)`.
 6. On any failure in steps 2-5 (e.g. the full resize/encode throws after the small write already succeeded), delete `smallOutputPath` and `fullOutputPath` if present (best-effort unlink) before reporting, so a failed job leaves no partial thumbnail and a failed reprocess does not leave the prior run's stale thumbnails on disk (both share the UUID-keyed path). This upholds the §10.2 no-thumbnail invariant.
 7. Sends back `{ photoId, success: true, source }` or `{ photoId, success: false, error: string }`.
 
@@ -918,17 +930,23 @@ This buffer is then passed to sharp as `sharp(data, { raw: { width, height, chan
 
 ### 10.5 Lossless export
 
-`POST /api/photos/:id/lossless` renders one photo at full resolution, 16-bit, into a JPEG XL kept beside the thumbnails. It exists because a WebP preview is not what you check focus or gradients on, and it is opt-in per photo because the output runs to tens or hundreds of megabytes and takes real time to build. The file is the cache: a second request finds it already there, and `PhotoDetail.has_lossless` is a `stat` rather than a column, so it cannot disagree with the disk.
+`POST /api/photos/:id/lossless` renders one photo at full resolution into an AVIF kept beside the thumbnails. It exists because a 3840px preview is not what you check focus or gradients on, and it is opt-in per photo because it takes real time to build. Unlike every other rendition it is never fitted to a maximum edge: this is the view that gets pixel-peeped. The file is the cache: a second request finds it already there, and `PhotoDetail.has_lossless` is a `stat` rather than a column, so it cannot disagree with the disk.
 
-**Format.** Measured on a 24MP frame against the same 16-bit decode: PNG 16-bit 111 MB, JPEG XL lossless 74 MB, AVIF lossless 12-bit 66 MB, JXL at distance 0.3 **9.4 MB in half a second**. JXL also keeps 16 bits where AVIF tops out at 12, and carries HDR (BT.2020 primaries, PQ or HLG transfer, an intensity target in nits). `LOSSLESS_DISTANCE` defaults to 0.3 rather than libjxl's "visually lossless" 1.0 because this view exists to be pixel-peeped; 0 is available and is bit-exact, at roughly 50s and 80 MB.
+It follows the library's HDR setting, since it is the same render from the same RAW and it would be odd for "view original" to be the one rendition that disagrees with the rest.
 
-PSNR reads low on these renders (33-37 dB across distances) and barely moves with quality. That is sensor noise, which a lossy encoder discards first and which PSNR punishes but butteraugli, what cjxl actually optimises, does not. The regression test asserts a floor well below the measured value, because its job is to catch a wrong-pixels bug rather than to grade the codec.
+**Format.** This was JPEG XL, and the swap to AVIF cost bit depth to buy simplicity. JXL keeps 16 bits where AVIF tops out at 10 here, and at matched quality the files are comparable: 3.42 MB against 2.97 MB on a 24MP frame, 0.34s against 0.48s. What decided it was delivery. No browser decodes JXL without a 1.6 MB wasm module, and the transcode that module needs to hand an `<img>` something it accepts cost more than the entire encode:
 
-**Encoding.** sharp/libvips has no JXL encoder, so this shells out to `cjxl` (libjxl-tools, installed in the image). cjxl will not read stdin, so the pixels go via a 16-bit PPM: a header plus the samples, `swap16` in place on a buffer we already own, and no compression pass on the way in. `libraw_set_output_bps(16)` on the decode is what makes it 16-bit in the first place.
+| | build | decode | total |
+|---|---|---|---|
+| AVIF, native everywhere |, | 136 ms | **136 ms** |
+| JXL, native (flag) |, | 619 ms | 619 ms |
+| JXL, wasm polyfill | 5.2 s PNG transcode | 518 ms | **7.5 s** |
 
-**Display.** Two paths, chosen by feature detection. Where the browser decodes JPEG XL itself the `<img>` takes the `.jxl` straight from the server; otherwise the client falls back to jxl-oxide as wasm (~1.7 MB, code-split) and transcodes to a PNG blob. On a 24MP render: **0.7s native against 5.9s through wasm**.
+The polyfill's cost was almost entirely the PNG it had to produce: a 121 MB 16-bit intermediate, deflated with dynamic Huffman to save 18% on a buffer that never leaves the tab. A stored-deflate PNG would have cut that to 805 ms, but `jxl-oxide-wasm` exposes no raw framebuffer; only `encodeToPng()`; so there was nothing to hand a faster writer. Deleting the format deleted the problem, along with the wasm, the cICP splicing and the ICC sniffing.
 
-Native support is real but off by default in both engines as of Chrome 151 / Firefox 153. Chrome behind `chrome://flags/#enable-jxl-image-format` (`--enable-features=JXLImageFormat`, a Rust decoder since Chrome 145), Firefox behind `image.jxl.enabled`. Detection loads a 1x1 data-URI JXL in an `<img>` rather than calling `ImageDecoder.isTypeSupported`, because that is the path the viewer actually uses and Safari decodes JXL without implementing `ImageDecoder`. The wasm glue is imported dynamically, so a browser that needs none of it downloads neither the 9 kB shim nor the module.
+`LOSSLESS_QUALITY` (sharp's 1-100) and `LOSSLESS_QUANTIZER` (avifenc's 0-63, for the HDR path) are set tight rather than "visually lossless", and kept inside a ~20MB budget on a 60MP frame.
+
+**Encoding.** SDR goes through sharp. The decode is deliberately 8-bit: sharp's AVIF output is 8-bit whatever goes in, and asking for 16 would reintroduce the trap that `raw.depth` is ignored on a `Buffer`, so the samples get read as 8-bit anyway and the picture is silently wrong. HDR goes through the ffmpeg/avifenc path (§10.7), which is where 10-bit and the PQ transfer live.
 
 An `<img>` rather than a canvas, because a canvas cannot be HDR: neither 2D nor WebGL2 accepts a `rec2100-*` colour space, only `srgb` and `display-p3`, and `configureHighDynamicRange` is absent. An `<img>` keeps the browser's own colour management, HDR compositing, zoom and pan.
 
@@ -955,7 +973,7 @@ It runs on an interval rather than at startup: a restart is no evidence anything
 
 Two browsers, two answers. **Chrome** renders HDR stills, on desktop and on Android 14+, from a PQ- or HLG-tagged image. **Firefox** honours no HDR image tagging at all: a flat 50% grey reads 128 whether it carries a PQ cICP chunk or nothing, through a PNG and through a natively decoded JXL alike (§10.5). Its **video** pipeline does composite HDR, on Windows only, by passing the frame through to the compositor and the monitor. The underlying reason is the same for images on every platform and for video on most of them: Gecko's compositor is still 32-bit SDR, and RGBA16F framebuffers (bug 1889288) gate all of it.
 
-So `POST /api/photos/:id/hdr` builds **six** renditions of one photo: an AVIF still and a one-frame AV1 video, each as **PQ**, **HLG** and an **SDR reference**. The comparison is the point; a single HDR file on an unknown display proves nothing. Encoding client-side was ruled out. Firefox 153 exposes no `VideoEncoder`, and `VideoFrame` rejects every 10-bit pixel format (`I420P10 is unsupported`), so there is neither an encoder to call nor a way to hand it HDR pixels.
+So `POST /api/photos/:id/hdr` builds **six** renditions of one photo: a 4:4:4 AVIF still, a 4:2:0 AVIF baseline control and a one-frame AV1 video, each as **PQ** and an **SDR reference**. HLG was dropped: everything that renders HDR renders PQ, and PQ is absolute where HLG is relative to the display's own range. The comparison is the point; a single HDR file on an unknown display proves nothing. Encoding client-side was ruled out. Firefox 153 exposes no `VideoEncoder`, and `VideoFrame` rejects every 10-bit pixel format (`I420P10 is unsupported`), so there is neither an encoder to call nor a way to hand it HDR pixels.
 
 **Decode.** This is the path that makes anything HDR, and until it existed nothing the server produced was. `decodeRaw(..., 'rec2020-linear')` asks LibRaw for Rec.2020 primaries (`output_color=8`), an identity gamma curve, and `no_auto_bright`. The last one matters most: auto-brightening normalises exposure, which spends exactly the headroom above diffuse white that carries the HDR. The result is scene-referred, so a normally exposed frame's mean sits far below the sRGB render's; which is what the integration test asserts, since a decode that quietly stopped applying these would still produce a plausible-looking file.
 
@@ -979,7 +997,7 @@ Three traps, all silent:
 
 - **SVT-AV1 discards the primaries and transfer** however the `-color_*` options are set, producing a file that reports `color_primaries=unknown`. The `av1_metadata` bitstream filter writes them back into the sequence header. Without it the encode succeeds and the result is not HDR, which is why a unit test pins the exact CICP numbers.
 - **Frames are fitted to `HDR_MAX_EDGE`** (default 3840), inside the same `zscale` call so the resampling happens in linear light; resizing after the transfer would average PQ code values and darken the result. The check page reports each rendition's actual dimensions rather than implying full resolution. This also sidesteps a limit that only SVT-AV1 had: a maximum frame height, so 9504x6336 encoded while the same 60MP frame as 6336x9504 failed with `code: -22`. libaom takes either orientation.
-- **Six renditions outlast a request.** `Bun.serve` idles a connection out after 10s by default and the client sees a closed socket rather than an error, which reads as a crash. `idleTimeout` is raised to Bun's 255s maximum; the lossless render (§10.5) was already close to the old limit on a large frame.
+- **The renditions outlast a request.** `Bun.serve` idles a connection out after 10s by default and the client sees a closed socket rather than an error, which reads as a crash. `idleTimeout` is raised to Bun's 255s maximum; the lossless render (§10.5) was already close to the old limit on a large frame.
 
 The SDR still is tagged sRGB where the SDR video is tagged BT.709: they share primaries, but BT.709's transfer is a camera OETF and a browser renders an untagged still against sRGB, so sRGB is what makes the control look like an ordinary picture. Stills are 10-bit for every variant, so the control differs from the HDR ones in transfer alone; the SDR video stays 8-bit, which is what an SDR video is.
 
@@ -1069,7 +1087,7 @@ When a user requests deletion of one or more photos:
 
 For each photo:
 
-1. **Keep the thumbnails.** They are *not* removed. The Bin is a view the user browses to find something to restore, and it is useless if every frame in it is a grey placeholder. The two WebPs are roughly 1% of the size of the RAW the Bin is already retaining, so deleting them saves almost nothing and costs the feature. They are removed only when a photo is permanently purged.
+1. **Keep the thumbnails.** They are *not* removed. The Bin is a view the user browses to find something to restore, and it is useless if every frame in it is a grey placeholder. The two AVIFs are roughly 1% of the size of the RAW the Bin is already retaining, so deleting them saves almost nothing and costs the feature. They are removed only when a photo is permanently purged.
 
 2. **Move RAW file to Bin:**
    - Determine the bin path:
@@ -1201,8 +1219,8 @@ All boolean query params are parsed with `z.stringbool()`, so `?is_missing=false
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/image/:photoId/small.webp` | Stream small thumbnail |
-| `GET` | `/image/:photoId/full.webp` | Stream full thumbnail |
+| `GET` | `/image/:photoId/small.avif` | Stream small thumbnail |
+| `GET` | `/image/:photoId/full.avif` | Stream full thumbnail |
 | `GET` | `/image/:photoId/original.arw` | Stream original RAW file |
 | `GET` | `/image/:photoId/full.jpg` | The full thumbnail transcoded to JPEG, as an attachment |
 
@@ -1213,7 +1231,7 @@ All boolean query params are parsed with `z.stringbool()`, so `?is_missing=false
 These endpoints:
 - Resolve the file path from the photo record and library configuration.
 - Stream the file directly from disk using Bun's file streaming (no buffering into memory).
-- Set appropriate `Content-Type` headers (`image/webp` or `image/x-sony-arw`).
+- Set appropriate `Content-Type` headers (`image/avif` or `image/x-sony-arw`).
 - Set `Content-Length` from file stats.
 - Return 404 if the file does not exist on disk. Soft-deleted photos **are** served: the row and both files still exist, and the Bin view depends on being able to render them (§12.1).
 - Support `Range` requests for partial content (HTTP 206), enabling seeking for large files. `Bun.serve` answers these against a `BunFile` body (including `Content-Range` and a 416 for an unsatisfiable range) but does not advertise the capability, so the handler sets `Accept-Ranges: bytes` itself.
@@ -1222,7 +1240,7 @@ The served thumbnails are already rotated to display orientation (baked in durin
 
 Implementation approach:
 ```typescript
-app.get('/image/:photoId/small.webp', async (c) => {
+app.get('/image/:photoId/small.avif', async (c) => {
   const photo = await photosService.get(c.req.param('photoId'));
   if (!photo) return c.notFound();
   
@@ -1287,16 +1305,17 @@ The server is configured via environment variables:
 | `HOST` | `0.0.0.0` | HTTP server bind address |
 | `DB_PATH` | `./bowerbird.db` | SQLite database file path |
 | `PROCESSING_CONCURRENCY` | `4` | Number of worker threads for thumbnail generation |
-| `SMALL_THUMBNAIL_QUALITY` | `80` | WebP quality for small thumbnails (1-100) |
-| `FULL_THUMBNAIL_QUALITY` | `90` | WebP quality for full thumbnails (1-100) |
+| `SMALL_THUMBNAIL_QUALITY` | `80` | AVIF quality for small thumbnails, 1-100 (§10.1) |
+| `FULL_THUMBNAIL_QUALITY` | `80` | AVIF quality for full thumbnails, 1-100 (§10.1) |
+| `THUMBNAIL_EFFORT` | `0` | sharp AVIF effort, 0-9; the default of 4 is 20x slower for ~15% (§10.1) |
 | `SMALL_THUMBNAIL_SIZE` | `800` | Longest edge in pixels for small thumbnails |
 | `FULL_THUMBNAIL_SIZE` | `3840` | Longest edge in pixels for full thumbnails |
 | `WATCH_ENABLED` | `true` | Auto-sync a library when its files change on disk (§9.8) |
 | `WATCH_DEBOUNCE_MS` | `2000` | Debounce window for coalescing filesystem events (§9.8) |
 | `SYNC_FULL_AT` | `03:00` | Local `HH:MM` for the daily full reconcile; `""` disables (§9.8) |
 | `PRUNE_EVERY_DAYS` | `7` | Interval for the orphaned-file sweep; `0` disables (§10.6) |
-| `LOSSLESS_DISTANCE` | `0.3` | libjxl butteraugli distance for the full-resolution export; `0` is bit-exact (§10.5) |
-| `LOSSLESS_EFFORT` | `4` | cjxl effort for the same (§10.5) |
+| `LOSSLESS_QUALITY` | `88` | sharp AVIF quality for the SDR full-resolution export (§10.5) |
+| `LOSSLESS_QUANTIZER` | `8` | avifenc max quantizer for the HDR one; lower is better (§10.5) |
 | `HDR_PEAK_NITS` | `1000` | What a fully exposed sensor sample is worth in nits, and the declared mastering peak (§10.7) |
 | `HDR_CRF` | `20` | Encoder quality for the HDR renditions; lower is better (§10.7) |
 | `HDR_PRESET` | `8` | Encoder speed; libaom `-cpu-used` 0-8 and avifenc `--speed` 0-10, both clamped (§10.7) |
@@ -1413,7 +1432,6 @@ A separate Vite + React app with its own `package.json`, dev server and build. I
 | Routing | React Router 6 |
 | Components | Base UI (unstyled primitives), wrapped once in `src/ui/ui.tsx` |
 | Icons | lucide-react |
-| JPEG XL decode | the browser where it can, else jxl-oxide-wasm, for the full-resolution view (§10.5) |
 | Calendar | react-day-picker, restyled through its CSS variables |
 | E2E | Playwright, driving the real API and a temp library |
 
