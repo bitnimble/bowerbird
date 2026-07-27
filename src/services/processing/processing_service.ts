@@ -53,6 +53,10 @@ export class ProcessingService {
       targets: [this.target(getDataPath(library), library.preview_hdr_video, photoId, rendition, hdr, 'render')],
       grade: this.grade(),
       reportSource: false,
+      // The on-demand rendition has to agree with the ones built at import, so it
+      // obeys the same setting. The fit is deterministic, so refitting here lands
+      // on the same transform rather than a second opinion.
+      matchEmbeddedJpeg: this.config.matchEmbeddedJpeg,
     });
   }
 
@@ -193,6 +197,7 @@ export class ProcessingService {
       targets,
       grade: this.grade(),
       reportSource: true,
+      matchEmbeddedJpeg: this.config.matchEmbeddedJpeg,
     };
   }
 

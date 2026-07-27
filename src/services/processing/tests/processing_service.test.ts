@@ -9,6 +9,9 @@ import type { RenditionJob, ProcessingResult } from '../processing_types';
 
 const CRASH = 'crash-photo';
 
+/** Every job the service handed to a worker, so its shape can be asserted. */
+const posted: RenditionJob[] = [];
+
 // Fake Worker: a job for CRASH fires onerror (a native-crash-like event, which
 // skips the worker's own catch); everything else reports success.
 class MockWorker {
@@ -16,6 +19,7 @@ class MockWorker {
   onerror: ((event: { message: string }) => void) | null = null;
   constructor(_url: string) {}
   postMessage(job: RenditionJob): void {
+    posted.push(job);
     queueMicrotask(() => {
       if (job.photoId === CRASH) this.onerror?.({ message: 'segfault' });
       else this.onmessage?.({ data: { photoId: job.photoId, success: true, source: job.targets[0]?.source } });
@@ -37,6 +41,7 @@ describe('ProcessingService.processUnprocessed', () => {
 
   beforeEach(() => {
     root = mkdtempSync(path.join(tmpdir(), 'bb-proc-'));
+    posted.length = 0;
     (globalThis as { Worker?: unknown }).Worker = MockWorker;
   });
   afterEach(() => {
@@ -56,6 +61,23 @@ describe('ProcessingService.processUnprocessed', () => {
       preview_hdr_video: 0,
     };
   }
+
+  it('passes the embedded-JPEG matching setting through to the worker', async () => {
+    // The worker cannot read config, so a job that does not carry the flag leaves
+    // the feature permanently off however the server is configured.
+    const repo = {
+      listPendingProcessing: jest.fn(() => [pending('a')]),
+      markProcessed: jest.fn(),
+      markProcessingFailed: jest.fn(),
+    } as unknown as PhotosRepository;
+
+    await new ProcessingService(repo, { ...config, matchEmbeddedJpeg: true } as Config).processUnprocessed('lib');
+    expect(posted.map((job) => job.matchEmbeddedJpeg)).toEqual([true]);
+
+    posted.length = 0;
+    await new ProcessingService(repo, { ...config, matchEmbeddedJpeg: false } as Config).processUnprocessed('lib');
+    expect(posted.map((job) => job.matchEmbeddedJpeg)).toEqual([false]);
+  });
 
   it('marks each photo processed and drains the pool without hanging', async () => {
     const markProcessed = jest.fn();

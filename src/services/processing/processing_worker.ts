@@ -2,6 +2,7 @@ import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import sharp from 'sharp';
 import { encodeHdr } from './hdr_media';
+import { applyMatchProfile, fitMatchProfile, type MatchProfile } from './jpeg_match';
 import { decodeRaw, readEmbeddedJpeg } from './raw_decoder';
 import type {
   HdrJob,
@@ -25,17 +26,41 @@ declare const self: {
 // drops chroma to a quarter of the samples, smearing the saturated edges a photo
 // is judged on. sharp's AVIF is 8-bit whatever the input depth, which is why the
 // HDR path below cannot go through sharp at all (§10.2).
+function fit(image: sharp.Sharp, target: RenditionTarget): sharp.Sharp {
+  return target.size === 0 ? image : image.resize({ width: target.size, height: target.size, fit: 'inside' });
+}
+
 function toAvif(image: sharp.Sharp, target: RenditionTarget): sharp.Sharp {
-  const sized =
-    target.size === 0 ? image : image.resize({ width: target.size, height: target.size, fit: 'inside' });
-  return sized.avif({ quality: target.quality, effort: target.effort, chromaSubsampling: '4:4:4' });
+  return fit(image, target).avif({ quality: target.quality, effort: target.effort, chromaSubsampling: '4:4:4' });
+}
+
+// The match transform after the resize rather than before it. The distortion model
+// is in radii normalised to the half-diagonal, so it is resolution-independent, and
+// the colour transform is a per-pixel lookup - which makes this the same picture
+// either way, for a fraction of the work. Warping the full 60MP decode when the
+// output is an 800px tile costs seconds per rendition, and the worker builds
+// several from one photo.
+async function toMatchedAvif(image: sharp.Sharp, target: RenditionTarget, profile: MatchProfile): Promise<void> {
+  const sized = await fit(image, target).raw().toBuffer({ resolveWithObject: true });
+  const matched = await applyMatchProfile(
+    { width: sized.info.width, height: sized.info.height, channels: 3, depth: 8, data: sized.data },
+    profile,
+  );
+  const raw = { raw: { width: matched.width, height: matched.height, channels: matched.channels } };
+  await sharp(matched.data, raw)
+    .avif({ quality: target.quality, effort: target.effort, chromaSubsampling: '4:4:4' })
+    .toFile(target.outputPath);
 }
 
 // The embedded JPEG carries its own EXIF orientation, so it needs rotating; a
 // render is already baked upright by the decoder (§11.1). Returns the source that
 // was actually used: a body that embeds a bitmap preview, or none at all, is a
 // property of the file rather than an error, so it falls back to a render.
-async function writeSdr(job: RenditionJob, target: RenditionTarget): Promise<ThumbnailSource> {
+async function writeSdr(
+  job: RenditionJob,
+  target: RenditionTarget,
+  profile: MatchProfile | null,
+): Promise<ThumbnailSource> {
   if (target.source === 'embedded') {
     const jpeg = readEmbeddedJpeg(job.rawFilePath);
     if (jpeg != null) {
@@ -48,7 +73,8 @@ async function writeSdr(job: RenditionJob, target: RenditionTarget): Promise<Thu
   // Buffer, so the samples get read as 8-bit anyway and the picture is wrong.
   const image = decodeRaw(job.rawFilePath, 8);
   const raw = { raw: { width: image.width, height: image.height, channels: image.channels } };
-  await toAvif(sharp(image.data, raw), target).toFile(target.outputPath);
+  if (profile == null) await toAvif(sharp(image.data, raw), target).toFile(target.outputPath);
+  else await toMatchedAvif(sharp(image.data, raw), target, profile);
   return 'render';
 }
 
@@ -102,12 +128,20 @@ async function ensureOutputDirs(job: WorkerJob): Promise<void> {
 
 async function renditions(job: RenditionJob): Promise<ThumbnailSource | undefined> {
   let used: ThumbnailSource | undefined;
+  // Fitted once for the whole job, before anything is written: every SDR rendition
+  // of one photo has to get the same transform or the grid tile and the full view
+  // will not match each other. Null when the setting is off, when nothing in the
+  // job renders, or when the fit found no match worth applying - and in every one
+  // of those cases the renders below are simply untransformed.
+  const rendersSdr = job.targets.some((target) => !target.hdr);
+  const profile = job.matchEmbeddedJpeg && rendersSdr ? await fitMatchProfile(job.rawFilePath) : null;
+
   for (const target of job.targets) {
     if (target.hdr) {
       await writeHdr(job, target);
       continue;
     }
-    const source = await writeSdr(job, target);
+    const source = await writeSdr(job, target, profile);
     // Only the grid is ever built from the embedded JPEG, so it is the only
     // target whose fallback the row needs to hear about.
     if (job.reportSource && target.rendition === 'grid') used = source;

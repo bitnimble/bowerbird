@@ -112,6 +112,16 @@ export const config = {
   // against 0.6s at effort 0, for a file only ~15% smaller. This is also what
   // the quality-check page encodes at, so what gets judged there is what ships.
   thumbnailEffort: envNumber('THUMBNAIL_EFFORT', 0),
+  // Give a render the camera's own colour treatment, by fitting the transform that
+  // takes it to the JPEG embedded in the same RAW (`jpeg_match.ts`). Applies to SDR
+  // renditions built from a render: an embedded-sourced grid already has the look,
+  // and an 8-bit SDR JPEG cannot teach the HDR path what to do above diffuse white.
+  //
+  // Off by default because it is not free - the fit costs seconds on a body that
+  // recorded no lens correction, where the geometry has to be searched rather than
+  // read. Turn it on for a catalogue where matching the camera matters more than
+  // import throughput.
+  matchEmbeddedJpeg: (process.env.MATCH_EMBEDDED_JPEG ?? 'false') !== 'false',
 } as const;
 
 export type Config = typeof config;

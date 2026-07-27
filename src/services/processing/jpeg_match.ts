@@ -15,12 +15,15 @@
 // describes the picture profile.
 
 import sharp from 'sharp';
-import { polynomialKnots, readDistortionSpline, sampleRadius } from './lens_corrections';
+import { polynomialKnots, readDistortionSpline, sampleRadius, SPLINE_UNIT } from './lens_corrections';
 import { decodeRaw, readEmbeddedJpeg, type DecodedImage } from './raw_decoder';
 
-/** Long edge the fit runs at. Fitting small and applying at full resolution costs
- *  nothing measurable (deltaE 1.40 against 1.42), and the fit is O(pixels). */
-const FIT_LONG_EDGE = 1200;
+// Long edge the fit runs at. Fitting small and applying at full resolution costs
+// nothing measurable (deltaE 1.40 against 1.42) and every candidate warp is
+// O(pixels), so this is the single biggest lever on how long a fit takes: it is
+// paid once per candidate, and there are tens of candidates. 640 still leaves well
+// over a hundred thousand usable pairs, far more than 256-bin curves need.
+const FIT_LONG_EDGE = 640;
 
 // Both images are blurred before pairing. The camera's sharpening and noise
 // reduction are not reproducible and must not leak into the colour fit, and a
@@ -408,14 +411,34 @@ async function fitCrop(
   return best;
 }
 
-const CROP_SCAN = [0.94, 0.95, 0.96, 0.97, 0.98, 0.99, 1.0, 1.01, 1.02];
+/**
+ * Where to start looking for the crop that accompanies a known spline.
+ *
+ * A pincushion correction pulls the corner inward, so the camera has to scale by
+ * roughly the reciprocal of the corner displacement to keep the frame full - and
+ * measured against a fitted crop that prediction was exact (1/(1 + 740/16384) =
+ * 0.95679 against 0.9569 fitted). For barrel the camera is more conservative than
+ * tightest-fill, so this is only a starting point, never the answer: a scan around
+ * it still runs. It replaces a blind sweep of the whole plausible range, which was
+ * most of the cost of a fit on a body that had already told us about its lens.
+ */
+function estimateCrop(knots: readonly number[]): number {
+  const corner = knots[knots.length - 1] ?? 0;
+  return corner > 0 ? 1 / (1 + corner / SPLINE_UNIT) : 1;
+}
+
+function scanAround(centre: number, step: number, count: number): number[] {
+  return Array.from({ length: count * 2 + 1 }, (_, i) => centre + (i - count) * step);
+}
 
 // The fallback searches a coarse grid and then refines, because crop and k1 trade
 // off against each other: the grid finds the right valley and the refine walks down
 // it. Scanning k1 alone and refining only the crop lands on whichever grid value
 // is nearest and stops, which is how a 3% injected distortion came back as 4%.
 const FALLBACK_K1_SCAN = [-0.06, -0.04, -0.02, 0, 0.02, 0.04, 0.06];
-const FALLBACK_CROP_SCAN = [0.96, 0.98, 1.0, 1.02];
+// Three crop values rather than a sweep: crop and k1 lie along a diagonal valley,
+// so the grid only has to land in the valley and the joint refine walks down it.
+const FALLBACK_CROP_SCAN = [0.97, 1.0, 1.03];
 const REFINE_FLOOR = 0.0005;
 const REFINE_MARGIN = 0.002;
 
@@ -475,7 +498,7 @@ async function resolveGeometry(source: Plane, jpeg: Plane, rawBytes: Uint8Array)
 
   const cameraKnots = readDistortionSpline(rawBytes);
   if (cameraKnots) {
-    const fitted = await fitCrop(source, jpeg, cameraKnots, CROP_SCAN);
+    const fitted = await fitCrop(source, jpeg, cameraKnots, scanAround(estimateCrop(cameraKnots), 0.01, 3));
     // The camera's curve is the truth about the lens, but only if using it
     // actually corresponds better - a body whose preview is uncorrected records
     // the spline anyway.

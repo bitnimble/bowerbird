@@ -120,6 +120,74 @@ describe('fitMatchProfile', () => {
   );
 
   test(
+    'fits the same profile twice, so renditions built at different times agree',
+    async () => {
+      // Load-bearing: the profile is deliberately not stored anywhere. The grid and
+      // the full view are fitted in one job, but the max-resolution export is built
+      // on demand later and refits from scratch. If the fit were not deterministic
+      // those two copies of one photo would be graded differently, and the only
+      // remedy would be persisting the profile.
+      const first = await fitMatchProfile(FIXTURE);
+      const second = await fitMatchProfile(FIXTURE);
+      expect(first).not.toBeNull();
+      expect(second!.deltaE).toBe(first!.deltaE);
+      expect(second!.crop).toBe(first!.crop);
+      expect(second!.distortionSource).toBe(first!.distortionSource);
+      expect(second!.distortion).toEqual(first!.distortion);
+      expect(second!.colour.matrix).toEqual(first!.colour.matrix);
+      for (let channel = 0; channel < 3; channel += 1) {
+        expect(Array.from(second!.colour.curves[channel]!)).toEqual(Array.from(first!.colour.curves[channel]!));
+      }
+    },
+    TIMEOUT,
+  );
+
+  test(
+    'gives the same picture whether applied before or after the resize',
+    async () => {
+      // The worker applies the profile to the *sized* image, because warping a
+      // 60MP decode to produce an 800px tile costs seconds per rendition. That is
+      // only legitimate if the order does not matter: the distortion model is in
+      // normalised radii and the colour transform is a per-pixel lookup, so it
+      // should not. This is the check on that reasoning.
+      const profile = (await fitMatchProfile(FIXTURE))!;
+      const render = decodeRaw(FIXTURE, 8, 'srgb');
+      const raw = { raw: { width: render.width, height: render.height, channels: 3 } };
+      const SIZE = 800;
+
+      const applied = await applyMatchProfile(render, profile);
+      const beforeResize = await sharp(applied.data, {
+        raw: { width: applied.width, height: applied.height, channels: 3 },
+      })
+        .resize(SIZE, SIZE, { fit: 'inside' })
+        .raw()
+        .toBuffer({ resolveWithObject: true });
+
+      const sized = await sharp(render.data, raw).resize(SIZE, SIZE, { fit: 'inside' }).raw().toBuffer({ resolveWithObject: true });
+      const afterResize = await applyMatchProfile(
+        { width: sized.info.width, height: sized.info.height, channels: 3, depth: 8, data: sized.data },
+        profile,
+      );
+
+      expect(afterResize.width).toBe(beforeResize.info.width);
+      expect(afterResize.height).toBe(beforeResize.info.height);
+      let total = 0;
+      let counted = 0;
+      for (let i = 0; i < afterResize.data.length; i += 3) {
+        total += deltaE76(
+          [beforeResize.data[i]!, beforeResize.data[i + 1]!, beforeResize.data[i + 2]!],
+          [afterResize.data[i]!, afterResize.data[i + 1]!, afterResize.data[i + 2]!],
+        );
+        counted += 1;
+      }
+      // Resampling order still moves a few edge pixels, so this is "the same
+      // picture", not "the same bytes".
+      expect(total / counted).toBeLessThan(1);
+    },
+    TIMEOUT,
+  );
+
+  test(
     'applying a profile leaves the render the same size and shape',
     async () => {
       const profile = await fitMatchProfile(FIXTURE);

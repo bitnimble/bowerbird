@@ -63,6 +63,15 @@ export interface RenditionJob {
    * that; unset on demand, where a rendition was asked for by name.
    */
   reportSource: boolean;
+  /**
+   * Fit the camera's own colour treatment and lens correction off the embedded
+   * JPEG and apply them to this job's SDR renders (DESIGN §10.8).
+   *
+   * On the job rather than the target because the fit is a property of the photo:
+   * one fit feeds every rendition in the job, so the grid and the full view cannot
+   * disagree about colour, and the expensive part happens once.
+   */
+  matchEmbeddedJpeg: boolean;
 }
 
 // One HDR rendition: an AVIF still for Chrome, or a one-frame video for
