@@ -7,6 +7,7 @@ import {
   Download,
   FileImage,
   FileType,
+  Image as ImageIcon,
   Maximize2,
   Minimize2,
   RefreshCw,
@@ -16,10 +17,10 @@ import {
   Wand2,
 } from 'lucide-react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { jpegUrl, originalUrl, thumbnailUrl, type ThumbnailSource } from '../../api/client';
+import { jpegUrl, originalUrl, previewUrl, thumbnailUrl, type ThumbnailSource } from '../../api/client';
 import { localDateTime } from '../../api/dates';
 import { useAlbumsStore, usePhotosStore, usePresenters, useServerConfigStore, useShootsStore } from '../../app/stores_context';
-import { ActionMenu, Button, ErrorBanner, ICON, MoreLess, type Option, Text, TextArea } from '../../ui/ui';
+import { ActionMenu, type ActionGroup, Button, ICON, MoreLess, type Option, Text, TextArea } from '../../ui/ui';
 import { sourceLabel } from './photos_presenter';
 import { PhotoStage } from './photo_stage';
 import { TRIAGE_KEYS, TriageControl } from './triage_control';
@@ -88,11 +89,19 @@ const DOWNLOADS: Option<'raw' | 'jpeg'>[] = [
 
 type PhotoAction = ThumbnailSource | 'metadata' | 'lossless';
 
-const ACTIONS: Option<PhotoAction>[] = [
-  { value: 'render', label: 'Rebuild from RAW', icon: <Wand2 size={ICON} /> },
-  { value: 'embedded', label: 'Use embedded JPEG', icon: <Sparkles size={ICON} /> },
+// Renditions of the same frame rather than commands: each is built once and
+// cached, so these read as "which one am I looking at", not "rebuild it now".
+const ACTIONS: (Option<PhotoAction> | ActionGroup<PhotoAction>)[] = [
   { value: 'metadata', label: 'Refresh metadata', icon: <RotateCw size={ICON} /> },
-  { value: 'lossless', label: 'View original', icon: <Maximize2 size={ICON} /> },
+  {
+    label: 'Image preview',
+    icon: <ImageIcon size={ICON} />,
+    options: [
+      { value: 'embedded', label: 'Embedded JPEG', icon: <Sparkles size={ICON} /> },
+      { value: 'render', label: 'From RAW', icon: <Wand2 size={ICON} /> },
+      { value: 'lossless', label: 'From RAW (max quality)', icon: <Maximize2 size={ICON} /> },
+    ],
+  },
 ];
 
 export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element {
@@ -184,9 +193,6 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
 
   return (
     <div className="pad detail-page">
-      {/* The page had no error surface at all, so a failed render or metadata
-          refresh set store.error and then showed nothing. */}
-      <ErrorBanner message={store.error} onDismiss={photos.clearError} />
       <div className="row detail__nav">
         <Button render={<Link to={libraryId == null ? '/' : `/libraries/${libraryId}`} />}>
           <ArrowLeft size={ICON} />
@@ -205,6 +211,20 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
         <ActionMenu
           trigger={
             <>
+              <RefreshCw size={ICON} />
+              Actions
+            </>
+          }
+          options={ACTIONS}
+          onSelect={(action) => {
+            if (action === 'metadata') void photos.refreshMetadata([photoId]);
+            else if (action === 'lossless') void showOriginal();
+            else void photos.showPreview(photoId, action);
+          }}
+        />
+        <ActionMenu
+          trigger={
+            <>
               <Download size={ICON} />
               Download
             </>
@@ -214,30 +234,17 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
             window.location.href = kind === 'raw' ? originalUrl(photoId) : jpegUrl(photoId);
           }}
         />
-        <ActionMenu
-          trigger={
-            <>
-              <RefreshCw size={ICON} />
-              Actions
-            </>
-          }
-          options={ACTIONS}
-          onSelect={(action) => {
-            if (action === 'metadata') void photos.refreshMetadata([photoId]);
-            else if (action === 'lossless') void showOriginal();
-            else void photos.reprocess([photoId], action);
-          }}
-        />
-        {store.buildingLossless && <Text variant="mono">building…</Text>}
-        {store.lossless != null && (
-          <Button onClick={photos.hideLossless}>
+        {(store.buildingLossless || store.buildingPreview) && <Text variant="mono">building…</Text>}
+        {(store.lossless != null || store.previewSource != null) && (
+          <Button onClick={store.lossless != null ? photos.hideLossless : photos.resetPreview}>
             <Minimize2 size={ICON} />
             Back to preview
           </Button>
         )}
         {photo != null && !photo.is_deleted && (
-          <Button variant="danger" iconOnly aria-label="Move to Bin" onClick={() => void photos.deletePhotos([photo.id])}>
+          <Button variant="danger" onClick={() => void photos.deletePhotos([photo.id])}>
             <Trash2 size={ICON} />
+            Move to Bin
           </Button>
         )}
       </div>
@@ -246,10 +253,18 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
         {/* Keyed off the route, not the loaded detail, so the photo on screen is
             always the one the URL asks for. */}
         <PhotoStage
-          src={store.lossless?.url ?? thumbnailUrl(photoId, 'full', store.rebuiltAt)}
+          src={
+            store.lossless?.url ??
+            (store.previewSource == null
+              ? thumbnailUrl(photoId, 'full', store.rebuiltAt)
+              : previewUrl(photoId, store.previewSource, store.rebuiltAt))
+          }
           alt={filename}
           filename={filename}
           onImageLoad={(width, height) => setThumbSize({ width, height })}
+          // Only the photo's own preview is built on sight. A chosen rendition was
+          // built before it was shown, so a 404 there is a real fault, not a gap.
+          onImageMissing={store.previewSource != null ? undefined : () => void photos.buildMissingPreview(photoId)}
         />
 
         <div className="detail__panels">
@@ -309,11 +324,22 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
               />
 
               <MetaPanel
-                title="Thumbnail on screen"
+                title="Image preview details"
                 rows={[
+                  // Reports the rendition actually on screen, which is the chosen
+                  // one when the user has switched away from the photo's own.
                   // Null on rows thumbnailed before the column existed, which is
                   // "not recorded" rather than "not built".
-                  ['Source', photo.thumbnail_source == null ? 'unknown' : sourceLabel(photo.thumbnail_source)],
+                  [
+                    'Source',
+                    store.lossless != null
+                      ? 'RAW render (max quality)'
+                      : store.previewSource != null
+                        ? sourceLabel(store.previewSource)
+                        : photo.thumbnail_source == null
+                          ? 'unknown'
+                          : sourceLabel(photo.thumbnail_source),
+                  ],
                   ['Resolution', thumbSize == null ? 'loading' : `${thumbSize.width} × ${thumbSize.height}`],
                   ['Format', thumbs?.format.toUpperCase() ?? 'WEBP'],
                   ['Colour space', thumbs?.color_space ?? 'sRGB'],

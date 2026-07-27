@@ -1,3 +1,5 @@
+import { existsSync, rmSync } from 'node:fs';
+import path from 'node:path';
 import { expect, test } from '@playwright/test';
 import { CULL_PHOTOS_DIR, PHOTO_NAMES } from './fixture_library';
 import { addLibrary, openLibrary, syncLibrary, viewOriginal } from './helpers';
@@ -225,11 +227,11 @@ test('the detail view shows shooting metadata, the triage control and steps betw
   await expect(triage.getByRole('button', { name: 'Undecided' })).toBeVisible();
   await expect(triage.getByRole('button', { name: 'Pick' })).toBeVisible();
 
-  // The served thumbnail reports where its pixels came from and how it was encoded.
-  const thumbnail = page.locator('.panel', { hasText: 'THUMBNAIL ON SCREEN' });
-  await expect(thumbnail.getByText('Source', { exact: true })).toBeVisible();
-  await thumbnail.getByRole('button', { name: /more/ }).click();
-  await expect(thumbnail.getByText('WEBP')).toBeVisible();
+  // The served preview reports where its pixels came from and how it was encoded.
+  const preview = page.locator('.panel', { hasText: 'IMAGE PREVIEW DETAILS' });
+  await expect(preview.getByText('Source', { exact: true })).toBeVisible();
+  await preview.getByRole('button', { name: /more/ }).click();
+  await expect(preview.getByText('WEBP')).toBeVisible();
 
   const path = page.locator('.detail__nav .ui-text--mono');
   const first = await path.innerText();
@@ -245,13 +247,75 @@ test('a selection can be rebuilt from the embedded JPEG', async ({ page }) => {
   await page.getByRole('button', { name: 'Select photo' }).first().click();
   await page.getByRole('button', { name: 'Rebuild' }).click();
   await page.getByRole('menuitem', { name: 'Thumbnails from the embedded JPEG' }).click();
-  await expect(page.getByText(/Rebuilding 1 thumbnail from the embedded JPEG/)).toBeVisible();
+  await expect(page.getByText(/Rebuilt 1 thumbnail from the embedded JPEG/)).toBeVisible();
 
   // The source is recorded per photo, so the detail view can say which pixels are
   // on screen rather than leaving the user to guess.
   await page.locator('.tile__hit').first().click();
-  const thumbnail = page.locator('.panel', { hasText: 'THUMBNAIL ON SCREEN' });
-  await expect(thumbnail.getByText('embedded JPEG')).toBeVisible({ timeout: 30_000 });
+  const preview = page.locator('.panel', { hasText: 'IMAGE PREVIEW DETAILS' });
+  await expect(preview.getByText('embedded JPEG')).toBeVisible({ timeout: 30_000 });
+});
+
+// A photo can be marked processed while its files are gone: a failed build, a
+// half-finished copy, a pruned data directory. Nothing would ever queue it
+// again, so the detail view has to notice and build it rather than sit on
+// "no thumbnail yet".
+test('opening a photo with no preview builds one instead of reporting it missing', async ({ page }) => {
+  await page.goto('/settings');
+  await openLibrary(page, CULL_PHOTOS_DIR);
+  await page.locator('.tile__hit').first().click();
+  await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
+
+  const photoId = new URL(page.url()).pathname.split('/').pop() ?? '';
+  const thumbnails = path.join(CULL_PHOTOS_DIR, '.bowerbird', 'thumbnails');
+  for (const size of ['small', 'full']) rmSync(path.join(thumbnails, size, `${photoId}.webp`), { force: true });
+
+  await page.reload();
+  await expect(page.getByText(/Rebuilt 1 thumbnail from the embedded JPEG/)).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
+});
+
+// The point of caching the renditions is that switching back to one already seen
+// costs nothing, and that no rendition can outlive the RAW it was made from.
+test('a chosen preview rendition is cached on disk, and dropped when the photo is rebuilt', async ({ page }) => {
+  await page.goto('/settings');
+  await openLibrary(page, CULL_PHOTOS_DIR);
+  await page.locator('.tile__hit').first().click();
+  await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
+  const photoId = new URL(page.url()).pathname.split('/').pop() ?? '';
+
+  // Keyboard, not pointer: the submenu opens on a real hover transition, and on
+  // the second pass the mouse is already resting where the trigger appears, so no
+  // pointer event fires and nothing opens.
+  const showRendition = async (label: string): Promise<void> => {
+    await page.getByRole('button', { name: 'Actions' }).click();
+    await page.getByRole('menuitem', { name: 'Image preview' }).focus();
+    await page.keyboard.press('ArrowRight');
+    await page.getByRole('menuitem', { name: label, exact: true }).click();
+  };
+
+  const preview = page.locator('.panel', { hasText: 'IMAGE PREVIEW DETAILS' });
+  await showRendition('From RAW');
+  await expect(preview.getByText('RAW render')).toBeVisible({ timeout: 60_000 });
+  await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
+
+  // The photo's own thumbnails are the embedded rendition, so only the render had
+  // to be built and stored; the embedded one is served from what already existed.
+  const cached = path.join(CULL_PHOTOS_DIR, '.bowerbird', 'previews', 'render', `${photoId}.webp`);
+  expect(existsSync(cached)).toBe(true);
+
+  await showRendition('Embedded JPEG');
+  await expect(preview.getByText('embedded JPEG')).toBeVisible();
+  await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
+
+  // Rebuilding is what a changed RAW triggers too, and it must take the cached
+  // renditions with it or they would show the previous file forever.
+  await openLibrary(page, CULL_PHOTOS_DIR);
+  await page.getByRole('button', { name: 'Select photo' }).first().click();
+  await page.getByRole('button', { name: 'Rebuild' }).click();
+  await page.getByRole('menuitem', { name: 'Thumbnails from the embedded JPEG' }).click();
+  await expect(page.getByText(/Rebuilt 1 thumbnail/)).toBeVisible({ timeout: 60_000 });
+  await expect.poll(() => existsSync(cached), { timeout: 15_000 }).toBe(false);
 });
 
 // Playwright's stock Chromium has JPEG XL compiled in but switched off, which is

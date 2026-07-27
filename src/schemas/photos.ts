@@ -77,6 +77,9 @@ export const ReprocessRequestSchema = PhotoIdListSchema.extend({
 });
 export type ReprocessRequest = z.infer<typeof ReprocessRequestSchema>;
 
+export const PreviewRequestSchema = z.object({ source: ThumbnailSourceSchema });
+export type PreviewRequest = z.infer<typeof PreviewRequestSchema>;
+
 export const UpdatePhotoRequestSchema = z.object({
   rating: z.number().int().min(0).max(5).optional(),
   triage: TriageSchema.optional(),

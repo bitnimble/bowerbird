@@ -20,6 +20,13 @@ function message(err: unknown): string {
   return err instanceof ApiError ? err.message : (err as Error).message;
 }
 
+// The code and status the message alone cannot carry. A bare "Unexpected error"
+// leaves nothing to search the server log for; the code and status do.
+function detail(err: unknown): string | undefined {
+  if (err instanceof ApiError) return err.status === 0 ? err.code : `${err.code} · HTTP ${err.status}`;
+  return err instanceof Error ? err.name : undefined;
+}
+
 function plural(n: number, one: string, many: string): string {
   return `${n} ${n === 1 ? one : many}`;
 }
@@ -32,6 +39,10 @@ export class PhotosPresenter {
   // Only the newest list request may write to the store; an older one that
   // resolves late (slow page of a big library) would otherwise overwrite it.
   private inFlight: AbortController | null = null;
+  // Photos already asked for on-demand build. The stage retries a missing
+  // preview on a backoff, and each retry is another failure: without this every
+  // one of them would queue the same job again.
+  private readonly previewBuilds = new Set<string>();
 
   constructor(
     private readonly store: PhotosStore,
@@ -89,13 +100,35 @@ export class PhotosPresenter {
       await this.refreshDetail();
       this.toasts.show(`Refreshed metadata for ${plural(updated, 'photo', 'photos')}`);
     } catch (err) {
-      runInAction(() => (this.store.error = message(err)));
+      this.fail(err);
     }
   }
 
   async refreshMetadataForSelection(): Promise<void> {
     await this.refreshMetadata(this.store.selectedIds);
     this.clearSelection();
+  }
+
+  // Switches the detail view to the preview built from `source`, building it the
+  // first time and serving the cached file every time after. The lossless render
+  // is the same idea one step further up in quality, so it is hidden here rather
+  // than left on screen underneath a rendition the user just chose instead.
+  async showPreview(photoId: string, source: ThumbnailSource): Promise<void> {
+    this.hideLossless();
+    runInAction(() => (this.store.buildingPreview = true));
+    try {
+      await api.buildPreview(photoId, source);
+      runInAction(() => (this.store.previewSource = source));
+    } catch (err) {
+      this.fail(err);
+    } finally {
+      runInAction(() => (this.store.buildingPreview = false));
+    }
+  }
+
+  @action.bound
+  resetPreview(): void {
+    this.store.previewSource = null;
   }
 
   // Builds the full-resolution render if it does not exist yet, then decodes it
@@ -114,7 +147,7 @@ export class PhotosPresenter {
         this.store.lossless = image;
       });
     } catch (err) {
-      runInAction(() => (this.store.error = message(err)));
+      this.fail(err);
     } finally {
       runInAction(() => (this.store.buildingLossless = false));
     }
@@ -228,10 +261,10 @@ export class PhotosPresenter {
 
   @action.bound
   toggle(photoId: string): void {
-    const next = new Set(this.store.selected);
-    if (next.has(photoId)) next.delete(photoId);
-    else next.add(photoId);
-    this.store.selected = next;
+    // Mutated, not replaced: the map is observable, so `has(id)` is tracked per
+    // id and only the tile whose membership changed re-renders.
+    if (this.store.selected.has(photoId)) this.store.selected.delete(photoId);
+    else this.store.selected.set(photoId, true);
     this.store.lastToggled = photoId;
   }
 
@@ -247,19 +280,18 @@ export class PhotosPresenter {
       return;
     }
     const [from, to] = anchor <= target ? [anchor, target] : [target, anchor];
-    const next = new Set(this.store.selected);
-    for (const id of ids.slice(from, to + 1)) next.add(id);
-    this.store.selected = next;
+    for (const id of ids.slice(from, to + 1)) this.store.selected.set(id, true);
   }
 
   @action.bound
   selectAllOnPage(): void {
-    this.store.selected = new Set(this.store.photos.map((p) => p.id));
+    this.store.selected.clear();
+    for (const photo of this.store.photos) this.store.selected.set(photo.id, true);
   }
 
   @action.bound
   clearSelection(): void {
-    this.store.selected = new Set();
+    this.store.selected.clear();
     this.store.lastToggled = null;
   }
 
@@ -311,10 +343,20 @@ export class PhotosPresenter {
       const { queued } = await api.reprocessPhotos(photoIds, source);
       runInAction(() => (this.store.rebuiltAt = Date.now()));
       await this.refreshDetail();
-      this.toasts.show(`Rebuilding ${plural(queued, 'thumbnail', 'thumbnails')} from the ${sourceLabel(source)}`);
+      this.toasts.show(`Rebuilt ${plural(queued, 'thumbnail', 'thumbnails')} from the ${sourceLabel(source)}`);
     } catch (err) {
-      runInAction(() => (this.store.error = message(err)));
+      this.fail(err);
     }
+  }
+
+  // A photo whose processing never ran, or failed, has no preview to serve and
+  // nothing queued to change that, so the detail view would sit on "no preview
+  // yet" indefinitely. The embedded JPEG is the cheap source: it needs no RAW
+  // decode, so the wait is a copy rather than a render.
+  async buildMissingPreview(photoId: string): Promise<void> {
+    if (this.previewBuilds.has(photoId)) return;
+    this.previewBuilds.add(photoId);
+    await this.reprocess([photoId], 'embedded');
   }
 
   private async refreshDetail(): Promise<void> {
@@ -330,7 +372,7 @@ export class PhotosPresenter {
     try {
       await api.deletePhotos(ids);
     } catch (err) {
-      runInAction(() => (this.store.error = message(err)));
+      this.fail(err);
       return;
     }
     this.clearSelection();
@@ -341,9 +383,12 @@ export class PhotosPresenter {
     });
   }
 
-  @action.bound
-  clearError(): void {
-    this.store.error = null;
+  // An action that failed, as opposed to a view that cannot render. store.error
+  // is the latter: it explains an empty grid or a missing photo, in place. A
+  // failed rebuild or delete leaves the view perfectly renderable, so it belongs
+  // in a toast that outlives the click and can be read at leisure.
+  private fail(err: unknown): void {
+    this.toasts.showError(message(err), detail(err));
   }
 
   private async bulk(run: () => Promise<void>, success: string): Promise<void> {
@@ -351,7 +396,7 @@ export class PhotosPresenter {
     try {
       await run();
     } catch (err) {
-      runInAction(() => (this.store.error = message(err)));
+      this.fail(err);
       return;
     }
     // The moves/deletes change what this collection contains, so re-read it
@@ -366,9 +411,14 @@ export class PhotosPresenter {
       const updated = await api.updatePhoto(photoId, fields);
       runInAction(() => {
         if (this.store.detail?.id === photoId) this.store.detail = updated;
-        this.store.photos = this.store.photos.map((p) =>
-          p.id === photoId ? { ...p, rating: updated.rating, triage: updated.triage } : p,
-        );
+        // Written into the row rather than mapped into a new array: replacing the
+        // array invalidates every tile's observable, so rating one photo used to
+        // re-render the whole grid.
+        const row = this.store.photos.find((p) => p.id === photoId);
+        if (row != null) {
+          row.rating = updated.rating;
+          row.triage = updated.triage;
+        }
       });
       // A verdict or rating can move a photo out of the slice being viewed, and
       // the point of rejecting from the Active view is that the frame leaves it.
@@ -377,7 +427,7 @@ export class PhotosPresenter {
       const f = this.store.filters;
       if (f.triage != null || f.rated != null) await this.fetchPage();
     } catch (err) {
-      runInAction(() => (this.store.error = message(err)));
+      this.fail(err);
     }
   }
 
@@ -450,7 +500,7 @@ export class PhotosPresenter {
   private beginLoad(source: PhotoSource): void {
     this.store.source = source;
     this.store.offset = 0;
-    this.store.selected = new Set();
+    this.store.selected.clear();
     this.store.lastToggled = null;
     this.store.focusIndex = -1;
     // The Bin and the missing view are already a specific slice, so a triage
@@ -500,6 +550,9 @@ export class PhotosPresenter {
     this.store.detailLoading = true;
     this.store.notesSavedAt = null;
     this.store.error = null;
+    // Per photo, not sticky: the next photo may have no preview cached for the
+    // rendition this one was showing, which would be a 404 rather than a picture.
+    this.store.previewSource = null;
   }
 
   @action.bound

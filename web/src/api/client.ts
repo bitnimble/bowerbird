@@ -113,6 +113,8 @@ export const api = {
     request('POST', '/api/photos/reprocess', { photo_ids: photoIds, source }),
   refreshMetadata: (photoIds: string[]): Promise<{ updated: number }> =>
     request('POST', '/api/photos/refresh-metadata', { photo_ids: photoIds }),
+  buildPreview: (photoId: string, source: ThumbnailSource): Promise<void> =>
+    request('POST', `/api/photos/${photoId}/preview`, { source }),
   buildLossless: (photoId: string): Promise<void> => request('POST', `/api/photos/${photoId}/lossless`),
 
   getSettings: (): Promise<AppSettings> => request('GET', '/api/config/settings'),
@@ -147,6 +149,13 @@ export const api = {
 // is never re-requested without it.
 export function thumbnailUrl(photoId: string, size: 'small' | 'full', version = 0): string {
   const url = `${BASE}/image/${photoId}/${size}.webp`;
+  return version === 0 ? url : `${url}?v=${version}`;
+}
+
+// The full-size preview built from one named source, as opposed to whichever one
+// this photo's own thumbnails came from.
+export function previewUrl(photoId: string, source: ThumbnailSource, version = 0): string {
+  const url = `${BASE}/image/${photoId}/preview/${source}`;
   return version === 0 ? url : `${url}?v=${version}`;
 }
 

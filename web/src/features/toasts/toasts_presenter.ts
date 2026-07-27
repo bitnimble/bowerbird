@@ -22,6 +22,13 @@ export class ToastsPresenter {
     this.push({ id: this.nextId++, message, undoLabel, undo }, UNDO_MS);
   }
 
+  // No timer: something that failed is not a thing to hide on a clock, and an
+  // error that vanished before it was read is an error the user cannot act on.
+  @action.bound
+  showError(message: string, detail?: string): void {
+    this.push({ id: this.nextId++, message, detail, tone: 'error' });
+  }
+
   async runUndo(id: number): Promise<void> {
     const toast = this.store.toasts.find((t) => t.id === id);
     if (toast?.undo == null) return;
@@ -31,7 +38,7 @@ export class ToastsPresenter {
     try {
       await toast.undo();
     } catch (err) {
-      this.show((err as Error).message);
+      this.showError((err as Error).message);
     }
   }
 
@@ -44,8 +51,9 @@ export class ToastsPresenter {
   }
 
   @action.bound
-  private push(toast: Toast, ms: number): void {
+  private push(toast: Toast, ms?: number): void {
     this.store.toasts = [...this.store.toasts, toast];
+    if (ms == null) return;
     this.timers.set(
       toast.id,
       setTimeout(() => runInAction(() => this.dismiss(toast.id)), ms),

@@ -7,6 +7,10 @@ export interface Toast {
   // does, so the toast never says a bare "Undo" with no context.
   undoLabel?: string;
   undo?: () => Promise<void>;
+  // Errors are red and stay until dismissed. `detail` carries the code and status
+  // the message alone cannot: "Unexpected error" says nothing on its own.
+  tone?: 'error';
+  detail?: string;
 }
 
 export class ToastsStore {

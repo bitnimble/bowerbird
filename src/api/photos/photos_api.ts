@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { PaginationSchema, PhotoIdListSchema } from '../../schemas/common';
-import { PhotoListQuerySchema, ReprocessRequestSchema, UpdatePhotoRequestSchema } from '../../schemas/photos';
+import { PhotoListQuerySchema, PreviewRequestSchema, ReprocessRequestSchema, UpdatePhotoRequestSchema } from '../../schemas/photos';
 import type { PhotosService } from '../../services/photos/photos_service';
 import type { ProcessingService } from '../../services/processing/processing_service';
 
@@ -52,6 +52,14 @@ export class PhotosApi {
       return c.json({ updated: await this.service.refreshMetadata(photo_ids) });
     });
 
+    // Ensures a full-size preview from one source exists. Returns at once when it
+    // is already cached, which is the common case after the first look.
+    app.post('/photos/:id/preview', async (c) => {
+      const { source } = PreviewRequestSchema.parse(await c.req.json());
+      await this.service.buildPreview(c.req.param('id'), source);
+      return c.body(null, 204);
+    });
+
     // Builds the full-resolution lossless render. Slow and large by design, so it
     // is one photo at a time and only when asked for.
     app.post('/photos/:id/lossless', async (c) => {
@@ -62,7 +70,7 @@ export class PhotosApi {
     // Builds the HDR stills (§10.7). Diagnostic: they exist to be opened on a
     // real HDR display, since nothing in a page can observe HDR output.
     app.post('/photos/:id/hdr', async (c) => {
-      await this.service.buildHdrVideos(c.req.param('id'));
+      await this.service.buildHdr(c.req.param('id'));
       return c.body(null, 204);
     });
 

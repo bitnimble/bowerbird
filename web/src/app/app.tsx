@@ -11,7 +11,7 @@ import { SettingsPage } from '../features/settings/settings_page';
 import { ShootPhotosPage } from '../features/shoots/shoot_photos_page';
 import { ShootsPage } from '../features/shoots/shoots_page';
 import { Toasts } from '../features/toasts/toasts';
-import { ICON, Modal, Text } from '../ui/ui';
+import { Button, ICON, Modal, Text } from '../ui/ui';
 import { useLibrariesStore, usePhotosStore, usePresenters, useShootsStore } from './stores_context';
 
 // Which library the user is inside. Only /libraries/* names it in the URL; shoot
@@ -95,7 +95,7 @@ const LibraryNav = observer(function LibraryNav({ activeId }: { activeId: string
   );
 });
 
-const Rail = observer(function Rail(): JSX.Element {
+const Rail = observer(function Rail({ onCollapse }: { onCollapse: () => void }): JSX.Element {
   const libraryId = useCurrentLibraryId();
   // Sections stay open on the library you were last in. Collapsing them the
   // moment you visit Albums or Settings means losing your place in the rail and
@@ -108,12 +108,17 @@ const Rail = observer(function Rail(): JSX.Element {
   return (
     <nav className="rail">
       <div className="brand">
-        <div className="brand__mark">Bowerbird</div>
-        <div className="brand__bower" aria-hidden="true">
-          <i />
-          <i />
-          <i />
+        <div>
+          <div className="brand__mark">Bowerbird</div>
+          <div className="brand__bower" aria-hidden="true">
+            <i />
+            <i />
+            <i />
+          </div>
         </div>
+        <Button iconOnly aria-label="Hide sidebar" aria-expanded onClick={onCollapse}>
+          <PanelLeftClose size={ICON} />
+        </Button>
       </div>
 
       <LibraryNav activeId={libraryId ?? lastLibraryId} />
@@ -218,16 +223,15 @@ export function App(): JSX.Element {
   return (
     <div className={`shell${collapsed ? ' shell--collapsed' : ''}`}>
       <EnsureLibraries />
-      {!collapsed && <Rail />}
+      {!collapsed && <Rail onCollapse={toggleRail} />}
       <div className="main">
-        <button
-          className="rail__toggle"
-          aria-label={collapsed ? 'Show sidebar' : 'Hide sidebar'}
-          aria-expanded={!collapsed}
-          onClick={toggleRail}
-        >
-          {collapsed ? <PanelLeftOpen size={ICON} /> : <PanelLeftClose size={ICON} />}
-        </button>
+        {/* Only the expand button floats over the content; collapsing is done
+            from inside the rail, where there is a row to put it in. */}
+        {collapsed && (
+          <Button className="rail__toggle" iconOnly aria-label="Show sidebar" aria-expanded={false} onClick={toggleRail}>
+            <PanelLeftOpen size={ICON} />
+          </Button>
+        )}
         <Toasts />
         <div className="content">
           <Routes>

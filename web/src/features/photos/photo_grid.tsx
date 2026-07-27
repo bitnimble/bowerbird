@@ -69,7 +69,19 @@ const TriageButtons = observer(function TriageButtons({ photo }: { photo: PhotoS
   );
 });
 
-const Tile = observer(function Tile({ photo, index }: { photo: PhotoSummary; index: number }): JSX.Element {
+// isFocused arrives as a prop rather than being read from the store here. Every
+// tile reading store.focusIndex meant one shared scalar changing re-rendered the
+// whole grid on every arrow key; as a prop, observer's memo lets through only the
+// two tiles whose value actually changed.
+const Tile = observer(function Tile({
+  photo,
+  index,
+  isFocused,
+}: {
+  photo: PhotoSummary;
+  index: number;
+  isFocused: boolean;
+}): JSX.Element {
   const store = usePhotosStore();
   const { photos } = usePresenters();
   const navigate = useNavigate();
@@ -85,21 +97,18 @@ const Tile = observer(function Tile({ photo, index }: { photo: PhotoSummary; ind
   // changes the file behind the same URL and needs its own version.
   const src = failedAt == null ? thumbnailUrl(photo.id, 'small', store.rebuiltAt) : `${thumbnailUrl(photo.id, 'small')}?r=${token}`;
   const selected = store.selected.has(photo.id);
-  // The keyboard cursor is meaningless once a selection is being assembled by
-  // mouse: two rings on the same tile only raises "why is this one different".
-  const focused = store.focusIndex === index && !store.hasSelection;
   const ref = useRef<HTMLDivElement>(null);
   const list = store.mode === 'list';
 
   // Keep the keyboard cursor on screen when it walks off the visible rows.
   useEffect(() => {
-    if (focused) ref.current?.scrollIntoView({ block: 'nearest' });
-  }, [focused]);
+    if (isFocused) ref.current?.scrollIntoView({ block: 'nearest' });
+  }, [isFocused]);
 
   return (
     <div
       ref={ref}
-      className={`tile${selected ? ' tile--selected' : ''}${focused ? ' tile--focused' : ''}`}
+      className={`tile${selected ? ' tile--selected' : ''}${isFocused ? ' tile--focused' : ''}`}
       data-triage={photo.triage}
     >
       <button
@@ -255,6 +264,19 @@ export const PhotoGrid = observer(function PhotoGrid({ emptyHint }: { emptyHint:
 
   if (store.loading && store.photos.length === 0) return <Text variant="muted">Loading photos…</Text>;
 
+  // A failed fetch also leaves nothing to show, and "Nothing here yet" would be a
+  // lie about a library that is merely unreachable.
+  if (store.isEmpty && store.error != null) {
+    return (
+      <div className="empty">
+        <div className="empty__title">Could not load these photos</div>
+        <Text as="p" variant="muted">
+          {store.error}
+        </Text>
+      </div>
+    );
+  }
+
   if (store.isEmpty) {
     return (
       <div className="empty">
@@ -271,7 +293,10 @@ export const PhotoGrid = observer(function PhotoGrid({ emptyHint }: { emptyHint:
       <GridKeys />
       <div className={`grid grid--${store.mode}`} style={{ '--tile': `${store.thumbSize}px` } as React.CSSProperties}>
         {store.photos.map((p, i) => (
-          <Tile key={p.id} photo={p} index={i} />
+          // The keyboard cursor is meaningless once a selection is being assembled
+          // by mouse: two rings on the same tile only raises "why is this one
+          // different".
+          <Tile key={p.id} photo={p} index={i} isFocused={store.focusIndex === i && !store.hasSelection} />
         ))}
       </div>
 

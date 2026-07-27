@@ -7,7 +7,7 @@ import { Select as BaseSelect } from '@base-ui-components/react/select';
 import { Slider as BaseSlider } from '@base-ui-components/react/slider';
 import { Toggle } from '@base-ui-components/react/toggle';
 import { ToggleGroup } from '@base-ui-components/react/toggle-group';
-import { Check, ChevronDown, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, X } from 'lucide-react';
 import { cloneElement, type ReactElement, type ReactNode } from 'react';
 
 // The whole component vocabulary. Everything on screen is built from these, so
@@ -31,6 +31,7 @@ interface ButtonProps {
   className?: string;
   'aria-label'?: string;
   'aria-pressed'?: boolean;
+  'aria-expanded'?: boolean;
   'aria-current'?: 'page';
   onClick?: (event: React.MouseEvent) => void;
   // Renders the button as something else (a router Link, an anchor) while
@@ -287,6 +288,13 @@ export function CheckMenu<T extends string>({
   );
 }
 
+// A named set of actions, shown as a submenu rather than inline.
+export interface ActionGroup<T extends string> {
+  label: string;
+  icon?: ReactNode;
+  options: Option<T>[];
+}
+
 // A menu of one-shot actions, as opposed to CheckMenu's independent toggles.
 export function ActionMenu<T extends string>({
   trigger,
@@ -294,21 +302,43 @@ export function ActionMenu<T extends string>({
   onSelect,
 }: {
   trigger: ReactNode;
-  options: Option<T>[];
+  options: (Option<T> | ActionGroup<T>)[];
   onSelect: (value: T) => void;
 }): JSX.Element {
+  const item = (option: Option<T>): JSX.Element => (
+    <Menu.Item key={option.value} className="ui-item ui-item--action" onClick={() => onSelect(option.value)}>
+      {option.icon}
+      {option.label}
+    </Menu.Item>
+  );
+
   return (
     <Menu.Root>
-      <Menu.Trigger className="ui-btn ui-btn--default">{trigger}</Menu.Trigger>
+      <Menu.Trigger className="ui-btn ui-btn--default">
+        {trigger}
+        <ChevronDown size={ICON} className="ui-btn__caret" />
+      </Menu.Trigger>
       <Menu.Portal>
         <Menu.Positioner sideOffset={4}>
           <Menu.Popup className="ui-popup">
-            {options.map((option) => (
-              <Menu.Item key={option.value} className="ui-item ui-item--action" onClick={() => onSelect(option.value)}>
-                {option.icon}
-                {option.label}
-              </Menu.Item>
-            ))}
+            {options.map((option) =>
+              'options' in option ? (
+                <Menu.SubmenuRoot key={option.label}>
+                  <Menu.SubmenuTrigger className="ui-item ui-item--action">
+                    {option.icon}
+                    {option.label}
+                    <ChevronRight size={ICON} className="ui-item__more" />
+                  </Menu.SubmenuTrigger>
+                  <Menu.Portal>
+                    <Menu.Positioner sideOffset={4} align="start">
+                      <Menu.Popup className="ui-popup">{option.options.map(item)}</Menu.Popup>
+                    </Menu.Positioner>
+                  </Menu.Portal>
+                </Menu.SubmenuRoot>
+              ) : (
+                item(option)
+              ),
+            )}
           </Menu.Popup>
         </Menu.Positioner>
       </Menu.Portal>
@@ -365,18 +395,6 @@ export function Modal({
         </Dialog.Popup>
       </Dialog.Portal>
     </Dialog.Root>
-  );
-}
-
-export function ErrorBanner({ message, onDismiss }: { message: string | null; onDismiss: () => void }): JSX.Element | null {
-  if (message == null) return null;
-  return (
-    <div className="error" role="alert">
-      <span>{message}</span>
-      <Button variant="ghost" onClick={onDismiss}>
-        Dismiss
-      </Button>
-    </div>
   );
 }
 

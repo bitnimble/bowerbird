@@ -19,6 +19,9 @@ export function applyErrorHandler(app: Hono): void {
       return c.json({ error: { code: 'VALIDATION_ERROR', message: 'Invalid JSON body' } }, 400);
     }
     console.error(err);
-    return c.json({ error: { code: 'INTERNAL_ERROR', message: 'Unexpected error' } }, 500);
+    // The real message, not a placeholder. This is a single-user server run
+    // against the operator's own library; "Unexpected error" tells them nothing
+    // and leaves no string to search the log for.
+    return c.json({ error: { code: 'INTERNAL_ERROR', message: (err as Error).message || 'Unexpected error' } }, 500);
   });
 }

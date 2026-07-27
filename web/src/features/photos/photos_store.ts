@@ -1,5 +1,5 @@
 import { computed, observable } from 'mobx';
-import type { Ordering, PhotoDetail, PhotoSummary, Triage } from '../../api/client';
+import type { Ordering, PhotoDetail, PhotoSummary, ThumbnailSource, Triage } from '../../api/client';
 import type { LosslessImage } from './lossless_image';
 
 // Which collection the grid is showing. One store serves the library, shoot,
@@ -39,7 +39,10 @@ export function activeFilters(): PhotoFilters {
 }
 
 export class PhotosStore {
-  @observable.shallow accessor photos: PhotoSummary[] = [];
+  // Deep, not shallow: a tile observes its own row's fields, so rating or
+  // rejecting one photo re-renders that tile alone. Shallow rows can only be
+  // updated by replacing the array, which invalidates every tile in the grid.
+  @observable accessor photos: PhotoSummary[] = [];
   @observable accessor total = 0;
   @observable accessor offset = 0;
   @observable accessor limit = 100;
@@ -54,7 +57,11 @@ export class PhotosStore {
   @observable accessor thumbSize = 240;
   @observable accessor mode: ViewMode = 'grid';
 
-  @observable accessor selected = new Set<string>();
+  // A Map, not a Set, purely for observability: mobx's ObservableSet reports its
+  // whole atom on `has`, so every tile would re-render whenever any tile was
+  // selected. ObservableMap tracks `has` per key, so only the tile that changed
+  // re-renders. The value is unused.
+  @observable accessor selected = new Map<string, true>();
   // Anchor for shift-click range selection: the last photo toggled on its own.
   @observable accessor lastToggled: string | null = null;
 
@@ -71,6 +78,11 @@ export class PhotosStore {
   // re-requested; appending this defeats that without polluting normal URLs.
   @observable accessor rebuiltAt = 0;
 
+  // Which rendition the detail view is showing. Null is the photo's own
+  // thumbnails; either source is the cached preview built from it on request.
+  @observable accessor previewSource: ThumbnailSource | null = null;
+  @observable accessor buildingPreview = false;
+
   // The full-resolution render is opt-in per photo: it is built on request and
   // shown only while the user asks for it, because it is a very large download.
   @observable accessor buildingLossless = false;
@@ -83,7 +95,7 @@ export class PhotosStore {
   @observable accessor notesSavedAt: number | null = null;
 
   @computed get selectedIds(): string[] {
-    return [...this.selected];
+    return [...this.selected.keys()];
   }
 
   @computed get selectionCount(): number {

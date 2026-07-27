@@ -16,6 +16,9 @@ interface Props {
   alt: string;
   filename: string;
   onImageLoad: (width: number, height: number) => void;
+  // The preview does not exist yet. Called once per src, before the retries
+  // start, so the caller can build the thing the retries are waiting for.
+  onImageMissing?: () => void;
 }
 
 // Scale and pan are one value, not two pieces of state. Zooming about a point
@@ -68,7 +71,7 @@ function zoomAbout(view: View, next: number, box: DOMRect | null, point: { x: nu
 // The image viewport: fit/zoom, wheel zoom, drag-to-pan and fullscreen. All of
 // this is ephemeral view state, so it stays local rather than going through a
 // store; nothing outside this component needs to know the pan offset.
-export function PhotoStage({ src, alt, filename, onImageLoad }: Props): JSX.Element {
+export function PhotoStage({ src, alt, filename, onImageLoad, onImageMissing }: Props): JSX.Element {
   const stageRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
   const [view, setView] = useState<View>(FITTED);
@@ -260,7 +263,12 @@ export function PhotoStage({ src, alt, filename, onImageLoad }: Props): JSX.Elem
             draggable={false}
             className={ready ? 'is-ready' : undefined}
             style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}
-            onError={() => setFailed(true)}
+            onError={() => {
+              setFailed(true);
+              // Only the first failure, and never for a blob: a decoded image in
+              // hand cannot be missing server-side.
+              if (attempt === 0 && !src.startsWith('blob:')) onImageMissing?.();
+            }}
             onLoad={(e) => {
               setNatural({ width: e.currentTarget.naturalWidth, height: e.currentTarget.naturalHeight });
               setReady(true);

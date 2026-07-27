@@ -35,6 +35,8 @@ export async function viewOriginal(page: Page, rootPath: string): Promise<void> 
   await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
 
   await page.getByRole('button', { name: 'Actions' }).click();
-  await page.getByRole('menuitem', { name: 'View original' }).click();
+  await page.getByRole('menuitem', { name: 'Image preview' }).focus();
+  await page.keyboard.press('ArrowRight');
+  await page.getByRole('menuitem', { name: 'From RAW (max quality)' }).click();
   await expect(page.getByRole('button', { name: 'Back to preview' })).toBeVisible({ timeout: 180_000 });
 }
