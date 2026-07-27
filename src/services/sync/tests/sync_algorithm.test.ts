@@ -136,9 +136,17 @@ describe('detectShootRelocations', () => {
     fileHash: 'h',
   });
   const photos = (...paths: string[]) => paths.map((file_path) => ({ file_path }));
+  // The folder being gone is the usual case under test; the ones that care pass
+  // their own predicate.
+  const detect = (
+    shoots: Parameters<typeof detectShootRelocations>[0],
+    moves: Parameters<typeof detectShootRelocations>[1],
+    dbPhotos: Parameters<typeof detectShootRelocations>[2],
+    folderStillOnDisk: Parameters<typeof detectShootRelocations>[3] = () => false,
+  ) => detectShootRelocations(shoots, moves, dbPhotos, folderStillOnDisk);
 
   it('infers the new folder when every photo under it moved, keeping its position', () => {
-    const relocations = detectShootRelocations(
+    const relocations = detect(
       [shoot('s1', 'NYC')],
       [move('NYC/a.arw', 'NewYork/a.arw'), move('NYC/b.arw', 'NewYork/b.arw')],
       photos('NYC/a.arw', 'NYC/b.arw'),
@@ -147,7 +155,7 @@ describe('detectShootRelocations', () => {
   });
 
   it('infers a move to a different depth, not just a rename in place', () => {
-    const relocations = detectShootRelocations(
+    const relocations = detect(
       [shoot('s1', 'NYC')],
       [move('NYC/a.arw', 'Archive/2024/NYC/a.arw')],
       photos('NYC/a.arw'),
@@ -158,7 +166,7 @@ describe('detectShootRelocations', () => {
   // The whole point of the all-or-nothing rule: a partial move is ambiguous, so
   // the shoot is left alone for the user to resolve rather than guessed at.
   it('declines when one photo stayed behind', () => {
-    const relocations = detectShootRelocations(
+    const relocations = detect(
       [shoot('s1', 'NYC')],
       [move('NYC/a.arw', 'NewYork/a.arw')],
       photos('NYC/a.arw', 'NYC/b.arw'),
@@ -167,7 +175,7 @@ describe('detectShootRelocations', () => {
   });
 
   it('declines when the photos scattered to different folders', () => {
-    const relocations = detectShootRelocations(
+    const relocations = detect(
       [shoot('s1', 'NYC')],
       [move('NYC/a.arw', 'NewYork/a.arw'), move('NYC/b.arw', 'Elsewhere/b.arw')],
       photos('NYC/a.arw', 'NYC/b.arw'),
@@ -178,7 +186,7 @@ describe('detectShootRelocations', () => {
   // Not a reshuffle: the folder holding every photo is now NewYork/sub, which is
   // exactly what a move into a subfolder looks like from the photos' side.
   it('treats a move deeper as a move, when every photo goes with it', () => {
-    const relocations = detectShootRelocations(
+    const relocations = detect(
       [shoot('s1', 'NYC')],
       [move('NYC/a.arw', 'NewYork/sub/a.arw'), move('NYC/b.arw', 'NewYork/sub/b.arw')],
       photos('NYC/a.arw', 'NYC/b.arw'),
@@ -187,7 +195,7 @@ describe('detectShootRelocations', () => {
   });
 
   it('declines when the photos landed at different depths, which is a reshuffle', () => {
-    const relocations = detectShootRelocations(
+    const relocations = detect(
       [shoot('s1', 'NYC')],
       [move('NYC/a.arw', 'NewYork/a.arw'), move('NYC/b.arw', 'NewYork/sub/b.arw')],
       photos('NYC/a.arw', 'NYC/b.arw'),
@@ -196,7 +204,7 @@ describe('detectShootRelocations', () => {
   });
 
   it('declines a target another shoot already owns', () => {
-    const relocations = detectShootRelocations(
+    const relocations = detect(
       [shoot('s1', 'NYC'), shoot('s2', 'NewYork')],
       [move('NYC/a.arw', 'NewYork/a.arw')],
       photos('NYC/a.arw'),
@@ -205,13 +213,13 @@ describe('detectShootRelocations', () => {
   });
 
   it('says nothing about an empty shoot, which offers no evidence either way', () => {
-    expect(detectShootRelocations([shoot('s1', 'NYC')], [], [])).toEqual([]);
+    expect(detect([shoot('s1', 'NYC')], [], [])).toEqual([]);
   });
 
   // A nested shoot's own photos prove its own move, so each is inferred
   // independently and lands at the right place without a cascade.
   it('relocates a parent and its nested shoot from their own photos', () => {
-    const relocations = detectShootRelocations(
+    const relocations = detect(
       [shoot('s1', 'Trip'), shoot('s2', 'Trip/Day1')],
       [move('Trip/a.arw', 'Vacation/a.arw'), move('Trip/Day1/b.arw', 'Vacation/Day1/b.arw')],
       photos('Trip/a.arw', 'Trip/Day1/b.arw'),
@@ -222,8 +230,31 @@ describe('detectShootRelocations', () => {
     ]);
   });
 
+  // Sorting a shoot's frames into a new subfolder moves every one of them and
+  // keeps each filename, so by the paths alone it is identical to a rename. The
+  // shoot's folder still being on disk is the only thing that tells them apart.
+  it('declines when the photos moved into a subfolder of a folder that still exists', () => {
+    const relocations = detect(
+      [shoot('s1', 'NYC')],
+      [move('NYC/a.arw', 'NYC/Selects/a.arw'), move('NYC/b.arw', 'NYC/Selects/b.arw')],
+      photos('NYC/a.arw', 'NYC/b.arw'),
+      (folder) => folder === 'NYC',
+    );
+    expect(relocations).toEqual([]);
+  });
+
+  it('declines a folder that is still on disk even when every photo left it', () => {
+    const relocations = detect(
+      [shoot('s1', 'NYC')],
+      [move('NYC/a.arw', 'Elsewhere/a.arw')],
+      photos('NYC/a.arw'),
+      () => true,
+    );
+    expect(relocations).toEqual([]);
+  });
+
   it('does not mistake a sibling folder for the shoot (NYC2 is not under NYC)', () => {
-    const relocations = detectShootRelocations(
+    const relocations = detect(
       [shoot('s1', 'NYC')],
       [move('NYC2/a.arw', 'Other/a.arw')],
       photos('NYC/keep.arw', 'NYC2/a.arw'),

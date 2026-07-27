@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { AppError } from '../../errors';
@@ -135,7 +136,9 @@ export class SyncService implements LibraryLifecycleListener {
       // shoot membership does not change at all. What is left is the moves that
       // are genuinely about individual files.
       const shoots = this.shoots.listByLibrary(libraryId);
-      const relocations = detectShootRelocations(shoots, result.moves, dbPhotos);
+      const relocations = detectShootRelocations(shoots, result.moves, dbPhotos, (folder) =>
+        existsSync(path.join(library.root_path, folder)),
+      );
       const relocatedFolders = relocations.map((r) => r.oldFolderPath);
       const moves = result.moves.filter((mv) => !relocatedFolders.some((folder) => shootContains(folder, mv.oldFilePath)));
 

@@ -169,3 +169,18 @@ test('a shoot folder renamed on disk relocates the shoot instead of orphaning it
   expect(status.photos_removed).toBe(0);
   expect(status.photos_added).toBe(0);
 });
+
+// Organising a shoot's frames into a subfolder moves every one of them and keeps
+// each filename, which by the paths alone is identical to renaming the folder.
+// The shoot did not move, so it must not be relocated into its own subfolder.
+test('sorting a shoot into a subfolder leaves the shoot where it is', async () => {
+  const folderPath = () => (db.query('SELECT folder_path FROM shoots WHERE id = ?').get('sh1') as { folder_path: string }).folder_path;
+  mkdirSync(abs('Renamed/Selects'));
+  renameSync(abs('Renamed/renamed.arw'), abs('Renamed/Selects/renamed.arw'));
+
+  await sync.syncLibrary(LIB);
+
+  expect(folderPath()).toBe('Renamed');
+  // The photo moved and is still in the shoot, because the subfolder is under it.
+  expect(row('Renamed/Selects/renamed.arw')?.shoot_id).toBe('sh1');
+});

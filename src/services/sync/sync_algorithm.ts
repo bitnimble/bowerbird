@@ -182,10 +182,17 @@ export interface ShootRelocation {
 // removed or reshuffled, so the folder's identity is genuinely ambiguous; the
 // shoot is left pointing at a folder that is gone, for the user to resolve,
 // rather than guessed at, a wrong guess silently adopts someone else's folder.
+//
+// `folderStillOnDisk` is what separates a folder that moved from photos that
+// were merely reorganised inside one that did not. Sorting a shoot's frames into
+// a new `Selects/` subfolder moves every one of them, keeping each one's
+// filename, which is indistinguishable from a rename by the paths alone. The old
+// folder still being there says the shoot did not go anywhere.
 export function detectShootRelocations(
   shoots: readonly { id: string; folder_path: string }[],
   moves: readonly MoveEntry[],
   dbPhotos: readonly { file_path: string }[],
+  folderStillOnDisk: (folderPath: string) => boolean,
 ): ShootRelocation[] {
   const movedTo = new Map<string, string>();
   for (const m of moves) movedTo.set(m.oldFilePath, m.newFilePath);
@@ -194,6 +201,7 @@ export function detectShootRelocations(
   const claimed = new Set<string>();
 
   for (const shoot of shoots) {
+    if (folderStillOnDisk(shoot.folder_path)) continue; // it did not go anywhere
     const under = dbPhotos.filter((p) => shootContains(shoot.folder_path, p.file_path));
     if (under.length === 0) continue; // nothing to reason from
 
