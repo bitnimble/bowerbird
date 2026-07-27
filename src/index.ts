@@ -15,6 +15,7 @@ import { AlbumsApi } from './api/albums/albums_api';
 import { AlbumsService } from './services/albums/albums_service';
 import { AlbumsRepository } from './services/albums/albums_repository';
 import { ImageApi } from './api/image/image_api';
+import { HdrTestApi } from './api/hdr/hdr_test_api';
 import { ConfigApi } from './api/config/config_api';
 import { SyncService } from './services/sync/sync_service';
 import { LibraryWatcher } from './services/sync/library_watcher';
@@ -82,6 +83,9 @@ app.route('/api', photosApi.routes);
 app.route('/api', shootsApi.routes);
 app.route('/api/albums', albumsApi.routes);
 app.route('/image', imageApi.routes);
+// Served by the API rather than the web client because it has to be opened
+// directly on an HDR machine, which may not be the one running the UI (§10.7).
+app.route('/hdr-check', new HdrTestApi(photosService).routes);
 
 if (config.watchEnabled) {
   const watcher = new LibraryWatcher(librariesRepo, syncService, config.watchDebounceMs);

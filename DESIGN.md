@@ -34,7 +34,9 @@ Bowerbird is a high-performance RAW photo management and cataloguing backend des
 
 ### System Dependencies
 
-- **LibRaw** — must be installed on the host system. The Bun process loads `libraw.so` / `libraw.dylib` via FFI. On Debian/Ubuntu: `apt install libraw-dev`. On macOS: `brew install libraw`.
+- **LibRaw**, must be installed on the host system. The Bun process loads `libraw.so` / `libraw.dylib` via FFI. On Debian/Ubuntu: `apt install libraw-dev`. On macOS: `brew install libraw`.
+- **libjxl-tools**, `cjxl` encodes the full-resolution export (§10.5); sharp/libvips has no JXL encoder.
+- **ffmpeg**, encodes the HDR stills (§10.7). Needs libsvtav1 for AV1 and libzimg for the `zscale` filter, which is what applies the PQ or HLG transfer; a build missing either cannot produce them.
 
 ### NPM Dependencies
 
@@ -944,9 +946,26 @@ Generated files are named `<photoId>.<ext>`, and photo ids are minted per insert
 Two things close that off:
 
 - **Removing a library removes its data directory.** Re-adding the same folder can never reuse the thumbnails (new ids), so keeping them is dead weight. The RAW files are not ours and are left alone. `data_path` is user-supplied, so a library configured to keep its data alongside or above the photographs is skipped with a warning rather than having that directory removed: losing thumbnails is recoverable, losing originals is not.
-- **A scheduled sweep** (`PRUNE_EVERY_DAYS`, default 7, 0 disables) walks each library's `thumbnails/small`, `thumbnails/full` and `lossless` and deletes any file whose id has no row. Only those three: the Bin holds RAWs named by filename, and the sync lock is not keyed by photo id at all. Ids are checked against the whole `photos` table, not one library's, because the id space is global and two libraries may share a data directory. Soft-deleted rows count as live, since their thumbnails are what make the Bin browsable (§12.1).
+- **A scheduled sweep** (`PRUNE_EVERY_DAYS`, default 7, 0 disables) walks each generated directory and deletes any file whose id has no row. The directories and the extension each is supposed to hold both come from the path helpers that write the files, so changing an output format cannot leave the sweep looking in the wrong place. A file whose extension no longer matches goes too, even when its photo is alive: a format change writes the new render beside the old one rather than over it, which the PNG-to-JXL switch made real at ~100 MB per photo ever opened. The Bin is excluded (RAWs named by filename) and so is the sync lock. Ids are checked against the whole `photos` table, not one library's, because the id space is global and two libraries may share a data directory. Soft-deleted rows count as live, since their thumbnails are what make the Bin browsable (§12.1).
 
 It runs on an interval rather than at startup: a restart is no evidence anything was orphaned, and in development that would sweep on every reload.
+
+### 10.7 HDR stills
+
+Firefox honours no HDR image tagging at all: a flat 50% grey reads 128 whether it carries a PQ cICP chunk or nothing, through a PNG and through a natively decoded JXL alike (§10.5). Its **video** pipeline does composite HDR, on Windows, by passing the frame through to the compositor and the monitor. So the only way to get an HDR still in front of it is to encode the still as a one-frame video.
+
+That cannot be done in the browser. Firefox 153 exposes no `VideoEncoder`, and `VideoFrame` rejects every 10-bit pixel format (`I420P10 is unsupported`), so there is neither an encoder to call nor a way to hand it HDR pixels. `POST /api/photos/:id/hdr` therefore builds them server-side, three variants at once: **PQ**, **HLG** and an **SDR reference** to compare against. The comparison is the point; a single HDR file on an unknown display proves nothing.
+
+**Decode.** This is the path that makes anything HDR, and until it existed nothing the server produced was. `decodeRaw(..., 'rec2020-linear')` asks LibRaw for Rec.2020 primaries (`output_color=8`), an identity gamma curve, and `no_auto_bright`. The last one matters most: auto-brightening normalises exposure, which spends exactly the headroom above diffuse white that carries the HDR. The result is scene-referred, so a normally exposed frame's mean sits far below the sRGB render's; which is what the integration test asserts, since a decode that quietly stopped applying these would still produce a plausible-looking file.
+
+**Encode.** AV1 via ffmpeg. Not VP9, whose colour signalling does not survive this ffmpeg build and which has no metadata bitstream filter to put it back; not HEVC, which Firefox only decodes through a platform decoder. `HDR_PEAK_NITS` (default 1000) is both the exposure control and the declared peak: the decode is linear, so this is what a fully exposed sensor sample is worth in nits, and 1000 puts a normal frame's diffuse white near the 203-nit reference with highlights above it.
+
+Two traps, both silent:
+
+- **SVT-AV1 discards the primaries and transfer** however the `-color_*` options are set, producing a file that reports `color_primaries=unknown`. The `av1_metadata` bitstream filter writes them back into the sequence header. Without it the encode succeeds and the result is not HDR, which is why a unit test pins the exact CICP numbers.
+- **AV1 cannot encode a current sensor at native size.** 8192x4352 works; a 6336x9504 60MP frame fails with `code: -22 (Invalid argument)` and writes nothing. Frames are fitted to `HDR_MAX_EDGE` (default 3840) inside the same `zscale` call, so the resampling happens in linear light; resizing after the transfer would average PQ code values and darken the result. The check page reports each variant's actual dimensions rather than implying full resolution.
+
+**Verification stops at the signalling.** `ffprobe` confirms BT.2020/PQ/BT.2020-ncl and 10-bit, and that the SDR reference is BT.709 throughout. Whether any of it lights up a panel is not observable from script: the frame goes to the compositor, and anything read back through a canvas has already been tone-mapped. `GET /hdr-check/:photoId` serves a page putting the three side by side, for looking at on real hardware. It is served by the API rather than the web client because the HDR machine may not be the one running the UI.
 
 ---
 
@@ -1098,6 +1117,7 @@ All endpoints return JSON. Error responses use a standard envelope:
 | `POST` | `/api/photos/reprocess` | Rebuild thumbnails for a selection from a named source (§10.3) |
 | `POST` | `/api/photos/refresh-metadata` | Re-read the RAW headers for a selection |
 | `POST` | `/api/photos/:id/lossless` | Build the full-resolution lossless render (§10.5) |
+| `POST` | `/api/photos/:id/hdr` | Build the HDR stills, all variants (§10.7) |
 
 Query parameters for listing (`PhotoListQuerySchema`, §5.3):
 - `offset` (int, default 0)
@@ -1255,6 +1275,10 @@ The server is configured via environment variables:
 | `PRUNE_EVERY_DAYS` | `7` | Interval for the orphaned-file sweep; `0` disables (§10.6) |
 | `LOSSLESS_DISTANCE` | `0.3` | libjxl butteraugli distance for the full-resolution export; `0` is bit-exact (§10.5) |
 | `LOSSLESS_EFFORT` | `4` | cjxl effort for the same (§10.5) |
+| `HDR_PEAK_NITS` | `1000` | What a fully exposed sensor sample is worth in nits, and the declared mastering peak (§10.7) |
+| `HDR_CRF` | `20` | SVT-AV1 quality for the HDR stills; lower is better (§10.7) |
+| `HDR_PRESET` | `8` | SVT-AV1 speed preset, 0 slowest to 13 fastest (§10.7) |
+| `HDR_MAX_EDGE` | `3840` | Longest edge of an HDR still; AV1 cannot encode a full-size sensor frame (§10.7) |
 | `CORS_ORIGINS` | *(unset)* | Comma-separated origins allowed to call the API, or `*`. Unset means "any port on whatever host the request arrived at", so the client works on loopback and over the LAN without hardcoding an address, while an unrelated site on the internet is still refused. |
 
 ---

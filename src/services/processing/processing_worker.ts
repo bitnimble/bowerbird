@@ -1,6 +1,7 @@
 import sharp from 'sharp';
+import { encodeHdrVideo } from './hdr_video';
 import { decodeRaw, readEmbeddedJpeg } from './raw_decoder';
-import type { LosslessJob, ProcessingJob, ProcessingResult, ThumbnailSource, WorkerJob } from './processing_types';
+import type { HdrVideoJob, LosslessJob, ProcessingJob, ProcessingResult, ThumbnailSource, WorkerJob } from './processing_types';
 
 // Bun worker thread (DESIGN §10.3). Produces both WebP thumbnails from either the
 // camera's embedded JPEG or a full RAW render, or a one-off lossless export. On
@@ -70,6 +71,21 @@ async function lossless(job: LosslessJob): Promise<void> {
   }
 }
 
+// The decode is scene-linear and wide-gamut rather than display-referred: the
+// transfer is applied by the encoder, and auto-brightening would flatten away
+// the highlight headroom that carries the HDR (DESIGN §10.7).
+async function hdrVideo(job: HdrVideoJob): Promise<void> {
+  const image = decodeRaw(job.rawFilePath, 16, 'rec2020-linear');
+  await encodeHdrVideo(image, {
+    variant: job.variant,
+    outputPath: job.outputPath,
+    peakNits: job.peakNits,
+    crf: job.crf,
+    preset: job.preset,
+    maxEdge: job.maxEdge,
+  });
+}
+
 self.onmessage = async (event) => {
   const job = event.data;
   try {
@@ -78,9 +94,15 @@ self.onmessage = async (event) => {
       self.postMessage({ photoId: job.photoId, success: true, source: 'render' });
       return;
     }
+    if (job.kind === 'hdr-video') {
+      await hdrVideo(job);
+      self.postMessage({ photoId: job.photoId, success: true, source: 'render' });
+      return;
+    }
     self.postMessage({ photoId: job.photoId, success: true, source: await thumbnails(job) });
   } catch (err) {
-    const outputs = job.kind === 'lossless' ? [job.outputPath] : [job.smallOutputPath, job.fullOutputPath];
+    const outputs =
+      job.kind === 'lossless' || job.kind === 'hdr-video' ? [job.outputPath] : [job.smallOutputPath, job.fullOutputPath];
     for (const path of outputs) await Bun.file(path).delete().catch(() => {});
     self.postMessage({ photoId: job.photoId, success: false, error: (err as Error).message });
   }

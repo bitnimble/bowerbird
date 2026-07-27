@@ -20,6 +20,8 @@ const SYMBOLS = {
   libraw_adjust_sizes_info_only: { args: [FFIType.ptr], returns: FFIType.i32 },
   libraw_set_output_bps: { args: [FFIType.ptr, FFIType.i32], returns: FFIType.void },
   libraw_set_output_color: { args: [FFIType.ptr, FFIType.i32], returns: FFIType.void },
+  libraw_set_gamma: { args: [FFIType.ptr, FFIType.i32, FFIType.f32], returns: FFIType.void },
+  libraw_set_no_auto_bright: { args: [FFIType.ptr, FFIType.i32], returns: FFIType.void },
   libraw_get_iwidth: { args: [FFIType.ptr], returns: FFIType.i32 },
   libraw_get_iheight: { args: [FFIType.ptr], returns: FFIType.i32 },
   libraw_get_imgother: { args: [FFIType.ptr], returns: FFIType.ptr },
@@ -63,7 +65,20 @@ export interface DecodedImage {
   data: Buffer; // interleaved RGB, already rotated to display orientation
 }
 
-const LIBRAW_COLORSPACE_SRGB = 1;
+// `output_color` values, which are LibRaw's own numbering for the render target
+// and are NOT the LIBRAW_COLORSPACE_* enum (that one describes what the camera
+// said its data was in).
+const OUTPUT_COLOR = { srgb: 1, rec2020: 8 } as const;
+
+// What the pixels are in when the decode hands them back.
+//   'srgb'            display-referred, sRGB primaries and transfer. Everything
+//                     that ends up in an <img> wants this.
+//   'rec2020-linear'  scene-referred, Rec.2020 primaries and no tone curve, for
+//                     an HDR encode: the transfer is applied downstream, and
+//                     highlights above diffuse white have to survive to get
+//                     there. Auto-brightening is off for the same reason, since
+//                     it normalises away the headroom that is the HDR signal.
+export type OutputSpace = 'srgb' | 'rec2020-linear';
 
 // libraw_processed_image_t: int type; u16 height,width,colors,bits; u32 data_size; u8 data[].
 const IMG = { type: 0, height: 4, width: 6, colors: 8, bits: 10, dataSize: 12, data: 16 } as const;
@@ -102,9 +117,9 @@ export function readEmbeddedJpeg(filePath: string): Buffer | null {
   }
 }
 
-// Decodes a RAW file to an upright 8-bit RGB bitmap. Every LibRaw allocation is
+// Decodes a RAW file to an upright RGB bitmap. Every LibRaw allocation is
 // freed on all paths (mem-image, unpacked data, processor) per DESIGN §10.4.
-export function decodeRaw(filePath: string, depth: 8 | 16 = 8): DecodedImage {
+export function decodeRaw(filePath: string, depth: 8 | 16 = 8, space: OutputSpace = 'srgb'): DecodedImage {
   const L = lib();
   const proc = L.libraw_init(0);
   if (!proc) throw new Error('libraw_init failed');
@@ -113,9 +128,18 @@ export function decodeRaw(filePath: string, depth: 8 | 16 = 8): DecodedImage {
     check(L, L.libraw_open_file(proc, cpath(filePath)), 'open_file');
     // Read before unpack/process, which overwrite the size fields.
     const insets = rotateInsets(readCropInsets(proc), readFlip(proc));
-    // A browser can only display a known space, and a PNG with no profile is
-    // taken as sRGB, so both depths render into it.
-    L.libraw_set_output_color(proc, LIBRAW_COLORSPACE_SRGB);
+    if (space === 'rec2020-linear') {
+      L.libraw_set_output_color(proc, OUTPUT_COLOR.rec2020);
+      // gamma[0] is the power and gamma[1] the toe slope; 1/1 is the identity
+      // curve, so the samples stay proportional to the light that made them.
+      L.libraw_set_gamma(proc, 0, 1);
+      L.libraw_set_gamma(proc, 1, 1);
+      L.libraw_set_no_auto_bright(proc, 1);
+    } else {
+      // A browser can only display a known space, and a PNG with no profile is
+      // taken as sRGB, so both depths render into it.
+      L.libraw_set_output_color(proc, OUTPUT_COLOR.srgb);
+    }
     L.libraw_set_output_bps(proc, depth);
     check(L, L.libraw_unpack(proc), 'unpack');
     check(L, L.libraw_dcraw_process(proc), 'dcraw_process');

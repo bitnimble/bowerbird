@@ -9,8 +9,12 @@ WORKDIR /app
 # libjxl-tools provides cjxl, which encodes the full-resolution export (§10.5).
 # sharp/libvips has no JXL encoder, so this is a real runtime dependency rather
 # than a build-time convenience.
+#
+# ffmpeg encodes the HDR stills (§10.7). It needs libsvtav1 for AV1 and libzimg
+# for the zscale filter, which is what applies the PQ or HLG transfer; a build
+# without either cannot produce them.
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends libraw-dev libjxl-tools \
+  && apt-get install -y --no-install-recommends libraw-dev libjxl-tools ffmpeg \
   && rm -rf /var/lib/apt/lists/*
 
 # Dependencies as a cacheable layer.

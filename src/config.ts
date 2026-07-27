@@ -66,6 +66,21 @@ export const config = {
   // lossless" 1.0, because this view exists to be pixel-peeped.
   losslessDistance: envNumber('LOSSLESS_DISTANCE', 0.3),
   losslessEffort: envNumber('LOSSLESS_EFFORT', 4),
+  // HDR still, encoded as a one-frame video (§10.7). This is the exposure
+  // control as much as the peak: the decode is scene-linear, so this is what a
+  // fully exposed sensor sample is worth in nits, and it is also what the file
+  // declares as its mastering peak. 1000 puts a normally exposed frame's
+  // diffuse white near the 203-nit reference and leaves highlights above it.
+  hdrPeakNits: envNumber('HDR_PEAK_NITS', 1000),
+  // SVT-AV1 quality and speed. A still is looked at rather than streamed, so
+  // this is tighter than a video default; 24MP takes about 2.5s at preset 8.
+  hdrCrf: envNumber('HDR_CRF', 20),
+  hdrPreset: envNumber('HDR_PRESET', 8),
+  // AV1 cannot encode a current sensor at native size (SVT-AV1 refuses a 60MP
+  // frame), and this still is for judging HDR on a monitor rather than for
+  // pixel-peeping, which the lossless export already covers. 4K shows 1:1 on
+  // the displays that do HDR.
+  hdrMaxEdge: envNumber('HDR_MAX_EDGE', 3840),
   processingConcurrency: envNumber('PROCESSING_CONCURRENCY', 4),
   smallThumbnailSize: envNumber('SMALL_THUMBNAIL_SIZE', 800),
   fullThumbnailSize: envNumber('FULL_THUMBNAIL_SIZE', 3840),

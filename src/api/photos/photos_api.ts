@@ -59,6 +59,13 @@ export class PhotosApi {
       return c.body(null, 204);
     });
 
+    // Builds the HDR stills (§10.7). Diagnostic: they exist to be opened on a
+    // real HDR display, since nothing in a page can observe HDR output.
+    app.post('/photos/:id/hdr', async (c) => {
+      await this.service.buildHdrVideos(c.req.param('id'));
+      return c.body(null, 204);
+    });
+
     app.get('/photos/:id', (c) => c.json(this.service.get(c.req.param('id'))));
 
     app.patch('/photos/:id', async (c) => {

@@ -1,7 +1,8 @@
 import { readdir, stat, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import type { Library } from '../../schemas/libraries';
-import { getFullThumbnailPath, getLosslessPath, getSmallThumbnailPath } from '../../utils/paths';
+import { getFullThumbnailPath, getHdrVideoPath, getLosslessPath, getSmallThumbnailPath } from '../../utils/paths';
+import { HDR_VARIANTS } from '../processing/hdr_video';
 import type { LibrariesRepository } from '../libraries/libraries_repository';
 import type { PhotosRepository } from '../photos/photos_repository';
 
@@ -12,7 +13,13 @@ import type { PhotosRepository } from '../photos/photos_repository';
 // data directory (the Bin, the sync lock) is keyed by something other than a
 // photo id and must not be touched.
 function generatedDirs(library: Library): Array<{ dir: string; ext: string }> {
-  return [getSmallThumbnailPath, getFullThumbnailPath, getLosslessPath].map((pathFor) => {
+  const pathFors = [
+    getSmallThumbnailPath,
+    getFullThumbnailPath,
+    getLosslessPath,
+    ...HDR_VARIANTS.map((variant) => (lib: Library, id: string) => getHdrVideoPath(lib, id, variant)),
+  ];
+  return pathFors.map((pathFor) => {
     const sample = pathFor(library, 'id');
     return { dir: path.dirname(sample), ext: path.extname(sample) };
   });

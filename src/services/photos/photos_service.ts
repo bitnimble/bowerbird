@@ -4,8 +4,9 @@ import { AppError } from '../../errors';
 import type { Pagination } from '../../schemas/common';
 import type { Library } from '../../schemas/libraries';
 import type { PhotoDetail, PhotoListQuery, PhotoListResponse, UpdatePhotoRequest } from '../../schemas/photos';
-import { getBinPath, getLosslessPath, getOriginalPath, toLibraryRelative } from '../../utils/paths';
+import { getBinPath, getHdrVideoPath, getLosslessPath, getOriginalPath, toLibraryRelative } from '../../utils/paths';
 import { ensureDir, moveIntoDir } from '../../utils/files';
+import { HDR_VARIANTS } from '../processing/hdr_video';
 import { extractMetadata, type FileMetadata } from '../processing/metadata';
 import type { AlbumsRepository } from '../albums/albums_repository';
 import type { LibrariesRepository } from '../libraries/libraries_repository';
@@ -145,6 +146,24 @@ export class PhotosService {
     const source = getOriginalPath(library, photo.file_path);
     if (!existsSync(source)) throw new AppError('NOT_FOUND', `original file not found: ${photo.file_path}`);
     await this.processing.renderLossless(source, output, photo.id);
+  }
+
+  // Builds every variant of the HDR still, including the SDR reference: the
+  // point of the exercise is comparing them on a real HDR display, and one
+  // decode feeding three encodes costs less than three separate requests.
+  async buildHdrVideos(photoId: string): Promise<void> {
+    const photo = this.get(photoId);
+    const library = this.libraries.getById(photo.library_id);
+    if (!library) throw new AppError('NOT_FOUND', `library not found: ${photo.library_id}`);
+
+    const source = getOriginalPath(library, photo.file_path);
+    if (!existsSync(source)) throw new AppError('NOT_FOUND', `original file not found: ${photo.file_path}`);
+
+    for (const variant of HDR_VARIANTS) {
+      const output = getHdrVideoPath(library, photo.id, variant);
+      if (existsSync(output)) continue; // the file is the cache, as with the lossless render
+      await this.processing.renderHdrVideo(source, output, photo.id, variant);
+    }
   }
 
   update(photoId: string, updates: UpdatePhotoRequest): PhotoDetail {

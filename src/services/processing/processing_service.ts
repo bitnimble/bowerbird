@@ -5,7 +5,8 @@ import type { Config } from '../../config';
 import { dataPathFor } from '../../utils/paths';
 import type { PendingPhoto, PhotosRepository } from '../photos/photos_repository';
 import type { SettingsRepository } from '../settings/settings_repository';
-import type { LosslessJob, ProcessingJob, ProcessingResult, ThumbnailSource } from './processing_types';
+import type { HdrVariant } from './hdr_video';
+import type { HdrVideoJob, LosslessJob, ProcessingJob, ProcessingResult, ThumbnailSource } from './processing_types';
 
 const WORKER_URL = new URL('./processing_worker.ts', import.meta.url).href;
 
@@ -33,10 +34,37 @@ export class ProcessingService {
     return queued;
   }
 
-  // One photo, on demand, outside the pending queue: this is a single explicit
-  // request the user is waiting on, not background work to batch.
-  async renderLossless(rawFilePath: string, outputPath: string, photoId: string): Promise<void> {
-    await mkdir(path.dirname(outputPath), { recursive: true });
+  renderLossless(rawFilePath: string, outputPath: string, photoId: string): Promise<void> {
+    return this.runOneOff({
+      kind: 'lossless',
+      photoId,
+      rawFilePath,
+      outputPath,
+      distance: this.config.losslessDistance,
+      effort: this.config.losslessEffort,
+    });
+  }
+
+  renderHdrVideo(rawFilePath: string, outputPath: string, photoId: string, variant: HdrVariant): Promise<void> {
+    return this.runOneOff({
+      kind: 'hdr-video',
+      photoId,
+      rawFilePath,
+      outputPath,
+      variant,
+      peakNits: this.config.hdrPeakNits,
+      crf: this.config.hdrCrf,
+      preset: this.config.hdrPreset,
+      maxEdge: this.config.hdrMaxEdge,
+    });
+  }
+
+  // One photo, on demand, outside the pending queue: a single explicit request
+  // the user is waiting on, not background work to batch. Its own worker, so a
+  // render that takes seconds cannot occupy a pool slot the thumbnail queue
+  // needs.
+  private async runOneOff(job: LosslessJob | HdrVideoJob): Promise<void> {
+    await mkdir(path.dirname(job.outputPath), { recursive: true });
     const worker = new Worker(WORKER_URL);
     try {
       await new Promise<void>((resolve, reject) => {
@@ -45,14 +73,7 @@ export class ProcessingService {
           else reject(new Error(event.data.error));
         };
         worker.onerror = (event: ErrorEvent) => reject(new Error(`worker crashed: ${event.message}`));
-        worker.postMessage({
-          kind: 'lossless',
-          photoId,
-          rawFilePath,
-          outputPath,
-          distance: this.config.losslessDistance,
-          effort: this.config.losslessEffort,
-        } satisfies LosslessJob);
+        worker.postMessage(job);
       });
     } finally {
       worker.terminate();

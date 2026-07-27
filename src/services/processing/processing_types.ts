@@ -1,3 +1,5 @@
+import type { HdrVariant } from './hdr_video';
+
 // Where a thumbnail's pixels come from. 'embedded' lifts the camera's own JPEG
 // out of the RAW: no demosaic, so it is much faster and carries the maker's
 // colour treatment, but it is only as large as the body chose to embed (anything
@@ -31,7 +33,22 @@ export interface LosslessJob {
   effort: number;
 }
 
-export type WorkerJob = ProcessingJob | LosslessJob;
+// A one-frame HDR video of the same render, which is the only container Firefox
+// will apply a PQ or HLG transfer to (§10.7). Same cost profile as the lossless
+// export, so it is asked for explicitly too.
+export interface HdrVideoJob {
+  kind: 'hdr-video';
+  photoId: string;
+  rawFilePath: string;
+  outputPath: string;
+  variant: HdrVariant;
+  peakNits: number;
+  crf: number;
+  preset: number;
+  maxEdge: number;
+}
+
+export type WorkerJob = ProcessingJob | LosslessJob | HdrVideoJob;
 
 export type ProcessingResult =
   // `source` is what was actually used: an embedded request falls back to a

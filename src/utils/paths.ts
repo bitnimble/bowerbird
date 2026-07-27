@@ -1,5 +1,6 @@
 import path from 'node:path';
 import type { Library } from '../schemas/libraries';
+import type { HdrVariant } from '../services/processing/hdr_video';
 
 // Column-level variant, for callers holding a joined row rather than a Library.
 export function dataPathFor(rootPath: string, dataPath: string | null): string {
@@ -22,6 +23,12 @@ export function getFullThumbnailPath(library: Library, photoId: string): string 
 // thumbnails so removing a library's data directory takes it too.
 export function getLosslessPath(library: Library, photoId: string): string {
   return path.join(getDataPath(library), 'lossless', `${photoId}.jxl`);
+}
+
+// One directory per variant, so every generated file stays `<photoId>.<ext>`
+// and the orphan sweep can keep reading a filename as an id (§10.6).
+export function getHdrVideoPath(library: Library, photoId: string, variant: HdrVariant): string {
+  return path.join(getDataPath(library), 'hdr', variant, `${photoId}.mp4`);
 }
 
 export function getBinPath(library: Library): string {
