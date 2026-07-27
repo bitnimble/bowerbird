@@ -22,6 +22,8 @@ const SYMBOLS = {
   libraw_set_output_color: { args: [FFIType.ptr, FFIType.i32], returns: FFIType.void },
   libraw_set_gamma: { args: [FFIType.ptr, FFIType.i32, FFIType.f32], returns: FFIType.void },
   libraw_set_no_auto_bright: { args: [FFIType.ptr, FFIType.i32], returns: FFIType.void },
+  libraw_set_user_mul: { args: [FFIType.ptr, FFIType.i32, FFIType.f32], returns: FFIType.void },
+  libraw_get_cam_mul: { args: [FFIType.ptr, FFIType.i32], returns: FFIType.f32 },
   libraw_get_iwidth: { args: [FFIType.ptr], returns: FFIType.i32 },
   libraw_get_iheight: { args: [FFIType.ptr], returns: FFIType.i32 },
   libraw_get_imgother: { args: [FFIType.ptr], returns: FFIType.ptr },
@@ -117,6 +119,43 @@ export function readEmbeddedJpeg(filePath: string): Buffer | null {
   }
 }
 
+// LibRaw's default white balance is the camera's *daylight* table, not the
+// multipliers the body actually metered, so a render of a tungsten-lit frame comes
+// out visibly orange. Measured against the embedded JPEG on an ILCE-6300, using
+// the as-shot values takes mean deltaE76 from 32.5 to 20.2, which is the single
+// largest colour error in the pipeline.
+//
+// There is no `use_camera_wb` setter in the C API, so the values are copied across
+// by hand. cam_mul is in camera-channel order (R, G1, B, G2) and normalising to G1
+// keeps green at unity, which is what dcraw's -w does.
+//
+/**
+ * As-shot multipliers normalised to green, or null when the file did not record a
+ * usable set and LibRaw's default should stand.
+ *
+ * Every one of R, G1 and B has to be positive before any of them is applied: these
+ * are written straight into `user_mul`, so a single zero or negative among them
+ * would zero or invert that channel in the render, which is a worse outcome than
+ * the wrong white balance this exists to fix.
+ *
+ * The fourth (G2) is the exception and must not be part of that test. A
+ * three-colour camera legitimately reports it as 0, and dcraw substitutes green
+ * for it downstream; rejecting on it would skip white balance entirely on exactly
+ * those bodies. Substituting green here matches what LibRaw would do anyway,
+ * without depending on it happening.
+ */
+export function cameraMultipliers(camMul: readonly number[]): [number, number, number, number] | null {
+  const [red, green, blue, green2] = [camMul[0] ?? 0, camMul[1] ?? 0, camMul[2] ?? 0, camMul[3] ?? 0];
+  if (!(red > 0) || !(green > 0) || !(blue > 0)) return null;
+  return [red / green, 1, blue / green, (green2 > 0 ? green2 : green) / green];
+}
+
+function applyCameraWhiteBalance(L: LibRaw, proc: Pointer): void {
+  const multipliers = cameraMultipliers([0, 1, 2, 3].map((i) => L.libraw_get_cam_mul(proc, i)));
+  if (multipliers == null) return;
+  for (let i = 0; i < 4; i += 1) L.libraw_set_user_mul(proc, i, multipliers[i]!);
+}
+
 // Decodes a RAW file to an upright RGB bitmap. Every LibRaw allocation is
 // freed on all paths (mem-image, unpacked data, processor) per DESIGN §10.4.
 export function decodeRaw(filePath: string, depth: 8 | 16 = 8, space: OutputSpace = 'srgb'): DecodedImage {
@@ -128,6 +167,7 @@ export function decodeRaw(filePath: string, depth: 8 | 16 = 8, space: OutputSpac
     check(L, L.libraw_open_file(proc, cpath(filePath)), 'open_file');
     // Read before unpack/process, which overwrite the size fields.
     const insets = rotateInsets(readCropInsets(proc), readFlip(proc));
+    applyCameraWhiteBalance(L, proc);
     if (space === 'rec2020-linear') {
       L.libraw_set_output_color(proc, OUTPUT_COLOR.rec2020);
       // gamma[0] is the power and gamma[1] the toe slope; 1/1 is the identity
