@@ -33,7 +33,7 @@ import {
   useServerConfigStore,
   useShootsStore,
 } from '../../app/stores_context';
-import { ActionMenu, type ActionGroup, Button, ICON, MoreLess, type Option, Text, TextArea } from '../../ui/ui';
+import { ActionMenu, Button, ICON, MoreLess, type Option, Text, TextArea } from '../../ui/ui';
 import { renditionLabel } from './photos_presenter';
 import { PhotoStage } from './photo_stage';
 import { TRIAGE_KEYS, TriageControl } from './triage_control';
@@ -108,8 +108,8 @@ function bodyLabel(make: string | null, model: string | null): string {
 
 // Empty once both passes have landed, which is the usual state.
 function stageLabel(photo: PhotoDetail): string {
-  if (photo.needs_tile) return ' · building the tile';
-  return photo.needs_renditions ? ' · building the preview' : '';
+  if (photo.needs_tile) return ' · building the grid thumbnail';
+  return photo.needs_renditions ? ' · building the full-size image this view shows' : '';
 }
 
 function fileSizeLabel(bytes: number): string {
@@ -129,22 +129,17 @@ const DOWNLOADS: Option<'raw' | 'jpeg'>[] = [
   { value: 'jpeg', label: 'JPEG', icon: <FileImage size={ICON} /> },
 ];
 
-type PhotoAction = PreviewRendition | 'metadata';
-
-const RENDITIONS: Option<PhotoAction>[] = [
+// Renditions of the same frame rather than commands: each is built once and
+// cached, so these read as "which one am I looking at", not "rebuild it now".
+// All three stay on offer whichever is showing, including the step back down to
+// the camera's JPEG: comparing a render against it is a reason to switch.
+const RENDITIONS: Option<PreviewRendition>[] = [
   { value: 'embedded', label: 'Embedded JPEG', icon: <Sparkles size={ICON} />, hint: 'I' },
   { value: 'full', label: 'From RAW', icon: <Wand2 size={ICON} />, hint: 'O' },
   { value: 'max', label: 'From RAW (max quality)', icon: <Maximize2 size={ICON} /> },
 ];
 
-// Renditions of the same frame rather than commands: each is built once and
-// cached, so these read as "which one am I looking at", not "rebuild it now".
-// All three stay on offer whichever is showing, including the step back down to
-// the camera's JPEG: comparing a render against it is a reason to switch.
-const ACTIONS: (Option<PhotoAction> | ActionGroup<PhotoAction>)[] = [
-  { value: 'metadata', label: 'Refresh metadata', icon: <RotateCw size={ICON} /> },
-  { label: 'Image preview', icon: <ImageIcon size={ICON} />, options: RENDITIONS },
-];
+const ACTIONS: Option<'metadata'>[] = [{ value: 'metadata', label: 'Refresh metadata', icon: <RotateCw size={ICON} /> }];
 
 // Where the reader can go from here, and what can be done to the photo they are
 // on. Its own observer so that a rebuild finishing, which flips `building…` on
@@ -174,14 +169,16 @@ const DetailNav = observer(function DetailNav({ photoId }: { photoId: string }):
 
       <div className="spacer" />
 
+      {/* Which of the three files is on screen: the comparison the detail view
+          exists for, so it sits in the bar rather than two levels into a menu. */}
       <ActionMenu
         trigger={
           <>
-            <RefreshCw size={ICON} />
-            Actions
+            <ImageIcon size={ICON} />
+            Image source
           </>
         }
-        options={ACTIONS}
+        options={RENDITIONS}
         toggles={[
           {
             label: 'Disable cache when changing preview',
@@ -190,10 +187,17 @@ const DetailNav = observer(function DetailNav({ photoId }: { photoId: string }):
             onChange: photos.setForceRebuild,
           },
         ]}
-        onSelect={(action) => {
-          if (action === 'metadata') void photos.refreshMetadata([photoId]);
-          else void photos.chooseRendition(photoId, action);
-        }}
+        onSelect={(rendition) => void photos.chooseRendition(photoId, rendition)}
+      />
+      <ActionMenu
+        trigger={
+          <>
+            <RefreshCw size={ICON} />
+            Actions
+          </>
+        }
+        options={ACTIONS}
+        onSelect={() => void photos.refreshMetadata([photoId])}
       />
       <ActionMenu
         trigger={
@@ -389,27 +393,20 @@ const PreviewPanel = observer(function PreviewPanel({ photoId, defaultOpen }: { 
       title="Image preview details"
       defaultOpen={defaultOpen}
       rows={[
-        // Reports the rendition actually on screen, which is the chosen one when
-        // the user has switched away from the photo's own. Null on rows
-        // thumbnailed before the column existed, which is "not recorded" rather
-        // than "not built".
-        ['Source', pending((p) => (store.rendition == null && p.rendition_source == null ? 'unknown' : renditionLabel(showing)))],
+        // The rendition actually on screen, which is the chosen one when the user
+        // has switched away from the photo's own. Always knowable: it is what the
+        // viewer asked for, not something a column has to have recorded.
+        ['Source', renditionLabel(showing)],
         // Named and ordered as in Original RAW below, so the same fact about two
-        // files reads the same way in both panels. Both rows describe what
-        // actually arrived rather than what a column claims: the pixels come off
-        // the decoded image, the weight off the response that carried it. The
-        // video twin is the exception on both counts: its weight is reported by
-        // the server, a media element leaving no timing entry to read it off.
+        // files reads the same way in both panels. The pixels come off the
+        // decoded image, the weight off the file the server served it from.
         ['Dimensions', shownImage == null ? PENDING : `${shownImage.width} × ${shownImage.height}`],
         [
           'File size',
-          shownVideo != null
-            ? fileSizeLabel(shownVideo.bytes)
-            : shownImage == null
-              ? PENDING
-              : shownImage.bytes == null
-                ? 'unknown'
-                : fileSizeLabel(shownImage.bytes),
+          pending(() => {
+            const bytes = shownVideo?.bytes ?? shownFile?.bytes;
+            return bytes == null ? 'unknown' : fileSizeLabel(bytes);
+          }),
         ],
         // The camera's JPEG is passed through untouched, so the encoder settings
         // the other two are built with say nothing about it.
@@ -426,7 +423,9 @@ const PreviewPanel = observer(function PreviewPanel({ photoId, defaultOpen }: { 
             showing === 'embedded' ? 'N/A' : thumbs == null ? 'unknown' : `${thumbs.full.quality} (longest edge ${thumbs.full.size}px)`,
           ),
         ],
-        ['Path', pending(() => shownVideo?.path ?? shownFile?.path ?? 'unknown')],
+        // The camera's JPEG has no file of its own: this is the RAW it is lifted
+        // out of, and without the qualifier the row reads as the RAW itself.
+        ['Path', pending(() => `${shownVideo?.path ?? shownFile?.path ?? 'unknown'}${showing === 'embedded' ? ' (embedded)' : ''}`)],
       ]}
     />
   );

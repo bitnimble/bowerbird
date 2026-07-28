@@ -38,12 +38,10 @@ export interface PhotoFilters {
 // another, and no combination of flags can describe a state that cannot happen.
 export type OpenPhoto = { id: string; status: 'loading' | 'ready' } | { id: string; status: 'missing'; error: string };
 
-// The served image as it actually arrived: decoded pixels, and the bytes the
-// response carried (null where nothing measured them, as for a video twin).
+/** The pixels the served image actually decoded to. */
 export interface ShownImage {
   width: number;
   height: number;
-  bytes: number | null;
 }
 
 /** The three stamps every image URL is versioned by. */
@@ -140,11 +138,10 @@ export class PhotosStore {
   @observable accessor loadedDetail: PhotoDetail | null = null;
   @observable accessor notesSavedAt: number | null = null;
   // What the viewer actually has on screen, measured off the decoded image
-  // rather than taken from a column: the panel reports the pixels that arrived
-  // and the weight of the response that carried them, which is the question a
-  // reader judging sharpness is asking. Null until something decodes, and
-  // cleared on every step - the panel must stop claiming the previous photo's
-  // resolution the moment the route changes.
+  // rather than taken from a column, which is the question a reader judging
+  // sharpness is asking. Null until something decodes, and cleared on every
+  // step - the panel must stop claiming the previous photo's resolution the
+  // moment the route changes.
   @observable.ref accessor shownImage: ShownImage | null = null;
 
   // This photo's detail, or null while it is still the one before it. Every

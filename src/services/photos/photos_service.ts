@@ -10,6 +10,7 @@ import { ensureDir, moveIntoDir } from '../../utils/files';
 import { HDR_MEDIA, HDR_VARIANTS } from '../processing/hdr_media';
 import type { Rendition } from '../processing/renditions';
 import { extractMetadata, type FileMetadata } from '../processing/metadata';
+import { readEmbeddedJpeg } from '../processing/raw_decoder';
 import type { AlbumsRepository } from '../albums/albums_repository';
 import type { LibrariesRepository } from '../libraries/libraries_repository';
 import type { ProcessingService } from '../processing/processing_service';
@@ -106,21 +107,33 @@ export class PhotosService {
     const stored = (rendition: Rendition) => {
       const file = getRenditionPath(library, photoId, rendition, hdr);
       const twin = getRenditionPath(library, photoId, rendition, hdr, true);
+      const still = statSync(file, { throwIfNoEntry: false });
       const video = hdr ? statSync(twin, { throwIfNoEntry: false }) : undefined;
       return {
         path: file,
-        built: existsSync(file),
+        built: still != null,
+        bytes: still?.size ?? null,
         hdr,
         video: video == null ? null : { path: twin, bytes: video.size },
       };
     };
+    const raw = getOriginalPath(library, filePath);
     return {
       // The camera's JPEG is the RAW's own bytes, so it is always available and
       // never built (§10.2).
-      embedded: { path: getOriginalPath(library, filePath), built: true, hdr: false, video: null },
+      embedded: { path: raw, built: true, bytes: this.embeddedBytes(raw), hdr: false, video: null },
       full: stored('full'),
       max: stored('max'),
     };
+  }
+
+  // The camera's JPEG has no file of its own to stat, so its weight is only
+  // known by lifting it out - a header read and a copy, ~1ms, on a single-photo
+  // read. Null for a RAW that has gone, which is also what keeps LibRaw out of
+  // the tests: they name files that do not exist.
+  private embeddedBytes(raw: string): number | null {
+    if (!existsSync(raw)) return null;
+    return readEmbeddedJpeg(raw)?.length ?? null;
   }
 
   listByLibrary(libraryId: string, query: PhotoListQuery): PhotoListResponse {

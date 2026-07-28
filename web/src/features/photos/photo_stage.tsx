@@ -11,11 +11,20 @@ const WHEEL_SENSITIVITY = 0.0015;
 // enough that a cold one reads as loading rather than as the wrong picture.
 const STALE_FRAME_MS = 100;
 
+// How many frames the frame being replaced is held under its replacement. An
+// element hidden with opacity: 0 is never rasterised, so the incoming one has no
+// raster at the moment it is revealed and the browser needs a frame or two to
+// build one; dropping the outgoing one in the same commit left the stage
+// background showing through for exactly that long, on every swap. Nothing in
+// the page can observe a raster landing - `decode()` resolves well before it -
+// so this is a count rather than a signal.
+const RETIRED_FRAMES = 3;
+
 interface Props {
   src: string;
   alt: string;
   filename: string;
-  onImageLoad: (width: number, height: number, bytes: number | null) => void;
+  onImageLoad: (width: number, height: number) => void;
   // Render a <video> rather than an <img>: the HDR rendition Firefox needs.
   video?: boolean;
   // Frames to warm the cache with once this one is up: the neighbours either way,
@@ -82,16 +91,6 @@ function zoomAbout(view: View, next: number, box: DOMRect | null, point: { x: nu
   return { scale, x: dx - ratio * (dx - view.x), y: dy - ratio * (dy - view.y) };
 }
 
-// The weight of what the browser actually pulled for this src. The camera's JPEG
-// has no file on disk to stat - the server extracts it out of the RAW to serve it
-// - so the size is read back off the response that already arrived rather than
-// asked for separately. Survives a revalidation: a 304 transfers no body but
-// still reports the cached one's size.
-function transferredBytes(src: string): number | null {
-  const entry = performance.getEntriesByName(new URL(src, window.location.href).href).at(-1) as PerformanceResourceTiming | undefined;
-  return entry != null && entry.encodedBodySize > 0 ? entry.encodedBodySize : null;
-}
-
 // The image viewport: fit/zoom, wheel zoom, drag-to-pan and fullscreen. All of
 // this is ephemeral view state, so it stays local rather than going through a
 // store; nothing outside this component needs to know the pan offset.
@@ -119,6 +118,14 @@ export function PhotoStage({ src, alt, filename, video, photoKey, hold, preloadS
   const [painted, setPainted] = useState<{ src: string; photoKey: string } | null>(null);
   const currentFrame = painted?.photoKey === photoKey ? painted.src : null;
   const ready = currentFrame != null;
+  // The frame `painted` just replaced, kept mounted and opaque underneath it for
+  // RETIRED_FRAMES. Its raster is the one the browser already has, so it is what
+  // shows through while the replacement's is being built.
+  const [retiring, setRetiring] = useState<string | null>(null);
+  // Read by the promote below, which runs off a decode promise: `painted` there
+  // would be whatever was on screen when that decode started.
+  const paintedSrc = useRef<string | null>(null);
+  paintedSrc.current = painted?.src ?? null;
   // Drives the stage's aspect-ratio, so the bordered box is the photo rather
   // than a letterboxed container with black margins inside it.
   const [natural, setNatural] = useState({ width: 0, height: 0 });
@@ -147,9 +154,25 @@ export function PhotoStage({ src, alt, filename, video, photoKey, hold, preloadS
   const stale = painted != null && painted.photoKey !== photoKey;
   useEffect(() => {
     if (!stale) return;
-    const timer = setTimeout(() => setPainted(null), STALE_FRAME_MS);
+    const timer = setTimeout(() => {
+      setPainted(null);
+      // Or the frame it was covering, which is older still, would be left as the
+      // only thing on the stage - the wrong picture, which is what the cap above
+      // exists to prevent.
+      setRetiring(null);
+    }, STALE_FRAME_MS);
     return () => clearTimeout(timer);
   }, [stale]);
+
+  useEffect(() => {
+    if (retiring == null) return;
+    let left = RETIRED_FRAMES;
+    let frame = requestAnimationFrame(function tick(): void {
+      if (left-- > 0) frame = requestAnimationFrame(tick);
+      else setRetiring(null);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [retiring]);
 
   useEffect(() => setFailed(false), [src]);
 
@@ -162,6 +185,10 @@ export function PhotoStage({ src, alt, filename, video, photoKey, hold, preloadS
 
   // The src being prepared, mounted but invisible until it can be shown.
   const incoming = src === currentFrame ? null : src;
+  // Switching back before the hold expires asks for the frame on its way out,
+  // and one src is one element: the hold is dropped rather than duplicated, which
+  // costs nothing here - the frame it was covering is still the one on screen.
+  const retired = retiring === incoming ? null : retiring;
   // A callback ref, not a RefObject: refs are invariant, so one object cannot be
   // handed to both an <img> and a <video>.
   const incomingRef = useRef<HTMLImageElement | HTMLVideoElement | null>(null);
@@ -183,7 +210,8 @@ export function PhotoStage({ src, alt, filename, video, photoKey, hold, preloadS
       const width = element instanceof HTMLVideoElement ? element.videoWidth : element.naturalWidth;
       const height = element instanceof HTMLVideoElement ? element.videoHeight : element.naturalHeight;
       setNatural({ width, height });
-      onLoaded.current(width, height, transferredBytes(incoming));
+      onLoaded.current(width, height);
+      if (paintedSrc.current != null && paintedSrc.current !== incoming) setRetiring(paintedSrc.current);
       setPainted({ src: incoming, photoKey });
     };
 
@@ -356,9 +384,15 @@ export function PhotoStage({ src, alt, filename, video, photoKey, hold, preloadS
           // One list, keyed by src, so promoting the incoming one keeps its
           // element: rendered as two slots React would unmount it and the
           // browser would decode the same file over again to paint it.
-          [painted?.src, failed ? null : incoming].map((source) => {
+          //
+          // Bottom to top: the frame on its way out, the one on screen, the one
+          // being prepared. Nothing here is a move on promotion - the incoming
+          // one keeps the slot it already had and the retiring one takes the slot
+          // below it, so no element is reinserted into the DOM mid-swap.
+          [retired, painted?.src, failed ? null : incoming].map((source) => {
             if (source == null) return false;
-            const className = source === painted?.src ? 'is-ready stage__content' : 'stage__content';
+            const className =
+              source === painted?.src ? 'is-ready stage__content' : source === retired ? 'is-retiring stage__content' : 'stage__content';
             const transform = `translate(${view.x}px, ${view.y}px) scale(${view.scale})`;
             // A one-frame video, the only way an HDR photo reaches a Firefox
             // display (§10.7). Muted and inline so autoplay is allowed at all,

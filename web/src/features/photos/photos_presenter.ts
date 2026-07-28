@@ -188,8 +188,8 @@ export class PhotosPresenter {
   // Reported by the stage when a frame has decoded, so the panel beside it can
   // describe what is on screen rather than what a column claims.
   @action.bound
-  imageShown(width: number, height: number, bytes: number | null): void {
-    this.store.shownImage = { width, height, bytes };
+  imageShown(width: number, height: number): void {
+    this.store.shownImage = { width, height };
   }
 
   // Whether a photo is still the one the view is on. Every write that lands after

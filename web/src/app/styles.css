@@ -336,13 +336,6 @@ p.ui-text--mono {
   padding-left: 9px;
 }
 
-/* Inherits the row's colour rather than setting its own, so it brightens with
-   the label on hover instead of staying dim against a highlighted row. */
-.ui-item__more {
-  margin-left: auto;
-  padding-left: 10px;
-}
-
 /* Right-aligned in a menu row, where the label is left of a wide popup; in a
    segmented button it sits against the label instead. */
 .ui-item .ui-btn__hint {
@@ -1269,6 +1262,21 @@ p.ui-text--mono {
    before it. */
 .stage__viewport .stage__content.is-ready {
   opacity: 1;
+}
+
+/* And the one it replaced, still opaque underneath it for a few frames: a
+   hidden element is never rasterised, so the frame revealed above this one has
+   no raster yet and this is what shows through until it does (see
+   RETIRED_FRAMES). Dropped in the same commit, the stage background did. */
+.stage__viewport .stage__content.is-retiring {
+  opacity: 1;
+}
+
+/* The warmed neighbours: decoys covering the frame, never pictures to interact
+   with. Left hit-testable they take the pointer, and a browser that ignores
+   -webkit-user-drag (Firefox) starts an image drag that cancels the pan. */
+.stage__viewport .stage__content[aria-hidden] {
+  pointer-events: none;
 }
 
 .stage--zoomed .stage__viewport .stage__content {

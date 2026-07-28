@@ -263,6 +263,24 @@ describe('PhotosService renditions', () => {
     expect(sdr?.hdr).toBe(false);
   });
 
+  // Firefox reports no body size for a cross-origin image, so the panel cannot
+  // read this off the response the way it used to; it comes off the same stat
+  // that answers `built`.
+  it('reports what a stored rendition weighs, and nothing for one that is not built', () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'bb-bytes-'));
+    try {
+      const dir = path.join(root, '.bowerbird', 'renditions', 'full');
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(path.join(dir, 'p1.avif'), 'x'.repeat(17));
+
+      const renditions = detailFor({ ...library, root_path: root }).renditions;
+      expect(renditions?.full.bytes).toBe(17);
+      expect(renditions?.max.bytes).toBeNull();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   // Firefox watches the twin rather than the still, so the panel describing what
   // is on screen has to be able to name that file and say what it weighs.
   it('reports the video twin with its path and weight, and nothing when there is none', () => {
