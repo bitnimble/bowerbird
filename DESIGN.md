@@ -1001,7 +1001,23 @@ The thumbnail and header paths (§11.1) still use LibRaw's C API through `bun:ff
 
 `bun run build:native` builds it, at cargo's stock release profile; the Docker build does so in its own stage and copies only the `.so` forward, keeping rustc, cargo and libclang out of the shipped image.
 
-**Codegen flags are not a lever here, which is worth knowing before reaching for them.** Measured end to end on the rendition job, `opt-level = 2`, `opt-level = 3` and `opt-level = 3` with fat LTO and one codegen unit are indistinguishable - every stage inside noise across two frames. The reason is structural rather than incidental: the expensive work is inside libvips and LibRaw, both precompiled shared libraries no profile of ours reaches and LTO cannot cross into, and this crate's own hot loops (`warp`, `pairs`, `score`, `apply`) already vectorise at `opt-level = 2` and are all in one crate, so there is nothing for LTO to inline across. A pinned `opt-level = 2` was removed for saying nothing; a full rebuild is 0.4s either way. Deliberately also not `-C target-cpu=native`, which would require building in the entrypoint on the machine that runs it: measured on a microbenchmark that tuning is worth ~20% on one hot loop, which does not justify putting a toolchain in the runtime image and turning a compile error into a failure to start - and given the above, expect it to be worth much less than 20% of a real job.
+**`opt-level` and LTO are not levers here.** Measured end to end on the rendition job, `opt-level = 2`, `opt-level = 3` and `opt-level = 3` with fat LTO and one codegen unit are indistinguishable - every stage inside noise across two frames. Structural rather than incidental: the expensive work is inside libvips and LibRaw, both precompiled shared libraries no profile of ours reaches and LTO cannot cross into, and this crate's own hot loops (`warp`, `pairs`, `score`, `apply`) already vectorise at `opt-level = 2` and are all in one crate, so there is nothing for LTO to inline across. A pinned `opt-level = 2` was removed for saying nothing; a full rebuild is 0.4s either way.
+
+**Instruction set is a lever, unlike the above.** On a Zen 4 desktop, medians over three runs:
+
+| `target-cpu` | fit (24MP) | grade (24MP) | job (24MP) | grade (15MP) | job (15MP) |
+|---|---|---|---|---|---|
+| `x86-64` (default) | 458ms | 312ms | 1580ms | 304ms | 2546ms |
+| `x86-64-v3` | 434ms | 298ms | 1534ms | 291ms | 2516ms |
+| `native` (znver4) | 396ms | 236ms | 1438ms | 222ms | 2437ms |
+
+`native` is worth 24-27% on the grade, 10-14% on the fit, and 4-9% on the whole job - diluted because the decode and the encoders are in libraries a flag of ours cannot reach. Available as a one-liner where it is wanted, which is why nothing in the build needs a switch for it:
+
+```sh
+RUSTFLAGS="-C target-cpu=native" bun run build:native
+```
+
+**Not the default, and `x86-64-v3` is not a safe compromise either**, which is the part worth writing down because it looks like one. v3 needs only AVX2 and runs on any x86 from 2013, but it captures barely a fifth of native's gain on the grade (298ms against 236ms), so most of that win needs more than AVX2. Against that: it makes the binary `SIGILL` on hardware that is precisely this application's deployment target. Low-end Celeron and Atom NAS boxes - the Synology and QNAP units someone self-hosts a photo library on - are commonly Goldmont, which has no AVX at all. A hard crash on real self-hosting hardware is not worth ~2%. The container ships the portable baseline for the same reason `-C target-cpu=native` is not used in the Dockerfile: tuning for the build machine requires compiling on the deploy machine, which means the whole toolchain in the runtime image and a compile error becoming a failure to start.
 
 **libvips 8.15.1 is the version to write against, not the crate's.** The `libvips` crate targets a later release and its `*_with_opts` helpers send every property their options struct knows about - `tune` for `heifsave`, a `keep` flag for `jpegsave` - neither of which exists in the version Debian and Ubuntu ship. `heifsave` failed outright with ``no property named `tune` ``; `jpegsave` only logged a GLib critical, which is worse, because it looked like it worked. Both savers go through the raw bindings and name their properties explicitly, keeping the version-coupled part of the dependency to one function. Two more of the crate's edges are load-bearing: `ResizeOptions::default()` has `vscale: 0`, which collapses an image to a single row unless it is always passed, and `VipsImage` derives `Clone` as a shallow refcount copy alongside a `Drop` that unrefs, so cloning one produces `g_object_unref: assertion 'G_IS_OBJECT (object)' failed` on the second drop - hundreds per fit, at one point. Nothing here clones a `VipsImage`; the pipeline consumes `self` at every step so that it cannot.
 

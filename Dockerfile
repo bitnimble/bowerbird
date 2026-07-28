@@ -33,11 +33,13 @@ RUN bun install --frozen-lockfile --production
 # than at runtime so the toolchain - rustc, cargo, and libclang for bindgen - stays
 # out of the shipped image; only the ~400KB .so is copied forward.
 #
-# Deliberately not `-C target-cpu=native`: this stage may not run on the machine
-# that runs the container. Building in the entrypoint instead would allow it, at
-# the cost of putting the whole toolchain in the runtime image and turning a
-# compile error into a failure to start. Measured, the tuning is worth ~20% on one
-# hot loop, which is not worth either.
+# The portable x86-64 baseline, deliberately. `-C target-cpu=native` is worth 4-9%
+# of a rendition job (DESIGN 10.4), but this stage may not run on the machine that
+# runs the container, so taking it would mean compiling in the entrypoint: the whole
+# toolchain in the runtime image and a compile error becoming a failure to start.
+# `x86-64-v3` needs no such thing and is the obvious compromise, which is why it is
+# worth naming as rejected: it captures a fifth of the gain and SIGILLs on the
+# Goldmont Celerons that low-end NAS boxes - a likely host for this - ship with.
 FROM base AS native
 RUN apt-get update \
   && apt-get install -y --no-install-recommends build-essential curl libclang-dev \
