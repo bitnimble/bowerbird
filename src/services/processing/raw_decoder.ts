@@ -257,14 +257,39 @@ export interface DecodeOptions {
   atLeastLongEdge?: number;
 }
 
-// Decodes a RAW file to an upright RGB bitmap. Every LibRaw allocation is
-// freed on all paths (mem-image, unpacked data, processor) per DESIGN §10.4.
+/**
+ * Decodes a RAW file to an upright RGB bitmap.
+ *
+ * Runs half size where the caller's `atLeastLongEdge` allows it, and falls back to
+ * a whole-frame decode if that did not take: the flag is set by a located offset,
+ * so a layout the anchors did not catch would write to a neighbouring field
+ * instead, and this is the check that the frame really did come back halved.
+ */
 export function decodeRaw(
   filePath: string,
   depth: 8 | 16 = 8,
   space: OutputSpace = 'srgb',
   options: DecodeOptions = {},
 ): DecodedImage {
+  const wanted = options.atLeastLongEdge ?? 0;
+  if (wanted > 0) {
+    const halved = decodeOnce(filePath, depth, space, wanted);
+    if (halved != null) return halved;
+  }
+  const whole = decodeOnce(filePath, depth, space, 0);
+  if (whole == null) throw new Error('decodeRaw: full-size decode reported as halved');
+  return whole;
+}
+
+/**
+ * One decode attempt. Null means half size was asked for and the frame came back
+ * whole anyway - the write went somewhere other than `half_size`, so whatever it
+ * did land on may have changed the picture and the result is not to be trusted.
+ *
+ * Every LibRaw allocation is freed on all paths (mem-image, unpacked data,
+ * processor) per DESIGN §10.4.
+ */
+function decodeOnce(filePath: string, depth: 8 | 16, space: OutputSpace, wanted: number): DecodedImage | null {
   const L = lib();
   const proc = L.libraw_init(0);
   if (!proc) throw new Error('libraw_init failed');
@@ -277,10 +302,9 @@ export function decodeRaw(
     // Only worth it when halving still leaves more than the caller needs. A 24MP
     // frame halves to about 3000px, under the 3840 a full-size rendition wants, so
     // it decodes whole; a 61MP one halves to 4864 and does not.
-    const wanted = options.atLeastLongEdge ?? 0;
-    if (wanted > 0 && Math.floor(visibleLongEdge(proc) / 2) >= wanted && enableHalfSize(L, proc)) {
-      insets = halveInsets(insets);
-    }
+    const fullLongEdge = visibleLongEdge(proc);
+    const halved = wanted > 0 && Math.floor(fullLongEdge / 2) >= wanted && enableHalfSize(L, proc);
+    if (halved) insets = halveInsets(insets);
 
     applyCameraWhiteBalance(L, proc);
     L.libraw_set_demosaic(proc, DEMOSAIC_PPG);
@@ -312,6 +336,12 @@ export function decodeRaw(
       const bits = head.getUint16(IMG.bits, true);
       const dataSize = head.getUint32(IMG.dataSize, true);
       if (colors !== 3 || bits !== depth) throw new Error(`unexpected image format: colors=${colors} bits=${bits}`);
+      // The frame has to have actually halved. If it did not, the offset write
+      // missed `half_size` and landed on one of its neighbours - `four_color_rgb`
+      // and `use_auto_wb` are both close by, and either would leave the dimensions
+      // looking perfectly normal while changing the picture. Discard and let the
+      // caller decode whole.
+      if (halved && Math.max(width, height) > fullLongEdge * 0.75) return null;
       // A view over LibRaw's own buffer, valid only until clear_mem below. Copying
       // and cropping happen in one pass out of it: a 60MP frame is ~190MB, and
       // copying it whole and then copying the crop out of that spent ~250ms per
