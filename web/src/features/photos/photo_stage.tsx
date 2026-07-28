@@ -97,14 +97,17 @@ export function PhotoStage({ src, alt, filename, video, photoKey, preloadSrc, on
   const [toolbarVisible, setToolbarVisible] = useState(false);
   const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
-  // The src actually painted, which lags the one asked for until it has decoded.
+  // The src actually shown, which lags the one asked for until it has decoded.
   //
-  // Swapping the element's src directly means a frame with nothing decoded to
-  // show, and the stage background comes through - a flash on every rendition
-  // change, including between two that were already cached, where there is no
-  // wait to justify it. Decoding first and swapping after costs nothing on a
-  // cached image (`decode()` settles in a microtask) and keeps the previous frame
-  // up while a genuinely new one is fetched.
+  // Swapping one element's src means a frame with nothing decoded to show and
+  // the stage background coming through - a flash on every rendition change,
+  // including between two that were already cached, where there is no wait to
+  // justify it. So the next src is mounted as a second, invisible <img> over the
+  // current one and only becomes the visible one once it has decoded; the
+  // element is then kept rather than replaced, so what it decoded is what gets
+  // painted. Decoding off-screen in a detached `new Image()` is not enough: the
+  // browser decodes for the size an element is drawn at, so the visible element
+  // decoded a 3840px AVIF a second time at paint and flashed anyway.
   const [painted, setPainted] = useState<string | null>(null);
   const ready = painted != null;
   // Drives the stage's aspect-ratio, so the bordered box is the photo rather
@@ -159,23 +162,30 @@ export function PhotoStage({ src, alt, filename, video, photoKey, preloadSrc, on
   // The browser caches the 404, so a retry needs a URL it has not seen.
   const shownSrc = attempt === 0 ? src : `${src}${src.includes('?') ? '&' : '?'}retry=${attempt}`;
 
-  // Through a ref: callers pass an inline callback, and a new identity per render
+  // Through refs: callers pass inline callbacks, and a new identity per render
   // would restart the decode below on every render while one is in flight.
   const onMissing = useRef(onImageMissing);
   onMissing.current = onImageMissing;
+  const onLoaded = useRef(onImageLoad);
+  onLoaded.current = onImageLoad;
 
-  // Decode before painting. A video cannot be decoded off-screen this way, so it
-  // swaps directly and keeps the old behaviour; it is the Firefox-only path and
-  // is never one of two cached renditions being compared.
+  // The src being prepared, mounted but invisible until it has decoded. A video
+  // has no equivalent, so it swaps directly and keeps the old behaviour; it is
+  // the Firefox-only path and is never one of two cached renditions compared.
+  const incoming = video || shownSrc === painted ? null : shownSrc;
+  const incomingRef = useRef<HTMLImageElement>(null);
+
   useEffect(() => {
-    if (video || shownSrc === painted) return;
+    const image = incomingRef.current;
+    if (incoming == null || image == null) return;
     let live = true;
-    const image = new Image();
-    image.src = shownSrc;
     image
       .decode()
       .then(() => {
-        if (live) setPainted(shownSrc);
+        if (!live) return;
+        setNatural({ width: image.naturalWidth, height: image.naturalHeight });
+        onLoaded.current(image.naturalWidth, image.naturalHeight, transferredBytes(incoming));
+        setPainted(incoming);
       })
       .catch(() => {
         if (!live) return;
@@ -187,7 +197,7 @@ export function PhotoStage({ src, alt, filename, video, photoKey, preloadSrc, on
     return () => {
       live = false;
     };
-  }, [shownSrc, painted, video, attempt, src]);
+  }, [incoming, attempt, src]);
 
   // Measures here, outside the updater, so the updater itself stays pure.
   const zoomBy = useCallback(
@@ -352,18 +362,22 @@ export function PhotoStage({ src, alt, filename, video, photoKey, preloadSrc, on
             }}
           />
         ) : (
-          painted != null && (
-            <img
-              src={painted}
-              alt={alt}
-              draggable={false}
-              className="is-ready stage__content"
-              style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}
-              onLoad={(e) => {
-                setNatural({ width: e.currentTarget.naturalWidth, height: e.currentTarget.naturalHeight });
-                onImageLoad(e.currentTarget.naturalWidth, e.currentTarget.naturalHeight, transferredBytes(painted));
-              }}
-            />
+          // One list, keyed by src, so promoting the incoming one keeps its
+          // element: rendered as two slots React would unmount it and the
+          // browser would decode the same file over again to paint it.
+          [painted, incoming].map(
+            (source) =>
+              source != null && (
+                <img
+                  key={source}
+                  ref={source === incoming ? incomingRef : null}
+                  src={source}
+                  alt={alt}
+                  draggable={false}
+                  className={source === painted ? 'is-ready stage__content' : 'stage__content'}
+                  style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}
+                />
+              ),
           )
         )}
       </div>

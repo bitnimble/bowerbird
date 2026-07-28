@@ -208,8 +208,8 @@ test('the detail view shows shooting metadata, the triage control and steps betw
   await openLibrary(page, CULL_PHOTOS_DIR);
   await page.locator('.tile__hit').first().click();
 
-  // Located by title rather than by any text the panel holds: row values mention
-  // the camera too ("as the camera wrote it"), which matches more than one panel.
+  // Located by title rather than by any text the panel holds: row values name the
+  // camera too, which matches more than one panel.
   const panel = (title: string) => page.locator('.panel', { has: page.locator('.panel__title', { hasText: title }) });
 
   // The fixture is portrait, so the panels sit in the full-height column beside
@@ -237,7 +237,7 @@ test('the detail view shows shooting metadata, the triage control and steps betw
   const preview = panel('IMAGE PREVIEW DETAILS');
   await expect(preview.getByText('Source', { exact: true })).toBeVisible();
   await expect(preview.getByText('JPEG', { exact: true })).toBeVisible();
-  await expect(preview.getByText('as the camera wrote it')).toBeVisible();
+  await expect(preview.getByText('N/A')).toBeVisible();
 
   // Both panels name the file on the server they are describing. This library
   // serves the camera's JPEG, so the photo opens at the RAW's own bytes rather
@@ -387,7 +387,7 @@ test('the max-quality rendition is served as a full-resolution AVIF', async ({ p
   test.setTimeout(240_000);
   await viewMaxQuality(page, CULL_PHOTOS_DIR);
 
-  const shown = page.locator('.stage__viewport img');
+  const shown = page.locator('.stage__viewport img.is-ready');
   expect(await shown.evaluate((i: HTMLImageElement) => i.src)).toContain('/renditions/max');
   // Full resolution, not the 3840-edge preview it replaced.
   expect(await shown.evaluate((i: HTMLImageElement) => i.naturalWidth)).toBeGreaterThan(3840);
@@ -446,7 +446,7 @@ test('the photo fits the stage instead of overflowing it', async ({ page }) => {
   await page.goto('/settings');
   await openLibrary(page, CULL_PHOTOS_DIR);
   await page.locator('.tile__hit').first().click();
-  await expect(page.locator('.stage__viewport img')).toBeVisible();
+  await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible();
 
   // Regression: as a grid item the image grew the row to its own height, so
   // `height: 100%` resolved against that and tall frames were cropped.

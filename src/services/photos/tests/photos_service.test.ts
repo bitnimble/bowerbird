@@ -226,4 +226,23 @@ describe('PhotosService renditions', () => {
     expect(hdr?.hdr).toBe(true);
     expect(sdr?.hdr).toBe(false);
   });
+
+  // Firefox watches the twin rather than the still, so the panel describing what
+  // is on screen has to be able to name that file and say what it weighs.
+  it('reports the video twin with its path and weight, and nothing when there is none', () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'bb-twin-'));
+    try {
+      const dir = path.join(root, '.bowerbird', 'renditions', 'full-hdr-video');
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(path.join(dir, 'p1.mp4'), 'x'.repeat(11));
+
+      const withVideo = detailFor({ ...library, root_path: root, preview_hdr: true }).renditions;
+      expect(withVideo?.full.video).toEqual({ path: path.join(dir, 'p1.mp4'), bytes: 11 });
+      // Only `full` has one on disk, and an SDR library never gets one at all.
+      expect(withVideo?.max.video).toBeNull();
+      expect(detailFor({ ...library, root_path: root }).renditions?.full.video).toBeNull();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });

@@ -82,9 +82,11 @@ export const PhotoDetailSchema = PhotoSummarySchema.extend({
         path: z.string(),
         built: z.boolean(),
         hdr: z.boolean(),
-        // Whether the one-frame AV1 twin exists, so a client on Firefox knows it
-        // may reach for it instead of a still it would render dark (§10.7).
-        video: z.boolean(),
+        // The one-frame AV1 twin when it exists, so a client on Firefox knows it
+        // may reach for it instead of a still it would render dark (§10.7). Its
+        // weight is reported from here rather than measured off the response the
+        // way the still's is: a media element leaves no resource-timing entry.
+        video: z.object({ path: z.string(), bytes: z.number().int() }).nullable(),
       }),
     )
     .nullable(),

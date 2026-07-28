@@ -217,7 +217,8 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   // video - so it gets the one-frame video of whichever rendition is showing
   // instead (§10.7). The embedded one never has a twin, being an 8-bit SDR JPEG
   // with no headroom to carry, so its still is already right.
-  const hdrVideo = needsHdrVideo() && shownFile?.video === true;
+  const shownVideo = needsHdrVideo() ? (shownFile?.video ?? null) : null;
+  const hdrVideo = shownVideo != null;
 
   // Stepping through frames is the whole job, so the next one is fetched and
   // decoded while this one is being looked at and paints on arrival. Only for the
@@ -399,23 +400,38 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
                   // Both rows describe what actually arrived rather than what a
                   // column claims: the pixels come off the decoded image, the
                   // weight off the response that carried it.
+                  // The video twin is the exception on both counts: its weight is
+                  // reported by the server, a media element leaving no timing
+                  // entry to read it off.
                   ['Dimensions', shownImage == null ? 'loading' : `${shownImage.width} × ${shownImage.height}`],
-                  ['File size', shownImage == null ? 'loading' : shownImage.bytes == null ? 'unknown' : fileSizeLabel(shownImage.bytes)],
+                  [
+                    'File size',
+                    shownVideo != null
+                      ? fileSizeLabel(shownVideo.bytes)
+                      : shownImage == null
+                        ? 'loading'
+                        : shownImage.bytes == null
+                          ? 'unknown'
+                          : fileSizeLabel(shownImage.bytes),
+                  ],
                   // The camera's JPEG is passed through untouched, so the encoder
                   // settings the other two are built with say nothing about it.
-                  ['Format', showing === 'embedded' ? 'JPEG' : (thumbs?.format.toUpperCase() ?? 'WEBP')],
+                  [
+                    'Format',
+                    shownVideo != null ? 'AV1 (MP4)' : showing === 'embedded' ? 'JPEG' : (thumbs?.format.toUpperCase() ?? 'WEBP'),
+                  ],
                   // The server config reports the SDR pipeline's output space; an
                   // HDR render leaves it for Rec.2020 primaries and a PQ transfer.
                   ['Colour space', hdr ? 'Rec.2020 PQ' : (thumbs?.color_space ?? 'sRGB')],
                   [
                     'Quality',
                     showing === 'embedded'
-                      ? 'as the camera wrote it'
+                      ? 'N/A'
                       : thumbs == null
                         ? 'unknown'
                         : `${thumbs.full.quality} (longest edge ${thumbs.full.size}px)`,
                   ],
-                  ['Path', shownFile?.path ?? 'unknown'],
+                  ['Path', shownVideo?.path ?? shownFile?.path ?? 'unknown'],
                 ]}
               />
 

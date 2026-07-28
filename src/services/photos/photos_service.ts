@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
 import { AppError } from '../../errors';
@@ -81,17 +81,19 @@ export class PhotosService {
     const hdr = library.preview_hdr;
     const stored = (rendition: Rendition) => {
       const file = getRenditionPath(library, photoId, rendition, hdr);
+      const twin = getRenditionPath(library, photoId, rendition, hdr, true);
+      const video = hdr ? statSync(twin, { throwIfNoEntry: false }) : undefined;
       return {
         path: file,
         built: existsSync(file),
         hdr,
-        video: hdr && existsSync(getRenditionPath(library, photoId, rendition, hdr, true)),
+        video: video == null ? null : { path: twin, bytes: video.size },
       };
     };
     return {
       // The camera's JPEG is the RAW's own bytes, so it is always available and
       // never built (§10.2).
-      embedded: { path: getOriginalPath(library, filePath), built: true, hdr: false, video: false },
+      embedded: { path: getOriginalPath(library, filePath), built: true, hdr: false, video: null },
       full: stored('full'),
       max: stored('max'),
     };

@@ -43,5 +43,5 @@ export async function viewMaxQuality(page: Page, rootPath: string): Promise<void
   });
   // The stage holds the previous frame until the new one has decoded, so the
   // panel naming the rendition is not yet the image carrying it.
-  await expect(page.locator('.stage__viewport img')).toHaveAttribute('src', /\/renditions\/max/, { timeout: 60_000 });
+  await expect(page.locator('.stage__viewport img.is-ready')).toHaveAttribute('src', /\/renditions\/max/, { timeout: 60_000 });
 }
