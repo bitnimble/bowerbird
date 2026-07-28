@@ -180,6 +180,30 @@ async function renderSource(image: DecodedImage, fitWidth: number): Promise<Plan
  * container differs, and two copies of a warp is two places for a sign to be
  * wrong in.
  */
+// Entries in the radius lookup the warp indexes by r^2. Radii are normalised to
+// the half-diagonal, so r^2 runs exactly 0..1 over the frame and the table needs
+// no range beyond that. 4096 buckets put the spline's own kinks several buckets
+// apart on a 16-knot curve, and the residual interpolation error is far below the
+// bilinear sampling that follows it.
+const RATIO_TABLE_LAST = 4096;
+
+/**
+ * `sampleRadius(r) / r` sampled over r^2, which is the form the warp wants: it has
+ * dx and dy, so it has r^2 for free, and turning that into a ratio via the table
+ * skips the sqrt, the spline walk and the division that a direct evaluation needs
+ * at every pixel.
+ */
+function ratioTable(knots: readonly number[], crop: number): Float64Array {
+  const table = new Float64Array(RATIO_TABLE_LAST + 1);
+  for (let slot = 0; slot <= RATIO_TABLE_LAST; slot += 1) {
+    const radius = Math.sqrt(slot / RATIO_TABLE_LAST);
+    // At the centre the ratio is the crop alone: the spline is anchored at zero
+    // there, and dividing a zero radius by itself is not defined.
+    table[slot] = radius === 0 ? crop : sampleRadius(knots, radius, crop) / radius;
+  }
+  return table;
+}
+
 export function warp<T extends Uint8Array | Uint16Array | Float64Array>(
   source: { width: number; height: number; data: T },
   width: number,
@@ -196,18 +220,30 @@ export function warp<T extends Uint8Array | Uint16Array | Float64Array>(
   const half = Math.hypot(width / 2, height / 2);
   const scaleX = source.width / width;
   const scaleY = source.height / height;
+  const ratios = ratioTable(knots, crop);
+  const centreX = source.width / 2;
+  const centreY = source.height / 2;
+  const stepX = half * scaleX;
+  const stepY = half * scaleY;
+  const edgeX = source.width - 1;
+  const edgeY = source.height - 1;
   for (let y = 0; y < height; y += 1) {
     const dy = (y - height / 2) / half;
+    const dy2 = dy * dy;
     for (let x = 0; x < width; x += 1) {
       const dx = (x - width / 2) / half;
-      const radius = Math.hypot(dx, dy);
-      // sampleRadius returns a radius; the direction is unchanged, so scale the
-      // components by the ratio rather than recomputing an angle.
-      const ratio = radius === 0 ? crop : sampleRadius(knots, radius, crop) / radius;
-      const px = source.width / 2 + dx * ratio * half * scaleX;
-      const py = source.height / 2 + dy * ratio * half * scaleY;
+      // Indexed by r^2, so the per-pixel work is a multiply and two loads: no
+      // sqrt, no walk along the spline, and no divide to turn a radius back into
+      // a ratio. Direction is unchanged by a radial model, so scaling the
+      // components by the ratio is the whole transform.
+      const t = (dx * dx + dy2) * RATIO_TABLE_LAST;
+      const slot = t < RATIO_TABLE_LAST ? t | 0 : RATIO_TABLE_LAST - 1;
+      const low = ratios[slot]!;
+      const ratio = low + (ratios[slot + 1]! - low) * (t - slot);
+      const px = centreX + dx * ratio * stepX;
+      const py = centreY + dy * ratio * stepY;
       const o = (y * width + x) * 3;
-      if (px < 0 || py < 0 || px >= source.width - 1 || py >= source.height - 1) {
+      if (px < 0 || py < 0 || px >= edgeX || py >= edgeY) {
         out[o] = 0;
         out[o + 1] = 0;
         out[o + 2] = 0;
@@ -416,6 +452,30 @@ function fitColour(pairs: Pairs, phase: Phase): ColourTransform {
   return { curves, matrix };
 }
 
+/**
+ * The curves and the matrix collapsed into nine 256-entry tables, one per
+ * (output channel, input channel) pair, so applying the transform to a pixel is
+ * nine lookups and six adds rather than three lookups, nine multiplies and six
+ * adds. Exact, not an approximation: the matrix is linear in each curve's output,
+ * so folding the coefficient into the table changes nothing.
+ *
+ * Worth building even for a single rendition - a 3840px frame is 9.8M pixels.
+ */
+function foldTransform(transform: ColourTransform): Float64Array[] {
+  const { curves, matrix } = transform;
+  const folded: Float64Array[] = [];
+  for (let out = 0; out < 3; out += 1) {
+    for (let channel = 0; channel < 3; channel += 1) {
+      const table = new Float64Array(256);
+      const coefficient = matrix[out]![channel]!;
+      const curve = curves[channel]!;
+      for (let level = 0; level < 256; level += 1) table[level] = coefficient * curve[level]!;
+      folded.push(table);
+    }
+  }
+  return folded;
+}
+
 export function applyColour(transform: ColourTransform, rgb: readonly number[]): [number, number, number] {
   const { curves, matrix } = transform;
   const r = curves[0][clamp8(Math.round(rgb[0]!))]!;
@@ -496,7 +556,10 @@ function score(pairs: Pairs, phase: Phase, transform: ColourTransform): number {
     const out2 = clamp8(Math.round(m[2]![0]! * r + m[2]![1]! * g + m[2]![2]! * b));
     const a = labFromLevels(out0, out1, out2);
     const t = labFromLevels(pairs.data[o + 3]!, pairs.data[o + 4]!, pairs.data[o + 5]!);
-    total += Math.hypot(a[0] - t[0], a[1] - t[1], a[2] - t[2]);
+    const dL = a[0] - t[0];
+    const da = a[1] - t[1];
+    const db = a[2] - t[2];
+    total += Math.sqrt(dL * dL + da * da + db * db);
     counted += 1;
   }
   return counted === 0 ? Number.POSITIVE_INFINITY : total / counted;
@@ -750,14 +813,26 @@ export async function applyMatchProfile(image: DecodedImage, profile: MatchProfi
   }
 
   const out = Buffer.allocUnsafe(data.length);
-  const { curves, matrix } = profile.colour;
+  // Hoisted out of the loop: reading these through profile.colour.matrix[o][c] per
+  // pixel is nine property chains nine million times.
+  const [rr, rg, rb, gr, gg, gb, br, bg, bb] = foldTransform(profile.colour) as [
+    Float64Array,
+    Float64Array,
+    Float64Array,
+    Float64Array,
+    Float64Array,
+    Float64Array,
+    Float64Array,
+    Float64Array,
+    Float64Array,
+  ];
   for (let i = 0; i < data.length; i += 3) {
-    const r = curves[0][data[i]!]!;
-    const g = curves[1][data[i + 1]!]!;
-    const b = curves[2][data[i + 2]!]!;
-    out[i] = clamp8(matrix[0]![0]! * r + matrix[0]![1]! * g + matrix[0]![2]! * b);
-    out[i + 1] = clamp8(matrix[1]![0]! * r + matrix[1]![1]! * g + matrix[1]![2]! * b);
-    out[i + 2] = clamp8(matrix[2]![0]! * r + matrix[2]![1]! * g + matrix[2]![2]! * b);
+    const r = data[i]!;
+    const g = data[i + 1]!;
+    const b = data[i + 2]!;
+    out[i] = clamp8(rr[r]! + rg[g]! + rb[b]!);
+    out[i + 1] = clamp8(gr[r]! + gg[g]! + gb[b]!);
+    out[i + 2] = clamp8(br[r]! + bg[g]! + bb[b]!);
   }
   return { width, height, channels: 3, depth: 8, data: out };
 }

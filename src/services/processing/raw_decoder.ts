@@ -24,6 +24,7 @@ const SYMBOLS = {
   libraw_set_no_auto_bright: { args: [FFIType.ptr, FFIType.i32], returns: FFIType.void },
   libraw_set_user_mul: { args: [FFIType.ptr, FFIType.i32, FFIType.f32], returns: FFIType.void },
   libraw_get_cam_mul: { args: [FFIType.ptr, FFIType.i32], returns: FFIType.f32 },
+  libraw_set_demosaic: { args: [FFIType.ptr, FFIType.i32], returns: FFIType.void },
   libraw_get_iwidth: { args: [FFIType.ptr], returns: FFIType.i32 },
   libraw_get_iheight: { args: [FFIType.ptr], returns: FFIType.i32 },
   libraw_get_imgother: { args: [FFIType.ptr], returns: FFIType.ptr },
@@ -71,6 +72,13 @@ export interface DecodedImage {
 // and are NOT the LIBRAW_COLORSPACE_* enum (that one describes what the camera
 // said its data was in).
 const OUTPUT_COLOR = { srgb: 1, rec2020: 8 } as const;
+
+// LibRaw's `user_qual`. The default is 3 (AHD); 2 is PPG, which on a 60MP frame
+// demosaics in 544ms against AHD's 849ms for a mean difference of 0.46 of an 8-bit
+// level - 0.18%, and every rendition is a downscale of at least 2.5x, so it is
+// gone before anything is looked at. Measured on the same frame, 0 (linear) is
+// slower than AHD rather than faster, and 1 (VNG) is 5.4s.
+const DEMOSAIC_PPG = 2;
 
 // What the pixels are in when the decode hands them back.
 //   'srgb'            display-referred, sRGB primaries and transfer. Everything
@@ -168,6 +176,7 @@ export function decodeRaw(filePath: string, depth: 8 | 16 = 8, space: OutputSpac
     // Read before unpack/process, which overwrite the size fields.
     const insets = rotateInsets(readCropInsets(proc), readFlip(proc));
     applyCameraWhiteBalance(L, proc);
+    L.libraw_set_demosaic(proc, DEMOSAIC_PPG);
     if (space === 'rec2020-linear') {
       L.libraw_set_output_color(proc, OUTPUT_COLOR.rec2020);
       // gamma[0] is the power and gamma[1] the toe slope; 1/1 is the identity
@@ -196,9 +205,12 @@ export function decodeRaw(filePath: string, depth: 8 | 16 = 8, space: OutputSpac
       const bits = head.getUint16(IMG.bits, true);
       const dataSize = head.getUint32(IMG.dataSize, true);
       if (colors !== 3 || bits !== depth) throw new Error(`unexpected image format: colors=${colors} bits=${bits}`);
-      // Copy out of LibRaw-owned memory before it is freed.
-      const data = Buffer.from(toArrayBuffer(image, IMG.data, dataSize).slice(0));
-      return cropRgb({ width, height, channels: 3, depth, data }, insets);
+      // A view over LibRaw's own buffer, valid only until clear_mem below. Copying
+      // and cropping happen in one pass out of it: a 60MP frame is ~190MB, and
+      // copying it whole and then copying the crop out of that spent ~250ms per
+      // decode moving bytes twice.
+      const source = new Uint8Array(toArrayBuffer(image, IMG.data, dataSize));
+      return copyCropped(source, width, height, depth, insets);
     } finally {
       L.libraw_dcraw_clear_mem(image);
     }
@@ -307,19 +319,33 @@ function rotateInsets(insets: Insets, flip: number): Insets {
   }
 }
 
-function cropRgb(image: DecodedImage, insets: Insets): DecodedImage {
-  const width = image.width - insets.left - insets.right;
-  const height = image.height - insets.top - insets.bottom;
-  if (width <= 0 || height <= 0 || (insets.left | insets.top | insets.right | insets.bottom) === 0) return image;
-
-  const pixel = 3 * (image.depth / 8);
-  const stride = image.width * pixel;
-  const out = Buffer.allocUnsafe(width * height * pixel);
-  for (let row = 0; row < height; row++) {
-    const from = (row + insets.top) * stride + insets.left * pixel;
-    image.data.copy(out, row * width * pixel, from, from + width * pixel);
+/**
+ * The decoded frame copied out of LibRaw's buffer, with any masked border removed
+ * on the way. One pass: `source` is a view over memory that is about to be freed,
+ * so it has to be copied regardless, and cropping during that copy is free.
+ */
+function copyCropped(
+  source: Uint8Array,
+  sourceWidth: number,
+  sourceHeight: number,
+  depth: 8 | 16,
+  insets: Insets,
+): DecodedImage {
+  const width = sourceWidth - insets.left - insets.right;
+  const height = sourceHeight - insets.top - insets.bottom;
+  const pixel = 3 * (depth / 8);
+  if (width <= 0 || height <= 0 || (insets.left | insets.top | insets.right | insets.bottom) === 0) {
+    return { width: sourceWidth, height: sourceHeight, channels: 3, depth, data: Buffer.from(source) };
   }
-  return { width, height, channels: 3, depth: image.depth, data: out };
+
+  const stride = sourceWidth * pixel;
+  const rowBytes = width * pixel;
+  const out = Buffer.allocUnsafe(width * height * pixel);
+  for (let row = 0; row < height; row += 1) {
+    const from = (row + insets.top) * stride + insets.left * pixel;
+    out.set(source.subarray(from, from + rowBytes), row * rowBytes);
+  }
+  return { width, height, channels: 3, depth, data: out };
 }
 
 /**
