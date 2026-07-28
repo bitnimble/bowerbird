@@ -48,27 +48,24 @@ fn avif_encoder() -> u32 {
     }
 }
 
-/// How much larger than the target the DCT is asked to leave the image.
+/// The largest 1/2, 1/4 or 1/8 DCT scale that still covers `target`.
 ///
-/// Not 1, which would be fastest. libjpeg's scaling and libvips' reduce are
-/// different filters, so how the work is split between them changes the result:
-/// letting the DCT go all the way to the target moved an 800px tile by up to
-/// deltaE 1.75 against decoding whole and reducing once, while leaving one factor
-/// of two for the reduce cuts that to 0.79 for 19% more time - 125ms against
-/// 105ms per file, where decoding whole was 458ms. Cheap insurance against a 4x
-/// speedup quietly restyling every thumbnail in the grid.
-const DCT_HEADROOM: usize = 2;
-
-/// The largest 1/2, 1/4 or 1/8 DCT scale that still leaves `target` covered, with
-/// `DCT_HEADROOM` to spare.
+/// libjpeg can only scale by these factors during the transform, so this gets as
+/// close to the target as those factors allow and a real reduce does the rest.
 ///
-/// libjpeg can only scale by these factors during the transform, so this gets
-/// close to the target and a real reduce does the rest.
+/// Going all the way rather than leaving the reduce a factor of two to work with
+/// is a deliberate quality trade. libjpeg's scaling and libvips' reduce are
+/// different filters, so shifting work between them moves the result: against
+/// decoding whole and reducing once, an 800px tile goes from deltaE 0.29 mean to
+/// 0.63, and its worst pixels from 7 to 24. That error is confined to fine detail
+/// where the two filters disagree - foliage, not sky - and at tile size it is not
+/// visible even under a 1:1 crop. Buys 105ms per file against 125ms, where
+/// decoding whole was 458ms.
 fn dct_shrink(longest: usize, target: usize) -> usize {
     if target == 0 {
         return 1;
     }
-    [8, 4, 2].into_iter().find(|shrink| longest / shrink >= target * DCT_HEADROOM).unwrap_or(1)
+    [8, 4, 2].into_iter().find(|shrink| longest / shrink >= target).unwrap_or(1)
 }
 
 pub fn init() {
@@ -494,10 +491,10 @@ mod tests {
         // Undershooting is the failure that matters: it would decode below the size
         // asked for and the reduce afterwards would be an upscale.
         for (longest, target, expected) in [
-            (9504, 800, 4),  // a 61MP body's full-resolution preview
-            (12800, 800, 8),
-            (1616, 800, 1),  // a small preview: /2 would leave no headroom
-            (3200, 800, 2),
+            (9504, 800, 8),  // a 61MP body's full-resolution preview
+            (6400, 800, 8),  // exactly the target at 1/8
+            (3200, 800, 4),  // 1/8 would undershoot by half
+            (1616, 800, 2),  // a small preview, one factor from the target
             (800, 800, 1),   // already the target
             (400, 800, 1),   // smaller than the target
         ] {

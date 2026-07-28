@@ -1071,7 +1071,11 @@ A shoot import is three different jobs with three different costs, measured over
 
 **Opening the RAW is not a time sink, so B and C need not share one.** The suspicion was that a fused pass would be needed to avoid opening each file twice, but extracting the embedded preview - `libraw_open_file` plus `unpack_thumb` - is **5ms of B's 124ms**. LibRaw reads headers lazily and the thumbnail is a few MB, so B never touches the sensor data C needs. They can be scheduled independently, which is the whole point.
 
-**A 61MP body embeds a full-resolution preview**, 9504x6336 and 5-14MB of JPEG, not the small thumbnail the name suggests - only the 24MP body in the corpus embeds something small (1080x1616). Decoding that whole to make an 800px tile was most of stage B: 458ms per file, of which 230-540ms was the JPEG decode and, on portrait frames, half of *that* was `autorot` shuffling 60MP. Shrinking during the decode instead (`shrink=` on the loader, then a reduce for the rest) takes B to 124ms.
+**A 61MP body embeds a full-resolution preview**, 9504x6336 and 5-14MB of JPEG, not the small thumbnail the name suggests - only the 24MP body in the corpus embeds something small (1080x1616). Decoding that whole to make an 800px tile was most of stage B: 458ms per file, of which 230-540ms was the JPEG decode and, on portrait frames, half of *that* was `autorot` shuffling 60MP. Shrinking during the decode instead (`shrink=` on the loader, then a reduce for the rest) takes B to 105ms.
+
+**The DCT is asked to go all the way to the target**, rather than stopping a factor of two short and leaving the reduce something to work with. It is a quality trade, because libjpeg's scaling and libvips' reduce are different filters: measured against decoding whole and reducing once, an 800px tile moves from deltaE 0.29 mean to 0.63, and its worst pixels from 7 to 24. The error is confined to fine detail where the two filters disagree - foliage, not sky - and at tile size it is invisible even under a 1:1 crop, which is the whole argument for taking it. Worth 105ms per file against 125ms.
+
+The saving is smaller than the pixel count suggests - a quarter the output pixels for a fifth less time - because the entropy decode is proportional to the *file*, not the output. Huffman-decoding every coefficient block happens either way; only the inverse DCT, the chroma upsample and the colour convert get cheaper.
 
 #### Where the time actually goes
 
