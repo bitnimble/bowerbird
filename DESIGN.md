@@ -183,7 +183,7 @@ CREATE TABLE libraries (
 ```
 
 - `root_path` — absolute path to the library root folder on disk.
-- `data_path` — absolute path to the data directory for thumbnails and bin. If NULL, defaults to `<root_path>/.bowerbird/`.
+- `data_path`, absolute path to the data directory for generated files. If NULL, defaults to `<root_path>/.bowerbird/`.
 - `ordering` — default ordering for photo listings in this library.
 
 ### 4.2 `photos` table
@@ -502,6 +502,8 @@ export const AlbumSchema = z.object({
 
 Each library has a **data directory** for generated files. By default, this is `<library_root>/.bowerbird/`. It can be overridden per-library via the `data_path` column.
 
+**Everything under it is disposable, and nothing under it is an original.** Removing a library removes the whole tree (§10.6), and a user is free to delete `.bowerbird/` by hand to reclaim the space; both must cost only renders. That is why the Bin lives at the library root rather than in here (§12.3), why `POST /api/libraries` refuses a `root_path` inside an existing library's data directory (and a `data_path` that would contain an existing root), and why the removal itself refuses to run while any RAW is still inside.
+
 ### Structure
 
 ```
@@ -515,9 +517,7 @@ Each library has a **data directory** for generated files. By default, this is `
 │   ├── max-hdr/
 │   └── max-hdr-video/
 │       └── <photo_uuid>.avif   # every rendition is named by photo id
-├── hdr/                # the HDR check page's renditions (§10.7)
-└── bin/                # Deleted original RAW files
-    └── ...
+└── hdr/                # the HDR check page's renditions (§10.7)
 ```
 
 ### Path Resolution
@@ -527,16 +527,9 @@ function getDataPath(library: Library): string {
   return library.data_path ?? path.join(library.root_path, '.bowerbird');
 }
 
-function getSmallThumbnailPath(library: Library, photoId: string): string {
-  return path.join(getDataPath(library), 'thumbnails', 'small', `${photoId}.avif`);
-}
-
-function getFullThumbnailPath(library: Library, photoId: string): string {
-  return path.join(getDataPath(library), 'thumbnails', 'full', `${photoId}.avif`);
-}
-
+// Originals, so outside the data directory (§12.3).
 function getBinPath(library: Library): string {
-  return path.join(getDataPath(library), 'bin');
+  return path.join(library.root_path, 'Bin');
 }
 ```
 
@@ -575,7 +568,7 @@ function isSupportedFile(filename: string): boolean {
 
 | Method | Description |
 |---|---|
-| `create(request)` | Validates the root path exists on disk, creates the data directory structure, inserts a library record, returns the library. |
+| `create(request)` | Validates the root path exists on disk and overlaps no existing library's data directory in either direction (§6), creates the data directory, inserts a library record, returns the library. |
 | `get(libraryId)` | Returns a single library by ID. |
 | `list()` | Returns all libraries. |
 | `delete(libraryId)` | Deletes a library record. Does not delete files on disk. |
@@ -1157,8 +1150,21 @@ Generated files are named `<photoId>.<ext>`, and photo ids are minted per insert
 
 Two things close that off:
 
-- **Removing a library removes its data directory.** Re-adding the same folder can never reuse the thumbnails (new ids), so keeping them is dead weight. The RAW files are not ours and are left alone. `data_path` is user-supplied, so a library configured to keep its data alongside or above the photographs is skipped with a warning rather than having that directory removed: losing thumbnails is recoverable, losing originals is not.
-- **A scheduled sweep** (`PRUNE_EVERY_DAYS`, default 7, 0 disables) walks each generated directory and deletes any file whose id has no row. The directories and the extension each is supposed to hold both come from the path helpers that write the files, so changing an output format cannot leave the sweep looking in the wrong place. A file whose extension no longer matches goes too, even when its photo is alive: a format change writes the new render beside the old one rather than over it, which the PNG-to-JXL switch made real at ~100 MB per photo ever opened. The Bin is excluded (RAWs named by filename) and so is the sync lock. Ids are checked against the whole `photos` table, not one library's, because the id space is global and two libraries may share a data directory. Soft-deleted rows count as live, since their thumbnails are what make the Bin browsable (§12.1).
+- **Removing a library removes its data directory.** Re-adding the same folder can never reuse the renditions (new ids), so keeping them is dead weight. The RAW files are not ours and are left alone: the Bin is outside the data directory (§12.3), and `data_path` is user-supplied, so a library configured to keep its data alongside or above the photographs is skipped with a warning rather than having that directory removed. Anything that still looks like an original under there - a `<data_path>/bin` from the layout that predates the Bin's move - is carried out into the library's Bin first, and the removal refuses outright if any is left behind. Losing renditions is recoverable; losing originals is not.
+- **A scheduled sweep** (`PRUNE_EVERY_DAYS`, default 7, 0 disables) walks each generated directory and deletes any file whose id has no row. The directories and the extension each is supposed to hold both come from the path helpers that write the files, so changing an output format cannot leave the sweep looking in the wrong place. A file whose extension no longer matches goes too, even when its photo is alive: a format change writes the new render beside the old one rather than over it, which the PNG-to-JXL switch made real at ~100 MB per photo ever opened. Only `renditions/` and `hdr/` are swept, so the sync lock is untouched (and the Bin is not in the data directory at all). Ids are checked against the whole `photos` table, not one library's, because the id space is global and two libraries may share a data directory. Soft-deleted rows count as live, since their renditions are what make the Bin browsable (§12.1).
+
+### 10.6.1 One place that deletes
+
+Every removal from disk goes through `src/utils/deletions.ts`, and a `no-restricted-imports` lint rule (`.oxlintrc.json`) bans `rm`/`unlink`/`rmdir` and their sync forms from `node:fs` everywhere else, tests aside. Renditions are cheap to lose and RAWs are not, and the two sit under directory paths that a refactor can make agree by accident, so the check that tells them apart is worth having in exactly one place rather than repeated at each call site.
+
+Each entry point states what it will not do:
+
+| | Guard |
+|---|---|
+| `deleteGeneratedFile(dataPath, target)` | Target must resolve under `<dataPath>/renditions` or `<dataPath>/hdr`, and must not carry a supported RAW extension. `dataPath` comes from the caller's own library, so a path from elsewhere cannot satisfy it. |
+| `deleteDataDirectory(dataPath)` | Refuses while any supported file exists anywhere beneath, symlinks excluded. |
+| `deleteSyncLockSync(lockPath)` | Basename must be `.bowerbird-sync.lock`. |
+| `unlinkMovedFile(from, movedTo)` | Removes the source half of a move only once the destination exists, so a failed link or copy can never leave the move having consumed the file. |
 
 It runs on an interval rather than at startup: a restart is no evidence anything was orphaned, and in development that would sweep on every reload.
 
@@ -1352,7 +1358,7 @@ For each photo:
 2. **Move RAW file to Bin:**
    - Determine the bin path:
      - If the photo is in a shoot: `<shoot_folder>/Bin/<original_filename>`
-     - Otherwise: `<data_path>/bin/<original_filename>`
+     - Otherwise: `<library_root>/Bin/<original_filename>`
    - If a file with the same name already exists in the Bin, append a numeric suffix (e.g. `IMG_0001_1.ARW`, `IMG_0001_2.ARW`).
    - Move (rename) the file. Do **not** copy-and-delete.
 
@@ -1372,7 +1378,9 @@ For each photo:
 
 ### 12.3 Bin Folder
 
-The Bin folder for shoots lives at `<shoot_folder>/Bin/` (inside the shoot folder itself). The Bin folder for non-shoot photos lives at `<data_path>/bin/`.
+The Bin folder for shoots lives at `<shoot_folder>/Bin/` (inside the shoot folder itself). The Bin folder for non-shoot photos lives at `<library_root>/Bin/`.
+
+**Never under `data_path`.** A Bin holds originals, and the data directory is the one tree the system deletes wholesale (§6, §10.6); a bin inside it would mean removing a library, or clearing `.bowerbird/` by hand, silently destroying every photograph the user had binned. Both bins therefore sit beside the photographs they came from, where the only thing that can remove them is the user.
 
 The sync scanner must skip `Bin/` directories inside shoot folders to avoid re-importing deleted files.
 

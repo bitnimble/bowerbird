@@ -112,6 +112,25 @@ test('restoring onto an occupied path suffixes rather than overwriting a live ph
   expect(existsSync(path.join(root, 'Trip', 'a_1.arw'))).toBe(true);
 });
 
+// The data directory is disposable, so a photo outside every shoot bins to the
+// library root rather than under `.bowerbird` (DESIGN §12.3).
+test('a photo in no shoot bins to <root>/Bin, never into the data directory', async () => {
+  const LOOSE = '00000000-0000-4000-8000-0000000000be';
+  writeFileSync(path.join(root, 'loose.arw'), 'RAW');
+  db.query(
+    `INSERT INTO photos (id, library_id, shoot_id, file_path, width, height, date_added, needs_processing)
+     VALUES (?, ?, NULL, 'loose.arw', 100, 100, '2026-01-01T00:00:00.000Z', 0)`,
+  ).run(LOOSE, LIB);
+
+  await service.delete([LOOSE]);
+
+  expect(existsSync(path.join(root, 'Bin', 'loose.arw'))).toBe(true);
+  expect(existsSync(path.join(root, '.bowerbird', 'bin', 'loose.arw'))).toBe(false);
+
+  await service.restore([LOOSE]);
+  expect(existsSync(path.join(root, 'loose.arw'))).toBe(true);
+});
+
 test('restoring a photo that is not deleted is a no-op', async () => {
   await service.restore([PHOTO]);
   expect(photoRow().file_path).toBe('Trip/a.arw');

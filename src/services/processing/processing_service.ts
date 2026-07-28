@@ -1,8 +1,8 @@
 import { existsSync } from 'node:fs';
-import { mkdir, rm } from 'node:fs/promises';
 import path from 'node:path';
 import type { Config } from '../../config';
 import type { Library } from '../../schemas/libraries';
+import { deleteGeneratedFile } from '../../utils/deletions';
 import { dataPathFor, getDataPath, renditionPathFor } from '../../utils/paths';
 import type { PendingPhoto, PhotosRepository } from '../photos/photos_repository';
 import type { HdrMedium, HdrVariant } from './hdr_media';
@@ -180,7 +180,7 @@ export class ProcessingService {
     for (const { dir, extension } of renditionDirs()) {
       const file = path.join(job.dataPath, 'renditions', dir, `${job.photoId}${extension}`);
       if (fresh.has(file)) continue;
-      void rm(file, { force: true }).catch(() => {});
+      void deleteGeneratedFile(job.dataPath, file).catch(() => {});
     }
   }
 
@@ -274,8 +274,10 @@ export class ProcessingService {
         worker.onerror = (event: ErrorEvent) => {
           if (current != null) {
             for (const target of current.targets) {
-              void rm(target.outputPath, { force: true }).catch(() => {});
-              if (target.videoOutputPath != null) void rm(target.videoOutputPath, { force: true }).catch(() => {});
+              void deleteGeneratedFile(current.dataPath, target.outputPath).catch(() => {});
+              if (target.videoOutputPath != null) {
+                void deleteGeneratedFile(current.dataPath, target.videoOutputPath).catch(() => {});
+              }
             }
             this.applyResult({ photoId: current.photoId, success: false, error: `worker crashed: ${event.message}` }, current);
           }

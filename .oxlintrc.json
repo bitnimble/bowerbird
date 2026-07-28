@@ -1,0 +1,43 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "ignorePatterns": ["node_modules", "web/dist", "native", ".scratch-*.ts"],
+  "rules": {
+    "no-restricted-imports": [
+      "error",
+      {
+        "paths": [
+          {
+            "name": "node:fs",
+            "importNames": ["rm", "rmSync", "rmdir", "rmdirSync", "unlink", "unlinkSync"],
+            "message": "Deleting from disk goes through src/utils/deletions.ts, which proves the target is not an original first."
+          },
+          {
+            "name": "node:fs/promises",
+            "importNames": ["rm", "rmdir", "unlink"],
+            "message": "Deleting from disk goes through src/utils/deletions.ts, which proves the target is not an original first."
+          },
+          {
+            "name": "fs",
+            "importNames": ["rm", "rmSync", "rmdir", "rmdirSync", "unlink", "unlinkSync"],
+            "message": "Deleting from disk goes through src/utils/deletions.ts, which proves the target is not an original first."
+          },
+          {
+            "name": "fs/promises",
+            "importNames": ["rm", "rmdir", "unlink"],
+            "message": "Deleting from disk goes through src/utils/deletions.ts, which proves the target is not an original first."
+          }
+        ]
+      }
+    ]
+  },
+  "overrides": [
+    {
+      "files": ["src/utils/deletions.ts"],
+      "rules": { "no-restricted-imports": "off" }
+    },
+    {
+      "files": ["**/tests/**", "**/*.test.ts", "**/*.spec.ts", "test/**", "web/e2e/**"],
+      "rules": { "no-restricted-imports": "off" }
+    }
+  ]
+}

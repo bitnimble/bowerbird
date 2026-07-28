@@ -1,11 +1,11 @@
 import { existsSync, statSync } from 'node:fs';
-import { rm } from 'node:fs/promises';
 import path from 'node:path';
 import { AppError } from '../../errors';
 import type { Pagination } from '../../schemas/common';
 import type { Library } from '../../schemas/libraries';
 import type { PhotoDetail, PhotoListQuery, PhotoListResponse, UpdatePhotoRequest } from '../../schemas/photos';
-import { getBinPath, getHdrPath, getOriginalPath, getRenditionPath, toLibraryRelative } from '../../utils/paths';
+import { deleteGeneratedFile } from '../../utils/deletions';
+import { getBinPath, getDataPath, getHdrPath, getOriginalPath, getRenditionPath, toLibraryRelative } from '../../utils/paths';
 import { ensureDir, moveIntoDir } from '../../utils/files';
 import { HDR_MEDIA, HDR_VARIANTS } from '../processing/hdr_media';
 import type { Rendition } from '../processing/renditions';
@@ -219,8 +219,9 @@ export class PhotosService {
     // hand back exactly the copy being rejected. Its HDR video twin goes too, or
     // Firefox would keep the old frame while every other browser got the new one.
     if (force) {
-      await rm(output, { force: true });
-      await rm(getRenditionPath(library, photo.id, rendition, hdr, true), { force: true });
+      const dataPath = getDataPath(library);
+      await deleteGeneratedFile(dataPath, output);
+      await deleteGeneratedFile(dataPath, getRenditionPath(library, photo.id, rendition, hdr, true));
     } else if (existsSync(output)) {
       return;
     }
@@ -354,7 +355,7 @@ export class PhotosService {
     }
   }
 
-  // Bin lives inside the shoot folder for shoot photos, else the library data dir.
+  // Bin lives inside the shoot folder for shoot photos, else at the library root.
   private binDir(library: Library, shootId: string | null): string {
     if (shootId) {
       const shoot = this.shoots.getById(shootId);

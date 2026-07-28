@@ -3,7 +3,8 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node
 import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { isSupportedFile, listSupportedFiles, moveIntoDir } from '../files';
+import { moveIntoDir } from '../files';
+import { isSupportedFile, listSupportedFiles } from '../scan';
 
 function withRoot(run: (root: string) => Promise<void> | void) {
   return async () => {

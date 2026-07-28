@@ -1,6 +1,7 @@
-import { readdir, stat, unlink } from 'node:fs/promises';
+import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import type { Library } from '../../schemas/libraries';
+import { deleteGeneratedFile } from '../../utils/deletions';
 import { getDataPath, getHdrPath } from '../../utils/paths';
 import { HDR_MEDIA, HDR_VARIANTS } from '../processing/hdr_media';
 import { renditionDirs } from '../processing/renditions';
@@ -52,6 +53,7 @@ export class PruneService {
     let bytes = 0;
 
     for (const library of this.libraries.list()) {
+      const dataPath = getDataPath(library);
       for (const { dir, ext } of generatedDirs(library)) {
         let files: string[];
         try {
@@ -68,7 +70,7 @@ export class PruneService {
           const target = path.join(dir, file);
           try {
             bytes += (await stat(target)).size;
-            await unlink(target);
+            await deleteGeneratedFile(dataPath, target);
             removed++;
           } catch (err) {
             // A concurrent processing run may have just replaced it. Skip and

@@ -171,7 +171,7 @@ describe('PhotosService.delete', () => {
       await service.delete(['p1']);
 
       expect(existsSync(path.join(root, 'a.arw'))).toBe(false);
-      expect(existsSync(path.join(dataDir, 'bin', 'a.arw'))).toBe(true);
+      expect(existsSync(path.join(root, 'Bin', 'a.arw'))).toBe(true);
       // Kept, not deleted: the Bin is browsable and restorable only if the
       // binned photos can still be seen.
       expect(existsSync(path.join(dataDir, 'thumbnails', 'small', 'p1.webp'))).toBe(true);
@@ -206,7 +206,7 @@ describe('PhotosService.delete', () => {
 
       // File is back at its original path, not orphaned in the (unscanned) Bin.
       expect(existsSync(path.join(root, 'a.arw'))).toBe(true);
-      expect(existsSync(path.join(root, '.bowerbird', 'bin', 'a.arw'))).toBe(false);
+      expect(existsSync(path.join(root, 'Bin', 'a.arw'))).toBe(false);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

@@ -4,7 +4,7 @@ import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { AppError } from '../../errors';
 import type { Library, LibrarySyncStatus } from '../../schemas/libraries';
-import { isSupportedFile, listSupportedFiles, type ScannedFile } from '../../utils/files';
+import { isSupportedFile, listSupportedFiles, type ScannedFile } from '../../utils/scan';
 import { computeFileHash } from '../../utils/hash';
 import { getDataPath } from '../../utils/paths';
 import { mostSpecificShoot, shootContains } from '../../utils/shoots';

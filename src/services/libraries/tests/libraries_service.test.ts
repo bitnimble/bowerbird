@@ -1,5 +1,5 @@
 import { describe, it, expect, jest } from 'bun:test';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { AppError } from '../../../errors';
@@ -81,7 +81,7 @@ describe('LibrariesService.create', () => {
     }
   });
 
-  it('inserts and creates the data directory structure on the happy path', async () => {
+  it('inserts and creates the data directory on the happy path', async () => {
     const root = mkdtempSync(path.join(tmpdir(), 'bb-'));
     const insert = jest.fn();
     try {
@@ -92,9 +92,52 @@ describe('LibrariesService.create', () => {
       expect(library.ordering).toBe('added_asc');
       expect(library.id).toMatch(/^[0-9a-f-]{36}$/);
       expect(insert).toHaveBeenCalledWith(library);
-      expect(existsSync(path.join(root, '.bowerbird', 'thumbnails', 'small'))).toBe(true);
-      expect(existsSync(path.join(root, '.bowerbird', 'thumbnails', 'full'))).toBe(true);
-      expect(existsSync(path.join(root, '.bowerbird', 'bin'))).toBe(true);
+      expect(existsSync(path.join(root, '.bowerbird'))).toBe(true);
+      // The Bin holds originals, so it is never made under the data directory.
+      expect(existsSync(path.join(root, '.bowerbird', 'bin'))).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // Removing a library deletes its whole data directory, so an overlap in either
+  // direction would put one library's photographs inside another's disposable tree.
+  it('refuses a root inside another library data directory, and a data_path holding another root', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'bb-'));
+    try {
+      const existing: Library = { ...sample, root_path: path.join(root, 'other'), data_path: path.join(root, 'shared') };
+      const service = new LibrariesService(mockRepo({ list: jest.fn(() => [existing]) }));
+
+      mkdirSync(path.join(root, 'shared', 'nested'), { recursive: true });
+      await expect(service.create({ root_path: path.join(root, 'shared', 'nested'), ordering: 'added_asc' })).rejects.toThrow(
+        /inside the data directory of library/,
+      );
+
+      mkdirSync(path.join(root, 'other'), { recursive: true });
+      await expect(
+        service.create({ root_path: path.join(root, 'other'), data_path: root, ordering: 'added_asc' }),
+      ).rejects.toThrow(/would contain the root of library/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('LibrariesService.delete, on disk', () => {
+  it('carries originals out of the data directory into the Bin before removing it', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'bb-'));
+    try {
+      const library: Library = { ...sample, root_path: root };
+      mkdirSync(path.join(root, '.bowerbird', 'bin'), { recursive: true }); // the pre-move layout
+      mkdirSync(path.join(root, '.bowerbird', 'renditions', 'grid'), { recursive: true });
+      writeFileSync(path.join(root, '.bowerbird', 'bin', 'a.arw'), 'raw');
+      writeFileSync(path.join(root, '.bowerbird', 'renditions', 'grid', 'p1.avif'), '');
+
+      const service = new LibrariesService(mockRepo({ getById: jest.fn(() => library), delete: jest.fn(() => true) }));
+      await service.delete(library.id);
+
+      expect(existsSync(path.join(root, '.bowerbird'))).toBe(false);
+      expect(readFileSync(path.join(root, 'Bin', 'a.arw'), 'utf8')).toBe('raw');
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

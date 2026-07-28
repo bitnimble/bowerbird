@@ -1,8 +1,7 @@
-import { closeSync, existsSync, openSync, readFileSync, unlinkSync, writeSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readFileSync, writeSync } from 'node:fs';
 import path from 'node:path';
 import { AppError } from '../../errors';
-
-const LOCK_NAME = '.bowerbird-sync.lock';
+import { deleteSyncLockSync, SYNC_LOCK_NAME } from '../../utils/deletions';
 
 function pidAlive(pid: number): boolean {
   try {
@@ -29,7 +28,7 @@ function ownerPid(lockPath: string): number | null {
 // Acquires the per-library sync lock (file at the library root). Reclaims a stale
 // lock whose owner PID is dead; otherwise throws SYNC_IN_PROGRESS. See DESIGN §9.7.
 export function acquireSyncLock(rootPath: string): string {
-  const lockPath = path.join(rootPath, LOCK_NAME);
+  const lockPath = path.join(rootPath, SYNC_LOCK_NAME);
 
   if (existsSync(lockPath)) {
     const pid = ownerPid(lockPath);
@@ -37,7 +36,7 @@ export function acquireSyncLock(rootPath: string): string {
       throw new AppError('SYNC_IN_PROGRESS', `a sync is already running for this library (pid ${pid})`);
     }
     try {
-      unlinkSync(lockPath); // stale
+      deleteSyncLockSync(lockPath); // stale
     } catch (err) {
       // A racer may have reclaimed it first; that's fine, openSync('wx') below
       // settles who wins. Any other error is real.
@@ -65,7 +64,7 @@ export function acquireSyncLock(rootPath: string): string {
 
 export function releaseSyncLock(lockPath: string): void {
   try {
-    unlinkSync(lockPath);
+    deleteSyncLockSync(lockPath);
   } catch {
     // already gone
   }

@@ -22,7 +22,7 @@ services:
     volumes:
       # Your photo library. Create libraries via the API with a root_path under
       # /photos (e.g. {"root_path": "/photos"}). Mounted read-write: sync moves
-      # files, and thumbnails/bin live in <root>/.bowerbird. The host directory
+      # files, renditions live in <root>/.bowerbird and the Bin in <root>/Bin. The host directory
       # must be writable by the container user (uid 1000).
       - "${PHOTOS_DIR:-./photos}:/photos"
       - bowerbird-db:/data

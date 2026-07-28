@@ -1,12 +1,13 @@
 import { existsSync, statSync } from 'node:fs';
-import { rm } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { AppError } from '../../errors';
 import { isUniqueViolation } from '../../db/constraints';
 import type { CreateLibraryRequest, Library, UpdateLibraryRequest } from '../../schemas/libraries';
-import { ensureDir } from '../../utils/files';
-import { getDataPath } from '../../utils/paths';
+import { deleteDataDirectory } from '../../utils/deletions';
+import { ensureDir, moveIntoDir } from '../../utils/files';
+import { containsPath, dataPathFor, getBinPath, getDataPath } from '../../utils/paths';
+import { findOriginalsAnywhere } from '../../utils/scan';
 import type { LibrariesRepository } from './libraries_repository';
 
 export interface LibraryLifecycleListener {
@@ -14,24 +15,35 @@ export interface LibraryLifecycleListener {
   onLibraryDeleted(libraryId: string): void;
 }
 
-// Removing a library takes its generated files with it: thumbnails are keyed by
+// Removing a library takes its generated files with it: renditions are keyed by
 // photo id, and ids are minted per insert, so re-adding the same folder can
 // never reuse them. Left behind they are dead weight nothing will ever claim.
 //
-// The RAW files are not ours to delete, and `data_path` is user-supplied, so a
-// library configured to keep its data alongside (or above) the photographs must
-// not have that directory removed. Losing the thumbnails is recoverable; losing
-// the originals is not.
+// Nothing under a data directory is supposed to be an original - the Bin lives
+// at the library root for exactly this reason (§12.3). Before an older layout's
+// `<data_path>/bin` (or a `data_path` aimed at the user's photographs) is swept
+// away with the rest, anything that IS an original is carried out to the Bin,
+// where the sweep cannot reach it. `deleteDataDirectory` refuses the removal if
+// that rescue left anything behind, so an unreadable stray costs the renditions
+// rather than the photograph.
 async function removeDataDirectory(library: Library): Promise<void> {
-  const dataPath = path.resolve(getDataPath(library));
-  const rootPath = path.resolve(library.root_path);
-  if (dataPath === rootPath || rootPath.startsWith(`${dataPath}${path.sep}`)) {
+  const dataPath = getDataPath(library);
+  if (containsPath(dataPath, library.root_path)) {
     console.warn(`not removing data directory for ${library.id}: ${dataPath} contains the library root`);
     return;
   }
-  await rm(dataPath, { recursive: true, force: true }).catch((err: Error) =>
-    console.error(`failed to remove data directory ${dataPath}: ${err.message}`),
-  );
+  try {
+    const strays = await findOriginalsAnywhere(dataPath);
+    if (strays.length > 0) {
+      const bin = getBinPath(library);
+      await ensureDir(bin);
+      for (const stray of strays) await moveIntoDir(stray, bin, path.basename(stray));
+      console.warn(`moved ${strays.length} original file(s) out of ${dataPath} into ${bin} before removing it`);
+    }
+    await deleteDataDirectory(dataPath);
+  } catch (err) {
+    console.error(`failed to remove data directory ${dataPath}: ${(err as Error).message}`);
+  }
 }
 
 export class LibrariesService {
@@ -50,6 +62,7 @@ export class LibrariesService {
     if (this.repo.getByRootPath(request.root_path)) {
       throw new AppError('CONFLICT', `library root already registered: ${request.root_path}`);
     }
+    this.assertNoDataDirectoryOverlap(request.root_path, request.data_path ?? null);
 
     const library: Library = {
       id: randomUUID(),
@@ -65,10 +78,7 @@ export class LibrariesService {
       photo_count: 0,
     };
 
-    const dataPath = getDataPath(library);
-    await ensureDir(path.join(dataPath, 'thumbnails', 'small'));
-    await ensureDir(path.join(dataPath, 'thumbnails', 'full'));
-    await ensureDir(path.join(dataPath, 'bin'));
+    await ensureDir(getDataPath(library));
 
     try {
       this.repo.insert(library);
@@ -80,6 +90,23 @@ export class LibrariesService {
     }
     for (const listener of this.listeners) listener.onLibraryCreated(library);
     return library;
+  }
+
+  // A data directory is disposable by design: removing its library deletes the
+  // whole tree. That is only safe while no library's photographs live inside
+  // another's, so both directions are refused here - a root under someone's data
+  // directory, and a data directory that would swallow someone's root.
+  private assertNoDataDirectoryOverlap(rootPath: string, dataPath: string | null): void {
+    const mine = dataPathFor(rootPath, dataPath);
+    for (const other of this.repo.list()) {
+      const theirs = getDataPath(other);
+      if (containsPath(theirs, rootPath)) {
+        throw new AppError('VALIDATION_ERROR', `root_path is inside the data directory of library ${other.id}: ${theirs}`);
+      }
+      if (containsPath(mine, other.root_path)) {
+        throw new AppError('VALIDATION_ERROR', `data_path would contain the root of library ${other.id}: ${other.root_path}`);
+      }
+    }
   }
 
   get(libraryId: string): Library {

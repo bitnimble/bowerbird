@@ -6,6 +6,7 @@
   "scripts": {
     "start": "bun run src/index.ts",
     "dev": "bun --watch run src/index.ts",
+    "lint": "oxlint",
     "test": "bun test src",
     "test:integration": "bun test test/integration",
     "test:native": "cargo test --release --manifest-path native/rawshim/Cargo.toml",
@@ -19,6 +20,7 @@
   "devDependencies": {
     "@types/bun": "^1.2.0",
     "@types/node": "^22.10.0",
+    "oxlint": "^1.76.0",
     "typescript": "^5.7.2"
   }
 }
