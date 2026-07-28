@@ -867,7 +867,19 @@ These were three trees under three names - `thumbnails/`, `previews/` and `lossl
 
 Two encoder settings were measured rather than inherited, and both defaults were wrong:
 
-- **`effort` is the expensive knob, not quality.** libvips defaults to 4, which is 13.6s for a 3840px frame against 0.6s at effort 0, for a file only ~15% smaller. `THUMBNAIL_EFFORT` is 0.
+- **`effort` buys essentially nothing, and costs everything.** libvips defaults to 4. Measured on a 3840px frame at Q88, with `Q` fixed the file size does not move - effort searches harder for the same quantiser, so what it can buy is quality, and it barely does:
+
+  | effort | ms | bytes | PSNR |
+  |---|---|---|---|
+  | 0 | 509 | 5.666MB | 40.13 |
+  | 1 | 545 | 5.685MB | 40.15 |
+  | 2 | 951 | 5.615MB | 40.16 |
+  | 4 | 5318 | 5.646MB | 40.59 |
+  | 9 | 132601 | 5.713MB | - |
+
+  Effort 4 is 10x the time for +0.46dB at the same size; effort 9 is 260x the time for a file 0.8% *larger*. On the 800px grid tile it is worse still, 15ms to 1626ms for +0.33dB and a bigger file. `THUMBNAIL_EFFORT` is 0.
+
+  This previously claimed effort 4 was 13.6s against 0.6s "for a file only ~15% smaller". The time ratio was roughly right; the 15% was not - the file is not smaller at all. Worth correcting because it framed effort as a size/speed trade with a real size on one side, when at fixed `Q` there is nothing on that side.
 - **AVIF quality is not WebP's scale.** Carrying the old 90 across would have produced 2551 kB thumbnails, 2.5x larger than what they replace. q80 is where shadow detail stops visibly degrading on real frames; q60 and q70 lose it. Quality is nearly free once effort is 0 (596ms at q60 against 898ms at q85), so this is chosen on appearance, not cost.
 
 **Where the pixels come from is per library**, not per server: `preview_source` (`embedded` or `render`), `preview_hdr` and `preview_hdr_video` on the `libraries` row. One catalogue may be scanned JPEGs where the camera's rendering is the point and another RAWs worth demosaicing. `embedded` is the default because it needs no demosaic. Changing either is deliberately **not retroactive**; it decides what gets built next, and rebuilding a catalogue is an explicit action.
@@ -1081,6 +1093,10 @@ So the reachable target is the grade (19% of the CPU budget), plus a demosaic th
 | 95 | 602 | 9.66MB | 44.66 | 3422 | 10.15MB | 45.45 |
 
 rav1e scores better at every Q, which means nothing on its own, because it also spends more bits at every Q. Compared at matched *size* - interpolating rav1e onto libaom's 5.67MB - it lands at ~39.9 PSNR against libaom's 40.13, so the rate-distortion curves are the same within measurement error while libaom is **5-6x faster**. libaom stays.
+
+**rav1e is not slow for want of configuration.** The obvious suspects were checked. The `effort` mapping is not inverted - effort 0 is the fastest for both encoders, so libvips' polarity survives the trip through libheif into rav1e's `speed`. And it is not a missing thread count: measured as CPU time over wall time, rav1e uses *more* cores than libaom (3.7-3.9 against 2.2-3.6) and is still 5x slower, so it is doing more work per output bit rather than doing it on fewer cores. There is also nothing left to set - libvips' `heifsave` exposes `Q`, `bitdepth`, `lossless`, `compression`, `effort`, `subsample-mode`, `encoder` and `keep`, and no threads, tiles or jobs parameter, so how a plugin parallelises is entirely libheif's business.
+
+Neither encoder saturates the machine, which sounds like an opportunity and is not. An import runs a pool and already saturates the CPU at ~2.4 img/s (above), so per-encode threading would add contention rather than throughput. It would only help the one-photo-at-a-time paths, the on-demand `max` rendition and the lossless export, where 2.2 of 12 threads is genuine idle capacity.
 
 **SVT-AV1 writes a 201-byte broken file and reports success.** §10.7 records that it implements AV1 Profile 0 only and converts 4:4:4 down silently; through libheif 1.17.6 it does not even manage that - `vips_heifsave` returns 0, and what lands on disk has no valid stream (`missing mandatory atoms, broken header`). It is unusable here, and unusable in a way that no error surfaces.
 
@@ -1537,7 +1553,7 @@ The server is configured via environment variables:
 | `PROCESSING_CONCURRENCY` | `4` | Number of worker threads for thumbnail generation |
 | `SMALL_THUMBNAIL_QUALITY` | `80` | AVIF quality for small thumbnails, 1-100 (§10.1) |
 | `FULL_THUMBNAIL_QUALITY` | `80` | AVIF quality for full thumbnails, 1-100 (§10.1) |
-| `THUMBNAIL_EFFORT` | `0` | AVIF effort, 0-9; the default of 4 is 20x slower for ~15% (§10.1) |
+| `THUMBNAIL_EFFORT` | `0` | AVIF effort, 0-9; the default of 4 is 10x slower for +0.5dB (§10.1) |
 | `SMALL_THUMBNAIL_SIZE` | `800` | Longest edge in pixels for small thumbnails |
 | `FULL_THUMBNAIL_SIZE` | `3840` | Longest edge in pixels for full thumbnails |
 | `MATCH_EMBEDDED_JPEG` | `true` | Give SDR renders the camera's own colour and lens correction, fitted per photo against the embedded JPEG; ~+2.4s on a 61MP frame (§10.8) |
