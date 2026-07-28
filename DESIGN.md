@@ -1003,21 +1003,37 @@ The thumbnail and header paths (§11.1) still use LibRaw's C API through `bun:ff
 
 **`opt-level` and LTO are not levers here.** Measured end to end on the rendition job, `opt-level = 2`, `opt-level = 3` and `opt-level = 3` with fat LTO and one codegen unit are indistinguishable - every stage inside noise across two frames. Structural rather than incidental: the expensive work is inside libvips and LibRaw, both precompiled shared libraries no profile of ours reaches and LTO cannot cross into, and this crate's own hot loops (`warp`, `pairs`, `score`, `apply`) already vectorise at `opt-level = 2` and are all in one crate, so there is nothing for LTO to inline across. A pinned `opt-level = 2` was removed for saying nothing; a full rebuild is 0.4s either way.
 
-**Instruction set is a lever, unlike the above.** On a Zen 4 desktop, medians over three runs:
+**Instruction set is a lever, unlike the above.** On a Zen 4 host, medians over three runs:
 
 | `target-cpu` | fit (24MP) | grade (24MP) | job (24MP) | grade (15MP) | job (15MP) |
 |---|---|---|---|---|---|
-| `x86-64` (default) | 458ms | 312ms | 1580ms | 304ms | 2546ms |
-| `x86-64-v3` | 434ms | 298ms | 1534ms | 291ms | 2516ms |
-| `native` (znver4) | 396ms | 236ms | 1438ms | 222ms | 2437ms |
+| `x86-64` (baseline) | 460ms | 310ms | 1562ms | 303ms | 2516ms |
+| `x86-64-v2` | 451ms | 307ms | 1565ms | 298ms | 2502ms |
+| `x86-64-v3` | 437ms | 296ms | 1530ms | 289ms | 2512ms |
+| `x86-64-v4` | 398ms | 229ms | 1446ms | 217ms | 2418ms |
+| `znver4` | 396ms | 235ms | 1494ms | 225ms | 2436ms |
+| `native` | 402ms | 230ms | 1438ms | 221ms | 2457ms |
 
-`native` is worth 24-27% on the grade, 10-14% on the fit, and 4-9% on the whole job - diluted because the decode and the encoders are in libraries a flag of ours cannot reach. Available as a one-liner where it is wanted, which is why nothing in the build needs a switch for it:
+**`v4`, `znver4` and `native` are the same number.** The gain is AVX-512 and nothing else - no microarchitectural scheduling on top - so a portable build gets all of it and there is nothing for a host compiler to find. `v2` is noise and is not shipped; `v3` is ~5% and is, being free.
 
-```sh
-RUSTFLAGS="-C target-cpu=native" bun run build:native
-```
+So the image ships one build per instruction set and picks between them at startup. Building on the host was tried first and is the wrong shape by four orders of magnitude: a `.so` is ~750KB, and the toolchain that produces one is 906MB of image (642MB rustup, 264MB build-essential) plus ~7s of every container start. Three variants cost 1.5MB and ~0.9s.
 
-**Not the default, and `x86-64-v3` is not a safe compromise either**, which is the part worth writing down because it looks like one. v3 needs only AVX2 and runs on any x86 from 2013, but it captures barely a fifth of native's gain on the grade (298ms against 236ms), so most of that win needs more than AVX2. Against that: it makes the binary `SIGILL` on hardware that is precisely this application's deployment target. Low-end Celeron and Atom NAS boxes - the Synology and QNAP units someone self-hosts a photo library on - are commonly Goldmont, which has no AVX at all. A hard crash on real self-hosting hardware is not worth ~2%. The container ships the portable baseline for the same reason `-C target-cpu=native` is not used in the Dockerfile: tuning for the build machine requires compiling on the deploy machine, which means the whole toolchain in the runtime image and a compile error becoming a failure to start.
+**Chosen by running them, not by reading CPU flags.** `native/entrypoint.sh` tries v4 then v3, each in a throwaway `bun native/verify_shim.ts` process, and symlinks the first that survives to `librawshim.selected.so`; the loader prefers that and ends at the plain `librawshim.so` baseline (§`rawshim.ts`). This is not the obvious design and is the cheaper one: a build using an absent instruction dies with `SIGILL`, which cannot be caught, so it has to die somewhere harmless anyway - and once a probe exists it *is* the feature detection, needing no flag table, no maintenance as levels are added, and no trust in a hypervisor that reports what it does not honour. `bb_selftest` runs the warp and the colour lookup rather than returning a constant, because a library that merely loads proves nothing about a CPU that faults once real pixel work starts. `BOWERBIRD_SHIM_VARIANT=baseline|v3|v4` pins one.
+
+Every failure path ends at the baseline, which is what makes the whole arrangement safe to ship: the baseline is plain x86-64 and runs on the Goldmont Celerons in low-end NAS boxes, which have no AVX at all.
+
+#### Where the time actually goes
+
+Single-image latency is the wrong measure for an import, and the difference is large enough to change decisions. Throughput on a 24MP frame, 8 cores:
+
+| concurrency | 1 | 2 | 4 | 8 | 12 |
+|---|---|---|---|---|---|
+| img/s | 0.53 | 1.04 | 1.69 | 2.40 | 2.35 |
+| effective ms/img | 1897 | 964 | 590 | 417 | 425 |
+
+It saturates at ~2.4 img/s: 4.5x the single-image rate, and flat past 8. An import is already throughput-bound with every core busy, so per-photo latency work only pays if it reduces total CPU. With the thread pools pinned to one, that budget is decode 495ms (26%), fit 675ms (36%), grade 364ms (19%), the two AVIF encodes 353ms (19%).
+
+**Rayon buys ~3% of the fit** (505ms against 490ms with it disabled), which is worth knowing before optimising the scan further. The parallel candidate scan is genuinely parallel but small; what dominates is the sequential refine, a hill-climb whose every step depends on the last. That is also why a GPU is not the obvious answer it looks like - see below.
 
 **libvips 8.15.1 is the version to write against, not the crate's.** The `libvips` crate targets a later release and its `*_with_opts` helpers send every property their options struct knows about - `tune` for `heifsave`, a `keep` flag for `jpegsave` - neither of which exists in the version Debian and Ubuntu ship. `heifsave` failed outright with ``no property named `tune` ``; `jpegsave` only logged a GLib critical, which is worse, because it looked like it worked. Both savers go through the raw bindings and name their properties explicitly, keeping the version-coupled part of the dependency to one function. Two more of the crate's edges are load-bearing: `ResizeOptions::default()` has `vscale: 0`, which collapses an image to a single row unless it is always passed, and `VipsImage` derives `Clone` as a shallow refcount copy alongside a `Drop` that unrefs, so cloning one produces `g_object_unref: assertion 'G_IS_OBJECT (object)' failed` on the second drop - hundreds per fit, at one point. Nothing here clones a `VipsImage`; the pipeline consumes `self` at every step so that it cannot.
 

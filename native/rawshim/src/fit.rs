@@ -67,9 +67,9 @@ pub struct ColourTransform {
 }
 
 impl ColourTransform {
-    /// Only the tests need one; production always fits a real transform.
-    #[cfg(test)]
-    fn identity() -> Self {
+    /// A fit always produces a real transform; this is for the self-test and the
+    /// tests, both of which need a known-good profile rather than a fitted one.
+    pub fn identity() -> Self {
         let mut curves = [[0u8; 256]; 3];
         for curve in &mut curves {
             for (level, slot) in curve.iter_mut().enumerate() {

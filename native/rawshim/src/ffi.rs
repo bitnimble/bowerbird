@@ -292,6 +292,56 @@ pub unsafe extern "C" fn bb_buffer_free(buffer: *mut BbBuffer) {
     drop(Vec::from_raw_parts(buffer.data, buffer.len, buffer.capacity));
 }
 
+/// Exercises the pixel paths on a tiny image. 0 if the library works here.
+///
+/// For one specific job: the container entrypoint builds a second copy of this
+/// library with `-C target-cpu=native` and has to decide whether to trust it
+/// before promoting it over the portable one baked into the image. A build tuned
+/// for instructions the host turns out to lack dies with `SIGILL`, which cannot
+/// be caught, so it has to die in a throwaway process rather than inside a worker
+/// halfway through an import.
+///
+/// It therefore has to run the *vectorised* code, not just enter the library: a
+/// symbol returning a constant would load and answer perfectly on a CPU that
+/// faults the moment the warp runs. So this grades through a real distortion,
+/// which is `warp` plus the folded colour lookup - the hot loops - and puts the
+/// result through libvips to confirm the linkage too.
+#[no_mangle]
+pub extern "C" fn bb_selftest() -> i32 {
+    vips::init();
+    let width = 64;
+    let height = 48;
+    let source = vips::Rgb {
+        width,
+        height,
+        data: (0..width * height * 3).map(|i| (i % 251) as u8).collect(),
+    };
+
+    let mut colour = fit::ColourTransform::identity();
+    colour.matrix = [[0.9, 0.05, 0.05], [0.1, 0.8, 0.1], [0.0, 0.02, 0.98]];
+    let profile = Profile {
+        knots: Some(crate::image::polynomial_knots(-0.02, 0.0, 16)),
+        crop: 0.99,
+        source: 2,
+        delta_e: 0.0,
+        colour,
+    };
+
+    let graded = fit::apply(source.as_ref(), &profile);
+    if graded.width != width || graded.height != height {
+        return -1;
+    }
+    // An all-black result would mean the warp sampled nothing, which a broken
+    // build can manage without faulting.
+    if graded.data.iter().all(|value| *value == 0) {
+        return -1;
+    }
+    match Pipeline::from_rgb(graded.as_ref()).and_then(|p| p.resize_to_fit(32)).and_then(Pipeline::finish) {
+        Ok(small) if small.width == 32 => 0,
+        _ => -1,
+    }
+}
+
 /// Size of `BbProfile`, so the caller can allocate it without hardcoding a layout
 /// that changes when a field is added.
 #[no_mangle]
@@ -313,4 +363,25 @@ pub extern "C" fn bb_buffer_header_size() -> usize {
 #[no_mangle]
 pub extern "C" fn bb_image_header_size() -> usize {
     std::mem::size_of::<BbImage>()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_selftest_passes_on_the_machine_that_built_it() {
+        // If this can fail here it is worthless as a gate on a tuned build.
+        assert_eq!(bb_selftest(), 0);
+    }
+
+    #[test]
+    fn the_layouts_the_typescript_reader_assumes_still_hold() {
+        // rawshim_ops.ts reads these structs at hardcoded offsets, having no way to
+        // ask for them. It checks the sizes at the first call and refuses to run on
+        // a mismatch; this is the same check, but at build time.
+        assert_eq!(bb_image_header_size(), 48);
+        assert_eq!(bb_buffer_header_size(), 24);
+        assert_eq!(bb_profile_size(), 1384);
+    }
 }

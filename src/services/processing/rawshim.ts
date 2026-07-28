@@ -20,9 +20,17 @@ import path from 'node:path';
 // inside the loop. Resize, decode and encode go through libvips, which is the
 // library sharp wrapped, so nothing about the output changed when they moved.
 
+// In order of preference, first hit wins.
 const CANDIDATES = [
-  // Next to the source tree in development, and where the Docker build stage puts it.
+  // Next to the source tree, which is a development build and what a live-mounted
+  // dev container sees. Ahead of the container paths so a local `bun run
+  // build:native` is what runs, rather than something the image shipped.
   path.join(import.meta.dir, '../../../native/rawshim/target/release/librawshim.so'),
+  // The best of the image's instruction-set variants that this CPU proved it can
+  // run, symlinked by the container entrypoint (§10.4). Absent when only the
+  // baseline works, or when a variant was pinned to it.
+  '/app/native/librawshim.selected.so',
+  // The portable x86-64 build: the fallback, and the only one guaranteed to run.
   '/app/native/librawshim.so',
   'librawshim.so',
 ];

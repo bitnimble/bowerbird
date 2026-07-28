@@ -8,3 +8,12 @@ bowerbird.db
 bowerbird.db-*
 **/.bowerbird
 coverage
+# Rust build artefacts, 787MB of them. The image builds the crate itself, and the
+# runtime stage copies the source in for the entrypoint's tuned rebuild, so shipping
+# a host-built target dir would be dead weight - and a host-built `librawshim.so`
+# sitting at the path the loader checks first would shadow the image's own.
+native/rawshim/target
+# A local photo library and the RAW test fixtures: hundreds of MB the image has no
+# use for, and the integration tests do not run in it.
+.photos
+test/fixtures
