@@ -45,6 +45,35 @@ function tiff({
   return bytes;
 }
 
+// A CR3's shape around the tags: `moov` → `uuid` (16 bytes of identifier first)
+// → `CMT1`, then `CMT2` holding the Exif IFD as a TIFF of its own. The real files
+// nest exactly this way; the box sizes here are the only thing scaled down.
+function cr3(exif: Uint8Array, { cmt2 = true }: { cmt2?: boolean } = {}): Uint8Array {
+  const ident = new Uint8Array(16).fill(0xa5);
+  const cmt1 = box('CMT1', new Uint8Array(8)); // IFD0, and not where the tags are
+  const inner = box(cmt2 ? 'CMT2' : 'CMT3', exif);
+  const uuid = box('uuid', concat(ident, cmt1, inner));
+  return concat(box('ftyp', new Uint8Array([0x63, 0x72, 0x78, 0x20])), box('moov', uuid));
+}
+
+function box(type: string, payload: Uint8Array): Uint8Array {
+  const out = new Uint8Array(8 + payload.length);
+  new DataView(out.buffer).setUint32(0, out.length, false);
+  for (let i = 0; i < 4; i++) out[4 + i] = type.charCodeAt(i);
+  out.set(payload, 8);
+  return out;
+}
+
+function concat(...parts: Uint8Array[]): Uint8Array {
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let at = 0;
+  for (const part of parts) {
+    out.set(part, at);
+    at += part.length;
+  }
+  return out;
+}
+
 describe('parseCaptureOffset', () => {
   it('reads OffsetTimeOriginal out of the Exif IFD, either byte order', () => {
     expect(parseCaptureOffset(tiff())).toBe('+11:00');
@@ -71,6 +100,17 @@ describe('parseCaptureOffset', () => {
 
   it('reads a tag written straight into IFD0, without an Exif pointer', () => {
     expect(parseCaptureOffset(tiff({ nested: false }))).toBe('+11:00');
+  });
+
+  it('reaches the Exif block of a CR3, which is not a TIFF at all', () => {
+    expect(parseCaptureOffset(cr3(tiff()))).toBe('+11:00');
+    expect(parseCaptureOffset(cr3(tiff({ value: '-08:00' })))).toBe('-08:00');
+  });
+
+  it('answers null when the box tree holds no Exif block', () => {
+    // CMT3 is Canon's own makernote, not the Exif IFD: finding a TIFF in the tree
+    // is not enough, it has to be the right box.
+    expect(parseCaptureOffset(cr3(tiff(), { cmt2: false }))).toBeNull();
   });
 });
 

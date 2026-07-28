@@ -130,7 +130,10 @@ pub unsafe fn read(r: *mut raw::libraw_data_t) -> BbHeader {
     }
 
     let gps = &other.parsed_gps;
-    if gps.gpsparsed == 1 {
+    // Canon reports a parsed fix on every frame and zeroes the triples when there
+    // was none, so an exact 0,0 is a body saying nothing rather than a photograph
+    // taken in the Gulf of Guinea.
+    if gps.gpsparsed == 1 && !(gps.latitude == [0.0; 3] && gps.longitude == [0.0; 3]) {
         // 'S' and 'W' are the negative hemispheres.
         let latitude = degrees(&gps.latitude) * if gps.latref as u8 == b'S' { -1.0 } else { 1.0 };
         let longitude = degrees(&gps.longitude) * if gps.longref as u8 == b'W' { -1.0 } else { 1.0 };

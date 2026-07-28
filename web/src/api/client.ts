@@ -198,8 +198,10 @@ export function eventsUrl(): string {
   return `${BASE}/api/events`;
 }
 
+// No extension: the catalogue holds several RAW formats, and the server names the
+// download off the file itself.
 export function originalUrl(photoId: string): string {
-  return `${BASE}/image/${photoId}/original.arw`;
+  return `${BASE}/image/${photoId}/original`;
 }
 
 export function jpegUrl(photoId: string): string {

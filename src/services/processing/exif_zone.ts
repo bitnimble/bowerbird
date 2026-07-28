@@ -1,8 +1,8 @@
 // EXIF 2.31 (2016) added the tags that say what zone a capture time was written
 // in. LibRaw exposes none of them - it hands back a `time_t` and nothing else
-// (DESIGN §11.1) - so they are read here, straight out of the TIFF header the
-// RAW already is. Bodies older than the spec write no offset at all, which is
-// why the result is nullable rather than a default of UTC.
+// (DESIGN §11.1) - so they are read here, straight out of the file's own header.
+// Bodies older than the spec write no offset at all, which is why the result is
+// nullable rather than a default of UTC.
 const OFFSET_TIME_ORIGINAL = 0x9011;
 const OFFSET_TIME = 0x9010;
 const EXIF_IFD_POINTER = 0x8769;
@@ -63,15 +63,56 @@ function readIfd(view: DataView, little: boolean, ifdAt: number, depth: number):
   return fallback;
 }
 
-// Exported for tests: the file read is the only part that needs a disk.
-export function parseCaptureOffset(bytes: Uint8Array): string | null {
-  if (bytes.byteLength < 8) return null;
+function readTiff(bytes: Uint8Array | null): string | null {
+  if (bytes == null || bytes.byteLength < 8) return null;
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const order = view.getUint16(0, false);
-  if (order !== 0x4949 && order !== 0x4d4d) return null; // not a TIFF, so not a RAW we can read
+  if (order !== 0x4949 && order !== 0x4d4d) return null; // not a TIFF
   const little = order === 0x4949;
   if (view.getUint16(2, little) !== 42) return null;
   return readIfd(view, little, view.getUint32(4, little), 0);
+}
+
+// A CR3 is not a TIFF. It is an ISO base-media file, and its EXIF sits in `CMT1`
+// (IFD0) and `CMT2` (the Exif IFD), each a complete little TIFF of its own, inside
+// a `uuid` box under `moov`. So Canon needs no second tag reader: it needs the box
+// tree walked as far as CMT2, and then the same walk as everything else.
+const BOX_HEADER = 8;
+const UUID_BYTES = 16;
+const MAX_BOX_DEPTH = 4;
+
+function findExifBlock(bytes: Uint8Array, view: DataView, from: number, to: number, depth: number): Uint8Array | null {
+  let at = from;
+  while (at + BOX_HEADER <= to) {
+    let size = view.getUint32(at, false);
+    let body = at + BOX_HEADER;
+    if (size === 1) {
+      if (body + 8 > to) return null;
+      size = Number(view.getBigUint64(body, false));
+      body += 8;
+    }
+    if (size === 0) size = to - at; // the last box runs to the end
+    if (size < body - at) return null;
+    // Clamped, not rejected: `moov` routinely runs past the header window, and
+    // every box worth reading is near its front.
+    const end = Math.min(at + size, to);
+
+    const type = ascii(view, at + 4, 4);
+    if (type === 'CMT2') return bytes.subarray(body, end);
+    if ((type === 'moov' || type === 'uuid') && depth < MAX_BOX_DEPTH) {
+      const found = findExifBlock(bytes, view, type === 'uuid' ? body + UUID_BYTES : body, end, depth + 1);
+      if (found != null) return found;
+    }
+    at += size;
+  }
+  return null;
+}
+
+// Exported for tests: the file read is the only part that needs a disk.
+export function parseCaptureOffset(bytes: Uint8Array): string | null {
+  if (bytes.byteLength < BOX_HEADER) return null;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  return readTiff(bytes) ?? readTiff(findExifBlock(bytes, view, 0, bytes.byteLength, 0));
 }
 
 // The camera's UTC offset for this frame, as EXIF wrote it, or null when the

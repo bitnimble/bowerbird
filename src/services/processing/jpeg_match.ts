@@ -19,8 +19,8 @@
 //
 // Geometry comes from the camera where it recorded it (`lens_corrections.ts`) and
 // is fitted otherwise, which is the common case: 14 of 20 Sony bodies measured
-// record nothing. Colour is always fitted, since nothing in the file describes the
-// picture profile.
+// record nothing, and no Canon does. Colour is always fitted, since nothing in the
+// file describes the picture profile.
 
 import {
   decodeRawImage,

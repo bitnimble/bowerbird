@@ -3,6 +3,7 @@ import type { Context } from 'hono';
 import { AppError } from '../../errors';
 import type { Library } from '../../schemas/libraries';
 import { getHdrPath, getOriginalPath, getRenditionPath } from '../../utils/paths';
+import { rawMediaType } from '../../utils/scan';
 import { readEmbeddedJpeg } from '../../services/processing/raw_decoder';
 import { decodeFile, encodeJpeg, freeImage } from '../../services/processing/rawshim_ops';
 import { contentTypeFor, isHdrMedium, isHdrVariant } from '../../services/processing/hdr_media';
@@ -29,6 +30,12 @@ const JPEG_QUALITY = 92;
 // the app and the API are different origins in development.
 const TIMING_ALLOW_ORIGIN = { 'Timing-Allow-Origin': '*' };
 
+// Quotes and backslashes would end the header's quoted-string early, and a file
+// on disk is free to contain either.
+function attachment(filename: string): string {
+  return `attachment; filename="${filename.replace(/["\\]/g, '')}"`;
+}
+
 // Streams straight from disk via Bun.file (no buffering); Bun.serve applies Range
 // handling to the BunFile body for 206 partial content (DESIGN §13.5).
 export class ImageApi {
@@ -54,7 +61,17 @@ export class ImageApi {
     // Served as the camera wrote it, never resized or transcoded into a rendition
     // of its own (§10.2). The RAW itself goes the same way.
     app.get('/:photoId/embedded.jpg', (c) => this.serveEmbedded(c));
-    app.get('/:photoId/original.arw', (c) => this.serve(c, 'image/x-sony-arw', (lib, photo) => getOriginalPath(lib, photo.file_path)));
+    // No extension in the URL and none assumed: a catalogue holds more than one
+    // RAW format, so both the media type and the name the download lands under
+    // come off the file itself.
+    app.get('/:photoId/original', (c) =>
+      this.serve(
+        c,
+        (photo) => rawMediaType(photo.file_path),
+        (lib, photo) => getOriginalPath(lib, photo.file_path),
+        (photo) => photo.file_path.split('/').pop() ?? photo.id,
+      ),
+    );
     app.get('/:photoId/full.jpg', (c) => this.serveJpeg(c));
     // HDR renditions: an AVIF still and a one-frame video, one per transfer,
     // each with an SDR reference (§10.7).
@@ -107,7 +124,7 @@ export class ImageApi {
     return new Response(new Uint8Array(jpeg), {
       headers: {
         'Content-Type': 'image/jpeg',
-        'Content-Disposition': `attachment; filename="${name}.jpg"`,
+        'Content-Disposition': attachment(`${name}.jpg`),
         'Cache-Control': 'no-cache',
       },
     });
@@ -119,7 +136,12 @@ export class ImageApi {
   // Soft-deleted photos are served, not hidden: the Bin is a browsable view that
   // a user restores from, and it is unusable if every frame in it is a grey box.
   // The row and both files still exist, so there is nothing to withhold.
-  private async serve(c: Context, contentType: string, pathFor: PathFor): Promise<Response> {
+  private async serve(
+    c: Context,
+    contentType: string | ((photo: BasicPhoto) => string),
+    pathFor: PathFor,
+    downloadAs?: (photo: BasicPhoto) => string,
+  ): Promise<Response> {
     const photoId = c.req.param('photoId');
     if (photoId == null) throw new AppError('NOT_FOUND', 'photo not found');
     const { photo, library } = this.photos.locate(photoId);
@@ -134,13 +156,14 @@ export class ImageApi {
     // caches, it just always asks first, which is a 304 in the common case.
     const etag = `"${file.size}-${Math.floor(file.lastModified)}"`;
     const headers = {
-      'Content-Type': contentType,
+      'Content-Type': typeof contentType === 'string' ? contentType : contentType(photo),
       // Bun.serve answers Range requests against a BunFile body but doesn't
       // advertise it; without this a client can't know it may seek a 25MB RAW.
       'Accept-Ranges': 'bytes',
       'Cache-Control': 'no-cache',
       ETag: etag,
       ...TIMING_ALLOW_ORIGIN,
+      ...(downloadAs == null ? {} : { 'Content-Disposition': attachment(downloadAs(photo)) }),
     };
     if (c.req.header('if-none-match') === etag) return new Response(null, { status: 304, headers });
 

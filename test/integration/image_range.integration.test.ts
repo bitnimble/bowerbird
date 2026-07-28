@@ -70,7 +70,7 @@ test('a full thumbnail response carries Content-Length and advertises range supp
 });
 
 test('a ranged request on the original returns 206 with just that slice', async () => {
-  const res = await fetch(`${origin}/image/p1/original.arw`, { headers: { Range: 'bytes=4-7' } });
+  const res = await fetch(`${origin}/image/p1/original`, { headers: { Range: 'bytes=4-7' } });
   expect(res.status).toBe(206);
   expect(res.headers.get('content-range')).toBe(`bytes 4-7/${BODY.length}`);
   expect(res.headers.get('content-length')).toBe('4');
@@ -78,12 +78,12 @@ test('a ranged request on the original returns 206 with just that slice', async 
 });
 
 test('an open-ended range serves through to the end of the file', async () => {
-  const res = await fetch(`${origin}/image/p1/original.arw`, { headers: { Range: 'bytes=12-' } });
+  const res = await fetch(`${origin}/image/p1/original`, { headers: { Range: 'bytes=12-' } });
   expect(res.status).toBe(206);
   expect(await res.text()).toBe('CDEF');
 });
 
 test('an unsatisfiable range is rejected rather than served as a full body', async () => {
-  const res = await fetch(`${origin}/image/p1/original.arw`, { headers: { Range: 'bytes=99-200' } });
+  const res = await fetch(`${origin}/image/p1/original`, { headers: { Range: 'bytes=99-200' } });
   expect(res.status).toBe(416);
 });

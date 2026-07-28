@@ -11,9 +11,12 @@
 // spline meant handing JavaScript the entire RAW - 60-120MB per photo - to find
 // one tag in the first few kilobytes of it.
 //
-// Only Sony is implemented. Canon records an equivalent, but CR2/CR3 have not been
-// checked against a real file, so they fall through to `None` and the caller fits
-// the geometry instead.
+// Only Sony is implemented, and a CR3 is not a TIFF at all, so Canon falls through
+// to `None` and the caller fits the geometry instead. That is the same path 14 of
+// 20 Sony bodies take, and it costs nothing measurable here: across 27 EOS R8
+// frames every fit is accepted, at a median deltaE of 1.89 against 1.35 for a Sony
+// set of the same size. Reading Canon's own correction out of the `CMT3` makernote
+// would be reverse engineering for a residual that is already below the threshold.
 
 const DISTORTION_TAG: u16 = 0x7037;
 const SUBIFD_TAG: u16 = 0x014a;

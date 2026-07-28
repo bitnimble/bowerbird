@@ -142,25 +142,66 @@ pub struct Insets {
 
 const UNSET: u16 = 65535;
 
+/// The window LibRaw emits on its own, and the one the camera says is the picture.
+/// Both in sensor coordinates.
+pub struct Window {
+    pub raw_width: u16,
+    pub raw_height: u16,
+    pub left_margin: u16,
+    pub top_margin: u16,
+    pub width: u16,
+    pub height: u16,
+    pub cleft: u16,
+    pub ctop: u16,
+    pub cwidth: u16,
+    pub cheight: u16,
+}
+
 /// Rows and columns the camera says are outside the picture, in sensor
 /// orientation. Some bodies report masked border columns as visible, and decoding
 /// them verbatim bakes black bars into the render.
+///
+/// Measured against what LibRaw already trims rather than against the whole
+/// sensor: the emitted frame starts at `left_margin`/`top_margin` and is
+/// `width`x`height`, so only the part of the camera's crop that falls beyond that
+/// is still ours to remove. Against the raw frame instead it was applied twice on
+/// every body that declares one - an EOS R8 losing 168 columns and 108 rows off an
+/// image that no longer had them, which is not a smaller picture but a differently
+/// framed one, since the excess comes off two sides rather than four.
+pub(crate) fn insets_of(w: &Window) -> Insets {
+    let none = Insets { left: 0, top: 0, right: 0, bottom: 0 };
+    if w.cleft == UNSET || w.ctop == UNSET || w.cwidth == 0 || w.cheight == 0 {
+        return none;
+    }
+    if w.cleft + w.cwidth > w.raw_width || w.ctop + w.cheight > w.raw_height {
+        return none;
+    }
+    let beyond = |edge: i32| edge.max(0) as usize;
+    Insets {
+        left: beyond(i32::from(w.cleft) - i32::from(w.left_margin)),
+        top: beyond(i32::from(w.ctop) - i32::from(w.top_margin)),
+        right: beyond(i32::from(w.left_margin) + i32::from(w.width) - i32::from(w.cleft) - i32::from(w.cwidth)),
+        bottom: beyond(i32::from(w.top_margin) + i32::from(w.height) - i32::from(w.ctop) - i32::from(w.cheight)),
+    }
+}
+
+/// # Safety
+/// `r` must be a live `libraw_data_t` with `open_file` already run.
 pub(crate) unsafe fn read_insets(r: *mut raw::libraw_data_t) -> Insets {
     let s = &(*r).sizes;
-    let none = Insets { left: 0, top: 0, right: 0, bottom: 0 };
     let crop = s.raw_inset_crops[0];
-    if crop.cleft == UNSET || crop.ctop == UNSET || crop.cwidth == 0 || crop.cheight == 0 {
-        return none;
-    }
-    if crop.cleft + crop.cwidth > s.raw_width || crop.ctop + crop.cheight > s.raw_height {
-        return none;
-    }
-    Insets {
-        left: crop.cleft as usize,
-        top: crop.ctop as usize,
-        right: (s.raw_width - crop.cleft - crop.cwidth) as usize,
-        bottom: (s.raw_height - crop.ctop - crop.cheight) as usize,
-    }
+    insets_of(&Window {
+        raw_width: s.raw_width,
+        raw_height: s.raw_height,
+        left_margin: s.left_margin,
+        top_margin: s.top_margin,
+        width: s.width,
+        height: s.height,
+        cleft: crop.cleft,
+        ctop: crop.ctop,
+        cwidth: crop.cwidth,
+        cheight: crop.cheight,
+    })
 }
 
 /// dcraw_process emits an upright frame, so sensor-space margins arrive rotated by
@@ -502,6 +543,86 @@ mod tests {
                 assert!(out.iter().all(|v| *v > 0.0), "{set:?} produced {out:?}");
             }
         }
+    }
+
+    /// Every geometry below was read off real files with LibRaw.
+    fn insets(w: &Window) -> (usize, usize, usize, usize) {
+        let i = insets_of(w);
+        (i.left, i.top, i.right, i.bottom)
+    }
+
+    #[test]
+    fn takes_nothing_more_off_a_frame_libraw_already_cropped() {
+        // EOS R8. LibRaw starts at the camera's own crop origin and emits exactly
+        // it, so every edge is already where it belongs. Measuring against the raw
+        // frame took another 168 columns and 108 rows off two sides of that.
+        let r8 = Window {
+            raw_width: 6188,
+            raw_height: 4120,
+            left_margin: 168,
+            top_margin: 108,
+            width: 5999,
+            height: 3999,
+            cleft: 168,
+            ctop: 108,
+            cwidth: 6000,
+            cheight: 4000,
+        };
+        assert_eq!(insets(&r8), (0, 0, 0, 0));
+    }
+
+    #[test]
+    fn still_trims_the_masked_border_a_body_reports_as_visible() {
+        // ILCE-7CR: LibRaw trims nothing, so the whole declared crop is ours.
+        let a7cr = Window {
+            raw_width: 9728,
+            raw_height: 6656,
+            left_margin: 0,
+            top_margin: 0,
+            width: 9728,
+            height: 6656,
+            cleft: 32,
+            ctop: 20,
+            cwidth: 9504,
+            cheight: 6336,
+        };
+        assert_eq!(insets(&a7cr), (32, 20, 192, 300));
+    }
+
+    #[test]
+    fn trims_only_the_columns_libraw_left_behind() {
+        // RX100M3: eight columns short of the raw width, so the trailing inset is
+        // eight narrower than the raw frame suggests.
+        let rx100 = Window {
+            raw_width: 5504,
+            raw_height: 3672,
+            left_margin: 0,
+            top_margin: 0,
+            width: 5496,
+            height: 3672,
+            cleft: 12,
+            ctop: 12,
+            cwidth: 5472,
+            cheight: 3648,
+        };
+        assert_eq!(insets(&rx100), (12, 12, 12, 12));
+    }
+
+    #[test]
+    fn takes_nothing_from_a_body_that_declares_no_crop() {
+        let unset = Window {
+            raw_width: 6048,
+            raw_height: 4024,
+            left_margin: 0,
+            top_margin: 0,
+            width: 6024,
+            height: 4024,
+            cleft: UNSET,
+            ctop: UNSET,
+            cwidth: 6000,
+            cheight: 4000,
+        };
+        assert_eq!(insets(&unset), (0, 0, 0, 0));
     }
 
     #[test]

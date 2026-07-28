@@ -74,11 +74,23 @@ test('serves the grid tile of an HDR library from the SDR directory', withRoot(a
   expect(await res.text()).toBe('AVIFDATA');
 }));
 
-test('serves the original with the arw content-type', withRoot(async (root) => {
+test('serves the original under its own format and filename', withRoot(async (root) => {
   writeFileSync(path.join(root, 'a.arw'), 'RAWBYTES');
-  const res = await buildApp(root, photo({})).request('/image/p1/original.arw');
+  const res = await buildApp(root, photo({})).request('/image/p1/original');
   expect(res.status).toBe(200);
   expect(res.headers.get('content-type')).toBe('image/x-sony-arw');
+  expect(res.headers.get('content-disposition')).toBe('attachment; filename="a.arw"');
+}));
+
+test('serves a Canon original under its own format and filename', withRoot(async (root) => {
+  mkdirSync(path.join(root, 'Trip'), { recursive: true });
+  writeFileSync(path.join(root, 'Trip', 'IMG_0116.CR3'), 'RAWBYTES');
+  const res = await buildApp(root, photo({ file_path: 'Trip/IMG_0116.CR3' })).request('/image/p1/original');
+  expect(res.status).toBe(200);
+  expect(res.headers.get('content-type')).toBe('image/x-canon-cr3');
+  // The name on disk, not the shoot-qualified path it is stored under.
+  expect(res.headers.get('content-disposition')).toBe('attachment; filename="IMG_0116.CR3"');
+  expect(await res.text()).toBe('RAWBYTES');
 }));
 
 test('returns a 404 envelope for an unknown photo', withRoot(async (root) => {

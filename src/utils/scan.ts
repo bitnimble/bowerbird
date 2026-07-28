@@ -1,11 +1,22 @@
 import { readdir, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 
-const SUPPORTED_EXTENSIONS = new Set(['.arw']);
+// The scan filter, and the media type each format is served under. See DESIGN §7:
+// the decoder is chosen later by header sniff, so a format is added here and read
+// by whichever reader already handles it.
+const RAW_MEDIA_TYPES = new Map([
+  ['.arw', 'image/x-sony-arw'],
+  ['.cr3', 'image/x-canon-cr3'],
+]);
 
 export function isSupportedFile(filename: string): boolean {
-  const ext = path.extname(filename).toLowerCase();
-  return SUPPORTED_EXTENSIONS.has(ext);
+  return RAW_MEDIA_TYPES.has(path.extname(filename).toLowerCase());
+}
+
+// What an original is served as. Falls back to a generic binary rather than
+// guessing, for a row whose path predates a format being dropped from the set.
+export function rawMediaType(filename: string): string {
+  return RAW_MEDIA_TYPES.get(path.extname(filename).toLowerCase()) ?? 'application/octet-stream';
 }
 
 // Directory basenames the scanner never descends into. See DESIGN §6, §12.2.

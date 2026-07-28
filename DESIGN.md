@@ -26,7 +26,7 @@ Bowerbird is a high-performance RAW photo management and cataloguing backend des
 | Validation | Zod v4 |
 | Database | SQLite via `bun:sqlite` |
 | Image processing | `native/rawshim`, a Rust library over libvips + LibRaw, called via `bun:ffi` (§10.4) |
-| RAW decoding | Per-format dispatch (header sniff → fastest reader); Sony ARW via LibRaw `bun:ffi` |
+| RAW decoding | Per-format dispatch (header sniff → fastest reader); Sony ARW and Canon CR3 via LibRaw `bun:ffi` |
 | Metadata extraction | LibRaw header parse (no pixel decode), per-format dispatch |
 | Testing | Bun's built-in test runner (`bun test`, run via `bun run test`) |
 | Logging | `console.log` / `console.info` / `console.error` |
@@ -53,7 +53,7 @@ Testing uses Bun's built-in `bun test` runner, so there is no test-framework dep
 
 Entity IDs (UUID v4) are generated with the runtime built-in `crypto.randomUUID()`, no third-party UUID package.
 
-RAW decoding and RAW metadata extraction are **dispatched per format**: a cheap header sniff (magic bytes / EXIF `Make`) selects the fastest maintained reader for that format, so each format can use its optimal library rather than a single lowest-common-denominator one. Stage 1 supports Sony ARW only, decoded via LibRaw (fast, actively maintained). Additional formats are added by registering another reader behind the same dispatch interface; Sony RAW is the priority when a reader supports only a subset of formats.
+RAW decoding and RAW metadata extraction are **dispatched per format**: a cheap header sniff (magic bytes / EXIF `Make`) selects the fastest maintained reader for that format, so each format can use its optimal library rather than a single lowest-common-denominator one. Sony ARW and Canon CR3 both decode via LibRaw (fast, actively maintained), so the dispatch currently resolves to one reader. Additional formats are added by registering another reader behind the same interface; Sony RAW is the priority when a reader supports only a subset of formats.
 
 No other third-party dependencies should be added without explicit approval.
 
@@ -123,7 +123,7 @@ bowerbird/
 │   │       ├── processing_service.ts  # Thumbnail generation orchestrator
 │   │       ├── processing_worker.ts   # Bun worker thread for image processing
 │   │       ├── raw_decoder.ts         # LibRaw FFI bindings
-│   │       ├── metadata.ts            # Per-format metadata extraction (LibRaw header parse for ARW)
+│   │       ├── metadata.ts            # Per-format metadata extraction (LibRaw header parse)
 │   │       └── tests/
 │   │           └── processing_service.test.ts   # (raw_decoder/metadata: integration-tested via LibRaw)
 │   └── utils/
@@ -132,7 +132,7 @@ bowerbird/
 │       └── paths.ts                # Path computation helpers (thumbnail paths, bin paths)
 ├── test/
 │   ├── integration/               # bun:test suites needing real bun:sqlite + LibRaw (run in-container)
-│   └── fixtures/                  # a real Sony ARW for decode/metadata tests
+│   └── fixtures/                  # one real file per format (ARW, CR3) for decode/metadata tests
 ├── web/                          # the web client: separate app, own build (§18)
 │   ├── e2e/                      # Playwright specs + throwaway library fixture
 │   └── src/
@@ -550,18 +550,28 @@ The scanner must skip the data directory (`.bowerbird/` or whatever `data_path` 
 
 ## 7. Supported File Formats
 
-**Stage 1:** Sony ARW (`.arw`, `.ARW`) only.
+Sony ARW (`.arw`) and Canon CR3 (`.cr3`), case-insensitive.
 
-The sync scanner matches files by extension (case-insensitive). All other files are silently ignored. The extension set is the *scan filter*; the actual decoder/metadata reader is chosen later by header sniff (§10, §11), so a future format is added by registering a reader plus extending this set.
+The sync scanner matches files by extension. All other files are silently ignored. The extension set is the *scan filter*; the actual decoder/metadata reader is chosen later by header sniff (§10, §11), so a further format is added by registering a reader plus extending this set. The same table carries the media type the original is served under (§13.5).
 
 ```typescript
-const SUPPORTED_EXTENSIONS = new Set(['.arw']);
+const RAW_MEDIA_TYPES = new Map([
+  ['.arw', 'image/x-sony-arw'],
+  ['.cr3', 'image/x-canon-cr3'],
+]);
 
 function isSupportedFile(filename: string): boolean {
-  const ext = path.extname(filename).toLowerCase();
-  return SUPPORTED_EXTENSIONS.has(ext);
+  return RAW_MEDIA_TYPES.has(path.extname(filename).toLowerCase());
 }
 ```
+
+**Canon needed no second reader, and that is the point of the split.** LibRaw decodes CR3 and parses its header like any other format, so the decode, the embedded preview, the exposure and the body and lens names all arrived working. Three things did not, and each is a place the ARW-only assumption had hardened into code rather than a Canon feature:
+
+- **The capture zone.** `exif_zone.ts` read the offset tags straight out of the TIFF header a RAW "already is". A CR3 is an ISO base-media file; its EXIF sits in a `CMT2` box under `moov`, as a complete little TIFF of its own. Walking the box tree that far and handing the block to the same IFD reader is the whole of it (§11.1).
+- **The masked-border crop.** Measured against the raw frame rather than against the window LibRaw already emits, so on every body that declares an inset crop - which is every Canon - it was applied twice. See §10.4.
+- **GPS.** Canon reports a parsed fix on every frame and zeroes it when there was none, which read as 0,0: a real place, in the Gulf of Guinea. An all-zero triple is now "not recorded".
+
+**CR2 is not in the set.** It is TIFF-based and LibRaw reads it, so it is likely a one-line addition, but nothing here has been run against one.
 
 ---
 
@@ -633,7 +643,7 @@ This service handles the full sync algorithm. See §9 for the detailed algorithm
 
 | Method | Description |
 |---|---|
-| `create(request)` | Creates a shoot record. The folder is named after the shoot `name`, created under the parent shoot's folder (or the library root if no parent); `folder_path` is stored as the full root-relative path (§4.3). If the folder does not exist, it is created. If it **already exists**, it is kept as-is and its photos are **adopted**: every existing non-deleted photo record whose `file_path` falls under this folder and for which this shoot is the most-specific matching shoot (i.e. not already claimed by a more-specific descendant shoot) has its `shoot_id` set to the new shoot. No files move on disk and no reprocessing occurs (thumbnails are keyed by photo UUID, unaffected by shoot membership). This mirrors the sync reconciliation rule (§9.4) and makes an orphaned folder from a prior shoot delete re-adoptable. ARW files physically present but not yet in the DB are picked up by the next sync, which will assign them to this shoot via the same reconciliation. |
+| `create(request)` | Creates a shoot record. The folder is named after the shoot `name`, created under the parent shoot's folder (or the library root if no parent); `folder_path` is stored as the full root-relative path (§4.3). If the folder does not exist, it is created. If it **already exists**, it is kept as-is and its photos are **adopted**: every existing non-deleted photo record whose `file_path` falls under this folder and for which this shoot is the most-specific matching shoot (i.e. not already claimed by a more-specific descendant shoot) has its `shoot_id` set to the new shoot. No files move on disk and no reprocessing occurs (thumbnails are keyed by photo UUID, unaffected by shoot membership). This mirrors the sync reconciliation rule (§9.4) and makes an orphaned folder from a prior shoot delete re-adoptable. RAW files physically present but not yet in the DB are picked up by the next sync, which will assign them to this shoot via the same reconciliation. |
 | `get(shootId)` | Returns a shoot by ID. |
 | `list(libraryId)` | Returns all shoots in a library. |
 | `addPhotos(shootId, photoIds)` | Moves photo files on disk into the shoot's folder. Updates each photo's `file_path` and `shoot_id` in the DB. A photo can only belong to one shoot; if it already belongs to another, it is moved out of the old shoot folder. If a file with the same name already exists in the destination folder, append a numeric suffix (e.g. `IMG_0001_1.ARW`, `IMG_0001_2.ARW`) so no existing file is overwritten and no two records share a `file_path` (§12.1). |
@@ -672,7 +682,7 @@ For each library:
    - The data directory (`.bowerbird/` or custom `data_path` if it's under `root_path`).
    - Any hidden directories (starting with `.`).
    - Any directory named `Bin` (the deletion bins that live inside shoot folders, §12.2), so soft-deleted files are never re-imported.
-3. Filter to supported extensions only (`.arw`). This yields the set of **present** file paths.
+3. Filter to supported extensions only (`.arw`, `.cr3`). This yields the set of **present** file paths.
 4. Query the database for all non-deleted photo records in this library (each carries its stored `date_updated` = last-seen mtime and `file_size`).
 5. **Stat quick-check (avoid opening unchanged files).** For each present file, `stat` it (cheap; no open). If a DB record exists at that path **and** its stored `date_updated` and `file_size` both match the current mtime and size, the file is **unchanged**: reuse its stored hash and do **not** open it. Only files that are new, or whose mtime/size differ, are opened to extract metadata (§11) and compute the **file hash** (§9.2). Call this opened subset **changed**. A no-op sync therefore performs zero LibRaw opens. (Like rsync's default quick-check, this misses a content change that preserves *both* mtime and size, which is rare in practice; a forced full re-hash is the escape hatch if ever needed.)
 6. Build the diff from the present set and the changed set:
@@ -710,17 +720,17 @@ interface LibraryDiff {
 
 The file hash is a SHA-1 digest of the following metadata properties, concatenated in a deterministic order:
 
-1. File extension (lowercase, e.g. `.arw`)
+1. File extension (lowercase, e.g. `.arw`, `.cr3`)
 2. Image width (pixels)
 3. Image height (pixels)
 4. Date modified (filesystem mtime, ISO string)
-5. Color space (string identifier; Stage 1 uses the constant sRGB output space, see §11.1)
+5. Color space (string identifier; the constant sRGB output space, see §11.1)
 6. File size in bytes
 7. Orientation/rotation (LibRaw `flip` orientation code, or `0` if not present)
 
 **mtime is included** so an in-place pixel edit that preserves dimensions/size/orientation is still detected as MODIFIED and re-processed (without it, such an edit is invisible). Note the tradeoff: an import/restore that resets mtime without changing content will spuriously mark untouched photos MODIFIED and re-process them. A pure backup *read* (this server as rsync source) does not change mtime, so ordinary cloud backups do not trigger this.
 
-**Critical rule:** Under no circumstances should the hash computation read past the file header/metadata. For ARW files, EXIF data is in the file header (TIFF-based structure), so reading resolution and orientation is safe. The implementation must not decode pixel data.
+**Critical rule:** Under no circumstances should the hash computation read past the file header/metadata. Every supported format keeps its metadata at the front of the file - an ARW is a TIFF, a CR3 puts its EXIF in a `CMT2` box near the head of `moov` - so reading resolution and orientation is safe. The implementation must not decode pixel data.
 
 The hash input string is formatted as:
 ```
@@ -814,7 +824,7 @@ This is updated as the sync progresses and is exposed via the API for client pol
 
 ### 9.7 Sync Lock
 
-Sync is locked **per library**, so two different libraries can sync concurrently while the same library cannot be synced twice at once. The lock is a **file at the library root**, `<root_path>/.bowerbird-sync.lock`, created with exclusive semantics (`open` with `O_CREAT | O_EXCL`, i.e. Bun/Node `wx` flag) and holding the owning PID and an ISO start timestamp. (It is a hidden non-`.arw` file, so the scanner ignores it regardless.)
+Sync is locked **per library**, so two different libraries can sync concurrently while the same library cannot be synced twice at once. The lock is a **file at the library root**, `<root_path>/.bowerbird-sync.lock`, created with exclusive semantics (`open` with `O_CREAT | O_EXCL`, i.e. Bun/Node `wx` flag) and holding the owning PID and an ISO start timestamp. (It is a hidden file with no RAW extension, so the scanner ignores it regardless.)
 
 - `syncLibrary(id)` acquires that library's lock; if already held it throws `SYNC_IN_PROGRESS` (409).
 - `syncAll()` acquires each library's lock independently as it processes it; a library whose lock is already held is skipped (and logged), and the remaining libraries proceed.
@@ -1320,7 +1330,9 @@ Used during sync to populate photo records and compute file hashes.
 
 Metadata is read via the same per-format dispatch as decoding (§10): sniff the header, route to the format's reader. libvips is **not** used for RAW metadata, as it has no RAW loader and, when coaxed to open an ARW as a generic TIFF, report the embedded preview's dimensions rather than the full-res sensor values.
 
-For Sony ARW, metadata comes from **LibRaw's header parse**: `libraw_init` then `libraw_open_file` populates `imgdata.sizes` (dimensions and `flip` orientation), `imgdata.other` (capture `timestamp`, parsed GPS), and `imgdata.color` (color space), followed by `libraw_adjust_sizes_info_only` to flip-adjust `sizes.iwidth`/`iheight` (see below), all **without** calling `libraw_unpack`/`libraw_dcraw_process`, so no pixel data is decoded. This is the fast path used per file during scan. `colorSpace` in Stage 1 is the constant `sRGB` output space: LibRaw exposes no stable accessor for the camera's source color-space EXIF tag, and the decode pipeline always outputs sRGB, so this field is fixed (informational + a stable, non-varying hash input) rather than read per file. (`imgdata.color` holds calibration/profile data, not a simple source-space identifier.) The EXIF capture time is naive (the tag carries no zone). LibRaw exposes it only as a pre-computed `time_t` in `imgdata.other.timestamp` (derived by interpreting the naive `DateTimeOriginal` as the process's local timezone), with no accessor for the EXIF `OffsetTimeOriginal` tag. Stage 1 therefore reads that `time_t` back through the same local zone `mktime` used and re-encodes those components as a `Z` UTC ISO string (§4), which stores the camera's wall clock verbatim whatever the server's zone is; taking the `time_t` as an instant instead would slide every capture date by the server's offset. The stored value is a wall clock rather than an instant, so the client formats it in UTC (`captureDateTime`) rather than in the viewer's zone, which would slide it a second time. The zone itself comes from a second, direct read of the file: `exif_zone.ts` walks the TIFF header the RAW already is, IFD0 into the Exif IFD, and returns `OffsetTimeOriginal` (0x9011), falling back to `OffsetTime` (0x9010), into the `date_taken_offset` column. Bounded to the first 256KB, so it costs a page or two rather than a read of a 25MB file, and null when a pointer leads past that window. The tags arrived in EXIF 2.31 (2016), so older bodies record nothing and the column stays NULL: a Sony ILCE-7CR writes `+11:00`, an ILCE-6300 writes no offset at all. Blank and malformed values ("      ", `+1100`) are read as absent rather than as UTC. It is deliberately not a hash input (§9.2), for the same reason `dateTaken` is not: the hash is a change detector for a file the scan has already decided to open, which only happens once mtime or size differs (§9.1), and mtime is itself hashed. Descriptive metadata therefore adds no detection the hash does not already have. Rewriting the zone tag in place while preserving mtime and size defeats the quick-check before a hash is ever computed, so hashing it would not catch that case either. `date_taken` stays the wall clock either way, so ordering and the date filters are unaffected by whether a body recorded a zone; the offset is what the viewer shows beside the time and what a true instant would be derived from. The reader also `stat`s the file to fill `mtime`/`fileSize`, so the scan-time result carries them all the way to Phase 3 apply (§9.4) without a second `stat` inside the transaction.
+For every supported format, metadata comes from **LibRaw's header parse**: `libraw_init` then `libraw_open_file` populates `imgdata.sizes` (dimensions and `flip` orientation), `imgdata.other` (capture `timestamp`, parsed GPS), and `imgdata.color` (color space), followed by `libraw_adjust_sizes_info_only` to flip-adjust `sizes.iwidth`/`iheight` (see below), all **without** calling `libraw_unpack`/`libraw_dcraw_process`, so no pixel data is decoded. This is the fast path used per file during scan. `colorSpace` is the constant `sRGB` output space: LibRaw exposes no stable accessor for the camera's source color-space EXIF tag, and the decode pipeline always outputs sRGB, so this field is fixed (informational + a stable, non-varying hash input) rather than read per file. (`imgdata.color` holds calibration/profile data, not a simple source-space identifier.) The EXIF capture time is naive (the tag carries no zone). LibRaw exposes it only as a pre-computed `time_t` in `imgdata.other.timestamp` (derived by interpreting the naive `DateTimeOriginal` as the process's local timezone), with no accessor for the EXIF `OffsetTimeOriginal` tag. It therefore reads that `time_t` back through the same local zone `mktime` used and re-encodes those components as a `Z` UTC ISO string (§4), which stores the camera's wall clock verbatim whatever the server's zone is; taking the `time_t` as an instant instead would slide every capture date by the server's offset. The stored value is a wall clock rather than an instant, so the client formats it in UTC (`captureDateTime`) rather than in the viewer's zone, which would slide it a second time. The zone itself comes from a second, direct read of the file: `exif_zone.ts` walks IFD0 into the Exif IFD and returns `OffsetTimeOriginal` (0x9011), falling back to `OffsetTime` (0x9010), into the `date_taken_offset` column. An ARW *is* a TIFF, so that walk starts at byte zero. A CR3 is an ISO base-media file, so the box tree is walked first - `moov` into the `uuid` box, to `CMT2`, which holds the Exif IFD as a complete little TIFF of its own - and the same IFD reader takes it from there. Bounded to the first 256KB, so it costs a page or two rather than a read of a 25MB file, and null when a pointer leads past that window. The tags arrived in EXIF 2.31 (2016), so older bodies record nothing and the column stays NULL: a Sony ILCE-7CR and a Canon EOS R8 both write `+11:00`, an ILCE-6300 writes no offset at all. Blank and malformed values ("      ", `+1100`) are read as absent rather than as UTC. It is deliberately not a hash input (§9.2), for the same reason `dateTaken` is not: the hash is a change detector for a file the scan has already decided to open, which only happens once mtime or size differs (§9.1), and mtime is itself hashed. Descriptive metadata therefore adds no detection the hash does not already have. Rewriting the zone tag in place while preserving mtime and size defeats the quick-check before a hash is ever computed, so hashing it would not catch that case either. `date_taken` stays the wall clock either way, so ordering and the date filters are unaffected by whether a body recorded a zone; the offset is what the viewer shows beside the time and what a true instant would be derived from. The reader also `stat`s the file to fill `mtime`/`fileSize`, so the scan-time result carries them all the way to Phase 3 apply (§9.4) without a second `stat` inside the transaction.
+
+**A parsed GPS block is not the same as a fix.** Canon sets `gpsparsed` on every frame and leaves the degree triples at zero when the body had no fix, so trusting the flag alone put a whole catalogue at 0,0 - which is not a null, it is a point in the Gulf of Guinea, and it maps. An all-zero latitude *and* longitude therefore reads as "not recorded".
 
 `width`/`height` are the **display (upright) dimensions**, i.e. after the orientation flip is applied. At `open_file` time LibRaw's `sizes.iwidth`/`iheight` are still in **sensor orientation** (the 90°/270° swap is applied only by `dcraw_process` or by an explicit `libraw_adjust_sizes_info_only()` call), so the reader must call `libraw_adjust_sizes_info_only()` after `open_file` and then read the now flip-adjusted `iwidth`/`iheight`. This is deliberate: the generated thumbnails are baked upright (§10.4), so storing upright dimensions means `width`/`height` always match the served thumbnail's aspect. `orientation` is retained separately (as the LibRaw flip orientation code) only as informational metadata and as a file-hash input (§9.2); **clients must not apply it to the served thumbnails, which are already upright** (doing so would double-rotate).
 
@@ -1353,6 +1365,8 @@ async function extractMetadata(filePath: string): Promise<FileMetadata> {
 Body and lens come from `libraw_get_iparams()` (`normalized_make`/`normalized_model`, falling back to the raw `make`/`model`) and `libraw_get_lensinfo()` (`Lens`). LibRaw leaves the lens blank or `---` on fixed-lens bodies, and both spellings are stored as NULL: "unknown" rather than a lens named `---`.
 
 **Sensor crop.** Some bodies (the ILCE-7CR among them) report masked border columns as part of LibRaw's "visible" area, `sizes.width`/`height` equal `raw_width`/`raw_height` with zero margins, while the file separately states the real picture in `sizes.raw_inset_crops[0]`. Decoding the visible area verbatim then bakes black bars down two edges of every thumbnail. Both the header read and the decode therefore crop to that inset when the file states a usable one (an origin of `65535` means "not stated", and a crop that does not fit the raw frame means the struct layout drifted; either way, no crop). `dcraw_process` emits an upright image, so the sensor-space margins are rotated by the same flip before being applied. The two paths must agree: the stored `width`/`height` describe the picture the thumbnail shows.
+
+**The inset is measured against what LibRaw already trims, not against the sensor.** The emitted frame starts at `left_margin`/`top_margin` and is `width`x`height`; only the part of the camera's crop falling outside *that* window is still ours to remove. Subtracting the crop from the raw frame instead double-applies it on every body where `left_margin` is already the crop origin - which is every Canon. An EOS R8 lost a further 168 columns and 108 rows, and because the excess came off two sides rather than four the result was not a smaller picture but a differently framed one: 5811x3879 where the camera's own JPEG is 6000x4000, shifted up and left. It also cost the JPEG match (§10.5), which models an overall rescale but has no term for a translation: acceptance across 27 EOS R8 frames was 15/27 before and 27/27 after, median deltaE 4.11 to 1.89, against 27/27 and 1.35 for a Sony set of the same size. Three Sony geometries were over-cropped by 8-32 columns on the right edge by the same arithmetic, which is why this is not a Canon special case.
 
 The processor is opened header-only and closed (`libraw_close`/`libraw_recycle`) immediately after reading the fields; the memory-leak audit note in §10.4 applies here too.
 
@@ -1527,7 +1541,7 @@ All boolean query params are parsed with `z.stringbool()`, so `?is_missing=false
 | `GET` | `/image/:photoId/renditions/:rendition` | Stream one rendition: `grid`, `full` or `max` (§10.1) |
 | `GET` | `/image/:photoId/renditions/:rendition/video` | The one-frame AV1 twin of an HDR rendition (§10.7) |
 | `GET` | `/image/:photoId/embedded.jpg` | The camera's own JPEG, lifted out of the RAW unchanged |
-| `GET` | `/image/:photoId/original.arw` | Stream original RAW file |
+| `GET` | `/image/:photoId/original` | Stream original RAW file (media type and download name from the file's own extension) |
 | `GET` | `/image/:photoId/full.jpg` | The full rendition transcoded to JPEG, as an attachment |
 
 **Dynamic range is not in the URL.** The library decides it, so a client naming `full-hdr` would be guessing at a file that may never have been built; the route resolves it from `preview_hdr` instead, and `PhotoDetail.renditions` tells the client what it is looking at.
@@ -1720,7 +1734,7 @@ The following order respects dependency chains — each step depends on the step
 5. **Repositories**: All repository classes (pure SQLite data access).
 6. **Libraries service + API**: CRUD operations for libraries.
 7. **RAW decoder / FFI**: `raw_decoder.ts` LibRaw FFI bindings and the per-format dispatch (header sniff). Needed before metadata since ARW metadata is read via LibRaw's header parse.
-8. **Metadata extraction**: `metadata.ts` (per-format header parse; LibRaw for ARW).
+8. **Metadata extraction**: `metadata.ts` (per-format header parse; LibRaw for ARW and CR3).
 9. **Photos service + API**: CRUD, listing, filtering.
 10. **Processing service**: Worker-based thumbnail generation (reuses the RAW decoder).
 11. **Sync service**: Full sync algorithm with move detection, reappearance handling, shoot-membership reconciliation, and the per-library sync lock (§9.7). Depends on the processing service (§8.4), which it calls to trigger thumbnail generation (§9.5).
