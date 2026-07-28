@@ -135,6 +135,34 @@ describe('ProcessingService.processUnprocessed', () => {
     expect(markProcessed).toHaveBeenCalledTimes(2);
   });
 
+  it('announces a photo when its tile lands, not only when its renditions do', async () => {
+    // Splitting the passes exists so a grid is browsable at the tile's pace (~125ms)
+    // rather than the render's (~1.5s). A client hears about a photo through these
+    // announcements, so raising one only at the end would hand that back: the tile
+    // would be on disk with nobody told for a second and a half.
+    const touchReprocessed = jest.fn();
+    const markProcessed = jest.fn();
+    const repo = {
+      listPendingProcessing: jest.fn(() => [pending('a')]),
+      markProcessed,
+      touchReprocessed,
+      markProcessingFailed: jest.fn(),
+    } as unknown as PhotosRepository;
+
+    const announced: { photoId: string; version: string }[] = [];
+    const service = new ProcessingService(repo, config);
+    service.onProcessed((photoId, version) => announced.push({ photoId, version }));
+    await service.processUnprocessed('lib');
+
+    // Once for the tile, once when the renditions land.
+    expect(announced.map((a) => a.photoId)).toEqual(['a', 'a']);
+    // Each carries the stamp its own write put on the row: a client builds the URL
+    // out of that, so an announcement ahead of the row would be walked back by the
+    // next list read.
+    expect(touchReprocessed).toHaveBeenCalledWith('a', announced[0]?.version);
+    expect(markProcessed).toHaveBeenCalledWith('a', announced[1]?.version, 'render');
+  });
+
   it('records what the viewer gets, so a second import still rebuilds the renditions', async () => {
     // `rendition_source` is written by markProcessed and read straight back by the
     // next import to decide whether the viewer's renditions get built. Recording the

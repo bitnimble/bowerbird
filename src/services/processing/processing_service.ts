@@ -224,6 +224,11 @@ export class ProcessingService {
         // Nothing more to build: this library serves the camera's JPEG in the
         // viewer, so the tile was the whole import.
         if (photo?.renditions == null) this.markDone(photo, result.photoId);
+        // Otherwise the tile is on disk and the render is still ~1.5s away, which
+        // is the whole reason the passes are split. Saying so here is what lets a
+        // grid already on screen fill in at the tile's pace rather than the
+        // render's; told only at the end, a watching client waits for both.
+        else this.tileWritten(result.photoId);
       },
     );
 
@@ -241,6 +246,22 @@ export class ProcessingService {
         this.markDone(photo, result.photoId);
       },
     );
+  }
+
+  // A grid tile written while its renditions are still to come. Stamps the row as
+  // well as announcing it: the version a client puts in the URL comes off the row
+  // (§13.5), so telling it about a file the row does not know about yet would have
+  // the next list read walk that URL back to the copy it already holds.
+  private tileWritten(photoId: string): void {
+    // Never throw: this runs inside a worker's onmessage, and a throw here would
+    // skip the pool's bookkeeping and hang the batch.
+    try {
+      const version = new Date().toISOString();
+      this.photos.touchReprocessed(photoId, version);
+      this.announce(photoId, version);
+    } catch (err) {
+      console.error(`tileWritten failed for photo ${photoId}: ${(err as Error).message}`);
+    }
   }
 
   // Clears the pending flag once every stage of a photo has landed, and sweeps the
