@@ -238,7 +238,13 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   // A wide photo wastes horizontal space if the panel sits beside it, and a tall
   // one wastes vertical space if the panel sits under it. Put the panel on
   // whichever edge leaves the photo biggest.
-  const landscape = photo == null || photo.width >= photo.height;
+  //
+  // Off the loaded list while the detail is still in flight: the shape decides
+  // which edge the panels take, so waiting for the detail to answer it means the
+  // stage changes size under a frame that may already be up - the neighbour the
+  // stage warmed decodes the moment it is asked for.
+  const shape = photo ?? store.photos.find((p) => p.id === photoId) ?? null;
+  const landscape = shape == null || shape.width >= shape.height;
   // Beside a portrait the column runs the full height of the page, so every row
   // fits without scrolling; under a landscape it is a 34vh strip and does not.
   const expanded = !landscape;

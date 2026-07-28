@@ -117,11 +117,12 @@ const Tile = observer(function Tile({
         type="button"
         className="tile__hit"
         onClick={(e) => {
+          // extendTo moves the cursor itself, so it is not preceded by focusAt.
+          if (e.shiftKey) return photos.extendTo(photo.id);
           photos.focusAt(index);
-          if (e.shiftKey) photos.extendTo(photo.id);
           // Once a selection exists the grid is in "choose things" mode, so a
           // plain click keeps building it instead of navigating away from it.
-          else if (e.metaKey || e.ctrlKey || store.hasSelection) photos.toggle(photo.id);
+          if (e.metaKey || e.ctrlKey || store.hasSelection) photos.toggle(photo.id);
           else navigate(`/photos/${photo.id}`);
         }}
         aria-label={`photo ${filename(photo.file_path, photo.id)}`}
@@ -149,7 +150,13 @@ const Tile = observer(function Tile({
       <button
         type="button"
         className="tile__check"
-        onClick={() => photos.toggle(photo.id)}
+        // Shift works on the box as well as on the frame: it is the visible
+        // handle for selecting, so it is where a range gets built from.
+        onClick={(e) => {
+          if (e.shiftKey) return photos.extendTo(photo.id);
+          photos.focusAt(index);
+          photos.toggle(photo.id);
+        }}
         aria-label={selected ? 'Deselect photo' : 'Select photo'}
         aria-pressed={selected}
       >

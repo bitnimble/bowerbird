@@ -83,6 +83,45 @@ test('rejecting removes a photo from the default working set', async ({ page }) 
   await expect(page.locator('.tile')).toHaveCount(PHOTO_NAMES.length);
 });
 
+// Picking a burst out of a shoot is a range, not forty clicks.
+test('shift-click extends the selection from the anchor', async ({ page }) => {
+  await page.goto('/settings');
+  await openLibrary(page, CULL_PHOTOS_DIR);
+  await expect(page.locator('.tile')).toHaveCount(PHOTO_NAMES.length);
+
+  const tiles = page.locator('.tile');
+  // Anchored on the last tile and then cleared, so a range that reaches it is
+  // the only way the count can come back: the anchor is where the range starts
+  // from, not what happens to be selected.
+  await tiles.last().getByRole('button', { name: 'Select photo' }).click();
+  await tiles.last().getByRole('button', { name: 'Deselect photo' }).click();
+  await expect(page.locator('.tile--selected')).toHaveCount(0);
+
+  await tiles.first().locator('.tile__hit').click({ modifiers: ['Shift'] });
+  await expect(page.locator('.tile--selected')).toHaveCount(PHOTO_NAMES.length);
+
+  // And it does not open the photo on the way.
+  expect(page.url()).not.toContain('/photos/');
+
+  // The tick box is the visible handle for selecting, so a range has to be
+  // buildable from there too rather than only from the frame.
+  await page.getByRole('button', { name: 'Clear', exact: true }).click();
+  await tiles.last().getByRole('button', { name: 'Select photo' }).click();
+  await tiles.first().getByRole('button', { name: 'Select photo' }).click({ modifiers: ['Shift'] });
+  await expect(page.locator('.tile--selected')).toHaveCount(PHOTO_NAMES.length);
+
+  // The cursor answers for the anchor when nothing has been toggled: arrow to a
+  // photo, shift-click another, get everything between them. ArrowLeft rather
+  // than Right because the cursor is wherever the clicks above left it, and
+  // moving it is clamped at the first tile.
+  await page.getByRole('button', { name: 'Clear', exact: true }).click();
+  await page.keyboard.press('ArrowLeft');
+  await expect(tiles.first()).toHaveClass(/tile--focused/);
+  await tiles.last().locator('.tile__hit').click({ modifiers: ['Shift'] });
+  await expect(page.locator('.tile--selected')).toHaveCount(PHOTO_NAMES.length);
+  await page.getByRole('button', { name: 'Clear', exact: true }).click();
+});
+
 test('the Picks filter narrows to what was picked', async ({ page }) => {
   await page.goto('/settings');
   await openLibrary(page, CULL_PHOTOS_DIR);

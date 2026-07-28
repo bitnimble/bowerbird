@@ -295,14 +295,23 @@ export class PhotosPresenter {
   @action.bound
   extendTo(photoId: string): void {
     const ids = this.store.photos.map((p) => p.id);
-    const anchor = this.store.lastToggled == null ? -1 : ids.indexOf(this.store.lastToggled);
+    // The cursor stands in for the anchor when nothing has been toggled yet:
+    // arrowing to one photo and shift-clicking another is the same gesture as in
+    // any file manager, and it is what a first shift-click has to reach for.
+    const anchorId = this.store.lastToggled ?? this.store.photos[this.store.focusIndex]?.id ?? null;
+    const anchor = anchorId == null ? -1 : ids.indexOf(anchorId);
     const target = ids.indexOf(photoId);
     if (anchor < 0 || target < 0) {
       this.toggle(photoId);
+      this.focusAt(target);
       return;
     }
     const [from, to] = anchor <= target ? [anchor, target] : [target, anchor];
     for (const id of ids.slice(from, to + 1)) this.store.selected.set(id, true);
+    // Moved here rather than by the caller, which would have to know to focus
+    // *after* extending: focus is the fallback anchor, so focusing first would
+    // make every range start and end on the photo just clicked.
+    this.focusAt(target);
   }
 
   @action.bound
