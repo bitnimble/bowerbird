@@ -8,7 +8,9 @@
     "dev": "bun --watch run src/index.ts",
     "test": "bun test src",
     "test:integration": "bun test test/integration",
-    "typecheck": "tsc --noEmit"
+    "test:native": "cargo test --release --manifest-path native/rawshim/Cargo.toml",
+    "typecheck": "tsc --noEmit",
+    "build:native": "cargo build --release --manifest-path native/rawshim/Cargo.toml"
   },
   "dependencies": {
     "hono": "^4.6.14",

@@ -10,22 +10,12 @@ const LIB_CANDIDATES = ['libraw.so', 'libraw.so.23', 'libraw.so.20', 'libraw.dyl
 const SYMBOLS = {
   libraw_init: { args: [FFIType.i32], returns: FFIType.ptr },
   libraw_open_file: { args: [FFIType.ptr, FFIType.cstring], returns: FFIType.i32 },
-  libraw_unpack: { args: [FFIType.ptr], returns: FFIType.i32 },
-  libraw_dcraw_process: { args: [FFIType.ptr], returns: FFIType.i32 },
-  libraw_dcraw_make_mem_image: { args: [FFIType.ptr, FFIType.ptr], returns: FFIType.ptr },
   libraw_unpack_thumb: { args: [FFIType.ptr], returns: FFIType.i32 },
   libraw_dcraw_make_mem_thumb: { args: [FFIType.ptr, FFIType.ptr], returns: FFIType.ptr },
   libraw_dcraw_clear_mem: { args: [FFIType.ptr], returns: FFIType.void },
   libraw_recycle: { args: [FFIType.ptr], returns: FFIType.void },
   libraw_close: { args: [FFIType.ptr], returns: FFIType.void },
   libraw_adjust_sizes_info_only: { args: [FFIType.ptr], returns: FFIType.i32 },
-  libraw_set_output_bps: { args: [FFIType.ptr, FFIType.i32], returns: FFIType.void },
-  libraw_set_output_color: { args: [FFIType.ptr, FFIType.i32], returns: FFIType.void },
-  libraw_set_gamma: { args: [FFIType.ptr, FFIType.i32, FFIType.f32], returns: FFIType.void },
-  libraw_set_no_auto_bright: { args: [FFIType.ptr, FFIType.i32], returns: FFIType.void },
-  libraw_set_user_mul: { args: [FFIType.ptr, FFIType.i32, FFIType.f32], returns: FFIType.void },
-  libraw_get_cam_mul: { args: [FFIType.ptr, FFIType.i32], returns: FFIType.f32 },
-  libraw_set_demosaic: { args: [FFIType.ptr, FFIType.i32], returns: FFIType.void },
   libraw_get_iwidth: { args: [FFIType.ptr], returns: FFIType.i32 },
   libraw_get_iheight: { args: [FFIType.ptr], returns: FFIType.i32 },
   libraw_get_imgother: { args: [FFIType.ptr], returns: FFIType.ptr },
@@ -68,18 +58,6 @@ export interface DecodedImage {
   depth: 8 | 16;
   data: Buffer; // interleaved RGB, already rotated to display orientation
 }
-
-// `output_color` values, which are LibRaw's own numbering for the render target
-// and are NOT the LIBRAW_COLORSPACE_* enum (that one describes what the camera
-// said its data was in).
-const OUTPUT_COLOR = { srgb: 1, rec2020: 8 } as const;
-
-// LibRaw's `user_qual`. The default is 3 (AHD); 2 is PPG, which on a 60MP frame
-// demosaics in 544ms against AHD's 849ms for a mean difference of 0.46 of an 8-bit
-// level - 0.18%, and every rendition is a downscale of at least 2.5x, so it is
-// gone before anything is looked at. Measured on the same frame, 0 (linear) is
-// slower than AHD rather than faster, and 1 (VNG) is 5.4s.
-const DEMOSAIC_PPG = 2;
 
 // What the pixels are in when the decode hands them back.
 //   'srgb'            display-referred, sRGB primaries and transfer. Everything
@@ -127,43 +105,6 @@ export function readEmbeddedJpeg(filePath: string): Buffer | null {
     L.libraw_recycle(proc);
     L.libraw_close(proc);
   }
-}
-
-// LibRaw's default white balance is the camera's *daylight* table, not the
-// multipliers the body actually metered, so a render of a tungsten-lit frame comes
-// out visibly orange. Measured against the embedded JPEG on an ILCE-6300, using
-// the as-shot values takes mean deltaE76 from 32.5 to 20.2, which is the single
-// largest colour error in the pipeline.
-//
-// There is no `use_camera_wb` setter in the C API, so the values are copied across
-// by hand. cam_mul is in camera-channel order (R, G1, B, G2) and normalising to G1
-// keeps green at unity, which is what dcraw's -w does.
-//
-/**
- * As-shot multipliers normalised to green, or null when the file did not record a
- * usable set and LibRaw's default should stand.
- *
- * Every one of R, G1 and B has to be positive before any of them is applied: these
- * are written straight into `user_mul`, so a single zero or negative among them
- * would zero or invert that channel in the render, which is a worse outcome than
- * the wrong white balance this exists to fix.
- *
- * The fourth (G2) is the exception and must not be part of that test. A
- * three-colour camera legitimately reports it as 0, and dcraw substitutes green
- * for it downstream; rejecting on it would skip white balance entirely on exactly
- * those bodies. Substituting green here matches what LibRaw would do anyway,
- * without depending on it happening.
- */
-export function cameraMultipliers(camMul: readonly number[]): [number, number, number, number] | null {
-  const [red, green, blue, green2] = [camMul[0] ?? 0, camMul[1] ?? 0, camMul[2] ?? 0, camMul[3] ?? 0];
-  if (!(red > 0) || !(green > 0) || !(blue > 0)) return null;
-  return [red / green, 1, blue / green, (green2 > 0 ? green2 : green) / green];
-}
-
-function applyCameraWhiteBalance(L: LibRaw, proc: Pointer): void {
-  const multipliers = cameraMultipliers([0, 1, 2, 3].map((i) => L.libraw_get_cam_mul(proc, i)));
-  if (multipliers == null) return;
-  for (let i = 0; i < 4; i += 1) L.libraw_set_user_mul(proc, i, multipliers[i]!);
 }
 
 export interface DecodeOptions {
@@ -293,35 +234,6 @@ function rotateInsets(insets: Insets, flip: number): Insets {
     default:
       return insets;
   }
-}
-
-/**
- * The decoded frame copied out of LibRaw's buffer, with any masked border removed
- * on the way. One pass: `source` is a view over memory that is about to be freed,
- * so it has to be copied regardless, and cropping during that copy is free.
- */
-function copyCropped(
-  source: Uint8Array,
-  sourceWidth: number,
-  sourceHeight: number,
-  depth: 8 | 16,
-  insets: Insets,
-): DecodedImage {
-  const width = sourceWidth - insets.left - insets.right;
-  const height = sourceHeight - insets.top - insets.bottom;
-  const pixel = 3 * (depth / 8);
-  if (width <= 0 || height <= 0 || (insets.left | insets.top | insets.right | insets.bottom) === 0) {
-    return { width: sourceWidth, height: sourceHeight, channels: 3, depth, data: Buffer.from(source) };
-  }
-
-  const stride = sourceWidth * pixel;
-  const rowBytes = width * pixel;
-  const out = Buffer.allocUnsafe(width * height * pixel);
-  for (let row = 0; row < height; row += 1) {
-    const from = (row + insets.top) * stride + insets.left * pixel;
-    out.set(source.subarray(from, from + rowBytes), row * rowBytes);
-  }
-  return { width, height, channels: 3, depth, data: out };
 }
 
 /**

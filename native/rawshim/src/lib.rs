@@ -231,3 +231,48 @@ pub unsafe extern "C" fn bb_free(image: *mut BbImage) {
     let image = Box::from_raw(image);
     drop(Vec::from_raw_parts(image.data, image.len, image.capacity));
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalises_the_as_shot_multipliers_to_green() {
+        // A real ILCE-7CR set, as LibRaw reports it.
+        let out = camera_multipliers(&[2770.0, 1024.0, 1669.0, 1024.0]).unwrap();
+        assert_eq!(out, [2770.0 / 1024.0, 1.0, 1669.0 / 1024.0, 1.0]);
+    }
+
+    #[test]
+    fn substitutes_green_for_a_three_colour_camera() {
+        // Reporting 0 in the fourth slot is legitimate, not corruption, so it must
+        // not veto the set - that would skip white balance on exactly those bodies.
+        let out = camera_multipliers(&[2060.0, 1024.0, 2904.0, 0.0]).unwrap();
+        assert_eq!(out, [2060.0 / 1024.0, 1.0, 2904.0 / 1024.0, 1.0]);
+    }
+
+    #[test]
+    fn refuses_a_set_missing_any_of_r_g_b() {
+        // These go straight into user_mul, so one zero would zero that channel and
+        // one negative would invert it. Falling back to LibRaw's default is better.
+        assert!(camera_multipliers(&[0.0, 1024.0, 1669.0, 1024.0]).is_none());
+        assert!(camera_multipliers(&[2770.0, 0.0, 1669.0, 1024.0]).is_none());
+        assert!(camera_multipliers(&[2770.0, 1024.0, 0.0, 1024.0]).is_none());
+        assert!(camera_multipliers(&[2770.0, 1024.0, -1669.0, 1024.0]).is_none());
+    }
+
+    #[test]
+    fn never_returns_a_non_positive_multiplier() {
+        for set in [[2770.0, 1024.0, 1669.0, 1024.0], [2060.0, 1024.0, 2904.0, 0.0], [1.0, 1.0, 1.0, -5.0]] {
+            if let Some(out) = camera_multipliers(&set) {
+                assert!(out.iter().all(|v| *v > 0.0), "{set:?} produced {out:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn halves_insets_without_going_negative() {
+        let halved = halve_insets(Insets { left: 7, top: 3, right: 9, bottom: 1 });
+        assert_eq!((halved.left, halved.top, halved.right, halved.bottom), (3, 1, 4, 0));
+    }
+}
