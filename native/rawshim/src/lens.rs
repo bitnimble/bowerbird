@@ -8,8 +8,9 @@
 // 0x94xx blocks are involved.
 //
 // Ported from TypeScript so the fit takes a path rather than a file: reading the
-// spline meant handing JavaScript the entire RAW - 60-120MB per photo - to find
-// one tag in the first few kilobytes of it.
+// spline meant handing JavaScript the entire RAW, 60-120MB per photo, for one tag.
+// The caller now reads a bounded head of the file instead (`ffi.rs`), which is not
+// as small as it sounds: the tag is early but its data is not.
 //
 // Only Sony is implemented, and a CR3 is not a TIFF at all, so Canon falls through
 // to `None` and the caller fits the geometry instead. That is the same path 14 of

@@ -476,6 +476,43 @@ pub unsafe extern "C" fn bb_extract_embedded(path: *const c_char) -> *mut BbBuff
     }
 }
 
+/// How much of a RAW the spline parser is given before it is given all of it.
+///
+/// Not "the first few kilobytes", which is what this was assumed to be until it was
+/// measured: over 1000 files sampled across the whole catalogue, a 128KB window
+/// missed the spline on 971 of them and 256KB missed none. The tag is early, its
+/// data is not - it lands past the previews IFD0 points at. So this is double what
+/// was needed, and still two orders of magnitude below a whole frame.
+const SPLINE_WINDOW: u64 = 512 * 1024;
+
+/// The spline, from as little of the file as will yield it.
+///
+/// Reading it whole was a page-cache hit in `bb_fit` - the decode had just pulled
+/// the same file through - but it still allocated and copied 25-60MB per photo.
+///
+/// The whole file is still read when the window comes back empty, and that is
+/// load-bearing rather than belt-and-braces: TIFF offsets are absolute, and the
+/// parser answers a pointer past the end of its buffer with `None`, which is the
+/// same answer as a body that recorded nothing. A window one byte too small would
+/// not fail, it would silently drop the frame onto the fitted fallback - slower and
+/// a worse grade, with nothing to say so.
+/// `Err` is a file that could not be read, which the callers report separately from
+/// a file that simply records no correction.
+fn spline_of(path: &str) -> std::io::Result<Option<Vec<f64>>> {
+    use std::io::Read;
+
+    let mut head = Vec::with_capacity(SPLINE_WINDOW as usize);
+    std::fs::File::open(path)?.take(SPLINE_WINDOW).read_to_end(&mut head)?;
+    if let Some(knots) = crate::lens::read_distortion_spline(&head) {
+        return Ok(Some(knots));
+    }
+    // A short read means that was the whole file, so there is nothing further on.
+    if (head.len() as u64) < SPLINE_WINDOW {
+        return Ok(None);
+    }
+    Ok(crate::lens::read_distortion_spline(&std::fs::read(path)?))
+}
+
 /// Reads the distortion spline a body recorded for this shot, in SPLINE_UNITs.
 ///
 /// Returns the knot count written to `out`, 0 when the file records none, or -1 if
@@ -491,9 +528,9 @@ pub unsafe extern "C" fn bb_read_distortion_spline(path: *const c_char, out: *mu
         return -1;
     }
     let Ok(path) = CStr::from_ptr(path).to_str() else { return -1 };
-    let Ok(bytes) = std::fs::read(path) else { return -1 };
+    let Ok(found) = spline_of(path) else { return -1 };
 
-    match crate::lens::read_distortion_spline(&bytes) {
+    match found {
         None => 0,
         Some(knots) => {
             let n = knots.len().min(max as usize);
@@ -549,13 +586,7 @@ pub unsafe extern "C" fn bb_fit(image: *const BbImage, raw_path: *const c_char, 
     }
     let Ok(path) = CStr::from_ptr(raw_path).to_str() else { return -1 };
 
-    // The spline lives in the first few kilobytes, but its offsets are absolute, so
-    // the whole file is what can be indexed safely. The decode just read it, so
-    // this is a page-cache hit rather than a second trip to disk.
-    let knots = match std::fs::read(path) {
-        Ok(bytes) => crate::lens::read_distortion_spline(&bytes),
-        Err(_) => return -1,
-    };
+    let Ok(knots) = spline_of(path) else { return -1 };
 
     let fitted = crate::with_embedded_jpeg(raw_path, |jpeg| fit_against(image, jpeg, knots, out));
     // No JPEG preview: nothing to match, and the caller renders untransformed.
