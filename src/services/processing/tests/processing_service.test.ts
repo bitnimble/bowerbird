@@ -80,11 +80,11 @@ describe('ProcessingService.processUnprocessed', () => {
 
     // Two jobs per photo now - the grid tile, then the renditions - and the flag has
     // to reach both, since the tile can fall back to a render and needs the match too.
-    await new ProcessingService(repo, { ...config, matchEmbeddedJpeg: true } as Config).processUnprocessed('lib');
+    await new ProcessingService(repo, { ...config, matchEmbeddedJpeg: true } as Config).processUnprocessed({ libraryId: 'lib' });
     expect(posted.map((job) => job.matchEmbeddedJpeg)).toEqual([true, true]);
 
     posted.length = 0;
-    await new ProcessingService(repo, { ...config, matchEmbeddedJpeg: false } as Config).processUnprocessed('lib');
+    await new ProcessingService(repo, { ...config, matchEmbeddedJpeg: false } as Config).processUnprocessed({ libraryId: 'lib' });
     expect(posted.map((job) => job.matchEmbeddedJpeg)).toEqual([false, false]);
   });
 
@@ -97,7 +97,7 @@ describe('ProcessingService.processUnprocessed', () => {
       markProcessingFailed: jest.fn(),
     } as unknown as PhotosRepository;
 
-    await new ProcessingService(repo, config).processUnprocessed('lib');
+    await new ProcessingService(repo, config).processUnprocessed({ libraryId: 'lib' });
 
     expect(markRenditionsBuilt).toHaveBeenCalledTimes(3);
   });
@@ -115,7 +115,7 @@ describe('ProcessingService.processUnprocessed', () => {
 
     // Must resolve (not hang): applyResult swallows the throw so the pool's
     // assignNext/terminate bookkeeping still runs for every job.
-    await expect(new ProcessingService(repo, config).processUnprocessed('lib')).resolves.toBeUndefined();
+    await expect(new ProcessingService(repo, config).processUnprocessed({ libraryId: 'lib' })).resolves.toBeUndefined();
     expect(markRenditionsBuilt).toHaveBeenCalledTimes(2);
   });
 
@@ -133,7 +133,7 @@ describe('ProcessingService.processUnprocessed', () => {
       markProcessingFailed: jest.fn(),
     } as unknown as PhotosRepository;
 
-    await new ProcessingService(repo, config).processUnprocessed('lib');
+    await new ProcessingService(repo, config).processUnprocessed({ libraryId: 'lib' });
 
     const order = posted.map((job) => photoStage(job));
     expect(order).toEqual(['a:grid', 'b:grid', 'a:full', 'b:full']);
@@ -154,7 +154,7 @@ describe('ProcessingService.processUnprocessed', () => {
       markProcessingFailed: jest.fn(),
     } as unknown as PhotosRepository;
 
-    await new ProcessingService(repo, config).processUnprocessed('lib');
+    await new ProcessingService(repo, config).processUnprocessed({ libraryId: 'lib' });
 
     expect(posted.map((job) => photoStage(job))).toEqual(['a:full']);
   });
@@ -176,7 +176,7 @@ describe('ProcessingService.processUnprocessed', () => {
       markProcessingFailed: jest.fn(),
     } as unknown as PhotosRepository;
 
-    await new ProcessingService(repo, config).processUnprocessed('lib');
+    await new ProcessingService(repo, config).processUnprocessed({ libraryId: 'lib' });
 
     expect(posted.map((job) => photoStage(job))).toEqual(['a:grid']);
     expect(markRenditionsBuilt).not.toHaveBeenCalled();
@@ -202,7 +202,7 @@ describe('ProcessingService.processUnprocessed', () => {
     const announced: { photoId: string; stage: string; version: string }[] = [];
     const service = new ProcessingService(repo, config);
     service.onProcessed((photoId, written) => announced.push({ photoId, ...written }));
-    await service.processUnprocessed('lib');
+    await service.processUnprocessed({ libraryId: 'lib' });
 
     expect(announced.map((a) => a.stage)).toEqual(['tile', 'renditions']);
     // Each carries the stamp its own write put on the row, and only that one moves:
@@ -229,12 +229,12 @@ describe('ProcessingService.processUnprocessed', () => {
       markProcessingFailed: jest.fn(),
     } as unknown as PhotosRepository;
 
-    await new ProcessingService(repo, config).processUnprocessed('lib');
+    await new ProcessingService(repo, config).processUnprocessed({ libraryId: 'lib' });
     expect(posted.map((job) => photoStage(job))).toEqual(['a:grid', 'a:full']);
     expect(stored).toBe('render');
 
     posted.length = 0;
-    await new ProcessingService(repo, config).processUnprocessed('lib');
+    await new ProcessingService(repo, config).processUnprocessed({ libraryId: 'lib' });
     expect(posted.map((job) => photoStage(job))).toEqual(['a:grid', 'a:full']);
   });
 
@@ -258,7 +258,7 @@ describe('ProcessingService.processUnprocessed', () => {
       markProcessingFailed,
     } as unknown as PhotosRepository;
 
-    await new ProcessingService(repo, config).processUnprocessed('lib');
+    await new ProcessingService(repo, config).processUnprocessed({ libraryId: 'lib' });
 
     expect(markProcessingFailed).toHaveBeenCalledWith(CRASH, expect.stringContaining('crashed'));
     for (let i = 0; i < 25 && (existsSync(staleSmall) || existsSync(staleFull)); i++) {
@@ -278,7 +278,7 @@ describe('ProcessingService.processUnprocessed', () => {
       markProcessingFailed,
     } as unknown as PhotosRepository;
 
-    await new ProcessingService(repo, config).processUnprocessed('lib');
+    await new ProcessingService(repo, config).processUnprocessed({ libraryId: 'lib' });
 
     expect(markProcessingFailed).not.toHaveBeenCalled();
   });
@@ -301,8 +301,8 @@ describe('ProcessingService.processUnprocessed', () => {
     const service = new ProcessingService(repo, config);
 
     // second call coalesces into the first and flags a rerun; both drain.
-    const first = service.processUnprocessed('lib');
-    const second = service.processUnprocessed('lib');
+    const first = service.processUnprocessed({ libraryId: 'lib' });
+    const second = service.processUnprocessed({ libraryId: 'lib' });
     expect(second).toBe(first); // same in-flight promise
     await Promise.all([first, second]);
 
@@ -328,7 +328,7 @@ describe('ProcessingService.processUnprocessed', () => {
       markProcessingFailed: jest.fn(),
     } as unknown as PhotosRepository;
 
-    await expect(new ProcessingService(repo, config).processUnprocessed('lib')).resolves.toBeUndefined();
+    await expect(new ProcessingService(repo, config).processUnprocessed({ libraryId: 'lib' })).resolves.toBeUndefined();
     expect(markRenditionsBuilt).not.toHaveBeenCalled(); // untouched -> both flags still set
   });
 
@@ -348,7 +348,7 @@ describe('ProcessingService.processUnprocessed', () => {
       markProcessingFailed: jest.fn(),
     } as unknown as PhotosRepository;
 
-    await new ProcessingService(repo, config).processUnprocessed('lib', () => stopped);
+    await new ProcessingService(repo, config).processUnprocessed({ libraryId: 'lib' }, () => stopped);
 
     // Two workers, so two tiles were already posted when the first came back. Not
     // c or d, and no ':full' at all: the rendition pass never starts.
@@ -357,6 +357,6 @@ describe('ProcessingService.processUnprocessed', () => {
 
   it('does nothing when there is no pending work', async () => {
     const repo = { listPendingProcessing: jest.fn(() => []) } as unknown as PhotosRepository;
-    await expect(new ProcessingService(repo, config).processUnprocessed('lib')).resolves.toBeUndefined();
+    await expect(new ProcessingService(repo, config).processUnprocessed({ libraryId: 'lib' })).resolves.toBeUndefined();
   });
 });

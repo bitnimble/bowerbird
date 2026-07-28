@@ -798,9 +798,19 @@ Process in this order within a database transaction:
 4. **Reappearances:** Clear `is_missing = 0` for each reappeared photo. No other change (content and path are unchanged).
 5. **Removals:** Set `is_missing = 1` for each removed photo. Do not delete files or records. Count only photos that transition `is_missing` from `0` to `1` toward `photos_removed`; a record already at `is_missing = 1` reappears in the removed list every scan (so delayed move-matching in §9.3 can still pair it), but it is not a new removal and must not be re-counted. This keeps `photos_removed` a per-sync delta consistent with `photos_added`/`photos_moved`/`photos_modified`.
 
+**A run with no rows commits as it scans, in batches of 1000.** A first import is hours of opening and hashing, and one closing transaction makes all of it contingent on reaching the end: kill the server at hour three and three hours of decodes are gone, with the next run starting from nothing. Applying a *partial* scan is normally unsafe for the reason §9.10 gives (absence from a half-built `present` set reads as a removal), but that reasoning needs rows to be absent from. When `dbPhotos` is empty (a library's first sync, and a scoped sync whose paths are all new) the diff can only be additions: no removal can be derived, so no move can pair either. Each batch is then true on its own, whatever the scan goes on to find, and a killed import resumes at the batch it reached rather than at zero; the rows it wrote carry the mtime and size that make §9.1's quick-check skip them, so the resumed scan does not re-open them either.
+
+Only that case qualifies. Against a populated library an addition can still turn out to be the far half of a move, so its inserts stay in the closing transaction where move detection can still claim them. Shoot membership is safe to resolve early for the same reason a batch is: a shoot relocation (§9.3) takes existing photos to move, and a run with no rows has none.
+
 ### 9.5 Phase 4: Trigger Processing
 
 After all changes are applied, call `ProcessingService.processUnprocessed()` to begin background generation for every photo owing either stage (`needs_tile` or `needs_renditions`) with `is_missing = 0`.
+
+**A scoped run passes the photos it reconciled; a full run passes none, meaning the whole library.** The watcher fires on one changed file, and draining everything the library still owes off the back of that is not what the change asked for, quite apart from making the strip report that one file as a thousand outstanding thumbnails. So a scoped sync hands over the ids it inserted or modified (moves and reappearances changed no pixels, so they owe nothing), and the status counts against that same set.
+
+That leaves the backlog to the two triggers that are *about* the whole library: a manual `POST /sync` and the daily reconcile (§9.8). This is deliberate, and it is what picks up work a killed process left half-done; nothing runs at startup (§9.6).
+
+`ProcessingService` merges concurrent requests for one key by widening, never narrowing: a full run joining a batch a scoped run started comes away having processed the library, not that run's handful of files.
 
 ### 9.6 Sync Status Tracking
 
@@ -826,6 +836,12 @@ This is updated as the sync progresses and is exposed via the API for client pol
 **Both phases of a run report progress, not just the second one.** `photosProcessed` against what was queued covers thumbnailing; `photosScanned` against `photosToScan` covers the scan, which on a first import is the longer of the two: minutes of opening and hashing every file, during which a status that only carried zeros left the client with nothing to say but "scanning". The counters are updated from the loop that opens and hashes, which is where a scan's whole cost is (the `stat` pass before it opens nothing), and `photosToScan` is only known once that pass has collapsed hardlink pairs, so a run reads 0/0 for the walk and the stats, then counts through the files. Both settle on the number of files found, so the client renders one bar per phase off the same pair of numbers.
 
 No generation guard on those writes, unlike the ones after the scan: the sync lock is not released until scan and apply are both done, so no newer generation of the same library can exist to stomp.
+
+**A process with no status in memory reads the outstanding work off the database.** The status object does not survive a restart, but the work does: `needs_tile` / `needs_renditions` are columns, so a library the last process had half-imported comes back owing exactly what it owed. Reporting a flat `idle` with zeros there is a lie the client cannot see past; the strip would show nothing to do while thousands of thumbnails were missing. `getSyncStatus` therefore falls back to `countPendingProcessing` and reports it as `photosProcessing` against `idle`: work waiting, not work running.
+
+**Nothing starts it.** Startup wires the watcher, the daily reconcile and the prune, and triggers no sync (`src/index.ts`); reading the status does not either. A restart mid-import resumes when the user asks, when the watcher sees a file change, or at `SYNC_FULL_AT`, and the status is what tells them there is something to ask for. Automatic resume would mean a server that comes back up saturating its cores on a job the user may have killed it to stop.
+
+`last_synced_at` is the other half of this, and the durable one: it is a column, so it survives the restart the status does not, and says how stale the catalogue is (§4.1).
 
 ### 9.7 Sync Lock
 
@@ -862,8 +878,9 @@ Sync snapshots the DB, then scans **asynchronously**, then applies. A user mutat
 
 What a stop means depends on which phase it lands in, and neither leaves anything half-applied:
 
-- **During the scan**, the loop that opens and hashes checks between files, so a stop lands within one file's decode rather than at the end of the walk. Every write is a single transaction *after* the scan, so abandoning it applies nothing: `syncLibrary` returns an idle status rather than raising, because the caller asked for this, and the detached processing in its `finally` never starts.
+- **During the scan**, the loop that opens and hashes checks between files, so a stop lands within one file's decode rather than at the end of the walk. On a populated library every write is a single transaction *after* the scan, so abandoning it applies nothing: `syncLibrary` returns an idle status rather than raising, because the caller asked for this, and the detached processing in its `finally` never starts.
   - **Except on a first scan, which keeps what it reached.** A half-built `present` set is normally unusable, and dangerously so: absence from it is how §9.1 detects a removal, so applying a truncated scan would mark every file it had not got to as missing. That reasoning needs rows to be absent from. When the run has none - `dbPhotos` is empty, which is a library's first sync, and also a scoped sync whose paths are all new - no removal can be derived, and therefore no move either, since a move pairs a removal with an addition. All a stopped scan can then hold is "these files are new", which is as true of a scan that saw half the library as of one that saw all of it, so it is applied and the files it never reached are simply added by the next sync. Otherwise a stopped 50k-frame import would throw away every file it had already read and hashed.
+  - That case is exactly the one §9.4 commits in batches, so most of what a stop keeps is already on disk before the stop arrives; all the stop itself adds is the tail of the batch in hand. A kill is the same event without the courtesy of asking, and it keeps the same work for the same reason.
   - The stop is still a stop: the processing that follows a partial commit is handed the same aborted generation, so it queues nothing and the photos land owing their thumbnails. `last_synced_at` is stamped, which says when a sync last ran rather than that the catalogue is complete.
 - **During processing**, the pool retires each worker as its current job lands instead of killing it mid-encode, which would leave a half-written rendition. What is already on disk stays - a tile is valid whether or not the rest of the run finished - and the photos it never reached keep their `needs_tile` / `needs_renditions` flags, so the next sync picks them up. The status settles to idle through the same tail that a completed run does.
 

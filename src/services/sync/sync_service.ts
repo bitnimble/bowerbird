@@ -14,18 +14,32 @@ import type { LibraryLifecycleListener } from '../libraries/libraries_service';
 import type { PhotosRepository, SyncDbPhoto } from '../photos/photos_repository';
 import type { ShootsRepository } from '../shoots/shoots_repository';
 import { extractMetadata, type FileMetadata } from '../processing/metadata';
-import { buildDiff, detectMoves, detectShootRelocations, type DiskFile } from './sync_algorithm';
+import type { ProcessingScope } from '../processing/processing_service';
+import { buildDiff, detectMoves, detectShootRelocations, type AddedEntry, type DiskFile } from './sync_algorithm';
 import { libraryMutex } from './library_mutex';
 import { acquireSyncLock, releaseSyncLock } from './sync_lock';
 
 export interface ProcessingTrigger {
-  processUnprocessed(libraryId?: string, stopped?: () => boolean): void | Promise<void>;
+  processUnprocessed(scope?: ProcessingScope, stopped?: () => boolean): void | Promise<void>;
 }
 
-// Unwinds a stopped scan whose partial result cannot be applied (see
-// `partialIsApplicable`). Never leaves this module: syncLibrary turns it back
-// into an idle status, because that run applied nothing.
+// Unwinds a stopped scan whose partial result cannot be applied, which is any
+// run that had rows to reconcile against (§9.10). Never leaves this module:
+// syncLibrary turns it back into an idle status, because that run applied nothing.
 class SyncCancelled extends Error {}
+
+// How many photos a first scan holds before writing them down. Small enough that
+// a kill costs seconds of work rather than hours, large enough that the commit
+// itself is nowhere near the cost of the decodes that filled it.
+const INSERT_BATCH = 1000;
+
+// What the detached thumbnail batch a run hands off covers, kept so the status
+// endpoint can report progress against the same set the batch is working on.
+interface ProcessingBatch {
+  queued: number;
+  /** The run's own photos, or null when the batch covers the whole library. */
+  photoIds: readonly string[] | null;
+}
 
 export type MetadataExtractor = (absPath: string) => Promise<FileMetadata>;
 
@@ -48,10 +62,10 @@ function idle(libraryId: string, status: Status = 'idle'): LibrarySyncStatus {
 
 export class SyncService implements LibraryLifecycleListener {
   private readonly statuses = new Map<string, LibrarySyncStatus>();
-  // Photos this library's current run queued for thumbnailing. Held so
+  // What this library's current run queued for thumbnailing. Held so
   // getSyncStatus can report processed = queued - still-pending without any
   // background bookkeeping: the live pending count comes from the DB on read.
-  private readonly queuedForProcessing = new Map<string, number>();
+  private readonly processingBatch = new Map<string, ProcessingBatch>();
   // Identity token per in-flight sync generation, and the handle that stops it.
   // The lock is released before the detached processing runs, so a newer sync can
   // start while the old one's processing tail is still going; the token lets a
@@ -77,7 +91,7 @@ export class SyncService implements LibraryLifecycleListener {
     this.generation.get(libraryId)?.abort(); // its rows are cascade-gone; finish nothing
     this.statuses.delete(libraryId);
     this.generation.delete(libraryId);
-    this.queuedForProcessing.delete(libraryId);
+    this.processingBatch.delete(libraryId);
   }
 
   async syncAll(): Promise<void> {
@@ -108,6 +122,10 @@ export class SyncService implements LibraryLifecycleListener {
     const token = new AbortController();
     this.generation.set(libraryId, token);
     let syncedStatus: LibrarySyncStatus | null = null;
+    // The photos this run created or rewrote, for a scoped run to hand its
+    // thumbnail batch. Null once the run is a full one, whose batch is the
+    // library's whole backlog.
+    let processingIds: readonly string[] | null = null;
     try {
       // Inside the mutex, outside the file lock: file lock first keeps sync-vs-sync
       // fail-fast (409), while the mutex makes file-moving mutations queue behind
@@ -122,24 +140,66 @@ export class SyncService implements LibraryLifecycleListener {
       const reportScan = (scanned: number, toScan: number): void => {
         this.statuses.set(libraryId, { ...idle(libraryId, 'scanning'), photos_to_scan: toScan, photos_scanned: scanned });
       };
+      // Read before the scan rather than after it: a first scan places its photos
+      // as it goes, so it needs the shoots up front. The mutex holds them still
+      // for the whole run (§9.9). A shoot relocation would rewrite these paths
+      // mid-run, but that takes existing photos to move, and a first scan has none.
+      const shoots = this.shoots.listByLibrary(libraryId);
+      const shootFor = (relPath: string): string | null => mostSpecificShoot(relPath, shoots)?.id ?? null;
+
+      // Only a scoped run collects them: a full run hands its batch the library
+      // rather than a list, and a 300k-frame import has no reason to hold every
+      // id it created.
+      const touched: string[] | null = scopePaths != null ? [] : null;
+      const insertPhoto = (entry: AddedEntry, addedAt: string): void => {
+        const id = this.insertAdded(libraryId, entry, shootFor(entry.filePath), addedAt);
+        touched?.push(id);
+      };
+      let added = 0;
+      // A first scan writes its photos down in batches instead of holding the lot
+      // until the end (§9.4). Its whole diff is additions - there are no rows for
+      // a removal to be an absence from, and no move can pair without one - so
+      // each batch is true on its own, whatever the scan goes on to find. That is
+      // what makes a 300k-frame import survive a kill: it resumes at the batch it
+      // reached, where a single closing transaction would have lost every hour of
+      // it. Only a run with no rows qualifies; against a populated library an
+      // addition can still turn out to be the far half of a move.
+      const insertBatch = (batch: readonly DiskFile[]): void => {
+        // Same re-check as the closing transaction: the library can be deleted
+        // mid-scan, and its photos are then cascade-gone. Nothing awaits between
+        // here and the (synchronous) transaction, so the delete cannot interleave.
+        if (!this.libraries.getById(libraryId)) throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
+        const batchAt = new Date().toISOString();
+        this.photos.transaction(() => {
+          for (const file of batch) {
+            insertPhoto({ filePath: file.filePath, fileHash: file.hash, metadata: file.metadata }, batchAt);
+          }
+        });
+        added += batch.length;
+      };
+
       let dbPhotos: SyncDbPhoto[];
-      let scan: { present: Set<string>; changed: DiskFile[]; failed: Set<string> };
+      let files: readonly ScannedFile[];
       if (scopePaths != null) {
         // Bun's fs.watch delivers only one event for a rename (the old name), so
         // readdir the changed paths' directories to also discover the move target
         // (a sibling). Reconcile only those directories' current files against the
         // rows at the changed + discovered paths, plus the missing move-source pool.
-        const files = await this.scopedFiles(library.root_path, dataPath, this.scopeDirs(scopePaths));
+        files = await this.scopedFiles(library.root_path, dataPath, this.scopeDirs(scopePaths));
         const known = new Set<string>(scopePaths);
         for (const f of files) known.add(f.relPath);
         dbPhotos = this.scopedDbPhotos(libraryId, [...known]);
-        scan = await this.scanFiles(files, dbPhotos, token.signal, reportScan);
       } else {
         dbPhotos = this.photos.listForSync(libraryId);
-        const onDisk = await listSupportedFiles(library.root_path, dataPath);
-        scan = await this.scanFiles(onDisk, dbPhotos, token.signal, reportScan);
+        files = await listSupportedFiles(library.root_path, dataPath);
       }
-      const { present, changed, failed } = scan;
+      const { present, changed, failed } = await this.scanFiles(
+        files,
+        dbPhotos,
+        token.signal,
+        reportScan,
+        dbPhotos.length === 0 ? insertBatch : null,
+      );
       const diff = buildDiff(dbPhotos, present, changed, failed);
       const result = detectMoves(diff, (id) => this.albums.getAlbumIdsForPhoto(id).length > 0);
 
@@ -149,7 +209,6 @@ export class SyncService implements LibraryLifecycleListener {
       // position inside the folder, so their paths shift by a prefix and their
       // shoot membership does not change at all. What is left is the moves that
       // are genuinely about individual files.
-      const shoots = this.shoots.listByLibrary(libraryId);
       const relocations = detectShootRelocations(shoots, result.moves, dbPhotos, (folder) =>
         existsSync(path.join(library.root_path, folder)),
       );
@@ -166,10 +225,8 @@ export class SyncService implements LibraryLifecycleListener {
           }
         }
       }
-      const shootFor = (relPath: string): string | null => mostSpecificShoot(relPath, shoots)?.id ?? null;
       const nowUtc = new Date().toISOString();
 
-      let added = 0;
       let removed = 0;
       // The relocated photos moved too, they were just answered in bulk.
       let moved = result.moves.length - moves.length;
@@ -211,33 +268,11 @@ export class SyncService implements LibraryLifecycleListener {
             camera_model: md.metadata.cameraModel,
             lens_model: md.metadata.lensModel,
           });
+          touched?.push(md.photoId);
           modified++;
         }
         for (const ad of result.added) {
-          this.photos.insertFromSync({
-            id: randomUUID(),
-            library_id: libraryId,
-            shoot_id: shootFor(ad.filePath),
-            file_hash: ad.fileHash,
-            file_path: ad.filePath,
-            width: ad.metadata.width,
-            height: ad.metadata.height,
-            orientation: ad.metadata.orientation,
-            date_taken: ad.metadata.dateTaken,
-            date_taken_offset: ad.metadata.dateTakenOffset,
-            date_added: nowUtc,
-            date_updated: ad.metadata.mtime,
-            file_size: ad.metadata.fileSize,
-            latitude: ad.metadata.latitude,
-            longitude: ad.metadata.longitude,
-            iso: ad.metadata.iso,
-            shutter_speed: ad.metadata.shutterSpeed,
-            aperture: ad.metadata.aperture,
-            focal_length: ad.metadata.focalLength,
-            camera_make: ad.metadata.cameraMake,
-            camera_model: ad.metadata.cameraModel,
-            lens_model: ad.metadata.lensModel,
-          });
+          insertPhoto(ad, nowUtc);
           added++;
         }
         for (const photoId of diff.reappeared) this.photos.clearMissing(photoId);
@@ -253,10 +288,17 @@ export class SyncService implements LibraryLifecycleListener {
       // how stale the catalogue is (§9.6).
       this.libraries.setLastSyncedAt(libraryId, nowUtc);
 
+      // A scoped run answers for the files it reconciled and nothing else: the
+      // watcher fires on one changed file, and draining the library's whole
+      // backlog off the back of that is not what the change asked for. A full run
+      // is the one that does clear the backlog, which is how work a killed
+      // process left behind gets picked up (§9.5).
+      processingIds = touched;
+
       // Read after the transaction commits, so rows this sync inserted/modified
       // are counted (§9.6). This is the denominator for processing progress.
-      const queued = this.photos.countPendingProcessing(libraryId);
-      this.queuedForProcessing.set(libraryId, queued);
+      const queued = this.photos.countPendingProcessing(libraryId, processingIds ?? undefined);
+      this.processingBatch.set(libraryId, { queued, photoIds: processingIds });
 
       const status: LibrarySyncStatus = {
         library_id: libraryId,
@@ -280,9 +322,10 @@ export class SyncService implements LibraryLifecycleListener {
       // doesn't report 'scanning' forever. Still our generation here (the lock,
       // released in finally, blocks a newer one), but guard for consistency.
       if (this.generation.get(libraryId) === token) this.statuses.set(libraryId, idle(libraryId));
-      // Stopped mid-scan: every write is one transaction after the scan, so
-      // nothing was applied and the library is simply idle again. Not an error -
-      // the caller asked for it. syncedStatus stays null, so no processing runs.
+      // Stopped mid-scan on a populated library, where the writes are one closing
+      // transaction: nothing was applied and the library is simply idle again.
+      // Not an error - the caller asked for it. syncedStatus stays null, so no
+      // processing runs.
       if (err instanceof SyncCancelled) return idle(libraryId);
       throw err;
     } finally {
@@ -295,9 +338,10 @@ export class SyncService implements LibraryLifecycleListener {
         // Runs on both success and failure: processing throwing must not leave the
         // status stuck at 'processing'. Skipped if a newer sync generation started
         // meanwhile, so a stale tail can't stomp the newer run's status.
+        const scope: ProcessingScope = { libraryId, photoIds: processingIds ?? undefined };
         const settle = (): void => {
           if (this.generation.get(libraryId) !== token) return;
-          const stillPending = this.photos.countPendingProcessing(libraryId);
+          const stillPending = this.photos.countPendingProcessing(libraryId, scope.photoIds);
           this.statuses.set(libraryId, {
             ...finalStatus,
             status: 'idle',
@@ -310,7 +354,7 @@ export class SyncService implements LibraryLifecycleListener {
         // sync coalescing into it must not leave the stop button pointing at a run
         // nothing is doing any more.
         const stopped = (): boolean => this.generation.get(libraryId)?.signal.aborted === true;
-        void Promise.resolve(this.processing.processUnprocessed(libraryId, stopped))
+        void Promise.resolve(this.processing.processUnprocessed(scope, stopped))
           .then(settle)
           .catch((err) => {
             console.error(`processing failed for library ${libraryId}: ${(err as Error).message}`);
@@ -334,12 +378,52 @@ export class SyncService implements LibraryLifecycleListener {
   // progress plumbing.
   getSyncStatus(libraryId: string): LibrarySyncStatus {
     if (!this.libraries.getById(libraryId)) throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
-    const status = this.statuses.get(libraryId) ?? idle(libraryId);
+    const status = this.statuses.get(libraryId);
+    // Nothing in memory: this process has not synced the library. The flags a
+    // killed process left behind are still in the rows, though, so report what is
+    // outstanding rather than a flat zero - the catalogue really does owe that
+    // many thumbnails. Reading it starts nothing; a sync is still what picks the
+    // work up (§9.6).
+    if (status == null) {
+      return { ...idle(libraryId), photos_processing: this.photos.countPendingProcessing(libraryId) };
+    }
     if (status.status !== 'processing') return status;
 
-    const stillPending = this.photos.countPendingProcessing(libraryId);
-    const queued = this.queuedForProcessing.get(libraryId) ?? stillPending;
+    const batch = this.processingBatch.get(libraryId);
+    const stillPending = this.photos.countPendingProcessing(libraryId, batch?.photoIds ?? undefined);
+    const queued = batch?.queued ?? stillPending;
     return { ...status, photos_processing: stillPending, photos_processed: Math.max(0, queued - stillPending) };
+  }
+
+  // One new photo, at the shoot its path falls under. Returns its id, which the
+  // run collects so a scoped one can hand the thumbnail batch its own photos.
+  private insertAdded(libraryId: string, entry: AddedEntry, shootId: string | null, addedAt: string): string {
+    const id = randomUUID();
+    this.photos.insertFromSync({
+      id,
+      library_id: libraryId,
+      shoot_id: shootId,
+      file_hash: entry.fileHash,
+      file_path: entry.filePath,
+      width: entry.metadata.width,
+      height: entry.metadata.height,
+      orientation: entry.metadata.orientation,
+      date_taken: entry.metadata.dateTaken,
+      date_taken_offset: entry.metadata.dateTakenOffset,
+      date_added: addedAt,
+      date_updated: entry.metadata.mtime,
+      file_size: entry.metadata.fileSize,
+      latitude: entry.metadata.latitude,
+      longitude: entry.metadata.longitude,
+      iso: entry.metadata.iso,
+      shutter_speed: entry.metadata.shutterSpeed,
+      aperture: entry.metadata.aperture,
+      focal_length: entry.metadata.focalLength,
+      camera_make: entry.metadata.cameraMake,
+      camera_model: entry.metadata.cameraModel,
+      lens_model: entry.metadata.lensModel,
+    });
+    return id;
   }
 
   // The rows a scoped sync reconciles: those at the changed + discovered paths
@@ -391,23 +475,24 @@ export class SyncService implements LibraryLifecycleListener {
   // Stats each file and opens/hashes ONLY the ones that are new or whose mtime+size
   // changed vs the stored record (§9.1). Unchanged files are never opened, so a
   // no-op sync does zero LibRaw work. Shared by the full and scoped paths.
+  //
+  // `onBatch`, when given, takes each run of INSERT_BATCH files as it is hashed
+  // and is what makes a first scan resumable: a half-built `present` is normally
+  // unusable, because absence from it is how a removal is detected, and applying
+  // it would mark every file the scan had not reached as missing. With no rows
+  // for it to be an absence from that cannot happen, and nothing else can either
+  // - a move pairs a removal with an addition, and there are no removals - so
+  // each batch says only "these files are new", which is true whether or not the
+  // scan saw the rest. Those files are then handed over rather than accumulated,
+  // so `changed` (and the diff built from it) stays empty.
   private async scanFiles(
     files: readonly ScannedFile[],
     dbPhotos: readonly SyncDbPhoto[],
     signal: AbortSignal,
     onProgress: (scanned: number, toScan: number) => void,
+    onBatch: ((batch: readonly DiskFile[]) => void) | null,
   ): Promise<{ present: Set<string>; changed: DiskFile[]; failed: Set<string> }> {
     const dbByPath = new Map(dbPhotos.map((p) => [p.file_path, p]));
-
-    // What a stop costs, and the one case where it costs nothing (§9.10). A
-    // half-built `present` is normally unusable, because absence from it is how a
-    // removal is detected: applied, it would mark every file the scan had not
-    // reached as missing. With no rows for it to be an absence from, that cannot
-    // happen and nothing else can either - a move pairs a removal with an
-    // addition, and there are no removals - so what a stopped scan holds is
-    // exactly "these files are new", which is true whether or not it saw the rest.
-    // That is the first import: the long scan, and the one worth stopping.
-    const partialIsApplicable = dbPhotos.length === 0;
 
     // Stat everything, collapsing hardlink pairs (same dev+ino) to a single path.
     // A concurrent non-atomic move (moveIntoDir does link() then unlink()) briefly
@@ -434,6 +519,15 @@ export class SyncService implements LibraryLifecycleListener {
     const present = new Set<string>();
     const changed: DiskFile[] = [];
     const failed = new Set<string>();
+    const batch: DiskFile[] = [];
+    const keep = (file: DiskFile): void => {
+      if (onBatch == null) {
+        changed.push(file);
+        return;
+      }
+      batch.push(file);
+      if (batch.length >= INSERT_BATCH) onBatch(batch.splice(0));
+    };
 
     // The loop below is the whole cost of a scan (the stat pass above opens
     // nothing), so it is the one worth reporting against. `present` is added to
@@ -452,7 +546,7 @@ export class SyncService implements LibraryLifecycleListener {
 
       try {
         const metadata = await this.extract(file.absPath);
-        changed.push({ filePath: file.relPath, hash: computeFileHash(file.absPath, metadata), metadata });
+        keep({ filePath: file.relPath, hash: computeFileHash(file.absPath, metadata), metadata });
       } catch (err) {
         // Unreadable/corrupt file: record it as failed so buildDiff leaves any
         // existing record untouched (not marked missing, and not falsely reappeared).
@@ -461,9 +555,12 @@ export class SyncService implements LibraryLifecycleListener {
       }
     }
 
-    // One decision for both loops: keep what a stopped scan found, or throw the
-    // run away entirely.
-    if (signal.aborted && !partialIsApplicable) throw new SyncCancelled();
+    // The tail of a batched scan, stopped or finished: it is as applicable as
+    // every batch before it.
+    if (batch.length > 0) onBatch?.(batch.splice(0));
+    // Nothing was written down as it went, so a stop leaves the run with nothing
+    // it can apply.
+    if (signal.aborted && onBatch == null) throw new SyncCancelled();
     return { present, changed, failed };
   }
 }

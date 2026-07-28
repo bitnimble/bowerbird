@@ -130,6 +130,18 @@ function folderRange(folderPath: string): [string, string] {
 const SUMMARY_COLS =
   'photos.id, photos.library_id, photos.shoot_id, photos.file_path, photos.width, photos.height, photos.date_taken, photos.date_added, photos.date_updated, photos.tile_built_at, photos.renditions_built_at, photos.preview_rendition, photos.triage, photos.rating, photos.is_missing, photos.is_deleted';
 
+// A photo the thumbnail queue owes work on. `prefix` is the table alias the
+// caller's query uses, empty when it has none.
+const PENDING_PROCESSING = (prefix: string): string =>
+  `(${prefix}needs_tile = 1 OR ${prefix}needs_renditions = 1) AND ${prefix}is_missing = 0 AND ${prefix}is_deleted = 0`;
+
+// Splits a value list into runs that fit under SQLITE_MAX_VARIABLE_NUMBER (999 on
+// old builds), so a caller can pass an unbounded set to an IN (...) query.
+const IN_CHUNK = 900;
+function* inChunks(values: readonly string[]): Generator<readonly string[]> {
+  for (let i = 0; i < values.length; i += IN_CHUNK) yield values.slice(i, i + IN_CHUNK);
+}
+
 const SYNC_COLUMNS = 'id, file_path, file_hash, is_missing, date_updated, file_size';
 interface SyncRow {
   id: string;
@@ -452,13 +464,10 @@ export class PhotosRepository {
   }
 
   // Sync rows at specific paths, the candidate set a scoped (watcher-driven) sync
-  // reconciles, instead of the whole library (§9 scoped sync). Chunked so a scoped
-  // sync over many discovered files can't exceed SQLite's bound-variable limit.
+  // reconciles, instead of the whole library (§9 scoped sync).
   listForSyncByPaths(libraryId: string, paths: readonly string[]): SyncDbPhoto[] {
-    const CHUNK = 900; // safely under SQLITE_MAX_VARIABLE_NUMBER (999 on old builds)
     const rows: SyncRow[] = [];
-    for (let i = 0; i < paths.length; i += CHUNK) {
-      const batch = paths.slice(i, i + CHUNK);
+    for (const batch of inChunks(paths)) {
       const placeholders = batch.map(() => '?').join(', ');
       rows.push(
         ...(this.db
@@ -611,17 +620,24 @@ export class PhotosRepository {
 
   // Photos awaiting thumbnails, joined with their library paths. is_missing is
   // excluded so a photo whose file vanished mid-queue is not failed against it.
-  listPendingProcessing(libraryId?: string): PendingPhoto[] {
+  // `photoIds` narrows to a named set: a scoped sync processes the files it
+  // reconciled rather than draining whatever else the library still owes (§9.5).
+  listPendingProcessing(libraryId?: string, photoIds?: readonly string[]): PendingPhoto[] {
     const where = libraryId ? 'AND p.library_id = ?' : '';
     const params = libraryId ? [libraryId] : [];
-    return this.db
-      .query(
-        `SELECT p.id AS photo_id, p.file_path, p.rendition_source, p.needs_tile, p.needs_renditions,
-                l.root_path, l.data_path, l.preview_source, l.preview_hdr, l.preview_hdr_video
-         FROM photos p JOIN libraries l ON l.id = p.library_id
-         WHERE (p.needs_tile = 1 OR p.needs_renditions = 1) AND p.is_missing = 0 AND p.is_deleted = 0 ${where}`,
-      )
-      .all(...params) as PendingPhoto[];
+    const query = (idClause: string): string =>
+      `SELECT p.id AS photo_id, p.file_path, p.rendition_source, p.needs_tile, p.needs_renditions,
+              l.root_path, l.data_path, l.preview_source, l.preview_hdr, l.preview_hdr_video
+       FROM photos p JOIN libraries l ON l.id = p.library_id
+       WHERE ${PENDING_PROCESSING('p.')} ${where} ${idClause}`;
+
+    if (photoIds == null) return this.db.query(query('')).all(...params) as PendingPhoto[];
+    const rows: PendingPhoto[] = [];
+    for (const batch of inChunks(photoIds)) {
+      const placeholders = batch.map(() => '?').join(', ');
+      rows.push(...(this.db.query(query(`AND p.id IN (${placeholders})`)).all(...params, ...batch) as PendingPhoto[]));
+    }
+    return rows;
   }
 
   // The grid tile has landed. Its own flag and its own stamp, because the
@@ -671,14 +687,22 @@ export class PhotosRepository {
   }
 
   // Pending while *either* stage is: the sync strip counts photos, not stages,
-  // and one still building its renditions is not done.
-  countPendingProcessing(libraryId?: string): number {
+  // and one still building its renditions is not done. Same predicate as
+  // `listPendingProcessing`, or the status would count work no batch will ever
+  // pick up and never settle.
+  countPendingProcessing(libraryId?: string, photoIds?: readonly string[]): number {
     const where = libraryId ? 'AND library_id = ?' : '';
     const params = libraryId ? [libraryId] : [];
-    const row = this.db
-      .query(`SELECT COUNT(*) AS n FROM photos WHERE (needs_tile = 1 OR needs_renditions = 1) AND is_deleted = 0 ${where}`)
-      .get(...params) as { n: number };
-    return row.n;
+    const query = (idClause: string): string =>
+      `SELECT COUNT(*) AS n FROM photos WHERE ${PENDING_PROCESSING('')} ${where} ${idClause}`;
+
+    if (photoIds == null) return (this.db.query(query('')).get(...params) as { n: number }).n;
+    let total = 0;
+    for (const batch of inChunks(photoIds)) {
+      const placeholders = batch.map(() => '?').join(', ');
+      total += (this.db.query(query(`AND id IN (${placeholders})`)).get(...params, ...batch) as { n: number }).n;
+    }
+    return total;
   }
 
   private list(

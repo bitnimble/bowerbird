@@ -40,12 +40,22 @@ interface StagedPhoto {
   owesRenditions: boolean;
 }
 
+/** Which photos a batch is for: a whole library, a named set, or everything. */
+export interface ProcessingScope {
+  libraryId?: string;
+  /** Only these, rather than everything the library still owes work on. */
+  photoIds?: readonly string[];
+}
+
 export class ProcessingService {
-  // Per-scope in-flight batch. A concurrent call returns the SAME promise (so an
-  // awaiter genuinely waits for completion) and flags a rerun so work queued
+  // Per-key in-flight batch. A concurrent call returns the SAME promise (so an
+  // awaiter genuinely waits for completion) and widens `queued` so work asked for
   // during the batch is drained before the promise resolves.
   private readonly inFlight = new Map<string, Promise<void>>();
-  private readonly rerun = new Set<string>();
+  // What the next pass of each key's batch covers: a set of photo ids, or null
+  // for everything pending. Absent means nothing more to do, which is how the
+  // drain loop knows to stop.
+  private readonly queued = new Map<string, Set<string> | null>();
   private readonly processed = new Set<(photoId: string, written: RenditionWritten) => void>();
 
   constructor(
@@ -71,7 +81,9 @@ export class ProcessingService {
   // have no file to read.
   async rebuildTiles(photoIds: string[]): Promise<number> {
     const queued = this.photos.queueTileRebuild(photoIds);
-    if (queued > 0) await this.processUnprocessed();
+    // Scoped to what was asked for: the caller is awaiting this, and a library
+    // with a backlog would otherwise make a three-photo rebuild wait it out.
+    if (queued > 0) await this.processUnprocessed({ photoIds });
     return queued;
   }
 
@@ -199,25 +211,40 @@ export class ProcessingService {
   // its signal is dropped on the floor by the dedup below, so a stop aimed at that
   // newer run would never reach the batch actually doing its work. Asked each time
   // instead, the caller answers for whichever run is current.
-  processUnprocessed(libraryId?: string, stopped?: () => boolean): Promise<void> {
-    const key = libraryId ?? '*';
+  processUnprocessed(scope: ProcessingScope = {}, stopped?: () => boolean): Promise<void> {
+    const key = scope.libraryId ?? '*';
+    this.widen(key, scope.photoIds);
     const existing = this.inFlight.get(key);
-    if (existing) {
-      this.rerun.add(key); // pick up work added since the running batch started
-      return existing;
-    }
-    const run = this.drain(libraryId, key, stopped).finally(() => this.inFlight.delete(key));
+    if (existing) return existing;
+    const run = this.drain(scope.libraryId, key, stopped).finally(() => this.inFlight.delete(key));
     this.inFlight.set(key, run);
     return run;
   }
 
+  // Absorbing, so a request that covers more than the running batch always wins:
+  // a full sync joining a batch a scoped one started must not come away having
+  // processed only that scoped run's handful of files.
+  private widen(key: string, photoIds?: readonly string[]): void {
+    if (photoIds == null) {
+      this.queued.set(key, null);
+      return;
+    }
+    const current = this.queued.get(key);
+    if (current === null) return; // already everything
+    const set = current ?? new Set<string>();
+    for (const id of photoIds) set.add(id);
+    this.queued.set(key, set);
+  }
+
   private async drain(libraryId: string | undefined, key: string, stopped?: () => boolean): Promise<void> {
     for (;;) {
-      this.rerun.delete(key);
-      const staged = this.photos.listPendingProcessing(libraryId).map((p) => this.toStages(p));
+      if (stopped?.() === true) return;
+      const scope = this.queued.get(key);
+      this.queued.delete(key);
+      if (scope === undefined) return; // nothing asked for since the last pass
+      const pending = this.photos.listPendingProcessing(libraryId, scope == null ? undefined : [...scope]);
+      const staged = pending.map((p) => this.toStages(p));
       if (staged.length > 0) await this.runStaged(staged, stopped);
-      // Stopped, or no new work requested during this pass.
-      if (stopped?.() === true || !this.rerun.has(key)) return;
     }
   }
 
