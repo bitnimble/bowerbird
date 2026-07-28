@@ -24,6 +24,8 @@ import { HDR_MEDIA, HDR_VARIANTS } from '../../src/services/processing/hdr_media
 import { fitMatchProfile } from '../../src/services/processing/jpeg_match';
 import {
   decodeRawImage,
+  fitHdrMatch,
+  freeHdrMatch,
   freeImage,
   hdrArgv,
   hdrGradedSamples,
@@ -129,10 +131,12 @@ test(
       if (withMatch) expect(profile, 'the SDR fit supplies the geometry this reuses').not.toBeNull();
 
       const linear = decodeRawImage(FIXTURE, 16, 'rec2020-linear', 0);
+      const matched = fitHdrMatch(linear, FIXTURE, options, profile);
       let graded: ReturnType<typeof hdrGradedSamples>;
       try {
-        graded = hdrGradedSamples(linear, FIXTURE, options, profile);
+        graded = hdrGradedSamples(linear, matched, options);
       } finally {
+        if (matched != null) freeHdrMatch(matched);
         freeImage(linear);
       }
 

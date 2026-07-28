@@ -347,30 +347,64 @@ export function hdrArgv(
 }
 
 /**
- * Builds one HDR rendition, from the RAW to the file on disk.
+ * A fitted HDR match, owned by the Rust library. Release with `freeHdrMatch`.
  *
- * The whole job in one call: the scene-linear decode, the camera's colour fitted in
- * the grade's own domain, the fit to size, the warp, the grade, and ffmpeg - with
- * avifenc after it for a still. None of the samples cross the boundary, which is the
- * reason for the shape: the graded frame is ~115MB at 24MP and ~366MB at 61MP.
- *
- * `profile` is the SDR fit, supplying the geometry the HDR colour is fitted through.
- * Null grades neutrally, which is what the HDR check page asks for.
+ * Separate from the encode on purpose: fitting costs ~0.9s on a 61MP frame, and every
+ * rendition of one photo has to use the *same* one, so a still and its video twin
+ * share it. Folding the fit into the encode - which is how this was first ported -
+ * paid for it once per rendition instead of once per photo.
  */
-export function encodeHdrRendition(
+export interface HdrMatchHandle {
+  readonly pointer: Pointer;
+}
+
+/**
+ * Fits the camera's colour for the HDR grade, reusing the geometry the SDR fit
+ * resolved.
+ *
+ * Null when the file embeds no preview, when the fit found too few usable pairs, or
+ * when there is no SDR profile to take geometry from - in each case the caller grades
+ * neutrally.
+ */
+export function fitHdrMatch(
   linear: ImageHandle,
   rawFilePath: string,
   options: HdrOptions,
   profile: FittedProfile | null,
-): void {
-  if (linear.depth !== 16) throw new Error(`the HDR encode needs a 16-bit decode, got ${linear.depth}`);
-  const raw = hdrOptionsBuffer(options);
-  const status = shim().bb_encode_hdr(
+): HdrMatchHandle | null {
+  if (linear.depth !== 16) throw new Error(`the HDR fit needs a 16-bit decode, got ${linear.depth}`);
+  if (profile == null) return null;
+  const pointer = shim().bb_fit_hdr_match(
     linear.pointer,
     Buffer.from(`${rawFilePath}\0`),
+    ptr(hdrOptionsBuffer(options)),
+    ptr(profile.raw),
+  );
+  return pointer ? { pointer } : null;
+}
+
+export function freeHdrMatch(matched: HdrMatchHandle): void {
+  shim().bb_hdr_match_free(matched.pointer);
+}
+
+/**
+ * Builds one HDR rendition, from a scene-linear decode to the file on disk.
+ *
+ * The fit to size, the warp, the grade, and ffmpeg - with avifenc after it for a
+ * still. None of the samples cross the boundary: the graded frame is ~115MB at 24MP
+ * and ~366MB at 61MP. `matched` null grades neutrally.
+ */
+export function encodeHdrRendition(
+  linear: ImageHandle,
+  matched: HdrMatchHandle | null,
+  options: HdrOptions,
+): void {
+  if (linear.depth !== 16) throw new Error(`the HDR encode needs a 16-bit decode, got ${linear.depth}`);
+  const status = shim().bb_encode_hdr(
+    linear.pointer,
+    matched == null ? null : matched.pointer,
     Buffer.from(`${options.outputPath}\0`),
-    ptr(raw),
-    profile == null ? null : ptr(profile.raw),
+    ptr(hdrOptionsBuffer(options)),
   );
   if (status !== 0) throw new Error(`rawshim could not encode ${options.outputPath}`);
 }
@@ -387,34 +421,22 @@ export interface HdrColourFit {
 }
 
 /**
- * The fitted HDR colour transform, without grading or encoding anything.
+ * The fitted transform, for inspection.
  *
- * The grade fits this itself; this is here so the tests that judge the fit against a
- * real file can reach it - a monotone curve, three channels leaving the fit domain
- * together, a deltaE inside the bound. Null when the fit declined.
+ * The grade uses the handle directly; this is here so the tests that judge the fit
+ * against a real file can reach it - a monotone curve, three channels leaving the fit
+ * domain together, a deltaE inside the bound.
  */
-export function fitHdrColour(
-  linear: ImageHandle,
-  rawFilePath: string,
-  options: HdrOptions,
-  profile: FittedProfile | null,
-): HdrColourFit | null {
+export function hdrMatchColour(matched: HdrMatchHandle): HdrColourFit {
   const S = shim();
   const size = Number(S.bb_hdr_colour_size());
   if (size !== HDR_COLOUR.size) {
     throw new Error(`BbHdrColour is ${size} bytes but this reader assumes ${HDR_COLOUR.size}`);
   }
   const raw = new Uint8Array(size);
-  const status = S.bb_fit_hdr(
-    linear.pointer,
-    Buffer.from(`${rawFilePath}\0`),
-    ptr(hdrOptionsBuffer(options)),
-    profile == null ? null : ptr(profile.raw),
-    ptr(raw),
-  );
-  if (status === 1) return null;
-  if (status !== 0) throw new Error(`rawshim could not fit an HDR colour for ${rawFilePath}`);
-
+  if (S.bb_hdr_match_colour(matched.pointer, ptr(raw)) !== 0) {
+    throw new Error('rawshim could not report the HDR colour');
+  }
   const view = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
   const curve = (channel: number): number[] =>
     Array.from({ length: 256 }, (_, i) => view.getFloat64(HDR_COLOUR.curves + (channel * 256 + i) * 8, true));
@@ -436,22 +458,19 @@ export function fitHdrColour(
  */
 export function hdrGradedSamples(
   linear: ImageHandle,
-  rawFilePath: string,
+  matched: HdrMatchHandle | null,
   options: HdrOptions,
-  profile: FittedProfile | null,
 ): { width: number; height: number; data: Buffer } {
-  const raw = hdrOptionsBuffer(options);
   const size = new Uint32Array(2);
   const data = takeBuffer(
     shim().bb_hdr_graded(
       linear.pointer,
-      Buffer.from(`${rawFilePath}\0`),
-      ptr(raw),
-      profile == null ? null : ptr(profile.raw),
+      matched == null ? null : matched.pointer,
+      ptr(hdrOptionsBuffer(options)),
       ptr(size),
     ),
   );
-  if (data == null) throw new Error(`rawshim could not grade ${rawFilePath}`);
+  if (data == null) throw new Error('rawshim could not grade that decode');
   return { width: size[0]!, height: size[1]!, data };
 }
 

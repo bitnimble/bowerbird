@@ -16,9 +16,12 @@ import { fitMatchProfile } from '../../src/services/processing/jpeg_match';
 import {
   decodeRawImage,
   encodeHdrRendition,
-  fitHdrColour,
+  fitHdrMatch,
+  freeHdrMatch,
   freeImage,
   hdrGradedSamples,
+  hdrMatchColour,
+  type HdrMatchHandle,
   type HdrOptions,
   type ImageHandle,
 } from '../../src/services/processing/rawshim_ops';
@@ -54,6 +57,19 @@ function withLinear<T>(use: (linear: ImageHandle) => T): T {
   }
 }
 
+/** Runs `use` against a decode and the HDR match fitted from it, releasing both. */
+function withMatch<T>(use: (linear: ImageHandle, matched: HdrMatchHandle | null) => T): T {
+  const profile = fitMatchProfile(FIXTURE);
+  return withLinear((linear) => {
+    const matched = fitHdrMatch(linear, FIXTURE, options(), profile);
+    try {
+      return use(linear, matched);
+    } finally {
+      if (matched != null) freeHdrMatch(matched);
+    }
+  });
+}
+
 /** The luma quantiles of a graded frame, in nits. */
 function quantiles(data: Buffer): (q: number) => number {
   const s = new Uint16Array(data.buffer, data.byteOffset, data.byteLength / 2);
@@ -71,11 +87,13 @@ test(
   () => {
     const profile = fitMatchProfile(FIXTURE);
     expect(profile).not.toBeNull();
-    const colour = withLinear((linear) => fitHdrColour(linear, FIXTURE, options(), profile));
-    expect(colour).not.toBeNull();
+    const colour = withMatch((_, matched) => {
+      expect(matched).not.toBeNull();
+      return hdrMatchColour(matched!);
+    });
     // The same bound the SDR path applies to itself. Above it the transform is not
     // worth applying and the caller renders untransformed.
-    expect(colour!.deltaE).toBeLessThan(6);
+    expect(colour.deltaE).toBeLessThan(6);
     // Not refitted here: geometry is a property of the lens, not of a colour space,
     // and searching it again would be seconds of work for the same answer.
     expect(['camera', 'fitted', 'none']).toContain(profile!.distortionSource);
@@ -86,8 +104,7 @@ test(
 test(
   'the fitted transform is monotone, so a gradient cannot posterise',
   () => {
-    const profile = fitMatchProfile(FIXTURE);
-    const colour = withLinear((linear) => fitHdrColour(linear, FIXTURE, options(), profile))!;
+    const colour = withMatch((_, matched) => hdrMatchColour(matched!));
     for (const curve of colour.curves) {
       for (let i = 1; i < curve.length; i += 1) expect(curve[i]!).toBeGreaterThanOrEqual(curve[i - 1]!);
     }
@@ -101,9 +118,8 @@ test(
 test(
   'the three channels leave the fit domain at comparable levels',
   () => {
-    const profile = fitMatchProfile(FIXTURE);
-    const colour = withLinear((linear) => fitHdrColour(linear, FIXTURE, options(), profile))!;
-    const ends = colour.curves.map((curve) => curve[curve.length - 1]!);
+    const colour = withMatch((_, matched) => hdrMatchColour(matched!));
+    const ends = colour.curves.map((curve: number[]) => curve[curve.length - 1]!);
     const spread = Math.max(...ends) / Math.min(...ends);
     expect(spread).toBeLessThan(1.5);
   },
@@ -113,8 +129,7 @@ test(
 test(
   'grading with the match keeps diffuse white near the reference',
   () => {
-    const profile = fitMatchProfile(FIXTURE);
-    const graded = withLinear((linear) => hdrGradedSamples(linear, FIXTURE, options(), profile));
+    const graded = withMatch((linear, matched) => hdrGradedSamples(linear, matched, options()));
     const at = quantiles(graded.data);
 
     // The anchor is measured on the brightest component and this is luma, so the
@@ -131,11 +146,10 @@ test(
 test(
   'the neutral grade is reproducible, and differs from the matched one',
   () => {
-    const profile = fitMatchProfile(FIXTURE);
-    const [first, second, matched] = withLinear((linear) => [
-      hdrGradedSamples(linear, FIXTURE, options(), null),
-      hdrGradedSamples(linear, FIXTURE, options(), null),
-      hdrGradedSamples(linear, FIXTURE, options(), profile),
+    const [first, second, matched] = withMatch((linear, fitted) => [
+      hdrGradedSamples(linear, null, options()),
+      hdrGradedSamples(linear, null, options()),
+      hdrGradedSamples(linear, fitted, options()),
     ]);
     expect(Buffer.compare(first.data, second.data)).toBe(0);
     // Otherwise the profile is being dropped somewhere between here and the grade,
@@ -152,14 +166,13 @@ test(
 test(
   'the encode carries the match through to the encoded file',
   () => {
-    const profile = fitMatchProfile(FIXTURE);
     const dir = mkdtempSync(path.join(tmpdir(), 'bb-hdr-match-'));
     try {
       const plain = path.join(dir, 'plain.avif');
       const matched = path.join(dir, 'matched.avif');
-      withLinear((linear) => {
-        encodeHdrRendition(linear, FIXTURE, options({ outputPath: plain, maxEdge: 640 }), null);
-        encodeHdrRendition(linear, FIXTURE, options({ outputPath: matched, maxEdge: 640 }), profile);
+      withMatch((linear, fitted) => {
+        encodeHdrRendition(linear, null, options({ outputPath: plain, maxEdge: 640 }));
+        encodeHdrRendition(linear, fitted, options({ outputPath: matched, maxEdge: 640 }));
       });
       // Same encoder, same size, same everything but the transform, so identical bytes
       // mean the transform never reached the encoder.
@@ -178,12 +191,11 @@ test(
 test(
   'every size of one photo grades to the same brightness',
   () => {
-    const profile = fitMatchProfile(FIXTURE);
     const median = (data: Buffer): number => quantiles(data)(0.5);
-    const [native, half, eighth] = withLinear((linear) => [
-      median(hdrGradedSamples(linear, FIXTURE, options(), profile).data),
-      median(hdrGradedSamples(linear, FIXTURE, options({ maxEdge: 3012 }), profile).data),
-      median(hdrGradedSamples(linear, FIXTURE, options({ maxEdge: 753 }), profile).data),
+    const [native, half, eighth] = withMatch((linear, matched) => [
+      median(hdrGradedSamples(linear, matched, options()).data),
+      median(hdrGradedSamples(linear, matched, options({ maxEdge: 3012 })).data),
+      median(hdrGradedSamples(linear, matched, options({ maxEdge: 753 })).data),
     ]);
     for (const other of [half, eighth]) expect(Math.abs(other - native) / native).toBeLessThan(0.05);
   },

@@ -43,7 +43,7 @@ async function encoded(medium: HdrMedium, variant: HdrVariant, run: (file: strin
     // hand-rolled check that only knew about 'still' wrote it as .mp4.
     const outputPath = path.join(dir, `${variant}${extensionFor(medium)}`);
     try {
-      encodeHdrRendition(image, FIXTURE, { variant, medium, outputPath, peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.99, crf: 40, preset: 12, maxEdge: 640 }, null);
+      encodeHdrRendition(image, null, { variant, medium, outputPath, peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.99, crf: 40, preset: 12, maxEdge: 640 });
     } finally {
       freeImage(image);
     }
@@ -135,7 +135,7 @@ test('the still leaves no intermediate behind', async () => {
     const image = decodeRawImage(FIXTURE, 16, 'rec2020-linear', 0);
     const outputPath = path.join(dir, 'pq.avif');
     try {
-      encodeHdrRendition(image, FIXTURE, { variant: 'pq', medium: 'still', outputPath, peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.99, crf: 40, preset: 12, maxEdge: 640 }, null);
+      encodeHdrRendition(image, null, { variant: 'pq', medium: 'still', outputPath, peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.99, crf: 40, preset: 12, maxEdge: 640 });
     } finally {
       freeImage(image);
     }
@@ -153,22 +153,17 @@ test('an 8-bit decode is refused rather than encoded as something HDR-shaped', (
   const image = decodeRawImage(FIXTURE, 8, 'srgb', 640);
   try {
     expect(() =>
-      encodeHdrRendition(
-        image,
-        FIXTURE,
-        {
-          variant: 'pq',
-          medium: 'still',
-          outputPath: '/tmp/never.avif',
-          peakNits: 1000,
-          referenceWhiteNits: 203,
-          whiteQuantile: 0.99,
-          crf: 40,
-          preset: 12,
-          maxEdge: 640,
-        },
-        null,
-      ),
+      encodeHdrRendition(image, null, {
+        variant: 'pq',
+        medium: 'still',
+        outputPath: '/tmp/never.avif',
+        peakNits: 1000,
+        referenceWhiteNits: 203,
+        whiteQuantile: 0.99,
+        crf: 40,
+        preset: 12,
+        maxEdge: 640,
+      }),
     ).toThrow(/16-bit/);
   } finally {
     freeImage(image);

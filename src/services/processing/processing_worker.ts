@@ -5,9 +5,12 @@ import {
   decodeEmbedded,
   decodeRawImage,
   encodeHdrRendition,
+  fitHdrMatch,
+  freeHdrMatch,
   freeImage,
   renderImage,
   saveAvif,
+  type HdrMatchHandle,
   type ImageHandle,
 } from './rawshim_ops';
 import type {
@@ -69,14 +72,14 @@ function writeSdr(job: RenditionJob, target: RenditionTarget, base: () => ImageH
 // applied by the encoder after the grade, and auto-brightening would flatten away
 // the highlight headroom that carries the HDR (§10.7).
 //
-// The decode is passed as a handle so the still and its video twin share one, and so
-// the ~115MB of graded samples never reach this side: the grade, the colour fit and
-// both encoders are in `native/rawshim` (§10.7).
+// The decode and the fitted match are both passed in, so a still and its video twin
+// share one of each - and so the ~115MB of graded samples never reach this side: the
+// grade, the colour fit and both encoders are in `native/rawshim` (§10.7).
 function writeHdr(
   job: RenditionJob,
   target: RenditionTarget,
   linear: () => ImageHandle,
-  profile: MatchProfile | null,
+  matched: HdrMatchHandle | null,
 ): void {
   const common = {
     ...job.grade,
@@ -87,19 +90,14 @@ function writeHdr(
     maxEdge: target.size === 0 ? Number.POSITIVE_INFINITY : target.size,
   } as const;
   const image = linear();
-  encodeHdrRendition(
-    image,
-    job.rawFilePath,
-    { ...common, variant: 'pq', medium: 'still', outputPath: target.outputPath },
-    profile,
-  );
+  encodeHdrRendition(image, matched, { ...common, variant: 'pq', medium: 'still', outputPath: target.outputPath });
   if (target.videoOutputPath == null) return;
-  encodeHdrRendition(
-    image,
-    job.rawFilePath,
-    { ...common, variant: 'pq', medium: 'video', outputPath: target.videoOutputPath },
-    profile,
-  );
+  encodeHdrRendition(image, matched, {
+    ...common,
+    variant: 'pq',
+    medium: 'video',
+    outputPath: target.videoOutputPath,
+  });
 }
 
 // One HDR rendition for the check page: an AVIF still for Chrome, or a one-frame
@@ -109,7 +107,9 @@ async function hdr(job: HdrJob): Promise<void> {
   try {
     encodeHdrRendition(
       image,
-      job.rawFilePath,
+      // The check page renders the neutral grade on purpose: it exists to judge the
+      // tone mapping, and the camera's colour on top would be one more variable.
+      null,
       {
         variant: job.variant,
         medium: job.medium,
@@ -119,9 +119,6 @@ async function hdr(job: HdrJob): Promise<void> {
         preset: job.preset,
         maxEdge: job.maxEdge,
       },
-      // The check page renders the neutral grade on purpose: it exists to judge the
-      // tone mapping, and the camera's colour on top would be one more variable.
-      null,
     );
   } finally {
     freeImage(image);
@@ -178,6 +175,9 @@ async function renditions(job: RenditionJob): Promise<ThumbnailSource | undefine
     return decodedLinear;
   };
 
+  // Released in the finally below, so it is declared out here with the handles.
+  let hdrMatch: HdrMatchHandle | null = null;
+
   try {
     // Fitted once, before anything is written: every rendition of one photo has to
     // get the same transform or the grid tile and the full view will not match each
@@ -204,6 +204,27 @@ async function renditions(job: RenditionJob): Promise<ThumbnailSource | undefine
     //
     // Lazy for the same reason the decode is: a job whose only SDR target comes
     // from the embedded JPEG never demosaics at all.
+    // Fitted once per photo, not once per rendition. It costs ~0.9s on a 61MP frame
+    // and every rendition has to use the same one anyway, so folding it into the
+    // encode - which is how this was first ported - paid for it twice on any job with
+    // a video twin.
+    if (profile != null && rendersHdr) {
+      hdrMatch = fitHdrMatch(
+        linear(),
+        job.rawFilePath,
+        {
+          ...job.grade,
+          variant: 'pq',
+          medium: 'still',
+          outputPath: '',
+          crf: 0,
+          preset: 0,
+          maxEdge: Number.POSITIVE_INFINITY,
+        },
+        profile,
+      );
+    }
+
     let base: ImageHandle | null = null;
     const sdrBase = (): ImageHandle => {
       if (base == null) {
@@ -222,7 +243,7 @@ async function renditions(job: RenditionJob): Promise<ThumbnailSource | undefine
       if (target.hdr) {
         // The profile supplies the geometry; the HDR colour is refitted inside the
         // encode, in the domain the grade works in (§10.8.1).
-        writeHdr(job, target, linear, profile);
+        writeHdr(job, target, linear, hdrMatch);
         continue;
       }
       const source = writeSdr(job, target, sdrBase);
@@ -235,6 +256,7 @@ async function renditions(job: RenditionJob): Promise<ThumbnailSource | undefine
     // A 60MP decode and its graded copy are ~380MB between them, held by Rust
     // rather than by the JS heap, so nothing collects them if this is skipped.
     for (const image of open) freeImage(image);
+    if (hdrMatch != null) freeHdrMatch(hdrMatch);
   }
 }
 

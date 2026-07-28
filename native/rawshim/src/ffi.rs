@@ -246,65 +246,45 @@ pub unsafe extern "C" fn bb_hdr_argv(
     BbBuffer::from_vec(parts.join("\0").into_bytes())
 }
 
-/// Builds one HDR rendition, from a scene-linear decode to the file on disk.
+/// A fitted HDR match, owned by this library for as long as JS holds the pointer.
 ///
-/// The whole job in one call: the camera's colour fitted in the grade's own domain,
-/// the fit to size, the warp, the grade, and ffmpeg - with avifenc after it for a
-/// still. None of the samples cross the boundary, which is the reason for the shape:
-/// the graded frame is ~115MB at 24MP and ~366MB at 61MP.
-///
-/// `image` must be a 16-bit `rec2020-linear` decode. It is passed rather than decoded
-/// here so that a still and its video twin share one, which is what the TypeScript
-/// did and is worth about a second on a 61MP frame.
-///
-/// `raw_path` is still needed: the embedded preview the colour is fitted against comes
-/// from it. `profile` is the SDR fit, supplying the geometry that fit runs through.
-/// Null grades neutrally, which is what the HDR check page asks for - it exists to
-/// judge the tone mapping, and the camera's colour on top would be one more variable.
-///
-/// 0 on success, -1 on failure.
-///
-/// # Safety
-/// `image` must be a live handle from this library, the paths NUL-terminated C
-/// strings, `options` a readable `BbHdrOptions`, `profile` null or readable.
-#[no_mangle]
-pub unsafe extern "C" fn bb_encode_hdr(
-    image: *const BbImage,
-    raw_path: *const c_char,
-    output_path: *const c_char,
-    options: *const BbHdrOptions,
-    profile: *const BbProfile,
-) -> i32 {
-    vips::init();
-    match hdr_job(image, raw_path, options, profile) {
-        None => -1,
-        Some((source, built, matched)) => {
-            let Ok(out) = CStr::from_ptr(output_path).to_str() else { return -1 };
-            let built = hdr_args::EncodeOptions { output_path: out.to_string(), ..built };
-            match crate::hdr::encode(&source, &built, matched.as_ref()) {
-                Ok(()) => 0,
-                Err(detail) => {
-                    eprintln!("bb_encode_hdr: {detail}");
-                    -1
-                }
-            }
-        }
-    }
+/// Opaque, and separate from the encode on purpose. Fitting it costs ~0.9s on a 61MP
+/// frame and every rendition of one photo must use the *same* one anyway, so a still
+/// and its video twin share it. Folding the fit into the encode - which is how this
+/// was first ported - paid for it once per rendition instead of once per photo.
+pub struct BbHdrMatch {
+    inner: crate::hdr_fit::HdrMatch,
 }
 
-/// The decode, the settings and the fitted match, which both HDR entry points need.
-unsafe fn hdr_job<'a>(
+/// Fits the camera's colour for the HDR grade, reusing the geometry the SDR fit
+/// resolved.
+///
+/// Null when the file embeds no preview, when the fit found too few usable pairs, or
+/// when `profile` is null - in each case the caller grades neutrally, which is also
+/// what the HDR check page wants: it exists to judge the tone mapping, and the
+/// camera's colour on top would be one more variable.
+///
+/// # Safety
+/// `image` must be a live 16-bit handle, `raw_path` a NUL-terminated C string.
+/// Release with `bb_hdr_match_free`.
+#[no_mangle]
+pub unsafe extern "C" fn bb_fit_hdr_match(
     image: *const BbImage,
     raw_path: *const c_char,
     options: *const BbHdrOptions,
     profile: *const BbProfile,
-) -> Option<(crate::hdr::Source<'a>, hdr_args::EncodeOptions, Option<crate::hdr_fit::HdrMatch>)> {
-    if image.is_null() || raw_path.is_null() || options.is_null() {
-        return None;
+) -> *mut BbHdrMatch {
+    vips::init();
+    if image.is_null() || raw_path.is_null() || options.is_null() || profile.is_null() {
+        return std::ptr::null_mut();
     }
-    let raw = CStr::from_ptr(raw_path).to_str().ok()?;
-    let built = (*options).to_options("")?;
-    let samples = (*image).view_u16()?;
+    let (Ok(raw), Some(built), Some(samples)) = (
+        CStr::from_ptr(raw_path).to_str(),
+        (*options).to_options(""),
+        (*image).view_u16(),
+    ) else {
+        return std::ptr::null_mut();
+    };
     let source = crate::hdr::Source {
         samples,
         width: (*image).width as usize,
@@ -315,14 +295,22 @@ unsafe fn hdr_job<'a>(
     // at display white, where this grade needs a domain it can carry past diffuse
     // white. The geometry is a property of the lens, so that half is reused, and it is
     // the expensive half.
-    let matched = match profile.is_null() {
-        true => None,
-        false => {
-            let sdr = (*profile).to_profile();
-            crate::hdr::fit_match(raw, &source, built.white_quantile, sdr.knots, sdr.crop)
-        }
-    };
-    Some((source, built, matched))
+    let sdr = (*profile).to_profile();
+    match crate::hdr::fit_match(raw, &source, built.white_quantile, sdr.knots, sdr.crop) {
+        Some(inner) => Box::into_raw(Box::new(BbHdrMatch { inner })),
+        None => std::ptr::null_mut(),
+    }
+}
+
+/// Releases a match from `bb_fit_hdr_match`. Safe with null.
+///
+/// # Safety
+/// `matched` must have come from this module and not been freed already.
+#[no_mangle]
+pub unsafe extern "C" fn bb_hdr_match_free(matched: *mut BbHdrMatch) {
+    if !matched.is_null() {
+        drop(Box::from_raw(matched));
+    }
 }
 
 /// The fitted HDR colour transform, flattened for inspection.
@@ -344,51 +332,92 @@ pub extern "C" fn bb_hdr_colour_size() -> usize {
     std::mem::size_of::<BbHdrColour>()
 }
 
-/// Fits the HDR colour and reports it, without grading or encoding anything.
+/// The fitted transform, flattened for inspection.
 ///
-/// The grade does this itself; this exists so the tests that judge the fit against a
-/// real file can still reach it - a monotone curve, three channels leaving the fit
+/// The grade uses the handle directly; this is here so the tests that judge the fit
+/// against a real file can reach it - a monotone curve, three channels leaving the fit
 /// domain together, a deltaE inside the bound. None of that is visible from a
 /// synthetic input, and none of it would fail an assertion about shape.
 ///
-/// 0 on success, 1 when the fit declined (too few usable pairs, or no embedded
-/// preview), -1 on failure.
-///
 /// # Safety
-/// As `bb_encode_hdr`, with `out` a writable `BbHdrColour`.
+/// `matched` must be a live handle and `out` a writable `BbHdrColour`.
 #[no_mangle]
-pub unsafe extern "C" fn bb_fit_hdr(
-    image: *const BbImage,
-    raw_path: *const c_char,
-    options: *const BbHdrOptions,
-    profile: *const BbProfile,
-    out: *mut BbHdrColour,
-) -> i32 {
-    vips::init();
-    if out.is_null() {
+pub unsafe extern "C" fn bb_hdr_match_colour(matched: *const BbHdrMatch, out: *mut BbHdrColour) -> i32 {
+    if matched.is_null() || out.is_null() {
         return -1;
     }
-    let Some((_, _, matched)) = hdr_job(image, raw_path, options, profile) else { return -1 };
-    let Some(matched) = matched else { return 1 };
-
-    // Built whole and written once: taking slices of `(*out)` would autoref through a
-    // raw pointer, which is a lint rather than a nicety - the reference would outlive
-    // nothing this function can vouch for.
+    let colour = &(*matched).inner.colour;
     let mut flat = BbHdrColour {
-        delta_e: matched.colour.delta_e,
-        saturation: matched.colour.saturation,
+        delta_e: colour.delta_e,
+        saturation: colour.saturation,
         matrix: [0.0; 9],
         curves: [0.0; 768],
     };
     for row in 0..3 {
-        flat.matrix[row * 3..row * 3 + 3].copy_from_slice(&matched.colour.matrix[row]);
+        flat.matrix[row * 3..row * 3 + 3].copy_from_slice(&colour.matrix[row]);
     }
     for channel in 0..3 {
-        let curve = &matched.colour.curves[channel];
+        let curve = &colour.curves[channel];
         flat.curves[channel * 256..channel * 256 + curve.len()].copy_from_slice(curve);
     }
     *out = flat;
     0
+}
+
+/// The decode and settings both encode entry points need.
+unsafe fn hdr_source<'a>(
+    image: *const BbImage,
+    options: *const BbHdrOptions,
+    output_path: &str,
+) -> Option<(crate::hdr::Source<'a>, hdr_args::EncodeOptions)> {
+    if image.is_null() || options.is_null() {
+        return None;
+    }
+    let built = (*options).to_options(output_path)?;
+    let samples = (*image).view_u16()?;
+    Some((
+        crate::hdr::Source { samples, width: (*image).width as usize, height: (*image).height as usize },
+        built,
+    ))
+}
+
+/// Builds one HDR rendition, from a scene-linear decode to the file on disk.
+///
+/// The fit to size, the warp, the grade, and ffmpeg - with avifenc after it for a
+/// still. None of the samples cross the boundary, which is the reason for the shape:
+/// the graded frame is ~115MB at 24MP and ~366MB at 61MP.
+///
+/// `image` must be a 16-bit `rec2020-linear` decode, and `matched` a match from
+/// `bb_fit_hdr_match` or null for a neutral grade. Both are passed rather than derived
+/// here so a still and its video twin share one decode and one fit.
+///
+/// 0 on success, -1 on failure.
+///
+/// # Safety
+/// `image` must be a live handle, `output_path` a NUL-terminated C string, `options`
+/// readable, `matched` null or a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn bb_encode_hdr(
+    image: *const BbImage,
+    matched: *const BbHdrMatch,
+    output_path: *const c_char,
+    options: *const BbHdrOptions,
+) -> i32 {
+    vips::init();
+    if output_path.is_null() {
+        return -1;
+    }
+    let Ok(out) = CStr::from_ptr(output_path).to_str() else { return -1 };
+    let Some((source, built)) = hdr_source(image, options, out) else { return -1 };
+    let matched = matched.as_ref().map(|m| &m.inner);
+
+    match crate::hdr::encode(&source, &built, matched) {
+        Ok(()) => 0,
+        Err(detail) => {
+            eprintln!("bb_encode_hdr: {detail}");
+            -1
+        }
+    }
 }
 
 /// The graded 16-bit samples `bb_encode_hdr` would hand to ffmpeg.
@@ -406,20 +435,18 @@ pub unsafe extern "C" fn bb_fit_hdr(
 #[no_mangle]
 pub unsafe extern "C" fn bb_hdr_graded(
     image: *const BbImage,
-    raw_path: *const c_char,
+    matched: *const BbHdrMatch,
     options: *const BbHdrOptions,
-    profile: *const BbProfile,
     out_size: *mut u32,
 ) -> *mut BbBuffer {
     vips::init();
     if out_size.is_null() {
         return std::ptr::null_mut();
     }
-    let Some((source, built, matched)) = hdr_job(image, raw_path, options, profile) else {
-        return std::ptr::null_mut();
-    };
+    let Some((source, built)) = hdr_source(image, options, "") else { return std::ptr::null_mut() };
+    let matched = matched.as_ref().map(|m| &m.inner);
 
-    let (graded, width, height) = crate::hdr::graded(&source, &built, matched.as_ref());
+    let (graded, width, height) = crate::hdr::graded(&source, &built, matched);
     *out_size = width as u32;
     *out_size.add(1) = height as u32;
     let bytes =

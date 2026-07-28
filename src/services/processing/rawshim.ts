@@ -45,19 +45,15 @@ const SYMBOLS = {
     returns: FFIType.ptr,
   },
   bb_hdr_options_size: { args: [], returns: FFIType.u64 },
-  bb_fit_hdr: {
-    args: [FFIType.ptr, FFIType.cstring, FFIType.ptr, FFIType.ptr, FFIType.ptr],
-    returns: FFIType.i32,
-  },
-  bb_hdr_colour_size: { args: [], returns: FFIType.u64 },
-  bb_encode_hdr: {
-    args: [FFIType.ptr, FFIType.cstring, FFIType.cstring, FFIType.ptr, FFIType.ptr],
-    returns: FFIType.i32,
-  },
-  bb_hdr_graded: {
-    args: [FFIType.ptr, FFIType.cstring, FFIType.ptr, FFIType.ptr, FFIType.ptr],
+  bb_fit_hdr_match: {
+    args: [FFIType.ptr, FFIType.cstring, FFIType.ptr, FFIType.ptr],
     returns: FFIType.ptr,
   },
+  bb_hdr_match_free: { args: [FFIType.ptr], returns: FFIType.void },
+  bb_hdr_match_colour: { args: [FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
+  bb_hdr_colour_size: { args: [], returns: FFIType.u64 },
+  bb_encode_hdr: { args: [FFIType.ptr, FFIType.ptr, FFIType.cstring, FFIType.ptr], returns: FFIType.i32 },
+  bb_hdr_graded: { args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.ptr },
   bb_header_size: { args: [], returns: FFIType.u64 },
   bb_decode_file: { args: [FFIType.cstring, FFIType.u32], returns: FFIType.ptr },
   bb_decode_image: { args: [FFIType.ptr, FFIType.u64, FFIType.u32], returns: FFIType.ptr },
