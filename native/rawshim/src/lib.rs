@@ -8,6 +8,14 @@
 // The reason this exists rather than a one-function shim: `params.half_size` has
 // no setter in the C API, and bindgen resolves it from the installed headers, so
 // the offset is the compiler's problem instead of something located at runtime.
+//
+// `bb_` and `Bb` are short for Bowerbird. On the exported functions the prefix is
+// not decoration: C has one flat symbol namespace, and this library is dlopen'd
+// into a process that already holds LibRaw, libvips, libheif and GLib, so a bare
+// `decode` or `fit` would be an invitation. The `#[repr(C)]` types carry it too,
+// against the usual rule of naming for behaviour rather than owner, only so that
+// each pairs visibly with the symbol it crosses the boundary in - `BbHeader` with
+// `bb_read_header`. Types that stay on this side are named normally.
 
 #![allow(non_upper_case_globals, non_camel_case_types, non_snake_case)]
 
