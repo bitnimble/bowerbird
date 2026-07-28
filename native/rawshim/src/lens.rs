@@ -19,6 +19,10 @@
 // set of the same size. Reading Canon's own correction out of the `CMT3` makernote
 // would be reverse engineering for a residual that is already below the threshold.
 
+/// Whether the body corrected its own preview, beside the spline it recorded for
+/// the lens. Sony writes the SubIFD as flag/params pairs - 0x7031/0x7032 for
+/// vignetting, 0x7034/0x7035 for chromatic aberration, these two for distortion.
+const CORRECTION_TAG: u16 = 0x7036;
 const DISTORTION_TAG: u16 = 0x7037;
 const SUBIFD_TAG: u16 = 0x014a;
 const TYPE_SHORT: u16 = 3;
@@ -131,28 +135,71 @@ fn find_spline(reader: &Reader<'_>, entries: &[Entry]) -> Option<Vec<f64>> {
     None
 }
 
-/// Radial distortion knots, centre to corner, in `SPLINE_UNIT`s. None when the
-/// file records none, which is most bodies older than about 2012.
-pub fn read_distortion_spline(bytes: &[u8]) -> Option<Vec<f64>> {
-    let little = match bytes.get(..2)? {
-        b"II" => true,
-        b"MM" => false,
-        _ => return None,
+/// 0 is the body saying it corrected nothing, so its preview needs nothing undone.
+/// The "on" value is not a single constant - 1 and 17 both appear across bodies -
+/// so anything non-zero counts as on rather than matching a list that would go
+/// stale on the next model.
+fn find_correction(reader: &Reader<'_>, entries: &[Entry]) -> Option<bool> {
+    entries
+        .iter()
+        .find(|entry| entry.tag == CORRECTION_TAG && entry.kind == TYPE_SHORT && entry.count == 1)
+        .and_then(|entry| reader.u16(entry.start))
+        .map(|value| value != 0)
+}
+
+/// What the file says about distortion.
+pub struct Distortion {
+    /// Whether the camera applied its correction to the preview this render is
+    /// matched against. None when the file states nothing, which is every format
+    /// but Sony's.
+    pub applied: Option<bool>,
+    /// Radial knots, centre to corner, in `SPLINE_UNIT`s. None when the file
+    /// records none, which is most bodies older than about 2012.
+    pub spline: Option<Vec<f64>>,
+}
+
+impl Distortion {
+    fn nothing() -> Distortion {
+        Distortion { applied: None, spline: None }
+    }
+}
+
+/// Both tags, in one walk of the SubIFDs, since they sit side by side.
+pub fn read_distortion(bytes: &[u8]) -> Distortion {
+    let little = match bytes.get(..2) {
+        Some(b"II") => true,
+        Some(b"MM") => false,
+        _ => return Distortion::nothing(),
     };
     let reader = Reader { bytes, little };
+    let Some(ifd0) = reader.u32(4) else { return Distortion::nothing() };
 
-    for entry in read_ifd(&reader, reader.u32(4)? as usize) {
+    let mut out = Distortion::nothing();
+    for entry in read_ifd(&reader, ifd0 as usize) {
         if entry.tag != SUBIFD_TAG || entry.kind != TYPE_LONG {
             continue;
         }
         for k in 0..entry.count as usize {
             let Some(offset) = reader.u32(entry.start + k * 4) else { break };
-            if let Some(knots) = find_spline(&reader, &read_ifd(&reader, offset as usize)) {
-                return Some(knots);
+            let entries = read_ifd(&reader, offset as usize);
+            if out.applied.is_none() {
+                out.applied = find_correction(&reader, &entries);
+            }
+            if out.spline.is_none() {
+                out.spline = find_spline(&reader, &entries);
+            }
+            if out.applied.is_some() && out.spline.is_some() {
+                return out;
             }
         }
     }
-    None
+    out
+}
+
+/// The spline alone, whatever the correction flag says. For the tests, which check
+/// the parser rather than the decision made from it.
+pub fn read_distortion_spline(bytes: &[u8]) -> Option<Vec<f64>> {
+    read_distortion(bytes).spline
 }
 
 #[cfg(test)]
@@ -161,6 +208,11 @@ mod tests {
 
     /// A little-endian TIFF with one SubIFD holding a distortion tag.
     fn synthetic(knots: &[i16]) -> Vec<u8> {
+        with_correction(knots, None)
+    }
+
+    /// The same, optionally carrying the correction flag beside the spline.
+    fn with_correction(knots: &[i16], flag: Option<u16>) -> Vec<u8> {
         let mut bytes = vec![0u8; 512];
         bytes[..2].copy_from_slice(b"II");
         bytes[2..4].copy_from_slice(&42u16.to_le_bytes());
@@ -173,12 +225,20 @@ mod tests {
         bytes[14..18].copy_from_slice(&1u32.to_le_bytes());
         bytes[18..22].copy_from_slice(&64u32.to_le_bytes()); // SubIFD at 64
 
-        // SubIFD: one entry, the distortion spline, pointing at 128.
-        bytes[64..66].copy_from_slice(&1u16.to_le_bytes());
-        bytes[66..68].copy_from_slice(&DISTORTION_TAG.to_le_bytes());
-        bytes[68..70].copy_from_slice(&TYPE_SSHORT.to_le_bytes());
-        bytes[70..74].copy_from_slice(&((knots.len() + 1) as u32).to_le_bytes());
-        bytes[74..78].copy_from_slice(&128u32.to_le_bytes());
+        // SubIFD: the distortion spline pointing at 128, and the flag inline
+        // before it where the file carries one.
+        bytes[64..66].copy_from_slice(&(if flag.is_some() { 2u16 } else { 1u16 }).to_le_bytes());
+        if let Some(value) = flag {
+            bytes[66..68].copy_from_slice(&CORRECTION_TAG.to_le_bytes());
+            bytes[68..70].copy_from_slice(&TYPE_SHORT.to_le_bytes());
+            bytes[70..74].copy_from_slice(&1u32.to_le_bytes());
+            bytes[74..78].copy_from_slice(&u32::from(value).to_le_bytes());
+        }
+        let spline = if flag.is_some() { 78 } else { 66 };
+        bytes[spline..spline + 2].copy_from_slice(&DISTORTION_TAG.to_le_bytes());
+        bytes[spline + 2..spline + 4].copy_from_slice(&TYPE_SSHORT.to_le_bytes());
+        bytes[spline + 4..spline + 8].copy_from_slice(&((knots.len() + 1) as u32).to_le_bytes());
+        bytes[spline + 8..spline + 12].copy_from_slice(&128u32.to_le_bytes());
 
         // The length prefix, then the knots.
         bytes[128..130].copy_from_slice(&(knots.len() as i16).to_le_bytes());
@@ -214,6 +274,29 @@ mod tests {
         let mut bytes = synthetic(&[0, -120, -400]);
         bytes[66..68].copy_from_slice(&0x7032u16.to_le_bytes()); // vignetting, not distortion
         assert!(read_distortion_spline(&bytes).is_none());
+    }
+
+    #[test]
+    fn reads_whether_the_body_corrected_its_own_preview() {
+        // 0 is off. The on value is not one constant - 1 and 17 both appear across
+        // bodies - so anything non-zero has to read as on.
+        assert_eq!(read_distortion(&with_correction(&[0, -120], Some(0))).applied, Some(false));
+        assert_eq!(read_distortion(&with_correction(&[0, -120], Some(1))).applied, Some(true));
+        assert_eq!(read_distortion(&with_correction(&[0, -120], Some(17))).applied, Some(true));
+    }
+
+    #[test]
+    fn states_nothing_when_the_file_carries_no_flag() {
+        // Every format but Sony's, which must go on being fitted rather than being
+        // read as "the camera corrected nothing".
+        assert_eq!(read_distortion(&synthetic(&[0, -120, -400])).applied, None);
+    }
+
+    #[test]
+    fn the_flag_does_not_disturb_the_spline_beside_it() {
+        let found = read_distortion(&with_correction(&[0, -120, -400], Some(0)));
+        assert_eq!(found.applied, Some(false));
+        assert_eq!(found.spline, Some(vec![0.0, -120.0, -400.0]), "the knots are still read when the flag says off");
     }
 
     #[test]

@@ -498,19 +498,20 @@ const SPLINE_WINDOW: u64 = 512 * 1024;
 /// a worse grade, with nothing to say so.
 /// `Err` is a file that could not be read, which the callers report separately from
 /// a file that simply records no correction.
-fn spline_of(path: &str) -> std::io::Result<Option<Vec<f64>>> {
+fn distortion_of(path: &str) -> std::io::Result<crate::lens::Distortion> {
     use std::io::Read;
 
     let mut head = Vec::with_capacity(SPLINE_WINDOW as usize);
     std::fs::File::open(path)?.take(SPLINE_WINDOW).read_to_end(&mut head)?;
-    if let Some(knots) = crate::lens::read_distortion_spline(&head) {
-        return Ok(Some(knots));
+    let found = crate::lens::read_distortion(&head);
+    if found.spline.is_some() {
+        return Ok(found);
     }
     // A short read means that was the whole file, so there is nothing further on.
     if (head.len() as u64) < SPLINE_WINDOW {
-        return Ok(None);
+        return Ok(found);
     }
-    Ok(crate::lens::read_distortion_spline(&std::fs::read(path)?))
+    Ok(crate::lens::read_distortion(&std::fs::read(path)?))
 }
 
 /// Reads the distortion spline a body recorded for this shot, in SPLINE_UNITs.
@@ -528,9 +529,9 @@ pub unsafe extern "C" fn bb_read_distortion_spline(path: *const c_char, out: *mu
         return -1;
     }
     let Ok(path) = CStr::from_ptr(path).to_str() else { return -1 };
-    let Ok(found) = spline_of(path) else { return -1 };
+    let Ok(found) = distortion_of(path) else { return -1 };
 
-    match found {
+    match found.spline {
         None => 0,
         Some(knots) => {
             let n = knots.len().min(max as usize);
@@ -586,9 +587,17 @@ pub unsafe extern "C" fn bb_fit(image: *const BbImage, raw_path: *const c_char, 
     }
     let Ok(path) = CStr::from_ptr(raw_path).to_str() else { return -1 };
 
-    let Ok(knots) = spline_of(path) else { return -1 };
+    let Ok(found) = distortion_of(path) else { return -1 };
+    // The body's own word that it corrected nothing, which saves searching for a
+    // correction that is not there (`fit.rs`). Only Sony states it; everything else
+    // reads as unstated and is fitted as before.
+    let geometry = match (found.applied, found.spline) {
+        (Some(false), _) => fit::Geometry::Uncorrected,
+        (_, Some(knots)) => fit::Geometry::Recorded(knots),
+        (_, None) => fit::Geometry::Unstated,
+    };
 
-    let fitted = crate::with_embedded_jpeg(raw_path, |jpeg| fit_against(image, jpeg, knots, out));
+    let fitted = crate::with_embedded_jpeg(raw_path, |jpeg| fit_against(image, jpeg, geometry, out));
     // No JPEG preview: nothing to match, and the caller renders untransformed.
     fitted.unwrap_or(-1)
 }
@@ -597,11 +606,11 @@ pub unsafe extern "C" fn bb_fit(image: *const BbImage, raw_path: *const c_char, 
 unsafe fn fit_against(
     image: *const BbImage,
     jpeg: &[u8],
-    camera_knots: Option<Vec<f64>>,
+    geometry: fit::Geometry,
     out: *mut BbProfile,
 ) -> i32 {
     let Some(render) = (*image).view() else { return -1 };
-    match fit::fit(render, jpeg, camera_knots) {
+    match fit::fit(render, jpeg, geometry) {
         Ok(Some(profile)) => {
             *out = BbProfile::from(&profile);
             0
@@ -633,11 +642,11 @@ pub unsafe extern "C" fn bb_fit_against(
     if image.is_null() || jpeg.is_null() || out.is_null() {
         return -1;
     }
-    let knots = match camera_knots.is_null() || camera_knot_count == 0 {
-        true => None,
-        false => Some(std::slice::from_raw_parts(camera_knots, camera_knot_count as usize).to_vec()),
+    let geometry = match camera_knots.is_null() || camera_knot_count == 0 {
+        true => fit::Geometry::Unstated,
+        false => fit::Geometry::Recorded(std::slice::from_raw_parts(camera_knots, camera_knot_count as usize).to_vec()),
     };
-    fit_against(image, std::slice::from_raw_parts(jpeg, jpeg_len), knots, out)
+    fit_against(image, std::slice::from_raw_parts(jpeg, jpeg_len), geometry, out)
 }
 
 /// Fits an image to a longest edge and applies a profile, in that order.

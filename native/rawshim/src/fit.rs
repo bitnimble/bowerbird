@@ -80,6 +80,16 @@ impl ColourTransform {
     }
 }
 
+/// What is known about the geometry before any searching.
+pub enum Geometry {
+    /// The body states it applied no correction, so its preview needs none undone.
+    Uncorrected,
+    /// The spline the body recorded for this shot.
+    Recorded(Vec<f64>),
+    /// The file states nothing either way, so it has to be fitted.
+    Unstated,
+}
+
 pub struct Profile {
     pub knots: Option<Vec<f64>>,
     pub crop: f64,
@@ -486,9 +496,8 @@ fn fit_polynomial(grids: &Grids) -> Option<(f64, f64, f64)> {
     Some((k1, crop, delta))
 }
 
-/// Fits the transform taking `render` to `jpeg_bytes`. `camera_knots` is the
-/// camera's own distortion spline where the file recorded one.
-pub fn fit(render: RgbRef<'_>, jpeg_bytes: &[u8], camera_knots: Option<Vec<f64>>) -> Result<Option<Profile>, String> {
+/// Fits the transform taking `render` to `jpeg_bytes`.
+pub fn fit(render: RgbRef<'_>, jpeg_bytes: &[u8], geometry: Geometry) -> Result<Option<Profile>, String> {
     // One libvips graph each, evaluated once. Decode, orient, resize and blur fuse
     // into a single streamed pass rather than four buffers handed between four
     // calls.
@@ -529,25 +538,28 @@ pub fn fit(render: RgbRef<'_>, jpeg_bytes: &[u8], camera_knots: Option<Vec<f64>>
 
     // Decided entirely on the search grid; the winner is re-fitted at full size
     // below, so nothing reported was measured coarse.
-    let chosen: (Option<Vec<f64>>, f64, u32) = match camera_knots {
-        Some(knots) => {
+    let chosen: (Option<Vec<f64>>, f64, u32) = match geometry {
+        // Taken at its word, and it is worth taking: the search is 55-70% of a fit,
+        // and on a frame the body says it left alone it lands on the identity
+        // anyway. Skipping it took an ILCE-7CM2 fit from ~500ms to ~200ms with the
+        // deltaE unchanged to two decimals on all 16 frames measured.
+        Geometry::Uncorrected => (None, 1.0, 0),
+        Geometry::Recorded(knots) => {
             // The camera's curve is the truth about the lens, but only if using it
-            // actually corresponds better - a body whose preview is uncorrected
-            // records the spline anyway.
+            // actually corresponds better.
             //
             // Losing means correcting nothing rather than falling through to the
             // search below, which reads like a missing cascade and is not: a spline
             // that cannot beat the identity is saying this JPEG was not corrected,
-            // and the polynomial agrees. Over the 58 sampled frames where this fires
-            // - every one an ILCE-7CM2, which was shot with the correction off - the
-            // search improved 3 by a median of 0.07 deltaE, and declined on half.
-            // A second of fitting each, for nothing.
+            // and the polynomial agrees. Over the 58 sampled frames where this fired
+            // before the flag above caught most of them, forcing the search through
+            // improved 3 by a median of 0.07 deltaE and declined on half.
             match fit_crop(&grids, &knots, &scan_around(estimate_crop(&knots), 0.01, 3)) {
                 Some((crop, delta)) if delta < baseline_delta => (Some(knots), crop, 1),
                 _ => (None, 1.0, 0),
             }
         }
-        None => match fit_polynomial(&grids) {
+        Geometry::Unstated => match fit_polynomial(&grids) {
             Some((k1, crop, delta)) if delta < baseline_delta => (Some(polynomial_knots(k1, 0.0, 16)), crop, 2),
             _ => (None, 1.0, 0),
         },
