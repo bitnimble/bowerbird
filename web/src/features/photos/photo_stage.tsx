@@ -26,6 +26,13 @@ interface Props {
   onImageMissing?: () => void;
   /** Clears the stage when it changes. The photo, not the src: a rendition swap must hold the frame. */
   photoKey: string;
+  /**
+   * Keep preparing the frame but do not show it yet. For the moment before the
+   * photo's own data arrives, when the panels around the stage have not settled:
+   * a warmed neighbour decodes the instant it is asked for, so it would paint
+   * and then jump as the layout resolved under it.
+   */
+  hold?: boolean;
 }
 
 // Scale and pan are one value, not two pieces of state. Zooming about a point
@@ -88,7 +95,7 @@ function transferredBytes(src: string): number | null {
 // The image viewport: fit/zoom, wheel zoom, drag-to-pan and fullscreen. All of
 // this is ephemeral view state, so it stays local rather than going through a
 // store; nothing outside this component needs to know the pan offset.
-export function PhotoStage({ src, alt, filename, video, photoKey, preloadSrc, onImageLoad, onImageMissing }: Props): JSX.Element {
+export function PhotoStage({ src, alt, filename, video, photoKey, hold, preloadSrc, onImageLoad, onImageMissing }: Props): JSX.Element {
   const stageRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
   const [view, setView] = useState<View>(FITTED);
@@ -158,35 +165,53 @@ export function PhotoStage({ src, alt, filename, video, photoKey, preloadSrc, on
   const onLoaded = useRef(onImageLoad);
   onLoaded.current = onImageLoad;
 
-  // The src being prepared, mounted but invisible until it can be shown. A video
-  // has no `decode()`, so it is promoted by its own `loadeddata` below - the same
-  // two-element swap, since the Firefox HDR path is a rendition comparison too.
+  // The src being prepared, mounted but invisible until it can be shown.
   const incoming = shownSrc === painted ? null : shownSrc;
-  const incomingRef = useRef<HTMLImageElement>(null);
+  // A callback ref, not a RefObject: refs are invariant, so one object cannot be
+  // handed to both an <img> and a <video>.
+  const incomingRef = useRef<HTMLImageElement | HTMLVideoElement | null>(null);
+  const captureIncoming = useCallback((element: HTMLImageElement | HTMLVideoElement | null) => {
+    incomingRef.current = element;
+  }, []);
 
+  // Promotion, for both media: an image when it has decoded, a video when it has
+  // a frame to show (`loadeddata`; `decode()` is an image method, and
+  // `loadedmetadata` knows the size and nothing else). `hold` is a dependency, so
+  // a frame prepared while the layout was still settling goes up the moment it is.
   useEffect(() => {
-    const image = incomingRef.current;
-    if (video || incoming == null || image == null) return;
+    const element = incomingRef.current;
+    if (hold === true || incoming == null || element == null) return;
     let live = true;
-    image
-      .decode()
-      .then(() => {
-        if (!live) return;
-        setNatural({ width: image.naturalWidth, height: image.naturalHeight });
-        onLoaded.current(image.naturalWidth, image.naturalHeight, transferredBytes(incoming));
-        setPainted(incoming);
-      })
-      .catch(() => {
-        if (!live) return;
-        setFailed(true);
-        // Only the first failure, and never for a blob: a decoded image in hand
-        // cannot be missing server-side.
-        if (attempt === 0 && !src.startsWith('blob:')) onMissing.current?.();
-      });
+
+    const promote = (): void => {
+      if (!live) return;
+      const width = element instanceof HTMLVideoElement ? element.videoWidth : element.naturalWidth;
+      const height = element instanceof HTMLVideoElement ? element.videoHeight : element.naturalHeight;
+      setNatural({ width, height });
+      onLoaded.current(width, height, transferredBytes(incoming));
+      setPainted(incoming);
+    };
+
+    if (element instanceof HTMLVideoElement) {
+      if (element.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) promote();
+      else element.addEventListener('loadeddata', promote);
+      return () => {
+        live = false;
+        element.removeEventListener('loadeddata', promote);
+      };
+    }
+
+    element.decode().then(promote, () => {
+      if (!live) return;
+      setFailed(true);
+      // Only the first failure, and never for a blob: a decoded image in hand
+      // cannot be missing server-side.
+      if (attempt === 0 && !src.startsWith('blob:')) onMissing.current?.();
+    });
     return () => {
       live = false;
     };
-  }, [incoming, attempt, src, video]);
+  }, [incoming, attempt, src, hold]);
 
   // Measures here, outside the updater, so the updater itself stays pure.
   const zoomBy = useCallback(
@@ -338,12 +363,12 @@ export function PhotoStage({ src, alt, filename, video, photoKey, preloadSrc, on
             // A one-frame video, the only way an HDR photo reaches a Firefox
             // display (§10.7). Muted and inline so autoplay is allowed at all,
             // and it carries the same transform as the <img> so zoom and pan are
-            // unchanged. Promoted on `loadeddata` - a decodable frame - rather
-            // than on `loadedmetadata`, which knows the size and nothing else.
+            // unchanged.
             if (video) {
               return (
                 <video
                   key={source}
+                  ref={source === incoming ? captureIncoming : null}
                   src={source}
                   autoPlay
                   loop
@@ -356,19 +381,13 @@ export function PhotoStage({ src, alt, filename, video, photoKey, preloadSrc, on
                     setFailed(true);
                     if (attempt === 0) onMissing.current?.();
                   }}
-                  onLoadedData={(e) => {
-                    if (source !== incoming) return;
-                    setNatural({ width: e.currentTarget.videoWidth, height: e.currentTarget.videoHeight });
-                    onLoaded.current(e.currentTarget.videoWidth, e.currentTarget.videoHeight, transferredBytes(source));
-                    setPainted(source);
-                  }}
                 />
               );
             }
             return (
               <img
                 key={source}
-                ref={source === incoming ? incomingRef : null}
+                ref={source === incoming ? captureIncoming : null}
                 src={source}
                 alt={alt}
                 draggable={false}

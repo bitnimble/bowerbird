@@ -1191,12 +1191,8 @@ p.ui-text--mono {
   grid-template-columns: minmax(0, 1fr) 320px;
 }
 
-/* The panel strip's height is reserved rather than taken from its content, the
-   way the column beside a portrait is a fixed 320px. An `auto` row is zero high
-   until the detail arrives, and a frame painted before it - the neighbour warmed
-   by the stage decodes in one - then jumped when the panels landed under it. */
 .detail--below {
-  grid-template-rows: minmax(0, 1fr) 34vh;
+  grid-template-rows: minmax(0, 1fr) auto;
 }
 
 /* minmax(0, 1fr) rather than the implicit `auto` column: an auto track is at
@@ -1213,6 +1209,7 @@ p.ui-text--mono {
 
 .detail--below .detail__panels {
   grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  max-height: 34vh;
 }
 
 .detail--below .panel,
