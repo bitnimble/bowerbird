@@ -885,6 +885,8 @@ Against that, the file being the cache means a change to the pipeline is invisib
 
 `PhotoDetail.renditions` answers the client's questions from **disk rather than from a column** - what each one's path is, whether it is built, whether it is HDR, whether a video twin exists - because settings are not retroactive and a library switched to HDR after an import still has SDR files. `default_rendition` is what the viewer opens at when nothing has been chosen, so the client never has to re-derive it from what happened to be built.
 
+**A missing grid tile is rebuilt when the photo is opened.** The queue only visits photos flagged for processing, so a tile deleted under a catalogued photo - a wiped cache, a sweep that went too far - is a hole in the grid that nothing ever fills; reprocessing the photo would fill it at the cost of every other rendition. Opening the photo is when someone is looking, so `GET /api/photos/:id` stats the tile and, if it is gone, renders that one rendition in the background from the source the import used (the photo's `rendition_source`, or the library's). A side effect on a read, deliberately: the file is the cache, and repairing a cache on the read that noticed it is empty is what a cache does. One repair per photo is in flight at a time.
+
 **Reprocessing clears every rendition it does not itself rewrite.** A photo is only reprocessed because its pixels changed, so the copies beside it are of the old file and nothing else would ever notice - the max-resolution export in particular would be served forever. The ones the job is about to write are exempt, or the sweep would delete what it just made.
 
 Every writer on this path fails on a missing directory rather than creating one, and ffmpeg fails the whole job rather than the one output, so the worker creates the directory for each of its job's outputs before it runs. At the call site instead, each new rendition is a directory somebody has to remember, and the one that was forgotten took the still down with it.
@@ -1627,6 +1629,8 @@ The image is absolutely positioned inside the stage. As a normal grid item its i
 Panning is clamped so the photo cannot be dragged away from the viewport edge. The limit is derived from the `object-fit: contain` geometry (the fit scale times the zoom), not from the natural size, and it is re-applied when zooming out too, since shrinking the image shrinks the legal offset.
 
 The stage's `src` is keyed off the route rather than the loaded detail, and the image stays hidden until that src decodes. The store deliberately keeps the previous detail while the next loads (so the rail does not collapse), which otherwise means the stage paints the frame *before* the one the URL asks for.
+
+**The next photo is warmed by a mounted, invisible `<img>`** rather than a detached `new Image()`, and only once this one is up, so the two never compete for the connection. Mounted because a decode is for the size an element is *drawn* at: a detached image decodes at natural size, which is the wrong entry, and the visible element then paid for a second decode at paint - the same trap the rendition swap fell into (§10.1).
 
 A "Thumbnail on screen" panel reports what is actually being displayed (its source, pixel dimensions, format, colour space and encode quality) separately from the original RAW's size and dimensions, because the two are easy to confuse and only one of them is what you are judging sharpness on.
 

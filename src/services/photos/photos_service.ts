@@ -48,6 +48,7 @@ export class PhotosService {
     const photo = this.photos.getById(photoId);
     if (!photo) throw new AppError('NOT_FOUND', `photo not found: ${photoId}`);
     const library = this.libraries.getById(photo.library_id);
+    if (library != null) this.repairGridTile(photo, library);
     // One stat, on a single-photo read only. The file is the cache, so asking
     // the filesystem beats a column that can disagree with what is on disk.
     return {
@@ -58,6 +59,27 @@ export class PhotosService {
       default_rendition: library?.preview_source === 'embedded' ? 'embedded' : 'full',
       renditions: library == null ? null : this.renditionsOf(library, photo.id, photo.file_path),
     };
+  }
+
+  // The grid tile is built at import, so a missing one means the file was cleared
+  // under a photo that is still catalogued and the grid shows a hole nothing ever
+  // fills: the queue only visits photos flagged for processing, and a reprocess
+  // would take every other rendition with it (§10.3). Opening the photo is when a
+  // person is looking, so that is when it is rebuilt - in the background, off the
+  // read that reports it, and from the same source an import would have used.
+  private readonly repairing = new Set<string>();
+
+  private repairGridTile(photo: PhotoDetail, library: Library): void {
+    if (this.repairing.has(photo.id)) return;
+    if (existsSync(getRenditionPath(library, photo.id, 'grid', false))) return;
+    const raw = getOriginalPath(library, photo.file_path);
+    if (!existsSync(raw)) return; // nothing to render from; the photo reads as missing
+
+    this.repairing.add(photo.id);
+    void this.processing
+      .renderOne(raw, photo.id, library, 'grid', false, photo.rendition_source ?? library.preview_source)
+      .catch((err: unknown) => console.error(`could not rebuild the grid tile for ${photo.id}: ${String(err)}`))
+      .finally(() => this.repairing.delete(photo.id));
   }
 
   // The photo and its library, and nothing else. Everything that serves bytes or

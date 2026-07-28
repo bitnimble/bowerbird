@@ -148,17 +148,6 @@ export function PhotoStage({ src, alt, filename, video, photoKey, preloadSrc, on
     return () => clearTimeout(timer);
   }, [failed, attempt, src]);
 
-  // Only once this photo has decoded: started any earlier the two frames compete
-  // for the connection, and the one being waited on is this one. Decoded as well
-  // as fetched: a 2566x3840 AVIF thumbnail costs ~50ms to decode on a fast
-  // desktop, which is paid at paint time otherwise.
-  useEffect(() => {
-    if (!ready || preloadSrc == null) return;
-    const next = new Image();
-    next.src = preloadSrc;
-    void next.decode().catch(() => {});
-  }, [ready, preloadSrc]);
-
   // The browser caches the 404, so a retry needs a URL it has not seen.
   const shownSrc = attempt === 0 ? src : `${src}${src.includes('?') ? '&' : '?'}retry=${attempt}`;
 
@@ -389,6 +378,13 @@ export function PhotoStage({ src, alt, filename, video, photoKey, preloadSrc, on
             );
           })
         )}
+
+        {/* The next photo, warmed only once this one is up: started any earlier
+            the two compete for the connection, and the one being waited on is
+            this one. Mounted rather than fetched into a detached Image for the
+            same reason the swap above is - a decode is for the size an element
+            is drawn at, and this element is the size the next photo will be. */}
+        {ready && preloadSrc != null && <img key={preloadSrc} src={preloadSrc} alt="" aria-hidden className="stage__content" />}
       </div>
 
       {/* Fullscreen shows nothing but the photo; the bar surfaces on hover so the

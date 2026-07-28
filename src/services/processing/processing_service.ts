@@ -42,15 +42,24 @@ export class ProcessingService {
   }
 
   // One rendition, on demand: the detail view asking for a size or a range it
-  // does not have yet. Always a render, never the embedded JPEG, which is served
-  // as itself rather than built (§10.2).
-  renderOne(rawFilePath: string, photoId: string, library: Library, rendition: Rendition, hdr: boolean): Promise<void> {
+  // does not have yet. The photo view's own renditions are always renders, never
+  // the embedded JPEG, which is served as itself rather than built (§10.2); the
+  // grid tile is the exception, since it is re-encoded from whichever source the
+  // library imports from.
+  renderOne(
+    rawFilePath: string,
+    photoId: string,
+    library: Library,
+    rendition: Rendition,
+    hdr: boolean,
+    source: ThumbnailSource = 'render',
+  ): Promise<void> {
     return this.runOneOff({
       kind: 'rendition',
       photoId,
       rawFilePath,
       dataPath: getDataPath(library),
-      targets: [this.target(getDataPath(library), library.preview_hdr_video, photoId, rendition, hdr, 'render')],
+      targets: [this.target(getDataPath(library), library.preview_hdr_video, photoId, rendition, hdr, source)],
       grade: this.grade(),
       reportSource: false,
       // The on-demand rendition has to agree with the ones built at import, so it

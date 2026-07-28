@@ -21,6 +21,7 @@ function build(over: {
   libraries?: Partial<LibrariesRepository>;
   shoots?: Partial<ShootsRepository>;
   albums?: Partial<AlbumsRepository>;
+  processing?: Partial<ProcessingService>;
 }) {
   const photos = {
     getById: jest.fn(() => null),
@@ -37,8 +38,12 @@ function build(over: {
   const shoots = { getById: jest.fn(() => null), ...over.shoots } as unknown as ShootsRepository;
   const albums = { getById: jest.fn(() => null), getAlbumIdsForPhoto: jest.fn(() => []), ...over.albums } as unknown as AlbumsRepository;
   // These tests never render, so a stub keeps LibRaw and worker threads out.
-  const processing = { renderLossless: jest.fn(async () => {}) } as unknown as ProcessingService;
-  return { service: new PhotosService(photos, albums, shoots, libraries, processing), photos, libraries, shoots, albums };
+  const processing = {
+    renderLossless: jest.fn(async () => {}),
+    renderOne: jest.fn(async () => {}),
+    ...over.processing,
+  } as unknown as ProcessingService;
+  return { service: new PhotosService(photos, albums, shoots, libraries, processing), photos, libraries, shoots, albums, processing };
 }
 
 const library: Library = { id: 'lib', root_path: '/r', data_path: null, ordering: 'added_asc',
@@ -59,6 +64,37 @@ describe('PhotosService.get', () => {
     // Not toBe: get() decorates the row with rendition state the repository
     // cannot answer, so it is a new object rather than the row itself.
     expect(service.get('p1')).toMatchObject(detail);
+  });
+
+  // A wiped cache leaves the grid showing holes nothing ever fills: the queue
+  // only visits photos flagged for processing. Opening one is when it is noticed.
+  it('rebuilds a missing grid tile in the background, from the source the import used', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'bb-tile-'));
+    try {
+      writeFileSync(path.join(root, 'a.arw'), 'raw');
+      const photo = { ...detail, rendition_source: 'embedded' } as PhotoDetail;
+      const lib = { ...library, root_path: root, preview_source: 'render' as const };
+      const { service, processing } = build({
+        photos: { getById: jest.fn(() => photo) },
+        libraries: { getById: jest.fn(() => lib) },
+      });
+
+      service.get('p1');
+      // The photo's own source wins over the library's: it is what the tile
+      // beside it in the grid was built from.
+      expect(processing.renderOne).toHaveBeenCalledWith(path.join(root, 'a.arw'), 'p1', lib, 'grid', false, 'embedded');
+
+      // Only once while the first is still in flight, and never once it is there.
+      service.get('p1');
+      expect(processing.renderOne).toHaveBeenCalledTimes(1);
+      await Promise.resolve();
+      mkdirSync(path.join(root, '.bowerbird', 'renditions', 'grid'), { recursive: true });
+      writeFileSync(path.join(root, '.bowerbird', 'renditions', 'grid', 'p1.avif'), 'tile');
+      service.get('p1');
+      expect(processing.renderOne).toHaveBeenCalledTimes(1);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 
