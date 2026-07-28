@@ -17,6 +17,7 @@ use std::os::raw::{c_char, c_int};
 pub mod ffi;
 pub mod fit;
 pub mod image;
+pub mod lens;
 pub mod vips;
 
 mod raw {
@@ -279,6 +280,90 @@ pub unsafe extern "C" fn bb_decode(
     raw::libraw_close(r);
     match result {
         Some(image) => Box::into_raw(image),
+        None => std::ptr::null_mut(),
+    }
+}
+
+/// `libraw_image_formats_t`: a preview is either a JPEG or a bare bitmap.
+const LIBRAW_IMAGE_JPEG: raw::LibRaw_image_formats = 1;
+
+/// Runs `use_bytes` over the camera's embedded JPEG preview, in place.
+///
+/// The bytes stay in LibRaw's own buffer for the duration - they are 5-14MB on a
+/// 61MP body, which embeds a full-resolution preview - and are released before
+/// this returns. Nothing copies them, and in particular nothing hands them to
+/// JavaScript, which is the whole reason this exists rather than an "extract the
+/// preview" call.
+///
+/// None when the file has no JPEG preview: some bodies embed a bitmap and some
+/// embed nothing, which is a property of the file rather than an error, and the
+/// caller falls back to a render.
+///
+/// # Safety
+/// `path` must be a NUL-terminated C string.
+unsafe fn with_embedded_jpeg<T>(path: *const c_char, use_bytes: impl FnOnce(&[u8]) -> T) -> Option<T> {
+    let r = raw::libraw_init(0);
+    if r.is_null() {
+        return None;
+    }
+
+    let result = (|| -> Option<T> {
+        if raw::libraw_open_file(r, path) != 0 || raw::libraw_unpack_thumb(r) != 0 {
+            return None;
+        }
+        let mut err: c_int = 0;
+        let thumb = raw::libraw_dcraw_make_mem_thumb(r, &mut err);
+        if thumb.is_null() || err != 0 {
+            return None;
+        }
+        // Freed on every path below, including the one where the format is wrong.
+        let out = (|| {
+            let size = (*thumb).data_size as usize;
+            if (*thumb).type_ != LIBRAW_IMAGE_JPEG || size == 0 {
+                return None;
+            }
+            Some(use_bytes(std::slice::from_raw_parts((*thumb).data.as_ptr(), size)))
+        })();
+        raw::libraw_dcraw_clear_mem(thumb);
+        out
+    })();
+
+    raw::libraw_recycle(r);
+    raw::libraw_close(r);
+    result
+}
+
+/// Decodes the camera's embedded preview to an upright RGB bitmap, fitted to
+/// `long_edge`. 0 leaves it at the size the body embedded.
+///
+/// This is the whole of an import's thumbnail stage: extract, decode, shrink. It
+/// used to be three steps with the JPEG copied into a JavaScript `Buffer` in the
+/// middle, which was both the largest thing crossing the boundary and the reason
+/// libvips' operation cache had to go - a cached graph held a pointer into bytes
+/// that JavaScript was free to collect (`vips.rs`).
+///
+/// Returns null when the file has no JPEG preview, which is not an error.
+///
+/// # Safety
+/// `path` must be a NUL-terminated C string. Release with `bb_free`.
+#[no_mangle]
+pub unsafe extern "C" fn bb_decode_embedded(path: *const c_char, long_edge: u32) -> *mut BbImage {
+    vips::init();
+    if path.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    let decoded = with_embedded_jpeg(path, |bytes| match long_edge {
+        0 => vips::Pipeline::decode_upright(bytes).and_then(vips::Pipeline::finish),
+        edge => vips::Pipeline::thumbnail(bytes, edge as usize).and_then(vips::Pipeline::finish),
+    });
+
+    match decoded {
+        Some(Ok(image)) => BbImage::own(image),
+        Some(Err(detail)) => {
+            eprintln!("bb_decode_embedded: {detail}");
+            std::ptr::null_mut()
+        }
         None => std::ptr::null_mut(),
     }
 }

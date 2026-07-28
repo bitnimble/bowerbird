@@ -16,7 +16,7 @@
 import { deltaE76, type MatchProfile } from './jpeg_match';
 import { warp } from './lens_corrections';
 import type { DecodedImage } from './raw_decoder';
-import { decodeImage, freeImage, pixels } from './rawshim_ops';
+import { decodeEmbedded, freeImage, pixels } from './rawshim_ops';
 
 // Long edge of the grid the fit runs on. Matching `jpeg_match.ts`: fitting small
 // and applying at full resolution is free, and a 60MP fit is minutes of work for
@@ -497,20 +497,25 @@ function measure(colour: HdrColour, render: Plane, jpeg: Plane, bits: Uint8Array
  * `anchor` is diffuse white as a raw 16-bit level, which the grade measures the
  * same way (§10.7.1); the fit is done in multiples of it so the curve means the
  * same thing whatever the exposure. Returns null when there are too few usable
- * pairs to fit from, in which case the caller grades untransformed.
+ * pairs to fit from, or when the file embeds no JPEG preview to match against, in
+ * which case the caller grades untransformed.
  */
 export async function fitHdrMatch(
   linear: DecodedImage,
   anchor: number,
-  jpegBytes: Buffer,
+  rawFilePath: string,
   geometry: Pick<MatchProfile, 'distortion' | 'crop'>,
 ): Promise<HdrMatch | null> {
   if (linear.depth !== 16) throw new Error(`fitHdrMatch needs a 16-bit decode, got ${linear.depth}`);
   if (!(anchor > 0)) return null;
 
-  // The embedded JPEG carries its own EXIF orientation, unlike a render, which
-  // the decoder has already baked upright (§10.3).
-  const handle = decodeImage(jpegBytes, FIT_LONG_EDGE);
+  // Extracted and shrunk to the fit grid inside one call, so the preview - 5-14MB
+  // of JPEG on a 61MP body - never crosses the boundary; only the 640px result
+  // does, because the fit below works on Float64 planes that have no native form.
+  // The preview carries its own EXIF orientation, unlike a render, which the
+  // decoder has already baked upright (§10.3).
+  const handle = decodeEmbedded(rawFilePath, FIT_LONG_EDGE);
+  if (handle == null) return null;
   const { width, height } = handle;
   const samples8 = pixels(handle);
   freeImage(handle);

@@ -1,14 +1,14 @@
 import { describe, expect, test } from 'bun:test';
 import { applyColour, applyMatchProfile, deltaE76, fitMatchProfile, fitProfileFor } from '../../src/services/processing/jpeg_match';
-import { readDistortionSpline, SPLINE_UNIT } from '../../src/services/processing/lens_corrections';
-import { readEmbeddedJpeg } from '../../src/services/processing/raw_decoder';
+import { SPLINE_UNIT } from '../../src/services/processing/lens_corrections';
 import {
-  decodeImage,
+  decodeEmbedded,
   decodeRawImage,
   encodeJpeg,
   freeImage,
   imageFromRgb,
   pixels,
+  readDistortionSpline,
   renderImage,
   type ImageHandle,
 } from '../../src/services/processing/rawshim_ops';
@@ -26,8 +26,11 @@ function take(image: ImageHandle): { width: number; height: number; data: Buffer
 }
 
 describe('lens correction metadata', () => {
-  test('reads the ILCE-6300 distortion spline out of a real ARW', async () => {
-    const knots = readDistortionSpline(new Uint8Array(await Bun.file(FIXTURE).arrayBuffer()));
+  test('reads the ILCE-6300 distortion spline out of a real ARW', () => {
+    // Through the shim, because the parser lives in Rust now (native/.../lens.rs).
+    // Its own tests use synthetic TIFFs, which cannot catch a wrong assumption
+    // about how Sony actually nests this; only a real file can.
+    const knots = readDistortionSpline(FIXTURE);
     expect(knots).not.toBeNull();
     // This body writes 11 knots, not the ILCE-7CR's 16.
     expect(knots!.length).toBe(11);
@@ -49,8 +52,7 @@ describe('fitMatchProfile', () => {
 
       // What the render looks like before any transform, on the same pixels, to
       // show the fit is doing the work rather than the metric being generous.
-      const jpegBytes = readEmbeddedJpeg(FIXTURE)!;
-      const jpeg = take(decodeImage(jpegBytes, 400));
+      const jpeg = take(decodeEmbedded(FIXTURE, 400)!);
       const plain = take(renderImage(decodeRawImage(FIXTURE, 8, 'srgb', 400), null, 400));
       // Both fitted to the same long edge, and the render and its own embedded
       // preview share an aspect, so this is a like-for-like comparison.
@@ -80,8 +82,7 @@ describe('fitMatchProfile', () => {
       // model and a radial error will always find each other and a null result
       // looks the same as no sensitivity. So: warp the camera's JPEG by a known
       // amount, hand it back as the target, and require the fit to notice.
-      const jpegBytes = readEmbeddedJpeg(FIXTURE)!;
-      const upright = take(decodeImage(jpegBytes));
+      const upright = take(decodeEmbedded(FIXTURE)!);
       const { width, height } = upright;
 
       // A 3% centre-to-corner pincushion, applied by resampling the JPEG.
@@ -125,12 +126,12 @@ describe('fitMatchProfile', () => {
         freeImage(injected);
       }
 
-      // Empty rawBytes forces the fitted path: the question is whether the search
-      // finds a displacement, not whether it can read one.
+      // Null knots force the fitted path: the question is whether the search finds
+      // a displacement, not whether it can read one.
       const render = decodeRawImage(FIXTURE, 8, 'srgb', 0);
       let fitted;
       try {
-        fitted = fitProfileFor(render, target, new Uint8Array(0));
+        fitted = fitProfileFor(render, target, null);
       } finally {
         freeImage(render);
       }

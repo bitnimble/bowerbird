@@ -10,7 +10,7 @@ import path from 'node:path';
 import { encodeHdr } from '../../src/services/processing/hdr_media';
 import { fitHdrMatch, TRUST_CEILING } from '../../src/services/processing/hdr_match';
 import { fitMatchProfile } from '../../src/services/processing/jpeg_match';
-import { decodeRaw, readEmbeddedJpeg, resizeRgb } from '../../src/services/processing/raw_decoder';
+import { decodeRaw, resizeRgb } from '../../src/services/processing/raw_decoder';
 import { diffuseWhite, grade, measureLevels } from '../../src/services/processing/tone_map';
 
 const FIXTURE = `${import.meta.dir}/../fixtures/DSC02981.ARW`;
@@ -21,11 +21,9 @@ const PEAK = 1000;
 async function fit() {
   const linear = decodeRaw(FIXTURE, 16, 'rec2020-linear');
   const anchor = diffuseWhite(linear, QUANTILE);
-  const jpeg = readEmbeddedJpeg(FIXTURE);
-  if (jpeg == null) throw new Error('fixture has no embedded JPEG');
   const profile = await fitMatchProfile(FIXTURE);
   if (profile == null) throw new Error('SDR fit declined, so there is no geometry to reuse');
-  const match = await fitHdrMatch(linear, anchor, jpeg, profile);
+  const match = await fitHdrMatch(linear, anchor, FIXTURE, profile);
   return { linear, anchor, match, colour: match?.colour ?? null, profile };
 }
 

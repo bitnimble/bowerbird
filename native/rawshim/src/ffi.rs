@@ -131,6 +131,33 @@ pub unsafe extern "C" fn bb_decode_image(bytes: *const u8, len: usize, long_edge
     }
 }
 
+/// Reads the distortion spline a body recorded for this shot, in SPLINE_UNITs.
+///
+/// Returns the knot count written to `out`, 0 when the file records none, or -1 if
+/// the file could not be read. `bb_fit` does this itself; this is exposed so a test
+/// can check the parser against a real ARW rather than only the synthetic TIFFs in
+/// `lens.rs`, which cannot catch a wrong assumption about how Sony nests it.
+///
+/// # Safety
+/// `path` must be a NUL-terminated C string and `out` valid for `max` f64s.
+#[no_mangle]
+pub unsafe extern "C" fn bb_read_distortion_spline(path: *const c_char, out: *mut f64, max: u32) -> i32 {
+    if path.is_null() || out.is_null() {
+        return -1;
+    }
+    let Ok(path) = CStr::from_ptr(path).to_str() else { return -1 };
+    let Ok(bytes) = std::fs::read(path) else { return -1 };
+
+    match crate::lens::read_distortion_spline(&bytes) {
+        None => 0,
+        Some(knots) => {
+            let n = knots.len().min(max as usize);
+            std::ptr::copy_nonoverlapping(knots.as_ptr(), out, n);
+            n as i32
+        }
+    }
+}
+
 /// Takes a copy of an 8-bit RGB buffer JS already holds.
 ///
 /// The one place a picture legitimately travels the other way. Everything in the
@@ -154,17 +181,71 @@ pub unsafe extern "C" fn bb_image_from_rgb(data: *const u8, width: u32, height: 
     })
 }
 
-/// Fits the transform taking a render to the camera's embedded JPEG.
+/// Fits the transform taking a render to the camera's own JPEG, given the RAW.
+///
+/// Everything it needs comes off the path: the embedded preview to match against,
+/// and the distortion spline the body recorded. Neither crosses the boundary -
+/// the preview is 5-14MB on a 61MP body, and reading the spline in TypeScript
+/// meant handing it the whole 60-120MB file to find one tag near the front.
 ///
 /// Returns 1 when there is no usable match, which is not an error: the caller
 /// renders untransformed rather than shipping a bad grade. 0 on success, -1 on
-/// failure.
+/// failure - including a file with no JPEG preview, which leaves nothing to fit
+/// against.
 ///
 /// # Safety
-/// `image` must be a live handle from this library, `jpeg` valid for `jpeg_len`,
-/// and `out` a writable `BbProfile`.
+/// `image` must be a live handle from this library, `raw_path` a NUL-terminated C
+/// string, and `out` a writable `BbProfile`.
 #[no_mangle]
-pub unsafe extern "C" fn bb_fit(
+pub unsafe extern "C" fn bb_fit(image: *const BbImage, raw_path: *const c_char, out: *mut BbProfile) -> i32 {
+    vips::init();
+    if image.is_null() || raw_path.is_null() || out.is_null() {
+        return -1;
+    }
+    let Ok(path) = CStr::from_ptr(raw_path).to_str() else { return -1 };
+
+    // The spline lives in the first few kilobytes, but its offsets are absolute, so
+    // the whole file is what can be indexed safely. The decode just read it, so
+    // this is a page-cache hit rather than a second trip to disk.
+    let knots = match std::fs::read(path) {
+        Ok(bytes) => crate::lens::read_distortion_spline(&bytes),
+        Err(_) => return -1,
+    };
+
+    let fitted = crate::with_embedded_jpeg(raw_path, |jpeg| fit_against(image, jpeg, knots, out));
+    // No JPEG preview: nothing to match, and the caller renders untransformed.
+    fitted.unwrap_or(-1)
+}
+
+/// The fit itself, once its inputs are in hand.
+unsafe fn fit_against(
+    image: *const BbImage,
+    jpeg: &[u8],
+    camera_knots: Option<Vec<f64>>,
+    out: *mut BbProfile,
+) -> i32 {
+    let Some(render) = (*image).view() else { return -1 };
+    match fit::fit(render, jpeg, camera_knots) {
+        Ok(Some(profile)) => {
+            *out = BbProfile::from(&profile);
+            0
+        }
+        Ok(None) => 1,
+        Err(_) => -1,
+    }
+}
+
+/// `bb_fit` against a caller-supplied target rather than the file's own preview.
+///
+/// Exists for the test that injects a known distortion into a JPEG and requires
+/// the fit to recover it - the check this whole module is kept honest by, since a
+/// radial model and a radial error will always find each other and a null result
+/// looks identical to no sensitivity. Nothing in the app calls it.
+///
+/// # Safety
+/// As `bb_fit`, with `jpeg` valid for `jpeg_len`.
+#[no_mangle]
+pub unsafe extern "C" fn bb_fit_against(
     image: *const BbImage,
     jpeg: *const u8,
     jpeg_len: usize,
@@ -176,22 +257,11 @@ pub unsafe extern "C" fn bb_fit(
     if image.is_null() || jpeg.is_null() || out.is_null() {
         return -1;
     }
-    let Some(render) = (*image).view() else { return -1 };
-    let jpeg_bytes = std::slice::from_raw_parts(jpeg, jpeg_len);
-    let knots = if camera_knots.is_null() || camera_knot_count == 0 {
-        None
-    } else {
-        Some(std::slice::from_raw_parts(camera_knots, camera_knot_count as usize).to_vec())
+    let knots = match camera_knots.is_null() || camera_knot_count == 0 {
+        true => None,
+        false => Some(std::slice::from_raw_parts(camera_knots, camera_knot_count as usize).to_vec()),
     };
-
-    match fit::fit(render, jpeg_bytes, knots) {
-        Ok(Some(profile)) => {
-            *out = BbProfile::from(&profile);
-            0
-        }
-        Ok(None) => 1,
-        Err(_) => -1,
-    }
+    fit_against(image, std::slice::from_raw_parts(jpeg, jpeg_len), knots, out)
 }
 
 /// Fits an image to a longest edge and applies a profile, in that order.

@@ -4,9 +4,9 @@ import { encodeHdr } from './hdr_media';
 import { fitHdrMatch, type HdrMatch } from './hdr_match';
 import { fitMatchProfile, type MatchProfile } from './jpeg_match';
 import { diffuseWhite } from './tone_map';
-import { decodeRaw, readEmbeddedJpeg, type DecodedImage } from './raw_decoder';
+import { decodeRaw, type DecodedImage } from './raw_decoder';
 import {
-  decodeImage,
+  decodeEmbedded,
   decodeRawImage,
   freeImage,
   renderImage,
@@ -50,9 +50,11 @@ function largestSdrSize(targets: readonly RenditionTarget[]): number {
 // property of the file rather than an error, so it falls back to a render.
 function writeSdr(job: RenditionJob, target: RenditionTarget, base: () => ImageHandle): ThumbnailSource {
   if (target.source === 'embedded') {
-    const jpeg = readEmbeddedJpeg(job.rawFilePath);
-    if (jpeg != null) {
-      const decoded = decodeImage(jpeg);
+    // Extracted, decoded and shrunk inside one call, so the preview - which is
+    // full-resolution on a 61MP body, 5-14MB of JPEG - never reaches this side.
+    // Asking for the target size lets it shrink during the decode (§10.4).
+    const decoded = decodeEmbedded(job.rawFilePath, target.size);
+    if (decoded != null) {
       try {
         toAvif(decoded, target);
         return 'embedded';
@@ -174,10 +176,9 @@ async function renditions(job: RenditionJob): Promise<ThumbnailSource | undefine
     // and stop at display white, where the HDR grade needs a domain it can carry
     // past diffuse white (§10.8). The geometry is a property of the lens, so that
     // half *is* reused, and it is the expensive half.
-    const jpegBytes = profile != null && rendersHdr ? readEmbeddedJpeg(job.rawFilePath) : null;
     const hdrMatch =
-      profile != null && jpegBytes != null
-        ? await fitHdrMatch(linear(), diffuseWhite(linear(), job.grade.whiteQuantile), jpegBytes, profile)
+      profile != null && rendersHdr
+        ? await fitHdrMatch(linear(), diffuseWhite(linear(), job.grade.whiteQuantile), job.rawFilePath, profile)
         : null;
 
     // Built once at the largest SDR size the job asks for, then resized down for the

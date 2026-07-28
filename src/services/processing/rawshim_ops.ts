@@ -98,11 +98,42 @@ export function decodeRawImage(
 }
 
 /**
+ * Decodes the camera's embedded preview from a RAW, fitted to `longEdge`. 0 leaves
+ * it at whatever size the body embedded.
+ *
+ * The whole of an import's thumbnail stage in one call. Null when the file has no
+ * JPEG preview, which is a property of the file rather than an error: the caller
+ * falls back to a render.
+ */
+export function decodeEmbedded(filePath: string, longEdge = 0): ImageHandle | null {
+  const pointer = shim().bb_decode_embedded(Buffer.from(`${filePath}\0`), longEdge);
+  return pointer ? handleOf(pointer, `decode the preview in ${filePath}`) : null;
+}
+
+/**
  * Decodes an encoded image (a JPEG, an AVIF) and applies its EXIF orientation,
  * fitting it to `longEdge` on the way. 0 leaves the size alone.
+ *
+ * For bytes that are already in hand for another reason - a rendition read off
+ * disk to transcode. Anything reading a RAW's preview wants `decodeEmbedded`,
+ * which never brings the JPEG across.
  */
 export function decodeImage(bytes: Buffer, longEdge = 0): ImageHandle {
   return handleOf(shim().bb_decode_image(bytes, BigInt(bytes.length), longEdge), 'decode that image');
+}
+
+/**
+ * The distortion spline the body recorded for this shot, in `SPLINE_UNIT`s, or
+ * null when it recorded none.
+ *
+ * `fitProfile` reads this itself; this is here so a test can check the parser
+ * against a real ARW, which the synthetic TIFFs in `lens.rs` cannot do.
+ */
+export function readDistortionSpline(rawFilePath: string): number[] | null {
+  const knots = new Float64Array(64);
+  const count = shim().bb_read_distortion_spline(Buffer.from(`${rawFilePath}\0`), ptr(knots), knots.length);
+  if (count < 0) throw new Error(`rawshim could not read ${rawFilePath}`);
+  return count === 0 ? null : Array.from(knots.subarray(0, count));
 }
 
 /**
@@ -200,21 +231,42 @@ export interface FittedProfile {
 
 const SOURCES = ['none', 'camera', 'fitted'] as const;
 
+function profileBuffer(): Uint8Array {
+  const size = Number(shim().bb_profile_size());
+  if (size !== PROFILE.size) {
+    throw new Error(`BbProfile is ${size} bytes but this reader assumes ${PROFILE.size}; the offsets here need updating`);
+  }
+  return new Uint8Array(size);
+}
+
 /**
- * Fits the transform taking `render` to the camera's embedded JPEG.
+ * Fits the transform taking `render` to the camera's own JPEG in `rawFilePath`.
+ *
+ * Everything the fit needs comes off that path - the embedded preview and the
+ * distortion spline the body recorded - and neither crosses the boundary.
  *
  * Null when there is no match worth applying, which is not an error: the caller
  * renders untransformed rather than shipping a bad grade.
  */
-export function fitProfile(render: ImageHandle, jpegBytes: Buffer, cameraKnots: number[] | null): FittedProfile | null {
-  const S = shim();
-  const size = Number(S.bb_profile_size());
-  if (size !== PROFILE.size) {
-    throw new Error(`BbProfile is ${size} bytes but this reader assumes ${PROFILE.size}; the offsets here need updating`);
-  }
-  const raw = new Uint8Array(size);
+export function fitProfile(render: ImageHandle, rawFilePath: string): FittedProfile | null {
+  const raw = profileBuffer();
+  const status = shim().bb_fit(render.pointer, Buffer.from(`${rawFilePath}\0`), ptr(raw));
+  return status === 1 ? null : readProfile(raw, status);
+}
+
+/**
+ * `fitProfile` against a target the caller constructed rather than the file's own
+ * preview. For the test that injects a known distortion and requires the fit to
+ * recover it; nothing in the app uses it.
+ */
+export function fitProfileAgainst(
+  render: ImageHandle,
+  jpegBytes: Buffer,
+  cameraKnots: number[] | null,
+): FittedProfile | null {
+  const raw = profileBuffer();
   const knots = new Float64Array(cameraKnots ?? []);
-  const status = S.bb_fit(
+  const status = shim().bb_fit_against(
     render.pointer,
     jpegBytes,
     BigInt(jpegBytes.length),
@@ -222,7 +274,10 @@ export function fitProfile(render: ImageHandle, jpegBytes: Buffer, cameraKnots: 
     knots.length,
     ptr(raw),
   );
-  if (status === 1) return null;
+  return status === 1 ? null : readProfile(raw, status);
+}
+
+function readProfile(raw: Uint8Array, status: number): FittedProfile {
   if (status !== 0) throw new Error('rawshim could not fit a profile');
 
   const view = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);

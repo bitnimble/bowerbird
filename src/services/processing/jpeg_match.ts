@@ -22,9 +22,16 @@
 // record nothing. Colour is always fitted, since nothing in the file describes the
 // picture profile.
 
-import { readDistortionSpline } from './lens_corrections';
-import { readEmbeddedJpeg } from './raw_decoder';
-import { decodeRawImage, fitProfile, freeImage, renderImage, type ColourTransform, type FittedProfile, type ImageHandle } from './rawshim_ops';
+import {
+  decodeRawImage,
+  fitProfile,
+  fitProfileAgainst,
+  freeImage,
+  renderImage,
+  type ColourTransform,
+  type FittedProfile,
+  type ImageHandle,
+} from './rawshim_ops';
 
 /**
  * The fitted transform, geometry and colour together.
@@ -51,28 +58,37 @@ function clamp8(value: number): number {
  * which is a large share of the whole fit, and doing it again here would be for an
  * identical result.
  */
-export async function fitMatchProfile(rawFilePath: string, render?: ImageHandle): Promise<MatchProfile | null> {
-  const jpegBytes = readEmbeddedJpeg(rawFilePath);
-  if (!jpegBytes) return null;
-  const rawBytes = new Uint8Array(await Bun.file(rawFilePath).arrayBuffer());
-  if (render != null) return fitProfileFor(render, jpegBytes, rawBytes);
+export function fitMatchProfile(rawFilePath: string, render?: ImageHandle): MatchProfile | null {
+  if (render != null) return fitFor(render, rawFilePath);
 
   const own = decodeRawImage(rawFilePath, 8, 'srgb', 0);
   try {
-    return fitProfileFor(own, jpegBytes, rawBytes);
+    return fitFor(own, rawFilePath);
   } finally {
     freeImage(own);
   }
 }
 
-/**
- * The fit itself, separated from reading the file so a test can hand it a target
- * it constructed. `rawBytes` supplies the camera's recorded correction; pass an
- * empty array to exercise the fitted fallback.
- */
-export function fitProfileFor(render: ImageHandle, jpegBytes: Buffer, rawBytes: Uint8Array): MatchProfile | null {
+function fitFor(render: ImageHandle, rawFilePath: string): MatchProfile | null {
   if (render.depth !== 8) throw new Error(`the fit needs an 8-bit render, got ${render.depth}`);
-  return fitProfile(render, jpegBytes, readDistortionSpline(rawBytes));
+  return fitProfile(render, rawFilePath);
+}
+
+/**
+ * The fit against a target the caller built, rather than the file's own preview.
+ *
+ * For the test that injects a known distortion and requires the fit to recover it,
+ * which is the check this module is kept honest by: a radial model and a radial
+ * error will always find each other, so a null result looks identical to no
+ * sensitivity. Pass null knots to exercise the fitted fallback.
+ */
+export function fitProfileFor(
+  render: ImageHandle,
+  jpegBytes: Buffer,
+  cameraKnots: number[] | null,
+): MatchProfile | null {
+  if (render.depth !== 8) throw new Error(`the fit needs an 8-bit render, got ${render.depth}`);
+  return fitProfileAgainst(render, jpegBytes, cameraKnots);
 }
 
 /**
