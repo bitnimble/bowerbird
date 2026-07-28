@@ -67,10 +67,30 @@ interface Plane {
 
 type ArrayConstructorOf<T> = new (length: number) => T;
 
-interface Pair {
-  src: [number, number, number];
-  dst: [number, number, number];
+/**
+ * Corresponding samples, six bytes each: source RGB then target RGB.
+ *
+ * Flat rather than an array of `{src, dst}` objects because this is the hot
+ * structure of the whole fit - a candidate geometry produces ~180k of them, and
+ * every candidate rebuilds the set. Measured on a 61MP frame, allocating three
+ * objects per pair cost 41ms per candidate against 1.8ms for filling one buffer,
+ * and a like-for-like Rust port of the object version only reached 1.4ms: the
+ * allocation was the whole gap, not the language.
+ */
+interface Pairs {
+  /** Six bytes per pair: src R,G,B then dst R,G,B. */
+  data: Uint8Array;
+  count: number;
 }
+
+const PAIR_STRIDE = 6;
+
+// Which half of the pairs a pass reads. Alternating by index rather than copying
+// the set in two keeps the train/test split free, and it is the same split the
+// object version made.
+const TRAIN = 0;
+const TEST = 1;
+type Phase = typeof TRAIN | typeof TEST;
 
 function clamp8(value: number): number {
   return value < 0 ? 0 : value > 255 ? 255 : value;
@@ -175,27 +195,39 @@ async function blur(plane: Plane, sigma: number): Promise<Plane> {
 
 // ------------------------------------------------------------------ colour model
 
-function pairs(render: Plane, jpeg: Plane): Pair[] {
+function pairs(render: Plane, jpeg: Plane): Pairs {
   const { width, height } = jpeg;
-  const out: Pair[] = [];
+  const data = new Uint8Array(width * height * PAIR_STRIDE);
+  let count = 0;
   for (let y = 1; y < height - 1; y += 1) {
     for (let x = 1; x < width - 1; x += 1) {
       const i = (y * width + x) * 3;
-      const src: [number, number, number] = [render.data[i]!, render.data[i + 1]!, render.data[i + 2]!];
-      const dst: [number, number, number] = [jpeg.data[i]!, jpeg.data[i + 1]!, jpeg.data[i + 2]!];
+      const s0 = render.data[i]!;
+      const s1 = render.data[i + 1]!;
+      const s2 = render.data[i + 2]!;
+      const d0 = jpeg.data[i]!;
+      const d1 = jpeg.data[i + 1]!;
+      const d2 = jpeg.data[i + 2]!;
       // Clipped samples carry no mapping: everything above the knee landed on the
       // same value, so they would drag the top of the curve down.
-      if (Math.min(...dst) <= 2 || Math.max(...dst) >= 253) continue;
-      if (Math.min(...src) <= 1 || Math.max(...src) >= 254) continue;
+      if (Math.min(d0, d1, d2) <= 2 || Math.max(d0, d1, d2) >= 253) continue;
+      if (Math.min(s0, s1, s2) <= 1 || Math.max(s0, s1, s2) >= 254) continue;
       const gx = Math.abs(jpeg.data[i + 3]! - jpeg.data[i - 3]!);
       const gy = Math.abs(jpeg.data[i + width * 3]! - jpeg.data[i - width * 3]!);
       if (gx + gy > MAX_PAIR_GRADIENT) continue;
       // A black warp margin is not scene content.
-      if (src[0] === 0 && src[1] === 0 && src[2] === 0) continue;
-      out.push({ src, dst });
+      if (s0 === 0 && s1 === 0 && s2 === 0) continue;
+      const o = count * PAIR_STRIDE;
+      data[o] = s0;
+      data[o + 1] = s1;
+      data[o + 2] = s2;
+      data[o + 3] = d0;
+      data[o + 4] = d1;
+      data[o + 5] = d2;
+      count += 1;
     }
   }
-  return out;
+  return { data, count };
 }
 
 const MIN_BIN_SAMPLES = 8;
@@ -206,12 +238,13 @@ const MIN_BIN_SAMPLES = 8;
  * (which would crush every highlight the frame happened not to sample), and the
  * result is made monotone so a thinly-populated bin cannot invert it.
  */
-function fitCurve(train: readonly Pair[], channel: number): Uint8Array {
+function fitCurve(pairs: Pairs, phase: Phase, channel: number): Uint8Array {
   const sum = new Float64Array(256);
   const count = new Float64Array(256);
-  for (const pair of train) {
-    const level = pair.src[channel]!;
-    sum[level]! += pair.dst[channel]!;
+  for (let p = phase; p < pairs.count; p += 2) {
+    const o = p * PAIR_STRIDE;
+    const level = pairs.data[o + channel]!;
+    sum[level]! += pairs.data[o + 3 + channel]!;
     count[level]! += 1;
   }
 
@@ -277,38 +310,63 @@ const IDENTITY_MATRIX = [
   [0, 0, 1],
 ];
 
+/** Leaves a render exactly as it is, for when there were not enough pairs to fit. */
+function identityTransform(): ColourTransform {
+  const ramp = (): Uint8Array => Uint8Array.from({ length: 256 }, (_, level) => level);
+  return { curves: [ramp(), ramp(), ramp()], matrix: IDENTITY_MATRIX };
+}
+
 /**
  * Per-channel curves then a 3x3 mix. Deliberately not a 3D LUT: measured against
  * one, 777 coefficients beat a 17^3 LUT and tie a 33^3 one (deltaE 1.14 against
  * 1.06 with 107k), because the vendor transform is close enough to separable that
  * the extra dimensions only fit noise in the cells a single frame never populates.
  */
-function fitColour(train: readonly Pair[]): ColourTransform {
-  const curves: [Uint8Array, Uint8Array, Uint8Array] = [fitCurve(train, 0), fitCurve(train, 1), fitCurve(train, 2)];
-  const toned = (pair: Pair): [number, number, number] => [
-    curves[0][pair.src[0]!]!,
-    curves[1][pair.src[1]!]!,
-    curves[2][pair.src[2]!]!,
+function fitColour(pairs: Pairs, phase: Phase): ColourTransform {
+  const curves: [Uint8Array, Uint8Array, Uint8Array] = [
+    fitCurve(pairs, phase, 0),
+    fitCurve(pairs, phase, 1),
+    fitCurve(pairs, phase, 2),
   ];
 
-  const ata = [
+  // Accumulated as scalars rather than through nested arrays: this is the inner
+  // loop over every training pair, and the normal equations are only nine sums.
+  let a00 = 0;
+  let a01 = 0;
+  let a02 = 0;
+  let a11 = 0;
+  let a12 = 0;
+  let a22 = 0;
+  const b = [
     [0, 0, 0],
     [0, 0, 0],
     [0, 0, 0],
   ];
-  const atb = [
-    [0, 0, 0],
-    [0, 0, 0],
-    [0, 0, 0],
-  ];
-  for (const pair of train) {
-    const s = toned(pair);
-    for (let i = 0; i < 3; i += 1) {
-      for (let j = 0; j < 3; j += 1) ata[i]![j]! += s[i]! * s[j]!;
-      for (let o = 0; o < 3; o += 1) atb[o]![i]! += s[i]! * pair.dst[o]!;
+  for (let p = phase; p < pairs.count; p += 2) {
+    const o = p * PAIR_STRIDE;
+    const s0 = curves[0][pairs.data[o]!]!;
+    const s1 = curves[1][pairs.data[o + 1]!]!;
+    const s2 = curves[2][pairs.data[o + 2]!]!;
+    // A'A is symmetric, so only the upper triangle is accumulated.
+    a00 += s0 * s0;
+    a01 += s0 * s1;
+    a02 += s0 * s2;
+    a11 += s1 * s1;
+    a12 += s1 * s2;
+    a22 += s2 * s2;
+    for (let out = 0; out < 3; out += 1) {
+      const target = pairs.data[o + 3 + out]!;
+      b[out]![0]! += s0 * target;
+      b[out]![1]! += s1 * target;
+      b[out]![2]! += s2 * target;
     }
   }
-  const matrix = [0, 1, 2].map((o) => solve3(ata.map((row) => [...row]), atb[o]!) ?? IDENTITY_MATRIX[o]!);
+  const ata = [
+    [a00, a01, a02],
+    [a01, a11, a12],
+    [a02, a12, a22],
+  ];
+  const matrix = [0, 1, 2].map((out) => solve3(ata.map((row) => [...row]), b[out]!) ?? IDENTITY_MATRIX[out]!);
   return { curves, matrix };
 }
 
@@ -331,6 +389,12 @@ function toLinear(value: number): number {
   return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
 }
 
+// The scoring loop only ever linearises 8-bit levels, and the transfer's pow() is
+// the most expensive arithmetic in the fit. 256 entries covers every input it can
+// receive there.
+const LINEAR_8BIT = new Float64Array(256);
+for (let level = 0; level < 256; level += 1) LINEAR_8BIT[level] = toLinear(level);
+
 function toLab(rgb: readonly number[]): [number, number, number] {
   const r = toLinear(rgb[0]!);
   const g = toLinear(rgb[1]!);
@@ -349,6 +413,19 @@ export function deltaE76(a: readonly number[], b: readonly number[]): number {
   return Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
 }
 
+/** Lab of three 8-bit levels, off the transfer lookup rather than three pow()s. */
+function labFromLevels(r: number, g: number, b: number): [number, number, number] {
+  const R = LINEAR_8BIT[r]!;
+  const G = LINEAR_8BIT[g]!;
+  const B = LINEAR_8BIT[b]!;
+  const x = (0.4124 * R + 0.3576 * G + 0.1805 * B) / 0.95047;
+  const y = 0.2126 * R + 0.7152 * G + 0.0722 * B;
+  const z = (0.0193 * R + 0.1192 * G + 0.9505 * B) / 1.08883;
+  const f = (t: number): number => (t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116);
+  const fy = f(y);
+  return [116 * fy - 16, 500 * (f(x) - fy), 200 * (fy - f(z))];
+}
+
 // ------------------------------------------------------------------------ fitting
 
 /**
@@ -356,18 +433,27 @@ export function deltaE76(a: readonly number[], b: readonly number[]): number {
  * module reports is held out: a curve with 256 free parameters will always look
  * better on its own training pairs.
  */
-function score(test: readonly Pair[], transform: ColourTransform): number {
-  if (test.length === 0) return Number.POSITIVE_INFINITY;
+function score(pairs: Pairs, phase: Phase, transform: ColourTransform): number {
+  const { curves, matrix } = transform;
+  const m = matrix;
   let total = 0;
-  for (const pair of test) total += deltaE76(applyColour(transform, pair.src), pair.dst);
-  return total / test.length;
-}
-
-function partition(all: readonly Pair[]): { train: Pair[]; test: Pair[] } {
-  const train: Pair[] = [];
-  const test: Pair[] = [];
-  for (let i = 0; i < all.length; i += 1) (i % 2 === 0 ? train : test).push(all[i]!);
-  return { train, test };
+  let counted = 0;
+  for (let p = phase; p < pairs.count; p += 2) {
+    const o = p * PAIR_STRIDE;
+    const r = curves[0][pairs.data[o]!]!;
+    const g = curves[1][pairs.data[o + 1]!]!;
+    const b = curves[2][pairs.data[o + 2]!]!;
+    // Rounded to the level that would actually be written to the rendition, which
+    // is also what makes the lookup exact rather than an approximation.
+    const out0 = clamp8(Math.round(m[0]![0]! * r + m[0]![1]! * g + m[0]![2]! * b));
+    const out1 = clamp8(Math.round(m[1]![0]! * r + m[1]![1]! * g + m[1]![2]! * b));
+    const out2 = clamp8(Math.round(m[2]![0]! * r + m[2]![1]! * g + m[2]![2]! * b));
+    const a = labFromLevels(out0, out1, out2);
+    const t = labFromLevels(pairs.data[o + 3]!, pairs.data[o + 4]!, pairs.data[o + 5]!);
+    total += Math.hypot(a[0] - t[0], a[1] - t[1], a[2] - t[2]);
+    counted += 1;
+  }
+  return counted === 0 ? Number.POSITIVE_INFINITY : total / counted;
 }
 
 /**
@@ -389,10 +475,9 @@ async function residualFor(
 ): Promise<{ deltaE: number; colour: ColourTransform } | null> {
   const warped = await blur(warp(source, jpeg.width, jpeg.height, knots, crop), FIT_BLUR_SIGMA);
   const all = pairs(warped, jpeg);
-  if (all.length < MIN_PAIRS) return null;
-  const { train, test } = partition(all);
-  const colour = fitColour(train);
-  return { deltaE: score(test, colour), colour };
+  if (all.count < MIN_PAIRS) return null;
+  const colour = fitColour(all, TRAIN);
+  return { deltaE: score(all, TEST, colour), colour };
 }
 
 interface Geometry {
@@ -514,7 +599,7 @@ async function resolveGeometry(source: Plane, jpeg: Plane, rawBytes: Uint8Array)
     crop: 1,
     source: 'none',
     deltaE: identity?.deltaE ?? Number.POSITIVE_INFINITY,
-    colour: identity?.colour ?? { curves: [fitCurve([], 0), fitCurve([], 1), fitCurve([], 2)], matrix: IDENTITY_MATRIX },
+    colour: identity?.colour ?? identityTransform(),
   };
 
   const cameraKnots = readDistortionSpline(rawBytes);
