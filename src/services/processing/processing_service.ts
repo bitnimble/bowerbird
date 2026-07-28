@@ -71,7 +71,6 @@ export class ProcessingService {
       dataPath: getDataPath(library),
       targets: [this.target(getDataPath(library), library.preview_hdr_video, photoId, rendition, hdr, source)],
       grade: this.grade(),
-      reportSource: false,
       // The on-demand rendition has to agree with the ones built at import, so it
       // obeys the same setting. The fit is deterministic, so refitting here lands
       // on the same transform rather than a second opinion.
@@ -187,12 +186,11 @@ export class ProcessingService {
   // a crash between the passes redoes the tile too - 125ms, against the alternative
   // of a second column to track half-done photos.
   private async runStaged(staged: StagedPhoto[]): Promise<void> {
-    const done = new Map<string, ThumbnailSource>();
+    const tiled = new Set<string>();
     const byId = new Map(staged.map((photo) => [photo.photoId, photo]));
 
-    // The tile pass reports which source it actually used, and a photo whose tile
-    // failed is not carried into the second pass: the failure is the file, not the
-    // stage, so a render would fail the same way.
+    // A photo whose tile failed is not carried into the second pass: the failure is
+    // the file, not the stage, so a render would fail the same way.
     await this.runPool(
       staged.map((photo) => photo.tile),
       (result, job) => {
@@ -201,14 +199,14 @@ export class ProcessingService {
           this.recordFailure(result, job, photo);
           return;
         }
-        done.set(result.photoId, result.source ?? 'render');
+        tiled.add(result.photoId);
         // Nothing more to build: this library serves the camera's JPEG in the
         // viewer, so the tile was the whole import.
-        if (photo?.renditions == null) this.markDone(photo, result.photoId, done);
+        if (photo?.renditions == null) this.markDone(photo, result.photoId);
       },
     );
 
-    const pending = staged.filter((photo) => photo.renditions != null && done.has(photo.photoId));
+    const pending = staged.filter((photo) => photo.renditions != null && tiled.has(photo.photoId));
     if (pending.length === 0) return;
 
     await this.runPool(
@@ -219,16 +217,22 @@ export class ProcessingService {
           this.recordFailure(result, job, photo);
           return;
         }
-        this.markDone(photo, result.photoId, done);
+        this.markDone(photo, result.photoId);
       },
     );
   }
 
   // Clears the pending flag once every stage of a photo has landed, and sweeps the
   // renditions this import did not itself rewrite.
-  private markDone(photo: StagedPhoto | null, photoId: string, sources: Map<string, ThumbnailSource>): void {
+  private markDone(photo: StagedPhoto | null, photoId: string): void {
     try {
-      this.photos.markProcessed(photoId, new Date().toISOString(), sources.get(photoId) ?? 'render');
+      // What the photo viewer will be served, which is the only thing this column is
+      // read back for. Not the tile's own source: the tile is always the embedded
+      // JPEG whatever the library says, so recording that would tell the next import
+      // there are no renditions to build - and `dropStaleRenditions` would then
+      // delete the ones there are, with nothing to ever rebuild them.
+      const source: ThumbnailSource = photo == null || photo.renditions != null ? 'render' : 'embedded';
+      this.photos.markProcessed(photoId, new Date().toISOString(), source);
       if (photo != null) this.dropStaleRenditions(photo);
     } catch (err) {
       // Never throw: this runs inside a worker's onmessage/onerror, and a throw here
@@ -296,15 +300,12 @@ export class ProcessingService {
     const tile: RenditionJob = {
       ...common,
       targets: [this.target(dataPath, hdrVideo, photoId, 'grid', false, 'embedded')],
-      // Only this stage decides the source, since only this stage can fall back.
-      reportSource: true,
     };
     const renditions: RenditionJob | null =
       source === 'render'
         ? {
             ...common,
             targets: [this.target(dataPath, hdrVideo, photoId, 'full', pending.preview_hdr === 1, 'render')],
-            reportSource: false,
           }
         : null;
 

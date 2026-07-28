@@ -85,7 +85,6 @@ async function render(matchEmbeddedJpeg: boolean, name: string): Promise<ReturnT
     dataPath: root,
     targets: [target(outputPath)],
     grade: { peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.9 },
-    reportSource: true,
     matchEmbeddedJpeg,
   });
   expect(result.success).toBe(true);

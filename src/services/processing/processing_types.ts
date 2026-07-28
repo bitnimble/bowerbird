@@ -58,12 +58,6 @@ export interface RenditionJob {
   targets: RenditionTarget[];
   grade: HdrGrade;
   /**
-   * Report back which source the grid ended up using. Set for an import, where a
-   * file with no embedded JPEG falls back to a render and the row has to record
-   * that; unset on demand, where a rendition was asked for by name.
-   */
-  reportSource: boolean;
-  /**
    * Fit the camera's own colour treatment and lens correction off the embedded
    * JPEG and apply them to this job's SDR renders (DESIGN §10.8).
    *
@@ -92,9 +86,6 @@ export interface HdrJob {
 
 export type WorkerJob = RenditionJob | HdrJob;
 
-// `source` is what was actually used rather than what was asked for: a file with
-// no embedded JPEG falls back to a render, and the row has to record that or the
-// next sync rebuilds it forever. Absent when the job did not ask to report one.
 export type ProcessingResult =
-  | { photoId: string; success: true; source?: ThumbnailSource }
+  | { photoId: string; success: true }
   | { photoId: string; success: false; error: string };

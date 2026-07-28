@@ -5,7 +5,7 @@ import path from 'node:path';
 import type { Config } from '../../../config';
 import type { PendingPhoto, PhotosRepository } from '../../photos/photos_repository';
 import { ProcessingService } from '../processing_service';
-import type { RenditionJob, ProcessingResult } from '../processing_types';
+import type { RenditionJob, ProcessingResult, ThumbnailSource } from '../processing_types';
 
 const CRASH = 'crash-photo';
 
@@ -22,7 +22,7 @@ class MockWorker {
     posted.push(job);
     queueMicrotask(() => {
       if (job.photoId === CRASH) this.onerror?.({ message: 'segfault' });
-      else this.onmessage?.({ data: { photoId: job.photoId, success: true, source: job.targets[0]?.source } });
+      else this.onmessage?.({ data: { photoId: job.photoId, success: true } });
     });
   }
   terminate(): void {}
@@ -135,6 +135,30 @@ describe('ProcessingService.processUnprocessed', () => {
     expect(markProcessed).toHaveBeenCalledTimes(2);
   });
 
+  it('records what the viewer gets, so a second import still rebuilds the renditions', async () => {
+    // `rendition_source` is written by markProcessed and read straight back by the
+    // next import to decide whether the viewer's renditions get built. Recording the
+    // tile's own source instead put 'embedded' there for every photo, whatever the
+    // library said - so the second import built the tile alone, and the sweep then
+    // deleted the `full` it had declined to rebuild, with nothing to ever restore it.
+    let stored: ThumbnailSource | null = 'render';
+    const repo = {
+      listPendingProcessing: jest.fn(() => [{ ...pending('a'), rendition_source: stored }]),
+      markProcessed: jest.fn((_id: string, _at: string, source: ThumbnailSource) => {
+        stored = source;
+      }),
+      markProcessingFailed: jest.fn(),
+    } as unknown as PhotosRepository;
+
+    await new ProcessingService(repo, config).processUnprocessed('lib');
+    expect(posted.map((job) => photoStage(job))).toEqual(['a:grid', 'a:full']);
+    expect(stored).toBe('render');
+
+    posted.length = 0;
+    await new ProcessingService(repo, config).processUnprocessed('lib');
+    expect(posted.map((job) => photoStage(job))).toEqual(['a:grid', 'a:full']);
+  });
+
   it('on a worker crash of a present file: marks it failed and deletes stale renditions', async () => {
     const gridDir = path.join(root, '.bowerbird', 'renditions', 'grid');
     const fullDir = path.join(root, '.bowerbird', 'renditions', 'full');
@@ -196,10 +220,11 @@ describe('ProcessingService.processUnprocessed', () => {
     expect(second).toBe(first); // same in-flight promise
     await Promise.all([first, second]);
 
-    // 'embedded', not 'render': the grid tile always comes from the fastest source
-    // there is, whatever the library serves in the viewer.
-    expect(markProcessed).toHaveBeenCalledWith('a', expect.any(String), 'embedded');
-    expect(markProcessed).toHaveBeenCalledWith('b', expect.any(String), 'embedded');
+    // 'render', because that is what the viewer gets on this library. Not the tile's
+    // own source, which is always the embedded JPEG and would say 'embedded' here for
+    // every photo on every library.
+    expect(markProcessed).toHaveBeenCalledWith('a', expect.any(String), 'render');
+    expect(markProcessed).toHaveBeenCalledWith('b', expect.any(String), 'render');
   });
 
   it('leaves jobs pending (no hang, no throw) when a worker cannot be spawned', async () => {

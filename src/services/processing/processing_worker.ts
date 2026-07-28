@@ -13,14 +13,7 @@ import {
   type HdrMatchHandle,
   type ImageHandle,
 } from './rawshim_ops';
-import type {
-  HdrJob,
-  ProcessingResult,
-  RenditionJob,
-  RenditionTarget,
-  ThumbnailSource,
-  WorkerJob,
-} from './processing_types';
+import type { HdrJob, ProcessingResult, RenditionJob, RenditionTarget, WorkerJob } from './processing_types';
 
 // Bun worker thread (DESIGN §10.3). Writes renditions of one photo - the grid
 // tile, the full-size view, the max-resolution export - in AVIF, plus the
@@ -45,10 +38,10 @@ function largestSdrSize(targets: readonly RenditionTarget[]): number {
 }
 
 // The embedded JPEG carries its own EXIF orientation, so it needs rotating; a
-// render is already baked upright by the decoder (§11.1). Returns the source that
-// was actually used: a body that embeds a bitmap preview, or none at all, is a
-// property of the file rather than an error, so it falls back to a render.
-function writeSdr(job: RenditionJob, target: RenditionTarget, base: () => ImageHandle): ThumbnailSource {
+// render is already baked upright by the decoder (§11.1). A body that embeds a
+// bitmap preview, or none at all, is a property of the file rather than an error,
+// so it falls back to a render.
+function writeSdr(job: RenditionJob, target: RenditionTarget, base: () => ImageHandle): void {
   if (target.source === 'embedded') {
     // Extracted, decoded and shrunk inside one call, so the preview - which is
     // full-resolution on a 61MP body, 5-14MB of JPEG - never reaches this side.
@@ -57,7 +50,7 @@ function writeSdr(job: RenditionJob, target: RenditionTarget, base: () => ImageH
     if (decoded != null) {
       try {
         toAvif(decoded, target);
-        return 'embedded';
+        return;
       } finally {
         freeImage(decoded);
       }
@@ -65,7 +58,6 @@ function writeSdr(job: RenditionJob, target: RenditionTarget, base: () => ImageH
   }
   // The base already carries the match, if there is one.
   toAvif(base(), target);
-  return 'render';
 }
 
 // Scene-linear and wide-gamut rather than display-referred: the transfer is
@@ -140,8 +132,7 @@ async function ensureOutputDirs(job: WorkerJob): Promise<void> {
   }
 }
 
-async function renditions(job: RenditionJob): Promise<ThumbnailSource | undefined> {
-  let used: ThumbnailSource | undefined;
+async function renditions(job: RenditionJob): Promise<void> {
   const open: ImageHandle[] = [];
 
   // One decode for the whole job, shared by the fit and by every SDR rendition.
@@ -246,12 +237,8 @@ async function renditions(job: RenditionJob): Promise<ThumbnailSource | undefine
         writeHdr(job, target, linear, hdrMatch);
         continue;
       }
-      const source = writeSdr(job, target, sdrBase);
-      // Only the grid is ever built from the embedded JPEG, so it is the only
-      // target whose fallback the row needs to hear about.
-      if (job.reportSource && target.rendition === 'grid') used = source;
+      writeSdr(job, target, sdrBase);
     }
-    return used;
   } finally {
     // A 60MP decode and its graded copy are ~380MB between them, held by Rust
     // rather than by the JS heap, so nothing collects them if this is skipped.
@@ -269,7 +256,8 @@ self.onmessage = async (event) => {
       self.postMessage({ photoId: job.photoId, success: true });
       return;
     }
-    self.postMessage({ photoId: job.photoId, success: true, source: await renditions(job) });
+    await renditions(job);
+    self.postMessage({ photoId: job.photoId, success: true });
   } catch (err) {
     for (const output of outputsOf(job)) await Bun.file(output).delete().catch(() => {});
     self.postMessage({ photoId: job.photoId, success: false, error: (err as Error).message });
