@@ -445,9 +445,11 @@ fn fit_crop(grids: &Grids, knots: &[f64], coarse: &[f64]) -> Option<(f64, f64)> 
     Some((crop, delta))
 }
 
-/// Radial polynomial plus crop, for bodies that recorded no correction - the
-/// common case, 14 of 20 Sony bodies measured. Two parameters reach the same
-/// residual as a camera's own spline, so this is slower but not less accurate.
+/// Radial polynomial plus crop, for bodies that record no correction of their own -
+/// every Canon, and anything old enough not to have written one. Two parameters
+/// reach the same residual as a camera's spline, but it is the expensive way there:
+/// fitting the same frames both ways is 1643ms against 360ms on an RX100M3 and
+/// 1216ms against 589ms on an ILCE-7CR.
 fn fit_polynomial(grids: &Grids) -> Option<(f64, f64, f64)> {
     let candidates: Vec<(f64, f64)> = FALLBACK_K1_SCAN
         .iter()
@@ -532,6 +534,14 @@ pub fn fit(render: RgbRef<'_>, jpeg_bytes: &[u8], camera_knots: Option<Vec<f64>>
             // The camera's curve is the truth about the lens, but only if using it
             // actually corresponds better - a body whose preview is uncorrected
             // records the spline anyway.
+            //
+            // Losing means correcting nothing rather than falling through to the
+            // search below, which reads like a missing cascade and is not: a spline
+            // that cannot beat the identity is saying this JPEG was not corrected,
+            // and the polynomial agrees. Over the 58 sampled frames where this fires
+            // - every one an ILCE-7CM2, which was shot with the correction off - the
+            // search improved 3 by a median of 0.07 deltaE, and declined on half.
+            // A second of fitting each, for nothing.
             match fit_crop(&grids, &knots, &scan_around(estimate_crop(&knots), 0.01, 3)) {
                 Some((crop, delta)) if delta < baseline_delta => (Some(knots), crop, 1),
                 _ => (None, 1.0, 0),
