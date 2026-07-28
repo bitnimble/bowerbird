@@ -6,6 +6,7 @@ import { captureDateTime, localDateTime } from '../../api/dates';
 import { renditionUrl, type PhotoSummary } from '../../api/client';
 import { useEventsStore, usePhotosStore, usePresenters } from '../../app/stores_context';
 import { Button, ICON, Text } from '../../ui/ui';
+import { RETRY_DELAYS_MS } from './retry_delays';
 
 function filename(filePath: string, id: string): string {
   return filePath.split('/').pop() ?? id.slice(0, 8);
@@ -91,11 +92,24 @@ const Tile = observer(function Tile({
   // the server's own "this photo was built" announcement, keyed by photo, so the
   // retry is this tile asking again for itself the moment there is something to
   // fetch - and nothing else in the grid hears about it.
-  const src = renditionUrl(photo.id, 'grid', events.version(photo.id));
+  //
+  // Backed by a retry on a backoff, because being told is not guaranteed: the
+  // stream can be down, or connect a moment after this tile asked, or the client
+  // can be asleep past the replay buffer. Without a floor under it a single
+  // missed announcement leaves a tile blank for the life of the page.
+  const [attempt, setAttempt] = useState(0);
+  const src = renditionUrl(photo.id, 'grid', events.version(photo.id) + attempt);
   const [failed, setFailed] = useState(false);
   // A tile that failed and has since been told to try again is not failed any
   // more; without this the placeholder outlives the thumbnail arriving.
   useEffect(() => setFailed(false), [src]);
+  useEffect(() => {
+    if (!failed) return;
+    const delay = RETRY_DELAYS_MS[attempt];
+    if (delay == null) return;
+    const timer = setTimeout(() => setAttempt((a) => a + 1), delay);
+    return () => clearTimeout(timer);
+  }, [failed, attempt]);
   const selected = store.selected.has(photo.id);
   const ref = useRef<HTMLDivElement>(null);
   const list = store.mode === 'list';

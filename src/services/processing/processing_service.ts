@@ -50,6 +50,14 @@ export class ProcessingService {
     this.processed.add(listener);
   }
 
+  // Announced from the two places that write a rendition - the queue's result
+  // handler and the one-off run - rather than from the queue alone: an on-demand
+  // build is a file changing behind a URL exactly as much as a queued one is, and
+  // the grid tile repaired on a detail read (§18.6) has no other way to be told.
+  private announce(photoId: string): void {
+    for (const listener of this.processed) listener(photoId);
+  }
+
   // Rebuilds thumbnails for specific photos from the given source. Returns how
   // many were queued; ids that are missing or binned have no file to read.
   async reprocess(photoIds: string[], source: ThumbnailSource): Promise<number> {
@@ -157,6 +165,9 @@ export class ProcessingService {
         worker.onerror = (event: ErrorEvent) => reject(new Error(`worker crashed: ${event.message}`));
         worker.postMessage(job);
       });
+      // The HDR diagnostics write their own files under their own names and no
+      // view reads them off a rendition URL, so only a rendition is worth saying.
+      if (job.kind === 'rendition') this.announce(job.photoId);
     } finally {
       worker.terminate();
     }
@@ -242,7 +253,7 @@ export class ProcessingService {
       if (photo != null) this.dropStaleRenditions(photo);
       // After the writes, so a client told the photo is ready cannot ask for it
       // before the row and the files say so.
-      for (const listener of this.processed) listener(photoId);
+      this.announce(photoId);
     } catch (err) {
       // Never throw: this runs inside a worker's onmessage/onerror, and a throw here
       // would skip the pool's assignNext/terminate/live-- bookkeeping and hang the

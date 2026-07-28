@@ -1,5 +1,6 @@
 import { computed, observable } from 'mobx';
 import type { Ordering, PhotoDetail, PhotoSummary, PreviewRendition, Triage } from '../../api/client';
+import type { LibrariesStore } from '../libraries/libraries_store';
 import type { AppSettingsStore } from '../settings/app_settings_store';
 
 // Which collection the grid is showing. One store serves the library, shoot,
@@ -39,9 +40,13 @@ export function activeFilters(): PhotoFilters {
 }
 
 export class PhotosStore {
-  // Read-only, for the viewer's opening rendition: which one that is comes from
-  // the setting, and the setting knows it before the photo's detail arrives.
-  constructor(private readonly settings: AppSettingsStore) {}
+  // Read-only peers, both for resolving which rendition the viewer opens at
+  // without waiting on the photo's detail: the setting says which one the reader
+  // wants, the library says which one is certain to have been built.
+  constructor(
+    private readonly settings: AppSettingsStore,
+    private readonly libraries: LibrariesStore,
+  ) {}
 
   // Deep, not shallow: a tile observes its own row's fields, so rating or
   // rejecting one photo re-renders that tile alone. Shallow rows can only be
@@ -130,11 +135,19 @@ export class PhotosStore {
     return this.detail?.library_id ?? null;
   }
 
-  // The library's own: it serves the camera's JPEG or it renders. A property of
-  // the photo, so it is only known once a detail has landed - any detail, the
-  // setting behind it being the library's rather than the photo's.
+  // What the open photo's library builds on import: it serves the camera's JPEG
+  // or it renders. The server names this on the detail, but it is a property of
+  // the *library*, and the library list is loaded for the rail long before any
+  // photo is opened - so it is read from the row the grid already holds. Taken
+  // off the detail it was a fetch behind, which is what made the viewer paint a
+  // render for a reader set to the camera's JPEG and swap it out a moment later;
+  // and in an album spanning two libraries it was the previous photo's answer.
   @computed get defaultRendition(): PreviewRendition {
-    return this.detail?.default_rendition ?? 'embedded';
+    const photo = this.photos.find((p) => p.id === this.requestedDetailId);
+    const library = this.libraries.byId.get(photo?.library_id ?? this.detail?.library_id ?? '');
+    // Unknown only until the collection loads, and the camera's JPEG is the one
+    // rendition every photo has, so it is the safe answer to guess with.
+    return library?.preview_source === 'render' ? 'full' : 'embedded';
   }
 
   // What the setting alone says to open at, before the photo's detail lands.
@@ -201,10 +214,14 @@ export class PhotosStore {
     return this.offset + this.limit < this.total;
   }
 
-  // Position of the open detail photo within the loaded page, so the detail view
-  // can step to its neighbours.
+  // Position of the open photo within the loaded page, so the detail view can
+  // step to its neighbours. Off the photo that was asked for, not the detail on
+  // hand: that is still the previous photo until the fetch lands, and stepping
+  // faster than it does made the arrow keys offer the neighbours of the frame
+  // before - so a press navigated to the photo already open and did nothing.
   @computed get detailIndex(): number {
-    return this.detail == null ? -1 : this.photos.findIndex((p) => p.id === this.detail?.id);
+    const id = this.requestedDetailId;
+    return id == null ? -1 : this.photos.findIndex((p) => p.id === id);
   }
 
   @computed get prevPhotoId(): string | null {

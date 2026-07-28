@@ -1,15 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Maximize, Minimize, ZoomIn, ZoomOut } from 'lucide-react';
 import { Button, ICON, Text } from '../../ui/ui';
+import { RETRY_DELAYS_MS } from './retry_delays';
 
 const MIN_SCALE = 1; // 1 = fitted to the stage
 const MAX_SCALE = 8;
 const WHEEL_SENSITIVITY = 0.0015;
-
-// Full-size renders are built by the background queue, so opening a photo just
-// after a sync can 404. The grid recovers on its next list refetch; the detail
-// view has no such loop, so it retries on its own before giving up.
-const RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 15000, 30000];
 
 // How long the previous photo may stay on screen after stepping to the next one,
 // while that one decodes. Long enough to cover a warmed frame's decode, short

@@ -13,7 +13,6 @@ import {
   type Triage,
 } from '../../api/client';
 import type { AlbumsPresenter } from '../albums/albums_presenter';
-import type { EventsPresenter } from '../events/events_presenter';
 import type { AppSettingsPresenter } from '../settings/app_settings_presenter';
 import type { AppSettingsStore } from '../settings/app_settings_store';
 import type { ShootsPresenter } from '../shoots/shoots_presenter';
@@ -61,7 +60,6 @@ export class PhotosPresenter {
     private readonly toasts: ToastsPresenter,
     private readonly settings: AppSettingsStore,
     private readonly settingsPresenter: AppSettingsPresenter,
-    private readonly events: EventsPresenter,
   ) {}
 
   async open(source: PhotoSource): Promise<void> {
@@ -147,26 +145,34 @@ export class PhotosPresenter {
     // The camera's JPEG comes straight out of the RAW, so there is no cached
     // build to force past.
     const force = this.store.forceRebuild && rendition !== 'embedded';
+    // The detail on hand is the previous photo's until this one's fetch lands, so
+    // "already built" has to be read from *this* photo's entry or not at all:
+    // trusting the neighbour's said a file existed that was never built here, and
+    // the build was skipped in favour of a 404.
+    const built = this.store.detail?.id === photoId && this.store.detail.renditions?.[rendition]?.built === true;
     runInAction(() => (this.store.buildingRendition = true));
     try {
-      if (rendition !== 'embedded' && (force || this.store.detail?.renditions?.[rendition]?.built !== true)) {
-        await api.buildRendition(photoId, rendition, force);
-        // The URL is stable, so a rebuilt file behind it is one the browser has
-        // already decoded and would never ask for again. Only this photo moved,
-        // and a build outside the processing queue raises no announcement, so the
-        // client that asked for it is the one that has to say so.
-        this.events.rebuilt(photoId);
-      }
+      if (rendition !== 'embedded' && (force || !built)) await api.buildRendition(photoId, rendition, force);
       // The build may have written an HDR video beside the still, and only the
       // detail knows whether one exists. Without this, Firefox keeps showing the
       // dark still until the page is reloaded (§10.7).
       await this.refreshDetail();
+      if (!this.isCurrent(photoId)) return;
       runInAction(() => (this.store.rendition = rendition));
     } catch (err) {
       this.fail(err);
     } finally {
       runInAction(() => (this.store.buildingRendition = false));
     }
+  }
+
+  // Whether a photo is still the one the view is on. Every write that lands after
+  // an await has to ask: the store holds one detail and one chosen rendition, so
+  // a request that resolves after the user has stepped on would otherwise put the
+  // photo they left back on screen, or apply its rendition to the one they are
+  // looking at now.
+  private isCurrent(photoId: string): boolean {
+    return this.store.requestedDetailId === photoId;
   }
 
   // What still has to be applied to open this photo where the setting asks, or
@@ -200,6 +206,11 @@ export class PhotosPresenter {
     await this.settingsPresenter.load();
     try {
       const detail = await api.getPhoto(photoId);
+      // Two of these can be in flight at once - stepping faster than the fetch -
+      // and they need not answer in order. The straggler's photo is one the user
+      // has already left, so writing it would replace the detail on screen with
+      // the one before it and leave the page reporting the open photo as missing.
+      if (!this.isCurrent(photoId)) return;
       runInAction(() => {
         this.store.detail = detail;
         this.store.detailLoading = false;
@@ -215,6 +226,7 @@ export class PhotosPresenter {
       if (this.store.isAlwaysBuilt(opening)) runInAction(() => (this.store.rendition = opening));
       else await this.showRendition(photoId, opening);
     } catch (err) {
+      if (!this.isCurrent(photoId)) return;
       runInAction(() => {
         this.store.detailLoading = false;
         this.store.error = message(err);
@@ -406,7 +418,9 @@ export class PhotosPresenter {
     const open = this.store.detail;
     if (open == null) return;
     const detail = await api.getPhoto(open.id).catch(() => null);
-    if (detail != null) runInAction(() => (this.store.detail = detail));
+    // The re-read is of whatever was open when it started, which a step during
+    // the round trip has already replaced.
+    if (detail != null && this.isCurrent(detail.id)) runInAction(() => (this.store.detail = detail));
   }
 
   // Binning is reversible, so it reports with an undo rather than asking first.

@@ -290,6 +290,40 @@ test('the detail view shows shooting metadata, the triage control and steps betw
   await expect(navPath).not.toHaveText(relative);
 });
 
+// Two detail fetches can be in flight at once - stepping is faster than the
+// round trip - and they need not answer in order.
+test('a detail that lands after the reader has stepped on does not replace the photo they are looking at', async ({ page }) => {
+  await page.goto('/settings');
+  await openLibrary(page, CULL_PHOTOS_DIR);
+  await expect(page.locator('.tile')).toHaveCount(PHOTO_NAMES.length);
+
+  const first = await page.locator('.tile img').first().getAttribute('src');
+  const firstId = /\/image\/([^/]+)\//.exec(first ?? '')?.[1] ?? '';
+  expect(firstId).not.toBe('');
+  await page.route(`**/api/photos/${firstId}`, async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    await route.continue();
+  });
+
+  // Stepping off before the first photo's detail has landed. The buttons have to
+  // be live for that: their neighbours come from the photo the route asks for,
+  // not from the detail that has not arrived, or the first frame of every photo
+  // opened from the grid is a dead end.
+  await page.locator('.tile__hit').first().click();
+  await page.getByRole('button', { name: 'Next photo' }).click();
+  const navPath = page.locator('.detail__nav .ui-text--mono');
+  await expect(navPath).not.toHaveText('', { timeout: 30_000 });
+  const stepped = await navPath.innerText();
+
+  // The straggler names a photo the reader has already left. Written anyway, it
+  // puts the previous photo's detail back in a store the page reads by id, so the
+  // page reports the photo in the URL as one the catalogue does not have.
+  await page.waitForTimeout(4000);
+  await expect(page.getByText('Photo not found')).toHaveCount(0);
+  await expect(navPath).toHaveText(stepped);
+  await page.unrouteAll({ behavior: 'ignoreErrors' });
+});
+
 test('a selection can be rebuilt from the embedded JPEG', async ({ page }) => {
   await page.goto('/settings');
   await openLibrary(page, CULL_PHOTOS_DIR);

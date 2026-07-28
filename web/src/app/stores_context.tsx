@@ -45,11 +45,13 @@ interface Presenters {
 const PresentersContext = createContext<Presenters | null>(null);
 
 function build(): { stores: Stores; presenters: Presenters } {
-  // The viewer's opening rendition is a setting, so the photos store reads it.
+  // Which rendition the viewer opens at is the setting's answer, bounded by what
+  // the library builds, so the photos store reads both.
   const appSettingsStore = new AppSettingsStore();
+  const librariesStore = new LibrariesStore();
   const stores: Stores = {
-    libraries: new LibrariesStore(),
-    photos: new PhotosStore(appSettingsStore),
+    libraries: librariesStore,
+    photos: new PhotosStore(appSettingsStore, librariesStore),
     shoots: new ShootsStore(),
     albums: new AlbumsStore(),
     sync: new SyncStore(),
@@ -66,7 +68,7 @@ function build(): { stores: Stores; presenters: Presenters } {
   const albums = new AlbumsPresenter(stores.albums);
   const appSettings = new AppSettingsPresenter(stores.appSettings);
   const events = new EventsPresenter(stores.events);
-  const photos = new PhotosPresenter(stores.photos, shoots, albums, toasts, stores.appSettings, appSettings, events);
+  const photos = new PhotosPresenter(stores.photos, shoots, albums, toasts, stores.appSettings, appSettings);
   const presenters: Presenters = {
     libraries: new LibrariesPresenter(stores.libraries),
     photos,
