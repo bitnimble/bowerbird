@@ -1,13 +1,10 @@
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
-import { encodeHdr } from './hdr_media';
-import { fitHdrMatch, type HdrMatch } from './hdr_match';
 import { fitMatchProfile, type MatchProfile } from './jpeg_match';
-import { diffuseWhite } from './tone_map';
-import { decodeRaw, type DecodedImage } from './raw_decoder';
 import {
   decodeEmbedded,
   decodeRawImage,
+  encodeHdrRendition,
   freeImage,
   renderImage,
   saveAvif,
@@ -71,44 +68,64 @@ function writeSdr(job: RenditionJob, target: RenditionTarget, base: () => ImageH
 // Scene-linear and wide-gamut rather than display-referred: the transfer is
 // applied by the encoder after the grade, and auto-brightening would flatten away
 // the highlight headroom that carries the HDR (§10.7).
-async function writeHdr(
+//
+// The decode is passed as a handle so the still and its video twin share one, and so
+// the ~115MB of graded samples never reach this side: the grade, the colour fit and
+// both encoders are in `native/rawshim` (§10.7).
+function writeHdr(
   job: RenditionJob,
   target: RenditionTarget,
-  linear: () => DecodedImage,
-  match: HdrMatch | null,
-): Promise<void> {
-  const image = linear();
+  linear: () => ImageHandle,
+  profile: MatchProfile | null,
+): void {
   const common = {
     ...job.grade,
-    match,
     crf: target.quantizer,
     preset: target.preset,
     // The still is never fitted past what was asked for; the video is, because
     // the encoder caps height at 8704 and a max-resolution frame exceeds it.
     maxEdge: target.size === 0 ? Number.POSITIVE_INFINITY : target.size,
   } as const;
-  await encodeHdr(image, { ...common, variant: 'pq', medium: 'still', outputPath: target.outputPath });
+  const image = linear();
+  encodeHdrRendition(
+    image,
+    job.rawFilePath,
+    { ...common, variant: 'pq', medium: 'still', outputPath: target.outputPath },
+    profile,
+  );
   if (target.videoOutputPath == null) return;
-  await encodeHdr(image, { ...common, variant: 'pq', medium: 'video', outputPath: target.videoOutputPath });
+  encodeHdrRendition(
+    image,
+    job.rawFilePath,
+    { ...common, variant: 'pq', medium: 'video', outputPath: target.videoOutputPath },
+    profile,
+  );
 }
 
 // One HDR rendition for the check page: an AVIF still for Chrome, or a one-frame
 // video for Firefox, which applies a PQ transfer to nothing else (§10.7).
 async function hdr(job: HdrJob): Promise<void> {
-  const image = decodeRaw(job.rawFilePath, 16, 'rec2020-linear');
-  await encodeHdr(image, {
-    variant: job.variant,
-    medium: job.medium,
-    outputPath: job.outputPath,
-    // The check page renders the neutral grade on purpose: it exists to judge
-    // the tone mapping, and the camera's colour on top would be one more
-    // variable in the comparison.
-    match: null,
-    ...job.grade,
-    crf: job.crf,
-    preset: job.preset,
-    maxEdge: job.maxEdge,
-  });
+  const image = decodeRawImage(job.rawFilePath, 16, 'rec2020-linear', 0);
+  try {
+    encodeHdrRendition(
+      image,
+      job.rawFilePath,
+      {
+        variant: job.variant,
+        medium: job.medium,
+        outputPath: job.outputPath,
+        ...job.grade,
+        crf: job.crf,
+        preset: job.preset,
+        maxEdge: job.maxEdge,
+      },
+      // The check page renders the neutral grade on purpose: it exists to judge the
+      // tone mapping, and the camera's colour on top would be one more variable.
+      null,
+    );
+  } finally {
+    freeImage(image);
+  }
 }
 
 function outputsOf(job: WorkerJob): string[] {
@@ -150,12 +167,16 @@ async function renditions(job: RenditionJob): Promise<ThumbnailSource | undefine
     return decoded;
   };
 
-  // The scene-linear decode, shared the same way. An HDR job builds a still and
-  // its video twin from one of these, and the colour fit needs the same pixels
-  // again. Copied into JS rather than kept as a handle, because its consumer is
-  // ffmpeg (§10.7) rather than anything on this side of the FFI.
-  let decodedLinear: DecodedImage | null = null;
-  const linear = (): DecodedImage => (decodedLinear ??= decodeRaw(job.rawFilePath, 16, 'rec2020-linear'));
+  // The scene-linear decode, shared the same way: an HDR job builds a still and its
+  // video twin from one of these, and the colour fit reads the same samples again.
+  let decodedLinear: ImageHandle | null = null;
+  const linear = (): ImageHandle => {
+    if (decodedLinear == null) {
+      decodedLinear = decodeRawImage(job.rawFilePath, 16, 'rec2020-linear', 0);
+      open.push(decodedLinear);
+    }
+    return decodedLinear;
+  };
 
   try {
     // Fitted once, before anything is written: every rendition of one photo has to
@@ -171,15 +192,6 @@ async function renditions(job: RenditionJob): Promise<ThumbnailSource | undefine
     const rendersHdr = job.targets.some((target) => target.hdr);
     const profile =
       job.matchEmbeddedJpeg && (rendersSdr || rendersHdr) ? await fitMatchProfile(job.rawFilePath, decode()) : null;
-
-    // The SDR profile's colour cannot be reused for HDR - its curves are 8-bit sRGB
-    // and stop at display white, where the HDR grade needs a domain it can carry
-    // past diffuse white (§10.8). The geometry is a property of the lens, so that
-    // half *is* reused, and it is the expensive half.
-    const hdrMatch =
-      profile != null && rendersHdr
-        ? await fitHdrMatch(linear(), diffuseWhite(linear(), job.grade.whiteQuantile), job.rawFilePath, profile)
-        : null;
 
     // Built once at the largest SDR size the job asks for, then resized down for the
     // rest by the encoder. Every smaller rendition is a resize of this rather than
@@ -208,7 +220,9 @@ async function renditions(job: RenditionJob): Promise<ThumbnailSource | undefine
 
     for (const target of job.targets) {
       if (target.hdr) {
-        await writeHdr(job, target, linear, hdrMatch);
+        // The profile supplies the geometry; the HDR colour is refitted inside the
+        // encode, in the domain the grade works in (§10.8.1).
+        writeHdr(job, target, linear, profile);
         continue;
       }
       const source = writeSdr(job, target, sdrBase);

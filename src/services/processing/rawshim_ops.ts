@@ -111,12 +111,22 @@ export function decodeEmbedded(filePath: string, longEdge = 0): ImageHandle | nu
 }
 
 /**
- * Decodes an encoded image (a JPEG, an AVIF) and applies its EXIF orientation,
- * fitting it to `longEdge` on the way. 0 leaves the size alone.
+ * Decodes an encoded image (a JPEG, an AVIF) off disk, applying its EXIF orientation
+ * and fitting it to `longEdge`. 0 leaves the size alone.
  *
- * For bytes that are already in hand for another reason - a rendition read off
- * disk to transcode. Anything reading a RAW's preview wants `decodeEmbedded`,
- * which never brings the JPEG across.
+ * What a transcode of an existing rendition wants: reading the file into a `Buffer`
+ * here only to hand it back is the round trip the handle API exists to remove.
+ */
+export function decodeFile(filePath: string, longEdge = 0): ImageHandle {
+  return handleOf(shim().bb_decode_file(Buffer.from(`${filePath}\0`), longEdge), `decode ${filePath}`);
+}
+
+/**
+ * Decodes an encoded image already in hand, applying its EXIF orientation and fitting
+ * it to `longEdge`. 0 leaves the size alone.
+ *
+ * Only for bytes that exist on this side for another reason - a test constructing a
+ * target. A file wants `decodeFile`, and a RAW's preview wants `decodeEmbedded`.
  */
 export function decodeImage(bytes: Buffer, longEdge = 0): ImageHandle {
   return handleOf(shim().bb_decode_image(bytes, BigInt(bytes.length), longEdge), 'decode that image');
@@ -255,6 +265,194 @@ export function encodeJpeg(image: ImageHandle, longEdge: number, quality: number
   const bytes = takeBuffer(shim().bb_encode_jpeg(image.pointer, longEdge, quality));
   if (bytes == null) throw new Error('rawshim could not encode a JPEG');
   return bytes;
+}
+
+// #[repr(C)] BbHdrOptions: u32 variant, u32 medium, f64 peak/referenceWhite
+// /whiteQuantile, i32 crf, i32 preset, f64 maxEdge.
+const HDR_OPTIONS = {
+  variant: 0,
+  medium: 4,
+  peakNits: 8,
+  referenceWhiteNits: 16,
+  whiteQuantile: 24,
+  crf: 32,
+  preset: 36,
+  maxEdge: 40,
+  size: 48,
+} as const;
+
+const VARIANTS = ['pq', 'sdr'] as const;
+const MEDIA = ['still', 'still-baseline', 'video'] as const;
+
+export interface HdrOptions {
+  variant: (typeof VARIANTS)[number];
+  medium: (typeof MEDIA)[number];
+  outputPath: string;
+  peakNits: number;
+  referenceWhiteNits: number;
+  whiteQuantile: number;
+  crf: number;
+  preset: number;
+  /** Infinity for "whatever the frame is", which a native-resolution export asks. */
+  maxEdge: number;
+}
+
+function hdrOptionsBuffer(options: HdrOptions): Uint8Array {
+  const size = Number(shim().bb_hdr_options_size());
+  if (size !== HDR_OPTIONS.size) {
+    throw new Error(
+      `BbHdrOptions is ${size} bytes but this writer assumes ${HDR_OPTIONS.size}; the offsets here need updating`,
+    );
+  }
+  const raw = new Uint8Array(size);
+  const view = new DataView(raw.buffer);
+  view.setUint32(HDR_OPTIONS.variant, VARIANTS.indexOf(options.variant), true);
+  view.setUint32(HDR_OPTIONS.medium, MEDIA.indexOf(options.medium), true);
+  view.setFloat64(HDR_OPTIONS.peakNits, options.peakNits, true);
+  view.setFloat64(HDR_OPTIONS.referenceWhiteNits, options.referenceWhiteNits, true);
+  view.setFloat64(HDR_OPTIONS.whiteQuantile, options.whiteQuantile, true);
+  view.setInt32(HDR_OPTIONS.crf, options.crf, true);
+  view.setInt32(HDR_OPTIONS.preset, options.preset, true);
+  view.setFloat64(HDR_OPTIONS.maxEdge, options.maxEdge, true);
+  return raw;
+}
+
+/**
+ * The argv the HDR encode would hand to ffmpeg or avifenc, and the size it targets.
+ *
+ * For the pin that holds this against the TypeScript it replaced
+ * (`hdr_pin.integration.test.ts`). The app never needs it: `encodeHdr` builds and
+ * runs these inside one call.
+ */
+export function hdrArgv(
+  options: HdrOptions,
+  width: number,
+  height: number,
+  which: 'ffmpeg' | 'avifenc' | 'size',
+  y4mPath = '',
+): string[] {
+  const raw = hdrOptionsBuffer(options);
+  const bytes = takeBuffer(
+    shim().bb_hdr_argv(
+      ptr(raw),
+      width,
+      height,
+      Buffer.from(`${options.outputPath}\0`),
+      Buffer.from(`${y4mPath}\0`),
+      ['ffmpeg', 'avifenc', 'size'].indexOf(which),
+    ),
+  );
+  if (bytes == null) throw new Error('rawshim could not build the HDR arguments');
+  return bytes.toString('binary').split('\0');
+}
+
+/**
+ * Builds one HDR rendition, from the RAW to the file on disk.
+ *
+ * The whole job in one call: the scene-linear decode, the camera's colour fitted in
+ * the grade's own domain, the fit to size, the warp, the grade, and ffmpeg - with
+ * avifenc after it for a still. None of the samples cross the boundary, which is the
+ * reason for the shape: the graded frame is ~115MB at 24MP and ~366MB at 61MP.
+ *
+ * `profile` is the SDR fit, supplying the geometry the HDR colour is fitted through.
+ * Null grades neutrally, which is what the HDR check page asks for.
+ */
+export function encodeHdrRendition(
+  linear: ImageHandle,
+  rawFilePath: string,
+  options: HdrOptions,
+  profile: FittedProfile | null,
+): void {
+  if (linear.depth !== 16) throw new Error(`the HDR encode needs a 16-bit decode, got ${linear.depth}`);
+  const raw = hdrOptionsBuffer(options);
+  const status = shim().bb_encode_hdr(
+    linear.pointer,
+    Buffer.from(`${rawFilePath}\0`),
+    Buffer.from(`${options.outputPath}\0`),
+    ptr(raw),
+    profile == null ? null : ptr(profile.raw),
+  );
+  if (status !== 0) throw new Error(`rawshim could not encode ${options.outputPath}`);
+}
+
+// #[repr(C)] BbHdrColour: f64 deltaE, f64 saturation, f64 matrix[9], f64 curves[768].
+const HDR_COLOUR = { deltaE: 0, saturation: 8, matrix: 16, curves: 88, size: 6232 } as const;
+
+export interface HdrColourFit {
+  deltaE: number;
+  saturation: number;
+  matrix: number[][];
+  /** Three 256-entry curves over render values 0 to the trust ceiling. */
+  curves: [number[], number[], number[]];
+}
+
+/**
+ * The fitted HDR colour transform, without grading or encoding anything.
+ *
+ * The grade fits this itself; this is here so the tests that judge the fit against a
+ * real file can reach it - a monotone curve, three channels leaving the fit domain
+ * together, a deltaE inside the bound. Null when the fit declined.
+ */
+export function fitHdrColour(
+  linear: ImageHandle,
+  rawFilePath: string,
+  options: HdrOptions,
+  profile: FittedProfile | null,
+): HdrColourFit | null {
+  const S = shim();
+  const size = Number(S.bb_hdr_colour_size());
+  if (size !== HDR_COLOUR.size) {
+    throw new Error(`BbHdrColour is ${size} bytes but this reader assumes ${HDR_COLOUR.size}`);
+  }
+  const raw = new Uint8Array(size);
+  const status = S.bb_fit_hdr(
+    linear.pointer,
+    Buffer.from(`${rawFilePath}\0`),
+    ptr(hdrOptionsBuffer(options)),
+    profile == null ? null : ptr(profile.raw),
+    ptr(raw),
+  );
+  if (status === 1) return null;
+  if (status !== 0) throw new Error(`rawshim could not fit an HDR colour for ${rawFilePath}`);
+
+  const view = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
+  const curve = (channel: number): number[] =>
+    Array.from({ length: 256 }, (_, i) => view.getFloat64(HDR_COLOUR.curves + (channel * 256 + i) * 8, true));
+  return {
+    deltaE: view.getFloat64(HDR_COLOUR.deltaE, true),
+    saturation: view.getFloat64(HDR_COLOUR.saturation, true),
+    matrix: [0, 1, 2].map((row) =>
+      [0, 1, 2].map((col) => view.getFloat64(HDR_COLOUR.matrix + (row * 3 + col) * 8, true)),
+    ),
+    curves: [curve(0), curve(1), curve(2)],
+  };
+}
+
+/**
+ * The graded 16-bit samples the HDR encode would hand to ffmpeg.
+ *
+ * For the pin that holds this against the TypeScript it replaced. It copies the whole
+ * frame, which is what the production path exists to avoid, so nothing else uses it.
+ */
+export function hdrGradedSamples(
+  linear: ImageHandle,
+  rawFilePath: string,
+  options: HdrOptions,
+  profile: FittedProfile | null,
+): { width: number; height: number; data: Buffer } {
+  const raw = hdrOptionsBuffer(options);
+  const size = new Uint32Array(2);
+  const data = takeBuffer(
+    shim().bb_hdr_graded(
+      linear.pointer,
+      Buffer.from(`${rawFilePath}\0`),
+      ptr(raw),
+      profile == null ? null : ptr(profile.raw),
+      ptr(size),
+    ),
+  );
+  if (data == null) throw new Error(`rawshim could not grade ${rawFilePath}`);
+  return { width: size[0]!, height: size[1]!, data };
 }
 
 /**

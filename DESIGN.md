@@ -1001,7 +1001,11 @@ The FFI passes an opaque pointer to a bitmap Rust owns. Each operation - fit, gr
 
 Getting this wrong the first time is worth recording, because the wrong version looked reasonable. Each call took a pixel pointer and returned a buffer, so `bb_fit` copied the render out of JS into a `Vec`, having already copied it *into* JS at the end of the decode: three ~45MB moves of pixels no JavaScript ever read. The same mistake shaped the libvips calls, one function per operation, each materialising its result for the next to copy back in - which threw away the lazy pipeline that is the whole reason libvips is fast, and is why the first native version *lost* to sharp on a 61MP fit, 915ms against 423ms. Chaining the operations into one graph and borrowing rather than copying closed most of it; moving the boundary closed the rest.
 
-The rule that falls out: pixels cross only where the consumer is not libvips. That is the scene-linear decode ffmpeg encodes (§10.7) and the HDR fit that reads the same samples, both of which call `pixels()` and copy on purpose. `imageFromRgb` is the same door in the other direction and exists only for tests, which construct a target and need it in the form a decode would have produced.
+The rule that falls out: **pixels cross only on their way into an HTTP response.** Nothing else. `GET .../embedded` hands the camera's preview to a `Response` unchanged, and `GET .../download` hands over a transcoded JPEG; both are bytes bound for a socket. Every other path - the decode, the fit, the grade, the warp, all four encoders - begins and ends on the Rust side.
+
+Two doors exist in the other direction and neither has a production caller: `imageFromRgb` and `bb_fit_against`, for the test that injects a known distortion and needs a target it constructed. `decodeRaw` is the same, kept for tests that compare a decode against what was written.
+
+Getting there took removing three round trips that each looked reasonable. The embedded preview was extracted into a `Buffer` - 5-14MB, since a 61MP body embeds a full-resolution one - and handed straight back to be decoded. The fit took that preview *and* the whole RAW, 60-120MB, so TypeScript could find one maker-note tag in the first few kilobytes. And a rendition being transcoded was read off disk into JavaScript only to be passed back down; `decodeFile` takes the path instead.
 
 Handles are freed explicitly, in a `finally`. Nothing on the JS side collects them, and the numbers are not small: a 60MP decode plus its graded copy is ~380MB.
 
@@ -1176,6 +1180,14 @@ So `POST /api/photos/:id/hdr` builds **six** renditions of one photo: a 4:4:4 AV
 
 **Decode.** This is the path that makes anything HDR, and until it existed nothing the server produced was. `decodeRaw(..., 'rec2020-linear')` asks LibRaw for Rec.2020 primaries (`output_color=8`), an identity gamma curve, and `no_auto_bright`. The last one matters most: auto-brightening normalises exposure, which spends exactly the headroom above diffuse white that carries the HDR. The result is scene-referred, so a normally exposed frame's mean sits far below the sRGB render's; which is what the integration test asserts, since a decode that quietly stopped applying these would still produce a plausible-looking file.
 
+**All of this is in `native/rawshim`** - the grade, the colour fit, the argv and both child processes (`tone.rs`, `hdr_fit.rs`, `hdr_args.rs`, `hdr.rs`). It was TypeScript, and the graded frame was written to ffmpeg's stdin from there: ~115MB at 24MP and ~366MB at 61MP crossing the FFI boundary to reach a consumer that was never on this side of it. One call now takes a 16-bit decode handle and a path and produces the file, so a still and its video twin still share one decode without the samples ever leaving.
+
+The argv construction moved with it rather than staying behind, which is the right split even though the argv holds no pixels: leaving it in TypeScript would have meant the encoder's settings living apart from the encoder invocation, and the two only make sense together.
+
+**The port was held to a pin rather than to judgement** (`hdr_pin.integration.test.ts`). Neither half could be verified by "the tests still pass": the argv carries colour signalling whose loss is invisible until a browser declines to treat a file as HDR, and the grade's failure modes look like ordinary pictures. So the TypeScript's output was recorded first - 192 argv rows across the variant/medium/size/edge matrix, and the graded samples for five cases - and the Rust was required to match. It did: **the argv identical across all 192 rows, and the graded samples bit-identical on all five cases**, every one of ~29.6M `u16` samples.
+
+Worth recording how nearly that pin was useless. Perturbing the BT.2390 knee changed nothing, because `eetf` returns early when the frame already fits the display: at 1000 nits the fixture never reaches the roll-off, so the pin covered none of the subtlest arithmetic in the grade. Two `peakNits=203` cases fixed it, and a 0.5 → 0.501 shift then fails. A pin nobody tries to break is a pin that proves nothing.
+
 **Encode.** One `zscale` call applies the transfer for both media, then they diverge. Both are AV1 via **libaom**, at **4:4:4 10-bit**. The still is muxed by **avifenc** rather than ffmpeg, because ffmpeg's avif muxer writes no `colr` box and AVIF has no equivalent of the bitstream filter to repair one; `--jobs all` matters more than any other flag, since avifenc is single-threaded by default and that alone is 9.6s against 0.5s on a 24MP frame.
 
 **4:4:4 is not a setting, it is an AV1 profile**, and that decides the encoder. Profile 0 is 4:2:0, Profile 1 is 4:4:4, Profile 2 is 4:2:2. SVT-AV1 implements Profile 0 only and *converts silently* - asking it for 4:4:4 or 4:2:2 yields 4:2:0 with no error - so it cannot be used here at all. libaom and rav1e implement all three. Measured decoder support:
@@ -1194,7 +1206,7 @@ Moving off SVT-AV1 gives up the **mastering-display and content-light metadata**
 
 ### 10.7.1 Grading scene-linear to display-referred
 
-The decode is scene-referred, and scene-referred data carries no exposure: LibRaw scales sensor saturation to full range whatever was metered. Tying linear 1.0 straight to the display peak therefore made brightness a function of the exposure rather than of the subject - measured over eight bodies, a 9.3x spread in mean brightness, with every clipped frame flat against the peak. `src/services/processing/tone_map.ts` grades the buffer before it reaches ffmpeg, and the same eight frames come out within 2.5x with nothing clipping.
+The decode is scene-referred, and scene-referred data carries no exposure: LibRaw scales sensor saturation to full range whatever was metered. Tying linear 1.0 straight to the display peak therefore made brightness a function of the exposure rather than of the subject - measured over eight bodies, a 9.3x spread in mean brightness, with every clipped frame flat against the peak. `native/rawshim/src/tone.rs` grades the samples before they reach ffmpeg, and the same eight frames come out within 2.5x with nothing clipping.
 
 Two ITU standards do the work, so no look had to be invented:
 
@@ -1225,7 +1237,7 @@ The SDR still is tagged sRGB where the SDR video is tagged BT.709: they share pr
 
 **A blank video row is usually the codec, not the tagging.** Firefox on Android ships `media.av1.enabled` off for battery, and Safari has no software AV1 decoder at all; it plays AV1 only where the hardware does, so Intel Macs, M1/M2 Macs and iPhones before the 15 Pro cannot, however current their Safari. Both fail all three videos identically, SDR included, which is the tell: an HDR problem would spare the SDR reference. The page prints what the browser claims for AV1 before loading anything and marks a failed panel rather than leaving it blank. Neither gap is worth working around, because both of those browsers decode the AVIF stills, which is the path that matters on their platforms; if an Apple video path were ever wanted it would be HEVC 10-bit, hardware-decoded on every Apple device.
 
-### 10.8 Matching the camera's own rendering (`jpeg_match.ts`)
+### 10.8 Matching the camera's own rendering (`fit.rs`)
 
 A render carries none of what the camera would have done to the same frame: not the maker's colour science, and not the picture profile the photographer chose on the body. Buying that normally means sourcing, storing and hosting a lens profile and a colour profile per body, which is tedious where it is possible and impossible where a maker never published one - and it still cannot honour a per-shot setting. Everything needed is already inside the RAW, in the JPEG the camera put there. `MATCH_EMBEDDED_JPEG` fits the transform that takes a render to that JPEG, and applies it to every rendition built from a render - SDR here, and HDR through §10.8.1, which reuses this section's geometry and refits only the colour.
 
@@ -1251,7 +1263,7 @@ A render carries none of what the camera would have done to the same frame: not 
 
 The lever if that ever matters is caching geometry by (lens, focal length) rather than per photo - the three 28mm frames measured agree to ~10%, so geometry pools even though colour does not - but that needs storage and is not built. Only Sony is verified; Canon records an equivalent but no CR2 or CR3 has been tested, so those fall through to the fitted path.
 
-### 10.8.1 The same look in HDR (`hdr_match.ts`)
+### 10.8.1 The same look in HDR (`hdr_fit.rs`)
 
 The colour half does not lift to HDR, and the reasons are structural rather than approximate. The SDR curves are indexed by an 8-bit render level and answer with an 8-bit JPEG level, so their **domain stops at display white** - which is the whole of what HDR adds - and 8 bits of output is coarser than the shadows of a PQ signal, so applying them would band. **The geometry does lift**, being a property of the lens and not of a colour space, and it is the expensive half: it is reused as fitted, and only the colour is refitted in the domain the grade works in, Rec.2020 linear normalised so diffuse white is 1.0. That normalisation is what makes the curve extrapolable, which is what lets the camera's rendering stop at diffuse white and BT.2390 take over above it (§10.7.1).
 

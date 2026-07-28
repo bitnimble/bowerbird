@@ -308,6 +308,25 @@ fn clamp8(value: f64) -> f64 {
     value.clamp(0.0, 255.0)
 }
 
+/// Lab distance between two 8-bit sRGB triples.
+///
+/// Shared with the HDR fit, which reports in the same measure so the two are
+/// comparable - it is the only space they both land in (`hdr_fit::to_srgb8`).
+pub fn delta_e76(a: &[f64; 3], b: &[f64; 3]) -> f64 {
+    let lab = |v: &[f64; 3]| {
+        let f = |value: f64| to_linear(value.clamp(0.0, 255.0));
+        let (r, g, bl) = (f(v[0]), f(v[1]), f(v[2]));
+        let x = (0.4124 * r + 0.3576 * g + 0.1805 * bl) / 0.95047;
+        let y = 0.2126 * r + 0.7152 * g + 0.0722 * bl;
+        let z = (0.0193 * r + 0.1192 * g + 0.9505 * bl) / 1.08883;
+        let t = |v: f64| if v > 0.008856 { v.cbrt() } else { 7.787 * v + 16.0 / 116.0 };
+        let fy = t(y);
+        [116.0 * fy - 16.0, 500.0 * (t(x) - fy), 200.0 * (fy - t(z))]
+    };
+    let (p, q) = (lab(a), lab(b));
+    ((p[0] - q[0]).powi(2) + (p[1] - q[1]).powi(2) + (p[2] - q[2]).powi(2)).sqrt()
+}
+
 /// Mean deltaE over pairs the transform was not fitted on. Every number this
 /// module reports is held out: a curve with 256 free parameters will always look
 /// better on its own training pairs.

@@ -40,7 +40,26 @@ const SYMBOLS = {
   bb_decode_embedded: { args: [FFIType.cstring, FFIType.u32], returns: FFIType.ptr },
   bb_extract_embedded: { args: [FFIType.cstring], returns: FFIType.ptr },
   bb_read_header: { args: [FFIType.cstring, FFIType.ptr], returns: FFIType.i32 },
+  bb_hdr_argv: {
+    args: [FFIType.ptr, FFIType.u32, FFIType.u32, FFIType.cstring, FFIType.cstring, FFIType.u32],
+    returns: FFIType.ptr,
+  },
+  bb_hdr_options_size: { args: [], returns: FFIType.u64 },
+  bb_fit_hdr: {
+    args: [FFIType.ptr, FFIType.cstring, FFIType.ptr, FFIType.ptr, FFIType.ptr],
+    returns: FFIType.i32,
+  },
+  bb_hdr_colour_size: { args: [], returns: FFIType.u64 },
+  bb_encode_hdr: {
+    args: [FFIType.ptr, FFIType.cstring, FFIType.cstring, FFIType.ptr, FFIType.ptr],
+    returns: FFIType.i32,
+  },
+  bb_hdr_graded: {
+    args: [FFIType.ptr, FFIType.cstring, FFIType.ptr, FFIType.ptr, FFIType.ptr],
+    returns: FFIType.ptr,
+  },
   bb_header_size: { args: [], returns: FFIType.u64 },
+  bb_decode_file: { args: [FFIType.cstring, FFIType.u32], returns: FFIType.ptr },
   bb_decode_image: { args: [FFIType.ptr, FFIType.u64, FFIType.u32], returns: FFIType.ptr },
   bb_image_from_rgb: { args: [FFIType.ptr, FFIType.u32, FFIType.u32], returns: FFIType.ptr },
   bb_read_distortion_spline: { args: [FFIType.cstring, FFIType.ptr, FFIType.u32], returns: FFIType.i32 },

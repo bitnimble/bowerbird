@@ -8,6 +8,7 @@
 // passes a path in and gets a path or a handle out; the samples stay on this side.
 
 use crate::fit::{self, Profile};
+use crate::hdr_args;
 use crate::vips::{self, Pipeline};
 use crate::BbImage;
 use std::ffi::{c_char, CStr};
@@ -105,6 +106,31 @@ fn shrinks(image: &vips::RgbRef<'_>, long_edge: u32) -> bool {
     long_edge > 0 && image.width.max(image.height) > long_edge as usize
 }
 
+/// Decodes an encoded image off disk, applying its EXIF orientation and optionally
+/// fitting it to a longest edge. `long_edge` of 0 leaves the size alone.
+///
+/// A path rather than bytes, so a rendition being transcoded is not read into
+/// JavaScript only to be handed straight back.
+///
+/// # Safety
+/// `path` must be a NUL-terminated C string. Release with `bb_free`.
+#[no_mangle]
+pub unsafe extern "C" fn bb_decode_file(path: *const c_char, long_edge: u32) -> *mut BbImage {
+    vips::init();
+    if path.is_null() {
+        return std::ptr::null_mut();
+    }
+    let Ok(path) = CStr::from_ptr(path).to_str() else { return std::ptr::null_mut() };
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            eprintln!("bb_decode_file: {path}: {e}");
+            return std::ptr::null_mut();
+        }
+    };
+    decode_encoded(&bytes, long_edge)
+}
+
 /// Decodes an encoded image, applies its EXIF orientation, and optionally fits it
 /// to a longest edge. `long_edge` of 0 leaves the size alone.
 ///
@@ -116,7 +142,10 @@ pub unsafe extern "C" fn bb_decode_image(bytes: *const u8, len: usize, long_edge
     if bytes.is_null() {
         return std::ptr::null_mut();
     }
-    let encoded = std::slice::from_raw_parts(bytes, len);
+    decode_encoded(std::slice::from_raw_parts(bytes, len), long_edge)
+}
+
+fn decode_encoded(encoded: &[u8], long_edge: u32) -> *mut BbImage {
     // Shrinking during the decode rather than after it, where a size was asked for.
     let decoded = match long_edge {
         0 => Pipeline::decode_upright(encoded).and_then(Pipeline::finish),
@@ -129,6 +158,273 @@ pub unsafe extern "C" fn bb_decode_image(bytes: *const u8, len: usize, long_edge
             std::ptr::null_mut()
         }
     }
+}
+
+/// The HDR encode's settings, flat so TypeScript can fill it with one DataView.
+#[repr(C)]
+pub struct BbHdrOptions {
+    /// 0 pq, 1 sdr.
+    pub variant: u32,
+    /// 0 still, 1 still-baseline, 2 video.
+    pub medium: u32,
+    pub peak_nits: f64,
+    pub reference_white_nits: f64,
+    pub white_quantile: f64,
+    pub crf: i32,
+    pub preset: i32,
+    /// Non-finite means no limit, which is how a native-resolution export asks.
+    pub max_edge: f64,
+}
+
+impl BbHdrOptions {
+    unsafe fn to_options(&self, output_path: &str) -> Option<hdr_args::EncodeOptions> {
+        Some(hdr_args::EncodeOptions {
+            variant: match self.variant {
+                0 => hdr_args::Variant::Pq,
+                1 => hdr_args::Variant::Sdr,
+                _ => return None,
+            },
+            medium: match self.medium {
+                0 => hdr_args::Medium::Still,
+                1 => hdr_args::Medium::StillBaseline,
+                2 => hdr_args::Medium::Video,
+                _ => return None,
+            },
+            output_path: output_path.to_string(),
+            peak_nits: self.peak_nits,
+            reference_white_nits: self.reference_white_nits,
+            white_quantile: self.white_quantile,
+            crf: self.crf,
+            preset: self.preset,
+            max_edge: if self.max_edge.is_finite() { self.max_edge } else { f64::INFINITY },
+        })
+    }
+}
+
+/// Size of `BbHdrOptions`, checked by the caller against the layout it writes.
+#[no_mangle]
+pub extern "C" fn bb_hdr_options_size() -> usize {
+    std::mem::size_of::<BbHdrOptions>()
+}
+
+/// The argv this would hand to ffmpeg or avifenc, NUL-separated.
+///
+/// Exposed only so the pin that captured the TypeScript's output can be held
+/// against this (`hdr_pin.integration.test.ts`). `which` is 0 for ffmpeg's
+/// arguments, 1 for avifenc's, 2 for the target size as `WxH`. Nothing in the app
+/// calls it; `bb_encode_hdr` builds and runs these itself.
+///
+/// # Safety
+/// `options` must be a readable `BbHdrOptions`, the paths NUL-terminated C strings.
+/// Release with `bb_buffer_free`.
+#[no_mangle]
+pub unsafe extern "C" fn bb_hdr_argv(
+    options: *const BbHdrOptions,
+    width: u32,
+    height: u32,
+    output_path: *const c_char,
+    y4m_path: *const c_char,
+    which: u32,
+) -> *mut BbBuffer {
+    if options.is_null() || output_path.is_null() || y4m_path.is_null() {
+        return std::ptr::null_mut();
+    }
+    let (Ok(out), Ok(y4m)) = (CStr::from_ptr(output_path).to_str(), CStr::from_ptr(y4m_path).to_str()) else {
+        return std::ptr::null_mut();
+    };
+    let Some(built) = (*options).to_options(out) else { return std::ptr::null_mut() };
+
+    let parts = match which {
+        0 => hdr_args::ffmpeg_args(width, height, &built),
+        1 => hdr_args::avifenc_args(&built, y4m),
+        2 => {
+            let size = hdr_args::target_size(width, height, &built);
+            vec![format!("{}x{}", size.width, size.height)]
+        }
+        _ => return std::ptr::null_mut(),
+    };
+    BbBuffer::from_vec(parts.join("\0").into_bytes())
+}
+
+/// Builds one HDR rendition, from a scene-linear decode to the file on disk.
+///
+/// The whole job in one call: the camera's colour fitted in the grade's own domain,
+/// the fit to size, the warp, the grade, and ffmpeg - with avifenc after it for a
+/// still. None of the samples cross the boundary, which is the reason for the shape:
+/// the graded frame is ~115MB at 24MP and ~366MB at 61MP.
+///
+/// `image` must be a 16-bit `rec2020-linear` decode. It is passed rather than decoded
+/// here so that a still and its video twin share one, which is what the TypeScript
+/// did and is worth about a second on a 61MP frame.
+///
+/// `raw_path` is still needed: the embedded preview the colour is fitted against comes
+/// from it. `profile` is the SDR fit, supplying the geometry that fit runs through.
+/// Null grades neutrally, which is what the HDR check page asks for - it exists to
+/// judge the tone mapping, and the camera's colour on top would be one more variable.
+///
+/// 0 on success, -1 on failure.
+///
+/// # Safety
+/// `image` must be a live handle from this library, the paths NUL-terminated C
+/// strings, `options` a readable `BbHdrOptions`, `profile` null or readable.
+#[no_mangle]
+pub unsafe extern "C" fn bb_encode_hdr(
+    image: *const BbImage,
+    raw_path: *const c_char,
+    output_path: *const c_char,
+    options: *const BbHdrOptions,
+    profile: *const BbProfile,
+) -> i32 {
+    vips::init();
+    match hdr_job(image, raw_path, options, profile) {
+        None => -1,
+        Some((source, built, matched)) => {
+            let Ok(out) = CStr::from_ptr(output_path).to_str() else { return -1 };
+            let built = hdr_args::EncodeOptions { output_path: out.to_string(), ..built };
+            match crate::hdr::encode(&source, &built, matched.as_ref()) {
+                Ok(()) => 0,
+                Err(detail) => {
+                    eprintln!("bb_encode_hdr: {detail}");
+                    -1
+                }
+            }
+        }
+    }
+}
+
+/// The decode, the settings and the fitted match, which both HDR entry points need.
+unsafe fn hdr_job<'a>(
+    image: *const BbImage,
+    raw_path: *const c_char,
+    options: *const BbHdrOptions,
+    profile: *const BbProfile,
+) -> Option<(crate::hdr::Source<'a>, hdr_args::EncodeOptions, Option<crate::hdr_fit::HdrMatch>)> {
+    if image.is_null() || raw_path.is_null() || options.is_null() {
+        return None;
+    }
+    let raw = CStr::from_ptr(raw_path).to_str().ok()?;
+    let built = (*options).to_options("")?;
+    let samples = (*image).view_u16()?;
+    let source = crate::hdr::Source {
+        samples,
+        width: (*image).width as usize,
+        height: (*image).height as usize,
+    };
+
+    // The SDR profile's colour cannot be reused - its curves are 8-bit sRGB and stop
+    // at display white, where this grade needs a domain it can carry past diffuse
+    // white. The geometry is a property of the lens, so that half is reused, and it is
+    // the expensive half.
+    let matched = match profile.is_null() {
+        true => None,
+        false => {
+            let sdr = (*profile).to_profile();
+            crate::hdr::fit_match(raw, &source, built.white_quantile, sdr.knots, sdr.crop)
+        }
+    };
+    Some((source, built, matched))
+}
+
+/// The fitted HDR colour transform, flattened for inspection.
+#[repr(C)]
+pub struct BbHdrColour {
+    /// Held-out mean deltaE76 over the fit pairs.
+    pub delta_e: f64,
+    /// The chroma blend applied after the matrix; 1 leaves it alone.
+    pub saturation: f64,
+    /// Row-major, output channel by input channel.
+    pub matrix: [f64; 9],
+    /// Three 256-entry curves, spanning render values 0 to TRUST_CEILING.
+    pub curves: [f64; 768],
+}
+
+/// Size of `BbHdrColour`, checked by the caller against the layout it reads.
+#[no_mangle]
+pub extern "C" fn bb_hdr_colour_size() -> usize {
+    std::mem::size_of::<BbHdrColour>()
+}
+
+/// Fits the HDR colour and reports it, without grading or encoding anything.
+///
+/// The grade does this itself; this exists so the tests that judge the fit against a
+/// real file can still reach it - a monotone curve, three channels leaving the fit
+/// domain together, a deltaE inside the bound. None of that is visible from a
+/// synthetic input, and none of it would fail an assertion about shape.
+///
+/// 0 on success, 1 when the fit declined (too few usable pairs, or no embedded
+/// preview), -1 on failure.
+///
+/// # Safety
+/// As `bb_encode_hdr`, with `out` a writable `BbHdrColour`.
+#[no_mangle]
+pub unsafe extern "C" fn bb_fit_hdr(
+    image: *const BbImage,
+    raw_path: *const c_char,
+    options: *const BbHdrOptions,
+    profile: *const BbProfile,
+    out: *mut BbHdrColour,
+) -> i32 {
+    vips::init();
+    if out.is_null() {
+        return -1;
+    }
+    let Some((_, _, matched)) = hdr_job(image, raw_path, options, profile) else { return -1 };
+    let Some(matched) = matched else { return 1 };
+
+    // Built whole and written once: taking slices of `(*out)` would autoref through a
+    // raw pointer, which is a lint rather than a nicety - the reference would outlive
+    // nothing this function can vouch for.
+    let mut flat = BbHdrColour {
+        delta_e: matched.colour.delta_e,
+        saturation: matched.colour.saturation,
+        matrix: [0.0; 9],
+        curves: [0.0; 768],
+    };
+    for row in 0..3 {
+        flat.matrix[row * 3..row * 3 + 3].copy_from_slice(&matched.colour.matrix[row]);
+    }
+    for channel in 0..3 {
+        let curve = &matched.colour.curves[channel];
+        flat.curves[channel * 256..channel * 256 + curve.len()].copy_from_slice(curve);
+    }
+    *out = flat;
+    0
+}
+
+/// The graded 16-bit samples `bb_encode_hdr` would hand to ffmpeg.
+///
+/// Exposed only so the pin captured from the TypeScript this replaced can be held
+/// against it (`hdr_pin.integration.test.ts`). It copies the whole graded frame -
+/// ~115MB at 24MP - which is exactly what the production path exists to avoid, so
+/// nothing in the app calls it.
+///
+/// `out_size` receives the width and height, since a fit-to-edge changes both.
+///
+/// # Safety
+/// As `bb_encode_hdr`, with `out_size` valid for two u32s. Release with
+/// `bb_buffer_free`.
+#[no_mangle]
+pub unsafe extern "C" fn bb_hdr_graded(
+    image: *const BbImage,
+    raw_path: *const c_char,
+    options: *const BbHdrOptions,
+    profile: *const BbProfile,
+    out_size: *mut u32,
+) -> *mut BbBuffer {
+    vips::init();
+    if out_size.is_null() {
+        return std::ptr::null_mut();
+    }
+    let Some((source, built, matched)) = hdr_job(image, raw_path, options, profile) else {
+        return std::ptr::null_mut();
+    };
+
+    let (graded, width, height) = crate::hdr::graded(&source, &built, matched.as_ref());
+    *out_size = width as u32;
+    *out_size.add(1) = height as u32;
+    let bytes =
+        std::slice::from_raw_parts(graded.as_ptr() as *const u8, std::mem::size_of_val(&graded[..])).to_vec();
+    BbBuffer::from_vec(bytes)
 }
 
 /// The camera's embedded JPEG preview, as bytes.

@@ -4,7 +4,7 @@ import { AppError } from '../../errors';
 import type { Library } from '../../schemas/libraries';
 import { getHdrPath, getOriginalPath, getRenditionPath } from '../../utils/paths';
 import { readEmbeddedJpeg } from '../../services/processing/raw_decoder';
-import { decodeImage, encodeJpeg, freeImage } from '../../services/processing/rawshim_ops';
+import { decodeFile, encodeJpeg, freeImage } from '../../services/processing/rawshim_ops';
 import { contentTypeFor, isHdrMedium, isHdrVariant } from '../../services/processing/hdr_media';
 import { isRendition, renditionContentType } from '../../services/processing/renditions';
 import type { BasicPhoto } from '../../services/photos/photos_repository';
@@ -97,7 +97,9 @@ export class ImageApi {
     const file = Bun.file(getRenditionPath(library, photo.id, 'full', library.preview_hdr));
     if (!(await file.exists())) throw new AppError('NOT_FOUND', `image not found on disk: ${photoId}`);
 
-    const rendition = decodeImage(Buffer.from(await file.arrayBuffer()));
+    // Decoded from the path: the rendition's bytes have no business on this side, and
+    // only the JPEG does - because that is what goes into the response.
+    const rendition = decodeFile(getRenditionPath(library, photo.id, 'full', library.preview_hdr));
     let jpeg: Buffer;
     try {
       jpeg = encodeJpeg(rendition, 0, JPEG_QUALITY);

@@ -7,8 +7,9 @@ import { expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { type HdrMedium, type HdrVariant, encodeHdr, extensionFor } from '../../src/services/processing/hdr_media';
+import { type HdrMedium, type HdrVariant, extensionFor } from '../../src/services/processing/hdr_media';
 import { decodeRaw } from '../../src/services/processing/raw_decoder';
+import { decodeRawImage, encodeHdrRendition, freeImage } from '../../src/services/processing/rawshim_ops';
 
 const FIXTURE = `${import.meta.dir}/../fixtures/DSC02981.ARW`;
 
@@ -37,11 +38,15 @@ function probe(file: string): Probe {
 async function encoded(medium: HdrMedium, variant: HdrVariant, run: (file: string) => void): Promise<void> {
   const dir = mkdtempSync(path.join(tmpdir(), 'bb-hdr-'));
   try {
-    const image = decodeRaw(FIXTURE, 16, 'rec2020-linear');
+    const image = decodeRawImage(FIXTURE, 16, 'rec2020-linear', 0);
     // extensionFor, not a local guess: `still-baseline` is an AVIF too, and a
     // hand-rolled check that only knew about 'still' wrote it as .mp4.
     const outputPath = path.join(dir, `${variant}${extensionFor(medium)}`);
-    await encodeHdr(image, { variant, medium, outputPath, peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.99, match: null, crf: 40, preset: 12, maxEdge: 640 });
+    try {
+      encodeHdrRendition(image, FIXTURE, { variant, medium, outputPath, peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.99, crf: 40, preset: 12, maxEdge: 640 }, null);
+    } finally {
+      freeImage(image);
+    }
     run(outputPath);
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -127,9 +132,13 @@ test('the SDR references are tagged so they can be compared against', async () =
 test('the still leaves no intermediate behind', async () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'bb-hdr-'));
   try {
-    const image = decodeRaw(FIXTURE, 16, 'rec2020-linear');
+    const image = decodeRawImage(FIXTURE, 16, 'rec2020-linear', 0);
     const outputPath = path.join(dir, 'pq.avif');
-    await encodeHdr(image, { variant: 'pq', medium: 'still', outputPath, peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.99, match: null, crf: 40, preset: 12, maxEdge: 640 });
+    try {
+      encodeHdrRendition(image, FIXTURE, { variant: 'pq', medium: 'still', outputPath, peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.99, crf: 40, preset: 12, maxEdge: 640 }, null);
+    } finally {
+      freeImage(image);
+    }
     // The y4m is uncompressed 10-bit, so a leaked one is tens of megabytes per
     // photo sitting next to the output that replaced it.
     expect(await Bun.file(`${outputPath}.y4m`).exists()).toBe(false);
@@ -138,20 +147,30 @@ test('the still leaves no intermediate behind', async () => {
   }
 });
 
-test('an 8-bit decode is refused rather than encoded as something HDR-shaped', async () => {
-  const image = decodeRaw(FIXTURE, 8);
-  await expect(
-    encodeHdr(image, {
-      variant: 'pq',
-      medium: 'still',
-      outputPath: '/tmp/never.avif',
-      peakNits: 1000,
-      referenceWhiteNits: 203,
-      whiteQuantile: 0.99,
-      match: null,
-      crf: 40,
-      preset: 12,
-      maxEdge: 640,
-    }),
-  ).rejects.toThrow('16-bit');
+test('an 8-bit decode is refused rather than encoded as something HDR-shaped', () => {
+  // The samples would be read as 16-bit and half the frame would come out noise, so
+  // this has to fail loudly rather than write a plausible-looking file.
+  const image = decodeRawImage(FIXTURE, 8, 'srgb', 640);
+  try {
+    expect(() =>
+      encodeHdrRendition(
+        image,
+        FIXTURE,
+        {
+          variant: 'pq',
+          medium: 'still',
+          outputPath: '/tmp/never.avif',
+          peakNits: 1000,
+          referenceWhiteNits: 203,
+          whiteQuantile: 0.99,
+          crf: 40,
+          preset: 12,
+          maxEdge: 640,
+        },
+        null,
+      ),
+    ).toThrow(/16-bit/);
+  } finally {
+    freeImage(image);
+  }
 });

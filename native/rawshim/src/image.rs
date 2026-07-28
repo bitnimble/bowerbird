@@ -11,7 +11,7 @@ pub const SPLINE_UNIT: f64 = 16384.0;
 /// half-diagonal, so r^2 runs exactly 0..1 over the frame and the table needs no
 /// range beyond that. 4096 puts a 16-knot spline's kinks several buckets apart,
 /// well below the bilinear sampling that follows.
-const RATIO_TABLE_LAST: usize = 4096;
+pub(crate) const RATIO_TABLE_LAST: usize = 4096;
 
 pub fn sample_radius(knots: &[f64], radius: f64, crop: f64) -> f64 {
     if knots.is_empty() {
@@ -82,6 +82,114 @@ pub fn warp(source: RgbRef<'_>, width: usize, height: usize, knots: &[f64], crop
     Rgb { width, height, data: out }
 }
 
+/// `warp` over any sample type, for the HDR path.
+///
+/// The SDR fit is 8-bit throughout, but the HDR one works on 16-bit scene-linear
+/// samples and on the f64 planes it derives from them. Two copies of a warp is two
+/// places for a sign to be wrong in, so the arithmetic lives here once and the
+/// caller supplies the conversions.
+#[allow(clippy::too_many_arguments)]
+pub fn warp_planar<T: Copy + Default>(
+    src: &[T],
+    source_width: usize,
+    source_height: usize,
+    width: usize,
+    height: usize,
+    knots: &[f64],
+    crop: f64,
+    to_f64: impl Fn(T) -> f64,
+    from_f64: impl Fn(f64) -> T,
+) -> Vec<T> {
+    let mut out = vec![T::default(); width * height * 3];
+    let half = ((width as f64 / 2.0).powi(2) + (height as f64 / 2.0).powi(2)).sqrt();
+    let ratios = ratio_table(knots, crop);
+    let (sw, sh) = (source_width, source_height);
+    let (scale_x, scale_y) = (sw as f64 / width as f64, sh as f64 / height as f64);
+    let (centre_x, centre_y) = (sw as f64 / 2.0, sh as f64 / 2.0);
+    let (step_x, step_y) = (half * scale_x, half * scale_y);
+    let (edge_x, edge_y) = ((sw - 1) as f64, (sh - 1) as f64);
+
+    for y in 0..height {
+        let dy = (y as f64 - height as f64 / 2.0) / half;
+        let dy2 = dy * dy;
+        for x in 0..width {
+            let dx = (x as f64 - width as f64 / 2.0) / half;
+            let t = (dx * dx + dy2) * RATIO_TABLE_LAST as f64;
+            let slot = if t < RATIO_TABLE_LAST as f64 { t as usize } else { RATIO_TABLE_LAST - 1 };
+            let low = ratios[slot];
+            let ratio = low + (ratios[slot + 1] - low) * (t - slot as f64);
+            let px = centre_x + dx * ratio * step_x;
+            let py = centre_y + dy * ratio * step_y;
+            let o = (y * width + x) * 3;
+            if px < 0.0 || py < 0.0 || px >= edge_x || py >= edge_y {
+                continue;
+            }
+            let (x0, y0) = (px as usize, py as usize);
+            let (fx, fy) = (px - x0 as f64, py - y0 as f64);
+            let i00 = (y0 * sw + x0) * 3;
+            let i01 = i00 + sw * 3;
+            for c in 0..3 {
+                out[o + c] = from_f64(
+                    to_f64(src[i00 + c]) * (1.0 - fx) * (1.0 - fy)
+                        + to_f64(src[i00 + 3 + c]) * fx * (1.0 - fy)
+                        + to_f64(src[i01 + c]) * (1.0 - fx) * fy
+                        + to_f64(src[i01 + 3 + c]) * fx * fy,
+                );
+            }
+        }
+    }
+    out
+}
+
+/// Box-average downscale of 16-bit interleaved RGB, in whatever light the samples
+/// are already in.
+///
+/// On a scene-linear decode that means averaging light, which is the only correct way
+/// to shrink one: averaging after a transfer curve has been applied averages code
+/// values instead, and darkens. Every source pixel contributes exactly once, so there
+/// is no ringing either.
+///
+/// Only downscales; asking for a larger size returns None, since this exists to avoid
+/// work rather than to invent detail.
+pub fn box_resize_u16(
+    src: &[u16],
+    sw: usize,
+    sh: usize,
+    width: usize,
+    height: usize,
+) -> Option<Vec<u16>> {
+    if width >= sw || height >= sh {
+        return None;
+    }
+    let mut out = vec![0u16; width * height * 3];
+    let xs = sw as f64 / width as f64;
+    let ys = sh as f64 / height as f64;
+    for dy in 0..height {
+        let y0 = (dy as f64 * ys).floor() as usize;
+        let y1 = (((dy + 1) as f64 * ys).floor() as usize).max(y0 + 1);
+        for dx in 0..width {
+            let x0 = (dx as f64 * xs).floor() as usize;
+            let x1 = (((dx + 1) as f64 * xs).floor() as usize).max(x0 + 1);
+            let mut acc = [0.0f64; 3];
+            for y in y0..y1 {
+                let row = y * sw;
+                for x in x0..x1 {
+                    let i = (row + x) * 3;
+                    for c in 0..3 {
+                        acc[c] += f64::from(src[i + c]);
+                    }
+                }
+            }
+            let n = ((y1 - y0) * (x1 - x0)) as f64;
+            let o = (dy * width + dx) * 3;
+            for c in 0..3 {
+                out[o + c] = (acc[c] / n).round() as u16;
+            }
+        }
+    }
+    Some(out)
+}
+
 /// A radial polynomial as knots, so a fitted model and a camera's own spline are
 /// interchangeable everywhere downstream.
 pub fn polynomial_knots(k1: f64, k2: f64, count: usize) -> Vec<f64> {
@@ -129,6 +237,58 @@ mod tests {
         assert_eq!(out.data[centre], source.data[centre], "the centre is a fixed point");
         let edge = (32 * 64 + 60) * 3;
         assert_ne!(out.data[edge], source.data[edge], "but the edges must have moved");
+    }
+
+    #[test]
+    fn the_box_resize_averages_rather_than_samples() {
+        // Two-by-two blocks of a known value: an averaging shrink returns the value,
+        // a nearest-neighbour one returns whichever corner it happened to land on.
+        let (w, h) = (4usize, 4usize);
+        let mut src = vec![0u16; w * h * 3];
+        for y in 0..h {
+            for x in 0..w {
+                let block = (y / 2) * 2 + (x / 2);
+                let i = (y * w + x) * 3;
+                for c in 0..3 {
+                    src[i + c] = (1000 * (block + 1)) as u16;
+                }
+            }
+        }
+        let out = box_resize_u16(&src, w, h, 2, 2).expect("a downscale");
+        assert_eq!(out.len(), 2 * 2 * 3);
+        for block in 0..4 {
+            assert_eq!(out[block * 3], (1000 * (block + 1)) as u16, "block {block}");
+        }
+    }
+
+    #[test]
+    fn the_box_resize_refuses_to_enlarge() {
+        // It exists to avoid work, not to invent detail; the caller keeps the original.
+        let src = vec![7u16; 8 * 8 * 3];
+        assert!(box_resize_u16(&src, 8, 8, 16, 16).is_none());
+        assert!(box_resize_u16(&src, 8, 8, 8, 8).is_none(), "the same size is not a downscale");
+        assert!(box_resize_u16(&src, 8, 8, 4, 4).is_some());
+    }
+
+    #[test]
+    fn the_planar_warp_matches_the_8_bit_one() {
+        // Two warps is two places for a sign to be wrong in, so the generic form has
+        // to agree with the one the SDR fit uses.
+        let source = ramp(32, 24);
+        let knots = polynomial_knots(-0.03, 0.0, 16);
+        let eight = warp(source.as_ref(), 32, 24, &knots, 0.98);
+        let planar: Vec<u8> = warp_planar(
+            &source.data,
+            32,
+            24,
+            32,
+            24,
+            &knots,
+            0.98,
+            |v| f64::from(v),
+            |v| v as u8,
+        );
+        assert_eq!(eight.data, planar);
     }
 
     #[test]

@@ -24,9 +24,13 @@ use std::os::raw::{c_char, c_int};
 
 pub mod ffi;
 pub mod fit;
+pub mod hdr;
+pub mod hdr_args;
+pub mod hdr_fit;
 pub mod header;
 pub mod image;
 pub mod lens;
+pub mod tone;
 pub mod vips;
 
 mod raw {
@@ -100,6 +104,21 @@ impl BbImage {
     /// have no path for - they are all 8-bit sRGB, and reading a 16-bit buffer as
     /// though it were 8-bit would silently render half the frame.
     ///
+    /// The samples of a 16-bit decode, borrowed. None for an 8-bit one.
+    ///
+    /// Separate from `view` because the two are not interchangeable: the image
+    /// operations are all 8-bit sRGB, and the HDR grade is all 16-bit scene-linear.
+    /// Reading either buffer as the other silently renders half a frame.
+    ///
+    /// # Safety
+    /// `data` must still point at the allocation this handle was built with.
+    pub unsafe fn view_u16(&self) -> Option<&[u16]> {
+        if self.depth != 16 || self.data.is_null() {
+            return None;
+        }
+        Some(std::slice::from_raw_parts(self.data as *const u16, self.len / 2))
+    }
+
     /// # Safety
     /// `data` must still point at the allocation this handle was built with.
     pub unsafe fn view(&self) -> Option<vips::RgbRef<'_>> {
@@ -340,6 +359,27 @@ unsafe fn with_embedded_jpeg<T>(path: *const c_char, use_bytes: impl FnOnce(&[u8
     raw::libraw_recycle(r);
     raw::libraw_close(r);
     result
+}
+
+/// The camera's embedded preview as RGB, bounded by `long_edge`, for callers on this
+/// side of the boundary. None when the file embeds no JPEG preview.
+pub fn decode_embedded_rgb(path: &str, long_edge: usize) -> Option<vips::Rgb> {
+    vips::init();
+    let c_path = std::ffi::CString::new(path).ok()?;
+    // SAFETY: the CString outlives the call.
+    let decoded = unsafe {
+        with_embedded_jpeg(c_path.as_ptr(), |bytes| {
+            vips::Pipeline::thumbnail(bytes, long_edge).and_then(vips::Pipeline::finish)
+        })
+    };
+    match decoded {
+        Some(Ok(image)) => Some(image),
+        Some(Err(detail)) => {
+            eprintln!("decode_embedded_rgb: {detail}");
+            None
+        }
+        None => None,
+    }
 }
 
 /// Decodes the camera's embedded preview to an upright RGB bitmap, fitted to
