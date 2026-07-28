@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'bun:test';
-import { parseCaptureOffset } from '../exif_zone';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { parseCaptureOffset, readCaptureOffset } from '../exif_zone';
 
 // A TIFF header with one IFD0 entry pointing at an Exif IFD, which holds the
 // offset tags. Built rather than read from a file: the fixture RAW is from a
@@ -68,5 +71,23 @@ describe('parseCaptureOffset', () => {
 
   it('reads a tag written straight into IFD0, without an Exif pointer', () => {
     expect(parseCaptureOffset(tiff({ nested: false }))).toBe('+11:00');
+  });
+});
+
+describe('readCaptureOffset', () => {
+  it('reads the header off disk, and answers null rather than throwing when it cannot', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'bb-exif-'));
+    try {
+      // Well under the read window, so the short-file path is what runs here.
+      const raw = path.join(dir, 'a.arw');
+      writeFileSync(raw, tiff());
+      expect(await readCaptureOffset(raw)).toBe('+11:00');
+
+      expect(await readCaptureOffset(path.join(dir, 'gone.arw'))).toBeNull();
+      writeFileSync(path.join(dir, 'empty.arw'), '');
+      expect(await readCaptureOffset(path.join(dir, 'empty.arw'))).toBeNull();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

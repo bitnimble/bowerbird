@@ -1,5 +1,3 @@
-import { open } from 'node:fs/promises';
-
 // EXIF 2.31 (2016) added the tags that say what zone a capture time was written
 // in. LibRaw exposes none of them - it hands back a `time_t` and nothing else
 // (DESIGN §11.1) - so they are read here, straight out of the TIFF header the
@@ -79,14 +77,10 @@ export function parseCaptureOffset(bytes: Uint8Array): string | null {
 // The camera's UTC offset for this frame, as EXIF wrote it, or null when the
 // body recorded none.
 export async function readCaptureOffset(filePath: string): Promise<string | null> {
-  const file = await open(filePath, 'r');
   try {
-    const bytes = new Uint8Array(WINDOW_BYTES);
-    const { bytesRead } = await file.read(bytes, 0, WINDOW_BYTES, 0);
-    return parseCaptureOffset(bytes.subarray(0, bytesRead));
+    // slice() is lazy, so only the window is ever read off disk.
+    return parseCaptureOffset(await Bun.file(filePath).slice(0, WINDOW_BYTES).bytes());
   } catch {
     return null; // an unreadable header is not a reason to fail the whole scan
-  } finally {
-    await file.close();
   }
 }
