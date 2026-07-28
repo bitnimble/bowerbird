@@ -458,6 +458,30 @@ test('the stage never shows the previous photo after navigating to another one',
   await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
 });
 
+// Regression: the panels were gated on this photo's detail arriving, so the strip
+// under a landscape frame collapsed to nothing while it was in flight and the
+// stage - a grid track sized against that strip - painted the photo full-size and
+// then shrank it when the panels landed.
+test('the panels keep their shape while the next photo is loading', async ({ page }) => {
+  await page.goto('/settings');
+  await openLibrary(page, CULL_PHOTOS_DIR);
+  await page.locator('.tile__hit').first().click();
+  await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
+
+  // Held open, or the API answers before there is a loading state to observe.
+  await page.route(/\/api\/photos\/[^/?]+$/, async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    await route.continue();
+  });
+
+  // Every panel is up while the fetch is still out, holding its rows empty rather
+  // than by keeping the previous photo's values.
+  await page.getByRole('button', { name: 'Next photo' }).click();
+  const camera = page.locator('.panel', { has: page.locator('.panel__title', { hasText: 'CAMERA' }) });
+  await expect(camera.getByText('loading').first()).toBeVisible();
+  await expect(page.locator('.detail__panels .panel')).toHaveCount(5);
+});
+
 test('the next photo is fetched while the current one is on screen', async ({ page }) => {
   const fetched: string[] = [];
   page.on('request', (r) => {

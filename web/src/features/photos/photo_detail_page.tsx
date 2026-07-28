@@ -22,6 +22,7 @@ import {
   originalUrl,
   renditionVideoUrl,
   viewerUrl,
+  type PhotoDetail,
   type PreviewRendition,
 } from '../../api/client';
 import { captureDateTime, localDateTime } from '../../api/dates';
@@ -38,6 +39,10 @@ import { PhotoStage } from './photo_stage';
 import { TRIAGE_KEYS, TriageControl } from './triage_control';
 
 type Row = [label: string, value: React.ReactNode];
+
+// Stands in for a field until the detail fetch lands, so every panel is its
+// final height from the first frame.
+const PENDING = 'loading';
 
 // Two rows visible, the rest one click away. Every panel then costs the same
 // three lines, so the column stays scannable however much a camera recorded.
@@ -246,6 +251,13 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   const expanded = !landscape;
   const filename = photo?.file_path.split('/').pop() ?? photoId;
 
+  // The panel strip is a grid track the stage is sized against, so it has to
+  // hold its height across the detail fetch. Every field that fetch answers
+  // renders as PENDING until it lands rather than the panel not rendering at
+  // all: an empty strip let the photo paint full-size and then shrink under
+  // itself when the panels appeared.
+  const pending = (value: (p: PhotoDetail) => React.ReactNode): React.ReactNode => (photo == null ? PENDING : value(photo));
+
   return (
     <div className="pad detail-page">
       <div className="row detail__nav">
@@ -332,143 +344,141 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
         />
 
         <div className="detail__panels">
-          {photo != null && (
-            <>
-              <Panel title="Triage">
-                <TriageControl value={photo.triage} onChange={(next) => void photos.setTriage(photo.id, next)} />
+          <Panel title="Triage">
+            {/* From the shape, so the verdict on screen is right from the first
+                frame and stays hittable while the detail is in flight. */}
+            <TriageControl value={shape?.triage ?? 'untriaged'} onChange={(next) => void photos.setTriage(photoId, next)} />
 
-                <div className="row detail__rating">
-                  <Text variant="label">Rating</Text>
-                  <div className="stars">
-                    {[1, 2, 3, 4, 5].map((n) => (
-                      <button
-                        key={n}
-                        type="button"
-                        className={`star${n <= photo.rating ? ' on' : ''}`}
-                        aria-label={`Set rating to ${n}`}
-                        onClick={() => void photos.setRating(photo.id, n === photo.rating ? 0 : n)}
-                      >
-                        ★
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </Panel>
+            <div className="row detail__rating">
+              <Text variant="label">Rating</Text>
+              <div className="stars">
+                {[1, 2, 3, 4, 5].map((n) => (
+                  <button
+                    key={n}
+                    type="button"
+                    className={`star${n <= (shape?.rating ?? 0) ? ' on' : ''}`}
+                    aria-label={`Set rating to ${n}`}
+                    onClick={() => void photos.setRating(photoId, n === shape?.rating ? 0 : n)}
+                  >
+                    ★
+                  </button>
+                ))}
+              </div>
+            </div>
+          </Panel>
 
-              <Panel title="Notes">
-                <TextArea
-                  label="Notes"
-                  placeholder="Add a note"
-                  value={notes}
-                  onChange={setNotes}
-                  onBlur={() => {
-                    if (notesDirty) void photos.setNotes(photo.id, notes);
-                  }}
-                />
-                <Text variant="mono">{notesDirty ? 'unsaved' : store.notesSavedAt != null ? 'saved' : ''}</Text>
-              </Panel>
+          <Panel title="Notes">
+            <TextArea
+              label="Notes"
+              placeholder="Add a note"
+              value={notes}
+              onChange={setNotes}
+              onBlur={() => {
+                if (notesDirty) void photos.setNotes(photoId, notes);
+              }}
+            />
+            <Text variant="mono">{notesDirty ? 'unsaved' : store.notesSavedAt != null ? 'saved' : ''}</Text>
+          </Panel>
 
-              <MetaPanel
-                title="Camera"
-                defaultOpen={expanded}
-                rows={[
-                  ['Body', bodyLabel(photo.camera_make, photo.camera_model)],
-                  ['Lens', photo.lens_model ?? 'not recorded'],
-                  ['ISO', photo.iso ?? 'not recorded'],
-                  ['Shutter', photo.shutter_speed == null ? 'not recorded' : shutterLabel(photo.shutter_speed)],
-                  ['Aperture', photo.aperture == null ? 'not recorded' : `f/${photo.aperture.toFixed(1)}`],
-                  ['Focal length', photo.focal_length == null ? 'not recorded' : `${Math.round(photo.focal_length)}mm`],
-                  // The camera's own clock, with the zone it was set to where the
-                  // body recorded one: without that, 5pm in Sydney and 5pm in
-                  // London are the same string on a trip that spanned both.
-                  ['Taken', takenLabel(photo.date_taken, photo.date_taken_offset)],
-                  [
-                    'GPS',
-                    photo.latitude == null || photo.longitude == null
-                      ? 'not recorded'
-                      : `${photo.latitude.toFixed(5)}, ${photo.longitude.toFixed(5)}`,
-                  ],
-                ]}
-              />
+          <MetaPanel
+            title="Camera"
+            defaultOpen={expanded}
+            rows={[
+              ['Body', pending((p) => bodyLabel(p.camera_make, p.camera_model))],
+              ['Lens', pending((p) => p.lens_model ?? 'not recorded')],
+              ['ISO', pending((p) => p.iso ?? 'not recorded')],
+              ['Shutter', pending((p) => (p.shutter_speed == null ? 'not recorded' : shutterLabel(p.shutter_speed)))],
+              ['Aperture', pending((p) => (p.aperture == null ? 'not recorded' : `f/${p.aperture.toFixed(1)}`))],
+              ['Focal length', pending((p) => (p.focal_length == null ? 'not recorded' : `${Math.round(p.focal_length)}mm`))],
+              // The camera's own clock, with the zone it was set to where the
+              // body recorded one: without that, 5pm in Sydney and 5pm in
+              // London are the same string on a trip that spanned both.
+              ['Taken', pending((p) => takenLabel(p.date_taken, p.date_taken_offset))],
+              [
+                'GPS',
+                pending((p) =>
+                  p.latitude == null || p.longitude == null ? 'not recorded' : `${p.latitude.toFixed(5)}, ${p.longitude.toFixed(5)}`,
+                ),
+              ],
+            ]}
+          />
 
-              <MetaPanel
-                title="Image preview details"
-                defaultOpen={expanded}
-                rows={[
-                  // Reports the rendition actually on screen, which is the chosen
-                  // one when the user has switched away from the photo's own.
-                  // Null on rows thumbnailed before the column existed, which is
-                  // "not recorded" rather than "not built".
-                  ['Source', rendition == null && photo.rendition_source == null ? 'unknown' : renditionLabel(showing)],
-                  // Named and ordered as in Original RAW below, so the same fact
-                  // about two files reads the same way in both panels.
-                  // Both rows describe what actually arrived rather than what a
-                  // column claims: the pixels come off the decoded image, the
-                  // weight off the response that carried it.
-                  // The video twin is the exception on both counts: its weight is
-                  // reported by the server, a media element leaving no timing
-                  // entry to read it off.
-                  ['Dimensions', shownImage == null ? 'loading' : `${shownImage.width} × ${shownImage.height}`],
-                  [
-                    'File size',
-                    shownVideo != null
-                      ? fileSizeLabel(shownVideo.bytes)
-                      : shownImage == null
-                        ? 'loading'
-                        : shownImage.bytes == null
-                          ? 'unknown'
-                          : fileSizeLabel(shownImage.bytes),
-                  ],
-                  // The camera's JPEG is passed through untouched, so the encoder
-                  // settings the other two are built with say nothing about it.
-                  [
-                    'Format',
-                    shownVideo != null ? 'AV1 (MP4)' : showing === 'embedded' ? 'JPEG' : (thumbs?.format.toUpperCase() ?? 'WEBP'),
-                  ],
-                  // The server config reports the SDR pipeline's output space; an
-                  // HDR render leaves it for Rec.2020 primaries and a PQ transfer.
-                  ['Colour space', hdr ? 'Rec.2020 PQ' : (thumbs?.color_space ?? 'sRGB')],
-                  [
-                    'Quality',
-                    showing === 'embedded'
-                      ? 'N/A'
-                      : thumbs == null
-                        ? 'unknown'
-                        : `${thumbs.full.quality} (longest edge ${thumbs.full.size}px)`,
-                  ],
-                  ['Path', shownVideo?.path ?? shownFile?.path ?? 'unknown'],
-                ]}
-              />
+          <MetaPanel
+            title="Image preview details"
+            defaultOpen={expanded}
+            rows={[
+              // Reports the rendition actually on screen, which is the chosen
+              // one when the user has switched away from the photo's own.
+              // Null on rows thumbnailed before the column existed, which is
+              // "not recorded" rather than "not built".
+              ['Source', pending((p) => (rendition == null && p.rendition_source == null ? 'unknown' : renditionLabel(showing)))],
+              // Named and ordered as in Original RAW below, so the same fact
+              // about two files reads the same way in both panels.
+              // Both rows describe what actually arrived rather than what a
+              // column claims: the pixels come off the decoded image, the
+              // weight off the response that carried it.
+              // The video twin is the exception on both counts: its weight is
+              // reported by the server, a media element leaving no timing
+              // entry to read it off.
+              ['Dimensions', shownImage == null ? PENDING : `${shownImage.width} × ${shownImage.height}`],
+              [
+                'File size',
+                shownVideo != null
+                  ? fileSizeLabel(shownVideo.bytes)
+                  : shownImage == null
+                    ? PENDING
+                    : shownImage.bytes == null
+                      ? 'unknown'
+                      : fileSizeLabel(shownImage.bytes),
+              ],
+              // The camera's JPEG is passed through untouched, so the encoder
+              // settings the other two are built with say nothing about it.
+              [
+                'Format',
+                pending(() => (shownVideo != null ? 'AV1 (MP4)' : showing === 'embedded' ? 'JPEG' : (thumbs?.format.toUpperCase() ?? 'WEBP'))),
+              ],
+              // The server config reports the SDR pipeline's output space; an
+              // HDR render leaves it for Rec.2020 primaries and a PQ transfer.
+              ['Colour space', pending(() => (hdr ? 'Rec.2020 PQ' : (thumbs?.color_space ?? 'sRGB')))],
+              [
+                'Quality',
+                pending(() =>
+                  showing === 'embedded' ? 'N/A' : thumbs == null ? 'unknown' : `${thumbs.full.quality} (longest edge ${thumbs.full.size}px)`,
+                ),
+              ],
+              ['Path', pending(() => shownVideo?.path ?? shownFile?.path ?? 'unknown')],
+            ]}
+          />
 
-              <MetaPanel
-                title="Original RAW"
-                defaultOpen={expanded}
-                rows={[
-                  ['Dimensions', `${photo.width} × ${photo.height}`],
-                  ['File size', photo.file_size == null ? 'unknown' : fileSizeLabel(photo.file_size)],
-                  ['Added', localDateTime(photo.date_added) ?? photo.date_added],
-                  ['Shoot', shoot == null ? 'none' : <Link to={`/shoots/${shoot.id}`}>{shoot.folder_path}</Link>],
-                  [
-                    'Albums',
-                    photoAlbums.length === 0
-                      ? 'none'
-                      : photoAlbums.map((a, i) => (
-                          <Fragment key={a.id}>
-                            {i > 0 && ', '}
-                            <Link to={`/albums/${a.id}`}>{a.name}</Link>
-                          </Fragment>
-                        )),
-                  ],
-                  [
-                    'State',
-                    `${photo.is_missing ? 'missing' : photo.is_deleted ? 'binned' : 'ok'}${photo.needs_processing ? ' · thumbnailing' : ''}`,
-                  ],
-                  ...(photo.processing_error != null ? ([['Error', photo.processing_error]] as Row[]) : []),
-                  ['Path', photo.original_path ?? photo.file_path],
-                ]}
-              />
-            </>
-          )}
+          <MetaPanel
+            title="Original RAW"
+            defaultOpen={expanded}
+            rows={[
+              ['Dimensions', shape == null ? PENDING : `${shape.width} × ${shape.height}`],
+              ['File size', pending((p) => (p.file_size == null ? 'unknown' : fileSizeLabel(p.file_size)))],
+              ['Added', pending((p) => localDateTime(p.date_added) ?? p.date_added)],
+              ['Shoot', pending(() => (shoot == null ? 'none' : <Link to={`/shoots/${shoot.id}`}>{shoot.folder_path}</Link>))],
+              [
+                'Albums',
+                pending(() =>
+                  photoAlbums.length === 0
+                    ? 'none'
+                    : photoAlbums.map((a, i) => (
+                        <Fragment key={a.id}>
+                          {i > 0 && ', '}
+                          <Link to={`/albums/${a.id}`}>{a.name}</Link>
+                        </Fragment>
+                      )),
+                ),
+              ],
+              [
+                'State',
+                pending((p) => `${p.is_missing ? 'missing' : p.is_deleted ? 'binned' : 'ok'}${p.needs_processing ? ' · thumbnailing' : ''}`),
+              ],
+              ...(photo?.processing_error != null ? ([['Error', photo.processing_error]] as Row[]) : []),
+              ['Path', pending((p) => p.original_path ?? p.file_path)],
+            ]}
+          />
         </div>
       </div>
     </div>
