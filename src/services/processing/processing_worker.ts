@@ -28,30 +28,51 @@ declare const self: {
 // drops chroma to a quarter of the samples, smearing the saturated edges a photo
 // is judged on. sharp's AVIF is 8-bit whatever the input depth, which is why the
 // HDR path below cannot go through sharp at all (§10.2).
-function fit(image: sharp.Sharp, target: RenditionTarget): sharp.Sharp {
-  return target.size === 0 ? image : image.resize({ width: target.size, height: target.size, fit: 'inside' });
+function fitTo(image: sharp.Sharp, size: number): sharp.Sharp {
+  return size === 0 ? image : image.resize({ width: size, height: size, fit: 'inside' });
 }
 
 function toAvif(image: sharp.Sharp, target: RenditionTarget): sharp.Sharp {
-  return fit(image, target).avif({ quality: target.quality, effort: target.effort, chromaSubsampling: '4:4:4' });
+  return fitTo(image, target.size).avif({
+    quality: target.quality,
+    effort: target.effort,
+    chromaSubsampling: '4:4:4',
+  });
 }
 
-// The match transform after the resize rather than before it. The distortion model
-// is in radii normalised to the half-diagonal, so it is resolution-independent, and
-// the colour transform is a per-pixel lookup - which makes this the same picture
-// either way, for a fraction of the work. Warping the full 60MP decode when the
-// output is an 800px tile costs seconds per rendition, and the worker builds
-// several from one photo.
-async function toMatchedAvif(image: sharp.Sharp, target: RenditionTarget, profile: MatchProfile): Promise<void> {
-  const sized = await fit(image, target).raw().toBuffer({ resolveWithObject: true });
-  const matched = await applyMatchProfile(
-    { width: sized.info.width, height: sized.info.height, channels: 3, depth: 8, data: sized.data },
-    profile,
-  );
-  const raw = { raw: { width: matched.width, height: matched.height, channels: matched.channels } };
-  await sharp(matched.data, raw)
-    .avif({ quality: target.quality, effort: target.effort, chromaSubsampling: '4:4:4' })
-    .toFile(target.outputPath);
+interface Plane {
+  width: number;
+  height: number;
+  data: Buffer;
+}
+
+function planeSource(plane: Plane): sharp.Sharp {
+  return sharp(plane.data, { raw: { width: plane.width, height: plane.height, channels: 3 } });
+}
+
+/** 0 (native) beats any bounded size, since it is the whole frame. */
+function largestSdrSize(targets: readonly RenditionTarget[]): number {
+  const sdr = targets.filter((target) => !target.hdr);
+  return sdr.some((target) => target.size === 0) ? 0 : Math.max(...sdr.map((target) => target.size));
+}
+
+/**
+ * The render with the match applied, once, at the largest SDR size the job needs.
+ *
+ * Every smaller rendition is then a resize of this rather than its own warp and
+ * re-grade of the same picture: a `render` import builds an 800px tile and a
+ * 3840px view, and transforming each separately did the 9.8M-pixel work twice.
+ * Legitimate because the order does not change the result - the distortion model
+ * is in normalised radii and the colour transform is a per-pixel lookup - and
+ * going 3840 to 800 is also a cheaper resize than 9504 to 800.
+ */
+async function matchedBase(image: DecodedImage, size: number, profile: MatchProfile | null): Promise<Plane> {
+  const raw = { raw: { width: image.width, height: image.height, channels: image.channels } };
+  const sized = await fitTo(sharp(image.data, raw), size).raw().toBuffer({ resolveWithObject: true });
+  const plane: Plane = { width: sized.info.width, height: sized.info.height, data: sized.data };
+  if (profile == null) return plane;
+  const matched = await applyMatchProfile({ ...plane, channels: 3, depth: 8 }, profile);
+  return { width: matched.width, height: matched.height, data: matched.data };
 }
 
 // The embedded JPEG carries its own EXIF orientation, so it needs rotating; a
@@ -61,8 +82,7 @@ async function toMatchedAvif(image: sharp.Sharp, target: RenditionTarget, profil
 async function writeSdr(
   job: RenditionJob,
   target: RenditionTarget,
-  decode: () => DecodedImage,
-  profile: MatchProfile | null,
+  base: () => Promise<Plane>,
 ): Promise<ThumbnailSource> {
   if (target.source === 'embedded') {
     const jpeg = readEmbeddedJpeg(job.rawFilePath);
@@ -71,10 +91,8 @@ async function writeSdr(
       return 'embedded';
     }
   }
-  const image = decode();
-  const raw = { raw: { width: image.width, height: image.height, channels: image.channels } };
-  if (profile == null) await toAvif(sharp(image.data, raw), target).toFile(target.outputPath);
-  else await toMatchedAvif(sharp(image.data, raw), target, profile);
+  // The base already carries the match, if there is one.
+  await toAvif(planeSource(await base()), target).toFile(target.outputPath);
   return 'render';
 }
 
@@ -181,12 +199,18 @@ async function renditions(job: RenditionJob): Promise<ThumbnailSource | undefine
       ? await fitHdrMatch(linear(), diffuseWhite(linear(), job.grade.whiteQuantile), jpegBytes, profile)
       : null;
 
+  // Built once at the largest SDR size the job asks for, then resized down for the
+  // rest. Lazy for the same reason the decode is: a job whose only SDR target comes
+  // from the embedded JPEG never demosaics at all.
+  let base: Plane | null = null;
+  const sdrBase = async (): Promise<Plane> => (base ??= await matchedBase(decode(), largestSdrSize(job.targets), profile));
+
   for (const target of job.targets) {
     if (target.hdr) {
       await writeHdr(job, target, linear, hdrMatch);
       continue;
     }
-    const source = await writeSdr(job, target, decode, profile);
+    const source = await writeSdr(job, target, sdrBase);
     // Only the grid is ever built from the embedded JPEG, so it is the only
     // target whose fallback the row needs to hear about.
     if (job.reportSource && target.rendition === 'grid') used = source;
