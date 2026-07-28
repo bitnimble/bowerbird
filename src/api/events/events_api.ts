@@ -1,16 +1,18 @@
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import type { ProcessingService } from '../../services/processing/processing_service';
+import type { RenditionWritten } from '../../services/processing/processing_types';
 
 export interface PhotoEvent {
   // Monotonic for the life of the process, so a reconnecting client can name the
   // last one it saw.
   id: number;
   photoId: string;
-  // The photo's new `date_reprocessed`, which is what a client puts in its image
-  // URLs. Carried on the event so that learning of a rebuild costs nothing beyond
-  // the event: the client writes it into the row it is already holding.
-  version: string;
+  // Which of the photo's derived files moved, and the stamp its row now carries.
+  // The tile and the renditions have one each, so a client moves only the URLs
+  // that actually changed. Carried on the event so learning of a rebuild costs
+  // nothing beyond it: the client writes the stamp into the row it already holds.
+  written: RenditionWritten;
 }
 
 // How far back a reconnecting client can be caught up. A browser retries a
@@ -34,7 +36,7 @@ export class EventsApi {
   private readonly clients = new Set<(event: PhotoEvent) => void>();
 
   constructor(processing: ProcessingService) {
-    processing.onProcessed((photoId, version) => this.publish(photoId, version));
+    processing.onProcessed((photoId, written) => this.publish(photoId, written));
 
     const app = new Hono();
 
@@ -49,7 +51,8 @@ export class EventsApi {
         };
 
         const send = (event: PhotoEvent): void => {
-          void write({ id: String(event.id), event: 'thumbnail', data: JSON.stringify({ id: event.photoId, version: event.version }) });
+          const data = JSON.stringify({ id: event.photoId, stage: event.written.stage, version: event.written.version });
+          void write({ id: String(event.id), event: 'thumbnail', data });
         };
         for (const event of this.since(c.req.header('Last-Event-ID'))) send(event);
         this.clients.add(send);
@@ -91,8 +94,8 @@ export class EventsApi {
     return this.recent.filter((event) => event.id > last);
   }
 
-  private publish(photoId: string, version: string): void {
-    const event: PhotoEvent = { id: this.nextId++, photoId, version };
+  private publish(photoId: string, written: RenditionWritten): void {
+    const event: PhotoEvent = { id: this.nextId++, photoId, written };
     this.recent.push(event);
     if (this.recent.length > REPLAY) this.recent.shift();
     for (const send of this.clients) send(event);

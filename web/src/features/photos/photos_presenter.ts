@@ -7,6 +7,7 @@ import {
   type PhotoListResponse,
   type PhotoSummary,
   type PreviewRendition,
+  type ProcessingStage,
   type Rendition,
   type ThumbnailSource,
   type Triage,
@@ -76,7 +77,7 @@ export class PhotosPresenter {
   // themselves are settled once the scan has finished inserting them, and their
   // thumbnails arrive by announcement (§18.6) rather than by re-reading the list.
   get tracksProcessing(): boolean {
-    return this.store.filters.needsProcessing != null;
+    return this.store.filters.needsTile != null;
   }
 
   // --- view controls ---
@@ -173,15 +174,20 @@ export class PhotosPresenter {
     }
   }
 
-  // The server has rewritten this photo's renditions. Written into the row every
-  // view already renders from, which is what moves its image URLs on to the new
-  // files; mobx notifies the one tile whose field changed and nothing else.
+  // The server has rewritten one of this photo's derived files. Written into the
+  // row every view already renders from, which is what moves that file's URLs on;
+  // mobx notifies the one tile whose field changed and nothing else.
+  //
+  // Only the stamp for the stage that moved: the grid tile and the viewer's
+  // renditions have one each, so rebuilding a photo's renditions leaves its tile
+  // where it is rather than re-fetching bytes that did not change.
   @action.bound
-  renditionsRebuilt(photoId: string, version: string): void {
+  renditionsRebuilt(photoId: string, stage: ProcessingStage, version: string): void {
+    const field = stage === 'tile' ? 'tile_built_at' : 'renditions_built_at';
     const row = this.store.photos.find((p) => p.id === photoId);
-    if (row != null) row.date_reprocessed = version;
+    if (row != null) row[field] = version;
     const detail = this.store.detailFor(photoId);
-    if (detail != null) detail.date_reprocessed = version;
+    if (detail != null) detail[field] = version;
   }
 
   // Reported by the stage when a frame has decoded, so the panel beside it can
@@ -581,7 +587,7 @@ export class PhotosPresenter {
       rated: f.rated,
       triage: f.triage,
       is_missing: f.isMissing,
-      needs_processing: f.needsProcessing,
+      needs_tile: f.needsTile,
       taken_from: f.takenFrom,
       taken_to: f.takenTo,
       match: f.match,

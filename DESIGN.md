@@ -204,8 +204,14 @@ CREATE TABLE photos (
   date_taken        TEXT,
   date_added        TEXT NOT NULL,
   date_updated      TEXT,  -- last modified on disk
-  date_reprocessed  TEXT,
-  needs_processing  INTEGER NOT NULL DEFAULT 1,
+  -- One pending flag and one written-at stamp per import stage (10.2): the grid
+  -- tile the gallery shows, then the photo viewer's renditions. Split so a run
+  -- interrupted between them resumes at the one it did not reach, and so a URL
+  -- versioned off a stamp moves only when its own file did (13.5).
+  needs_tile        INTEGER NOT NULL DEFAULT 1,
+  needs_renditions  INTEGER NOT NULL DEFAULT 1,
+  tile_built_at     TEXT,
+  renditions_built_at TEXT,
   processing_error  TEXT,  -- last thumbnail-generation error; NULL if none/succeeded (§10.2)
   latitude          REAL,
   longitude         REAL,
@@ -230,7 +236,8 @@ CREATE INDEX idx_photos_shoot_added ON photos(shoot_id, date_added);
 CREATE INDEX idx_photos_shoot_taken ON photos(shoot_id, date_taken);
 CREATE INDEX idx_photos_file_hash ON photos(library_id, file_hash);
 CREATE INDEX idx_photos_file_path ON photos(library_id, file_path);
-CREATE INDEX idx_photos_needs_processing ON photos(needs_processing) WHERE needs_processing = 1;
+CREATE INDEX idx_photos_needs_tile ON photos(needs_tile) WHERE needs_tile = 1;
+CREATE INDEX idx_photos_needs_renditions ON photos(needs_renditions) WHERE needs_renditions = 1;
 CREATE INDEX idx_photos_is_missing ON photos(library_id, is_missing) WHERE is_missing = 1;
 CREATE INDEX idx_photos_is_deleted ON photos(library_id, is_deleted) WHERE is_deleted = 1;
 ```
@@ -406,8 +413,10 @@ export const PhotoDetailSchema = PhotoSummarySchema.extend({
   date_taken: z.string().nullable(),
   date_added: z.string(),
   date_updated: z.string().nullable(),
-  date_reprocessed: z.string().nullable(),
-  needs_processing: z.boolean(),
+  tile_built_at: z.string().nullable(),
+  renditions_built_at: z.string().nullable(),
+  needs_tile: z.boolean(),
+  needs_renditions: z.boolean(),
   processing_error: z.string().nullable(),
   latitude: z.number().nullable(),
   longitude: z.number().nullable(),
@@ -440,7 +449,7 @@ export const PhotoListQuerySchema = PaginationSchema
   .extend(SoftDeleteFilterSchema.shape)  // include_deleted
   .extend({
     is_missing: z.stringbool().optional(),
-    needs_processing: z.stringbool().optional(),
+    needs_tile: z.stringbool().optional(),
   });
 ```
 
@@ -582,7 +591,7 @@ function isSupportedFile(filename: string): boolean {
 | Method | Description |
 |---|---|
 | `get(photoId)` | Returns full photo detail by ID. |
-| `listByLibrary(libraryId, pagination, filters?)` | Returns paginated `PhotoSummary` list for a library. Excludes soft-deleted photos unless `include_deleted` is set (§13.2). Supports optional `is_missing` and `needs_processing` filters. Ordering is determined by the library's `ordering` setting, with NULL ordering dates sorted last. |
+| `listByLibrary(libraryId, pagination, filters?)` | Returns paginated `PhotoSummary` list for a library. Excludes soft-deleted photos unless `include_deleted` is set (§13.2). Supports optional `is_missing` and `needs_tile` filters. Ordering is determined by the library's `ordering` setting, with NULL ordering dates sorted last. |
 | `listByShoot(shootId, pagination, filters?)` | Returns paginated `PhotoSummary` list for a shoot. Accepts the same `include_deleted` filter (§13.2), excluding soft-deleted by default. |
 | `listByAlbum(albumId, pagination, filters?)` | Returns paginated `PhotoSummary` list for an album. Accepts the same `include_deleted` filter, excluding soft-deleted by default. |
 | `listMissing(libraryId, pagination)` | Convenience method: calls `listByLibrary` with `is_missing: true` filter. |
@@ -612,7 +621,7 @@ This service handles the full sync algorithm. See §9 for the detailed algorithm
 
 | Method | Description |
 |---|---|
-| `processUnprocessed(libraryId?)` | Queries for photos with `needs_processing = 1` and `is_missing = 0`, spawns Bun worker threads (up to configured concurrency) to generate thumbnails. Updates `needs_processing`, `date_reprocessed` on completion. |
+| `processUnprocessed(libraryId?)` | Queries for photos owing either stage (`needs_tile` or `needs_renditions`) with `is_missing = 0`, spawns Bun worker threads (up to configured concurrency) to generate them. Each stage clears its own flag and stamps its own `*_built_at` as it lands. |
 | `processPhoto(photoId)` | Processes a single photo on the main thread: resolves the raw file and thumbnail output paths from the repositories, dispatches the job to a worker (§10.2, §10.3), and persists the result. |
 | `getProcessingStatus(libraryId)` | Returns count of photos pending/completed processing. |
 
@@ -759,7 +768,7 @@ interface MoveEntry {
 Process in this order within a database transaction:
 
 1. **Moves:** Update `file_path` for each moved photo. Clear `is_missing` if it was set. **Reconcile shoot membership from the destination path:** if `newFilePath` falls under a known shoot's `folder_path`, set the photo's `shoot_id` to the **most-specific (longest-matching) `folder_path`** shoot (so a file under `NYC/Day1` maps to `Day1`, not the ancestor `NYC`); if it moved out to the library root (or a non-shoot folder), clear `shoot_id`. This keeps DB shoot membership consistent with files the user relocated on disk directly (rather than via the shoots API).
-2. **Modifications:** Update `file_hash`, `width`, `height`, `orientation`, `date_updated`, `needs_processing = 1` for each modified photo, plus any other changed metadata columns (GPS, `date_taken`). Clear `is_missing` if it was set.
+2. **Modifications:** Update `file_hash`, `width`, `height`, `orientation`, `date_updated`, and both pending flags for each modified photo, plus any other changed metadata columns (GPS, `date_taken`). Clear `is_missing` if it was set.
 3. **Additions:** Insert new photo records:
    - `id` = new UUID v4 (`crypto.randomUUID()`)
    - `library_id` = the library being synced
@@ -771,7 +780,7 @@ Process in this order within a database transaction:
    - `date_taken` = UTC-normalized EXIF capture time (§11.1) if available, else NULL
    - `date_updated` = filesystem mtime
    - `latitude`, `longitude` = from EXIF GPS data if available
-   - `needs_processing = 1`
+   - `needs_tile = 1`, `needs_renditions = 1`
    - `is_missing = 0`
    - `is_deleted = 0`
    - `rating = 0`
@@ -781,7 +790,7 @@ Process in this order within a database transaction:
 
 ### 9.5 Phase 4: Trigger Processing
 
-After all changes are applied, call `ProcessingService.processUnprocessed()` to begin background thumbnail generation for all photos with `needs_processing = 1` and `is_missing = 0`.
+After all changes are applied, call `ProcessingService.processUnprocessed()` to begin background generation for every photo owing either stage (`needs_tile` or `needs_renditions`) with `is_missing = 0`.
 
 ### 9.6 Sync Status Tracking
 
@@ -906,12 +915,12 @@ Every writer on this path fails on a missing directory rather than creating one,
 Processing uses **Bun worker threads** for parallelism. The concurrency level is configurable (default: 4 workers).
 
 The orchestrator (`processing_service.ts`):
-1. Queries for all photos with `needs_processing = 1` and `is_missing = 0` (a photo whose file went missing while processing was still pending must not be run against the absent file; excluding it keeps `needs_processing = 1` so it is generated on the sync that clears `is_missing`, §9.4 step 4).
+1. Queries for all photos owing either stage with `is_missing = 0` (a photo whose file went missing while processing was still pending must not be run against the absent file; excluding it leaves its flags set so it is generated on the sync that clears `is_missing`, §9.4 step 4).
 2. Maintains a work queue.
 3. Spawns up to N Bun `Worker` instances, each running `processing_worker.ts`.
 4. Sends photo processing jobs to workers via `postMessage`.
 5. Workers send completion/error messages back.
-6. On a success message, the orchestrator updates the photo record: `needs_processing = 0`, `date_reprocessed = now()`, `processing_error = NULL`. On a failure message, it sets `needs_processing = 0` (so the photo is not silently reprocessed on every subsequent sync), records the worker's `error` string in `processing_error`, leaves `date_reprocessed` unchanged, and logs via `console.error`. Such a photo has no thumbnail on disk (the worker deletes any partial or stale output on failure, §10.3), so the image endpoints 404 (§13.5), but `processing_error` distinguishes a failed photo from an unprocessed one.
+6. On a success message, the orchestrator clears the flag for the stage that landed and stamps its `*_built_at`; the renditions stage also writes `rendition_source` and clears `processing_error`. On a failure message, it clears *both* flags (so the photo is not silently reprocessed on every subsequent sync, and a file whose tile could not be built is not asked for renditions), records the worker's `error` string in `processing_error`, leaves the stamps unchanged, and logs via `console.error`. Such a photo has no thumbnail on disk (the worker deletes any partial or stale output on failure, §10.3), so the image endpoints 404 (§13.5), but `processing_error` distinguishes a failed photo from an unprocessed one.
 
 ### 10.3 Worker Implementation (`processing_worker.ts`)
 
@@ -929,7 +938,7 @@ Each worker:
 
 **An import runs in two passes, tiles before renditions.** Both cover the same photos, so this is purely an ordering choice, and it is the reason the stages are split at all: measured over 23 real ARWs, a tile is 124ms where a rendition is 1518ms, and at concurrency 8 that is 30 img/s against 3. On a 2000-frame shoot the whole grid is browsable in about a minute rather than after the eleven minutes the renders take.
 
-`needs_processing` is one boolean and stays one: it clears only when *every* stage of a photo has landed. Clearing it after the tile would leave nothing tracking that the renditions are outstanding, so a crash between the passes would lose them silently, and correcting that needs a second column. Paying for it instead: a crash mid-import redoes the tile as well, at 124ms. The flag's other two jobs - the pending queue and the retry guarantee - are unchanged by the split, and nothing user-facing reads it (`countPendingProcessing` is sync's own loop deciding whether work remains).
+**The pending flag is per stage, because everything that reads it wants to know which one.** `needs_tile` and `needs_renditions` each clear as their own pass lands, so a run interrupted between them resumes at the second rather than redoing a tile already on disk; the queue asks for either (`countPendingProcessing` counts photos owing one, since the sync strip counts photos rather than stages); the gallery's "No thumbnail" filter means `needs_tile`, a photo with a tile being no hole in the grid; and the detail panel can say which of the two it is waiting on rather than reporting one word for two rather different waits. A failure clears both: the failure is the file, not the stage.
 
 A failure sweeps *every* derivative of that photo, not just the stage that failed. A photo is only being reprocessed because its pixels changed, so a rendition the failed run never reached is of the old file and would otherwise be served forever with nothing to notice.
 
@@ -1388,7 +1397,7 @@ For each photo:
 
 3. **Update DB record:**
    - Set `is_deleted = 1`.
-   - Set `needs_processing = 0`.
+   - Clear both pending flags.
    - Do **not** delete the record.
 
 ### 12.2 Restore
@@ -1455,7 +1464,7 @@ Query parameters for listing (`PhotoListQuerySchema`, §5.3):
 - `offset` (int, default 0)
 - `limit` (int, default 100, max 500)
 - `is_missing` (boolean, optional filter)
-- `needs_processing` (boolean, optional filter)
+- `needs_tile` (boolean, optional filter: photos with no grid tile yet)
 - `include_deleted` (boolean, default false)
 - `is_deleted` (boolean, optional filter)
 - `rated` (boolean, optional: `true` = at least one star, `false` = unrated)
@@ -1469,7 +1478,7 @@ The same schema serves the library, shoot and album listings, so a filter behave
 
 `rated` is a "has any rating" test rather than an equality one, because the question during a cull is "what have I not judged yet".
 
-`match` selects how `rated`, `triage`, `is_missing` and `needs_processing` combine. `all` intersects them; `any` unions them, which is what a "show me anything still needing attention" filter means; as an intersection, "picks and unrated and missing" is almost always empty. It applies only to those four: scope (soft-delete, `q`, the date range) always intersects, so narrowing by filename or date still narrows a union.
+`match` selects how `rated`, `triage`, `is_missing` and `needs_tile` combine. `all` intersects them; `any` unions them, which is what a "show me anything still needing attention" filter means; as an intersection, "picks and unrated and missing" is almost always empty. It applies only to those four: scope (soft-delete, `q`, the date range) always intersects, so narrowing by filename or date still narrows a union.
 
 The date range filters on `COALESCE(date_taken, date_added)`; the same date the listing sorts and labels by; so a file the camera never dated stays reachable. `taken_to` is inclusive of the whole closing day (the column is a timestamp, the bound is a date).
 
@@ -1523,7 +1532,7 @@ All boolean query params are parsed with `z.stringbool()`, so `?is_missing=false
 
 **Caching.** Thumbnails are rebuilt in place under a stable URL, so every image response carries an `ETag` (file size + mtime) and `Cache-Control: no-cache`. Without a validator the browser caches heuristically with nothing to revalidate against, and keeps showing the pre-rebuild picture; `no-cache` still caches, it just always asks first, which is a 304 in the common case. `If-None-Match` is answered directly.
 
-That covers everything that *asks*, which is every fresh page load. But an `<img>` whose `src` attribute has not changed never asks at all, so a rebuild is invisible to the copy already decoded in a live page; and a fresh element with the same `src` is handed that copy without revalidating, so remounting does not ask either. Every image URL therefore carries the photo's `date_reprocessed` as a version (§18.6): stamped by whatever wrote the file, delivered on the row, so it is right from the first render, identical in every client, and stable across reloads. Two URLs, two cache entries; the ETag then keeps each of them honest.
+That covers everything that *asks*, which is every fresh page load. But an `<img>` whose `src` attribute has not changed never asks at all, so a rebuild is invisible to the copy already decoded in a live page; and a fresh element with the same `src` is handed that copy without revalidating, so remounting does not ask either. Every image URL therefore carries a version (§18.6): the stamp of whatever produces its bytes - `tile_built_at` for the grid, `renditions_built_at` for the viewer's two, `date_updated` for the camera's JPEG, which is lifted out of the RAW per request. Stamped by whatever wrote the file and delivered on the row, so it is right from the first render, identical in every client, stable across reloads, and moves only when its own file did. Two URLs, two cache entries; the ETag then keeps each of them honest.
 
 These endpoints:
 - Resolve the file path from the photo record and library configuration.
@@ -1860,7 +1869,7 @@ Destructive actions split by reversibility. Binning is undoable, so it just happ
 
 Thumbnails are generated asynchronously, so a tile's first request can 404 while processing is still writing the file, and nothing in the page can know when that changes. **The server says so**: `ProcessingService` announces each photo whose renditions it has just written, and `GET /api/events` streams those announcements to every connected client as `event: thumbnail` (`EventsApi`).
 
-**The version is a column, and it travels on the row.** `photos.date_reprocessed` already meant "when were this photo's renditions last written", which is exactly what a URL has to name; it is on `PhotoSummary`, so every view that renders a photo is already holding it. Appending it is the only thing that makes a rebuilt file visible to an `<img>` that has already decoded the old one (§13.5). Remounting the element is not an alternative: three fresh `<img>`s with the same `src` produce one network request between them, because the browser hands the later ones the copy already in its in-memory resource cache without revalidating. The URL itself has to differ.
+**The version is a column, and it travels on the row.** `photos.tile_built_at` and `photos.renditions_built_at` each mean "when was this file last written", which is exactly what a URL has to name; both are on `PhotoSummary`, so every view that renders a photo is already holding them. Appending it is the only thing that makes a rebuilt file visible to an `<img>` that has already decoded the old one (§13.5). Remounting the element is not an alternative: three fresh `<img>`s with the same `src` produce one network request between them, because the browser hands the later ones the copy already in its in-memory resource cache without revalidating. The URL itself has to differ.
 
 Everything else follows from it being the server's value rather than something a client made up. It is there on the first render, so there is no plain-URL window to be stale in. It survives a reload, so revisiting a catalogue still revalidates rather than re-downloading. Two browsers agree. And the viewer's warmed neighbours are painted at the URL they were warmed at, because both readings come off the same row - which is the invariant a client-side version could not hold, since whatever held it was keyed by the view rather than by the photo.
 
@@ -1870,7 +1879,9 @@ Per photo rather than per rendition because a reprocess rewrites or drops all of
 
 **Stamping the row and announcing it are the same act, and both happen wherever a rendition is written.** There are three such places. The import's rendition pass, at the end of which `markDone` already stamped the row (`markProcessed`). The import's *tile* pass, which is the point of splitting the two (§10.2): the tile is on disk a second and a half before its render, and a grid already on screen should fill at that pace rather than the render's, so the tile announces itself and stamps the row to match (`tileWritten`). And `runOneOff`, which serves the viewer's on-demand build (`POST /photos/:id/renditions/:r`, including the force rebuild that deliberately rewrites a file behind an unchanged URL) and the grid tile repaired on a detail read (§13.2); that path wrote files without touching the row at all, so it stamps one too.
 
-The stamp is what makes each of those announceable rather than merely true: a client builds its URLs out of `date_reprocessed` (§13.5), so telling it about a file the row does not know about yet would have the next list read walk that URL back to the copy the browser already holds. A photo therefore announces twice during an import of a rendering library. The second moves the tile's URL as well, and a moved URL is a different cache key rather than something to revalidate, so the tile is downloaded again in full (~15KB) despite being byte-identical. That is the price of one version per photo rather than one per rendition - which is what the viewer's neighbour warming needs, holding no detail for the frames either side of the one on screen (§18.5) - and it is bounded by the page being watched rather than by the size of the import.
+The stamp is what makes each of those announceable rather than merely true: a client builds its URLs out of these columns (§13.5), so telling it about a file the row does not know about yet would have the next list read walk that URL back to the copy the browser already holds.
+
+**One stamp per stage, not one per photo.** A photo announces twice during an import of a rendering library, and the two announcements move different URLs: the tile pass moves `tile_built_at` and with it the gallery's, the rendition pass moves `renditions_built_at` and with it the viewer's. Shared, the second announcement moved the tile's URL too - and a moved URL is a different cache key rather than something to revalidate, so every tile on the page was downloaded again in full (~15KB each) for bytes that had not changed. Which stamp a URL reads is the rendition it is asking for: `grid` from the tile's, `full` and `max` from the renditions', and the camera's JPEG from `date_updated`, since that one is lifted out of the RAW per request rather than built and changes exactly when the RAW does.
 
 **Being told is the fast path, not the only one.** A tile that 404s also retries on a backoff (`RETRY_DELAYS_MS`, shared with the viewer), because delivery is not guaranteed: the stream can be down, or connect a moment after a tile has already asked, or the client can be asleep for longer than the replay buffer. Without that floor a single missed announcement leaves a tile blank for the life of the page, which is the one thing the counter it replaced, crude as it was, did cover.
 

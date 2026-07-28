@@ -1,12 +1,13 @@
 import { describe, it, expect } from 'bun:test';
 import { Hono } from 'hono';
 import type { ProcessingService } from '../../../services/processing/processing_service';
+import type { ProcessingStage, RenditionWritten } from '../../../services/processing/processing_types';
 import { EventsApi } from '../events_api';
 
 function build() {
-  let notify: (photoId: string, version: string) => void = () => {};
+  let notify: (photoId: string, written: RenditionWritten) => void = () => {};
   const processing = {
-    onProcessed: (listener: (photoId: string, version: string) => void) => {
+    onProcessed: (listener: (photoId: string, written: RenditionWritten) => void) => {
       notify = listener;
     },
   } as unknown as ProcessingService;
@@ -14,7 +15,12 @@ function build() {
   const api = new EventsApi(processing);
   const app = new Hono();
   app.route('/api/events', api.routes);
-  return { api, app, processed: (photoId: string, version = '2026-07-28T00:00:00.000Z') => notify(photoId, version) };
+  return {
+    api,
+    app,
+    processed: (photoId: string, stage: ProcessingStage = 'tile', version = '2026-07-28T00:00:00.000Z') =>
+      notify(photoId, { stage, version }),
+  };
 }
 
 async function readChunk(reader: { read(): Promise<{ value?: Uint8Array }> }): Promise<string> {
@@ -33,7 +39,7 @@ describe('EventsApi', () => {
     // The exact wire format, because an EventSource that cannot parse it reports
     // nothing at all rather than failing.
     expect(await readChunk(reader)).toBe(
-      'event: thumbnail\ndata: {"id":"photo-a","version":"2026-07-28T00:00:00.000Z"}\nid: 1\n\n',
+      'event: thumbnail\ndata: {"id":"photo-a","stage":"tile","version":"2026-07-28T00:00:00.000Z"}\nid: 1\n\n',
     );
     await reader.cancel();
   });

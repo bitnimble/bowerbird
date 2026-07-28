@@ -106,6 +106,12 @@ function bodyLabel(make: string | null, model: string | null): string {
   return `${make} ${model}`;
 }
 
+// Empty once both passes have landed, which is the usual state.
+function stageLabel(photo: PhotoDetail): string {
+  if (photo.needs_tile) return ' · building the tile';
+  return photo.needs_renditions ? ' · building the preview' : '';
+}
+
 function fileSizeLabel(bytes: number): string {
   const mb = bytes / (1024 * 1024);
   return mb >= 1 ? `${mb.toFixed(1)} MB` : `${Math.round(bytes / 1024)} KB`;
@@ -224,7 +230,9 @@ const DetailFrame = observer(function DetailFrame({ photoId }: { photoId: string
   // Every field comes from the same entry, so what is on screen, whether it is
   // HDR and where its bytes live can no longer disagree (§10.2).
   const shownFile = photo?.renditions?.[showing];
-  const version = store.renditionVersionOf(photoId);
+  // By the rendition being asked for, so the grid tile's stamp and the viewer's
+  // move independently: a rebuild of one does not re-fetch the other.
+  const version = store.renditionVersionOf(photoId, showing);
   const stillSrc = viewerUrl(photoId, showing, version);
 
   // Firefox renders an HDR still dark - it applies a PQ transfer to nothing but
@@ -244,7 +252,7 @@ const DetailFrame = observer(function DetailFrame({ photoId }: { photoId: string
   const preloadSrcs =
     hdrVideo || !store.isAlwaysBuilt(showing)
       ? undefined
-      : neighbours.flatMap((id) => (id == null ? [] : [viewerUrl(id, showing, store.renditionVersionOf(id))]));
+      : neighbours.flatMap((id) => (id == null ? [] : [viewerUrl(id, showing, store.renditionVersionOf(id, showing))]));
 
   const filename = photo?.file_path.split('/').pop() ?? photoId;
 
@@ -460,7 +468,10 @@ const RawPanel = observer(function RawPanel({ photoId, defaultOpen }: { photoId:
         ],
         [
           'State',
-          pending((p) => `${p.is_missing ? 'missing' : p.is_deleted ? 'binned' : 'ok'}${p.needs_processing ? ' · thumbnailing' : ''}`),
+          // Which stage is outstanding rather than merely that one is: the tile is
+          // the gallery's and lands in ~125ms, the renditions are the viewer's and
+          // take ~1.5s, so "still working" means two rather different waits.
+          pending((p) => `${p.is_missing ? 'missing' : p.is_deleted ? 'binned' : 'ok'}${stageLabel(p)}`),
         ],
         ...(photo?.processing_error != null ? ([['Error', photo.processing_error]] as Row[]) : []),
         ['Path', pending((p) => p.original_path ?? p.file_path)],

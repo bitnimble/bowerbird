@@ -397,6 +397,34 @@ test('a rebuilt thumbnail is pushed to the tile that changed, and to no other', 
   expect(await src(1)).toBe(untouched);
 });
 
+// The two halves of an import are tracked apart all the way to the browser's
+// cache: one stamp each, so a URL only moves when the file behind it did.
+test('rebuilding a photo rendition leaves its grid tile where it is', async ({ page }) => {
+  test.setTimeout(240_000);
+  await page.goto('/settings');
+  await libraryRow(page, CULL_PHOTOS_DIR).getByRole('button', { name: 'Render the RAW' }).click();
+  await openLibrary(page, CULL_PHOTOS_DIR);
+  await expect(page.locator('.tile')).toHaveCount(PHOTO_NAMES.length);
+
+  const tile = page.locator('.tile img').first();
+  const before = await tile.getAttribute('src');
+  const photoId = /\/image\/([^/]+)\//.exec(before ?? '')?.[1] ?? '';
+  expect(photoId).not.toBe('');
+
+  // A render of the viewer's copy, which writes no tile. Shared one stamp, this
+  // moved every tile URL on the page and re-downloaded bytes that had not changed.
+  await page.request.post(`${API_URL}/api/photos/${photoId}/renditions/full?force=true`, { timeout: 180_000 });
+  // Long enough for the announcement to have arrived and been applied.
+  await expect.poll(async () => (await page.locator('.tile img').nth(1).getAttribute('src')) ?? '').not.toBe('');
+  await page.waitForTimeout(1000);
+  expect(await tile.getAttribute('src')).toBe(before);
+
+  // And the viewer's own URL did move, so the announcement was heard - it is the
+  // stage that changed, not the fact of a change, that the tile ignored.
+  await page.locator('.tile__hit').first().click();
+  await expect(page.locator(`.stage__viewport img.is-ready[src*="/renditions/full?v="]`)).toBeVisible({ timeout: 60_000 });
+});
+
 // A photo can be marked processed while its renditions are gone: a failed build,
 // a half-finished copy, a pruned data directory. Nothing would ever queue it
 // again, so the detail view has to notice and build the one it needs rather than

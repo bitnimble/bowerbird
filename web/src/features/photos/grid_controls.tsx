@@ -65,7 +65,7 @@ function customToFilters(keys: CustomKey[]): PhotoFilters {
     // Both together is "any rating at all", which is no rating filter.
     ...(wantsRated !== wantsUnrated ? { rated: wantsRated } : {}),
     ...(keys.includes('missing') ? { isMissing: true } : {}),
-    ...(keys.includes('pending') ? { needsProcessing: true } : {}),
+    ...(keys.includes('pending') ? { needsTile: true } : {}),
     match: 'any',
   };
 }
@@ -79,13 +79,13 @@ function customKeys(filters: PhotoFilters): CustomKey[] {
     ...(filters.rated === true ? (['rated'] as const) : []),
     ...(filters.rated === false ? (['unrated'] as const) : []),
     ...(filters.isMissing === true ? (['missing'] as const) : []),
-    ...(filters.needsProcessing === true ? (['pending'] as const) : []),
+    ...(filters.needsTile === true ? (['pending'] as const) : []),
   ];
 }
 
 function activeView(filters: PhotoFilters): ViewKey | null {
   const triage = filters.triage ?? [];
-  const narrowed = filters.rated != null || filters.isMissing != null || filters.needsProcessing != null;
+  const narrowed = filters.rated != null || filters.isMissing != null || filters.needsTile != null;
   if (narrowed) return null;
   const match = VIEWS.find((v) => {
     const want = v.filters.triage ?? [];

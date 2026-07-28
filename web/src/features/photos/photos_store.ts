@@ -1,5 +1,5 @@
 import { computed, observable } from 'mobx';
-import type { Ordering, PhotoDetail, PhotoSummary, PreviewRendition, Triage } from '../../api/client';
+import type { Ordering, PhotoDetail, PhotoSummary, PreviewRendition, Rendition, Triage } from '../../api/client';
 import type { LibrariesStore } from '../libraries/libraries_store';
 import type { AppSettingsStore } from '../settings/app_settings_store';
 
@@ -22,7 +22,7 @@ export interface PhotoFilters {
   rated?: boolean;
   triage?: Triage[];
   isMissing?: boolean;
-  needsProcessing?: boolean;
+  needsTile?: boolean;
   search?: string;
   // Inclusive YYYY-MM-DD bounds from the calendar.
   takenFrom?: string;
@@ -46,14 +46,24 @@ export interface ShownImage {
   bytes: number | null;
 }
 
-// Which generation of a photo's renditions to ask the server for. The row
-// carries it, so it is known for the frame on screen and for a neighbour being
-// warmed alike, it survives a reload, and every client agrees - none of which a
-// version a client made up for itself could manage (§13.5). 0 for a photo whose
-// renditions have never been built, and before its row has loaded, which leaves
-// the URL plain and the ETag in charge.
-export function renditionVersion(photo: { date_reprocessed: string | null } | null | undefined): number {
-  return photo?.date_reprocessed == null ? 0 : Date.parse(photo.date_reprocessed);
+/** The three stamps every image URL is versioned by. */
+export type PhotoStamps = Pick<PhotoSummary, 'tile_built_at' | 'renditions_built_at' | 'date_updated'>;
+
+// Which generation of a file to ask the server for, by the stamp of whatever
+// produces its bytes: the import's tile pass for the grid, its rendition pass for
+// the viewer's two, and the RAW's own mtime for the camera JPEG, which is lifted
+// out of it per request rather than built. Each moves only when its own file did,
+// so rebuilding a photo's renditions no longer re-fetches its grid tile.
+//
+// The row carries all three, so this is known for the frame on screen and for a
+// neighbour being warmed alike, it survives a reload, and every client agrees -
+// none of which a version a client made up for itself could manage (§13.5). 0
+// before that file has ever been written, which leaves the URL plain and the
+// ETag in charge.
+export function renditionVersion(photo: PhotoStamps | null | undefined, rendition: Rendition | PreviewRendition): number {
+  const stamp =
+    rendition === 'grid' ? photo?.tile_built_at : rendition === 'embedded' ? photo?.date_updated : photo?.renditions_built_at;
+  return stamp == null ? 0 : Date.parse(stamp);
 }
 
 // A gallery opens on the working set: everything not yet rejected. Rejecting is
@@ -156,9 +166,9 @@ export class PhotosStore {
   // For a photo the view knows only by id - the neighbours the viewer warms.
   // Anything holding the row itself reads `renditionVersion` off it directly,
   // which is both cheaper and narrower to observe.
-  renditionVersionOf(photoId: string | null): number {
+  renditionVersionOf(photoId: string | null, rendition: Rendition | PreviewRendition): number {
     if (photoId == null) return 0;
-    return renditionVersion(this.photos.find((p) => p.id === photoId) ?? this.detailFor(photoId));
+    return renditionVersion(this.photoFor(photoId), rendition);
   }
 
   @computed get selectedIds(): string[] {
@@ -255,7 +265,7 @@ export class PhotosStore {
       f.rated != null ||
       f.triage != null ||
       f.isMissing != null ||
-      f.needsProcessing != null ||
+      f.needsTile != null ||
       f.takenFrom != null ||
       f.takenTo != null ||
       (f.search ?? '') !== ''

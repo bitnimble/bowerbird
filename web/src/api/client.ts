@@ -4,6 +4,7 @@ import type { PhotoDetail, PhotoListResponse, Triage, UpdatePhotoRequest } from 
 import type { PreviewRendition, PreviewRenditionMode, Settings, UpdateSettingsRequest } from '../../../src/schemas/settings';
 import type { CreateShootRequest, Shoot, UpdateShootRequest } from '../../../src/schemas/shoots';
 import type { Rendition } from '../../../src/services/processing/renditions';
+import type { ProcessingStage } from '../../../src/services/processing/processing_types';
 import type { ServerConfig } from '../features/settings/server_config_store';
 
 // Types come straight from the server's Zod schemas as type-only imports, so the
@@ -22,7 +23,7 @@ export type {
   UpdateLibraryRequest,
 };
 export type PhotoSummary = PhotoListResponse['photos'][number];
-export type { Rendition };
+export type { Rendition, ProcessingStage };
 export type Ordering = Library['ordering'];
 export type PreviewSource = Library['preview_source'];
 // NonNullable: the column is null until a photo has been processed once.
@@ -82,7 +83,7 @@ export interface PhotoListParams {
   offset?: number;
   limit?: number;
   is_missing?: boolean;
-  needs_processing?: boolean;
+  needs_tile?: boolean;
   include_deleted?: boolean;
   is_deleted?: boolean;
   rated?: boolean;

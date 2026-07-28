@@ -55,8 +55,16 @@ CREATE TABLE IF NOT EXISTS photos (
   date_taken_offset TEXT,           -- its UTC offset, "+11:00", where the body recorded one
   date_added        TEXT NOT NULL,
   date_updated      TEXT,
-  date_reprocessed  TEXT,
-  needs_processing  INTEGER NOT NULL DEFAULT 1,
+  -- An import runs in two passes, and everything from the queue's own bookkeeping
+  -- to a client's cache keys has to tell them apart (§10.2). The grid tile is
+  -- written first and is what the gallery shows; the viewer's renditions follow,
+  -- ~1.5s later per photo. A pending flag and a written-at stamp each, so a run
+  -- interrupted between the passes resumes at the one it did not reach, and a URL
+  -- moves only when the file behind it did.
+  needs_tile        INTEGER NOT NULL DEFAULT 1,
+  needs_renditions  INTEGER NOT NULL DEFAULT 1,
+  tile_built_at     TEXT,
+  renditions_built_at TEXT,
   processing_error  TEXT,
   latitude          REAL,
   longitude         REAL,
@@ -85,7 +93,6 @@ CREATE INDEX IF NOT EXISTS idx_photos_shoot_added ON photos(shoot_id, date_added
 CREATE INDEX IF NOT EXISTS idx_photos_shoot_taken ON photos(shoot_id, date_taken);
 CREATE INDEX IF NOT EXISTS idx_photos_file_hash ON photos(library_id, file_hash);
 CREATE INDEX IF NOT EXISTS idx_photos_file_path ON photos(library_id, file_path);
-CREATE INDEX IF NOT EXISTS idx_photos_needs_processing ON photos(needs_processing) WHERE needs_processing = 1;
 CREATE INDEX IF NOT EXISTS idx_photos_is_missing ON photos(library_id, is_missing) WHERE is_missing = 1;
 CREATE INDEX IF NOT EXISTS idx_photos_is_deleted ON photos(library_id, is_deleted) WHERE is_deleted = 1;
 
@@ -164,6 +171,23 @@ function migrateThumbnailsToRenditions(db: Database): void {
   db.exec("UPDATE settings SET value = 'full' WHERE value = 'render' AND key IN ('preview_rendition_mode', 'last_preview_rendition')");
 }
 
+// One pending flag and one timestamp became two of each, because the import runs
+// in two passes and nothing could tell them apart: the queue redid a tile it had
+// already written when a run was interrupted, and a client re-fetched every grid
+// tile on the page whenever a photo's *renditions* were rebuilt, the two sharing
+// one stamp. Existing rows are carried over as they stand - a photo that needed
+// processing needs both passes, and one that did not has both already, at the
+// time the single stamp recorded.
+function migrateProcessingStages(db: Database): void {
+  if (!columnNames(db, 'photos').has('needs_processing')) return;
+  db.exec('UPDATE photos SET needs_tile = needs_processing, needs_renditions = needs_processing');
+  db.exec('UPDATE photos SET tile_built_at = date_reprocessed, renditions_built_at = date_reprocessed');
+  // Before the column it is built on can go.
+  db.exec('DROP INDEX IF EXISTS idx_photos_needs_processing');
+  db.exec('ALTER TABLE photos DROP COLUMN needs_processing');
+  db.exec('ALTER TABLE photos DROP COLUMN date_reprocessed');
+}
+
 export function runMigrations(db: Database): void {
   db.exec(SCHEMA);
   // Additive columns, for DBs created before each feature landed. CREATE TABLE
@@ -191,4 +215,14 @@ export function runMigrations(db: Database): void {
   ensureColumn(db, 'libraries', 'preview_hdr', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'libraries', 'preview_hdr_video', 'INTEGER NOT NULL DEFAULT 0');
   migrateSelectedToTriage(db);
+  ensureColumn(db, 'photos', 'needs_tile', 'INTEGER NOT NULL DEFAULT 1');
+  ensureColumn(db, 'photos', 'needs_renditions', 'INTEGER NOT NULL DEFAULT 1');
+  ensureColumn(db, 'photos', 'tile_built_at', 'TEXT');
+  ensureColumn(db, 'photos', 'renditions_built_at', 'TEXT');
+  migrateProcessingStages(db);
+  // After the columns exist rather than in SCHEMA above: that runs first, and on a
+  // database being upgraded the columns are added here, so indexing them up there
+  // fails on every start until the table is recreated.
+  db.exec('CREATE INDEX IF NOT EXISTS idx_photos_needs_tile ON photos(needs_tile) WHERE needs_tile = 1');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_photos_needs_renditions ON photos(needs_renditions) WHERE needs_renditions = 1');
 }

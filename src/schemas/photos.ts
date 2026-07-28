@@ -25,12 +25,17 @@ export const PhotoSummarySchema = z.object({
   rating: z.number().int().min(0).max(5),
   is_missing: z.boolean(),
   is_deleted: z.boolean(),
-  // When this photo's renditions were last written, and so which generation of
-  // them a URL asks for. On the summary because it is what a client puts in
-  // every image URL: derived files are rebuilt in place under a stable path, and
-  // a page holding the previous ones has no other way to know they moved
-  // (§13.5). Null for a photo whose renditions have never been built.
-  date_reprocessed: z.string().nullable(),
+  // When each derived file was last written, and so which generation of it a URL
+  // asks for. On the summary because this is what a client puts in every image
+  // URL: they are rebuilt in place under a stable path, and a page holding the
+  // previous ones has no other way to know they moved (§13.5). One per stage of
+  // the import, because they move at different times and a URL should only move
+  // when the file behind it did. Null before that stage has ever run.
+  tile_built_at: z.string().nullable(),
+  renditions_built_at: z.string().nullable(),
+  // When the RAW itself last changed. The camera's JPEG is lifted out of it per
+  // request rather than built, so this is the generation of *that* file.
+  date_updated: z.string().nullable(),
   // The rendition this photo was last viewed in, read by the setting that
   // reopens it there. On the summary for the same reason as the field above: the
   // viewer has to know which file to ask for before it has fetched anything, or
@@ -49,8 +54,11 @@ export const PhotoDetailSchema = PhotoSummarySchema.extend({
   // (§11.1), and this says what that clock was set to.
   date_taken_offset: z.string().nullable(),
   date_added: z.string(),
-  date_updated: z.string().nullable(),
-  needs_processing: z.boolean(),
+  // Which passes this photo still owes: the grid tile the gallery shows, then the
+  // viewer's renditions (§10.2). Separate so a view can say which one it is
+  // waiting on rather than reporting "thumbnailing" for both.
+  needs_tile: z.boolean(),
+  needs_renditions: z.boolean(),
   processing_error: z.string().nullable(),
   latitude: z.number().nullable(),
   longitude: z.number().nullable(),
@@ -146,7 +154,7 @@ export const PhotoListQuerySchema = PaginationSchema
       .pipe(z.array(TriageSchema).min(1))
       .optional(),
     is_missing: z.stringbool().optional(),
-    needs_processing: z.stringbool().optional(),
+    needs_tile: z.stringbool().optional(),
     // Selects *only* (or only non-) soft-deleted rows, where include_deleted just
     // widens the default exclusion. `include_deleted=true&is_deleted=true` is the
     // Bin view; without this pair a client can ask for "deleted and live" but
@@ -155,7 +163,7 @@ export const PhotoListQuerySchema = PaginationSchema
     // Inclusive YYYY-MM-DD bounds on when the photo was taken.
     taken_from: z.iso.date().optional(),
     taken_to: z.iso.date().optional(),
-    // How rated/triage/is_missing/needs_processing combine. 'any' is what makes a
+    // How rated/triage/is_missing/needs_tile combine. 'any' is what makes a
     // custom filter like "picks, unrated or missing" mean a union rather than an
     // intersection, which as an intersection is almost always empty.
     match: z.enum(['all', 'any']).optional(),

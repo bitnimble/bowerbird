@@ -1,4 +1,4 @@
-import { eventsUrl } from '../../api/client';
+import { eventsUrl, type ProcessingStage } from '../../api/client';
 import type { PhotosPresenter } from '../photos/photos_presenter';
 
 export class EventsPresenter {
@@ -16,8 +16,12 @@ export class EventsPresenter {
     source.addEventListener('thumbnail', (event) => {
       // The announcement carries the row's new value rather than a bare "it
       // changed", so nothing has to be re-read to act on it.
-      const { id, version } = JSON.parse((event as MessageEvent<string>).data) as { id: string; version: string };
-      this.photos.renditionsRebuilt(id, version);
+      const { id, stage, version } = JSON.parse((event as MessageEvent<string>).data) as {
+        id: string;
+        stage: ProcessingStage;
+        version: string;
+      };
+      this.photos.renditionsRebuilt(id, stage, version);
     });
     this.source = source;
   }

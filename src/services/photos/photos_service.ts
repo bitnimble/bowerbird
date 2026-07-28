@@ -21,7 +21,7 @@ function toFilters(query: PhotoListQuery): PhotoListFilters {
   return {
     includeDeleted: query.include_deleted,
     isMissing: query.is_missing,
-    needsProcessing: query.needs_processing,
+    needsTile: query.needs_tile,
     isDeleted: query.is_deleted,
     rated: query.rated,
     triage: query.triage,

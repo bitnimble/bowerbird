@@ -7,7 +7,8 @@ import type { ThumbnailSource } from '../processing/processing_types';
 export interface PhotoListFilters {
   includeDeleted: boolean;
   isMissing?: boolean;
-  needsProcessing?: boolean;
+  // Photos with no grid tile yet, which is what a gallery means by "no thumbnail".
+  needsTile?: boolean;
   // Only meaningful together with includeDeleted, which lifts the blanket
   // is_deleted = 0 clause this then narrows back down (the Bin view).
   isDeleted?: boolean;
@@ -21,7 +22,7 @@ export interface PhotoListFilters {
   // Inclusive YYYY-MM-DD bounds on when the photo was taken.
   takenFrom?: string;
   takenTo?: string;
-  // 'any' unions the rated/triage/isMissing/needsProcessing filters instead of
+  // 'any' unions the rated/triage/isMissing/needsTile filters instead of
   // intersecting them. Scope (deleted, search, dates) always intersects.
   match?: 'all' | 'any';
 }
@@ -95,6 +96,10 @@ export interface PendingPhoto {
   file_path: string;
   root_path: string;
   data_path: string | null;
+  // Which passes this photo still owes. A run interrupted between them comes back
+  // needing only the second, and staging reads these rather than rebuilding both.
+  needs_tile: number;
+  needs_renditions: number;
   // The source requested for this photo; NULL for rows queued before the setting
   // existed, which the service resolves to the library's default.
   rendition_source: ThumbnailSource | null;
@@ -123,7 +128,7 @@ function folderRange(folderPath: string): [string, string] {
 // Qualified with `photos.` because listByAlbum joins album_photos, which also has
 // a date_added column (bare names would be ambiguous).
 const SUMMARY_COLS =
-  'photos.id, photos.library_id, photos.shoot_id, photos.file_path, photos.width, photos.height, photos.date_taken, photos.date_added, photos.date_reprocessed, photos.preview_rendition, photos.triage, photos.rating, photos.is_missing, photos.is_deleted';
+  'photos.id, photos.library_id, photos.shoot_id, photos.file_path, photos.width, photos.height, photos.date_taken, photos.date_added, photos.date_updated, photos.tile_built_at, photos.renditions_built_at, photos.preview_rendition, photos.triage, photos.rating, photos.is_missing, photos.is_deleted';
 
 const SYNC_COLUMNS = 'id, file_path, file_hash, is_missing, date_updated, file_size';
 interface SyncRow {
@@ -139,7 +144,8 @@ interface SyncRow {
 // otherwise be ambiguous.
 const DETAIL_COLS = `photos.id, photos.library_id, photos.shoot_id, photos.width, photos.height,
   photos.orientation, photos.file_path, photos.file_hash, photos.date_taken, photos.date_taken_offset, photos.date_added,
-  photos.date_updated, photos.date_reprocessed, photos.needs_processing, photos.processing_error,
+  photos.date_updated, photos.tile_built_at, photos.renditions_built_at,
+  photos.needs_tile, photos.needs_renditions, photos.processing_error,
   photos.latitude, photos.longitude, photos.rating, photos.triage, photos.is_missing,
   photos.is_deleted, photos.notes, photos.file_size, photos.iso, photos.shutter_speed, photos.aperture,
   photos.focal_length, photos.camera_make, photos.camera_model, photos.lens_model, photos.rendition_source, photos.preview_rendition`;
@@ -153,7 +159,9 @@ interface SummaryRow {
   height: number;
   date_taken: string | null;
   date_added: string;
-  date_reprocessed: string | null;
+  date_updated: string | null;
+  tile_built_at: string | null;
+  renditions_built_at: string | null;
   preview_rendition: PreviewRendition | null;
   triage: string | null;
   rating: number;
@@ -168,8 +176,8 @@ interface DetailRow extends SummaryRow {
   // Detail only: a grid tile is labelled with a wall clock, and a zone per tile
   // would be noise on 100 of them.
   date_taken_offset: string | null;
-  date_updated: string | null;
-  needs_processing: number;
+  needs_tile: number;
+  needs_renditions: number;
   processing_error: string | null;
   latitude: number | null;
   longitude: number | null;
@@ -222,7 +230,9 @@ function toSummary(row: SummaryRow, ordering: Ordering): PhotoSummary {
     rating: row.rating,
     is_missing: row.is_missing === 1,
     is_deleted: row.is_deleted === 1,
-    date_reprocessed: row.date_reprocessed,
+    date_updated: row.date_updated,
+    tile_built_at: row.tile_built_at,
+    renditions_built_at: row.renditions_built_at,
     preview_rendition: row.preview_rendition,
   };
 }
@@ -242,8 +252,10 @@ function toDetail(row: DetailRow, albumIds: string[]): PhotoDetail {
     date_taken_offset: row.date_taken_offset,
     date_added: row.date_added,
     date_updated: row.date_updated,
-    date_reprocessed: row.date_reprocessed,
-    needs_processing: row.needs_processing === 1,
+    tile_built_at: row.tile_built_at,
+    renditions_built_at: row.renditions_built_at,
+    needs_tile: row.needs_tile === 1,
+    needs_renditions: row.needs_renditions === 1,
     processing_error: row.processing_error,
     latitude: row.latitude,
     longitude: row.longitude,
@@ -410,7 +422,7 @@ export class PhotosRepository {
   // alone, so those survive the round trip without any extra bookkeeping.
   markDeleted(id: string, deletedFromPath: string): void {
     this.db
-      .query('UPDATE photos SET is_deleted = 1, needs_processing = 0, deleted_from_path = ? WHERE id = ?')
+      .query('UPDATE photos SET is_deleted = 1, needs_tile = 0, needs_renditions = 0, deleted_from_path = ? WHERE id = ?')
       .run(deletedFromPath, id);
   }
 
@@ -487,10 +499,11 @@ export class PhotosRepository {
       .query(
         `INSERT INTO photos
           (id, library_id, shoot_id, file_hash, file_path, file_size, width, height, orientation,
-           is_missing, is_deleted, date_taken, date_taken_offset, date_added, date_updated, needs_processing,
+           is_missing, is_deleted, date_taken, date_taken_offset, date_added, date_updated,
+           needs_tile, needs_renditions,
            latitude, longitude, iso, shutter_speed, aperture, focal_length,
            camera_make, camera_model, lens_model, rating)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, 1, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
       )
       .run(
         record.id,
@@ -524,7 +537,7 @@ export class PhotosRepository {
         `UPDATE photos SET file_hash = ?, width = ?, height = ?, orientation = ?, date_taken = ?, date_taken_offset = ?,
           date_updated = ?, file_size = ?, latitude = ?, longitude = ?, iso = ?, shutter_speed = ?,
           aperture = ?, focal_length = ?, camera_make = ?, camera_model = ?, lens_model = ?,
-          needs_processing = 1, is_missing = 0 WHERE id = ?`,
+          needs_tile = 1, needs_renditions = 1, is_missing = 0 WHERE id = ?`,
       )
       .run(
         fields.file_hash,
@@ -549,8 +562,8 @@ export class PhotosRepository {
   }
 
   // Header fields only. Deliberately does not touch file_hash, date_updated or
-  // needs_processing: re-reading metadata is not a content change, so it must not
-  // look like one to the next sync or trigger a thumbnail rebuild.
+  // either pending flag: re-reading metadata is not a content change, so it must
+  // not look like one to the next sync or trigger a rebuild.
   updateMetadata(photoId: string, fields: PhotoMetadataFields): void {
     this.db
       .query(
@@ -603,29 +616,31 @@ export class PhotosRepository {
     const params = libraryId ? [libraryId] : [];
     return this.db
       .query(
-        `SELECT p.id AS photo_id, p.file_path, p.rendition_source, l.root_path, l.data_path,
-                l.preview_source, l.preview_hdr, l.preview_hdr_video
+        `SELECT p.id AS photo_id, p.file_path, p.rendition_source, p.needs_tile, p.needs_renditions,
+                l.root_path, l.data_path, l.preview_source, l.preview_hdr, l.preview_hdr_video
          FROM photos p JOIN libraries l ON l.id = p.library_id
-         WHERE p.needs_processing = 1 AND p.is_missing = 0 AND p.is_deleted = 0 ${where}`,
+         WHERE (p.needs_tile = 1 OR p.needs_renditions = 1) AND p.is_missing = 0 AND p.is_deleted = 0 ${where}`,
       )
       .all(...params) as PendingPhoto[];
   }
 
-  // A rendition written outside the processing queue - one the viewer asked for,
-  // or the grid tile repaired on a detail read. The row is not otherwise touched
-  // by those, but `date_reprocessed` is what a client puts in the URL, so a file
-  // that moved without it would go on being served from the copy already held.
-  touchReprocessed(id: string, reprocessedAtIso: string): void {
-    this.db.query('UPDATE photos SET date_reprocessed = ? WHERE id = ?').run(reprocessedAtIso, id);
+  // The grid tile has landed. Its own flag and its own stamp, because the
+  // renditions are still to come and a client versions the tile's URL off this
+  // one alone: sharing a stamp with the second pass re-fetched every tile on the
+  // page whenever any photo's renditions were rebuilt.
+  markTileBuilt(id: string, builtAtIso: string): void {
+    this.db.query('UPDATE photos SET needs_tile = 0, tile_built_at = ? WHERE id = ?').run(builtAtIso, id);
   }
 
-  markProcessed(id: string, reprocessedAtIso: string, source: ThumbnailSource): void {
+  // The viewer's renditions have landed, which is also when `rendition_source`
+  // becomes true: it records what the viewer is served (§10.2).
+  markRenditionsBuilt(id: string, builtAtIso: string, source: ThumbnailSource): void {
     this.db
       .query(
-        `UPDATE photos SET needs_processing = 0, date_reprocessed = ?, processing_error = NULL,
+        `UPDATE photos SET needs_renditions = 0, renditions_built_at = ?, processing_error = NULL,
           rendition_source = ? WHERE id = ?`,
       )
-      .run(reprocessedAtIso, source, id);
+      .run(builtAtIso, source, id);
   }
 
   // Queues thumbnails to be rebuilt from `source`. Returns how many rows were
@@ -635,21 +650,27 @@ export class PhotosRepository {
     const placeholders = photoIds.map(() => '?').join(', ');
     return this.db
       .query(
-        `UPDATE photos SET needs_processing = 1, processing_error = NULL, rendition_source = ?
+        `UPDATE photos SET needs_tile = 1, needs_renditions = 1, processing_error = NULL, rendition_source = ?
          WHERE id IN (${placeholders}) AND is_missing = 0 AND is_deleted = 0`,
       )
       .run(source, ...photoIds).changes;
   }
 
+  // Both stages: the failure is the file rather than the stage, so a photo whose
+  // tile could not be built has nothing to gain from being asked for renditions.
   markProcessingFailed(id: string, error: string): void {
-    this.db.query('UPDATE photos SET needs_processing = 0, processing_error = ? WHERE id = ?').run(error, id);
+    this.db
+      .query('UPDATE photos SET needs_tile = 0, needs_renditions = 0, processing_error = ? WHERE id = ?')
+      .run(error, id);
   }
 
+  // Pending while *either* stage is: the sync strip counts photos, not stages,
+  // and one still building its renditions is not done.
   countPendingProcessing(libraryId?: string): number {
     const where = libraryId ? 'AND library_id = ?' : '';
     const params = libraryId ? [libraryId] : [];
     const row = this.db
-      .query(`SELECT COUNT(*) AS n FROM photos WHERE needs_processing = 1 AND is_deleted = 0 ${where}`)
+      .query(`SELECT COUNT(*) AS n FROM photos WHERE (needs_tile = 1 OR needs_renditions = 1) AND is_deleted = 0 ${where}`)
       .get(...params) as { n: number };
     return row.n;
   }
@@ -696,9 +717,11 @@ export class PhotosRepository {
       user.push('is_missing = ?');
       userParams.push(filters.isMissing ? 1 : 0);
     }
-    if (filters.needsProcessing != null) {
-      user.push('needs_processing = ?');
-      userParams.push(filters.needsProcessing ? 1 : 0);
+    // "No thumbnail" is about the grid tile: the renditions behind it are the
+    // viewer's business and a photo with a tile is not a hole in the gallery.
+    if (filters.needsTile != null) {
+      user.push('needs_tile = ?');
+      userParams.push(filters.needsTile ? 1 : 0);
     }
     if (filters.rated != null) user.push(filters.rated ? 'rating > 0' : 'rating = 0');
     if (filters.triage != null && filters.triage.length > 0) {

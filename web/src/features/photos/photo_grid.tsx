@@ -98,7 +98,7 @@ const Tile = observer(function Tile({
   // can be asleep past the replay buffer. Without a floor under it a single
   // missed announcement leaves a tile blank for the life of the page.
   const [retry, setRetry] = useState({ attempt: 0, at: 0 });
-  const version = renditionVersion(photo);
+  const version = renditionVersion(photo, 'grid');
   // Both are moments, so the newer one wins and neither can land on a value the
   // other already used - which adding them together could, and a URL that repeats
   // itself is a request the browser does not make.
