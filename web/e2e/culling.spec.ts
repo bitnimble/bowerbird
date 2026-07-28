@@ -1,7 +1,7 @@
 import { existsSync, rmSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
-import { CULL_PHOTOS_DIR, PHOTO_NAMES } from './fixture_library';
+import { API_URL, CULL_PHOTOS_DIR, PHOTO_NAMES } from './fixture_library';
 import { addLibrary, libraryRow, openLibrary, syncLibrary, viewMaxQuality } from './helpers';
 
 // This spec has its own library root, so binning and rejecting here cannot
@@ -288,6 +288,35 @@ test('the detail view shows shooting metadata, the triage control and steps betw
 
   await page.getByRole('button', { name: 'Next photo' }).click();
   await expect(navPath).not.toHaveText(relative);
+});
+
+// The warm is only worth anything if the reader lands on the URL it was warmed
+// at. A rebuild announced while a neighbour is being warmed moves that URL, and
+// the frame the reader steps onto has to move with it - held per view, the two
+// disagreed, and the plain URL the viewer fell back to is answered out of the
+// copy the browser already has: the file from before the rebuild.
+test('a neighbour rebuilt while it was warmed is painted at the URL it was warmed at', async ({ page }) => {
+  await page.goto('/settings');
+  await openLibrary(page, CULL_PHOTOS_DIR);
+  await expect(page.locator('.tile')).toHaveCount(PHOTO_NAMES.length);
+  const second = await page.locator('.tile img').nth(1).getAttribute('src');
+  const secondId = /\/image\/([^/]+)\//.exec(second ?? '')?.[1] ?? '';
+  expect(secondId).not.toBe('');
+
+  await page.locator('.tile__hit').first().click();
+  await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
+  const warmed = page.locator(`.stage__viewport img[aria-hidden="true"][src*="${secondId}"]`);
+  await expect(warmed).toHaveCount(1);
+
+  // Rebuilt from under the reader while they are still on its neighbour.
+  await page.request.post(`${API_URL}/api/photos/reprocess`, { data: { photo_ids: [secondId], source: 'embedded' } });
+  await expect(warmed).toHaveAttribute('src', /\?v=/, { timeout: 60_000 });
+  const warmedSrc = await warmed.getAttribute('src');
+
+  await page.getByRole('button', { name: 'Next photo' }).click();
+  await expect(page.locator(`.stage__viewport img.is-ready[src*="${secondId}"]`)).toHaveAttribute('src', warmedSrc ?? '', {
+    timeout: 60_000,
+  });
 });
 
 test('a photo the catalogue does not have says so, with the reason', async ({ page }) => {

@@ -183,9 +183,13 @@ export function needsHdrVideo(): boolean {
   return navigator.userAgent.includes('Firefox');
 }
 
-// The camera's own JPEG, handed over as the camera wrote it (§10.2).
-export function embeddedUrl(photoId: string): string {
-  return `${BASE}/image/${photoId}/embedded.jpg`;
+// The camera's own JPEG, handed over as the camera wrote it (§10.2). Versioned
+// like a stored rendition even though nothing builds it: it is lifted out of the
+// RAW on each request, so a RAW replaced on disk changes these bytes too, and a
+// page holding the previous ones would otherwise never ask again.
+export function embeddedUrl(photoId: string, version = 0): string {
+  const url = `${BASE}/image/${photoId}/embedded.jpg`;
+  return version === 0 ? url : `${url}?v=${version}`;
 }
 
 // Server-sent events: which photos have a thumbnail worth re-requesting.
@@ -204,5 +208,5 @@ export function jpegUrl(photoId: string): string {
 // What the viewer shows for one of its three choices: the camera's JPEG served
 // directly, or a stored rendition.
 export function viewerUrl(photoId: string, rendition: PreviewRendition, version = 0): string {
-  return rendition === 'embedded' ? embeddedUrl(photoId) : renditionUrl(photoId, rendition, version);
+  return rendition === 'embedded' ? embeddedUrl(photoId, version) : renditionUrl(photoId, rendition, version);
 }

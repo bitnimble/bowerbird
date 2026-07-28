@@ -70,10 +70,11 @@ export class SyncPresenter {
       return;
     }
 
-    // Refresh the grid on every tick of an active run: rows appear as the scan
-    // inserts them, and thumbnails resolve as processing finishes. Only then -
-    // an idle library's grid was just fetched by the page that opened it, and a
-    // second list request answers with the page it already has.
+    // Re-read the grid while a run is moving, for the rows the scan inserts.
+    // Not for their thumbnails: those arrive by announcement now (§18.6), and a
+    // refetch that returns the same page deliberately changes nothing. And only
+    // while it is moving - an idle library's grid was just fetched by the page
+    // that opened it, and a second list request answers with what it already has.
     if (wasBusy || this.busy) await this.photos.reload();
     this.busy = wasBusy;
 

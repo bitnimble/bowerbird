@@ -219,6 +219,10 @@ export class PhotosPresenter {
       // neighbours are unknown and prev/next are dead. Open the photo's library
       // so stepping works from a deep link as well as from the grid.
       if (this.store.source == null) await this.open({ kind: 'library', libraryId: detail.library_id });
+      // A second await, and a slower one - a whole page of the library. The
+      // rendition written below is a single shared field, so a reader who has
+      // moved on while that was in flight must not have this photo's applied.
+      if (!this.isCurrent(photoId)) return;
       const opening = this.renditionToApply(detail);
       if (opening == null) return;
       // A rendition every photo already has needs no build, and no round trip to
@@ -244,6 +248,10 @@ export class PhotosPresenter {
 
   async setNotes(photoId: string, notes: string): Promise<void> {
     await this.patch(photoId, { notes });
+    // Blurring the box and stepping on is one gesture during a cull, so the save
+    // routinely lands on a photo the reader has already left - where "saved"
+    // would be a claim about a note they never wrote.
+    if (!this.isCurrent(photoId)) return;
     runInAction(() => (this.store.notesSavedAt = Date.now()));
   }
 

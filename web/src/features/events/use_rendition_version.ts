@@ -10,22 +10,17 @@ import { usePresenters } from '../../app/stores_context';
 // later ones out of its in-memory resource cache without revalidating. The URL
 // itself has to differ, and this is the part of it that differs.
 //
-// Held here rather than in a store because its life is the view's: a version for
-// a photo nobody is looking at buys nothing, and a store of them would grow with
-// every photo an import touches and need a cap and an eviction rule to stand in
-// for what unmounting does for free. Losing one costs a revalidation and nothing
-// else - the plain URL still carries an ETag (§13.5).
+// The value lives on the presenter, keyed by photo; this only subscribes to it,
+// so that a view showing a photo re-renders when that photo is rebuilt and no
+// view is woken by anyone else's.
 export function useRenditionVersion(photoId: string | null): number {
   const { events } = usePresenters();
-  // Paired with the photo it belongs to, so the render between a new id arriving
-  // and the effect that subscribes for it does not spend the last photo's
-  // version on this one's URL.
-  const [rebuilt, setRebuilt] = useState<{ photoId: string; at: number } | null>(null);
+  const [, rebuilt] = useState(0);
 
   useEffect(() => {
     if (photoId == null) return;
-    return events.watch(photoId, () => setRebuilt({ photoId, at: Date.now() }));
+    return events.watch(photoId, () => rebuilt((n) => n + 1));
   }, [events, photoId]);
 
-  return rebuilt?.photoId === photoId ? rebuilt.at : 0;
+  return photoId == null ? 0 : events.versionOf(photoId);
 }

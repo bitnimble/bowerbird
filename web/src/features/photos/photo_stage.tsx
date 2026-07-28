@@ -132,12 +132,10 @@ export function PhotoStage({ src, alt, filename, video, photoKey, hold, preloadS
 
   // A new photo starts fitted; carrying a pan offset across frames would show
   // the next one scrolled to a corner. Keyed on the photo rather than the src, so
-  // that switching rendition holds the frame it is already showing.
-  useEffect(() => {
-    reset();
-    setFailed(false);
-    setAttempt(0);
-  }, [photoKey, reset]);
+  // that switching rendition holds the frame it is already showing. The retry
+  // state is not reset here: every photo change is also a src change, and the
+  // effect below already covers it.
+  useEffect(reset, [photoKey, reset]);
 
   // The previous photo's frame is left up for a beat rather than cleared on the
   // step: both neighbours are warmed, so the next one usually decodes within a

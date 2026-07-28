@@ -98,14 +98,20 @@ const Tile = observer(function Tile({
   // can be asleep past the replay buffer. Without a floor under it a single
   // missed announcement leaves a tile blank for the life of the page.
   const [retry, setRetry] = useState({ attempt: 0, at: 0 });
+  const version = useRenditionVersion(photo.id);
   // Both are moments, so the newer one wins and neither can land on a value the
   // other already used - which adding them together could, and a URL that repeats
   // itself is a request the browser does not make.
-  const src = renditionUrl(photo.id, 'grid', Math.max(useRenditionVersion(photo.id), retry.at));
+  const src = renditionUrl(photo.id, 'grid', Math.max(version, retry.at));
   const [failed, setFailed] = useState(false);
   // A tile that failed and has since been told to try again is not failed any
   // more; without this the placeholder outlives the thumbnail arriving.
   useEffect(() => setFailed(false), [src]);
+  // The budget below is per incident, so an announcement rearms it. Spent once
+  // and never refilled, a tile that burned six attempts in its first minute -
+  // which every tile does when the grid is opened onto an import - would have no
+  // way left to recover from an announcement that never arrived.
+  useEffect(() => setRetry({ attempt: 0, at: 0 }), [version]);
   useEffect(() => {
     if (!failed) return;
     const delay = RETRY_DELAYS_MS[retry.attempt];
