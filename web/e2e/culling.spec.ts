@@ -684,6 +684,75 @@ test('a photo reopens at the rendition it was last read in, without the library 
   expect(requested.filter((url) => url.includes(`/${photoId}/renditions/`))).toEqual([]);
 });
 
+interface Sample {
+  id: string;
+  src: string;
+}
+
+// The two flashes this work started from, measured the way they were reported:
+// every animation frame across a step, in the configuration they were seen in -
+// a library that renders the RAW, read at the camera's JPEG.
+//
+// Both were about *which* file the viewer asked for and *when*, so both show up
+// here as facts about the frames on screen: a step must never leave the stage
+// empty, and the render must never be the picture, not even for a frame.
+test('stepping through photos shows no empty stage and never the wrong rendition', async ({ page }) => {
+  test.setTimeout(240_000);
+  await page.goto('/settings');
+  await libraryRow(page, CULL_PHOTOS_DIR).getByRole('button', { name: 'Render the RAW' }).click();
+  await page.getByRole('group', { name: 'Open photos at' }).getByRole('button', { name: 'Camera JPEG', exact: true }).click();
+  await openLibrary(page, CULL_PHOTOS_DIR);
+  await expect(page.locator('.tile')).toHaveCount(PHOTO_NAMES.length);
+  await page.locator('.tile__hit').first().click();
+  await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
+  // The neighbour is warmed once this frame is up, and the step below is only
+  // honest with the warm in place - it is half of why there is no gap.
+  await page.waitForTimeout(1500);
+
+  const sample = async (): Promise<void> => {
+    await page.evaluate(() => {
+      const samples: Sample[] = [];
+      (window as unknown as { flash: Sample[] }).flash = samples;
+      const tick = (): void => {
+        const shown = document.querySelector<HTMLElement>('.stage__viewport .is-ready');
+        samples.push({ id: location.pathname.split('/').pop() ?? '', src: shown?.getAttribute('src') ?? '' });
+        requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    });
+  };
+
+  // Only the frames after the route has moved on: the ones before it are the
+  // photo being left, which is nobody's idea of a flash.
+  const after = async (from: string): Promise<Sample[]> => {
+    const samples = await page.evaluate(() => (window as unknown as { flash: Sample[] }).flash);
+    return samples.filter((s) => s.id !== from);
+  };
+
+  const step = async (button: string): Promise<Sample[]> => {
+    const from = page.url().split('/').pop() ?? '';
+    await sample();
+    await page.getByRole('button', { name: button }).click();
+    await page.waitForTimeout(2000);
+    const frames = await after(from);
+    expect(frames.length).toBeGreaterThan(30);
+    return frames;
+  };
+
+  for (const button of ['Next photo', 'Previous photo']) {
+    const frames = await step(button);
+    // A blank frame is the stage's own background, which is what the reader
+    // reported seeing between photos. The previous frame is held until the next
+    // one has decoded, so there should be nothing to see: a couple of frames of
+    // slack for a cold machine, not the hundreds of milliseconds a fetch takes.
+    expect(frames.filter((f) => f.src === '').length, `blank frames after ${button}`).toBeLessThanOrEqual(3);
+    // And never the library's default. Painting the render first and swapping it
+    // out is the second flash, and it is invisible to a request-level assertion
+    // once the file is cached.
+    expect(frames.filter((f) => f.src.includes('/renditions/')), `render frames after ${button}`).toEqual([]);
+  }
+});
+
 test('the photo fits the stage instead of overflowing it', async ({ page }) => {
   await page.goto('/settings');
   await openLibrary(page, CULL_PHOTOS_DIR);
