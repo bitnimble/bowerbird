@@ -77,7 +77,9 @@ export class PhotosService {
 
     this.repairing.add(photo.id);
     void this.processing
-      .renderOne(raw, photo.id, library, 'grid', false, photo.rendition_source ?? library.preview_source)
+      // Always the embedded JPEG, matching the import: the grid wants a small SDR
+      // thumbnail from the fastest source there is, whatever the viewer is set to.
+      .renderOne(raw, photo.id, library, 'grid', false, 'embedded')
       .catch((err: unknown) => console.error(`could not rebuild the grid tile for ${photo.id}: ${String(err)}`))
       .finally(() => this.repairing.delete(photo.id));
   }

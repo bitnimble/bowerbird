@@ -36,6 +36,10 @@ const config = {
   fullThumbnailQuality: 90,
 } as Config;
 
+function photoStage(job: { photoId: string; targets: { rendition: string }[] }): string {
+  return job.photoId + ':' + job.targets[0]!.rendition;
+}
+
 describe('ProcessingService.processUnprocessed', () => {
   let root: string;
 
@@ -71,12 +75,14 @@ describe('ProcessingService.processUnprocessed', () => {
       markProcessingFailed: jest.fn(),
     } as unknown as PhotosRepository;
 
+    // Two jobs per photo now - the grid tile, then the renditions - and the flag has
+    // to reach both, since the tile can fall back to a render and needs the match too.
     await new ProcessingService(repo, { ...config, matchEmbeddedJpeg: true } as Config).processUnprocessed('lib');
-    expect(posted.map((job) => job.matchEmbeddedJpeg)).toEqual([true]);
+    expect(posted.map((job) => job.matchEmbeddedJpeg)).toEqual([true, true]);
 
     posted.length = 0;
     await new ProcessingService(repo, { ...config, matchEmbeddedJpeg: false } as Config).processUnprocessed('lib');
-    expect(posted.map((job) => job.matchEmbeddedJpeg)).toEqual([false]);
+    expect(posted.map((job) => job.matchEmbeddedJpeg)).toEqual([false, false]);
   });
 
   it('marks each photo processed and drains the pool without hanging', async () => {
@@ -105,6 +111,27 @@ describe('ProcessingService.processUnprocessed', () => {
     // Must resolve (not hang): applyResult swallows the throw so the pool's
     // assignNext/terminate bookkeeping still runs for every job.
     await expect(new ProcessingService(repo, config).processUnprocessed('lib')).resolves.toBeUndefined();
+    expect(markProcessed).toHaveBeenCalledTimes(2);
+  });
+
+  it('builds every grid tile before any rendition, and clears the flag only once both land', async () => {
+    // The whole point of the split. A tile is ~125ms where a rendition is ~1.5s, so
+    // interleaving them would make a 2000-frame shoot's grid take as long as the
+    // renders do. Nothing else pins the ordering, so a future refactor that fused the
+    // passes back together would be invisible.
+    const markProcessed = jest.fn();
+    const repo = {
+      listPendingProcessing: jest.fn(() => [pending('a'), pending('b')]),
+      markProcessed,
+      markProcessingFailed: jest.fn(),
+    } as unknown as PhotosRepository;
+
+    await new ProcessingService(repo, config).processUnprocessed('lib');
+
+    const order = posted.map((job) => photoStage(job));
+    expect(order).toEqual(['a:grid', 'b:grid', 'a:full', 'b:full']);
+    // Not after the tile: a photo whose renditions are still outstanding has to stay
+    // pending, or a crash between the passes would lose them with nothing to retry.
     expect(markProcessed).toHaveBeenCalledTimes(2);
   });
 
@@ -169,8 +196,10 @@ describe('ProcessingService.processUnprocessed', () => {
     expect(second).toBe(first); // same in-flight promise
     await Promise.all([first, second]);
 
-    expect(markProcessed).toHaveBeenCalledWith('a', expect.any(String), 'render');
-    expect(markProcessed).toHaveBeenCalledWith('b', expect.any(String), 'render');
+    // 'embedded', not 'render': the grid tile always comes from the fastest source
+    // there is, whatever the library serves in the viewer.
+    expect(markProcessed).toHaveBeenCalledWith('a', expect.any(String), 'embedded');
+    expect(markProcessed).toHaveBeenCalledWith('b', expect.any(String), 'embedded');
   });
 
   it('leaves jobs pending (no hang, no throw) when a worker cannot be spawned', async () => {
