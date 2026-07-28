@@ -36,6 +36,7 @@ Bowerbird is a high-performance RAW photo management and cataloguing backend des
 
 - **LibRaw**, must be installed on the host system. The Bun process loads `libraw.so` / `libraw.dylib` via FFI. On Debian/Ubuntu: `apt install libraw-dev`. On macOS: `brew install libraw`.
 - **libvips**, resize, blur and the AVIF/JPEG encoders. Linked by `native/rawshim` rather than dlopen'd, so it is needed to build as well as to run: `apt install libvips-dev` / `brew install vips`. This is the library sharp used to bundle; see §10.4 for why it moved out of node_modules.
+- **libheif's aomenc plugin**, `apt install libheif-plugin-aomenc`. Easy to miss and not optional: Debian ships libheif's codecs as separate plugin packages and libvips pulls in only the *decoders*, so an image without this reads AVIF perfectly and cannot write a single one - which is every rendition this app produces. `bun native/smoke_avif.ts` proves an install has an encoder rather than only a decoder.
 - **ffmpeg**, applies the PQ transfer and encodes the HDR video (§10.7). Needs libzimg for the `zscale` filter and **libsvtav1** for the video; a build missing either cannot produce them. SVT-AV1 implementing AV1 Profile 0 only is the point rather than a limitation: 4:4:4 is Profile 1, which no hardware decoder takes, and the video exists to reach a hardware HDR path.
 - **libavif-bin**, `avifenc` encodes the HDR still. ffmpeg's own avif muxer writes no `colr` box, so it cannot tag one as HDR at all.
 
@@ -1067,7 +1068,23 @@ Batching across images is the right counter-argument and still loses, for a reas
 
 So the reachable target is the grade (19% of the CPU budget), plus a demosaic that would be worse, against CUDA as a hard NVIDIA-only dependency and a second implementation of the pixel maths kept in agreement with the CPU one - which has to stay, since the baseline exists for machines with no AVX at all.
 
-**Cheaper levers, in order.** The fit is 36% of the budget and is dominated by a sequential refine, so parallelising its axis probes or cutting evaluation count attacks the largest share with no new dependency. Then the AVIF encoder: libheif here has only the aom plugin, while `libsvtav1enc1` and `librav1e0` are already installed as libraries - adding `libheif-plugin-svtenc` or `libheif-plugin-rav1e` makes SVT-AV1 or rav1e available to the same call, both 4:4:4-capable, for a config change rather than an architecture.
+**The cheaper lever is the fit**, 36% of the budget and dominated by a sequential refine, so parallelising its axis probes or cutting evaluation count attacks the largest share with no new dependency. The AVIF encoder is *not* a lever: the alternatives were measured and neither beats libaom (below).
+
+**libaom, named explicitly, after measuring the alternatives.** libheif can be built with any of libaom, rav1e, SVT-AV1 or x265, and libvips' `heifsave` takes an `encoder` property to choose. All three AV1 encoders were installed and compared on the 3840px rendition; `BOWERBIRD_AVIF_ENCODER` (aom, rav1e, svt, auto) reproduces it.
+
+| Q | libaom | | | rav1e | | |
+|---|---|---|---|---|---|---|
+| | ms | bytes | PSNR | ms | bytes | PSNR |
+| 60 | 272 | 1.06MB | 33.53 | 1634 | 1.99MB | 34.73 |
+| 80 | 404 | 3.50MB | 37.19 | 2300 | 4.80MB | 38.74 |
+| 88 | 511 | 5.67MB | 40.13 | 2731 | 6.82MB | 41.50 |
+| 95 | 602 | 9.66MB | 44.66 | 3422 | 10.15MB | 45.45 |
+
+rav1e scores better at every Q, which means nothing on its own, because it also spends more bits at every Q. Compared at matched *size* - interpolating rav1e onto libaom's 5.67MB - it lands at ~39.9 PSNR against libaom's 40.13, so the rate-distortion curves are the same within measurement error while libaom is **5-6x faster**. libaom stays.
+
+**SVT-AV1 writes a 201-byte broken file and reports success.** §10.7 records that it implements AV1 Profile 0 only and converts 4:4:4 down silently; through libheif 1.17.6 it does not even manage that - `vips_heifsave` returns 0, and what lands on disk has no valid stream (`missing mandatory atoms, broken header`). It is unusable here, and unusable in a way that no error surfaces.
+
+That is why the encoder is named rather than left at libheif's `auto`, which picks by plugin priority. Measured, `auto` still chooses libaom with the svtenc plugin installed, so this is hardening rather than a bug fix - but the ordering is libheif's to change, the input here is always 4:4:4, and the failure mode is a silently corrupt rendition.
 
 **libvips 8.15.1 is the version to write against, not the crate's.** The `libvips` crate targets a later release and its `*_with_opts` helpers send every property their options struct knows about - `tune` for `heifsave`, a `keep` flag for `jpegsave` - neither of which exists in the version Debian and Ubuntu ship. `heifsave` failed outright with ``no property named `tune` ``; `jpegsave` only logged a GLib critical, which is worse, because it looked like it worked. Both savers go through the raw bindings and name their properties explicitly, keeping the version-coupled part of the dependency to one function. Two more of the crate's edges are load-bearing: `ResizeOptions::default()` has `vscale: 0`, which collapses an image to a single row unless it is always passed, and `VipsImage` derives `Clone` as a shallow refcount copy alongside a `Drop` that unrefs, so cloning one produces `g_object_unref: assertion 'G_IS_OBJECT (object)' failed` on the second drop - hundreds per fit, at one point. Nothing here clones a `VipsImage`; the pipeline consumes `self` at every step so that it cannot.
 

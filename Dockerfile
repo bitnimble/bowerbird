@@ -11,6 +11,12 @@ WORKDIR /app
 # The -dev package is what the native stage compiles against, and the runtime
 # stage inherits the same base layer, so one install serves both.
 #
+# libheif-plugin-aomenc is not optional and is easy to miss. Debian ships libheif's
+# codecs as separate plugin packages, and libvips pulls in only the *decoders*
+# (dav1d, libde265) - so without this the image reads AVIF perfectly and cannot
+# write a single one, which is every rendition this app produces. It surfaces as
+# `heifsave` returning an error and nothing more specific.
+#
 # ffmpeg applies the PQ transfer and encodes the HDR video (§10.7). It needs
 # libzimg for the zscale filter, which is what applies the transfer, and
 # libsvtav1 for the video. SVT-AV1 implements AV1 Profile 0 only, which is
@@ -21,7 +27,7 @@ WORKDIR /app
 # come from SVT-AV1. ffmpeg's own avif muxer writes no colr box, so it cannot
 # tag one as HDR at all.
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends libraw-dev libvips-dev ffmpeg libavif-bin \
+  && apt-get install -y --no-install-recommends libraw-dev libvips-dev libheif-plugin-aomenc ffmpeg libavif-bin \
   && rm -rf /var/lib/apt/lists/*
 
 # Dependencies as a cacheable layer.
@@ -77,7 +83,7 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY --from=native /build/x86-64/release/librawshim.so ./native/librawshim.so
 COPY --from=native /build/x86-64-v3/release/librawshim.so ./native/librawshim.v3.so
 COPY --from=native /build/x86-64-v4/release/librawshim.so ./native/librawshim.v4.so
-COPY native/entrypoint.sh native/verify_shim.ts ./native/
+COPY native/entrypoint.sh native/verify_shim.ts native/smoke_avif.ts ./native/
 RUN chmod +x ./native/entrypoint.sh
 COPY package.json bun.lock tsconfig.json ./
 COPY src ./src

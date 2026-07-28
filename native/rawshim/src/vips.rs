@@ -30,6 +30,24 @@ fn thread_count() -> i32 {
         .unwrap_or_else(|| std::thread::available_parallelism().map(|n| n.get() as i32).unwrap_or(4))
 }
 
+/// Which AV1 encoder libheif should use for AVIF, overridable with
+/// BOWERBIRD_AVIF_ENCODER (aom, rav1e, svt).
+///
+/// Named rather than `auto` on purpose; see `save_avif`. Anything unrecognised
+/// falls back to aom rather than to libheif's plugin ordering, because the failure
+/// this guards against is a silent one.
+fn avif_encoder() -> u32 {
+    use libvips::bindings as b;
+    match std::env::var("BOWERBIRD_AVIF_ENCODER").unwrap_or_default().as_str() {
+        "rav1e" => b::VipsForeignHeifEncoder_VIPS_FOREIGN_HEIF_ENCODER_RAV1E,
+        "svt" => b::VipsForeignHeifEncoder_VIPS_FOREIGN_HEIF_ENCODER_SVT,
+        // libheif's own pick, by plugin priority. What this did before the encoder
+        // was named, and kept only so that behaviour stays reachable for testing.
+        "auto" => b::VipsForeignHeifEncoder_VIPS_FOREIGN_HEIF_ENCODER_AUTO,
+        _ => b::VipsForeignHeifEncoder_VIPS_FOREIGN_HEIF_ENCODER_AOM,
+    }
+}
+
 pub fn init() {
     APP.get_or_init(|| {
         let app = VipsApp::new("bowerbird", false).expect("libvips failed to initialise");
@@ -200,12 +218,19 @@ impl<'a> Pipeline<'a> {
     /// AVIF, 4:4:4. Chroma is kept at full resolution because these are
     /// photographs: 4:2:0 smears the saturated edges a photo is judged on
     /// (DESIGN 10.1).
+    ///
+    /// The encoder is named rather than left to libheif's plugin priority, and
+    /// that is load-bearing: 4:4:4 is an AV1 profile, not a setting, and SVT-AV1
+    /// implements Profile 0 only while *converting silently* (DESIGN 10.7). If a
+    /// deployment happened to have the svtenc plugin at a higher priority, `auto`
+    /// would quietly ship 4:2:0. BOWERBIRD_AVIF_ENCODER overrides for measurement.
     pub fn save_avif(self, quality: i32, effort: i32, out_path: &str) -> Result<()> {
         use libvips::bindings;
         use std::ffi::{c_char, CString};
 
         let path = CString::new(out_path).map_err(|_| "output path contains a NUL".to_string())?;
         let image = self.finish()?;
+        let encoder = avif_encoder();
 
         // SAFETY: as `writer`. The property names are NUL-terminated literals and
         // the list is NULL-terminated, as the varargs contract requires.
@@ -221,6 +246,8 @@ impl<'a> Pipeline<'a> {
                 effort,
                 c"subsample_mode".as_ptr() as *const c_char,
                 bindings::VipsForeignSubsample_VIPS_FOREIGN_SUBSAMPLE_OFF,
+                c"encoder".as_ptr() as *const c_char,
+                encoder,
                 std::ptr::null::<c_char>(),
             )
         })?;
