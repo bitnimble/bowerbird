@@ -29,7 +29,7 @@ services:
       # repo's path ON THE DOCKER HOST (it differs from the path in this container).
       - "${REPO_DIR:?set REPO_DIR in .env to this repo's absolute path on the docker host}:/app"
       # node_modules stays container-side (installed on first run): the host copy is
-      # not shadowed/overwritten and platform binaries (sharp) match the image.
+      # not shadowed/overwritten and platform binaries match the image.
       - /app/node_modules
       - "${PHOTOS_DIR:-./photos}:/photos"
       - bowerbird-db-dev:/data

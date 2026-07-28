@@ -1,10 +1,15 @@
-# Bowerbird backend. RAW decoding/metadata use LibRaw via bun:ffi, so the image
-# ships libraw as a system library. sharp's prebuilt binaries bundle libvips.
+# Bowerbird backend. Every pixel operation goes through native/rawshim, which
+# links LibRaw and libvips, so the image ships both as system libraries.
 FROM oven/bun:1-debian AS base
 WORKDIR /app
 
 # libraw.so is dlopen'd at runtime (raw_decoder.ts, metadata.ts). The -dev package
 # provides the unversioned libraw.so symlink the FFI loader resolves.
+#
+# libvips is the image library sharp used to bundle; rawshim links it directly,
+# so it has to be present rather than arriving inside a node_modules prebuild.
+# The -dev package is what the native stage compiles against, and the runtime
+# stage inherits the same base layer, so one install serves both.
 #
 # ffmpeg applies the PQ transfer and encodes the HDR video (§10.7). It needs
 # libzimg for the zscale filter, which is what applies the transfer, and
@@ -16,7 +21,7 @@ WORKDIR /app
 # come from SVT-AV1. ffmpeg's own avif muxer writes no colr box, so it cannot
 # tag one as HDR at all.
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends libraw-dev ffmpeg libavif-bin \
+  && apt-get install -y --no-install-recommends libraw-dev libvips-dev ffmpeg libavif-bin \
   && rm -rf /var/lib/apt/lists/*
 
 # Dependencies as a cacheable layer.
@@ -32,8 +37,7 @@ RUN bun install --frozen-lockfile --production
 # that runs the container. Building in the entrypoint instead would allow it, at
 # the cost of putting the whole toolchain in the runtime image and turning a
 # compile error into a failure to start. Measured, the tuning is worth ~20% on one
-# hot loop that is currently at parity with the TypeScript it replaced, so it is
-# not worth either.
+# hot loop, which is not worth either.
 FROM base AS native
 RUN apt-get update \
   && apt-get install -y --no-install-recommends build-essential curl libclang-dev \

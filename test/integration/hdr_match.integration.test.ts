@@ -23,7 +23,7 @@ async function fit() {
   const anchor = diffuseWhite(linear, QUANTILE);
   const jpeg = readEmbeddedJpeg(FIXTURE);
   if (jpeg == null) throw new Error('fixture has no embedded JPEG');
-  const profile = await fitMatchProfile(FIXTURE, decodeRaw(FIXTURE, 8));
+  const profile = await fitMatchProfile(FIXTURE);
   if (profile == null) throw new Error('SDR fit declined, so there is no geometry to reuse');
   const match = await fitHdrMatch(linear, anchor, jpeg, profile);
   return { linear, anchor, match, colour: match?.colour ?? null, profile };

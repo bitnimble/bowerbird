@@ -1,5 +1,5 @@
 import { dlopen, FFIType, ptr, toArrayBuffer, type Pointer } from 'bun:ffi';
-import { decodeViaShim } from './rawshim';
+import { decodeRawImage, freeImage, pixels } from './rawshim_ops';
 
 // LibRaw is loaded at runtime via FFI (the container ships libraw-dev). The C API
 // (libraw/libraw_c_api.h) exposes plain functions + accessors, avoiding most
@@ -54,7 +54,7 @@ export interface DecodedImage {
   width: number;
   height: number;
   channels: 3;
-  // 8 for thumbnails, 16 for a full-depth export. sharp needs to be told which.
+  // 8 for thumbnails, 16 for a full-depth export.
   depth: 8 | 16;
   data: Buffer; // interleaved RGB, already rotated to display orientation
 }
@@ -127,6 +127,11 @@ export interface DecodeOptions {
  * masked-border crop all happen in there now: they are one job, and splitting them
  * across an FFI boundary meant reaching into LibRaw's params struct from
  * TypeScript to set a field the C API does not expose.
+ *
+ * Copies the samples out, so this is for the HDR path, whose encoder is ffmpeg
+ * and which therefore does need them in JS. Anything that only feeds the pixels
+ * back to another image operation wants `decodeRawImage`, which keeps them where
+ * they are.
  */
 export function decodeRaw(
   filePath: string,
@@ -134,7 +139,12 @@ export function decodeRaw(
   space: OutputSpace = 'srgb',
   options: DecodeOptions = {},
 ): DecodedImage {
-  return decodeViaShim(filePath, depth, space, options.atLeastLongEdge ?? 0);
+  const image = decodeRawImage(filePath, depth, space, options.atLeastLongEdge ?? 0);
+  try {
+    return { width: image.width, height: image.height, channels: 3, depth, data: pixels(image) };
+  } finally {
+    freeImage(image);
+  }
 }
 
 export interface RawHeader {

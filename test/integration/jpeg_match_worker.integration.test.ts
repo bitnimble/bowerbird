@@ -6,9 +6,9 @@ import { afterAll, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import sharp from 'sharp';
 import { deltaE76 } from '../../src/services/processing/jpeg_match';
 import { readEmbeddedJpeg } from '../../src/services/processing/raw_decoder';
+import { decodeImage, freeImage, pixels, type ImageHandle } from '../../src/services/processing/rawshim_ops';
 import type { ProcessingResult, RenditionJob, RenditionTarget } from '../../src/services/processing/processing_types';
 
 const FIXTURE = `${import.meta.dir}/../fixtures/DSC02981.ARW`;
@@ -55,7 +55,28 @@ function runJob(job: RenditionJob): Promise<ProcessingResult> {
   });
 }
 
-async function render(matchEmbeddedJpeg: boolean, name: string): Promise<Buffer> {
+/** The handle's pixels, with the handle released. */
+function take(image: ImageHandle): { width: number; height: number; data: Buffer } {
+  try {
+    return { width: image.width, height: image.height, data: pixels(image) };
+  } finally {
+    freeImage(image);
+  }
+}
+
+async function readImage(file: string, longEdge = 0): Promise<ReturnType<typeof take>> {
+  return take(decodeImage(Buffer.from(await Bun.file(file).arrayBuffer()), longEdge));
+}
+
+/** The pixel at a fractional position, so images of different shapes compare. */
+function at(image: ReturnType<typeof take>, u: number, v: number): [number, number, number] {
+  const x = Math.min(image.width - 1, Math.floor(u * image.width));
+  const y = Math.min(image.height - 1, Math.floor(v * image.height));
+  const i = (y * image.width + x) * 3;
+  return [image.data[i]!, image.data[i + 1]!, image.data[i + 2]!];
+}
+
+async function render(matchEmbeddedJpeg: boolean, name: string): Promise<ReturnType<typeof take>> {
   const outputPath = path.join(root, `${name}.avif`);
   const result = await runJob({
     kind: 'rendition',
@@ -68,28 +89,33 @@ async function render(matchEmbeddedJpeg: boolean, name: string): Promise<Buffer>
     matchEmbeddedJpeg,
   });
   expect(result.success).toBe(true);
-  return sharp(outputPath).removeAlpha().raw().toBuffer();
+  return readImage(outputPath);
 }
 
 test(
   'the worker applies the match when the job asks for it, and not otherwise',
   async () => {
     const [plain, matched] = await Promise.all([render(false, 'plain'), render(true, 'matched')]);
-    expect(matched.length).toBe(plain.length);
+    expect(matched.data.length).toBe(plain.data.length);
 
     // The camera's own JPEG is what both are trying to look like, so the test is
     // not "the bytes changed" but "the render moved towards the target".
     const jpeg = readEmbeddedJpeg(FIXTURE)!;
-    const { width, height } = await sharp(path.join(root, 'plain.avif')).metadata();
-    const reference = await sharp(jpeg).rotate().resize(width, height, { fit: 'fill' }).removeAlpha().raw().toBuffer();
+    const reference = take(decodeImage(jpeg, Math.max(plain.width, plain.height)));
 
+    // Sampled on a normalised grid rather than by buffer index, because the three
+    // images are not the same shape: the JPEG is distortion-cropped, so at an 800px
+    // long edge it comes out 534 wide against the render's 535, and walking a shared
+    // index would slide a pixel per row and compare different parts of the scene.
     let plainError = 0;
     let matchedError = 0;
     let counted = 0;
-    for (let i = 0; i + 2 < plain.length; i += 3 * 11) {
-      const target = [reference[i]!, reference[i + 1]!, reference[i + 2]!];
-      plainError += deltaE76([plain[i]!, plain[i + 1]!, plain[i + 2]!], target);
-      matchedError += deltaE76([matched[i]!, matched[i + 1]!, matched[i + 2]!], target);
+    for (let step = 0; step < 4000; step += 1) {
+      const u = (step % 61) / 61;
+      const v = (step / 4000) % 1;
+      const target = at(reference, u, v);
+      plainError += deltaE76(at(plain, u, v), target);
+      matchedError += deltaE76(at(matched, u, v), target);
       counted += 1;
     }
     expect(counted).toBeGreaterThan(100);

@@ -268,7 +268,7 @@ export class ProcessingService {
           assignNext();
         };
         // Bun kills the worker thread after onerror fires, so the worker can't be
-        // reused. A native crash (segfault in LibRaw/sharp) skips the worker's own
+        // reused. A native crash (segfault in LibRaw/libvips) skips the worker's own
         // catch, so clean up the in-flight job's partial/stale output here too,
         // record the failure, drop this worker, and launch a replacement.
         worker.onerror = (event: ErrorEvent) => {

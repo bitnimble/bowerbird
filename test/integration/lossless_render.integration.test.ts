@@ -1,15 +1,15 @@
 // The full-resolution export is a second decode path feeding an encoder that
-// lives outside sharp for the HDR case. None of that is visible until someone
+// lives outside libvips for the HDR case. None of that is visible until someone
 // opens the file (§10.5).
 //   docker exec bowerbird-dev bun test test/integration
 import { expect, test } from 'bun:test';
 import { mkdtempSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import sharp from 'sharp';
 import type { Library } from '../../src/schemas/libraries';
 import { ProcessingService } from '../../src/services/processing/processing_service';
 import { decodeRaw } from '../../src/services/processing/raw_decoder';
+import { decodeImage, freeImage, pixels } from '../../src/services/processing/rawshim_ops';
 import { getRenditionPath } from '../../src/utils/paths';
 
 // The output path is the library's business now, so the test asks for it the
@@ -63,18 +63,18 @@ test('the SDR render the service produces decodes back to the image that went in
     await service().renderOne(FIXTURE, 'test-photo', lib, 'max', false);
 
     const expected = decodeRaw(FIXTURE, 8);
-    const meta = await sharp(output).metadata();
-    expect(meta.format).toBe('heif'); // libvips reports AVIF as its container
+    const written = decodeImage(Buffer.from(await Bun.file(output).arrayBuffer()));
     // Full resolution: this is the view that gets pixel-peeped, so unlike every
     // other rendition it is never fitted to a maximum edge.
-    expect(meta.width).toBe(expected.width);
-    expect(meta.height).toBe(expected.height);
+    expect(written.width).toBe(expected.width);
+    expect(written.height).toBe(expected.height);
     // Comfortably inside the size budget the quality was chosen against.
     expect(statSync(output).size).toBeLessThan(20_000_000);
 
     // The pixels, not just the dimensions. A wrong-depth read produces a file of
     // exactly the right size full of garbage, which only a comparison catches.
-    const actual = await sharp(output).raw().toBuffer();
+    const actual = pixels(written);
+    freeImage(written);
     let sum = 0;
     for (let i = 0; i < actual.length; i++) sum += (actual[i]! - expected.data[i]!) ** 2;
     const psnr = 10 * Math.log10(255 ** 2 / (sum / actual.length));

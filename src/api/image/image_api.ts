@@ -1,10 +1,10 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
-import sharp from 'sharp';
 import { AppError } from '../../errors';
 import type { Library } from '../../schemas/libraries';
 import { getHdrPath, getOriginalPath, getRenditionPath } from '../../utils/paths';
 import { readEmbeddedJpeg } from '../../services/processing/raw_decoder';
+import { decodeImage, encodeJpeg, freeImage } from '../../services/processing/rawshim_ops';
 import { contentTypeFor, isHdrMedium, isHdrVariant } from '../../services/processing/hdr_media';
 import { isRendition, renditionContentType } from '../../services/processing/renditions';
 import type { BasicPhoto } from '../../services/photos/photos_repository';
@@ -97,7 +97,13 @@ export class ImageApi {
     const file = Bun.file(getRenditionPath(library, photo.id, 'full', library.preview_hdr));
     if (!(await file.exists())) throw new AppError('NOT_FOUND', `image not found on disk: ${photoId}`);
 
-    const jpeg = await sharp(await file.arrayBuffer()).jpeg({ quality: JPEG_QUALITY }).toBuffer();
+    const rendition = decodeImage(Buffer.from(await file.arrayBuffer()));
+    let jpeg: Buffer;
+    try {
+      jpeg = encodeJpeg(rendition, 0, JPEG_QUALITY);
+    } finally {
+      freeImage(rendition);
+    }
     const name = (photo.file_path.split('/').pop() ?? photo.id).replace(/\.[^.]+$/, '');
     return new Response(new Uint8Array(jpeg), {
       headers: {

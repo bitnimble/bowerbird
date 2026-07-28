@@ -39,11 +39,11 @@ export interface RenditionTarget {
   // else the embedded JPEG is served as itself rather than rendered into a
   // rendition (§10.2).
   source: ThumbnailSource;
-  /** sharp AVIF quality, 1-100, for the SDR path. */
+  /** AVIF quality, 1-100, for the SDR path. */
   quality: number;
   /** avifenc max quantizer, 0-63 and lower is better, for the HDR path. */
   quantizer: number;
-  /** sharp AVIF effort, 0-9. See config: the default of 4 is a pure loss. */
+  /** AVIF effort, 0-9. See config: the default of 4 is a pure loss. */
   effort: number;
   /** Encoder speed for the HDR path. */
   preset: number;

@@ -64,7 +64,7 @@ export const config = {
   // mathematically lossless but ~50s and 80MB on a 24MP frame, where 0.3 is
   // half a second and 9MB. Deliberately tighter than libjxl's "visually
   // lossless" 1.0, because this view exists to be pixel-peeped.
-  // Full-resolution export (§10.5), AVIF. `quality` is sharp's 1-100 scale for
+  // Full-resolution export (§10.5), AVIF. `quality` is libvips' 1-100 scale for
   // the SDR path; `quantizer` is avifenc's 0-63 (lower is better) for the HDR
   // one. Both are set tight rather than "visually lossless", because this is the
   // view that exists to be pixel-peeped, and kept inside a ~20MB budget on a
@@ -107,7 +107,7 @@ export const config = {
   // the WebP q90 it replaces, and encodes in 713ms at effort 0.
   smallThumbnailQuality: envNumber('SMALL_THUMBNAIL_QUALITY', 80),
   fullThumbnailQuality: envNumber('FULL_THUMBNAIL_QUALITY', 80),
-  // sharp's AVIF effort, 0-9, and 0 because speed matters more here than size.
+  // AVIF effort, 0-9, and 0 because speed matters more here than size.
   // The default of 4 is pathological either way: 13.6s for a 3840px frame
   // against 0.6s at effort 0, for a file only ~15% smaller. This is also what
   // the quality-check page encodes at, so what gets judged there is what ships.

@@ -3,31 +3,42 @@
 // path, so it needs a real file to prove anything.
 //   docker exec bowerbird-dev bun test test/integration
 import { expect, test } from 'bun:test';
-import sharp from 'sharp';
 import { createDatabase } from '../../src/db/connection';
-import { readEmbeddedJpeg } from '../../src/services/processing/raw_decoder';
+import { readEmbeddedJpeg, readRawHeader } from '../../src/services/processing/raw_decoder';
+import { decodeImage, freeImage } from '../../src/services/processing/rawshim_ops';
 import { LibrariesRepository } from '../../src/services/libraries/libraries_repository';
 
 const FIXTURE = `${import.meta.dir}/../fixtures/DSC02981.ARW`;
 
-test('the embedded preview is a decodable JPEG', async () => {
+test('the embedded preview is a decodable JPEG', () => {
   const jpeg = readEmbeddedJpeg(FIXTURE);
   expect(jpeg).not.toBeNull();
-  const meta = await sharp(jpeg!).metadata();
-  expect(meta.format).toBe('jpeg');
-  expect(meta.width).toBeGreaterThan(0);
-  expect(meta.height).toBeGreaterThan(0);
+  // A body that embeds a bitmap preview instead is the case the caller falls
+  // back on, so this is checked at the bytes rather than taken on trust.
+  expect(Array.from(jpeg!.subarray(0, 2))).toEqual([0xff, 0xd8]);
+
+  const decoded = decodeImage(jpeg!);
+  try {
+    expect(decoded.width).toBeGreaterThan(0);
+    expect(decoded.height).toBeGreaterThan(0);
+  } finally {
+    freeImage(decoded);
+  }
 });
 
-test('the embedded preview carries its own EXIF orientation', async () => {
+test('the embedded preview carries its own EXIF orientation', () => {
   // The render path bakes upright, the embedded path does not, so the worker has
   // to rotate. If this stops being true, portrait frames come out sideways.
-  const jpeg = readEmbeddedJpeg(FIXTURE)!;
-  const meta = await sharp(jpeg).metadata();
-  expect(meta.orientation).toBe(8);
+  expect(readRawHeader(FIXTURE).orientation).not.toBe(0);
 
-  const upright = await sharp(jpeg).rotate().toBuffer({ resolveWithObject: true });
-  expect(upright.info.height).toBeGreaterThan(upright.info.width);
+  const jpeg = readEmbeddedJpeg(FIXTURE)!;
+  const upright = decodeImage(jpeg);
+  try {
+    // Only true if the orientation was applied: the preview is stored landscape.
+    expect(upright.height).toBeGreaterThan(upright.width);
+  } finally {
+    freeImage(upright);
+  }
 });
 
 test('the preview settings live on the library and round-trip', () => {

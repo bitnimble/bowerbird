@@ -25,7 +25,7 @@ Bowerbird is a high-performance RAW photo management and cataloguing backend des
 | Web framework | Hono |
 | Validation | Zod v4 |
 | Database | SQLite via `bun:sqlite` |
-| Image processing | sharp (AVIF encoding/resizing) |
+| Image processing | `native/rawshim`, a Rust library over libvips + LibRaw, called via `bun:ffi` (§10.4) |
 | RAW decoding | Per-format dispatch (header sniff → fastest reader); Sony ARW via LibRaw `bun:ffi` |
 | Metadata extraction | LibRaw header parse (no pixel decode), per-format dispatch |
 | Testing | Bun's built-in test runner (`bun test`, run via `bun run test`) |
@@ -35,6 +35,7 @@ Bowerbird is a high-performance RAW photo management and cataloguing backend des
 ### System Dependencies
 
 - **LibRaw**, must be installed on the host system. The Bun process loads `libraw.so` / `libraw.dylib` via FFI. On Debian/Ubuntu: `apt install libraw-dev`. On macOS: `brew install libraw`.
+- **libvips**, resize, blur and the AVIF/JPEG encoders. Linked by `native/rawshim` rather than dlopen'd, so it is needed to build as well as to run: `apt install libvips-dev` / `brew install vips`. This is the library sharp used to bundle; see §10.4 for why it moved out of node_modules.
 - **ffmpeg**, applies the PQ transfer and encodes the HDR video (§10.7). Needs libzimg for the `zscale` filter and **libsvtav1** for the video; a build missing either cannot produce them. SVT-AV1 implementing AV1 Profile 0 only is the point rather than a limitation: 4:4:4 is Profile 1, which no hardware decoder takes, and the video exists to reach a hardware HDR path.
 - **libavif-bin**, `avifenc` encodes the HDR still. ffmpeg's own avif muxer writes no `colr` box, so it cannot tag one as HDR at all.
 
@@ -44,7 +45,8 @@ Bowerbird is a high-performance RAW photo management and cataloguing backend des
 |---|---|
 | `hono` | Web server and routing |
 | `zod` | Schema validation (v4) |
-| `sharp` | Image resizing and AVIF encoding (operates on decoded RGB buffers, never on RAW files directly) |
+
+There is no image-processing package. Everything that touches pixels is in `native/rawshim` (§10.4), which links libvips directly.
 
 Testing uses Bun's built-in `bun test` runner, so there is no test-framework dependency.
 
@@ -864,12 +866,12 @@ These were three trees under three names - `thumbnails/`, `previews/` and `lossl
 
 Two encoder settings were measured rather than inherited, and both defaults were wrong:
 
-- **`effort` is the expensive knob, not quality.** sharp defaults to 4, which is 13.6s for a 3840px frame against 0.6s at effort 0, for a file only ~15% smaller. `THUMBNAIL_EFFORT` is 0.
+- **`effort` is the expensive knob, not quality.** libvips defaults to 4, which is 13.6s for a 3840px frame against 0.6s at effort 0, for a file only ~15% smaller. `THUMBNAIL_EFFORT` is 0.
 - **AVIF quality is not WebP's scale.** Carrying the old 90 across would have produced 2551 kB thumbnails, 2.5x larger than what they replace. q80 is where shadow detail stops visibly degrading on real frames; q60 and q70 lose it. Quality is nearly free once effort is 0 (596ms at q60 against 898ms at q85), so this is chosen on appearance, not cost.
 
 **Where the pixels come from is per library**, not per server: `preview_source` (`embedded` or `render`), `preview_hdr` and `preview_hdr_video` on the `libraries` row. One catalogue may be scanned JPEGs where the camera's rendering is the point and another RAWs worth demosaicing. `embedded` is the default because it needs no demosaic. Changing either is deliberately **not retroactive**; it decides what gets built next, and rebuilding a catalogue is an explicit action.
 
-**Only `full` and `max` are ever HDR.** The grid stays SDR whatever the library says: a wall of HDR tiles is punishing to look at, and it would put a LibRaw linear decode and two encoder passes on every photo in an import rather than one sharp call.
+**Only `full` and `max` are ever HDR.** The grid stays SDR whatever the library says: a wall of HDR tiles is punishing to look at, and it would put a LibRaw linear decode and two encoder passes on every photo in an import rather than one AVIF encode.
 
 **An import builds `grid` always, and `full` only when the library renders.** A library serving the camera's JPEG has nothing to build for the photo view - it hands over the RAW's own bytes - so it pays one small encode per photo and no demosaic at all. `max` is never built at import: it is native resolution and tens of megabytes, so it happens on request and only once.
 
@@ -906,13 +908,16 @@ The orchestrator (`processing_service.ts`):
 ### 10.3 Worker Implementation (`processing_worker.ts`)
 
 Each worker:
-1. Receives a message with `{ photoId, rawFilePath, smallOutputPath, fullOutputPath, smallSize, fullSize, smallQuality, fullQuality }` (sizes/qualities passed in from config).
-2. Sniffs the file header and dispatches to the format's decoder (Stage 1: LibRaw for ARW) → produces an in-memory RGB bitmap buffer, **already rotated to display orientation** (see §10.4, the decoder applies the EXIF flip; the raw buffer carries no EXIF for sharp to auto-rotate from).
-3. Passes the bitmap buffer to sharp.
-4. Generates small thumbnail: `sharp(buffer, { raw: { width, height, channels: 3 } }).resize({ width: smallSize, height: smallSize, fit: 'inside' }).avif({ quality: smallQuality, effort, chromaSubsampling: '4:4:4' }).toFile(smallOutputPath)`.
-5. Generates full thumbnail: `sharp(buffer, { raw: { width, height, channels: 3 } }).resize({ width: fullSize, height: fullSize, fit: 'inside' }).avif({ quality: fullQuality, effort, chromaSubsampling: '4:4:4' }).toFile(fullOutputPath)`.
-6. On any failure in steps 2-5 (e.g. the full resize/encode throws after the small write already succeeded), delete `smallOutputPath` and `fullOutputPath` if present (best-effort unlink) before reporting, so a failed job leaves no partial thumbnail and a failed reprocess does not leave the prior run's stale thumbnails on disk (both share the UUID-keyed path). This upholds the §10.2 no-thumbnail invariant.
-7. Sends back `{ photoId, success: true, source }` or `{ photoId, success: false, error: string }`.
+1. Receives a message naming the RAW, the targets it has to write, and the sizes and qualities for each (passed in from config).
+2. Decodes the RAW once, through `native/rawshim` (§10.4) → an RGB bitmap **already rotated to display orientation** (the decoder applies the EXIF flip; the raw buffer carries no EXIF for a downstream library to auto-rotate from).
+3. Fits the camera-match profile once, if the library asked for it (§10.8).
+4. Builds one graded base at the largest SDR size any target needs, and writes each target's AVIF from it.
+5. On any failure, deletes every output the job names, if present (best-effort unlink), before reporting - so a failed job leaves no partial rendition and a failed reprocess does not leave the prior run's stale ones on disk (both share the UUID-keyed path). This upholds the §10.2 no-thumbnail invariant.
+6. Sends back `{ photoId, success: true, source }` or `{ photoId, success: false, error: string }`.
+
+**The decode never enters the JS heap.** Steps 2-4 pass a handle - an opaque pointer to a bitmap Rust owns - so a 60MP frame is decoded, fitted, graded and encoded without its pixels crossing the FFI boundary. The worker holds every handle it opens in one list and frees them in a `finally`, because nothing on the JS side collects them: a 60MP decode and its graded copy are ~380MB between them. The two places that genuinely need samples in JS - the scene-linear decode ffmpeg encodes (§10.7) and the HDR fit that reads the same pixels - copy explicitly, through `pixels()`.
+
+**One grade, not one per rendition.** A `render` import builds an 800px tile and a 3840px view, and transforming each separately did the ~9.8M-pixel warp and grade twice. The base is built at the largest SDR size the job asks for and every smaller rendition is a resize of it, which is legitimate because the order does not change the result: the distortion model is in radii normalised to the half-diagonal and the colour transform is a per-pixel lookup, so neither depends on resolution. Going 3840→800 is also a cheaper resize than 9504→800. The integration suite checks the reasoning rather than trusting it, comparing a grade-then-resize against a resize-then-grade.
 
 **Thumbnail source.** The job names where the pixels come from:
 
@@ -921,9 +926,11 @@ Each worker:
 | `render` | Demosaics the RAW (steps 2-3 above) | Full sensor resolution, slow |
 | `embedded` | Lifts the camera's own JPEG out of the file (`libraw_unpack_thumb` + `libraw_dcraw_make_mem_thumb`) | Much faster, the maker's colour treatment, but only as large as the body embedded, which ranges from 640×480 to the full sensor |
 
-The embedded JPEG carries its own EXIF orientation, so it is passed through `sharp().rotate()`; a render is already baked upright by the decoder (§11.1) and must not be rotated again. A file with no JPEG preview (some bodies embed a bitmap, or nothing) is a property of the file rather than an error, so an `embedded` request falls back to a render. The result reports what was **actually** used and `photos.rendition_source` records it, so the client can state which pixels are on screen instead of leaving the user to guess.
+The embedded JPEG carries its own EXIF orientation, so the decode applies it (`autorot`); a render is already baked upright by the decoder (§11.1) and must not be rotated again. A file with no JPEG preview (some bodies embed a bitmap, or nothing) is a property of the file rather than an error, so an `embedded` request falls back to a render. The result reports what was **actually** used and `photos.rendition_source` records it, so the client can state which pixels are on screen instead of leaving the user to guess.
 
-### 10.4 LibRaw FFI Bindings (`raw_decoder.ts`)
+### 10.4 The native layer (`native/rawshim`, `raw_decoder.ts`)
+
+Everything that touches pixels is in one Rust library, called from TypeScript over `bun:ffi`. It links LibRaw for the decode and libvips - the library sharp wrapped - for resize, blur and the AVIF/JPEG encoders. TypeScript orchestrates: it passes a path and a job, and gets back a handle, a profile or a written file.
 
 Minimal FFI bindings for LibRaw:
 
@@ -943,7 +950,7 @@ const libraw = dlopen('libraw.so', {
 ```
 
 The decoder function:
-1. Calls `libraw_init(0)` to create a processor. LibRaw's default `user_flip = -1` already applies the camera's EXIF orientation during `dcraw_process`, so the output RGB buffer is upright (sharp receives no EXIF and cannot rotate on its own). **Do not override `user_flip` to `0`**; that would emit unrotated pixels and misorient landscape/portrait thumbnails. Relying on the default also avoids poking a struct field by offset through FFI, which is version-fragile.
+1. Calls `libraw_init(0)` to create a processor. LibRaw's default `user_flip = -1` already applies the camera's EXIF orientation during `dcraw_process`, so the output RGB buffer is upright (a raw bitmap carries no EXIF, so nothing downstream can rotate on its own). **Do not override `user_flip` to `0`**; that would emit unrotated pixels and misorient landscape/portrait thumbnails. Relying on the default also avoids poking a struct field by offset through FFI, which is version-fragile.
 2. Opens the file with `libraw_open_file`.
 3. Calls `libraw_unpack` and `libraw_dcraw_process`.
 4. Calls `libraw_dcraw_make_mem_image` to get the processed image in memory.
@@ -953,8 +960,6 @@ The decoder function:
 8. Cleans up in a `finally` so every path (including a decode or copy error) releases resources: `libraw_dcraw_clear_mem` on the mem-image pointer if it was allocated (null-guarded, since an error before step 4 leaves it unset), then `libraw_recycle` and `libraw_close` on the processor.
 
 **Memory-leak audit:** every LibRaw allocation must be paired with its free on all paths, including errors. The three owners are the mem-image (`libraw_dcraw_clear_mem`), the unpacked data (`libraw_recycle`), and the processor (`libraw_close`). The implementing agent should audit the full FFI lifecycle, not just these calls.
-
-This buffer is then passed to sharp as `sharp(data, { raw: { width, height, channels: 3 } })`.
 
 **One copy, not two.** The frame is copied straight out of LibRaw's buffer with the masked-border crop applied on the way. It used to be copied whole and then have the crop copied out of that, which on a 60MP frame is ~190MB moved twice, about 250ms per decode for nothing.
 
@@ -966,11 +971,37 @@ It is a genuine quality trade, not a free one: dark edges pick up a faint checke
 
 **`half_size` has no setter in the C API**, and that is why the decode lives in Rust (`native/rawshim`) rather than in TypeScript. The FFI could only reach the field by locating `libraw_output_params_t` at runtime and writing at an offset; that worked, and was cross-checked from two directions, but its neighbours are `four_color_rgb` and `use_auto_wb`, either of which silently changes the picture when written to by mistake while leaving the dimensions perfectly plausible. bindgen resolves the field from the same headers the runtime library was built from, so the offset is the compiler's problem and stops being ours.
 
-The wrapper owns the whole job, because it is one job: as-shot white balance, the PPG demosaic, the half-size decision and the masked-border crop. TypeScript makes one call and gets a pointer. **It buys no speed** - measured against the TypeScript path it is 0.99x on a 61MP frame and 1.07x on a 24MP one, pixel-identical, because the time is inside LibRaw's unpack and demosaic either way. This is a correctness change, and a place to put later native work.
+The wrapper owns the whole decode, because it is one job: as-shot white balance, the PPG demosaic, the half-size decision and the masked-border crop. **The decode itself buys no speed** - measured against the TypeScript path it is 0.99x on a 61MP frame and 1.07x on a 24MP one, pixel-identical, because the time is inside LibRaw's unpack and demosaic either way. That was a correctness change. What it also did was put the boundary in the right place for everything else to follow.
 
-The thumbnail and header paths (§11.1) still use the C API through `bun:ffi` directly: they touch no struct that lacks an accessor, so they have nothing to gain from crossing into Rust.
+#### Handles, not pixels
 
-`bun run build:native` builds it; the Docker build does so in its own stage and copies only the ~400KB `.so` forward, keeping rustc, cargo and libclang out of the shipped image. Deliberately not built with `-C target-cpu=native`, which would require building in the entrypoint on the machine that runs it: measured, that tuning is worth ~20% on one hot loop that is currently at parity with the TypeScript it replaced, which does not justify putting a toolchain in the runtime image and turning a compile error into a failure to start.
+The FFI passes an opaque pointer to a bitmap Rust owns. Each operation - fit, grade, resize, encode - takes a handle and, where it makes an image, returns another.
+
+Getting this wrong the first time is worth recording, because the wrong version looked reasonable. Each call took a pixel pointer and returned a buffer, so `bb_fit` copied the render out of JS into a `Vec`, having already copied it *into* JS at the end of the decode: three ~45MB moves of pixels no JavaScript ever read. The same mistake shaped the libvips calls, one function per operation, each materialising its result for the next to copy back in - which threw away the lazy pipeline that is the whole reason libvips is fast, and is why the first native version *lost* to sharp on a 61MP fit, 915ms against 423ms. Chaining the operations into one graph and borrowing rather than copying closed most of it; moving the boundary closed the rest.
+
+The rule that falls out: pixels cross only where the consumer is not libvips. That is the scene-linear decode ffmpeg encodes (§10.7) and the HDR fit that reads the same samples, both of which call `pixels()` and copy on purpose. `imageFromRgb` is the same door in the other direction and exists only for tests, which construct a target and need it in the form a decode would have produced.
+
+Handles are freed explicitly, in a `finally`. Nothing on the JS side collects them, and the numbers are not small: a 60MP decode plus its graded copy is ~380MB.
+
+#### What it bought
+
+An import job - decode, fit, grade, and write a 3840px view plus an 800px tile - against the sharp pipeline it replaced:
+
+| Frame | sharp | native | |
+|---|---|---|---|
+| 24MP, no halving | 3478ms | 1560ms | 2.2x |
+| 61MP, halved to 15MP | 2701ms | 2135ms | 1.3x |
+| 61MP, halved to 15MP | 3425ms | 2620ms | 1.3x |
+
+By stage on the 24MP frame, which is the clearest because nothing is halved: decode 499→490 (identical code), fit 844→466, grade 1542→307, 3840px AVIF 563→280, 800px tile 30→21.
+
+The grade is where the boundary shows: it was a JS loop over 72MB with a sharp resize round-trip on either side, and is now one pass in Rust. The encoders are roughly 2x, which is not our work but the system libvips 8.15.1 build against sharp's bundled one. **The fit is not where it shows** - it was already in Rust before the handles, at 451ms, so removing its copy is inside the noise. Worth stating plainly, because "we removed three 45MB copies" invites the assumption that the copies were the cost; on the fit they were not.
+
+The thumbnail and header paths (§11.1) still use LibRaw's C API through `bun:ffi` directly: they touch no struct that lacks an accessor, so they have nothing to gain from crossing into Rust.
+
+`bun run build:native` builds it; the Docker build does so in its own stage and copies only the `.so` forward, keeping rustc, cargo and libclang out of the shipped image. Deliberately not built with `-C target-cpu=native`, which would require building in the entrypoint on the machine that runs it: measured, that tuning is worth ~20% on one hot loop, which does not justify putting a toolchain in the runtime image and turning a compile error into a failure to start.
+
+**libvips 8.15.1 is the version to write against, not the crate's.** The `libvips` crate targets a later release and its `*_with_opts` helpers send every property their options struct knows about - `tune` for `heifsave`, a `keep` flag for `jpegsave` - neither of which exists in the version Debian and Ubuntu ship. `heifsave` failed outright with ``no property named `tune` ``; `jpegsave` only logged a GLib critical, which is worse, because it looked like it worked. Both savers go through the raw bindings and name their properties explicitly, keeping the version-coupled part of the dependency to one function. Two more of the crate's edges are load-bearing: `ResizeOptions::default()` has `vscale: 0`, which collapses an image to a single row unless it is always passed, and `VipsImage` derives `Clone` as a shallow refcount copy alongside a `Drop` that unrefs, so cloning one produces `g_object_unref: assertion 'G_IS_OBJECT (object)' failed` on the second drop - hundreds per fit, at one point. Nothing here clones a `VipsImage`; the pipeline consumes `self` at every step so that it cannot.
 
 ### 10.5 Lossless export
 
@@ -988,9 +1019,9 @@ It follows the library's HDR setting, since it is the same render from the same 
 
 The polyfill's cost was almost entirely the PNG it had to produce: a 121 MB 16-bit intermediate, deflated with dynamic Huffman to save 18% on a buffer that never leaves the tab. A stored-deflate PNG would have cut that to 805 ms, but `jxl-oxide-wasm` exposes no raw framebuffer; only `encodeToPng()`; so there was nothing to hand a faster writer. Deleting the format deleted the problem, along with the wasm, the cICP splicing and the ICC sniffing.
 
-`LOSSLESS_QUALITY` (sharp's 1-100) and `LOSSLESS_QUANTIZER` (avifenc's 0-63, for the HDR path) are set tight rather than "visually lossless", and kept inside a ~20MB budget on a 60MP frame.
+`LOSSLESS_QUALITY` (libvips' 1-100) and `LOSSLESS_QUANTIZER` (avifenc's 0-63, for the HDR path) are set tight rather than "visually lossless", and kept inside a ~20MB budget on a 60MP frame.
 
-**Encoding.** SDR goes through sharp. The decode is deliberately 8-bit: sharp's AVIF output is 8-bit whatever goes in, and asking for 16 would reintroduce the trap that `raw.depth` is ignored on a `Buffer`, so the samples get read as 8-bit anyway and the picture is silently wrong. HDR goes through the ffmpeg/avifenc path (§10.7), which is where 10-bit and the PQ transfer live.
+**Encoding.** SDR goes through libvips' AVIF encoder. The decode is deliberately 8-bit, because that encoder's output is 8-bit whatever goes in, so a 16-bit decode would be twice the memory for samples it discards. HDR goes through the ffmpeg/avifenc path (§10.7), which is where 10-bit and the PQ transfer live.
 
 An `<img>` rather than a canvas, because a canvas cannot be HDR: neither 2D nor WebGL2 accepts a `rec2100-*` colour space, only `srgb` and `display-p3`, and `configureHighDynamicRange` is absent. An `<img>` keeps the browser's own colour management, HDR compositing, zoom and pan.
 
@@ -1126,7 +1157,7 @@ Used during sync to populate photo records and compute file hashes.
 
 ### 11.1 Implementation
 
-Metadata is read via the same per-format dispatch as decoding (§10): sniff the header, route to the format's reader. `sharp`/libvips is **not** used for RAW metadata, as its prebuilt builds have no RAW loader and, when coaxed to open an ARW as a generic TIFF, report the embedded preview's dimensions rather than the full-res sensor values.
+Metadata is read via the same per-format dispatch as decoding (§10): sniff the header, route to the format's reader. libvips is **not** used for RAW metadata, as it has no RAW loader and, when coaxed to open an ARW as a generic TIFF, report the embedded preview's dimensions rather than the full-res sensor values.
 
 For Sony ARW, metadata comes from **LibRaw's header parse**: `libraw_init` then `libraw_open_file` populates `imgdata.sizes` (dimensions and `flip` orientation), `imgdata.other` (capture `timestamp`, parsed GPS), and `imgdata.color` (color space), followed by `libraw_adjust_sizes_info_only` to flip-adjust `sizes.iwidth`/`iheight` (see below), all **without** calling `libraw_unpack`/`libraw_dcraw_process`, so no pixel data is decoded. This is the fast path used per file during scan. `colorSpace` in Stage 1 is the constant `sRGB` output space: LibRaw exposes no stable accessor for the camera's source color-space EXIF tag, and the decode pipeline always outputs sRGB, so this field is fixed (informational + a stable, non-varying hash input) rather than read per file. (`imgdata.color` holds calibration/profile data, not a simple source-space identifier.) The EXIF capture time is naive (the tag carries no zone). LibRaw exposes it only as a pre-computed `time_t` in `imgdata.other.timestamp` (derived by interpreting the naive `DateTimeOriginal` as the process's local timezone), with no accessor for the EXIF `OffsetTimeOriginal` tag. Stage 1 therefore reads that `time_t` back through the same local zone `mktime` used and re-encodes those components as a `Z` UTC ISO string (§4), which stores the camera's wall clock verbatim whatever the server's zone is; taking the `time_t` as an instant instead would slide every capture date by the server's offset. The stored value is a wall clock rather than an instant, so the client formats it in UTC (`captureDateTime`) rather than in the viewer's zone, which would slide it a second time. The zone itself comes from a second, direct read of the file: `exif_zone.ts` walks the TIFF header the RAW already is, IFD0 into the Exif IFD, and returns `OffsetTimeOriginal` (0x9011), falling back to `OffsetTime` (0x9010), into the `date_taken_offset` column. Bounded to the first 256KB, so it costs a page or two rather than a read of a 25MB file, and null when a pointer leads past that window. The tags arrived in EXIF 2.31 (2016), so older bodies record nothing and the column stays NULL: a Sony ILCE-7CR writes `+11:00`, an ILCE-6300 writes no offset at all. Blank and malformed values ("      ", `+1100`) are read as absent rather than as UTC. It is deliberately not a hash input (§9.2), for the same reason `dateTaken` is not: the hash is a change detector for a file the scan has already decided to open, which only happens once mtime or size differs (§9.1), and mtime is itself hashed. Descriptive metadata therefore adds no detection the hash does not already have. Rewriting the zone tag in place while preserving mtime and size defeats the quick-check before a hash is ever computed, so hashing it would not catch that case either. `date_taken` stays the wall clock either way, so ordering and the date filters are unaffected by whether a body recorded a zone; the offset is what the viewer shows beside the time and what a true instant would be derived from. The reader also `stat`s the file to fill `mtime`/`fileSize`, so the scan-time result carries them all the way to Phase 3 apply (§9.4) without a second `stat` inside the transaction.
 
@@ -1421,7 +1452,7 @@ The server is configured via environment variables:
 | `PROCESSING_CONCURRENCY` | `4` | Number of worker threads for thumbnail generation |
 | `SMALL_THUMBNAIL_QUALITY` | `80` | AVIF quality for small thumbnails, 1-100 (§10.1) |
 | `FULL_THUMBNAIL_QUALITY` | `80` | AVIF quality for full thumbnails, 1-100 (§10.1) |
-| `THUMBNAIL_EFFORT` | `0` | sharp AVIF effort, 0-9; the default of 4 is 20x slower for ~15% (§10.1) |
+| `THUMBNAIL_EFFORT` | `0` | AVIF effort, 0-9; the default of 4 is 20x slower for ~15% (§10.1) |
 | `SMALL_THUMBNAIL_SIZE` | `800` | Longest edge in pixels for small thumbnails |
 | `FULL_THUMBNAIL_SIZE` | `3840` | Longest edge in pixels for full thumbnails |
 | `MATCH_EMBEDDED_JPEG` | `true` | Give SDR renders the camera's own colour and lens correction, fitted per photo against the embedded JPEG; ~+2.4s on a 61MP frame (§10.8) |
@@ -1429,7 +1460,7 @@ The server is configured via environment variables:
 | `WATCH_DEBOUNCE_MS` | `2000` | Debounce window for coalescing filesystem events (§9.8) |
 | `SYNC_FULL_AT` | `03:00` | Local `HH:MM` for the daily full reconcile; `""` disables (§9.8) |
 | `PRUNE_EVERY_DAYS` | `7` | Interval for the orphaned-file sweep; `0` disables (§10.6) |
-| `LOSSLESS_QUALITY` | `88` | sharp AVIF quality for the SDR full-resolution export (§10.5) |
+| `LOSSLESS_QUALITY` | `88` | AVIF quality for the SDR full-resolution export (§10.5) |
 | `LOSSLESS_QUANTIZER` | `8` | avifenc max quantizer for the HDR one; lower is better (§10.5) |
 | `HDR_PEAK_NITS` | `1000` | Display peak the BT.2390 roll-off targets, and the declared mastering peak (§10.7.1) |
 | `HDR_REFERENCE_WHITE_NITS` | `203` | ITU-R BT.2408 HDR Reference White; what diffuse white is graded to (§10.7.1) |

@@ -2,18 +2,17 @@ import { mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Hono } from 'hono';
-import sharp from 'sharp';
 import { AppError } from '../../errors';
 import type { Config } from '../../config';
 import { getOriginalPath } from '../../utils/paths';
 import type { LibrariesService } from '../../services/libraries/libraries_service';
 import type { PhotosService } from '../../services/photos/photos_service';
-import { decodeRaw } from '../../services/processing/raw_decoder';
+import { decodeRawImage, freeImage, saveAvif } from '../../services/processing/rawshim_ops';
 
 // Which AVIF quality to ship thumbnails at. A diagnostic, like the HDR check
 // (§10.7): the trade is speed against artefacts, and only an eye at 1:1 settles
 // where it stops mattering. Effort is pinned at 0 because that is where the
-// speed is - 0.59s against 13.6s at sharp's default on a 3840px frame - so
+// speed is - 0.59s against 13.6s at the encoder's default on a 3840px frame - so
 // quality is the only variable left.
 const QUALITIES = [60, 70, 80, 85] as const;
 const EFFORT = 0;
@@ -56,17 +55,17 @@ export class QualityCheckApi {
         // Created here rather than once at startup: this lives in the temp
         // directory, which something else is entitled to clean at any time.
         mkdirSync(CACHE, { recursive: true });
-        const image = decodeRaw(getOriginalPath(library, photo.file_path), 8);
-        const raw = { raw: { width: image.width, height: image.height, channels: image.channels } };
-        // Timed from here, not from the decode: the RAW decode is the same work
-        // whatever the quality, so including it would flatten the difference the
-        // page exists to show.
-        const started = Bun.nanoseconds();
-        await sharp(image.data, raw)
-          .resize({ width: this.config.fullThumbnailSize, height: this.config.fullThumbnailSize, fit: 'inside' })
-          .avif({ quality, effort: EFFORT, chromaSubsampling: '4:4:4' })
-          .toFile(file);
-        encodeMs = Math.round((Bun.nanoseconds() - started) / 1e6);
+        const image = decodeRawImage(getOriginalPath(library, photo.file_path), 8, 'srgb', 0);
+        try {
+          // Timed from here, not from the decode: the RAW decode is the same work
+          // whatever the quality, so including it would flatten the difference the
+          // page exists to show.
+          const started = Bun.nanoseconds();
+          saveAvif(image, this.config.fullThumbnailSize, quality, EFFORT, file);
+          encodeMs = Math.round((Bun.nanoseconds() - started) / 1e6);
+        } finally {
+          freeImage(image);
+        }
       }
 
       const out = Bun.file(file);

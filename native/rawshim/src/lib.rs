@@ -14,6 +14,11 @@
 use std::ffi::CStr;
 use std::os::raw::{c_char, c_int};
 
+pub mod ffi;
+pub mod fit;
+pub mod image;
+pub mod vips;
+
 mod raw {
     #![allow(non_upper_case_globals, non_camel_case_types, non_snake_case, dead_code)]
     include!(concat!(env!("OUT_DIR"), "/libraw.rs"));
@@ -25,8 +30,17 @@ const DEMOSAIC_PPG: c_int = 2;
 const OUTPUT_SRGB: c_int = 1;
 const OUTPUT_REC2020: c_int = 8;
 
-/// What JS receives. Plain fields and a pointer, so it can be read through a
-/// DataView without a second call per property.
+/// A decoded image, owned by this library for as long as JS holds the pointer.
+///
+/// Handed to JS as an opaque handle, not as pixels. Every operation - fit, grade,
+/// resize, encode - takes the handle back and works on the buffer where it lies,
+/// so a 60MP render never crosses the boundary. It used to: the decode copied
+/// into a JS `Buffer` and each call copied it back into a `Vec`, three ~45MB
+/// moves of pixels no JavaScript ever looked at.
+///
+/// Still `#[repr(C)]` with plain fields, because the two paths that genuinely do
+/// want the samples in JS - the 16-bit scene-linear decode the HDR encoder pipes
+/// to ffmpeg, and the fit that grades it - read them through a DataView.
 #[repr(C)]
 pub struct BbImage {
     pub width: u32,
@@ -38,6 +52,41 @@ pub struct BbImage {
     pub halved: u32,
     /// Kept so `bb_free` can drop the exact allocation it handed out.
     capacity: usize,
+}
+
+impl BbImage {
+    /// Takes ownership of an 8-bit RGB buffer and hands back a handle to it.
+    pub fn own(image: vips::Rgb) -> *mut BbImage {
+        let width = image.width as u32;
+        let height = image.height as u32;
+        let mut data = std::mem::ManuallyDrop::new(image.data);
+        Box::into_raw(Box::new(BbImage {
+            width,
+            height,
+            depth: 8,
+            data: data.as_mut_ptr(),
+            len: data.len(),
+            halved: 0,
+            capacity: data.capacity(),
+        }))
+    }
+
+    /// The pixels, borrowed. None for a 16-bit decode, which the image operations
+    /// have no path for - they are all 8-bit sRGB, and reading a 16-bit buffer as
+    /// though it were 8-bit would silently render half the frame.
+    ///
+    /// # Safety
+    /// `data` must still point at the allocation this handle was built with.
+    pub unsafe fn view(&self) -> Option<vips::RgbRef<'_>> {
+        if self.depth != 8 || self.data.is_null() {
+            return None;
+        }
+        Some(vips::RgbRef {
+            width: self.width as usize,
+            height: self.height as usize,
+            data: std::slice::from_raw_parts(self.data, self.len),
+        })
+    }
 }
 
 struct Insets {

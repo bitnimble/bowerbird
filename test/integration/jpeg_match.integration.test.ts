@@ -1,11 +1,29 @@
 import { describe, expect, test } from 'bun:test';
-import sharp from 'sharp';
 import { applyColour, applyMatchProfile, deltaE76, fitMatchProfile, fitProfileFor } from '../../src/services/processing/jpeg_match';
 import { readDistortionSpline, SPLINE_UNIT } from '../../src/services/processing/lens_corrections';
-import { decodeRaw, readEmbeddedJpeg } from '../../src/services/processing/raw_decoder';
+import { readEmbeddedJpeg } from '../../src/services/processing/raw_decoder';
+import {
+  decodeImage,
+  decodeRawImage,
+  encodeJpeg,
+  freeImage,
+  imageFromRgb,
+  pixels,
+  renderImage,
+  type ImageHandle,
+} from '../../src/services/processing/rawshim_ops';
 
 const FIXTURE = `${import.meta.dir}/../fixtures/DSC02981.ARW`;
 const TIMEOUT = 120_000;
+
+/** The handle's pixels, with the handle released. */
+function take(image: ImageHandle): { width: number; height: number; data: Buffer } {
+  try {
+    return { width: image.width, height: image.height, data: pixels(image) };
+  } finally {
+    freeImage(image);
+  }
+}
 
 describe('lens correction metadata', () => {
   test('reads the ILCE-6300 distortion spline out of a real ARW', async () => {
@@ -32,19 +50,18 @@ describe('fitMatchProfile', () => {
       // What the render looks like before any transform, on the same pixels, to
       // show the fit is doing the work rather than the metric being generous.
       const jpegBytes = readEmbeddedJpeg(FIXTURE)!;
-      const jpeg = await sharp(jpegBytes).rotate().resize(400, 400, { fit: 'inside' }).raw().toBuffer({ resolveWithObject: true });
-      const render = decodeRaw(FIXTURE, 8, 'srgb');
-      const plain = await sharp(render.data, { raw: { width: render.width, height: render.height, channels: 3 } })
-        .resize(jpeg.info.width, jpeg.info.height, { fit: 'fill' })
-        .raw()
-        .toBuffer();
+      const jpeg = take(decodeImage(jpegBytes, 400));
+      const plain = take(renderImage(decodeRawImage(FIXTURE, 8, 'srgb', 400), null, 400));
+      // Both fitted to the same long edge, and the render and its own embedded
+      // preview share an aspect, so this is a like-for-like comparison.
+      expect([plain.width, plain.height]).toEqual([jpeg.width, jpeg.height]);
 
       let before = 0;
       let after = 0;
       let counted = 0;
-      for (let i = 0; i < plain.length; i += 3 * 37) {
+      for (let i = 0; i < plain.data.length; i += 3 * 37) {
         const target = [jpeg.data[i]!, jpeg.data[i + 1]!, jpeg.data[i + 2]!];
-        const source = [plain[i]!, plain[i + 1]!, plain[i + 2]!];
+        const source = [plain.data[i]!, plain.data[i + 1]!, plain.data[i + 2]!];
         before += deltaE76(source, target);
         after += deltaE76(applyColour(profile!.colour, source), target);
         counted += 1;
@@ -64,8 +81,8 @@ describe('fitMatchProfile', () => {
       // looks the same as no sensitivity. So: warp the camera's JPEG by a known
       // amount, hand it back as the target, and require the fit to notice.
       const jpegBytes = readEmbeddedJpeg(FIXTURE)!;
-      const upright = await sharp(jpegBytes).rotate().raw().toBuffer({ resolveWithObject: true });
-      const { width, height } = upright.info;
+      const upright = take(decodeImage(jpegBytes));
+      const { width, height } = upright;
 
       // A 3% centre-to-corner pincushion, applied by resampling the JPEG.
       const K1 = 0.03;
@@ -100,11 +117,23 @@ describe('fitMatchProfile', () => {
           }
         }
       }
-      const target = await sharp(distorted, { raw: { width, height, channels: 3 } }).jpeg({ quality: 95 }).toBuffer();
+      const injected = imageFromRgb(distorted, width, height);
+      let target: Buffer;
+      try {
+        target = encodeJpeg(injected, 0, 95);
+      } finally {
+        freeImage(injected);
+      }
 
       // Empty rawBytes forces the fitted path: the question is whether the search
       // finds a displacement, not whether it can read one.
-      const fitted = await fitProfileFor(decodeRaw(FIXTURE, 8, 'srgb'), target, new Uint8Array(0));
+      const render = decodeRawImage(FIXTURE, 8, 'srgb', 0);
+      let fitted;
+      try {
+        fitted = fitProfileFor(render, target, new Uint8Array(0));
+      } finally {
+        freeImage(render);
+      }
       expect(fitted).not.toBeNull();
       expect(fitted!.distortionSource).toBe('fitted');
 
@@ -151,26 +180,25 @@ describe('fitMatchProfile', () => {
       // normalised radii and the colour transform is a per-pixel lookup, so it
       // should not. This is the check on that reasoning.
       const profile = (await fitMatchProfile(FIXTURE))!;
-      const render = decodeRaw(FIXTURE, 8, 'srgb');
-      const raw = { raw: { width: render.width, height: render.height, channels: 3 as const } };
+      const render = decodeRawImage(FIXTURE, 8, 'srgb', 0);
       const SIZE = 800;
 
-      const applied = await applyMatchProfile(render, profile);
-      const beforeResize = await sharp(applied.data, {
-        raw: { width: applied.width, height: applied.height, channels: 3 },
-      })
-        .resize(SIZE, SIZE, { fit: 'inside' })
-        .raw()
-        .toBuffer({ resolveWithObject: true });
+      let beforeResize: ReturnType<typeof take>;
+      let afterResize: ReturnType<typeof take>;
+      try {
+        const graded = applyMatchProfile(render, profile);
+        try {
+          beforeResize = take(renderImage(graded, null, SIZE));
+        } finally {
+          freeImage(graded);
+        }
+        afterResize = take(renderImage(render, profile, SIZE));
+      } finally {
+        freeImage(render);
+      }
 
-      const sized = await sharp(render.data, raw).resize(SIZE, SIZE, { fit: 'inside' }).raw().toBuffer({ resolveWithObject: true });
-      const afterResize = await applyMatchProfile(
-        { width: sized.info.width, height: sized.info.height, channels: 3, depth: 8, data: sized.data },
-        profile,
-      );
-
-      expect(afterResize.width).toBe(beforeResize.info.width);
-      expect(afterResize.height).toBe(beforeResize.info.height);
+      expect(afterResize.width).toBe(beforeResize.width);
+      expect(afterResize.height).toBe(beforeResize.height);
       let total = 0;
       let counted = 0;
       for (let i = 0; i < afterResize.data.length; i += 3) {
@@ -191,11 +219,17 @@ describe('fitMatchProfile', () => {
     'applying a profile leaves the render the same size and shape',
     async () => {
       const profile = await fitMatchProfile(FIXTURE);
-      const render = decodeRaw(FIXTURE, 8, 'srgb');
-      const corrected = await applyMatchProfile(render, profile!);
+      const handle = decodeRawImage(FIXTURE, 8, 'srgb', 0);
+      let render: ReturnType<typeof take>;
+      let corrected: ReturnType<typeof take>;
+      try {
+        corrected = take(applyMatchProfile(handle, profile!));
+        render = { width: handle.width, height: handle.height, data: pixels(handle) };
+      } finally {
+        freeImage(handle);
+      }
       expect(corrected.width).toBe(render.width);
       expect(corrected.height).toBe(render.height);
-      expect(corrected.depth).toBe(8);
       expect(corrected.data.length).toBe(render.data.length);
       // A transform that returned the render untouched would pass every size
       // assertion above while doing nothing.

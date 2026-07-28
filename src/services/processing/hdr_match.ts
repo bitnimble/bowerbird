@@ -13,9 +13,10 @@
 // extrapolable, which is what lets the camera's rendering stop at diffuse white
 // and BT.2390 take over above it (§10.7.1).
 
-import sharp from 'sharp';
-import { deltaE76, warp, type MatchProfile } from './jpeg_match';
+import { deltaE76, type MatchProfile } from './jpeg_match';
+import { warp } from './lens_corrections';
 import type { DecodedImage } from './raw_decoder';
+import { decodeImage, freeImage, pixels } from './rawshim_ops';
 
 // Long edge of the grid the fit runs on. Matching `jpeg_match.ts`: fitting small
 // and applying at full resolution is free, and a 60MP fit is minutes of work for
@@ -132,11 +133,11 @@ interface Plane {
 
 // ------------------------------------------------------------------ the pair
 
-// Box average, and done here rather than through sharp because sharp's raw path
-// reports `depth: uchar` for a 16-bit input and hands back 8-bit samples. That
-// left ~57 distinct levels across the whole fit domain once the scene-linear data
-// was normalised, and the curve fitted from that staircase was visibly contrasty.
-// Doing both sides here also means neither gets a filter the other did not.
+// Box average, and in plain TypeScript because the native operations are all
+// 8-bit sRGB: routing a scene-linear plane through them left ~57 distinct levels
+// across the whole fit domain once it was normalised, and the curve fitted from
+// that staircase was visibly contrasty. Doing both sides here also means neither
+// gets a filter the other did not.
 function resample(src: Float64Array, sw: number, sh: number, dw: number, dh: number): Float64Array {
   const out = new Float64Array(dw * dh * 3);
   const xs = sw / dw;
@@ -509,28 +510,27 @@ export async function fitHdrMatch(
 
   // The embedded JPEG carries its own EXIF orientation, unlike a render, which
   // the decoder has already baked upright (§10.3).
-  const decoded = await sharp(jpegBytes)
-    .rotate()
-    .resize(FIT_LONG_EDGE, FIT_LONG_EDGE, { fit: 'inside', withoutEnlargement: true })
-    .raw()
-    .toBuffer({ resolveWithObject: true });
+  const handle = decodeImage(jpegBytes, FIT_LONG_EDGE);
+  const { width, height } = handle;
+  const samples8 = pixels(handle);
+  freeImage(handle);
 
   // Linearised before the resample: averaging gamma-encoded samples is not
   // averaging light, and at this scale factor that alone shifts the mid-tones.
-  const full = new Float64Array(decoded.info.width * decoded.info.height * 3);
-  for (let p = 0; p < decoded.info.width * decoded.info.height; p += 1) {
+  const full = new Float64Array(width * height * 3);
+  for (let p = 0; p < width * height; p += 1) {
     const i = p * 3;
     const [r, g, b] = apply3(
       SRGB_TO_REC2020,
-      SRGB_EOTF[decoded.data[i]!]!,
-      SRGB_EOTF[decoded.data[i + 1]!]!,
-      SRGB_EOTF[decoded.data[i + 2]!]!,
+      SRGB_EOTF[samples8[i]!]!,
+      SRGB_EOTF[samples8[i + 1]!]!,
+      SRGB_EOTF[samples8[i + 2]!]!,
     );
     full[i] = r;
     full[i + 1] = g;
     full[i + 2] = b;
   }
-  const jpeg: Plane = { width: decoded.info.width, height: decoded.info.height, data: full };
+  const jpeg: Plane = { width, height, data: full };
   blurPlane(jpeg, FIT_BLUR_RADIUS);
 
   // Down to twice the fit grid *before* warping, the same order `jpeg_match.ts`
