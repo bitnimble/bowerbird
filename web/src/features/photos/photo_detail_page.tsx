@@ -80,13 +80,11 @@ function MetaPanel({ title, rows, defaultOpen }: { title: string; rows: Row[]; d
 const NotesPanel = observer(function NotesPanel({ photoId }: { photoId: string }): JSX.Element {
   const store = usePhotosStore();
   const { photos } = usePresenters();
-  const saved = store.detail?.id === photoId ? (store.detail.notes ?? '') : '';
+  const saved = store.detailFor(photoId)?.notes ?? '';
   const [notes, setNotes] = useState(saved);
   // Keyed on the photo alone. Following `notes` as well would let a save that
   // lands after the user has started typing again overwrite the field mid-edit.
-  useEffect(() => {
-    setNotes(store.detail?.id === photoId ? (store.detail.notes ?? '') : '');
-  }, [photoId, store.detail?.id]);
+  useEffect(() => setNotes(store.detailFor(photoId)?.notes ?? ''), [photoId, store.loadedDetail?.id]);
   const dirty = notes !== saved;
 
   return (
@@ -184,10 +182,10 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
     setShownImage(null);
   }, [photoId, photos, configPresenter]);
 
-  // The store deliberately keeps the previous detail while the next loads, so
-  // the rail doesn't collapse on every next/prev. Everything driven by *this*
-  // photo's data has to check the id, or it renders the one before it.
-  const photo = store.detail?.id === photoId ? store.detail : null;
+  // Null while the store still holds the photo before this one - it keeps the
+  // previous detail on purpose, so the rail and the panels do not collapse on
+  // every step. Asking by id is the only safe way to read it.
+  const photo = store.detailFor(photoId);
 
   const prevId = store.prevPhotoId;
   const nextId = store.nextPhotoId;
@@ -216,17 +214,18 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
     return () => window.removeEventListener('keydown', onKey);
   }, [prevId, nextId, navigate, libraryId, photoId, photos]);
 
-  // Only once this photo has actually been asked for. The fetch starts in an
-  // effect, so the render that first sees a new id has no detail and nothing in
-  // flight - which read as "not found" and tore the whole page down, stage
-  // included, for the frame before the effect ran.
-  if (store.requestedDetailId === photoId && photo == null && !store.detailLoading) {
+  // Only once the read for *this* photo has come back empty. The fetch starts in
+  // an effect, so the render that first sees a new id has nothing loaded and
+  // nothing in flight - which read as "not found" and tore the whole page down,
+  // stage included, for the frame before the effect ran.
+  const open = store.open;
+  if (open?.id === photoId && open.status === 'missing') {
     return (
       <div className="pad">
         <div className="empty">
           <div className="empty__title">Photo not found</div>
           <Text as="p" variant="muted">
-            {store.error ?? 'It may have been removed from the catalogue.'}
+            {open.error}
           </Text>
         </div>
       </div>

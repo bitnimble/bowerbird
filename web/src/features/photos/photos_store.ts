@@ -32,6 +32,12 @@ export interface PhotoFilters {
   match?: 'all' | 'any';
 }
 
+// Which photo the detail view is on, and what came back for it. A union rather
+// than a detail plus two flags: "missing" carries the reason that made it
+// missing, so a failure to read one photo cannot be reported as the state of
+// another, and no combination of flags can describe a state that cannot happen.
+export type OpenPhoto = { id: string; status: 'loading' | 'ready' } | { id: string; status: 'missing'; error: string };
+
 // A gallery opens on the working set: everything not yet rejected. Rejecting is
 // a decision to stop seeing a frame, so it should leave the view at once. Lives
 // here so the presenter's opening state and the "Active" chip cannot disagree.
@@ -89,14 +95,25 @@ export class PhotosStore {
   // thing standing between a changed setting and seeing what it did.
   @observable accessor forceRebuild = false;
 
-  @observable.ref accessor detail: PhotoDetail | null = null;
-  @observable accessor detailLoading = false;
-  // Which photo the detail state is about, in flight or landed. What tells "no
-  // such photo" apart from "not asked for yet": `detail` still holds the
-  // previous one across a step, and the fetch for the next does not start until
-  // the effect that follows its first render.
-  @observable accessor requestedDetailId: string | null = null;
+  // The photo the viewer is on and how far its read has got. One value, so it
+  // cannot say "loading" and "no such photo" at once, and so "not asked for yet"
+  // (null) is distinct from both: the fetch starts in an effect, and the render
+  // before it once read as a photo the catalogue does not have.
+  @observable.ref accessor open: OpenPhoto | null = null;
+  // The last detail that arrived, which is the *previous* photo's until this
+  // one's read lands - deliberately, so the rail and the panels do not collapse
+  // on every step. Nothing should read it without saying which photo it wants,
+  // which is what `detailFor` is for.
+  @observable.ref accessor loadedDetail: PhotoDetail | null = null;
   @observable accessor notesSavedAt: number | null = null;
+
+  // This photo's detail, or null while it is still the one before it. Every
+  // consumer needs this check and none of them can be trusted to remember it:
+  // the store holds one detail, the view holds another photo's id, and the two
+  // disagree for the length of a fetch.
+  detailFor(photoId: string): PhotoDetail | null {
+    return this.loadedDetail?.id === photoId ? this.loadedDetail : null;
+  }
 
   @computed get selectedIds(): string[] {
     return [...this.selected.keys()];
@@ -132,7 +149,7 @@ export class PhotosStore {
   // notifies when the *library* changes, so stepping through photos in one
   // library never re-renders the rail or the title bar.
   @computed get detailLibraryId(): string | null {
-    return this.detail?.library_id ?? null;
+    return this.loadedDetail?.library_id ?? null;
   }
 
   // What the open photo's library builds on import: it serves the camera's JPEG
@@ -143,8 +160,8 @@ export class PhotosStore {
   // render for a reader set to the camera's JPEG and swap it out a moment later;
   // and in an album spanning two libraries it was the previous photo's answer.
   @computed get defaultRendition(): PreviewRendition {
-    const photo = this.photos.find((p) => p.id === this.requestedDetailId);
-    const library = this.libraries.byId.get(photo?.library_id ?? this.detail?.library_id ?? '');
+    const photo = this.photos.find((p) => p.id === this.open?.id);
+    const library = this.libraries.byId.get(photo?.library_id ?? this.loadedDetail?.library_id ?? '');
     // Unknown only until the collection loads, and the camera's JPEG is the one
     // rendition every photo has, so it is the safe answer to guess with.
     return library?.preview_source === 'render' ? 'full' : 'embedded';
@@ -220,7 +237,7 @@ export class PhotosStore {
   // faster than it does made the arrow keys offer the neighbours of the frame
   // before - so a press navigated to the photo already open and did nothing.
   @computed get detailIndex(): number {
-    const id = this.requestedDetailId;
+    const id = this.open?.id;
     return id == null ? -1 : this.photos.findIndex((p) => p.id === id);
   }
 

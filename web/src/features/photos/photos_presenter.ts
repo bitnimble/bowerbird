@@ -99,7 +99,7 @@ export class PhotosPresenter {
   // Sets a verdict straight from a grid tile, and pressing the verdict a photo
   // already has clears it, so one control covers all three states.
   async toggleTriage(photoId: string, verdict: Exclude<Triage, 'untriaged'>): Promise<void> {
-    const photo = this.store.photos.find((p) => p.id === photoId) ?? this.store.detail;
+    const photo = this.store.photos.find((p) => p.id === photoId) ?? this.store.detailFor(photoId);
     if (photo == null) return;
     await this.setTriage(photoId, photo.triage === verdict ? 'untriaged' : verdict);
   }
@@ -149,7 +149,7 @@ export class PhotosPresenter {
     // "already built" has to be read from *this* photo's entry or not at all:
     // trusting the neighbour's said a file existed that was never built here, and
     // the build was skipped in favour of a 404.
-    const built = this.store.detail?.id === photoId && this.store.detail.renditions?.[rendition]?.built === true;
+    const built = this.store.detailFor(photoId)?.renditions?.[rendition]?.built === true;
     runInAction(() => (this.store.buildingRendition = true));
     try {
       if (rendition !== 'embedded' && (force || !built)) await api.buildRendition(photoId, rendition, force);
@@ -172,7 +172,7 @@ export class PhotosPresenter {
   // photo they left back on screen, or apply its rendition to the one they are
   // looking at now.
   private isCurrent(photoId: string): boolean {
-    return this.store.requestedDetailId === photoId;
+    return this.store.open?.id === photoId;
   }
 
   // What still has to be applied to open this photo where the setting asks, or
@@ -212,8 +212,8 @@ export class PhotosPresenter {
       // the one before it and leave the page reporting the open photo as missing.
       if (!this.isCurrent(photoId)) return;
       runInAction(() => {
-        this.store.detail = detail;
-        this.store.detailLoading = false;
+        this.store.loadedDetail = detail;
+        this.store.open = { id: photoId, status: 'ready' };
       });
       // Landing straight on a photo URL leaves no collection loaded, so the
       // neighbours are unknown and prev/next are dead. Open the photo's library
@@ -227,10 +227,10 @@ export class PhotosPresenter {
       else await this.showRendition(photoId, opening);
     } catch (err) {
       if (!this.isCurrent(photoId)) return;
-      runInAction(() => {
-        this.store.detailLoading = false;
-        this.store.error = message(err);
-      });
+      // On the open photo rather than in the store's shared error slot, which a
+      // list fetch also writes: a library that failed to load must not read as
+      // this photo being missing from the catalogue.
+      runInAction(() => (this.store.open = { id: photoId, status: 'missing', error: message(err) }));
     }
   }
 
@@ -415,12 +415,12 @@ export class PhotosPresenter {
   }
 
   private async refreshDetail(): Promise<void> {
-    const open = this.store.detail;
+    const open = this.store.open;
     if (open == null) return;
     const detail = await api.getPhoto(open.id).catch(() => null);
     // The re-read is of whatever was open when it started, which a step during
     // the round trip has already replaced.
-    if (detail != null && this.isCurrent(detail.id)) runInAction(() => (this.store.detail = detail));
+    if (detail != null && this.isCurrent(detail.id)) runInAction(() => (this.store.loadedDetail = detail));
   }
 
   // Binning is reversible, so it reports with an undo rather than asking first.
@@ -467,7 +467,7 @@ export class PhotosPresenter {
     try {
       const updated = await api.updatePhoto(photoId, fields);
       runInAction(() => {
-        if (this.store.detail?.id === photoId) this.store.detail = updated;
+        if (this.store.loadedDetail?.id === photoId) this.store.loadedDetail = updated;
         // Written into the row rather than mapped into a new array: replacing the
         // array invalidates every tile's observable, so rating one photo used to
         // re-render the whole grid.
@@ -623,15 +623,13 @@ export class PhotosPresenter {
     this.remember();
   }
 
-  // Deliberately keeps the previous detail on screen while the next one loads.
-  // Clearing it made library_id momentarily null, which collapsed the rail and
-  // title on every next/prev and read as a flash.
+  // Deliberately leaves `loadedDetail` alone: it is the previous photo's until
+  // this one lands, and clearing it made library_id momentarily null, which
+  // collapsed the rail and title on every next/prev and read as a flash.
   @action.bound
   private beginDetail(photoId: string): void {
-    this.store.requestedDetailId = photoId;
-    this.store.detailLoading = true;
+    this.store.open = { id: photoId, status: 'loading' };
     this.store.notesSavedAt = null;
-    this.store.error = null;
     // Per photo, not sticky: the next photo may have no preview cached for the
     // rendition this one was showing, which would be a 404 rather than a picture.
     // Reopening it there is the setting's job, and it builds first.

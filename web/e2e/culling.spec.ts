@@ -290,6 +290,16 @@ test('the detail view shows shooting metadata, the triage control and steps betw
   await expect(navPath).not.toHaveText(relative);
 });
 
+test('a photo the catalogue does not have says so, with the reason', async ({ page }) => {
+  await page.goto('/photos/11111111-1111-4111-8111-111111111111');
+
+  // The other side of the state the viewer spent so long getting wrong: this is
+  // the only thing that may render "not found", and it carries the read's own
+  // error rather than whatever a list fetch last left behind.
+  await expect(page.locator('.empty__title')).toHaveText('Photo not found');
+  await expect(page.getByText(/photo not found: 11111111/)).toBeVisible();
+});
+
 // Two detail fetches can be in flight at once - stepping is faster than the
 // round trip - and they need not answer in order.
 test('a detail that lands after the reader has stepped on does not replace the photo they are looking at', async ({ page }) => {
