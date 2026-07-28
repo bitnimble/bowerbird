@@ -188,6 +188,11 @@ export function embeddedUrl(photoId: string): string {
   return `${BASE}/image/${photoId}/embedded.jpg`;
 }
 
+// Server-sent events: which photos have a thumbnail worth re-requesting.
+export function eventsUrl(): string {
+  return `${BASE}/api/events`;
+}
+
 export function originalUrl(photoId: string): string {
   return `${BASE}/image/${photoId}/original.arw`;
 }

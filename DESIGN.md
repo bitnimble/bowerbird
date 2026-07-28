@@ -1523,6 +1523,8 @@ All boolean query params are parsed with `z.stringbool()`, so `?is_missing=false
 
 **Caching.** Thumbnails are rebuilt in place under a stable URL, so every image response carries an `ETag` (file size + mtime) and `Cache-Control: no-cache`. Without a validator the browser caches heuristically with nothing to revalidate against, and keeps showing the pre-rebuild picture; `no-cache` still caches, it just always asks first, which is a 304 in the common case. `If-None-Match` is answered directly.
 
+That covers everything that *asks*, which is every fresh page load. But an `<img>` whose `src` attribute has not changed never asks at all, so a rebuild is invisible to the copy already decoded in a live page. Closing that is a client concern and scoped to the session: the viewer and the grid append a **per-photo version** to the URL, bumped when this client learns the photo's renditions were rewritten (§18.6). Nothing server-side needs to mint it, and nothing needs to persist it: after a reload the plain URL revalidates and the ETag settles it.
+
 These endpoints:
 - Resolve the file path from the photo record and library configuration.
 - Stream the file directly from disk using Bun's file streaming (no buffering into memory).
@@ -1551,13 +1553,14 @@ app.get('/image/:photoId/renditions/:rendition', async (c) => {
 
 `Bun.file()` returns a lazy reference that streams from disk when consumed as a `Response` body, no full read into memory.
 
-### 13.6 Config and settings
+### 13.6 Config, settings and events
 
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/api/config` | Thumbnail format, sizes and qualities, so a client can state what it is rendering |
 | `GET` | `/api/settings` | App-wide preferences |
 | `PATCH` | `/api/settings` | Update them |
+| `GET` | `/api/events` | Server-sent events; `thumbnail` carries the id of a photo whose renditions were just written (§18.6) |
 
 Three different things, by how far their scope reaches: `config` is fixed by the deployment (environment variables, §15); the `libraries` row holds what belongs to one catalogue (the preview source and HDR, §10.2); `settings` is app-wide and lives in a key/value table, holding `preview_rendition_mode` and the rendition `remember` remembers. A table rather than a column per setting because they are read one at a time and never queried across, and adding one should not need a migration. A value the build no longer understands reads as its default rather than failing the request: these are preferences, and the viewer has to open with or without them.
 
@@ -1823,7 +1826,15 @@ Panning is clamped so the photo cannot be dragged away from the viewport edge. T
 
 The stage's `src` is keyed off the route rather than the loaded detail, and the image stays hidden until that src decodes. The store deliberately keeps the previous detail while the next loads (so the rail does not collapse), which otherwise means the stage paints the frame *before* the one the URL asks for.
 
-**The next photo is warmed by a mounted, invisible `<img>`** rather than a detached `new Image()`, and only once this one is up, so the two never compete for the connection. Mounted because a decode is for the size an element is *drawn* at: a detached image decodes at natural size, which is the wrong entry, and the visible element then paid for a second decode at paint - the same trap the rendition swap fell into (§10.1).
+**The previous photo's frame is held for up to 100ms after a step** (`STALE_FRAME_MS`), rather than cleared on the route change. Even a warmed neighbour has to decode, and dropping the old frame first turns that into a blink of stage background on every step. The cap is what keeps it honest: the panels beside the stage already describe the photo in the URL, so a frame held past its decode is the wrong picture rather than a smooth step, and a rendition that has to be *built* would otherwise leave it up for the length of the build. The frame is stored with the photo it belongs to, not as a bare src, because everything gated on "this photo is up" - warming the neighbours, above all - has to tell the held frame from the arrived one.
+
+That hold is only reachable because **the detail page no longer tears itself down between photos**. "Photo not found" was rendered whenever no detail matched the route and nothing was in flight, which is exactly the state of the render that first sees a new id: the fetch starts in the effect *after* it. Every step therefore unmounted the whole page, stage included, for a frame. The page now waits for `requestedDetailId` to name the photo it is rendering before believing it is missing, and `openDetail` marks that synchronously, ahead of the settings load it used to sit behind.
+
+**Both neighbours are warmed by mounted, invisible `<img>`s** rather than detached `new Image()`s, and only once this one is up, so they never compete for the connection with the frame being waited on. Mounted because a decode is for the size an element is *drawn* at: a detached image decodes at natural size, which is the wrong entry, and the visible element then paid for a second decode at paint - the same trap the rendition swap fell into (§10.1). Backwards and forwards, because a cull steps both ways.
+
+**Which rendition the viewer shows is answered by the setting, not by the photo** (`PhotosStore.showing`). The library's default is a property of the photo and so arrives with its detail; the setting is already in hand, so resolving from it means the stage asks for the file the reader actually wants on the first frame. Deriving it from the detail meant a reader set to the camera's JPEG in a library that renders got the render first - fetched, decoded and painted, lens distortion and all - and swapped out the moment the setting could be applied, paying for both files on every step. The setting can only be trusted ahead of the detail for a rendition every photo is certain to have (`isAlwaysBuilt`): the camera's JPEG, which is extracted from the RAW on demand, and the library's own default, which is built on import. The other two are built on request, so asking early is a 404 rather than a picture, and they wait for `openDetail` to build them. That same test decides what is worth warming, so the neighbours are only ever fetched at the rendition on screen.
+
+The notes box is its own component holding its own draft, because a keystroke in it would otherwise re-render the whole detail page: every metadata panel and the stage with them.
 
 A "Thumbnail on screen" panel reports what is actually being displayed (its source, pixel dimensions, format, colour space and encode quality) separately from the original RAW's size and dimensions, because the two are easy to confuse and only one of them is what you are judging sharpness on.
 
@@ -1835,9 +1846,19 @@ Destructive actions split by reversibility. Binning is undoable, so it just happ
 
 ### 18.6 Thumbnails and the sync strip
 
-Thumbnails are generated asynchronously, so a tile's first request can 404 while processing is still writing the file. A tile records *which list generation* its request failed on rather than a bare boolean; `PhotosStore.reloadToken` advances on every completed list fetch, which clears the failure and re-requests with a cache-busting query param. Without this the grid stays blank until a manual page reload.
+Thumbnails are generated asynchronously, so a tile's first request can 404 while processing is still writing the file, and nothing in the page can know when that changes. **The server says so**: `ProcessingService` announces each photo whose renditions it has just written, and `GET /api/events` streams those announcements to every connected client as `event: thumbnail` with the photo's id (`EventsApi`). `EventsStore.versions` counts what this client has been told, keyed by photo id and read through an `ObservableMap`, which tracks reads per key: a tile watching its own photo is not woken by another photo's rebuild.
 
-The sync status bar renders one cell per photo queued by the current run, filling as `photos_processed` climbs (§9.6). It stops polling as soon as the library reports idle.
+**One version per photo, and it is the client's.** Both the grid tile and the viewer append it to their URLs, which is the only thing that makes a rebuilt file visible to an `<img>` that has already decoded the old one (§13.5). Per photo rather than per rendition because the viewer warms both neighbours and holds no detail for them: one number per photo is the same whether a frame is being warmed or painted, so the warmed URL is the one that ends up on screen. Client-side rather than a server-minted stamp for the same reason it can be a bare counter; all it has to do is differ from the last value this client put in a URL, and a page load starts over from the plain URL, where the ETag is authoritative again.
+
+Two things bump it: the announcement above, and a build this client asked for and waited on. `POST /photos/:id/renditions/:r` renders outside the processing queue (`renderOne`), so it raises no announcement and the presenter that made the request says so itself. That is what carries the force rebuild, where the file behind an unchanged URL is deliberately rewritten.
+
+The version is told rather than guessed, and that is the whole point. What it replaced was a pair of global flags: `reloadToken`, bumped on every completed list fetch, so the grid re-requested *all* of its thumbnails whenever anything refetched the list and re-rendered every tile to do it, at a poll a second for the length of an import, which is exactly when the grid is largest and the least of it has changed. The other was `rebuiltAt`, a session timestamp that made every *subsequent* photo in the viewer miss the browser cache once because one photo had been rebuilt.
+
+The stream carries an `id:` per event and keeps the last few hundred in a ring buffer, so a browser reconnecting after a blip replays what it missed through `Last-Event-ID`. Without that, a dropped connection leaves a tile stuck on its placeholder until the view is reopened. An id from a previous run of the server (one at or beyond the current counter) replays nothing rather than the whole buffer. A heartbeat every 20s keeps the connection from being idled out (`idleTimeout`, §index.ts), and waits on the disconnect as well as the timer, so a departed client is dropped at once rather than at the next beat.
+
+The sync status bar renders one cell per photo queued by the current run, filling as `photos_processed` climbs (§9.6). It stops polling as soon as the library reports idle, and only re-reads the grid while a run is moving (plus the one tick that finds it finished) - an idle library's page was already fetched by the view that opened it.
+
+**A refetch that returns the same page changes nothing observable.** `reconcile` writes the server's fields into the row objects already on screen rather than replacing them, and hands back the *same array* when the ids and their order are unchanged; a fresh array notifies everything reading the list, which during a sync is the whole grid, once a second, for a page that did not move. In the same spirit the emptiness checks test `photos.length` before `loading`, so a populated grid short-circuits away its dependency on a flag that toggles twice per fetch.
 
 ### 18.7 Running and testing
 

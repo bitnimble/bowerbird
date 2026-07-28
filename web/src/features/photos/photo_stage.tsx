@@ -11,6 +11,11 @@ const WHEEL_SENSITIVITY = 0.0015;
 // view has no such loop, so it retries on its own before giving up.
 const RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 15000, 30000];
 
+// How long the previous photo may stay on screen after stepping to the next one,
+// while that one decodes. Long enough to cover a warmed frame's decode, short
+// enough that a cold one reads as loading rather than as the wrong picture.
+const STALE_FRAME_MS = 100;
+
 interface Props {
   src: string;
   alt: string;
@@ -18,9 +23,9 @@ interface Props {
   onImageLoad: (width: number, height: number, bytes: number | null) => void;
   // Render a <video> rather than an <img>: the HDR rendition Firefox needs.
   video?: boolean;
-  // The frame to warm the cache with once this one is up. Undefined when there is
-  // no next photo, or when what it will open at is not knowable from here.
-  preloadSrc?: string;
+  // Frames to warm the cache with once this one is up: the neighbours either way,
+  // minus any whose rendition is not knowable from here.
+  preloadSrcs?: string[];
   // The preview does not exist yet. Called once per src, before the retries
   // start, so the caller can build the thing the retries are waiting for.
   onImageMissing?: () => void;
@@ -95,7 +100,7 @@ function transferredBytes(src: string): number | null {
 // The image viewport: fit/zoom, wheel zoom, drag-to-pan and fullscreen. All of
 // this is ephemeral view state, so it stays local rather than going through a
 // store; nothing outside this component needs to know the pan offset.
-export function PhotoStage({ src, alt, filename, video, photoKey, hold, preloadSrc, onImageLoad, onImageMissing }: Props): JSX.Element {
+export function PhotoStage({ src, alt, filename, video, photoKey, hold, preloadSrcs, onImageLoad, onImageMissing }: Props): JSX.Element {
   const stageRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
   const [view, setView] = useState<View>(FITTED);
@@ -104,7 +109,9 @@ export function PhotoStage({ src, alt, filename, video, photoKey, hold, preloadS
   const [toolbarVisible, setToolbarVisible] = useState(false);
   const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
-  // The src actually shown, which lags the one asked for until it has decoded.
+  // The src actually shown, which lags the one asked for until it has decoded,
+  // with the photo it belongs to: for a moment after a step that is the previous
+  // one, and everything driven by "this photo is up" has to tell the two apart.
   //
   // Swapping one element's src means a frame with nothing decoded to show and
   // the stage background coming through - a flash on every rendition change,
@@ -115,8 +122,9 @@ export function PhotoStage({ src, alt, filename, video, photoKey, hold, preloadS
   // painted. Decoding off-screen in a detached `new Image()` is not enough: the
   // browser decodes for the size an element is drawn at, so the visible element
   // decoded a 3840px AVIF a second time at paint and flashed anyway.
-  const [painted, setPainted] = useState<string | null>(null);
-  const ready = painted != null;
+  const [painted, setPainted] = useState<{ src: string; photoKey: string } | null>(null);
+  const currentFrame = painted?.photoKey === photoKey ? painted.src : null;
+  const ready = currentFrame != null;
   // Drives the stage's aspect-ratio, so the bordered box is the photo rather
   // than a letterboxed container with black margins inside it.
   const [natural, setNatural] = useState({ width: 0, height: 0 });
@@ -128,14 +136,30 @@ export function PhotoStage({ src, alt, filename, video, photoKey, hold, preloadS
 
   // A new photo starts fitted; carrying a pan offset across frames would show
   // the next one scrolled to a corner. Keyed on the photo rather than the src, so
-  // that switching rendition holds the frame it is already showing: the previous
-  // *photo* must be cleared at once, a different rendition of this one must not.
+  // that switching rendition holds the frame it is already showing.
   useEffect(() => {
     reset();
     setFailed(false);
-    setPainted(null);
     setAttempt(0);
   }, [photoKey, reset]);
+
+  // The previous photo's frame is left up for a beat rather than cleared on the
+  // step: both neighbours are warmed, so the next one usually decodes within a
+  // frame or two, and dropping the old one first turns every step into a blink of
+  // stage background. Capped, because the picture and the panels beside it
+  // disagree until it goes, and a photo whose rendition has to be built keeps
+  // them disagreeing for as long as the build takes.
+  //
+  // Timed from when the frame went stale rather than from the last step, which
+  // is what the lone `stale` dependency buys: stepping faster than the cap
+  // leaves it running instead of restarting it, so holding the arrow key cannot
+  // pin a frame from ten photos ago to the stage.
+  const stale = painted != null && painted.photoKey !== photoKey;
+  useEffect(() => {
+    if (!stale) return;
+    const timer = setTimeout(() => setPainted(null), STALE_FRAME_MS);
+    return () => clearTimeout(timer);
+  }, [stale]);
 
   useEffect(() => {
     setFailed(false);
@@ -166,7 +190,7 @@ export function PhotoStage({ src, alt, filename, video, photoKey, hold, preloadS
   onLoaded.current = onImageLoad;
 
   // The src being prepared, mounted but invisible until it can be shown.
-  const incoming = shownSrc === painted ? null : shownSrc;
+  const incoming = shownSrc === currentFrame ? null : shownSrc;
   // A callback ref, not a RefObject: refs are invariant, so one object cannot be
   // handed to both an <img> and a <video>.
   const incomingRef = useRef<HTMLImageElement | HTMLVideoElement | null>(null);
@@ -189,7 +213,7 @@ export function PhotoStage({ src, alt, filename, video, photoKey, hold, preloadS
       const height = element instanceof HTMLVideoElement ? element.videoHeight : element.naturalHeight;
       setNatural({ width, height });
       onLoaded.current(width, height, transferredBytes(incoming));
-      setPainted(incoming);
+      setPainted({ src: incoming, photoKey });
     };
 
     if (element instanceof HTMLVideoElement) {
@@ -211,7 +235,7 @@ export function PhotoStage({ src, alt, filename, video, photoKey, hold, preloadS
     return () => {
       live = false;
     };
-  }, [incoming, attempt, src, hold]);
+  }, [incoming, attempt, src, hold, photoKey]);
 
   // Measures here, outside the updater, so the updater itself stays pure.
   const zoomBy = useCallback(
@@ -356,9 +380,9 @@ export function PhotoStage({ src, alt, filename, video, photoKey, hold, preloadS
           // One list, keyed by src, so promoting the incoming one keeps its
           // element: rendered as two slots React would unmount it and the
           // browser would decode the same file over again to paint it.
-          [painted, incoming].map((source) => {
+          [painted?.src, incoming].map((source) => {
             if (source == null) return false;
-            const className = source === painted ? 'is-ready stage__content' : 'stage__content';
+            const className = source === painted?.src ? 'is-ready stage__content' : 'stage__content';
             const transform = `translate(${view.x}px, ${view.y}px) scale(${view.scale})`;
             // A one-frame video, the only way an HDR photo reaches a Firefox
             // display (§10.7). Muted and inline so autoplay is allowed at all,
@@ -398,12 +422,12 @@ export function PhotoStage({ src, alt, filename, video, photoKey, hold, preloadS
           })
         )}
 
-        {/* The next photo, warmed only once this one is up: started any earlier
-            the two compete for the connection, and the one being waited on is
-            this one. Mounted rather than fetched into a detached Image for the
-            same reason the swap above is - a decode is for the size an element
-            is drawn at, and this element is the size the next photo will be. */}
-        {ready && preloadSrc != null && <img key={preloadSrc} src={preloadSrc} alt="" aria-hidden className="stage__content" />}
+        {/* The neighbouring photos, warmed only once this one is up: started any
+            earlier they compete for the connection with the one being waited on.
+            Mounted rather than fetched into a detached Image for the same reason
+            the swap above is - a decode is for the size an element is drawn at,
+            and these elements are the size those photos will be. */}
+        {ready && preloadSrcs?.map((source) => <img key={source} src={source} alt="" aria-hidden className="stage__content" />)}
       </div>
 
       {/* Fullscreen shows nothing but the photo; the bar surfaces on hover so the

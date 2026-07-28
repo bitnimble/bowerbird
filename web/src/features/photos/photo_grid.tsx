@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { Check, ChevronLeft, ChevronRight, ThumbsDown, ThumbsUp } from 'lucide-react';
 import { captureDateTime, localDateTime } from '../../api/dates';
 import { renditionUrl, type PhotoSummary } from '../../api/client';
-import { usePhotosStore, usePresenters } from '../../app/stores_context';
+import { useEventsStore, usePhotosStore, usePresenters } from '../../app/stores_context';
 import { Button, ICON, Text } from '../../ui/ui';
 
 function filename(filePath: string, id: string): string {
@@ -83,18 +83,19 @@ const Tile = observer(function Tile({
   isFocused: boolean;
 }): JSX.Element {
   const store = usePhotosStore();
+  const events = useEventsStore();
   const { photos } = usePresenters();
   const navigate = useNavigate();
   const [loaded, setLoaded] = useState(false);
-  // Which list generation this tile's thumbnail request failed on. A thumbnail
-  // 404s while processing is still writing it, so a failure is only believed
-  // until the next refresh; after that the tile asks again with a fresh URL
-  // (the query param defeats the browser's cache of the 404).
-  const [failedAt, setFailedAt] = useState<number | null>(null);
-  const token = store.reloadToken;
-  // A failed request retries against the current list generation; a rebuild
-  // changes the file behind the same URL and needs its own version.
-  const src = failedAt == null ? renditionUrl(photo.id, 'grid', store.rebuiltAt) : `${renditionUrl(photo.id, 'grid')}?r=${token}`;
+  // A thumbnail 404s while processing is still writing it. The version comes off
+  // the server's own "this photo was built" announcement, keyed by photo, so the
+  // retry is this tile asking again for itself the moment there is something to
+  // fetch - and nothing else in the grid hears about it.
+  const src = renditionUrl(photo.id, 'grid', events.version(photo.id));
+  const [failed, setFailed] = useState(false);
+  // A tile that failed and has since been told to try again is not failed any
+  // more; without this the placeholder outlives the thumbnail arriving.
+  useEffect(() => setFailed(false), [src]);
   const selected = store.selected.has(photo.id);
   const ref = useRef<HTMLDivElement>(null);
   const list = store.mode === 'list';
@@ -137,9 +138,9 @@ const Tile = observer(function Tile({
           loading="lazy"
           className={loaded ? 'is-loaded' : undefined}
           onLoad={() => setLoaded(true)}
-          onError={() => setFailedAt(token)}
+          onError={() => setFailed(true)}
         />
-        {!loaded && <span className="tile__pending">{failedAt == null ? null : 'no thumbnail yet'}</span>}
+        {!loaded && <span className="tile__pending">{failed ? 'no thumbnail yet' : null}</span>}
       </button>
 
       <div className="tile__badges">
@@ -272,7 +273,9 @@ const GridKeys = observer(function GridKeys(): null {
 export const PhotoGrid = observer(function PhotoGrid({ emptyHint }: { emptyHint: string }): JSX.Element {
   const store = usePhotosStore();
 
-  if (store.loading && store.photos.length === 0) return <Text variant="muted">Loading photos…</Text>;
+  // Length first: short-circuiting leaves a populated grid unsubscribed from
+  // `loading`, which toggles twice on every refetch.
+  if (store.photos.length === 0 && store.loading) return <Text variant="muted">Loading photos…</Text>;
 
   // A failed fetch also leaves nothing to show, and "Nothing here yet" would be a
   // lie about a library that is merely unreachable.

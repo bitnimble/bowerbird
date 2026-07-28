@@ -11,6 +11,9 @@ function message(err: unknown): string {
 
 export class SyncPresenter {
   private timer: ReturnType<typeof setTimeout> | null = null;
+  // Whether the previous tick saw a run in flight, so the tick that finds it
+  // finished still re-reads the grid once.
+  private busy = false;
 
   constructor(
     private readonly store: SyncStore,
@@ -68,8 +71,11 @@ export class SyncPresenter {
     }
 
     // Refresh the grid on every tick of an active run: rows appear as the scan
-    // inserts them, and thumbnails resolve as processing finishes.
-    await this.photos.reload();
+    // inserts them, and thumbnails resolve as processing finishes. Only then -
+    // an idle library's grid was just fetched by the page that opened it, and a
+    // second list request answers with the page it already has.
+    if (wasBusy || this.busy) await this.photos.reload();
+    this.busy = wasBusy;
 
     if (wasBusy && this.store.libraryId === libraryId) {
       this.timer = setTimeout(() => void this.poll(), POLL_MS);

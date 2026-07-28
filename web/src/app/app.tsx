@@ -157,6 +157,18 @@ const EnsureLibraries = observer(function EnsureLibraries(): null {
   return null;
 });
 
+// One stream for the session rather than one per view: what it carries is about
+// photos, not about whichever collection happens to be open, and a grid the user
+// steps away from and back to would otherwise miss what landed in between.
+function ServerEvents(): null {
+  const { events } = usePresenters();
+  useEffect(() => {
+    events.connect();
+    return () => events.disconnect();
+  }, [events]);
+  return null;
+}
+
 // One place that states the cull keybindings, reachable with ? from anywhere.
 // C and X are neighbours so the left hand can pick and reject without moving
 // while the right hand drives the arrow keys.
@@ -225,6 +237,7 @@ export function App(): JSX.Element {
   return (
     <div className={`shell${collapsed ? ' shell--collapsed' : ''}`}>
       <EnsureLibraries />
+      <ServerEvents />
       {!collapsed && <Rail onCollapse={toggleRail} />}
       <div className="main">
         {/* Only the expand button floats over the content; collapsing is done

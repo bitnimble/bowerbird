@@ -38,11 +38,17 @@ export class ProcessingService {
   // during the batch is drained before the promise resolves.
   private readonly inFlight = new Map<string, Promise<void>>();
   private readonly rerun = new Set<string>();
+  private readonly processed = new Set<(photoId: string) => void>();
 
   constructor(
     private readonly photos: PhotosRepository,
     private readonly config: Config,
   ) {}
+
+  /** Called with each photo whose renditions have just been written. */
+  onProcessed(listener: (photoId: string) => void): void {
+    this.processed.add(listener);
+  }
 
   // Rebuilds thumbnails for specific photos from the given source. Returns how
   // many were queued; ids that are missing or binned have no file to read.
@@ -234,6 +240,9 @@ export class ProcessingService {
       const source: ThumbnailSource = photo == null || photo.renditions != null ? 'render' : 'embedded';
       this.photos.markProcessed(photoId, new Date().toISOString(), source);
       if (photo != null) this.dropStaleRenditions(photo);
+      // After the writes, so a client told the photo is ready cannot ask for it
+      // before the row and the files say so.
+      for (const listener of this.processed) listener(photoId);
     } catch (err) {
       // Never throw: this runs inside a worker's onmessage/onerror, and a throw here
       // would skip the pool's assignNext/terminate/live-- bookkeeping and hang the

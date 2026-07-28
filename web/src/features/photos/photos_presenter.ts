@@ -13,6 +13,7 @@ import {
   type Triage,
 } from '../../api/client';
 import type { AlbumsPresenter } from '../albums/albums_presenter';
+import type { EventsPresenter } from '../events/events_presenter';
 import type { AppSettingsPresenter } from '../settings/app_settings_presenter';
 import type { AppSettingsStore } from '../settings/app_settings_store';
 import type { ShootsPresenter } from '../shoots/shoots_presenter';
@@ -60,6 +61,7 @@ export class PhotosPresenter {
     private readonly toasts: ToastsPresenter,
     private readonly settings: AppSettingsStore,
     private readonly settingsPresenter: AppSettingsPresenter,
+    private readonly events: EventsPresenter,
   ) {}
 
   async open(source: PhotoSource): Promise<void> {
@@ -150,9 +152,10 @@ export class PhotosPresenter {
       if (rendition !== 'embedded' && (force || this.store.detail?.renditions?.[rendition]?.built !== true)) {
         await api.buildRendition(photoId, rendition, force);
         // The URL is stable, so a rebuilt file behind it is one the browser has
-        // already decoded and will not ask for again. This is the same version
-        // the rebuild action uses.
-        runInAction(() => (this.store.rebuiltAt = Date.now()));
+        // already decoded and would never ask for again. Only this photo moved,
+        // and a build outside the processing queue raises no announcement, so the
+        // client that asked for it is the one that has to say so.
+        this.events.rebuilt(photoId);
       }
       // The build may have written an HDR video beside the still, and only the
       // detail knows whether one exists. Without this, Firefox keeps showing the
@@ -166,19 +169,12 @@ export class PhotosPresenter {
     }
   }
 
-  // What to open a photo at. Null means the library's own default, which is
-  // already built: either nothing has been chosen yet for the remembering modes
-  // to remember, or the choice is that default, and asking for it explicitly
-  // would be a round trip to learn it is already on disk.
-  private openingRendition(detail: PhotoDetail): PreviewRendition | null {
-    const mode = this.settings.previewRenditionMode;
-    const target =
-      mode === 'remember'
-        ? this.settings.lastPreviewRendition
-        : mode === 'remember_per_photo'
-          ? detail.preview_rendition
-          : mode;
-    return target === detail.default_rendition ? null : target;
+  // What still has to be applied to open this photo where the setting asks, or
+  // null when the viewer resolved that from the setting on its own. Only the
+  // per-photo memory needs the detail read at all.
+  private renditionToApply(detail: PhotoDetail): PreviewRendition | null {
+    const target = this.settings.previewRenditionMode === 'remember_per_photo' ? detail.preview_rendition : this.store.preferredRendition;
+    return target == null || target === this.store.showing ? null : target;
   }
 
   async goToPage(index: number): Promise<void> {
@@ -197,7 +193,11 @@ export class PhotosPresenter {
   // --- detail ---
 
   async openDetail(photoId: string): Promise<void> {
-    this.beginDetail();
+    this.beginDetail(photoId);
+    // Before the fetch, not before the call: the settings decide which rendition
+    // this photo opens at, but waiting on them to say the detail is in flight
+    // leaves the page unable to tell "loading" from "no such photo".
+    await this.settingsPresenter.load();
     try {
       const detail = await api.getPhoto(photoId);
       runInAction(() => {
@@ -208,8 +208,12 @@ export class PhotosPresenter {
       // neighbours are unknown and prev/next are dead. Open the photo's library
       // so stepping works from a deep link as well as from the grid.
       if (this.store.source == null) await this.open({ kind: 'library', libraryId: detail.library_id });
-      const opening = this.openingRendition(detail);
-      if (opening != null) await this.showRendition(photoId, opening);
+      const opening = this.renditionToApply(detail);
+      if (opening == null) return;
+      // A rendition every photo already has needs no build, and no round trip to
+      // learn that: it goes up as soon as the detail names it.
+      if (this.store.isAlwaysBuilt(opening)) runInAction(() => (this.store.rendition = opening));
+      else await this.showRendition(photoId, opening);
     } catch (err) {
       runInAction(() => {
         this.store.detailLoading = false;
@@ -367,12 +371,12 @@ export class PhotosPresenter {
   }
 
   // Rebuilding is queued server-side, so this reports that the work started
-  // rather than that it finished; the grid picks up the new files as they land.
+  // rather than that it finished; every photo picks up its new file when the
+  // server announces it, which is also what tells the grid.
   async reprocess(photoIds: string[], source: ThumbnailSource): Promise<void> {
     if (photoIds.length === 0) return;
     try {
       const { queued } = await api.reprocessPhotos(photoIds, source);
-      runInAction(() => (this.store.rebuiltAt = Date.now()));
       await this.refreshDetail();
       this.toasts.show(`Rebuilt ${plural(queued, 'thumbnail', 'thumbnails')} from the ${sourceLabel(source)}`);
     } catch (err) {
@@ -478,14 +482,21 @@ export class PhotosPresenter {
   // the server's fields into it. Handing back fresh objects would invalidate
   // every tile's observable on a refetch, so rejecting one photo re-rendered the
   // whole grid; mobx notifies only for the fields that actually differ.
+  //
+  // And the array itself when the page holds the same ids in the same order,
+  // because assigning a new one notifies everything reading the list - the grid
+  // and the controls above it - for a page that did not change. A sync polls
+  // this once a second.
   private reconcile(rows: PhotoSummary[]): PhotoSummary[] {
-    const current = new Map(this.store.photos.map((p) => [p.id, p]));
-    return rows.map((row) => {
-      const existing = current.get(row.id);
+    const current = this.store.photos;
+    const byId = new Map(current.map((p) => [p.id, p]));
+    const next = rows.map((row) => {
+      const existing = byId.get(row.id);
       if (existing == null) return row;
       Object.assign(existing, row);
       return existing;
     });
+    return next.length === current.length && next.every((row, i) => row === current[i]) ? current : next;
   }
 
   private async fetchPage(): Promise<void> {
@@ -522,7 +533,6 @@ export class PhotosPresenter {
         this.store.photos = this.reconcile(page.photos);
         this.store.total = page.total;
         this.store.loading = false;
-        this.store.reloadToken++;
         // Keep the keyboard cursor inside the new page: binning the last photo
         // would otherwise leave focus pointing past the end.
         if (this.store.focusIndex >= page.photos.length) this.store.focusIndex = page.photos.length - 1;
@@ -603,7 +613,8 @@ export class PhotosPresenter {
   // Clearing it made library_id momentarily null, which collapsed the rail and
   // title on every next/prev and read as a flash.
   @action.bound
-  private beginDetail(): void {
+  private beginDetail(photoId: string): void {
+    this.store.requestedDetailId = photoId;
     this.store.detailLoading = true;
     this.store.notesSavedAt = null;
     this.store.error = null;

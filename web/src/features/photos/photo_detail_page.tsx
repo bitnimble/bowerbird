@@ -30,6 +30,7 @@ import {
   useAlbumsStore,
   usePhotosStore,
   usePresenters,
+  useEventsStore,
   useServerConfigStore,
   useShootsStore,
 } from '../../app/stores_context';
@@ -73,6 +74,36 @@ function MetaPanel({ title, rows, defaultOpen }: { title: string; rows: Row[]; d
     </div>
   );
 }
+
+// Its own component, holding its own draft: on the page, a keystroke re-rendered
+// every panel and the stage with them.
+const NotesPanel = observer(function NotesPanel({ photoId }: { photoId: string }): JSX.Element {
+  const store = usePhotosStore();
+  const { photos } = usePresenters();
+  const saved = store.detail?.id === photoId ? (store.detail.notes ?? '') : '';
+  const [notes, setNotes] = useState(saved);
+  // Keyed on the photo alone. Following `notes` as well would let a save that
+  // lands after the user has started typing again overwrite the field mid-edit.
+  useEffect(() => {
+    setNotes(store.detail?.id === photoId ? (store.detail.notes ?? '') : '');
+  }, [photoId, store.detail?.id]);
+  const dirty = notes !== saved;
+
+  return (
+    <Panel title="Notes">
+      <TextArea
+        label="Notes"
+        placeholder="Add a note"
+        value={notes}
+        onChange={setNotes}
+        onBlur={() => {
+          if (dirty) void photos.setNotes(photoId, notes);
+        }}
+      />
+      <Text variant="mono">{dirty ? 'unsaved' : store.notesSavedAt != null ? 'saved' : ''}</Text>
+    </Panel>
+  );
+});
 
 function Panel({ title, children }: { title: string; children: React.ReactNode }): JSX.Element {
   return (
@@ -137,33 +168,26 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   const shoots = useShootsStore();
   const albums = useAlbumsStore();
   const serverConfig = useServerConfigStore();
-  const { photos, serverConfig: configPresenter, appSettings } = usePresenters();
+  const events = useEventsStore();
+  const { photos, serverConfig: configPresenter } = usePresenters();
   const navigate = useNavigate();
-  const [notes, setNotes] = useState('');
   // Actual pixels of the served thumbnail, so the panel reports what is on
   // screen rather than the RAW's dimensions.
   const [shownImage, setShownImage] = useState<{ width: number; height: number; bytes: number | null } | null>(null);
 
   useEffect(() => {
-    // Settings first: they decide which rendition this photo opens at, and it
-    // is fetched once per session, so only the first photo pays for it.
-    void appSettings.load().then(() => photos.openDetail(photoId));
+    void photos.openDetail(photoId);
     void configPresenter.load();
     // Cleared on the route change rather than when the detail arrives: the panel
     // must stop claiming the previous photo's resolution the moment we navigate,
     // and the new image can take a while to decode.
     setShownImage(null);
-  }, [photoId, photos, configPresenter, appSettings]);
+  }, [photoId, photos, configPresenter]);
 
   // The store deliberately keeps the previous detail while the next loads, so
   // the rail doesn't collapse on every next/prev. Everything driven by *this*
   // photo's data has to check the id, or it renders the one before it.
   const photo = store.detail?.id === photoId ? store.detail : null;
-  // Keyed on the id alone. Also watching photo.notes would let a save that lands
-  // after the user has started typing again overwrite the field mid-edit.
-  useEffect(() => {
-    setNotes(photo?.notes ?? '');
-  }, [photo?.id]);
 
   const prevId = store.prevPhotoId;
   const nextId = store.nextPhotoId;
@@ -192,7 +216,11 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
     return () => window.removeEventListener('keydown', onKey);
   }, [prevId, nextId, navigate, libraryId, photoId, photos]);
 
-  if (photo == null && !store.detailLoading) {
+  // Only once this photo has actually been asked for. The fetch starts in an
+  // effect, so the render that first sees a new id has no detail and nothing in
+  // flight - which read as "not found" and tore the whole page down, stage
+  // included, for the frame before the effect ran.
+  if (store.requestedDetailId === photoId && photo == null && !store.detailLoading) {
     return (
       <div className="pad">
         <div className="empty">
@@ -205,16 +233,16 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
     );
   }
 
-  // Null means the library's default, which the server names: a catalogue that
-  // serves the camera's JPEG opens there, one that renders opens at the full-size
-  // rendition. Resolving it here keeps the menu and the panel honest about what
-  // is on screen without a fourth state to reason about.
+  // Resolved by the store from the setting rather than from this photo's detail,
+  // so stepping to the next frame asks for the rendition the user actually reads
+  // at on the first attempt. Deriving it from the detail meant the library's
+  // default painted first and was swapped out the moment the fetch landed.
   const rendition = store.rendition;
-  const showing: PreviewRendition = rendition ?? photo?.default_rendition ?? 'embedded';
+  const showing = store.showing;
   // Every field comes from the same entry, so what is on screen, whether it is
   // HDR and where its bytes live can no longer disagree (§10.2).
   const shownFile = photo?.renditions?.[showing];
-  const stillSrc = viewerUrl(photoId, showing, store.rebuiltAt);
+  const stillSrc = viewerUrl(photoId, showing, events.version(photoId));
   const hdr = shownFile?.hdr === true;
 
   // Firefox renders an HDR still dark - it applies a PQ transfer to nothing but
@@ -224,17 +252,20 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   const shownVideo = needsHdrVideo() ? (shownFile?.video ?? null) : null;
   const hdrVideo = shownVideo != null;
 
-  // Stepping through frames is the whole job, so the next one is fetched and
-  // decoded while this one is being looked at and paints on arrival. Only for the
-  // default rendition: a chosen one is built on request, so asking for the next
-  // photo's copy before anything has built it is a 404, and the video twin is a
-  // poor guess at what the next photo needs. The camera's JPEG is warmed like the
-  // rest - it is extracted from a RAW that is still there, so it cannot 404.
-  const preloadSrc = nextId == null || rendition != null || hdrVideo ? undefined : viewerUrl(nextId, showing, store.rebuiltAt);
+  // Stepping through frames is the whole job, so both neighbours are fetched and
+  // decoded while this one is being looked at and paint on arrival - backwards
+  // through a cull is as common as forwards. The rendition on screen is the one
+  // warmed, so a reader set to the camera's JPEG never pays for a render they
+  // will not see. Only where the neighbour is sure to have it: a rendition built
+  // on request is a 404 until something builds it, and the video twin is a poor
+  // guess at what the next photo needs.
+  const preloadSrcs =
+    hdrVideo || !store.isAlwaysBuilt(showing)
+      ? undefined
+      : [prevId, nextId].filter((id) => id != null).map((id) => viewerUrl(id, showing, events.version(id)));
 
   const shoot = photo?.shoot_id == null ? null : shoots.byId.get(photo.shoot_id);
   const photoAlbums = photo == null ? [] : albums.albums.filter((a) => photo.album_ids.includes(a.id));
-  const notesDirty = notes !== (photo?.notes ?? '');
   const thumbs = serverConfig.config?.thumbnails;
 
   // A wide photo wastes horizontal space if the panel sits beside it, and a tall
@@ -325,11 +356,11 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
           // The panels decide which edge they take from this photo's shape, so
           // until that is known from somewhere the stage is not the size it will be.
           hold={shape == null}
-          src={hdrVideo && showing !== 'embedded' ? renditionVideoUrl(photoId, showing, store.rebuiltAt) : stillSrc}
+          src={hdrVideo && showing !== 'embedded' ? renditionVideoUrl(photoId, showing, events.version(photoId)) : stillSrc}
           video={hdrVideo}
           alt={filename}
           filename={filename}
-          preloadSrc={preloadSrc}
+          preloadSrcs={preloadSrcs}
           onImageLoad={(width, height, bytes) => setShownImage({ width, height, bytes })}
           // Only the library's default is built on sight, and only when it is a
           // stored rendition: the camera's JPEG comes out of the RAW, so a 404
@@ -367,18 +398,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
             </div>
           </Panel>
 
-          <Panel title="Notes">
-            <TextArea
-              label="Notes"
-              placeholder="Add a note"
-              value={notes}
-              onChange={setNotes}
-              onBlur={() => {
-                if (notesDirty) void photos.setNotes(photoId, notes);
-              }}
-            />
-            <Text variant="mono">{notesDirty ? 'unsaved' : store.notesSavedAt != null ? 'saved' : ''}</Text>
-          </Panel>
+          <NotesPanel photoId={photoId} />
 
           <MetaPanel
             title="Camera"

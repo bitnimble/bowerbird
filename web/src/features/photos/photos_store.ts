@@ -1,5 +1,6 @@
 import { computed, observable } from 'mobx';
 import type { Ordering, PhotoDetail, PhotoSummary, PreviewRendition, Triage } from '../../api/client';
+import type { AppSettingsStore } from '../settings/app_settings_store';
 
 // Which collection the grid is showing. One store serves the library, shoot,
 // album, bin and missing views because they differ only in the fetch call.
@@ -38,6 +39,10 @@ export function activeFilters(): PhotoFilters {
 }
 
 export class PhotosStore {
+  // Read-only, for the viewer's opening rendition: which one that is comes from
+  // the setting, and the setting knows it before the photo's detail arrives.
+  constructor(private readonly settings: AppSettingsStore) {}
+
   // Deep, not shallow: a tile observes its own row's fields, so rating or
   // rejecting one photo re-renders that tile alone. Shallow rows can only be
   // updated by replacing the array, which invalidates every tile in the grid.
@@ -67,20 +72,10 @@ export class PhotosStore {
   // Which tile the keyboard is on. -1 means the grid has not been entered yet.
   @observable accessor focusIndex = -1;
 
-  // Bumped on every completed list fetch. A tile whose thumbnail 404'd (it was
-  // still being generated) uses this to know a newer generation exists and the
-  // image is worth requesting again.
-  @observable accessor reloadToken = 0;
-
-  // Bumped when thumbnails are rebuilt. The file changes behind a URL that does
-  // not, so images already decoded in the page would otherwise never be
-  // re-requested; appending this defeats that without polluting normal URLs.
-  @observable accessor rebuiltAt = 0;
-
-  // Which rendition the detail view is showing: the same picture at one of three
-  // quality levels, each built on request and cached (§10.2). Null is the photo's
-  // own thumbnail, which is whichever of the first two the library builds on
-  // import, and is the only one that costs nothing to show.
+  // The rendition picked for this photo, for as long as it is open: the same
+  // picture at one of three quality levels, each built on request and cached
+  // (§10.2). Null until something is picked, which is the usual state - the
+  // setting answers for the rest, and `showing` is what is actually on screen.
   @observable accessor rendition: PreviewRendition | null = null;
   @observable accessor buildingRendition = false;
 
@@ -91,6 +86,11 @@ export class PhotosStore {
 
   @observable.ref accessor detail: PhotoDetail | null = null;
   @observable accessor detailLoading = false;
+  // Which photo the detail state is about, in flight or landed. What tells "no
+  // such photo" apart from "not asked for yet": `detail` still holds the
+  // previous one across a step, and the fetch for the next does not start until
+  // the effect that follows its first render.
+  @observable accessor requestedDetailId: string | null = null;
   @observable accessor notesSavedAt: number | null = null;
 
   @computed get selectedIds(): string[] {
@@ -109,8 +109,10 @@ export class PhotosStore {
     return this.photos.length > 0 && this.photos.every((p) => this.selected.has(p.id));
   }
 
+  // Length first, so a populated grid's dependency on `loading` short-circuits
+  // away: it toggles twice on every refetch, and the answer cannot change.
   @computed get isEmpty(): boolean {
-    return !this.loading && this.photos.length === 0;
+    return this.photos.length === 0 && !this.loading;
   }
 
   @computed get focusedPhoto(): PhotoSummary | null {
@@ -126,6 +128,40 @@ export class PhotosStore {
   // library never re-renders the rail or the title bar.
   @computed get detailLibraryId(): string | null {
     return this.detail?.library_id ?? null;
+  }
+
+  // The library's own: it serves the camera's JPEG or it renders. A property of
+  // the photo, so it is only known once a detail has landed - any detail, the
+  // setting behind it being the library's rather than the photo's.
+  @computed get defaultRendition(): PreviewRendition {
+    return this.detail?.default_rendition ?? 'embedded';
+  }
+
+  // What the setting alone says to open at, before the photo's detail lands.
+  // Null when only the detail can answer: the per-photo memory lives on it, and
+  // 'remember' has nothing to remember until something is picked.
+  @computed get preferredRendition(): PreviewRendition | null {
+    const mode = this.settings.previewRenditionMode;
+    if (mode === 'remember') return this.settings.lastPreviewRendition;
+    if (mode === 'remember_per_photo') return null;
+    return mode;
+  }
+
+  // The rendition on screen. Answered from the setting wherever it can be, so
+  // stepping to the next photo asks for the file the reader actually wants on
+  // the first frame instead of painting the library's default and swapping.
+  @computed get showing(): PreviewRendition {
+    if (this.rendition != null) return this.rendition;
+    const preferred = this.preferredRendition;
+    return preferred != null && this.isAlwaysBuilt(preferred) ? preferred : this.defaultRendition;
+  }
+
+  // Exists for every photo in the library, so it can be asked for before that
+  // photo's own detail says whether it does: the camera's JPEG is extracted from
+  // the RAW on demand, and the library's default is built on import. The other
+  // two are built on request, and asking early is a 404, not a picture.
+  isAlwaysBuilt(rendition: PreviewRendition): boolean {
+    return rendition === 'embedded' || rendition === this.defaultRendition;
   }
 
   @computed get hasActiveFilters(): boolean {

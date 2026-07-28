@@ -18,9 +18,9 @@ test('indexes a library and shows a thumbnail for every RAW file', async ({ page
   await expect(page.locator('.tile')).toHaveCount(PHOTO_NAMES.length, { timeout: 45_000 });
 
   // Regression: thumbnails are requested before processing has written them, so
-  // the first request 404s. The tile used to latch that failure forever and stay
-  // blank even after the sync poll refreshed the grid. Every tile must end up
-  // showing decoded pixels, and none may be left on the placeholder.
+  // the first request 404s, and the tile has nothing to do but wait for the
+  // server to say its photo is built. Every tile must end up showing decoded
+  // pixels, and none may be left on the placeholder.
   await expect
     .poll(
       async () =>
