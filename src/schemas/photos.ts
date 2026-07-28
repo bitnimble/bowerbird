@@ -25,6 +25,12 @@ export const PhotoSummarySchema = z.object({
   rating: z.number().int().min(0).max(5),
   is_missing: z.boolean(),
   is_deleted: z.boolean(),
+  // When this photo's renditions were last written, and so which generation of
+  // them a URL asks for. On the summary because it is what a client puts in
+  // every image URL: derived files are rebuilt in place under a stable path, and
+  // a page holding the previous ones has no other way to know they moved
+  // (§13.5). Null for a photo whose renditions have never been built.
+  date_reprocessed: z.string().nullable(),
 });
 export type PhotoSummary = z.infer<typeof PhotoSummarySchema>;
 
@@ -39,7 +45,6 @@ export const PhotoDetailSchema = PhotoSummarySchema.extend({
   date_taken_offset: z.string().nullable(),
   date_added: z.string(),
   date_updated: z.string().nullable(),
-  date_reprocessed: z.string().nullable(),
   needs_processing: z.boolean(),
   processing_error: z.string().nullable(),
   latitude: z.number().nullable(),

@@ -38,15 +38,15 @@ export class ProcessingService {
   // during the batch is drained before the promise resolves.
   private readonly inFlight = new Map<string, Promise<void>>();
   private readonly rerun = new Set<string>();
-  private readonly processed = new Set<(photoId: string) => void>();
+  private readonly processed = new Set<(photoId: string, version: string) => void>();
 
   constructor(
     private readonly photos: PhotosRepository,
     private readonly config: Config,
   ) {}
 
-  /** Called with each photo whose renditions have just been written. */
-  onProcessed(listener: (photoId: string) => void): void {
+  /** Called with each photo whose renditions have just been written, and when. */
+  onProcessed(listener: (photoId: string, version: string) => void): void {
     this.processed.add(listener);
   }
 
@@ -54,8 +54,8 @@ export class ProcessingService {
   // handler and the one-off run - rather than from the queue alone: an on-demand
   // build is a file changing behind a URL exactly as much as a queued one is, and
   // the grid tile repaired on a detail read (§18.6) has no other way to be told.
-  private announce(photoId: string): void {
-    for (const listener of this.processed) listener(photoId);
+  private announce(photoId: string, version: string): void {
+    for (const listener of this.processed) listener(photoId, version);
   }
 
   // Rebuilds thumbnails for specific photos from the given source. Returns how
@@ -167,7 +167,11 @@ export class ProcessingService {
       });
       // The HDR diagnostics write their own files under their own names and no
       // view reads them off a rendition URL, so only a rendition is worth saying.
-      if (job.kind === 'rendition') this.announce(job.photoId);
+      if (job.kind === 'rendition') {
+        const version = new Date().toISOString();
+        this.photos.touchReprocessed(job.photoId, version);
+        this.announce(job.photoId, version);
+      }
     } finally {
       worker.terminate();
     }
@@ -249,11 +253,14 @@ export class ProcessingService {
       // there are no renditions to build - and `dropStaleRenditions` would then
       // delete the ones there are, with nothing to ever rebuild them.
       const source: ThumbnailSource = photo == null || photo.renditions != null ? 'render' : 'embedded';
-      this.photos.markProcessed(photoId, new Date().toISOString(), source);
+      const version = new Date().toISOString();
+      this.photos.markProcessed(photoId, version, source);
       if (photo != null) this.dropStaleRenditions(photo);
       // After the writes, so a client told the photo is ready cannot ask for it
-      // before the row and the files say so.
-      this.announce(photoId);
+      // before the row and the files say so. The same stamp the row took, or the
+      // URL a client builds from the event would not be the one the next list
+      // read hands it.
+      this.announce(photoId, version);
     } catch (err) {
       // Never throw: this runs inside a worker's onmessage/onerror, and a throw here
       // would skip the pool's assignNext/terminate/live-- bookkeeping and hang the

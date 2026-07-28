@@ -4,9 +4,9 @@ import type { ProcessingService } from '../../../services/processing/processing_
 import { EventsApi } from '../events_api';
 
 function build() {
-  let notify: (photoId: string) => void = () => {};
+  let notify: (photoId: string, version: string) => void = () => {};
   const processing = {
-    onProcessed: (listener: (photoId: string) => void) => {
+    onProcessed: (listener: (photoId: string, version: string) => void) => {
       notify = listener;
     },
   } as unknown as ProcessingService;
@@ -14,7 +14,7 @@ function build() {
   const api = new EventsApi(processing);
   const app = new Hono();
   app.route('/api/events', api.routes);
-  return { api, app, processed: (photoId: string) => notify(photoId) };
+  return { api, app, processed: (photoId: string, version = '2026-07-28T00:00:00.000Z') => notify(photoId, version) };
 }
 
 async function readChunk(reader: { read(): Promise<{ value?: Uint8Array }> }): Promise<string> {
@@ -32,7 +32,9 @@ describe('EventsApi', () => {
     processed('photo-a');
     // The exact wire format, because an EventSource that cannot parse it reports
     // nothing at all rather than failing.
-    expect(await readChunk(reader)).toBe('event: thumbnail\ndata: photo-a\nid: 1\n\n');
+    expect(await readChunk(reader)).toBe(
+      'event: thumbnail\ndata: {"id":"photo-a","version":"2026-07-28T00:00:00.000Z"}\nid: 1\n\n',
+    );
     await reader.cancel();
   });
 
@@ -47,7 +49,7 @@ describe('EventsApi', () => {
 
     const res = await app.request('/api/events', { headers: { 'Last-Event-ID': '2' } });
     const reader = res.body!.getReader();
-    expect(await readChunk(reader)).toContain('data: photo-c');
+    expect(await readChunk(reader)).toContain('"id":"photo-c"');
     await reader.cancel();
   });
 

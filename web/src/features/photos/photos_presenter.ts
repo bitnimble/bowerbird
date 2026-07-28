@@ -166,6 +166,19 @@ export class PhotosPresenter {
     }
   }
 
+  // The server has rewritten this photo's renditions. Written into the row every
+  // view already renders from, which is what moves its image URLs on to the new
+  // files; mobx notifies the one tile whose field changed and nothing else.
+  @action.bound
+  renditionsRebuilt(photoId: string, version: string): void {
+    const row = this.store.photos.find((p) => p.id === photoId);
+    if (row != null) row.date_reprocessed = version;
+    // The detail is held by reference, so it takes a new object rather than a
+    // field write to notify.
+    const detail = this.store.detailFor(photoId);
+    if (detail != null) this.store.loadedDetail = { ...detail, date_reprocessed: version };
+  }
+
   // Whether a photo is still the one the view is on. Every write that lands after
   // an await has to ask: the store holds one detail and one chosen rendition, so
   // a request that resolves after the user has stepped on would otherwise put the

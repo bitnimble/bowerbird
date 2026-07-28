@@ -34,7 +34,6 @@ import {
   useShootsStore,
 } from '../../app/stores_context';
 import { ActionMenu, type ActionGroup, Button, ICON, MoreLess, type Option, Text, TextArea } from '../../ui/ui';
-import { useRenditionVersion } from '../events/use_rendition_version';
 import { renditionLabel } from './photos_presenter';
 import { PhotoStage } from './photo_stage';
 import { TRIAGE_KEYS, TriageControl } from './triage_control';
@@ -190,13 +189,13 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   const nextId = store.nextPhotoId;
   const libraryId = store.detailLibraryId;
 
-  // The frame on screen and the two being warmed, each watching its own photo for
-  // a rebuild. Above the early return below, because a hook cannot be called
-  // conditionally - and the neighbours are watched at all so that the URL one is
-  // warmed at stays the URL it is painted at when the reader steps onto it.
-  const version = useRenditionVersion(photoId);
-  const prevVersion = useRenditionVersion(prevId);
-  const nextVersion = useRenditionVersion(nextId);
+  // The frame on screen and the two being warmed. All three come off their rows,
+  // so a neighbour is warmed at the URL it will be painted at when the reader
+  // steps onto it - the row does not change under them, and it is the same row
+  // either way.
+  const version = store.renditionVersionOf(photoId);
+  const prevVersion = store.renditionVersionOf(prevId);
+  const nextVersion = store.renditionVersionOf(nextId);
 
   // Stepping through frames and judging them is the whole point of a detail view
   // during a cull, so the verdict keys work here exactly as they do in the grid.

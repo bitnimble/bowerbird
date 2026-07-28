@@ -123,7 +123,7 @@ function folderRange(folderPath: string): [string, string] {
 // Qualified with `photos.` because listByAlbum joins album_photos, which also has
 // a date_added column (bare names would be ambiguous).
 const SUMMARY_COLS =
-  'photos.id, photos.library_id, photos.shoot_id, photos.file_path, photos.width, photos.height, photos.date_taken, photos.date_added, photos.triage, photos.rating, photos.is_missing, photos.is_deleted';
+  'photos.id, photos.library_id, photos.shoot_id, photos.file_path, photos.width, photos.height, photos.date_taken, photos.date_added, photos.date_reprocessed, photos.triage, photos.rating, photos.is_missing, photos.is_deleted';
 
 const SYNC_COLUMNS = 'id, file_path, file_hash, is_missing, date_updated, file_size';
 interface SyncRow {
@@ -153,6 +153,7 @@ interface SummaryRow {
   height: number;
   date_taken: string | null;
   date_added: string;
+  date_reprocessed: string | null;
   triage: string | null;
   rating: number;
   is_missing: number;
@@ -167,7 +168,6 @@ interface DetailRow extends SummaryRow {
   // would be noise on 100 of them.
   date_taken_offset: string | null;
   date_updated: string | null;
-  date_reprocessed: string | null;
   needs_processing: number;
   processing_error: string | null;
   latitude: number | null;
@@ -222,6 +222,7 @@ function toSummary(row: SummaryRow, ordering: Ordering): PhotoSummary {
     rating: row.rating,
     is_missing: row.is_missing === 1,
     is_deleted: row.is_deleted === 1,
+    date_reprocessed: row.date_reprocessed,
   };
 }
 
@@ -607,6 +608,14 @@ export class PhotosRepository {
          WHERE p.needs_processing = 1 AND p.is_missing = 0 AND p.is_deleted = 0 ${where}`,
       )
       .all(...params) as PendingPhoto[];
+  }
+
+  // A rendition written outside the processing queue - one the viewer asked for,
+  // or the grid tile repaired on a detail read. The row is not otherwise touched
+  // by those, but `date_reprocessed` is what a client puts in the URL, so a file
+  // that moved without it would go on being served from the copy already held.
+  touchReprocessed(id: string, reprocessedAtIso: string): void {
+    this.db.query('UPDATE photos SET date_reprocessed = ? WHERE id = ?').run(reprocessedAtIso, id);
   }
 
   markProcessed(id: string, reprocessedAtIso: string, source: ThumbnailSource): void {

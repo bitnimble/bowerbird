@@ -5,8 +5,8 @@ import { Check, ChevronLeft, ChevronRight, ThumbsDown, ThumbsUp } from 'lucide-r
 import { captureDateTime, localDateTime } from '../../api/dates';
 import { renditionUrl, type PhotoSummary } from '../../api/client';
 import { usePhotosStore, usePresenters } from '../../app/stores_context';
-import { useRenditionVersion } from '../events/use_rendition_version';
 import { Button, ICON, Text } from '../../ui/ui';
+import { renditionVersion } from './photos_store';
 import { RETRY_DELAYS_MS } from './retry_delays';
 
 function filename(filePath: string, id: string): string {
@@ -88,17 +88,17 @@ const Tile = observer(function Tile({
   const { photos } = usePresenters();
   const navigate = useNavigate();
   const [loaded, setLoaded] = useState(false);
-  // A thumbnail 404s while processing is still writing it. The version comes off
-  // the server's own "this photo was built" announcement, keyed by photo, so the
-  // retry is this tile asking again for itself the moment there is something to
-  // fetch - and nothing else in the grid hears about it.
+  // A thumbnail 404s while processing is still writing it. The version is this
+  // row's own `date_reprocessed`, which the announcement for this photo writes
+  // into it: the retry is one tile asking again for itself the moment there is
+  // something to fetch, and no other tile in the grid observes that field.
   //
   // Backed by a retry on a backoff, because being told is not guaranteed: the
   // stream can be down, or connect a moment after this tile asked, or the client
   // can be asleep past the replay buffer. Without a floor under it a single
   // missed announcement leaves a tile blank for the life of the page.
   const [retry, setRetry] = useState({ attempt: 0, at: 0 });
-  const version = useRenditionVersion(photo.id);
+  const version = renditionVersion(photo);
   // Both are moments, so the newer one wins and neither can land on a value the
   // other already used - which adding them together could, and a URL that repeats
   // itself is a request the browser does not make.
@@ -111,7 +111,9 @@ const Tile = observer(function Tile({
   // and never refilled, a tile that burned six attempts in its first minute -
   // which every tile does when the grid is opened onto an import - would have no
   // way left to recover from an announcement that never arrived.
-  useEffect(() => setRetry({ attempt: 0, at: 0 }), [version]);
+  // Returning the same object when there is nothing to reset lets React bail out
+  // rather than re-render every tile in the grid once on mount.
+  useEffect(() => setRetry((r) => (r.attempt === 0 && r.at === 0 ? r : { attempt: 0, at: 0 })), [version]);
   useEffect(() => {
     if (!failed) return;
     const delay = RETRY_DELAYS_MS[retry.attempt];

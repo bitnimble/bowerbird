@@ -7,6 +7,10 @@ export interface PhotoEvent {
   // last one it saw.
   id: number;
   photoId: string;
+  // The photo's new `date_reprocessed`, which is what a client puts in its image
+  // URLs. Carried on the event so that learning of a rebuild costs nothing beyond
+  // the event: the client writes it into the row it is already holding.
+  version: string;
 }
 
 // How far back a reconnecting client can be caught up. A browser retries a
@@ -30,7 +34,7 @@ export class EventsApi {
   private readonly clients = new Set<(event: PhotoEvent) => void>();
 
   constructor(processing: ProcessingService) {
-    processing.onProcessed((photoId) => this.publish(photoId));
+    processing.onProcessed((photoId, version) => this.publish(photoId, version));
 
     const app = new Hono();
 
@@ -45,7 +49,7 @@ export class EventsApi {
         };
 
         const send = (event: PhotoEvent): void => {
-          void write({ id: String(event.id), event: 'thumbnail', data: event.photoId });
+          void write({ id: String(event.id), event: 'thumbnail', data: JSON.stringify({ id: event.photoId, version: event.version }) });
         };
         for (const event of this.since(c.req.header('Last-Event-ID'))) send(event);
         this.clients.add(send);
@@ -87,8 +91,8 @@ export class EventsApi {
     return this.recent.filter((event) => event.id > last);
   }
 
-  private publish(photoId: string): void {
-    const event: PhotoEvent = { id: this.nextId++, photoId };
+  private publish(photoId: string, version: string): void {
+    const event: PhotoEvent = { id: this.nextId++, photoId, version };
     this.recent.push(event);
     if (this.recent.length > REPLAY) this.recent.shift();
     for (const send of this.clients) send(event);

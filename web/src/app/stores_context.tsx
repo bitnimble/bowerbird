@@ -64,8 +64,10 @@ function build(): { stores: Stores; presenters: Presenters } {
   const shoots = new ShootsPresenter(stores.shoots);
   const albums = new AlbumsPresenter(stores.albums);
   const appSettings = new AppSettingsPresenter(stores.appSettings);
-  const events = new EventsPresenter();
   const photos = new PhotosPresenter(stores.photos, shoots, albums, toasts, stores.appSettings, appSettings);
+  // Announcements land on the rows the views render from, so this writes through
+  // the presenter that owns them.
+  const events = new EventsPresenter(photos);
   const presenters: Presenters = {
     libraries: new LibrariesPresenter(stores.libraries),
     photos,

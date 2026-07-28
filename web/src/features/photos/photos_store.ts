@@ -38,6 +38,16 @@ export interface PhotoFilters {
 // another, and no combination of flags can describe a state that cannot happen.
 export type OpenPhoto = { id: string; status: 'loading' | 'ready' } | { id: string; status: 'missing'; error: string };
 
+// Which generation of a photo's renditions to ask the server for. The row
+// carries it, so it is known for the frame on screen and for a neighbour being
+// warmed alike, it survives a reload, and every client agrees - none of which a
+// version a client made up for itself could manage (§13.5). 0 for a photo whose
+// renditions have never been built, and before its row has loaded, which leaves
+// the URL plain and the ETag in charge.
+export function renditionVersion(photo: { date_reprocessed: string | null } | null | undefined): number {
+  return photo?.date_reprocessed == null ? 0 : Date.parse(photo.date_reprocessed);
+}
+
 // A gallery opens on the working set: everything not yet rejected. Rejecting is
 // a decision to stop seeing a frame, so it should leave the view at once. Lives
 // here so the presenter's opening state and the "Active" chip cannot disagree.
@@ -113,6 +123,14 @@ export class PhotosStore {
   // disagree for the length of a fetch.
   detailFor(photoId: string): PhotoDetail | null {
     return this.loadedDetail?.id === photoId ? this.loadedDetail : null;
+  }
+
+  // For a photo the view knows only by id - the neighbours the viewer warms.
+  // Anything holding the row itself reads `renditionVersion` off it directly,
+  // which is both cheaper and narrower to observe.
+  renditionVersionOf(photoId: string | null): number {
+    if (photoId == null) return 0;
+    return renditionVersion(this.photos.find((p) => p.id === photoId) ?? this.detailFor(photoId));
   }
 
   @computed get selectedIds(): string[] {
