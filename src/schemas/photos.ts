@@ -97,10 +97,13 @@ export const PhotoDetailSchema = PhotoSummarySchema.extend({
         path: z.string(),
         built: z.boolean(),
         hdr: z.boolean(),
+        // What this file weighs, null when it is not built. Reported here rather
+        // than measured off the response in the browser: Firefox leaves the body
+        // sizes on a cross-origin resource-timing entry at 0 whatever the
+        // response is labelled with, so the panel read "unknown" there.
+        bytes: z.number().int().nullable(),
         // The one-frame AV1 twin when it exists, so a client on Firefox knows it
-        // may reach for it instead of a still it would render dark (§10.7). Its
-        // weight is reported from here rather than measured off the response the
-        // way the still's is: a media element leaves no resource-timing entry.
+        // may reach for it instead of a still it would render dark (§10.7).
         video: z.object({ path: z.string(), bytes: z.number().int() }).nullable(),
       }),
     )

@@ -34,9 +34,7 @@ export async function viewMaxQuality(page: Page, rootPath: string): Promise<void
   // freshly synced library can wait on a real decode here.
   await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
 
-  await page.getByRole('button', { name: 'Actions' }).click();
-  await page.getByRole('menuitem', { name: 'Image preview' }).focus();
-  await page.keyboard.press('ArrowRight');
+  await page.getByRole('button', { name: 'Image source' }).click();
   await page.getByRole('menuitem', { name: 'From RAW (max quality)' }).click();
   await expect(page.locator('.panel', { hasText: 'IMAGE PREVIEW DETAILS' }).getByText('RAW render (max quality)')).toBeVisible({
     timeout: 180_000,

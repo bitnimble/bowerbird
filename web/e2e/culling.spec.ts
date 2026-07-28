@@ -467,13 +467,8 @@ test('a chosen preview rendition is cached on disk, and survives a tile rebuild'
   await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
   const photoId = new URL(page.url()).pathname.split('/').pop() ?? '';
 
-  // Keyboard, not pointer: the submenu opens on a real hover transition, and on
-  // the second pass the mouse is already resting where the trigger appears, so no
-  // pointer event fires and nothing opens.
   const showRendition = async (label: string): Promise<void> => {
-    await page.getByRole('button', { name: 'Actions' }).click();
-    await page.getByRole('menuitem', { name: 'Image preview' }).focus();
-    await page.keyboard.press('ArrowRight');
+    await page.getByRole('button', { name: 'Image source' }).click();
     await page.getByRole('menuitem', { name: label, exact: true }).click();
   };
 
@@ -507,7 +502,7 @@ test('a chosen preview rendition is cached on disk, and survives a tile rebuild'
 });
 
 // Switching between the camera's JPEG and a render is the comparison the detail
-// view exists for, so it is a keystroke rather than three clicks into a submenu.
+// view exists for, so it is a keystroke rather than a trip through the menu.
 test('i and o switch between the camera JPEG and the render, and the cache can be forced past', async ({ page }) => {
   // A forced rebuild is a real render of the RAW, not a cache hit.
   test.setTimeout(240_000);
@@ -528,12 +523,12 @@ test('i and o switch between the camera JPEG and the render, and the cache can b
   // stored copy is dropped first.
   const cached = path.join(CULL_PHOTOS_DIR, '.bowerbird', 'renditions', 'full', `${photoId}.avif`);
   const before = statSync(cached).mtimeMs;
-  await page.getByRole('button', { name: 'Actions' }).click();
+  await page.getByRole('button', { name: 'Image source' }).click();
   await page.getByRole('menuitemcheckbox', { name: 'Disable cache when changing preview' }).click();
   // The toggle leaves the menu open on purpose - it says what the actions above
   // it will do. Close it, then put focus back on the page: an open menu makes
   // everything behind it inert, and its trigger eats letter keys as typeahead.
-  await page.getByRole('button', { name: 'Actions' }).click();
+  await page.getByRole('button', { name: 'Image source' }).click();
   await page.locator('.detail__nav .ui-text--mono').click();
   await page.keyboard.press('o');
   await expect(preview.getByText('RAW render')).toBeVisible({ timeout: 120_000 });
@@ -869,4 +864,64 @@ test('panning a zoomed photo cannot drag it off the stage', async ({ page }) => 
     return Math.max(i.left - v.left, i.top - v.top);
   });
   expect(gap).toBeLessThanOrEqual(1);
+  // And it moved at all: the clamp above is satisfied just as well by a drag
+  // that did nothing, which is what the regression below actually was.
+  const moved = await page.locator('.stage__viewport img.is-ready').evaluate((img) => img.style.transform);
+  expect(moved).not.toContain('translate(0px, 0px)');
+});
+
+// Regression: the warmed neighbours are full-size images stacked over the frame,
+// so the pointer landed on one of them. Chromium honours the -webkit-user-drag
+// they inherit; Firefox does not, and started an image drag that cancelled the
+// pointer capture, so a zoomed photo could not be panned at all.
+test('the warmed neighbours never take the pointer from the frame', async ({ page }) => {
+  await page.goto('/settings');
+  await openLibrary(page, CULL_PHOTOS_DIR);
+  await page.locator('.tile__hit').first().click();
+  await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
+  // The warm only starts once this frame is up, so there is nothing to stack
+  // over it until then.
+  await expect(page.locator('.stage__viewport img[aria-hidden="true"]')).not.toHaveCount(0, { timeout: 60_000 });
+
+  const hit = await page.locator('.stage__viewport').evaluate((vp) => {
+    const box = vp.getBoundingClientRect();
+    const el = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+    return el?.getAttribute('aria-hidden');
+  });
+  expect(hit).toBeNull();
+});
+
+// Regression: a fully transparent element is never rasterised, so the frame
+// revealed on promotion had no raster and the browser needed a frame or two to
+// build one. Dropped in the same commit, the outgoing frame left the stage
+// background showing through for exactly that long, on every swap. Sampling
+// which src carries `is-ready` cannot see it: the DOM is already correct, so
+// what this pins is the overlap that covers the gap.
+test('the frame being replaced is held opaque under its replacement for a beat', async ({ page }) => {
+  await page.goto('/settings');
+  await openLibrary(page, CULL_PHOTOS_DIR);
+  await page.locator('.tile__hit').first().click();
+  await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
+
+  // Every frame, because the hold is a few frames long and no round trip can be
+  // relied on to land inside it.
+  await page.evaluate(() => {
+    const counts: number[] = [];
+    (window as unknown as { opaque: number[] }).opaque = counts;
+    const tick = (): void => {
+      counts.push(document.querySelectorAll('.stage__viewport .is-ready, .stage__viewport .is-retiring').length);
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+
+  await page.keyboard.press('o');
+  await expect(page.locator('.panel', { hasText: 'IMAGE PREVIEW DETAILS' }).getByText('RAW render')).toBeVisible({ timeout: 120_000 });
+  await page.waitForTimeout(1000);
+
+  const counts = await page.evaluate(() => (window as unknown as { opaque: number[] }).opaque);
+  // Two frames up at once across the swap, and back to one after it: a hold that
+  // never ends would leave the photo before this one on the stage.
+  expect(counts.filter((n) => n === 2).length).toBeGreaterThan(0);
+  expect(counts.at(-1)).toBe(1);
 });
