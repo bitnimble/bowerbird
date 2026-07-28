@@ -361,18 +361,22 @@ export function ActionMenu<T extends string>({
             {toggles.map((toggle) => (
               <Menu.CheckboxItem
                 key={toggle.label}
-                className="ui-item"
+                className="ui-item ui-item--action"
                 // Stays open: this changes what the actions above it do, so it is
                 // set on the way to picking one rather than instead of picking one.
                 closeOnClick={false}
                 checked={toggle.checked}
                 onCheckedChange={toggle.onChange}
               >
-                <Menu.CheckboxItemIndicator className="ui-item__check">
-                  <Check size={ICON} />
-                </Menu.CheckboxItemIndicator>
                 {toggle.icon}
                 {toggle.label}
+                {/* The span, not the indicator, holds the column: the indicator is
+                    unmounted when unticked and the row would jump on every click. */}
+                <span className="ui-item__check ui-item__check--end">
+                  <Menu.CheckboxItemIndicator>
+                    <Check size={ICON} />
+                  </Menu.CheckboxItemIndicator>
+                </span>
               </Menu.CheckboxItem>
             ))}
           </Menu.Popup>

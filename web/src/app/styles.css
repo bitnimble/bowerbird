@@ -350,6 +350,11 @@ p.ui-text--mono {
   padding-left: 12px;
 }
 
+.ui-item__check--end {
+  margin-left: auto;
+  padding-left: 12px;
+}
+
 .ui-item__rule {
   height: 1px;
   margin: 4px 2px;

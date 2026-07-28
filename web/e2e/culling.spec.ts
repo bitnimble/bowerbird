@@ -369,7 +369,7 @@ test('i and o switch between the camera JPEG and the render, and the cache can b
   const cached = path.join(CULL_PHOTOS_DIR, '.bowerbird', 'renditions', 'full', `${photoId}.avif`);
   const before = statSync(cached).mtimeMs;
   await page.getByRole('button', { name: 'Actions' }).click();
-  await page.getByRole('menuitemcheckbox', { name: 'Rebuild, ignoring the cache' }).click();
+  await page.getByRole('menuitemcheckbox', { name: 'Disable cache when changing preview' }).click();
   // The toggle leaves the menu open on purpose - it says what the actions above
   // it will do. Close it, then put focus back on the page: an open menu makes
   // everything behind it inert, and its trigger eats letter keys as typeahead.

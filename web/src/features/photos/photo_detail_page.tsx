@@ -270,7 +270,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
           options={ACTIONS}
           toggles={[
             {
-              label: 'Rebuild, ignoring the cache',
+              label: 'Disable cache when changing preview',
               icon: <RefreshCw size={ICON} />,
               checked: store.forceRebuild,
               onChange: photos.setForceRebuild,
