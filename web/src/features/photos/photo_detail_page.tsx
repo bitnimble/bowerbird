@@ -20,7 +20,6 @@ import {
   jpegUrl,
   needsHdrVideo,
   originalUrl,
-  renditionUrl,
   renditionVideoUrl,
   viewerUrl,
   type PreviewRendition,
@@ -224,11 +223,9 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   // decoded while this one is being looked at and paints on arrival. Only for the
   // default rendition: a chosen one is built on request, so asking for the next
   // photo's copy before anything has built it is a 404, and the video twin is a
-  // poor guess at what the next photo needs.
-  const preloadSrc =
-    nextId == null || rendition != null || hdrVideo || showing === 'embedded'
-      ? undefined
-      : renditionUrl(nextId, showing, store.rebuiltAt);
+  // poor guess at what the next photo needs. The camera's JPEG is warmed like the
+  // rest - it is extracted from a RAW that is still there, so it cannot 404.
+  const preloadSrc = nextId == null || rendition != null || hdrVideo ? undefined : viewerUrl(nextId, showing, store.rebuiltAt);
 
   const shoot = photo?.shoot_id == null ? null : shoots.byId.get(photo.shoot_id);
   const photoAlbums = photo == null ? [] : albums.albums.filter((a) => photo.album_ids.includes(a.id));
@@ -238,7 +235,12 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   // A wide photo wastes horizontal space if the panel sits beside it, and a tall
   // one wastes vertical space if the panel sits under it. Put the panel on
   // whichever edge leaves the photo biggest.
-  const landscape = photo == null || photo.width >= photo.height;
+  //
+  // From the loaded grid row when the detail has not arrived: the shape is all
+  // the layout needs, and waiting for the fetch to learn it costs a frame of
+  // empty stage on every step, warmed neighbour or not.
+  const shape = photo ?? store.photos.find((p) => p.id === photoId) ?? null;
+  const landscape = shape == null || shape.width >= shape.height;
   // Beside a portrait the column runs the full height of the page, so every row
   // fits without scrolling; under a landscape it is a 34vh strip and does not.
   const expanded = !landscape;
@@ -308,9 +310,9 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
             always the one the URL asks for. */}
         <PhotoStage
           photoKey={photoId}
-          // The panels decide which edge they take from this photo's own shape,
-          // so until it has arrived the stage is not the size it will be.
-          hold={photo == null}
+          // The panels decide which edge they take from this photo's shape, so
+          // until that is known from somewhere the stage is not the size it will be.
+          hold={shape == null}
           src={hdrVideo && showing !== 'embedded' ? renditionVideoUrl(photoId, showing, store.rebuiltAt) : stillSrc}
           video={hdrVideo}
           alt={filename}
