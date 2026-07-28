@@ -368,13 +368,19 @@ export function PhotoStage({ src, alt, filename, video, photoKey, hold, preloadS
         onPointerCancel={onPointerUp}
         onClick={onClick}
       >
-        {failed ? (
+        {/* A frame that failed replaces the incoming one, not the picture already
+            on screen: switching to a rendition that 404s should leave the one
+            being compared against up, not blank the stage and flicker it back on
+            every retry. Nothing to hold means there is nothing to say but this.
+            A frame belonging to the *previous* photo is not a candidate - the cap
+            above has already dropped it by the time any of this can matter. */}
+        {failed && painted == null ? (
           <span className="tile__pending">no thumbnail yet</span>
         ) : (
           // One list, keyed by src, so promoting the incoming one keeps its
           // element: rendered as two slots React would unmount it and the
           // browser would decode the same file over again to paint it.
-          [painted?.src, incoming].map((source) => {
+          [painted?.src, failed ? null : incoming].map((source) => {
             if (source == null) return false;
             const className = source === painted?.src ? 'is-ready stage__content' : 'stage__content';
             const transform = `translate(${view.x}px, ${view.y}px) scale(${view.scale})`;

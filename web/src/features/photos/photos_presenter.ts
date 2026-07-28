@@ -71,6 +71,14 @@ export class PhotosPresenter {
     await this.fetchPage();
   }
 
+  // Whether what this view shows depends on which photos have been thumbnailed,
+  // and so goes stale as a run works through them. Only the filter does: the rows
+  // themselves are settled once the scan has finished inserting them, and their
+  // thumbnails arrive by announcement (§18.6) rather than by re-reading the list.
+  get tracksProcessing(): boolean {
+    return this.store.filters.needsProcessing != null;
+  }
+
   // --- view controls ---
 
   async setFilters(filters: PhotoFilters): Promise<void> {
@@ -431,6 +439,12 @@ export class PhotosPresenter {
       await this.refreshDetail();
     } catch (err) {
       this.fail(err);
+    } finally {
+      // Only for as long as the build is running. Held past that, a build that
+      // failed - a RAW that was briefly unreadable, a worker that could not spawn
+      // - was never attempted again for the life of the tab, and the set grew
+      // with every photo that ever asked.
+      this.previewBuilds.delete(key);
     }
   }
 
