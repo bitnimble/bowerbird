@@ -8,6 +8,18 @@ import type { Rendition } from './renditions';
 export const THUMBNAIL_SOURCES = ['embedded', 'render'] as const;
 export type ThumbnailSource = (typeof THUMBNAIL_SOURCES)[number];
 
+// The two halves of an import, which land at different times and are worth
+// telling apart everywhere: the grid tile the gallery shows (~125ms), then the
+// photo viewer's renditions (~1.5s). See DESIGN §10.2.
+export const PROCESSING_STAGES = ['tile', 'renditions'] as const;
+export type ProcessingStage = (typeof PROCESSING_STAGES)[number];
+
+/** A derived file that has just been written, and the stamp its row now carries. */
+export interface RenditionWritten {
+  stage: ProcessingStage;
+  version: string;
+}
+
 export function isThumbnailSource(value: string): value is ThumbnailSource {
   return (THUMBNAIL_SOURCES as readonly string[]).includes(value);
 }

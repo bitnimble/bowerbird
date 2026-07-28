@@ -14,6 +14,7 @@ import { ShootsRepository } from './services/shoots/shoots_repository';
 import { AlbumsApi } from './api/albums/albums_api';
 import { AlbumsService } from './services/albums/albums_service';
 import { AlbumsRepository } from './services/albums/albums_repository';
+import { EventsApi } from './api/events/events_api';
 import { ImageApi } from './api/image/image_api';
 import { HdrTestApi } from './api/hdr/hdr_test_api';
 import { QualityCheckApi } from './api/quality/quality_check_api';
@@ -87,6 +88,7 @@ app.use('*', async (c, next) => {
   c.header('X-Content-Type-Options', 'nosniff');
 });
 app.route('/api/config', new ConfigApi(config).routes);
+app.route('/api/events', new EventsApi(processingService).routes);
 app.route('/api/settings', new SettingsApi(new SettingsRepository(db)).routes);
 app.route('/api/libraries', librariesApi.routes);
 app.route('/api', photosApi.routes);

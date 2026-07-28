@@ -110,7 +110,7 @@ describe('PhotosService.listByLibrary', () => {
     expect(photos.listByLibrary).toHaveBeenCalledWith('lib', 'added_asc', 5, 10, {
       includeDeleted: false,
       isMissing: true,
-      needsProcessing: undefined,
+      needsTile: undefined,
     });
     expect(res).toEqual({ photos: [], total: 0, offset: 5, limit: 10 });
   });
@@ -123,7 +123,7 @@ describe('PhotosService.listMissing', () => {
     expect(photos.listByLibrary).toHaveBeenCalledWith('lib', 'added_asc', 0, 100, {
       includeDeleted: false,
       isMissing: true,
-      needsProcessing: undefined,
+      needsTile: undefined,
     });
   });
 });

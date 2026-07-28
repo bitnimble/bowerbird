@@ -11,6 +11,9 @@ function message(err: unknown): string {
 
 export class SyncPresenter {
   private timer: ReturnType<typeof setTimeout> | null = null;
+  // Whether the previous tick saw a run in flight, so the tick that finds it
+  // finished still re-reads the grid once.
+  private busy = false;
 
   constructor(
     private readonly store: SyncStore,
@@ -58,18 +61,26 @@ export class SyncPresenter {
     if (libraryId == null) return;
 
     let wasBusy = false;
+    let scanning = false;
     try {
       const status = await api.getSyncStatus(libraryId);
       wasBusy = status.status !== 'idle';
+      scanning = status.status === 'scanning';
       runInAction(() => (this.store.status = status));
     } catch (err) {
       runInAction(() => (this.store.error = message(err)));
       return;
     }
 
-    // Refresh the grid on every tick of an active run: rows appear as the scan
-    // inserts them, and thumbnails resolve as processing finishes.
-    await this.photos.reload();
+    // The grid is re-read for the rows a scan inserts, and once more on the tick
+    // that finds the run finished. Not through the processing phase, which is the
+    // long one: the row set is settled by then and thumbnails arrive by
+    // announcement (§18.6), so a list request per second would answer with the
+    // page the grid already has - unless the view is filtering on what processing
+    // changes, which is the one thing a refetch is still the only way to learn.
+    const finished = this.busy && !wasBusy;
+    if (scanning || finished || (wasBusy && this.photos.tracksProcessing)) await this.photos.reload();
+    this.busy = wasBusy;
 
     if (wasBusy && this.store.libraryId === libraryId) {
       this.timer = setTimeout(() => void this.poll(), POLL_MS);

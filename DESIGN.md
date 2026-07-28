@@ -204,8 +204,14 @@ CREATE TABLE photos (
   date_taken        TEXT,
   date_added        TEXT NOT NULL,
   date_updated      TEXT,  -- last modified on disk
-  date_reprocessed  TEXT,
-  needs_processing  INTEGER NOT NULL DEFAULT 1,
+  -- One pending flag and one written-at stamp per import stage (10.2): the grid
+  -- tile the gallery shows, then the photo viewer's renditions. Split so a run
+  -- interrupted between them resumes at the one it did not reach, and so a URL
+  -- versioned off a stamp moves only when its own file did (13.5).
+  needs_tile        INTEGER NOT NULL DEFAULT 1,
+  needs_renditions  INTEGER NOT NULL DEFAULT 1,
+  tile_built_at     TEXT,
+  renditions_built_at TEXT,
   processing_error  TEXT,  -- last thumbnail-generation error; NULL if none/succeeded (§10.2)
   latitude          REAL,
   longitude         REAL,
@@ -230,7 +236,8 @@ CREATE INDEX idx_photos_shoot_added ON photos(shoot_id, date_added);
 CREATE INDEX idx_photos_shoot_taken ON photos(shoot_id, date_taken);
 CREATE INDEX idx_photos_file_hash ON photos(library_id, file_hash);
 CREATE INDEX idx_photos_file_path ON photos(library_id, file_path);
-CREATE INDEX idx_photos_needs_processing ON photos(needs_processing) WHERE needs_processing = 1;
+CREATE INDEX idx_photos_needs_tile ON photos(needs_tile) WHERE needs_tile = 1;
+CREATE INDEX idx_photos_needs_renditions ON photos(needs_renditions) WHERE needs_renditions = 1;
 CREATE INDEX idx_photos_is_missing ON photos(library_id, is_missing) WHERE is_missing = 1;
 CREATE INDEX idx_photos_is_deleted ON photos(library_id, is_deleted) WHERE is_deleted = 1;
 ```
@@ -406,8 +413,10 @@ export const PhotoDetailSchema = PhotoSummarySchema.extend({
   date_taken: z.string().nullable(),
   date_added: z.string(),
   date_updated: z.string().nullable(),
-  date_reprocessed: z.string().nullable(),
-  needs_processing: z.boolean(),
+  tile_built_at: z.string().nullable(),
+  renditions_built_at: z.string().nullable(),
+  needs_tile: z.boolean(),
+  needs_renditions: z.boolean(),
   processing_error: z.string().nullable(),
   latitude: z.number().nullable(),
   longitude: z.number().nullable(),
@@ -440,7 +449,7 @@ export const PhotoListQuerySchema = PaginationSchema
   .extend(SoftDeleteFilterSchema.shape)  // include_deleted
   .extend({
     is_missing: z.stringbool().optional(),
-    needs_processing: z.stringbool().optional(),
+    needs_tile: z.stringbool().optional(),
   });
 ```
 
@@ -582,7 +591,7 @@ function isSupportedFile(filename: string): boolean {
 | Method | Description |
 |---|---|
 | `get(photoId)` | Returns full photo detail by ID. |
-| `listByLibrary(libraryId, pagination, filters?)` | Returns paginated `PhotoSummary` list for a library. Excludes soft-deleted photos unless `include_deleted` is set (§13.2). Supports optional `is_missing` and `needs_processing` filters. Ordering is determined by the library's `ordering` setting, with NULL ordering dates sorted last. |
+| `listByLibrary(libraryId, pagination, filters?)` | Returns paginated `PhotoSummary` list for a library. Excludes soft-deleted photos unless `include_deleted` is set (§13.2). Supports optional `is_missing` and `needs_tile` filters. Ordering is determined by the library's `ordering` setting, with NULL ordering dates sorted last. |
 | `listByShoot(shootId, pagination, filters?)` | Returns paginated `PhotoSummary` list for a shoot. Accepts the same `include_deleted` filter (§13.2), excluding soft-deleted by default. |
 | `listByAlbum(albumId, pagination, filters?)` | Returns paginated `PhotoSummary` list for an album. Accepts the same `include_deleted` filter, excluding soft-deleted by default. |
 | `listMissing(libraryId, pagination)` | Convenience method: calls `listByLibrary` with `is_missing: true` filter. |
@@ -612,7 +621,7 @@ This service handles the full sync algorithm. See §9 for the detailed algorithm
 
 | Method | Description |
 |---|---|
-| `processUnprocessed(libraryId?)` | Queries for photos with `needs_processing = 1` and `is_missing = 0`, spawns Bun worker threads (up to configured concurrency) to generate thumbnails. Updates `needs_processing`, `date_reprocessed` on completion. |
+| `processUnprocessed(libraryId?)` | Queries for photos owing either stage (`needs_tile` or `needs_renditions`) with `is_missing = 0`, spawns Bun worker threads (up to configured concurrency) to generate them. Each stage clears its own flag and stamps its own `*_built_at` as it lands. |
 | `processPhoto(photoId)` | Processes a single photo on the main thread: resolves the raw file and thumbnail output paths from the repositories, dispatches the job to a worker (§10.2, §10.3), and persists the result. |
 | `getProcessingStatus(libraryId)` | Returns count of photos pending/completed processing. |
 
@@ -759,7 +768,7 @@ interface MoveEntry {
 Process in this order within a database transaction:
 
 1. **Moves:** Update `file_path` for each moved photo. Clear `is_missing` if it was set. **Reconcile shoot membership from the destination path:** if `newFilePath` falls under a known shoot's `folder_path`, set the photo's `shoot_id` to the **most-specific (longest-matching) `folder_path`** shoot (so a file under `NYC/Day1` maps to `Day1`, not the ancestor `NYC`); if it moved out to the library root (or a non-shoot folder), clear `shoot_id`. This keeps DB shoot membership consistent with files the user relocated on disk directly (rather than via the shoots API).
-2. **Modifications:** Update `file_hash`, `width`, `height`, `orientation`, `date_updated`, `needs_processing = 1` for each modified photo, plus any other changed metadata columns (GPS, `date_taken`). Clear `is_missing` if it was set.
+2. **Modifications:** Update `file_hash`, `width`, `height`, `orientation`, `date_updated`, and both pending flags for each modified photo, plus any other changed metadata columns (GPS, `date_taken`). Clear `is_missing` if it was set.
 3. **Additions:** Insert new photo records:
    - `id` = new UUID v4 (`crypto.randomUUID()`)
    - `library_id` = the library being synced
@@ -771,7 +780,7 @@ Process in this order within a database transaction:
    - `date_taken` = UTC-normalized EXIF capture time (§11.1) if available, else NULL
    - `date_updated` = filesystem mtime
    - `latitude`, `longitude` = from EXIF GPS data if available
-   - `needs_processing = 1`
+   - `needs_tile = 1`, `needs_renditions = 1`
    - `is_missing = 0`
    - `is_deleted = 0`
    - `rating = 0`
@@ -781,7 +790,7 @@ Process in this order within a database transaction:
 
 ### 9.5 Phase 4: Trigger Processing
 
-After all changes are applied, call `ProcessingService.processUnprocessed()` to begin background thumbnail generation for all photos with `needs_processing = 1` and `is_missing = 0`.
+After all changes are applied, call `ProcessingService.processUnprocessed()` to begin background generation for every photo owing either stage (`needs_tile` or `needs_renditions`) with `is_missing = 0`.
 
 ### 9.6 Sync Status Tracking
 
@@ -885,7 +894,7 @@ Two encoder settings were measured rather than inherited, and both defaults were
 
 With `preview_hdr_video` also set, the worker writes the one-frame AV1 twin off the same decode. Firefox applies a PQ transfer to nothing but video and renders an HDR still dark, so that file is the only rendition reaching an HDR display there, and the client serves it in place of the AVIF on Firefox alone (§10.7). It is a separate opt-in rather than implied by HDR because it is a second encode per photo - roughly another second - for a file no other browser ever reads. `renditions[x].video` carries that file's path and weight rather than a boolean, so the panel describing what is on screen names the MP4 the viewer is actually watching instead of the AVIF beside it; its size has to come from the server because a media element leaves no resource-timing entry to read it off the way a still does.
 
-**The viewer sees a three-step quality ladder**: the camera's JPEG, `full`, and `max`. They are the same picture at different costs, so it treats them as interchangeable and `preview_rendition_mode` (§13.6) decides which one a photo opens at: pinned to one of the three, or reopened at whatever was chosen last, either across the catalogue (`remember`) or for that photo (`remember_per_photo`, stored on `photos.preview_rendition`). Server-side rather than in the browser because the same catalogue is opened from a phone, a laptop and whatever is plugged into the good monitor, and "where I left off" is worth nothing if it only holds on one of them. All three stay on offer whichever is showing, the step back down to the camera's JPEG included: comparing a render against it is a reason to switch.
+**The viewer sees a three-step quality ladder**: the camera's JPEG, `full`, and `max`. They are the same picture at different costs, so it treats them as interchangeable and `preview_rendition_mode` (§13.6) decides which one a photo opens at: pinned to one of the three, or reopened at whatever was chosen last, either across the catalogue (`remember`) or for that photo (`remember_per_photo`, stored on `photos.preview_rendition` and carried on the summary so the viewer can act on it before it has fetched anything, §18.5). Server-side rather than in the browser because the same catalogue is opened from a phone, a laptop and whatever is plugged into the good monitor, and "where I left off" is worth nothing if it only holds on one of them. All three stay on offer whichever is showing, the step back down to the camera's JPEG included: comparing a render against it is a reason to switch.
 
 Comparing two of them is the reason to have three, so `I` and `O` switch straight to the camera's JPEG and to the render, and the stage holds the frame it is already showing until the next one has decoded rather than dropping to the background between them - a flash on a swap between two files that are both already cached says "loading" where nothing was loaded. The same decode-then-swap covers a genuinely slow one; only a photo *change* clears the stage, because there the previous frame is the wrong picture.
 
@@ -906,12 +915,12 @@ Every writer on this path fails on a missing directory rather than creating one,
 Processing uses **Bun worker threads** for parallelism. The concurrency level is configurable (default: 4 workers).
 
 The orchestrator (`processing_service.ts`):
-1. Queries for all photos with `needs_processing = 1` and `is_missing = 0` (a photo whose file went missing while processing was still pending must not be run against the absent file; excluding it keeps `needs_processing = 1` so it is generated on the sync that clears `is_missing`, §9.4 step 4).
+1. Queries for all photos owing either stage with `is_missing = 0` (a photo whose file went missing while processing was still pending must not be run against the absent file; excluding it leaves its flags set so it is generated on the sync that clears `is_missing`, §9.4 step 4).
 2. Maintains a work queue.
 3. Spawns up to N Bun `Worker` instances, each running `processing_worker.ts`.
 4. Sends photo processing jobs to workers via `postMessage`.
 5. Workers send completion/error messages back.
-6. On a success message, the orchestrator updates the photo record: `needs_processing = 0`, `date_reprocessed = now()`, `processing_error = NULL`. On a failure message, it sets `needs_processing = 0` (so the photo is not silently reprocessed on every subsequent sync), records the worker's `error` string in `processing_error`, leaves `date_reprocessed` unchanged, and logs via `console.error`. Such a photo has no thumbnail on disk (the worker deletes any partial or stale output on failure, §10.3), so the image endpoints 404 (§13.5), but `processing_error` distinguishes a failed photo from an unprocessed one.
+6. On a success message, the orchestrator clears the flag for the stage that landed and stamps its `*_built_at`; the renditions stage also writes `rendition_source` and clears `processing_error`. On a failure message, it clears *both* flags (so the photo is not silently reprocessed on every subsequent sync, and a file whose tile could not be built is not asked for renditions), records the worker's `error` string in `processing_error`, leaves the stamps unchanged, and logs via `console.error`. Such a photo has no thumbnail on disk (the worker deletes any partial or stale output on failure, §10.3), so the image endpoints 404 (§13.5), but `processing_error` distinguishes a failed photo from an unprocessed one.
 
 ### 10.3 Worker Implementation (`processing_worker.ts`)
 
@@ -929,7 +938,7 @@ Each worker:
 
 **An import runs in two passes, tiles before renditions.** Both cover the same photos, so this is purely an ordering choice, and it is the reason the stages are split at all: measured over 23 real ARWs, a tile is 124ms where a rendition is 1518ms, and at concurrency 8 that is 30 img/s against 3. On a 2000-frame shoot the whole grid is browsable in about a minute rather than after the eleven minutes the renders take.
 
-`needs_processing` is one boolean and stays one: it clears only when *every* stage of a photo has landed. Clearing it after the tile would leave nothing tracking that the renditions are outstanding, so a crash between the passes would lose them silently, and correcting that needs a second column. Paying for it instead: a crash mid-import redoes the tile as well, at 124ms. The flag's other two jobs - the pending queue and the retry guarantee - are unchanged by the split, and nothing user-facing reads it (`countPendingProcessing` is sync's own loop deciding whether work remains).
+**The pending flag is per stage, because everything that reads it wants to know which one.** `needs_tile` and `needs_renditions` each clear as their own pass lands, so a run interrupted between them resumes at the second rather than redoing a tile already on disk; the queue asks for either (`countPendingProcessing` counts photos owing one, since the sync strip counts photos rather than stages); the gallery's "No thumbnail" filter means `needs_tile`, a photo with a tile being no hole in the grid; and the detail panel can say which of the two it is waiting on rather than reporting one word for two rather different waits. A failure clears both: the failure is the file, not the stage.
 
 A failure sweeps *every* derivative of that photo, not just the stage that failed. A photo is only being reprocessed because its pixels changed, so a rendition the failed run never reached is of the old file and would otherwise be served forever with nothing to notice.
 
@@ -1388,7 +1397,7 @@ For each photo:
 
 3. **Update DB record:**
    - Set `is_deleted = 1`.
-   - Set `needs_processing = 0`.
+   - Clear both pending flags.
    - Do **not** delete the record.
 
 ### 12.2 Restore
@@ -1455,7 +1464,7 @@ Query parameters for listing (`PhotoListQuerySchema`, §5.3):
 - `offset` (int, default 0)
 - `limit` (int, default 100, max 500)
 - `is_missing` (boolean, optional filter)
-- `needs_processing` (boolean, optional filter)
+- `needs_tile` (boolean, optional filter: photos with no grid tile yet)
 - `include_deleted` (boolean, default false)
 - `is_deleted` (boolean, optional filter)
 - `rated` (boolean, optional: `true` = at least one star, `false` = unrated)
@@ -1469,7 +1478,7 @@ The same schema serves the library, shoot and album listings, so a filter behave
 
 `rated` is a "has any rating" test rather than an equality one, because the question during a cull is "what have I not judged yet".
 
-`match` selects how `rated`, `triage`, `is_missing` and `needs_processing` combine. `all` intersects them; `any` unions them, which is what a "show me anything still needing attention" filter means; as an intersection, "picks and unrated and missing" is almost always empty. It applies only to those four: scope (soft-delete, `q`, the date range) always intersects, so narrowing by filename or date still narrows a union.
+`match` selects how `rated`, `triage`, `is_missing` and `needs_tile` combine. `all` intersects them; `any` unions them, which is what a "show me anything still needing attention" filter means; as an intersection, "picks and unrated and missing" is almost always empty. It applies only to those four: scope (soft-delete, `q`, the date range) always intersects, so narrowing by filename or date still narrows a union.
 
 The date range filters on `COALESCE(date_taken, date_added)`; the same date the listing sorts and labels by; so a file the camera never dated stays reachable. `taken_to` is inclusive of the whole closing day (the column is a timestamp, the bound is a date).
 
@@ -1523,6 +1532,8 @@ All boolean query params are parsed with `z.stringbool()`, so `?is_missing=false
 
 **Caching.** Thumbnails are rebuilt in place under a stable URL, so every image response carries an `ETag` (file size + mtime) and `Cache-Control: no-cache`. Without a validator the browser caches heuristically with nothing to revalidate against, and keeps showing the pre-rebuild picture; `no-cache` still caches, it just always asks first, which is a 304 in the common case. `If-None-Match` is answered directly.
 
+That covers everything that *asks*, which is every fresh page load. But an `<img>` whose `src` attribute has not changed never asks at all, so a rebuild is invisible to the copy already decoded in a live page; and a fresh element with the same `src` is handed that copy without revalidating, so remounting does not ask either. Every image URL therefore carries a version (§18.6): the stamp of whatever produces its bytes - `tile_built_at` for the grid, `renditions_built_at` for the viewer's two, `date_updated` for the camera's JPEG, which is lifted out of the RAW per request. Stamped by whatever wrote the file and delivered on the row, so it is right from the first render, identical in every client, stable across reloads, and moves only when its own file did. Two URLs, two cache entries; the ETag then keeps each of them honest.
+
 These endpoints:
 - Resolve the file path from the photo record and library configuration.
 - Stream the file directly from disk using Bun's file streaming (no buffering into memory).
@@ -1551,13 +1562,14 @@ app.get('/image/:photoId/renditions/:rendition', async (c) => {
 
 `Bun.file()` returns a lazy reference that streams from disk when consumed as a `Response` body, no full read into memory.
 
-### 13.6 Config and settings
+### 13.6 Config, settings and events
 
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/api/config` | Thumbnail format, sizes and qualities, so a client can state what it is rendering |
 | `GET` | `/api/settings` | App-wide preferences |
 | `PATCH` | `/api/settings` | Update them |
+| `GET` | `/api/events` | Server-sent events; `thumbnail` carries the id of a photo whose renditions were just written (§18.6) |
 
 Three different things, by how far their scope reaches: `config` is fixed by the deployment (environment variables, §15); the `libraries` row holds what belongs to one catalogue (the preview source and HDR, §10.2); `settings` is app-wide and lives in a key/value table, holding `preview_rendition_mode` and the rendition `remember` remembers. A table rather than a column per setting because they are read one at a time and never queried across, and adding one should not need a migration. A value the build no longer understands reads as its default rather than failing the request: these are preferences, and the viewer has to open with or without them.
 
@@ -1823,7 +1835,27 @@ Panning is clamped so the photo cannot be dragged away from the viewport edge. T
 
 The stage's `src` is keyed off the route rather than the loaded detail, and the image stays hidden until that src decodes. The store deliberately keeps the previous detail while the next loads (so the rail does not collapse), which otherwise means the stage paints the frame *before* the one the URL asks for.
 
-**The next photo is warmed by a mounted, invisible `<img>`** rather than a detached `new Image()`, and only once this one is up, so the two never compete for the connection. Mounted because a decode is for the size an element is *drawn* at: a detached image decodes at natural size, which is the wrong entry, and the visible element then paid for a second decode at paint - the same trap the rendition swap fell into (§10.1).
+**`open` is the photo the view is on; `loadedDetail` is the one that has arrived.** They disagree for the length of a fetch, deliberately, and the two questions are different: everything about *where the reader is* - the neighbours the arrow keys offer (`detailIndex`), which library's default applies, whether a response that has just resolved is still wanted - reads `open`, while the panels read what has landed.
+
+`open` is a union, `{ id, status: 'loading' | 'ready' } | { id, status: 'missing', error }`, rather than a detail plus a pair of flags. Every state that cannot happen is then unspellable, which is what the flags kept getting wrong: "nothing loaded and nothing in flight" was indistinguishable from "no such photo", so the first render of every step reported the photo as missing; and "missing" read its message out of the store's shared error slot, which a failed *list* fetch also writes. The reason a read failed now travels with the read that failed.
+
+Nothing reads `loadedDetail` without naming the photo it wants (`detailFor(photoId)`). Six places had to make that comparison by hand and two of them didn't, which is how a stale response came to overwrite the open photo: a detail fetch is not ordered against the one before it, so every write after an `await` also checks `isCurrent` first.
+
+**The previous photo's frame is held for up to 100ms after a step** (`STALE_FRAME_MS`), rather than cleared on the route change. Even a warmed neighbour has to decode, and dropping the old frame first turns that into a blink of stage background on every step. The cap is what keeps it honest: the panels beside the stage already describe the photo in the URL, so a frame held past its decode is the wrong picture rather than a smooth step, and a rendition that has to be *built* would otherwise leave it up for the length of the build. The frame is stored with the photo it belongs to, not as a bare src, because everything gated on "this photo is up" - warming the neighbours, above all - has to tell the held frame from the arrived one.
+
+That hold is only reachable because **the detail page no longer tears itself down between photos**. "Photo not found" was rendered whenever no detail matched the route and nothing was in flight, which is exactly the state of the render that first sees a new id: the fetch starts in the effect *after* it. Every step therefore unmounted the whole page, stage included, for a frame. The page now believes a photo missing only when the read for *that* photo came back empty (`open.status`, above), and `openDetail` marks the read as started synchronously, ahead of the settings load it used to sit behind.
+
+**Both neighbours are warmed by mounted, invisible `<img>`s** rather than detached `new Image()`s, and only once this one is up, so they never compete for the connection with the frame being waited on. Mounted because a decode is for the size an element is *drawn* at: a detached image decodes at natural size, which is the wrong entry, and the visible element then paid for a second decode at paint - the same trap the rendition swap fell into (§10.1). Backwards and forwards, because a cull steps both ways.
+
+**Which rendition the viewer shows is answered without waiting for the photo's detail** (`PhotosStore.showing`). Two facts decide it, and the client holds both before the fetch: the *setting* says which rendition the reader wants, and the *library* says which one was built on import. Deriving either from the detail meant a reader set to the camera's JPEG in a library that renders got the render first - fetched, decoded and painted, lens distortion and all - and swapped out the moment the fetch landed, paying for both files on every step.
+
+The setting can only be trusted for a rendition every photo is certain to have (`isAlwaysBuilt`): the camera's JPEG, extracted from the RAW on demand, and the library's own default, built on import. The other two are built on request, so asking early is a 404 rather than a picture, and they wait for `openDetail`. That same test decides what is worth warming, so the neighbours are only ever fetched at the rendition on screen.
+
+**Both facts it needs are on the row, and neither is read off the detail.** `defaultRendition` reads `preview_source` from the **library**, found through the row's `library_id`, rather than the `default_rendition` the server puts on the detail: the server derives that from exactly the same library setting (§13.2), so this is the same answer a round trip earlier - and it is per photo, which matters in an album spanning two libraries, where the detail on hand belongs to a photo from the other one. `preferredRendition` reads `preview_rendition` from the row for the same reason, which is what lets "last used per photo" answer on the first frame; on the detail alone, that mode painted the library's default and swapped to the reader's own choice a moment later - the original complaint, in the one mode that still had it.
+
+**The page is a layout and seven observers, not one.** The nav, the frame, and each panel read only what they show - the notes box holds its own draft, the triage panel reads the verdict and rating off the row, the camera panel reads the camera fields, the preview panel is the only one that hears a frame decode. As one component they all re-rendered on anything any of them watched: a keystroke in the notes box redrew the stage, and a star redrew the camera settings.
+
+Splitting the components is only half of it, because **`loadedDetail` is deep-observed and written into rather than replaced.** A fresh object notifies everyone reading any part of it, which is what `reconcile` already avoids for grid rows; `patch` therefore assigns the changed fields into the detail the panels are holding, minus `renditions` and `album_ids` - a patch cannot change those, but they arrive as new objects every time and would read as a change to the two components that watch them. A rating click now re-renders the triage panel and nothing else.
 
 A "Thumbnail on screen" panel reports what is actually being displayed (its source, pixel dimensions, format, colour space and encode quality) separately from the original RAW's size and dimensions, because the two are easy to confuse and only one of them is what you are judging sharpness on.
 
@@ -1835,9 +1867,35 @@ Destructive actions split by reversibility. Binning is undoable, so it just happ
 
 ### 18.6 Thumbnails and the sync strip
 
-Thumbnails are generated asynchronously, so a tile's first request can 404 while processing is still writing the file. A tile records *which list generation* its request failed on rather than a bare boolean; `PhotosStore.reloadToken` advances on every completed list fetch, which clears the failure and re-requests with a cache-busting query param. Without this the grid stays blank until a manual page reload.
+Thumbnails are generated asynchronously, so a tile's first request can 404 while processing is still writing the file, and nothing in the page can know when that changes. **The server says so**: `ProcessingService` announces each photo whose renditions it has just written, and `GET /api/events` streams those announcements to every connected client as `event: thumbnail` (`EventsApi`).
+
+**The version is a column, and it travels on the row.** `photos.tile_built_at` and `photos.renditions_built_at` each mean "when was this file last written", which is exactly what a URL has to name; both are on `PhotoSummary`, so every view that renders a photo is already holding them. Appending it is the only thing that makes a rebuilt file visible to an `<img>` that has already decoded the old one (§13.5). Remounting the element is not an alternative: three fresh `<img>`s with the same `src` produce one network request between them, because the browser hands the later ones the copy already in its in-memory resource cache without revalidating. The URL itself has to differ.
+
+Everything else follows from it being the server's value rather than something a client made up. It is there on the first render, so there is no plain-URL window to be stale in. It survives a reload, so revisiting a catalogue still revalidates rather than re-downloading. Two browsers agree. And the viewer's warmed neighbours are painted at the URL they were warmed at, because both readings come off the same row - which is the invariant a client-side version could not hold, since whatever held it was keyed by the view rather than by the photo.
+
+**The announcement carries the new value**, not just the fact of a change, so learning about a rebuild costs nothing beyond the event: `PhotosPresenter.renditionsRebuilt` writes it into the row already on screen, and mobx notifies the one tile whose field moved. Nothing is re-fetched to find out what the version became.
+
+Per photo rather than per rendition because a reprocess rewrites or drops all of them together (`dropStaleRenditions`), so a rendition-level version would be three copies of one fact.
+
+**Stamping the row and announcing it are the same act, and both happen wherever a rendition is written.** There are three such places. The import's rendition pass, at the end of which `markDone` already stamped the row (`markProcessed`). The import's *tile* pass, which is the point of splitting the two (§10.2): the tile is on disk a second and a half before its render, and a grid already on screen should fill at that pace rather than the render's, so the tile announces itself and stamps the row to match (`tileWritten`). And `runOneOff`, which serves the viewer's on-demand build (`POST /photos/:id/renditions/:r`, including the force rebuild that deliberately rewrites a file behind an unchanged URL) and the grid tile repaired on a detail read (§13.2); that path wrote files without touching the row at all, so it stamps one too.
+
+The stamp is what makes each of those announceable rather than merely true: a client builds its URLs out of these columns (§13.5), so telling it about a file the row does not know about yet would have the next list read walk that URL back to the copy the browser already holds.
+
+**One stamp per stage, not one per photo.** A photo announces twice during an import of a rendering library, and the two announcements move different URLs: the tile pass moves `tile_built_at` and with it the gallery's, the rendition pass moves `renditions_built_at` and with it the viewer's. Shared, the second announcement moved the tile's URL too - and a moved URL is a different cache key rather than something to revalidate, so every tile on the page was downloaded again in full (~15KB each) for bytes that had not changed. Which stamp a URL reads is the rendition it is asking for: `grid` from the tile's, `full` and `max` from the renditions', and the camera's JPEG from `date_updated`, since that one is lifted out of the RAW per request rather than built and changes exactly when the RAW does.
+
+**Being told is the fast path, not the only one.** A tile that 404s also retries on a backoff (`RETRY_DELAYS_MS`, shared with the viewer), because delivery is not guaranteed: the stream can be down, or connect a moment after a tile has already asked, or the client can be asleep for longer than the replay buffer. Without that floor a single missed announcement leaves a tile blank for the life of the page, which is the one thing the counter it replaced, crude as it was, did cover.
+
+The tile's retry and the row's version both feed the same suffix, and both are moments, so the newer wins and neither can produce a URL the other has already used - which a URL that repeats itself would turn into a request the browser never makes.
+
+The version is told rather than guessed, and that is the whole point. What it replaced was a pair of global flags: `reloadToken`, bumped on every completed list fetch, so the grid re-requested *all* of its thumbnails whenever anything refetched the list and re-rendered every tile to do it, at a poll a second for the length of an import, which is exactly when the grid is largest and the least of it has changed. The other was `rebuiltAt`, a session timestamp that made every *subsequent* photo in the viewer miss the browser cache once because one photo had been rebuilt.
+
+The stream carries an `id:` per event and keeps the last few hundred in a ring buffer, so a browser reconnecting after a blip replays what it missed through `Last-Event-ID` rather than waiting out the backoff above. An id from a previous run of the server (one at or beyond the current counter) replays nothing rather than the whole buffer; a restart is therefore a gap in the announcements, and the backoff is what closes it. A heartbeat every 20s keeps the connection from being idled out (`idleTimeout`, §index.ts), and waits on the disconnect as well as the timer, so a departed client is dropped at once rather than at the next beat.
 
 The sync status bar renders one cell per photo queued by the current run, filling as `photos_processed` climbs (§9.6). It stops polling as soon as the library reports idle.
+
+**The poll re-reads the grid for rows, not for thumbnails.** It does so while the *scan* is inserting them and once more on the tick that finds the run finished - not through the processing phase, which is the long one. By then the row set is settled and each thumbnail announces itself, so a list request per second would answer with the page the grid already has, filtered and counted over the whole library to say so. The exception is a view filtering on what processing changes ("No thumbnail"), which a refetch is still the only way to learn.
+
+**A refetch that returns the same page changes nothing observable.** `reconcile` writes the server's fields into the row objects already on screen rather than replacing them, and hands back the *same array* when the ids and their order are unchanged; a fresh array notifies everything reading the list, which during a sync is the whole grid, once a second, for a page that did not move. In the same spirit the emptiness checks test `photos.length` before `loading`, so a populated grid short-circuits away its dependency on a flag that toggles twice per fetch.
 
 ### 18.7 Running and testing
 

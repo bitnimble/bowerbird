@@ -1,7 +1,7 @@
 import { existsSync, rmSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
-import { CULL_PHOTOS_DIR, PHOTO_NAMES } from './fixture_library';
+import { API_URL, CULL_PHOTOS_DIR, PHOTO_NAMES } from './fixture_library';
 import { addLibrary, libraryRow, openLibrary, syncLibrary, viewMaxQuality } from './helpers';
 
 // This spec has its own library root, so binning and rejecting here cannot
@@ -290,6 +290,79 @@ test('the detail view shows shooting metadata, the triage control and steps betw
   await expect(navPath).not.toHaveText(relative);
 });
 
+// The warm is only worth anything if the reader lands on the URL it was warmed
+// at. A rebuild announced while a neighbour is being warmed moves that URL, and
+// the frame the reader steps onto has to move with it - held per view, the two
+// disagreed, and the plain URL the viewer fell back to is answered out of the
+// copy the browser already has: the file from before the rebuild.
+test('a neighbour rebuilt while it was warmed is painted at the URL it was warmed at', async ({ page }) => {
+  await page.goto('/settings');
+  await openLibrary(page, CULL_PHOTOS_DIR);
+  await expect(page.locator('.tile')).toHaveCount(PHOTO_NAMES.length);
+  const second = await page.locator('.tile img').nth(1).getAttribute('src');
+  const secondId = /\/image\/([^/]+)\//.exec(second ?? '')?.[1] ?? '';
+  expect(secondId).not.toBe('');
+
+  await page.locator('.tile__hit').first().click();
+  await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
+  const warmed = page.locator(`.stage__viewport img[aria-hidden="true"][src*="${secondId}"]`);
+  await expect(warmed).toHaveCount(1);
+
+  // Rebuilt from under the reader while they are still on its neighbour.
+  await page.request.post(`${API_URL}/api/photos/reprocess`, { data: { photo_ids: [secondId], source: 'embedded' } });
+  await expect(warmed).toHaveAttribute('src', /\?v=/, { timeout: 60_000 });
+  const warmedSrc = await warmed.getAttribute('src');
+
+  await page.getByRole('button', { name: 'Next photo' }).click();
+  await expect(page.locator(`.stage__viewport img.is-ready[src*="${secondId}"]`)).toHaveAttribute('src', warmedSrc ?? '', {
+    timeout: 60_000,
+  });
+});
+
+test('a photo the catalogue does not have says so, with the reason', async ({ page }) => {
+  await page.goto('/photos/11111111-1111-4111-8111-111111111111');
+
+  // The other side of the state the viewer spent so long getting wrong: this is
+  // the only thing that may render "not found", and it carries the read's own
+  // error rather than whatever a list fetch last left behind.
+  await expect(page.locator('.empty__title')).toHaveText('Photo not found');
+  await expect(page.getByText(/photo not found: 11111111/)).toBeVisible();
+});
+
+// Two detail fetches can be in flight at once - stepping is faster than the
+// round trip - and they need not answer in order.
+test('a detail that lands after the reader has stepped on does not replace the photo they are looking at', async ({ page }) => {
+  await page.goto('/settings');
+  await openLibrary(page, CULL_PHOTOS_DIR);
+  await expect(page.locator('.tile')).toHaveCount(PHOTO_NAMES.length);
+
+  const first = await page.locator('.tile img').first().getAttribute('src');
+  const firstId = /\/image\/([^/]+)\//.exec(first ?? '')?.[1] ?? '';
+  expect(firstId).not.toBe('');
+  await page.route(`**/api/photos/${firstId}`, async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    await route.continue();
+  });
+
+  // Stepping off before the first photo's detail has landed. The buttons have to
+  // be live for that: their neighbours come from the photo the route asks for,
+  // not from the detail that has not arrived, or the first frame of every photo
+  // opened from the grid is a dead end.
+  await page.locator('.tile__hit').first().click();
+  await page.getByRole('button', { name: 'Next photo' }).click();
+  const navPath = page.locator('.detail__nav .ui-text--mono');
+  await expect(navPath).not.toHaveText('', { timeout: 30_000 });
+  const stepped = await navPath.innerText();
+
+  // The straggler names a photo the reader has already left. Written anyway, it
+  // puts the previous photo's detail back in a store the page reads by id, so the
+  // page reports the photo in the URL as one the catalogue does not have.
+  await page.waitForTimeout(4000);
+  await expect(page.getByText('Photo not found')).toHaveCount(0);
+  await expect(navPath).toHaveText(stepped);
+  await page.unrouteAll({ behavior: 'ignoreErrors' });
+});
+
 test('a selection can be rebuilt from the embedded JPEG', async ({ page }) => {
   await page.goto('/settings');
   await openLibrary(page, CULL_PHOTOS_DIR);
@@ -305,6 +378,51 @@ test('a selection can be rebuilt from the embedded JPEG', async ({ page }) => {
   await page.locator('.tile__hit').first().click();
   const preview = page.locator('.panel', { hasText: 'IMAGE PREVIEW DETAILS' });
   await expect(preview.getByText('embedded JPEG')).toBeVisible({ timeout: 30_000 });
+});
+
+test('a rebuilt thumbnail is pushed to the tile that changed, and to no other', async ({ page }) => {
+  await page.goto('/settings');
+  await openLibrary(page, CULL_PHOTOS_DIR);
+  await expect(page.locator('.tile')).toHaveCount(PHOTO_NAMES.length);
+  const src = (index: number): Promise<string | null> => page.locator('.tile img').nth(index).getAttribute('src');
+  const [rebuilt, untouched] = [await src(0), await src(1)];
+
+  await page.getByRole('button', { name: 'Select photo' }).first().click();
+  await page.getByRole('button', { name: 'Rebuild' }).click();
+  await page.getByRole('menuitem', { name: 'Thumbnails from the embedded JPEG' }).click();
+
+  // The server names the photo it just wrote and the tile asks again for that one
+  // alone. Nothing here polls, and no version lands on a photo that did not move.
+  await expect.poll(() => src(0), { timeout: 60_000 }).not.toBe(rebuilt);
+  expect(await src(1)).toBe(untouched);
+});
+
+// The two halves of an import are tracked apart all the way to the browser's
+// cache: one stamp each, so a URL only moves when the file behind it did.
+test('rebuilding a photo rendition leaves its grid tile where it is', async ({ page }) => {
+  test.setTimeout(240_000);
+  await page.goto('/settings');
+  await libraryRow(page, CULL_PHOTOS_DIR).getByRole('button', { name: 'Render the RAW' }).click();
+  await openLibrary(page, CULL_PHOTOS_DIR);
+  await expect(page.locator('.tile')).toHaveCount(PHOTO_NAMES.length);
+
+  const tile = page.locator('.tile img').first();
+  const before = await tile.getAttribute('src');
+  const photoId = /\/image\/([^/]+)\//.exec(before ?? '')?.[1] ?? '';
+  expect(photoId).not.toBe('');
+
+  // A render of the viewer's copy, which writes no tile. Shared one stamp, this
+  // moved every tile URL on the page and re-downloaded bytes that had not changed.
+  await page.request.post(`${API_URL}/api/photos/${photoId}/renditions/full?force=true`, { timeout: 180_000 });
+  // Long enough for the announcement to have arrived and been applied.
+  await expect.poll(async () => (await page.locator('.tile img').nth(1).getAttribute('src')) ?? '').not.toBe('');
+  await page.waitForTimeout(1000);
+  expect(await tile.getAttribute('src')).toBe(before);
+
+  // And the viewer's own URL did move, so the announcement was heard - it is the
+  // stage that changed, not the fact of a change, that the tile ignored.
+  await page.locator('.tile__hit').first().click();
+  await expect(page.locator(`.stage__viewport img.is-ready[src*="/renditions/full?v="]`)).toBeVisible({ timeout: 60_000 });
 });
 
 // A photo can be marked processed while its renditions are gone: a failed build,
@@ -420,6 +538,12 @@ test('i and o switch between the camera JPEG and the render, and the cache can b
   await page.keyboard.press('o');
   await expect(preview.getByText('RAW render')).toBeVisible({ timeout: 120_000 });
   await expect.poll(() => statSync(cached).mtimeMs, { timeout: 120_000 }).toBeGreaterThan(before);
+
+  // Rewriting the file is only half of it: the URL is stable, so the stage would
+  // go on showing the copy it has already decoded. Nothing announces a build made
+  // outside the processing queue, so the client that asked for it says so itself,
+  // and the version lands on this photo alone.
+  await expect(page.locator('.stage__viewport img.is-ready')).toHaveAttribute('src', /\/renditions\/full\?v=/, { timeout: 60_000 });
 });
 
 // The max-quality rendition goes straight to an <img>: AVIF decodes natively in
@@ -435,26 +559,48 @@ test('the max-quality rendition is served as a full-resolution AVIF', async ({ p
   expect(await shown.evaluate((i: HTMLImageElement) => i.naturalWidth)).toBeGreaterThan(3840);
 });
 
-test('the stage never shows the previous photo after navigating to another one', async ({ page }) => {
+test('the previous photo is held for a beat and then dropped, however slow the next one is', async ({ page }) => {
   await page.goto('/settings');
   await openLibrary(page, CULL_PHOTOS_DIR);
   await page.locator('.tile__hit').first().click();
   await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible();
+  const openId = page.url().split('/').pop() ?? '';
 
-  // Regression: the store deliberately keeps the previous detail while the next
-  // loads (so the rail doesn't collapse), which made the stage paint the frame
-  // before for a beat. The visible image must always be the one in the URL.
-  await page.getByRole('button', { name: 'Next photo' }).click();
-  const mismatch = await page.evaluate(() => {
-    const img = document.querySelector<HTMLImageElement>('.stage__viewport img');
-    // Nothing on the stage is the correct state between two photos: the previous
-    // frame is dropped on the route change and the next is not decoded yet.
-    if (img == null) return null;
-    const shown = img.classList.contains('is-ready');
-    const id = location.pathname.split('/').pop();
-    return shown && !img.src.includes(id ?? '') ? `showing ${img.src} on ${id}` : null;
+  // Held open, so the hold is observable at all: warmed, the next frame decodes
+  // faster than this can sample.
+  await page.route(/\/image\//, async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    await route.continue();
   });
-  expect(mismatch).toBeNull();
+
+  // Sampled every frame rather than read once after the click: the hold is capped
+  // in the tens of milliseconds, which no round trip can be relied on to land in.
+  await page.evaluate(() => {
+    const samples: { id: string; src: string }[] = [];
+    (window as unknown as { stageSamples: typeof samples }).stageSamples = samples;
+    const tick = (): void => {
+      const img = document.querySelector<HTMLImageElement>('.stage__viewport img.is-ready');
+      samples.push({ id: location.pathname.split('/').pop() ?? '', src: img?.src ?? '' });
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+
+  await page.getByRole('button', { name: 'Next photo' }).click();
+  await page.waitForTimeout(1000);
+  const after = (await page.evaluate(() => (window as unknown as { stageSamples: { id: string; src: string }[] }).stageSamples)).filter(
+    (s) => s.id !== openId,
+  );
+
+  // The frame before stays up across the route change: dropping it first turns
+  // the decode of even a warmed neighbour into a blink of stage background.
+  expect(after.some((s) => s.src.includes(openId))).toBe(true);
+  // And only for a beat. The panels beside it already describe the photo in the
+  // URL, so a held frame that outlasts its cap is the wrong picture rather than a
+  // smooth step - and this one's own image is still three seconds out.
+  expect(after.at(-1)?.src).toBe('');
+
+  await page.unrouteAll({ behavior: 'ignoreErrors' });
   await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
 });
 
@@ -506,6 +652,133 @@ test('the next photo is fetched while the current one is on screen', async ({ pa
   // for the connection with the one being waited on.
   const openId = page.url().split('/').pop() ?? '';
   await expect.poll(() => fetched.some((id) => id !== openId)).toBe(true);
+});
+
+// Regression: which rendition the viewer shows came from the photo's detail, so
+// a reader set to the camera's JPEG in a library that renders got the render
+// first - fetched, decoded and painted with its lens distortion still in - and
+// then swapped out the moment the setting could be applied. Every step through
+// the cull paid for both files.
+test('a reader set to the camera JPEG never loads the render', async ({ page }) => {
+  const requested: string[] = [];
+  page.on('request', (r) => requested.push(r.url()));
+
+  await page.goto('/settings');
+  await libraryRow(page, CULL_PHOTOS_DIR).getByRole('button', { name: 'Render the RAW' }).click();
+  await page.getByRole('group', { name: 'Open photos at' }).getByRole('button', { name: 'Camera JPEG', exact: true }).click();
+  await openLibrary(page, CULL_PHOTOS_DIR);
+  await page.locator('.tile__hit').first().click();
+  await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
+
+  // Warmed at the rendition on screen rather than the library's, or the step
+  // below arrives cold and shows the stage background while it fetches.
+  const openId = page.url().split('/').pop() ?? '';
+  await expect.poll(() => requested.some((url) => url.includes('/embedded.jpg') && !url.includes(openId))).toBe(true);
+
+  requested.length = 0;
+  await page.getByRole('button', { name: 'Next photo' }).click();
+  const nextId = page.url().split('/').pop() ?? '';
+  await expect(page.locator(`.stage__viewport img.is-ready[src*="${nextId}"]`)).toBeVisible({ timeout: 60_000 });
+  expect(requested.filter((url) => url.includes(`/${nextId}/renditions/`))).toEqual([]);
+});
+
+// "Last used per photo" is the same question as the setting above, asked per
+// photo rather than once: the answer has to be on the row for the same reason,
+// or reopening a photo paints the library's default while the detail carrying
+// the reader's own choice is still in flight.
+test('a photo reopens at the rendition it was last read in, without the library default first', async ({ page }) => {
+  const requested: string[] = [];
+  page.on('request', (r) => requested.push(r.url()));
+
+  await page.goto('/settings');
+  await libraryRow(page, CULL_PHOTOS_DIR).getByRole('button', { name: 'Render the RAW' }).click();
+  await page.getByRole('group', { name: 'Open photos at' }).getByRole('button', { name: 'Last used per photo' }).click();
+  await openLibrary(page, CULL_PHOTOS_DIR);
+  await page.locator('.tile__hit').first().click();
+  const photoId = page.url().split('/').pop() ?? '';
+  await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
+
+  // Read it in the camera's JPEG, which this library does not default to.
+  await page.keyboard.press('i');
+  const preview = page.locator('.panel', { hasText: 'IMAGE PREVIEW DETAILS' });
+  await expect(preview.getByText('embedded JPEG')).toBeVisible({ timeout: 60_000 });
+
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.tile')).toHaveCount(PHOTO_NAMES.length);
+  requested.length = 0;
+  await page.locator('.tile__hit').first().click();
+
+  await expect(page.locator(`.stage__viewport img.is-ready[src*="/embedded.jpg"]`)).toBeVisible({ timeout: 60_000 });
+  expect(requested.filter((url) => url.includes(`/${photoId}/renditions/`))).toEqual([]);
+});
+
+interface Sample {
+  id: string;
+  src: string;
+}
+
+// The two flashes this work started from, measured the way they were reported:
+// every animation frame across a step, in the configuration they were seen in -
+// a library that renders the RAW, read at the camera's JPEG.
+//
+// Both were about *which* file the viewer asked for and *when*, so both show up
+// here as facts about the frames on screen: a step must never leave the stage
+// empty, and the render must never be the picture, not even for a frame.
+test('stepping through photos shows no empty stage and never the wrong rendition', async ({ page }) => {
+  test.setTimeout(240_000);
+  await page.goto('/settings');
+  await libraryRow(page, CULL_PHOTOS_DIR).getByRole('button', { name: 'Render the RAW' }).click();
+  await page.getByRole('group', { name: 'Open photos at' }).getByRole('button', { name: 'Camera JPEG', exact: true }).click();
+  await openLibrary(page, CULL_PHOTOS_DIR);
+  await expect(page.locator('.tile')).toHaveCount(PHOTO_NAMES.length);
+  await page.locator('.tile__hit').first().click();
+  await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
+  // The neighbour is warmed once this frame is up, and the step below is only
+  // honest with the warm in place - it is half of why there is no gap.
+  await page.waitForTimeout(1500);
+
+  const sample = async (): Promise<void> => {
+    await page.evaluate(() => {
+      const samples: Sample[] = [];
+      (window as unknown as { flash: Sample[] }).flash = samples;
+      const tick = (): void => {
+        const shown = document.querySelector<HTMLElement>('.stage__viewport .is-ready');
+        samples.push({ id: location.pathname.split('/').pop() ?? '', src: shown?.getAttribute('src') ?? '' });
+        requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    });
+  };
+
+  // Only the frames after the route has moved on: the ones before it are the
+  // photo being left, which is nobody's idea of a flash.
+  const after = async (from: string): Promise<Sample[]> => {
+    const samples = await page.evaluate(() => (window as unknown as { flash: Sample[] }).flash);
+    return samples.filter((s) => s.id !== from);
+  };
+
+  const step = async (button: string): Promise<Sample[]> => {
+    const from = page.url().split('/').pop() ?? '';
+    await sample();
+    await page.getByRole('button', { name: button }).click();
+    await page.waitForTimeout(2000);
+    const frames = await after(from);
+    expect(frames.length).toBeGreaterThan(30);
+    return frames;
+  };
+
+  for (const button of ['Next photo', 'Previous photo']) {
+    const frames = await step(button);
+    // A blank frame is the stage's own background, which is what the reader
+    // reported seeing between photos. The previous frame is held until the next
+    // one has decoded, so there should be nothing to see: a couple of frames of
+    // slack for a cold machine, not the hundreds of milliseconds a fetch takes.
+    expect(frames.filter((f) => f.src === '').length, `blank frames after ${button}`).toBeLessThanOrEqual(3);
+    // And never the library's default. Painting the render first and swapping it
+    // out is the second flash, and it is invisible to a request-level assertion
+    // once the file is cached.
+    expect(frames.filter((f) => f.src.includes('/renditions/')), `render frames after ${button}`).toEqual([]);
+  }
 });
 
 test('the photo fits the stage instead of overflowing it', async ({ page }) => {

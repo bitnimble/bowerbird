@@ -53,13 +53,15 @@ test('processing counts track thumbnail progress, then settle when the tail fini
   expect(status.photos_processing).toBe(3);
   expect(status.photos_processed).toBe(0);
 
-  // Simulate the worker pool finishing one photo: the live count must follow.
+  // Simulate the worker pool finishing one photo: the live count must follow. Both
+  // stages, because a photo still owing either is still pending.
   const [first] = photos.listPendingProcessing(LIB);
-  photos.markProcessed(first!.photo_id, new Date().toISOString(), 'render');
+  photos.markTileBuilt(first!.photo_id, new Date().toISOString());
+  photos.markRenditionsBuilt(first!.photo_id, new Date().toISOString(), 'render');
   expect(sync.getSyncStatus(LIB).photos_processing).toBe(2);
   expect(sync.getSyncStatus(LIB).photos_processed).toBe(1);
 
-  // A failed photo also leaves the queue (needs_processing=0), so it counts as done.
+  // A failed photo also leaves the queue (both flags cleared), so it counts as done.
   const [second] = photos.listPendingProcessing(LIB);
   photos.markProcessingFailed(second!.photo_id, 'boom');
   expect(sync.getSyncStatus(LIB).photos_processed).toBe(2);

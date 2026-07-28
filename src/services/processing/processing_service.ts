@@ -10,8 +10,10 @@ import type {
   HdrGrade,
   HdrJob,
   ProcessingResult,
+  ProcessingStage,
   RenditionJob,
   RenditionTarget,
+  RenditionWritten,
   ThumbnailSource,
 } from './processing_types';
 import { renditionDirs, type Rendition } from './renditions';
@@ -26,8 +28,8 @@ interface StagedPhoto {
   photoId: string;
   rawFilePath: string;
   dataPath: string;
-  /** The grid tile, from the fastest source there is. Always present. */
-  tile: RenditionJob;
+  /** The grid tile, from the fastest source there is. Null once it has been built. */
+  tile: RenditionJob | null;
   /** The photo viewer's renditions. Null when the library serves the camera's JPEG. */
   renditions: RenditionJob | null;
 }
@@ -38,11 +40,25 @@ export class ProcessingService {
   // during the batch is drained before the promise resolves.
   private readonly inFlight = new Map<string, Promise<void>>();
   private readonly rerun = new Set<string>();
+  private readonly processed = new Set<(photoId: string, written: RenditionWritten) => void>();
 
   constructor(
     private readonly photos: PhotosRepository,
     private readonly config: Config,
   ) {}
+
+  /** Called with each derived file written: which photo, which stage, and when. */
+  onProcessed(listener: (photoId: string, written: RenditionWritten) => void): void {
+    this.processed.add(listener);
+  }
+
+  // Announced from the two places that write a rendition - the queue's result
+  // handler and the one-off run - rather than from the queue alone: an on-demand
+  // build is a file changing behind a URL exactly as much as a queued one is, and
+  // the grid tile repaired on a detail read (§18.6) has no other way to be told.
+  private announce(photoId: string, written: RenditionWritten): void {
+    for (const listener of this.processed) listener(photoId, written);
+  }
 
   // Rebuilds thumbnails for specific photos from the given source. Returns how
   // many were queued; ids that are missing or binned have no file to read.
@@ -151,6 +167,17 @@ export class ProcessingService {
         worker.onerror = (event: ErrorEvent) => reject(new Error(`worker crashed: ${event.message}`));
         worker.postMessage(job);
       });
+      // The HDR diagnostics write their own files under their own names and no
+      // view reads them off a rendition URL, so only a rendition is worth saying.
+      // Which stamp it moves follows which file it wrote: a repaired grid tile is
+      // the gallery's, anything else is the viewer's.
+      if (job.kind === 'rendition') {
+        const stage: ProcessingStage = job.targets.every((t) => t.rendition === 'grid') ? 'tile' : 'renditions';
+        const version = new Date().toISOString();
+        if (stage === 'tile') this.photos.markTileBuilt(job.photoId, version);
+        else this.photos.markRenditionsBuilt(job.photoId, version, 'render');
+        this.announce(job.photoId, { stage, version });
+      }
     } finally {
       worker.terminate();
     }
@@ -182,31 +209,31 @@ export class ProcessingService {
   // Both passes cover the same photos, so this is purely an ordering choice, and it
   // is the whole point of splitting them: a tile is ~125ms against ~1.5s for a
   // render, so a shoot's grid is browsable in about a minute instead of after the
-  // renders finish. `needs_processing` is not cleared until the renditions land, so
-  // a crash between the passes redoes the tile too - 125ms, against the alternative
-  // of a second column to track half-done photos.
+  // renders finish. Each pass clears its own flag as it lands, so a run interrupted
+  // between them resumes at the second rather than repeating the first.
   private async runStaged(staged: StagedPhoto[]): Promise<void> {
-    const tiled = new Set<string>();
     const byId = new Map(staged.map((photo) => [photo.photoId, photo]));
-
     // A photo whose tile failed is not carried into the second pass: the failure is
     // the file, not the stage, so a render would fail the same way.
+    const failed = new Set<string>();
+
     await this.runPool(
-      staged.map((photo) => photo.tile),
+      staged.flatMap((photo) => (photo.tile == null ? [] : [photo.tile])),
       (result, job) => {
         const photo = byId.get(result.photoId) ?? null;
         if (!result.success) {
+          failed.add(result.photoId);
           this.recordFailure(result, job, photo);
           return;
         }
-        tiled.add(result.photoId);
-        // Nothing more to build: this library serves the camera's JPEG in the
-        // viewer, so the tile was the whole import.
-        if (photo?.renditions == null) this.markDone(photo, result.photoId);
+        // Its own stage, said as soon as it lands: the render behind it is still
+        // ~1.5s away, and a grid already on screen should fill at the tile's pace
+        // rather than wait for both.
+        this.stageDone(photo, result.photoId, 'tile');
       },
     );
 
-    const pending = staged.filter((photo) => photo.renditions != null && tiled.has(photo.photoId));
+    const pending = staged.filter((photo) => photo.renditions != null && !failed.has(photo.photoId));
     if (pending.length === 0) return;
 
     await this.runPool(
@@ -217,30 +244,55 @@ export class ProcessingService {
           this.recordFailure(result, job, photo);
           return;
         }
-        this.markDone(photo, result.photoId);
+        this.stageDone(photo, result.photoId, 'renditions');
       },
     );
   }
 
-  // Clears the pending flag once every stage of a photo has landed, and sweeps the
-  // renditions this import did not itself rewrite.
-  private markDone(photo: StagedPhoto | null, photoId: string): void {
+  // One stage of one photo has landed: clear its flag, stamp when it was written,
+  // and say so. The stamp and the announcement carry the same value, because a
+  // client builds its image URLs out of that column (DESIGN 13.5) - told a version
+  // the row does not have, it would be walked back by the next list read.
+  //
+  // Per stage rather than per photo because the two files move at different times:
+  // sharing one stamp re-fetched every grid tile on the page whenever any photo's
+  // renditions were rebuilt, for bytes that had not changed.
+  private stageDone(photo: StagedPhoto | null, photoId: string, stage: ProcessingStage): void {
+    // Never throw: this runs inside a worker's onmessage/onerror, and a throw here
+    // would skip the pool's assignNext/terminate/live-- bookkeeping and hang the
+    // batch forever. On a DB write failure, log and leave the flag set.
     try {
-      // What the photo viewer will be served, which is the only thing this column is
-      // read back for. Not the tile's own source: the tile is always the embedded
-      // JPEG whatever the library says, so recording that would tell the next import
-      // there are no renditions to build - and `dropStaleRenditions` would then
-      // delete the ones there are, with nothing to ever rebuild them.
-      const source: ThumbnailSource = photo == null || photo.renditions != null ? 'render' : 'embedded';
-      this.photos.markProcessed(photoId, new Date().toISOString(), source);
-      if (photo != null) this.dropStaleRenditions(photo);
+      const version = new Date().toISOString();
+      if (stage === 'tile') {
+        this.photos.markTileBuilt(photoId, version);
+        // Nothing more to build: this library serves the camera's JPEG in the
+        // viewer, so the tile was the whole import.
+        if (photo?.renditions == null) this.finishRenditions(photo, photoId);
+      } else {
+        this.finishRenditions(photo, photoId);
+      }
+      // After the writes, so a client told the file is ready cannot ask for it
+      // before the row says so.
+      this.announce(photoId, { stage, version });
     } catch (err) {
-      // Never throw: this runs inside a worker's onmessage/onerror, and a throw here
-      // would skip the pool's assignNext/terminate/live-- bookkeeping and hang the
-      // batch forever. On a DB write failure, log and leave needs_processing=1.
-      console.error(`markDone failed for photo ${photoId}: ${(err as Error).message}`);
+      console.error('stageDone failed for photo ' + photoId + ': ' + (err as Error).message);
     }
   }
+
+  // The viewer's side is settled - either its renditions were built, or this
+  // library has none to build - so the column recording what the viewer gets can
+  // be written, and the renditions this import did not rewrite swept.
+  private finishRenditions(photo: StagedPhoto | null, photoId: string): void {
+    // What the photo viewer will be served, which is the only thing this column is
+    // read back for. Not the tile's own source: the tile is always the embedded
+    // JPEG whatever the library says, so recording that would tell the next import
+    // there are no renditions to build - and `dropStaleRenditions` would then
+    // delete the ones there are, with nothing to ever rebuild them.
+    const source: ThumbnailSource = photo == null || photo.renditions != null ? 'render' : 'embedded';
+    this.photos.markRenditionsBuilt(photoId, new Date().toISOString(), source);
+    if (photo != null) this.dropStaleRenditions(photo);
+  }
+
 
   // A photo is only reprocessed because its pixels changed: the sync saw a new
   // stat, or the user asked for a rebuild. Every derived copy is then of the old
@@ -250,7 +302,7 @@ export class ProcessingService {
   private dropStaleRenditions(photo: StagedPhoto): void {
     // Both stages' outputs, not one stage's: sweeping after the tile alone would
     // delete the very renditions the second stage is about to write.
-    const targets = [...photo.tile.targets, ...(photo.renditions?.targets ?? [])];
+    const targets = [...(photo.tile?.targets ?? []), ...(photo.renditions?.targets ?? [])];
     this.sweepRenditions(
       photo,
       new Set(
@@ -297,12 +349,15 @@ export class ProcessingService {
       matchEmbeddedJpeg: this.config.matchEmbeddedJpeg,
     } as const;
 
-    const tile: RenditionJob = {
-      ...common,
-      targets: [this.target(dataPath, hdrVideo, photoId, 'grid', false, 'embedded')],
-    };
+    // Only the passes this photo still owes. A run interrupted between them - a
+    // crash, a restart, a library that went away and came back - resumes at the
+    // one it did not reach rather than redoing a tile already on disk.
+    const tile: RenditionJob | null =
+      pending.needs_tile === 1
+        ? { ...common, targets: [this.target(dataPath, hdrVideo, photoId, 'grid', false, 'embedded')] }
+        : null;
     const renditions: RenditionJob | null =
-      source === 'render'
+      source === 'render' && pending.needs_renditions === 1
         ? {
             ...common,
             targets: [this.target(dataPath, hdrVideo, photoId, 'full', pending.preview_hdr === 1, 'render')],
@@ -319,11 +374,11 @@ export class ProcessingService {
   ): void {
     // Never throw: this runs inside a worker's onmessage/onerror, and a throw here
     // would skip the pool's assignNext/terminate/live-- bookkeeping and hang the
-    // batch forever. On a DB write failure, log and leave needs_processing=1.
+    // batch forever. On a DB write failure, log and leave the flags set.
     try {
       // If the source file moved/was deleted since the job was queued (a move that
       // landed before the worker ran), don't burn it as a terminal failure: leave
-      // needs_processing=1 so a later sync reprocesses it at its current path.
+      // its flags set so a later sync reprocesses it at its current path.
       if (!existsSync(job.rawFilePath)) return;
       this.photos.markProcessingFailed(result.photoId, result.error);
       // Every derivative, not just the stage that failed. A photo is only being
@@ -347,7 +402,7 @@ export class ProcessingService {
 
       // Returns false if the worker couldn't be spawned (e.g. OS thread
       // exhaustion when several libraries process at once). Callers leave the
-      // unstarted jobs pending (needs_processing stays 1) for the next sync.
+      // unstarted jobs pending (their flags stay set) for the next sync.
       const launch = (): boolean => {
         let worker: Worker;
         try {

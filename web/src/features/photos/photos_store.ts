@@ -1,5 +1,7 @@
 import { computed, observable } from 'mobx';
-import type { Ordering, PhotoDetail, PhotoSummary, PreviewRendition, Triage } from '../../api/client';
+import type { Ordering, PhotoDetail, PhotoSummary, PreviewRendition, Rendition, Triage } from '../../api/client';
+import type { LibrariesStore } from '../libraries/libraries_store';
+import type { AppSettingsStore } from '../settings/app_settings_store';
 
 // Which collection the grid is showing. One store serves the library, shoot,
 // album, bin and missing views because they differ only in the fetch call.
@@ -20,7 +22,7 @@ export interface PhotoFilters {
   rated?: boolean;
   triage?: Triage[];
   isMissing?: boolean;
-  needsProcessing?: boolean;
+  needsTile?: boolean;
   search?: string;
   // Inclusive YYYY-MM-DD bounds from the calendar.
   takenFrom?: string;
@@ -28,6 +30,40 @@ export interface PhotoFilters {
   // 'any' is what the Custom menu sends: picking "picks, unrated and missing"
   // means a photo that is any of those, which as an intersection is empty.
   match?: 'all' | 'any';
+}
+
+// Which photo the detail view is on, and what came back for it. A union rather
+// than a detail plus two flags: "missing" carries the reason that made it
+// missing, so a failure to read one photo cannot be reported as the state of
+// another, and no combination of flags can describe a state that cannot happen.
+export type OpenPhoto = { id: string; status: 'loading' | 'ready' } | { id: string; status: 'missing'; error: string };
+
+// The served image as it actually arrived: decoded pixels, and the bytes the
+// response carried (null where nothing measured them, as for a video twin).
+export interface ShownImage {
+  width: number;
+  height: number;
+  bytes: number | null;
+}
+
+/** The three stamps every image URL is versioned by. */
+export type PhotoStamps = Pick<PhotoSummary, 'tile_built_at' | 'renditions_built_at' | 'date_updated'>;
+
+// Which generation of a file to ask the server for, by the stamp of whatever
+// produces its bytes: the import's tile pass for the grid, its rendition pass for
+// the viewer's two, and the RAW's own mtime for the camera JPEG, which is lifted
+// out of it per request rather than built. Each moves only when its own file did,
+// so rebuilding a photo's renditions no longer re-fetches its grid tile.
+//
+// The row carries all three, so this is known for the frame on screen and for a
+// neighbour being warmed alike, it survives a reload, and every client agrees -
+// none of which a version a client made up for itself could manage (§13.5). 0
+// before that file has ever been written, which leaves the URL plain and the
+// ETag in charge.
+export function renditionVersion(photo: PhotoStamps | null | undefined, rendition: Rendition | PreviewRendition): number {
+  const stamp =
+    rendition === 'grid' ? photo?.tile_built_at : rendition === 'embedded' ? photo?.date_updated : photo?.renditions_built_at;
+  return stamp == null ? 0 : Date.parse(stamp);
 }
 
 // A gallery opens on the working set: everything not yet rejected. Rejecting is
@@ -38,6 +74,14 @@ export function activeFilters(): PhotoFilters {
 }
 
 export class PhotosStore {
+  // Read-only peers, both for resolving which rendition the viewer opens at
+  // without waiting on the photo's detail: the setting says which one the reader
+  // wants, the library says which one is certain to have been built.
+  constructor(
+    private readonly settings: AppSettingsStore,
+    private readonly libraries: LibrariesStore,
+  ) {}
+
   // Deep, not shallow: a tile observes its own row's fields, so rating or
   // rejecting one photo re-renders that tile alone. Shallow rows can only be
   // updated by replacing the array, which invalidates every tile in the grid.
@@ -67,20 +111,10 @@ export class PhotosStore {
   // Which tile the keyboard is on. -1 means the grid has not been entered yet.
   @observable accessor focusIndex = -1;
 
-  // Bumped on every completed list fetch. A tile whose thumbnail 404'd (it was
-  // still being generated) uses this to know a newer generation exists and the
-  // image is worth requesting again.
-  @observable accessor reloadToken = 0;
-
-  // Bumped when thumbnails are rebuilt. The file changes behind a URL that does
-  // not, so images already decoded in the page would otherwise never be
-  // re-requested; appending this defeats that without polluting normal URLs.
-  @observable accessor rebuiltAt = 0;
-
-  // Which rendition the detail view is showing: the same picture at one of three
-  // quality levels, each built on request and cached (§10.2). Null is the photo's
-  // own thumbnail, which is whichever of the first two the library builds on
-  // import, and is the only one that costs nothing to show.
+  // The rendition picked for this photo, for as long as it is open: the same
+  // picture at one of three quality levels, each built on request and cached
+  // (§10.2). Null until something is picked, which is the usual state - the
+  // setting answers for the rest, and `showing` is what is actually on screen.
   @observable accessor rendition: PreviewRendition | null = null;
   @observable accessor buildingRendition = false;
 
@@ -89,9 +123,53 @@ export class PhotosStore {
   // thing standing between a changed setting and seeing what it did.
   @observable accessor forceRebuild = false;
 
-  @observable.ref accessor detail: PhotoDetail | null = null;
-  @observable accessor detailLoading = false;
+  // The photo the viewer is on and how far its read has got. One value, so it
+  // cannot say "loading" and "no such photo" at once, and so "not asked for yet"
+  // (null) is distinct from both: the fetch starts in an effect, and the render
+  // before it once read as a photo the catalogue does not have.
+  @observable.ref accessor open: OpenPhoto | null = null;
+  // The last detail that arrived, which is the *previous* photo's until this
+  // one's read lands - deliberately, so the rail and the panels do not collapse
+  // on every step. Nothing should read it without saying which photo it wants,
+  // which is what `detailFor` is for.
+  //
+  // Deep, not by reference: five panels read different parts of this, and a
+  // replaced object notifies all of them. Rating a photo would re-render the
+  // camera settings and the file paths beside it, for the same reason the grid
+  // keeps its row objects rather than remapping them (`reconcile`).
+  @observable accessor loadedDetail: PhotoDetail | null = null;
   @observable accessor notesSavedAt: number | null = null;
+  // What the viewer actually has on screen, measured off the decoded image
+  // rather than taken from a column: the panel reports the pixels that arrived
+  // and the weight of the response that carried them, which is the question a
+  // reader judging sharpness is asking. Null until something decodes, and
+  // cleared on every step - the panel must stop claiming the previous photo's
+  // resolution the moment the route changes.
+  @observable.ref accessor shownImage: ShownImage | null = null;
+
+  // This photo's detail, or null while it is still the one before it. Every
+  // consumer needs this check and none of them can be trusted to remember it:
+  // the store holds one detail, the view holds another photo's id, and the two
+  // disagree for the length of a fetch.
+  detailFor(photoId: string): PhotoDetail | null {
+    return this.loadedDetail?.id === photoId ? this.loadedDetail : null;
+  }
+
+  // As much of a photo as the client has: the grid row, or the detail when there
+  // is no row (a deep link). Enough for a verdict, a rating and the shape the
+  // viewer lays itself out against, all of which the row already carries - so
+  // none of them wait on the fetch.
+  photoFor(photoId: string): PhotoSummary | null {
+    return this.photos.find((p) => p.id === photoId) ?? this.detailFor(photoId);
+  }
+
+  // For a photo the view knows only by id - the neighbours the viewer warms.
+  // Anything holding the row itself reads `renditionVersion` off it directly,
+  // which is both cheaper and narrower to observe.
+  renditionVersionOf(photoId: string | null, rendition: Rendition | PreviewRendition): number {
+    if (photoId == null) return 0;
+    return renditionVersion(this.photoFor(photoId), rendition);
+  }
 
   @computed get selectedIds(): string[] {
     return [...this.selected.keys()];
@@ -109,8 +187,10 @@ export class PhotosStore {
     return this.photos.length > 0 && this.photos.every((p) => this.selected.has(p.id));
   }
 
+  // Length first, so a populated grid's dependency on `loading` short-circuits
+  // away: it toggles twice on every refetch, and the answer cannot change.
   @computed get isEmpty(): boolean {
-    return !this.loading && this.photos.length === 0;
+    return this.photos.length === 0 && !this.loading;
   }
 
   @computed get focusedPhoto(): PhotoSummary | null {
@@ -125,7 +205,58 @@ export class PhotosStore {
   // notifies when the *library* changes, so stepping through photos in one
   // library never re-renders the rail or the title bar.
   @computed get detailLibraryId(): string | null {
-    return this.detail?.library_id ?? null;
+    return this.loadedDetail?.library_id ?? null;
+  }
+
+  // The open photo as the client already knows it: the row the grid loaded, or
+  // the last detail when there is no row to have (a deep link, before the
+  // collection behind it is fetched). Everything the viewer has to decide before
+  // its own fetch returns is answered from here.
+  @computed get openPhoto(): PhotoSummary | null {
+    const id = this.open?.id;
+    return id == null ? null : this.photoFor(id);
+  }
+
+  // What the open photo's library builds on import: it serves the camera's JPEG
+  // or it renders. The server names this on the detail, but it is a property of
+  // the *library*, and the library list is loaded for the rail long before any
+  // photo is opened - so it is read from the row the grid already holds. Taken
+  // off the detail it was a fetch behind, which is what made the viewer paint a
+  // render for a reader set to the camera's JPEG and swap it out a moment later;
+  // and in an album spanning two libraries it was the previous photo's answer.
+  @computed get defaultRendition(): PreviewRendition {
+    const library = this.libraries.byId.get(this.openPhoto?.library_id ?? '');
+    // Unknown only until the collection loads, and the camera's JPEG is the one
+    // rendition every photo has, so it is the safe answer to guess with.
+    return library?.preview_source === 'render' ? 'full' : 'embedded';
+  }
+
+  // What the setting says to open at. Null only when nothing has been chosen for
+  // it to remember: the per-photo memory is on the row like everything else the
+  // first frame needs, so "last used per photo" no longer has to wait for the
+  // detail and paint the library's default in the meantime.
+  @computed get preferredRendition(): PreviewRendition | null {
+    const mode = this.settings.previewRenditionMode;
+    if (mode === 'remember') return this.settings.lastPreviewRendition;
+    if (mode === 'remember_per_photo') return this.openPhoto?.preview_rendition ?? null;
+    return mode;
+  }
+
+  // The rendition on screen. Answered from the setting wherever it can be, so
+  // stepping to the next photo asks for the file the reader actually wants on
+  // the first frame instead of painting the library's default and swapping.
+  @computed get showing(): PreviewRendition {
+    if (this.rendition != null) return this.rendition;
+    const preferred = this.preferredRendition;
+    return preferred != null && this.isAlwaysBuilt(preferred) ? preferred : this.defaultRendition;
+  }
+
+  // Exists for every photo in the library, so it can be asked for before that
+  // photo's own detail says whether it does: the camera's JPEG is extracted from
+  // the RAW on demand, and the library's default is built on import. The other
+  // two are built on request, and asking early is a 404, not a picture.
+  isAlwaysBuilt(rendition: PreviewRendition): boolean {
+    return rendition === 'embedded' || rendition === this.defaultRendition;
   }
 
   @computed get hasActiveFilters(): boolean {
@@ -134,7 +265,7 @@ export class PhotosStore {
       f.rated != null ||
       f.triage != null ||
       f.isMissing != null ||
-      f.needsProcessing != null ||
+      f.needsTile != null ||
       f.takenFrom != null ||
       f.takenTo != null ||
       (f.search ?? '') !== ''
@@ -165,10 +296,14 @@ export class PhotosStore {
     return this.offset + this.limit < this.total;
   }
 
-  // Position of the open detail photo within the loaded page, so the detail view
-  // can step to its neighbours.
+  // Position of the open photo within the loaded page, so the detail view can
+  // step to its neighbours. Off the photo that was asked for, not the detail on
+  // hand: that is still the previous photo until the fetch lands, and stepping
+  // faster than it does made the arrow keys offer the neighbours of the frame
+  // before - so a press navigated to the photo already open and did nothing.
   @computed get detailIndex(): number {
-    return this.detail == null ? -1 : this.photos.findIndex((p) => p.id === this.detail?.id);
+    const id = this.open?.id;
+    return id == null ? -1 : this.photos.findIndex((p) => p.id === id);
   }
 
   @computed get prevPhotoId(): string | null {

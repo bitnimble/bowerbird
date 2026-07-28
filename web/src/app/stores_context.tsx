@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, type ReactNode } from 'react';
 import { AlbumsPresenter } from '../features/albums/albums_presenter';
 import { AlbumsStore } from '../features/albums/albums_store';
+import { EventsPresenter } from '../features/events/events_presenter';
 import { LibrariesPresenter } from '../features/libraries/libraries_presenter';
 import { LibrariesStore } from '../features/libraries/libraries_store';
 import { PhotosPresenter } from '../features/photos/photos_presenter';
@@ -36,20 +37,25 @@ interface Presenters {
   toasts: ToastsPresenter;
   serverConfig: ServerConfigPresenter;
   appSettings: AppSettingsPresenter;
+  events: EventsPresenter;
 }
 
 const PresentersContext = createContext<Presenters | null>(null);
 
 function build(): { stores: Stores; presenters: Presenters } {
+  // Which rendition the viewer opens at is the setting's answer, bounded by what
+  // the library builds, so the photos store reads both.
+  const appSettingsStore = new AppSettingsStore();
+  const librariesStore = new LibrariesStore();
   const stores: Stores = {
-    libraries: new LibrariesStore(),
-    photos: new PhotosStore(),
+    libraries: librariesStore,
+    photos: new PhotosStore(appSettingsStore, librariesStore),
     shoots: new ShootsStore(),
     albums: new AlbumsStore(),
     sync: new SyncStore(),
     toasts: new ToastsStore(),
     serverConfig: new ServerConfigStore(),
-    appSettings: new AppSettingsStore(),
+    appSettings: appSettingsStore,
   };
 
   // Wiring order encodes the dependency direction: shoots/albums presenters know
@@ -59,6 +65,9 @@ function build(): { stores: Stores; presenters: Presenters } {
   const albums = new AlbumsPresenter(stores.albums);
   const appSettings = new AppSettingsPresenter(stores.appSettings);
   const photos = new PhotosPresenter(stores.photos, shoots, albums, toasts, stores.appSettings, appSettings);
+  // Announcements land on the rows the views render from, so this writes through
+  // the presenter that owns them.
+  const events = new EventsPresenter(photos);
   const presenters: Presenters = {
     libraries: new LibrariesPresenter(stores.libraries),
     photos,
@@ -68,6 +77,7 @@ function build(): { stores: Stores; presenters: Presenters } {
     toasts,
     serverConfig: new ServerConfigPresenter(stores.serverConfig),
     appSettings,
+    events,
   };
   return { stores, presenters };
 }

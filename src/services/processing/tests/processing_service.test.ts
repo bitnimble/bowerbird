@@ -60,6 +60,8 @@ describe('ProcessingService.processUnprocessed', () => {
       root_path: root,
       data_path: null,
       rendition_source: 'render',
+      needs_tile: 1,
+      needs_renditions: 1,
       preview_source: 'render',
       preview_hdr: 0,
       preview_hdr_video: 0,
@@ -71,7 +73,8 @@ describe('ProcessingService.processUnprocessed', () => {
     // the feature permanently off however the server is configured.
     const repo = {
       listPendingProcessing: jest.fn(() => [pending('a')]),
-      markProcessed: jest.fn(),
+      markTileBuilt: jest.fn(),
+      markRenditionsBuilt: jest.fn(),
       markProcessingFailed: jest.fn(),
     } as unknown as PhotosRepository;
 
@@ -86,43 +89,47 @@ describe('ProcessingService.processUnprocessed', () => {
   });
 
   it('marks each photo processed and drains the pool without hanging', async () => {
-    const markProcessed = jest.fn();
+    const markRenditionsBuilt = jest.fn();
     const repo = {
       listPendingProcessing: jest.fn(() => [pending('a'), pending('b'), pending('c')]),
-      markProcessed,
+      markTileBuilt: jest.fn(),
+      markRenditionsBuilt,
       markProcessingFailed: jest.fn(),
     } as unknown as PhotosRepository;
 
     await new ProcessingService(repo, config).processUnprocessed('lib');
 
-    expect(markProcessed).toHaveBeenCalledTimes(3);
+    expect(markRenditionsBuilt).toHaveBeenCalledTimes(3);
   });
 
   it('a DB write failure in applyResult does not hang the pool', async () => {
-    const markProcessed = jest.fn(() => {
+    const markRenditionsBuilt = jest.fn(() => {
       throw new Error('SQLITE_FULL: database or disk is full');
     });
     const repo = {
       listPendingProcessing: jest.fn(() => [pending('a'), pending('b')]),
-      markProcessed,
+      markTileBuilt: jest.fn(),
+      markRenditionsBuilt,
       markProcessingFailed: jest.fn(),
     } as unknown as PhotosRepository;
 
     // Must resolve (not hang): applyResult swallows the throw so the pool's
     // assignNext/terminate bookkeeping still runs for every job.
     await expect(new ProcessingService(repo, config).processUnprocessed('lib')).resolves.toBeUndefined();
-    expect(markProcessed).toHaveBeenCalledTimes(2);
+    expect(markRenditionsBuilt).toHaveBeenCalledTimes(2);
   });
 
-  it('builds every grid tile before any rendition, and clears the flag only once both land', async () => {
+  it('builds every grid tile before any rendition, and clears each flag as its stage lands', async () => {
     // The whole point of the split. A tile is ~125ms where a rendition is ~1.5s, so
     // interleaving them would make a 2000-frame shoot's grid take as long as the
     // renders do. Nothing else pins the ordering, so a future refactor that fused the
     // passes back together would be invisible.
-    const markProcessed = jest.fn();
+    const markTileBuilt = jest.fn();
+    const markRenditionsBuilt = jest.fn();
     const repo = {
       listPendingProcessing: jest.fn(() => [pending('a'), pending('b')]),
-      markProcessed,
+      markTileBuilt,
+      markRenditionsBuilt,
       markProcessingFailed: jest.fn(),
     } as unknown as PhotosRepository;
 
@@ -130,13 +137,58 @@ describe('ProcessingService.processUnprocessed', () => {
 
     const order = posted.map((job) => photoStage(job));
     expect(order).toEqual(['a:grid', 'b:grid', 'a:full', 'b:full']);
-    // Not after the tile: a photo whose renditions are still outstanding has to stay
-    // pending, or a crash between the passes would lose them with nothing to retry.
-    expect(markProcessed).toHaveBeenCalledTimes(2);
+    // Each stage clears its own, so a run interrupted between the passes comes back
+    // owing only the second.
+    expect(markTileBuilt.mock.calls.map((c) => c[0])).toEqual(['a', 'b']);
+    expect(markRenditionsBuilt.mock.calls.map((c) => c[0])).toEqual(['a', 'b']);
+  });
+
+  it('resumes at the stage a photo still owes rather than rebuilding the tile', async () => {
+    // What the split flags buy over one: an import interrupted after the tiles came
+    // back needing both passes redone, and a tile is 125ms per photo of work that
+    // was already on disk.
+    const repo = {
+      listPendingProcessing: jest.fn(() => [{ ...pending('a'), needs_tile: 0 }]),
+      markTileBuilt: jest.fn(),
+      markRenditionsBuilt: jest.fn(),
+      markProcessingFailed: jest.fn(),
+    } as unknown as PhotosRepository;
+
+    await new ProcessingService(repo, config).processUnprocessed('lib');
+
+    expect(posted.map((job) => photoStage(job))).toEqual(['a:full']);
+  });
+
+  it('announces each stage as it lands, with the stamp that stage wrote', async () => {
+    // Splitting the passes exists so a grid is browsable at the tile's pace (~125ms)
+    // rather than the render's (~1.5s). A client hears about a photo through these
+    // announcements, so raising one only at the end would hand that back: the tile
+    // would be on disk with nobody told for a second and a half.
+    const markTileBuilt = jest.fn();
+    const markRenditionsBuilt = jest.fn();
+    const repo = {
+      listPendingProcessing: jest.fn(() => [pending('a')]),
+      markTileBuilt,
+      markRenditionsBuilt,
+      markProcessingFailed: jest.fn(),
+    } as unknown as PhotosRepository;
+
+    const announced: { photoId: string; stage: string; version: string }[] = [];
+    const service = new ProcessingService(repo, config);
+    service.onProcessed((photoId, written) => announced.push({ photoId, ...written }));
+    await service.processUnprocessed('lib');
+
+    expect(announced.map((a) => a.stage)).toEqual(['tile', 'renditions']);
+    // Each carries the stamp its own write put on the row, and only that one moves:
+    // a client builds the URL out of that column, so an announcement ahead of the row
+    // would be walked back by the next list read - and a tile whose stamp moved for
+    // a rendition rebuild would be re-fetched for bytes that had not changed.
+    expect(markTileBuilt).toHaveBeenCalledWith('a', announced[0]?.version);
+    expect(markRenditionsBuilt).toHaveBeenCalledWith('a', announced[1]?.version, 'render');
   });
 
   it('records what the viewer gets, so a second import still rebuilds the renditions', async () => {
-    // `rendition_source` is written by markProcessed and read straight back by the
+    // `rendition_source` is written when the renditions land, and read straight back by the
     // next import to decide whether the viewer's renditions get built. Recording the
     // tile's own source instead put 'embedded' there for every photo, whatever the
     // library said - so the second import built the tile alone, and the sweep then
@@ -144,7 +196,8 @@ describe('ProcessingService.processUnprocessed', () => {
     let stored: ThumbnailSource | null = 'render';
     const repo = {
       listPendingProcessing: jest.fn(() => [{ ...pending('a'), rendition_source: stored }]),
-      markProcessed: jest.fn((_id: string, _at: string, source: ThumbnailSource) => {
+      markTileBuilt: jest.fn(),
+      markRenditionsBuilt: jest.fn((_id: string, _at: string, source: ThumbnailSource) => {
         stored = source;
       }),
       markProcessingFailed: jest.fn(),
@@ -171,10 +224,11 @@ describe('ProcessingService.processUnprocessed', () => {
     writeFileSync(path.join(root, `${CRASH}.arw`), ''); // source still present -> real failure
 
     const markProcessingFailed = jest.fn();
-    const markProcessed = jest.fn();
+    const markRenditionsBuilt = jest.fn();
     const repo = {
       listPendingProcessing: jest.fn(() => [pending('ok'), pending(CRASH)]),
-      markProcessed,
+      markTileBuilt: jest.fn(),
+      markRenditionsBuilt,
       markProcessingFailed,
     } as unknown as PhotosRepository;
 
@@ -193,7 +247,8 @@ describe('ProcessingService.processUnprocessed', () => {
     const markProcessingFailed = jest.fn();
     const repo = {
       listPendingProcessing: jest.fn(() => [pending(CRASH)]),
-      markProcessed: jest.fn(),
+      markTileBuilt: jest.fn(),
+      markRenditionsBuilt: jest.fn(),
       markProcessingFailed,
     } as unknown as PhotosRepository;
 
@@ -203,7 +258,7 @@ describe('ProcessingService.processUnprocessed', () => {
   });
 
   it('drains work that becomes pending while a batch is already running (rerun)', async () => {
-    const markProcessed = jest.fn();
+    const markRenditionsBuilt = jest.fn();
     let call = 0;
     const listPendingProcessing = jest.fn(() => {
       call += 1;
@@ -211,7 +266,12 @@ describe('ProcessingService.processUnprocessed', () => {
       if (call === 2) return [pending('b')];
       return [];
     });
-    const repo = { listPendingProcessing, markProcessed, markProcessingFailed: jest.fn() } as unknown as PhotosRepository;
+    const repo = {
+      listPendingProcessing,
+      markTileBuilt: jest.fn(),
+      markRenditionsBuilt,
+      markProcessingFailed: jest.fn(),
+    } as unknown as PhotosRepository;
     const service = new ProcessingService(repo, config);
 
     // second call coalesces into the first and flags a rerun; both drain.
@@ -223,8 +283,8 @@ describe('ProcessingService.processUnprocessed', () => {
     // 'render', because that is what the viewer gets on this library. Not the tile's
     // own source, which is always the embedded JPEG and would say 'embedded' here for
     // every photo on every library.
-    expect(markProcessed).toHaveBeenCalledWith('a', expect.any(String), 'render');
-    expect(markProcessed).toHaveBeenCalledWith('b', expect.any(String), 'render');
+    expect(markRenditionsBuilt).toHaveBeenCalledWith('a', expect.any(String), 'render');
+    expect(markRenditionsBuilt).toHaveBeenCalledWith('b', expect.any(String), 'render');
   });
 
   it('leaves jobs pending (no hang, no throw) when a worker cannot be spawned', async () => {
@@ -234,15 +294,16 @@ describe('ProcessingService.processUnprocessed', () => {
       }
     }
     (globalThis as { Worker?: unknown }).Worker = ThrowingWorker;
-    const markProcessed = jest.fn();
+    const markRenditionsBuilt = jest.fn();
     const repo = {
       listPendingProcessing: jest.fn(() => [pending('a'), pending('b')]),
-      markProcessed,
+      markTileBuilt: jest.fn(),
+      markRenditionsBuilt,
       markProcessingFailed: jest.fn(),
     } as unknown as PhotosRepository;
 
     await expect(new ProcessingService(repo, config).processUnprocessed('lib')).resolves.toBeUndefined();
-    expect(markProcessed).not.toHaveBeenCalled(); // untouched -> still needs_processing=1
+    expect(markRenditionsBuilt).not.toHaveBeenCalled(); // untouched -> both flags still set
   });
 
   it('does nothing when there is no pending work', async () => {

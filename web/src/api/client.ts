@@ -4,6 +4,7 @@ import type { PhotoDetail, PhotoListResponse, Triage, UpdatePhotoRequest } from 
 import type { PreviewRendition, PreviewRenditionMode, Settings, UpdateSettingsRequest } from '../../../src/schemas/settings';
 import type { CreateShootRequest, Shoot, UpdateShootRequest } from '../../../src/schemas/shoots';
 import type { Rendition } from '../../../src/services/processing/renditions';
+import type { ProcessingStage } from '../../../src/services/processing/processing_types';
 import type { ServerConfig } from '../features/settings/server_config_store';
 
 // Types come straight from the server's Zod schemas as type-only imports, so the
@@ -22,7 +23,7 @@ export type {
   UpdateLibraryRequest,
 };
 export type PhotoSummary = PhotoListResponse['photos'][number];
-export type { Rendition };
+export type { Rendition, ProcessingStage };
 export type Ordering = Library['ordering'];
 export type PreviewSource = Library['preview_source'];
 // NonNullable: the column is null until a photo has been processed once.
@@ -82,7 +83,7 @@ export interface PhotoListParams {
   offset?: number;
   limit?: number;
   is_missing?: boolean;
-  needs_processing?: boolean;
+  needs_tile?: boolean;
   include_deleted?: boolean;
   is_deleted?: boolean;
   rated?: boolean;
@@ -183,9 +184,18 @@ export function needsHdrVideo(): boolean {
   return navigator.userAgent.includes('Firefox');
 }
 
-// The camera's own JPEG, handed over as the camera wrote it (§10.2).
-export function embeddedUrl(photoId: string): string {
-  return `${BASE}/image/${photoId}/embedded.jpg`;
+// The camera's own JPEG, handed over as the camera wrote it (§10.2). Versioned
+// like a stored rendition even though nothing builds it: it is lifted out of the
+// RAW on each request, so a RAW replaced on disk changes these bytes too, and a
+// page holding the previous ones would otherwise never ask again.
+export function embeddedUrl(photoId: string, version = 0): string {
+  const url = `${BASE}/image/${photoId}/embedded.jpg`;
+  return version === 0 ? url : `${url}?v=${version}`;
+}
+
+// Server-sent events: which photos have a thumbnail worth re-requesting.
+export function eventsUrl(): string {
+  return `${BASE}/api/events`;
 }
 
 export function originalUrl(photoId: string): string {
@@ -199,5 +209,5 @@ export function jpegUrl(photoId: string): string {
 // What the viewer shows for one of its three choices: the camera's JPEG served
 // directly, or a stored rendition.
 export function viewerUrl(photoId: string, rendition: PreviewRendition, version = 0): string {
-  return rendition === 'embedded' ? embeddedUrl(photoId) : renditionUrl(photoId, rendition, version);
+  return rendition === 'embedded' ? embeddedUrl(photoId, version) : renditionUrl(photoId, rendition, version);
 }
