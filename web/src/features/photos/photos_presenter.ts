@@ -180,10 +180,15 @@ export class PhotosPresenter {
   renditionsRebuilt(photoId: string, version: string): void {
     const row = this.store.photos.find((p) => p.id === photoId);
     if (row != null) row.date_reprocessed = version;
-    // The detail is held by reference, so it takes a new object rather than a
-    // field write to notify.
     const detail = this.store.detailFor(photoId);
-    if (detail != null) this.store.loadedDetail = { ...detail, date_reprocessed: version };
+    if (detail != null) detail.date_reprocessed = version;
+  }
+
+  // Reported by the stage when a frame has decoded, so the panel beside it can
+  // describe what is on screen rather than what a column claims.
+  @action.bound
+  imageShown(width: number, height: number, bytes: number | null): void {
+    this.store.shownImage = { width, height, bytes };
   }
 
   // Whether a photo is still the one the view is on. Every write that lands after
@@ -501,7 +506,14 @@ export class PhotosPresenter {
     try {
       const updated = await api.updatePhoto(photoId, fields);
       runInAction(() => {
-        if (this.store.loadedDetail?.id === photoId) this.store.loadedDetail = updated;
+        // Into the object the panels are already reading, not over it: only the
+        // fields that moved then notify, so rating a photo leaves the camera
+        // settings and the paths beside it alone. Minus the two a patch cannot
+        // change, which arrive as fresh objects every time and would look like a
+        // change to whoever reads them - the frame and the preview panel, for a
+        // star. What does move them says so itself (§18.6).
+        const { renditions: _renditions, album_ids: _albums, ...changed } = updated;
+        if (this.store.loadedDetail?.id === photoId) Object.assign(this.store.loadedDetail, changed);
         // Written into the row rather than mapped into a new array: replacing the
         // array invalidates every tile's observable, so rating one photo used to
         // re-render the whole grid.
@@ -667,6 +679,10 @@ export class PhotosPresenter {
   private beginDetail(photoId: string): void {
     this.store.open = { id: photoId, status: 'loading' };
     this.store.notesSavedAt = null;
+    // On the step rather than when the next detail lands: the panel must stop
+    // claiming the previous photo's resolution the moment we navigate, and the
+    // new frame can take a while to decode.
+    this.store.shownImage = null;
     // Per photo, not sticky: the next photo may have no preview cached for the
     // rendition this one was showing, which would be a 404 rather than a picture.
     // Reopening it there is the setting's job, and it builds first.

@@ -38,6 +38,14 @@ export interface PhotoFilters {
 // another, and no combination of flags can describe a state that cannot happen.
 export type OpenPhoto = { id: string; status: 'loading' | 'ready' } | { id: string; status: 'missing'; error: string };
 
+// The served image as it actually arrived: decoded pixels, and the bytes the
+// response carried (null where nothing measured them, as for a video twin).
+export interface ShownImage {
+  width: number;
+  height: number;
+  bytes: number | null;
+}
+
 // Which generation of a photo's renditions to ask the server for. The row
 // carries it, so it is known for the frame on screen and for a neighbour being
 // warmed alike, it survives a reload, and every client agrees - none of which a
@@ -114,8 +122,20 @@ export class PhotosStore {
   // one's read lands - deliberately, so the rail and the panels do not collapse
   // on every step. Nothing should read it without saying which photo it wants,
   // which is what `detailFor` is for.
-  @observable.ref accessor loadedDetail: PhotoDetail | null = null;
+  //
+  // Deep, not by reference: five panels read different parts of this, and a
+  // replaced object notifies all of them. Rating a photo would re-render the
+  // camera settings and the file paths beside it, for the same reason the grid
+  // keeps its row objects rather than remapping them (`reconcile`).
+  @observable accessor loadedDetail: PhotoDetail | null = null;
   @observable accessor notesSavedAt: number | null = null;
+  // What the viewer actually has on screen, measured off the decoded image
+  // rather than taken from a column: the panel reports the pixels that arrived
+  // and the weight of the response that carried them, which is the question a
+  // reader judging sharpness is asking. Null until something decodes, and
+  // cleared on every step - the panel must stop claiming the previous photo's
+  // resolution the moment the route changes.
+  @observable.ref accessor shownImage: ShownImage | null = null;
 
   // This photo's detail, or null while it is still the one before it. Every
   // consumer needs this check and none of them can be trusted to remember it:
@@ -123,6 +143,14 @@ export class PhotosStore {
   // disagree for the length of a fetch.
   detailFor(photoId: string): PhotoDetail | null {
     return this.loadedDetail?.id === photoId ? this.loadedDetail : null;
+  }
+
+  // As much of a photo as the client has: the grid row, or the detail when there
+  // is no row (a deep link). Enough for a verdict, a rating and the shape the
+  // viewer lays itself out against, all of which the row already carries - so
+  // none of them wait on the fetch.
+  photoFor(photoId: string): PhotoSummary | null {
+    return this.photos.find((p) => p.id === photoId) ?? this.detailFor(photoId);
   }
 
   // For a photo the view knows only by id - the neighbours the viewer warms.
@@ -176,7 +204,7 @@ export class PhotosStore {
   // its own fetch returns is answered from here.
   @computed get openPhoto(): PhotoSummary | null {
     const id = this.open?.id;
-    return id == null ? null : (this.photos.find((p) => p.id === id) ?? this.detailFor(id));
+    return id == null ? null : this.photoFor(id);
   }
 
   // What the open photo's library builds on import: it serves the camera's JPEG

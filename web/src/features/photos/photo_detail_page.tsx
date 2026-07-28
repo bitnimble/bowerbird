@@ -48,6 +48,15 @@ const PENDING = 'loading';
 // three lines, so the column stays scannable however much a camera recorded.
 const VISIBLE_ROWS = 2;
 
+// The panel strip is a grid track the stage is sized against, so it has to hold
+// its height across the detail fetch. Every field that fetch answers renders as
+// PENDING until it lands rather than the panel not rendering at all: an empty
+// strip let the photo paint full-size and then shrink under itself when the
+// panels appeared.
+function pendingUntil(photo: PhotoDetail | null) {
+  return (value: (p: PhotoDetail) => React.ReactNode): React.ReactNode => (photo == null ? PENDING : value(photo));
+}
+
 function MetaPanel({ title, rows, defaultOpen }: { title: string; rows: Row[]; defaultOpen: boolean }): JSX.Element {
   // Null until the user has an opinion, so the panel follows the layout's default
   // when the next photo changes it and stops following the moment they toggle it.
@@ -73,34 +82,6 @@ function MetaPanel({ title, rows, defaultOpen }: { title: string; rows: Row[]; d
     </div>
   );
 }
-
-// Its own component, holding its own draft: on the page, a keystroke re-rendered
-// every panel and the stage with them.
-const NotesPanel = observer(function NotesPanel({ photoId }: { photoId: string }): JSX.Element {
-  const store = usePhotosStore();
-  const { photos } = usePresenters();
-  const saved = store.detailFor(photoId)?.notes ?? '';
-  const [notes, setNotes] = useState(saved);
-  // Keyed on the photo alone. Following `notes` as well would let a save that
-  // lands after the user has started typing again overwrite the field mid-edit.
-  useEffect(() => setNotes(store.detailFor(photoId)?.notes ?? ''), [photoId, store.loadedDetail?.id]);
-  const dirty = notes !== saved;
-
-  return (
-    <Panel title="Notes">
-      <TextArea
-        label="Notes"
-        placeholder="Add a note"
-        value={notes}
-        onChange={setNotes}
-        onBlur={() => {
-          if (dirty) void photos.setNotes(photoId, notes);
-        }}
-      />
-      <Text variant="mono">{dirty ? 'unsaved' : store.notesSavedAt != null ? 'saved' : ''}</Text>
-    </Panel>
-  );
-});
 
 function Panel({ title, children }: { title: string; children: React.ReactNode }): JSX.Element {
   return (
@@ -159,46 +140,347 @@ const ACTIONS: (Option<PhotoAction> | ActionGroup<PhotoAction>)[] = [
   { label: 'Image preview', icon: <ImageIcon size={ICON} />, options: RENDITIONS },
 ];
 
-export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element {
-  const { photoId = '' } = useParams();
+// Where the reader can go from here, and what can be done to the photo they are
+// on. Its own observer so that a rebuild finishing, which flips `building…` on
+// and off, does not re-render the frame or the panels beside it.
+const DetailNav = observer(function DetailNav({ photoId }: { photoId: string }): JSX.Element {
   const store = usePhotosStore();
-  const shoots = useShootsStore();
-  const albums = useAlbumsStore();
-  const serverConfig = useServerConfigStore();
-  const { photos, serverConfig: configPresenter } = usePresenters();
+  const { photos } = usePresenters();
   const navigate = useNavigate();
-  // Actual pixels of the served thumbnail, so the panel reports what is on
-  // screen rather than the RAW's dimensions.
-  const [shownImage, setShownImage] = useState<{ width: number; height: number; bytes: number | null } | null>(null);
-
-  useEffect(() => {
-    void photos.openDetail(photoId);
-    void configPresenter.load();
-    // Cleared on the route change rather than when the detail arrives: the panel
-    // must stop claiming the previous photo's resolution the moment we navigate,
-    // and the new image can take a while to decode.
-    setShownImage(null);
-  }, [photoId, photos, configPresenter]);
-
-  // Null while the store still holds the photo before this one - it keeps the
-  // previous detail on purpose, so the rail and the panels do not collapse on
-  // every step. Asking by id is the only safe way to read it.
   const photo = store.detailFor(photoId);
-
   const prevId = store.prevPhotoId;
   const nextId = store.nextPhotoId;
   const libraryId = store.detailLibraryId;
 
-  // The frame on screen and the two being warmed. All three come off their rows,
-  // so a neighbour is warmed at the URL it will be painted at when the reader
-  // steps onto it - the row does not change under them, and it is the same row
-  // either way.
-  const version = store.renditionVersionOf(photoId);
-  const prevVersion = store.renditionVersionOf(prevId);
-  const nextVersion = store.renditionVersionOf(nextId);
+  return (
+    <div className="row detail__nav">
+      <Button render={<Link to={libraryId == null ? '/' : `/libraries/${libraryId}`} />}>
+        <ArrowLeft size={ICON} />
+        Library
+      </Button>
+      <Button iconOnly aria-label="Previous photo" disabled={prevId == null} onClick={() => prevId != null && navigate(`/photos/${prevId}`)}>
+        <ChevronLeft size={ICON} />
+      </Button>
+      <Button iconOnly aria-label="Next photo" disabled={nextId == null} onClick={() => nextId != null && navigate(`/photos/${nextId}`)}>
+        <ChevronRight size={ICON} />
+      </Button>
+      <Text variant="mono">{photo?.file_path ?? ''}</Text>
 
-  // Stepping through frames and judging them is the whole point of a detail view
-  // during a cull, so the verdict keys work here exactly as they do in the grid.
+      <div className="spacer" />
+
+      <ActionMenu
+        trigger={
+          <>
+            <RefreshCw size={ICON} />
+            Actions
+          </>
+        }
+        options={ACTIONS}
+        toggles={[
+          {
+            label: 'Disable cache when changing preview',
+            icon: <RefreshCw size={ICON} />,
+            checked: store.forceRebuild,
+            onChange: photos.setForceRebuild,
+          },
+        ]}
+        onSelect={(action) => {
+          if (action === 'metadata') void photos.refreshMetadata([photoId]);
+          else void photos.chooseRendition(photoId, action);
+        }}
+      />
+      <ActionMenu
+        trigger={
+          <>
+            <Download size={ICON} />
+            Download
+          </>
+        }
+        options={DOWNLOADS}
+        onSelect={(kind) => {
+          window.location.href = kind === 'raw' ? originalUrl(photoId) : jpegUrl(photoId);
+        }}
+      />
+      {store.buildingRendition && <Text variant="mono">building…</Text>}
+      {photo != null && !photo.is_deleted && (
+        <Button variant="danger" onClick={() => void photos.deletePhotos([photo.id])}>
+          <Trash2 size={ICON} />
+          Move to Bin
+        </Button>
+      )}
+    </div>
+  );
+});
+
+// The frame on screen, and the two being warmed either side of it. Everything
+// here is about which file to ask for, so it re-renders when that changes and
+// not when a panel's data does.
+const DetailFrame = observer(function DetailFrame({ photoId }: { photoId: string }): JSX.Element {
+  const store = usePhotosStore();
+  const { photos } = usePresenters();
+  const photo = store.detailFor(photoId);
+  const rendition = store.rendition;
+  const showing = store.showing;
+  // Every field comes from the same entry, so what is on screen, whether it is
+  // HDR and where its bytes live can no longer disagree (§10.2).
+  const shownFile = photo?.renditions?.[showing];
+  const version = store.renditionVersionOf(photoId);
+  const stillSrc = viewerUrl(photoId, showing, version);
+
+  // Firefox renders an HDR still dark - it applies a PQ transfer to nothing but
+  // video - so it gets the one-frame video of whichever rendition is showing
+  // instead (§10.7). The embedded one never has a twin, being an 8-bit SDR JPEG
+  // with no headroom to carry, so its still is already right.
+  const hdrVideo = needsHdrVideo() && shownFile?.video != null;
+
+  // Stepping through frames is the whole job, so both neighbours are fetched and
+  // decoded while this one is being looked at and paint on arrival - backwards
+  // through a cull is as common as forwards. The rendition on screen is the one
+  // warmed, so a reader set to the camera's JPEG never pays for a render they
+  // will not see. Only where the neighbour is sure to have it: a rendition built
+  // on request is a 404 until something builds it, and the video twin is a poor
+  // guess at what the next photo needs.
+  const neighbours = [store.prevPhotoId, store.nextPhotoId];
+  const preloadSrcs =
+    hdrVideo || !store.isAlwaysBuilt(showing)
+      ? undefined
+      : neighbours.flatMap((id) => (id == null ? [] : [viewerUrl(id, showing, store.renditionVersionOf(id))]));
+
+  const filename = photo?.file_path.split('/').pop() ?? photoId;
+
+  return (
+    /* Keyed off the route, not the loaded detail, so the photo on screen is
+       always the one the URL asks for. */
+    <PhotoStage
+      photoKey={photoId}
+      // The panels decide which edge they take from this photo's shape, so until
+      // that is known from somewhere the stage is not the size it will be.
+      hold={store.photoFor(photoId) == null}
+      src={hdrVideo && showing !== 'embedded' ? renditionVideoUrl(photoId, showing, version) : stillSrc}
+      video={hdrVideo}
+      alt={filename}
+      filename={filename}
+      preloadSrcs={preloadSrcs}
+      onImageLoad={photos.imageShown}
+      // Only the library's default is built on sight, and only when it is a
+      // stored rendition: the camera's JPEG comes out of the RAW, so a 404 there
+      // means the RAW is gone, which building cannot fix. A chosen rendition was
+      // built before it was shown, so a 404 there is a real fault rather than a
+      // gap.
+      onImageMissing={
+        rendition != null || showing === 'embedded' ? undefined : () => void photos.buildMissingRendition(photoId, showing)
+      }
+    />
+  );
+});
+
+// The verdict and the rating, both off the row: they are right from the first
+// frame and stay hittable while the detail is in flight, and judging a photo
+// re-renders nothing but this.
+const TriagePanel = observer(function TriagePanel({ photoId }: { photoId: string }): JSX.Element {
+  const store = usePhotosStore();
+  const { photos } = usePresenters();
+  const photo = store.photoFor(photoId);
+
+  return (
+    <Panel title="Triage">
+      <TriageControl value={photo?.triage ?? 'untriaged'} onChange={(next) => void photos.setTriage(photoId, next)} />
+
+      <div className="row detail__rating">
+        <Text variant="label">Rating</Text>
+        <div className="stars">
+          {[1, 2, 3, 4, 5].map((n) => (
+            <button
+              key={n}
+              type="button"
+              className={`star${n <= (photo?.rating ?? 0) ? ' on' : ''}`}
+              aria-label={`Set rating to ${n}`}
+              onClick={() => void photos.setRating(photoId, n === photo?.rating ? 0 : n)}
+            >
+              ★
+            </button>
+          ))}
+        </div>
+      </div>
+    </Panel>
+  );
+});
+
+// Its own component holding its own draft: on the page, a keystroke re-rendered
+// every panel and the stage with them.
+const NotesPanel = observer(function NotesPanel({ photoId }: { photoId: string }): JSX.Element {
+  const store = usePhotosStore();
+  const { photos } = usePresenters();
+  const saved = store.detailFor(photoId)?.notes ?? '';
+  const [notes, setNotes] = useState(saved);
+  // Keyed on the photo alone. Following `notes` as well would let a save that
+  // lands after the user has started typing again overwrite the field mid-edit.
+  useEffect(() => setNotes(store.detailFor(photoId)?.notes ?? ''), [photoId, store.loadedDetail?.id]);
+  const dirty = notes !== saved;
+
+  return (
+    <Panel title="Notes">
+      <TextArea
+        label="Notes"
+        placeholder="Add a note"
+        value={notes}
+        onChange={setNotes}
+        onBlur={() => {
+          if (dirty) void photos.setNotes(photoId, notes);
+        }}
+      />
+      <Text variant="mono">{dirty ? 'unsaved' : store.notesSavedAt != null ? 'saved' : ''}</Text>
+    </Panel>
+  );
+});
+
+const CameraPanel = observer(function CameraPanel({ photoId, defaultOpen }: { photoId: string; defaultOpen: boolean }): JSX.Element {
+  const pending = pendingUntil(usePhotosStore().detailFor(photoId));
+
+  return (
+    <MetaPanel
+      title="Camera"
+      defaultOpen={defaultOpen}
+      rows={[
+        ['Body', pending((p) => bodyLabel(p.camera_make, p.camera_model))],
+        ['Lens', pending((p) => p.lens_model ?? 'not recorded')],
+        ['ISO', pending((p) => p.iso ?? 'not recorded')],
+        ['Shutter', pending((p) => (p.shutter_speed == null ? 'not recorded' : shutterLabel(p.shutter_speed)))],
+        ['Aperture', pending((p) => (p.aperture == null ? 'not recorded' : `f/${p.aperture.toFixed(1)}`))],
+        ['Focal length', pending((p) => (p.focal_length == null ? 'not recorded' : `${Math.round(p.focal_length)}mm`))],
+        // The camera's own clock, with the zone it was set to where the body
+        // recorded one: without that, 5pm in Sydney and 5pm in London are the
+        // same string on a trip that spanned both.
+        ['Taken', pending((p) => takenLabel(p.date_taken, p.date_taken_offset))],
+        [
+          'GPS',
+          pending((p) =>
+            p.latitude == null || p.longitude == null ? 'not recorded' : `${p.latitude.toFixed(5)}, ${p.longitude.toFixed(5)}`,
+          ),
+        ],
+      ]}
+    />
+  );
+});
+
+// What is actually on screen, which is the only panel that has to hear about a
+// frame decoding.
+const PreviewPanel = observer(function PreviewPanel({ photoId, defaultOpen }: { photoId: string; defaultOpen: boolean }): JSX.Element {
+  const store = usePhotosStore();
+  const serverConfig = useServerConfigStore();
+  const photo = store.detailFor(photoId);
+  const pending = pendingUntil(photo);
+  const showing = store.showing;
+  const shownFile = photo?.renditions?.[showing];
+  const shownVideo = needsHdrVideo() ? (shownFile?.video ?? null) : null;
+  const shownImage = store.shownImage;
+  const thumbs = serverConfig.config?.thumbnails;
+
+  return (
+    <MetaPanel
+      title="Image preview details"
+      defaultOpen={defaultOpen}
+      rows={[
+        // Reports the rendition actually on screen, which is the chosen one when
+        // the user has switched away from the photo's own. Null on rows
+        // thumbnailed before the column existed, which is "not recorded" rather
+        // than "not built".
+        ['Source', pending((p) => (store.rendition == null && p.rendition_source == null ? 'unknown' : renditionLabel(showing)))],
+        // Named and ordered as in Original RAW below, so the same fact about two
+        // files reads the same way in both panels. Both rows describe what
+        // actually arrived rather than what a column claims: the pixels come off
+        // the decoded image, the weight off the response that carried it. The
+        // video twin is the exception on both counts: its weight is reported by
+        // the server, a media element leaving no timing entry to read it off.
+        ['Dimensions', shownImage == null ? PENDING : `${shownImage.width} × ${shownImage.height}`],
+        [
+          'File size',
+          shownVideo != null
+            ? fileSizeLabel(shownVideo.bytes)
+            : shownImage == null
+              ? PENDING
+              : shownImage.bytes == null
+                ? 'unknown'
+                : fileSizeLabel(shownImage.bytes),
+        ],
+        // The camera's JPEG is passed through untouched, so the encoder settings
+        // the other two are built with say nothing about it.
+        [
+          'Format',
+          pending(() => (shownVideo != null ? 'AV1 (MP4)' : showing === 'embedded' ? 'JPEG' : (thumbs?.format.toUpperCase() ?? 'WEBP'))),
+        ],
+        // The server config reports the SDR pipeline's output space; an HDR
+        // render leaves it for Rec.2020 primaries and a PQ transfer.
+        ['Colour space', pending(() => (shownFile?.hdr === true ? 'Rec.2020 PQ' : (thumbs?.color_space ?? 'sRGB')))],
+        [
+          'Quality',
+          pending(() =>
+            showing === 'embedded' ? 'N/A' : thumbs == null ? 'unknown' : `${thumbs.full.quality} (longest edge ${thumbs.full.size}px)`,
+          ),
+        ],
+        ['Path', pending(() => shownVideo?.path ?? shownFile?.path ?? 'unknown')],
+      ]}
+    />
+  );
+});
+
+// The original on disk and what the catalogue has made of it. The only panel
+// that reads the shoot and album lists, so renaming either wakes nothing else.
+const RawPanel = observer(function RawPanel({ photoId, defaultOpen }: { photoId: string; defaultOpen: boolean }): JSX.Element {
+  const store = usePhotosStore();
+  const shoots = useShootsStore();
+  const albums = useAlbumsStore();
+  const photo = store.detailFor(photoId);
+  const pending = pendingUntil(photo);
+  const shape = store.photoFor(photoId);
+  const shoot = photo?.shoot_id == null ? null : shoots.byId.get(photo.shoot_id);
+  const photoAlbums = photo == null ? [] : albums.albums.filter((a) => photo.album_ids.includes(a.id));
+
+  return (
+    <MetaPanel
+      title="Original RAW"
+      defaultOpen={defaultOpen}
+      rows={[
+        ['Dimensions', shape == null ? PENDING : `${shape.width} × ${shape.height}`],
+        ['File size', pending((p) => (p.file_size == null ? 'unknown' : fileSizeLabel(p.file_size)))],
+        ['Added', pending((p) => localDateTime(p.date_added) ?? p.date_added)],
+        ['Shoot', pending(() => (shoot == null ? 'none' : <Link to={`/shoots/${shoot.id}`}>{shoot.folder_path}</Link>))],
+        [
+          'Albums',
+          pending(() =>
+            photoAlbums.length === 0
+              ? 'none'
+              : photoAlbums.map((a, i) => (
+                  <Fragment key={a.id}>
+                    {i > 0 && ', '}
+                    <Link to={`/albums/${a.id}`}>{a.name}</Link>
+                  </Fragment>
+                )),
+          ),
+        ],
+        [
+          'State',
+          pending((p) => `${p.is_missing ? 'missing' : p.is_deleted ? 'binned' : 'ok'}${p.needs_processing ? ' · thumbnailing' : ''}`),
+        ],
+        ...(photo?.processing_error != null ? ([['Error', photo.processing_error]] as Row[]) : []),
+        ['Path', pending((p) => p.original_path ?? p.file_path)],
+      ]}
+    />
+  );
+});
+
+// The viewer's keyboard layer. Stepping through frames and judging them is the
+// whole point of a detail view during a cull, so the verdict keys work here
+// exactly as they do in the grid. Separate component so that a keystroke
+// re-renders whichever panel owns what it changed, and nothing else.
+const DetailKeys = observer(function DetailKeys({ photoId }: { photoId: string }): null {
+  const store = usePhotosStore();
+  const { photos } = usePresenters();
+  const navigate = useNavigate();
+  const prevId = store.prevPhotoId;
+  const nextId = store.nextPhotoId;
+  const libraryId = store.detailLibraryId;
+
   useEffect(() => {
     function onKey(e: KeyboardEvent): void {
       const target = e.target as HTMLElement | null;
@@ -220,6 +502,21 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
     return () => window.removeEventListener('keydown', onKey);
   }, [prevId, nextId, navigate, libraryId, photoId, photos]);
 
+  return null;
+});
+
+// Nothing but the layout and what decides it, so the page itself re-renders once
+// per photo rather than on everything each part of it watches.
+export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element {
+  const { photoId = '' } = useParams();
+  const store = usePhotosStore();
+  const { photos, serverConfig: configPresenter } = usePresenters();
+
+  useEffect(() => {
+    void photos.openDetail(photoId);
+    void configPresenter.load();
+  }, [photoId, photos, configPresenter]);
+
   // Only once the read for *this* photo has come back empty. The fetch starts in
   // an effect, so the render that first sees a new id has nothing loaded and
   // nothing in flight - which read as "not found" and tore the whole page down,
@@ -238,44 +535,6 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
     );
   }
 
-  // Resolved by the store from the setting rather than from this photo's detail,
-  // so stepping to the next frame asks for the rendition the user actually reads
-  // at on the first attempt. Deriving it from the detail meant the library's
-  // default painted first and was swapped out the moment the fetch landed.
-  const rendition = store.rendition;
-  const showing = store.showing;
-  // Every field comes from the same entry, so what is on screen, whether it is
-  // HDR and where its bytes live can no longer disagree (§10.2).
-  const shownFile = photo?.renditions?.[showing];
-  const stillSrc = viewerUrl(photoId, showing, version);
-  const hdr = shownFile?.hdr === true;
-
-  // Firefox renders an HDR still dark - it applies a PQ transfer to nothing but
-  // video - so it gets the one-frame video of whichever rendition is showing
-  // instead (§10.7). The embedded one never has a twin, being an 8-bit SDR JPEG
-  // with no headroom to carry, so its still is already right.
-  const shownVideo = needsHdrVideo() ? (shownFile?.video ?? null) : null;
-  const hdrVideo = shownVideo != null;
-
-  // Stepping through frames is the whole job, so both neighbours are fetched and
-  // decoded while this one is being looked at and paint on arrival - backwards
-  // through a cull is as common as forwards. The rendition on screen is the one
-  // warmed, so a reader set to the camera's JPEG never pays for a render they
-  // will not see. Only where the neighbour is sure to have it: a rendition built
-  // on request is a 404 until something builds it, and the video twin is a poor
-  // guess at what the next photo needs.
-  const preloadSrcs =
-    hdrVideo || !store.isAlwaysBuilt(showing)
-      ? undefined
-      : [
-          { id: prevId, version: prevVersion },
-          { id: nextId, version: nextVersion },
-        ].flatMap((n) => (n.id == null ? [] : [viewerUrl(n.id, showing, n.version)]));
-
-  const shoot = photo?.shoot_id == null ? null : shoots.byId.get(photo.shoot_id);
-  const photoAlbums = photo == null ? [] : albums.albums.filter((a) => photo.album_ids.includes(a.id));
-  const thumbs = serverConfig.config?.thumbnails;
-
   // A wide photo wastes horizontal space if the panel sits beside it, and a tall
   // one wastes vertical space if the panel sits under it. Put the panel on
   // whichever edge leaves the photo biggest.
@@ -283,230 +542,26 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   // From the loaded grid row when the detail has not arrived: the shape is all
   // the layout needs, and waiting for the fetch to learn it costs a frame of
   // empty stage on every step, warmed neighbour or not.
-  const shape = photo ?? store.photos.find((p) => p.id === photoId) ?? null;
+  const shape = store.photoFor(photoId);
   const landscape = shape == null || shape.width >= shape.height;
   // Beside a portrait the column runs the full height of the page, so every row
   // fits without scrolling; under a landscape it is a 34vh strip and does not.
   const expanded = !landscape;
-  const filename = photo?.file_path.split('/').pop() ?? photoId;
-
-  // The panel strip is a grid track the stage is sized against, so it has to
-  // hold its height across the detail fetch. Every field that fetch answers
-  // renders as PENDING until it lands rather than the panel not rendering at
-  // all: an empty strip let the photo paint full-size and then shrink under
-  // itself when the panels appeared.
-  const pending = (value: (p: PhotoDetail) => React.ReactNode): React.ReactNode => (photo == null ? PENDING : value(photo));
 
   return (
     <div className="pad detail-page">
-      <div className="row detail__nav">
-        <Button render={<Link to={libraryId == null ? '/' : `/libraries/${libraryId}`} />}>
-          <ArrowLeft size={ICON} />
-          Library
-        </Button>
-        <Button iconOnly aria-label="Previous photo" disabled={prevId == null} onClick={() => prevId != null && navigate(`/photos/${prevId}`)}>
-          <ChevronLeft size={ICON} />
-        </Button>
-        <Button iconOnly aria-label="Next photo" disabled={nextId == null} onClick={() => nextId != null && navigate(`/photos/${nextId}`)}>
-          <ChevronRight size={ICON} />
-        </Button>
-        <Text variant="mono">{photo?.file_path ?? ''}</Text>
-
-        <div className="spacer" />
-
-        <ActionMenu
-          trigger={
-            <>
-              <RefreshCw size={ICON} />
-              Actions
-            </>
-          }
-          options={ACTIONS}
-          toggles={[
-            {
-              label: 'Disable cache when changing preview',
-              icon: <RefreshCw size={ICON} />,
-              checked: store.forceRebuild,
-              onChange: photos.setForceRebuild,
-            },
-          ]}
-          onSelect={(action) => {
-            if (action === 'metadata') void photos.refreshMetadata([photoId]);
-            else void photos.chooseRendition(photoId, action);
-          }}
-        />
-        <ActionMenu
-          trigger={
-            <>
-              <Download size={ICON} />
-              Download
-            </>
-          }
-          options={DOWNLOADS}
-          onSelect={(kind) => {
-            window.location.href = kind === 'raw' ? originalUrl(photoId) : jpegUrl(photoId);
-          }}
-        />
-        {store.buildingRendition && <Text variant="mono">building…</Text>}
-        {photo != null && !photo.is_deleted && (
-          <Button variant="danger" onClick={() => void photos.deletePhotos([photo.id])}>
-            <Trash2 size={ICON} />
-            Move to Bin
-          </Button>
-        )}
-      </div>
+      <DetailKeys photoId={photoId} />
+      <DetailNav photoId={photoId} />
 
       <div className={landscape ? 'detail detail--below' : 'detail detail--beside'}>
-        {/* Keyed off the route, not the loaded detail, so the photo on screen is
-            always the one the URL asks for. */}
-        <PhotoStage
-          photoKey={photoId}
-          // The panels decide which edge they take from this photo's shape, so
-          // until that is known from somewhere the stage is not the size it will be.
-          hold={shape == null}
-          src={hdrVideo && showing !== 'embedded' ? renditionVideoUrl(photoId, showing, version) : stillSrc}
-          video={hdrVideo}
-          alt={filename}
-          filename={filename}
-          preloadSrcs={preloadSrcs}
-          onImageLoad={(width, height, bytes) => setShownImage({ width, height, bytes })}
-          // Only the library's default is built on sight, and only when it is a
-          // stored rendition: the camera's JPEG comes out of the RAW, so a 404
-          // there means the RAW is gone, which building cannot fix. A chosen
-          // rendition was built before it was shown, so a 404 there is a real
-          // fault rather than a gap.
-          onImageMissing={
-            rendition != null || showing === 'embedded'
-              ? undefined
-              : () => void photos.buildMissingRendition(photoId, showing)
-          }
-        />
+        <DetailFrame photoId={photoId} />
 
         <div className="detail__panels">
-          <Panel title="Triage">
-            {/* From the shape, so the verdict on screen is right from the first
-                frame and stays hittable while the detail is in flight. */}
-            <TriageControl value={shape?.triage ?? 'untriaged'} onChange={(next) => void photos.setTriage(photoId, next)} />
-
-            <div className="row detail__rating">
-              <Text variant="label">Rating</Text>
-              <div className="stars">
-                {[1, 2, 3, 4, 5].map((n) => (
-                  <button
-                    key={n}
-                    type="button"
-                    className={`star${n <= (shape?.rating ?? 0) ? ' on' : ''}`}
-                    aria-label={`Set rating to ${n}`}
-                    onClick={() => void photos.setRating(photoId, n === shape?.rating ? 0 : n)}
-                  >
-                    ★
-                  </button>
-                ))}
-              </div>
-            </div>
-          </Panel>
-
+          <TriagePanel photoId={photoId} />
           <NotesPanel photoId={photoId} />
-
-          <MetaPanel
-            title="Camera"
-            defaultOpen={expanded}
-            rows={[
-              ['Body', pending((p) => bodyLabel(p.camera_make, p.camera_model))],
-              ['Lens', pending((p) => p.lens_model ?? 'not recorded')],
-              ['ISO', pending((p) => p.iso ?? 'not recorded')],
-              ['Shutter', pending((p) => (p.shutter_speed == null ? 'not recorded' : shutterLabel(p.shutter_speed)))],
-              ['Aperture', pending((p) => (p.aperture == null ? 'not recorded' : `f/${p.aperture.toFixed(1)}`))],
-              ['Focal length', pending((p) => (p.focal_length == null ? 'not recorded' : `${Math.round(p.focal_length)}mm`))],
-              // The camera's own clock, with the zone it was set to where the
-              // body recorded one: without that, 5pm in Sydney and 5pm in
-              // London are the same string on a trip that spanned both.
-              ['Taken', pending((p) => takenLabel(p.date_taken, p.date_taken_offset))],
-              [
-                'GPS',
-                pending((p) =>
-                  p.latitude == null || p.longitude == null ? 'not recorded' : `${p.latitude.toFixed(5)}, ${p.longitude.toFixed(5)}`,
-                ),
-              ],
-            ]}
-          />
-
-          <MetaPanel
-            title="Image preview details"
-            defaultOpen={expanded}
-            rows={[
-              // Reports the rendition actually on screen, which is the chosen
-              // one when the user has switched away from the photo's own.
-              // Null on rows thumbnailed before the column existed, which is
-              // "not recorded" rather than "not built".
-              ['Source', pending((p) => (rendition == null && p.rendition_source == null ? 'unknown' : renditionLabel(showing)))],
-              // Named and ordered as in Original RAW below, so the same fact
-              // about two files reads the same way in both panels.
-              // Both rows describe what actually arrived rather than what a
-              // column claims: the pixels come off the decoded image, the
-              // weight off the response that carried it.
-              // The video twin is the exception on both counts: its weight is
-              // reported by the server, a media element leaving no timing
-              // entry to read it off.
-              ['Dimensions', shownImage == null ? PENDING : `${shownImage.width} × ${shownImage.height}`],
-              [
-                'File size',
-                shownVideo != null
-                  ? fileSizeLabel(shownVideo.bytes)
-                  : shownImage == null
-                    ? PENDING
-                    : shownImage.bytes == null
-                      ? 'unknown'
-                      : fileSizeLabel(shownImage.bytes),
-              ],
-              // The camera's JPEG is passed through untouched, so the encoder
-              // settings the other two are built with say nothing about it.
-              [
-                'Format',
-                pending(() => (shownVideo != null ? 'AV1 (MP4)' : showing === 'embedded' ? 'JPEG' : (thumbs?.format.toUpperCase() ?? 'WEBP'))),
-              ],
-              // The server config reports the SDR pipeline's output space; an
-              // HDR render leaves it for Rec.2020 primaries and a PQ transfer.
-              ['Colour space', pending(() => (hdr ? 'Rec.2020 PQ' : (thumbs?.color_space ?? 'sRGB')))],
-              [
-                'Quality',
-                pending(() =>
-                  showing === 'embedded' ? 'N/A' : thumbs == null ? 'unknown' : `${thumbs.full.quality} (longest edge ${thumbs.full.size}px)`,
-                ),
-              ],
-              ['Path', pending(() => shownVideo?.path ?? shownFile?.path ?? 'unknown')],
-            ]}
-          />
-
-          <MetaPanel
-            title="Original RAW"
-            defaultOpen={expanded}
-            rows={[
-              ['Dimensions', shape == null ? PENDING : `${shape.width} × ${shape.height}`],
-              ['File size', pending((p) => (p.file_size == null ? 'unknown' : fileSizeLabel(p.file_size)))],
-              ['Added', pending((p) => localDateTime(p.date_added) ?? p.date_added)],
-              ['Shoot', pending(() => (shoot == null ? 'none' : <Link to={`/shoots/${shoot.id}`}>{shoot.folder_path}</Link>))],
-              [
-                'Albums',
-                pending(() =>
-                  photoAlbums.length === 0
-                    ? 'none'
-                    : photoAlbums.map((a, i) => (
-                        <Fragment key={a.id}>
-                          {i > 0 && ', '}
-                          <Link to={`/albums/${a.id}`}>{a.name}</Link>
-                        </Fragment>
-                      )),
-                ),
-              ],
-              [
-                'State',
-                pending((p) => `${p.is_missing ? 'missing' : p.is_deleted ? 'binned' : 'ok'}${p.needs_processing ? ' · thumbnailing' : ''}`),
-              ],
-              ...(photo?.processing_error != null ? ([['Error', photo.processing_error]] as Row[]) : []),
-              ['Path', pending((p) => p.original_path ?? p.file_path)],
-            ]}
-          />
+          <CameraPanel photoId={photoId} defaultOpen={expanded} />
+          <PreviewPanel photoId={photoId} defaultOpen={expanded} />
+          <RawPanel photoId={photoId} defaultOpen={expanded} />
         </div>
       </div>
     </div>
