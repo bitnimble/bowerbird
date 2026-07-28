@@ -32,6 +32,12 @@ interface StagedPhoto {
   tile: RenditionJob | null;
   /** The photo viewer's renditions. Null when the library serves the camera's JPEG. */
   renditions: RenditionJob | null;
+  /**
+   * Whether the viewer's side of this photo is this run's business at all. False
+   * for a tile rebuild asked for on its own, which must neither stamp
+   * `rendition_source` nor sweep the renditions it was never going to write.
+   */
+  owesRenditions: boolean;
 }
 
 export class ProcessingService {
@@ -60,10 +66,11 @@ export class ProcessingService {
     for (const listener of this.processed) listener(photoId, written);
   }
 
-  // Rebuilds thumbnails for specific photos from the given source. Returns how
-  // many were queued; ids that are missing or binned have no file to read.
-  async reprocess(photoIds: string[], source: ThumbnailSource): Promise<number> {
-    const queued = this.photos.queueReprocess(photoIds, source);
+  // Rebuilds the grid tile of specific photos, from the camera's JPEG an import
+  // builds it from. Returns how many were queued; ids that are missing or binned
+  // have no file to read.
+  async rebuildTiles(photoIds: string[]): Promise<number> {
+    const queued = this.photos.queueTileRebuild(photoIds);
     if (queued > 0) await this.processUnprocessed();
     return queued;
   }
@@ -266,8 +273,10 @@ export class ProcessingService {
       if (stage === 'tile') {
         this.photos.markTileBuilt(photoId, version);
         // Nothing more to build: this library serves the camera's JPEG in the
-        // viewer, so the tile was the whole import.
-        if (photo?.renditions == null) this.finishRenditions(photo, photoId);
+        // viewer, so the tile was the whole import. A tile rebuilt on its own owes
+        // no renditions either, but there the viewer's side is already settled and
+        // settling it again would sweep the copies it holds.
+        if (photo != null && photo.renditions == null && photo.owesRenditions) this.finishRenditions(photo, photoId);
       } else {
         this.finishRenditions(photo, photoId);
       }
@@ -352,19 +361,20 @@ export class ProcessingService {
     // Only the passes this photo still owes. A run interrupted between them - a
     // crash, a restart, a library that went away and came back - resumes at the
     // one it did not reach rather than redoing a tile already on disk.
+    const owesRenditions = pending.needs_renditions === 1;
     const tile: RenditionJob | null =
       pending.needs_tile === 1
         ? { ...common, targets: [this.target(dataPath, hdrVideo, photoId, 'grid', false, 'embedded')] }
         : null;
     const renditions: RenditionJob | null =
-      source === 'render' && pending.needs_renditions === 1
+      source === 'render' && owesRenditions
         ? {
             ...common,
             targets: [this.target(dataPath, hdrVideo, photoId, 'full', pending.preview_hdr === 1, 'render')],
           }
         : null;
 
-    return { photoId, rawFilePath, dataPath, tile, renditions };
+    return { photoId, rawFilePath, dataPath, tile, renditions, owesRenditions };
   }
 
   private recordFailure(
@@ -381,11 +391,13 @@ export class ProcessingService {
       // its flags set so a later sync reprocesses it at its current path.
       if (!existsSync(job.rawFilePath)) return;
       this.photos.markProcessingFailed(result.photoId, result.error);
-      // Every derivative, not just the stage that failed. A photo is only being
+      // Every derivative, not just the stage that failed. A photo is being
       // reprocessed because its pixels changed, so the ones this run did not reach -
       // the renditions, when it was the tile that crashed - are of the old file and
-      // would be served forever with nothing to notice.
-      if (photo != null) this.sweepRenditions(photo, new Set());
+      // would be served forever with nothing to notice. Except when the run owed
+      // the tile alone: nothing said the pixels changed, so the viewer's copies are
+      // still of the file it has.
+      if (photo != null && photo.owesRenditions) this.sweepRenditions(photo, new Set());
     } catch (err) {
       console.error(`recordFailure failed for photo ${result.photoId}: ${(err as Error).message}`);
     }

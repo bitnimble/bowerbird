@@ -643,17 +643,23 @@ export class PhotosRepository {
       .run(builtAtIso, source, id);
   }
 
-  // Queues thumbnails to be rebuilt from `source`. Returns how many rows were
-  // actually queued, so a request naming missing or binned photos reports it.
-  queueReprocess(photoIds: string[], source: ThumbnailSource): number {
+  // Queues the grid tile to be rebuilt, and only that. The viewer's renditions are
+  // of the same unchanged file, so this leaves `needs_renditions` and
+  // `rendition_source` where they are: setting either would have the run stamp the
+  // viewer's side and sweep the renditions it did not rewrite (§10.3), which is a
+  // rebuild of the thumbnail deleting the photo view's copies behind it.
+  //
+  // Returns how many rows were actually queued, so a request naming missing or
+  // binned photos reports it.
+  queueTileRebuild(photoIds: string[]): number {
     if (photoIds.length === 0) return 0;
     const placeholders = photoIds.map(() => '?').join(', ');
     return this.db
       .query(
-        `UPDATE photos SET needs_tile = 1, needs_renditions = 1, processing_error = NULL, rendition_source = ?
+        `UPDATE photos SET needs_tile = 1, processing_error = NULL
          WHERE id IN (${placeholders}) AND is_missing = 0 AND is_deleted = 0`,
       )
-      .run(source, ...photoIds).changes;
+      .run(...photoIds).changes;
   }
 
   // Both stages: the failure is the file rather than the stage, so a photo whose

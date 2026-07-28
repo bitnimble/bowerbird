@@ -124,8 +124,8 @@ export const api = {
   updatePhoto: (id: string, body: UpdatePhotoRequest): Promise<PhotoDetail> => request('PATCH', `/api/photos/${id}`, body),
   deletePhotos: (photoIds: string[]): Promise<void> => request('POST', '/api/photos/delete', { photo_ids: photoIds }),
   restorePhotos: (photoIds: string[]): Promise<void> => request('POST', '/api/photos/restore', { photo_ids: photoIds }),
-  reprocessPhotos: (photoIds: string[], source: ThumbnailSource): Promise<{ queued: number }> =>
-    request('POST', '/api/photos/reprocess', { photo_ids: photoIds, source }),
+  rebuildTiles: (photoIds: string[]): Promise<{ queued: number }> =>
+    request('POST', '/api/photos/rebuild-tiles', { photo_ids: photoIds }),
   refreshMetadata: (photoIds: string[]): Promise<{ updated: number }> =>
     request('POST', '/api/photos/refresh-metadata', { photo_ids: photoIds }),
   buildRendition: (photoId: string, rendition: Rendition, force = false): Promise<void> =>

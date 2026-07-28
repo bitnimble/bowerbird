@@ -7,7 +7,6 @@ import { renditionUrl, type PhotoSummary } from '../../api/client';
 import { usePhotosStore, usePresenters } from '../../app/stores_context';
 import { Button, ICON, Text } from '../../ui/ui';
 import { renditionVersion } from './photos_store';
-import { RETRY_DELAYS_MS } from './retry_delays';
 
 function filename(filePath: string, id: string): string {
   return filePath.split('/').pop() ?? id.slice(0, 8);
@@ -88,39 +87,22 @@ const Tile = observer(function Tile({
   const { photos } = usePresenters();
   const navigate = useNavigate();
   const [loaded, setLoaded] = useState(false);
-  // A thumbnail 404s while processing is still writing it. The version is this
-  // row's own `date_reprocessed`, which the announcement for this photo writes
-  // into it: the retry is one tile asking again for itself the moment there is
-  // something to fetch, and no other tile in the grid observes that field.
+  // A thumbnail 404s while processing is still writing it, and the announcement
+  // is what brings it back: the version is this row's own `date_reprocessed`,
+  // which the announcement for this photo writes into it, so a new URL is one
+  // tile asking again for itself the moment there is something to fetch. No
+  // other tile in the grid observes that field.
   //
-  // Backed by a retry on a backoff, because being told is not guaranteed: the
-  // stream can be down, or connect a moment after this tile asked, or the client
-  // can be asleep past the replay buffer. Without a floor under it a single
-  // missed announcement leaves a tile blank for the life of the page.
-  const [retry, setRetry] = useState({ attempt: 0, at: 0 });
+  // Nothing polls behind that. A tile whose announcement never arrives stays
+  // blank until the user rebuilds it or reloads, which is the cheap failure; a
+  // backoff here meant a library whose tiles were all 404ing - one bad path, one
+  // cleared data directory - re-requested every tile on screen forever.
   const version = renditionVersion(photo, 'grid');
-  // Both are moments, so the newer one wins and neither can land on a value the
-  // other already used - which adding them together could, and a URL that repeats
-  // itself is a request the browser does not make.
-  const src = renditionUrl(photo.id, 'grid', Math.max(version, retry.at));
+  const src = renditionUrl(photo.id, 'grid', version);
   const [failed, setFailed] = useState(false);
   // A tile that failed and has since been told to try again is not failed any
   // more; without this the placeholder outlives the thumbnail arriving.
   useEffect(() => setFailed(false), [src]);
-  // The budget below is per incident, so an announcement rearms it. Spent once
-  // and never refilled, a tile that burned six attempts in its first minute -
-  // which every tile does when the grid is opened onto an import - would have no
-  // way left to recover from an announcement that never arrived.
-  // Returning the same object when there is nothing to reset lets React bail out
-  // rather than re-render every tile in the grid once on mount.
-  useEffect(() => setRetry((r) => (r.attempt === 0 && r.at === 0 ? r : { attempt: 0, at: 0 })), [version]);
-  useEffect(() => {
-    if (!failed) return;
-    const delay = RETRY_DELAYS_MS[retry.attempt];
-    if (delay == null) return;
-    const timer = setTimeout(() => setRetry((r) => ({ attempt: r.attempt + 1, at: Date.now() })), delay);
-    return () => clearTimeout(timer);
-  }, [failed, retry]);
   const selected = store.selected.has(photo.id);
   const ref = useRef<HTMLDivElement>(null);
   const list = store.mode === 'list';
@@ -154,9 +136,9 @@ const Tile = observer(function Tile({
         aria-label={`photo ${filename(photo.file_path, photo.id)}`}
       >
         {/* The image is always mounted and the placeholder sits behind it until
-            something decodes. Swapping the two on every retry made each list
-            refresh blink every un-thumbnailed tile: the placeholder came down,
-            the request 404'd again, and it went back up. */}
+            something decodes. Swapping the two made each list refresh blink every
+            un-thumbnailed tile: the placeholder came down, the request 404'd
+            again, and it went back up. */}
         <img
           src={src}
           alt=""

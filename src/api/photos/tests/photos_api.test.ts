@@ -20,11 +20,11 @@ function buildApp(over: Partial<PhotosService> = {}) {
     delete: jest.fn(async () => {}),
     ...over,
   } as unknown as PhotosService;
-  const processing = { reprocess: jest.fn(async () => 0) } as unknown as ProcessingService;
+  const processing = { rebuildTiles: jest.fn(async () => 1) } as unknown as ProcessingService;
   const app = new Hono();
   app.route('/api', new PhotosApi(service, processing).routes);
   applyErrorHandler(app);
-  return { app, service };
+  return { app, service, processing };
 }
 
 const PID = '11111111-1111-4111-8111-111111111111';
@@ -80,6 +80,18 @@ describe('PhotosApi', () => {
     });
     expect(res.status).toBe(204);
     expect(del).toHaveBeenCalledWith([PID]);
+  });
+
+  it('queues a tile rebuild for the ids it was given', async () => {
+    const { app, processing } = buildApp();
+    const res = await app.request('/api/photos/rebuild-tiles', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ photo_ids: [PID] }),
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ queued: 1 });
+    expect(processing.rebuildTiles).toHaveBeenCalledWith([PID]);
   });
 
   it('returns the JSON envelope for an unmatched route', async () => {

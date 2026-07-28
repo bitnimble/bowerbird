@@ -9,7 +9,6 @@ import {
   type PreviewRendition,
   type ProcessingStage,
   type Rendition,
-  type ThumbnailSource,
   type Triage,
 } from '../../api/client';
 import type { AlbumsPresenter } from '../albums/albums_presenter';
@@ -35,10 +34,6 @@ function plural(n: number, one: string, many: string): string {
   return `${n} ${n === 1 ? one : many}`;
 }
 
-export function sourceLabel(source: ThumbnailSource): string {
-  return source === 'embedded' ? 'embedded JPEG' : 'RAW render';
-}
-
 export function renditionLabel(rendition: PreviewRendition): string {
   if (rendition === 'embedded') return 'embedded JPEG';
   return rendition === 'full' ? 'RAW render' : 'RAW render (max quality)';
@@ -48,9 +43,9 @@ export class PhotosPresenter {
   // Only the newest list request may write to the store; an older one that
   // resolves late (slow page of a big library) would otherwise overwrite it.
   private inFlight: AbortController | null = null;
-  // Photos already asked for on-demand build. The stage retries a missing
-  // preview on a backoff, and each retry is another failure: without this every
-  // one of them would queue the same job again.
+  // Photos already asked for on-demand build. A stage that fails, is re-mounted
+  // and fails again reports missing each time: without this every one of them
+  // would queue the same job again.
   private readonly previewBuilds = new Set<string>();
 
   constructor(
@@ -416,23 +411,24 @@ export class PhotosPresenter {
     await this.bulk(() => api.restorePhotos(ids), `Restored ${plural(ids.length, 'photo', 'photos')}`);
   }
 
-  async reprocessSelected(source: ThumbnailSource): Promise<void> {
-    await this.reprocess(this.store.selectedIds, source);
-    this.clearSelection();
-  }
-
-  // Rebuilding is queued server-side, so this reports that the work started
-  // rather than that it finished; every photo picks up its new file when the
-  // server announces it, which is also what tells the grid.
-  async reprocess(photoIds: string[], source: ThumbnailSource): Promise<void> {
+  // The grid tile alone, from the camera's JPEG an import builds it from (§10.2).
+  // The photo view's renditions are left where they are: they are of the same
+  // unchanged file, and rebuilding one is its own action in the viewer.
+  //
+  // Queued server-side, so this reports that the work started rather than that it
+  // finished; every photo picks up its new file when the server announces it,
+  // which is also what tells the grid.
+  async regenerateThumbnails(): Promise<void> {
+    const photoIds = this.store.selectedIds;
     if (photoIds.length === 0) return;
     try {
-      const { queued } = await api.reprocessPhotos(photoIds, source);
+      const { queued } = await api.rebuildTiles(photoIds);
       await this.refreshDetail();
-      this.toasts.show(`Rebuilt ${plural(queued, 'thumbnail', 'thumbnails')} from the ${sourceLabel(source)}`);
+      this.toasts.show(`Rebuilt ${plural(queued, 'thumbnail', 'thumbnails')}`);
     } catch (err) {
       this.fail(err);
     }
+    this.clearSelection();
   }
 
   // A photo whose processing never ran, or failed, has no rendition to serve and

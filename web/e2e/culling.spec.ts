@@ -309,7 +309,7 @@ test('a neighbour rebuilt while it was warmed is painted at the URL it was warme
   await expect(warmed).toHaveCount(1);
 
   // Rebuilt from under the reader while they are still on its neighbour.
-  await page.request.post(`${API_URL}/api/photos/reprocess`, { data: { photo_ids: [secondId], source: 'embedded' } });
+  await page.request.post(`${API_URL}/api/photos/${secondId}/renditions/full?force=true`);
   await expect(warmed).toHaveAttribute('src', /\?v=/, { timeout: 60_000 });
   const warmedSrc = await warmed.getAttribute('src');
 
@@ -363,18 +363,17 @@ test('a detail that lands after the reader has stepped on does not replace the p
   await page.unrouteAll({ behavior: 'ignoreErrors' });
 });
 
-test('a selection can be rebuilt from the embedded JPEG', async ({ page }) => {
+test("a selection's grid tiles can be rebuilt from the bulk bar", async ({ page }) => {
   await page.goto('/settings');
   await openLibrary(page, CULL_PHOTOS_DIR);
   await expect(page.locator('.tile')).toHaveCount(PHOTO_NAMES.length);
 
   await page.getByRole('button', { name: 'Select photo' }).first().click();
-  await page.getByRole('button', { name: 'Rebuild' }).click();
-  await page.getByRole('menuitem', { name: 'Thumbnails from the embedded JPEG' }).click();
-  await expect(page.getByText(/Rebuilt 1 thumbnail from the embedded JPEG/)).toBeVisible();
+  await page.getByRole('button', { name: 'Regenerate thumbnails' }).click();
+  await expect(page.getByText(/Rebuilt 1 thumbnail/)).toBeVisible();
 
-  // The source is recorded per photo, so the detail view can say which pixels are
-  // on screen rather than leaving the user to guess.
+  // What the viewer is served is recorded per photo and a tile rebuild says
+  // nothing about it, so the detail view reads the same afterwards.
   await page.locator('.tile__hit').first().click();
   const preview = page.locator('.panel', { hasText: 'IMAGE PREVIEW DETAILS' });
   await expect(preview.getByText('embedded JPEG')).toBeVisible({ timeout: 30_000 });
@@ -388,8 +387,7 @@ test('a rebuilt thumbnail is pushed to the tile that changed, and to no other', 
   const [rebuilt, untouched] = [await src(0), await src(1)];
 
   await page.getByRole('button', { name: 'Select photo' }).first().click();
-  await page.getByRole('button', { name: 'Rebuild' }).click();
-  await page.getByRole('menuitem', { name: 'Thumbnails from the embedded JPEG' }).click();
+  await page.getByRole('button', { name: 'Regenerate thumbnails' }).click();
 
   // The server names the photo it just wrote and the tile asks again for that one
   // alone. Nothing here polls, and no version lands on a photo that did not move.
@@ -461,8 +459,8 @@ test('opening a photo whose rendition is gone builds that rendition back', async
 });
 
 // The point of caching the renditions is that switching back to one already seen
-// costs nothing, and that no rendition can outlive the RAW it was made from.
-test('a chosen preview rendition is cached on disk, and dropped when the photo is rebuilt', async ({ page }) => {
+// costs nothing.
+test('a chosen preview rendition is cached on disk, and survives a tile rebuild', async ({ page }) => {
   await page.goto('/settings');
   await openLibrary(page, CULL_PHOTOS_DIR);
   await page.locator('.tile__hit').first().click();
@@ -496,14 +494,16 @@ test('a chosen preview rendition is cached on disk, and dropped when the photo i
   await showRendition('From RAW');
   await expect(preview.getByText('RAW render')).toBeVisible({ timeout: 60_000 });
 
-  // Rebuilding is what a changed RAW triggers too, and it must take the cached
-  // renditions with it or they would show the previous file forever.
+  // The grid's rebuild is the grid tile and nothing else. It used to queue both
+  // stages, which had the run sweep every rendition it did not itself write - so
+  // regenerating a thumbnail deleted the render the viewer was holding, and the
+  // next look paid for it again.
   await openLibrary(page, CULL_PHOTOS_DIR);
   await page.getByRole('button', { name: 'Select photo' }).first().click();
-  await page.getByRole('button', { name: 'Rebuild' }).click();
-  await page.getByRole('menuitem', { name: 'Thumbnails from the embedded JPEG' }).click();
+  await page.getByRole('button', { name: 'Regenerate thumbnails' }).click();
   await expect(page.getByText(/Rebuilt 1 thumbnail/)).toBeVisible({ timeout: 60_000 });
-  await expect.poll(() => existsSync(cached), { timeout: 15_000 }).toBe(false);
+  await page.waitForTimeout(2000); // the sweep that must not happen is fire-and-forget
+  expect(existsSync(cached)).toBe(true);
 });
 
 // Switching between the camera's JPEG and a render is the comparison the detail

@@ -159,6 +159,32 @@ describe('ProcessingService.processUnprocessed', () => {
     expect(posted.map((job) => photoStage(job))).toEqual(['a:full']);
   });
 
+  it('rebuilds a tile on its own without touching the renditions beside it', async () => {
+    // The grid's own action, on a file whose pixels have not changed: stamping the
+    // viewer's side here would sweep every rendition this run did not write, so
+    // regenerating a thumbnail deleted the photo view's copies behind it.
+    const fullDir = path.join(root, '.bowerbird', 'renditions', 'full');
+    mkdirSync(fullDir, { recursive: true });
+    const full = path.join(fullDir, 'a.avif');
+    writeFileSync(full, 'kept');
+
+    const markRenditionsBuilt = jest.fn();
+    const repo = {
+      listPendingProcessing: jest.fn(() => [{ ...pending('a'), needs_renditions: 0 }]),
+      markTileBuilt: jest.fn(),
+      markRenditionsBuilt,
+      markProcessingFailed: jest.fn(),
+    } as unknown as PhotosRepository;
+
+    await new ProcessingService(repo, config).processUnprocessed('lib');
+
+    expect(posted.map((job) => photoStage(job))).toEqual(['a:grid']);
+    expect(markRenditionsBuilt).not.toHaveBeenCalled();
+    // The sweep is fire-and-forget, so give it the chance to be wrong.
+    await new Promise((r) => setTimeout(r, 50));
+    expect(existsSync(full)).toBe(true);
+  });
+
   it('announces each stage as it lands, with the stamp that stage wrote', async () => {
     // Splitting the passes exists so a grid is browsable at the tile's pace (~125ms)
     // rather than the render's (~1.5s). A client hears about a photo through these

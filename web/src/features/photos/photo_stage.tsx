@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Maximize, Minimize, ZoomIn, ZoomOut } from 'lucide-react';
 import { Button, ICON, Text } from '../../ui/ui';
-import { RETRY_DELAYS_MS } from './retry_delays';
 
 const MIN_SCALE = 1; // 1 = fitted to the stage
 const MAX_SCALE = 8;
@@ -104,7 +103,6 @@ export function PhotoStage({ src, alt, filename, video, photoKey, hold, preloadS
   const [fullscreen, setFullscreen] = useState(false);
   const [toolbarVisible, setToolbarVisible] = useState(false);
   const [failed, setFailed] = useState(false);
-  const [attempt, setAttempt] = useState(0);
   // The src actually shown, which lags the one asked for until it has decoded,
   // with the photo it belongs to: for a moment after a step that is the previous
   // one, and everything driven by "this photo is up" has to tell the two apart.
@@ -132,9 +130,7 @@ export function PhotoStage({ src, alt, filename, video, photoKey, hold, preloadS
 
   // A new photo starts fitted; carrying a pan offset across frames would show
   // the next one scrolled to a corner. Keyed on the photo rather than the src, so
-  // that switching rendition holds the frame it is already showing. The retry
-  // state is not reset here: every photo change is also a src change, and the
-  // effect below already covers it.
+  // that switching rendition holds the frame it is already showing.
   useEffect(reset, [photoKey, reset]);
 
   // The previous photo's frame is left up for a beat rather than cleared on the
@@ -155,26 +151,7 @@ export function PhotoStage({ src, alt, filename, video, photoKey, hold, preloadS
     return () => clearTimeout(timer);
   }, [stale]);
 
-  useEffect(() => {
-    setFailed(false);
-    setAttempt(0);
-  }, [src]);
-
-  useEffect(() => {
-    // A blob URL is decoded from bytes already in hand; it will not start
-    // working later.
-    if (!failed || src.startsWith('blob:')) return;
-    const delay = RETRY_DELAYS_MS[attempt];
-    if (delay == null) return;
-    const timer = setTimeout(() => {
-      setFailed(false);
-      setAttempt((a) => a + 1);
-    }, delay);
-    return () => clearTimeout(timer);
-  }, [failed, attempt, src]);
-
-  // The browser caches the 404, so a retry needs a URL it has not seen.
-  const shownSrc = attempt === 0 ? src : `${src}${src.includes('?') ? '&' : '?'}retry=${attempt}`;
+  useEffect(() => setFailed(false), [src]);
 
   // Through refs: callers pass inline callbacks, and a new identity per render
   // would restart the decode below on every render while one is in flight.
@@ -184,7 +161,7 @@ export function PhotoStage({ src, alt, filename, video, photoKey, hold, preloadS
   onLoaded.current = onImageLoad;
 
   // The src being prepared, mounted but invisible until it can be shown.
-  const incoming = shownSrc === currentFrame ? null : shownSrc;
+  const incoming = src === currentFrame ? null : src;
   // A callback ref, not a RefObject: refs are invariant, so one object cannot be
   // handed to both an <img> and a <video>.
   const incomingRef = useRef<HTMLImageElement | HTMLVideoElement | null>(null);
@@ -222,14 +199,13 @@ export function PhotoStage({ src, alt, filename, video, photoKey, hold, preloadS
     element.decode().then(promote, () => {
       if (!live) return;
       setFailed(true);
-      // Only the first failure, and never for a blob: a decoded image in hand
-      // cannot be missing server-side.
-      if (attempt === 0 && !src.startsWith('blob:')) onMissing.current?.();
+      // Never for a blob: a decoded image in hand cannot be missing server-side.
+      if (!src.startsWith('blob:')) onMissing.current?.();
     });
     return () => {
       live = false;
     };
-  }, [incoming, attempt, src, hold, photoKey]);
+  }, [incoming, src, hold, photoKey]);
 
   // Measures here, outside the updater, so the updater itself stays pure.
   const zoomBy = useCallback(
@@ -370,8 +346,8 @@ export function PhotoStage({ src, alt, filename, video, photoKey, hold, preloadS
       >
         {/* A frame that failed replaces the incoming one, not the picture already
             on screen: switching to a rendition that 404s should leave the one
-            being compared against up, not blank the stage and flicker it back on
-            every retry. Nothing to hold means there is nothing to say but this.
+            being compared against up, not blank the stage. Nothing to hold means
+            there is nothing to say but this.
             A frame belonging to the *previous* photo is not a candidate - the cap
             above has already dropped it by the time any of this can matter. */}
         {failed && painted == null ? (
@@ -403,7 +379,7 @@ export function PhotoStage({ src, alt, filename, video, photoKey, hold, preloadS
                   onError={() => {
                     if (source !== incoming) return;
                     setFailed(true);
-                    if (attempt === 0) onMissing.current?.();
+                    onMissing.current?.();
                   }}
                 />
               );

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { OrderingSchema, PaginationSchema, PhotoIdListSchema, SoftDeleteFilterSchema, UuidSchema } from './common';
+import { OrderingSchema, PaginationSchema, SoftDeleteFilterSchema, UuidSchema } from './common';
 import { PreviewRenditionSchema } from './settings';
 
 // The cull verdict. 'untriaged' is the wire spelling of a NULL column: a photo
@@ -118,12 +118,6 @@ export const PhotoListResponseSchema = z.object({
   limit: z.number().int(),
 });
 export type PhotoListResponse = z.infer<typeof PhotoListResponseSchema>;
-
-export const ReprocessRequestSchema = PhotoIdListSchema.extend({
-  source: ThumbnailSourceSchema,
-});
-export type ReprocessRequest = z.infer<typeof ReprocessRequestSchema>;
-
 
 export const UpdatePhotoRequestSchema = z.object({
   rating: z.number().int().min(0).max(5).optional(),

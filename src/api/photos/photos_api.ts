@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { PaginationSchema, PhotoIdListSchema } from '../../schemas/common';
-import { PhotoListQuerySchema, ReprocessRequestSchema, UpdatePhotoRequestSchema } from '../../schemas/photos';
+import { PhotoListQuerySchema, UpdatePhotoRequestSchema } from '../../schemas/photos';
 import { AppError } from '../../errors';
 import { isRendition } from '../../services/processing/renditions';
 import type { PhotosService } from '../../services/photos/photos_service';
@@ -40,11 +40,12 @@ export class PhotosApi {
       return c.body(null, 204);
     });
 
-    // Rebuilds thumbnails from a chosen source. Separate from PATCH because it is
-    // work to schedule, not a field to set, and it applies to a whole selection.
-    app.post('/photos/reprocess', async (c) => {
-      const { photo_ids, source } = ReprocessRequestSchema.parse(await c.req.json());
-      return c.json({ queued: await this.processing.reprocess(photo_ids, source) });
+    // Rebuilds grid tiles, and nothing else: the photo view's renditions are built
+    // and rebuilt on their own (§10.3). Separate from PATCH because it is work to
+    // schedule, not a field to set, and it applies to a whole selection.
+    app.post('/photos/rebuild-tiles', async (c) => {
+      const { photo_ids } = PhotoIdListSchema.parse(await c.req.json());
+      return c.json({ queued: await this.processing.rebuildTiles(photo_ids) });
     });
 
     // Re-reads the RAW headers. Sync only re-opens a file whose stat changed, so

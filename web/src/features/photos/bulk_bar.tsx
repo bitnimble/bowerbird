@@ -1,14 +1,7 @@
 import { observer } from 'mobx-react-lite';
-import { FolderInput, Images, RefreshCw, RotateCcw, RotateCw, Sparkles, Trash2, Wand2, X } from 'lucide-react';
-import type { ThumbnailSource } from '../../api/client';
+import { FolderInput, Images, RotateCcw, RotateCw, Sparkles, Trash2, X } from 'lucide-react';
 import { useAlbumsStore, usePhotosStore, usePresenters, useShootsStore } from '../../app/stores_context';
-import { ActionMenu, Button, CheckMenu, ICON, type Option, Text } from '../../ui/ui';
-
-const REBUILDS: Option<ThumbnailSource | 'metadata'>[] = [
-  { value: 'render', label: 'Thumbnails from the RAW', icon: <Wand2 size={ICON} /> },
-  { value: 'embedded', label: 'Thumbnails from the embedded JPEG', icon: <Sparkles size={ICON} /> },
-  { value: 'metadata', label: 'Metadata from the RAW header', icon: <RotateCw size={ICON} /> },
-];
+import { Button, CheckMenu, ICON, Text } from '../../ui/ui';
 
 interface Props {
   // Set on a shoot or album page so the selection can be removed from it, not
@@ -78,19 +71,15 @@ export const BulkBar = observer(function BulkBar({ removeFrom }: Props): JSX.Ele
             />
           )}
 
-          <ActionMenu
-            trigger={
-              <>
-                <RefreshCw size={ICON} />
-                Rebuild
-              </>
-            }
-            options={REBUILDS}
-            onSelect={(action) => {
-              if (action === 'metadata') void photos.refreshMetadataForSelection();
-              else void photos.reprocessSelected(action);
-            }}
-          />
+          <Button onClick={() => void photos.regenerateThumbnails()}>
+            <Sparkles size={ICON} />
+            Regenerate thumbnails
+          </Button>
+
+          <Button onClick={() => void photos.refreshMetadataForSelection()}>
+            <RotateCw size={ICON} />
+            Refresh metadata
+          </Button>
 
           {removeFrom != null && (
             <Button

@@ -906,7 +906,9 @@ Against that, the file being the cache means a change to the pipeline is invisib
 
 **A missing grid tile is rebuilt when the photo is opened.** The queue only visits photos flagged for processing, so a tile deleted under a catalogued photo - a wiped cache, a sweep that went too far - is a hole in the grid that nothing ever fills; reprocessing the photo would fill it at the cost of every other rendition. Opening the photo is when someone is looking, so `GET /api/photos/:id` stats the tile and, if it is gone, renders that one rendition in the background from the source the import used (the photo's `rendition_source`, or the library's). A side effect on a read, deliberately: the file is the cache, and repairing a cache on the read that noticed it is empty is what a cache does. One repair per photo is in flight at a time.
 
-**Reprocessing clears every rendition it does not itself rewrite.** A photo is only reprocessed because its pixels changed, so the copies beside it are of the old file and nothing else would ever notice - the max-resolution export in particular would be served forever. The ones the job is about to write are exempt, or the sweep would delete what it just made.
+**Reprocessing clears every rendition it does not itself rewrite.** A photo is reprocessed because its pixels changed, so the copies beside it are of the old file and nothing else would ever notice - the max-resolution export in particular would be served forever. The ones the job is about to write are exempt, or the sweep would delete what it just made.
+
+**A run that owes only the tile sweeps nothing.** `POST /api/photos/rebuild-tiles` sets `needs_tile` alone, and a run that was never going to write a rendition neither stamps `rendition_source` nor sweeps: nothing said the pixels changed, so the viewer's copies are still of the file it has. Sweeping there made regenerating a grid thumbnail delete the render the photo view was holding, which the next look then paid for again.
 
 Every writer on this path fails on a missing directory rather than creating one, and ffmpeg fails the whole job rather than the one output, so the worker creates the directory for each of its job's outputs before it runs. At the call site instead, each new rendition is a directory somebody has to remember, and the one that was forgotten took the still down with it.
 
@@ -940,7 +942,7 @@ Each worker:
 
 **The pending flag is per stage, because everything that reads it wants to know which one.** `needs_tile` and `needs_renditions` each clear as their own pass lands, so a run interrupted between them resumes at the second rather than redoing a tile already on disk; the queue asks for either (`countPendingProcessing` counts photos owing one, since the sync strip counts photos rather than stages); the gallery's "No thumbnail" filter means `needs_tile`, a photo with a tile being no hole in the grid; and the detail panel can say which of the two it is waiting on rather than reporting one word for two rather different waits. A failure clears both: the failure is the file, not the stage.
 
-A failure sweeps *every* derivative of that photo, not just the stage that failed. A photo is only being reprocessed because its pixels changed, so a rendition the failed run never reached is of the old file and would otherwise be served forever with nothing to notice.
+A failure sweeps *every* derivative of that photo, not just the stage that failed. A photo is being reprocessed because its pixels changed, so a rendition the failed run never reached is of the old file and would otherwise be served forever with nothing to notice. The exception is a run that owed the tile alone (§10.3): nothing there says the pixels changed, so a failed thumbnail rebuild leaves the viewer's copies where they are.
 
 **Thumbnail source.** The job names where the pixels come from:
 
@@ -1167,7 +1169,7 @@ On the wasm path HDR signalling rides on a PNG **cICP** chunk (9/16/0/1 = BT.202
 
 `libraw_set_output_color` currently pins sRGB, so nothing produced today is HDR: the delivery path is ready for it, the decode is not.
 
-The default for newly indexed photos is the library's `preview_source` (§10.1). Changing it is deliberately not retroactive: rebuilding an existing catalogue is a job the user asks for explicitly, not something a preference does to thousands of files in the background. `POST /api/photos/reprocess` is that explicit request.
+The default for newly indexed photos is the library's `preview_source` (§10.1). Changing it is deliberately not retroactive: rebuilding an existing catalogue is a job the user asks for explicitly, not something a preference does to thousands of files in the background. `POST /api/photos/:id/renditions/:r?force=true` is that explicit request, one photo at a time, from the viewer that is showing it - there is no bulk re-render, because a selection's worth of RAW renders is minutes of work for pixels nobody has asked to look at.
 
 ### 10.6 Orphaned files
 
@@ -1455,7 +1457,7 @@ All endpoints return JSON. Error responses use a standard envelope:
 | `POST` | `/api/photos/delete` | Soft-delete photos (body: `{ photo_ids: string[] }`) |
 | `GET` | `/api/config` | Thumbnail format, sizes and qualities, so a client can state what it is rendering |
 | `POST` | `/api/photos/restore` | Restore soft-deleted photos to where they were deleted from (§12.2) |
-| `POST` | `/api/photos/reprocess` | Rebuild thumbnails for a selection from a named source (§10.3) |
+| `POST` | `/api/photos/rebuild-tiles` | Rebuild the grid tiles of a selection, and nothing else (§10.3) |
 | `POST` | `/api/photos/refresh-metadata` | Re-read the RAW headers for a selection |
 | `POST` | `/api/photos/:id/lossless` | Build the full-resolution lossless render (§10.5) |
 | `POST` | `/api/photos/:id/hdr` | Build the HDR renditions, both media, all variants (§10.7) |
@@ -1883,13 +1885,11 @@ The stamp is what makes each of those announceable rather than merely true: a cl
 
 **One stamp per stage, not one per photo.** A photo announces twice during an import of a rendering library, and the two announcements move different URLs: the tile pass moves `tile_built_at` and with it the gallery's, the rendition pass moves `renditions_built_at` and with it the viewer's. Shared, the second announcement moved the tile's URL too - and a moved URL is a different cache key rather than something to revalidate, so every tile on the page was downloaded again in full (~15KB each) for bytes that had not changed. Which stamp a URL reads is the rendition it is asking for: `grid` from the tile's, `full` and `max` from the renditions', and the camera's JPEG from `date_updated`, since that one is lifted out of the RAW per request rather than built and changes exactly when the RAW does.
 
-**Being told is the fast path, not the only one.** A tile that 404s also retries on a backoff (`RETRY_DELAYS_MS`, shared with the viewer), because delivery is not guaranteed: the stream can be down, or connect a moment after a tile has already asked, or the client can be asleep for longer than the replay buffer. Without that floor a single missed announcement leaves a tile blank for the life of the page, which is the one thing the counter it replaced, crude as it was, did cover.
-
-The tile's retry and the row's version both feed the same suffix, and both are moments, so the newer wins and neither can produce a URL the other has already used - which a URL that repeats itself would turn into a request the browser never makes.
+**Being told is the only path.** Nothing polls behind the announcement. A tile that 404s stays blank until it is announced, rebuilt from the bulk bar, or the page is reloaded - a missed announcement therefore costs a reload, and that is the cheaper failure: the backoff this replaced (`RETRY_DELAYS_MS`, shared with the viewer) meant that a library whose tiles all 404 - one wrong path, one cleared data directory - re-requested every tile on screen for as long as the page was open, and turned a bug into a load test against the same 404.
 
 The version is told rather than guessed, and that is the whole point. What it replaced was a pair of global flags: `reloadToken`, bumped on every completed list fetch, so the grid re-requested *all* of its thumbnails whenever anything refetched the list and re-rendered every tile to do it, at a poll a second for the length of an import, which is exactly when the grid is largest and the least of it has changed. The other was `rebuiltAt`, a session timestamp that made every *subsequent* photo in the viewer miss the browser cache once because one photo had been rebuilt.
 
-The stream carries an `id:` per event and keeps the last few hundred in a ring buffer, so a browser reconnecting after a blip replays what it missed through `Last-Event-ID` rather than waiting out the backoff above. An id from a previous run of the server (one at or beyond the current counter) replays nothing rather than the whole buffer; a restart is therefore a gap in the announcements, and the backoff is what closes it. A heartbeat every 20s keeps the connection from being idled out (`idleTimeout`, §index.ts), and waits on the disconnect as well as the timer, so a departed client is dropped at once rather than at the next beat.
+The stream carries an `id:` per event and keeps the last few hundred in a ring buffer, so a browser reconnecting after a blip replays what it missed through `Last-Event-ID` rather than losing it. An id from a previous run of the server (one at or beyond the current counter) replays nothing rather than the whole buffer; a restart mid-import is therefore a gap in the announcements, and a reload is what closes it. A heartbeat every 20s keeps the connection from being idled out (`idleTimeout`, §index.ts), and waits on the disconnect as well as the timer, so a departed client is dropped at once rather than at the next beat.
 
 The sync status bar renders one cell per photo queued by the current run, filling as `photos_processed` climbs (§9.6). It stops polling as soon as the library reports idle.
 
