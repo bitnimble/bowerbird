@@ -170,6 +170,15 @@ export class PhotosStore {
     return this.loadedDetail?.library_id ?? null;
   }
 
+  // The open photo as the client already knows it: the row the grid loaded, or
+  // the last detail when there is no row to have (a deep link, before the
+  // collection behind it is fetched). Everything the viewer has to decide before
+  // its own fetch returns is answered from here.
+  @computed get openPhoto(): PhotoSummary | null {
+    const id = this.open?.id;
+    return id == null ? null : (this.photos.find((p) => p.id === id) ?? this.detailFor(id));
+  }
+
   // What the open photo's library builds on import: it serves the camera's JPEG
   // or it renders. The server names this on the detail, but it is a property of
   // the *library*, and the library list is loaded for the rail long before any
@@ -178,20 +187,20 @@ export class PhotosStore {
   // render for a reader set to the camera's JPEG and swap it out a moment later;
   // and in an album spanning two libraries it was the previous photo's answer.
   @computed get defaultRendition(): PreviewRendition {
-    const photo = this.photos.find((p) => p.id === this.open?.id);
-    const library = this.libraries.byId.get(photo?.library_id ?? this.loadedDetail?.library_id ?? '');
+    const library = this.libraries.byId.get(this.openPhoto?.library_id ?? '');
     // Unknown only until the collection loads, and the camera's JPEG is the one
     // rendition every photo has, so it is the safe answer to guess with.
     return library?.preview_source === 'render' ? 'full' : 'embedded';
   }
 
-  // What the setting alone says to open at, before the photo's detail lands.
-  // Null when only the detail can answer: the per-photo memory lives on it, and
-  // 'remember' has nothing to remember until something is picked.
+  // What the setting says to open at. Null only when nothing has been chosen for
+  // it to remember: the per-photo memory is on the row like everything else the
+  // first frame needs, so "last used per photo" no longer has to wait for the
+  // detail and paint the library's default in the meantime.
   @computed get preferredRendition(): PreviewRendition | null {
     const mode = this.settings.previewRenditionMode;
     if (mode === 'remember') return this.settings.lastPreviewRendition;
-    if (mode === 'remember_per_photo') return null;
+    if (mode === 'remember_per_photo') return this.openPhoto?.preview_rendition ?? null;
     return mode;
   }
 

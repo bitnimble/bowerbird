@@ -123,7 +123,7 @@ function folderRange(folderPath: string): [string, string] {
 // Qualified with `photos.` because listByAlbum joins album_photos, which also has
 // a date_added column (bare names would be ambiguous).
 const SUMMARY_COLS =
-  'photos.id, photos.library_id, photos.shoot_id, photos.file_path, photos.width, photos.height, photos.date_taken, photos.date_added, photos.date_reprocessed, photos.triage, photos.rating, photos.is_missing, photos.is_deleted';
+  'photos.id, photos.library_id, photos.shoot_id, photos.file_path, photos.width, photos.height, photos.date_taken, photos.date_added, photos.date_reprocessed, photos.preview_rendition, photos.triage, photos.rating, photos.is_missing, photos.is_deleted';
 
 const SYNC_COLUMNS = 'id, file_path, file_hash, is_missing, date_updated, file_size';
 interface SyncRow {
@@ -154,6 +154,7 @@ interface SummaryRow {
   date_taken: string | null;
   date_added: string;
   date_reprocessed: string | null;
+  preview_rendition: PreviewRendition | null;
   triage: string | null;
   rating: number;
   is_missing: number;
@@ -182,7 +183,6 @@ interface DetailRow extends SummaryRow {
   camera_model: string | null;
   lens_model: string | null;
   rendition_source: ThumbnailSource | null;
-  preview_rendition: PreviewRendition | null;
   lib_ordering: string; // the owning library's ordering, for ordering_date
 }
 
@@ -223,6 +223,7 @@ function toSummary(row: SummaryRow, ordering: Ordering): PhotoSummary {
     is_missing: row.is_missing === 1,
     is_deleted: row.is_deleted === 1,
     date_reprocessed: row.date_reprocessed,
+    preview_rendition: row.preview_rendition,
   };
 }
 

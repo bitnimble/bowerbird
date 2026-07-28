@@ -654,6 +654,36 @@ test('a reader set to the camera JPEG never loads the render', async ({ page }) 
   expect(requested.filter((url) => url.includes(`/${nextId}/renditions/`))).toEqual([]);
 });
 
+// "Last used per photo" is the same question as the setting above, asked per
+// photo rather than once: the answer has to be on the row for the same reason,
+// or reopening a photo paints the library's default while the detail carrying
+// the reader's own choice is still in flight.
+test('a photo reopens at the rendition it was last read in, without the library default first', async ({ page }) => {
+  const requested: string[] = [];
+  page.on('request', (r) => requested.push(r.url()));
+
+  await page.goto('/settings');
+  await libraryRow(page, CULL_PHOTOS_DIR).getByRole('button', { name: 'Render the RAW' }).click();
+  await page.getByRole('group', { name: 'Open photos at' }).getByRole('button', { name: 'Last used per photo' }).click();
+  await openLibrary(page, CULL_PHOTOS_DIR);
+  await page.locator('.tile__hit').first().click();
+  const photoId = page.url().split('/').pop() ?? '';
+  await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
+
+  // Read it in the camera's JPEG, which this library does not default to.
+  await page.keyboard.press('i');
+  const preview = page.locator('.panel', { hasText: 'IMAGE PREVIEW DETAILS' });
+  await expect(preview.getByText('embedded JPEG')).toBeVisible({ timeout: 60_000 });
+
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.tile')).toHaveCount(PHOTO_NAMES.length);
+  requested.length = 0;
+  await page.locator('.tile__hit').first().click();
+
+  await expect(page.locator(`.stage__viewport img.is-ready[src*="/embedded.jpg"]`)).toBeVisible({ timeout: 60_000 });
+  expect(requested.filter((url) => url.includes(`/${photoId}/renditions/`))).toEqual([]);
+});
+
 test('the photo fits the stage instead of overflowing it', async ({ page }) => {
   await page.goto('/settings');
   await openLibrary(page, CULL_PHOTOS_DIR);

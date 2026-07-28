@@ -31,6 +31,11 @@ export const PhotoSummarySchema = z.object({
   // a page holding the previous ones has no other way to know they moved
   // (§13.5). Null for a photo whose renditions have never been built.
   date_reprocessed: z.string().nullable(),
+  // The rendition this photo was last viewed in, read by the setting that
+  // reopens it there. On the summary for the same reason as the field above: the
+  // viewer has to know which file to ask for before it has fetched anything, or
+  // it opens at the library's default and swaps a moment later (§18.5).
+  preview_rendition: PreviewRenditionSchema.nullable(),
 });
 export type PhotoSummary = z.infer<typeof PhotoSummarySchema>;
 
@@ -65,9 +70,6 @@ export const PhotoDetailSchema = PhotoSummarySchema.extend({
   lens_model: z.string().nullable(),
   // Which pixels the grid tile was built from; NULL before first processing.
   rendition_source: ThumbnailSourceSchema.nullable(),
-  // The rendition this photo was last viewed in, remembered only for the mode
-  // that reopens it there; null until then.
-  preview_rendition: PreviewRenditionSchema.nullable(),
   // Where the bytes actually live on the server, so the detail panel can name the
   // file it is showing. Resolved by the service, which holds the library: null on
   // the repository's own read, and for a photo whose library has gone.

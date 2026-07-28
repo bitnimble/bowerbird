@@ -3,7 +3,6 @@ import {
   ApiError,
   api,
   type Ordering,
-  type PhotoDetail,
   type PhotoListParams,
   type PhotoListResponse,
   type PhotoSummary,
@@ -189,10 +188,10 @@ export class PhotosPresenter {
   }
 
   // What still has to be applied to open this photo where the setting asks, or
-  // null when the viewer resolved that from the setting on its own. Only the
-  // per-photo memory needs the detail read at all.
-  private renditionToApply(detail: PhotoDetail): PreviewRendition | null {
-    const target = this.settings.previewRenditionMode === 'remember_per_photo' ? detail.preview_rendition : this.store.preferredRendition;
+  // null when the viewer resolved that from the row on its own - which is the
+  // usual answer now that every fact the setting reads is on the row.
+  private renditionToApply(): PreviewRendition | null {
+    const target = this.store.preferredRendition;
     return target == null || target === this.store.showing ? null : target;
   }
 
@@ -236,7 +235,7 @@ export class PhotosPresenter {
       // rendition written below is a single shared field, so a reader who has
       // moved on while that was in flight must not have this photo's applied.
       if (!this.isCurrent(photoId)) return;
-      const opening = this.renditionToApply(detail);
+      const opening = this.renditionToApply();
       if (opening == null) return;
       // A rendition every photo already has needs no build, and no round trip to
       // learn that: it goes up as soon as the detail names it.
@@ -496,6 +495,9 @@ export class PhotosPresenter {
         if (row != null) {
           row.rating = updated.rating;
           row.triage = updated.triage;
+          // The row answers which rendition to reopen this photo at, so a choice
+          // written only to the detail would be forgotten on the step back to it.
+          row.preview_rendition = updated.preview_rendition;
         }
       });
       // Only the field that changed can move a photo out of the slice being
