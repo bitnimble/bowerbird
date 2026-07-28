@@ -1,0 +1,14 @@
+[package]
+name = "rawshim"
+version = "0.1.0"
+edition = "2021"
+
+# cdylib so Bun can dlopen it exactly like libraw.so itself.
+[lib]
+crate-type = ["cdylib"]
+
+[build-dependencies]
+bindgen = "0.69"
+
+[profile.release]
+opt-level = 2

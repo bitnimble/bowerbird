@@ -277,6 +277,9 @@ test('a selection can be rebuilt from the embedded JPEG', async ({ page }) => {
 // writes the grid tile, which is not what the viewer asked for, so a library
 // that renders would ask again on every paint and never settle.
 test('opening a photo whose rendition is gone builds that rendition back', async ({ page }) => {
+  // Two real renders of the RAW, and the 60s default expires mid-poll: the
+  // failure then reads as a timeout rather than as the wait it is.
+  test.setTimeout(240_000);
   await page.goto('/settings');
   await openLibrary(page, CULL_PHOTOS_DIR);
   await page.locator('.tile__hit').first().click();

@@ -169,15 +169,15 @@ export function PhotoStage({ src, alt, filename, video, photoKey, preloadSrc, on
   const onLoaded = useRef(onImageLoad);
   onLoaded.current = onImageLoad;
 
-  // The src being prepared, mounted but invisible until it has decoded. A video
-  // has no equivalent, so it swaps directly and keeps the old behaviour; it is
-  // the Firefox-only path and is never one of two cached renditions compared.
-  const incoming = video || shownSrc === painted ? null : shownSrc;
+  // The src being prepared, mounted but invisible until it can be shown. A video
+  // has no `decode()`, so it is promoted by its own `loadeddata` below - the same
+  // two-element swap, since the Firefox HDR path is a rendition comparison too.
+  const incoming = shownSrc === painted ? null : shownSrc;
   const incomingRef = useRef<HTMLImageElement>(null);
 
   useEffect(() => {
     const image = incomingRef.current;
-    if (incoming == null || image == null) return;
+    if (video || incoming == null || image == null) return;
     let live = true;
     image
       .decode()
@@ -197,7 +197,7 @@ export function PhotoStage({ src, alt, filename, video, photoKey, preloadSrc, on
     return () => {
       live = false;
     };
-  }, [incoming, attempt, src]);
+  }, [incoming, attempt, src, video]);
 
   // Measures here, outside the updater, so the updater itself stays pure.
   const zoomBy = useCallback(
@@ -338,47 +338,56 @@ export function PhotoStage({ src, alt, filename, video, photoKey, preloadSrc, on
       >
         {failed ? (
           <span className="tile__pending">no thumbnail yet</span>
-        ) : video ? (
-          // A one-frame video, the only way an HDR photo reaches a Firefox
-          // display (§10.7). Muted and inline so autoplay is allowed at all, and
-          // it carries the same transform as the <img> so zoom and pan are
-          // unchanged.
-          <video
-            src={shownSrc}
-            autoPlay
-            loop
-            muted
-            playsInline
-            className={ready ? 'is-ready stage__content' : 'stage__content'}
-            style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}
-            onError={() => {
-              setFailed(true);
-              if (attempt === 0) onImageMissing?.();
-            }}
-            onLoadedMetadata={(e) => {
-              setNatural({ width: e.currentTarget.videoWidth, height: e.currentTarget.videoHeight });
-              setPainted(shownSrc);
-              onImageLoad(e.currentTarget.videoWidth, e.currentTarget.videoHeight, transferredBytes(shownSrc));
-            }}
-          />
         ) : (
           // One list, keyed by src, so promoting the incoming one keeps its
           // element: rendered as two slots React would unmount it and the
           // browser would decode the same file over again to paint it.
-          [painted, incoming].map(
-            (source) =>
-              source != null && (
-                <img
+          [painted, incoming].map((source) => {
+            if (source == null) return false;
+            const className = source === painted ? 'is-ready stage__content' : 'stage__content';
+            const transform = `translate(${view.x}px, ${view.y}px) scale(${view.scale})`;
+            // A one-frame video, the only way an HDR photo reaches a Firefox
+            // display (§10.7). Muted and inline so autoplay is allowed at all,
+            // and it carries the same transform as the <img> so zoom and pan are
+            // unchanged. Promoted on `loadeddata` - a decodable frame - rather
+            // than on `loadedmetadata`, which knows the size and nothing else.
+            if (video) {
+              return (
+                <video
                   key={source}
-                  ref={source === incoming ? incomingRef : null}
                   src={source}
-                  alt={alt}
-                  draggable={false}
-                  className={source === painted ? 'is-ready stage__content' : 'stage__content'}
-                  style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}
+                  autoPlay
+                  loop
+                  muted
+                  playsInline
+                  className={className}
+                  style={{ transform }}
+                  onError={() => {
+                    if (source !== incoming) return;
+                    setFailed(true);
+                    if (attempt === 0) onMissing.current?.();
+                  }}
+                  onLoadedData={(e) => {
+                    if (source !== incoming) return;
+                    setNatural({ width: e.currentTarget.videoWidth, height: e.currentTarget.videoHeight });
+                    onLoaded.current(e.currentTarget.videoWidth, e.currentTarget.videoHeight, transferredBytes(source));
+                    setPainted(source);
+                  }}
                 />
-              ),
-          )
+              );
+            }
+            return (
+              <img
+                key={source}
+                ref={source === incoming ? incomingRef : null}
+                src={source}
+                alt={alt}
+                draggable={false}
+                className={className}
+                style={{ transform }}
+              />
+            );
+          })
         )}
       </div>
 

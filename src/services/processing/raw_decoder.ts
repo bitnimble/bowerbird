@@ -1,4 +1,5 @@
 import { dlopen, FFIType, ptr, toArrayBuffer, type Pointer } from 'bun:ffi';
+import { decodeViaShim } from './rawshim';
 
 // LibRaw is loaded at runtime via FFI (the container ships libraw-dev). The C API
 // (libraw/libraw_c_api.h) exposes plain functions + accessors, avoiding most
@@ -94,86 +95,6 @@ export type OutputSpace = 'srgb' | 'rec2020-linear';
 const IMG = { type: 0, height: 4, width: 6, colors: 8, bits: 10, dataSize: 12, data: 16 } as const;
 const LIBRAW_IMAGE_JPEG = 1;
 
-// ------------------------------------------------------------------ half size
-//
-// `half_size` makes LibRaw collapse each Bayer quad into one output pixel instead
-// of interpolating: a quarter of the pixels, no demosaic, and a quarter of the
-// bytes to copy out. On a 61MP frame that is 1592ms of decode down to 956ms, all
-// of it from the demosaic (594ms to 128ms) and the copy (183ms to 46ms); the
-// unpack is the raw decompression and does not move.
-//
-// It costs real detail - dark edges pick up a faint checkerboard - so it is only
-// used when the halved frame still exceeds what the caller asked for, and never
-// for a native-resolution rendition.
-//
-// There is no setter for it in the C API, so it has to be written into
-// libraw_output_params_t by offset. Rather than hardcode one (it moves between
-// builds), the struct is located at runtime through fields that *do* have setters:
-// `output_bps` is found by writing sentinels through its setter and seeing which
-// word follows, and `user_qual` then confirms the layout from the other side.
-// Half_size sits at a fixed distance from both within the same struct, so two
-// agreeing anchors mean the third address is right. If either check fails the
-// decode simply runs full size.
-const BPS_FROM_HALF_SIZE = 64; // offsetof(output_bps) - offsetof(half_size)
-const QUAL_FROM_BPS = 16; // offsetof(user_qual) - offsetof(output_bps)
-const PARAMS_SCAN_BYTES = 65536;
-
-/** Offset of `params.output_bps` within libraw_data_t, or null if not pinned down. */
-function findOutputBps(L: LibRaw, proc: Pointer): number | null {
-  const view = new DataView(toArrayBuffer(proc, 0, PARAMS_SCAN_BYTES));
-  let candidates: number[] = [];
-  // Three distinct values: anything that tracks all of them is the field itself.
-  for (const [index, sentinel] of [16, 14, 8].entries()) {
-    L.libraw_set_output_bps(proc, sentinel);
-    if (index === 0) {
-      candidates = [];
-      for (let offset = 0; offset + 4 <= PARAMS_SCAN_BYTES; offset += 4) {
-        if (view.getInt32(offset, true) === sentinel) candidates.push(offset);
-      }
-    } else {
-      candidates = candidates.filter((offset) => view.getInt32(offset, true) === sentinel);
-    }
-    if (candidates.length === 0) return null;
-  }
-  return candidates.length === 1 ? candidates[0]! : null;
-}
-
-/**
- * Turns on half-size decoding, or reports that it could not be done safely.
- * Must be called before `unpack`.
- */
-function enableHalfSize(L: LibRaw, proc: Pointer): boolean {
-  const bps = findOutputBps(L, proc);
-  if (bps == null || bps < BPS_FROM_HALF_SIZE) return false;
-
-  // Second anchor from the other direction: if user_qual is where the struct says
-  // it should be relative to output_bps, the layout is the one these offsets came
-  // from, and half_size is too.
-  const view = new DataView(toArrayBuffer(proc, 0, bps + QUAL_FROM_BPS + 4));
-  for (const sentinel of [2, 3]) {
-    L.libraw_set_demosaic(proc, sentinel);
-    if (view.getInt32(bps + QUAL_FROM_BPS, true) !== sentinel) return false;
-  }
-
-  view.setInt32(bps - BPS_FROM_HALF_SIZE, 1, true);
-  return true;
-}
-
-/** Long edge of the visible frame, read from `sizes` without decoding anything. */
-function visibleLongEdge(proc: Pointer): number {
-  const dv = sizesView(proc);
-  // sizes begins ushort raw_height, raw_width, height, width.
-  return Math.max(dv.getUint16(4, true), dv.getUint16(6, true));
-}
-
-function halveInsets(insets: Insets): Insets {
-  return {
-    left: Math.floor(insets.left / 2),
-    top: Math.floor(insets.top / 2),
-    right: Math.floor(insets.right / 2),
-    bottom: Math.floor(insets.bottom / 2),
-  };
-}
 
 // The camera's own JPEG rendering, embedded in the RAW. Extracting it needs no
 // demosaic, so it is far faster than a render and carries the maker's colour
@@ -258,12 +179,13 @@ export interface DecodeOptions {
 }
 
 /**
- * Decodes a RAW file to an upright RGB bitmap.
+ * Decodes a RAW file to an upright RGB bitmap, via the Rust wrapper
+ * (`native/rawshim`, and see `rawshim.ts` for why).
  *
- * Runs half size where the caller's `atLeastLongEdge` allows it, and falls back to
- * a whole-frame decode if that did not take: the flag is set by a located offset,
- * so a layout the anchors did not catch would write to a neighbouring field
- * instead, and this is the check that the frame really did come back halved.
+ * As-shot white balance, the PPG demosaic, the half-size decision and the
+ * masked-border crop all happen in there now: they are one job, and splitting them
+ * across an FFI boundary meant reaching into LibRaw's params struct from
+ * TypeScript to set a field the C API does not expose.
  */
 export function decodeRaw(
   filePath: string,
@@ -271,90 +193,7 @@ export function decodeRaw(
   space: OutputSpace = 'srgb',
   options: DecodeOptions = {},
 ): DecodedImage {
-  const wanted = options.atLeastLongEdge ?? 0;
-  if (wanted > 0) {
-    const halved = decodeOnce(filePath, depth, space, wanted);
-    if (halved != null) return halved;
-  }
-  const whole = decodeOnce(filePath, depth, space, 0);
-  if (whole == null) throw new Error('decodeRaw: full-size decode reported as halved');
-  return whole;
-}
-
-/**
- * One decode attempt. Null means half size was asked for and the frame came back
- * whole anyway - the write went somewhere other than `half_size`, so whatever it
- * did land on may have changed the picture and the result is not to be trusted.
- *
- * Every LibRaw allocation is freed on all paths (mem-image, unpacked data,
- * processor) per DESIGN §10.4.
- */
-function decodeOnce(filePath: string, depth: 8 | 16, space: OutputSpace, wanted: number): DecodedImage | null {
-  const L = lib();
-  const proc = L.libraw_init(0);
-  if (!proc) throw new Error('libraw_init failed');
-
-  try {
-    check(L, L.libraw_open_file(proc, cpath(filePath)), 'open_file');
-    // Read before unpack/process, which overwrite the size fields.
-    let insets = rotateInsets(readCropInsets(proc), readFlip(proc));
-
-    // Only worth it when halving still leaves more than the caller needs. A 24MP
-    // frame halves to about 3000px, under the 3840 a full-size rendition wants, so
-    // it decodes whole; a 61MP one halves to 4864 and does not.
-    const fullLongEdge = visibleLongEdge(proc);
-    const halved = wanted > 0 && Math.floor(fullLongEdge / 2) >= wanted && enableHalfSize(L, proc);
-    if (halved) insets = halveInsets(insets);
-
-    applyCameraWhiteBalance(L, proc);
-    L.libraw_set_demosaic(proc, DEMOSAIC_PPG);
-    if (space === 'rec2020-linear') {
-      L.libraw_set_output_color(proc, OUTPUT_COLOR.rec2020);
-      // gamma[0] is the power and gamma[1] the toe slope; 1/1 is the identity
-      // curve, so the samples stay proportional to the light that made them.
-      L.libraw_set_gamma(proc, 0, 1);
-      L.libraw_set_gamma(proc, 1, 1);
-      L.libraw_set_no_auto_bright(proc, 1);
-    } else {
-      // A browser can only display a known space, and a PNG with no profile is
-      // taken as sRGB, so both depths render into it.
-      L.libraw_set_output_color(proc, OUTPUT_COLOR.srgb);
-    }
-    L.libraw_set_output_bps(proc, depth);
-    check(L, L.libraw_unpack(proc), 'unpack');
-    check(L, L.libraw_dcraw_process(proc), 'dcraw_process');
-
-    const err = new Int32Array(1);
-    const image = L.libraw_dcraw_make_mem_image(proc, ptr(err));
-    if (!image || err[0] !== 0) throw new Error(`make_mem_image failed (${err[0]})`);
-
-    try {
-      const head = new DataView(toArrayBuffer(image, 0, IMG.data));
-      const height = head.getUint16(IMG.height, true);
-      const width = head.getUint16(IMG.width, true);
-      const colors = head.getUint16(IMG.colors, true);
-      const bits = head.getUint16(IMG.bits, true);
-      const dataSize = head.getUint32(IMG.dataSize, true);
-      if (colors !== 3 || bits !== depth) throw new Error(`unexpected image format: colors=${colors} bits=${bits}`);
-      // The frame has to have actually halved. If it did not, the offset write
-      // missed `half_size` and landed on one of its neighbours - `four_color_rgb`
-      // and `use_auto_wb` are both close by, and either would leave the dimensions
-      // looking perfectly normal while changing the picture. Discard and let the
-      // caller decode whole.
-      if (halved && Math.max(width, height) > fullLongEdge * 0.75) return null;
-      // A view over LibRaw's own buffer, valid only until clear_mem below. Copying
-      // and cropping happen in one pass out of it: a 60MP frame is ~190MB, and
-      // copying it whole and then copying the crop out of that spent ~250ms per
-      // decode moving bytes twice.
-      const source = new Uint8Array(toArrayBuffer(image, IMG.data, dataSize));
-      return copyCropped(source, width, height, depth, insets);
-    } finally {
-      L.libraw_dcraw_clear_mem(image);
-    }
-  } finally {
-    L.libraw_recycle(proc);
-    L.libraw_close(proc);
-  }
+  return decodeViaShim(filePath, depth, space, options.atLeastLongEdge ?? 0);
 }
 
 export interface RawHeader {

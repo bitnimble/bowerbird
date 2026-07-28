@@ -152,3 +152,7 @@ web/playwright-report/
 # Screenshots taken while driving the app
 *.png
 *.jpg
+
+# Rust native module build output (native/rawshim). The .so is built by
+# `bun run build:native`, or by the Docker build stage.
+native/rawshim/target/
