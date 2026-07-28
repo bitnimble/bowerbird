@@ -23,6 +23,15 @@ export function isRendition(value: string): value is Rendition {
   return (RENDITIONS as readonly string[]).includes(value);
 }
 
+// Whether this rendition is built HDR in a library that asks for HDR. The grid
+// tile never is (above), and it is the library setting that every caller has to
+// hand, so the exception lives here rather than at each of them: a reader that
+// applied the setting to `grid` would look in a directory nothing ever writes
+// and 404 every tile in the library.
+function storedAsHdr(rendition: Rendition, hdr: boolean): boolean {
+  return hdr && rendition !== 'grid';
+}
+
 // HDR is stored beside the SDR copy rather than replacing it, so turning the
 // setting off does not throw away work that turning it back on would redo. The
 // video twin gets its own directory rather than sitting beside the still it
@@ -30,7 +39,7 @@ export function isRendition(value: string): value is Rendition {
 // supposed to hold, and two in one directory would have it delete the video as a
 // superseded format on every pass (§10.6).
 export function renditionDir(rendition: Rendition, hdr: boolean, video = false): string {
-  if (!hdr) return rendition;
+  if (!storedAsHdr(rendition, hdr)) return rendition;
   return video ? `${rendition}-hdr-video` : `${rendition}-hdr`;
 }
 
@@ -46,8 +55,15 @@ export function renditionExtension(video: boolean): string {
 export function renditionDirs(): { dir: string; extension: string }[] {
   return RENDITIONS.flatMap((rendition) => [
     { dir: renditionDir(rendition, false), extension: renditionExtension(false) },
-    { dir: renditionDir(rendition, true), extension: renditionExtension(false) },
-    { dir: renditionDir(rendition, true, true), extension: renditionExtension(true) },
+    // A rendition with no HDR form has no second directory, and listing one would
+    // pair the SDR directory with the video extension - which the orphan sweep
+    // reads as "every .avif in here is a superseded format" and deletes.
+    ...(storedAsHdr(rendition, true)
+      ? [
+          { dir: renditionDir(rendition, true), extension: renditionExtension(false) },
+          { dir: renditionDir(rendition, true, true), extension: renditionExtension(true) },
+        ]
+      : []),
   ]);
 }
 

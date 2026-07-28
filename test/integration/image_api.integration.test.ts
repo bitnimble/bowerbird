@@ -15,14 +15,14 @@ import type { PhotosService } from '../../src/services/photos/photos_service';
 // Serving bytes needs an id, a library and a file path and nothing else, so the
 // API asks for `locate` rather than the detail payload (§8.2). Stubbing `get` here
 // instead left every one of these tests failing with a 500.
-function buildApp(root: string, photo: BasicPhoto | null) {
+function buildApp(root: string, photo: BasicPhoto | null, previewHdr = false) {
   const library: Library = {
     id: 'lib',
     root_path: root,
     data_path: null,
     ordering: 'taken_desc',
     preview_source: 'render',
-    preview_hdr: false,
+    preview_hdr: previewHdr,
     preview_hdr_video: false,
     last_synced_at: null,
     photo_count: 1,
@@ -60,6 +60,17 @@ test('serves a rendition with the avif content-type', withRoot(async (root) => {
   const res = await buildApp(root, photo({})).request('/image/p1/renditions/grid');
   expect(res.status).toBe(200);
   expect(res.headers.get('content-type')).toBe('image/avif');
+  expect(await res.text()).toBe('AVIFDATA');
+}));
+
+// The grid tile is built SDR whatever the library asks for (§10.2), so reading it
+// at the library's dynamic range looked for `renditions/grid-hdr/`, which nothing
+// writes - and every tile in an HDR library 404'd.
+test('serves the grid tile of an HDR library from the SDR directory', withRoot(async (root) => {
+  mkdirSync(path.join(root, '.bowerbird', 'renditions', 'grid'), { recursive: true });
+  writeFileSync(path.join(root, '.bowerbird', 'renditions', 'grid', 'p1.avif'), 'AVIFDATA');
+  const res = await buildApp(root, photo({}), true).request('/image/p1/renditions/grid');
+  expect(res.status).toBe(200);
   expect(await res.text()).toBe('AVIFDATA');
 }));
 
