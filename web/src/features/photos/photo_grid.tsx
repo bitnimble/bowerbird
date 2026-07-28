@@ -4,7 +4,8 @@ import { useNavigate } from 'react-router-dom';
 import { Check, ChevronLeft, ChevronRight, ThumbsDown, ThumbsUp } from 'lucide-react';
 import { captureDateTime, localDateTime } from '../../api/dates';
 import { renditionUrl, type PhotoSummary } from '../../api/client';
-import { useEventsStore, usePhotosStore, usePresenters } from '../../app/stores_context';
+import { usePhotosStore, usePresenters } from '../../app/stores_context';
+import { useRenditionVersion } from '../events/use_rendition_version';
 import { Button, ICON, Text } from '../../ui/ui';
 import { RETRY_DELAYS_MS } from './retry_delays';
 
@@ -84,7 +85,6 @@ const Tile = observer(function Tile({
   isFocused: boolean;
 }): JSX.Element {
   const store = usePhotosStore();
-  const events = useEventsStore();
   const { photos } = usePresenters();
   const navigate = useNavigate();
   const [loaded, setLoaded] = useState(false);
@@ -97,19 +97,22 @@ const Tile = observer(function Tile({
   // stream can be down, or connect a moment after this tile asked, or the client
   // can be asleep past the replay buffer. Without a floor under it a single
   // missed announcement leaves a tile blank for the life of the page.
-  const [attempt, setAttempt] = useState(0);
-  const src = renditionUrl(photo.id, 'grid', events.version(photo.id) + attempt);
+  const [retry, setRetry] = useState({ attempt: 0, at: 0 });
+  // Both are moments, so the newer one wins and neither can land on a value the
+  // other already used - which adding them together could, and a URL that repeats
+  // itself is a request the browser does not make.
+  const src = renditionUrl(photo.id, 'grid', Math.max(useRenditionVersion(photo.id), retry.at));
   const [failed, setFailed] = useState(false);
   // A tile that failed and has since been told to try again is not failed any
   // more; without this the placeholder outlives the thumbnail arriving.
   useEffect(() => setFailed(false), [src]);
   useEffect(() => {
     if (!failed) return;
-    const delay = RETRY_DELAYS_MS[attempt];
+    const delay = RETRY_DELAYS_MS[retry.attempt];
     if (delay == null) return;
-    const timer = setTimeout(() => setAttempt((a) => a + 1), delay);
+    const timer = setTimeout(() => setRetry((r) => ({ attempt: r.attempt + 1, at: Date.now() })), delay);
     return () => clearTimeout(timer);
-  }, [failed, attempt]);
+  }, [failed, retry]);
   const selected = store.selected.has(photo.id);
   const ref = useRef<HTMLDivElement>(null);
   const list = store.mode === 'list';

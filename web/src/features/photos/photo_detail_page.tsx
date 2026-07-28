@@ -30,11 +30,11 @@ import {
   useAlbumsStore,
   usePhotosStore,
   usePresenters,
-  useEventsStore,
   useServerConfigStore,
   useShootsStore,
 } from '../../app/stores_context';
 import { ActionMenu, type ActionGroup, Button, ICON, MoreLess, type Option, Text, TextArea } from '../../ui/ui';
+import { useRenditionVersion } from '../events/use_rendition_version';
 import { renditionLabel } from './photos_presenter';
 import { PhotoStage } from './photo_stage';
 import { TRIAGE_KEYS, TriageControl } from './triage_control';
@@ -166,7 +166,6 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   const shoots = useShootsStore();
   const albums = useAlbumsStore();
   const serverConfig = useServerConfigStore();
-  const events = useEventsStore();
   const { photos, serverConfig: configPresenter } = usePresenters();
   const navigate = useNavigate();
   // Actual pixels of the served thumbnail, so the panel reports what is on
@@ -190,6 +189,14 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   const prevId = store.prevPhotoId;
   const nextId = store.nextPhotoId;
   const libraryId = store.detailLibraryId;
+
+  // The frame on screen and the two being warmed, each watching its own photo for
+  // a rebuild. Above the early return below, because a hook cannot be called
+  // conditionally - and the neighbours are watched at all so that the URL one is
+  // warmed at stays the URL it is painted at when the reader steps onto it.
+  const version = useRenditionVersion(photoId);
+  const prevVersion = useRenditionVersion(prevId);
+  const nextVersion = useRenditionVersion(nextId);
 
   // Stepping through frames and judging them is the whole point of a detail view
   // during a cull, so the verdict keys work here exactly as they do in the grid.
@@ -241,7 +248,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   // Every field comes from the same entry, so what is on screen, whether it is
   // HDR and where its bytes live can no longer disagree (§10.2).
   const shownFile = photo?.renditions?.[showing];
-  const stillSrc = viewerUrl(photoId, showing, events.version(photoId));
+  const stillSrc = viewerUrl(photoId, showing, version);
   const hdr = shownFile?.hdr === true;
 
   // Firefox renders an HDR still dark - it applies a PQ transfer to nothing but
@@ -261,7 +268,10 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   const preloadSrcs =
     hdrVideo || !store.isAlwaysBuilt(showing)
       ? undefined
-      : [prevId, nextId].filter((id) => id != null).map((id) => viewerUrl(id, showing, events.version(id)));
+      : [
+          { id: prevId, version: prevVersion },
+          { id: nextId, version: nextVersion },
+        ].flatMap((n) => (n.id == null ? [] : [viewerUrl(n.id, showing, n.version)]));
 
   const shoot = photo?.shoot_id == null ? null : shoots.byId.get(photo.shoot_id);
   const photoAlbums = photo == null ? [] : albums.albums.filter((a) => photo.album_ids.includes(a.id));
@@ -355,7 +365,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
           // The panels decide which edge they take from this photo's shape, so
           // until that is known from somewhere the stage is not the size it will be.
           hold={shape == null}
-          src={hdrVideo && showing !== 'embedded' ? renditionVideoUrl(photoId, showing, events.version(photoId)) : stillSrc}
+          src={hdrVideo && showing !== 'embedded' ? renditionVideoUrl(photoId, showing, version) : stillSrc}
           video={hdrVideo}
           alt={filename}
           filename={filename}
