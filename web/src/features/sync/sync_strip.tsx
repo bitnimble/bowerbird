@@ -10,15 +10,19 @@ export const SyncStrip = observer(function SyncStrip(): JSX.Element | null {
   const status = sync.status;
   if (status == null) return null;
 
-  const queued = status.photos_processing + status.photos_processed;
-  const cells = Math.min(queued, MAX_CELLS);
-  const doneCells = queued === 0 ? 0 : Math.round((status.photos_processed / queued) * cells);
+  // The scan reports its own progress (§9.6), so the same strip covers both
+  // phases of a run rather than sitting empty through the first one.
+  const progress = sync.progress;
+  const cells = progress == null ? 0 : Math.min(progress.total, MAX_CELLS);
+  const doneCells = progress == null ? 0 : Math.round((progress.done / progress.total) * cells);
+  // The tallies are what the scan concluded, so they only mean anything once it has.
+  const scanning = status.status === 'scanning';
 
   return (
     <div className="strip">
       <span className={`status-dot status-dot--${status.status}`} aria-hidden="true" />
-      {cells > 0 && (
-        <div className="strip__cells" role="img" aria-label={`${status.photos_processed} of ${queued} thumbnails built`}>
+      {progress != null && cells > 0 && (
+        <div className="strip__cells" role="img" aria-label={`${progress.done} of ${progress.total} ${progress.noun}`}>
           {Array.from({ length: cells }, (_, i) => (
             <span
               key={i}
@@ -29,11 +33,11 @@ export const SyncStrip = observer(function SyncStrip(): JSX.Element | null {
       )}
       <span className="strip__label">
         {sync.label}
-        {queued > 0 && ` · ${status.photos_processed}/${queued} thumbnails`}
-        {status.photos_scanned > 0 && ` · ${status.photos_scanned} scanned`}
-        {status.photos_added > 0 && ` · +${status.photos_added}`}
-        {status.photos_moved > 0 && ` · ${status.photos_moved} moved`}
-        {status.photos_removed > 0 && ` · ${status.photos_removed} missing`}
+        {progress != null && ` · ${progress.done}/${progress.total} ${progress.noun}`}
+        {!scanning && status.photos_scanned > 0 && ` · ${status.photos_scanned} scanned`}
+        {!scanning && status.photos_added > 0 && ` · +${status.photos_added}`}
+        {!scanning && status.photos_moved > 0 && ` · ${status.photos_moved} moved`}
+        {!scanning && status.photos_removed > 0 && ` · ${status.photos_removed} missing`}
       </span>
     </div>
   );

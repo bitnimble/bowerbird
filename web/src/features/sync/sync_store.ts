@@ -15,12 +15,15 @@ export class SyncStore {
     return this.status.status;
   }
 
-  // Fraction of this run's thumbnailing that is done, or null when nothing was
-  // queued (so the UI can hide the bar rather than render a meaningless 100%).
-  @computed get processingProgress(): number | null {
+  // What the run's current phase is counting through: the files the scan is
+  // walking, then the thumbnails it queued. Null when there is nothing to count,
+  // so the UI can hide the bar rather than render a meaningless 100%.
+  @computed get progress(): { done: number; total: number; noun: string } | null {
     const s = this.status;
     if (s == null) return null;
-    const total = s.photos_processing + s.photos_processed;
-    return total === 0 ? null : s.photos_processed / total;
+    const scanning = s.status === 'scanning';
+    const done = scanning ? s.photos_scanned : s.photos_processed;
+    const total = scanning ? s.photos_to_scan : s.photos_processing + s.photos_processed;
+    return total === 0 ? null : { done, total, noun: scanning ? 'files' : 'thumbnails' };
   }
 }

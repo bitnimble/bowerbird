@@ -114,6 +114,7 @@ export const api = {
   updateLibrary: (id: string, body: UpdateLibraryRequest): Promise<Library> => request('PATCH', `/api/libraries/${id}`, body),
   deleteLibrary: (id: string): Promise<void> => request('DELETE', `/api/libraries/${id}`),
   syncLibrary: (id: string): Promise<LibrarySyncStatus> => request('POST', `/api/libraries/${id}/sync`),
+  cancelSync: (id: string): Promise<void> => request('DELETE', `/api/libraries/${id}/sync`),
   getSyncStatus: (id: string): Promise<LibrarySyncStatus> => request('GET', `/api/libraries/${id}/sync/status`),
 
   listLibraryPhotos: (libraryId: string, params: PhotoListParams): Promise<PhotoListResponse> =>

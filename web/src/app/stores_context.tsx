@@ -68,12 +68,15 @@ function build(): { stores: Stores; presenters: Presenters } {
   // Announcements land on the rows the views render from, so this writes through
   // the presenter that owns them.
   const events = new EventsPresenter(photos);
+  // A finished sync moves the library's photo count, so sync re-reads the list
+  // through the presenter that owns it.
+  const libraries = new LibrariesPresenter(stores.libraries);
   const presenters: Presenters = {
-    libraries: new LibrariesPresenter(stores.libraries),
+    libraries,
     photos,
     shoots,
     albums,
-    sync: new SyncPresenter(stores.sync, photos),
+    sync: new SyncPresenter(stores.sync, photos, libraries),
     toasts,
     serverConfig: new ServerConfigPresenter(stores.serverConfig),
     appSettings,

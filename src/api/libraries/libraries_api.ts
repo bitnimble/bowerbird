@@ -21,6 +21,13 @@ export class LibrariesApi {
 
     app.post('/:id/sync', async (c) => c.json(await this.sync.syncLibrary(c.req.param('id'))));
 
+    // Returns as soon as the run has been told to stop; it settles back to idle
+    // on its own, which the status endpoint reports like any other transition.
+    app.delete('/:id/sync', (c) => {
+      this.sync.cancelSync(c.req.param('id'));
+      return c.body(null, 204);
+    });
+
     app.get('/:id/sync/status', (c) => c.json(this.sync.getSyncStatus(c.req.param('id'))));
 
     app.get('/:id', (c) => c.json(this.service.get(c.req.param('id'))));

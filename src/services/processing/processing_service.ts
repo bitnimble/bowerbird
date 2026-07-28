@@ -190,24 +190,28 @@ export class ProcessingService {
     }
   }
 
-  processUnprocessed(libraryId?: string): Promise<void> {
+  // `signal` stops the batch between jobs (a sync the user stopped, §9.10). What is
+  // already on disk stays - a tile is valid whether or not the rest of the run
+  // finished - and everything unreached keeps its flags for the next sync.
+  processUnprocessed(libraryId?: string, signal?: AbortSignal): Promise<void> {
     const key = libraryId ?? '*';
     const existing = this.inFlight.get(key);
     if (existing) {
       this.rerun.add(key); // pick up work added since the running batch started
       return existing;
     }
-    const run = this.drain(libraryId, key).finally(() => this.inFlight.delete(key));
+    const run = this.drain(libraryId, key, signal).finally(() => this.inFlight.delete(key));
     this.inFlight.set(key, run);
     return run;
   }
 
-  private async drain(libraryId: string | undefined, key: string): Promise<void> {
+  private async drain(libraryId: string | undefined, key: string, signal?: AbortSignal): Promise<void> {
     for (;;) {
       this.rerun.delete(key);
       const staged = this.photos.listPendingProcessing(libraryId).map((p) => this.toStages(p));
-      if (staged.length > 0) await this.runStaged(staged);
-      if (!this.rerun.has(key)) return; // no new work requested during this pass
+      if (staged.length > 0) await this.runStaged(staged, signal);
+      // Stopped, or no new work requested during this pass.
+      if (signal?.aborted === true || !this.rerun.has(key)) return;
     }
   }
 
@@ -218,7 +222,7 @@ export class ProcessingService {
   // render, so a shoot's grid is browsable in about a minute instead of after the
   // renders finish. Each pass clears its own flag as it lands, so a run interrupted
   // between them resumes at the second rather than repeating the first.
-  private async runStaged(staged: StagedPhoto[]): Promise<void> {
+  private async runStaged(staged: StagedPhoto[], signal?: AbortSignal): Promise<void> {
     const byId = new Map(staged.map((photo) => [photo.photoId, photo]));
     // A photo whose tile failed is not carried into the second pass: the failure is
     // the file, not the stage, so a render would fail the same way.
@@ -238,10 +242,11 @@ export class ProcessingService {
         // rather than wait for both.
         this.stageDone(photo, result.photoId, 'tile');
       },
+      signal,
     );
 
     const pending = staged.filter((photo) => photo.renditions != null && !failed.has(photo.photoId));
-    if (pending.length === 0) return;
+    if (pending.length === 0 || signal?.aborted === true) return;
 
     await this.runPool(
       pending.map((photo) => photo.renditions as RenditionJob),
@@ -253,6 +258,7 @@ export class ProcessingService {
         }
         this.stageDone(photo, result.photoId, 'renditions');
       },
+      signal,
     );
   }
 
@@ -406,6 +412,7 @@ export class ProcessingService {
   private runPool(
     jobs: RenditionJob[],
     onResult: (result: ProcessingResult, job: RenditionJob) => void,
+    signal?: AbortSignal,
   ): Promise<void> {
     const poolSize = Math.min(this.config.processingConcurrency, jobs.length);
     return new Promise((resolve) => {
@@ -427,7 +434,9 @@ export class ProcessingService {
         let current: RenditionJob | undefined;
 
         const assignNext = (): void => {
-          if (next >= jobs.length) {
+          // A stop retires each worker as its current job lands rather than
+          // killing it mid-encode, which would leave a half-written rendition.
+          if (next >= jobs.length || signal?.aborted === true) {
             worker.terminate();
             live--;
             if (live === 0) resolve();
@@ -457,7 +466,7 @@ export class ProcessingService {
           }
           worker.terminate();
           live--;
-          if (next < jobs.length && launch()) return; // replacement running
+          if (next < jobs.length && signal?.aborted !== true && launch()) return; // replacement running
           if (live === 0) resolve();
         };
 

@@ -810,6 +810,7 @@ The sync service maintains an in-memory status object per library:
 interface SyncStatus {
   libraryId: string;
   status: 'idle' | 'scanning' | 'processing';
+  photosToScan: number;
   photosScanned: number;
   photosAdded: number;
   photosRemoved: number;
@@ -821,6 +822,10 @@ interface SyncStatus {
 ```
 
 This is updated as the sync progresses and is exposed via the API for client polling.
+
+**Both phases of a run report progress, not just the second one.** `photosProcessed` against what was queued covers thumbnailing; `photosScanned` against `photosToScan` covers the scan, which on a first import is the longer of the two: minutes of opening and hashing every file, during which a status that only carried zeros left the client with nothing to say but "scanning". The counters are updated from the loop that opens and hashes, which is where a scan's whole cost is (the `stat` pass before it opens nothing), and `photosToScan` is only known once that pass has collapsed hardlink pairs, so a run reads 0/0 for the walk and the stats, then counts through the files. Both settle on the number of files found, so the client renders one bar per phase off the same pair of numbers.
+
+No generation guard on those writes, unlike the ones after the scan: the sync lock is not released until scan and apply are both done, so no newer generation of the same library can exist to stomp.
 
 ### 9.7 Sync Lock
 
@@ -850,6 +855,17 @@ Sync snapshots the DB, then scans **asynchronously**, then applies. A user mutat
 - `syncLibrary` takes the sync **lock file first, then the mutex**. Lock-first keeps sync-vs-sync fail-fast (`SYNC_IN_PROGRESS`, 409, §9.7); the mutex only makes *mutations* wait. Mutations never take the lock file, so there is no cycle to deadlock on.
 - The mutex is acquired at exactly one level per operation (e.g. in `rename`, not its caller `update`), since it is not re-entrant.
 - This closes the mutation-vs-scan race class at the source, rather than guarding each symptom. The per-write guards it supersedes are kept anyway (path-guarded `setMissing`, the `(dev, ino)` collapse, the re-checks before FK writes) because they also cover the cross-process case the in-memory mutex cannot.
+
+### 9.10 Stopping a sync
+
+`DELETE /api/libraries/:id/sync` aborts the library's current run. The generation token (§9.6) *is* the `AbortController`, so "which run" and "how to stop it" are one thing, and a stop can never reach a newer generation than the one that was asked for.
+
+What a stop means depends on which phase it lands in, and neither leaves anything half-applied:
+
+- **During the scan**, the loop that opens and hashes checks between files, so a stop lands within one file's decode rather than at the end of the walk. Every write is a single transaction *after* the scan, so abandoning it applies nothing: `syncLibrary` returns an idle status rather than raising, because the caller asked for this, and the detached processing in its `finally` never starts.
+- **During processing**, the pool retires each worker as its current job lands instead of killing it mid-encode, which would leave a half-written rendition. What is already on disk stays - a tile is valid whether or not the rest of the run finished - and the photos it never reached keep their `needs_tile` / `needs_renditions` flags, so the next sync picks them up. The status settles to idle through the same tail that a completed run does.
+
+Deleting a library aborts its run for the same reason: its rows are cascade-gone, so there is nothing left to finish.
 
 **Why the full scan stats every file.** Skipping the stat for files in directories whose mtime is unchanged was tried and removed: the stat is the *only* cost it saves (the mtime+size quick-check already skips the expensive decode for unchanged files), and skipping it also skips the `(dev, ino)` collapse that `moveIntoDir`'s non-atomic `link()`-then-`unlink()` window depends on. A cross-directory move bumps only the destination directory's mtime, so the source stays "unchanged" and is pruned; the destination is then inserted as a new photo while the source row survives, leaving a duplicate. Making it safe means restoring the stat, which leaves no saving.
 
@@ -1464,6 +1480,7 @@ All endpoints return JSON. Error responses use a standard envelope:
 | `PATCH` | `/api/libraries/:id` | Update a library (default ordering) |
 | `DELETE` | `/api/libraries/:id` | Delete a library |
 | `POST` | `/api/libraries/:id/sync` | Trigger sync for a library |
+| `DELETE` | `/api/libraries/:id/sync` | Stop the library's current sync (§9.10) |
 | `GET` | `/api/libraries/:id/sync/status` | Get sync/processing status |
 
 ### 13.2 Photos
@@ -1688,6 +1705,7 @@ The sync-service, photo-deletion, and image-streaming cases below run in the int
 - mtime change (e.g. in-place edit) marks a file MODIFIED and re-processes it (§9.2)
 - Sync lock: a second concurrent sync of the *same* library throws `SYNC_IN_PROGRESS`; two *different* libraries sync concurrently; a stale lock (dead PID) is reclaimed (§9.7)
 - Concurrency vs. a user mutation mid-scan: an in-flight move's hardlink pair (link+unlink) is collapsed by inode so no duplicate row is inserted; a library deleted mid-scan aborts `NOT_FOUND` (no FK crash); a stale sync generation's detached processing tail doesn't stomp a newer sync's status
+- Stopping (§9.10): mid-scan applies nothing, opens no further files and starts no processing, returning an idle status; mid-processing the run ends rather than waiting itself out, leaving the unreached photos pending
 
 **Photo deletion:**
 - Thumbnails are kept, so the Bin can be browsed
@@ -1911,7 +1929,11 @@ The version is told rather than guessed, and that is the whole point. What it re
 
 The stream carries an `id:` per event and keeps the last few hundred in a ring buffer, so a browser reconnecting after a blip replays what it missed through `Last-Event-ID` rather than losing it. An id from a previous run of the server (one at or beyond the current counter) replays nothing rather than the whole buffer; a restart mid-import is therefore a gap in the announcements, and a reload is what closes it. A heartbeat every 20s keeps the connection from being idled out (`idleTimeout`, §index.ts), and waits on the disconnect as well as the timer, so a departed client is dropped at once rather than at the next beat.
 
-The sync status bar renders one cell per photo queued by the current run, filling as `photos_processed` climbs (§9.6). It stops polling as soon as the library reports idle.
+The sync status bar renders one cell per item the run's current phase is counting through, filling as it climbs: the files while the library is scanning, then the photos queued for thumbnailing (§9.6). One bar for two phases rather than one per phase, because they are consecutive and only ever one is live; which one it is names itself in the label, so an import reads `scanning · 1204/50000 files` and then `processing · 32/50000 thumbnails`. The tallies beside it (added, moved, missing) are what the *scan* concluded, so they are shown only once it has. It stops polling as soon as the library reports idle, and while a run is in flight the row's Sync button becomes Stop (§9.10) - starting a second one is not on offer anyway, so the slot is worth more as the control that ends the first.
+
+**The poll runs alongside the triggering request, not after it.** `POST /sync` only answers once the scan has finished, which on a library's first import is minutes of opening and hashing every file - and for the whole of it the run is already under way and the status endpoint has been reporting it. Awaiting the request first meant a freshly added library sat at "0 photos, never synced" with the button still offering a sync that was already running, and then jumped to a moving progress bar minutes later, which reads as the click having done nothing and the catalogue having refreshed itself. Until that request answers, an `idle` status report is a run the server has not started recording yet rather than the truth, so it neither paints the strip idle nor stops the poll.
+
+A finished run also re-reads the **library list**, which is where the row's photo count and "synced 3m ago" come from; nothing else re-reads it while the settings page stays open, so a sync completed under the user's eyes would otherwise leave both saying what they said before it started.
 
 **The poll re-reads the grid for rows, not for thumbnails.** It does so while the *scan* is inserting them and once more on the tick that finds the run finished - not through the processing phase, which is the long one. By then the row set is settled and each thumbnail announces itself, so a list request per second would answer with the page the grid already has, filtered and counted over the whole library to say so. The exception is a view filtering on what processing changes ("No thumbnail"), which a refetch is still the only way to learn.
 

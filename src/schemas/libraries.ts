@@ -40,6 +40,10 @@ export type UpdateLibraryRequest = z.infer<typeof UpdateLibraryRequestSchema>;
 export const LibrarySyncStatusSchema = z.object({
   library_id: UuidSchema,
   status: z.enum(['idle', 'scanning', 'processing']),
+  // How many files the scan will look at, and how many it has looked at so far.
+  // The pair is the scan's progress while `status` is 'scanning' (§9.6), and both
+  // settle on the number of files found once it is over.
+  photos_to_scan: z.number().int(),
   photos_scanned: z.number().int(),
   photos_added: z.number().int(),
   photos_removed: z.number().int(),

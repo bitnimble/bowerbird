@@ -19,8 +19,12 @@ import { libraryMutex } from './library_mutex';
 import { acquireSyncLock, releaseSyncLock } from './sync_lock';
 
 export interface ProcessingTrigger {
-  processUnprocessed(libraryId?: string): void | Promise<void>;
+  processUnprocessed(libraryId?: string, signal?: AbortSignal): void | Promise<void>;
 }
+
+// Unwinds a scan the user stopped. Never leaves this module: syncLibrary turns it
+// back into an idle status, because a stopped scan applied nothing.
+class SyncCancelled extends Error {}
 
 export type MetadataExtractor = (absPath: string) => Promise<FileMetadata>;
 
@@ -30,6 +34,7 @@ function idle(libraryId: string, status: Status = 'idle'): LibrarySyncStatus {
   return {
     library_id: libraryId,
     status,
+    photos_to_scan: 0,
     photos_scanned: 0,
     photos_added: 0,
     photos_removed: 0,
@@ -46,11 +51,11 @@ export class SyncService implements LibraryLifecycleListener {
   // getSyncStatus can report processed = queued - still-pending without any
   // background bookkeeping: the live pending count comes from the DB on read.
   private readonly queuedForProcessing = new Map<string, number>();
-  // Identity token per in-flight sync generation. The lock is released before the
-  // detached processing runs, so a newer sync can start while the old one's
-  // processing tail is still going; the token lets a stale tail skip its status
-  // write instead of stomping the newer generation's status.
-  private readonly generation = new Map<string, object>();
+  // Identity token per in-flight sync generation, and the handle that stops it.
+  // The lock is released before the detached processing runs, so a newer sync can
+  // start while the old one's processing tail is still going; the token lets a
+  // stale tail skip its status write instead of stomping the newer generation's.
+  private readonly generation = new Map<string, AbortController>();
 
   constructor(
     private readonly photos: PhotosRepository,
@@ -68,6 +73,7 @@ export class SyncService implements LibraryLifecycleListener {
   // Drop the deleted library's in-memory status/generation so those maps don't
   // grow unbounded across create/delete cycles (mirrors the watcher's teardown).
   onLibraryDeleted(libraryId: string): void {
+    this.generation.get(libraryId)?.abort(); // its rows are cascade-gone; finish nothing
     this.statuses.delete(libraryId);
     this.generation.delete(libraryId);
     this.queuedForProcessing.delete(libraryId);
@@ -98,7 +104,7 @@ export class SyncService implements LibraryLifecycleListener {
     if (!library) throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
 
     const lockPath = acquireSyncLock(library.root_path);
-    const token = {};
+    const token = new AbortController();
     this.generation.set(libraryId, token);
     let syncedStatus: LibrarySyncStatus | null = null;
     try {
@@ -109,6 +115,12 @@ export class SyncService implements LibraryLifecycleListener {
       this.statuses.set(libraryId, idle(libraryId, 'scanning'));
 
       const dataPath = getDataPath(library);
+      // The scan is the long half of an import, and the status endpoint is the
+      // only thing that can say so while it runs. No generation guard: the sync
+      // lock is not released until after the scan, so nothing newer can exist.
+      const reportScan = (scanned: number, toScan: number): void => {
+        this.statuses.set(libraryId, { ...idle(libraryId, 'scanning'), photos_to_scan: toScan, photos_scanned: scanned });
+      };
       let dbPhotos: SyncDbPhoto[];
       let scan: { present: Set<string>; changed: DiskFile[]; failed: Set<string> };
       if (scopePaths != null) {
@@ -120,10 +132,11 @@ export class SyncService implements LibraryLifecycleListener {
         const known = new Set<string>(scopePaths);
         for (const f of files) known.add(f.relPath);
         dbPhotos = this.scopedDbPhotos(libraryId, [...known]);
-        scan = await this.scanFiles(files, dbPhotos);
+        scan = await this.scanFiles(files, dbPhotos, token.signal, reportScan);
       } else {
         dbPhotos = this.photos.listForSync(libraryId);
-        scan = await this.scanFiles(await listSupportedFiles(library.root_path, dataPath), dbPhotos);
+        const onDisk = await listSupportedFiles(library.root_path, dataPath);
+        scan = await this.scanFiles(onDisk, dbPhotos, token.signal, reportScan);
       }
       const { present, changed, failed } = scan;
       const diff = buildDiff(dbPhotos, present, changed, failed);
@@ -247,6 +260,7 @@ export class SyncService implements LibraryLifecycleListener {
       const status: LibrarySyncStatus = {
         library_id: libraryId,
         status: 'processing',
+        photos_to_scan: present.size,
         photos_scanned: present.size,
         photos_added: added,
         photos_removed: removed,
@@ -265,6 +279,10 @@ export class SyncService implements LibraryLifecycleListener {
       // doesn't report 'scanning' forever. Still our generation here (the lock,
       // released in finally, blocks a newer one), but guard for consistency.
       if (this.generation.get(libraryId) === token) this.statuses.set(libraryId, idle(libraryId));
+      // Stopped mid-scan: every write is one transaction after the scan, so
+      // nothing was applied and the library is simply idle again. Not an error -
+      // the caller asked for it. syncedStatus stays null, so no processing runs.
+      if (err instanceof SyncCancelled) return idle(libraryId);
       throw err;
     } finally {
       // Release the lock as soon as scan+apply is done. Thumbnail generation runs
@@ -286,7 +304,7 @@ export class SyncService implements LibraryLifecycleListener {
             photos_processed: Math.max(0, finalStatus.photos_processing - stillPending),
           });
         };
-        void Promise.resolve(this.processing.processUnprocessed(libraryId))
+        void Promise.resolve(this.processing.processUnprocessed(libraryId, token.signal))
           .then(settle)
           .catch((err) => {
             console.error(`processing failed for library ${libraryId}: ${(err as Error).message}`);
@@ -294,6 +312,15 @@ export class SyncService implements LibraryLifecycleListener {
           });
       }
     }
+  }
+
+  // Stops the library's current run, wherever it has got to. A scan abandons its
+  // work (nothing is applied), and processing stops handing out jobs, leaving the
+  // photos it never reached pending for the next sync to pick up. Both settle
+  // back to idle on their own; there is nothing to wait for here.
+  cancelSync(libraryId: string): void {
+    if (!this.libraries.getById(libraryId)) throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
+    this.generation.get(libraryId)?.abort();
   }
 
   // While thumbnailing runs (detached, §9.5), the counts are computed live from the
@@ -361,6 +388,8 @@ export class SyncService implements LibraryLifecycleListener {
   private async scanFiles(
     files: readonly ScannedFile[],
     dbPhotos: readonly SyncDbPhoto[],
+    signal: AbortSignal,
+    onProgress: (scanned: number, toScan: number) => void,
   ): Promise<{ present: Set<string>; changed: DiskFile[]; failed: Set<string> }> {
     const dbByPath = new Map(dbPhotos.map((p) => [p.file_path, p]));
 
@@ -372,6 +401,7 @@ export class SyncService implements LibraryLifecycleListener {
     type Scanned = { relPath: string; absPath: string; stats: Awaited<ReturnType<typeof stat>> };
     const byInode = new Map<string, Scanned>();
     for (const file of files) {
+      if (signal.aborted) throw new SyncCancelled();
       let stats;
       try {
         stats = await stat(file.absPath);
@@ -389,7 +419,14 @@ export class SyncService implements LibraryLifecycleListener {
     const changed: DiskFile[] = [];
     const failed = new Set<string>();
 
+    // The loop below is the whole cost of a scan (the stat pass above opens
+    // nothing), so it is the one worth reporting against. `present` is added to
+    // once per file, so its size is how many have been dealt with.
     for (const file of byInode.values()) {
+      // Between files, not inside one: this is the loop that opens and hashes, so
+      // a stop lands within one file's decode rather than at the end of the scan.
+      if (signal.aborted) throw new SyncCancelled();
+      onProgress(present.size, byInode.size);
       present.add(file.relPath);
 
       const record = dbByPath.get(file.relPath);

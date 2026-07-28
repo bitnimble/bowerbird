@@ -1,6 +1,6 @@
 import { observer } from 'mobx-react-lite';
 import { useEffect, useState } from 'react';
-import { FolderPlus, History, Maximize2, RefreshCw, Sparkles, Trash2, Wand2 } from 'lucide-react';
+import { CircleStop, FolderPlus, History, Maximize2, RefreshCw, Sparkles, Trash2, Wand2 } from 'lucide-react';
 import type { Library, PreviewRenditionMode, PreviewSource } from '../../api/client';
 import { useAppSettingsStore, useLibrariesStore, usePresenters, useSyncStore } from '../../app/stores_context';
 import { Button, Heading, ICON, type Option, SegmentedControl, Text, TextField } from '../../ui/ui';
@@ -38,10 +38,19 @@ const LibrarySettings = observer(function LibrarySettings(): JSX.Element {
             <PreviewSettings library={library} />
           </div>
 
-          <Button disabled={sync.isBusy && sync.libraryId === library.id} onClick={() => void syncPresenter.trigger(library.id)}>
-            <RefreshCw size={ICON} />
-            {sync.isBusy && sync.libraryId === library.id ? 'Syncing…' : 'Sync now'}
-          </Button>
+          {/* The same slot, because stopping is what you want from a run in
+              flight and starting another is not on offer anyway. */}
+          {sync.isBusy && sync.libraryId === library.id ? (
+            <Button onClick={() => void syncPresenter.cancel(library.id)}>
+              <CircleStop size={ICON} />
+              Stop
+            </Button>
+          ) : (
+            <Button onClick={() => void syncPresenter.trigger(library.id)}>
+              <RefreshCw size={ICON} />
+              Sync now
+            </Button>
+          )}
 
           <Button
             variant="danger"

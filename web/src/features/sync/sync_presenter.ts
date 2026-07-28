@@ -1,5 +1,6 @@
 import { action, runInAction } from 'mobx';
 import { ApiError, api } from '../../api/client';
+import type { LibrariesPresenter } from '../libraries/libraries_presenter';
 import type { PhotosPresenter } from '../photos/photos_presenter';
 import type { SyncStore } from './sync_store';
 
@@ -14,10 +15,14 @@ export class SyncPresenter {
   // Whether the previous tick saw a run in flight, so the tick that finds it
   // finished still re-reads the grid once.
   private busy = false;
+  // The library whose run we asked for and the server has not answered for yet.
+  // Until then an 'idle' report of it is a run not yet recorded, not the truth.
+  private starting: string | null = null;
 
   constructor(
     private readonly store: SyncStore,
     private readonly photos: PhotosPresenter,
+    private readonly libraries: LibrariesPresenter,
   ) {}
 
   // Poll while a sync/processing run is in flight so the grid fills in as
@@ -28,21 +33,39 @@ export class SyncPresenter {
     await this.poll();
   }
 
+  // Polls alongside the request rather than after it. POST /sync only answers once
+  // the scan has finished, which on a library's first import is minutes of opening
+  // and hashing every file - the whole time the run is already under way and the
+  // status endpoint has been reporting it.
   async trigger(libraryId: string): Promise<void> {
+    this.stop(); // one poll loop, whether or not a view is already watching
     this.setLibrary(libraryId);
-    try {
-      const status = await api.syncLibrary(libraryId);
-      runInAction(() => (this.store.status = status));
-    } catch (err) {
-      // A 409 means someone else is already syncing, which is not a failure
-      // worth showing: polling below will report that run's progress.
-      const conflict = err instanceof ApiError && err.code === 'SYNC_IN_PROGRESS';
-      if (!conflict) {
-        runInAction(() => (this.store.error = message(err)));
-        return;
-      }
-    }
+    this.starting = libraryId;
+    const run = api.syncLibrary(libraryId).then(
+      (status) => runInAction(() => (this.store.status = status)),
+      (err) => {
+        // A 409 means someone else is already syncing, which is not a failure
+        // worth showing: the poll reports that run's progress.
+        if (!(err instanceof ApiError && err.code === 'SYNC_IN_PROGRESS')) {
+          runInAction(() => (this.store.error = message(err)));
+        }
+      },
+    );
+    void run.finally(() => {
+      if (this.starting === libraryId) this.starting = null;
+    });
     await this.poll();
+    await run;
+  }
+
+  // Stops whatever the library is doing. The run settles back to idle on its own,
+  // which the poll already in flight picks up like any other transition.
+  async cancel(libraryId: string): Promise<void> {
+    try {
+      await api.cancelSync(libraryId);
+    } catch (err) {
+      runInAction(() => (this.store.error = message(err)));
+    }
   }
 
   @action.bound
@@ -64,9 +87,11 @@ export class SyncPresenter {
     let scanning = false;
     try {
       const status = await api.getSyncStatus(libraryId);
-      wasBusy = status.status !== 'idle';
+      const running = status.status !== 'idle';
+      const unanswered = this.starting === libraryId;
+      if (running || !unanswered) runInAction(() => (this.store.status = status));
+      wasBusy = running || unanswered;
       scanning = status.status === 'scanning';
-      runInAction(() => (this.store.status = status));
     } catch (err) {
       runInAction(() => (this.store.error = message(err)));
       return;
@@ -80,6 +105,9 @@ export class SyncPresenter {
     // changes, which is the one thing a refetch is still the only way to learn.
     const finished = this.busy && !wasBusy;
     if (scanning || finished || (wasBusy && this.photos.tracksProcessing)) await this.photos.reload();
+    // The library's photo count and "synced 3m ago" come off the library list,
+    // which nothing else re-reads while the settings page stays open.
+    if (finished) await this.libraries.load();
     this.busy = wasBusy;
 
     if (wasBusy && this.store.libraryId === libraryId) {
