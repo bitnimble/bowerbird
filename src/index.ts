@@ -127,4 +127,12 @@ applyErrorHandler(app);
 // like a crash rather than a timeout. 255 is Bun's maximum.
 const IDLE_TIMEOUT_SECONDS = 255;
 
-export default { port: config.port, hostname: config.host, idleTimeout: IDLE_TIMEOUT_SECONDS, fetch: app.fetch };
+// Served explicitly rather than by default export, because with the default
+// port of 0 the assigned port is only knowable from the started server.
+const server = Bun.serve({
+  port: config.port,
+  hostname: config.host,
+  idleTimeout: IDLE_TIMEOUT_SECONDS,
+  fetch: app.fetch,
+});
+console.log(`Listening on http://${config.host}:${server.port}`);

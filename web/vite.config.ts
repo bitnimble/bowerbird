@@ -11,8 +11,11 @@ export default defineConfig({
   esbuild: { target: 'es2022' },
   build: { target: 'es2022' },
   server: {
-    port: 5174,
-    strictPort: true,
+    // Random rather than fixed, so several checkouts can run a dev server at
+    // once; Vite prints the one it settled on. `vite --port N` pins it (Vite's
+    // CLI has no -p). Not port 0: Vite reads that as "unset" and falls back to
+    // its own default, which is the collision this avoids.
+    port: 20000 + Math.floor(Math.random() * 20000),
     host: true,
     // The client talks to the API directly on its own origin, so these are not
     // for the app. They exist so the API's own pages are reachable from a device

@@ -4,8 +4,8 @@ import { API_PORT, API_URL, DB_PATH, WEB_PORT, prepareFixture } from './e2e/fixt
 prepareFixture();
 
 // Drives the real stack: the Hono API (which needs LibRaw for RAW decoding) and
-// the Vite dev server, both on dedicated ports so a running dev session is not
-// disturbed.
+// the Vite dev server, both on their own random ports so neither a dev session
+// nor another checkout's run is disturbed.
 export default defineConfig({
   testDir: './e2e',
   fullyParallel: false,

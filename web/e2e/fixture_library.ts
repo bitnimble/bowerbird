@@ -1,20 +1,39 @@
+import { createHash } from 'node:crypto';
 import { copyFileSync, mkdirSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 
+const E2E_DIR = path.dirname(new URL(import.meta.url).pathname);
+
 // A throwaway library root + DB per run, so E2E never touches a real catalogue
-// and a rerun starts from a known-empty state.
-export const E2E_ROOT = '/tmp/bowerbird-e2e';
+// and a rerun starts from a known-empty state. Keyed by checkout so parallel
+// worktrees don't wipe each other's fixture mid-run, but stable across reruns
+// of one checkout so the copies are overwritten rather than piling up in /tmp.
+const CHECKOUT_KEY = createHash('sha1').update(path.resolve(E2E_DIR, '../..')).digest('hex').slice(0, 8);
+export const E2E_ROOT = path.join(tmpdir(), `bowerbird-e2e-${CHECKOUT_KEY}`);
 // One library root per spec file. The whole run shares a single API and DB, so
 // specs that mutate a catalogue (binning, moving into shoots) would otherwise
 // see each other's changes and depend on file order.
 export const PHOTOS_DIR = path.join(E2E_ROOT, 'photos');
 export const CULL_PHOTOS_DIR = path.join(E2E_ROOT, 'cull-photos');
 export const DB_PATH = path.join(E2E_ROOT, 'e2e.db');
-export const API_PORT = 3111;
-export const WEB_PORT = 5199;
+// Playwright has to know both URLs before it launches anything, so these can't
+// be port 0 - pick one and publish it. The config process picks first and the
+// worker processes it forks inherit the choice through the environment, which is
+// what keeps the API_URL the specs call on the one the API was started on.
+function runPort(name: string): number {
+  const published = process.env[name];
+  if (published != null && published !== '') return Number(published);
+  const port = 20000 + Math.floor(Math.random() * 20000);
+  process.env[name] = String(port);
+  return port;
+}
+
+export const API_PORT = runPort('E2E_API_PORT');
+export const WEB_PORT = runPort('E2E_WEB_PORT');
 export const API_URL = `http://127.0.0.1:${API_PORT}`;
 
-const FIXTURE = path.join(path.dirname(new URL(import.meta.url).pathname), '../../test/fixtures/DSC02981.ARW');
+const FIXTURE = path.join(E2E_DIR, '../../test/fixtures/DSC02981.ARW');
 
 // Two copies under different names: enough to prove the grid, selection and
 // paging work, without a 24MB decode per extra frame.
@@ -24,6 +43,7 @@ export const PHOTO_NAMES = ['alpha.arw', 'beta.arw'];
 // webServers launch before globalSetup runs, and the API cannot open its DB
 // until this directory exists.
 export function prepareFixture(): void {
+  console.log(`E2E API on ${API_URL}, web on http://127.0.0.1:${WEB_PORT}, fixture in ${E2E_ROOT}`);
   rmSync(E2E_ROOT, { recursive: true, force: true });
   for (const dir of [PHOTOS_DIR, CULL_PHOTOS_DIR]) {
     mkdirSync(dir, { recursive: true });

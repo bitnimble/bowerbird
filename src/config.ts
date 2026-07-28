@@ -1,5 +1,7 @@
 // Server configuration from environment variables (DESIGN §15).
 
+import { parseArgs } from 'node:util';
+
 // Parses a numeric env var, failing fast (rather than propagating NaN, which
 // silently breaks e.g. the processing pool's Math.min bound).
 function envNumber(name: string, fallback: number): number {
@@ -39,8 +41,23 @@ function envOrigins(name: string): string[] | '*' | null {
   return list.length === 0 ? null : list;
 }
 
+// -p/--port, taking precedence over PORT so a specific port can be pinned
+// without editing the environment. Not strict: the flag has to coexist with
+// whatever else the runtime was invoked with.
+function argPort(): number | undefined {
+  const { values } = parseArgs({ options: { port: { type: 'string', short: 'p' } }, strict: false });
+  if (typeof values.port !== 'string') return undefined;
+  const value = Number(values.port);
+  if (!Number.isInteger(value) || value < 0 || value > 65535) {
+    throw new Error(`Invalid -p: "${values.port}" is not a port number`);
+  }
+  return value;
+}
+
 export const config = {
-  port: envNumber('PORT', 3000),
+  // 0 means "whatever the OS hands out", so several checkouts can run their own
+  // server (and their own E2E run) at once. The bound port is logged at startup.
+  port: argPort() ?? envNumber('PORT', 0),
   host: process.env.HOST ?? '0.0.0.0',
   dbPath: process.env.DB_PATH ?? './bowerbird.db',
   // The web client is a separate app on its own origin, so the API must opt it

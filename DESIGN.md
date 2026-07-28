@@ -1610,7 +1610,7 @@ The server is configured via environment variables:
 
 | Variable | Default | Description |
 |---|---|---|
-| `PORT` | `3000` | HTTP server port |
+| `PORT` | random | HTTP server port, printed on startup; `-p <port>` overrides it |
 | `HOST` | `0.0.0.0` | HTTP server bind address |
 | `DB_PATH` | `./bowerbird.db` | SQLite database file path |
 | `PROCESSING_CONCURRENCY` | `4` | Number of worker threads for thumbnail generation |
@@ -1738,7 +1738,7 @@ A separate Vite + React app with its own `package.json`, dev server and build. I
 
 | Concern | Choice |
 |---|---|
-| Build / dev server | Vite 5 (port 5174, bound to `0.0.0.0`) |
+| Build / dev server | Vite 5 (random port, bound to `0.0.0.0`) |
 | UI | React 18 |
 | State | MobX 6 with standard (TC39) decorators |
 | Routing | React Router 6 |
@@ -1901,8 +1901,10 @@ The sync status bar renders one cell per photo queued by the current run, fillin
 
 ```bash
 cd web && bun install
-bun run dev                       # http://localhost:5174, expects the API on :3000
-bun run test:e2e                  # Playwright; starts its own API + Vite on :3111/:5199
+bun run dev                       # Vite on a random port, which it prints; --port pins it
+bun run test:e2e                  # Playwright; starts its own API + Vite on random ports
 ```
 
-`bun run test:e2e` builds a throwaway library under `/tmp/bowerbird-e2e` from the ARW fixture and drives the real stack, so it needs LibRaw present. `VITE_API_URL` points the client at a non-default API origin.
+Every service picks a free port at random rather than a fixed one, so several checkouts (parallel worktrees, an agent per branch) can each run a dev server and an E2E suite without fighting over `:3000`. Each prints the port it got, and takes an override when one has to be pinned: `-p <port>` for the API, `--port <port>` for Vite. The client still has to be told where the API is, so a dev session either pins the API with `-p 3000` or passes the port it was given as `VITE_API_URL`.
+
+`bun run test:e2e` builds a throwaway library under `$TMPDIR/bowerbird-e2e-<checkout hash>` from the ARW fixture and drives the real stack, so it needs LibRaw present. The path is keyed by checkout so two worktrees testing at once do not wipe each other's fixture, and stable across runs of one checkout so the copies are overwritten rather than piling up. `VITE_API_URL` points the client at a non-default API origin.
