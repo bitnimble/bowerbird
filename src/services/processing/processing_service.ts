@@ -190,28 +190,34 @@ export class ProcessingService {
     }
   }
 
-  // `signal` stops the batch between jobs (a sync the user stopped, §9.10). What is
+  // `stopped` ends the batch between jobs (a sync the user stopped, §9.10). What is
   // already on disk stays - a tile is valid whether or not the rest of the run
   // finished - and everything unreached keeps its flags for the next sync.
-  processUnprocessed(libraryId?: string, signal?: AbortSignal): Promise<void> {
+  //
+  // A predicate rather than an `AbortSignal`, because a batch outlives the sync
+  // that started it: a later sync of the same library coalesces into this one and
+  // its signal is dropped on the floor by the dedup below, so a stop aimed at that
+  // newer run would never reach the batch actually doing its work. Asked each time
+  // instead, the caller answers for whichever run is current.
+  processUnprocessed(libraryId?: string, stopped?: () => boolean): Promise<void> {
     const key = libraryId ?? '*';
     const existing = this.inFlight.get(key);
     if (existing) {
       this.rerun.add(key); // pick up work added since the running batch started
       return existing;
     }
-    const run = this.drain(libraryId, key, signal).finally(() => this.inFlight.delete(key));
+    const run = this.drain(libraryId, key, stopped).finally(() => this.inFlight.delete(key));
     this.inFlight.set(key, run);
     return run;
   }
 
-  private async drain(libraryId: string | undefined, key: string, signal?: AbortSignal): Promise<void> {
+  private async drain(libraryId: string | undefined, key: string, stopped?: () => boolean): Promise<void> {
     for (;;) {
       this.rerun.delete(key);
       const staged = this.photos.listPendingProcessing(libraryId).map((p) => this.toStages(p));
-      if (staged.length > 0) await this.runStaged(staged, signal);
+      if (staged.length > 0) await this.runStaged(staged, stopped);
       // Stopped, or no new work requested during this pass.
-      if (signal?.aborted === true || !this.rerun.has(key)) return;
+      if (stopped?.() === true || !this.rerun.has(key)) return;
     }
   }
 
@@ -222,7 +228,7 @@ export class ProcessingService {
   // render, so a shoot's grid is browsable in about a minute instead of after the
   // renders finish. Each pass clears its own flag as it lands, so a run interrupted
   // between them resumes at the second rather than repeating the first.
-  private async runStaged(staged: StagedPhoto[], signal?: AbortSignal): Promise<void> {
+  private async runStaged(staged: StagedPhoto[], stopped?: () => boolean): Promise<void> {
     const byId = new Map(staged.map((photo) => [photo.photoId, photo]));
     // A photo whose tile failed is not carried into the second pass: the failure is
     // the file, not the stage, so a render would fail the same way.
@@ -242,11 +248,11 @@ export class ProcessingService {
         // rather than wait for both.
         this.stageDone(photo, result.photoId, 'tile');
       },
-      signal,
+      stopped,
     );
 
     const pending = staged.filter((photo) => photo.renditions != null && !failed.has(photo.photoId));
-    if (pending.length === 0 || signal?.aborted === true) return;
+    if (pending.length === 0 || stopped?.() === true) return;
 
     await this.runPool(
       pending.map((photo) => photo.renditions as RenditionJob),
@@ -258,7 +264,7 @@ export class ProcessingService {
         }
         this.stageDone(photo, result.photoId, 'renditions');
       },
-      signal,
+      stopped,
     );
   }
 
@@ -412,7 +418,7 @@ export class ProcessingService {
   private runPool(
     jobs: RenditionJob[],
     onResult: (result: ProcessingResult, job: RenditionJob) => void,
-    signal?: AbortSignal,
+    stopped?: () => boolean,
   ): Promise<void> {
     const poolSize = Math.min(this.config.processingConcurrency, jobs.length);
     return new Promise((resolve) => {
@@ -436,7 +442,7 @@ export class ProcessingService {
         const assignNext = (): void => {
           // A stop retires each worker as its current job lands rather than
           // killing it mid-encode, which would leave a half-written rendition.
-          if (next >= jobs.length || signal?.aborted === true) {
+          if (next >= jobs.length || stopped?.() === true) {
             worker.terminate();
             live--;
             if (live === 0) resolve();
@@ -466,7 +472,7 @@ export class ProcessingService {
           }
           worker.terminate();
           live--;
-          if (next < jobs.length && signal?.aborted !== true && launch()) return; // replacement running
+          if (next < jobs.length && stopped?.() !== true && launch()) return; // replacement running
           if (live === 0) resolve();
         };
 

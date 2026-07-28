@@ -113,13 +113,15 @@ test('stopping mid-scan applies nothing and leaves the library idle', async () =
 });
 
 test('stopping during processing ends the run rather than waiting it out', async () => {
-  let signalled: AbortSignal | null = null;
+  const asked: (() => boolean)[] = [];
+  let release!: () => void;
+  const blocked = new Promise<void>((r) => (release = r));
   const sync: SyncService = build(
+    // Stands in for the worker pool, which asks between jobs whether to carry on.
     {
-      // Stands in for the worker pool: runs until the signal says to stop.
-      processUnprocessed: (_libraryId, signal) => {
-        signalled = signal ?? null;
-        return new Promise<void>((resolve) => signal?.addEventListener('abort', () => resolve()));
+      processUnprocessed: (_libraryId, stopped) => {
+        if (stopped) asked.push(stopped);
+        return blocked;
       },
     },
     async () => metadata(new Date(), 3),
@@ -128,13 +130,39 @@ test('stopping during processing ends the run rather than waiting it out', async
   const status = await sync.syncLibrary(LIB);
   expect(status.status).toBe('processing');
   expect(status.photos_added).toBe(3);
-  expect(signalled).not.toBeNull();
+  expect(asked[0]?.()).toBe(false);
   expect(sync.getSyncStatus(LIB).status).toBe('processing');
 
   sync.cancelSync(LIB);
+  expect(asked[0]?.()).toBe(true); // the pool is told at its next job
+
+  release();
   await flush();
 
   expect(sync.getSyncStatus(LIB).status).toBe('idle');
   // The photos it never reached keep their flags, so the next sync picks them up.
   expect(sync.getSyncStatus(LIB).photos_processing).toBe(3);
+});
+
+test('a batch a later sync coalesced into is still what a stop reaches', async () => {
+  // A batch is per library and outlives the sync that started it, so a second sync
+  // joins the running one (ProcessingService dedups by library) and whatever it
+  // handed over is dropped. Asked for a fixed answer, the batch would go on
+  // watching the finished sync, and Stop would do nothing at all.
+  const asked: (() => boolean)[] = [];
+  const sync: SyncService = build(
+    {
+      processUnprocessed: (_libraryId, stopped) => {
+        if (stopped) asked.push(stopped);
+      },
+    },
+    async () => metadata(new Date(), 3),
+  );
+
+  await sync.syncLibrary(LIB); // the generation whose batch is running
+  await sync.syncLibrary(LIB); // a later one, which would join that batch
+  await flush();
+
+  sync.cancelSync(LIB); // aimed at the newer generation
+  expect(asked[0]?.()).toBe(true); // and answered by the batch the older one started
 });

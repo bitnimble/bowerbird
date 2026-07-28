@@ -332,6 +332,29 @@ describe('ProcessingService.processUnprocessed', () => {
     expect(markRenditionsBuilt).not.toHaveBeenCalled(); // untouched -> both flags still set
   });
 
+  it('stops handing out jobs once the run is stopped, and does not start the second pass', async () => {
+    // What a stopped sync (§9.10) actually buys: the pool stops feeding its
+    // workers rather than running the import out to the end. The two in flight
+    // when the stop lands still finish - killing a worker mid-encode would leave
+    // a half-written rendition - so the tiles already queued are the last of it.
+    let stopped = false;
+    const markTileBuilt = jest.fn(() => {
+      stopped = true;
+    });
+    const repo = {
+      listPendingProcessing: jest.fn(() => [pending('a'), pending('b'), pending('c'), pending('d')]),
+      markTileBuilt,
+      markRenditionsBuilt: jest.fn(),
+      markProcessingFailed: jest.fn(),
+    } as unknown as PhotosRepository;
+
+    await new ProcessingService(repo, config).processUnprocessed('lib', () => stopped);
+
+    // Two workers, so two tiles were already posted when the first came back. Not
+    // c or d, and no ':full' at all: the rendition pass never starts.
+    expect(posted.map((job) => photoStage(job))).toEqual(['a:grid', 'b:grid']);
+  });
+
   it('does nothing when there is no pending work', async () => {
     const repo = { listPendingProcessing: jest.fn(() => []) } as unknown as PhotosRepository;
     await expect(new ProcessingService(repo, config).processUnprocessed('lib')).resolves.toBeUndefined();

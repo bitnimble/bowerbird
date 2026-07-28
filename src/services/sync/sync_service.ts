@@ -19,7 +19,7 @@ import { libraryMutex } from './library_mutex';
 import { acquireSyncLock, releaseSyncLock } from './sync_lock';
 
 export interface ProcessingTrigger {
-  processUnprocessed(libraryId?: string, signal?: AbortSignal): void | Promise<void>;
+  processUnprocessed(libraryId?: string, stopped?: () => boolean): void | Promise<void>;
 }
 
 // Unwinds a scan the user stopped. Never leaves this module: syncLibrary turns it
@@ -304,7 +304,12 @@ export class SyncService implements LibraryLifecycleListener {
             photos_processed: Math.max(0, finalStatus.photos_processing - stillPending),
           });
         };
-        void Promise.resolve(this.processing.processUnprocessed(libraryId, token.signal))
+        // Asks about whichever generation is current rather than about this one:
+        // a batch is per library and outlives the sync that started it, so a later
+        // sync coalescing into it must not leave the stop button pointing at a run
+        // nothing is doing any more.
+        const stopped = (): boolean => this.generation.get(libraryId)?.signal.aborted === true;
+        void Promise.resolve(this.processing.processUnprocessed(libraryId, stopped))
           .then(settle)
           .catch((err) => {
             console.error(`processing failed for library ${libraryId}: ${(err as Error).message}`);
