@@ -48,8 +48,8 @@ beforeEach(() => {
   );
   db.query('INSERT INTO albums (id, name, ordering) VALUES (?, ?, ?)').run(ALBUM, 'Keepers', 'taken_desc');
   db.query(
-    `INSERT INTO photos (id, library_id, shoot_id, file_path, width, height, date_added, needs_processing)
-     VALUES (?, ?, ?, 'Trip/a.arw', 100, 100, '2026-01-01T00:00:00.000Z', 0)`,
+    `INSERT INTO photos (id, library_id, shoot_id, file_path, width, height, date_added, needs_tile, needs_renditions)
+     VALUES (?, ?, ?, 'Trip/a.arw', 100, 100, '2026-01-01T00:00:00.000Z', 0, 0)`,
   ).run(PHOTO, LIB, SHOOT);
   db.query('INSERT INTO album_photos (album_id, photo_id, date_added) VALUES (?, ?, ?)').run(
     ALBUM,
@@ -118,8 +118,8 @@ test('a photo in no shoot bins to <root>/Bin, never into the data directory', as
   const LOOSE = '00000000-0000-4000-8000-0000000000be';
   writeFileSync(path.join(root, 'loose.arw'), 'RAW');
   db.query(
-    `INSERT INTO photos (id, library_id, shoot_id, file_path, width, height, date_added, needs_processing)
-     VALUES (?, ?, NULL, 'loose.arw', 100, 100, '2026-01-01T00:00:00.000Z', 0)`,
+    `INSERT INTO photos (id, library_id, shoot_id, file_path, width, height, date_added, needs_tile, needs_renditions)
+     VALUES (?, ?, NULL, 'loose.arw', 100, 100, '2026-01-01T00:00:00.000Z', 0, 0)`,
   ).run(LOOSE, LIB);
 
   await service.delete([LOOSE]);

@@ -30,8 +30,12 @@ function library(dataPath: string, hdr: boolean): Library {
 
 const FIXTURE = `${import.meta.dir}/../fixtures/DSC02981.ARW`;
 
+// A one-off render stamps the row it wrote and announces it (§18.6), so the
+// service needs a repository even here, where the subject is the pixels.
+const stamps = { markTileBuilt: () => {}, markRenditionsBuilt: () => {} } as never;
+
 function service(): ProcessingService {
-  return new ProcessingService({} as never, {
+  return new ProcessingService(stamps, {
     processingConcurrency: 1,
     losslessQuality: 88,
     losslessQuantizer: 8,

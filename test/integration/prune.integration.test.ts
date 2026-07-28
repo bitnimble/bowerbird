@@ -35,8 +35,8 @@ function seedFile(dir: string, name: string): string {
 
 function insertPhoto(id: string, deleted = false): void {
   db.query(
-    `INSERT INTO photos (id, library_id, file_path, width, height, date_added, is_deleted, needs_processing)
-     VALUES (?, ?, ?, 100, 100, '2026-01-01T00:00:00.000Z', ?, 0)`,
+    `INSERT INTO photos (id, library_id, file_path, width, height, date_added, is_deleted, needs_tile, needs_renditions)
+     VALUES (?, ?, ?, 100, 100, '2026-01-01T00:00:00.000Z', ?, 0, 0)`,
   ).run(id, LIB, `${id}.arw`, deleted ? 1 : 0);
 }
 

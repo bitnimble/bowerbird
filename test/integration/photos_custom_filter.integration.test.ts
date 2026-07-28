@@ -19,8 +19,8 @@ interface Row {
 
 function insert({ id, taken, rating = 0, triage = null, missing = false }: Row): void {
   db.query(
-    `INSERT INTO photos (id, library_id, file_path, width, height, date_taken, date_added, rating, triage, is_missing, is_deleted, needs_processing)
-     VALUES (?, ?, ?, 100, 100, ?, '2020-01-01T00:00:00.000Z', ?, ?, ?, 0, 0)`,
+    `INSERT INTO photos (id, library_id, file_path, width, height, date_taken, date_added, rating, triage, is_missing, is_deleted, needs_tile, needs_renditions)
+     VALUES (?, ?, ?, 100, 100, ?, '2020-01-01T00:00:00.000Z', ?, ?, ?, 0, 0, 0)`,
   ).run(id, LIB, `${id}.arw`, taken, rating, triage, missing ? 1 : 0);
 }
 
