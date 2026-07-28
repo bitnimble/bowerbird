@@ -24,9 +24,24 @@ mod raw {
     include!(concat!(env!("OUT_DIR"), "/libraw.rs"));
 }
 
-/// LibRaw's `user_qual`: PPG. Measured against the default AHD it is 544ms rather
-/// than 849ms on a 61MP frame, for 0.18% mean difference.
+/// LibRaw's `user_qual`: PPG, the cheapest of LibRaw's algorithms and not the
+/// worst. See DESIGN 10.4 for the measured table across all of them.
 const DEMOSAIC_PPG: c_int = 2;
+
+/// Which demosaic to run, overridable with BOWERBIRD_DEMOSAIC.
+///
+/// A knob because the choice is a speed/quality trade that only measurement
+/// settles, and the measurement is worth repeating on a different sensor: see
+/// DESIGN 10.4 for the numbers across LibRaw's algorithms. Anything outside the
+/// range LibRaw accepts falls back to PPG rather than letting it pick its default.
+fn demosaic() -> c_int {
+    std::env::var("BOWERBIRD_DEMOSAIC")
+        .ok()
+        .and_then(|value| value.parse::<c_int>().ok())
+        .filter(|value| (0..=12).contains(value))
+        .unwrap_or(DEMOSAIC_PPG)
+}
+
 const OUTPUT_SRGB: c_int = 1;
 const OUTPUT_REC2020: c_int = 8;
 
@@ -208,7 +223,7 @@ pub unsafe extern "C" fn bb_decode(
         if let Some(mul) = camera_multipliers(&(*r).color.cam_mul) {
             (*r).params.user_mul = mul;
         }
-        (*r).params.user_qual = DEMOSAIC_PPG;
+        (*r).params.user_qual = demosaic();
         (*r).params.output_bps = depth as c_int;
         if rec2020_linear != 0 {
             (*r).params.output_color = OUTPUT_REC2020;
