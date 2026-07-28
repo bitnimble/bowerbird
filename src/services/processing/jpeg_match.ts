@@ -25,6 +25,7 @@ import { decodeRaw, readEmbeddedJpeg, type DecodedImage } from './raw_decoder';
 // over a hundred thousand usable pairs, far more than 256-bin curves need.
 const FIT_LONG_EDGE = 640;
 
+
 // Both images are blurred before pairing. The camera's sharpening and noise
 // reduction are not reproducible and must not leak into the colour fit, and a
 // little residual misregistration stops mattering once neither image has detail at
@@ -98,16 +99,61 @@ function clamp8(value: number): number {
 
 // ---------------------------------------------------------------- image plumbing
 
-async function embeddedOnFitGrid(jpegBytes: Buffer): Promise<Plane> {
+async function embeddedOnFitGrid(jpegBytes: Buffer, longEdge: number): Promise<Plane> {
   // The embedded JPEG carries its own EXIF orientation, unlike a render, which the
   // decoder has already baked upright (DESIGN §10.3).
   const out = await sharp(jpegBytes)
     .rotate()
-    .resize(FIT_LONG_EDGE, FIT_LONG_EDGE, { fit: 'inside', withoutEnlargement: true })
+    .resize(longEdge, longEdge, { fit: 'inside', withoutEnlargement: true })
     .blur(FIT_BLUR_SIGMA)
     .raw()
     .toBuffer({ resolveWithObject: true });
   return { width: out.info.width, height: out.info.height, data: out.data };
+}
+
+/** The render and the camera's JPEG on one common grid, ready to be compared. */
+interface Grid {
+  source: Plane;
+  jpeg: Plane;
+}
+
+/** Both resolutions a fit works at: cheap for scanning, full for refining. */
+interface Grids {
+  full: Grid;
+  search: Grid;
+}
+
+async function gridAt(render: DecodedImage, jpegBytes: Buffer, longEdge: number): Promise<Grid> {
+  const jpeg = await embeddedOnFitGrid(jpegBytes, longEdge);
+  return { jpeg, source: await renderSource(render, jpeg.width) };
+}
+
+async function halve(plane: Plane): Promise<Plane> {
+  const width = Math.max(1, Math.round(plane.width / 2));
+  const height = Math.max(1, Math.round(plane.height / 2));
+  const data = await sharp(plane.data, { raw: { width: plane.width, height: plane.height, channels: 3 } })
+    .resize(width, height, { fit: 'fill', kernel: 'lanczos3' })
+    .raw()
+    .toBuffer();
+  return { width, height, data };
+}
+
+/**
+ * Half-size copy of the grid, for ranking candidates.
+ *
+ * The search only has to order geometries against each other, and that ordering is
+ * a smooth function of two parameters - it does not need the resolution the final
+ * transform is fitted at. Half the long edge is a quarter of the pixels through
+ * every stage of every candidate, and the winner is re-fitted at full size, so
+ * nothing that ships was measured here.
+ *
+ * Derived from the full grid rather than built from the 60MP decode a second time:
+ * resizing a 1280px plane costs nothing, resizing the original costs ~250ms, and
+ * doing that twice ate most of what the coarse search saved.
+ */
+async function searchGrid(full: Grid): Promise<Grid> {
+  const [source, jpeg] = await Promise.all([halve(full.source), halve(full.jpeg)]);
+  return { source, jpeg };
 }
 
 /**
@@ -468,11 +514,11 @@ function score(pairs: Pairs, phase: Phase, transform: ColourTransform): number {
  * into the fit, since the number being minimised *is* the correspondence measure.
  */
 async function residualFor(
-  source: Plane,
-  jpeg: Plane,
+  grid: Grid,
   knots: readonly number[],
   crop: number,
 ): Promise<{ deltaE: number; colour: ColourTransform } | null> {
+  const { source, jpeg } = grid;
   const warped = await blur(warp(source, jpeg.width, jpeg.height, knots, crop), FIT_BLUR_SIGMA);
   const all = pairs(warped, jpeg);
   if (all.count < MIN_PAIRS) return null;
@@ -490,25 +536,33 @@ interface Geometry {
 
 /** Coarse scan then halving refine of a single scalar. */
 async function fitCrop(
-  source: Plane,
-  jpeg: Plane,
+  grids: Grids,
   knots: readonly number[],
   coarse: readonly number[],
-): Promise<{ crop: number; deltaE: number; colour: ColourTransform } | null> {
-  let best: { crop: number; deltaE: number; colour: ColourTransform } | null = null;
+): Promise<{ crop: number; deltaE: number } | null> {
+  let best: { crop: number; deltaE: number } | null = null;
   for (const crop of coarse) {
-    const result = await residualFor(source, jpeg, knots, crop);
-    if (result && (best == null || result.deltaE < best.deltaE)) best = { crop, ...result };
+    const result = await residualFor(grids.search, knots, crop);
+    if (result && (best == null || result.deltaE < best.deltaE)) best = { crop, deltaE: result.deltaE };
   }
   if (best == null) return null;
+
+  // Refine at full size. The scan only has to land in the right valley, which a
+  // quarter of the pixels answers just as well, but the walk down it compares
+  // neighbours a fraction of a percent apart - and at half resolution those
+  // differences fall under the improvement threshold, so the refine stops early and
+  // leaves the geometry short. Measured: an injected 3% distortion came back as
+  // 1.3% when the refine also ran coarse.
+  const rescored = await residualFor(grids.full, knots, best.crop);
+  if (rescored) best = { crop: best.crop, deltaE: rescored.deltaE };
   let step = (coarse[1] ?? 1) - (coarse[0] ?? 0);
-  while (step > 0.0005) {
+  while (step > REFINE_FLOOR) {
     let improved = false;
     for (const sign of [1, -1]) {
       const crop: number = best.crop + sign * step;
-      const result = await residualFor(source, jpeg, knots, crop);
-      if (result && result.deltaE < best.deltaE - 0.002) {
-        best = { crop, ...result };
+      const result = await residualFor(grids.full, knots, crop);
+      if (result && result.deltaE < best.deltaE - REFINE_MARGIN) {
+        best = { crop, deltaE: result.deltaE };
         improved = true;
       }
     }
@@ -552,7 +606,6 @@ interface Candidate {
   k1: number;
   crop: number;
   deltaE: number;
-  colour: ColourTransform;
 }
 
 /**
@@ -561,15 +614,18 @@ interface Candidate {
  * against 1.69 on the frame with the largest correction measured), so this is
  * slower than reading metadata but not less accurate.
  */
-async function fitPolynomial(source: Plane, jpeg: Plane): Promise<Candidate | null> {
+async function fitPolynomial(grids: Grids): Promise<Candidate | null> {
   let best: Candidate | null = null;
   for (const k1 of FALLBACK_K1_SCAN) {
     for (const crop of FALLBACK_CROP_SCAN) {
-      const result = await residualFor(source, jpeg, polynomialKnots(k1, 0), crop);
-      if (result && (best == null || result.deltaE < best.deltaE)) best = { k1, crop, ...result };
+      const result = await residualFor(grids.search, polynomialKnots(k1, 0), crop);
+      if (result && (best == null || result.deltaE < best.deltaE)) best = { k1, crop, deltaE: result.deltaE };
     }
   }
   if (best == null) return null;
+
+  const rescored = await residualFor(grids.full, polynomialKnots(best.k1, 0), best.crop);
+  if (rescored) best = { ...best, deltaE: rescored.deltaE };
 
   const steps = { k1: 0.01, crop: 0.01 };
   while (steps.crop > REFINE_FLOOR) {
@@ -578,9 +634,9 @@ async function fitPolynomial(source: Plane, jpeg: Plane): Promise<Candidate | nu
       for (const sign of [1, -1]) {
         const k1: number = key === 'k1' ? best.k1 + sign * steps.k1 : best.k1;
         const crop: number = key === 'crop' ? best.crop + sign * steps.crop : best.crop;
-        const result = await residualFor(source, jpeg, polynomialKnots(k1, 0), crop);
+        const result = await residualFor(grids.full, polynomialKnots(k1, 0), crop);
         if (result && result.deltaE < best.deltaE - REFINE_MARGIN) {
-          best = { k1, crop, ...result };
+          best = { k1, crop, deltaE: result.deltaE };
           improved = true;
         }
       }
@@ -592,36 +648,50 @@ async function fitPolynomial(source: Plane, jpeg: Plane): Promise<Candidate | nu
   return best;
 }
 
-async function resolveGeometry(source: Plane, jpeg: Plane, rawBytes: Uint8Array): Promise<Geometry> {
-  const identity = await residualFor(source, jpeg, [], 1);
-  const baseline: Geometry = {
-    knots: null,
-    crop: 1,
-    source: 'none',
-    deltaE: identity?.deltaE ?? Number.POSITIVE_INFINITY,
-    colour: identity?.colour ?? identityTransform(),
-  };
+interface Chosen {
+  knots: number[] | null;
+  crop: number;
+  source: Geometry['source'];
+  deltaE: number;
+}
+
+/**
+ * Which geometry to use, decided entirely on the search grid. Every deltaE here is
+ * for ranking candidates against each other; the winner is re-fitted at full size
+ * by the caller, so none of these numbers is reported or shipped.
+ */
+async function chooseGeometry(grids: Grids, rawBytes: Uint8Array): Promise<Chosen> {
+  const identity = await residualFor(grids.full, [], 1);
+  const baseline: Chosen = { knots: null, crop: 1, source: 'none', deltaE: identity?.deltaE ?? Number.POSITIVE_INFINITY };
 
   const cameraKnots = readDistortionSpline(rawBytes);
   if (cameraKnots) {
-    const fitted = await fitCrop(source, jpeg, cameraKnots, scanAround(estimateCrop(cameraKnots), 0.01, 3));
+    const fitted = await fitCrop(grids, cameraKnots, scanAround(estimateCrop(cameraKnots), 0.01, 3));
     // The camera's curve is the truth about the lens, but only if using it
     // actually corresponds better - a body whose preview is uncorrected records
     // the spline anyway.
     if (fitted && fitted.deltaE < baseline.deltaE) {
-      return { knots: cameraKnots, crop: fitted.crop, source: 'camera', deltaE: fitted.deltaE, colour: fitted.colour };
+      return { knots: cameraKnots, crop: fitted.crop, source: 'camera', deltaE: fitted.deltaE };
     }
     return baseline;
   }
 
-  const fitted = await fitPolynomial(source, jpeg);
+  const fitted = await fitPolynomial(grids);
   if (fitted == null || fitted.deltaE >= baseline.deltaE) return baseline;
+  return { knots: polynomialKnots(fitted.k1, 0), crop: fitted.crop, source: 'fitted', deltaE: fitted.deltaE };
+}
+
+async function resolveGeometry(grids: Grids, rawBytes: Uint8Array): Promise<Geometry> {
+  const chosen = await chooseGeometry(grids, rawBytes);
+  // One evaluation at full size, for the transform that actually ships and the
+  // deltaE that gets reported and gated on.
+  const final = await residualFor(grids.full, chosen.knots ?? [], chosen.crop);
   return {
-    knots: polynomialKnots(fitted.k1, 0),
-    crop: fitted.crop,
-    source: 'fitted',
-    deltaE: fitted.deltaE,
-    colour: fitted.colour,
+    knots: chosen.knots,
+    crop: chosen.crop,
+    source: chosen.source,
+    deltaE: final?.deltaE ?? Number.POSITIVE_INFINITY,
+    colour: final?.colour ?? identityTransform(),
   };
 }
 
@@ -654,10 +724,8 @@ export async function fitProfileFor(
   jpegBytes: Buffer,
   rawBytes: Uint8Array,
 ): Promise<MatchProfile | null> {
-  const jpeg = await embeddedOnFitGrid(jpegBytes);
-  const source = await renderSource(render, jpeg.width);
-
-  const geometry = await resolveGeometry(source, jpeg, rawBytes);
+  const full = await gridAt(render, jpegBytes, FIT_LONG_EDGE);
+  const geometry = await resolveGeometry({ full, search: await searchGrid(full) }, rawBytes);
   if (!Number.isFinite(geometry.deltaE) || geometry.deltaE > MAX_ACCEPTABLE_DELTA_E) return null;
   return {
     distortion: geometry.knots,
