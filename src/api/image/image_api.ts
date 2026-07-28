@@ -29,9 +29,6 @@ const JPEG_QUALITY = 92;
 // the app and the API are different origins in development.
 const TIMING_ALLOW_ORIGIN = { 'Timing-Allow-Origin': '*' };
 
-// Every stored rendition is AVIF now (§10.2).
-const AVIF = 'image/avif';
-
 // Streams straight from disk via Bun.file (no buffering); Bun.serve applies Range
 // handling to the BunFile body for 206 partial content (DESIGN §13.5).
 export class ImageApi {
