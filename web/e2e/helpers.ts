@@ -41,4 +41,7 @@ export async function viewMaxQuality(page: Page, rootPath: string): Promise<void
   await expect(page.locator('.panel', { hasText: 'IMAGE PREVIEW DETAILS' }).getByText('RAW render (max quality)')).toBeVisible({
     timeout: 180_000,
   });
+  // The stage holds the previous frame until the new one has decoded, so the
+  // panel naming the rendition is not yet the image carrying it.
+  await expect(page.locator('.stage__viewport img')).toHaveAttribute('src', /\/renditions\/max/, { timeout: 60_000 });
 }

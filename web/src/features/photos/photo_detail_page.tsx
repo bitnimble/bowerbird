@@ -113,8 +113,8 @@ const DOWNLOADS: Option<'raw' | 'jpeg'>[] = [
 type PhotoAction = PreviewRendition | 'metadata';
 
 const RENDITIONS: Option<PhotoAction>[] = [
-  { value: 'embedded', label: 'Embedded JPEG', icon: <Sparkles size={ICON} /> },
-  { value: 'full', label: 'From RAW', icon: <Wand2 size={ICON} /> },
+  { value: 'embedded', label: 'Embedded JPEG', icon: <Sparkles size={ICON} />, hint: 'I' },
+  { value: 'full', label: 'From RAW', icon: <Wand2 size={ICON} />, hint: 'O' },
   { value: 'max', label: 'From RAW (max quality)', icon: <Maximize2 size={ICON} /> },
 ];
 
@@ -176,6 +176,8 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
       const verdict = TRIAGE_KEYS[e.key];
       if (verdict != null) void photos.setTriage(photoId, verdict);
       else if (/^[0-5]$/.test(e.key)) void photos.setRating(photoId, Number(e.key));
+      else if (e.key === 'i') void photos.chooseRendition(photoId, 'embedded');
+      else if (e.key === 'o') void photos.chooseRendition(photoId, 'full');
       else if (e.key === 'ArrowLeft' && prevId != null) navigate(`/photos/${prevId}`);
       else if (e.key === 'ArrowRight' && nextId != null) navigate(`/photos/${nextId}`);
       else if (e.key === 'Escape' && document.fullscreenElement == null && libraryId != null) navigate(`/libraries/${libraryId}`);
@@ -266,6 +268,14 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
             </>
           }
           options={ACTIONS}
+          toggles={[
+            {
+              label: 'Rebuild, ignoring the cache',
+              icon: <RefreshCw size={ICON} />,
+              checked: store.forceRebuild,
+              onChange: photos.setForceRebuild,
+            },
+          ]}
           onSelect={(action) => {
             if (action === 'metadata') void photos.refreshMetadata([photoId]);
             else void photos.chooseRendition(photoId, action);
@@ -296,6 +306,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
         {/* Keyed off the route, not the loaded detail, so the photo on screen is
             always the one the URL asks for. */}
         <PhotoStage
+          photoKey={photoId}
           src={hdrVideo && showing !== 'embedded' ? renditionVideoUrl(photoId, showing, store.rebuiltAt) : stillSrc}
           video={hdrVideo}
           alt={filename}

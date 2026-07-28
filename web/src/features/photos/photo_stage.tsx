@@ -24,6 +24,8 @@ interface Props {
   // The preview does not exist yet. Called once per src, before the retries
   // start, so the caller can build the thing the retries are waiting for.
   onImageMissing?: () => void;
+  /** Clears the stage when it changes. The photo, not the src: a rendition swap must hold the frame. */
+  photoKey: string;
 }
 
 // Scale and pan are one value, not two pieces of state. Zooming about a point
@@ -86,7 +88,7 @@ function transferredBytes(src: string): number | null {
 // The image viewport: fit/zoom, wheel zoom, drag-to-pan and fullscreen. All of
 // this is ephemeral view state, so it stays local rather than going through a
 // store; nothing outside this component needs to know the pan offset.
-export function PhotoStage({ src, alt, filename, video, preloadSrc, onImageLoad, onImageMissing }: Props): JSX.Element {
+export function PhotoStage({ src, alt, filename, video, photoKey, preloadSrc, onImageLoad, onImageMissing }: Props): JSX.Element {
   const stageRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
   const [view, setView] = useState<View>(FITTED);
@@ -95,9 +97,16 @@ export function PhotoStage({ src, alt, filename, video, preloadSrc, onImageLoad,
   const [toolbarVisible, setToolbarVisible] = useState(false);
   const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
-  // Held back until this src has decoded. Without it the previous photo stays on
-  // screen for a beat after navigating, which reads as a flash of the wrong frame.
-  const [ready, setReady] = useState(false);
+  // The src actually painted, which lags the one asked for until it has decoded.
+  //
+  // Swapping the element's src directly means a frame with nothing decoded to
+  // show, and the stage background comes through - a flash on every rendition
+  // change, including between two that were already cached, where there is no
+  // wait to justify it. Decoding first and swapping after costs nothing on a
+  // cached image (`decode()` settles in a microtask) and keeps the previous frame
+  // up while a genuinely new one is fetched.
+  const [painted, setPainted] = useState<string | null>(null);
+  const ready = painted != null;
   // Drives the stage's aspect-ratio, so the bordered box is the photo rather
   // than a letterboxed container with black margins inside it.
   const [natural, setNatural] = useState({ width: 0, height: 0 });
@@ -108,13 +117,20 @@ export function PhotoStage({ src, alt, filename, video, preloadSrc, onImageLoad,
   const reset = useCallback(() => setView(FITTED), []);
 
   // A new photo starts fitted; carrying a pan offset across frames would show
-  // the next one scrolled to a corner.
+  // the next one scrolled to a corner. Keyed on the photo rather than the src, so
+  // that switching rendition holds the frame it is already showing: the previous
+  // *photo* must be cleared at once, a different rendition of this one must not.
   useEffect(() => {
     reset();
     setFailed(false);
-    setReady(false);
+    setPainted(null);
     setAttempt(0);
-  }, [src, reset]);
+  }, [photoKey, reset]);
+
+  useEffect(() => {
+    setFailed(false);
+    setAttempt(0);
+  }, [src]);
 
   useEffect(() => {
     // A blob URL is decoded from bytes already in hand; it will not start
@@ -142,6 +158,36 @@ export function PhotoStage({ src, alt, filename, video, preloadSrc, onImageLoad,
 
   // The browser caches the 404, so a retry needs a URL it has not seen.
   const shownSrc = attempt === 0 ? src : `${src}${src.includes('?') ? '&' : '?'}retry=${attempt}`;
+
+  // Through a ref: callers pass an inline callback, and a new identity per render
+  // would restart the decode below on every render while one is in flight.
+  const onMissing = useRef(onImageMissing);
+  onMissing.current = onImageMissing;
+
+  // Decode before painting. A video cannot be decoded off-screen this way, so it
+  // swaps directly and keeps the old behaviour; it is the Firefox-only path and
+  // is never one of two cached renditions being compared.
+  useEffect(() => {
+    if (video || shownSrc === painted) return;
+    let live = true;
+    const image = new Image();
+    image.src = shownSrc;
+    image
+      .decode()
+      .then(() => {
+        if (live) setPainted(shownSrc);
+      })
+      .catch(() => {
+        if (!live) return;
+        setFailed(true);
+        // Only the first failure, and never for a blob: a decoded image in hand
+        // cannot be missing server-side.
+        if (attempt === 0 && !src.startsWith('blob:')) onMissing.current?.();
+      });
+    return () => {
+      live = false;
+    };
+  }, [shownSrc, painted, video, attempt, src]);
 
   // Measures here, outside the updater, so the updater itself stays pure.
   const zoomBy = useCallback(
@@ -301,29 +347,24 @@ export function PhotoStage({ src, alt, filename, video, preloadSrc, onImageLoad,
             }}
             onLoadedMetadata={(e) => {
               setNatural({ width: e.currentTarget.videoWidth, height: e.currentTarget.videoHeight });
-              setReady(true);
+              setPainted(shownSrc);
               onImageLoad(e.currentTarget.videoWidth, e.currentTarget.videoHeight, transferredBytes(shownSrc));
             }}
           />
         ) : (
-          <img
-            src={shownSrc}
-            alt={alt}
-            draggable={false}
-            className={ready ? 'is-ready stage__content' : 'stage__content'}
-            style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}
-            onError={() => {
-              setFailed(true);
-              // Only the first failure, and never for a blob: a decoded image in
-              // hand cannot be missing server-side.
-              if (attempt === 0 && !src.startsWith('blob:')) onImageMissing?.();
-            }}
-            onLoad={(e) => {
-              setNatural({ width: e.currentTarget.naturalWidth, height: e.currentTarget.naturalHeight });
-              setReady(true);
-              onImageLoad(e.currentTarget.naturalWidth, e.currentTarget.naturalHeight, transferredBytes(shownSrc));
-            }}
-          />
+          painted != null && (
+            <img
+              src={painted}
+              alt={alt}
+              draggable={false}
+              className="is-ready stage__content"
+              style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}
+              onLoad={(e) => {
+                setNatural({ width: e.currentTarget.naturalWidth, height: e.currentTarget.naturalHeight });
+                onImageLoad(e.currentTarget.naturalWidth, e.currentTarget.naturalHeight, transferredBytes(painted));
+              }}
+            />
+          )
         )}
       </div>
 

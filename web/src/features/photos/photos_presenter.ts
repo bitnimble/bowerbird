@@ -130,13 +130,29 @@ export class PhotosPresenter {
     else await this.settingsPresenter.rememberRendition(rendition);
   }
 
+  // Every rendition is rebuilt from scratch rather than served from the file that
+  // already exists. For working on the pipeline itself: the file *is* the cache,
+  // so a change to a decode setting is invisible on every photo already looked at
+  // until something deletes what is there.
+  @action.bound
+  setForceRebuild(force: boolean): void {
+    this.store.forceRebuild = force;
+  }
+
   // Builds the rendition the first time and serves the cached file every time
   // after. The camera's JPEG is never built: it is the RAW's own bytes (§10.2).
   private async showRendition(photoId: string, rendition: PreviewRendition): Promise<void> {
+    // The camera's JPEG comes straight out of the RAW, so there is no cached
+    // build to force past.
+    const force = this.store.forceRebuild && rendition !== 'embedded';
     runInAction(() => (this.store.buildingRendition = true));
     try {
-      if (rendition !== 'embedded' && this.store.detail?.renditions?.[rendition]?.built !== true) {
-        await api.buildRendition(photoId, rendition);
+      if (rendition !== 'embedded' && (force || this.store.detail?.renditions?.[rendition]?.built !== true)) {
+        await api.buildRendition(photoId, rendition, force);
+        // The URL is stable, so a rebuilt file behind it is one the browser has
+        // already decoded and will not ask for again. This is the same version
+        // the rebuild action uses.
+        runInAction(() => (this.store.rebuiltAt = Date.now()));
       }
       // The build may have written an HDR video beside the still, and only the
       // detail knows whether one exists. Without this, Firefox keeps showing the

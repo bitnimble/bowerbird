@@ -1,4 +1,4 @@
-import { existsSync, rmSync } from 'node:fs';
+import { existsSync, rmSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
 import { CULL_PHOTOS_DIR, PHOTO_NAMES } from './fixture_library';
@@ -346,6 +346,40 @@ test('a chosen preview rendition is cached on disk, and dropped when the photo i
   await expect.poll(() => existsSync(cached), { timeout: 15_000 }).toBe(false);
 });
 
+// Switching between the camera's JPEG and a render is the comparison the detail
+// view exists for, so it is a keystroke rather than three clicks into a submenu.
+test('i and o switch between the camera JPEG and the render, and the cache can be forced past', async ({ page }) => {
+  // A forced rebuild is a real render of the RAW, not a cache hit.
+  test.setTimeout(240_000);
+  await page.goto('/settings');
+  await openLibrary(page, CULL_PHOTOS_DIR);
+  await page.locator('.tile__hit').first().click();
+  await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
+  const photoId = new URL(page.url()).pathname.split('/').pop() ?? '';
+
+  const preview = page.locator('.panel', { hasText: 'IMAGE PREVIEW DETAILS' });
+  await page.keyboard.press('o');
+  await expect(preview.getByText('RAW render')).toBeVisible({ timeout: 60_000 });
+  await page.keyboard.press('i');
+  await expect(preview.getByText('embedded JPEG')).toBeVisible({ timeout: 60_000 });
+
+  // The file is the cache, so nothing rebuilds a rendition once it exists. This
+  // is the escape hatch for working on the pipeline: the same choice, but the
+  // stored copy is dropped first.
+  const cached = path.join(CULL_PHOTOS_DIR, '.bowerbird', 'renditions', 'full', `${photoId}.avif`);
+  const before = statSync(cached).mtimeMs;
+  await page.getByRole('button', { name: 'Actions' }).click();
+  await page.getByRole('menuitemcheckbox', { name: 'Rebuild, ignoring the cache' }).click();
+  // The toggle leaves the menu open on purpose - it says what the actions above
+  // it will do. Close it, then put focus back on the page: an open menu makes
+  // everything behind it inert, and its trigger eats letter keys as typeahead.
+  await page.getByRole('button', { name: 'Actions' }).click();
+  await page.locator('.detail__nav .ui-text--mono').click();
+  await page.keyboard.press('o');
+  await expect(preview.getByText('RAW render')).toBeVisible({ timeout: 120_000 });
+  await expect.poll(() => statSync(cached).mtimeMs, { timeout: 120_000 }).toBeGreaterThan(before);
+});
+
 // The max-quality rendition goes straight to an <img>: AVIF decodes natively in
 // every browser, which is why it replaced the JXL that needed a wasm module and
 // a PNG transcode first (§10.5).
@@ -371,13 +405,15 @@ test('the stage never shows the previous photo after navigating to another one',
   await page.getByRole('button', { name: 'Next photo' }).click();
   const mismatch = await page.evaluate(() => {
     const img = document.querySelector<HTMLImageElement>('.stage__viewport img');
-    if (img == null) return 'no image';
+    // Nothing on the stage is the correct state between two photos: the previous
+    // frame is dropped on the route change and the next is not decoded yet.
+    if (img == null) return null;
     const shown = img.classList.contains('is-ready');
     const id = location.pathname.split('/').pop();
     return shown && !img.src.includes(id ?? '') ? `showing ${img.src} on ${id}` : null;
   });
   expect(mismatch).toBeNull();
-  await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible();
+  await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
 });
 
 test('the next photo is fetched while the current one is on screen', async ({ page }) => {
@@ -392,6 +428,10 @@ test('the next photo is fetched while the current one is on screen', async ({ pa
   // whichever test ran last.
   await page.goto('/settings');
   await libraryRow(page, CULL_PHOTOS_DIR).getByRole('button', { name: 'Render the RAW' }).click();
+  // And which rendition it opens at, for the same reason: "last used" is global
+  // and a test above leaves the max-quality one behind, which is chosen rather
+  // than the library's default and so deliberately never warmed.
+  await page.getByRole('group', { name: 'Open photos at' }).getByRole('button', { name: 'From RAW', exact: true }).click();
   await openLibrary(page, CULL_PHOTOS_DIR);
   await page.locator('.tile__hit').first().click();
   await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible();

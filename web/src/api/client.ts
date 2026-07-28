@@ -127,8 +127,8 @@ export const api = {
     request('POST', '/api/photos/reprocess', { photo_ids: photoIds, source }),
   refreshMetadata: (photoIds: string[]): Promise<{ updated: number }> =>
     request('POST', '/api/photos/refresh-metadata', { photo_ids: photoIds }),
-  buildRendition: (photoId: string, rendition: Rendition): Promise<void> =>
-    request('POST', `/api/photos/${photoId}/renditions/${rendition}`),
+  buildRendition: (photoId: string, rendition: Rendition, force = false): Promise<void> =>
+    request('POST', `/api/photos/${photoId}/renditions/${rendition}${force ? '?force=true' : ''}`),
 
   listShoots: (libraryId: string): Promise<Shoot[]> => request('GET', `/api/libraries/${libraryId}/shoots`),
   getShoot: (id: string): Promise<Shoot> => request('GET', `/api/shoots/${id}`),

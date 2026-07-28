@@ -295,20 +295,38 @@ export interface ActionGroup<T extends string> {
   options: Option<T>[];
 }
 
+/** A setting that modifies the actions around it, rather than an action itself. */
+export interface ActionToggle {
+  label: string;
+  icon?: ReactNode;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}
+
 // A menu of one-shot actions, as opposed to CheckMenu's independent toggles.
 export function ActionMenu<T extends string>({
   trigger,
   options,
+  toggles = [],
   onSelect,
 }: {
   trigger: ReactNode;
   options: (Option<T> | ActionGroup<T>)[];
+  /** Shown below the actions, since these change what the actions do. */
+  toggles?: ActionToggle[];
   onSelect: (value: T) => void;
 }): JSX.Element {
   const item = (option: Option<T>): JSX.Element => (
     <Menu.Item key={option.value} className="ui-item ui-item--action" onClick={() => onSelect(option.value)}>
       {option.icon}
       {option.label}
+      {/* Out of the accessible name: it would read as part of the label ("Embedded
+          JPEG I"), and the shortcut is already announced by the ? help. */}
+      {option.hint != null && (
+        <span className="ui-btn__hint" aria-hidden>
+          {option.hint}
+        </span>
+      )}
     </Menu.Item>
   );
 
@@ -339,6 +357,24 @@ export function ActionMenu<T extends string>({
                 item(option)
               ),
             )}
+            {toggles.length > 0 && <Menu.Separator className="ui-item__rule" />}
+            {toggles.map((toggle) => (
+              <Menu.CheckboxItem
+                key={toggle.label}
+                className="ui-item"
+                // Stays open: this changes what the actions above it do, so it is
+                // set on the way to picking one rather than instead of picking one.
+                closeOnClick={false}
+                checked={toggle.checked}
+                onCheckedChange={toggle.onChange}
+              >
+                <Menu.CheckboxItemIndicator className="ui-item__check">
+                  <Check size={ICON} />
+                </Menu.CheckboxItemIndicator>
+                {toggle.icon}
+                {toggle.label}
+              </Menu.CheckboxItem>
+            ))}
           </Menu.Popup>
         </Menu.Positioner>
       </Menu.Portal>

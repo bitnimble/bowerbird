@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import path from 'node:path';
 import { AppError } from '../../errors';
 import type { Pagination } from '../../schemas/common';
@@ -182,13 +183,23 @@ export class PhotosService {
   // detail view costs one build each and nothing after that. The full-resolution
   // one is seconds of work and tens of megabytes, which is why none of this
   // happens at import.
-  async buildRendition(photoId: string, rendition: Rendition): Promise<void> {
+  async buildRendition(photoId: string, rendition: Rendition, force = false): Promise<void> {
     const { photo, library } = this.locate(photoId);
 
     // Both renditions follow the library's HDR setting: they are the same render
     // from the same RAW, and dropping one to SDR would make it the odd one out.
     const hdr = library.preview_hdr;
-    if (existsSync(getRenditionPath(library, photo.id, rendition, hdr))) return;
+    const output = getRenditionPath(library, photo.id, rendition, hdr);
+    // The file *is* the cache, so forcing a rebuild means removing it: the
+    // builder returns early on a file that already exists, and would otherwise
+    // hand back exactly the copy being rejected. Its HDR video twin goes too, or
+    // Firefox would keep the old frame while every other browser got the new one.
+    if (force) {
+      await rm(output, { force: true });
+      await rm(getRenditionPath(library, photo.id, rendition, hdr, true), { force: true });
+    } else if (existsSync(output)) {
+      return;
+    }
 
     // A photo whose file is gone has nothing to render from, and LibRaw's
     // "Input/output error" surfaces as a 500 that says nothing useful.

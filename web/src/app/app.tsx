@@ -168,6 +168,8 @@ const SHORTCUTS: [string, string][] = [
   ['Del', 'Move to Bin'],
   ['Space', 'Add to selection'],
   ['F', 'Fullscreen (photo view)'],
+  ['I', "Show the camera's JPEG (photo view)"],
+  ['O', 'Show the render from RAW (photo view)'],
   ['Esc', 'Clear selection, or leave a photo'],
 ];
 

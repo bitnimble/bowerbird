@@ -343,6 +343,19 @@ p.ui-text--mono {
   padding-left: 10px;
 }
 
+/* Right-aligned in a menu row, where the label is left of a wide popup; in a
+   segmented button it sits against the label instead. */
+.ui-item .ui-btn__hint {
+  margin-left: auto;
+  padding-left: 12px;
+}
+
+.ui-item__rule {
+  height: 1px;
+  margin: 4px 2px;
+  background: var(--slate);
+}
+
 .ui-backdrop {
   position: fixed;
   inset: 0;

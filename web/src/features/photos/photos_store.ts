@@ -84,6 +84,11 @@ export class PhotosStore {
   @observable accessor rendition: PreviewRendition | null = null;
   @observable accessor buildingRendition = false;
 
+  // Rebuild a rendition even when one is already on disk. Session-scoped and off
+  // by default: it is for working on the pipeline, where the cached copy is the
+  // thing standing between a changed setting and seeing what it did.
+  @observable accessor forceRebuild = false;
+
   @observable.ref accessor detail: PhotoDetail | null = null;
   @observable accessor detailLoading = false;
   @observable accessor notesSavedAt: number | null = null;

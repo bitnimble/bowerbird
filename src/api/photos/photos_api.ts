@@ -62,7 +62,11 @@ export class PhotosApi {
       if (!isRendition(rendition) || rendition === 'grid') {
         throw new AppError('NOT_FOUND', `not a rendition the viewer can build: ${rendition}`);
       }
-      await this.service.buildRendition(c.req.param('id'), rendition);
+      // `force` drops the cached copy first, for a viewer comparing settings that
+      // changed since it was built - the file is the cache, so nothing else would
+      // ever rebuild it.
+      const force = c.req.query('force') === 'true';
+      await this.service.buildRendition(c.req.param('id'), rendition, force);
       return c.body(null, 204);
     });
 

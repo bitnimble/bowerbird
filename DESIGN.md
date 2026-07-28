@@ -1,4 +1,4 @@
-| `MATCH_EMBEDDED_JPEG` | `true` | Give renders the camera's own colour and lens correction, fitted per photo against the embedded JPEG; ~+2.4s on a 61MP frame for SDR (§10.8), and again for HDR (§10.8.1) || `POST` | `/api/photos/:id/renditions/:rendition` | Build one rendition on demand: `full` or `max` (§10.1) |# Bowerbird — Design Document
+| `MATCH_EMBEDDED_JPEG` | `true` | Give renders the camera's own colour and lens correction, fitted per photo against the embedded JPEG; ~+2.4s on a 61MP frame for SDR (§10.8), and again for HDR (§10.8.1) || `POST` | `/api/photos/:id/renditions/:rendition` | Build one rendition on demand: `full` or `max`; `?force=true` drops the cached copy first (§10.1) |# Bowerbird — Design Document
 
 ## 1. Overview
 
@@ -877,6 +877,10 @@ With `preview_hdr_video` also set, the worker writes the one-frame AV1 twin off 
 
 **The viewer sees a three-step quality ladder**: the camera's JPEG, `full`, and `max`. They are the same picture at different costs, so it treats them as interchangeable and `preview_rendition_mode` (§13.6) decides which one a photo opens at: pinned to one of the three, or reopened at whatever was chosen last, either across the catalogue (`remember`) or for that photo (`remember_per_photo`, stored on `photos.preview_rendition`). Server-side rather than in the browser because the same catalogue is opened from a phone, a laptop and whatever is plugged into the good monitor, and "where I left off" is worth nothing if it only holds on one of them. All three stay on offer whichever is showing, the step back down to the camera's JPEG included: comparing a render against it is a reason to switch.
 
+Comparing two of them is the reason to have three, so `I` and `O` switch straight to the camera's JPEG and to the render, and the stage holds the frame it is already showing until the next one has decoded rather than dropping to the background between them - a flash on a swap between two files that are both already cached says "loading" where nothing was loaded. The same decode-then-swap covers a genuinely slow one; only a photo *change* clears the stage, because there the previous frame is the wrong picture.
+
+Against that, the file being the cache means a change to the pipeline is invisible on every photo already looked at. **"Rebuild, ignoring the cache"** (`?force=true`) removes the stored copy and its video twin before building, so choosing the same rendition again renders it afresh. It is a checkbox in the Actions menu rather than a fourth entry in the ladder because it modifies the choice rather than being one, and it is off by default and per-session: it is for working on the renderer, not for looking at photographs. The camera's JPEG ignores it, having no build to force past.
+
 `PhotoDetail.renditions` answers the client's questions from **disk rather than from a column** - what each one's path is, whether it is built, whether it is HDR, whether a video twin exists - because settings are not retroactive and a library switched to HDR after an import still has SDR files. `default_rendition` is what the viewer opens at when nothing has been chosen, so the client never has to re-derive it from what happened to be built.
 
 **Reprocessing clears every rendition it does not itself rewrite.** A photo is only reprocessed because its pixels changed, so the copies beside it are of the old file and nothing else would ever notice - the max-resolution export in particular would be served forever. The ones the job is about to write are exempt, or the sweep would delete what it just made.
@@ -1590,6 +1594,7 @@ Rating a shoot is the daily job, so it must not require opening each frame. The 
 | `Del` | Move to Bin |
 | `Space` | Add to the selection |
 | `F` | Fullscreen, in the photo view |
+| `I` / `O` | The camera's JPEG / the render, in the photo view (§10.1) |
 | `Esc` | Clear the selection |
 | `?` | Shortcut overlay |
 
