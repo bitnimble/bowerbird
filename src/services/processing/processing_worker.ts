@@ -1,6 +1,6 @@
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
-import { fitMatchProfile, type MatchProfile } from './jpeg_match';
+import { fitMatchProfile } from './jpeg_match';
 import {
   decodeEmbedded,
   decodeRawImage,
