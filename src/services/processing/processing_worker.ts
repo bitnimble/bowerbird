@@ -166,8 +166,12 @@ async function renditions(job: RenditionJob): Promise<ThumbnailSource | undefine
   // 8-bit deliberately: sharp's AVIF output is 8-bit whatever goes in, and asking
   // for 16 would reintroduce the trap that `raw.depth` is ignored on a Buffer, so
   // the samples get read as 8-bit anyway and the picture is silently wrong.
+  // Telling the decoder the largest SDR size this job needs lets it halve the
+  // decode on a sensor big enough to spare it (§10.8). A native-resolution target
+  // reports 0 and gets the whole frame.
   let decoded: DecodedImage | null = null;
-  const decode = (): DecodedImage => (decoded ??= decodeRaw(job.rawFilePath, 8));
+  const decode = (): DecodedImage =>
+    (decoded ??= decodeRaw(job.rawFilePath, 8, 'srgb', { atLeastLongEdge: largestSdrSize(job.targets) }));
 
   // The scene-linear decode, shared the same way. An HDR job builds a still and
   // its video twin from one of these, and the colour fit needs the same pixels

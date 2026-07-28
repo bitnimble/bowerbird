@@ -952,6 +952,16 @@ The decoder function:
 
 This buffer is then passed to sharp as `sharp(data, { raw: { width, height, channels: 3 } })`.
 
+**One copy, not two.** The frame is copied straight out of LibRaw's buffer with the masked-border crop applied on the way. It used to be copied whole and then have the crop copied out of that, which on a 60MP frame is ~190MB moved twice, about 250ms per decode for nothing.
+
+**PPG rather than LibRaw's default AHD** (`user_qual = 2`). Measured on a 61MP frame the demosaic is 544ms against 849ms, for a mean difference of 0.46 of an 8-bit level - 0.18% - and every rendition downscales by at least 2.5x, so it is gone before anything is looked at. The obvious guess is wrong, incidentally: quality 0 (linear) is *slower* than AHD here, and VNG is 5.4s.
+
+**Half-size decoding, when the caller can afford it.** `decodeRaw` takes an `atLeastLongEdge`: the longest edge the caller is going to need. When halving the frame still clears that, LibRaw's `half_size` runs instead, collapsing each Bayer quad into one output pixel rather than interpolating. On a 61MP frame that is 1592ms of decode down to 956ms - the demosaic 594ms to 128ms and the copy 183ms to 46ms, while the unpack is raw decompression and does not move - and it makes every downstream resize a quarter of the work. End to end an import of that frame goes from 3414ms to 2580ms.
+
+It is a genuine quality trade, not a free one: dark edges pick up a faint checkerboard, visible when pixel-peeping at 100%. Hence the gate. A 61MP sensor halves to 4864 and still clears the 3840 a full rendition wants; a 24MP one halves to about 3012 and does not, so it decodes whole. A native-resolution rendition passes 0, which means the whole frame rather than "no preference". The 4k rendition is a triage view and the artefacts do not survive being looked at normally; the max rendition exists to be pixel-peeped and never takes this path.
+
+**`half_size` has no setter in the C API**, so it is written into `libraw_output_params_t` by offset - and the offset is *found*, not hardcoded, because it moves between builds. `output_bps` does have a setter, so writing three sentinels through it and seeing which word tracks them locates the struct; `user_qual`, which also has a setter, then confirms the layout from the other side at its own known distance. Half_size sits a fixed distance from both, so two agreeing anchors mean the third address is right. If either check fails, the decode runs full size - a wrong guess costs speed, never correctness. Neighbouring fields are `four_color_rgb` and `use_auto_wb`, either of which would visibly wreck a render, so an integration test compares mean channel values between a halved and a whole decode rather than only checking dimensions.
+
 ### 10.5 Lossless export
 
 `POST /api/photos/:id/lossless` renders one photo at full resolution into an AVIF kept beside the thumbnails. It exists because a 3840px preview is not what you check focus or gradients on, and it is opt-in per photo because it takes real time to build. Unlike every other rendition it is never fitted to a maximum edge: this is the view that gets pixel-peeped. The file is the cache: a second request finds it already there, and `PhotoDetail.renditions.max.built` is a `stat` rather than a column, so it cannot disagree with the disk.
