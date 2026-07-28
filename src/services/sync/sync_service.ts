@@ -22,8 +22,9 @@ export interface ProcessingTrigger {
   processUnprocessed(libraryId?: string, stopped?: () => boolean): void | Promise<void>;
 }
 
-// Unwinds a scan the user stopped. Never leaves this module: syncLibrary turns it
-// back into an idle status, because a stopped scan applied nothing.
+// Unwinds a stopped scan whose partial result cannot be applied (see
+// `partialIsApplicable`). Never leaves this module: syncLibrary turns it back
+// into an idle status, because that run applied nothing.
 class SyncCancelled extends Error {}
 
 export type MetadataExtractor = (absPath: string) => Promise<FileMetadata>;
@@ -398,6 +399,16 @@ export class SyncService implements LibraryLifecycleListener {
   ): Promise<{ present: Set<string>; changed: DiskFile[]; failed: Set<string> }> {
     const dbByPath = new Map(dbPhotos.map((p) => [p.file_path, p]));
 
+    // What a stop costs, and the one case where it costs nothing (§9.10). A
+    // half-built `present` is normally unusable, because absence from it is how a
+    // removal is detected: applied, it would mark every file the scan had not
+    // reached as missing. With no rows for it to be an absence from, that cannot
+    // happen and nothing else can either - a move pairs a removal with an
+    // addition, and there are no removals - so what a stopped scan holds is
+    // exactly "these files are new", which is true whether or not it saw the rest.
+    // That is the first import: the long scan, and the one worth stopping.
+    const partialIsApplicable = dbPhotos.length === 0;
+
     // Stat everything, collapsing hardlink pairs (same dev+ino) to a single path.
     // A concurrent non-atomic move (moveIntoDir does link() then unlink()) briefly
     // exposes both the old and new path pointing at one inode; without this, the
@@ -406,7 +417,7 @@ export class SyncService implements LibraryLifecycleListener {
     type Scanned = { relPath: string; absPath: string; stats: Awaited<ReturnType<typeof stat>> };
     const byInode = new Map<string, Scanned>();
     for (const file of files) {
-      if (signal.aborted) throw new SyncCancelled();
+      if (signal.aborted) break;
       let stats;
       try {
         stats = await stat(file.absPath);
@@ -430,7 +441,7 @@ export class SyncService implements LibraryLifecycleListener {
     for (const file of byInode.values()) {
       // Between files, not inside one: this is the loop that opens and hashes, so
       // a stop lands within one file's decode rather than at the end of the scan.
-      if (signal.aborted) throw new SyncCancelled();
+      if (signal.aborted) break;
       onProgress(present.size, byInode.size);
       present.add(file.relPath);
 
@@ -450,6 +461,9 @@ export class SyncService implements LibraryLifecycleListener {
       }
     }
 
+    // One decision for both loops: keep what a stopped scan found, or throw the
+    // run away entirely.
+    if (signal.aborted && !partialIsApplicable) throw new SyncCancelled();
     return { present, changed, failed };
   }
 }

@@ -91,25 +91,48 @@ test('the scan counts its way through the files it will open', async () => {
   expect(status.photos_to_scan).toBe(3);
 });
 
-test('stopping mid-scan applies nothing and leaves the library idle', async () => {
+test('a stopped first scan keeps the photos it did reach', async () => {
+  // Nothing in the catalogue for the half-built picture to contradict, so what it
+  // holds is "these files are new" and stays true however much it did not see.
+  // The alternative is throwing away every file a stopped 50k import had read.
   let scanned = 0;
-  let processingRuns = 0;
-  const sync: SyncService = build(
-    { processUnprocessed: () => void processingRuns++ },
-    async () => {
-      if (scanned++ === 0) sync.cancelSync(LIB); // stop while there are files still to read
-      return metadata(new Date(), 3);
-    },
-  );
+  const sync: SyncService = build({ processUnprocessed: () => {} }, async () => {
+    if (++scanned === 2) sync.cancelSync(LIB); // stop with the third still to read
+    return metadata(new Date(), 3);
+  });
 
   const status = await sync.syncLibrary(LIB);
 
+  expect(scanned).toBe(2); // the third was never opened
+  expect(status.photos_added).toBe(2);
+  expect(db.query('SELECT COUNT(*) AS n FROM photos').get()).toEqual({ n: 2 });
+  // None marked missing: the file it never reached is simply not in the catalogue
+  // yet, which is what the next sync adds.
+  expect(db.query('SELECT COUNT(*) AS n FROM photos WHERE is_missing = 1').get()).toEqual({ n: 0 });
+});
+
+test('stopping a rescan applies nothing, because a half-built scan reads as deletions', async () => {
+  const sync: SyncService = build({ processUnprocessed: () => {} }, async () => metadata(new Date(), 3));
+  await sync.syncLibrary(LIB);
+  const before = db.query('SELECT id, file_hash FROM photos ORDER BY file_path').all();
+  expect(before).toHaveLength(3);
+
+  // A fourth file to be found, so there is something for a partial run to apply.
+  writeFileSync(path.join(root, 'd.arw'), 'd.arw');
+
+  let scanned = 0;
+  const stopped: SyncService = build({ processUnprocessed: () => {} }, async () => {
+    if (++scanned === 1) stopped.cancelSync(LIB);
+    return metadata(new Date(), 3);
+  });
+  const status = await stopped.syncLibrary(LIB);
+
   expect(status.status).toBe('idle');
   expect(status.photos_scanned).toBe(0);
-  expect(scanned).toBe(1); // the remaining files were never opened
-  expect(processingRuns).toBe(0); // nothing was applied, so nothing to process
-  expect(db.query('SELECT COUNT(*) AS n FROM photos').get()).toEqual({ n: 0 });
-  expect(sync.getSyncStatus(LIB).status).toBe('idle');
+  // Untouched: no fourth row, and no row marked missing for the files it never
+  // reached, which is what applying the truncated scan would have done.
+  expect(db.query('SELECT id, file_hash FROM photos ORDER BY file_path').all()).toEqual(before);
+  expect(db.query('SELECT COUNT(*) AS n FROM photos WHERE is_missing = 1').get()).toEqual({ n: 0 });
 });
 
 test('stopping during processing ends the run rather than waiting it out', async () => {
