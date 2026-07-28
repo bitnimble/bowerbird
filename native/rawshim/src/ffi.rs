@@ -116,12 +116,18 @@ pub unsafe extern "C" fn bb_decode_image(bytes: *const u8, len: usize, long_edge
     if bytes.is_null() {
         return std::ptr::null_mut();
     }
-    let decoded = Pipeline::decode_upright(std::slice::from_raw_parts(bytes, len))
-        .and_then(|pipeline| pipeline.resize_to_fit(long_edge as usize))
-        .and_then(Pipeline::finish);
+    let encoded = std::slice::from_raw_parts(bytes, len);
+    // Shrinking during the decode rather than after it, where a size was asked for.
+    let decoded = match long_edge {
+        0 => Pipeline::decode_upright(encoded).and_then(Pipeline::finish),
+        edge => Pipeline::thumbnail(encoded, edge as usize).and_then(Pipeline::finish),
+    };
     match decoded {
         Ok(image) => BbImage::own(image),
-        Err(_) => std::ptr::null_mut(),
+        Err(e) => {
+            eprintln!("bb_decode_image: {e}");
+            std::ptr::null_mut()
+        }
     }
 }
 

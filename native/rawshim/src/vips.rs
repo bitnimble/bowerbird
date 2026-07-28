@@ -48,10 +48,49 @@ fn avif_encoder() -> u32 {
     }
 }
 
+/// How much larger than the target the DCT is asked to leave the image.
+///
+/// Not 1, which would be fastest. libjpeg's scaling and libvips' reduce are
+/// different filters, so how the work is split between them changes the result:
+/// letting the DCT go all the way to the target moved an 800px tile by up to
+/// deltaE 1.75 against decoding whole and reducing once, while leaving one factor
+/// of two for the reduce cuts that to 0.79 for 19% more time - 125ms against
+/// 105ms per file, where decoding whole was 458ms. Cheap insurance against a 4x
+/// speedup quietly restyling every thumbnail in the grid.
+const DCT_HEADROOM: usize = 2;
+
+/// The largest 1/2, 1/4 or 1/8 DCT scale that still leaves `target` covered, with
+/// `DCT_HEADROOM` to spare.
+///
+/// libjpeg can only scale by these factors during the transform, so this gets
+/// close to the target and a real reduce does the rest.
+fn dct_shrink(longest: usize, target: usize) -> usize {
+    if target == 0 {
+        return 1;
+    }
+    [8, 4, 2].into_iter().find(|shrink| longest / shrink >= target * DCT_HEADROOM).unwrap_or(1)
+}
+
 pub fn init() {
     APP.get_or_init(|| {
         let app = VipsApp::new("bowerbird", false).expect("libvips failed to initialise");
         app.concurrency_set(thread_count());
+        // The operation cache is turned off, and that is a correctness fix rather
+        // than a memory tweak.
+        //
+        // libvips memoises operations by their arguments, so a cached result holds a
+        // reference to the image it came from - and every image here is built with
+        // `vips_image_new_from_buffer` or `_from_memory`, which reference the
+        // caller's bytes rather than copying them. Those bytes belong to JavaScript
+        // and are collectable the moment the call returns, so anything the cache
+        // keeps is a pointer into memory that may already be gone. Measured, it also
+        // grows: a batch of embedded previews went from 71ms to 114ms per file as
+        // the cache filled, then died partway through the batch.
+        //
+        // Nothing here would benefit from it in any case. Every call is a different
+        // photo, so there is no repeated operation to memoise.
+        app.cache_set_max(0);
+        app.cache_set_max_mem(0);
         app
     });
 }
@@ -167,6 +206,43 @@ impl<'a> Pipeline<'a> {
     pub fn decode_upright(bytes: &'a [u8]) -> Result<Pipeline<'a>> {
         let image = wrap(VipsImage::new_from_buffer(bytes, ""))?;
         Ok(Pipeline { image: wrap(ops::autorot(&image))?, _borrow: std::marker::PhantomData })
+    }
+
+    /// Decodes an encoded image straight to a bounded size, shrinking during the
+    /// decode rather than after it.
+    ///
+    /// Worth a separate entry point because the saving is not marginal. A 61MP
+    /// body embeds a *full-resolution* preview - 9504x6336, 5-14MB of JPEG - and
+    /// the grid tile is 800px, so decoding it whole and then resizing spends
+    /// ~250-540ms to discard 99% of what it produced. libjpeg can scale during the
+    /// DCT, which `thumbnail` picks a factor for, then reduces properly from
+    /// there. It also rotates, so this replaces the `autorot` above; on a portrait
+    /// frame that rotation alone was doubling the cost, since it shuffled 60MP.
+    /// Not `vips_thumbnail`, which would be the obvious call: the crate's
+    /// `thumbnail_buffer_with_opts` sends `input-profile`, which libvips 8.15.1
+    /// calls `import-profile`, so it fails outright - the third property this crate
+    /// has renamed out from under the version Debian ships. The loader's option
+    /// *string* takes no such struct, so it is the version-independent way in.
+    pub fn thumbnail(bytes: &'a [u8], long_edge: usize) -> Result<Pipeline<'a>> {
+        // `shrink` is a jpegload option and other loaders reject it outright, so it
+        // is only offered where the bytes are a JPEG. That covers what needs it:
+        // the caller passing a size is always working on an embedded preview.
+        let options = match bytes.starts_with(&[0xFF, 0xD8]) {
+            false => String::new(),
+            true => {
+                // A load with no options is lazy, so this reads the header only.
+                // Rotation swaps the two, which does not change the longer of them.
+                let header = wrap(VipsImage::new_from_buffer(bytes, ""))?;
+                match dct_shrink(header.get_width().max(header.get_height()) as usize, long_edge) {
+                    1 => String::new(),
+                    shrink => format!("shrink={shrink}"),
+                }
+            }
+        };
+        let image = wrap(VipsImage::new_from_buffer(bytes, &options))?;
+        let upright = Pipeline { image: wrap(ops::autorot(&image))?, _borrow: std::marker::PhantomData };
+        // The DCT gets within a factor of two; a proper reduce finishes the job.
+        upright.resize_to_fit(long_edge)
     }
 
     /// Longest-edge fit, preserving aspect. 0 leaves the image alone.
@@ -414,9 +490,47 @@ mod tests {
     }
 
     #[test]
+    fn the_dct_shrink_never_undershoots_the_target() {
+        // Undershooting is the failure that matters: it would decode below the size
+        // asked for and the reduce afterwards would be an upscale.
+        for (longest, target, expected) in [
+            (9504, 800, 4),  // a 61MP body's full-resolution preview
+            (12800, 800, 8),
+            (1616, 800, 1),  // a small preview: /2 would leave no headroom
+            (3200, 800, 2),
+            (800, 800, 1),   // already the target
+            (400, 800, 1),   // smaller than the target
+        ] {
+            assert_eq!(dct_shrink(longest, target), expected, "{longest} -> {target}");
+            // Undershooting would make the reduce that follows an upscale.
+            assert!(longest / dct_shrink(longest, target) >= target.min(longest));
+        }
+        assert_eq!(dct_shrink(9504, 0), 1, "no target means no shrink");
+    }
+
+    #[test]
+    fn a_thumbnail_fits_inside_the_bound_and_never_enlarges() {
+        init();
+        let source = gradient(1600, 900);
+        let jpeg = Pipeline::from_rgb(source.as_ref()).unwrap().encode_jpeg(92).unwrap();
+
+        // The bound and the aspect, not the exact rounding: 900/1600*200 is 112.5,
+        // and which side of it a given shrink lands on is libvips' business.
+        let small = Pipeline::thumbnail(&jpeg, 200).unwrap().finish().unwrap();
+        assert_eq!(small.width.max(small.height), 200);
+        assert!((small.height as i32 - 113).abs() <= 1, "got {}x{}", small.width, small.height);
+
+        // Bigger than the source: `size: down` territory, and inventing detail here
+        // would mean a grid tile upscaled from a small embedded preview.
+        let big = Pipeline::thumbnail(&jpeg, 4000).unwrap().finish().unwrap();
+        assert_eq!((big.width, big.height), (1600, 900));
+    }
+
+    #[test]
     fn a_short_buffer_is_refused_rather_than_read_past() {
         init();
         let short = RgbRef { width: 64, height: 64, data: &[0u8; 64 * 3] };
         assert!(Pipeline::from_rgb(short).is_err());
     }
 }
+

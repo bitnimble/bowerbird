@@ -1051,6 +1051,23 @@ So the image ships one build per instruction set and picks between them at start
 
 Every failure path ends at the baseline, which is what makes the whole arrangement safe to ship: the baseline is plain x86-64 and runs on the Goldmont Celerons in low-end NAS boxes, which have no AVX at all.
 
+#### What an import costs, by stage
+
+A shoot import is three different jobs with three different costs, measured over 23 real ARWs (a 24MP body and a 61MP one):
+
+| | per file | at concurrency 8 |
+|---|---|---|
+| A, header read for the catalogue | 2ms | - |
+| A, sha256 of the file | 107ms | I/O bound |
+| B, grid tile from the embedded JPEG | **124ms** | **30.1 img/s** |
+| C, full render and 3840px AVIF | 1501ms | 3.08 img/s |
+
+**B is ten times the throughput of C**, which is what makes staging worth doing rather than interleaving: on a 2000-frame shoot, doing every tile first fills the whole grid in about a minute, where a combined job would take the full eleven that C needs before the last thumbnail appeared.
+
+**Opening the RAW is not a time sink, so B and C need not share one.** The suspicion was that a fused pass would be needed to avoid opening each file twice, but extracting the embedded preview - `libraw_open_file` plus `unpack_thumb` - is **5ms of B's 124ms**. LibRaw reads headers lazily and the thumbnail is a few MB, so B never touches the sensor data C needs. They can be scheduled independently, which is the whole point.
+
+**A 61MP body embeds a full-resolution preview**, 9504x6336 and 5-14MB of JPEG, not the small thumbnail the name suggests - only the 24MP body in the corpus embeds something small (1080x1616). Decoding that whole to make an 800px tile was most of stage B: 458ms per file, of which 230-540ms was the JPEG decode and, on portrait frames, half of *that* was `autorot` shuffling 60MP. Shrinking during the decode instead (`shrink=` on the loader, then a reduce for the rest) takes B to 124ms.
+
 #### Where the time actually goes
 
 Single-image latency is the wrong measure for an import, and the difference is large enough to change decisions. Throughput on a 24MP frame, 8 cores:
