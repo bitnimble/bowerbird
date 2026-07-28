@@ -131,6 +131,28 @@ pub unsafe extern "C" fn bb_decode_image(bytes: *const u8, len: usize, long_edge
     }
 }
 
+/// The camera's embedded JPEG preview, as bytes.
+///
+/// The one call here that hands pixels over on purpose: its caller serves them to
+/// an HTTP response unchanged, so they are bytes bound for a socket rather than
+/// input to another image operation. Anything that goes on to decode the preview
+/// wants `bb_decode_embedded`, which keeps it on this side.
+///
+/// Null when the file has no JPEG preview, which is not an error.
+///
+/// # Safety
+/// `path` must be a NUL-terminated C string. Release with `bb_buffer_free`.
+#[no_mangle]
+pub unsafe extern "C" fn bb_extract_embedded(path: *const c_char) -> *mut BbBuffer {
+    if path.is_null() {
+        return std::ptr::null_mut();
+    }
+    match crate::with_embedded_jpeg(path, <[u8]>::to_vec) {
+        Some(bytes) => BbBuffer::from_vec(bytes),
+        None => std::ptr::null_mut(),
+    }
+}
+
 /// Reads the distortion spline a body recorded for this shot, in SPLINE_UNITs.
 ///
 /// Returns the knot count written to `out`, 0 when the file records none, or -1 if

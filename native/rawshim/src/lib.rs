@@ -16,6 +16,7 @@ use std::os::raw::{c_char, c_int};
 
 pub mod ffi;
 pub mod fit;
+pub mod header;
 pub mod image;
 pub mod lens;
 pub mod vips;
@@ -105,11 +106,11 @@ impl BbImage {
     }
 }
 
-struct Insets {
-    left: usize,
-    top: usize,
-    right: usize,
-    bottom: usize,
+pub struct Insets {
+    pub left: usize,
+    pub top: usize,
+    pub right: usize,
+    pub bottom: usize,
 }
 
 const UNSET: u16 = 65535;
@@ -117,7 +118,7 @@ const UNSET: u16 = 65535;
 /// Rows and columns the camera says are outside the picture, in sensor
 /// orientation. Some bodies report masked border columns as visible, and decoding
 /// them verbatim bakes black bars into the render.
-unsafe fn read_insets(r: *mut raw::libraw_data_t) -> Insets {
+pub(crate) unsafe fn read_insets(r: *mut raw::libraw_data_t) -> Insets {
     let s = &(*r).sizes;
     let none = Insets { left: 0, top: 0, right: 0, bottom: 0 };
     let crop = s.raw_inset_crops[0];
@@ -137,7 +138,7 @@ unsafe fn read_insets(r: *mut raw::libraw_data_t) -> Insets {
 
 /// dcraw_process emits an upright frame, so sensor-space margins arrive rotated by
 /// the same flip.
-fn rotate_insets(i: Insets, flip: c_int) -> Insets {
+pub(crate) fn rotate_insets(i: Insets, flip: c_int) -> Insets {
     match flip {
         3 => Insets { left: i.right, top: i.bottom, right: i.left, bottom: i.top },
         5 => Insets { left: i.top, top: i.right, right: i.bottom, bottom: i.left },
@@ -366,6 +367,42 @@ pub unsafe extern "C" fn bb_decode_embedded(path: *const c_char, long_edge: u32)
         }
         None => std::ptr::null_mut(),
     }
+}
+
+/// Reads what the catalogue needs from a RAW without decoding a pixel.
+///
+/// Returns 0 on success, -1 if the file could not be opened. See `header.rs` for
+/// why this is not a set of byte offsets in TypeScript any more.
+///
+/// # Safety
+/// `path` must be a NUL-terminated C string and `out` a writable `BbHeader`.
+#[no_mangle]
+pub unsafe extern "C" fn bb_read_header(path: *const c_char, out: *mut header::BbHeader) -> c_int {
+    if path.is_null() || out.is_null() {
+        return -1;
+    }
+    let r = raw::libraw_init(0);
+    if r.is_null() {
+        return -1;
+    }
+
+    let status = match raw::libraw_open_file(r, path) {
+        0 => {
+            *out = header::read(r);
+            0
+        }
+        _ => -1,
+    };
+
+    raw::libraw_recycle(r);
+    raw::libraw_close(r);
+    status
+}
+
+/// Size of `BbHeader`, which the caller checks against the layout it reads.
+#[no_mangle]
+pub extern "C" fn bb_header_size() -> usize {
+    std::mem::size_of::<header::BbHeader>()
 }
 
 /// Releases an image from `bb_decode`. Safe to call with null.

@@ -38,6 +38,9 @@ const CANDIDATES = [
 const SYMBOLS = {
   bb_decode: { args: [FFIType.cstring, FFIType.u32, FFIType.i32, FFIType.u32], returns: FFIType.ptr },
   bb_decode_embedded: { args: [FFIType.cstring, FFIType.u32], returns: FFIType.ptr },
+  bb_extract_embedded: { args: [FFIType.cstring], returns: FFIType.ptr },
+  bb_read_header: { args: [FFIType.cstring, FFIType.ptr], returns: FFIType.i32 },
+  bb_header_size: { args: [], returns: FFIType.u64 },
   bb_decode_image: { args: [FFIType.ptr, FFIType.u64, FFIType.u32], returns: FFIType.ptr },
   bb_image_from_rgb: { args: [FFIType.ptr, FFIType.u32, FFIType.u32], returns: FFIType.ptr },
   bb_read_distortion_spline: { args: [FFIType.cstring, FFIType.ptr, FFIType.u32], returns: FFIType.i32 },

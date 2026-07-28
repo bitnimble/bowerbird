@@ -17,6 +17,7 @@ fn main() {
         .allowlist_function("libraw_init")
         .allowlist_function("libraw_open_file")
         .allowlist_function("libraw_unpack")
+        .allowlist_function("libraw_adjust_sizes_info_only")
         .allowlist_function("libraw_unpack_thumb")
         .allowlist_function("libraw_dcraw_make_mem_thumb")
         .allowlist_function("libraw_dcraw_process")
