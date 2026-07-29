@@ -2,7 +2,7 @@ import { existsSync, rmSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
 import { API_URL, CULL_PHOTOS_DIR, PHOTO_NAMES } from './fixture_library';
-import { addLibrary, libraryRow, openLibrary, syncLibrary, viewMaxQuality } from './helpers';
+import { addLibrary, openLibrary, setRenditionSource, setViewerRendition, syncLibrary, viewMaxQuality } from './helpers';
 
 // This spec has its own library root, so binning and rejecting here cannot
 // disturb the counts the other spec asserts.
@@ -400,7 +400,7 @@ test('a rebuilt rendition is pushed to the tile that changed, and to no other', 
 test('rebuilding a photo rendition leaves its grid tile where it is', async ({ page }) => {
   test.setTimeout(240_000);
   await page.goto('/settings');
-  await libraryRow(page, CULL_PHOTOS_DIR).getByRole('button', { name: 'Rendered RAW' }).click();
+  await setRenditionSource(page, CULL_PHOTOS_DIR, 'Rendered RAW');
   await openLibrary(page, CULL_PHOTOS_DIR);
   await expect(page.locator('.tile')).toHaveCount(PHOTO_NAMES.length);
 
@@ -446,7 +446,7 @@ test('opening a photo whose rendition is gone builds that rendition back', async
   // renders. Switching it is also what makes the reload open at the full-size
   // rendition rather than at the JPEG.
   await page.goto('/settings');
-  await libraryRow(page, CULL_PHOTOS_DIR).getByRole('button', { name: 'Rendered RAW' }).click();
+  await setRenditionSource(page, CULL_PHOTOS_DIR, 'Rendered RAW');
   const full = path.join(CULL_PHOTOS_DIR, '.bowerbird', 'renditions', 'full', `${photoId}.avif`);
 
   await page.goto(`/photos/${photoId}`);
@@ -634,11 +634,11 @@ test('the next photo is fetched while the current one is on screen', async ({ pa
   // nothing to preload, so say which kind this is rather than inheriting it from
   // whichever test ran last.
   await page.goto('/settings');
-  await libraryRow(page, CULL_PHOTOS_DIR).getByRole('button', { name: 'Rendered RAW' }).click();
+  await setRenditionSource(page, CULL_PHOTOS_DIR, 'Rendered RAW');
   // And which rendition it opens at, for the same reason: "last used" is global
   // and a test above leaves the max-quality one behind, which is chosen rather
   // than the library's default and so deliberately never warmed.
-  await page.getByRole('group', { name: 'Open photos at' }).getByRole('button', { name: 'Rendered RAW', exact: true }).click();
+  await setViewerRendition(page, 'Rendered RAW');
   await openLibrary(page, CULL_PHOTOS_DIR);
   await page.locator('.tile__hit').first().click();
   await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible();
@@ -659,8 +659,8 @@ test('a reader set to the camera JPEG never loads the render', async ({ page }) 
   page.on('request', (r) => requested.push(r.url()));
 
   await page.goto('/settings');
-  await libraryRow(page, CULL_PHOTOS_DIR).getByRole('button', { name: 'Rendered RAW' }).click();
-  await page.getByRole('group', { name: 'Open photos at' }).getByRole('button', { name: 'Embedded JPEG', exact: true }).click();
+  await setRenditionSource(page, CULL_PHOTOS_DIR, 'Rendered RAW');
+  await setViewerRendition(page, 'Embedded JPEG');
   await openLibrary(page, CULL_PHOTOS_DIR);
   await page.locator('.tile__hit').first().click();
   await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
@@ -686,8 +686,8 @@ test('a photo reopens at the rendition it was last read in, without the library 
   page.on('request', (r) => requested.push(r.url()));
 
   await page.goto('/settings');
-  await libraryRow(page, CULL_PHOTOS_DIR).getByRole('button', { name: 'Rendered RAW' }).click();
-  await page.getByRole('group', { name: 'Open photos at' }).getByRole('button', { name: 'Last used per photo' }).click();
+  await setRenditionSource(page, CULL_PHOTOS_DIR, 'Rendered RAW');
+  await setViewerRendition(page, 'Last used per photo');
   await openLibrary(page, CULL_PHOTOS_DIR);
   await page.locator('.tile__hit').first().click();
   const photoId = page.url().split('/').pop() ?? '';
@@ -722,8 +722,8 @@ interface Sample {
 test('stepping through photos shows no empty stage and never the wrong rendition', async ({ page }) => {
   test.setTimeout(240_000);
   await page.goto('/settings');
-  await libraryRow(page, CULL_PHOTOS_DIR).getByRole('button', { name: 'Rendered RAW' }).click();
-  await page.getByRole('group', { name: 'Open photos at' }).getByRole('button', { name: 'Embedded JPEG', exact: true }).click();
+  await setRenditionSource(page, CULL_PHOTOS_DIR, 'Rendered RAW');
+  await setViewerRendition(page, 'Embedded JPEG');
   await openLibrary(page, CULL_PHOTOS_DIR);
   await expect(page.locator('.tile')).toHaveCount(PHOTO_NAMES.length);
   await page.locator('.tile__hit').first().click();

@@ -20,15 +20,32 @@ export async function addLibrary(page: Page, rootPath: string): Promise<void> {
   await expect(libraryRow(page, rootPath)).toBeVisible();
 }
 
+// Points a library at the pixels its renditions are built from. The control is a
+// Select, whose trigger is a combobox named after the setting rather than a
+// button named after the value, so the value is picked from the menu it opens.
+export async function setRenditionSource(page: Page, rootPath: string, source: string): Promise<void> {
+  await libraryRow(page, rootPath).getByLabel('Build renditions from').click();
+  await page.getByRole('option', { name: source }).click();
+}
+
+// Which rendition the photo viewer opens at, an app-wide setting rather than a
+// per-library one. Same shape of control as above, and named for the question it
+// answers rather than for the answer currently showing.
+export async function setViewerRendition(page: Page, rendition: string): Promise<void> {
+  await page.getByLabel('Default rendition in photo viewer').click();
+  await page.getByRole('option', { name: rendition, exact: true }).click();
+}
+
 export async function syncLibrary(page: Page, rootPath: string): Promise<void> {
   await page.goto('/settings');
   await libraryRow(page, rootPath).getByRole('button', { name: /Sync/ }).click();
 }
 
-// From the library's Shoots page. The folder picker opens at the library root,
-// which is where a shoot with no location chosen belongs.
+// From the library's Shoots page. Where the shoot goes is the row its + menu was
+// opened from, so a root-level one comes from the library root's own menu.
 export async function addShoot(page: Page, name: string): Promise<void> {
-  await page.getByRole('button', { name: 'Add shoot' }).click();
+  await page.getByRole('button', { name: 'Add to the library root' }).click();
+  await page.getByRole('menuitem', { name: 'Create shoot in subfolder' }).click();
   await page.getByLabel('Shoot name').fill(name);
   await page.locator('.ui-modal').getByRole('button', { name: 'Create shoot' }).click();
 }

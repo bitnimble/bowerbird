@@ -3,6 +3,7 @@ import {
   ApiError,
   api,
   type CreateLibraryRequest,
+  type FolderRule,
   type Ordering,
   type RenditionSource,
   type UpdateLibraryRequest,
@@ -63,6 +64,43 @@ export class LibrariesPresenter {
 
   async setRenditionHdrVideo(libraryId: string, rendition_hdr_video: boolean): Promise<void> {
     await this.update(libraryId, { rendition_hdr_video });
+  }
+
+  // How much of the folder tree the library is, and whether those folders are its
+  // shoots (§4.1). The server forces mirroring off with subfolders, so the reload
+  // in update() is what puts the second control in the state it actually has.
+  async setIncludeSubfolders(libraryId: string, include_subfolders: boolean): Promise<void> {
+    await this.update(libraryId, { include_subfolders });
+  }
+
+  async setMirrorShoots(libraryId: string, mirror_shoots: boolean): Promise<void> {
+    await this.update(libraryId, { mirror_shoots });
+  }
+
+  async loadFolderRules(libraryId: string): Promise<void> {
+    try {
+      const rules = await api.listFolderRules(libraryId);
+      this.putFolderRules(libraryId, rules);
+    } catch (err) {
+      this.fail(message(err));
+    }
+  }
+
+  // Returns the folder to whatever the library's settings say in general, which
+  // for an excluded one means the next sync imports its photographs afresh.
+  async clearFolderRule(libraryId: string, folderPath: string): Promise<void> {
+    try {
+      await api.clearFolderRule(libraryId, folderPath);
+    } catch (err) {
+      this.fail(message(err));
+      return;
+    }
+    await this.loadFolderRules(libraryId);
+  }
+
+  @action.bound
+  private putFolderRules(libraryId: string, rules: FolderRule[]): void {
+    this.store.folderRules.set(libraryId, rules);
   }
 
   private async update(libraryId: string, body: UpdateLibraryRequest): Promise<void> {

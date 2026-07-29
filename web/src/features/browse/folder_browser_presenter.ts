@@ -2,24 +2,19 @@ import { action, runInAction } from 'mobx';
 import { ApiError, api } from '../../api/client';
 import type { FolderBrowserStore } from './folder_browser_store';
 
+// Walks the whole server in absolute paths, which is what choosing a library
+// root needs. Folders *inside* a library are the Shoots page's own tree now
+// (§18.3.2), so this no longer answers for both.
 export class FolderBrowserPresenter {
-  /**
-   * With a library id the walk is fenced to that library and every path is
-   * root-relative; without one it is the whole server, in absolute paths.
-   */
-  constructor(
-    private readonly store: FolderBrowserStore,
-    private readonly libraryId: string | null = null,
-  ) {}
+  constructor(private readonly store: FolderBrowserStore) {}
 
-  // Undefined asks for wherever the walk starts: the library root, or the
-  // account's home directory. A path that cannot be read leaves the previous
-  // listing on screen rather than emptying the picker, so the way back out is
-  // still there.
+  // Undefined asks for wherever the walk starts, the account's home directory. A
+  // path that cannot be read leaves the previous listing on screen rather than
+  // emptying the picker, so the way back out is still there.
   async open(path?: string): Promise<void> {
     this.beginLoad();
     try {
-      const listing = this.libraryId == null ? await api.browse(path) : await api.browseLibrary(this.libraryId, path ?? '');
+      const listing = await api.browse(path);
       runInAction(() => {
         this.store.listing = listing;
         this.store.loading = false;

@@ -1638,6 +1638,49 @@ p.ui-text--mono {
   vertical-align: middle;
 }
 
+/* The library root: always present, never deletable, so it reads as the surface
+   the rest sit on rather than as one more shoot. */
+.list__row--root {
+  background: var(--bower);
+}
+
+/* A folder nobody has claimed. Dimmed rather than hidden: it is on disk either
+   way, and the page is for finding out what is there. */
+.list__row--untracked .list__name,
+.list__row--untracked .list__banner--none {
+  opacity: 0.6;
+}
+
+.list__row--untracked .list__banner--none {
+  display: grid;
+  place-items: center;
+  background: none;
+}
+
+/* A checkbox or radio and its label as one target. */
+.check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rules {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.rules__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.rules__row > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+
 @media (prefers-reduced-motion: reduce) {
   * {
     animation: none !important;

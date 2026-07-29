@@ -1,6 +1,13 @@
 import type { Album, CreateAlbumRequest, UpdateAlbumRequest } from '../../../src/schemas/albums';
 import type { BrowseResponse } from '../../../src/schemas/browse';
-import type { CreateLibraryRequest, Library, LibrarySyncStatus, UpdateLibraryRequest } from '../../../src/schemas/libraries';
+import type {
+  CreateLibraryRequest,
+  FolderRule,
+  Library,
+  LibrarySyncStatus,
+  SetFolderRuleRequest,
+  UpdateLibraryRequest,
+} from '../../../src/schemas/libraries';
 import type { PhotoDetail, PhotoListResponse, PhotoSelection, PhotoTarget, Triage, UpdatePhotoRequest } from '../../../src/schemas/photos';
 import type { ViewerRendition, ViewerRenditionMode, Settings, UpdateSettingsRequest } from '../../../src/schemas/settings';
 import type { CreateShootRequest, Shoot, UpdateShootRequest } from '../../../src/schemas/shoots';
@@ -13,6 +20,7 @@ export type {
   Album,
   BrowseResponse,
   CreateLibraryRequest,
+  FolderRule,
   Library,
   LibrarySyncStatus,
   PhotoDetail,
@@ -123,6 +131,12 @@ export const api = {
   // stored as, and refusing anything above the root.
   browseLibrary: (libraryId: string, path = ''): Promise<BrowseResponse> =>
     request('GET', `/api/libraries/${libraryId}/browse?path=${encodeURIComponent(path)}`),
+  // Where a folder differs from what the library's settings say in general (§4.7).
+  listFolderRules: (libraryId: string): Promise<FolderRule[]> => request('GET', `/api/libraries/${libraryId}/folder-rules`),
+  setFolderRule: (libraryId: string, body: SetFolderRuleRequest): Promise<FolderRule[]> =>
+    request('PUT', `/api/libraries/${libraryId}/folder-rules`, body),
+  clearFolderRule: (libraryId: string, folderPath: string): Promise<void> =>
+    request('DELETE', `/api/libraries/${libraryId}/folder-rules?folder_path=${encodeURIComponent(folderPath)}`),
   listLibraries: (): Promise<Library[]> => request('GET', '/api/libraries'),
   getLibrary: (id: string): Promise<Library> => request('GET', `/api/libraries/${id}`),
   createLibrary: (body: CreateLibraryRequest): Promise<Library> => request('POST', '/api/libraries', body),
@@ -162,7 +176,10 @@ export const api = {
   getShoot: (id: string): Promise<Shoot> => request('GET', `/api/shoots/${id}`),
   createShoot: (body: CreateShootRequest): Promise<Shoot> => request('POST', '/api/shoots', body),
   updateShoot: (id: string, body: UpdateShootRequest): Promise<Shoot> => request('PATCH', `/api/shoots/${id}`, body),
-  deleteShoot: (id: string): Promise<void> => request('DELETE', `/api/shoots/${id}`),
+  // 'remove' takes the photo records and their renditions with the shoot; the
+  // files on disk are untouched either way (§8.5).
+  deleteShoot: (id: string, photos: 'keep' | 'remove'): Promise<void> =>
+    request('DELETE', `/api/shoots/${id}?photos=${photos}`),
   addPhotosToShoot: (id: string, target: PhotoTarget): Promise<void> => request('POST', `/api/shoots/${id}/photos`, target),
   removePhotosFromShoot: (id: string, target: PhotoTarget): Promise<void> =>
     request('DELETE', `/api/shoots/${id}/photos`, target),

@@ -61,6 +61,12 @@ test('keeps the library in the shell when a shoot is opened by deep link', async
   await openLibrary(page, PHOTOS_DIR);
   await page.getByRole('link', { name: 'Shoots', exact: true }).click();
 
+  // The library root is a permanent row carrying what sits outside every shoot,
+  // so a library with photos and no shoots is never an empty page.
+  const root = page.locator('.list__row--root');
+  await expect(root).toBeVisible();
+  await expect(root).toContainText('in no shoot');
+
   await addShoot(page, 'Reef');
   await expect(page.locator('.list__name', { hasText: 'Reef' })).toBeVisible();
 

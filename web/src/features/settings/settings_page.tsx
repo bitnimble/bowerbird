@@ -100,6 +100,7 @@ const LibraryList = observer(function LibraryList(): JSX.Element {
               {library.last_synced_at == null ? 'never synced' : `synced ${relativeTime(library.last_synced_at)}`}
             </Text>
             {sync.libraryId === library.id && <SyncStrip />}
+            <FolderSettings library={library} />
             <RenditionSettings library={library} />
           </div>
         </div>
@@ -149,6 +150,83 @@ function hdrCapability(): string {
   if (typeof window === 'undefined' || window.matchMedia == null) return 'unknown';
   return window.matchMedia('(dynamic-range: high)').matches ? 'this display reports HDR' : 'this display reports SDR only';
 }
+
+// What the library is, as opposed to what it builds: how much of the folder tree
+// belongs to it, and whether those folders are its shoots. Standing rules rather
+// than decisions taken at import, so a folder made next month is in or out for
+// the same reason today's are (§4.1).
+const FolderSettings = observer(function FolderSettings({ library }: { library: Library }): JSX.Element {
+  const { libraries } = usePresenters();
+
+  return (
+    <div className="panel">
+      <Text variant="label" as="div" className="panel__title">
+        Folders
+      </Text>
+
+      <SettingRow
+        label="Include subfolders"
+        hint="Off, the library is the photographs sitting in its root folder and nothing else, however deep the tree goes. Turning it off drops the photos already imported from the subfolders; the files themselves are never touched."
+      >
+        <input
+          type="checkbox"
+          aria-label="Include subfolders"
+          checked={library.include_subfolders}
+          onChange={(e) => void libraries.setIncludeSubfolders(library.id, e.currentTarget.checked)}
+        />
+      </SettingRow>
+
+      {/* A shoot is a subfolder, so there is nothing for this to mirror when the
+          library is its root alone. */}
+      <SettingRow
+        label="Make shoots from folders"
+        hint="Keeps a shoot for every folder holding photographs, so the catalogue always agrees with the tree on disk. Off, a shoot exists only where you make one, and the rest are offered on the Shoots page."
+        disabledReason={library.include_subfolders ? undefined : 'This library is its root folder only, so it has no folders to mirror.'}
+      >
+        <input
+          type="checkbox"
+          aria-label="Make shoots from folders"
+          checked={library.mirror_shoots}
+          onChange={(e) => void libraries.setMirrorShoots(library.id, e.currentTarget.checked)}
+        />
+      </SettingRow>
+
+      <FolderRuleList library={library} />
+    </div>
+  );
+});
+
+// Invisible state otherwise: both rules are written by deleting a shoot, and a
+// folder that has quietly stopped being part of the library needs somewhere it
+// can be found and undone.
+const FolderRuleList = observer(function FolderRuleList({ library }: { library: Library }): JSX.Element | null {
+  const store = useLibrariesStore();
+  const { libraries } = usePresenters();
+  const rules = store.folderRules.get(library.id) ?? [];
+
+  useEffect(() => {
+    void libraries.loadFolderRules(library.id);
+  }, [libraries, library.id]);
+
+  if (rules.length === 0) return null;
+
+  return (
+    <div className="rules">
+      <Text variant="label" as="div">
+        Folders you have set aside
+      </Text>
+      {rules.map((rule) => (
+        <div className="rules__row" key={rule.folder_path}>
+          <Text variant="mono">{rule.folder_path}</Text>
+          <Text variant="muted">
+            {rule.rule === 'excluded' ? 'Not part of this library' : 'In the library, but not a shoot'}
+          </Text>
+          <Button onClick={() => void libraries.clearFolderRule(library.id, rule.folder_path)}>Undo</Button>
+        </div>
+      ))}
+    </div>
+  );
+});
 
 // Per library, because one catalogue may be scanned JPEGs where the camera's
 // rendering is the point and another RAWs worth demosaicing. Deliberately not

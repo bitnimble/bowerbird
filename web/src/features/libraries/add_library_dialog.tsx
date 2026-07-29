@@ -37,6 +37,8 @@ export const AddLibraryDialog = observer(function AddLibraryDialog({
   const [path, setPath] = useState('');
   const [name, setName] = useState('');
   const [ordering, setOrdering] = useState<Ordering>('taken_asc');
+  const [includeSubfolders, setIncludeSubfolders] = useState(true);
+  const [mirrorShoots, setMirrorShoots] = useState(true);
   const [saving, setSaving] = useState(false);
 
   // Reopening starts over rather than resuming wherever the last attempt was
@@ -47,6 +49,8 @@ export const AddLibraryDialog = observer(function AddLibraryDialog({
     if (!open) return;
     setName('');
     setOrdering('taken_asc');
+    setIncludeSubfolders(true);
+    setMirrorShoots(true);
     // Including whatever the last attempt failed with, which is answered by
     // this attempt rather than still standing over it.
     libraries.clearError();
@@ -57,7 +61,13 @@ export const AddLibraryDialog = observer(function AddLibraryDialog({
 
   async function submit(): Promise<void> {
     setSaving(true);
-    const created = await libraries.create({ root_path: path.trim(), name: name.trim(), ordering });
+    const created = await libraries.create({
+      root_path: path.trim(),
+      name: name.trim(),
+      ordering,
+      include_subfolders: includeSubfolders,
+      mirror_shoots: mirrorShoots,
+    });
     setSaving(false);
     if (created) onOpenChange(false);
   }
@@ -99,6 +109,31 @@ export const AddLibraryDialog = observer(function AddLibraryDialog({
             Sort photos by
           </Text>
           <Select label="Sort photos by" options={ORDERINGS} value={ordering} onChange={setOrdering} />
+        </div>
+
+        {/* Asked here rather than left to Settings because both decide what the
+            first sync imports, and a library that has already spent an hour
+            building renditions for a folder of decade-old rejects has answered
+            the question the expensive way. */}
+        <div className="field">
+          <label className="check">
+            <input type="checkbox" checked={includeSubfolders} onChange={(e) => setIncludeSubfolders(e.currentTarget.checked)} />
+            Include subfolders
+          </label>
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={mirrorShoots}
+              disabled={!includeSubfolders}
+              onChange={(e) => setMirrorShoots(e.currentTarget.checked)}
+            />
+            Make a shoot for every folder holding photos
+          </label>
+          <Text variant="mono" as="p">
+            {includeSubfolders
+              ? 'Shoots follow the folders on disk, so the two can never disagree. You can set a folder aside later from the Shoots page.'
+              : 'The library is the photographs in the folder above and nothing else, so it has no folders to make shoots from.'}
+          </Text>
         </div>
 
         {store.error != null && <div className="error">{store.error}</div>}
