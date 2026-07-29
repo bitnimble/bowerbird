@@ -470,6 +470,14 @@ export class PhotosRepository {
   // Records where the file was before the Bin move so restore can put it back
   // exactly there (§12.3). shoot_id and album membership are deliberately left
   // alone, so those survive the round trip without any extra bookkeeping.
+  // Left as its own statement rather than folded into the file_path write beside
+  // it. Merging the two looks like it should halve the work and does not: they
+  // touch different indexes - file_path one, is_deleted all six ordering ones
+  // (§4.2) - so each entry is rewritten once either way, and the row rewrite
+  // they would share is the cheap part. Measured identical within noise, against
+  // a lie: a photo binned while its file was already gone would have had
+  // is_missing cleared, because the merged statement has no way to say "the file
+  // did not actually move".
   markDeleted(id: string, deletedFromPath: string, batch?: string): void {
     this.db
       .query(

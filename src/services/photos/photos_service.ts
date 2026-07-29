@@ -410,6 +410,8 @@ export class PhotosService {
           try {
             this.photos.transaction(() => {
               for (const row of moved) {
+                // Only when it actually moved: a photo binned while its file was
+                // already gone keeps is_missing, which is still true of it.
                 if (row.binRelPath !== row.wasAt) this.photos.setFilePath(row.id, row.binRelPath);
                 this.photos.markDeleted(row.id, row.wasAt, batch);
               }
