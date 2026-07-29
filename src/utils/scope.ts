@@ -22,11 +22,16 @@ function isExcludedName(name: string): boolean {
   return name.startsWith('.') || name === 'Bin';
 }
 
-/** `relDir` is root-relative with forward slashes; `''` is the library root. */
-export function isDirInScope(scope: LibraryScope, relDir: string): boolean {
-  if (relDir === '') return true;
-  const segments = relDir.split('/');
-  if (!scope.includeSubfolders) return false;
+// The rules that read the path itself, which answer the same whether what sits
+// there is a file or a folder: every one of them is about a segment, so a path
+// under a skipped folder is skipped however it ends.
+//
+// Separate from `isDirInScope` because the watcher cannot always tell the two
+// apart - chokidar asks about a path both with and without `stats` - and this
+// half needs no such distinction.
+export function isPathAllowed(scope: LibraryScope, relPath: string): boolean {
+  if (relPath === '') return true;
+  const segments = relPath.split('/');
   if (segments.some(isExcludedName)) return false;
 
   // Excluded is subtree-wide: a folder that is never walked has no children to
@@ -37,9 +42,18 @@ export function isDirInScope(scope: LibraryScope, relDir: string): boolean {
     if (scope.excluded.has(prefix)) return false;
   }
 
-  const abs = path.resolve(scope.rootPath, relDir);
+  const abs = path.resolve(scope.rootPath, relPath);
   const data = path.resolve(scope.dataPath);
   return abs !== data && !abs.startsWith(`${data}${path.sep}`);
+}
+
+/** `relDir` is root-relative with forward slashes; `''` is the library root. */
+export function isDirInScope(scope: LibraryScope, relDir: string): boolean {
+  if (relDir === '') return true;
+  // The one rule that needs to know it is looking at a folder: a root-only
+  // library keeps the files in its root and none of the folders beside them.
+  if (!scope.includeSubfolders) return false;
+  return isPathAllowed(scope, relDir);
 }
 
 /** Location only: whether the *format* is one of ours is `isSupportedFile` (§7). */

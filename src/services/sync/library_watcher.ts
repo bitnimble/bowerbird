@@ -3,7 +3,7 @@ import path from 'node:path';
 import { AppError } from '../../errors';
 import { Logger } from '../../logger';
 import type { Library } from '../../schemas/libraries';
-import { isDirInScope, isFileInScope } from '../../utils/scope';
+import { isPathAllowed } from '../../utils/scope';
 import type { LibrariesRepository } from '../libraries/libraries_repository';
 import type { LibraryLifecycleListener } from '../libraries/libraries_service';
 import type { SyncService } from './sync_service';
@@ -122,15 +122,20 @@ export class LibraryWatcher implements LibraryLifecycleListener {
     try {
       const watcher = chokidar.watch(library.root_path, {
         ignoreInitial: true, // the tree as it stands is sync's job, not an event
-        // The scan's own predicate (§9.1), so the watcher and the scan cannot
-        // disagree about which folders the library contains. Directories are
-        // asked as directories: `ignored` is consulted for them before chokidar
-        // descends, which is what keeps an excluded subtree from being watched at
-        // all rather than merely filtered afterwards.
-        ignored: (target, stats) => {
+        // How far the library goes, expressed as depth rather than through
+        // `ignored` below: chokidar asks about a path both with and without
+        // `stats`, so a predicate needing to know a folder from a file would get
+        // it wrong on the stats-less call - and this is the one rule where a
+        // root-level folder and a root-level file differ.
+        depth: scope.includeSubfolders ? undefined : 0,
+        // The scan's own rules (§9.1), so the watcher and the scan cannot
+        // disagree about which folders the library contains. Consulted before
+        // chokidar descends, so an excluded subtree is never watched rather than
+        // being filtered after the fact.
+        ignored: (target) => {
           const relPath = path.relative(library.root_path, target).split(path.sep).join('/');
           if (relPath === '' || relPath.startsWith('..')) return false;
-          return stats?.isDirectory() ?? false ? !isDirInScope(scope, relPath) : !isFileInScope(scope, relPath);
+          return !isPathAllowed(scope, relPath);
         },
       });
       watcher.on('all', (_event, target) => {

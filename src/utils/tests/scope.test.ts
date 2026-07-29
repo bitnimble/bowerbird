@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'bun:test';
 import path from 'node:path';
-import { isDirInScope, isFileInScope, type LibraryScope } from '../scope';
+import { isDirInScope, isFileInScope, isPathAllowed, type LibraryScope } from '../scope';
 
 const ROOT = '/lib';
 
@@ -45,6 +45,34 @@ describe('isDirInScope', () => {
     expect(isDirInScope(s, 'Trip/Old/Raw')).toBe(false);
     expect(isDirInScope(s, 'Trip')).toBe(true);
     expect(isDirInScope(s, 'Rejected')).toBe(true); // prefix, not an ancestor
+  });
+});
+
+// What the watcher asks, because chokidar cannot always tell it whether a path
+// is a folder or a file. Every rule here is about a segment, so both answers
+// have to agree.
+describe('isPathAllowed', () => {
+  it('answers the same for a folder and for a file inside it', () => {
+    const s = scope({ excluded: new Set(['Rejects']) });
+    expect(isPathAllowed(s, 'Rejects')).toBe(false);
+    expect(isPathAllowed(s, 'Rejects/a.arw')).toBe(false);
+    expect(isPathAllowed(s, 'Trip')).toBe(true);
+    expect(isPathAllowed(s, 'Trip/a.arw')).toBe(true);
+  });
+
+  // The rule that does need to know, and so is `depth` on the watcher rather
+  // than part of this: a root-level file stays while a root-level folder goes.
+  it('says nothing about how deep the library goes', () => {
+    const s = scope({ includeSubfolders: false });
+    expect(isPathAllowed(s, 'Trip')).toBe(true);
+    expect(isPathAllowed(s, 'Trip/a.arw')).toBe(true);
+  });
+
+  it('still refuses the Bin, dotfolders and the data directory', () => {
+    const s = scope();
+    expect(isPathAllowed(s, 'Trip/Bin')).toBe(false);
+    expect(isPathAllowed(s, 'Trip/Bin/a.arw')).toBe(false);
+    expect(isPathAllowed(s, '.bowerbird/renditions/x.avif')).toBe(false);
   });
 });
 
