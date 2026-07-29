@@ -92,7 +92,7 @@ export class PhotosStore {
   @observable accessor error: string | null = null;
 
   @observable accessor filters: PhotoFilters = {};
-  @observable accessor ordering: Ordering = 'taken_desc';
+  @observable accessor ordering: Ordering = 'taken_asc';
 
   // Minimum tile width in px, driven by the grid's zoom slider.
   @observable accessor thumbSize = 240;

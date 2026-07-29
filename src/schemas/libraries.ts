@@ -4,7 +4,7 @@ import { OrderingSchema, UuidSchema } from './common';
 export const CreateLibraryRequestSchema = z.object({
   root_path: z.string().min(1),
   data_path: z.string().optional(),
-  ordering: OrderingSchema.default('taken_desc'),
+  ordering: OrderingSchema.default('taken_asc'),
 });
 export type CreateLibraryRequest = z.infer<typeof CreateLibraryRequestSchema>;
 

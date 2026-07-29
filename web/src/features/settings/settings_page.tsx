@@ -204,7 +204,7 @@ export const SettingsPage = observer(function SettingsPage(): JSX.Element {
     if (rootPath.trim() === '') return;
     // Sort order is a per-view choice made in the gallery, not a property of the
     // library, so adding one asks for a path and nothing else.
-    if (await libraries.create(rootPath.trim(), 'taken_desc')) setRootPath('');
+    if (await libraries.create(rootPath.trim(), 'taken_asc')) setRootPath('');
   }
 
   return (

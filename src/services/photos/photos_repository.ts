@@ -1,5 +1,5 @@
 import type { Database } from 'bun:sqlite';
-import type { Ordering } from '../../schemas/common';
+import { OrderingSchema, type Ordering } from '../../schemas/common';
 import type { PhotoDetail, PhotoSummary, Triage } from '../../schemas/photos';
 import type { PreviewRendition } from '../../schemas/settings';
 import type { ThumbnailSource } from '../processing/processing_types';
@@ -207,16 +207,18 @@ interface DetailRow extends SummaryRow {
 }
 
 // `date_taken IS NULL` first keeps NULL capture dates last in both directions (DESIGN §5.1).
-function orderByClause(ordering: Ordering): string {
+// `prefix` is the table's alias in the query being built, since the processing
+// queue joins photos as `p` and orders by the same rule the grid reads by.
+function orderByClause(ordering: Ordering, prefix = 'photos.'): string {
   switch (ordering) {
     case 'added_asc':
-      return 'photos.date_added ASC, photos.id ASC';
+      return `${prefix}date_added ASC, ${prefix}id ASC`;
     case 'added_desc':
-      return 'photos.date_added DESC, photos.id ASC';
+      return `${prefix}date_added DESC, ${prefix}id ASC`;
     case 'taken_asc':
-      return 'photos.date_taken IS NULL, photos.date_taken ASC, photos.id ASC';
+      return `${prefix}date_taken IS NULL, ${prefix}date_taken ASC, ${prefix}id ASC`;
     case 'taken_desc':
-      return 'photos.date_taken IS NULL, photos.date_taken DESC, photos.id ASC';
+      return `${prefix}date_taken IS NULL, ${prefix}date_taken DESC, ${prefix}id ASC`;
   }
 }
 
@@ -625,11 +627,17 @@ export class PhotosRepository {
   listPendingProcessing(libraryId?: string, photoIds?: readonly string[]): PendingPhoto[] {
     const where = libraryId ? 'AND p.library_id = ?' : '';
     const params = libraryId ? [libraryId] : [];
+    // Queued in the order the grid will show them, so the first screenful of a
+    // 50k import is the first to fill in rather than the rows arriving in
+    // whatever order they were inserted (§10.2). Only when the run names one
+    // library: across several there is no single ordering to follow, and those
+    // runs are always an explicit set of ids the user just asked for.
+    const order = libraryId == null ? '' : `ORDER BY ${orderByClause(this.libraryOrdering(libraryId), 'p.')}`;
     const query = (idClause: string): string =>
       `SELECT p.id AS photo_id, p.file_path, p.rendition_source, p.needs_tile, p.needs_renditions,
               l.root_path, l.data_path, l.preview_source, l.preview_hdr, l.preview_hdr_video
        FROM photos p JOIN libraries l ON l.id = p.library_id
-       WHERE ${PENDING_PROCESSING('p.')} ${where} ${idClause}`;
+       WHERE ${PENDING_PROCESSING('p.')} ${where} ${idClause} ${order}`;
 
     if (photoIds == null) return this.db.query(query('')).all(...params) as PendingPhoto[];
     const rows: PendingPhoto[] = [];
@@ -638,6 +646,16 @@ export class PhotosRepository {
       rows.push(...(this.db.query(query(`AND p.id IN (${placeholders})`)).all(...params, ...batch) as PendingPhoto[]));
     }
     return rows;
+  }
+
+  // The ordering the library's grid reads by, which is what its queue is built
+  // in. A row that has gone (deleted mid-run) or holds a value the enum no
+  // longer has falls back to what a new library gets, rather than failing a
+  // batch over a sort order.
+  private libraryOrdering(libraryId: string): Ordering {
+    const row = this.db.query('SELECT ordering FROM libraries WHERE id = ?').get(libraryId) as { ordering: string } | null;
+    const parsed = OrderingSchema.safeParse(row?.ordering);
+    return parsed.success ? parsed.data : 'taken_asc';
   }
 
   // The grid tile has landed. Its own flag and its own stamp, because the

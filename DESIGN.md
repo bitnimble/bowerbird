@@ -177,7 +177,7 @@ CREATE TABLE libraries (
   id          TEXT PRIMARY KEY,
   root_path   TEXT NOT NULL UNIQUE,
   data_path   TEXT,  -- path to .bowerbird/ data folder; NULL means default (<root_path>/.bowerbird/)
-  ordering    TEXT NOT NULL DEFAULT 'taken_desc'
+  ordering    TEXT NOT NULL DEFAULT 'taken_asc'
     CHECK (ordering IN ('taken_asc', 'taken_desc', 'added_asc', 'added_desc'))
 );
 ```
@@ -367,7 +367,7 @@ export const PhotoIdListSchema = z.object({
 export const CreateLibraryRequestSchema = z.object({
   root_path: z.string().min(1),
   data_path: z.string().optional(),
-  ordering: OrderingSchema.default('taken_desc'),
+  ordering: OrderingSchema.default('taken_asc'),
 });
 
 export const LibrarySchema = z.object({
@@ -969,6 +969,10 @@ Every writer on this path fails on a missing directory rather than creating one,
 ### 10.2 Concurrency Model
 
 Processing uses **Bun worker threads** for parallelism. The concurrency level is configurable (default: 4 workers).
+
+**The queue is built in the order the grid will show it.** `listPendingProcessing` orders by the library's own `ordering` (`taken_asc` by default, so oldest capture first), using the same clause the gallery reads by, NULL capture dates included. A 50k-frame import otherwise filled in whatever order the rows happened to be inserted, which is the scan's order and therefore the filesystem's - so the first screenful was among the last to get its thumbnails, and the user watched an empty grid while work was being done on photos three thousand rows down. Both passes follow it, since each iterates the same staged list.
+
+Only applied when the run names a single library: a batch spanning several has no one ordering to follow, and those runs are always an explicit set of ids the user just asked to rebuild. Above one `IN (...)` chunk the order is per chunk rather than global, which affects only sets far larger than a scoped sync ever carries (the watcher falls back to a full sync past 256 paths, §9.8).
 
 The orchestrator (`processing_service.ts`):
 1. Queries for all photos owing either stage with `is_missing = 0` (a photo whose file went missing while processing was still pending must not be run against the absent file; excluding it leaves its flags set so it is generated on the sync that clears `is_missing`, §9.4 step 4).

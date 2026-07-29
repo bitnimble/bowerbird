@@ -638,7 +638,7 @@ export class PhotosPresenter {
     // The Bin and the missing view are already a specific slice, so a triage
     // default there would fight the thing the user opened.
     this.store.filters = source.kind === 'library' || source.kind === 'shoot' || source.kind === 'album' ? activeFilters() : {};
-    this.store.ordering = 'taken_desc';
+    this.store.ordering = 'taken_asc';
     this.store.error = null;
 
     // Anything the user chose last time they were here wins over those defaults.

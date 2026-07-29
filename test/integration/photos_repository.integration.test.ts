@@ -63,6 +63,37 @@ test('setMissing marks missing only when file_path still matches the scanned pat
   expect(missingOf('mv')).toBe(1);
 });
 
+// The thumbnail queue is built in the order the grid will show it, so the first
+// screenful of a large import is the first to fill in (§10.2). Insertion order is
+// deliberately the reverse of capture order here: returning these in the order
+// they were written is exactly the failure, and it is invisible on a small library.
+test('listPendingProcessing queues photos in the library grid order', () => {
+  const ORD = '00000000-0000-4000-8000-000000000ord';
+  db.query('INSERT INTO libraries (id, root_path, ordering) VALUES (?, ?, ?)').run(ORD, '/tmp/bb-ordering', 'taken_asc');
+  const taken: [string, string | null][] = [
+    ['newest', '2024-03-01T00:00:00.000Z'],
+    ['undated', null],
+    ['oldest', '2020-01-01T00:00:00.000Z'],
+    ['middle', '2022-06-01T00:00:00.000Z'],
+  ];
+  for (const [id, date] of taken) {
+    db.query(
+      `INSERT INTO photos (id, library_id, file_path, width, height, date_added, date_taken)
+       VALUES (?, ?, ?, 100, 100, '2024-01-01T00:00:00.000Z', ?)`,
+    ).run(id, ORD, `${id}.arw`, date);
+  }
+
+  const ids = (): string[] => photos.listPendingProcessing(ORD).map((p) => p.photo_id);
+  // Undated last in both directions, matching the grid (DESIGN §5.1).
+  expect(ids()).toEqual(['oldest', 'middle', 'newest', 'undated']);
+
+  db.query('UPDATE libraries SET ordering = ? WHERE id = ?').run('taken_desc', ORD);
+  expect(ids()).toEqual(['newest', 'middle', 'oldest', 'undated']);
+
+  db.query('UPDATE libraries SET ordering = ? WHERE id = ?').run('added_asc', ORD);
+  expect(ids()).toHaveLength(4); // date_added is identical, so only the tie-break id order is defined
+});
+
 // Regression: a move-op runs only after the file exists at the new path, so it
 // must clear is_missing; else a concurrent sync's setMissing landing just before
 // leaves the present photo stuck missing until the next sync.

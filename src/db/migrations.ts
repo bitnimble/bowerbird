@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS libraries (
   root_path   TEXT NOT NULL UNIQUE,
   data_path   TEXT,
   last_synced_at TEXT,          -- ISO datetime of the last completed sync; NULL if never synced
-  ordering    TEXT NOT NULL DEFAULT 'taken_desc'
+  ordering    TEXT NOT NULL DEFAULT 'taken_asc'
     CHECK (ordering IN ('taken_asc', 'taken_desc', 'added_asc', 'added_desc')),
   -- Where thumbnails and previews get their pixels, and whether the full-size
   -- render is HDR (§10.2). Per library rather than global: one catalogue may be
