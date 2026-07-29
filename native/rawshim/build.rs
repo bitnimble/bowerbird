@@ -9,6 +9,10 @@ use std::path::PathBuf;
 fn main() {
     println!("cargo:rustc-link-lib=raw");
     println!("cargo:rustc-link-lib=lensfun");
+    // The library avifenc is a thin wrapper around. Linking it means the still's
+    // encode stops being two child processes with the whole frame passed between
+    // them, and becomes a pointer.
+    println!("cargo:rustc-link-lib=avif");
     println!("cargo:rerun-if-changed=wrapper.h");
 
     let bindings = bindgen::Builder::default()
@@ -39,6 +43,18 @@ fn main() {
         .allowlist_function("libraw_dcraw_clear_mem")
         .allowlist_function("libraw_recycle")
         .allowlist_function("libraw_close")
+        .allowlist_type("avifImage")
+        .allowlist_type("avifRGBImage")
+        .allowlist_type("avifEncoder")
+        .allowlist_function("avifImageCreate")
+        .allowlist_function("avifImageDestroy")
+        .allowlist_function("avifRGBImageSetDefaults")
+        .allowlist_function("avifImageRGBToYUV")
+        .allowlist_function("avifEncoderCreate")
+        .allowlist_function("avifEncoderDestroy")
+        .allowlist_function("avifEncoderWrite")
+        .allowlist_function("avifRWDataFree")
+        .allowlist_function("avifResultToString")
         .layout_tests(false)
         .generate()
         .expect("bindgen failed against the installed LibRaw headers");

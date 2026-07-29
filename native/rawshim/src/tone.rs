@@ -32,7 +32,10 @@ const C2: f64 = (2413.0 / 4096.0) * 32.0;
 const C3: f64 = (2392.0 / 4096.0) * 32.0;
 const PQ_MAX_NITS: f64 = 10000.0;
 
-fn pq(nits: f64) -> f64 {
+/// SMPTE ST 2084, forward. Public because the still's encoder applies the same
+/// transfer the roll-off is computed in, rather than handing the frame to `zscale`
+/// to do it in another process (`avif.rs`).
+pub fn pq(nits: f64) -> f64 {
     let y = (nits / PQ_MAX_NITS).clamp(0.0, 1.0).powf(M1);
     ((C1 + C2 * y) / (1.0 + C3 * y)).powf(M2)
 }

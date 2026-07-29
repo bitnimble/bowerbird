@@ -36,9 +36,14 @@ RUN printf '%s\n' \
 # exactly what is wanted: 4:4:4 is Profile 1, which no hardware decoder will
 # take, and the video exists to reach a hardware HDR path.
 #
-# libavif-bin provides avifenc for the HDR still, which is 4:4:4 and so cannot
-# come from SVT-AV1. ffmpeg's own avif muxer writes no colr box, so it cannot
-# tag one as HDR at all.
+# libavif is what writes the HDR still. rawshim links it directly (`avif.rs`), so
+# the runtime needs the library rather than the binary: the frame is handed over as
+# a pointer instead of being written to ffmpeg's stdin, converted, written again as
+# y4m and read back by avifenc. libavif-bin comes along anyway because `avifenc` is
+# still the reference the linked path is pinned against, and it is 300KB.
+#
+# It cannot be ffmpeg's own avif muxer instead, which writes no colr box and so
+# cannot tag a still as HDR at all - that box is the whole reason libavif is here.
 #
 # liblensfun1 pulls its data package with it, and both halves are needed: the
 # library is what rawshim links, and the ~4MB of XML under /usr/share/lensfun is
@@ -55,7 +60,7 @@ RUN printf '%s\n' \
 # why the build stage below opens with --fix-broken.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
-     libraw23t64 libvips42t64 liblensfun1 libheif-plugin-aomenc ffmpeg libavif-bin \
+     libraw23t64 libvips42t64 liblensfun1 libheif-plugin-aomenc ffmpeg libavif16 libavif-bin \
   && dpkg --force-depends --purge libllvm19 libz3-4 mesa-libgallium libgl1-mesa-dri libglx-mesa0 \
   && rm -rf /var/lib/apt/lists/*
 
@@ -115,7 +120,7 @@ FROM base AS native
 RUN apt-get update \
   && apt-get install -y --fix-broken \
   && apt-get install -y --no-install-recommends \
-     libraw-dev libvips-dev liblensfun-dev \
+     libraw-dev libvips-dev liblensfun-dev libavif-dev \
      build-essential ca-certificates curl libclang-dev \
   && rm -rf /var/lib/apt/lists/*
 # Downloaded to a file rather than piped into sh: in a pipeline the exit status is

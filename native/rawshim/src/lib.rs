@@ -23,6 +23,7 @@ use rayon::prelude::*;
 use std::ffi::CStr;
 use std::os::raw::{c_char, c_int};
 
+pub mod avif;
 pub mod ffi;
 pub mod fit;
 pub mod hdr;

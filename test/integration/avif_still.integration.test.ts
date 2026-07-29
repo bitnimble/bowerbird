@@ -1,0 +1,99 @@
+// The HDR still is encoded by libavif in this process rather than by spawning ffmpeg
+// and avifenc (DESIGN §10.7). avifenc is a wrapper around the same library, so the two
+// should agree - but "should" is doing a lot of work there: the linked path applies the
+// PQ transfer itself where zscale used to, and hands libavif 16-bit RGB where avifenc
+// hands it a y4m that is already YCbCr.
+//
+// So it is pinned against the binary rather than argued about. `BOWERBIRD_AVIFENC=1`
+// puts the encode back on the child processes, and what has to match is everything a
+// browser reads: the dimensions, the pixel format, the range, and the CICP - the last
+// of which is the whole reason libavif is here rather than ffmpeg's avif muxer.
+//
+// The pixels are compared rather than hashed. They are not bit-identical and should not
+// be expected to be: the linked path quantises to 16-bit PQ before libavif converts to
+// 10-bit YCbCr, where zscale goes straight there, and that intermediate step costs
+// about a code value. What matters is that it is about a code value and not a picture.
+//   docker exec bowerbird-dev bun test test/integration
+import { expect, test } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+
+const FIXTURE = `${import.meta.dir}/../fixtures/DSC02981.ARW`;
+
+const PROBE = `
+import { decodeRawImage, encodeHdrRendition, freeImage } from '${import.meta.dir}/../../src/services/processing/rawshim_ops';
+const [file, out, medium] = process.argv.slice(-3);
+const image = decodeRawImage(file, 16, 'rec2020-linear', 640);
+try {
+  encodeHdrRendition(image, null, {
+    variant: 'pq', medium, outputPath: out, peakNits: 1000, referenceWhiteNits: 203,
+    whiteQuantile: 0.9, crf: 30, preset: 10, maxEdge: 640,
+  });
+} finally {
+  freeImage(image);
+}
+`;
+
+async function encode(out: string, medium: string, viaAvifenc: boolean): Promise<void> {
+  const child = Bun.spawn(['bun', '-e', PROBE, '--', FIXTURE, out, medium], {
+    env: { ...process.env, ...(viaAvifenc ? { BOWERBIRD_AVIFENC: '1' } : {}), LOG_LEVEL: 'warn' },
+    stdout: 'pipe',
+    stderr: 'pipe',
+  });
+  const [err, code] = await Promise.all([new Response(child.stderr).text(), child.exited]);
+  if (code !== 0) throw new Error(`encode failed: ${err}`);
+}
+
+function probe(file: string): string {
+  const result = Bun.spawnSync([
+    'ffprobe', '-hide_banner', '-loglevel', 'error',
+    '-show_entries', 'stream=width,height,pix_fmt,color_range,color_primaries,color_transfer,color_space',
+    '-of', 'default=nw=1', file,
+  ]);
+  if (result.exitCode !== 0) throw new Error(`ffprobe failed: ${result.stderr.toString()}`);
+  return result.stdout.toString().trim();
+}
+
+/** Mean PSNR between two encodes of the same frame, in dB. Infinity when identical. */
+function psnr(a: string, b: string): number {
+  const result = Bun.spawnSync([
+    'ffmpeg', '-hide_banner', '-loglevel', 'info', '-i', a, '-i', b,
+    '-lavfi', '[0:v]format=yuv444p10le[x];[1:v]format=yuv444p10le[y];[x][y]psnr', '-f', 'null', '-',
+  ]);
+  const found = /average:([0-9.]+|inf)/.exec(result.stderr.toString());
+  if (found == null) throw new Error(`no psnr in ffmpeg output: ${result.stderr.toString().slice(-400)}`);
+  return found[1] === 'inf' ? Number.POSITIVE_INFINITY : Number(found[1]);
+}
+
+// Both media, because they differ in the one field most easily got wrong: the baseline
+// control is 4:2:0 where the still is 4:4:4, and libavif takes that as a pixel format
+// on the image rather than as a flag beside it.
+for (const medium of ['still', 'still-baseline'] as const) {
+  test(
+    `the linked encoder agrees with avifenc, ${medium}`,
+    async () => {
+      const dir = mkdtempSync(path.join(tmpdir(), 'bb-avif-'));
+      try {
+        const linked = path.join(dir, 'linked.avif');
+        const spawned = path.join(dir, 'spawned.avif');
+        await encode(linked, medium, false);
+        await encode(spawned, medium, true);
+
+        // Everything a browser reads to decide what the file is, including the CICP
+        // that decides whether it is treated as HDR at all.
+        expect(probe(linked)).toBe(probe(spawned));
+        expect(probe(linked)).toContain(medium === 'still' ? 'pix_fmt=yuv444p10le' : 'pix_fmt=yuv420p10le');
+        expect(probe(linked)).toContain('color_transfer=smpte2084');
+        expect(probe(linked)).toContain('color_primaries=bt2020');
+
+        // ~1 code value at 10 bits is the intermediate quantisation; a picture apart
+        // would be tens of dB below this.
+        expect(psnr(linked, spawned)).toBeGreaterThan(50);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+    180_000,
+  );
+}

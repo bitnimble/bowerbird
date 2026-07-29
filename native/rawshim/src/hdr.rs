@@ -224,20 +224,44 @@ fn encode_graded(graded: &[u16], width: usize, height: usize, options: &EncodeOp
         return run(&hdr_args::ffmpeg_args(width as u32, height as u32, options), Some(bytes));
     }
 
-    // A still goes through ffmpeg only to become y4m: ffmpeg's avif muxer writes no
-    // colr box, so the primaries and transfer would be lost, and AVIF has no
-    // equivalent of the bitstream filter to put them back. avifenc does the tagging.
-    //
-    // Down a pipe rather than through a file. The y4m is the whole frame uncompressed -
-    // 59MB at 3840 and ~366MB at native resolution - and writing it out only for
-    // avifenc to read it back in is a round trip through the page cache, or through the
-    // disk on a machine that is short of it, for bytes neither process wants kept.
+    // In this process. `avifenc` is a wrapper around libavif, and what it was adding
+    // over ffmpeg is the nclx `colr` box, which libavif writes just as well when called
+    // directly - so the frame stops being written to ffmpeg's stdin, converted, written
+    // again as y4m and read back, and becomes a pointer (`avif.rs`).
+    if !use_avifenc() {
+        let (primaries, transfer, matrix) = hdr_args::cicp(options.variant, options.medium);
+        return crate::avif::encode_still(
+            graded,
+            width,
+            height,
+            &crate::avif::StillOptions {
+                cicp: crate::avif::Cicp { primaries, transfer, matrix },
+                subsample_420: options.medium == Medium::StillBaseline,
+                quantizer: options.crf,
+                speed: options.preset.min(10),
+                peak_nits: options.peak_nits,
+            },
+            &options.output_path,
+        );
+    }
+
+    // The child-process route, kept as the reference the in-process one is measured and
+    // pinned against. ffmpeg converts, avifenc tags; the y4m between them goes down a
+    // pipe rather than a file, since it is the whole frame uncompressed.
     let to_pipe = EncodeOptions { output_path: "-".to_string(), ..options.clone() };
     pipe(
         &hdr_args::ffmpeg_args(width as u32, height as u32, &to_pipe),
         &hdr_args::avifenc_args(options, ""),
         bytes,
     )
+}
+
+/// Encode stills by spawning ffmpeg and avifenc instead of calling libavif here.
+///
+/// For the test that holds the two against each other, and as a way out if a build
+/// turns up where the linked library and the binary disagree.
+fn use_avifenc() -> bool {
+    std::env::var("BOWERBIRD_AVIFENC").is_ok_and(|value| value == "1")
 }
 
 /// Runs `first`, feeding it `stdin_data`, with its stdout piped into `second`.

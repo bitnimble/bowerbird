@@ -110,6 +110,13 @@ const BT709: Coding = Coding { name: "bt709", cicp: 1 };
 /// Video keeps BT.709, which is what a video decoder expects.
 const STILL_SDR_TRANSFER: Coding = Coding { name: "iec61966-2-1", cicp: 13 };
 
+/// The CICP triple this rendition is tagged with, for the encoder that sets it
+/// directly rather than through a command line.
+pub fn cicp(variant: Variant, medium: Medium) -> (u16, u16, u16) {
+    let target = target_for(variant, medium);
+    (target.primaries.cicp as u16, target.transfer.cicp as u16, target.matrix.cicp as u16)
+}
+
 fn target_for(variant: Variant, medium: Medium) -> Target {
     match variant {
         Variant::Pq => Target {
