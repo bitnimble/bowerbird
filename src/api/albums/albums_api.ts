@@ -1,7 +1,6 @@
 import { Hono } from 'hono';
 import { CreateAlbumRequestSchema, UpdateAlbumRequestSchema } from '../../schemas/albums';
-import { PhotoIdListSchema } from '../../schemas/common';
-import { PhotoListQuerySchema } from '../../schemas/photos';
+import { PhotoListQuerySchema, PhotoTargetSchema } from '../../schemas/photos';
 import type { AlbumsService } from '../../services/albums/albums_service';
 import type { PhotosService } from '../../services/photos/photos_service';
 
@@ -27,15 +26,15 @@ export class AlbumsApi {
       return c.body(null, 204);
     });
 
+    // Ids, or the positions to read them from - the same two shapes every bulk
+    // route takes (§18.3.3).
     app.post('/:id/photos', async (c) => {
-      const { photo_ids } = PhotoIdListSchema.parse(await c.req.json());
-      this.albums.addPhotos(c.req.param('id'), photo_ids);
+      this.albums.addPhotos(c.req.param('id'), this.photos.resolve(PhotoTargetSchema.parse(await c.req.json())));
       return c.body(null, 204);
     });
 
     app.delete('/:id/photos', async (c) => {
-      const { photo_ids } = PhotoIdListSchema.parse(await c.req.json());
-      this.albums.removePhotos(c.req.param('id'), photo_ids);
+      this.albums.removePhotos(c.req.param('id'), this.photos.resolve(PhotoTargetSchema.parse(await c.req.json())));
       return c.body(null, 204);
     });
 

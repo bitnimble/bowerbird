@@ -79,6 +79,7 @@ CREATE TABLE IF NOT EXISTS photos (
   camera_model      TEXT,
   lens_model        TEXT,
   deleted_from_path TEXT,           -- file_path before the Bin move, so restore can put it back (§12.3)
+  deleted_batch     TEXT,           -- which bin took it, so an undo names the operation not every id (§12.3)
   rating            INTEGER NOT NULL DEFAULT 0 CHECK (rating >= 0 AND rating <= 5),
   -- Cull verdict. NULL means untriaged, which is a real third state: "not yet
   -- judged" is what a photographer filters on, and a boolean cannot say it.
@@ -90,10 +91,31 @@ CREATE TABLE IF NOT EXISTS photos (
 );
 CREATE INDEX IF NOT EXISTS idx_photos_library ON photos(library_id);
 CREATE INDEX IF NOT EXISTS idx_photos_shoot ON photos(shoot_id);
-CREATE INDEX IF NOT EXISTS idx_photos_library_added ON photos(library_id, date_added);
-CREATE INDEX IF NOT EXISTS idx_photos_library_taken ON photos(library_id, date_taken);
-CREATE INDEX IF NOT EXISTS idx_photos_shoot_added ON photos(shoot_id, date_added);
-CREATE INDEX IF NOT EXISTS idx_photos_shoot_taken ON photos(shoot_id, date_taken);
+-- The gallery's four orderings, keyed exactly as ORDER BY spells them
+-- (orderByClause, §8.2): the id tiebreak that makes paging a total order is part
+-- of the key, and the taken_* pair leads with the NULL-last expression. Without
+-- the tiebreak in the index SQLite sorts the whole library into a temp b-tree on
+-- every request - which a pager hid behind a click, and a scroll asking for ten
+-- thousand blocks does not (§18.3.2).
+--
+-- is_deleted sits ahead of the sort columns because every listing filters on it,
+-- so the rows a deep OFFSET skips are skipped inside the index rather than
+-- probed in the table. Named apart from the pairs they replace so an existing
+-- catalogue rebuilds rather than keeping a definition that no longer matches.
+CREATE INDEX IF NOT EXISTS idx_photos_library_order_added ON photos(library_id, is_deleted, date_added, id);
+CREATE INDEX IF NOT EXISTS idx_photos_library_order_taken
+  ON photos(library_id, is_deleted, (date_taken IS NULL), date_taken, id);
+CREATE INDEX IF NOT EXISTS idx_photos_shoot_order_added ON photos(shoot_id, is_deleted, date_added, id);
+CREATE INDEX IF NOT EXISTS idx_photos_shoot_order_taken
+  ON photos(shoot_id, is_deleted, (date_taken IS NULL), date_taken, id);
+-- The added_* pair is one index read forwards or backwards, but taken_desc is
+-- not: NULLs stay last while the dates reverse, so its key is the only one that
+-- genuinely differs by direction and the only one that needs a twin. "Newest
+-- first" is the default a photographer reaches for, so it is worth the write.
+CREATE INDEX IF NOT EXISTS idx_photos_library_order_taken_desc
+  ON photos(library_id, is_deleted, (date_taken IS NULL), date_taken DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_photos_shoot_order_taken_desc
+  ON photos(shoot_id, is_deleted, (date_taken IS NULL), date_taken DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_photos_file_hash ON photos(library_id, file_hash);
 CREATE INDEX IF NOT EXISTS idx_photos_file_path ON photos(library_id, file_path);
 CREATE INDEX IF NOT EXISTS idx_photos_is_missing ON photos(library_id, is_missing) WHERE is_missing = 1;
@@ -210,8 +232,18 @@ function migrateProcessingStages(db: Database): void {
   db.exec('ALTER TABLE photos DROP COLUMN date_reprocessed');
 }
 
+// The `(collection, date)` pairs the `_order_` indexes above replace. They are a
+// prefix of the new keys, so every query they served is served better now, and
+// keeping them would cost a second b-tree per write for nothing.
+function dropSupersededOrderingIndexes(db: Database): void {
+  for (const name of ['idx_photos_library_added', 'idx_photos_library_taken', 'idx_photos_shoot_added', 'idx_photos_shoot_taken']) {
+    db.exec(`DROP INDEX IF EXISTS ${name}`);
+  }
+}
+
 export function runMigrations(db: Database): void {
   db.exec(SCHEMA);
+  dropSupersededOrderingIndexes(db);
   renamePreviewColumnsToRenditions(db);
   // Additive columns, for DBs created before each feature landed. CREATE TABLE
   // above already has them, so these are no-ops on a fresh database.
@@ -231,6 +263,11 @@ export function runMigrations(db: Database): void {
   ensureColumn(db, 'photos', 'viewer_rendition', 'TEXT'); // per-photo viewer memory (§10.2)
   migrateThumbnailsToRenditions(db);
   ensureColumn(db, 'photos', 'deleted_from_path', 'TEXT'); // Bin restore (§12.2)
+  // Which bin took this photo, so an undo can name that one operation instead of
+  // shipping back every id it touched (§12.3). Stamped by the client, so the
+  // undo works even if the answer to the delete never arrived.
+  ensureColumn(db, 'photos', 'deleted_batch', 'TEXT');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_photos_deleted_batch ON photos(deleted_batch) WHERE deleted_batch IS NOT NULL');
   ensureColumn(db, 'libraries', 'last_synced_at', 'TEXT'); // §9.6
   // Per-library rendition settings, replacing the global import.thumbnail_source
   // (§10.2). The default matches what that setting shipped with.

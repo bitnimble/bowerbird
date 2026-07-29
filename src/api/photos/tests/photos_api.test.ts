@@ -18,6 +18,9 @@ function buildApp(over: Partial<PhotosService> = {}) {
     listByAlbum: jest.fn(() => emptyList),
     update: jest.fn(),
     delete: jest.fn(async () => {}),
+    // The real one reads a selection's ids off the same listing the grid was
+    // built from; here every route just needs the ids it was handed back.
+    resolve: jest.fn((target: { photo_ids?: string[] }) => target.photo_ids ?? [PID]),
     ...over,
   } as unknown as PhotosService;
   const processing = { rebuildTiles: jest.fn(async () => 1) } as unknown as ProcessingService;
@@ -28,6 +31,16 @@ function buildApp(over: Partial<PhotosService> = {}) {
 }
 
 const PID = '11111111-1111-4111-8111-111111111111';
+const BATCH = '22222222-2222-4222-8222-222222222222';
+
+const selectionStatus = async (app: Hono, ranges: { start: number; end: number }[]): Promise<number> => {
+  const res = await app.request('/api/photos/delete', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ selection: { scope: { kind: 'library', id: PID }, ranges } }),
+  });
+  return res.status;
+};
 
 describe('PhotosApi', () => {
   it('lists library photos (200)', async () => {
@@ -70,16 +83,82 @@ describe('PhotosApi', () => {
     expect(res.status).toBe(400);
   });
 
-  it('deletes photos and returns 204', async () => {
+  // Answers with a count, not with the ids: the undo names the batch the client
+  // stamped the request with, so a bin of a million is not a 36MB response
+  // (§12.3).
+  it('deletes photos, stamps the batch, and answers with a count', async () => {
     const del = jest.fn(async () => {});
     const { app } = buildApp({ delete: del });
     const res = await app.request('/api/photos/delete', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ photo_ids: [PID] }),
+      body: JSON.stringify({ photo_ids: [PID], batch: BATCH }),
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ deleted: 1 });
+    expect(del).toHaveBeenCalledWith([PID], BATCH);
+  });
+
+  // And the undo names that batch rather than carrying the ids back.
+  it('restores everything one batch took', async () => {
+    const restore = jest.fn(async () => {});
+    const { app, service } = buildApp({ restore });
+    const res = await app.request('/api/photos/restore', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ batch: BATCH }),
     });
     expect(res.status).toBe(204);
-    expect(del).toHaveBeenCalledWith([PID]);
+    expect(service.resolve).toHaveBeenCalledWith({ batch: BATCH });
+  });
+
+  // A client holding a window of a huge collection names its photos by where
+  // they sit rather than by id (§18.3.3); the route resolves them first.
+  it('deletes a selection named by position', async () => {
+    const del = jest.fn(async () => {});
+    const { app, service } = buildApp({ delete: del });
+    const selection = {
+      scope: { kind: 'library', id: PID },
+      filters: { triage: ['picked'] },
+      ranges: [{ start: 0, end: 99_999 }],
+    };
+    const res = await app.request('/api/photos/delete', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ selection }),
+    });
+    expect(res.status).toBe(200);
+    expect(service.resolve).toHaveBeenCalledWith({ selection: { ...selection, filters: { triage: ['picked'] } } });
+    expect(del).toHaveBeenCalledWith([PID], undefined);
+  });
+
+  it('rejects a selection whose range ends before it starts', async () => {
+    const { app } = buildApp();
+    expect(await selectionStatus(app, [{ start: 5, end: 4 }])).toBe(400);
+  });
+
+  // Overlapping runs would name the same photo more than once, so ten thousand
+  // copies of one whole-library run would resolve to ten thousand times its ids.
+  it('rejects runs that overlap or run backwards', async () => {
+    const { app } = buildApp();
+    expect(
+      await selectionStatus(app, [
+        { start: 0, end: 10 },
+        { start: 5, end: 20 },
+      ]),
+    ).toBe(400);
+    expect(
+      await selectionStatus(app, [
+        { start: 30, end: 40 },
+        { start: 0, end: 10 },
+      ]),
+    ).toBe(400);
+    expect(
+      await selectionStatus(app, [
+        { start: 0, end: 10 },
+        { start: 11, end: 20 },
+      ]),
+    ).toBe(200);
   });
 
   it('queues a tile rebuild for the ids it was given', async () => {

@@ -1,6 +1,5 @@
 import { Hono } from 'hono';
-import { PhotoIdListSchema } from '../../schemas/common';
-import { PhotoListQuerySchema } from '../../schemas/photos';
+import { PhotoListQuerySchema, PhotoTargetSchema } from '../../schemas/photos';
 import { CreateShootRequestSchema, UpdateShootRequestSchema } from '../../schemas/shoots';
 import type { PhotosService } from '../../services/photos/photos_service';
 import type { ShootsService } from '../../services/shoots/shoots_service';
@@ -27,15 +26,15 @@ export class ShootsApi {
       return c.body(null, 204);
     });
 
+    // Ids, or the positions to read them from - the same two shapes every bulk
+    // route takes (§18.3.3).
     app.post('/shoots/:id/photos', async (c) => {
-      const { photo_ids } = PhotoIdListSchema.parse(await c.req.json());
-      await this.shoots.addPhotos(c.req.param('id'), photo_ids);
+      await this.shoots.addPhotos(c.req.param('id'), this.photos.resolve(PhotoTargetSchema.parse(await c.req.json())));
       return c.body(null, 204);
     });
 
     app.delete('/shoots/:id/photos', async (c) => {
-      const { photo_ids } = PhotoIdListSchema.parse(await c.req.json());
-      await this.shoots.removePhotos(c.req.param('id'), photo_ids);
+      await this.shoots.removePhotos(c.req.param('id'), this.photos.resolve(PhotoTargetSchema.parse(await c.req.json())));
       return c.body(null, 204);
     });
 

@@ -121,12 +121,28 @@ describe('PhotosService.listByLibrary', () => {
 describe('PhotosService.listMissing', () => {
   it('delegates to listByLibrary with is_missing=true', () => {
     const { service, photos } = build({ libraries: { getById: jest.fn(() => library) } });
-    service.listMissing('lib', { offset: 0, limit: 100 });
+    service.listMissing('lib', { offset: 0, limit: 100, include_deleted: false });
     expect(photos.listByLibrary).toHaveBeenCalledWith('lib', 'added_asc', 0, 100, {
       includeDeleted: false,
       isMissing: true,
       needsTile: undefined,
     });
+  });
+
+  // It takes the whole listing query, not just pagination. A client acting on a
+  // selection made in this view states the filters it was viewing under
+  // (§18.3.3), so filters dropped here would resolve a different set of photos
+  // than the grid ever showed.
+  it('carries the rest of the filters through', () => {
+    const { service, photos } = build({ libraries: { getById: jest.fn(() => library) } });
+    service.listMissing('lib', { offset: 0, limit: 100, include_deleted: false, rated: true, triage: ['picked'], q: 'DSC' });
+    expect(photos.listByLibrary).toHaveBeenCalledWith(
+      'lib',
+      'added_asc',
+      0,
+      100,
+      expect.objectContaining({ isMissing: true, rated: true, triage: ['picked'], search: 'DSC' }),
+    );
   });
 });
 
@@ -164,13 +180,15 @@ describe('PhotosService.delete', () => {
   rendition_hdr: false,
   rendition_hdr_video: false, last_synced_at: null, photo_count: 0 };
       const markDeleted = jest.fn();
-      const photo = { id: 'p1', library_id: 'lib', shoot_id: null, file_path: 'a.arw', is_deleted: false } as PhotoDetail;
+      // getBasicByIds, not getById: the delete reads the four columns it needs
+      // for a whole batch rather than a detail payload per photo (§12.1).
+      const photo = { id: 'p1', library_id: 'lib', shoot_id: null, file_path: 'a.arw' };
       const { service } = build({
-        photos: { getById: jest.fn(() => photo), markDeleted },
+        photos: { getBasicByIds: jest.fn(() => [photo]), markDeleted },
         libraries: { getById: jest.fn(() => lib) },
       });
 
-      await service.delete(['p1']);
+      await service.delete(['p1'], 'batch-1');
 
       expect(existsSync(path.join(root, 'a.arw'))).toBe(false);
       expect(existsSync(path.join(root, 'Bin', 'a.arw'))).toBe(true);
@@ -178,8 +196,9 @@ describe('PhotosService.delete', () => {
       // binned photos can still be seen.
       expect(existsSync(path.join(dataDir, 'renditions', 'small', 'p1.webp'))).toBe(true);
       expect(existsSync(path.join(dataDir, 'renditions', 'full', 'p1.webp'))).toBe(true);
-      // The pre-delete path is recorded so restore can put the file back there.
-      expect(markDeleted).toHaveBeenCalledWith('p1', 'a.arw');
+      // The pre-delete path is recorded so restore can put the file back there,
+      // and the batch so an undo can name this one bin rather than every id.
+      expect(markDeleted).toHaveBeenCalledWith('p1', 'a.arw', 'batch-1');
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -193,10 +212,10 @@ describe('PhotosService.delete', () => {
   rendition_source: 'embedded' as const,
   rendition_hdr: false,
   rendition_hdr_video: false, last_synced_at: null, photo_count: 0 };
-      const photo = { id: 'p1', library_id: 'lib', shoot_id: null, file_path: 'a.arw', is_deleted: false } as PhotoDetail;
+      const photo = { id: 'p1', library_id: 'lib', shoot_id: null, file_path: 'a.arw' };
       const { service } = build({
         photos: {
-          getById: jest.fn(() => photo),
+          getBasicByIds: jest.fn(() => [photo]),
           transaction: () => {
             throw new Error('SQLITE_FULL: database or disk is full');
           },
@@ -214,12 +233,58 @@ describe('PhotosService.delete', () => {
     }
   });
 
+  // getBasicByIds excludes them, which is how a photo already in the Bin is
+  // skipped without a per-photo check.
   it('skips already-deleted photos', async () => {
     const markDeleted = jest.fn();
-    const photo = { id: 'p1', is_deleted: true } as PhotoDetail;
-    const { service } = build({ photos: { getById: jest.fn(() => photo), markDeleted } });
+    const { service } = build({ photos: { getBasicByIds: jest.fn(() => []), markDeleted } });
     await service.delete(['p1']);
     expect(markDeleted).not.toHaveBeenCalled();
+  });
+
+  // The whole batch shares one lock, one library lookup and one commit per
+  // chunk; per photo it was a join, a second query for album membership it never
+  // reads, a lock and a transaction each.
+  it('reads the rows and commits the flags once for the batch, not once per photo', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'bb-batch-'));
+    try {
+      const ids = Array.from({ length: 40 }, (_, i) => `p${i}`);
+      for (const id of ids) writeFileSync(path.join(root, `${id}.arw`), '');
+      const lib: Library = {
+        id: 'lib',
+        root_path: root,
+        data_path: null,
+        ordering: 'added_asc',
+        rendition_source: 'embedded' as const,
+        rendition_hdr: false,
+        rendition_hdr_video: false,
+        last_synced_at: null,
+        photo_count: 0,
+      };
+      const getBasicByIds = jest.fn(() => ids.map((id) => ({ id, library_id: 'lib', shoot_id: null, file_path: `${id}.arw` })));
+      // Counted by hand: jest.fn erases the generic the repository declares.
+      let commits = 0;
+      const transaction = <T,>(fn: () => T): T => {
+        commits++;
+        return fn();
+      };
+      const getById = jest.fn();
+      const markDeleted = jest.fn();
+      const { service } = build({
+        photos: { getBasicByIds, transaction, getById, markDeleted },
+        libraries: { getById: jest.fn(() => lib) },
+      });
+
+      await service.delete(ids);
+
+      expect(getBasicByIds).toHaveBeenCalledTimes(1);
+      expect(commits).toBe(1);
+      expect(getById).not.toHaveBeenCalled();
+      expect(markDeleted).toHaveBeenCalledTimes(40);
+      for (const id of ids) expect(existsSync(path.join(root, 'Bin', `${id}.arw`))).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 

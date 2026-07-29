@@ -1,4 +1,4 @@
-import { action, runInAction } from 'mobx';
+import { action, comparer, reaction, runInAction } from 'mobx';
 import {
   ApiError,
   api,
@@ -6,7 +6,9 @@ import {
   type Ordering,
   type PhotoListParams,
   type PhotoListResponse,
+  type PhotoSelection,
   type PhotoSummary,
+  type PhotoTarget,
   type ProcessingStage,
   type Rendition,
   type Triage,
@@ -18,8 +20,30 @@ import type { AppSettingsPresenter } from '../settings/app_settings_presenter';
 import type { AppSettingsStore } from '../settings/app_settings_store';
 import type { ShootsPresenter } from '../shoots/shoots_presenter';
 import type { ToastsPresenter } from '../toasts/toasts_presenter';
+import { BLOCK } from './grid_layout';
 import { activeFilters, type PhotoFilters, type PhotoSource, type PhotosStore, type ViewMode } from './photos_store';
+import { type IndexSample, SelectionRanges, rebase } from './selection';
 import { loadViewState, saveViewState } from './view_state';
+
+// Blocks of rows kept in memory at once. A scroll through a hundred thousand
+// photos would otherwise accumulate every row it passed; two and a half thousand
+// is far more than any viewport plus its overscan can hold, and small enough
+// that the whole cache is a few megabytes whatever the library's size.
+const MAX_BLOCKS = 24;
+
+// The collection a selection's positions are into. The bin and the missing view
+// are the library plus a filter, so the server needs no scope of its own for
+// them (§18.3.3).
+function scopeOf(source: PhotoSource): PhotoSelection['scope'] {
+  switch (source.kind) {
+    case 'shoot':
+      return { kind: 'shoot', id: source.shootId };
+    case 'album':
+      return { kind: 'album', id: source.albumId };
+    default:
+      return { kind: 'library', id: source.libraryId };
+  }
+}
 
 function message(err: unknown): string {
   return err instanceof ApiError ? err.message : (err as Error).message;
@@ -37,9 +61,24 @@ function plural(n: number, one: string, many: string): string {
 }
 
 export class PhotosPresenter {
-  // Only the newest list request may write to the store; an older one that
-  // resolves late (slow page of a big library) would otherwise overwrite it.
-  private inFlight: AbortController | null = null;
+  // Which blocks of the collection this client holds, and the request still out
+  // for each one that is loading.
+  private readonly blocks = new Map<number, 'loading' | 'loaded'>();
+  private readonly controllers = new Map<number, AbortController>();
+  // Block indices, most recently needed first: what eviction drops from the end.
+  private recent: number[] = [];
+  // Bumped whenever the collection being listed changes out from under the
+  // requests in flight - a different filter, a different sort, a mutation that
+  // moves rows between positions. A response from an older generation describes
+  // a collection that no longer exists, so it is dropped rather than written at
+  // an index that now holds something else.
+  private generation = 0;
+  // Whether this generation still owes a count. Set when one starts, cleared by
+  // the first block to ask (`fetchBlock`).
+  private needsCount = true;
+  // The re-read in flight, so the next one queues behind it rather than racing
+  // it (`refresh`).
+  private refreshing: Promise<void> = Promise.resolve();
   // Photos already asked for on-demand build. A stage that fails, is re-mounted
   // and fails again reports missing each time: without this every one of them
   // would queue the same job again.
@@ -53,16 +92,25 @@ export class PhotosPresenter {
     private readonly toasts: ToastsPresenter,
     private readonly settings: AppSettingsStore,
     private readonly settingsPresenter: AppSettingsPresenter,
-  ) {}
+  ) {
+    // The scroll is the only thing that decides what to fetch: move the viewport
+    // (or open a photo near the edge of what is loaded) and the blocks that
+    // answers for are requested, and the ones nothing needs any more are
+    // dropped. Lives for the life of the app, like the presenter itself.
+    reaction(() => this.store.neededBlocks, (blocks) => void this.ensureBlocks(blocks), {
+      equals: comparer.structural,
+      fireImmediately: true,
+    });
+  }
 
   async open(source: PhotoSource): Promise<void> {
     this.beginLoad(source);
-    await this.fetchPage();
+    await this.ensureBlocks(this.store.neededBlocks);
   }
 
   async reload(): Promise<void> {
     if (this.store.source == null) return;
-    await this.fetchPage();
+    await this.refresh();
   }
 
   // Whether what this view shows depends on which photos have a grid rendition,
@@ -77,7 +125,32 @@ export class PhotosPresenter {
 
   async setFilters(filters: PhotoFilters): Promise<void> {
     this.applyFilters(filters);
-    await this.fetchPage();
+    await this.ensureBlocks(this.store.neededBlocks);
+  }
+
+  // --- the scroller ---
+  // The three facts every layout question is answered from. Written here so no
+  // view has to measure the DOM to ask one (§18.3.2).
+
+  @action.bound
+  setViewport(width: number, height: number): void {
+    // Masonry's blocks were measured at the old width, so they describe a layout
+    // that no longer exists.
+    if (this.store.viewportWidth !== width) this.store.blockHeights.clear();
+    this.store.viewportWidth = width;
+    this.store.viewportHeight = height;
+  }
+
+  @action.bound
+  setScrollTop(top: number): void {
+    this.store.scrollTop = top;
+  }
+
+  // A masonry block reporting the height it actually laid out to, replacing the
+  // estimate the scroll was built from.
+  @action.bound
+  measuredBlock(block: number, height: number): void {
+    this.store.blockHeights.set(block, height);
   }
 
   // Sorting a gallery edits the collection, because the sort *is* the
@@ -88,7 +161,6 @@ export class PhotosPresenter {
   async setOrdering(ordering: Ordering): Promise<void> {
     const source = this.store.source;
     if (source == null) return;
-    runInAction(() => (this.store.offset = 0)); // a different sort is a different first page
     switch (source.kind) {
       case 'shoot':
         await this.shoots.setOrdering(source.shootId, ordering);
@@ -104,33 +176,37 @@ export class PhotosPresenter {
         await this.libraries.setOrdering(source.libraryId, ordering);
         break;
     }
-    await this.fetchPage();
+    // A different sort puts different photos at every position, so nothing the
+    // client is holding still describes where it sits.
+    this.resetRows();
+    await this.ensureBlocks(this.store.neededBlocks);
   }
 
   @action.bound
   setTileSize(px: number): void {
     this.store.tileSize = px;
+    this.store.blockHeights.clear(); // a different zoom is a different masonry layout
     this.remember();
   }
 
   @action.bound
   setMode(mode: ViewMode): void {
     this.store.mode = mode;
+    this.store.blockHeights.clear();
     this.remember();
   }
 
   // Sets a verdict straight from a grid tile, and pressing the verdict a photo
   // already has clears it, so one control covers all three states.
   async toggleTriage(photoId: string, verdict: Exclude<Triage, 'untriaged'>): Promise<void> {
-    const photo = this.store.photos.find((p) => p.id === photoId) ?? this.store.detailFor(photoId);
+    const photo = this.store.photoFor(photoId);
     if (photo == null) return;
     await this.setTriage(photoId, photo.triage === verdict ? 'untriaged' : verdict);
   }
 
-  async refreshMetadata(photoIds: string[]): Promise<void> {
-    if (photoIds.length === 0) return;
+  async refreshMetadata(target: PhotoTarget): Promise<void> {
     try {
-      const { updated } = await api.refreshMetadata(photoIds);
+      const { updated } = await api.refreshMetadata(target);
       await this.refreshDetail();
       this.toasts.show(`Refreshed metadata for ${plural(updated, 'photo', 'photos')}`);
     } catch (err) {
@@ -139,7 +215,9 @@ export class PhotosPresenter {
   }
 
   async refreshMetadataForSelection(): Promise<void> {
-    await this.refreshMetadata(this.store.selectedIds);
+    const target = this.selectionTarget();
+    if (target == null) return;
+    await this.refreshMetadata(target);
     this.clearSelection();
   }
 
@@ -219,7 +297,7 @@ export class PhotosPresenter {
   @action.bound
   renditionsRebuilt(photoId: string, stage: ProcessingStage, version: string): void {
     const field = stage === 'tile' ? 'tile_built_at' : 'renditions_built_at';
-    const row = this.store.photos.find((p) => p.id === photoId);
+    const row = this.store.rowById(photoId);
     if (row != null) row[field] = version;
     const detail = this.store.detailFor(photoId);
     if (detail != null) detail[field] = version;
@@ -254,19 +332,6 @@ export class PhotosPresenter {
   private renditionToApply(): ViewerRendition | null {
     const target = this.store.preferredRendition;
     return target == null || target === this.store.showing ? null : target;
-  }
-
-  async goToPage(index: number): Promise<void> {
-    this.setOffset(Math.max(0, Math.min(index, this.store.pageCount - 1)) * this.store.limit);
-    await this.fetchPage();
-  }
-
-  async nextPage(): Promise<void> {
-    if (this.store.hasNextPage) await this.goToPage(this.store.pageIndex + 1);
-  }
-
-  async prevPage(): Promise<void> {
-    if (this.store.hasPrevPage) await this.goToPage(this.store.pageIndex - 1);
   }
 
   // --- detail ---
@@ -332,10 +397,13 @@ export class PhotosPresenter {
   // These act on the focused tile, so the whole cull can happen in the grid
   // without opening each photo.
 
+  // Anywhere in the collection, not just in what is loaded: the cursor walks the
+  // whole thing, and the tile it lands on is at most a row outside the rendered
+  // window, which the overscan already has mounted.
   @action.bound
   focusAt(index: number): void {
-    if (this.store.photos.length === 0) return;
-    this.store.focusIndex = Math.max(0, Math.min(index, this.store.photos.length - 1));
+    if (this.store.total === 0) return;
+    this.store.focusIndex = Math.max(0, Math.min(index, this.store.total - 1));
   }
 
   @action.bound
@@ -373,53 +441,60 @@ export class PhotosPresenter {
   async binFocused(): Promise<void> {
     const photo = this.store.focusedPhoto;
     if (photo == null || photo.is_deleted) return;
-    await this.deletePhotos([photo.id]);
+    await this.deletePhotos({ photo_ids: [photo.id] });
   }
 
   // --- selection ---
 
   @action.bound
-  toggle(photoId: string): void {
-    // Mutated, not replaced: the map is observable, so `has(id)` is tracked per
-    // id and only the tile whose membership changed re-renders.
-    if (this.store.selected.has(photoId)) this.store.selected.delete(photoId);
-    else this.store.selected.set(photoId, true);
-    this.store.lastToggled = photoId;
+  toggle(index: number): void {
+    if (index < 0) return;
+    this.store.selection = this.store.selection.toggle(index);
+    this.store.lastToggled = index;
   }
 
   // Shift-click selects everything between the last toggled photo and this one,
-  // which is how you pick a burst without clicking forty times.
+  // which is how you pick a burst without clicking forty times. One range,
+  // however long, so a burst and a whole library cost the same.
   @action.bound
-  extendTo(photoId: string): void {
-    const ids = this.store.photos.map((p) => p.id);
+  extendTo(index: number): void {
     // The cursor stands in for the anchor when nothing has been toggled yet:
     // arrowing to one photo and shift-clicking another is the same gesture as in
     // any file manager, and it is what a first shift-click has to reach for.
-    const anchorId = this.store.lastToggled ?? this.store.photos[this.store.focusIndex]?.id ?? null;
-    const anchor = anchorId == null ? -1 : ids.indexOf(anchorId);
-    const target = ids.indexOf(photoId);
-    if (anchor < 0 || target < 0) {
-      this.toggle(photoId);
-      this.focusAt(target);
+    const anchor = this.store.lastToggled ?? this.store.focusIndex;
+    if (anchor < 0 || index < 0) {
+      this.toggle(index);
+      this.focusAt(index);
       return;
     }
-    const [from, to] = anchor <= target ? [anchor, target] : [target, anchor];
-    for (const id of ids.slice(from, to + 1)) this.store.selected.set(id, true);
+    const [from, to] = anchor <= index ? [anchor, index] : [index, anchor];
+    this.store.selection = this.store.selection.add(from, to);
     // Moved here rather than by the caller, which would have to know to focus
     // *after* extending: focus is the fallback anchor, so focusing first would
     // make every range start and end on the photo just clicked.
-    this.focusAt(target);
+    this.focusAt(index);
   }
 
+  /** Everything the grid currently has on screen. */
   @action.bound
-  selectAllOnPage(): void {
-    this.store.selected.clear();
-    for (const photo of this.store.photos) this.store.selected.set(photo.id, true);
+  selectVisible(): void {
+    const { from, to } = this.store.visible;
+    this.store.selection = SelectionRanges.of(from, to - 1);
+    this.store.lastToggled = null;
+  }
+
+  // The whole collection, however large: two numbers, and no ids at all - an
+  // action on it names the positions and the server resolves them
+  // (`selectionTarget`).
+  @action.bound
+  selectAll(): void {
+    this.store.selection = SelectionRanges.of(0, this.store.total - 1);
+    this.store.lastToggled = null;
   }
 
   @action.bound
   clearSelection(): void {
-    this.store.selected.clear();
+    this.store.selection = SelectionRanges.EMPTY;
     this.store.lastToggled = null;
   }
 
@@ -427,35 +502,44 @@ export class PhotosPresenter {
   // Cross-domain writes go through the sibling presenter, never the sibling store.
 
   async addSelectedToShoot(shootId: string): Promise<void> {
-    const ids = this.store.selectedIds;
-    await this.bulk(() => this.shoots.addPhotos(shootId, ids), `Moved ${plural(ids.length, 'photo', 'photos')} into the shoot`);
+    await this.bulk(
+      (target) => this.shoots.addPhotos(shootId, target),
+      (n) => `Moved ${plural(n, 'photo', 'photos')} into the shoot`,
+    );
   }
 
   async addSelectedToAlbum(albumId: string): Promise<void> {
-    const ids = this.store.selectedIds;
-    await this.bulk(() => this.albums.addPhotos(albumId, ids), `Added ${plural(ids.length, 'photo', 'photos')} to the album`);
+    await this.bulk(
+      (target) => this.albums.addPhotos(albumId, target),
+      (n) => `Added ${plural(n, 'photo', 'photos')} to the album`,
+    );
   }
 
   async removeSelectedFromShoot(shootId: string): Promise<void> {
-    const ids = this.store.selectedIds;
     await this.bulk(
-      () => this.shoots.removePhotos(shootId, ids),
-      `Moved ${plural(ids.length, 'photo', 'photos')} back to the library root`,
+      (target) => this.shoots.removePhotos(shootId, target),
+      (n) => `Moved ${plural(n, 'photo', 'photos')} back to the library root`,
     );
   }
 
   async removeSelectedFromAlbum(albumId: string): Promise<void> {
-    const ids = this.store.selectedIds;
-    await this.bulk(() => this.albums.removePhotos(albumId, ids), `Removed ${plural(ids.length, 'photo', 'photos')} from the album`);
+    await this.bulk(
+      (target) => this.albums.removePhotos(albumId, target),
+      (n) => `Removed ${plural(n, 'photo', 'photos')} from the album`,
+    );
   }
 
   async deleteSelected(): Promise<void> {
-    await this.deletePhotos(this.store.selectedIds);
+    const target = this.selectionTarget();
+    if (target == null) return;
+    await this.deletePhotos(target);
   }
 
   async restoreSelected(): Promise<void> {
-    const ids = this.store.selectedIds;
-    await this.bulk(() => api.restorePhotos(ids), `Restored ${plural(ids.length, 'photo', 'photos')}`);
+    await this.bulk(
+      (target) => api.restorePhotos(target),
+      (n) => `Restored ${plural(n, 'photo', 'photos')}`,
+    );
   }
 
   // The grid rendition alone, from the camera's JPEG an import builds it from
@@ -469,12 +553,12 @@ export class PhotosPresenter {
   // missing left its tile stale until the user reloaded, with no second chance,
   // and a bulk action reads back what it did (`bulk`).
   async rebuildGridRenditions(): Promise<void> {
-    const photoIds = this.store.selectedIds;
-    if (photoIds.length === 0) return;
+    const target = this.selectionTarget();
+    if (target == null) return;
     try {
-      const { queued } = await api.rebuildTiles(photoIds);
+      const { queued } = await api.rebuildTiles(target);
       await this.refreshDetail();
-      await this.fetchPage();
+      await this.refresh();
       this.toasts.show(`Rebuilt ${plural(queued, 'grid rendition', 'grid renditions')}`);
     } catch (err) {
       this.fail(err);
@@ -516,19 +600,26 @@ export class PhotosPresenter {
   }
 
   // Binning is reversible, so it reports with an undo rather than asking first.
-  async deletePhotos(ids: string[]): Promise<void> {
-    if (ids.length === 0) return;
+  // The batch is stamped on the rows the bin takes, and the undo names it: the
+  // selection this was made from resolves to different photographs now that
+  // these have left the collection, and the ids themselves are something neither
+  // side should be carrying a million of (§12.3).
+  async deletePhotos(target: PhotoTarget): Promise<void> {
+    const batch = crypto.randomUUID();
+    let deleted: number;
     try {
-      await api.deletePhotos(ids);
+      // How many it took, from the server: a selection can name positions that
+      // no longer hold a photo, so the count on screen is not the answer.
+      deleted = (await api.deletePhotos(target, batch)).deleted;
     } catch (err) {
       this.fail(err);
       return;
     }
     this.clearSelection();
-    await this.fetchPage();
-    this.toasts.showUndoable(`${plural(ids.length, 'photo', 'photos')} moved to the Bin`, 'Undo', async () => {
-      await api.restorePhotos(ids);
-      await this.fetchPage();
+    await this.refresh();
+    this.toasts.showUndoable(`${plural(deleted, 'photo', 'photos')} moved to the Bin`, 'Undo', async () => {
+      await api.restorePhotos({ batch });
+      await this.refresh();
     });
   }
 
@@ -540,10 +631,12 @@ export class PhotosPresenter {
     this.toasts.showError(message(err), detail(err));
   }
 
-  private async bulk(run: () => Promise<void>, success: string): Promise<void> {
-    if (this.store.selectedIds.length === 0) return;
+  private async bulk(run: (target: PhotoTarget) => Promise<void>, success: (count: number) => string): Promise<void> {
+    const target = this.selectionTarget();
+    if (target == null) return;
+    const count = this.store.selectionCount;
     try {
-      await run();
+      await run(target);
     } catch (err) {
       this.fail(err);
       return;
@@ -551,8 +644,44 @@ export class PhotosPresenter {
     // The moves/deletes change what this collection contains, so re-read it
     // rather than patching rows locally and drifting from the server.
     this.clearSelection();
-    await this.fetchPage();
-    this.toasts.show(success);
+    await this.refresh();
+    this.toasts.show(success(count));
+  }
+
+  // The current selection as something a bulk request can carry: the collection,
+  // the filters it was made under, and the runs of positions - never the ids,
+  // which the server reads off the same listing the grid was built from
+  // (§18.3.3). So acting on a hundred thousand photos is one small request, and
+  // nothing is fetched to make a selection at all.
+  //
+  // Null when there is nothing selected, or when the view is a slice the server
+  // has no scope for - which cannot happen, since the bin and the missing view
+  // are the library plus a filter.
+  private selectionTarget(): PhotoTarget | null {
+    const source = this.store.source;
+    if (source == null || !this.store.hasSelection) return null;
+    const f = this.store.filters;
+    return {
+      selection: {
+        scope: scopeOf(source),
+        filters: {
+          rated: f.rated,
+          triage: f.triage,
+          is_missing: f.isMissing,
+          needs_tile: f.needsTile,
+          taken_from: f.takenFrom,
+          taken_to: f.takenTo,
+          match: f.match,
+          ...(f.search != null && f.search !== '' ? { q: f.search } : {}),
+          // Last, because these are what makes the view that view rather than a
+          // chip the reader could clear: the Bin is only the soft-deleted rows,
+          // and the missing view only the ones whose file has gone.
+          ...(source.kind === 'bin' ? { include_deleted: true, is_deleted: true } : {}),
+          ...(source.kind === 'missing' ? { is_missing: true } : {}),
+        },
+        ranges: this.store.selection.ranges.map((range) => ({ ...range })),
+      },
+    };
   }
 
   private async patch(photoId: string, fields: Parameters<typeof api.updatePhoto>[1]): Promise<void> {
@@ -567,10 +696,10 @@ export class PhotosPresenter {
         // star. What does move them says so itself (§18.6).
         const { renditions: _renditions, album_ids: _albums, ...changed } = updated;
         if (this.store.loadedDetail?.id === photoId) Object.assign(this.store.loadedDetail, changed);
-        // Written into the row rather than mapped into a new array: replacing the
-        // array invalidates every tile's observable, so rating one photo used to
-        // re-render the whole grid.
-        const row = this.store.photos.find((p) => p.id === photoId);
+        // Written into the row the grid is already rendering rather than over
+        // it: replacing the object invalidates that tile's observable, and a
+        // fresh one for every row would re-render the whole grid.
+        const row = this.store.rowById(photoId);
         if (row != null) {
           row.rating = updated.rating;
           row.triage = updated.triage;
@@ -588,49 +717,160 @@ export class PhotosPresenter {
       const f = this.store.filters;
       const mayLeaveView =
         (fields.triage !== undefined && f.triage != null) || (fields.rating !== undefined && f.rated != null);
-      if (mayLeaveView) await this.fetchPage();
+      if (mayLeaveView) await this.refresh();
     } catch (err) {
       this.fail(err);
     }
   }
 
-  // Keeps the observable row object for any id the page still contains, writing
-  // the server's fields into it. Handing back fresh objects would invalidate
-  // every tile's observable on a refetch, so rejecting one photo re-rendered the
-  // whole grid; mobx notifies only for the fields that actually differ.
+  // --- loading the collection ---
+
+  // Everything the client holds now describes a collection that has changed
+  // under it, so every block is re-read. The rows themselves are left on screen
+  // in the meantime: they are replaced in place as the answers land, which is
+  // what keeps a bin, a restore or a sync poll from blanking the grid.
   //
-  // And the array itself when the page holds the same ids in the same order,
-  // because assigning a new one notifies everything reading the list - the grid
-  // and the controls above it - for a page that did not change. A sync polls
-  // this once a second.
-  private reconcile(rows: PhotoSummary[]): PhotoSummary[] {
-    const current = this.store.photos;
-    const byId = new Map(current.map((p) => [p.id, p]));
-    const next = rows.map((row) => {
-      const existing = byId.get(row.id);
-      if (existing == null) return row;
-      Object.assign(existing, row);
-      return existing;
-    });
-    return next.length === current.length && next.every((row, i) => row === current[i]) ? current : next;
+  // One at a time, always. Two of these overlap routinely - a sync poll ticking
+  // while a verdict is being set - and each rebases the selection against a
+  // snapshot the other has already moved, so the same shift is applied twice and
+  // the selection ends up naming photographs nobody chose.
+  private refresh(): Promise<void> {
+    const next = this.refreshing.then(() => this.readAgain());
+    this.refreshing = next.catch(() => undefined);
+    return next;
   }
 
-  private async fetchPage(): Promise<void> {
-    const source = this.store.source;
-    if (source == null) return;
+  private async readAgain(): Promise<void> {
+    if (this.store.source == null) return;
+    // Where every row this client can name sat before the re-read. A scan
+    // inserting under an open gallery renumbers positions, and the selection and
+    // the cursor are both positions, so this is what they are put back against
+    // afterwards (§18.3.3).
+    const before = new Map(this.store.indexById);
+    const whole = this.store.allSelected;
+    const held = new Set(this.blocks.keys());
+    this.invalidate();
+    const blocks = this.refreshBlocks(held);
+    await this.ensureBlocks(blocks);
+    // Only the blocks that came back. A request that failed, or that a newer
+    // generation overtook, left its old rows sitting where they were - sampling
+    // those would report a move of zero that never happened.
+    const landed = blocks.filter((block) => held.has(block) && this.blocks.get(block) === 'loaded');
+    this.rebasePositions(before, landed, whole);
+  }
 
-    this.inFlight?.abort();
+  // What to re-read: what is on screen, plus the blocks the selection covers
+  // that this client still holds rows for - those are what make the rebase
+  // exact where the reader actually built the selection.
+  private refreshBlocks(held: Set<number>): number[] {
+    const blocks = new Set(this.store.neededBlocks);
+    for (const { start, end } of this.store.selection.ranges) {
+      const last = Math.floor(end / BLOCK);
+      for (let block = Math.floor(start / BLOCK); block <= last && blocks.size < MAX_BLOCKS; block++) {
+        if (held.has(block)) blocks.add(block);
+      }
+    }
+    return [...blocks].sort((a, b) => a - b);
+  }
+
+  // Puts the selection and the cursor back on the photographs they were on,
+  // against a listing whose positions may have moved under them.
+  @action.bound
+  private rebasePositions(before: Map<string, number>, landed: number[], whole: boolean): void {
+    // "Everything" survives as everything, including whatever arrived: it needs
+    // no samples, and it is the one selection whose meaning is not a position.
+    if (whole) {
+      this.store.selection = SelectionRanges.of(0, this.store.total - 1);
+      return;
+    }
+    // The old positions this re-read can actually speak for: the blocks it both
+    // held rows for and read back. Everywhere else, a gap in the samples is
+    // indistinguishable from a removal, so nothing is claimed (`rebase`).
+    let domain = SelectionRanges.EMPTY;
+    for (const block of landed) domain = domain.add(block * BLOCK, (block + 1) * BLOCK - 1);
+
+    const samples: IndexSample[] = [];
+    for (const [index, row] of this.store.rows) {
+      const from = before.get(row.id);
+      if (from != null && domain.has(from)) samples.push({ from, to: index });
+    }
+
+    if (this.store.hasSelection) this.store.selection = rebase(this.store.selection, samples, domain);
+    this.store.focusIndex = this.moved(this.store.focusIndex, samples, domain);
+    this.store.lastToggled = this.store.lastToggled == null ? null : this.moved(this.store.lastToggled, samples, domain);
+  }
+
+  // One position through the same mapping the selection goes through, so the
+  // cursor and the shift-click anchor stay on their own photographs too. Left
+  // where it is when the re-read cannot speak for it, which is the same choice
+  // as leaving the scroll alone.
+  private moved(index: number, samples: IndexSample[], domain: SelectionRanges): number {
+    if (index < 0) return index;
+    return rebase(SelectionRanges.of(index, index), samples, domain).ranges[0]?.start ?? index;
+  }
+
+  // Requests whatever of these blocks is missing and drops what nothing needs
+  // any more. Idempotent: a block already loading is left to its own request.
+  private async ensureBlocks(blocks: number[]): Promise<void> {
+    if (this.store.source == null) return;
+    const needed = new Set(blocks);
+    this.recent = [...blocks, ...this.recent.filter((block) => !needed.has(block))];
+    this.evict(needed);
+    await Promise.all(blocks.filter((block) => !this.blocks.has(block)).map((block) => this.fetchBlock(block)));
+  }
+
+  private async fetchBlock(block: number): Promise<void> {
+    const source = this.store.source;
+    // Set before the first await, so two callers arriving in the same tick - the
+    // reaction and whoever changed the filter it fired for - make one request.
+    if (source == null || this.blocks.has(block)) return;
+    this.blocks.set(block, 'loading');
     const controller = new AbortController();
-    this.inFlight = controller;
+    this.controllers.set(block, controller);
+    const generation = this.generation;
     runInAction(() => {
       this.store.loading = true;
       this.store.error = null;
     });
 
+    // Only the first block of a generation asks for the total. Counting is a
+    // scan of everything that matches - 774ms of a 792ms block at a million
+    // photos - and nothing can change the count without starting a generation.
+    const counting = this.needsCount;
+    this.needsCount = false;
+
+    try {
+      const page = await this.fetchFor(source, this.params(block * BLOCK, BLOCK, counting), controller.signal);
+      if (controller.signal.aborted || generation !== this.generation) return;
+      runInAction(() => {
+        this.merge(block, page.photos);
+        if (page.total != null) this.store.total = page.total;
+        this.store.ordering = page.ordering; // what it was actually sorted by, not what we hoped
+        this.pruneBeyondTotal();
+      });
+      this.blocks.set(block, 'loaded');
+    } catch (err) {
+      // The count went out with a request that never landed, so the next block
+      // of this generation has to ask for it again.
+      if (counting) this.needsCount = true;
+      if (controller.signal.aborted || generation !== this.generation) return;
+      this.blocks.delete(block); // a failed block is not a loaded one; scrolling back asks again
+      runInAction(() => (this.store.error = message(err)));
+    } finally {
+      // Only if this request is still the one registered: a block dropped and
+      // scrolled back to has a second request out by now, and the straggler
+      // clearing that one's entry would leave it untracked and unabortable.
+      if (this.controllers.get(block) === controller) this.controllers.delete(block);
+      runInAction(() => (this.store.loading = this.controllers.size > 0));
+    }
+  }
+
+  private params(offset: number, limit: number, count = true): PhotoListParams {
     const f = this.store.filters;
-    const params: PhotoListParams = {
-      offset: this.store.offset,
-      limit: this.store.limit,
+    return {
+      offset,
+      limit,
+      count,
       rated: f.rated,
       triage: f.triage,
       is_missing: f.isMissing,
@@ -642,52 +882,101 @@ export class PhotosPresenter {
       // rather than stating it is what keeps there being one copy of it.
       ...(f.search != null && f.search !== '' ? { q: f.search } : {}),
     };
-
-    try {
-      const page = await this.fetchFor(source, params);
-      if (controller.signal.aborted) return;
-      runInAction(() => {
-        this.store.photos = this.reconcile(page.photos);
-        this.store.total = page.total;
-        this.store.ordering = page.ordering; // what it was actually sorted by, not what we hoped
-        this.store.loading = false;
-        // Keep the keyboard cursor inside the new page: binning the last photo
-        // would otherwise leave focus pointing past the end.
-        if (this.store.focusIndex >= page.photos.length) this.store.focusIndex = page.photos.length - 1;
-      });
-    } catch (err) {
-      if (controller.signal.aborted) return;
-      runInAction(() => {
-        this.store.loading = false;
-        this.store.error = message(err);
-      });
-    }
   }
 
-  private fetchFor(source: PhotoSource, params: PhotoListParams): Promise<PhotoListResponse> {
+  // Keeps the observable row object wherever the same photo is still at the same
+  // position, writing the server's fields into it. A fresh object invalidates
+  // that tile's observable, so a sync polling once a second would re-render
+  // every tile on screen for rows that had not moved; mobx notifies only for the
+  // fields that actually differ.
+  private merge(block: number, rows: PhotoSummary[]): void {
+    rows.forEach((row, offset) => {
+      const index = block * BLOCK + offset;
+      const existing = this.store.rows.get(index);
+      if (existing?.id === row.id) Object.assign(existing, row);
+      else this.store.rows.set(index, row);
+    });
+  }
+
+  // Rows past the end of a collection that has shrunk - a bin, a filter that now
+  // matches less - along with the cursor, which would otherwise point past it.
+  private pruneBeyondTotal(): void {
+    const stale = [...this.store.rows.keys()].filter((index) => index >= this.store.total);
+    for (const index of stale) this.store.rows.delete(index);
+    if (this.store.focusIndex >= this.store.total) this.store.focusIndex = this.store.total - 1;
+  }
+
+  private evict(keep: Set<number>): void {
+    const drop: number[] = [];
+    // The blocks being kept count against the budget too, or the cache is
+    // MAX_BLOCKS *plus* whatever is on screen.
+    let kept = keep.size;
+    for (const block of this.recent) {
+      if (keep.has(block) || ++kept <= MAX_BLOCKS) continue;
+      drop.push(block);
+    }
+    if (drop.length === 0) return;
+    runInAction(() => {
+      for (const block of drop) {
+        this.controllers.get(block)?.abort();
+        this.controllers.delete(block);
+        this.blocks.delete(block);
+        for (let index = block * BLOCK; index < (block + 1) * BLOCK; index++) this.store.rows.delete(index);
+      }
+    });
+    const dropped = new Set(drop);
+    this.recent = this.recent.filter((block) => !dropped.has(block));
+  }
+
+  // Abandons every request in flight and forgets which blocks are held, without
+  // touching the rows themselves.
+  private invalidate(): void {
+    this.generation++;
+    this.needsCount = true; // a new pass over the collection, so the total is asked for again
+    for (const controller of this.controllers.values()) controller.abort();
+    this.controllers.clear();
+    this.blocks.clear();
+    runInAction(() => (this.store.loading = false));
+  }
+
+  // Drops everything loaded, for a collection whose every position now holds
+  // something else. Deliberately not the keyboard cursor: a filter is a narrower
+  // view of the same photographs, and a cull works through them by keyboard, so
+  // taking the cursor away at each switch would cost a keystroke to get back.
+  // The next block to land clamps it into range (`pruneBeyondTotal`).
+  @action.bound
+  private resetRows(): void {
+    this.invalidate();
+    this.clearSelection(); // positions into a collection that no longer exists
+    this.recent = [];
+    this.store.rows.clear();
+    this.store.blockHeights.clear();
+    this.store.total = 0;
+    this.store.scrollTop = 0;
+  }
+
+  private fetchFor(source: PhotoSource, params: PhotoListParams, signal?: AbortSignal): Promise<PhotoListResponse> {
     switch (source.kind) {
       case 'library':
-        return api.listLibraryPhotos(source.libraryId, params);
+        return api.listLibraryPhotos(source.libraryId, params, signal);
       case 'shoot':
-        return api.listShootPhotos(source.shootId, params);
+        return api.listShootPhotos(source.shootId, params, signal);
       case 'album':
-        return api.listAlbumPhotos(source.albumId, params);
+        return api.listAlbumPhotos(source.albumId, params, signal);
       case 'missing':
-        return api.listMissingPhotos(source.libraryId, params);
+        return api.listMissingPhotos(source.libraryId, params, signal);
       case 'bin':
         // include_deleted lifts the default exclusion, is_deleted narrows it back
         // to *only* the soft-deleted rows.
-        return api.listLibraryPhotos(source.libraryId, { ...params, include_deleted: true, is_deleted: true });
+        return api.listLibraryPhotos(source.libraryId, { ...params, include_deleted: true, is_deleted: true }, signal);
     }
   }
 
   @action.bound
   private beginLoad(source: PhotoSource): void {
     this.store.source = source;
-    this.store.offset = 0;
-    this.store.selected.clear();
-    this.store.lastToggled = null;
-    this.store.focusIndex = -1;
+    this.resetRows();
+    this.store.focusIndex = -1; // a different collection, so the cursor has nothing to keep its place in
     // The Bin and the missing view are already a specific slice, so a triage
     // default there would fight the thing the user opened.
     this.store.filters = source.kind === 'library' || source.kind === 'shoot' || source.kind === 'album' ? activeFilters() : {};
@@ -717,7 +1006,9 @@ export class PhotosPresenter {
   @action.bound
   private applyFilters(filters: PhotoFilters): void {
     this.store.filters = filters;
-    this.store.offset = 0;
+    // A different filter is a different collection: every position in it holds
+    // something else, so nothing loaded against the last one survives.
+    this.resetRows();
     this.remember();
   }
 
@@ -732,10 +1023,5 @@ export class PhotosPresenter {
     // rendition this one was showing, which would be a 404 rather than a picture.
     // Reopening it there is the setting's job, and it builds first.
     this.store.rendition = null;
-  }
-
-  @action.bound
-  private setOffset(offset: number): void {
-    this.store.offset = offset;
   }
 }

@@ -24,7 +24,12 @@ function buildApp(shoots: Partial<ShootsService> = {}, photos: Partial<PhotosSer
     removePhotos: jest.fn(async () => {}),
     ...shoots,
   } as unknown as ShootsService;
-  const photosSvc = { listByShoot: jest.fn(() => emptyList), ...photos } as unknown as PhotosService;
+  const photosSvc = {
+    listByShoot: jest.fn(() => emptyList),
+    // Bulk routes take ids or the positions to read them from (§18.3.3).
+    resolve: jest.fn((target: { photo_ids?: string[] }) => target.photo_ids ?? []),
+    ...photos,
+  } as unknown as PhotosService;
   const app = new Hono();
   app.route('/api', new ShootsApi(shootsSvc, photosSvc).routes);
   applyErrorHandler(app);

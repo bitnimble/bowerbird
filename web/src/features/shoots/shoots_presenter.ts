@@ -1,5 +1,5 @@
 import { action, runInAction } from 'mobx';
-import { ApiError, api, type Ordering } from '../../api/client';
+import { ApiError, api, type Ordering, type PhotoTarget } from '../../api/client';
 import type { ShootsStore } from './shoots_store';
 
 function message(err: unknown): string {
@@ -89,12 +89,12 @@ export class ShootsPresenter {
 
   // Called by PhotosPresenter for bulk actions: the shoots domain owns its own
   // writes, so the photos presenter never touches this store directly.
-  async addPhotos(shootId: string, photoIds: string[]): Promise<void> {
-    await api.addPhotosToShoot(shootId, photoIds);
+  async addPhotos(shootId: string, target: PhotoTarget): Promise<void> {
+    await api.addPhotosToShoot(shootId, target);
   }
 
-  async removePhotos(shootId: string, photoIds: string[]): Promise<void> {
-    await api.removePhotosFromShoot(shootId, photoIds);
+  async removePhotos(shootId: string, target: PhotoTarget): Promise<void> {
+    await api.removePhotosFromShoot(shootId, target);
   }
 
   @action.bound

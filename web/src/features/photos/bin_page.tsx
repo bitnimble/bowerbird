@@ -16,7 +16,7 @@ export const BinPage = observer(function BinPage(): JSX.Element {
   }, [libraryId, photos]);
 
   return (
-    <div className="pad">
+    <div className="pad pad--fill">
       <Heading>Bin</Heading>
       <Text variant="mono" as="p">
         Soft-deleted photos. The RAW files still exist, moved into a Bin folder on disk.
