@@ -1889,7 +1889,7 @@ The bin and the missing view sort by their library's ordering, since they are sl
 
 Presets are named points in the same space as Custom, so selecting one shows its constituents already ticked there rather than leaving the menu looking untouched.
 
-Three view modes share the same tiles: **grid** crops nothing but gives every photo a uniform cell so rows line up, **masonry** lets each keep its own shape (CSS columns, since `grid-template-rows: masonry` is not shipping), **list** trades density for filename and date. The zoom slider runs from many-across to a single photo filling the width.
+Three view modes share the same tiles: **grid** crops nothing but gives every photo a uniform cell so rows line up, **masonry** lets each keep its own shape in rows that read across before they read down (flex lines grown from each photo's stored aspect, so no DOM measurement, and no column that a paged list would have to fill to the bottom), **list** trades density for filename and date. The zoom slider runs from many-across to a single photo filling the width.
 
 Filter, tile size and view mode are remembered per collection in `localStorage`: those are about the machine you are sitting at, and a tile size chosen for a 32" display is wrong on a phone. The sort is not among them, for the reason above. The filename search and the date range are not remembered either, being questions asked in the moment rather than preferences.
 

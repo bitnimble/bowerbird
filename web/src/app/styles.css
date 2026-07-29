@@ -816,30 +816,29 @@ p.ui-text--mono {
   grid-template-columns: repeat(auto-fill, minmax(min(var(--tile, 240px), 100%), 1fr));
 }
 
-/* Each photo keeps its own shape. CSS columns rather than a grid: a masonry
-   grid needs either JS measurement or `grid-template-rows: masonry`, which is
-   not shipping yet. */
+/* Each photo keeps its own shape, in rows that read across before they read
+   down - CSS columns filled top to bottom, which puts photo two below photo one
+   and cannot work at all once the list is paged or infinite.
+   Flex grows every tile on a line by the same factor of its own aspect, so the
+   widths stay proportional and the line lands on a single height, all from
+   `--ar` off the photo's stored dimensions rather than from measuring the DOM. */
 .grid--masonry {
-  column-width: var(--tile, 240px);
-  column-gap: 3px;
+  display: flex;
+  flex-wrap: wrap;
 }
 
 .grid--masonry .tile {
-  aspect-ratio: auto;
-  break-inside: avoid;
-  margin-bottom: 3px;
+  aspect-ratio: var(--ar);
+  flex: var(--ar) 1 calc(var(--ar) * var(--tile, 240px));
 }
 
-/* The hit target is absolutely positioned in the grid, where the cell's aspect
-   sets the height. Masonry has no such cell: the photo itself has to be in flow
-   or the tile collapses to nothing. */
-.grid--masonry .tile__hit {
-  position: static;
-  display: block;
-  width: 100%;
+/* Eats the last line's free space, so two leftover photos don't stretch to a
+   screen-wide row. No height, so it is not a row of its own. */
+.grid--masonry::after {
+  content: '';
+  flex: 1000000 0 0;
 }
 
-.grid--masonry .tile img,
 .grid--list .tile img {
   position: static;
   height: auto;
@@ -923,10 +922,9 @@ p.ui-text--mono {
   opacity: 1;
 }
 
-/* Until it decodes, the image is a probe sitting behind the placeholder, so it
-   must contribute no height: in masonry the row takes its height from the image,
-   and a tile whose thumbnail is missing would collapse to nothing. Declared
-   after the masonry and list overrides, which it ties with on specificity. */
+/* Until it decodes, the image is a probe sitting behind the placeholder rather
+   than beside it: in flow the two stack and the placeholder is pushed out of the
+   tile. Declared after the list override, which it ties with on specificity. */
 .tile img:not(.is-loaded) {
   position: absolute;
   inset: 0;
@@ -969,9 +967,6 @@ p.ui-text--mono {
   white-space: nowrap;
 }
 
-/* Stands in for the <img>, so it is in flow rather than an overlay: absolutely
-   positioned it contributed no height, and a masonry column, which takes its
-   row heights from the images, dropped every un-thumbnailed photo out of view. */
 .tile__pending {
   display: grid;
   place-items: center;
@@ -982,12 +977,6 @@ p.ui-text--mono {
   letter-spacing: 0.08em;
   color: #4a505c;
   text-transform: uppercase;
-}
-
-/* Nothing gives this one a height, so it names its own. */
-.grid--masonry .tile__pending {
-  height: auto;
-  aspect-ratio: 3 / 2;
 }
 
 .tile__badges {

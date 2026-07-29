@@ -124,6 +124,9 @@ const Tile = observer(function Tile({
       ref={ref}
       className={`tile${selected ? ' tile--selected' : ''}${isFocused ? ' tile--focused' : ''}`}
       data-triage={photo.triage}
+      // Masonry sizes a tile from the photo's own shape. Off the stored
+      // dimensions, so no layout is ever read back to lay the rows out.
+      style={{ '--ar': String(photo.width / photo.height) } as React.CSSProperties}
     >
       <button
         type="button"

@@ -116,6 +116,27 @@ test('a photo can be taken back out of a shoot', async ({ page }) => {
   expect(atRoot).toHaveLength(PHOTO_NAMES.length);
 });
 
+test('masonry lays photos out across a row, not down a column', async ({ page }) => {
+  await page.goto('/settings');
+  await openLibrary(page, PHOTOS_DIR);
+  await expect(page.locator('.tile')).toHaveCount(PHOTO_NAMES.length);
+  await page.getByRole('button', { name: 'Masonry' }).click();
+
+  // Regression: laid out with CSS columns, the tiles ran down the first column
+  // before starting the second, which a paged or infinite list cannot do - it
+  // has no bottom to fill to. They now sit on a row of one height, which is the
+  // zoom size: under columns the height was whatever the column's width made it.
+  const box = async (i: number) => (await page.locator('.tile').nth(i).boundingBox())!;
+  const zoom = await page.locator('.grid').evaluate((el) => parseFloat(getComputedStyle(el).getPropertyValue('--tile')));
+  const first = await box(0);
+  const second = await box(1);
+  expect(second.y).toBeCloseTo(first.y, 0);
+  expect(first.height).toBeCloseTo(zoom, 0);
+  expect(second.height).toBeCloseTo(first.height, 0);
+
+  await page.getByRole('button', { name: 'Grid' }).click();
+});
+
 test('the bin shows only soft-deleted photos, and the library hides them', async ({ page }) => {
   await page.goto('/settings');
   await openLibrary(page, PHOTOS_DIR);
