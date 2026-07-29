@@ -22,6 +22,14 @@ export const BLOCK = 100;
 // already mounted rather than on a gap.
 export const OVERSCAN_ROWS = 2;
 
+// The tallest scroll a browser will honour, less a wide margin. Chromium clamps
+// at 33,554,428px and Firefox at roughly half that, silently: past the clamp the
+// rest of the collection is simply unreachable, and the grid at its highest zoom
+// hits it at thirty thousand photos - one column of thousand-pixel rows. Beyond
+// this the scroll is compressed and positions are scaled into it (`scrollScale`)
+// rather than the collection being quietly truncated.
+export const MAX_SCROLL = 15_000_000;
+
 /** A half-open range: `from` inclusive, `to` exclusive. */
 export interface Span {
   from: number;

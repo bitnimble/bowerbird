@@ -6,6 +6,7 @@ import {
   BLOCK,
   GRID_GAP,
   LIST_ROW_H,
+  MAX_SCROLL,
   type Span,
   blockTops,
   gridColumns,
@@ -390,9 +391,33 @@ export class PhotosStore {
     return this.rowCount * this.rowHeight - GRID_GAP;
   }
 
+  /** How tall the scroller actually is, which past `MAX_SCROLL` is not how tall the collection is. */
+  @computed get scrollHeight(): number {
+    return Math.min(this.contentHeight, MAX_SCROLL);
+  }
+
+  // Scroll pixels per content pixel: 1 until the collection is taller than a
+  // browser will scroll, and below 1 after that. Everything the grid lays out is
+  // in content pixels; only the scroller itself is in scroll pixels.
+  @computed get scrollScale(): number {
+    const content = this.contentHeight - this.viewportHeight;
+    if (content <= 0 || this.contentHeight <= MAX_SCROLL) return 1;
+    return (this.scrollHeight - this.viewportHeight) / content;
+  }
+
+  /** Where the viewport is in the collection, in content pixels. */
+  @computed get virtualTop(): number {
+    return this.scrollTop / this.scrollScale;
+  }
+
+  /** A position in content pixels, as a position inside the scroller. */
+  domTop(contentTop: number): number {
+    return this.scrollTop - (this.virtualTop - contentTop);
+  }
+
   /** Masonry only: the blocks whose tiles are mounted. */
   @computed get visibleBlocks(): Span {
-    return visibleBlocks(this.blockTops, this.scrollTop, this.viewportHeight);
+    return visibleBlocks(this.blockTops, this.virtualTop, this.viewportHeight);
   }
 
   /** The photos the grid actually renders, as a half-open span of indices. */
@@ -402,13 +427,13 @@ export class PhotosStore {
       const blocks = this.visibleBlocks;
       return { from: blocks.from * BLOCK, to: Math.min(this.total, blocks.to * BLOCK) };
     }
-    const rows = visibleRows(this.scrollTop, this.viewportHeight, this.rowHeight, this.rowCount);
+    const rows = visibleRows(this.virtualTop, this.viewportHeight, this.rowHeight, this.rowCount);
     return { from: rows.from * this.columns, to: Math.min(this.total, rows.to * this.columns) };
   }
 
-  /** Where the rendered window sits inside the full scroll height (uniform modes). */
+  /** Where the rendered window sits inside the scroller (uniform modes). */
   @computed get visibleTop(): number {
-    return Math.floor(this.visible.from / this.columns) * this.rowHeight;
+    return this.domTop(Math.floor(this.visible.from / this.columns) * this.rowHeight);
   }
 
   // Where the scroll has to be for the keyboard cursor to be on screen, or null
@@ -418,19 +443,21 @@ export class PhotosStore {
   // mounted cannot scroll anything - the cull simply lost sight of the cursor.
   @computed get focusScrollTop(): number | null {
     if (this.focusIndex < 0 || this.total === 0) return null;
+    // Answered in scroll pixels, because it is assigned straight to the element.
+    const scrolled = (contentTop: number): number => Math.max(0, contentTop) * this.scrollScale;
     if (this.mode === 'masonry') {
       // No row arithmetic to land on, so this goes as far as the block: within
       // one, the tile is mounted and near enough.
       const block = Math.floor(this.focusIndex / BLOCK);
       const { from, to } = this.visibleBlocks;
-      return block >= from && block < to ? null : (this.blockTops[block] ?? 0);
+      return block >= from && block < to ? null : scrolled(this.blockTops[block] ?? 0);
     }
     const top = Math.floor(this.focusIndex / this.columns) * this.rowHeight;
     // The cell, not the row pitch: the gap under it is not part of the tile, and
     // scrolling to clear it would overshoot by one gap every time.
     const bottom = top + this.rowHeight - GRID_GAP;
-    if (top < this.scrollTop) return top;
-    if (bottom > this.scrollTop + this.viewportHeight) return Math.max(0, bottom - this.viewportHeight);
+    if (top < this.virtualTop) return scrolled(top);
+    if (bottom > this.virtualTop + this.viewportHeight) return scrolled(bottom - this.viewportHeight);
     return null;
   }
 

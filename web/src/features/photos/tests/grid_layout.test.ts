@@ -1,5 +1,15 @@
 import { describe, expect, test } from 'bun:test';
-import { BLOCK, GRID_GAP, OVERSCAN_ROWS, blockTops, gridColumns, gridRowHeight, visibleBlocks, visibleRows } from '../grid_layout';
+import {
+  BLOCK,
+  GRID_GAP,
+  MAX_SCROLL,
+  OVERSCAN_ROWS,
+  blockTops,
+  gridColumns,
+  gridRowHeight,
+  visibleBlocks,
+  visibleRows,
+} from '../grid_layout';
 
 describe('gridColumns', () => {
   test('fits as many tiles of the minimum size as the width allows', () => {
@@ -58,6 +68,27 @@ describe('visibleBlocks', () => {
 
   test('always offers at least the block under the scroll', () => {
     expect(visibleBlocks(tops, 0, 0)).toEqual({ from: 0, to: 1 });
+  });
+});
+
+// A browser silently clamps a scroll past ~33.5M px (half that in Firefox), and
+// the grid at its highest zoom - one column of thousand-pixel rows - reaches
+// that at thirty thousand photos. Past the clamp the rest of the collection is
+// simply unreachable, which is the one failure the virtual scroll exists to
+// avoid, so the numbers that decide when scaling kicks in are worth pinning.
+describe('MAX_SCROLL', () => {
+  test('leaves room under the tightest browser limit', () => {
+    const FIREFOX = 17_895_697;
+    expect(MAX_SCROLL).toBeLessThan(FIREFOX);
+  });
+
+  test('the zoom that used to truncate a library is inside it', () => {
+    // One column at the 1600px maximum tile: a 3:2 cell plus its gap.
+    const pitch = gridRowHeight(1600, 1);
+    expect(Math.floor(MAX_SCROLL / pitch)).toBeGreaterThan(13_000);
+    // Unscaled this wanted 33.4M px for 31,370 rows, which is where Chromium cut
+    // the collection off. Scaling is what keeps the tail reachable instead.
+    expect(31_370 * pitch).toBeGreaterThan(MAX_SCROLL);
   });
 });
 

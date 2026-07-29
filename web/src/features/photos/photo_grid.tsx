@@ -115,8 +115,14 @@ const Tile = observer(function Tile({
     : captureDateTime(photo.ordering_date);
 
   return (
+    // The set size and position are stated because only a few dozen tiles are in
+    // the DOM at once: without them a reader is told it is on "photo 4 of 30"
+    // somewhere in a hundred thousand (§18.3.2).
     <div
       className={`tile${selected ? ' tile--selected' : ''}${isFocused ? ' tile--focused' : ''}`}
+      role="listitem"
+      aria-setsize={store.total}
+      aria-posinset={index + 1}
       data-triage={photo.triage}
       // Masonry sizes a tile from the photo's own shape. Off the stored
       // dimensions, so no layout is ever read back to lay the rows out.
@@ -200,7 +206,17 @@ function tilesFor(store: PhotosStore, from: number, to: number): JSX.Element[] {
       // unselected in the middle of "select all" would be a lie about what the
       // next action is going to touch.
       const selected = store.selection.has(index) ? ' tile--selected' : '';
-      tiles.push(<div key={index} className={`tile tile--waiting${selected}`} style={{ '--ar': '1.5' } as React.CSSProperties} />);
+      tiles.push(
+        <div
+          key={index}
+          className={`tile tile--waiting${selected}`}
+          role="listitem"
+          aria-busy
+          aria-setsize={store.total}
+          aria-posinset={index + 1}
+          style={{ '--ar': '1.5' } as React.CSSProperties}
+        />,
+      );
       continue;
     }
     // The keyboard cursor is meaningless once a selection is being assembled by
@@ -243,7 +259,7 @@ const MasonryBlock = observer(function MasonryBlock({
   }, [block, onMeasured]);
 
   return (
-    <div ref={ref} className="grid grid--masonry grid__block" style={{ top }}>
+    <div ref={ref} className="grid grid--masonry grid__block" role="presentation" style={{ top }}>
       {tilesFor(store, block * BLOCK, Math.min(store.total, (block + 1) * BLOCK))}
     </div>
   );
@@ -407,7 +423,7 @@ const GridScroller = observer(function GridScroller(): JSX.Element {
       const anchor = store.visibleBlocks.from;
       const before = store.blockTops[anchor] ?? 0;
       photos.measuredBlock(block, height);
-      const shifted = (store.blockTops[anchor] ?? 0) - before;
+      const shifted = ((store.blockTops[anchor] ?? 0) - before) * store.scrollScale;
       const element = scroller.current;
       if (element != null && shifted !== 0) element.scrollTop = Math.max(0, store.scrollTop + shifted);
     },
@@ -418,20 +434,29 @@ const GridScroller = observer(function GridScroller(): JSX.Element {
   if (store.mode === 'masonry') for (let b = store.visibleBlocks.from; b < store.visibleBlocks.to; b++) blocks.push(b);
 
   return (
+    // Focusable and labelled because it is a scrollable region holding content
+    // no tab stop of its own would reach: without it Page Up/Down, Home and End
+    // have nothing to act on until a tile happens to be focused.
     <div
       className="grid__scroller"
       ref={scroller}
       onScroll={onScroll}
+      tabIndex={0}
+      role="list"
+      aria-label={`${store.total} photos`}
       style={{ '--tile': `${store.tileSize}px` } as React.CSSProperties}
     >
-      <div className="grid__content" style={{ height: store.contentHeight }}>
+      {/* The spacer and the window are scaffolding for the scroll, not structure:
+          announced, they would sit between the list and its items. */}
+      <div className="grid__content" role="presentation" style={{ height: store.scrollHeight }}>
         {store.mode === 'masonry' ? (
           blocks.map((block) => (
-            <MasonryBlock key={block} block={block} top={store.blockTops[block] ?? 0} onMeasured={onMeasured} />
+            <MasonryBlock key={block} block={block} top={store.domTop(store.blockTops[block] ?? 0)} onMeasured={onMeasured} />
           ))
         ) : (
           <div
             className={`grid grid--${store.mode} grid__window`}
+            role="presentation"
             style={
               {
                 transform: `translateY(${store.visibleTop}px)`,
