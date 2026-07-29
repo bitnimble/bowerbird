@@ -20,7 +20,7 @@ function mockRepo(overrides: Partial<LibrariesRepository> = {}): LibrariesReposi
   } as unknown as LibrariesRepository;
 }
 
-const sample: Library = { id: 'id-1', root_path: '/x', data_path: null, ordering: 'taken_desc',
+const sample: Library = { id: 'id-1', root_path: '/x', data_path: null, name: null, ordering: 'taken_desc',
   rendition_source: 'embedded' as const,
   rendition_hdr: false,
   rendition_hdr_video: false, last_synced_at: null, photo_count: 0 };

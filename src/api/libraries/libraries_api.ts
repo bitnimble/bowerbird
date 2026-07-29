@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { CreateLibraryRequestSchema, UpdateLibraryRequestSchema } from '../../schemas/libraries';
+import { browseUnder } from '../../utils/browse';
 import type { LibrariesService } from '../../services/libraries/libraries_service';
 import type { SyncService } from '../../services/sync/sync_service';
 
@@ -18,6 +19,13 @@ export class LibrariesApi {
     });
 
     app.get('/', (c) => c.json(this.service.list()));
+
+    // Folders inside this library, in the root-relative paths a shoot's folder
+    // is stored as. Fenced at the root: a shoot's folder cannot be outside the
+    // library it belongs to, so neither can the picker that chooses one.
+    app.get('/:id/browse', async (c) =>
+      c.json(await browseUnder(this.service.get(c.req.param('id')).root_path, c.req.query('path') ?? '')),
+    );
 
     app.post('/:id/sync', async (c) => c.json(await this.sync.syncLibrary(c.req.param('id'))));
 

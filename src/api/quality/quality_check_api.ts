@@ -7,6 +7,7 @@ import { getOriginalPath } from '../../utils/paths';
 import type { LibrariesService } from '../../services/libraries/libraries_service';
 import type { PhotosService } from '../../services/photos/photos_service';
 import { decodeRawImage, freeImage, saveAvif } from '../../services/processing/rawshim_ops';
+import { AVIF_EFFORT } from '../../services/processing/renditions';
 import type { SettingsRepository } from '../../services/settings/settings_repository';
 
 // Which AVIF quality to ship renditions at. A diagnostic, like the HDR check
@@ -15,7 +16,6 @@ import type { SettingsRepository } from '../../services/settings/settings_reposi
 // speed is - 0.59s against 13.6s at the encoder's default on a 3840px frame - so
 // quality is the only variable left.
 const QUALITIES = [60, 70, 80, 85] as const;
-const EFFORT = 0;
 
 // Rebuilt per server run rather than cached in the library: this answers a
 // question once and should not leave files behind for the orphan sweep.
@@ -61,7 +61,7 @@ export class QualityCheckApi {
           // whatever the quality, so including it would flatten the difference the
           // page exists to show.
           const started = Bun.nanoseconds();
-          saveAvif(image, this.settings.get().full_rendition_size, quality, EFFORT, file);
+          saveAvif(image, this.settings.get().full_rendition_size, quality, AVIF_EFFORT, file);
           encodeMs = Math.round((Bun.nanoseconds() - started) / 1e6);
         } finally {
           freeImage(image);
@@ -119,7 +119,7 @@ function page(photoId: string): string {
   code { color: #7fd; }
   label { color: #ddd; }
 </style>
-<h1>AVIF quality, effort ${EFFORT}, at the full rendition size</h1>
+<h1>AVIF quality, effort ${AVIF_EFFORT}, at the full rendition size</h1>
 <p>
   Shown at <strong>1:1</strong>, not scaled: artefacts vanish in a downscaled view.
   Drag any panel to pan them all. <code id="note"></code>

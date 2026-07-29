@@ -14,6 +14,7 @@ import {
   type ImageHandle,
 } from './rawshim_ops';
 import type { HdrJob, ProcessingResult, RenditionJob, RenditionTarget, WorkerJob } from './processing_types';
+import { AVIF_EFFORT } from './renditions';
 
 // Bun worker thread (DESIGN §10.3). Writes renditions of one photo - the grid
 // tile, the full-size view, the max-resolution export - in AVIF, plus the
@@ -28,7 +29,7 @@ declare const self: {
 // through this at all and has its own encoder (§10.2). Chroma subsampling is the
 // encoder's own business; see `vips.rs` for why it is off.
 function toAvif(image: ImageHandle, target: RenditionTarget): void {
-  saveAvif(image, target.size, target.quality, target.effort, target.outputPath);
+  saveAvif(image, target.size, target.quality, AVIF_EFFORT, target.outputPath);
 }
 
 /** 0 (native) beats any bounded size, since it is the whole frame. */

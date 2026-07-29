@@ -192,6 +192,7 @@ export function TextField({
   onBlur,
   onKeyDown,
   grow = false,
+  disabled = false,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -202,6 +203,7 @@ export function TextField({
   onBlur?: () => void;
   onKeyDown?: (event: React.KeyboardEvent) => void;
   grow?: boolean;
+  disabled?: boolean;
 }): JSX.Element {
   return (
     <span className={`ui-input${grow ? ' ui-input--grow' : ''}`}>
@@ -211,6 +213,7 @@ export function TextField({
         aria-label={label}
         placeholder={placeholder}
         autoFocus={autoFocus}
+        disabled={disabled}
         onBlur={onBlur}
         onKeyDown={onKeyDown}
         onValueChange={onChange}

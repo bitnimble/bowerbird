@@ -28,7 +28,6 @@ function target(outputPath: string): RenditionTarget {
     source: 'render',
     quality: 80,
     quantizer: 8,
-    effort: 0,
     preset: 8,
   };
 }

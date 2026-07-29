@@ -147,7 +147,6 @@ export class ProcessingService {
       size: sizes[rendition],
       quality: qualities[rendition],
       quantizer: rendition === 'max' ? settings.lossless_quantizer : settings.hdr_crf,
-      effort: settings.rendition_effort,
       preset: settings.hdr_preset,
     };
   }

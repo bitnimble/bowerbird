@@ -4,6 +4,7 @@ import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { Image, Images, Keyboard, Layers, Library, PanelLeftClose, PanelLeftOpen, Settings, Trash2 } from 'lucide-react';
 import { AlbumPhotosPage } from '../features/albums/album_photos_page';
 import { AlbumsPage } from '../features/albums/albums_page';
+import { libraryLabel } from '../features/libraries/library_label';
 import { BinPage } from '../features/photos/bin_page';
 import { LibraryPhotosPage } from '../features/photos/library_photos_page';
 import { PhotoDetailPage } from '../features/photos/photo_detail_page';
@@ -68,7 +69,7 @@ const LibraryNav = observer(function LibraryNav({ activeId }: { activeId: string
           <div key={library.id}>
             <NavLink end to={`/libraries/${library.id}`} className={railClass} title={library.root_path}>
               <Library size={ICON} />
-              <span className="rail__text">{library.root_path.split('/').pop() ?? library.root_path}</span>
+              <span className="rail__text">{libraryLabel(library)}</span>
               <span className="rail__count">{library.photo_count}</span>
             </NavLink>
             {active && (

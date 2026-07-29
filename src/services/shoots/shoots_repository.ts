@@ -14,8 +14,28 @@ interface ShootRow {
   photo_count: number;
 }
 
+// A shoot with no banner of its own shows its first photo, in the shoot's own
+// ordering, so it is the one at the top of the grid the row opens into. Derived
+// rather than written at import: the first photo moves as photos are added,
+// binned or re-dated, and a stored default would go stale and then have to be
+// told apart from a deliberate choice. `shoot_banners` therefore only ever holds
+// a choice, and a chosen banner still wins here.
+//
+// One expression rather than four, because SQLite cannot take the direction from
+// a column: for each ordering the two CASEs leave the other's term NULL for every
+// row, which ties and so contributes nothing. The rule is `orderByClause`'s in
+// `photos_repository.ts`, NULL capture dates last in both directions included.
+const FIRST_PHOTO = `SELECT p.id FROM photos p
+  WHERE p.shoot_id = s.id AND p.is_deleted = 0
+  ORDER BY
+    CASE s.ordering WHEN 'taken_asc' THEN p.date_taken IS NULL WHEN 'taken_desc' THEN p.date_taken IS NULL END,
+    CASE s.ordering WHEN 'taken_asc' THEN p.date_taken WHEN 'added_asc' THEN p.date_added END ASC,
+    CASE s.ordering WHEN 'taken_desc' THEN p.date_taken WHEN 'added_desc' THEN p.date_added END DESC,
+    p.id ASC
+  LIMIT 1`;
+
 const SELECT = `SELECT s.id, s.parent_id, s.library_id, s.folder_path, s.name, s.description, s.ordering,
-  b.photo_id AS banner_photo_id,
+  COALESCE(b.photo_id, (${FIRST_PHOTO})) AS banner_photo_id,
   (SELECT COUNT(*) FROM photos p WHERE p.shoot_id = s.id AND p.is_deleted = 0) AS photo_count
   FROM shoots s LEFT JOIN shoot_banners b ON b.shoot_id = s.id`;
 

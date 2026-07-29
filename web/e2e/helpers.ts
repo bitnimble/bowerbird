@@ -8,14 +8,29 @@ export function libraryRow(page: Page, rootPath: string) {
 
 export async function addLibrary(page: Page, rootPath: string): Promise<void> {
   await page.goto('/settings');
-  await page.getByLabel('Library root path').fill(rootPath);
   await page.getByRole('button', { name: 'Add library' }).click();
+  // The picker writes the folder it opened at into this box, so a path typed
+  // before that lands would be overwritten by it.
+  const path = page.getByLabel('Library root path');
+  await expect(path).not.toHaveValue('');
+  await path.fill(rootPath);
+  // The dialog's own button carries the same name as the one that opened it, so
+  // the confirm has to be scoped to the dialog.
+  await page.locator('.ui-modal').getByRole('button', { name: 'Add library' }).click();
   await expect(libraryRow(page, rootPath)).toBeVisible();
 }
 
 export async function syncLibrary(page: Page, rootPath: string): Promise<void> {
   await page.goto('/settings');
   await libraryRow(page, rootPath).getByRole('button', { name: /Sync/ }).click();
+}
+
+// From the library's Shoots page. The folder picker opens at the library root,
+// which is where a shoot with no location chosen belongs.
+export async function addShoot(page: Page, name: string): Promise<void> {
+  await page.getByRole('button', { name: 'Add shoot' }).click();
+  await page.getByLabel('Shoot name').fill(name);
+  await page.locator('.ui-modal').getByRole('button', { name: 'Create shoot' }).click();
 }
 
 // The rail lists every library by its folder name, with the full path as the

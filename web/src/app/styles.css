@@ -379,6 +379,71 @@ p.ui-text--mono {
   z-index: 51;
 }
 
+.dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(520px, 78vw);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* A field stacks, so "grow" has to mean the full width rather than what it means
+   in a row, where the flex basis would become the control's height. */
+.field .ui-input--grow {
+  flex: 0 0 auto;
+  width: 100%;
+}
+
+.dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* One directory at a time. A fixed height rather than one that grows with the
+   listing: the buttons below it must not move as folders are opened. */
+.browse {
+  border: 1px solid var(--slate);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.browse__bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px;
+  border-bottom: 1px solid var(--slate);
+}
+
+.browse__list {
+  height: 200px;
+  overflow: auto;
+  padding: 4px;
+}
+
+.browse__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 6px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.browse__item:hover {
+  background: var(--slate);
+}
+
 .ui-modal__head {
   display: flex;
   align-items: center;
@@ -638,6 +703,40 @@ p.ui-text--mono {
    column of them reads as a column. */
 .setting .ui-input input {
   width: 7ch;
+}
+
+/* A knob that cannot be used still says what it is and what it would do; the
+   title attribute carries why it is off. */
+.setting--off {
+  opacity: 0.45;
+}
+
+/* A section title with the action that adds to it on the same line. */
+.page__head {
+  margin-bottom: 8px;
+}
+
+.page__head .panel__title,
+.page__head .ui-h {
+  margin-bottom: 0;
+}
+
+/* Most of the settings are numbers you tune once and never look at again, so
+   they open rather than occupy the page. */
+.advanced {
+  margin-top: 18px;
+}
+
+.advanced__summary {
+  cursor: pointer;
+  font-family: var(--display);
+  font-size: 13px;
+  padding: 6px 0;
+  color: var(--bone-dim);
+}
+
+.advanced__summary:hover {
+  color: var(--bone);
 }
 
 .error {

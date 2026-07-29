@@ -73,11 +73,6 @@ export const SettingsSchema = z.object({
   // the WebP q90 it replaces, and encodes in 713ms at effort 0.
   grid_rendition_quality: z.number().int().min(1).max(100),
   full_rendition_quality: z.number().int().min(1).max(100),
-  // AVIF effort, 0-9, and 0 because speed matters more here than size.
-  // The default of 4 is pathological either way: 13.6s for a 3840px frame
-  // against 0.6s at effort 0, for a file only ~15% smaller. This is also what
-  // the quality-check page encodes at, so what gets judged there is what ships.
-  rendition_effort: z.number().int().min(0).max(9),
 
   // Full-resolution export (§10.5), AVIF. `quality` is libvips' 1-100 scale for
   // the SDR path; `quantizer` is avifenc's 0-63 (lower is better) for the HDR
@@ -132,7 +127,6 @@ export const DEFAULT_SETTINGS: Settings = {
   full_rendition_size: 3840,
   grid_rendition_quality: 80,
   full_rendition_quality: 80,
-  rendition_effort: 0,
 
   lossless_quality: 88,
   lossless_quantizer: 8,

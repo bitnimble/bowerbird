@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { readdirSync } from 'node:fs';
 import { PHOTOS_DIR, PHOTO_NAMES } from './fixture_library';
-import { addLibrary, openLibrary, syncLibrary } from './helpers';
+import { addLibrary, addShoot, openLibrary, syncLibrary } from './helpers';
 
 // One ordered journey: each step depends on the catalogue state the previous one
 // produced, which is also how the bugs below were originally found.
@@ -61,8 +61,7 @@ test('keeps the library in the shell when a shoot is opened by deep link', async
   await openLibrary(page, PHOTOS_DIR);
   await page.getByRole('link', { name: 'Shoots', exact: true }).click();
 
-  await page.getByLabel('Shoot name').fill('Reef');
-  await page.getByRole('button', { name: 'Create shoot' }).click();
+  await addShoot(page, 'Reef');
   await expect(page.locator('.list__name', { hasText: 'Reef' })).toBeVisible();
 
   const shootHref = await page.getByRole('link', { name: 'View photos' }).first().getAttribute('href');

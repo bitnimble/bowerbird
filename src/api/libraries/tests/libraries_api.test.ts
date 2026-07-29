@@ -7,7 +7,7 @@ import type { LibrariesService } from '../../../services/libraries/libraries_ser
 import type { SyncService } from '../../../services/sync/sync_service';
 import { LibrariesApi } from '../libraries_api';
 
-const library: Library = { id: 'l1', root_path: '/r', data_path: null, ordering: 'taken_desc',
+const library: Library = { id: 'l1', root_path: '/r', data_path: null, name: null, ordering: 'taken_desc',
   rendition_source: 'embedded' as const,
   rendition_hdr: false,
   rendition_hdr_video: false, last_synced_at: null, photo_count: 0 };

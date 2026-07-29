@@ -1,4 +1,5 @@
 import type { Album, CreateAlbumRequest, UpdateAlbumRequest } from '../../../src/schemas/albums';
+import type { BrowseResponse } from '../../../src/schemas/browse';
 import type { CreateLibraryRequest, Library, LibrarySyncStatus, UpdateLibraryRequest } from '../../../src/schemas/libraries';
 import type { PhotoDetail, PhotoListResponse, Triage, UpdatePhotoRequest } from '../../../src/schemas/photos';
 import type { ViewerRendition, ViewerRenditionMode, Settings, UpdateSettingsRequest } from '../../../src/schemas/settings';
@@ -10,6 +11,8 @@ import type { ProcessingStage } from '../../../src/services/processing/processin
 // client can never drift from the API and nothing is added to the bundle.
 export type {
   Album,
+  BrowseResponse,
+  CreateLibraryRequest,
   Library,
   LibrarySyncStatus,
   PhotoDetail,
@@ -107,6 +110,14 @@ function query(params: PhotoListParams): string {
 export const api = {
   getSettings: (): Promise<Settings> => request('GET', '/api/settings'),
   updateSettings: (body: UpdateSettingsRequest): Promise<Settings> => request('PATCH', '/api/settings', body),
+  // The server's directories, not this browser's: a library root is a path the
+  // server has to be able to open.
+  browse: (path?: string): Promise<BrowseResponse> =>
+    request('GET', `/api/browse${path == null ? '' : `?path=${encodeURIComponent(path)}`}`),
+  // Folders inside one library, in the root-relative paths a shoot's folder is
+  // stored as, and refusing anything above the root.
+  browseLibrary: (libraryId: string, path = ''): Promise<BrowseResponse> =>
+    request('GET', `/api/libraries/${libraryId}/browse?path=${encodeURIComponent(path)}`),
   listLibraries: (): Promise<Library[]> => request('GET', '/api/libraries'),
   getLibrary: (id: string): Promise<Library> => request('GET', `/api/libraries/${id}`),
   createLibrary: (body: CreateLibraryRequest): Promise<Library> => request('POST', '/api/libraries', body),
