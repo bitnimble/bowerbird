@@ -61,6 +61,17 @@ export interface NewShoot {
   name: string;
   description: string | null;
   ordering: Ordering;
+  folder_ino: number | null;
+  folder_birthtime: number | null;
+}
+
+// A shoot's folder as the filesystem knows it, which is what survives the folder
+// being renamed (§9.4.1).
+export interface ShootIdentity {
+  id: string;
+  folder_path: string;
+  folder_ino: number | null;
+  folder_birthtime: number | null;
 }
 
 export class ShootsRepository {
@@ -73,9 +84,20 @@ export class ShootsRepository {
   insert(shoot: NewShoot): void {
     this.db
       .query(
-        'INSERT INTO shoots (id, parent_id, library_id, folder_path, name, description, ordering) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        `INSERT INTO shoots (id, parent_id, library_id, folder_path, name, description, ordering, folder_ino, folder_birthtime)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(shoot.id, shoot.parent_id, shoot.library_id, shoot.folder_path, shoot.name, shoot.description, shoot.ordering);
+      .run(
+        shoot.id,
+        shoot.parent_id,
+        shoot.library_id,
+        shoot.folder_path,
+        shoot.name,
+        shoot.description,
+        shoot.ordering,
+        shoot.folder_ino,
+        shoot.folder_birthtime,
+      );
   }
 
   getById(id: string): Shoot | null {
@@ -83,9 +105,21 @@ export class ShootsRepository {
     return row ? mapRow(row) : null;
   }
 
-  getByName(libraryId: string, name: string): Shoot | null {
-    const row = this.db.query(`${SELECT} WHERE s.library_id = ? AND s.name = ?`).get(libraryId, name) as ShootRow | null;
+  getByFolderPath(libraryId: string, folderPath: string): Shoot | null {
+    const row = this.db
+      .query(`${SELECT} WHERE s.library_id = ? AND s.folder_path = ?`)
+      .get(libraryId, folderPath) as ShootRow | null;
     return row ? mapRow(row) : null;
+  }
+
+  listIdentities(libraryId: string): ShootIdentity[] {
+    return this.db
+      .query('SELECT id, folder_path, folder_ino, folder_birthtime FROM shoots WHERE library_id = ?')
+      .all(libraryId) as ShootIdentity[];
+  }
+
+  setIdentity(id: string, ino: number, birthtimeMs: number): void {
+    this.db.query('UPDATE shoots SET folder_ino = ?, folder_birthtime = ? WHERE id = ?').run(ino, birthtimeMs, id);
   }
 
   listByLibrary(libraryId: string): Shoot[] {

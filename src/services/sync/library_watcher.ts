@@ -1,9 +1,9 @@
-import { watch, type FSWatcher } from 'node:fs';
+import chokidar, { type FSWatcher } from 'chokidar';
 import path from 'node:path';
 import { AppError } from '../../errors';
 import { Logger } from '../../logger';
 import type { Library } from '../../schemas/libraries';
-import { getDataPath } from '../../utils/paths';
+import { isDirInScope, isFileInScope } from '../../utils/scope';
 import type { LibrariesRepository } from '../libraries/libraries_repository';
 import type { LibraryLifecycleListener } from '../libraries/libraries_service';
 import type { SyncService } from './sync_service';
@@ -23,7 +23,13 @@ const MAX_RETRY_MS = 5 * 60 * 1000;
 
 // Watches each library root and triggers a debounced sync when its files change
 // on disk. Reactive counterpart to the on-demand POST /sync (DESIGN §9). Change
-// detection stays with sync; the watcher only decides *when* to run it.
+// detection stays with sync; the watcher only decides *when* to run it, and for
+// which paths.
+//
+// chokidar rather than node:fs (§9.8): `fs.watch` reports a rename, a move and an
+// `rm -rf` identically, as one event naming only the source, so where a folder
+// went could not be known from an event at all. chokidar names both halves, which
+// is what lets a moved folder be recognised in the same debounce window it moved.
 export class LibraryWatcher implements LibraryLifecycleListener {
   private readonly watchers = new Map<string, FSWatcher>();
   private readonly timers = new Map<string, Timer>();
@@ -34,6 +40,11 @@ export class LibraryWatcher implements LibraryLifecycleListener {
   // Changed relative paths accumulated per library during the debounce window; the
   // next run() reconciles just these (scoped sync) instead of the whole library.
   private readonly pending = new Map<string, Set<string>>();
+  // Resolves once a watcher has walked its tree and is delivering events. Unlike
+  // fs.watch, which was live the moment it returned, chokidar establishes itself
+  // asynchronously, so a change made in that window is only ever caught by the
+  // next full sync.
+  private readonly ready = new Map<string, Promise<void>>();
   private stopped = false;
 
   constructor(
@@ -47,6 +58,11 @@ export class LibraryWatcher implements LibraryLifecycleListener {
     for (const library of this.libraries.list()) this.watchLibrary(library);
   }
 
+  /** Settles once every library established at the last start() is being watched. */
+  async whenReady(): Promise<void> {
+    await Promise.all(this.ready.values());
+  }
+
   /** Applies changed settings (§15) without a restart. */
   configure(enabled: boolean, debounceMs: number): void {
     this.debounceMs = debounceMs;
@@ -58,10 +74,11 @@ export class LibraryWatcher implements LibraryLifecycleListener {
     // Set before clearing so an in-flight run()'s finally can't reschedule a sync
     // (or a retry timer fire and re-establish a watcher) after teardown.
     this.stopped = true;
-    for (const watcher of this.watchers.values()) watcher.close();
+    for (const watcher of this.watchers.values()) void watcher.close();
     for (const timer of this.timers.values()) clearTimeout(timer);
     for (const timer of this.retryTimers.values()) clearTimeout(timer);
     this.watchers.clear();
+    this.ready.clear();
     this.timers.clear();
     this.retryTimers.clear();
     this.retryDelays.clear();
@@ -88,21 +105,39 @@ export class LibraryWatcher implements LibraryLifecycleListener {
     this.pending.delete(libraryId);
   }
 
+  /** Re-reads a library whose scope changed, so an excluded folder stops waking syncs. */
+  onLibraryUpdated(library: Library): void {
+    if (!this.watchers.has(library.id)) return;
+    this.dropWatcher(library.id);
+    this.watchLibrary(library);
+  }
+
   private watchLibrary(library: Library): void {
     if (this.stopped || this.watchers.has(library.id)) return;
     // A queued watch-error retry can land after the library was deleted; without
-    // this, watchLibrary would re-create a live FSWatcher (leaked inotify handle +
+    // this, watchLibrary would re-create a live watcher (leaked inotify handles +
     // spurious syncs) that onLibraryDeleted can never tear down again.
     if (!this.libraries.getById(library.id)) return;
-    const dataDir = path.resolve(getDataPath(library));
+    const scope = this.sync.scopeFor(library);
     try {
-      const watcher = watch(library.root_path, { recursive: true }, (_event, filename) => {
-        if (filename == null) return;
-        const relPath = filename.toString().split(path.sep).join('/');
-        if (this.isRelevant(library.root_path, dataDir, relPath)) {
-          this.record(library.id, relPath);
-          this.schedule(library.id);
-        }
+      const watcher = chokidar.watch(library.root_path, {
+        ignoreInitial: true, // the tree as it stands is sync's job, not an event
+        // The scan's own predicate (§9.1), so the watcher and the scan cannot
+        // disagree about which folders the library contains. Directories are
+        // asked as directories: `ignored` is consulted for them before chokidar
+        // descends, which is what keeps an excluded subtree from being watched at
+        // all rather than merely filtered afterwards.
+        ignored: (target, stats) => {
+          const relPath = path.relative(library.root_path, target).split(path.sep).join('/');
+          if (relPath === '' || relPath.startsWith('..')) return false;
+          return stats?.isDirectory() ?? false ? !isDirInScope(scope, relPath) : !isFileInScope(scope, relPath);
+        },
+      });
+      watcher.on('all', (_event, target) => {
+        const relPath = path.relative(library.root_path, target).split(path.sep).join('/');
+        if (relPath === '' || relPath.startsWith('..')) return;
+        this.record(library.id, relPath);
+        this.schedule(library.id);
       });
       watcher.on('error', (err) => {
         // A watch error (e.g. inotify ENOSPC) kills this watcher; drop it and try
@@ -111,6 +146,10 @@ export class LibraryWatcher implements LibraryLifecycleListener {
         this.scheduleRetry(library);
       });
       this.watchers.set(library.id, watcher);
+      this.ready.set(
+        library.id,
+        new Promise<void>((resolve) => watcher.on('ready', () => resolve())),
+      );
       log.info('watching', { library: library.id, root: library.root_path });
       this.retryDelays.delete(library.id); // watching again: next failure starts from the short delay
     } catch (err) {
@@ -139,17 +178,9 @@ export class LibraryWatcher implements LibraryLifecycleListener {
   }
 
   private dropWatcher(libraryId: string): void {
-    this.watchers.get(libraryId)?.close();
+    void this.watchers.get(libraryId)?.close();
     this.watchers.delete(libraryId);
-  }
-
-  // Ignore the data dir (renditions/bin, where processing writes, so watching it
-  // would loop), Bin folders, and hidden entries (incl. the sync lock file).
-  private isRelevant(rootPath: string, dataDir: string, filename: string): boolean {
-    const segments = filename.split(path.sep).join('/').split('/');
-    if (segments.some((s) => s.startsWith('.') || s === 'Bin')) return false;
-    const abs = path.resolve(rootPath, filename);
-    return abs !== dataDir && !abs.startsWith(`${dataDir}${path.sep}`);
+    this.ready.delete(libraryId);
   }
 
   private record(libraryId: string, relPath: string): void {

@@ -25,6 +25,8 @@ function buildApp(root: string, photo: BasicPhoto | null, renditionHdr = false) 
     rendition_source: 'render',
     rendition_hdr: renditionHdr,
     rendition_hdr_video: false,
+    include_subfolders: true,
+    mirror_shoots: true,
     last_synced_at: null,
     photo_count: 1,
   };

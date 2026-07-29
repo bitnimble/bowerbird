@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { PhotoListQuerySchema, PhotoTargetSchema } from '../../schemas/photos';
-import { CreateShootRequestSchema, UpdateShootRequestSchema } from '../../schemas/shoots';
+import { CreateShootRequestSchema, DeleteShootQuerySchema, UpdateShootRequestSchema } from '../../schemas/shoots';
 import type { PhotosService } from '../../services/photos/photos_service';
 import type { ShootsService } from '../../services/shoots/shoots_service';
 
@@ -21,8 +21,9 @@ export class ShootsApi {
 
     app.patch('/shoots/:id', async (c) => c.json(await this.shoots.update(c.req.param('id'), UpdateShootRequestSchema.parse(await c.req.json()))));
 
-    app.delete('/shoots/:id', (c) => {
-      this.shoots.delete(c.req.param('id'));
+    app.delete('/shoots/:id', async (c) => {
+      const { photos } = DeleteShootQuerySchema.parse(c.req.query());
+      await this.shoots.delete(c.req.param('id'), photos);
       return c.body(null, 204);
     });
 

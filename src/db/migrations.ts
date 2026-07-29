@@ -25,7 +25,12 @@ CREATE TABLE IF NOT EXISTS libraries (
   -- Also encode the HDR rendition as a one-frame AV1. Off by default: it is a
   -- second encode per photo for a file only Firefox on Windows ever reads, and
   -- most installs never serve one.
-  rendition_hdr_video INTEGER NOT NULL DEFAULT 0
+  rendition_hdr_video INTEGER NOT NULL DEFAULT 0,
+  -- How much of the folder tree this library is, and whether its folders are
+  -- shoots (§4.1). Standing rules, not import-time choices: a folder created
+  -- next month is in or out for the same reason today's are.
+  include_subfolders INTEGER NOT NULL DEFAULT 1,
+  mirror_shoots      INTEGER NOT NULL DEFAULT 1
 );
 
 CREATE TABLE IF NOT EXISTS shoots (
@@ -37,7 +42,13 @@ CREATE TABLE IF NOT EXISTS shoots (
   description   TEXT,
   ordering      TEXT NOT NULL DEFAULT 'taken_asc'
     CHECK (ordering IN ('taken_asc', 'taken_desc', 'added_asc', 'added_desc')),
-  UNIQUE (library_id, name)
+  -- The folder's identity apart from its path, so a rename on disk is recognised
+  -- rather than read as a delete plus a create (§9.4.1). NULL until first seen.
+  folder_ino        INTEGER,
+  folder_birthtime  REAL,
+  -- A shoot is its folder; the name is a label on it. Two shoots in one folder is
+  -- the collision worth refusing, and it is this one stated directly.
+  UNIQUE (library_id, folder_path)
 );
 CREATE INDEX IF NOT EXISTS idx_shoots_library ON shoots(library_id);
 CREATE INDEX IF NOT EXISTS idx_shoots_parent ON shoots(parent_id);
@@ -147,6 +158,18 @@ CREATE TABLE IF NOT EXISTS album_banners (
   photo_id  TEXT NOT NULL REFERENCES photos(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_album_banners_photo ON album_banners(photo_id);
+
+-- Where a folder differs from what the library's settings say in general (§4.7).
+-- 'excluded' keeps it out of the scan entirely; 'plain' lets its photos in but
+-- keeps mirroring from making it a shoot, which is what lets "delete the shoot,
+-- keep the photos" survive the next sync. One row per folder: both answer the
+-- same question about it, so the second write replaces the first.
+CREATE TABLE IF NOT EXISTS folder_rules (
+  library_id   TEXT NOT NULL REFERENCES libraries(id) ON DELETE CASCADE,
+  folder_path  TEXT NOT NULL,
+  rule         TEXT NOT NULL CHECK (rule IN ('excluded', 'plain')),
+  PRIMARY KEY (library_id, folder_path)
+);
 
 -- Runtime settings the user can change from the app, as opposed to the
 -- deployment config in environment variables (§15).
@@ -275,6 +298,14 @@ export function runMigrations(db: Database): void {
   ensureColumn(db, 'libraries', 'rendition_hdr', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'libraries', 'rendition_hdr_video', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'libraries', 'name', 'TEXT'); // display name, NULL falls back to the root folder
+  // What the library contains, and whether its folders are shoots (§4.1). The
+  // shoots' UNIQUE moved from (library_id, name) to (library_id, folder_path) at
+  // the same time, which no ALTER can express: a database predating that keeps
+  // the old constraint and has to be recreated to lose it.
+  ensureColumn(db, 'libraries', 'include_subfolders', 'INTEGER NOT NULL DEFAULT 1');
+  ensureColumn(db, 'libraries', 'mirror_shoots', 'INTEGER NOT NULL DEFAULT 1');
+  ensureColumn(db, 'shoots', 'folder_ino', 'INTEGER'); // folder identity across a rename (§9.4.1)
+  ensureColumn(db, 'shoots', 'folder_birthtime', 'REAL');
   migrateSelectedToTriage(db);
   ensureColumn(db, 'photos', 'needs_tile', 'INTEGER NOT NULL DEFAULT 1');
   ensureColumn(db, 'photos', 'needs_renditions', 'INTEGER NOT NULL DEFAULT 1');
@@ -284,6 +315,7 @@ export function runMigrations(db: Database): void {
   // After the columns exist rather than in SCHEMA above: that runs first, and on a
   // database being upgraded the columns are added here, so indexing them up there
   // fails on every start until the table is recreated.
+  db.exec('CREATE INDEX IF NOT EXISTS idx_shoots_ino ON shoots(library_id, folder_ino)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_photos_needs_tile ON photos(needs_tile) WHERE needs_tile = 1');
   db.exec('CREATE INDEX IF NOT EXISTS idx_photos_needs_renditions ON photos(needs_renditions) WHERE needs_renditions = 1');
 }

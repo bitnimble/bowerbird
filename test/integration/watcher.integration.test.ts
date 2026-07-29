@@ -8,6 +8,7 @@ import { createDatabase } from '../../src/db/connection';
 import { AlbumsRepository } from '../../src/services/albums/albums_repository';
 import { LibrariesRepository } from '../../src/services/libraries/libraries_repository';
 import { PhotosRepository } from '../../src/services/photos/photos_repository';
+import { FolderRulesRepository } from '../../src/services/shoots/folder_rules_repository';
 import { ShootsRepository } from '../../src/services/shoots/shoots_repository';
 import { LibraryWatcher } from '../../src/services/sync/library_watcher';
 import { SyncService } from '../../src/services/sync/sync_service';
@@ -31,7 +32,7 @@ async function settle(check: () => boolean): Promise<void> {
   for (let i = 0; i < 40 && !check(); i++) await sleep(100);
 }
 
-beforeAll(() => {
+beforeAll(async () => {
   root = mkdtempSync(path.join(tmpdir(), 'bb-watch-'));
   db = createDatabase(':memory:');
   db.query('INSERT INTO libraries (id, root_path, ordering) VALUES (?, ?, ?)').run(LIB, root, 'taken_desc');
@@ -40,10 +41,12 @@ beforeAll(() => {
     new LibrariesRepository(db),
     new AlbumsRepository(db),
     new ShootsRepository(db),
+    new FolderRulesRepository(db),
     { processUnprocessed() {} },
   );
   watcher = new LibraryWatcher(new LibrariesRepository(db), sync, DEBOUNCE);
   watcher.start();
+  await watcher.whenReady(); // chokidar walks the tree before it delivers anything
 });
 
 afterAll(() => {

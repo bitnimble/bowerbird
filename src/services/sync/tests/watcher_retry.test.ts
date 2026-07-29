@@ -1,26 +1,45 @@
-import { describe, it, expect, afterEach, beforeEach, jest } from 'bun:test';
+import { describe, it, expect, afterEach, beforeEach, jest, mock } from 'bun:test';
 import type { Library } from '../../../schemas/libraries';
 import type { LibrariesRepository } from '../../libraries/libraries_repository';
-import { LibraryWatcher } from '../library_watcher';
+import type { LibraryScope } from '../../../utils/scope';
 import type { SyncService } from '../sync_service';
 
-// watch() on this path throws synchronously, so every re-attempt fails the same
-// way a permanently unmounted drive would.
+// Every attempt to watch fails, the way a permanently unmounted drive would.
+// Mocked rather than pointed at a path that does not exist, because chokidar
+// reports that asynchronously and this is about our own retry loop.
+mock.module('chokidar', () => ({
+  default: {
+    watch: () => {
+      throw new Error('ENOENT');
+    },
+  },
+}));
+
+const { LibraryWatcher } = await import('../library_watcher');
+
 const library: Library = { id: 'lib', root_path: '/definitely/not/a/real/root', data_path: null, name: null, ordering: 'taken_desc',
   rendition_source: 'embedded' as const,
   rendition_hdr: false,
-  rendition_hdr_video: false, last_synced_at: null, photo_count: 0 };
+  rendition_hdr_video: false, include_subfolders: true, mirror_shoots: true, last_synced_at: null, photo_count: 0 };
 const DEBOUNCE = 1000;
 const TEN_MINUTES = 10 * 60 * 1000;
 
-function build(): LibraryWatcher {
+function build(): InstanceType<typeof LibraryWatcher> {
   const libraries = { list: () => [library], getById: () => library } as unknown as LibrariesRepository;
-  const sync = { syncLibrary: () => Promise.resolve() } as unknown as SyncService;
+  const sync = {
+    syncLibrary: () => Promise.resolve(),
+    scopeFor: (): LibraryScope => ({
+      rootPath: library.root_path,
+      dataPath: '/x',
+      includeSubfolders: true,
+      excluded: new Set<string>(),
+    }),
+  } as unknown as SyncService;
   return new LibraryWatcher(libraries, sync, DEBOUNCE);
 }
 
 describe('LibraryWatcher watch-error backoff', () => {
-  let watcher: LibraryWatcher;
+  let watcher: InstanceType<typeof LibraryWatcher>;
   let attempts: number;
   let error: ReturnType<typeof jest.spyOn>;
 

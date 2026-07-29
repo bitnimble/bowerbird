@@ -36,6 +36,8 @@ beforeAll(() => {
     rendition_source: 'render',
     rendition_hdr: false,
     rendition_hdr_video: false,
+    include_subfolders: true,
+    mirror_shoots: true,
     last_synced_at: null,
     photo_count: 1,
   };

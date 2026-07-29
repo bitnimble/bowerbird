@@ -31,6 +31,25 @@ function generatedDirs(library: Library): Array<{ dir: string; ext: string }> {
 
 const log = new Logger('prune');
 
+// The eager half of the sweep below, for photos whose rows are going right now
+// rather than ones whose rows went at some point (§8.5). Same directories and the
+// same rule about which files a photo id owns, so a change to either is made once.
+export async function deleteGeneratedFilesFor(library: Library, photoIds: readonly string[]): Promise<void> {
+  if (photoIds.length === 0) return;
+  const ids = new Set(photoIds);
+  const dataPath = getDataPath(library);
+  for (const { dir } of generatedDirs(library)) {
+    const files = await readdir(dir).catch(() => []);
+    for (const file of files) {
+      if (!ids.has(file.replace(/\.[^.]+$/, ''))) continue;
+      // The sweep is the backstop, so a file that will not go now is not an error.
+      await deleteGeneratedFile(dataPath, path.join(dir, file)).catch((err: unknown) => {
+        log.warn('could not remove a rendition; the sweep will', { file, err });
+      });
+    }
+  }
+}
+
 export interface PruneResult {
   removed: number;
   bytes: number;

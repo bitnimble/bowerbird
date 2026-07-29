@@ -34,6 +34,15 @@ export const UpdateShootRequestSchema = z.object({
 });
 export type UpdateShootRequest = z.infer<typeof UpdateShootRequestSchema>;
 
+// What becomes of the photographs, asked rather than assumed (§8.5): 'keep'
+// leaves them in the library and marks the folder plain, 'remove' takes their
+// rows and renditions with the shoot and excludes the folder. The reversible
+// answer is the default.
+export const DeleteShootQuerySchema = z.object({
+  photos: z.enum(['keep', 'remove']).default('keep'),
+});
+export type DeleteShootQuery = z.infer<typeof DeleteShootQuerySchema>;
+
 export const ShootSchema = z.object({
   id: UuidSchema,
   parent_id: UuidSchema.nullable(),

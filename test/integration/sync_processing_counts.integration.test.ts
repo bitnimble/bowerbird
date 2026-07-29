@@ -10,6 +10,7 @@ import { createDatabase } from '../../src/db/connection';
 import { AlbumsRepository } from '../../src/services/albums/albums_repository';
 import { LibrariesRepository } from '../../src/services/libraries/libraries_repository';
 import { PhotosRepository } from '../../src/services/photos/photos_repository';
+import { FolderRulesRepository } from '../../src/services/shoots/folder_rules_repository';
 import { ShootsRepository } from '../../src/services/shoots/shoots_repository';
 import { SyncService } from '../../src/services/sync/sync_service';
 import { extractMetadata } from '../../src/services/processing/metadata';
@@ -43,6 +44,7 @@ test('processing counts track rendition progress, then settle when the tail fini
     new LibrariesRepository(db),
     new AlbumsRepository(db),
     new ShootsRepository(db),
+    new FolderRulesRepository(db),
     { processUnprocessed: () => blocked },
     extractMetadata,
   );

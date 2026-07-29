@@ -5,7 +5,8 @@ import path from 'node:path';
 import { AppError } from '../../errors';
 import { Logger } from '../../logger';
 import type { Library, LibrarySyncStatus } from '../../schemas/libraries';
-import { isSupportedFile, listSupportedFiles, type ScannedFile } from '../../utils/scan';
+import { isSupportedFile, scanLibraryTree, type ScannedDir, type ScannedFile } from '../../utils/scan';
+import { isDirInScope, isFileInScope, type LibraryScope } from '../../utils/scope';
 import { computeFileHash } from '../../utils/hash';
 import { getDataPath } from '../../utils/paths';
 import { mostSpecificShoot, shootContains } from '../../utils/shoots';
@@ -13,10 +14,18 @@ import type { AlbumsRepository } from '../albums/albums_repository';
 import type { LibrariesRepository } from '../libraries/libraries_repository';
 import type { LibraryLifecycleListener } from '../libraries/libraries_service';
 import type { PhotosRepository, SyncDbPhoto } from '../photos/photos_repository';
+import type { FolderRulesRepository } from '../shoots/folder_rules_repository';
 import type { ShootsRepository } from '../shoots/shoots_repository';
 import { extractMetadata, type FileMetadata } from '../processing/metadata';
 import type { ProcessingScope } from '../processing/processing_service';
-import { buildDiff, detectMoves, detectShootRelocations, type AddedEntry, type DiskFile } from './sync_algorithm';
+import {
+  buildDiff,
+  detectMoves,
+  detectRelocationsByIdentity,
+  detectShootRelocations,
+  type AddedEntry,
+  type DiskFile,
+} from './sync_algorithm';
 import { libraryMutex } from './library_mutex';
 import { acquireSyncLock, releaseSyncLock } from './sync_lock';
 
@@ -85,9 +94,22 @@ export class SyncService implements LibraryLifecycleListener {
     private readonly libraries: LibrariesRepository,
     private readonly albums: AlbumsRepository,
     private readonly shoots: ShootsRepository,
+    private readonly folderRules: FolderRulesRepository,
     private readonly processing: ProcessingTrigger,
     private readonly extract: MetadataExtractor = extractMetadata,
   ) {}
+
+  // What this library contains, in the form the scan and the watcher both read
+  // (§9.1). Built per run: a folder rule set between two syncs takes effect on
+  // the next one without anything having to invalidate a cache.
+  scopeFor(library: Library): LibraryScope {
+    return {
+      rootPath: library.root_path,
+      dataPath: getDataPath(library),
+      includeSubfolders: library.include_subfolders,
+      excluded: this.folderRules.pathsWithRule(library.id, 'excluded'),
+    };
+  }
 
   onLibraryCreated(_library: Library): void {
     // No action: sync is triggered on demand (POST /sync) or by the watcher.
@@ -148,7 +170,6 @@ export class SyncService implements LibraryLifecycleListener {
       const synced = await libraryMutex.run(libraryId, async () => {
       this.statuses.set(libraryId, idle(libraryId, 'scanning'));
 
-      const dataPath = getDataPath(library);
       // The scan is the long half of an import, and the status endpoint is the
       // only thing that can say so while it runs. No generation guard: the sync
       // lock is not released until after the scan, so nothing newer can exist.
@@ -196,20 +217,28 @@ export class SyncService implements LibraryLifecycleListener {
         added += batch.length;
       };
 
+      const scope = this.scopeFor(library);
       let dbPhotos: SyncDbPhoto[];
       let files: readonly ScannedFile[];
+      // The folders this run saw, and their identities: every one of them on a
+      // full walk, and on a scoped run the ones the watcher named. A folder that
+      // moved is in here under its new path either way, which is what lets §9.4.1
+      // recognise it (including one holding no photos, whose move nothing else
+      // leaves a trace of).
+      let dirs: readonly ScannedDir[];
       if (scopePaths != null) {
-        // Bun's fs.watch delivers only one event for a rename (the old name), so
-        // readdir the changed paths' directories to also discover the move target
-        // (a sibling). Reconcile only those directories' current files against the
-        // rows at the changed + discovered paths, plus the missing move-source pool.
-        files = await this.scopedFiles(library.root_path, dataPath, this.scopeDirs(scopePaths));
+        // Reconcile only the changed paths' directories against the rows at the
+        // changed + discovered paths, plus the missing move-source pool. Reading
+        // whole directories rather than single files is what catches the other
+        // half of a move whose two events did not land in the same window.
+        files = await this.scopedFiles(scope, this.scopeDirs(scopePaths));
         const known = new Set<string>(scopePaths);
         for (const f of files) known.add(f.relPath);
         dbPhotos = this.scopedDbPhotos(libraryId, [...known]);
+        dirs = await this.scopedDirs(scope, scopePaths);
       } else {
         dbPhotos = this.photos.listForSync(libraryId);
-        files = await listSupportedFiles(library.root_path, dataPath);
+        ({ files, dirs } = await scanLibraryTree(scope));
       }
       const { present, changed, failed } = await this.scanFiles(
         files,
@@ -238,9 +267,25 @@ export class SyncService implements LibraryLifecycleListener {
       // position inside the folder, so their paths shift by a prefix and their
       // shoot membership does not change at all. What is left is the moves that
       // are genuinely about individual files.
-      const relocations = detectShootRelocations(shoots, result.moves, dbPhotos, (folder) =>
-        existsSync(path.join(library.root_path, folder)),
-      );
+      //
+      // The inode answers first and exactly (§9.4.1); the photos answer the cases
+      // it cannot see, which is any move that minted a new inode - across a
+      // filesystem, or a whole library restored from a backup.
+      const onDisk = (folder: string): boolean => existsSync(path.join(library.root_path, folder));
+      const byIdentity = detectRelocationsByIdentity(this.shoots.listIdentities(libraryId), dirs, onDisk);
+      const settled = new Set(byIdentity.map((r) => r.shootId));
+      const claimed = new Set(byIdentity.map((r) => r.newFolderPath));
+      const relocations = [
+        ...byIdentity,
+        // Two shoots cannot occupy one folder, so a guess at a folder the inode
+        // has already spoken for is wrong by construction.
+        ...detectShootRelocations(
+          shoots.filter((s) => !settled.has(s.id)),
+          result.moves,
+          dbPhotos,
+          onDisk,
+        ).filter((r) => !claimed.has(r.newFolderPath)),
+      ];
       const relocatedFolders = relocations.map((r) => r.oldFolderPath);
       const moves = result.moves.filter((mv) => !relocatedFolders.some((folder) => shootContains(folder, mv.oldFilePath)));
 
@@ -320,6 +365,10 @@ export class SyncService implements LibraryLifecycleListener {
         }
       });
 
+      // After the photos are written, so the folders' contents are settled: which
+      // folders hold photographs is the whole question mirroring answers.
+      const mirrored = this.reconcileShootFolders(library, dirs, present, scopePaths == null);
+
       // Survives a restart, unlike the in-memory status, so the UI can always say
       // how stale the catalogue is (§9.6).
       this.libraries.setLastSyncedAt(libraryId, nowUtc);
@@ -355,6 +404,7 @@ export class SyncService implements LibraryLifecycleListener {
         removed,
         moved,
         relocatedShoots: relocations.length,
+        mirroredShoots: mirrored,
         modified,
         reappeared: diff.reappeared.length,
         queuedForProcessing: queued,
@@ -487,6 +537,94 @@ export class SyncService implements LibraryLifecycleListener {
     return id;
   }
 
+  // Brings the shoots into step with the folders the scan just saw (§9.4.1).
+  //
+  // Runs for every library, mirroring or not, because recording where each shoot's
+  // folder actually is has nothing to do with the setting: it is how the next
+  // rename gets recognised, and a shoot created before the folder was ever scanned
+  // has no identity until something writes one.
+  private reconcileShootFolders(
+    library: Library,
+    dirs: readonly ScannedDir[],
+    presentFiles: ReadonlySet<string>,
+    fullRun: boolean,
+  ): number {
+    const seen = new Map(dirs.map((d) => [d.relPath, d]));
+    const shoots = this.shoots.listByLibrary(library.id);
+    const byPath = new Map(shoots.map((s) => [s.folder_path, s]));
+
+    return this.shoots.transaction(() => {
+      let changed = 0;
+      for (const identity of this.shoots.listIdentities(library.id)) {
+        const dir = seen.get(identity.folder_path);
+        if (dir == null) continue;
+        if (identity.folder_ino === dir.ino && identity.folder_birthtime === dir.birthtimeMs) continue;
+        this.shoots.setIdentity(identity.id, dir.ino, dir.birthtimeMs);
+      }
+      if (!library.mirror_shoots) return changed;
+
+      // A folder holding photographs of its own. Pass-through folders are left
+      // out: they are structure rather than a set of photographs, and the tree on
+      // screen is drawn from the shoots' own paths (§18.3.2).
+      const plain = this.folderRules.pathsWithRule(library.id, 'plain');
+      const withPhotos = new Set<string>();
+      for (const file of presentFiles) {
+        const slash = file.lastIndexOf('/');
+        if (slash > 0) withPhotos.add(file.slice(0, slash));
+      }
+
+      // Shallowest first, so each new shoot's parent already exists to be derived
+      // from - the same derivation `create` uses, against a list that grows as we
+      // go rather than one read once.
+      const wanted = [...withPhotos]
+        .filter((folder) => !byPath.has(folder) && !plain.has(folder))
+        .sort((a, b) => a.split('/').length - b.split('/').length);
+      const known = shoots.map((s) => ({ id: s.id, folder_path: s.folder_path }));
+      for (const folder of wanted) {
+        const dir = seen.get(folder);
+        const shoot = {
+          id: randomUUID(),
+          parent_id: mostSpecificShoot(folder, known)?.id ?? null,
+          library_id: library.id,
+          folder_path: folder,
+          name: folder.slice(folder.lastIndexOf('/') + 1),
+          description: null,
+          // No explicit choice was made, so the library's own answer is the
+          // closest thing to one.
+          ordering: library.ordering,
+          folder_ino: dir?.ino ?? null,
+          folder_birthtime: dir?.birthtimeMs ?? null,
+        };
+        this.shoots.insert(shoot);
+        known.push({ id: shoot.id, folder_path: folder });
+        changed++;
+      }
+
+      // A new shoot takes the photographs in its folder, including any that a
+      // shallower shoot was holding for want of a closer one. Re-stated shallowest
+      // first over the affected subtrees only, so the deeper claim lands last and
+      // a library with nothing new to mirror rewrites no rows at all.
+      if (wanted.length > 0) {
+        const affected = known
+          .filter((s) => wanted.some((folder) => s.folder_path === folder || shootContains(folder, s.folder_path)))
+          .sort((a, b) => a.folder_path.split('/').length - b.folder_path.split('/').length);
+        for (const shoot of affected) this.photos.setShootForFolder(library.id, shoot.folder_path, shoot.id);
+      }
+
+      // Both halves are required: a folder that is gone but still has rows is a
+      // library whose files went missing, not a shoot to discard. Only a full run
+      // can say a folder is absent - a scoped one never looked.
+      if (fullRun) {
+        for (const shoot of shoots) {
+          if (seen.has(shoot.folder_path) || shoot.photo_count > 0) continue;
+          this.shoots.delete(shoot.id);
+          changed++;
+        }
+      }
+      return changed;
+    });
+  }
+
   // The rows a scoped sync reconciles: those at the changed + discovered paths
   // (candidates for remove/modify/reappear/add) plus every already-missing row (so
   // a new file can still hash-pair into a move across syncs). Deduped by id.
@@ -507,15 +645,31 @@ export class SyncService implements LibraryLifecycleListener {
     return [...dirs];
   }
 
+  // The identities of the folders a scoped run was told about: each changed path
+  // that is itself a directory, plus the directories those paths sit in. The first
+  // is what a folder move reports (an empty folder's move reports nothing else at
+  // all), the second is what a file's move reports.
+  private async scopedDirs(scope: LibraryScope, scopePaths: readonly string[]): Promise<ScannedDir[]> {
+    const candidates = new Set<string>(scopePaths);
+    for (const dir of this.scopeDirs(scopePaths)) candidates.add(dir);
+    const dirs: ScannedDir[] = [];
+    for (const relPath of candidates) {
+      if (relPath === '' || !isDirInScope(scope, relPath)) continue;
+      const stats = await stat(path.join(scope.rootPath, relPath)).catch(() => null);
+      if (stats?.isDirectory()) dirs.push({ relPath, ino: stats.ino, birthtimeMs: stats.birthtimeMs });
+    }
+    return dirs;
+  }
+
   // readdir each scoped directory (non-recursive) for its current RAW files,
-  // dropping non-RAW, excluded-dir, and data-dir entries. A directory that's gone
-  // just yields nothing, so its DB rows fall through to `removed`.
-  private async scopedFiles(rootPath: string, dataPath: string, dirs: readonly string[]): Promise<ScannedFile[]> {
-    const resolvedData = path.resolve(dataPath);
+  // dropping non-RAW entries and anything out of the library's scope (§9.1). A
+  // directory that's gone just yields nothing, so its DB rows fall through to
+  // `removed`.
+  private async scopedFiles(scope: LibraryScope, dirs: readonly string[]): Promise<ScannedFile[]> {
     const files: ScannedFile[] = [];
     for (const dir of dirs) {
-      if (dir.split('/').some((s) => s.startsWith('.') || s === 'Bin')) continue;
-      const absDir = path.join(rootPath, dir);
+      if (!isDirInScope(scope, dir)) continue;
+      const absDir = path.join(scope.rootPath, dir);
       let entries;
       try {
         entries = await readdir(absDir, { withFileTypes: true });
@@ -524,10 +678,9 @@ export class SyncService implements LibraryLifecycleListener {
       }
       for (const entry of entries) {
         if (entry.isDirectory() || !isSupportedFile(entry.name)) continue;
-        const absPath = path.join(absDir, entry.name);
-        const resolved = path.resolve(absPath);
-        if (resolved === resolvedData || resolved.startsWith(`${resolvedData}${path.sep}`)) continue;
-        files.push({ relPath: dir ? `${dir}/${entry.name}` : entry.name, absPath });
+        const relPath = dir ? `${dir}/${entry.name}` : entry.name;
+        if (!isFileInScope(scope, relPath)) continue;
+        files.push({ relPath, absPath: path.join(absDir, entry.name) });
       }
     }
     return files;

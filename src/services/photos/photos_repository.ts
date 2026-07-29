@@ -425,7 +425,30 @@ export class PhotosRepository {
       .all(libraryId, lo, hi) as BasicPhoto[];
   }
 
-  // Bulk prefix rewrite for a shoot folder that moved on disk (§9.5). Two
+  // Hands every photo under `folderPath` to that folder's shoot. Callers run it
+  // shallowest folder first, so a deeper shoot's own claim lands last and wins,
+  // which is the same "most specific folder" rule the per-photo path uses (§9.4).
+  setShootForFolder(libraryId: string, folderPath: string, shootId: string): void {
+    const [lo, hi] = folderRange(folderPath);
+    this.db
+      .query('UPDATE photos SET shoot_id = ? WHERE library_id = ? AND file_path >= ? AND file_path < ?')
+      .run(shootId, libraryId, lo, hi);
+  }
+
+  // Removes the rows outright, unlike the soft delete in §12, which moves a file
+  // to a Bin so it can come back. This is for a folder leaving the library (§4.7):
+  // the files stay exactly where they are on disk, and what goes is the
+  // catalogue's record of them. Album membership, banners and the rest cascade.
+  deleteByIds(ids: readonly string[]): number {
+    let deleted = 0;
+    for (const batch of inChunks(ids)) {
+      const placeholders = batch.map(() => '?').join(', ');
+      deleted += this.db.query(`DELETE FROM photos WHERE id IN (${placeholders})`).run(...batch).changes;
+    }
+    return deleted;
+  }
+
+  // Bulk prefix rewrite for a shoot folder that moved on disk (§9.4.1). Two
   // statements rather than one UPDATE per photo: a folder move is the one case
   // where every path beneath it changes the same way, and a shoot can hold
   // thousands of frames.

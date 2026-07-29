@@ -4,16 +4,21 @@ import { AppError } from '../../../errors';
 import { applyErrorHandler } from '../../error_handler';
 import type { Library, LibrarySyncStatus } from '../../../schemas/libraries';
 import type { LibrariesService } from '../../../services/libraries/libraries_service';
+import type { FolderRulesRepository } from '../../../services/shoots/folder_rules_repository';
 import type { SyncService } from '../../../services/sync/sync_service';
 import { LibrariesApi } from '../libraries_api';
 
 const library: Library = { id: 'l1', root_path: '/r', data_path: null, name: null, ordering: 'taken_desc',
   rendition_source: 'embedded' as const,
   rendition_hdr: false,
-  rendition_hdr_video: false, last_synced_at: null, photo_count: 0 };
+  rendition_hdr_video: false, include_subfolders: true, mirror_shoots: true, last_synced_at: null, photo_count: 0 };
 const status = { library_id: 'l1', status: 'processing', photos_added: 3 } as LibrarySyncStatus;
 
-function buildApp(lib: Partial<LibrariesService> = {}, sync: Partial<SyncService> = {}) {
+function buildApp(
+  lib: Partial<LibrariesService> = {},
+  sync: Partial<SyncService> = {},
+  rules: Partial<FolderRulesRepository> = {},
+) {
   const libraries = {
     create: jest.fn(async () => library),
     list: jest.fn(() => [library]),
@@ -26,10 +31,16 @@ function buildApp(lib: Partial<LibrariesService> = {}, sync: Partial<SyncService
     getSyncStatus: jest.fn(() => status),
     ...sync,
   } as unknown as SyncService;
+  const folderRules = {
+    listByLibrary: jest.fn(() => []),
+    set: jest.fn(),
+    clear: jest.fn(() => true),
+    ...rules,
+  } as unknown as FolderRulesRepository;
   const app = new Hono();
-  app.route('/api/libraries', new LibrariesApi(libraries, syncSvc).routes);
+  app.route('/api/libraries', new LibrariesApi(libraries, syncSvc, folderRules).routes);
   applyErrorHandler(app);
-  return { app, libraries, sync: syncSvc };
+  return { app, libraries, sync: syncSvc, folderRules };
 }
 
 describe('LibrariesApi', () => {

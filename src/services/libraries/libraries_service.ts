@@ -16,6 +16,8 @@ const log = new Logger('libraries');
 export interface LibraryLifecycleListener {
   onLibraryCreated(library: Library): void;
   onLibraryDeleted(libraryId: string): void;
+  /** For listeners holding something derived from the library's settings. */
+  onLibraryUpdated?(library: Library): void;
 }
 
 // Removing a library takes its generated files with it: renditions are keyed by
@@ -78,6 +80,10 @@ export class LibrariesService {
       rendition_source: 'embedded',
       rendition_hdr: false,
       rendition_hdr_video: false,
+      include_subfolders: request.include_subfolders,
+      // A shoot is a subfolder, so mirroring folders the scan will never reach
+      // would only ever produce nothing (§4.1).
+      mirror_shoots: request.include_subfolders && request.mirror_shoots,
       last_synced_at: null,
       photo_count: 0,
     };
@@ -129,13 +135,26 @@ export class LibrariesService {
   // touch existing photos - it is the default for what gets built next, and for
   // an explicit rebuild (§10.2).
   update(libraryId: string, updates: UpdateLibraryRequest): Library {
-    if (this.repo.getById(libraryId) == null) throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
+    const current = this.repo.getById(libraryId);
+    if (current == null) throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
     if (updates.name != null) this.repo.setName(libraryId, updates.name === '' ? null : updates.name);
     if (updates.ordering != null) this.repo.setOrdering(libraryId, updates.ordering);
     if (updates.rendition_source != null) this.repo.setRenditionSource(libraryId, updates.rendition_source);
     if (updates.rendition_hdr != null) this.repo.setRenditionHdr(libraryId, updates.rendition_hdr);
     if (updates.rendition_hdr_video != null) this.repo.setRenditionHdrVideo(libraryId, updates.rendition_hdr_video);
-    return this.get(libraryId);
+    if (updates.include_subfolders != null) this.repo.setIncludeSubfolders(libraryId, updates.include_subfolders);
+    // Mirroring folders the scan will never reach produces nothing, so the two
+    // settings cannot be left disagreeing - whichever of them this request moved.
+    const includeSubfolders = updates.include_subfolders ?? current.include_subfolders;
+    const mirror = updates.mirror_shoots ?? current.mirror_shoots;
+    if (mirror !== current.mirror_shoots || !includeSubfolders) {
+      this.repo.setMirrorShoots(libraryId, includeSubfolders && mirror);
+    }
+    const updated = this.get(libraryId);
+    // The watcher holds a scope built from these, so an excluded folder would
+    // otherwise keep waking syncs until a restart.
+    for (const listener of this.listeners) listener.onLibraryUpdated?.(updated);
+    return updated;
   }
 
   async delete(libraryId: string): Promise<void> {

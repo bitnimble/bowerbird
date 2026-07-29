@@ -11,7 +11,17 @@ let db: ReturnType<typeof createDatabase>;
 let shoots: ShootsRepository;
 
 function insertShoot(id: string, ordering: Ordering): void {
-  shoots.insert({ id, parent_id: null, library_id: LIB, folder_path: id, name: id, description: null, ordering });
+  shoots.insert({
+    id,
+    parent_id: null,
+    library_id: LIB,
+    folder_path: id,
+    name: id,
+    description: null,
+    ordering,
+    folder_ino: null,
+    folder_birthtime: null,
+  });
 }
 
 // date_taken is deliberately out of step with date_added, so an ordering read off

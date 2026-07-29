@@ -49,7 +49,7 @@ function build(over: {
 const library: Library = { id: 'lib', root_path: '/r', data_path: null, name: null, ordering: 'added_asc',
   rendition_source: 'embedded' as const,
   rendition_hdr: false,
-  rendition_hdr_video: false, last_synced_at: null, photo_count: 0 };
+  rendition_hdr_video: false, include_subfolders: true, mirror_shoots: true, last_synced_at: null, photo_count: 0 };
 const shoot: Shoot = { id: 'sh', parent_id: null, library_id: 'lib', folder_path: 'Trip', name: 'Trip', description: null, banner_photo_id: null, ordering: 'taken_asc', photo_count: 0 };
 const album: Album = { id: 'al', name: 'Faves', ordering: 'taken_desc', banner_photo_id: null, photo_count: 0 };
 const detail = { id: 'p1', file_path: 'a.arw' } as PhotoDetail;
@@ -178,7 +178,7 @@ describe('PhotosService.delete', () => {
       const lib: Library = { id: 'lib', root_path: root, data_path: null, name: null, ordering: 'added_asc',
   rendition_source: 'embedded' as const,
   rendition_hdr: false,
-  rendition_hdr_video: false, last_synced_at: null, photo_count: 0 };
+  rendition_hdr_video: false, include_subfolders: true, mirror_shoots: true, last_synced_at: null, photo_count: 0 };
       const markDeleted = jest.fn();
       // getBasicByIds, not getById: the delete reads the four columns it needs
       // for a whole batch rather than a detail payload per photo (§12.1).
@@ -211,7 +211,7 @@ describe('PhotosService.delete', () => {
       const lib: Library = { id: 'lib', root_path: root, data_path: null, name: null, ordering: 'added_asc',
   rendition_source: 'embedded' as const,
   rendition_hdr: false,
-  rendition_hdr_video: false, last_synced_at: null, photo_count: 0 };
+  rendition_hdr_video: false, include_subfolders: true, mirror_shoots: true, last_synced_at: null, photo_count: 0 };
       const photo = { id: 'p1', library_id: 'lib', shoot_id: null, file_path: 'a.arw' };
       const { service } = build({
         photos: {

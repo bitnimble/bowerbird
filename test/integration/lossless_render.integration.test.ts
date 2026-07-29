@@ -26,6 +26,8 @@ function library(dataPath: string, hdr: boolean): Library {
     rendition_source: 'render',
     rendition_hdr: hdr,
     rendition_hdr_video: false,
+    include_subfolders: true,
+    mirror_shoots: true,
     last_synced_at: null,
     photo_count: 0,
   };

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'bun:test';
 import type { FileMetadata } from '../../processing/metadata';
-import { buildDiff, detectMoves, detectShootRelocations } from '../sync_algorithm';
+import { buildDiff, detectMoves, detectRelocationsByIdentity, detectShootRelocations } from '../sync_algorithm';
+import type { ScannedDir } from '../../../utils/scan';
 import type { DbPhoto, DiskFile, LibraryDiff, MoveEntry } from '../sync_algorithm';
 
 const META = {} as FileMetadata;
@@ -260,5 +261,69 @@ describe('detectShootRelocations', () => {
       photos('NYC/keep.arw', 'NYC2/a.arw'),
     );
     expect(relocations).toEqual([]);
+  });
+});
+
+describe('detectRelocationsByIdentity', () => {
+  const shoot = (id: string, folder_path: string, folder_ino: number | null, folder_birthtime: number | null = 100) => ({
+    id,
+    folder_path,
+    folder_ino,
+    folder_birthtime,
+  });
+  const dir = (relPath: string, ino: number, birthtimeMs = 100): ScannedDir => ({ relPath, ino, birthtimeMs });
+  const detect = (
+    shoots: Parameters<typeof detectRelocationsByIdentity>[0],
+    dirs: Parameters<typeof detectRelocationsByIdentity>[1],
+    folderStillOnDisk: Parameters<typeof detectRelocationsByIdentity>[2] = () => false,
+  ) => detectRelocationsByIdentity(shoots, dirs, folderStillOnDisk);
+
+  it('follows the inode to the folder’s new path', () => {
+    expect(detect([shoot('s1', 'NYC', 7)], [dir('NewYork', 7)])).toEqual([
+      { shootId: 's1', oldFolderPath: 'NYC', newFolderPath: 'NewYork' },
+    ]);
+  });
+
+  // The case photo evidence structurally cannot see: nothing moved, so there is
+  // no other trace of the rename at all.
+  it('follows a shoot holding no photos', () => {
+    expect(detect([shoot('empty', 'Planned', 9)], [dir('Booked', 9)])).toEqual([
+      { shootId: 'empty', oldFolderPath: 'Planned', newFolderPath: 'Booked' },
+    ]);
+  });
+
+  it('leaves a shoot whose folder is still there', () => {
+    expect(detect([shoot('s1', 'NYC', 7)], [dir('NewYork', 7)], () => true)).toEqual([]);
+  });
+
+  it('has nothing to match on for a shoot that was never scanned', () => {
+    expect(detect([shoot('s1', 'NYC', null, null)], [dir('NewYork', 7)])).toEqual([]);
+  });
+
+  // A recycled inode number pointing at an unrelated folder.
+  it('refuses a match whose birthtime disagrees', () => {
+    expect(detect([shoot('s1', 'NYC', 7, 100)], [dir('Somewhere', 7, 999)])).toEqual([]);
+  });
+
+  // Reported as 0 by some filesystems, where rejecting on it would disable the
+  // check exactly where the inode is the only evidence there is.
+  it('still matches when either side reports no birthtime', () => {
+    expect(detect([shoot('s1', 'NYC', 7, 0)], [dir('NewYork', 7, 999)])).toHaveLength(1);
+    expect(detect([shoot('s1', 'NYC', 7, 100)], [dir('NewYork', 7, 0)])).toHaveLength(1);
+  });
+
+  it('refuses a folder another shoot already holds', () => {
+    expect(detect([shoot('s1', 'NYC', 7), shoot('s2', 'NewYork', 8)], [dir('NewYork', 7)])).toEqual([]);
+  });
+
+  // Hardlinked directories, or a filesystem recycling numbers within one scan:
+  // either way the identification is not one.
+  it('refuses an ambiguous match across two folders sharing an inode', () => {
+    expect(detect([shoot('s1', 'NYC', 7)], [dir('A', 7), dir('B', 7)])).toEqual([]);
+  });
+
+  it('gives one target to at most one shoot', () => {
+    const relocations = detect([shoot('s1', 'NYC', 7), shoot('s2', 'LA', 7)], [dir('NewYork', 7)]);
+    expect(relocations).toHaveLength(1);
   });
 });

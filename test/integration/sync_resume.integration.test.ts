@@ -13,6 +13,7 @@ import type { ProcessingScope } from '../../src/services/processing/processing_s
 import { AlbumsRepository } from '../../src/services/albums/albums_repository';
 import { LibrariesRepository } from '../../src/services/libraries/libraries_repository';
 import { PhotosRepository } from '../../src/services/photos/photos_repository';
+import { FolderRulesRepository } from '../../src/services/shoots/folder_rules_repository';
 import { ShootsRepository } from '../../src/services/shoots/shoots_repository';
 import { SyncService, type ProcessingTrigger } from '../../src/services/sync/sync_service';
 
@@ -53,6 +54,7 @@ function build(processing: ProcessingTrigger, extract: (absPath: string) => Prom
     new LibrariesRepository(db),
     new AlbumsRepository(db),
     new ShootsRepository(db),
+    new FolderRulesRepository(db),
     processing,
     extract,
   );

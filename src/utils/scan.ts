@@ -1,5 +1,6 @@
 import { readdir, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
+import { isDirInScope, type LibraryScope } from './scope';
 
 // The scan filter, and the media type each format is served under. See DESIGN §7:
 // the decoder is chosen later by header sniff, so a format is added here and read
@@ -20,25 +21,36 @@ export function rawMediaType(filename: string): string {
   return RAW_MEDIA_TYPES.get(path.extname(filename).toLowerCase()) ?? 'application/octet-stream';
 }
 
-// Directory basenames the scanner never descends into. See DESIGN §6, §12.2.
-//  - hidden dirs (leading '.') covers `.bowerbird` and other dotfolders
-//  - `Bin` covers the deletion bins so soft-deleted files aren't re-imported
-function isExcludedDir(name: string): boolean {
-  return name.startsWith('.') || name === 'Bin';
-}
-
 export interface ScannedFile {
   // path relative to the scan root, forward slashes
   relPath: string;
   absPath: string;
 }
 
-// Recursively list supported files under `rootPath`, skipping excluded dirs and
-// anything under `dataPath` when it lives inside the root.
-export async function listSupportedFiles(rootPath: string, dataPath: string): Promise<ScannedFile[]> {
-  const results: ScannedFile[] = [];
-  const resolvedData = path.resolve(dataPath);
+// A folder the walk descended into, with the identity that survives its being
+// renamed (DESIGN §4.3). `birthtimeMs` is 0 on filesystems that report no
+// creation time, which is why §9.4.1 treats it as corroboration rather than as
+// half of the key.
+export interface ScannedDir {
+  relPath: string;
+  ino: number;
+  birthtimeMs: number;
+}
+
+export interface TreeScan {
+  files: ScannedFile[];
+  dirs: ScannedDir[];
+}
+
+// Walk everything the library contains, per `isInScope` (§9.1). Directories are
+// `stat`ed as they are entered: one call each, against the per-file stats the
+// scan already does, for the folder identities relocation reads.
+export async function scanLibraryTree(scope: LibraryScope): Promise<TreeScan> {
+  const files: ScannedFile[] = [];
+  const dirs: ScannedDir[] = [];
   const visitedDirs = new Set<string>(); // real paths, to stop symlink cycles
+
+  const relative = (abs: string): string => path.relative(scope.rootPath, abs).split(path.sep).join('/');
 
   async function walk(absDir: string): Promise<void> {
     const entries = await readdir(absDir, { withFileTypes: true });
@@ -58,23 +70,24 @@ export async function listSupportedFiles(rootPath: string, dataPath: string): Pr
         }
       }
 
+      const rel = relative(abs);
       if (isDir) {
-        if (isExcludedDir(entry.name)) continue;
-        if (path.resolve(abs) === resolvedData) continue;
+        if (!isDirInScope(scope, rel)) continue;
         const real = await realpath(abs).catch(() => abs);
         if (visitedDirs.has(real)) continue;
         visitedDirs.add(real);
+        const stats = await stat(abs).catch(() => null);
+        if (stats != null) dirs.push({ relPath: rel, ino: stats.ino, birthtimeMs: stats.birthtimeMs });
         await walk(abs);
       } else if (isFile && isSupportedFile(entry.name)) {
-        const rel = path.relative(rootPath, abs).split(path.sep).join('/');
-        results.push({ relPath: rel, absPath: abs });
+        files.push({ relPath: rel, absPath: abs });
       }
     }
   }
 
-  visitedDirs.add(await realpath(rootPath).catch(() => path.resolve(rootPath))); // so a symlink back to root can't re-walk the tree
-  await walk(rootPath);
-  return results;
+  visitedDirs.add(await realpath(scope.rootPath).catch(() => path.resolve(scope.rootPath))); // so a symlink back to root can't re-walk the tree
+  await walk(scope.rootPath);
+  return { files, dirs };
 }
 
 // Every supported file anywhere under `dir`, excluded directories included: used

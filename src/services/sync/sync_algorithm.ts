@@ -1,4 +1,6 @@
 import { shootContains } from '../../utils/shoots';
+import type { ScannedDir } from '../../utils/scan';
+import type { ShootIdentity } from '../shoots/shoots_repository';
 import type { FileMetadata } from '../processing/metadata';
 
 // Prior state (DB) and current state (disk) for one library.
@@ -171,7 +173,62 @@ export interface ShootRelocation {
   newFolderPath: string;
 }
 
-// A shoot folder renamed outside the app (DESIGN §9.5). Nothing on disk says a
+// A shoot folder renamed outside the app, answered by the folder itself rather
+// than by what is filed in it (DESIGN §9.4.1). A rename preserves the inode, so a
+// shoot whose recorded identity turns up at another path *is* that folder: no
+// time window, no all-or-nothing test over its photos, and it works for a folder
+// holding none, whose move leaves no other trace at all.
+//
+// `birthtime` is corroboration, not half of the key. It rules out a recycled
+// inode number silently adopting an unrelated folder, and only when both sides
+// report one: some filesystems return 0, and treating that as a mismatch would
+// disable the check exactly where it is the only evidence there is.
+export function detectRelocationsByIdentity(
+  shoots: readonly ShootIdentity[],
+  dirs: readonly ScannedDir[],
+  folderStillOnDisk: (folderPath: string) => boolean,
+): ShootRelocation[] {
+  const byIno = new Map<number, ScannedDir[]>();
+  for (const dir of dirs) {
+    const list = byIno.get(dir.ino);
+    if (list) list.push(dir);
+    else byIno.set(dir.ino, [dir]);
+  }
+
+  const occupied = new Set(shoots.map((s) => s.folder_path));
+  const relocations: ShootRelocation[] = [];
+  const claimed = new Set<string>();
+
+  for (const shoot of shoots) {
+    if (shoot.folder_ino == null) continue; // never scanned: nothing recorded to match
+    if (folderStillOnDisk(shoot.folder_path)) continue; // it did not go anywhere
+
+    const candidates = (byIno.get(shoot.folder_ino) ?? []).filter(
+      (dir) =>
+        dir.relPath !== shoot.folder_path &&
+        !occupied.has(dir.relPath) && // a folder another shoot already holds
+        !claimed.has(dir.relPath) &&
+        birthtimesAgree(shoot.folder_birthtime, dir.birthtimeMs),
+    );
+    // Exactly one, or it is not an identification. Two folders sharing an inode
+    // are hardlinked directories or a filesystem recycling numbers within one
+    // scan, and either way the folder's identity is genuinely ambiguous.
+    const target = candidates.length === 1 ? candidates[0] : undefined;
+    if (target == null) continue;
+
+    claimed.add(target.relPath);
+    relocations.push({ shootId: shoot.id, oldFolderPath: shoot.folder_path, newFolderPath: target.relPath });
+  }
+
+  return relocations;
+}
+
+function birthtimesAgree(recorded: number | null, found: number): boolean {
+  if (recorded == null || recorded === 0 || found === 0) return true;
+  return recorded === found;
+}
+
+// A shoot folder renamed outside the app (DESIGN §9.4.1). Nothing on disk says a
 // folder was renamed rather than deleted and another created, and the watcher is
 // no help: the kernel pairs the two halves of a rename with a cookie, but no
 // portable JS watcher exposes it. The photos are the evidence instead. If every

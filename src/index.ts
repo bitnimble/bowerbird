@@ -10,6 +10,7 @@ import { PhotosService } from './services/photos/photos_service';
 import { PhotosRepository } from './services/photos/photos_repository';
 import { ShootsApi } from './api/shoots/shoots_api';
 import { ShootsService } from './services/shoots/shoots_service';
+import { FolderRulesRepository } from './services/shoots/folder_rules_repository';
 import { ShootsRepository } from './services/shoots/shoots_repository';
 import { AlbumsApi } from './api/albums/albums_api';
 import { AlbumsService } from './services/albums/albums_service';
@@ -39,6 +40,7 @@ const settingsRepo = new SettingsRepository(db);
 const librariesRepo = new LibrariesRepository(db);
 const photosRepo = new PhotosRepository(db);
 const shootsRepo = new ShootsRepository(db);
+const folderRulesRepo = new FolderRulesRepository(db);
 const albumsRepo = new AlbumsRepository(db);
 
 const processingService = new ProcessingService(photosRepo, settingsRepo);
@@ -46,12 +48,12 @@ const processingService = new ProcessingService(photosRepo, settingsRepo);
 const librariesService = new LibrariesService(librariesRepo);
 const photosService = new PhotosService(photosRepo, albumsRepo, shootsRepo, librariesRepo, processingService);
 const albumsService = new AlbumsService(albumsRepo, photosRepo);
-const shootsService = new ShootsService(shootsRepo, photosRepo, librariesRepo);
-const syncService = new SyncService(photosRepo, librariesRepo, albumsRepo, shootsRepo, processingService);
+const shootsService = new ShootsService(shootsRepo, photosRepo, librariesRepo, folderRulesRepo);
+const syncService = new SyncService(photosRepo, librariesRepo, albumsRepo, shootsRepo, folderRulesRepo, processingService);
 // Prune sync's per-library in-memory state when a library is deleted (unbounded otherwise).
 librariesService.addLifecycleListener(syncService);
 
-const librariesApi = new LibrariesApi(librariesService, syncService);
+const librariesApi = new LibrariesApi(librariesService, syncService, folderRulesRepo);
 const photosApi = new PhotosApi(photosService, processingService);
 const albumsApi = new AlbumsApi(albumsService, photosService);
 const shootsApi = new ShootsApi(shootsService, photosService);

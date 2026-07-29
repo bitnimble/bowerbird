@@ -14,6 +14,7 @@
     "build:native": "cargo build --release --manifest-path native/rawshim/Cargo.toml"
   },
   "dependencies": {
+    "chokidar": "^5.0.0",
     "hono": "^4.6.14",
     "zod": "^4.0.5"
   },

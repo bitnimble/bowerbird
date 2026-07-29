@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { AppError } from '../../errors';
@@ -9,8 +9,10 @@ import { ensureDir, moveIntoDir } from '../../utils/files';
 import { containsPath, getDataPath, toLibraryRelative } from '../../utils/paths';
 import { mostSpecificShoot } from '../../utils/shoots';
 import type { LibrariesRepository } from '../libraries/libraries_repository';
+import { deleteGeneratedFilesFor } from '../maintenance/prune_service';
 import { libraryMutex } from '../sync/library_mutex';
 import type { PhotosRepository } from '../photos/photos_repository';
+import type { FolderRulesRepository } from './folder_rules_repository';
 import type { ShootsRepository } from './shoots_repository';
 
 export class ShootsService {
@@ -18,6 +20,7 @@ export class ShootsService {
     private readonly shoots: ShootsRepository,
     private readonly photos: PhotosRepository,
     private readonly libraries: LibrariesRepository,
+    private readonly folderRules: FolderRulesRepository,
   ) {}
 
   async create(request: CreateShootRequest): Promise<Shoot> {
@@ -36,8 +39,8 @@ export class ShootsService {
       throw new AppError('VALIDATION_ERROR', `shoot folder is inside the library's data directory: ${folderPath}`);
     }
 
-    if (this.shoots.getByName(library.id, request.name)) {
-      throw new AppError('CONFLICT', `shoot name already used in library: ${request.name}`);
+    if (this.shoots.getByFolderPath(library.id, folderPath)) {
+      throw new AppError('CONFLICT', `a shoot already covers this folder: ${folderPath}`);
     }
 
     // Read off the folder rather than taken from the request: the enclosing
@@ -47,6 +50,9 @@ export class ShootsService {
 
     const existed = existsSync(absFolder);
     await ensureDir(absFolder);
+    // From the moment the shoot exists rather than from its first scan, so a
+    // rename before then is still followed (§9.4.1).
+    const identity = statSync(absFolder, { throwIfNoEntry: false });
 
     const id = randomUUID();
     try {
@@ -58,13 +64,19 @@ export class ShootsService {
         name: request.name,
         description: request.description ?? null,
         ordering: request.ordering,
+        folder_ino: identity?.ino ?? null,
+        folder_birthtime: identity?.birthtimeMs ?? null,
       });
     } catch (err) {
-      // getByName above catches the common case; a concurrent create with the
-      // same name can still pass it before either commits and lose the race here.
-      if (isUniqueViolation(err)) throw new AppError('CONFLICT', `shoot name already used in library: ${request.name}`);
+      // getByFolderPath above catches the common case; a concurrent create of the
+      // same folder can still pass it before either commits and lose the race here.
+      if (isUniqueViolation(err)) throw new AppError('CONFLICT', `a shoot already covers this folder: ${folderPath}`);
       throw err;
     }
+
+    // The user is answering the same question again, the other way: this folder
+    // is a shoot after all, whether it was excluded or merely kept plain (§4.7).
+    this.folderRules.clear(library.id, folderPath);
 
     if (existed) this.adoptExistingPhotos(library.id, id, folderPath);
 
@@ -146,31 +158,50 @@ export class ShootsService {
     });
   }
 
-  delete(shootId: string): void {
-    if (!this.shoots.delete(shootId)) throw new AppError('NOT_FOUND', `shoot not found: ${shootId}`);
+  // What becomes of the photographs is asked rather than assumed, because one
+  // answer is reversible and the other is not. Neither touches a file on disk.
+  //
+  // Both write a folder rule (§4.7), and they have to: without one, mirroring
+  // recreates the shoot on the next sync and the delete reads as broken.
+  async delete(shootId: string, photos: 'keep' | 'remove'): Promise<void> {
+    const shoot = this.shoots.getById(shootId);
+    if (shoot == null) throw new AppError('NOT_FOUND', `shoot not found: ${shootId}`);
+    const library = this.requireLibrary(shoot.library_id);
+
+    if (photos === 'keep') {
+      this.shoots.transaction(() => {
+        this.folderRules.set(library.id, shoot.folder_path, 'plain');
+        this.shoots.delete(shootId); // shoot_id clears via ON DELETE SET NULL
+      });
+      return;
+    }
+
+    // Soft-deleted rows go too: their files sit in <folder>/Bin, inside the folder
+    // that is leaving the library, so a Bin they could be restored from no longer
+    // exists as far as the catalogue is concerned.
+    const doomed = this.photos.listUnderFolder(library.id, shoot.folder_path, true);
+    this.shoots.transaction(() => {
+      this.folderRules.set(library.id, shoot.folder_path, 'excluded');
+      this.photos.deleteByIds(doomed.map((p) => p.id));
+      this.shoots.delete(shootId);
+    });
+    // After the rows, so a failure here leaves files the sweep still reaps rather
+    // than renditions whose photos are alive.
+    await deleteGeneratedFilesFor(library, doomed.map((p) => p.id));
   }
 
   // A shoot's name is a label, not its folder: renaming one touches nothing on
-  // disk. The folder is chosen once, at create, and keeps whatever name it has; // which also means a shoot can be named freely without reshuffling a catalogue,
-  // and that a folder renamed outside the app is a mismatch to repair rather than
-  // a rename to mirror.
+  // disk, and cannot collide, since a shoot is identified by its folder (§4.3).
+  // A folder renamed outside the app is the other direction, and is followed
+  // rather than repaired (§9.4.1).
   async update(shootId: string, updates: UpdateShootRequest): Promise<Shoot> {
     const shoot = this.get(shootId);
 
-    if (updates.name != null && updates.name !== shoot.name) {
-      if (this.shoots.getByName(shoot.library_id, updates.name)) {
-        throw new AppError('CONFLICT', `shoot name already used in library: ${updates.name}`);
-      }
-      try {
-        this.shoots.updateFields(shootId, { name: updates.name });
-      } catch (err) {
-        // getByName above catches the common case; a concurrent rename to the same
-        // name can still pass it before either commits and hit UNIQUE here.
-        if (isUniqueViolation(err)) throw new AppError('CONFLICT', `shoot name already used in library: ${updates.name}`);
-        throw err;
-      }
-    }
-    this.shoots.updateFields(shootId, { description: updates.description, ordering: updates.ordering });
+    this.shoots.updateFields(shootId, {
+      name: updates.name,
+      description: updates.description,
+      ordering: updates.ordering,
+    });
     if ('banner_photo_id' in updates) {
       const bannerId = updates.banner_photo_id ?? null;
       if (bannerId != null) {

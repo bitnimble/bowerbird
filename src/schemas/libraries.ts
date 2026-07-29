@@ -8,6 +8,11 @@ export const CreateLibraryRequestSchema = z.object({
   // library shows until someone gives it a name of its own.
   name: z.string().trim().optional(),
   ordering: OrderingSchema.default('taken_asc'),
+  // Asked here rather than left to Settings because both change what the first
+  // sync imports, and a library that has already built renditions for a folder of
+  // decade-old rejects has answered the question the expensive way (§4.1).
+  include_subfolders: z.boolean().default(true),
+  mirror_shoots: z.boolean().default(true),
 });
 export type CreateLibraryRequest = z.infer<typeof CreateLibraryRequestSchema>;
 
@@ -20,10 +25,29 @@ export const LibrarySchema = z.object({
   rendition_source: RenditionSourceSchema,
   rendition_hdr: z.boolean(),
   rendition_hdr_video: z.boolean(),
+  include_subfolders: z.boolean(),
+  mirror_shoots: z.boolean(),
   last_synced_at: z.string().nullable(),
   photo_count: z.number().int(),
 });
 export type Library = z.infer<typeof LibrarySchema>;
+
+// §4.7. 'excluded' keeps a folder out of the scan entirely; 'plain' lets its
+// photos in but keeps mirroring from making it a shoot.
+export const FolderRuleKindSchema = z.enum(['excluded', 'plain']);
+export type FolderRuleKind = z.infer<typeof FolderRuleKindSchema>;
+
+export const FolderRuleSchema = z.object({
+  folder_path: z.string(),
+  rule: FolderRuleKindSchema,
+});
+export type FolderRule = z.infer<typeof FolderRuleSchema>;
+
+export const SetFolderRuleRequestSchema = z.object({
+  folder_path: z.string().min(1),
+  rule: FolderRuleKindSchema,
+});
+export type SetFolderRuleRequest = z.infer<typeof SetFolderRuleRequestSchema>;
 
 // Every field optional: the settings UI changes one control at a time, and a
 // partial update must not reset the others to their defaults.
@@ -34,6 +58,8 @@ export const UpdateLibraryRequestSchema = z.object({
   rendition_source: RenditionSourceSchema.optional(),
   rendition_hdr: z.boolean().optional(),
   rendition_hdr_video: z.boolean().optional(),
+  include_subfolders: z.boolean().optional(),
+  mirror_shoots: z.boolean().optional(),
 });
 export type UpdateLibraryRequest = z.infer<typeof UpdateLibraryRequestSchema>;
 

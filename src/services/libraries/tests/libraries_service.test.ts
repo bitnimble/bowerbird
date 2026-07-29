@@ -23,7 +23,7 @@ function mockRepo(overrides: Partial<LibrariesRepository> = {}): LibrariesReposi
 const sample: Library = { id: 'id-1', root_path: '/x', data_path: null, name: null, ordering: 'taken_desc',
   rendition_source: 'embedded' as const,
   rendition_hdr: false,
-  rendition_hdr_video: false, last_synced_at: null, photo_count: 0 };
+  rendition_hdr_video: false, include_subfolders: true, mirror_shoots: true, last_synced_at: null, photo_count: 0 };
 
 describe('LibrariesService.get', () => {
   it('returns the library when present', () => {
@@ -53,7 +53,7 @@ describe('LibrariesService.delete', () => {
 describe('LibrariesService.create', () => {
   it('throws VALIDATION_ERROR when root_path is not a directory', async () => {
     const service = new LibrariesService(mockRepo());
-    await expect(service.create({ root_path: '/definitely/not/here', ordering: 'taken_desc' })).rejects.toThrow(
+    await expect(service.create({ root_path: '/definitely/not/here', ordering: 'taken_desc', include_subfolders: true, mirror_shoots: true })).rejects.toThrow(
       /does not exist or is not a directory/,
     );
   });
@@ -62,7 +62,7 @@ describe('LibrariesService.create', () => {
     const root = mkdtempSync(path.join(tmpdir(), 'bb-'));
     try {
       const service = new LibrariesService(mockRepo({ getByRootPath: jest.fn(() => sample) }));
-      await expect(service.create({ root_path: root, ordering: 'taken_desc' })).rejects.toThrow(/already registered/);
+      await expect(service.create({ root_path: root, ordering: 'taken_desc', include_subfolders: true, mirror_shoots: true })).rejects.toThrow(/already registered/);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -75,7 +75,7 @@ describe('LibrariesService.create', () => {
     });
     try {
       const service = new LibrariesService(mockRepo({ getByRootPath: jest.fn(() => null), insert }));
-      await expect(service.create({ root_path: root, ordering: 'taken_desc' })).rejects.toMatchObject({ code: 'CONFLICT' });
+      await expect(service.create({ root_path: root, ordering: 'taken_desc', include_subfolders: true, mirror_shoots: true })).rejects.toMatchObject({ code: 'CONFLICT' });
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -86,7 +86,7 @@ describe('LibrariesService.create', () => {
     const insert = jest.fn();
     try {
       const service = new LibrariesService(mockRepo({ insert }));
-      const library = await service.create({ root_path: root, ordering: 'added_asc' });
+      const library = await service.create({ root_path: root, ordering: 'added_asc', include_subfolders: true, mirror_shoots: true });
 
       expect(library.root_path).toBe(root);
       expect(library.ordering).toBe('added_asc');
@@ -109,13 +109,13 @@ describe('LibrariesService.create', () => {
       const service = new LibrariesService(mockRepo({ list: jest.fn(() => [existing]) }));
 
       mkdirSync(path.join(root, 'shared', 'nested'), { recursive: true });
-      await expect(service.create({ root_path: path.join(root, 'shared', 'nested'), ordering: 'added_asc' })).rejects.toThrow(
+      await expect(service.create({ root_path: path.join(root, 'shared', 'nested'), ordering: 'added_asc', include_subfolders: true, mirror_shoots: true })).rejects.toThrow(
         /inside the data directory of library/,
       );
 
       mkdirSync(path.join(root, 'other'), { recursive: true });
       await expect(
-        service.create({ root_path: path.join(root, 'other'), data_path: root, ordering: 'added_asc' }),
+        service.create({ root_path: path.join(root, 'other'), data_path: root, ordering: 'added_asc', include_subfolders: true, mirror_shoots: true }),
       ).rejects.toThrow(/would contain the root of library/);
     } finally {
       rmSync(root, { recursive: true, force: true });

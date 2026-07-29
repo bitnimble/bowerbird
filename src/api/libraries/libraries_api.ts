@@ -1,7 +1,9 @@
 import { Hono } from 'hono';
-import { CreateLibraryRequestSchema, UpdateLibraryRequestSchema } from '../../schemas/libraries';
+import { CreateLibraryRequestSchema, SetFolderRuleRequestSchema, UpdateLibraryRequestSchema } from '../../schemas/libraries';
+import { AppError } from '../../errors';
 import { browseUnder } from '../../utils/browse';
 import type { LibrariesService } from '../../services/libraries/libraries_service';
+import type { FolderRulesRepository } from '../../services/shoots/folder_rules_repository';
 import type { SyncService } from '../../services/sync/sync_service';
 
 export class LibrariesApi {
@@ -10,6 +12,7 @@ export class LibrariesApi {
   constructor(
     private readonly service: LibrariesService,
     private readonly sync: SyncService,
+    private readonly folderRules: FolderRulesRepository,
   ) {
     const app = new Hono();
 
@@ -26,6 +29,28 @@ export class LibrariesApi {
     app.get('/:id/browse', async (c) =>
       c.json(await browseUnder(this.service.get(c.req.param('id')).root_path, c.req.query('path') ?? '')),
     );
+
+    // Where a folder differs from what the library's settings say (§4.7). Reads
+    // and writes go through the library so an id that does not exist is a 404
+    // here rather than a rule nothing will ever consult.
+    app.get('/:id/folder-rules', (c) => c.json(this.folderRules.listByLibrary(this.service.get(c.req.param('id')).id)));
+
+    app.put('/:id/folder-rules', async (c) => {
+      const library = this.service.get(c.req.param('id'));
+      const body = SetFolderRuleRequestSchema.parse(await c.req.json());
+      this.folderRules.set(library.id, body.folder_path, body.rule);
+      return c.json(this.folderRules.listByLibrary(library.id));
+    });
+
+    app.delete('/:id/folder-rules', (c) => {
+      const library = this.service.get(c.req.param('id'));
+      const folderPath = c.req.query('folder_path');
+      if (folderPath == null || folderPath === '') {
+        throw new AppError('VALIDATION_ERROR', 'folder_path is required');
+      }
+      this.folderRules.clear(library.id, folderPath);
+      return c.body(null, 204);
+    });
 
     app.post('/:id/sync', async (c) => c.json(await this.sync.syncLibrary(c.req.param('id'))));
 

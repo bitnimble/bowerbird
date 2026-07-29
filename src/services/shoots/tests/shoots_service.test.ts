@@ -7,6 +7,7 @@ import type { Library } from '../../../schemas/libraries';
 import type { Shoot } from '../../../schemas/shoots';
 import type { LibrariesRepository } from '../../libraries/libraries_repository';
 import type { BasicPhoto, PhotosRepository } from '../../photos/photos_repository';
+import type { FolderRulesRepository } from '../folder_rules_repository';
 import { ShootsService } from '../shoots_service';
 import type { ShootsRepository } from '../shoots_repository';
 
@@ -15,13 +16,24 @@ function mockShoots(over: Partial<ShootsRepository> = {}): ShootsRepository {
     transaction: (fn: () => unknown) => fn(),
     insert: jest.fn(),
     getById: jest.fn(() => null),
-    getByName: jest.fn(() => null),
+    getByFolderPath: jest.fn(() => null),
+    listIdentities: jest.fn(() => []),
+    setIdentity: jest.fn(),
     listByLibrary: jest.fn(() => []),
     updateFields: jest.fn(),
     delete: jest.fn(() => false),
     setBanner: jest.fn(),
     ...over,
   } as unknown as ShootsRepository;
+}
+function mockRules(over: Partial<FolderRulesRepository> = {}): FolderRulesRepository {
+  return {
+    listByLibrary: jest.fn(() => []),
+    pathsWithRule: jest.fn(() => new Set<string>()),
+    set: jest.fn(),
+    clear: jest.fn(() => false),
+    ...over,
+  } as unknown as FolderRulesRepository;
 }
 function mockPhotos(over: Partial<PhotosRepository> = {}): PhotosRepository {
   return {
@@ -37,7 +49,7 @@ function library(root: string): Library {
   return { id: 'lib', root_path: root, data_path: null, name: null, ordering: 'taken_desc',
   rendition_source: 'embedded' as const,
   rendition_hdr: false,
-  rendition_hdr_video: false, last_synced_at: null, photo_count: 0 };
+  rendition_hdr_video: false, include_subfolders: true, mirror_shoots: true, last_synced_at: null, photo_count: 0 };
 }
 function mockLibs(root: string): LibrariesRepository {
   return { getById: jest.fn(() => library(root)) } as unknown as LibrariesRepository;
@@ -70,7 +82,7 @@ describe('ShootsService.create', () => {
   it('creates the folder and inserts the record', withRoot(async (root) => {
     const insert = jest.fn();
     // getById is used by create() to read the new record back for its return value.
-    const service = new ShootsService(mockShoots({ insert, getById: jest.fn(() => shoot) }), mockPhotos(), mockLibs(root));
+    const service = new ShootsService(mockShoots({ insert, getById: jest.fn(() => shoot) }), mockPhotos(), mockLibs(root), mockRules());
     const created = await service.create({ library_id: 'lib', parent_path: '', name: 'Trip', ordering: 'taken_desc' });
     expect(created.folder_path).toBe('Trip');
     expect(existsSync(path.join(root, 'Trip'))).toBe(true);
@@ -84,7 +96,7 @@ describe('ShootsService.create', () => {
       getById: jest.fn(() => shoot),
       listByLibrary: jest.fn(() => [shoot, { ...shoot, id: 'other', folder_path: 'Elsewhere', name: 'Elsewhere' }]),
     });
-    const service = new ShootsService(shoots, mockPhotos(), mockLibs(root));
+    const service = new ShootsService(shoots, mockPhotos(), mockLibs(root), mockRules());
 
     await service.create({ library_id: 'lib', parent_path: 'Trip/2024', name: 'Day1', ordering: 'taken_desc' });
 
@@ -93,29 +105,53 @@ describe('ShootsService.create', () => {
   }));
 
   it('refuses a parent_path that climbs out of the library', withRoot(async (root) => {
-    const service = new ShootsService(mockShoots(), mockPhotos(), mockLibs(root));
+    const service = new ShootsService(mockShoots(), mockPhotos(), mockLibs(root), mockRules());
     await expect(
       service.create({ library_id: 'lib', parent_path: '../elsewhere', name: 'Trip', ordering: 'taken_desc' }),
     ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
   }));
 
   it('refuses a shoot inside the data directory, which is deleted with the library', withRoot(async (root) => {
-    const service = new ShootsService(mockShoots(), mockPhotos(), mockLibs(root));
+    const service = new ShootsService(mockShoots(), mockPhotos(), mockLibs(root), mockRules());
     await expect(
       service.create({ library_id: 'lib', parent_path: '.bowerbird', name: 'Trip', ordering: 'taken_desc' }),
     ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
   }));
 
-  it('throws CONFLICT when the name is taken', withRoot(async (root) => {
-    const service = new ShootsService(mockShoots({ getByName: jest.fn(() => shoot) }), mockPhotos(), mockLibs(root));
-    await expect(service.create({ library_id: 'lib', parent_path: '', name: 'Trip', ordering: 'taken_desc' })).rejects.toThrow(/already used/);
+  it('throws CONFLICT when a shoot already covers the folder', withRoot(async (root) => {
+    const service = new ShootsService(mockShoots({ getByFolderPath: jest.fn(() => shoot) }), mockPhotos(), mockLibs(root), mockRules());
+    await expect(service.create({ library_id: 'lib', parent_path: '', name: 'Trip', ordering: 'taken_desc' })).rejects.toThrow(/already covers/);
+  }));
+
+  it('takes the same name as an existing shoot in another folder', withRoot(async (root) => {
+    const insert = jest.fn();
+    const shoots = mockShoots({
+      insert,
+      getById: jest.fn(() => shoot),
+      listByLibrary: jest.fn(() => [{ ...shoot, id: 'other', folder_path: 'LA/Day1', name: 'Day1' }]),
+    });
+    const service = new ShootsService(shoots, mockPhotos(), mockLibs(root), mockRules());
+
+    await service.create({ library_id: 'lib', parent_path: 'NYC', name: 'Day1', ordering: 'taken_desc' });
+
+    expect(insert).toHaveBeenCalledWith(expect.objectContaining({ folder_path: 'NYC/Day1', name: 'Day1' }));
+  }));
+
+  it('records the folder identity, so a rename before the first scan is still followed', withRoot(async (root) => {
+    const insert = jest.fn();
+    const service = new ShootsService(mockShoots({ insert, getById: jest.fn(() => shoot) }), mockPhotos(), mockLibs(root), mockRules());
+
+    await service.create({ library_id: 'lib', parent_path: '', name: 'Trip', ordering: 'taken_desc' });
+
+    const [written] = insert.mock.calls[0] as [{ folder_ino: number | null }];
+    expect(written.folder_ino).toBeGreaterThan(0);
   }));
 
   it('maps a UNIQUE violation lost to a create race to CONFLICT (not a raw 500)', withRoot(async (root) => {
     const insert = jest.fn(() => {
-      throw Object.assign(new Error('UNIQUE constraint failed: shoots.name'), { code: 'SQLITE_CONSTRAINT_UNIQUE' });
+      throw Object.assign(new Error('UNIQUE constraint failed: shoots.folder_path'), { code: 'SQLITE_CONSTRAINT_UNIQUE' });
     });
-    const service = new ShootsService(mockShoots({ getByName: jest.fn(() => null), insert }), mockPhotos(), mockLibs(root));
+    const service = new ShootsService(mockShoots({ insert }), mockPhotos(), mockLibs(root), mockRules());
     await expect(service.create({ library_id: 'lib', parent_path: '', name: 'Trip', ordering: 'taken_desc' })).rejects.toMatchObject({ code: 'CONFLICT' });
   }));
 });
@@ -123,7 +159,7 @@ describe('ShootsService.create', () => {
 describe('ShootsService.update (banner)', () => {
   it('rejects a banner photo that does not exist (400, not a raw 500)', withRoot(async (root) => {
     const setBanner = jest.fn();
-    const service = new ShootsService(mockShoots({ getById: jest.fn(() => shoot), setBanner }), mockPhotos(), mockLibs(root));
+    const service = new ShootsService(mockShoots({ getById: jest.fn(() => shoot), setBanner }), mockPhotos(), mockLibs(root), mockRules());
     await expect(service.update('sh', { banner_photo_id: 'ghost' })).rejects.toThrow(/banner photo not found/);
     expect(setBanner).not.toHaveBeenCalled();
   }));
@@ -131,7 +167,7 @@ describe('ShootsService.update (banner)', () => {
   it('rejects a banner photo from another library', withRoot(async (root) => {
     const setBanner = jest.fn();
     const photos = mockPhotos({ getBasicByIds: jest.fn(() => [{ id: 'p1', library_id: 'other', file_path: 'p1.arw', shoot_id: null }]) });
-    const service = new ShootsService(mockShoots({ getById: jest.fn(() => shoot), setBanner }), photos, mockLibs(root));
+    const service = new ShootsService(mockShoots({ getById: jest.fn(() => shoot), setBanner }), photos, mockLibs(root), mockRules());
     await expect(service.update('sh', { banner_photo_id: 'p1' })).rejects.toThrow(/not in this shoot's library/);
     expect(setBanner).not.toHaveBeenCalled();
   }));
@@ -139,7 +175,7 @@ describe('ShootsService.update (banner)', () => {
   it('sets a valid same-library banner and clears on null', withRoot(async (root) => {
     const setBanner = jest.fn();
     const photos = mockPhotos({ getBasicByIds: jest.fn(() => [{ id: 'p1', library_id: 'lib', file_path: 'p1.arw', shoot_id: null }]) });
-    const service = new ShootsService(mockShoots({ getById: jest.fn(() => shoot), setBanner }), photos, mockLibs(root));
+    const service = new ShootsService(mockShoots({ getById: jest.fn(() => shoot), setBanner }), photos, mockLibs(root), mockRules());
     await service.update('sh', { banner_photo_id: 'p1' });
     expect(setBanner).toHaveBeenCalledWith('sh', 'p1');
     await service.update('sh', { banner_photo_id: null });
@@ -158,7 +194,7 @@ describe('ShootsService.addPhotos', () => {
       setShoot,
       setFilePathAndShoot,
     });
-    const service = new ShootsService(mockShoots({ getById: jest.fn(() => shoot) }), photos, mockLibs(root));
+    const service = new ShootsService(mockShoots({ getById: jest.fn(() => shoot) }), photos, mockLibs(root), mockRules());
 
     await service.addPhotos('sh', ['p1']);
 
@@ -176,7 +212,7 @@ describe('ShootsService.addPhotos', () => {
       getBasicByIds: jest.fn(() => [{ id: 'p1', library_id: 'lib', file_path: 'a.arw', shoot_id: null }]),
       setFilePathAndShoot,
     });
-    const service = new ShootsService(mockShoots({ getById: jest.fn(() => shoot) }), photos, mockLibs(root));
+    const service = new ShootsService(mockShoots({ getById: jest.fn(() => shoot) }), photos, mockLibs(root), mockRules());
 
     await expect(service.addPhotos('sh', ['p1', 'ghost'])).rejects.toThrow(/photos not found/);
     expect(setFilePathAndShoot).not.toHaveBeenCalled();
@@ -190,7 +226,7 @@ describe('ShootsService.addPhotos', () => {
       getBasicByIds: jest.fn(() => [{ id: 'p1', library_id: 'other-lib', file_path: 'a.arw', shoot_id: null }]),
       setFilePathAndShoot,
     });
-    const service = new ShootsService(mockShoots({ getById: jest.fn(() => shoot) }), photos, mockLibs(root));
+    const service = new ShootsService(mockShoots({ getById: jest.fn(() => shoot) }), photos, mockLibs(root), mockRules());
 
     await expect(service.addPhotos('sh', ['p1'])).rejects.toThrow(/not in this shoot's library/);
     expect(setFilePathAndShoot).not.toHaveBeenCalled();
@@ -208,7 +244,7 @@ describe('ShootsService.addPhotos', () => {
       setFilePath,
       setFilePathAndShoot,
     });
-    const service = new ShootsService(mockShoots({ getById }), photos, mockLibs(root));
+    const service = new ShootsService(mockShoots({ getById }), photos, mockLibs(root), mockRules());
 
     await expect(service.addPhotos('sh', ['p1'])).rejects.toMatchObject({ code: 'CONFLICT' });
     expect(setFilePathAndShoot).not.toHaveBeenCalled();
@@ -223,7 +259,7 @@ describe('ShootsService.addPhotos', () => {
       getBasicByIds: jest.fn(() => [{ id: 'p1', library_id: 'lib', file_path: 'a.arw', shoot_id: null }]),
       setFilePathAndShoot,
     });
-    const service = new ShootsService(mockShoots({ getById: jest.fn(() => shoot) }), photos, mockLibs(root));
+    const service = new ShootsService(mockShoots({ getById: jest.fn(() => shoot) }), photos, mockLibs(root), mockRules());
 
     await service.addPhotos('sh', ['p1']);
 
@@ -234,9 +270,45 @@ describe('ShootsService.addPhotos', () => {
 });
 
 describe('ShootsService.delete', () => {
-  it('throws NOT_FOUND when the shoot is absent (and never touches disk)', () => {
-    const service = new ShootsService(mockShoots({ delete: jest.fn(() => false) }), mockPhotos(), mockLibs('/x'));
-    expect(() => service.delete('sh')).toThrow(AppError);
+  it('throws NOT_FOUND when the shoot is absent (and never touches disk)', async () => {
+    const service = new ShootsService(mockShoots({ getById: jest.fn(() => null) }), mockPhotos(), mockLibs('/x'), mockRules());
+    await expect(service.delete('sh', 'keep')).rejects.toThrow(AppError);
+  });
+
+  // Without the rule, mirroring recreates the shoot on the next sync and the
+  // delete reads as broken.
+  it('keeps the photos and marks the folder plain', async () => {
+    const set = jest.fn();
+    const deleteByIds = jest.fn();
+    const service = new ShootsService(
+      mockShoots({ getById: jest.fn(() => shoot) }),
+      mockPhotos({ deleteByIds }),
+      mockLibs('/x'),
+      mockRules({ set }),
+    );
+
+    await service.delete('sh', 'keep');
+
+    expect(set).toHaveBeenCalledWith('lib', 'Trip', 'plain');
+    expect(deleteByIds).not.toHaveBeenCalled();
+  });
+
+  it('excludes the folder and takes the photo records with it, soft-deleted rows included', async () => {
+    const set = jest.fn();
+    const deleteByIds = jest.fn();
+    const listUnderFolder = jest.fn(() => [{ id: 'p1', library_id: 'lib', file_path: 'Trip/a.arw', shoot_id: 'sh' }]);
+    const service = new ShootsService(
+      mockShoots({ getById: jest.fn(() => shoot) }),
+      mockPhotos({ listUnderFolder, deleteByIds }),
+      mockLibs('/x'),
+      mockRules({ set }),
+    );
+
+    await service.delete('sh', 'remove');
+
+    expect(listUnderFolder).toHaveBeenCalledWith('lib', 'Trip', true);
+    expect(set).toHaveBeenCalledWith('lib', 'Trip', 'excluded');
+    expect(deleteByIds).toHaveBeenCalledWith(['p1']);
   });
 });
 
@@ -249,7 +321,7 @@ describe('ShootsService.removePhotos', () => {
       getBasicByIds: jest.fn(() => [{ id: 'p1', library_id: 'lib', file_path: 'Trip/a.arw', shoot_id: 'sh' }]),
       setFilePathAndShoot,
     });
-    const service = new ShootsService(mockShoots({ getById: jest.fn(() => shoot) }), photos, mockLibs(root));
+    const service = new ShootsService(mockShoots({ getById: jest.fn(() => shoot) }), photos, mockLibs(root), mockRules());
 
     await service.removePhotos('sh', ['p1']);
 
@@ -264,7 +336,7 @@ describe('ShootsService.removePhotos', () => {
       getBasicByIds: jest.fn(() => [{ id: 'p1', library_id: 'lib', file_path: 'x.arw', shoot_id: 'other' }]),
       setFilePathAndShoot,
     });
-    const service = new ShootsService(mockShoots({ getById: jest.fn(() => shoot) }), photos, mockLibs(root));
+    const service = new ShootsService(mockShoots({ getById: jest.fn(() => shoot) }), photos, mockLibs(root), mockRules());
     await service.removePhotos('sh', ['p1']);
     expect(setFilePathAndShoot).not.toHaveBeenCalled();
   }));
@@ -278,13 +350,15 @@ describe('ShootsService.update (rename)', () => {
     const setFilePathAndShoot = jest.fn();
     const shoots = mockShoots({
       getById: jest.fn(() => shoot),
-      getByName: jest.fn(() => null),
+      getByFolderPath: jest.fn(() => null),
+    listIdentities: jest.fn(() => []),
+    setIdentity: jest.fn(),
       listByLibrary: jest.fn(() => [shoot, descendant]),
       updateFields,
     });
     const listUnderFolder = jest.fn(() => []);
     const photos = mockPhotos({ listUnderFolder, setFilePathAndShoot });
-    const service = new ShootsService(shoots, photos, mockLibs(root));
+    const service = new ShootsService(shoots, photos, mockLibs(root), mockRules());
 
     await service.update('sh', { name: 'Vacation' });
 
@@ -298,14 +372,20 @@ describe('ShootsService.update (rename)', () => {
     expect(listUnderFolder).not.toHaveBeenCalled();
   }));
 
-  it('still rejects a name already used in the library', withRoot(async (root) => {
+  // The name is a label on a folder, and two folders may legitimately be called
+  // the same thing (NYC/Day1 and LA/Day1).
+  it('takes a name another shoot already uses', withRoot(async (root) => {
+    const updateFields = jest.fn();
     const shoots = mockShoots({
       getById: jest.fn(() => shoot),
-      getByName: jest.fn(() => ({ ...shoot, id: 'other', name: 'Vacation' })),
+      listByLibrary: jest.fn(() => [{ ...shoot, id: 'other', folder_path: 'Elsewhere', name: 'Vacation' }]),
+      updateFields,
     });
-    const service = new ShootsService(shoots, mockPhotos({}), mockLibs(root));
+    const service = new ShootsService(shoots, mockPhotos({}), mockLibs(root), mockRules());
 
-    await expect(service.update('sh', { name: 'Vacation' })).rejects.toMatchObject({ code: 'CONFLICT' });
+    await service.update('sh', { name: 'Vacation' });
+
+    expect(updateFields).toHaveBeenCalledWith('sh', expect.objectContaining({ name: 'Vacation' }));
   }));
 });
 
@@ -319,7 +399,9 @@ describe('ShootsService.create (adoption)', () => {
     const setShoot = jest.fn();
     const shoots = mockShoots({
       insert,
-      getByName: jest.fn(() => null),
+      getByFolderPath: jest.fn(() => null),
+    listIdentities: jest.fn(() => []),
+    setIdentity: jest.fn(),
       getById: jest.fn(() => shoot),
       listByLibrary: jest.fn(() => (insertedId ? [{ ...shoot, id: insertedId, folder_path: 'Existing', name: 'Existing' }] : [])),
     });
@@ -327,7 +409,7 @@ describe('ShootsService.create (adoption)', () => {
       listUnderFolder: jest.fn(() => [{ id: 'p1', library_id: 'lib', file_path: 'Existing/c.arw', shoot_id: null }]),
       setShoot,
     });
-    const service = new ShootsService(shoots, photos, mockLibs(root));
+    const service = new ShootsService(shoots, photos, mockLibs(root), mockRules());
 
     await service.create({ library_id: 'lib', parent_path: '', name: 'Existing', ordering: 'taken_desc' });
 
