@@ -4,38 +4,34 @@ import { FolderPlus } from 'lucide-react';
 import { useParams } from 'react-router-dom';
 import { CollectionRow } from '../../app/collection_row';
 import { usePresenters, useShootsStore } from '../../app/stores_context';
-import { Button, Heading, ICON, type Option, Select, Text, TextField } from '../../ui/ui';
+import { Button, Heading, ICON, Text } from '../../ui/ui';
+import { AddShootDialog } from './add_shoot_dialog';
 
 export const ShootsPage = observer(function ShootsPage(): JSX.Element {
   const { libraryId = '' } = useParams();
   const store = useShootsStore();
-  const { shoots } = usePresenters();
-  const [name, setName] = useState('');
-  const [parentId, setParentId] = useState('');
+  const { shoots, libraries } = usePresenters();
+  const [adding, setAdding] = useState(false);
 
   useEffect(() => {
     void shoots.load(libraryId);
-  }, [libraryId, shoots]);
-
-  async function submit(e: React.FormEvent): Promise<void> {
-    e.preventDefault();
-    if (name.trim() === '') return;
-    if (await shoots.create(libraryId, name.trim(), parentId === '' ? null : parentId, 'taken_asc')) {
-      setName('');
-      setParentId('');
-    }
-  }
-
-  const parents: Option<string>[] = [
-    { value: '', label: 'Top level' },
-    ...store.shoots.map((s) => ({ value: s.id, label: `inside ${s.folder_path}` })),
-  ];
+    // The picker names the library root after the library, which the rail has
+    // usually loaded already but a deep link has not.
+    void libraries.load();
+  }, [libraryId, shoots, libraries]);
 
   return (
     <div className="pad">
-      <Heading>Shoots</Heading>
+      <div className="row page__head">
+        <Heading>Shoots</Heading>
+        <span className="spacer" />
+        <Button variant="primary" onClick={() => setAdding(true)}>
+          <FolderPlus size={ICON} />
+          Add shoot
+        </Button>
+      </div>
       <Text variant="mono" as="p">
-        A shoot is a real folder on disk. Creating one makes the folder; adding photos moves the files.
+        A shoot is a real folder on disk. Creating one makes the folder, and adding photos moves the files.
       </Text>
 
       {store.error != null && (
@@ -45,16 +41,7 @@ export const ShootsPage = observer(function ShootsPage(): JSX.Element {
         </div>
       )}
 
-      <div className="panel">
-        <form className="row" onSubmit={(e) => void submit(e)}>
-          <TextField grow label="Shoot name" placeholder="Shoot name" value={name} onChange={setName} />
-          <Select label="Parent shoot" options={parents} value={parentId} onChange={setParentId} />
-          <Button variant="primary" type="submit">
-            <FolderPlus size={ICON} />
-            Create shoot
-          </Button>
-        </form>
-      </div>
+      <AddShootDialog libraryId={libraryId} open={adding} onOpenChange={setAdding} />
 
       {store.isEmpty ? (
         <div className="empty">

@@ -42,14 +42,11 @@ export class ShootsPresenter {
     }
   }
 
-  async create(libraryId: string, name: string, parentId: string | null, ordering: Ordering): Promise<boolean> {
+  // `parentPath` is the library-relative folder the shoot's own folder goes in,
+  // empty for the library root. The parent shoot follows from it server-side.
+  async create(libraryId: string, name: string, parentPath: string, ordering: Ordering): Promise<boolean> {
     try {
-      await api.createShoot({
-        library_id: libraryId,
-        name,
-        ordering,
-        ...(parentId == null ? {} : { parent_id: parentId }),
-      });
+      await api.createShoot({ library_id: libraryId, parent_path: parentPath, name, ordering });
     } catch (err) {
       this.fail(message(err));
       return false;

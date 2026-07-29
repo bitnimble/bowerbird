@@ -6,7 +6,7 @@ import { isUniqueViolation } from '../../db/constraints';
 import type { CreateShootRequest, Shoot, UpdateShootRequest } from '../../schemas/shoots';
 import type { Library } from '../../schemas/libraries';
 import { ensureDir, moveIntoDir } from '../../utils/files';
-import { toLibraryRelative } from '../../utils/paths';
+import { containsPath, getDataPath, toLibraryRelative } from '../../utils/paths';
 import { mostSpecificShoot } from '../../utils/shoots';
 import type { LibrariesRepository } from '../libraries/libraries_repository';
 import { libraryMutex } from '../sync/library_mutex';
@@ -23,20 +23,28 @@ export class ShootsService {
   async create(request: CreateShootRequest): Promise<Shoot> {
     const library = this.requireLibrary(request.library_id);
 
-    let folderPath = request.name;
-    if (request.parent_id) {
-      const parent = this.shoots.getById(request.parent_id);
-      if (!parent || parent.library_id !== library.id) {
-        throw new AppError('VALIDATION_ERROR', `parent shoot not found in library: ${request.parent_id}`);
-      }
-      folderPath = `${parent.folder_path}/${request.name}`;
+    const parentPath = request.parent_path.replace(/^\/+|\/+$/g, '');
+    const folderPath = parentPath === '' ? request.name : `${parentPath}/${request.name}`;
+    const absFolder = path.join(library.root_path, folderPath);
+    if (!containsPath(library.root_path, absFolder)) {
+      throw new AppError('VALIDATION_ERROR', `shoot folder is outside the library: ${folderPath}`);
+    }
+    // Everything under the data directory is disposable and goes with the
+    // library when it is removed (§6), so a shoot there would be photographs
+    // queued for deletion.
+    if (containsPath(getDataPath(library), absFolder)) {
+      throw new AppError('VALIDATION_ERROR', `shoot folder is inside the library's data directory: ${folderPath}`);
     }
 
     if (this.shoots.getByName(library.id, request.name)) {
       throw new AppError('CONFLICT', `shoot name already used in library: ${request.name}`);
     }
 
-    const absFolder = path.join(library.root_path, folderPath);
+    // Read off the folder rather than taken from the request: the enclosing
+    // shoot is a fact about where this one sits, and the same rule decides which
+    // shoot a photo belongs to (§9.4), so the two cannot drift apart.
+    const parent = mostSpecificShoot(folderPath, this.shoots.listByLibrary(library.id));
+
     const existed = existsSync(absFolder);
     await ensureDir(absFolder);
 
@@ -44,7 +52,7 @@ export class ShootsService {
     try {
       this.shoots.insert({
         id,
-        parent_id: request.parent_id ?? null,
+        parent_id: parent?.id ?? null,
         library_id: library.id,
         folder_path: folderPath,
         name: request.name,

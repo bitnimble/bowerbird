@@ -14,7 +14,12 @@ export const ShootNameSchema = z
 
 export const CreateShootRequestSchema = z.object({
   library_id: UuidSchema,
-  parent_id: UuidSchema.optional(),
+  // Which folder the shoot's own folder is created in, relative to the library
+  // root, where "" is the root itself. The parent shoot is derived from it
+  // rather than chosen alongside it, so the shoot tree can never disagree with
+  // the folders on disk, and a shoot can sit under a folder that is not itself
+  // a shoot.
+  parent_path: z.string().default(''),
   name: ShootNameSchema,
   description: z.string().optional(),
   ordering: OrderingSchema.default('taken_asc'),

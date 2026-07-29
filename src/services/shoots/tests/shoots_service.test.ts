@@ -71,15 +71,44 @@ describe('ShootsService.create', () => {
     const insert = jest.fn();
     // getById is used by create() to read the new record back for its return value.
     const service = new ShootsService(mockShoots({ insert, getById: jest.fn(() => shoot) }), mockPhotos(), mockLibs(root));
-    const created = await service.create({ library_id: 'lib', name: 'Trip', ordering: 'taken_desc' });
+    const created = await service.create({ library_id: 'lib', parent_path: '', name: 'Trip', ordering: 'taken_desc' });
     expect(created.folder_path).toBe('Trip');
     expect(existsSync(path.join(root, 'Trip'))).toBe(true);
     expect(insert).toHaveBeenCalled();
   }));
 
+  it('nests the folder under parent_path and takes its parent from the shoot enclosing it', withRoot(async (root) => {
+    const insert = jest.fn();
+    const shoots = mockShoots({
+      insert,
+      getById: jest.fn(() => shoot),
+      listByLibrary: jest.fn(() => [shoot, { ...shoot, id: 'other', folder_path: 'Elsewhere', name: 'Elsewhere' }]),
+    });
+    const service = new ShootsService(shoots, mockPhotos(), mockLibs(root));
+
+    await service.create({ library_id: 'lib', parent_path: 'Trip/2024', name: 'Day1', ordering: 'taken_desc' });
+
+    expect(insert).toHaveBeenCalledWith(expect.objectContaining({ folder_path: 'Trip/2024/Day1', parent_id: 'sh' }));
+    expect(existsSync(path.join(root, 'Trip', '2024', 'Day1'))).toBe(true);
+  }));
+
+  it('refuses a parent_path that climbs out of the library', withRoot(async (root) => {
+    const service = new ShootsService(mockShoots(), mockPhotos(), mockLibs(root));
+    await expect(
+      service.create({ library_id: 'lib', parent_path: '../elsewhere', name: 'Trip', ordering: 'taken_desc' }),
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+  }));
+
+  it('refuses a shoot inside the data directory, which is deleted with the library', withRoot(async (root) => {
+    const service = new ShootsService(mockShoots(), mockPhotos(), mockLibs(root));
+    await expect(
+      service.create({ library_id: 'lib', parent_path: '.bowerbird', name: 'Trip', ordering: 'taken_desc' }),
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+  }));
+
   it('throws CONFLICT when the name is taken', withRoot(async (root) => {
     const service = new ShootsService(mockShoots({ getByName: jest.fn(() => shoot) }), mockPhotos(), mockLibs(root));
-    await expect(service.create({ library_id: 'lib', name: 'Trip', ordering: 'taken_desc' })).rejects.toThrow(/already used/);
+    await expect(service.create({ library_id: 'lib', parent_path: '', name: 'Trip', ordering: 'taken_desc' })).rejects.toThrow(/already used/);
   }));
 
   it('maps a UNIQUE violation lost to a create race to CONFLICT (not a raw 500)', withRoot(async (root) => {
@@ -87,7 +116,7 @@ describe('ShootsService.create', () => {
       throw Object.assign(new Error('UNIQUE constraint failed: shoots.name'), { code: 'SQLITE_CONSTRAINT_UNIQUE' });
     });
     const service = new ShootsService(mockShoots({ getByName: jest.fn(() => null), insert }), mockPhotos(), mockLibs(root));
-    await expect(service.create({ library_id: 'lib', name: 'Trip', ordering: 'taken_desc' })).rejects.toMatchObject({ code: 'CONFLICT' });
+    await expect(service.create({ library_id: 'lib', parent_path: '', name: 'Trip', ordering: 'taken_desc' })).rejects.toMatchObject({ code: 'CONFLICT' });
   }));
 });
 
@@ -300,7 +329,7 @@ describe('ShootsService.create (adoption)', () => {
     });
     const service = new ShootsService(shoots, photos, mockLibs(root));
 
-    await service.create({ library_id: 'lib', name: 'Existing', ordering: 'taken_desc' });
+    await service.create({ library_id: 'lib', parent_path: '', name: 'Existing', ordering: 'taken_desc' });
 
     expect(setShoot).toHaveBeenCalledWith('p1', insertedId);
   }));
