@@ -31,6 +31,7 @@ pub mod header;
 pub mod image;
 pub mod lens;
 pub mod lensfun;
+pub mod stacks;
 pub mod tone;
 pub mod vips;
 
@@ -498,6 +499,63 @@ pub unsafe extern "C" fn bb_free(image: *mut BbImage) {
     }
     let image = Box::from_raw(image);
     drop(Vec::from_raw_parts(image.data, image.len, image.capacity));
+}
+
+/// How many bytes `bb_descriptor` writes, so the caller can size its buffer and
+/// the database column without either guessing.
+#[no_mangle]
+pub extern "C" fn bb_descriptor_size() -> usize {
+    stacks::DESCRIPTOR_BYTES
+}
+
+/// Writes the stacking descriptor for an 8-bit image into `out`.
+///
+/// Returns 0 on success, -1 when the handle holds no 8-bit samples.
+///
+/// # Safety
+/// `image` must be a live handle and `out` must have room for
+/// `bb_descriptor_size()` bytes.
+#[no_mangle]
+pub unsafe extern "C" fn bb_descriptor(image: *const BbImage, out: *mut u8) -> c_int {
+    if image.is_null() || out.is_null() {
+        return -1;
+    }
+    let Some(view) = (*image).view() else {
+        return -1;
+    };
+    let descriptor = stacks::describe(view);
+    std::ptr::copy_nonoverlapping(descriptor.as_ptr(), out, descriptor.len());
+    0
+}
+
+/// Groups frames into stacks, writing one group index per frame into `out`, or
+/// -1 for a frame that ended up alone.
+///
+/// The frames must arrive in ascending time order, which the query that selects
+/// them already guarantees.
+///
+/// Returns 0 on success, -1 on a null argument.
+///
+/// # Safety
+/// `descriptors` must hold `count * bb_descriptor_size()` bytes, and
+/// `timestamps` and `out` must each hold `count` elements.
+#[no_mangle]
+pub unsafe extern "C" fn bb_stack_groups(
+    descriptors: *const u8,
+    timestamps: *const i64,
+    count: usize,
+    threshold: f32,
+    window_seconds: i64,
+    out: *mut i32,
+) -> c_int {
+    if descriptors.is_null() || timestamps.is_null() || out.is_null() {
+        return -1;
+    }
+    let descriptors = std::slice::from_raw_parts(descriptors, count * stacks::DESCRIPTOR_BYTES);
+    let timestamps = std::slice::from_raw_parts(timestamps, count);
+    let groups = stacks::group(descriptors, timestamps, threshold, window_seconds);
+    std::ptr::copy_nonoverlapping(groups.as_ptr(), out, count);
+    0
 }
 
 #[cfg(test)]

@@ -84,6 +84,11 @@ export class LibrariesService {
       // A shoot is a subfolder, so mirroring folders the scan will never reach
       // would only ever produce nothing (§4.1).
       mirror_shoots: request.include_subfolders && request.mirror_shoots,
+      // Matching the column defaults again (§19.2): stacking is on, at the
+      // threshold and window the labelled folder settled on.
+      auto_stack: true,
+      auto_stack_similarity: 0.78,
+      auto_stack_window_seconds: 60,
       last_synced_at: null,
       photo_count: 0,
     };
@@ -150,6 +155,9 @@ export class LibrariesService {
     if (mirror !== current.mirror_shoots || !includeSubfolders) {
       this.repo.setMirrorShoots(libraryId, includeSubfolders && mirror);
     }
+    if (updates.auto_stack != null) this.repo.setAutoStack(libraryId, updates.auto_stack);
+    if (updates.auto_stack_similarity != null) this.repo.setAutoStackSimilarity(libraryId, updates.auto_stack_similarity);
+    if (updates.auto_stack_window_seconds != null) this.repo.setAutoStackWindow(libraryId, updates.auto_stack_window_seconds);
     const updated = this.get(libraryId);
     // The watcher holds a scope built from these, so an excluded folder would
     // otherwise keep waking syncs until a restart.

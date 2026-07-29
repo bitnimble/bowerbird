@@ -1,4 +1,4 @@
-import { extractEmbedded, decodeRawImage, freeImage, pixels, readHeaderFields } from './rawshim_ops';
+import { extractEmbedded, readHeaderFields } from './rawshim_ops';
 
 // The RAW file's own metadata and its embedded preview, both by way of
 // `native/rawshim` (DESIGN §10.4 / §11.1).
@@ -9,15 +9,6 @@ import { extractEmbedded, decodeRawImage, freeImage, pixels, readHeaderFields } 
 // files from several bodies, but nothing kept them right, and the failure would have
 // been a silent one - a photo dated 1970, or every rendition sideways. bindgen
 // resolves the fields in Rust from the headers the runtime library was built from.
-
-export interface DecodedImage {
-  width: number;
-  height: number;
-  channels: 3;
-  // 8 for renditions, 16 for a full-depth export.
-  depth: 8 | 16;
-  data: Buffer; // interleaved RGB, already rotated to display orientation
-}
 
 // What the pixels are in when the decode hands them back.
 //   'srgb'            display-referred, sRGB primaries and transfer. Everything
@@ -42,46 +33,6 @@ export type OutputSpace = 'srgb' | 'rec2020-linear';
  */
 export function readEmbeddedJpeg(filePath: string): Buffer | null {
   return extractEmbedded(filePath);
-}
-
-export interface DecodeOptions {
-  /**
-   * Longest edge the caller is going to need.
-   *
-   * When the sensor is large enough that even a half-size decode clears this, that
-   * is what runs: it is a great deal cheaper and the difference does not survive
-   * the downscale to a rendition. Omit it, or pass 0, to always decode at full
-   * size - which is what a native-resolution rendition requires.
-   */
-  atLeastLongEdge?: number;
-}
-
-/**
- * Decodes a RAW file to an upright RGB bitmap, via the Rust wrapper
- * (`native/rawshim`, and see `rawshim.ts` for why).
- *
- * As-shot white balance, the PPG demosaic, the half-size decision and the
- * masked-border crop all happen in there now: they are one job, and splitting them
- * across an FFI boundary meant reaching into LibRaw's params struct from
- * TypeScript to set a field the C API does not expose.
- *
- * Copies the samples out, and nothing in the app does that any more: every pixel path
- * now ends in Rust. This is here for the tests that compare a decode against what was
- * written, which is the one thing that genuinely needs the samples on this side.
- * Production wants `decodeRawImage`, which leaves them where they are.
- */
-export function decodeRaw(
-  filePath: string,
-  depth: 8 | 16 = 8,
-  space: OutputSpace = 'srgb',
-  options: DecodeOptions = {},
-): DecodedImage {
-  const image = decodeRawImage(filePath, depth, space, options.atLeastLongEdge ?? 0);
-  try {
-    return { width: image.width, height: image.height, channels: 3, depth, data: pixels(image) };
-  } finally {
-    freeImage(image);
-  }
 }
 
 export interface RawHeader {

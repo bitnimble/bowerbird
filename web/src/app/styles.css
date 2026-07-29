@@ -1157,6 +1157,83 @@ p.ui-text--mono {
   gap: 4px;
 }
 
+/* Pushed clear of the stack badge, which owns this corner when there is one. */
+.tile:has(.tile__stack) .tile__badges {
+  top: 30px;
+}
+
+/* Photo stacks (§19). The badge is the stack's only control: it opens the band
+   of members below this row, and clicking it again closes it.
+
+   Top left rather than top right, where the select box already lives: two
+   controls in one corner is the later one in the DOM quietly swallowing the
+   other's clicks. The missing/binned badges share this corner but are rare and
+   flow beside it (`.tile__badges`). */
+.tile__stack {
+  position: absolute;
+  left: 6px;
+  top: 6px;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: 3px;
+  background: rgba(10, 12, 16, 0.82);
+  color: var(--bone);
+  font-family: var(--mono);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.tile__stack:hover {
+  background: rgba(10, 12, 16, 0.95);
+}
+
+/* Expanded, the tile itself is what closes the band, so it says so: the whole
+   frame dims and the layers become a chevron pointing at the band below it. */
+.tile__stack--open {
+  inset: 0;
+  border-radius: 0;
+  justify-content: center;
+  background: rgba(10, 12, 16, 0.62);
+}
+
+.tile__stack-count {
+  font-variant-numeric: tabular-nums;
+}
+
+/* The band itself: members of one stack, alone on their own rows, marked as a
+   run rather than as part of the grid around them. */
+.grid__band {
+  background: rgba(120, 140, 180, 0.07);
+  border-top: 1px solid rgba(120, 140, 180, 0.28);
+  border-bottom: 1px solid rgba(120, 140, 180, 0.28);
+  box-sizing: border-box;
+}
+
+/* A shoot shows a stack whole and dims the members that are not in it, which is
+   the one place a photograph appears in a collection it does not belong to. */
+.tile--outside .tile__hit img {
+  opacity: 0.35;
+}
+
+.tile__outside {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  pointer-events: none;
+  color: var(--bone-dim);
+  font-family: var(--mono);
+  font-size: 10px;
+  text-align: center;
+}
+
 .badge {
   font-family: var(--mono);
   font-size: 9px;

@@ -22,7 +22,7 @@ const { LibraryWatcher } = await import('../library_watcher');
 const library: Library = { id: 'lib', root_path: '/definitely/not/a/real/root', data_path: null, name: null, ordering: 'taken_desc',
   rendition_source: 'embedded' as const,
   rendition_hdr: false,
-  rendition_hdr_video: false, include_subfolders: true, mirror_shoots: true, last_synced_at: null, photo_count: 0 };
+  rendition_hdr_video: false, include_subfolders: true, mirror_shoots: true, auto_stack: true, auto_stack_similarity: 0.78, auto_stack_window_seconds: 60, last_synced_at: null, photo_count: 0 };
 const DEBOUNCE = 1000;
 const TEN_MINUTES = 10 * 60 * 1000;
 

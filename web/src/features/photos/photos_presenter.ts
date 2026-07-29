@@ -20,8 +20,16 @@ import type { AppSettingsPresenter } from '../settings/app_settings_presenter';
 import type { AppSettingsStore } from '../settings/app_settings_store';
 import type { ShootsPresenter } from '../shoots/shoots_presenter';
 import type { ToastsPresenter } from '../toasts/toasts_presenter';
+import { bandRows, displayRowOf } from './bands';
 import { BLOCK } from './grid_layout';
-import { activeFilters, type PhotoFilters, type PhotoSource, type PhotosStore, type ViewMode } from './photos_store';
+import {
+  activeFilters,
+  type Expansion,
+  type PhotoFilters,
+  type PhotoSource,
+  type PhotosStore,
+  type ViewMode,
+} from './photos_store';
 import { type IndexSample, SelectionRanges, rebase } from './selection';
 import { loadViewState, saveViewState } from './view_state';
 
@@ -83,6 +91,9 @@ export class PhotosPresenter {
   // and fails again reports missing each time: without this every one of them
   // would queue the same job again.
   private readonly renditionBuilds = new Set<string>();
+  // Stacks whose members are on the wire, so a second click on the same badge
+  // cannot open one band and correct the scroll for two.
+  private readonly opening = new Set<string>();
 
   constructor(
     private readonly store: PhotosStore,
@@ -126,6 +137,11 @@ export class PhotosPresenter {
   async setFilters(filters: PhotoFilters): Promise<void> {
     this.applyFilters(filters);
     await this.ensureBlocks(this.store.neededBlocks);
+    // A filter moves every position, and an open band is pinned to a stack
+    // rather than to a position precisely so it can follow (§19.6.1). Without
+    // this it stays drawn at the row it was opened at, under whatever the filter
+    // has since put there.
+    await this.replaceBands();
   }
 
   // --- the scroller ---
@@ -180,6 +196,7 @@ export class PhotosPresenter {
     // client is holding still describes where it sits.
     this.resetRows();
     await this.ensureBlocks(this.store.neededBlocks);
+    await this.replaceBands();
   }
 
   @action.bound
@@ -448,6 +465,7 @@ export class PhotosPresenter {
 
   @action.bound
   toggle(index: number): void {
+    this.takeSelection();
     if (index < 0) return;
     this.store.selection = this.store.selection.toggle(index);
     this.store.lastToggled = index;
@@ -458,6 +476,7 @@ export class PhotosPresenter {
   // however long, so a burst and a whole library cost the same.
   @action.bound
   extendTo(index: number): void {
+    this.takeSelection();
     // The cursor stands in for the anchor when nothing has been toggled yet:
     // arrowing to one photo and shift-clicking another is the same gesture as in
     // any file manager, and it is what a first shift-click has to reach for.
@@ -478,6 +497,7 @@ export class PhotosPresenter {
   /** Everything the grid currently has on screen. */
   @action.bound
   selectVisible(): void {
+    this.takeSelection();
     const { from, to } = this.store.visible;
     this.store.selection = SelectionRanges.of(from, to - 1);
     this.store.lastToggled = null;
@@ -488,6 +508,7 @@ export class PhotosPresenter {
   // (`selectionTarget`).
   @action.bound
   selectAll(): void {
+    this.takeSelection();
     this.store.selection = SelectionRanges.of(0, this.store.total - 1);
     this.store.lastToggled = null;
   }
@@ -496,6 +517,15 @@ export class PhotosPresenter {
   clearSelection(): void {
     this.store.selection = SelectionRanges.EMPTY;
     this.store.lastToggled = null;
+  }
+
+  // Whichever selection was last touched is the live one, and the other is
+  // dropped. Both non-empty means the bulk bar shows one of them while an action
+  // could reach the other: a member picked out of a band, then Select all, left
+  // three hundred photographs selected behind a bar reading "1 selected".
+  @action.bound
+  private takeSelection(): void {
+    if (this.store.selectedMembers.size > 0) this.store.selectedMembers = new Set();
   }
 
   // --- bulk actions ---
@@ -657,28 +687,230 @@ export class PhotosPresenter {
   // Null when there is nothing selected, or when the view is a slice the server
   // has no scope for - which cannot happen, since the bin and the missing view
   // are the library plus a filter.
+  // --- stacks (§19.6) ---
+
+  /**
+   * Opens or closes a stack's band of member rows.
+   *
+   * Opening one above the viewport displaces everything below it, so the scroll
+   * is corrected by exactly the height the band inserted and the view does not
+   * move. Every input is a number the store already holds, which is what lets
+   * this be arithmetic rather than a measurement.
+   */
+  @action.bound
+  async toggleBand(stackId: string, position: number): Promise<number> {
+    const open = this.store.expansions.get(stackId);
+    if (open != null) {
+      const rows = bandRows(open.photos.length, this.store.columns);
+      const next = new Map(this.store.expansions);
+      next.delete(stackId);
+      this.store.expansions = next;
+      return this.scrollShift(position, -rows);
+    }
+    // A second click while the members are still in flight would otherwise open
+    // the band once and correct the scroll twice, because both calls see it
+    // closed. The reader asked for open-then-closed, so the second click is
+    // dropped rather than queued: the band is about to be open either way.
+    if (this.opening.has(stackId)) return 0;
+    this.opening.add(stackId);
+    const source = this.store.source;
+    const generation = this.generation;
+    try {
+      const photos = await api.listStackPhotos(stackId, this.bandScope());
+      return runInAction(() => {
+        // The collection this was opened against may have been replaced while
+        // the members were on the wire, and those positions describe a listing
+        // that no longer exists.
+        if (this.generation !== generation || this.store.source !== source) return 0;
+        const next = new Map(this.store.expansions);
+        next.set(stackId, { stackId, position, photos });
+        this.store.expansions = next;
+        return this.scrollShift(position, bandRows(photos.length, this.store.columns));
+      });
+    } catch (err) {
+      this.fail(err);
+      return 0;
+    } finally {
+      this.opening.delete(stackId);
+    }
+  }
+
+  // How far the scroller has to move for the view to stay still, in scroll
+  // pixels. A band opening at or below the first visible row displaces nothing
+  // the reader can see, so it is left alone.
+  //
+  // Both sides of that comparison have to be *display* rows. The stack's row in
+  // the collection is not where it is drawn once anything above it is expanded,
+  // so comparing one against the other jerks the view by the height of every
+  // band above whenever a stack on screen is opened.
+  private scrollShift(position: number, rows: number): number {
+    if (rows === 0 || this.store.mode === 'masonry') return 0;
+    const bandRow = displayRowOf(Math.floor(position / this.store.columns), this.store.bands, this.store.columns);
+    const firstVisible = Math.floor(this.store.virtualTop / this.store.rowHeight);
+    if (bandRow >= firstVisible) return 0;
+    return rows * this.store.rowHeight * this.store.scrollScale;
+  }
+
+  /**
+   * Re-places every open band, and closes the ones whose stack has left.
+   *
+   * A band is pinned to its stack, never to the position it was opened at, so a
+   * re-order or an import moves where it is drawn rather than closing it. The
+   * server is asked for every band in one call: numbering rows costs an ordered
+   * pass over the collection, and ten open bands must not mean ten of them.
+   */
+  async replaceBands(): Promise<void> {
+    const source = this.store.source;
+    if (source == null || this.store.expansions.size === 0) return;
+    const keys = [...this.store.expansions.keys()];
+    const generation = this.generation;
+    try {
+      const [positions, members] = await Promise.all([
+        api.photoPositions({ scope: scopeOf(source), filters: this.selectionFilters(), keys }),
+        // Re-read alongside the positions, because a refresh follows the actions
+        // that change what a stack holds: without this, photos just removed from
+        // a stack stay drawn in its band until it is closed and opened again.
+        Promise.all(
+          keys.map((stackId) =>
+            api
+              .listStackPhotos(stackId, this.bandScope())
+              .then((photos) => [stackId, photos] as const)
+              .catch(() => [stackId, null] as const),
+          ),
+        ),
+      ]);
+      runInAction(() => {
+        if (this.generation !== generation || this.store.source !== source) return;
+        const fresh = new Map(members);
+        const kept = new Map<string, Expansion>();
+        for (const [stackId, open] of this.store.expansions) {
+          // Only the bands this answer is about. One opened while it was in
+          // flight was never asked for, so its absence here says nothing, and
+          // dropping it would close a band the reader had just opened.
+          if (!keys.includes(stackId)) {
+            kept.set(stackId, open);
+            continue;
+          }
+          const position = positions[stackId];
+          const photos = fresh.get(stackId);
+          // Absent means the stack is no longer in this collection at all - a
+          // filter that excludes every member, or an unstack - which is the one
+          // thing that closes a band on its own. A stack down to one member is
+          // an ordinary photograph again, so its band closes with it.
+          if (position == null || photos == null || photos.length < 2) continue;
+          kept.set(stackId, { ...open, position, photos });
+        }
+        this.store.expansions = kept;
+        // Members that have left every open band cannot be acted on any more.
+        const live = new Set([...kept.values()].flatMap((band) => band.photos.map((photo) => photo.id)));
+        this.store.selectedMembers = new Set([...this.store.selectedMembers].filter((id) => live.has(id)));
+      });
+    } catch (err) {
+      this.fail(err);
+    }
+  }
+
+  // What a band has to answer for: the album it is being shown in, and which
+  // side of the bin the listing is on.
+  private bandScope(): { albumId?: string; deleted?: boolean } {
+    const source = this.store.source;
+    return {
+      albumId: source?.kind === 'album' ? source.albumId : undefined,
+      deleted: source?.kind === 'bin' ? true : undefined,
+    };
+  }
+
+  @action.bound
+  toggleMember(photoId: string): void {
+    const selected = new Set(this.store.selectedMembers);
+    if (!selected.delete(photoId)) selected.add(photoId);
+    this.store.selectedMembers = selected;
+    // The two selections are different intentions: "everything in this library"
+    // and "these three frames of this burst" should not silently become one.
+    if (selected.size > 0) this.store.selection = SelectionRanges.EMPTY;
+  }
+
+  @action.bound
+  clearMemberSelection(): void {
+    this.store.selectedMembers = new Set();
+  }
+
+  /** Makes a stack of whatever is selected. */
+  async stackSelection(): Promise<void> {
+    const target = this.selectionTarget();
+    if (target == null) return;
+    try {
+      await api.createStack(target);
+      this.clearSelection();
+      await this.refresh();
+    } catch (err) {
+      this.fail(err);
+    }
+  }
+
+  /** Drops every photo out of a stack and deletes it. */
+  async unstack(stackId: string): Promise<void> {
+    try {
+      await api.unstack(stackId);
+      runInAction(() => {
+        this.store.expansions.delete(stackId);
+        this.store.expansions = new Map(this.store.expansions);
+      });
+      this.clearSelection();
+      await this.refresh();
+    } catch (err) {
+      this.fail(err);
+    }
+  }
+
+  /** Takes the selected band members out of the stacks they are in. */
+  async removeSelectedFromStacks(): Promise<void> {
+    const byStack = new Map<string, string[]>();
+    for (const open of this.store.expansions.values()) {
+      const chosen = open.photos.filter((photo) => this.store.selectedMembers.has(photo.id)).map((photo) => photo.id);
+      if (chosen.length > 0) byStack.set(open.stackId, chosen);
+    }
+    if (byStack.size === 0) return;
+    try {
+      for (const [stackId, photoIds] of byStack) await api.removeFromStack(stackId, photoIds);
+      this.clearMemberSelection();
+      await this.refresh();
+    } catch (err) {
+      this.fail(err);
+    }
+  }
+
+  // The filters a server-side question about this collection has to carry, so
+  // that a selection and a position lookup are asking about the same listing. A
+  // second copy of this is a position meaning one photograph here and another
+  // there (§19.5.1).
+  private selectionFilters(): PhotoSelection['filters'] {
+    const source = this.store.source;
+    const f = this.store.filters;
+    return {
+      rated: f.rated,
+      triage: f.triage,
+      is_missing: f.isMissing,
+      needs_tile: f.needsTile,
+      taken_from: f.takenFrom,
+      taken_to: f.takenTo,
+      match: f.match,
+      ...(f.search != null && f.search !== '' ? { q: f.search } : {}),
+      // Last, because these are what makes the view that view rather than a
+      // chip the reader could clear: the Bin is only the soft-deleted rows,
+      // and the missing view only the ones whose file has gone.
+      ...(source?.kind === 'bin' ? { include_deleted: true, is_deleted: true } : {}),
+      ...(source?.kind === 'missing' ? { is_missing: true } : {}),
+    };
+  }
+
   private selectionTarget(): PhotoTarget | null {
     const source = this.store.source;
     if (source == null || !this.store.hasSelection) return null;
-    const f = this.store.filters;
     return {
       selection: {
         scope: scopeOf(source),
-        filters: {
-          rated: f.rated,
-          triage: f.triage,
-          is_missing: f.isMissing,
-          needs_tile: f.needsTile,
-          taken_from: f.takenFrom,
-          taken_to: f.takenTo,
-          match: f.match,
-          ...(f.search != null && f.search !== '' ? { q: f.search } : {}),
-          // Last, because these are what makes the view that view rather than a
-          // chip the reader could clear: the Bin is only the soft-deleted rows,
-          // and the missing view only the ones whose file has gone.
-          ...(source.kind === 'bin' ? { include_deleted: true, is_deleted: true } : {}),
-          ...(source.kind === 'missing' ? { is_missing: true } : {}),
-        },
+        filters: this.selectionFilters(),
         ranges: this.store.selection.ranges.map((range) => ({ ...range })),
       },
     };
@@ -699,13 +931,16 @@ export class PhotosPresenter {
         // Written into the row the grid is already rendering rather than over
         // it: replacing the object invalidates that tile's observable, and a
         // fresh one for every row would re-render the whole grid.
-        const row = this.store.rowById(photoId);
-        if (row != null) {
-          row.rating = updated.rating;
-          row.triage = updated.triage;
+        // The band member as well as the row: a stack's members have no row of
+        // their own in a collapsed listing, so a verdict set on one would answer
+        // from the server and never show.
+        for (const held of [this.store.rowById(photoId), this.store.memberById(photoId)]) {
+          if (held == null) continue;
+          held.rating = updated.rating;
+          held.triage = updated.triage;
           // The row answers which rendition to reopen this photo at, so a choice
           // written only to the detail would be forgotten on the step back to it.
-          row.viewer_rendition = updated.viewer_rendition;
+          held.viewer_rendition = updated.viewer_rendition;
         }
       });
       // Only the field that changed can move a photo out of the slice being
@@ -757,6 +992,11 @@ export class PhotosPresenter {
     // those would report a move of zero that never happened.
     const landed = blocks.filter((block) => held.has(block) && this.blocks.get(block) === 'loaded');
     this.rebasePositions(before, landed, whole);
+    // Open stacks are pinned to their stack rather than to a position, so a
+    // re-order or an import moves where a band is drawn instead of closing it
+    // (§19.6.1). After the rebase, since both answer the same question about the
+    // same re-read and the selection's is the one with a local answer.
+    await this.replaceBands();
   }
 
   // What to re-read: what is on screen, plus the blocks the selection covers
@@ -976,6 +1216,13 @@ export class PhotosPresenter {
   private beginLoad(source: PhotoSource): void {
     this.store.source = source;
     this.resetRows();
+    // A different collection, so an open band describes photographs that are not
+    // in it: its position indexes a listing that no longer exists, and its
+    // members would be drawn as a band somewhere in the middle of the new one.
+    // Filters and orderings keep their bands (they are re-placed); a different
+    // library, shoot or album does not.
+    this.store.expansions = new Map();
+    this.store.selectedMembers = new Set();
     this.store.focusIndex = -1; // a different collection, so the cursor has nothing to keep its place in
     // The Bin and the missing view are already a specific slice, so a triage
     // default there would fight the thing the user opened.

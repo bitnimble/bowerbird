@@ -175,6 +175,23 @@ CREATE TABLE IF NOT EXISTS folder_rules (
   PRIMARY KEY (library_id, folder_path)
 );
 
+-- A group of photographs of one shot: a burst, or several takes of a scene
+-- (§19). Library-wide, so a stack transcends the shoots and albums its members
+-- happen to sit in.
+--
+-- The origin column is load-bearing rather than informational. Detection re-runs
+-- over already-stacked photos so that changing the threshold re-forms stacks,
+-- and without it that pass would dissolve a manual stack whose members are not
+-- alike - two lenses on one subject, which is the case manual stacking exists
+-- for. A human touching a stack makes it 'manual' and detection lets it be.
+CREATE TABLE IF NOT EXISTS stacks (
+  id            TEXT PRIMARY KEY,
+  library_id    TEXT NOT NULL REFERENCES libraries(id) ON DELETE CASCADE,
+  origin        TEXT NOT NULL CHECK (origin IN ('auto', 'manual')),
+  date_created  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_stacks_library ON stacks(library_id);
+
 -- Runtime settings the user can change from the app, as opposed to the
 -- deployment config in environment variables (§15).
 CREATE TABLE IF NOT EXISTS settings (
@@ -391,4 +408,51 @@ export function runMigrations(db: Database): void {
   );
   db.exec('CREATE INDEX IF NOT EXISTS idx_photos_needs_tile ON photos(needs_tile) WHERE needs_tile = 1');
   db.exec('CREATE INDEX IF NOT EXISTS idx_photos_needs_renditions ON photos(needs_renditions) WHERE needs_renditions = 1');
+
+  // Photo stacks (§19). `stack_state` is the three answers to "is this photo in
+  // a stack?": 'none' has never been in one and detection may claim it,
+  // 'stacked' is in one, and 'unstacked' was pulled out by a human and is never
+  // claimed again. It agrees with `stack_id` - 'stacked' exactly when the id is
+  // set - and the repository writes both together rather than a CHECK spanning
+  // them, because a library delete cascades `stacks` and `photos` in an order
+  // SQLite does not define and such a CHECK would fire mid-cascade.
+  ensureColumn(db, 'photos', 'stack_id', 'TEXT REFERENCES stacks(id) ON DELETE SET NULL');
+  ensureColumn(db, 'photos', 'stack_state', "TEXT NOT NULL DEFAULT 'none' CHECK (stack_state IN ('none', 'stacked', 'unstacked'))");
+  // The perceptual descriptor, written when the grid tile is built. NULL for
+  // every photo imported before stacks existed, and those are never candidates:
+  // there is no backfill, because rebuilding tiles is already the way to ask for
+  // one (§19.4.2).
+  ensureColumn(db, 'photos', 'descriptor', 'BLOB');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_photos_stack ON photos(stack_id)');
+  // Detection's candidate scan: the loose and already-stacked photos of one
+  // library, in time order. Leading with the state keeps it off the photos that
+  // are none of its business, which on a mature library is most of them.
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_photos_stack_candidates
+       ON photos(library_id, stack_state, date_taken, date_added, id)`,
+  );
+  // Which member of a stack stands for it in a listing (§19.5.1). 1 on every
+  // photograph that is in no stack, and on one member of each stack.
+  //
+  // A hint rather than a truth: the listing falls back to promoting the newest
+  // visible member when this one is hidden, so a stale flag costs a little speed
+  // and never correctness. What it must never be is set on two members of one
+  // stack, which would show that stack twice - hence the unique index, which
+  // turns a bookkeeping slip into an error at the write rather than a duplicate
+  // tile nobody notices.
+  ensureColumn(db, 'photos', 'is_representative', 'INTEGER NOT NULL DEFAULT 1');
+  db.exec(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_photos_one_representative
+       ON photos(stack_id) WHERE stack_id IS NOT NULL AND is_representative = 1`,
+  );
+  // Catches up any stack that predates the column, and is a no-op afterwards.
+  db.exec(
+    `UPDATE photos SET is_representative = 0
+       WHERE stack_id IS NOT NULL AND is_representative = 1
+         AND id <> (SELECT m.id FROM photos m WHERE m.stack_id = photos.stack_id
+                    ORDER BY COALESCE(m.date_taken, m.date_added) DESC, m.id DESC LIMIT 1)`,
+  );
+  ensureColumn(db, 'libraries', 'auto_stack', 'INTEGER NOT NULL DEFAULT 1');
+  ensureColumn(db, 'libraries', 'auto_stack_similarity', 'REAL NOT NULL DEFAULT 0.78');
+  ensureColumn(db, 'libraries', 'auto_stack_window_seconds', 'INTEGER NOT NULL DEFAULT 60');
 }

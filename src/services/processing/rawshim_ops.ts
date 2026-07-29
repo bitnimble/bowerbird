@@ -3,9 +3,12 @@
 // The unit that crosses the boundary is a handle, not a picture. A decode returns
 // one, each operation takes one, and the pixels stay in the library the whole
 // time; a 60MP render is never copied into a JS `Buffer` for a caller that only
-// wanted it resized and written to disk. Only two things read the samples back:
-// the scene-linear decode the HDR encoder pipes to ffmpeg, and the fit that
-// grades it, both through `pixels()` - which copies, and says so.
+// wanted it resized and written to disk.
+//
+// **The only buffer that leaves Rust is an encoded file, on its way to the
+// client**: `encodeJpeg` for a response body, `extractEmbedded` for the camera's
+// own preview. Nothing here hands back samples. Reading those is
+// `rawshim_pixels.ts`, which is for tests and which lint keeps out of `src/**`.
 //
 // Handles are freed explicitly, in a `finally`. Nothing on the JS side collects
 // them, and a 60MP frame is 190MB of leak if one is dropped.
@@ -16,7 +19,10 @@ import type { OutputSpace } from './raw_decoder';
 
 // #[repr(C)] BbImage: u32 width, u32 height, u32 depth, 4 bytes padding, *mut u8
 // data, usize len, u32 halved, 4 bytes padding, usize capacity.
-const IMAGE = { width: 0, height: 4, depth: 8, data: 16, len: 24, halved: 32, size: 48 } as const;
+//
+// Exported for `rawshim_pixels.ts` alone, which needs `data` and `len` to copy
+// the samples out. Nothing in `src/` may import that module.
+export const IMAGE = { width: 0, height: 4, depth: 8, data: 16, len: 24, halved: 32, size: 48 } as const;
 
 // BbBuffer is a data pointer, a length and a capacity, 8 bytes each.
 const BUFFER = { data: 0, len: 8, size: 24 } as const;
@@ -58,7 +64,7 @@ export interface ImageHandle {
   readonly halved: boolean;
 }
 
-function handleOf(pointer: Pointer | null, what: string): ImageHandle {
+export function handleOf(pointer: Pointer | null, what: string): ImageHandle {
   if (!pointer) throw new Error(`rawshim could not ${what}`);
   checkLayout();
   const head = new DataView(toArrayBuffer(pointer, 0, IMAGE.size));
@@ -267,17 +273,6 @@ export function readLensfunKnots(
 }
 
 /**
- * A handle over a copy of RGB pixels JS already holds.
- *
- * The one direction that copies on purpose, and the app never needs it:
- * everything here decodes on the Rust side. It exists for tests, which construct
- * a target and need it in the form a decode would have produced.
- */
-export function imageFromRgb(data: Buffer, width: number, height: number): ImageHandle {
-  return handleOf(shim().bb_image_from_rgb(data, width, height), 'take those pixels');
-}
-
-/**
  * Fits to a longest edge and applies a profile, in that order. Either half is
  * optional: a null profile is a plain resize, and a `longEdge` of 0 grades at the
  * size the image arrived at.
@@ -329,7 +324,7 @@ export interface HdrOptions {
   maxEdge: number;
 }
 
-function hdrOptionsBuffer(options: HdrOptions): Uint8Array {
+export function hdrOptionsBuffer(options: HdrOptions): Uint8Array {
   const size = Number(shim().bb_hdr_options_size());
   if (size !== HDR_OPTIONS.size) {
     throw new Error(
@@ -482,28 +477,65 @@ export function hdrMatchColour(matched: HdrMatchHandle): HdrColourFit {
   };
 }
 
+/** Bytes one photo's stacking descriptor occupies, as the library reports it. */
+export function descriptorSize(): number {
+  return Number(shim().bb_descriptor_size());
+}
+
 /**
- * The graded 16-bit samples the HDR encode would hand to ffmpeg.
+ * The stacking descriptor for a decoded image (DESIGN §19).
  *
- * For the pin that holds this against the TypeScript it replaced. It copies the whole
- * frame, which is what the production path exists to avoid, so nothing else uses it.
+ * A blob to everything on this side: what it means, and every comparison of two
+ * of them, lives in `native/rawshim/src/stacks.rs`. TypeScript stores it and
+ * hands it back.
  */
-export function hdrGradedSamples(
-  linear: ImageHandle,
-  matched: HdrMatchHandle | null,
-  options: HdrOptions,
-): { width: number; height: number; data: Buffer } {
-  const size = new Uint32Array(2);
-  const data = takeBuffer(
-    shim().bb_hdr_graded(
-      linear.pointer,
-      matched == null ? null : matched.pointer,
-      ptr(hdrOptionsBuffer(options)),
-      ptr(size),
-    ),
+export function describeForStacking(image: ImageHandle): Buffer {
+  const out = Buffer.alloc(descriptorSize());
+  if (shim().bb_descriptor(image.pointer, ptr(out)) !== 0) {
+    throw new Error('rawshim could not describe that image for stacking');
+  }
+  return out;
+}
+
+/**
+ * Groups frames into stacks, given their descriptors in ascending time order.
+ *
+ * Returns a group index per frame, or -1 for one that ended up alone. The whole
+ * walk runs in Rust: a comparison is descriptor arithmetic over a couple of
+ * thousand cells, and a library-sized pass makes hundreds of thousands of them.
+ */
+export function stackGroups(
+  descriptors: Buffer[],
+  timestamps: BigInt64Array,
+  threshold: number,
+  windowSeconds: number,
+): Int32Array {
+  const out = new Int32Array(descriptors.length);
+  if (descriptors.length === 0) return out;
+  // Checked rather than trusted, because the other side reads
+  // `count * descriptorSize()` bytes from this pointer in one go: a single blob
+  // of the wrong length - a row written by another version of the descriptor, a
+  // truncated column - would have it read past the end of the buffer rather
+  // than merely produce a bad score.
+  const size = descriptorSize();
+  const wrong = descriptors.findIndex((descriptor) => descriptor.length !== size);
+  if (wrong !== -1) {
+    throw new Error(`descriptor ${wrong} is ${descriptors[wrong]!.length} bytes, expected ${size}`);
+  }
+  if (timestamps.length !== descriptors.length) {
+    throw new Error(`${timestamps.length} timestamps for ${descriptors.length} descriptors`);
+  }
+  const joined = Buffer.concat(descriptors);
+  const status = shim().bb_stack_groups(
+    ptr(joined),
+    ptr(timestamps),
+    descriptors.length,
+    threshold,
+    BigInt(windowSeconds),
+    ptr(out),
   );
-  if (data == null) throw new Error('rawshim could not grade that decode');
-  return { width: size[0]!, height: size[1]!, data };
+  if (status !== 0) throw new Error('rawshim could not group those descriptors');
+  return out;
 }
 
 /**
@@ -518,7 +550,7 @@ export function extractEmbedded(filePath: string): Buffer | null {
 }
 
 /** Copies a `BbBuffer` out and releases it. Null in, null out. */
-function takeBuffer(handle: Pointer | null): Buffer | null {
+export function takeBuffer(handle: Pointer | null): Buffer | null {
   if (!handle) return null;
   try {
     checkLayout();
@@ -531,20 +563,6 @@ function takeBuffer(handle: Pointer | null): Buffer | null {
   } finally {
     shim().bb_buffer_free(handle);
   }
-}
-
-/**
- * The samples, copied into JS.
- *
- * The expensive way to use a handle, and the point of the handle API is that
- * almost nothing needs to: only the HDR path, whose encoder is ffmpeg rather than
- * libvips, and the HDR fit that reads the same pixels.
- */
-export function pixels(image: ImageHandle): Buffer {
-  const head = new DataView(toArrayBuffer(image.pointer, 0, IMAGE.size));
-  const address = Number(head.getBigUint64(IMAGE.data, true));
-  const length = Number(head.getBigUint64(IMAGE.len, true));
-  return Buffer.from(new Uint8Array(toArrayBuffer(address as never, 0, length)));
 }
 
 // #[repr(C)] BbProfile: u32 has_distortion, u32 source, f64 crop, f64 delta_e,

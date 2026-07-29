@@ -51,7 +51,7 @@ function library(root: string): Library {
   return { id: 'lib', root_path: root, data_path: null, name: null, ordering: 'taken_desc',
   rendition_source: 'embedded' as const,
   rendition_hdr: false,
-  rendition_hdr_video: false, include_subfolders: true, mirror_shoots: true, last_synced_at: null, photo_count: 0 };
+  rendition_hdr_video: false, include_subfolders: true, mirror_shoots: true, auto_stack: true, auto_stack_similarity: 0.78, auto_stack_window_seconds: 60, last_synced_at: null, photo_count: 0 };
 }
 function mockLibs(root: string): LibrariesRepository {
   return { getById: jest.fn(() => library(root)) } as unknown as LibrariesRepository;

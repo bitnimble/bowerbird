@@ -1,7 +1,31 @@
 import { observer } from 'mobx-react-lite';
-import { FolderInput, Images, RotateCcw, RotateCw, Sparkles, Trash2, X } from 'lucide-react';
+import { FolderInput, Images, Layers, Layers2, RotateCcw, RotateCw, Sparkles, Trash2, X } from 'lucide-react';
 import { useAlbumsStore, usePhotosStore, usePresenters, useShootsStore } from '../../app/stores_context';
 import { Button, CheckMenu, ICON, Text } from '../../ui/ui';
+
+// What can be done to photos picked out inside an open stack. Only the two
+// actions that are about the stack: everything else here works on positions,
+// which is what a member does not have.
+const MemberBar = observer(function MemberBar(): JSX.Element {
+  const store = usePhotosStore();
+  const { photos } = usePresenters();
+  return (
+    <div className="bulkbar">
+      <Text variant="mono" className="bulkbar__count">
+        {store.selectedMembers.size} selected in {store.selectedMembers.size === 1 ? 'a stack' : 'stacks'}
+      </Text>
+      <Button variant="ghost" onClick={photos.clearMemberSelection}>
+        <X size={ICON} />
+        Clear
+      </Button>
+      <div className="spacer" />
+      <Button onClick={() => void photos.removeSelectedFromStacks()}>
+        <Layers2 size={ICON} />
+        Remove from stack
+      </Button>
+    </div>
+  );
+});
 
 interface Props {
   // Set on a shoot or album page so the selection can be removed from it, not
@@ -17,6 +41,12 @@ export const BulkBar = observer(function BulkBar({ removeFrom }: Props): JSX.Ele
   const albums = useAlbumsStore();
   const { photos } = usePresenters();
 
+  // Members of an open stack are a selection of their own, held by id because a
+  // collapsed listing gives them no position (§19.6). The two are different
+  // intentions - "everything in this library" against "these frames of this
+  // burst" - so the bar acts on whichever one is live.
+  if (store.selectedMembers.size > 0) return <MemberBar />;
+
   if (!store.hasSelection) return null;
 
   // Binned photos are excluded from the shoot/album membership queries, so
@@ -27,7 +57,10 @@ export const BulkBar = observer(function BulkBar({ removeFrom }: Props): JSX.Ele
   return (
     <div className="bulkbar">
       {/* "all" rather than the bare count when it is the whole collection: at
-          six figures the number alone does not tell you whether you got it. */}
+          six figures the number alone does not tell you whether you got it.
+          Entries rather than photographs, because a stack is one entry standing
+          for however many it holds, and the client cannot know the sizes of the
+          stacks in a selection covering rows it has never held. */}
       <Text variant="mono" className="bulkbar__count">
         {store.allSelected ? `all ${store.selectionCount} selected` : `${store.selectionCount} selected`}
       </Text>
@@ -37,6 +70,20 @@ export const BulkBar = observer(function BulkBar({ removeFrom }: Props): JSX.Ele
       </Button>
 
       <div className="spacer" />
+
+      {!inBin && store.selectionCount >= 2 && (
+        <Button onClick={() => void photos.stackSelection()}>
+          <Layers size={ICON} />
+          Stack
+        </Button>
+      )}
+
+      {!inBin && store.selectedStackId != null && (
+        <Button onClick={() => void photos.unstack(store.selectedStackId!)}>
+          <Layers2 size={ICON} />
+          Unstack
+        </Button>
+      )}
 
       {inBin ? (
         <Button variant="primary" onClick={() => void photos.restoreSelected()}>

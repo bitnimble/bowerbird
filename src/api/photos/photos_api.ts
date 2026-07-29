@@ -1,5 +1,11 @@
 import { Hono } from 'hono';
-import { DeletePhotosRequestSchema, PhotoListQuerySchema, PhotoTargetSchema, UpdatePhotoRequestSchema } from '../../schemas/photos';
+import {
+  DeletePhotosRequestSchema,
+  PhotoListQuerySchema,
+  PhotoPositionsRequestSchema,
+  PhotoTargetSchema,
+  UpdatePhotoRequestSchema,
+} from '../../schemas/photos';
 import { AppError } from '../../errors';
 import { isRendition } from '../../services/processing/renditions';
 import type { PhotosService } from '../../services/photos/photos_service';
@@ -30,6 +36,14 @@ export class PhotosApi {
       const query = PhotoListQuerySchema.parse(c.req.query());
       return c.json(this.service.listByLibrary(c.req.param('libraryId'), query));
     });
+
+    // Where rows sit in a collection now, so a client holding open expansion
+    // bands and a scroll anchor can re-place them after an import or a re-order
+    // rather than closing them (§19.6.1). A POST because the scope, the filters
+    // and up to a thousand keys do not belong in a query string.
+    app.post('/photos/positions', async (c) =>
+      c.json(this.service.positionsOf(PhotoPositionsRequestSchema.parse(await c.req.json()))),
+    );
 
     // Answers with a count, not with the ids. The undo restores by the batch id
     // the client stamped the request with (§12.3): the selection those photos

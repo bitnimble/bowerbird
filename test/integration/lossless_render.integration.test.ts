@@ -10,8 +10,9 @@ import type { Library } from '../../src/schemas/libraries';
 import { DEFAULT_SETTINGS, type Settings } from '../../src/schemas/settings';
 import { ProcessingService } from '../../src/services/processing/processing_service';
 import type { SettingsRepository } from '../../src/services/settings/settings_repository';
-import { decodeRaw, readRawHeader } from '../../src/services/processing/raw_decoder';
-import { decodeImage, freeImage, pixels } from '../../src/services/processing/rawshim_ops';
+import { readRawHeader } from '../../src/services/processing/raw_decoder';
+import { decodeImage, freeImage } from '../../src/services/processing/rawshim_ops';
+import { decodeRaw, pixels } from '../../src/services/processing/rawshim_pixels';
 import { getRenditionPath } from '../../src/utils/paths';
 
 // The output path is the library's business now, so the test asks for it the
@@ -28,6 +29,9 @@ function library(dataPath: string, hdr: boolean): Library {
     rendition_hdr_video: false,
     include_subfolders: true,
     mirror_shoots: true,
+    auto_stack: true,
+    auto_stack_similarity: 0.78,
+    auto_stack_window_seconds: 60,
     last_synced_at: null,
     photo_count: 0,
   };

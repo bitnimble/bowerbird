@@ -60,6 +60,7 @@ export class ProcessingService {
   // drain loop knows to stop.
   private readonly queued = new Map<string, Set<string> | null>();
   private readonly processed = new Set<(photoId: string, written: RenditionWritten) => void>();
+  private readonly described = new Set<(photoId: string, descriptor: Uint8Array) => void>();
 
   constructor(
     private readonly photos: PhotosRepository,
@@ -69,6 +70,19 @@ export class ProcessingService {
   /** Called with each derived file written: which photo, which stage, and when. */
   onProcessed(listener: (photoId: string, written: RenditionWritten) => void): void {
     this.processed.add(listener);
+  }
+
+  /**
+   * Called with the stacking descriptor a grid tile produced, as it lands.
+   *
+   * The worker computes it off the pixels it already holds and sends it back
+   * with the result, so nothing on this side decodes anything: doing that here
+   * put ~20ms of synchronous native work per photo inside the pool's result
+   * handler, which both stalled every HTTP request and left the worker that had
+   * just finished idling until it returned.
+   */
+  onDescribed(listener: (photoId: string, descriptor: Uint8Array) => void): void {
+    this.described.add(listener);
   }
 
   // Announced from the two places that write a rendition - the queue's result
@@ -309,7 +323,7 @@ export class ProcessingService {
         // Its own stage, said as soon as it lands: the render behind it is still
         // ~1.5s away, and a grid already on screen should fill at the tile's pace
         // rather than wait for both.
-        this.stageDone(photo, result.photoId, 'tile');
+        this.stageDone(photo, result.photoId, 'tile', result.descriptor);
       },
       stopped,
     );
@@ -339,7 +353,12 @@ export class ProcessingService {
   // Per stage rather than per photo because the two files move at different times:
   // sharing one stamp re-fetched every grid tile on the page whenever any photo's
   // renditions were rebuilt, for bytes that had not changed.
-  private stageDone(photo: StagedPhoto | null, photoId: string, stage: ProcessingStage): void {
+  private stageDone(
+    photo: StagedPhoto | null,
+    photoId: string,
+    stage: ProcessingStage,
+    descriptor?: Uint8Array,
+  ): void {
     // Never throw: this runs inside a worker's onmessage/onerror, and a throw here
     // would skip the pool's assignNext/terminate/live-- bookkeeping and hang the
     // batch forever. On a DB write failure, log and leave the flag set.
@@ -358,6 +377,10 @@ export class ProcessingService {
       // After the writes, so a client told the file is ready cannot ask for it
       // before the row says so.
       this.announce(photoId, { stage, version });
+      // Handed over as it arrives, still inside the try above: a descriptor that
+      // fails to store is a photo that will not stack, which is not worth losing
+      // the rendition over.
+      if (descriptor != null) for (const listener of this.described) listener(photoId, descriptor);
       log.debug('stage done', { photo: photoId, stage });
     } catch (err) {
       log.error('could not record a finished stage', { photo: photoId, stage, err });

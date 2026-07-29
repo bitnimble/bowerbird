@@ -1207,7 +1207,9 @@ Getting this wrong the first time is worth recording, because the wrong version 
 
 The rule that falls out: **pixels cross only on their way into an HTTP response.** Nothing else. `GET .../embedded` hands the camera's preview to a `Response` unchanged, and `GET .../download` hands over a transcoded JPEG; both are bytes bound for a socket. Every other path - the decode, the fit, the grade, the warp, all four encoders - begins and ends on the Rust side.
 
-Two doors exist in the other direction and neither has a production caller: `imageFromRgb` and `bb_fit_against`, for the test that injects a known distortion and needs a target it constructed. `decodeRaw` is the same, kept for tests that compare a decode against what was written.
+The doors in the other direction all live in **`rawshim_pixels.ts`**, and lint keeps them shut: `.oxlintrc.json` bans that module from `src/**`, allowing it only under `test/` and `**/tests/**`. `pixels`, `imageFromRgb`, `hdrGradedSamples` and `decodeRaw` are behind it, none with a production caller; they exist so an integration test can assert on what Rust produced, which is the one thing the rule cannot do without: that a written AVIF matches the decode it came from, that a JPEG-matched render differs from a plain one, that HDR grading is stable frame to frame.
+
+A lint rule rather than a comment because the failure mode is a plausible-looking one. Reading samples into TypeScript to compute something over them reads as ordinary code, and it is how the colour model ends up living in two places and how a per-pixel loop ends up in the slower of the two languages. `rawshim_ops.ts` therefore hands back a handle or an encoded file, and nothing else.
 
 Getting there took removing three round trips that each looked reasonable. The embedded preview was extracted into a `Buffer` - 5-14MB, since a 61MP body embeds a full-resolution one - and handed straight back to be decoded. The fit took that preview *and* the whole RAW, 60-120MB, so TypeScript could find one maker-note tag in the first few kilobytes. And a rendition being transcoded was read off disk into JavaScript only to be passed back down; `decodeFile` takes the path instead.
 
@@ -2288,3 +2290,297 @@ bun run test:e2e                  # Playwright; starts its own API + Vite on ran
 Every service picks a free port at random rather than a fixed one, so several checkouts (parallel worktrees, an agent per branch) can each run a dev server and an E2E suite without fighting over `:3000`. Each prints the port it got, and takes an override when one has to be pinned: `-p <port>` for the API, `--port <port>` for Vite. The client still has to be told where the API is, so a dev session either pins the API with `-p 3000` or passes the port it was given as `VITE_API_URL`.
 
 `bun run test:e2e` builds a throwaway library under `$TMPDIR/bowerbird-e2e-<checkout hash>` from the ARW fixture and drives the real stack, so it needs LibRaw present. The path is keyed by checkout so two worktrees testing at once do not wipe each other's fixture, and stable across runs of one checkout so the copies are overwritten rather than piling up. `VITE_API_URL` points the client at a non-default API origin.
+
+---
+
+## 19. Photo Stacks
+
+A **stack** groups photographs of one shot: a burst, or several takes of a
+scene. It is one entity in the catalogue, shown as one tile, expandable to its
+members. A stack is **library-wide** and transcends the shoots and albums its
+members sit in, which since shoots mirror folders (§4.1) is the ordinary case
+rather than an unusual one: any stack whose photos are in two folders is a stack
+across two shoots.
+
+### 19.1 Why not a perceptual hash
+
+The obvious answer is a 64-bit perceptual hash, and it does not work. Measured
+against a labelled folder of 231 frames, dHash scores the worst true pair at
+0.531 while a hand-verified *different-scene* pair scores 0.641; DCT pHash is
+0.406 against 0.594. Both have a **negative** margin - the different scenes
+outscore the same ones - so no threshold separates them. They are not merely
+weak here; they are unusable.
+
+What a descriptor has to survive, for two frames of one scene, is a different
+exposure, a shift or small rotation, people walking through, a different white
+balance or colour profile, and a step closer or further back.
+
+### 19.2 Schema
+
+```sql
+CREATE TABLE stacks (
+  id            TEXT PRIMARY KEY,
+  library_id    TEXT NOT NULL REFERENCES libraries(id) ON DELETE CASCADE,
+  origin        TEXT NOT NULL CHECK (origin IN ('auto', 'manual')),
+  date_created  TEXT NOT NULL
+);
+```
+
+The `origin` column is load-bearing rather than informational. Detection re-runs
+over already-stacked photos so that changing the threshold re-forms stacks
+(§19.4.3), and without it that pass would dissolve a manual stack whose members
+are not alike - two lenses on one subject, which is the case manual stacking
+exists for.
+
+On `photos`: `stack_id`, `descriptor` (a BLOB, §19.3), and `stack_state`, which
+is the three answers to "is this photo in a stack?"
+
+| value | meaning | detection may claim it |
+|---|---|---|
+| `none` | never been in one | yes |
+| `stacked` | currently in one | yes, if the stack is `auto` |
+| `unstacked` | a human pulled it out | **never** |
+
+`stack_state` is `stacked` exactly when `stack_id` is set. The repository writes
+both together rather than a `CHECK` spanning them, because a library delete
+cascades `stacks` and `photos` in an order SQLite does not define and such a
+constraint would fire mid-cascade.
+
+On `libraries`: `auto_stack`, `auto_stack_similarity` (0.78) and
+`auto_stack_window_seconds` (60). Per library because one catalogue may be
+burst-heavy sport where the stack is the unit of work and another a studio where
+every frame is deliberate.
+
+### 19.3 The descriptor (`native/rawshim/src/stacks.rs`)
+
+Rust computes it, Rust compares it, and TypeScript only ever stores the blob and
+hands it back. A comparison is arithmetic over a couple of thousand cells, and a
+library-sized pass makes hundreds of thousands of them, so handing that across
+the FFI boundary one call at a time would cost more than the work.
+
+Two views of the frame - the whole thing, and its **central 78%** - each holding
+a rank-normalized luma grid at 20x20, two grey-world chroma grids at 20x20, and
+a 10x10 luma grid used only to find the alignment. 2.6 kB per photo, so ~260 MB
+for a 100k library, against the terabytes of RAW such a library holds.
+
+Three properties do the work:
+
+- **Rank normalization** is the exposure and white-balance invariance: any
+  monotonic tone curve leaves the ordering of the cells alone, so it leaves the
+  descriptor alone. Cells that tie share the mean of the ranks they span, and
+  cells are rounded to the precision the descriptor stores *before* being
+  ranked. Both matter more than they look: a flat sky, a blown highlight and a
+  neutral shadow are long runs of equal cells, and the chromaticity of a grey
+  region differs cell to cell only in the last bits of a float division. Ranking
+  that raw turns numerical noise into a full-scale signal, and two frames of one
+  grey scene describe it completely differently.
+- **Aspect is squashed, not fitted.** A crop or a second body gives one scene two
+  aspect ratios, and that must not read as a difference.
+- **The trimmed mean** - the best 75% of cells - is the occlusion tolerance.
+  Somebody walking through changes a handful of cells completely, and a plain
+  mean lets those few outvote the scene they are standing in.
+
+Comparing two descriptors takes the best of three pairings: both whole, and each
+one's whole frame against the other's crop. Cropping both sides is the same view
+as cropping neither, so that pairing is skipped; trying both directions is what
+makes the score symmetric, which the grouping needs. Each pairing finds the
+offset that best lines the 10x10 grids up, then evaluates the real distance once
+at that offset. Searching coarsely and evaluating once rather than evaluating all
+25 offsets at full size is 19x faster for 0.014 of margin.
+
+The crop is centred, and measurably has to be: anchoring it off centre moves the
+true pairs by 0.001 and lifts the different-scene pairs from 0.640 to 0.751,
+because more freedom to slide the window is more chance of a coincidental match.
+Vertical is worse than horizontal, since frames of a landscape share sky along
+the top and ground along the bottom.
+
+The descriptor is written when a photo's **grid tile** lands, read back from the
+tile rather than computed inside the render, so every photo is described from
+the picture the grid actually shows however its tile was produced. Two libraries
+are then comparable even when one serves the camera's JPEG and the other a
+demosaiced render.
+
+### 19.4 Detection (`stacks_service.ts`)
+
+#### 19.4.1 When
+
+After a sync **and the processing it queued** have both settled, and only when
+that sync added or changed photos. It waits for processing rather than for the
+scan because what it needs is the derived files: photos imported a moment ago
+have nothing to compare yet. The added-or-changed condition is not an
+optimisation - watching is on by default with a two-second debounce, so a save
+starts a scoped sync, and without it a library would re-clique its whole
+collection every couple of seconds while somebody worked in it.
+
+There is no separate "scan now" control: a manual sync is already how you ask a
+library to re-look at itself.
+
+#### 19.4.2 Candidates, and the absence of a backfill
+
+Photos whose `stack_state` is `none` or `stacked`, which are not members of a
+`manual` stack, and which have a descriptor. Deliberately **no camera or lens
+gate**: shooting one subject with two bodies to compare them later is a case
+stacking should serve.
+
+A photo imported before this feature has no descriptor and is never a candidate,
+so an existing library stacks nothing until it imports something new. There is
+no backfill pass, because the value is in what arrives next rather than in a
+walk over everything that already landed - and rebuilding a library's tiles
+already backfills it as a side effect, since the descriptor rides along with the
+tile.
+
+#### 19.4.3 The rule
+
+Candidates are walked once in time order, growing one stack at a time. The next
+photo joins when **both** hold: it is no more than `auto_stack_window_seconds`
+after the photo before it, *not* after the stack's first photo; and it clears
+`auto_stack_similarity` against **every** photo already in the stack, not merely
+against its neighbour.
+
+The clique requirement is what bounds a stack, and it removes the need for any
+separate guard against chaining: a scene that drifts frame by frame reaches a
+point where the newest photo no longer matches the one the stack started from,
+and the stack ends there on its own. On the labelled folder the largest stack
+produced is seven.
+
+The pass rewrites every `auto` stack in the library from scratch, which is what
+makes the similarity setting mean something after it changes: raise it and stacks
+split, lower it and they merge. Photos leaving an auto stack during that rewrite
+go back to `none` rather than `unstacked` - this is detection changing its own
+mind, not a person rejecting the grouping.
+
+Cost is `n * s` where s is the size of the stack being built, never `n^2`, and
+not a function of the window at all. Measured at 23k comparisons per second per
+core.
+
+#### 19.4.4 The human boundary
+
+Any manual edit - create, add, remove, unstack - sets the stack's `origin` to
+`manual`, and detection stops managing it permanently. Remove and unstack
+additionally set every affected photo to `unstacked`. Enforced in the service
+rather than at the API, so a later caller cannot route around it.
+
+### 19.5 Reading stacks
+
+#### 19.5.1 Collapsing
+
+Collapsing happens in SQL, so a stack costs one row of a page and one unit of
+`total`, which becomes `COUNT(DISTINCT COALESCE(stack_id, id))`. One helper
+builds the predicate, used by the listing, by `idsAt` and by `positionsAt` -
+written twice, a position would mean one photograph to the client and another
+here.
+
+**It is a filter, not a window function, and that is the whole of why listings
+are still fast.** A window has to see every scoped row before `LIMIT` can take a
+hundred of them, so it sorts the collection for every block a scroll fetches:
+measured at 179ms a page on 200k photos against 0.9ms for the same listing
+without stacks, and paid by every library whether or not it has a single stack.
+As a filter the ordering index is walked and stops at the page, and the same
+listing costs 4.2ms.
+
+The filter has two arms:
+
+- `photos.is_representative`, a stored flag set on every unstacked photograph and
+  on one member of each stack, which answers for almost every row with an
+  equality test;
+- failing that, "this stack has no visible flagged member, and no visible member
+  sorts before me" - which **promotes** the next survivor when the flagged one is
+  hidden, by a filter, by the bin, or by being in another shoot.
+
+So the flag is a hint rather than a truth. Stale or missing, the second arm still
+returns the right row and only costs a little more. What it must never be is set
+on two members of one stack, which would show that stack twice, so a partial
+unique index (`photos(stack_id) WHERE stack_id IS NOT NULL AND is_representative
+= 1`) makes that an error at the write rather than a duplicate tile nobody
+notices. It is maintained by `refreshRepresentative`, which every membership
+change calls.
+
+The promotion arm carries the **same scope and filters as the outer query**,
+which is what keeps the properties the window gave for free. An album is strict,
+because a member it does not hold is not a candidate to stand for the stack. A
+shoot promotes to the newest *in-shoot* member, so it never shows a tile for a
+photograph that is not in it. And a filter promotes rather than making the stack
+vanish.
+
+Two costs remain, both once-per-pass rather than per-block: the `total` count is
+a full scan (it always was), and `positionsAt` numbers rows without a bound
+because it cannot know where its keys are, at ~158ms on 200k photos. It runs on a
+refresh with bands open, not on every block.
+
+**Selecting a stack means selecting every photograph in it**, and `idsAt` is
+where that happens: a collapsed row stands for its stack, so expanding the chosen
+rows to their members is one join in one place, and no client holds a member id
+to do it with.
+
+#### 19.5.2 Scope rules
+
+- The representative is the newest **in-scope** member, so a shoot never shows a
+  tile for a photograph that is not in it.
+- `stack_size` is the full membership in library and shoot views, and the
+  in-album count in an album view.
+- A stack with one visible member renders as an ordinary tile.
+
+#### 19.5.3 Expansion
+
+`GET /api/stacks/:id/photos` returns every member; `?album_id=` narrows to what
+that album holds. A shoot needs no such argument - each row carries its own
+`shoot_id`, which is all the client needs to dim the members that are elsewhere.
+
+### 19.6 The grid (`bands.ts`)
+
+Clicking a stack tile opens a **band of fresh rows directly below the row that
+tile sits in**. The tile stays where it is and takes a dark overlay with a down
+chevron, which is also how the stack closes.
+
+The members live alone in that band and never share a row with photos outside
+the stack, so no tile ever changes which neighbours it sits beside: the grid
+below is displaced downwards and otherwise untouched. Band rows are ordinary tile
+rows at the same cell geometry, marked by their background rather than their
+size - `visibleRows` takes **one** row height for the whole list, so anything
+that gave a band its own height would put the scroll height back into the DOM,
+which the virtual grid exists to avoid.
+
+Any number of stacks may be open. Expansions are a list of `(position, member
+count)` sorted by position; `rowCount` is the base rows plus each band's
+`ceil(members / columns)`, and mapping a display row to a collection position is
+a prefix-sum walk over that list.
+
+#### 19.6.1 Keeping bands and the scroll put
+
+A row's identity is `COALESCE(stack_id, id)` - the key the collapsing partitions
+on. That is what the store holds for an open band, and positions are derived from
+it rather than stored, so ordering changes, filters and syncs move where a band
+is drawn without closing it. A band closes only when its stack genuinely leaves
+the collection.
+
+On any refresh, each open band's position is re-resolved through
+`POST /api/photos/positions`, which numbers rows **once** and reads every wanted
+key out of that one numbering. Ten open bands must not mean ten ordered passes
+over the collection, which is the lesson `idsAt` already records.
+
+Opening a band above the viewport displaces everything below it, so the action
+adds the band's height to `scrollTop` and the view does not move. Every input is
+a number the store already holds, so the correction is exact rather than a
+measurement.
+
+**Band members have no position of their own**, in any mode: the listing is
+collapsed, so the server numbers one row per stack and members are not in that
+numbering at all. They are selected **by id**, in a set held beside the position
+ranges. This stays inside the rule the virtual grid enforces rather than bending
+it - what must never happen is an id standing in for an *unloaded* row, and a
+band's members are loaded, on screen, and few. The two selections are separate,
+and the bulk bar acts on whichever is live: "everything in this library" and
+"these three frames of this burst" are different intentions.
+
+The bulk bar counts **entries**, where a stack counts as one, because the client
+cannot know the sizes of stacks in a selection covering rows it has never held.
+
+| action | shown when |
+|---|---|
+| Stack | two or more entries selected |
+| Unstack | the selection is a single row that is a stack |
+| Remove from stack | band members are selected, of one stack or several |
+
+Stacking a selection that already contains stacked photos moves those photos into
+the new stack; any stack left with fewer than two members is deleted, because a
+stack of one is a photograph.

@@ -13,6 +13,9 @@ interface LibraryRow {
   rendition_hdr_video: number;
   include_subfolders: number;
   mirror_shoots: number;
+  auto_stack: number;
+  auto_stack_similarity: number;
+  auto_stack_window_seconds: number;
   last_synced_at: string | null;
   photo_count: number;
 }
@@ -20,7 +23,7 @@ interface LibraryRow {
 // photo_count excludes binned photos: it answers "how big is this library", and
 // the Bin has its own count in the UI.
 const SELECT = `SELECT l.id, l.root_path, l.data_path, l.name, l.ordering, l.rendition_source, l.rendition_hdr, l.rendition_hdr_video,
-  l.include_subfolders, l.mirror_shoots, l.last_synced_at,
+  l.include_subfolders, l.mirror_shoots, l.auto_stack, l.auto_stack_similarity, l.auto_stack_window_seconds, l.last_synced_at,
   (SELECT COUNT(*) FROM photos p WHERE p.library_id = l.id AND p.is_deleted = 0) AS photo_count
   FROM libraries l`;
 
@@ -89,6 +92,18 @@ export class LibrariesRepository {
     return this.db.query('UPDATE libraries SET mirror_shoots = ? WHERE id = ?').run(mirror ? 1 : 0, id).changes > 0;
   }
 
+  setAutoStack(id: string, enabled: boolean): boolean {
+    return this.db.query('UPDATE libraries SET auto_stack = ? WHERE id = ?').run(enabled ? 1 : 0, id).changes > 0;
+  }
+
+  setAutoStackSimilarity(id: string, similarity: number): boolean {
+    return this.db.query('UPDATE libraries SET auto_stack_similarity = ? WHERE id = ?').run(similarity, id).changes > 0;
+  }
+
+  setAutoStackWindow(id: string, seconds: number): boolean {
+    return this.db.query('UPDATE libraries SET auto_stack_window_seconds = ? WHERE id = ?').run(seconds, id).changes > 0;
+  }
+
   // Stamped when a sync finishes, so the UI can say how stale the catalogue is
   // even after a restart (the in-memory status does not survive one, §9.6).
   setLastSyncedAt(id: string, iso: string): void {
@@ -112,6 +127,9 @@ function mapRow(row: LibraryRow): Library {
     rendition_hdr_video: row.rendition_hdr_video === 1,
     include_subfolders: row.include_subfolders === 1,
     mirror_shoots: row.mirror_shoots === 1,
+    auto_stack: row.auto_stack === 1,
+    auto_stack_similarity: row.auto_stack_similarity,
+    auto_stack_window_seconds: row.auto_stack_window_seconds,
     last_synced_at: row.last_synced_at,
     photo_count: row.photo_count,
   };

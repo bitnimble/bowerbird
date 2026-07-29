@@ -19,12 +19,12 @@ import {
   fitHdrMatch,
   freeHdrMatch,
   freeImage,
-  hdrGradedSamples,
   hdrMatchColour,
   type HdrMatchHandle,
   type HdrOptions,
   type ImageHandle,
 } from '../../src/services/processing/rawshim_ops';
+import { hdrGradedSamples } from '../../src/services/processing/rawshim_pixels';
 
 const FIXTURE = `${import.meta.dir}/../fixtures/DSC02981.ARW`;
 const QUANTILE = 0.9;

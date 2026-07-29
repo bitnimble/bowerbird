@@ -38,6 +38,9 @@ beforeAll(() => {
     rendition_hdr_video: false,
     include_subfolders: true,
     mirror_shoots: true,
+    auto_stack: true,
+    auto_stack_similarity: 0.78,
+    auto_stack_window_seconds: 60,
     last_synced_at: null,
     photo_count: 1,
   };

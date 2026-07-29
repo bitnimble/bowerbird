@@ -1,7 +1,7 @@
 import { observer } from 'mobx-react-lite';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Check, ThumbsDown, ThumbsUp } from 'lucide-react';
+import { Check, ChevronDown, EyeOff, Layers, ThumbsDown, ThumbsUp } from 'lucide-react';
 import { captureDateTime, localDateTime } from '../../api/dates';
 import { renditionUrl, type PhotoSummary } from '../../api/client';
 import { usePhotosStore, usePresenters } from '../../app/stores_context';
@@ -79,10 +79,13 @@ const Tile = observer(function Tile({
   photo,
   index,
   isFocused,
+  onBandToggled,
 }: {
   photo: PhotoSummary;
   index: number;
   isFocused: boolean;
+  /** How far to move the scroller so opening a band above does not shift the view. */
+  onBandToggled?: (shift: number) => void;
 }): JSX.Element {
   const store = usePhotosStore();
   const { photos } = usePresenters();
@@ -105,6 +108,7 @@ const Tile = observer(function Tile({
   // more; without this the placeholder outlives the rendition arriving.
   useEffect(() => setFailed(false), [src]);
   const selected = store.selection.has(index);
+  const expanded = photo.stack_id != null && store.expansions.has(photo.stack_id);
   const list = store.mode === 'list';
   // ordering_date is date_taken under a taken_* ordering and date_added otherwise,
   // and those are not the same kind of timestamp (§11.1).
@@ -162,6 +166,31 @@ const Tile = observer(function Tile({
         {photo.is_deleted && <span className="badge badge--deleted">binned</span>}
       </div>
 
+      {/* The stack's own control, and the only one it has: clicking the tile
+          opens the band of members below this row, and clicking it again closes
+          it. Expanded, the tile takes a dark overlay and turns its layers into a
+          chevron, so the thing that opened the band is visibly the thing that
+          will close it (§19.6).
+
+          Not offered in masonry, where rows are packed from each photo's own
+          shape rather than laid out on a row model there is anywhere to insert a
+          band into. A badge there did nothing but move the scroll. */}
+      {photo.stack_id != null && photo.stack_size > 1 && store.mode !== 'masonry' && (
+        <button
+          type="button"
+          className={`tile__stack${expanded ? ' tile__stack--open' : ''}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            void photos.toggleBand(photo.stack_id!, index).then((shift) => onBandToggled?.(shift));
+          }}
+          aria-expanded={expanded}
+          aria-label={expanded ? 'Collapse this stack' : `Expand this stack of ${photo.stack_size} photos`}
+        >
+          {expanded ? <ChevronDown size={14} /> : <Layers size={12} />}
+          {!expanded && <span className="tile__stack-count">{photo.stack_size}</span>}
+        </button>
+      )}
+
       <button
         type="button"
         className="tile__check"
@@ -192,11 +221,78 @@ const Tile = observer(function Tile({
   );
 });
 
+// One member of an open stack.
+//
+// Selected by id rather than by position, because a collapsed listing numbers
+// one row per stack and a member has no position at all. Legitimate because a
+// band's members are loaded and on screen: what the virtual grid forbids is an
+// id standing in for a row this client has never held (§19.6).
+const BandMember = observer(function BandMember({ photo }: { photo: PhotoSummary }): JSX.Element {
+  const store = usePhotosStore();
+  const { photos } = usePresenters();
+  const navigate = useNavigate();
+  const [loaded, setLoaded] = useState(false);
+  const selected = store.selectedMembers.has(photo.id);
+  const src = renditionUrl(photo.id, 'grid', renditionVersion(photo, 'grid'));
+  // A shoot shows the whole stack and dims the members that are not in it, which
+  // is the one place a photo appears in a collection it does not belong to.
+  const source = store.source;
+  const outside = source?.kind === 'shoot' && photo.shoot_id !== source.shootId;
+
+  return (
+    <div
+      className={`tile tile--member${selected ? ' tile--selected' : ''}${outside ? ' tile--outside' : ''}`}
+      role="listitem"
+      data-triage={photo.triage}
+      style={{ '--ar': String(photo.width / photo.height) } as React.CSSProperties}
+    >
+      <button
+        type="button"
+        className="tile__hit"
+        onClick={(e) => {
+          if (e.metaKey || e.ctrlKey || store.selectedMembers.size > 0) photos.toggleMember(photo.id);
+          else navigate(`/photos/${photo.id}`);
+        }}
+        aria-label={`photo ${filename(photo.file_path, photo.id)}`}
+      >
+        <img src={src} alt="" loading="lazy" className={loaded ? 'is-loaded' : undefined} onLoad={() => setLoaded(true)} />
+      </button>
+
+      {outside && (
+        <div className="tile__outside" aria-hidden>
+          <EyeOff size={14} />
+          <span>not in this shoot</span>
+        </div>
+      )}
+
+      <button
+        type="button"
+        className="tile__check"
+        onClick={() => photos.toggleMember(photo.id)}
+        aria-label={selected ? 'Deselect photo' : 'Select photo'}
+        aria-pressed={selected}
+      >
+        <Check size={12} strokeWidth={3} />
+      </button>
+
+      <div className="tile__foot">
+        <span className="tile__name" title={photo.file_path}>
+          {filename(photo.file_path, photo.id)}
+        </span>
+        <span className="tile__marks">
+          <TriageButtons photo={photo} />
+          <Rating photo={photo} />
+        </span>
+      </div>
+    </div>
+  );
+});
+
 // The tiles for one span of the collection. A row the client is not holding -
 // evicted behind the scroll, or still in flight - keeps its place as an empty
 // cell rather than closing the gap, so nothing shifts under the reader when it
 // lands.
-function tilesFor(store: PhotosStore, from: number, to: number): JSX.Element[] {
+function tilesFor(store: PhotosStore, from: number, to: number, onBandToggled?: (shift: number) => void): JSX.Element[] {
   const tiles: JSX.Element[] = [];
   for (let index = from; index < to; index++) {
     const photo = store.rows.get(index);
@@ -222,7 +318,13 @@ function tilesFor(store: PhotosStore, from: number, to: number): JSX.Element[] {
     // The keyboard cursor is meaningless once a selection is being assembled by
     // mouse: two rings on the same tile only raises "why is this one different".
     tiles.push(
-      <Tile key={photo.id} photo={photo} index={index} isFocused={store.focusIndex === index && !store.hasSelection} />,
+      <Tile
+        key={photo.id}
+        photo={photo}
+        index={index}
+        isFocused={store.focusIndex === index && !store.hasSelection}
+        onBandToggled={onBandToggled}
+      />,
     );
   }
   return tiles;
@@ -430,6 +532,15 @@ const GridScroller = observer(function GridScroller(): JSX.Element {
     [store, photos],
   );
 
+  // Opening a stack above the viewport displaces everything below it, so the
+  // scroller moves by exactly what the band inserted and the view stays put. The
+  // presenter works the distance out from numbers the store holds; writing it is
+  // the view's job, as it is for a measured masonry block (§19.6.1).
+  const onBandToggled = useCallback((shift: number) => {
+    const element = scroller.current;
+    if (element != null && shift !== 0) element.scrollTop = Math.max(0, element.scrollTop + shift);
+  }, []);
+
   const blocks: number[] = [];
   if (store.mode === 'masonry') for (let b = store.visibleBlocks.from; b < store.visibleBlocks.to; b++) blocks.push(b);
 
@@ -454,19 +565,46 @@ const GridScroller = observer(function GridScroller(): JSX.Element {
             <MasonryBlock key={block} block={block} top={store.domTop(store.blockTops[block] ?? 0)} onMeasured={onMeasured} />
           ))
         ) : (
-          <div
-            className={`grid grid--${store.mode} grid__window`}
-            role="presentation"
-            style={
-              {
-                transform: `translateY(${store.visibleTop}px)`,
-                '--cols': store.columns,
-                '--row-h': `${store.rowHeight - GRID_GAP}px`,
-              } as React.CSSProperties
-            }
-          >
-            {tilesFor(store, store.visible.from, store.visible.to)}
-          </div>
+          // One element per section rather than one window over a contiguous
+          // run: an open stack's band sits between rows of the collection, and a
+          // band several rows tall has to be one bordered box rather than one
+          // per row (§19.6).
+          store.sections.map((section) =>
+            section.kind === 'grid' ? (
+              <div
+                key={`grid-${section.from}`}
+                className={`grid grid--${store.mode} grid__window`}
+                role="presentation"
+                style={
+                  {
+                    transform: `translateY(${store.domTop(section.top)}px)`,
+                    '--cols': store.columns,
+                    '--row-h': `${store.rowHeight - GRID_GAP}px`,
+                  } as React.CSSProperties
+                }
+              >
+                {tilesFor(store, section.from, section.to, onBandToggled)}
+              </div>
+            ) : (
+              <div
+                key={`band-${section.stackId}`}
+                className={`grid grid--${store.mode} grid__window grid__band`}
+                role="group"
+                aria-label={`${section.photos.length} photos in this stack`}
+                style={
+                  {
+                    transform: `translateY(${store.domTop(section.top)}px)`,
+                    '--cols': store.columns,
+                    '--row-h': `${store.rowHeight - GRID_GAP}px`,
+                  } as React.CSSProperties
+                }
+              >
+                {section.photos.map((photo) => (
+                  <BandMember key={photo.id} photo={photo} />
+                ))}
+              </div>
+            ),
+          )
         )}
       </div>
     </div>

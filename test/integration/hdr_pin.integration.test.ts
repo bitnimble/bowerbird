@@ -28,10 +28,10 @@ import {
   freeHdrMatch,
   freeImage,
   hdrArgv,
-  hdrGradedSamples,
   type HdrOptions,
   type ImageHandle,
 } from '../../src/services/processing/rawshim_ops';
+import { hdrGradedSamples } from '../../src/services/processing/rawshim_pixels';
 
 const FIXTURE = `${import.meta.dir}/../fixtures/DSC02981.ARW`;
 const ARGV_PIN = `${import.meta.dir}/../fixtures/hdr_argv.pin.txt`;

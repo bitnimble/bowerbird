@@ -15,6 +15,9 @@ import { ShootsRepository } from './services/shoots/shoots_repository';
 import { AlbumsApi } from './api/albums/albums_api';
 import { AlbumsService } from './services/albums/albums_service';
 import { AlbumsRepository } from './services/albums/albums_repository';
+import { StacksApi } from './api/stacks/stacks_api';
+import { StacksService } from './services/stacks/stacks_service';
+import { StacksRepository } from './services/stacks/stacks_repository';
 import { EventsApi } from './api/events/events_api';
 import { ImageApi } from './api/image/image_api';
 import { HdrTestApi } from './api/hdr/hdr_test_api';
@@ -42,6 +45,7 @@ const photosRepo = new PhotosRepository(db);
 const shootsRepo = new ShootsRepository(db);
 const folderRulesRepo = new FolderRulesRepository(db);
 const albumsRepo = new AlbumsRepository(db);
+const stacksRepo = new StacksRepository(db);
 
 const processingService = new ProcessingService(photosRepo, settingsRepo);
 
@@ -50,13 +54,36 @@ const photosService = new PhotosService(photosRepo, albumsRepo, shootsRepo, libr
 const albumsService = new AlbumsService(albumsRepo, photosRepo);
 const shootsService = new ShootsService(shootsRepo, photosRepo, librariesRepo, folderRulesRepo);
 const syncService = new SyncService(photosRepo, librariesRepo, albumsRepo, shootsRepo, folderRulesRepo, processingService);
+const stacksService = new StacksService(stacksRepo, photosRepo, librariesRepo);
 // Prune sync's per-library in-memory state when a library is deleted (unbounded otherwise).
 librariesService.addLifecycleListener(syncService);
+
+// A photo is described for stacking as its grid tile lands (§19.3). The
+// descriptor is computed in the worker that already holds the pixels and rides
+// back with the result, so this side only stores it. Registered here rather than
+// inside ProcessingService so that building renditions keeps knowing nothing
+// about stacks: it reports what it produced, and this is one more reader of it.
+processingService.onDescribed((photoId, descriptor) => stacksService.storeDescriptor(photoId, descriptor));
+
+// Detection runs when a sync settles, and only if that sync actually brought
+// something in. Not an optimisation: watching is on by default with a two-second
+// debounce, so saving a file starts a scoped sync, and re-cliquing the whole
+// collection every couple of seconds while someone works in the folder is not
+// something a library should do (§19.4.1).
+syncService.onSettled((libraryId, changed) => {
+  if (!changed) return;
+  try {
+    stacksService.detect(libraryId);
+  } catch (error) {
+    log.warn('stack detection failed', { library: libraryId, err: String(error) });
+  }
+});
 
 const librariesApi = new LibrariesApi(librariesService, syncService, folderRulesRepo);
 const photosApi = new PhotosApi(photosService, processingService);
 const albumsApi = new AlbumsApi(albumsService, photosService);
 const shootsApi = new ShootsApi(shootsService, photosService);
+const stacksApi = new StacksApi(stacksService, photosService);
 const imageApi = new ImageApi(photosService);
 
 // With no configured allowlist, mirror back any origin on the same host the
@@ -120,6 +147,7 @@ app.route('/api/libraries', librariesApi.routes);
 app.route('/api', photosApi.routes);
 app.route('/api', shootsApi.routes);
 app.route('/api/albums', albumsApi.routes);
+app.route('/api/stacks', stacksApi.routes);
 app.route('/image', imageApi.routes);
 // Served by the API rather than the web client because it has to be opened
 // directly on an HDR machine, which may not be the one running the UI (§10.7).

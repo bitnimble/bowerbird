@@ -27,6 +27,12 @@
             "importNames": ["rm", "rmdir", "unlink"],
             "message": "Deleting from disk goes through src/utils/deletions.ts, which proves the target is not an original first."
           }
+        ],
+        "patterns": [
+          {
+            "group": ["**/rawshim_pixels", "./rawshim_pixels"],
+            "message": "Pixel work belongs in native/rawshim. Only handles and encoded files cross into TypeScript; rawshim_pixels reads samples back and is for tests alone."
+          }
         ]
       }
     ]

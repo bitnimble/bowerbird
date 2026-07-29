@@ -4,7 +4,15 @@ import { AppError } from '../../errors';
 import { Logger } from '../../logger';
 import type { Ordering } from '../../schemas/common';
 import type { Library } from '../../schemas/libraries';
-import type { PhotoDetail, PhotoListQuery, PhotoListResponse, PhotoSelection, PhotoTarget, UpdatePhotoRequest } from '../../schemas/photos';
+import type {
+  PhotoDetail,
+  PhotoListQuery,
+  PhotoListResponse,
+  PhotoPositionsRequest,
+  PhotoSelection,
+  PhotoTarget,
+  UpdatePhotoRequest,
+} from '../../schemas/photos';
 import { deleteGeneratedFile } from '../../utils/deletions';
 import { getBinPath, getDataPath, getHdrPath, getOriginalPath, getRenditionPath, toLibraryRelative } from '../../utils/paths';
 import { ensureDir, moveIntoDir } from '../../utils/files';
@@ -246,6 +254,39 @@ export class PhotosService {
         return this.photos.idsInAlbum(scope.id, album.ordering, ranges, listFilters);
       }
     }
+  }
+
+  /**
+   * Where the given rows sit in a scoped listing now (§19.6.1).
+   *
+   * Keys are `COALESCE(stack_id, id)`: a stack by its stack, a photo by itself,
+   * which is what identifies a row of a collapsed listing. A key that is no
+   * longer in the collection is simply absent from the answer, which is how a
+   * client learns that the band it had open has been filtered away.
+   */
+  positionsOf(request: PhotoPositionsRequest): Record<string, number> {
+    const { scope, filters, keys } = request;
+    const listFilters = fromSelectionFilters(filters);
+    const found = ((): Map<string, number> => {
+      switch (scope.kind) {
+        case 'library': {
+          const library = this.libraries.getById(scope.id);
+          if (!library) throw new AppError('NOT_FOUND', `library not found: ${scope.id}`);
+          return this.photos.positionsInLibrary(scope.id, library.ordering, keys, listFilters);
+        }
+        case 'shoot': {
+          const shoot = this.shoots.getById(scope.id);
+          if (!shoot) throw new AppError('NOT_FOUND', `shoot not found: ${scope.id}`);
+          return this.photos.positionsInShoot(scope.id, shoot.ordering, keys, listFilters);
+        }
+        case 'album': {
+          const album = this.albums.getById(scope.id);
+          if (!album) throw new AppError('NOT_FOUND', `album not found: ${scope.id}`);
+          return this.photos.positionsInAlbum(scope.id, album.ordering, keys, listFilters);
+        }
+      }
+    })();
+    return Object.fromEntries(found);
   }
 
   // Re-reads the RAW header and updates the stored metadata. Sync only re-opens

@@ -10,7 +10,8 @@
 // second proof that LibRaw reads Canon.
 //   docker exec bowerbird-dev bun test test/integration
 import { beforeAll, describe, expect, test } from 'bun:test';
-import { decodeRaw, readRawHeader } from '../../src/services/processing/raw_decoder';
+import { readRawHeader } from '../../src/services/processing/raw_decoder';
+import { decodeRaw } from '../../src/services/processing/rawshim_pixels';
 import { extractMetadata } from '../../src/services/processing/metadata';
 
 const SONY = `${import.meta.dir}/../fixtures/DSC02981.ARW`;

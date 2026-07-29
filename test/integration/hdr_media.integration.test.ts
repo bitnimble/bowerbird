@@ -8,7 +8,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { type HdrMedium, type HdrVariant, extensionFor } from '../../src/services/processing/hdr_media';
-import { decodeRaw } from '../../src/services/processing/raw_decoder';
+import { decodeRaw } from '../../src/services/processing/rawshim_pixels';
 import { decodeRawImage, encodeHdrRendition, freeImage, type ImageHandle } from '../../src/services/processing/rawshim_ops';
 
 const FIXTURE = `${import.meta.dir}/../fixtures/DSC02981.ARW`;

@@ -8,7 +8,16 @@ import type {
   SetFolderRuleRequest,
   UpdateLibraryRequest,
 } from '../../../src/schemas/libraries';
-import type { PhotoDetail, PhotoListResponse, PhotoSelection, PhotoTarget, Triage, UpdatePhotoRequest } from '../../../src/schemas/photos';
+import type {
+  PhotoDetail,
+  PhotoListResponse,
+  PhotoPositionsRequest,
+  PhotoSelection,
+  PhotoTarget,
+  Triage,
+  UpdatePhotoRequest,
+} from '../../../src/schemas/photos';
+import type { Stack } from '../../../src/schemas/stacks';
 import type { ViewerRendition, ViewerRenditionMode, Settings, UpdateSettingsRequest } from '../../../src/schemas/settings';
 import type { CreateShootRequest, Shoot, ShootRemoval, UpdateShootRequest } from '../../../src/schemas/shoots';
 import type { Rendition } from '../../../src/services/processing/renditions';
@@ -198,6 +207,32 @@ export const api = {
     request('DELETE', `/api/albums/${id}/photos`, target),
   listAlbumPhotos: (id: string, params: PhotoListParams, signal?: AbortSignal): Promise<PhotoListResponse> =>
     request('GET', `/api/albums/${id}/photos${query(params)}`, undefined, signal),
+
+  // Stacks (§19). A stack is made from whatever the bulk bar has selected, which
+  // is positions rather than ids for anything larger than a screenful, so this
+  // takes the same target shape every other bulk call does.
+  createStack: (target: PhotoTarget): Promise<Stack> => request('POST', '/api/stacks', target),
+  // Every member, so a shoot can dim the ones that are not in it; `albumId`
+  // narrows to what that album holds, because an album is strict (§19.5.3).
+  listStackPhotos: (
+    id: string,
+    options: { albumId?: string; deleted?: boolean } = {},
+    signal?: AbortSignal,
+  ): Promise<PhotoSummary[]> => {
+    const search = new URLSearchParams();
+    if (options.albumId != null) search.set('album_id', options.albumId);
+    if (options.deleted === true) search.set('deleted', 'true');
+    const query = search.toString();
+    return request('GET', `/api/stacks/${id}/photos${query === '' ? '' : `?${query}`}`, undefined, signal);
+  },
+  unstack: (id: string): Promise<void> => request('DELETE', `/api/stacks/${id}`),
+  removeFromStack: (id: string, photoIds: string[]): Promise<void> =>
+    request('POST', `/api/stacks/${id}/remove`, { photo_ids: photoIds }),
+  // Where rows sit in a collection now, so open bands and the scroll anchor can
+  // be re-placed after an import or a re-order instead of being thrown away
+  // (§19.6.1). Keyed by stack id for a stack and photo id for a photo.
+  photoPositions: (body: PhotoPositionsRequest, signal?: AbortSignal): Promise<Record<string, number>> =>
+    request('POST', '/api/photos/positions', body, signal),
 };
 
 // `version` is appended only once renditions have been rebuilt in this session:

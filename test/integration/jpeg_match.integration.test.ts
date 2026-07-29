@@ -13,14 +13,13 @@ import {
   decodeRawImage,
   encodeJpeg,
   freeImage,
-  imageFromRgb,
-  pixels,
   readDistortionSpline,
   readHeaderFields,
   readLensfunKnots,
   renderImage,
   type ImageHandle,
 } from '../../src/services/processing/rawshim_ops';
+import { imageFromRgb, pixels } from '../../src/services/processing/rawshim_pixels';
 
 const FIXTURE = `${import.meta.dir}/../fixtures/DSC02981.ARW`;
 /// A body that records no spline of its own, so the database is the only geometry.

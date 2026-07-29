@@ -141,7 +141,93 @@ function folderRange(folderPath: string): [string, string] {
 // Qualified with `photos.` because listByAlbum joins album_photos, which also has
 // a date_added column (bare names would be ambiguous).
 const SUMMARY_COLS =
-  'photos.id, photos.library_id, photos.shoot_id, photos.file_path, photos.width, photos.height, photos.date_taken, photos.date_added, photos.date_updated, photos.tile_built_at, photos.renditions_built_at, photos.viewer_rendition, photos.triage, photos.rating, photos.is_missing, photos.is_deleted';
+  'photos.id, photos.library_id, photos.shoot_id, photos.file_path, photos.width, photos.height, photos.date_taken, photos.date_added, photos.date_updated, photos.tile_built_at, photos.renditions_built_at, photos.viewer_rendition, photos.triage, photos.rating, photos.is_missing, photos.is_deleted, photos.stack_id';
+
+// How wide a stack counts in a listing (§19.5.2).
+//
+// A shoot shows the whole stack and dims the members that are not in it, so its
+// tile has to say how many photographs the stack holds. An album is strict about
+// what it contains, so there its tile may only count the members the album
+// holds. Both are the same window function over different row sets, which is why
+// this is a flag and not two queries.
+export type StackScope = 'collection' | 'album';
+
+/**
+ * Which row of a stack a listing shows: a **filter**, not a window function.
+ *
+ * This is the whole reason listings are still fast. A window function has to see
+ * every scoped row before `LIMIT` can take a hundred of them, so it sorts the
+ * collection for every block a scroll fetches - measured at 179ms a page against
+ * 0.9ms for the same listing without stacks, on every library whether or not it
+ * has any. Expressed as a filter, the ordering index is walked and stops at the
+ * page, and a 200k library costs 5ms.
+ *
+ * Two arms:
+ *
+ * - the stored `is_representative` flag, which is the fast answer for almost
+ *   every row: it is set on every unstacked photo and on one member of each
+ *   stack, so the common case is an equality test;
+ * - failing that, "this stack has no visible flagged member, and no visible
+ *   member of it sorts before me" - which promotes the next survivor when the
+ *   flagged one is hidden by a filter, by the bin, or by being in another shoot.
+ *
+ * The flag is therefore a hint rather than a truth. Stale or missing, the second
+ * arm still returns the right row and only costs a little more; what it must
+ * never be is set on *two* visible members of one stack, which would show that
+ * stack twice. A partial unique index makes that an error rather than a
+ * duplicate (`migrations.ts`).
+ *
+ * `memberScope` is how a member of the same stack is recognised as being in this
+ * listing at all - the shoot it must be in, the album that must hold it - so a
+ * shoot promotes to the newest *in-shoot* member and never shows a tile for a
+ * photograph that is not in it.
+ */
+interface MemberScope {
+  /** A predicate on alias `m`, or empty when the whole library is in scope. */
+  sql: string;
+  params: (string | number)[];
+}
+
+function representativeFilter(filters: PhotoListFilters, member: MemberScope): { sql: string; params: (string | number)[] } {
+  const { clauses, params } = conditions(filters, 'm.');
+  const visible = [...(member.sql === '' ? [] : [member.sql]), ...clauses].join(' AND ');
+  const inListing = visible === '' ? '' : ` AND ${visible}`;
+  const memberParams = [...member.params, ...params];
+  const taken = (alias: string) => `COALESCE(${alias}date_taken, ${alias}date_added)`;
+  return {
+    sql: `(photos.is_representative = 1 OR (photos.stack_id IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM photos m
+          WHERE m.stack_id = photos.stack_id AND m.is_representative = 1${inListing})
+        AND NOT EXISTS (
+          SELECT 1 FROM photos m
+          WHERE m.stack_id = photos.stack_id${inListing}
+            AND (${taken('m.')} > ${taken('photos.')}
+              OR (${taken('m.')} = ${taken('photos.')} AND m.id > photos.id)))))`,
+    params: [...memberParams, ...memberParams],
+  };
+}
+
+/**
+ * How many photographs the tile stands for.
+ *
+ * A correlated count rather than a window, and only ever evaluated for the rows
+ * a page actually returns. In a shoot or the library it is the stack's whole
+ * membership, because those views show the stack whole and dim the members that
+ * are elsewhere; in an album it is what the album holds, because an album is
+ * strict (§19.5.2). Either way it honours the listing's own view of the bin, so
+ * the number on the tile and the set an action touches are the same.
+ */
+function sizeExpression(filters: PhotoListFilters, counting: MemberScope): { sql: string; params: (string | number)[] } {
+  const { clauses, params } = conditions(filters, 'm.');
+  const visible = [...(counting.sql === '' ? [] : [counting.sql]), ...clauses].join(' AND ');
+  return {
+    sql: `CASE WHEN photos.stack_id IS NULL THEN 1 ELSE (
+            SELECT COUNT(*) FROM photos m WHERE m.stack_id = photos.stack_id${visible === '' ? '' : ` AND ${visible}`}
+          ) END`,
+    params: [...counting.params, ...params],
+  };
+}
 
 // A photo the rendition queue owes work on. `prefix` is the table alias the
 // caller's query uses, empty when it has none.
@@ -173,12 +259,17 @@ const DETAIL_COLS = `photos.id, photos.library_id, photos.shoot_id, photos.width
   photos.needs_tile, photos.needs_renditions, photos.processing_error,
   photos.latitude, photos.longitude, photos.rating, photos.triage, photos.is_missing,
   photos.is_deleted, photos.notes, photos.file_size, photos.iso, photos.shutter_speed, photos.aperture,
-  photos.focal_length, photos.camera_make, photos.camera_model, photos.lens_model, photos.rendition_source, photos.viewer_rendition`;
+  photos.focal_length, photos.camera_make, photos.camera_model, photos.lens_model, photos.rendition_source, photos.viewer_rendition,
+  photos.stack_id`;
 
 interface SummaryRow {
   id: string;
   library_id: string;
   shoot_id: string | null;
+  stack_id: string | null;
+  // Absent from the queries that read a photo rather than a listing; those rows
+  // stand for themselves, which is a stack of one.
+  stack_size?: number;
   file_path: string;
   width: number;
   height: number;
@@ -266,6 +357,8 @@ function toSummary(row: SummaryRow, ordering: Ordering): PhotoSummary {
     tile_built_at: row.tile_built_at,
     renditions_built_at: row.renditions_built_at,
     viewer_rendition: row.viewer_rendition,
+    stack_id: row.stack_id,
+    stack_size: row.stack_size ?? 1,
   };
 }
 
@@ -306,6 +399,11 @@ function toDetail(row: DetailRow, albumIds: string[]): PhotoDetail {
     lens_model: row.lens_model,
     rendition_source: row.rendition_source,
     viewer_rendition: row.viewer_rendition,
+    // A photo read on its own stands for itself, whatever stack it belongs to:
+    // the detail view opens one photograph, and collapsing is a property of a
+    // listing rather than of a row.
+    stack_id: row.stack_id,
+    stack_size: 1,
     // All resolved by the service, which knows the library: they need its data
     // directory to stat or to build a path from, and its rendition settings. The
     // repository has no business doing either.
@@ -315,6 +413,18 @@ function toDetail(row: DetailRow, albumIds: string[]): PhotoDetail {
     album_ids: albumIds,
   };
 }
+
+// What a stack's other members are, for the two questions a collapsed listing
+// asks about them (§19.5.1). `promotion` is which of them may stand for the
+// stack here - a shoot's tile must be a photograph in that shoot - and `counting`
+// is which of them the number on the tile is counting. They differ for a shoot,
+// which shows the stack whole and dims the members that are elsewhere.
+const WHOLE_STACK: MemberScope = { sql: '', params: [] };
+const inAlbum = (albumId: string): MemberScope => ({
+  sql: 'EXISTS (SELECT 1 FROM album_photos map WHERE map.photo_id = m.id AND map.album_id = ?)',
+  params: [albumId],
+});
+const inShoot = (shootId: string): MemberScope => ({ sql: 'm.shoot_id = ?', params: [shootId] });
 
 export class PhotosRepository {
   constructor(private readonly db: Database) {}
@@ -332,11 +442,11 @@ export class PhotosRepository {
   }
 
   listByLibrary(libraryId: string, ordering: Ordering, offset: number, limit: number, filters: PhotoListFilters): PhotoListResult {
-    return this.list('FROM photos WHERE library_id = ?', [libraryId], ordering, offset, limit, filters);
+    return this.list('FROM photos WHERE library_id = ?', [libraryId], ordering, offset, limit, filters, WHOLE_STACK, WHOLE_STACK);
   }
 
   listByShoot(shootId: string, ordering: Ordering, offset: number, limit: number, filters: PhotoListFilters): PhotoListResult {
-    return this.list('FROM photos WHERE shoot_id = ?', [shootId], ordering, offset, limit, filters);
+    return this.list('FROM photos WHERE shoot_id = ?', [shootId], ordering, offset, limit, filters, inShoot(shootId), WHOLE_STACK);
   }
 
   listByAlbum(albumId: string, ordering: Ordering, offset: number, limit: number, filters: PhotoListFilters): PhotoListResult {
@@ -347,15 +457,17 @@ export class PhotosRepository {
       offset,
       limit,
       filters,
+      inAlbum(albumId),
+      inAlbum(albumId),
     );
   }
 
   idsInLibrary(libraryId: string, ordering: Ordering, ranges: SelectionRanges, filters: PhotoListFilters): string[] {
-    return this.idsAt('FROM photos WHERE library_id = ?', [libraryId], ordering, ranges, filters);
+    return this.idsAt('FROM photos WHERE library_id = ?', [libraryId], ordering, ranges, filters, WHOLE_STACK);
   }
 
   idsInShoot(shootId: string, ordering: Ordering, ranges: SelectionRanges, filters: PhotoListFilters): string[] {
-    return this.idsAt('FROM photos WHERE shoot_id = ?', [shootId], ordering, ranges, filters);
+    return this.idsAt('FROM photos WHERE shoot_id = ?', [shootId], ordering, ranges, filters, inShoot(shootId));
   }
 
   idsInAlbum(albumId: string, ordering: Ordering, ranges: SelectionRanges, filters: PhotoListFilters): string[] {
@@ -365,6 +477,7 @@ export class PhotosRepository {
       ordering,
       ranges,
       filters,
+      inAlbum(albumId),
     );
   }
 
@@ -829,16 +942,31 @@ export class PhotosRepository {
     offset: number,
     limit: number,
     filters: PhotoListFilters,
+    promotion: MemberScope,
+    counting: MemberScope,
   ): PhotoListResult {
     const { where, params } = this.scoped(fromWhere, baseParams, filters);
+    const one = representativeFilter(filters, promotion);
+    const size = sizeExpression(filters, counting);
     // Counted only when asked. No ordering index can cover it - the filter chips
     // vary, so it is a scan of everything that matches - and at a million photos
     // it is 774ms of a 792ms listing, re-run for each of ten thousand blocks a
     // scroll walks through, for a number that cannot move underneath it.
-    const total = filters.count === false ? undefined : (this.db.query(`SELECT COUNT(*) AS n ${where}`).get(...params) as { n: number }).n;
+    //
+    // Distinct over the collapsing key, so a stack is one entry of the collection
+    // just as it is one tile of it (§19.5.1).
+    const total =
+      filters.count === false
+        ? undefined
+        : (this.db.query(`SELECT COUNT(DISTINCT COALESCE(photos.stack_id, photos.id)) AS n ${where}`).get(...params) as { n: number }).n;
     const rows = this.db
-      .query(`SELECT ${SUMMARY_COLS} ${where} ORDER BY ${orderByClause(ordering)} LIMIT ? OFFSET ?`)
-      .all(...params, limit, offset) as SummaryRow[];
+      .query(
+        `SELECT ${SUMMARY_COLS}, ${size.sql} AS stack_size ${where} AND ${one.sql}
+         ORDER BY ${orderByClause(ordering)} LIMIT ? OFFSET ?`,
+      )
+      // Bound in the order the placeholders appear in the text, and the size
+      // expression is in the SELECT list, so it comes before the scope.
+      .all(...size.params, ...params, ...one.params, limit, offset) as SummaryRow[];
 
     return { photos: rows.map((r) => toSummary(r, ordering)), total };
   }
@@ -860,23 +988,111 @@ export class PhotosRepository {
     ordering: Ordering,
     ranges: SelectionRanges,
     filters: PhotoListFilters,
+    promotion: MemberScope,
   ): string[] {
     if (ranges.length === 0) return [];
     const { where, params } = this.scoped(fromWhere, baseParams, filters);
+    const one = representativeFilter(filters, promotion);
     // The runs are ascending and disjoint (`PhotoSelectionSchema`), so the last
     // one's end bounds the numbering: nothing past it is ever asked for.
     const last = ranges[ranges.length - 1]!.end;
     const spans = ranges.map(() => 'position BETWEEN ? AND ?').join(' OR ');
     const bounds = ranges.flatMap(({ start, end }) => [start, end]);
+    // Numbered over the *collapsed* listing, because that is the listing the grid
+    // was built from: number the raw rows instead and position 400 means one
+    // photograph to the client and a different one here (§19.5.1).
+    //
+    // Selecting a stack then means selecting every photograph in it, and the join
+    // below is the whole of how that happens: a chosen row stands for its stack,
+    // so expanding it to its members is one join in one place and no client ever
+    // holds a member id to do it with.
+    //
+    // The member set has to match whatever `stack_size` counted, or the number on
+    // the tile and the set the action touches are two different things. That is
+    // the same pair of scopes the listing was built with: an album is strict, a
+    // shoot acts on the stack whole, and both honour the listing's own view of
+    // the bin - the Bin is nothing but deleted rows, and a member set that
+    // excluded those would resolve every selection there to nothing.
+    const members = conditions(filters, 'm.');
+    const memberVisible = [...(promotion.sql === '' ? [] : [promotion.sql]), ...members.clauses];
     const rows = this.db
       .query(
-        `SELECT id FROM (
-           SELECT id, ROW_NUMBER() OVER (ORDER BY ${orderByClause(ordering)}) - 1 AS position
-           ${where} LIMIT ?
-         ) WHERE ${spans}`,
+        `SELECT m.id FROM (
+           SELECT id, stack_id, ROW_NUMBER() OVER (ORDER BY ${orderByClause(ordering)}) - 1 AS position
+           ${where} AND ${one.sql} LIMIT ?
+         ) chosen
+         JOIN photos m
+           ON m.id = chosen.id
+           OR (chosen.stack_id IS NOT NULL AND m.stack_id = chosen.stack_id)
+         WHERE (${spans})${memberVisible.map((clause) => ` AND ${clause}`).join('')}`,
       )
-      .all(...params, last + 1, ...bounds) as { id: string }[];
-    return rows.map((row) => row.id);
+      // Bound in the order the placeholders appear in the text: the scoped rows,
+      // the representative filter, the bound on the numbering, the runs being
+      // read out, then the member set.
+      .all(...params, ...one.params, last + 1, ...bounds, ...promotion.params, ...members.params) as { id: string }[];
+    return [...new Set(rows.map((row) => row.id))];
+  }
+
+  // Where given rows sit in a scoped, ordered, filtered listing (§19.6.1).
+  //
+  // Keyed by `COALESCE(stack_id, id)`, which is what identifies a row of a
+  // collapsed listing: a stack by its stack, an ordinary photo by itself. That is
+  // what an open expansion band and the scroll anchor both hold, so that neither
+  // stores a position that a re-order or an import would silently invalidate.
+  //
+  // One query for every key, never one per key. Numbering rows costs an ordered
+  // pass over the collection, which is the same trap `idsAt` records: ten open
+  // bands must not mean ten passes.
+  private positionsAt(
+    fromWhere: string,
+    baseParams: string[],
+    ordering: Ordering,
+    keys: readonly string[],
+    filters: PhotoListFilters,
+    promotion: MemberScope,
+  ): Map<string, number> {
+    const found = new Map<string, number>();
+    if (keys.length === 0) return found;
+    const { where, params } = this.scoped(fromWhere, baseParams, filters);
+    const one = representativeFilter(filters, promotion);
+    for (const batch of inChunks(keys)) {
+      const placeholders = batch.map(() => '?').join(', ');
+      const rows = this.db
+        .query(
+          `SELECT key, position FROM (
+             SELECT COALESCE(photos.stack_id, photos.id) AS key,
+                    ROW_NUMBER() OVER (ORDER BY ${orderByClause(ordering)}) - 1 AS position
+             ${where} AND ${one.sql}
+           ) WHERE key IN (${placeholders})`,
+        )
+        .all(...params, ...one.params, ...batch) as { key: string; position: number }[];
+      for (const row of rows) found.set(row.key, row.position);
+    }
+    return found;
+  }
+
+  positionsInLibrary(
+    libraryId: string,
+    ordering: Ordering,
+    keys: readonly string[],
+    filters: PhotoListFilters,
+  ): Map<string, number> {
+    return this.positionsAt('FROM photos WHERE library_id = ?', [libraryId], ordering, keys, filters, WHOLE_STACK);
+  }
+
+  positionsInShoot(shootId: string, ordering: Ordering, keys: readonly string[], filters: PhotoListFilters): Map<string, number> {
+    return this.positionsAt('FROM photos WHERE shoot_id = ?', [shootId], ordering, keys, filters, inShoot(shootId));
+  }
+
+  positionsInAlbum(albumId: string, ordering: Ordering, keys: readonly string[], filters: PhotoListFilters): Map<string, number> {
+    return this.positionsAt(
+      'FROM photos JOIN album_photos ap ON ap.photo_id = photos.id WHERE ap.album_id = ?',
+      [albumId],
+      ordering,
+      keys,
+      filters,
+      inAlbum(albumId),
+    );
   }
 
   private scoped(
@@ -884,64 +1100,77 @@ export class PhotosRepository {
     baseParams: string[],
     filters: PhotoListFilters,
   ): { where: string; params: (string | number)[] } {
-    // Scope says which rows are in play at all; user holds the filter chips. They
-    // are built separately because only the chips honour `match`.
-    const scope: string[] = [];
-    const scopeParams: (string | number)[] = [];
-    const user: string[] = [];
-    const userParams: (string | number)[] = [];
-
-    if (!filters.includeDeleted) scope.push('is_deleted = 0');
-    if (filters.isDeleted != null) {
-      scope.push('is_deleted = ?');
-      scopeParams.push(filters.isDeleted ? 1 : 0);
-    }
-    if (filters.search != null) {
-      // LIKE is case-insensitive for ASCII in SQLite, which is what filenames are.
-      scope.push('file_path LIKE ?');
-      scopeParams.push(`%${filters.search}%`);
-    }
-    // COALESCE rather than date_taken alone: a file the camera never dated still
-    // has to be reachable, and this is the same date the grid sorts and labels by.
-    if (filters.takenFrom != null) {
-      scope.push('COALESCE(photos.date_taken, photos.date_added) >= ?');
-      scopeParams.push(filters.takenFrom);
-    }
-    if (filters.takenTo != null) {
-      // The bound is a whole day but the column is a timestamp, so compare against
-      // the start of the next one.
-      scope.push(`COALESCE(photos.date_taken, photos.date_added) < date(?, '+1 day')`);
-      scopeParams.push(filters.takenTo);
-    }
-
-    if (filters.isMissing != null) {
-      user.push('is_missing = ?');
-      userParams.push(filters.isMissing ? 1 : 0);
-    }
-    // "No rendition" is about the grid tile: the renditions behind it are the
-    // viewer's business and a photo with a tile is not a hole in the gallery.
-    if (filters.needsTile != null) {
-      user.push('needs_tile = ?');
-      userParams.push(filters.needsTile ? 1 : 0);
-    }
-    if (filters.rated != null) user.push(filters.rated ? 'rating > 0' : 'rating = 0');
-    if (filters.triage != null && filters.triage.length > 0) {
-      // NULL is the untriaged bucket, so it needs an IS NULL arm rather than an IN.
-      const wanted = filters.triage.filter((t) => t !== 'untriaged');
-      const arms: string[] = [];
-      if (filters.triage.includes('untriaged')) arms.push('triage IS NULL');
-      if (wanted.length > 0) {
-        arms.push(`triage IN (${wanted.map(() => '?').join(', ')})`);
-        userParams.push(...wanted);
-      }
-      user.push(`(${arms.join(' OR ')})`);
-    }
-
-    const combined = filters.match === 'any' && user.length > 1 ? [`(${user.join(' OR ')})`] : user;
-    const clauses = [...scope, ...combined];
+    const { clauses, params } = conditions(filters, 'photos.');
     return {
       where: clauses.length ? `${fromWhere} AND ${clauses.join(' AND ')}` : fromWhere,
-      params: [...baseParams, ...scopeParams, ...userParams],
+      params: [...baseParams, ...params],
     };
   }
+}
+
+/**
+ * Everything a listing filters by, written against one table alias.
+ *
+ * Taking the alias as an argument is what lets the promotion clause (§19.5.1)
+ * ask about a stack's *other* members under exactly the filters the listing is
+ * running: a second copy of this would drift, and a listing whose promotion
+ * disagreed with its own filter would show a stack twice or not at all.
+ */
+function conditions(filters: PhotoListFilters, prefix: string): { clauses: string[]; params: (string | number)[] } {
+  // Scope says which rows are in play at all; user holds the filter chips. They
+  // are built separately because only the chips honour `match`.
+  const scope: string[] = [];
+  const scopeParams: (string | number)[] = [];
+  const user: string[] = [];
+  const userParams: (string | number)[] = [];
+  const taken = `COALESCE(${prefix}date_taken, ${prefix}date_added)`;
+
+  if (!filters.includeDeleted) scope.push(`${prefix}is_deleted = 0`);
+  if (filters.isDeleted != null) {
+    scope.push(`${prefix}is_deleted = ?`);
+    scopeParams.push(filters.isDeleted ? 1 : 0);
+  }
+  if (filters.search != null) {
+    // LIKE is case-insensitive for ASCII in SQLite, which is what filenames are.
+    scope.push(`${prefix}file_path LIKE ?`);
+    scopeParams.push(`%${filters.search}%`);
+  }
+  // COALESCE rather than date_taken alone: a file the camera never dated still
+  // has to be reachable, and this is the same date the grid sorts and labels by.
+  if (filters.takenFrom != null) {
+    scope.push(`${taken} >= ?`);
+    scopeParams.push(filters.takenFrom);
+  }
+  if (filters.takenTo != null) {
+    // The bound is a whole day but the column is a timestamp, so compare against
+    // the start of the next one.
+    scope.push(`${taken} < date(?, '+1 day')`);
+    scopeParams.push(filters.takenTo);
+  }
+
+  if (filters.isMissing != null) {
+    user.push(`${prefix}is_missing = ?`);
+    userParams.push(filters.isMissing ? 1 : 0);
+  }
+  // "No rendition" is about the grid tile: the renditions behind it are the
+  // viewer's business and a photo with a tile is not a hole in the gallery.
+  if (filters.needsTile != null) {
+    user.push(`${prefix}needs_tile = ?`);
+    userParams.push(filters.needsTile ? 1 : 0);
+  }
+  if (filters.rated != null) user.push(filters.rated ? `${prefix}rating > 0` : `${prefix}rating = 0`);
+  if (filters.triage != null && filters.triage.length > 0) {
+    // NULL is the untriaged bucket, so it needs an IS NULL arm rather than an IN.
+    const wanted = filters.triage.filter((t) => t !== 'untriaged');
+    const arms: string[] = [];
+    if (filters.triage.includes('untriaged')) arms.push(`${prefix}triage IS NULL`);
+    if (wanted.length > 0) {
+      arms.push(`${prefix}triage IN (${wanted.map(() => '?').join(', ')})`);
+      userParams.push(...wanted);
+    }
+    user.push(`(${arms.join(' OR ')})`);
+  }
+
+  const combined = filters.match === 'any' && user.length > 1 ? [`(${user.join(' OR ')})`] : user;
+  return { clauses: [...scope, ...combined], params: [...scopeParams, ...userParams] };
 }

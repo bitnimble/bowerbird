@@ -8,7 +8,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { deltaE76 } from '../../src/services/processing/jpeg_match';
 import { readEmbeddedJpeg } from '../../src/services/processing/raw_decoder';
-import { decodeImage, freeImage, pixels, type ImageHandle } from '../../src/services/processing/rawshim_ops';
+import { decodeImage, freeImage, type ImageHandle } from '../../src/services/processing/rawshim_ops';
+import { pixels } from '../../src/services/processing/rawshim_pixels';
 import type { ProcessingResult, RenditionJob, RenditionTarget } from '../../src/services/processing/processing_types';
 
 const FIXTURE = `${import.meta.dir}/../fixtures/DSC02981.ARW`;

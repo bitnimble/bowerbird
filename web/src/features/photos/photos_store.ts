@@ -5,6 +5,20 @@ import type { AppSettingsStore } from '../settings/app_settings_store';
 import { type Span, visibleRows } from '../../ui/virtual_rows';
 import { BLOCK, GRID_GAP, LIST_ROW_H, MAX_SCROLL, blockTops, gridColumns, gridRowHeight, visibleBlocks } from './grid_layout';
 import { SelectionRanges } from './selection';
+import { type Band, displayRowOf, rowAt, totalRows } from './bands';
+
+/** A stack the reader has opened, and the members it is showing. */
+export interface Expansion {
+  stackId: string;
+  /** Where the stack's own tile sits in the collapsed collection. */
+  position: number;
+  photos: PhotoSummary[];
+}
+
+/** A run of display rows showing one kind of thing. */
+export type GridSection =
+  | { kind: 'grid'; top: number; from: number; to: number }
+  | { kind: 'band'; top: number; stackId: string; position: number; photos: PhotoSummary[] };
 
 // Which collection the grid is showing. One store serves the library, shoot,
 // album, bin and missing views because they differ only in the fetch call.
@@ -115,6 +129,22 @@ export class PhotosStore {
   // laid out. Cleared whenever anything that would change that layout changes.
   @observable accessor blockHeights = new Map<number, number>();
 
+  // The stacks the reader has expanded, keyed by stack id (§19.6).
+  //
+  // Keyed by the stack rather than by the position it was opened at, because the
+  // position is a coordinate that a re-order or an import moves: a band survives
+  // those and has its position recomputed, rather than being closed because the
+  // collection changed underneath it.
+  @observable accessor expansions = new Map<string, Expansion>();
+
+  // Which members of open bands are selected, by id.
+  //
+  // Ids rather than positions, and legitimately so: the listing is collapsed, so
+  // the server numbers one row per stack and a member has no position at all. The
+  // rule the virtual grid enforces is that an id must never stand in for an
+  // *unloaded* position, and a band's members are loaded, on screen, and few.
+  @observable accessor selectedMembers = new Set<string>();
+
   @observable accessor filters: PhotoFilters = {};
   // The collection's own sort, as the server reported serving it. Null until the
   // first page lands, because a default invented here would be a second answer to
@@ -221,7 +251,22 @@ export class PhotosStore {
   // against, all of which the row already carries - so none of them wait on the
   // fetch.
   photoFor(photoId: string): PhotoSummary | null {
-    return this.rowById(photoId) ?? this.detailFor(photoId);
+    return this.rowById(photoId) ?? this.memberById(photoId) ?? this.detailFor(photoId);
+  }
+
+  /**
+   * A photo held only as a member of an open band.
+   *
+   * A collapsed listing has no row for a stack's members (§19.5.1), so without
+   * this every control that starts by locating the photo - rating, the triage
+   * verdicts - silently does nothing on a band tile while appearing to work.
+   */
+  memberById(photoId: string): PhotoSummary | null {
+    for (const open of this.expansions.values()) {
+      const found = open.photos.find((photo) => photo.id === photoId);
+      if (found != null) return found;
+    }
+    return null;
   }
 
   // For a photo the view knows only by id - the neighbours the viewer warms.
@@ -343,8 +388,73 @@ export class PhotosStore {
     return this.mode === 'list' ? LIST_ROW_H + GRID_GAP : gridRowHeight(this.viewportWidth, this.columns);
   }
 
-  @computed get rowCount(): number {
+  // Rows of the collection itself, before any stack is opened.
+  @computed get gridRowCount(): number {
     return Math.ceil(this.total / this.columns);
+  }
+
+  @computed get rowCount(): number {
+    return totalRows(this.gridRowCount, this.bands, this.columns);
+  }
+
+  /** The open stacks, as the row arithmetic wants them (§19.6). */
+  @computed get bands(): Band[] {
+    return [...this.expansions.values()].map((open) => ({ position: open.position, members: open.photos.length }));
+  }
+
+  /**
+   * What each visible display row shows: rows of the collection, or the members
+   * of one open stack.
+   *
+   * Consecutive rows of a kind are one section, so a band several rows tall is
+   * one bordered box rather than one per row.
+   */
+  @computed get sections(): GridSection[] {
+    const span = visibleRows(this.virtualTop, this.viewportHeight, this.rowHeight, this.rowCount);
+    const sections: GridSection[] = [];
+    for (let display = span.from; display < span.to; display++) {
+      const at = rowAt(display, this.bands, this.columns);
+      const last = sections.at(-1);
+      if (at.kind === 'grid') {
+        const from = at.row * this.columns;
+        const to = Math.min(this.total, from + this.columns);
+        if (last?.kind === 'grid' && last.to === from) last.to = to;
+        else sections.push({ kind: 'grid', top: display * this.rowHeight, from, to });
+        continue;
+      }
+      const open = this.expansionAt(at.band.position);
+      if (open == null) continue;
+      if (last?.kind === 'band' && last.stackId === open.stackId) continue;
+      // The band's *own* first row, not whichever of its rows happened to be the
+      // first one visible: every member is drawn from this offset, so anchoring
+      // it to the visible row would slide the whole band down by however much of
+      // it is above the fold and paint it over the grid below.
+      const top = (display - at.offset) * this.rowHeight;
+      sections.push({ kind: 'band', top, stackId: open.stackId, position: open.position, photos: open.photos });
+    }
+    return sections;
+  }
+
+  /**
+   * The stack a selection of exactly one row stands for, if it is a stack.
+   *
+   * What "Unstack" is offered for: unstacking is about one stack, and a
+   * selection spanning several says nothing about which. Only answerable for a
+   * row this client is holding, which a single selected row always is - it is on
+   * screen, because that is where it was clicked.
+   */
+  @computed get selectedStackId(): string | null {
+    if (this.selectionCount !== 1) return null;
+    const only = this.selection.ranges[0];
+    if (only == null) return null;
+    return this.rows.get(only.start)?.stack_id ?? null;
+  }
+
+  expansionAt(position: number): Expansion | null {
+    for (const open of this.expansions.values()) {
+      if (open.position === position) return open;
+    }
+    return null;
   }
 
   @computed get blockCount(): number {
@@ -417,13 +527,24 @@ export class PhotosStore {
       const blocks = this.visibleBlocks;
       return { from: blocks.from * BLOCK, to: Math.min(this.total, blocks.to * BLOCK) };
     }
-    const rows = visibleRows(this.virtualTop, this.viewportHeight, this.rowHeight, this.rowCount);
-    return { from: rows.from * this.columns, to: Math.min(this.total, rows.to * this.columns) };
+    // Off the sections rather than off the display rows, because open bands mean
+    // the two no longer march together: a screenful of rows can cover fewer
+    // photographs than it has cells, and asking for the ones a band displaced off
+    // the bottom would fetch blocks nothing is going to show.
+    const grid = this.sections.filter((section) => section.kind === 'grid');
+    if (grid.length > 0) return { from: grid[0]!.from, to: grid.at(-1)!.to };
+    // A band taller than the viewport fills it, so there is no grid section to
+    // read a span from. Answering "nothing" there stops every fetch and makes
+    // Select visible a no-op, so the stack's own row answers instead - it is the
+    // row the reader is inside, and its block is the one they will land on.
+    const anchor = this.sections[0];
+    const position = anchor?.kind === 'band' ? anchor.position : 0;
+    return { from: position, to: Math.min(this.total, position + 1) };
   }
 
   /** Where the rendered window sits inside the scroller (uniform modes). */
   @computed get visibleTop(): number {
-    return this.domTop(Math.floor(this.visible.from / this.columns) * this.rowHeight);
+    return this.domTop(this.sections[0]?.top ?? 0);
   }
 
   // Where the scroll has to be for the keyboard cursor to be on screen, or null
@@ -442,7 +563,12 @@ export class PhotosStore {
       const { from, to } = this.visibleBlocks;
       return block >= from && block < to ? null : scrolled(this.blockTops[block] ?? 0);
     }
-    const top = Math.floor(this.focusIndex / this.columns) * this.rowHeight;
+    // Through the bands, because the scroll is in display rows: with one open
+    // above the cursor, the row the photo is drawn on is further down than its
+    // row in the collection, and scrolling to the latter lands a whole band's
+    // height short of the tile every time.
+    const row = displayRowOf(Math.floor(this.focusIndex / this.columns), this.bands, this.columns);
+    const top = row * this.rowHeight;
     // The cell, not the row pitch: the gap under it is not part of the tile, and
     // scrolling to clear it would overshoot by one gap every time.
     const bottom = top + this.rowHeight - GRID_GAP;

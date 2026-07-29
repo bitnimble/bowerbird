@@ -93,5 +93,10 @@ export interface HdrJob {
 export type WorkerJob = RenditionJob | HdrJob;
 
 export type ProcessingResult =
-  | { photoId: string; success: true }
+  // `descriptor` rides back with the grid tile that produced it (§19.3). Computed
+  // in the worker, off the pixels it is already holding, because the alternative
+  // - reading the written tile back on the main thread - put a ~20ms synchronous
+  // decode per photo inside the pool's result handler, where it both stalls every
+  // HTTP request and idles the worker that is waiting to be handed its next job.
+  | { photoId: string; success: true; descriptor?: Uint8Array }
   | { photoId: string; success: false; error: string };

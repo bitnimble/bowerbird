@@ -86,6 +86,12 @@ const SYMBOLS = {
   bb_profile_size: { args: [], returns: FFIType.u64 },
   bb_buffer_header_size: { args: [], returns: FFIType.u64 },
   bb_image_header_size: { args: [], returns: FFIType.u64 },
+  bb_descriptor_size: { args: [], returns: FFIType.u64 },
+  bb_descriptor: { args: [FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
+  bb_stack_groups: {
+    args: [FFIType.ptr, FFIType.ptr, FFIType.u64, FFIType.f32, FFIType.i64, FFIType.ptr],
+    returns: FFIType.i32,
+  },
 } as const;
 
 type Shim = ReturnType<typeof dlopen<typeof SYMBOLS>>['symbols'];

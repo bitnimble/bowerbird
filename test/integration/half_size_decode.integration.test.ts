@@ -4,7 +4,7 @@
 //   docker exec bowerbird-dev bun test test/integration
 import { describe, expect, test } from 'bun:test';
 import { existsSync } from 'node:fs';
-import { decodeRaw } from '../../src/services/processing/raw_decoder';
+import { decodeRaw } from '../../src/services/processing/rawshim_pixels';
 
 // The fixture is 24MP, which is below the threshold by design, so the halving side
 // needs a sensor big enough to halve. There is no committed fixture that large - a

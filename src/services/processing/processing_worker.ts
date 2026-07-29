@@ -4,6 +4,7 @@ import { fitMatchProfile } from './jpeg_match';
 import {
   decodeEmbedded,
   decodeRawImage,
+  describeForStacking,
   encodeHdrRendition,
   fitHdrMatch,
   freeHdrMatch,
@@ -42,7 +43,15 @@ function largestSdrSize(targets: readonly RenditionTarget[]): number {
 // render is already baked upright by the decoder (§11.1). A body that embeds a
 // bitmap preview, or none at all, is a property of the file rather than an error,
 // so it falls back to a render.
-function writeSdr(job: RenditionJob, target: RenditionTarget, base: () => ImageHandle): void {
+function writeSdr(
+  job: RenditionJob,
+  target: RenditionTarget,
+  base: () => ImageHandle,
+  // Handed the pixels this rendition was actually written from, before they are
+  // released. Which handle that is depends on the source, and the stacking
+  // descriptor has to come from the same one the tile did (§19.3).
+  wrote?: (image: ImageHandle) => void,
+): void {
   if (target.source === 'embedded') {
     // Extracted, decoded and shrunk inside one call, so the preview - which is
     // full-resolution on a 61MP body, 5-14MB of JPEG - never reaches this side.
@@ -51,6 +60,7 @@ function writeSdr(job: RenditionJob, target: RenditionTarget, base: () => ImageH
     if (decoded != null) {
       try {
         toAvif(decoded, target);
+        wrote?.(decoded);
         return;
       } finally {
         freeImage(decoded);
@@ -58,7 +68,9 @@ function writeSdr(job: RenditionJob, target: RenditionTarget, base: () => ImageH
     }
   }
   // The base already carries the match, if there is one.
-  toAvif(base(), target);
+  const image = base();
+  toAvif(image, target);
+  wrote?.(image);
 }
 
 // Scene-linear and wide-gamut rather than display-referred: the transfer is
@@ -133,8 +145,9 @@ async function ensureOutputDirs(job: WorkerJob): Promise<void> {
   }
 }
 
-async function renditions(job: RenditionJob): Promise<void> {
+async function renditions(job: RenditionJob): Promise<Uint8Array | undefined> {
   const open: ImageHandle[] = [];
+  let descriptor: Uint8Array | undefined;
 
   // One decode for the whole job, shared by the fit and by every SDR rendition.
   // A 60MP frame takes about two seconds to demosaic, and a `render` import builds
@@ -238,14 +251,33 @@ async function renditions(job: RenditionJob): Promise<void> {
         writeHdr(job, target, linear, hdrMatch);
         continue;
       }
-      writeSdr(job, target, sdrBase);
+      // Described off the same pixels the tile was written from, while they are
+      // still here (§19.3), and only for the grid - the one pass every photo
+      // goes through exactly once whatever its library builds from.
+      //
+      // Through the callback rather than from `sdrBase()`, because an
+      // embedded-source tile never calls that: asking it for a handle here would
+      // demosaic the whole RAW for a descriptor, on the path whose entire point
+      // is not doing that.
+      //
+      // Never fatal. A descriptor is what stacking would like, not what the
+      // import owes, and a photo without one is simply not a candidate.
+      writeSdr(job, target, sdrBase, target.rendition !== 'grid' ? undefined : (image) => {
+        try {
+          descriptor = describeForStacking(image);
+        } catch {
+          descriptor = undefined;
+        }
+      });
     }
+
   } finally {
     // A 60MP decode and its graded copy are ~380MB between them, held by Rust
     // rather than by the JS heap, so nothing collects them if this is skipped.
     for (const image of open) freeImage(image);
     if (hdrMatch != null) freeHdrMatch(hdrMatch);
   }
+  return descriptor;
 }
 
 self.onmessage = async (event) => {
@@ -257,8 +289,8 @@ self.onmessage = async (event) => {
       self.postMessage({ photoId: job.photoId, success: true });
       return;
     }
-    await renditions(job);
-    self.postMessage({ photoId: job.photoId, success: true });
+    const descriptor = await renditions(job);
+    self.postMessage({ photoId: job.photoId, success: true, descriptor });
   } catch (err) {
     for (const output of outputsOf(job)) await Bun.file(output).delete().catch(() => {});
     self.postMessage({ photoId: job.photoId, success: false, error: (err as Error).message });

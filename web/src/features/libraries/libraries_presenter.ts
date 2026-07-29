@@ -66,6 +66,23 @@ export class LibrariesPresenter {
     await this.update(libraryId, { rendition_hdr_video });
   }
 
+  // Automatic photo stacking (§19.4). None of the three is retroactive: they
+  // decide what the next detection pass does, and that pass runs when a sync
+  // brings something in.
+  async setAutoStack(libraryId: string, auto_stack: boolean): Promise<void> {
+    await this.update(libraryId, { auto_stack });
+  }
+
+  async setAutoStackSimilarity(libraryId: string, auto_stack_similarity: number): Promise<void> {
+    if (!Number.isFinite(auto_stack_similarity)) return;
+    await this.update(libraryId, { auto_stack_similarity: Math.min(1, Math.max(0, auto_stack_similarity)) });
+  }
+
+  async setAutoStackWindow(libraryId: string, auto_stack_window_seconds: number): Promise<void> {
+    if (!Number.isFinite(auto_stack_window_seconds)) return;
+    await this.update(libraryId, { auto_stack_window_seconds: Math.max(1, Math.round(auto_stack_window_seconds)) });
+  }
+
   // How much of the folder tree the library is, and whether those folders are its
   // shoots (§4.1). The server forces mirroring off with subfolders, so the reload
   // in update() is what puts the second control in the state it actually has.

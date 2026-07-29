@@ -102,6 +102,7 @@ const LibraryList = observer(function LibraryList(): JSX.Element {
             {sync.libraryId === library.id && <SyncStrip />}
             <FolderSettings library={library} />
             <RenditionSettings library={library} />
+            <StackSettings library={library} />
           </div>
         </div>
       ))}
@@ -288,6 +289,65 @@ const RenditionSettings = observer(function RenditionSettings({ library }: { lib
             onChange={(e) => void libraries.setRenditionHdrVideo(library.id, e.currentTarget.checked)}
           />
         </SettingRow>
+      )}
+    </div>
+  );
+});
+
+// Per library, because one catalogue may be burst-heavy sport where a stack is
+// the unit of work and another a studio where every frame is deliberate.
+const StackSettings = observer(function StackSettings({ library }: { library: Library }): JSX.Element {
+  const { libraries } = usePresenters();
+
+  return (
+    <div className="panel">
+      <Text variant="label" as="div" className="panel__title">
+        Stacks
+      </Text>
+
+      <SettingRow
+        label="Group similar photos automatically"
+        hint="Runs after a sync that brought new photos in, grouping frames of the same shot into one tile. Photos imported before this was switched on are not looked at; rebuilding a library's grid renditions is what gives them something to compare."
+      >
+        <input
+          type="checkbox"
+          aria-label="Group similar photos automatically"
+          checked={library.auto_stack}
+          onChange={(e) => void libraries.setAutoStack(library.id, e.currentTarget.checked)}
+        />
+      </SettingRow>
+
+      {library.auto_stack && (
+        <>
+          <SettingRow
+            label="How alike, from 0 to 1"
+            hint="Raise it and stacks split; lower it and they merge. Photos of one scene from a different angle or distance sit around 0.8, and two genuinely different shots from the same spot below 0.75."
+          >
+            <input
+              type="number"
+              min={0}
+              max={1}
+              step={0.01}
+              aria-label="How alike, from 0 to 1"
+              value={library.auto_stack_similarity}
+              onChange={(e) => void libraries.setAutoStackSimilarity(library.id, Number(e.currentTarget.value))}
+            />
+          </SettingRow>
+
+          <SettingRow
+            label="Seconds between frames"
+            hint="How long a gap can be and still count as the same run. It only gates neighbours, so a stack chains as far as it likes: what ends one is a frame no longer matching every other frame already in it."
+          >
+            <input
+              type="number"
+              min={1}
+              step={1}
+              aria-label="Seconds between frames"
+              value={library.auto_stack_window_seconds}
+              onChange={(e) => void libraries.setAutoStackWindow(library.id, Number(e.currentTarget.value))}
+            />
+          </SettingRow>
+        </>
       )}
     </div>
   );

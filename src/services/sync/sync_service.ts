@@ -115,6 +115,7 @@ export class SyncService implements LibraryLifecycleListener {
   // getSyncStatus can report processed = queued - still-pending without any
   // background bookkeeping: the live pending count comes from the DB on read.
   private readonly processingBatch = new Map<string, ProcessingBatch>();
+  private readonly settledListeners = new Set<(libraryId: string, changed: boolean) => void>();
   // Identity token per in-flight sync generation, and the handle that stops it.
   // The lock is released before the detached processing runs, so a newer sync can
   // start while the old one's processing tail is still going; the token lets a
@@ -149,6 +150,19 @@ export class SyncService implements LibraryLifecycleListener {
     this.statuses.delete(libraryId);
     this.generation.delete(libraryId);
     this.processingBatch.delete(libraryId);
+  }
+
+  /**
+   * Called when a sync and the processing it queued have both finished, with
+   * whether that sync actually brought anything in.
+   *
+   * `changed` is the guard a listener needs rather than a nicety: file watching
+   * is on by default, so a save in a watched folder starts a scoped sync, and a
+   * listener that walks the whole library would then do so every couple of
+   * seconds while somebody is working in it.
+   */
+  onSettled(listener: (libraryId: string, changed: boolean) => void): void {
+    this.settledListeners.add(listener);
   }
 
   async syncAll(): Promise<void> {
@@ -493,10 +507,39 @@ export class SyncService implements LibraryLifecycleListener {
         // status stuck at 'processing'. Skipped if a newer sync generation started
         // meanwhile, so a stale tail can't stomp the newer run's status.
         const scope: ProcessingScope = { libraryId, photoIds: processingIds ?? undefined };
+        // Idempotent, because both arms of the promise below reach it: a failure
+        // inside `settle` itself would otherwise run the whole of it twice,
+        // including every listener - and detection is not a cheap thing to do
+        // by accident.
+        let settled = false;
         const settle = (): void => {
-          if (this.generation.get(libraryId) !== token) return;
+          if (settled || this.generation.get(libraryId) !== token) return;
+          settled = true;
           const stillPending = this.photos.countPendingProcessing(libraryId, scope.photoIds);
           const processed = Math.max(0, finalStatus.photos_processing - stillPending);
+          // Before the status goes idle, not after. A client watching for idle
+          // re-reads the collection the moment it sees it, and a listener that
+          // changes the collection's *shape* - stack detection groups rows into
+          // one another (§19.4.1) - would land after that read and leave the
+          // grid showing a library that no longer exists. "Settled" has to mean
+          // settled, so this holds 'processing' for however long it takes.
+          //
+          // Announced here rather than when the scan finished for the same kind
+          // of reason: what listens wants the *derived* files, and a sync that
+          // has only scanned has imported photographs nothing can compare yet.
+          const changed = finalStatus.photos_added + finalStatus.photos_modified > 0;
+          for (const listener of this.settledListeners) {
+            // One listener's failure is its own. Left to throw, it would take
+            // the status write below with it and leave the library reading
+            // 'processing' forever, which no later sync clears - a listener is
+            // something this service tells, not something it depends on.
+            try {
+              listener(libraryId, changed);
+            } catch (err) {
+              log.error('a settled listener failed', { library: libraryId, err });
+            }
+          }
+
           this.statuses.set(libraryId, {
             ...finalStatus,
             status: 'idle',

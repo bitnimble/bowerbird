@@ -27,6 +27,18 @@ export const LibrarySchema = z.object({
   rendition_hdr_video: z.boolean(),
   include_subfolders: z.boolean(),
   mirror_shoots: z.boolean(),
+  // Automatic photo stacking (§19.4). Per library rather than global because one
+  // catalogue may be burst-heavy sport and another a studio where every frame is
+  // deliberate, and the two want different answers.
+  auto_stack: z.boolean(),
+  // How alike two frames must be, in [0, 1]. 0.78 rather than a rounder number
+  // because that is where the labelled folder the descriptor was tuned against
+  // reproduces (§19.9).
+  auto_stack_similarity: z.number().min(0).max(1),
+  // How far apart two frames may be and still be considered adjacent. It gates
+  // adjacency only: a stack chains as far as it likes, bounded instead by every
+  // member matching every other.
+  auto_stack_window_seconds: z.number().int().min(1),
   last_synced_at: z.string().nullable(),
   photo_count: z.number().int(),
 });
@@ -72,6 +84,9 @@ export const UpdateLibraryRequestSchema = z.object({
   rendition_hdr_video: z.boolean().optional(),
   include_subfolders: z.boolean().optional(),
   mirror_shoots: z.boolean().optional(),
+  auto_stack: z.boolean().optional(),
+  auto_stack_similarity: z.number().min(0).max(1).optional(),
+  auto_stack_window_seconds: z.number().int().min(1).optional(),
 });
 export type UpdateLibraryRequest = z.infer<typeof UpdateLibraryRequestSchema>;
 
