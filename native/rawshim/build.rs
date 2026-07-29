@@ -8,10 +8,24 @@ use std::path::PathBuf;
 
 fn main() {
     println!("cargo:rustc-link-lib=raw");
+    println!("cargo:rustc-link-lib=lensfun");
     println!("cargo:rerun-if-changed=wrapper.h");
 
     let bindings = bindgen::Builder::default()
         .header("wrapper.h")
+        // lensfun.h is one header for two languages: under C++ its types are classes
+        // with methods, which bindgen renders as an unusable second surface beside
+        // the `lf_*` functions. The C half is the flat structs this crate binds.
+        .clang_args(["-x", "c"])
+        .allowlist_type("lfLens")
+        .allowlist_type("lfCamera")
+        .allowlist_type("lfDatabase")
+        .allowlist_type("lfModifier")
+        .allowlist_function("lf_db_.*")
+        .allowlist_function("lf_modifier_.*")
+        .allowlist_function("lf_free")
+        .allowlist_var("LF_SEARCH_LOOSE")
+        .allowlist_var("LF_MODIFY_DISTORTION")
         .allowlist_type("libraw_data_t")
         .allowlist_type("libraw_processed_image_t")
         .allowlist_function("libraw_init")

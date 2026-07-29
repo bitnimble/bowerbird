@@ -59,6 +59,20 @@ const SYMBOLS = {
   bb_decode_image: { args: [FFIType.ptr, FFIType.u64, FFIType.u32], returns: FFIType.ptr },
   bb_image_from_rgb: { args: [FFIType.ptr, FFIType.u32, FFIType.u32], returns: FFIType.ptr },
   bb_read_distortion_spline: { args: [FFIType.cstring, FFIType.ptr, FFIType.u32], returns: FFIType.i32 },
+  bb_lensfun_knots: {
+    args: [
+      FFIType.cstring,
+      FFIType.cstring,
+      FFIType.cstring,
+      FFIType.f32,
+      FFIType.f32,
+      FFIType.u32,
+      FFIType.u32,
+      FFIType.ptr,
+      FFIType.u32,
+    ],
+    returns: FFIType.i32,
+  },
   bb_fit: { args: [FFIType.ptr, FFIType.cstring, FFIType.ptr], returns: FFIType.i32 },
   bb_fit_against: {
     args: [FFIType.ptr, FFIType.ptr, FFIType.u64, FFIType.ptr, FFIType.u32, FFIType.ptr],

@@ -26,9 +26,23 @@ WORKDIR /app
 # libavif-bin provides avifenc for the HDR still, which is 4:4:4 and so cannot
 # come from SVT-AV1. ffmpeg's own avif muxer writes no colr box, so it cannot
 # tag one as HDR at all.
+#
+# liblensfun-dev pulls its data package with it, and both halves are needed: the
+# library is what rawshim links, and the ~4MB of XML under /usr/share/lensfun is
+# where every lens profile lives. Without the data the database loads empty and
+# every Canon frame silently falls back to fitting its own geometry - twice the
+# time for a slightly worse grade, with nothing in the logs to say why.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends libraw-dev libvips-dev libheif-plugin-aomenc ffmpeg libavif-bin \
+     liblensfun-dev \
   && rm -rf /var/lib/apt/lists/*
+
+# Owned by `bun` (uid 1000) here, in the stage every other one inherits, because a
+# fresh Docker volume takes its ownership from the image directory it shadows. The
+# dev compose file mounts an anonymous volume over node_modules, and a named one
+# over /data in both; created against a root-owned path they arrive root-owned and
+# the app cannot write its own database.
+RUN mkdir -p /app/node_modules /data && chown -R bun:bun /app /data
 
 # Dependencies as a cacheable layer.
 FROM base AS deps
@@ -77,17 +91,27 @@ ENV NODE_ENV=production
 ENV HOST=0.0.0.0
 ENV PORT=3000
 
-COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps --chown=bun:bun /app/node_modules ./node_modules
 # The baseline keeps the plain name: it is the fallback the loader ends at, and the
 # only one guaranteed to run.
-COPY --from=native /build/x86-64/release/librawshim.so ./native/librawshim.so
-COPY --from=native /build/x86-64-v3/release/librawshim.so ./native/librawshim.v3.so
-COPY --from=native /build/x86-64-v4/release/librawshim.so ./native/librawshim.v4.so
-COPY native/entrypoint.sh native/verify_shim.ts native/smoke_avif.ts ./native/
+COPY --from=native --chown=bun:bun /build/x86-64/release/librawshim.so ./native/librawshim.so
+COPY --from=native --chown=bun:bun /build/x86-64-v3/release/librawshim.so ./native/librawshim.v3.so
+COPY --from=native --chown=bun:bun /build/x86-64-v4/release/librawshim.so ./native/librawshim.v4.so
+# native/ stays writable rather than read-only: the entrypoint symlinks the variant
+# it picked into it on every start.
+COPY --chown=bun:bun native/entrypoint.sh native/verify_shim.ts native/smoke_avif.ts ./native/
 RUN chmod +x ./native/entrypoint.sh
-COPY package.json bun.lock tsconfig.json ./
-COPY src ./src
+COPY --chown=bun:bun package.json bun.lock tsconfig.json ./
+COPY --chown=bun:bun src ./src
 EXPOSE 3000
+
+# Everything the app writes lands on a bind mount - the photo library, its
+# renditions, the Bin - and as root every one of those files arrives owned by root
+# on the host, which is only discoverable after the fact and annoying to undo. uid
+# 1000 is the `bun` user this base image already ships and the usual first human
+# account on a Linux host, so the common case needs no configuration; a host whose
+# owner is not 1000 overrides it with `user:` in the compose file.
+USER bun
 # The entrypoint tunes the pixel library and then execs the command, so `docker run
 # … <anything>` still works and the app remains PID 1's exec target.
 ENTRYPOINT ["/app/native/entrypoint.sh"]
