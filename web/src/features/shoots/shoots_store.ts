@@ -68,6 +68,16 @@ export class ShootsStore {
   // list does around it. (The grid keys its cursor by index because a position is
   // all a sparse collection has, §18.3.2.)
   @observable accessor cursorPath: string | null = null;
+  // Bumped by every cursor command, so following it can react to being *asked*
+  // rather than to the index changing. Flat and Tree list the same shoots in the
+  // same order, so switching between them leaves the index alone - and a scroll
+  // away from the cursor changes nothing at all - yet both want the list brought
+  // back to the cursor.
+  @observable accessor cursorSeq = 0;
+  // Where the cursor was when its folder was last on the list, so a collapse or a
+  // delete can put it back somewhere near rather than at the top. -1 until the
+  // reader has ever had one, which is a different thing from "at the first row".
+  @observable accessor lastCursorIndex = -1;
   /** How many photographs the library holds that are in no shoot at all. */
   @observable accessor rootPhotoCount = 0;
   /** Folders whose children are drawn; every ancestor of a shoot is one. */

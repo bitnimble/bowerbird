@@ -114,9 +114,13 @@ test('the folder list is walkable by keyboard, and Tab lands on the cursor', asy
   await expect(page.locator('.list__row[tabindex="0"]')).toHaveCount(1);
   await expect(page.locator('.list__row[tabindex="0"]')).toContainText('Kelp');
 
-  // Focusing inside a row moves the cursor there, so the ring and the focus can
-  // never disagree about where the reader is.
-  await page.locator('.list__row', { hasText: 'Reef' }).getByRole('button', { name: 'Rename' }).focus();
+  // Clicking a row moves the cursor to it, because that is the reader choosing.
+  await page.locator('.list__row', { hasText: 'Reef' }).locator('.list__name').click();
+  await expect(page.locator('.list__row--cursored')).toContainText('Reef');
+
+  // Merely *focusing* one does not: focus arrives at rows for reasons that are
+  // not a choice, and the cursor is the reader's place.
+  await page.locator('.list__row', { hasText: 'Kelp' }).getByRole('button', { name: 'Rename' }).focus();
   await expect(page.locator('.list__row--cursored')).toContainText('Reef');
 
   // Put the list back as it was found: the rest of this file is one ordered
@@ -125,6 +129,53 @@ test('the folder list is walkable by keyboard, and Tab lands on the cursor', asy
   await page.locator('.list__row', { hasText: 'Kelp' }).getByRole('button', { name: 'Delete' }).click();
   await page.locator('.ui-modal').getByRole('button', { name: 'Delete shoot' }).click();
   await expect(page.locator('.list__name', { hasText: 'Kelp' })).toHaveCount(0);
+});
+
+// The actual regression, which needs more rows than fit on screen: the list must
+// hold the reader's place when the row they were in stops existing.
+test('a cursor survives the row under it being unmounted by a scroll', async ({ page }) => {
+  await page.goto('/settings');
+  await openLibrary(page, PHOTOS_DIR);
+  await page.getByRole('link', { name: 'Shoots', exact: true }).click();
+
+  const made = Array.from({ length: 30 }, (_, i) => `Deep${String(i).padStart(2, '0')}`);
+  for (const name of made) await addShoot(page, name);
+  await expect(page.locator('.list__row')).not.toHaveCount(made.length + 1); // virtualised: fewer mounted than exist
+
+  await page.locator('.list__scroller').focus();
+  await page.keyboard.press('ArrowDown');
+  await expect(page.locator('.list__row--cursored')).toContainText('Deep00');
+
+  // Focus something inside the cursored row, then scroll it far out of the window.
+  await page.locator('.list__row--cursored').getByRole('button', { name: 'Rename' }).focus();
+  await page.locator('.list__scroller').evaluate((el) => {
+    el.scrollTop = el.scrollHeight;
+  });
+  await expect(page.locator('.list__row', { hasText: 'Deep00' })).toHaveCount(0); // unmounted
+
+  // Focus went back to the list rather than to the document body, so the next
+  // Tab continues from here instead of restarting at the top of the page.
+  await expect(page.locator('.list__scroller')).toBeFocused();
+
+  // Tabbing forward reaches a row that is actually on screen, and does NOT move
+  // the cursor: the reader's place is kept until they ask for it to move.
+  await page.keyboard.press('Tab');
+  await expect(page.locator('.list__scroller')).not.toBeFocused();
+  expect(await page.evaluate(() => document.activeElement?.tagName)).not.toBe('BODY');
+  await expect(page.locator('.list__row--cursored')).toHaveCount(0); // still Deep00, still unmounted
+
+  // And it is genuinely still there: arrowing brings it back rather than starting
+  // over at the top of a list the reader was thirty rows into.
+  await page.locator('.list__scroller').focus();
+  await page.keyboard.press('ArrowDown');
+  await expect(page.locator('.list__row--cursored')).toContainText('Deep01');
+  await expect(page.locator('.list__row--cursored')).toBeVisible();
+
+  for (const name of made) {
+    await page.locator('.list__row', { hasText: name }).getByRole('button', { name: 'Delete' }).click();
+    await page.locator('.ui-modal').getByRole('button', { name: 'Delete shoot' }).click();
+    await expect(page.locator('.list__name', { hasText: name })).toHaveCount(0);
+  }
 });
 
 test('adding a photo to a shoot moves the file out of the library root on disk', async ({ page }) => {

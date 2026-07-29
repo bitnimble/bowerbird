@@ -4,6 +4,11 @@ import type { ShootsStore, ShootView } from './shoots_store';
 
 const VIEW_KEY = 'bowerbird.shoots.view';
 
+function parentOf(folderPath: string): string {
+  const slash = folderPath.lastIndexOf('/');
+  return slash < 0 ? '' : folderPath.slice(0, slash);
+}
+
 function message(err: unknown): string {
   return err instanceof ApiError ? err.message : (err as Error).message;
 }
@@ -87,24 +92,47 @@ export class ShootsPresenter {
   // because rows are mounted only while they are on screen: scrolling past the
   // cursor would otherwise drop it on the floor and leave the browser focusing
   // the document body (§18.3.4).
+  // Only ever set to a folder that is actually a row: a cursor pointing at
+  // something the list does not show has no ring, puts no row in the tab order,
+  // and sends the next arrow key back to the top.
   @action.bound
   setCursor(folderPath: string | null): void {
-    this.store.cursorPath = folderPath;
+    if (folderPath == null) {
+      this.store.cursorPath = null;
+      return;
+    }
+    const index = this.store.rowIndexByPath.get(folderPath);
+    if (index == null) return;
+    this.putCursor(index);
   }
 
   @action.bound
   moveCursor(delta: number): void {
     const rows = this.store.rows;
     if (rows.length === 0) return;
-    // From the top on the first keystroke, so arrowing into an untouched list
-    // starts somewhere rather than nowhere.
-    const from = this.store.cursorIndex < 0 ? (delta > 0 ? -1 : rows.length) : this.store.cursorIndex;
-    const next = Math.max(0, Math.min(from + delta, rows.length - 1));
-    this.store.cursorPath = rows[next]!.folderPath;
+    // Three cases: a live cursor moves from itself; one whose folder has gone
+    // resumes from where that folder was; and a list never touched starts at the
+    // end the reader is heading away from, so the first ↓ is the first row.
+    const from =
+      this.store.cursorIndex >= 0
+        ? this.store.cursorIndex
+        : this.store.lastCursorIndex >= 0
+          ? this.store.lastCursorIndex - Math.sign(delta)
+          : delta > 0
+            ? -1
+            : rows.length;
+    this.putCursor(Math.max(0, Math.min(from + delta, rows.length - 1)));
+  }
+
+  @action.bound
+  private putCursor(index: number): void {
+    this.store.cursorPath = this.store.rows[index]!.folderPath;
+    this.store.lastCursorIndex = index;
+    this.store.cursorSeq++;
   }
 
   // Right opens a folder and then walks into it; left closes one, or steps out to
-  // the parent when it is already closed. The arrows a tree is expected to answer.
+  // the nearest ancestor that is a row. The arrows a tree is expected to answer.
   async openCursor(): Promise<void> {
     const row = this.store.cursorRow;
     if (row == null) return;
@@ -119,11 +147,34 @@ export class ShootsPresenter {
     const row = this.store.cursorRow;
     if (row == null) return;
     if (row.expandable && this.store.expanded.has(row.folderPath)) {
+      // The folder's rows are about to go; the cursor sits on the folder itself,
+      // which stays.
       await this.toggleFolder(row.folderPath);
+      this.settleCursor();
       return;
     }
-    const slash = row.folderPath.lastIndexOf('/');
-    if (slash > 0) this.setCursor(row.folderPath.slice(0, slash));
+    // The nearest ancestor *that is a row*: in the tree views the parent may be a
+    // folder the reading skips over, and in flat there are no ancestors at all.
+    for (let path = parentOf(row.folderPath); path !== ''; path = parentOf(path)) {
+      if (this.store.rowIndexByPath.has(path)) {
+        this.setCursor(path);
+        return;
+      }
+    }
+  }
+
+  // Puts the cursor back on a real row after something removed the one it was on
+  // - a collapse, a delete, a sync tick. Held where the row was rather than reset,
+  // so the reader carries on from the same place in the list.
+  @action.bound
+  settleCursor(): void {
+    if (this.store.cursorPath == null || this.store.cursorIndex >= 0) return;
+    const rows = this.store.rows;
+    if (rows.length === 0) {
+      this.store.cursorPath = null;
+      return;
+    }
+    this.putCursor(Math.max(0, Math.min(this.store.lastCursorIndex, rows.length - 1)));
   }
 
   @action.bound
@@ -165,6 +216,8 @@ export class ShootsPresenter {
   async toggleFolder(folderPath: string): Promise<void> {
     if (this.store.expanded.has(folderPath)) {
       this.collapse(folderPath);
+      // Collapsing takes rows away, and the cursor may have been on one of them.
+      this.settleCursor();
       return;
     }
     this.expand(folderPath);
@@ -260,6 +313,9 @@ export class ShootsPresenter {
       return;
     }
     await this.reload();
+    // The deleted shoot may have been the cursor, and with mirroring off its row
+    // goes with it.
+    this.settleCursor();
   }
 
   // Called by PhotosPresenter for bulk actions: the shoots domain owns its own

@@ -1,5 +1,5 @@
 import { observer } from 'mobx-react-lite';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight, Folder, FolderPlus, Images, Pencil, Plus, Trash2 } from 'lucide-react';
 import { Link, useParams } from 'react-router-dom';
 import { renditionUrl } from '../../api/client';
@@ -60,18 +60,24 @@ export const ShootsPage = observer(function ShootsPage(): JSX.Element {
 
   // The element keeps its own scroll position across a re-render, and row four
   // thousand of one reading says nothing about row four thousand of another, so
-  // both readings start from the top. The presenter has already zeroed the store.
+  // both readings start from the top. Written to the store as well as to the
+  // element: assigning 0 to something already at 0 fires no scroll event, so the
+  // store would keep the old offset and translate the window somewhere the
+  // scrollbar is not.
   useEffect(() => {
     if (scroller.current != null) scroller.current.scrollTop = 0;
-  }, [libraryId, store.view]);
+    shoots.setScrollTop(0);
+  }, [libraryId, store.view, shoots]);
 
-  // Follow the cursor. Declared after the reset above so that switching view with
-  // a cursor set lands on the same folder rather than at the top - the cursor is
-  // a folder, and it means the same thing in every reading of the tree.
+  // Follow the cursor, on every command rather than on the index changing: Flat
+  // and Tree list the same shoots in the same order, so switching between them
+  // leaves the index alone, and scrolling away from the cursor changes nothing at
+  // all - yet both want the list brought back. Declared after the reset above so
+  // a view change with a cursor set lands on the folder rather than at the top.
   useEffect(() => {
     const target = store.cursorScrollTop;
     if (scroller.current != null && target != null) scroller.current.scrollTop = target;
-  }, [store.cursorIndex, store]);
+  }, [store.cursorSeq, store.view, store]);
 
   useEffect(() => {
     shoots.restoreView();
@@ -164,6 +170,7 @@ export const ShootsPage = observer(function ShootsPage(): JSX.Element {
                   total={store.rows.length}
                   onCreateIn={setCreatingIn}
                   onDelete={setDeleting}
+                  scroller={scroller}
                 />
               ))}
             </div>
@@ -244,15 +251,32 @@ const ShootRow = observer(function ShootRow({
   total,
   onCreateIn,
   onDelete,
+  scroller,
 }: {
   row: FolderRow;
   position: number;
   total: number;
   onCreateIn: (folderPath: string) => void;
   onDelete: (row: FolderRow) => void;
+  scroller: React.RefObject<HTMLDivElement>;
 }): JSX.Element {
   const store = useShootsStore();
   const { shoots } = usePresenters();
+  const element = useRef<HTMLDivElement>(null);
+
+  // Scrolling unmounts the row under the reader's focus, and a removed element
+  // drops focus on the document body - after which the next Tab starts from the
+  // top of the page. Handing it back to the list keeps the reader where they
+  // were, and the list brings the cursor into view when it takes focus.
+  //
+  // Layout effect, because its cleanup is the last moment the row is still in the
+  // document to be asked whether it holds the focus.
+  useLayoutEffect(
+    () => () => {
+      if (element.current?.contains(document.activeElement) === true) scroller.current?.focus();
+    },
+    [scroller],
+  );
   // A shoot shows its first photo from the moment it has one, which is before
   // the import has built that photo's tile, so the banner is routinely asked for
   // a file that is not there yet.
@@ -273,17 +297,22 @@ const ShootRow = observer(function ShootRow({
       className={`list__row${row.shoot == null ? ' list__row--untracked' : ''}${editing ? ' list__row--editing' : ''}${
         cursored ? ' list__row--cursored' : ''
       }`}
+      ref={element}
       role="listitem"
       aria-posinset={position}
       aria-setsize={total}
       aria-level={row.depth + 1}
-      // Roving: exactly one row is ever in the tab order, so tabbing past the
-      // scroller lands on the cursor rather than restarting at the top of the
-      // document - which is what scrolling a focused row out of the window used
-      // to cost. Focusing anything in a row moves the cursor there, so the two
-      // never disagree about where the reader is.
+      // Says which row the keyboard is on, which the ring alone only tells a
+      // reader who can see it.
+      aria-current={cursored ? 'true' : undefined}
+      // Roving: exactly one row is ever in the tab order, so while the cursor is
+      // on screen, tabbing into the list lands on it.
       tabIndex={cursored ? 0 : -1}
-      onFocus={() => shoots.setCursor(row.folderPath)}
+      // Pointer, not focus. Focus arrives at a row for reasons that are not the
+      // reader choosing it - tabbing forward after a scroll unmounted the row
+      // they were in lands on whichever row happens to be mounted, and moving
+      // the cursor there would throw away the place they were keeping.
+      onPointerDown={() => shoots.setCursor(row.folderPath)}
     >
       <span className="depth" style={{ width: row.depth * 16 }} />
 
