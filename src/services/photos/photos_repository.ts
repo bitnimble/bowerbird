@@ -466,12 +466,20 @@ export class PhotosRepository {
            WHERE library_id = ? AND is_deleted = 0 AND file_path >= ? AND file_path < ?`,
       )
       .run(newFolderPath, tailFrom, libraryId, lo, hi);
+    // `deleted_from_path` travels with the file, or a restore after the folder
+    // moved would recreate the old folder and put the photo back outside the
+    // shoot it still belongs to. It is rewritten by the same prefix, and only
+    // where it points inside the folder that moved.
     this.db
       .query(
-        `UPDATE photos SET file_path = ? || substr(file_path, ?)
+        `UPDATE photos
+            SET file_path = ? || substr(file_path, ?),
+                deleted_from_path = CASE
+                  WHEN deleted_from_path >= ? AND deleted_from_path < ? THEN ? || substr(deleted_from_path, ?)
+                  ELSE deleted_from_path END
            WHERE library_id = ? AND is_deleted = 1 AND file_path >= ? AND file_path < ?`,
       )
-      .run(newFolderPath, tailFrom, libraryId, lo, hi);
+      .run(newFolderPath, tailFrom, lo, hi, newFolderPath, tailFrom, libraryId, lo, hi);
   }
 
   setShoot(photoId: string, shootId: string | null): void {

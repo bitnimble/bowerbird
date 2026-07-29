@@ -71,7 +71,7 @@ export const ShootsPage = observer(function ShootsPage(): JSX.Element {
       />
       <DeleteShootDialog
         shoot={deleting?.shoot ?? null}
-        photoCount={deleting?.photoCount ?? 0}
+        photoCount={deleting == null ? 0 : store.photosUnder(deleting.folderPath)}
         onOpenChange={(open) => !open && setDeleting(null)}
         onConfirm={(photos) => {
           const shoot = deleting?.shoot;

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { moveIntoDir } from '../files';
 import { isSupportedFile, rawMediaType, scanLibraryTree } from '../scan';
-import type { LibraryScope } from '../scope';
+import { libraryScope, type LibraryScope } from '../scope';
 
 function withRoot(run: (root: string) => Promise<void> | void) {
   return async () => {
@@ -41,14 +41,15 @@ describe('rawMediaType', () => {
   });
 });
 
-function scope(root: string, over: Partial<LibraryScope> = {}): LibraryScope {
-  return {
-    rootPath: root,
-    dataPath: path.join(root, '.bowerbird'),
-    includeSubfolders: true,
-    excluded: new Set<string>(),
-    ...over,
-  };
+function scope(
+  root: string,
+  over: { dataPath?: string; includeSubfolders?: boolean; excluded?: Set<string> } = {},
+): LibraryScope {
+  return libraryScope(
+    { root_path: root, include_subfolders: over.includeSubfolders ?? true },
+    over.dataPath ?? path.join(root, '.bowerbird'),
+    over.excluded ?? new Set<string>(),
+  );
 }
 
 describe('scanLibraryTree', () => {

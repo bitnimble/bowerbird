@@ -6,10 +6,10 @@ import { AppError } from '../../errors';
 import { Logger } from '../../logger';
 import type { Library, LibrarySyncStatus } from '../../schemas/libraries';
 import { isSupportedFile, scanLibraryTree, type ScannedDir, type ScannedFile } from '../../utils/scan';
-import { isDirInScope, isFileInScope, type LibraryScope } from '../../utils/scope';
+import { isDirInScope, isFileInScope, libraryScope, type LibraryScope } from '../../utils/scope';
 import { computeFileHash } from '../../utils/hash';
 import { getDataPath } from '../../utils/paths';
-import { mostSpecificShoot, shootContains } from '../../utils/shoots';
+import { shootContains } from '../../utils/shoots';
 import type { AlbumsRepository } from '../albums/albums_repository';
 import type { LibrariesRepository } from '../libraries/libraries_repository';
 import type { LibraryLifecycleListener } from '../libraries/libraries_service';
@@ -60,6 +60,45 @@ interface ProcessingBatch {
 
 export type MetadataExtractor = (absPath: string) => Promise<FileMetadata>;
 
+// Which folders actually need their photographs re-assigned after mirroring made
+// new shoots. A shoot claims everything under its folder, so a claim by an
+// ancestor of another claimant is pure waste: the deeper one covers the same rows
+// and lands last. Only shoots at or under a newly created folder are in question
+// at all - the rest of the library was already right.
+function deepestClaims(created: readonly string[], byFolder: ReadonlyMap<string, string>): string[] {
+  if (created.length === 0) return [];
+  const isNew = new Set(created);
+
+  // Walked by path segment rather than compared against every other folder:
+  // mirroring creates as many folders as the library has, and "is any of these
+  // under any of those" over both lists is quadratic in exactly the case this
+  // runs in.
+  const ancestors = (folder: string): string[] => {
+    const found: string[] = [];
+    let prefix = '';
+    for (const segment of folder.split('/').slice(0, -1)) {
+      prefix = prefix === '' ? segment : `${prefix}/${segment}`;
+      found.push(prefix);
+    }
+    return found;
+  };
+
+  const touched = new Set<string>();
+  for (const folder of byFolder.keys()) {
+    if (isNew.has(folder) || ancestors(folder).some((a) => isNew.has(a))) touched.add(folder);
+  }
+
+  // An ancestor's claim covers the same rows as its descendant's and is
+  // overwritten by it, so only the leaves of the touched set are worth issuing.
+  const covered = new Set<string>();
+  for (const folder of touched) {
+    for (const ancestor of ancestors(folder)) {
+      if (touched.has(ancestor)) covered.add(ancestor);
+    }
+  }
+  return [...touched].filter((folder) => !covered.has(folder));
+}
+
 type Status = LibrarySyncStatus['status'];
 
 function idle(libraryId: string, status: Status = 'idle'): LibrarySyncStatus {
@@ -103,12 +142,7 @@ export class SyncService implements LibraryLifecycleListener {
   // (§9.1). Built per run: a folder rule set between two syncs takes effect on
   // the next one without anything having to invalidate a cache.
   scopeFor(library: Library): LibraryScope {
-    return {
-      rootPath: library.root_path,
-      dataPath: getDataPath(library),
-      includeSubfolders: library.include_subfolders,
-      excluded: this.folderRules.pathsWithRule(library.id, 'excluded'),
-    };
+    return libraryScope(library, getDataPath(library), this.folderRules.pathsWithRule(library.id, 'excluded'));
   }
 
   onLibraryCreated(_library: Library): void {
@@ -183,8 +217,22 @@ export class SyncService implements LibraryLifecycleListener {
       // as it goes, so it needs the shoots up front. The mutex holds them still
       // for the whole run (§9.9). A shoot relocation would rewrite these paths
       // mid-run, but that takes existing photos to move, and a first scan has none.
-      const shoots = this.shoots.listByLibrary(libraryId);
-      const shootFor = (relPath: string): string | null => mostSpecificShoot(relPath, shoots)?.id ?? null;
+      const shoots = this.shoots.listFolders(libraryId);
+      // A photo's shoot is the deepest of its ancestor folders that has one, so
+      // it is a handful of map lookups rather than a walk of every shoot. With a
+      // shoot per folder the walk was 20,000 comparisons per photo, which is
+      // minutes of blocked event loop across a large import.
+      const byFolder = new Map(shoots.map((s) => [s.folder_path, s.id]));
+      const shootFor = (relPath: string): string | null => {
+        const segments = relPath.split('/');
+        let prefix = '';
+        let deepest: string | null = null;
+        for (const segment of segments.slice(0, -1)) {
+          prefix = prefix === '' ? segment : `${prefix}/${segment}`;
+          deepest = byFolder.get(prefix) ?? deepest;
+        }
+        return deepest;
+      };
 
       // Only a scoped run collects them: a full run hands its batch the library
       // rather than a list, and a 300k-frame import has no reason to hold every
@@ -285,7 +333,13 @@ export class SyncService implements LibraryLifecycleListener {
           dbPhotos,
           onDisk,
         ).filter((r) => !claimed.has(r.newFolderPath)),
-      ];
+      ]
+        // Deepest first, because each one rewrites its whole subtree by prefix.
+        // Rename a folder and its child in one window and applying the parent
+        // first would move the child's photos to a path the child's own rewrite
+        // then fails to match, leaving rows pointing at a file that is not there
+        // while `is_missing` still reads 0.
+        .sort((a, b) => b.oldFolderPath.split('/').length - a.oldFolderPath.split('/').length);
       const relocatedFolders = relocations.map((r) => r.oldFolderPath);
       const moves = result.moves.filter((mv) => !relocatedFolders.some((folder) => shootContains(folder, mv.oldFilePath)));
 
@@ -298,6 +352,10 @@ export class SyncService implements LibraryLifecycleListener {
             shoot.folder_path = r.newFolderPath + shoot.folder_path.slice(r.oldFolderPath.length);
           }
         }
+      }
+      if (relocations.length > 0) {
+        byFolder.clear();
+        for (const shoot of shoots) byFolder.set(shoot.folder_path, shoot.id);
       }
       const nowUtc = new Date().toISOString();
 
@@ -550,41 +608,81 @@ export class SyncService implements LibraryLifecycleListener {
     fullRun: boolean,
   ): number {
     const seen = new Map(dirs.map((d) => [d.relPath, d]));
-    const shoots = this.shoots.listByLibrary(library.id);
+    const identities = this.shoots.listIdentities(library.id);
+    const stale = identities.filter((identity) => {
+      const dir = seen.get(identity.folder_path);
+      return (
+        dir != null &&
+        (identity.folder_dev !== dir.dev || identity.folder_ino !== dir.ino || identity.folder_birthtime !== dir.birthtimeMs)
+      );
+    });
+
+    const shoots = this.shoots.listFolders(library.id);
     const byPath = new Map(shoots.map((s) => [s.folder_path, s]));
+    const plain = library.mirror_shoots ? this.folderRules.pathsWithRule(library.id, 'plain') : new Set<string>();
 
-    return this.shoots.transaction(() => {
-      let changed = 0;
-      for (const identity of this.shoots.listIdentities(library.id)) {
-        const dir = seen.get(identity.folder_path);
-        if (dir == null) continue;
-        if (identity.folder_ino === dir.ino && identity.folder_birthtime === dir.birthtimeMs) continue;
-        this.shoots.setIdentity(identity.id, dir.ino, dir.birthtimeMs);
-      }
-      if (!library.mirror_shoots) return changed;
-
-      // A folder holding photographs of its own. Pass-through folders are left
-      // out: they are structure rather than a set of photographs, and the tree on
-      // screen is drawn from the shoots' own paths (§18.3.2).
-      const plain = this.folderRules.pathsWithRule(library.id, 'plain');
+    // A folder holding photographs of its own. Pass-through folders are left out:
+    // they are structure rather than a set of photographs, and the tree on screen
+    // is drawn from the shoots' own paths (§18.3.2).
+    const wanted: string[] = [];
+    if (library.mirror_shoots) {
       const withPhotos = new Set<string>();
       for (const file of presentFiles) {
         const slash = file.lastIndexOf('/');
         if (slash > 0) withPhotos.add(file.slice(0, slash));
       }
-
+      for (const folder of withPhotos) {
+        if (!byPath.has(folder) && !plain.has(folder)) wanted.push(folder);
+      }
       // Shallowest first, so each new shoot's parent already exists to be derived
-      // from - the same derivation `create` uses, against a list that grows as we
-      // go rather than one read once.
-      const wanted = [...withPhotos]
-        .filter((folder) => !byPath.has(folder) && !plain.has(folder))
-        .sort((a, b) => a.split('/').length - b.split('/').length);
-      const known = shoots.map((s) => ({ id: s.id, folder_path: s.folder_path }));
+      // from - the same derivation `create` uses.
+      wanted.sort((a, b) => a.split('/').length - b.split('/').length);
+    }
+
+    const doomed =
+      fullRun && library.mirror_shoots
+        ? shoots.filter((shoot) => {
+            if (seen.has(shoot.folder_path) || shoot.photo_count > 0) return false;
+            // A shoot still holding a shoot is not empty, whatever its own count
+            // says: `parent_id` cascades, so deleting it would take a descendant's
+            // label, banner and its photos' membership with it, and those photos
+            // are only "missing" in the sense that the whole subtree moved.
+            return !shoots.some((other) => other.id !== shoot.id && shootContains(shoot.folder_path, other.folder_path));
+          })
+        : [];
+
+    // Nothing to say: the overwhelmingly common sync. Skipped before opening a
+    // transaction rather than inside one, so a quiet library costs a few map
+    // lookups and no write lock at all.
+    if (stale.length === 0 && wanted.length === 0 && doomed.length === 0) return 0;
+
+    return this.shoots.transaction(() => {
+      let changed = 0;
+      for (const identity of stale) {
+        const dir = seen.get(identity.folder_path)!;
+        this.shoots.setIdentity(identity.id, dir.dev, dir.ino, dir.birthtimeMs);
+      }
+
+      // Keyed by folder so the enclosing shoot is a few lookups up the path
+      // rather than a scan of every shoot per folder created, which was quadratic
+      // in the folders a first mirroring sync makes.
+      const byFolder = new Map(shoots.map((s) => [s.folder_path, s.id]));
+      const enclosing = (folder: string): string | null => {
+        const segments = folder.split('/');
+        let prefix = '';
+        let deepest: string | null = null;
+        for (const segment of segments.slice(0, -1)) {
+          prefix = prefix === '' ? segment : `${prefix}/${segment}`;
+          deepest = byFolder.get(prefix) ?? deepest;
+        }
+        return deepest;
+      };
+
       for (const folder of wanted) {
         const dir = seen.get(folder);
         const shoot = {
           id: randomUUID(),
-          parent_id: mostSpecificShoot(folder, known)?.id ?? null,
+          parent_id: enclosing(folder),
           library_id: library.id,
           folder_path: folder,
           name: folder.slice(folder.lastIndexOf('/') + 1),
@@ -592,34 +690,27 @@ export class SyncService implements LibraryLifecycleListener {
           // No explicit choice was made, so the library's own answer is the
           // closest thing to one.
           ordering: library.ordering,
+          folder_dev: dir?.dev ?? null,
           folder_ino: dir?.ino ?? null,
           folder_birthtime: dir?.birthtimeMs ?? null,
         };
         this.shoots.insert(shoot);
-        known.push({ id: shoot.id, folder_path: folder });
+        byFolder.set(folder, shoot.id);
         changed++;
       }
 
-      // A new shoot takes the photographs in its folder, including any that a
-      // shallower shoot was holding for want of a closer one. Re-stated shallowest
-      // first over the affected subtrees only, so the deeper claim lands last and
-      // a library with nothing new to mirror rewrites no rows at all.
-      if (wanted.length > 0) {
-        const affected = known
-          .filter((s) => wanted.some((folder) => s.folder_path === folder || shootContains(folder, s.folder_path)))
-          .sort((a, b) => a.folder_path.split('/').length - b.folder_path.split('/').length);
-        for (const shoot of affected) this.photos.setShootForFolder(library.id, shoot.folder_path, shoot.id);
+      // A new shoot takes the photographs in its folder, including any a shallower
+      // shoot was holding for want of a closer one. Only the *deepest* shoot at or
+      // under each new folder is restated: a shallower claim over the same rows is
+      // overwritten by it immediately, so issuing both writes every row twice for
+      // nothing - two thirds of the row writes of a first mirroring sync.
+      for (const folder of deepestClaims(wanted, byFolder)) {
+        this.photos.setShootForFolder(library.id, folder, byFolder.get(folder)!);
       }
 
-      // Both halves are required: a folder that is gone but still has rows is a
-      // library whose files went missing, not a shoot to discard. Only a full run
-      // can say a folder is absent - a scoped one never looked.
-      if (fullRun) {
-        for (const shoot of shoots) {
-          if (seen.has(shoot.folder_path) || shoot.photo_count > 0) continue;
-          this.shoots.delete(shoot.id);
-          changed++;
-        }
+      for (const shoot of doomed) {
+        this.shoots.delete(shoot.id);
+        changed++;
       }
       return changed;
     });
@@ -656,7 +747,7 @@ export class SyncService implements LibraryLifecycleListener {
     for (const relPath of candidates) {
       if (relPath === '' || !isDirInScope(scope, relPath)) continue;
       const stats = await stat(path.join(scope.rootPath, relPath)).catch(() => null);
-      if (stats?.isDirectory()) dirs.push({ relPath, ino: stats.ino, birthtimeMs: stats.birthtimeMs });
+      if (stats?.isDirectory()) dirs.push({ relPath, dev: stats.dev, ino: stats.ino, birthtimeMs: stats.birthtimeMs });
     }
     return dirs;
   }

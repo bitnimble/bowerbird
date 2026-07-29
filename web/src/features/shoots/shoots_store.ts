@@ -28,6 +28,17 @@ function parentOf(folderPath: string): string {
   return slash < 0 ? '' : folderPath.slice(0, slash);
 }
 
+/** Every folder above this one, shallowest first. */
+function ancestorsOf(folderPath: string): string[] {
+  const found: string[] = [];
+  let prefix = '';
+  for (const segment of folderPath.split('/').slice(0, -1)) {
+    prefix = prefix === '' ? segment : `${prefix}/${segment}`;
+    found.push(prefix);
+  }
+  return found;
+}
+
 export class ShootsStore {
   @observable.shallow accessor shoots: Shoot[] = [];
   @observable accessor loading = false;
@@ -46,6 +57,16 @@ export class ShootsStore {
 
   @computed get shootByFolder(): Map<string, Shoot> {
     return new Map(this.shoots.map((s) => [s.folder_path, s]));
+  }
+
+  // Everything a delete would take with it, which is the whole subtree and not
+  // just the shoot's own members: removing a shoot's photographs removes every
+  // photograph under its folder, descendant shoots included. The dialog says this
+  // number out loud, so it has to be the one that is about to be true.
+  photosUnder(folderPath: string): number {
+    return this.shoots
+      .filter((s) => s.folder_path === folderPath || s.folder_path.startsWith(`${folderPath}/`))
+      .reduce((total, s) => total + s.photo_count, 0);
   }
 
   @computed get isEmpty(): boolean {
@@ -75,13 +96,18 @@ export class ShootsStore {
 
   // Shoots alone: unnested and stating their whole path, or nested under the
   // nearest shoot above them with the skipped folders named in the subtitle.
+  //
+  // Ancestors are found by walking each path's own segments against a Set, not by
+  // testing every shoot against every other: mirroring gives a library a shoot per
+  // folder, and the pairwise version froze the page for seconds on every rename at
+  // a few thousand of them.
   private get shootRows(): FolderRow[] {
     const flat = this.view === 'flat';
-    const paths = this.shoots.map((s) => s.folder_path).sort();
+    const paths = new Set(this.shoots.map((s) => s.folder_path));
     return [...this.shoots]
       .sort((a, b) => a.folder_path.localeCompare(b.folder_path))
       .map((shoot) => {
-        const ancestors = flat ? [] : paths.filter((p) => shoot.folder_path.startsWith(`${p}/`));
+        const ancestors = flat ? [] : ancestorsOf(shoot.folder_path).filter((p) => paths.has(p));
         const nearest = ancestors.length === 0 ? null : ancestors[ancestors.length - 1]!;
         const between = nearest == null ? parentOf(shoot.folder_path) : parentOf(shoot.folder_path).slice(nearest.length + 1);
         return {
@@ -101,9 +127,19 @@ export class ShootsStore {
   // have I got" and "make that a shoot" are the same question in the same place.
   private get fullTree(): FolderRow[] {
     const byFolder = this.shootByFolder;
-    const known = this.knownFolders;
-    const childrenOf = (parent: string): string[] =>
-      [...known].filter((folder) => parentOf(folder) === parent && folder !== parent).sort();
+    // Grouped once rather than filtered per expanded row: the walk visits every
+    // open folder, and scanning the whole folder set at each of them is quadratic
+    // in a tree that is mostly open, which is what auto-expanding to every shoot
+    // makes it.
+    const children = new Map<string, string[]>();
+    for (const folder of this.knownFolders) {
+      const parent = parentOf(folder);
+      const siblings = children.get(parent);
+      if (siblings) siblings.push(folder);
+      else children.set(parent, [folder]);
+    }
+    for (const siblings of children.values()) siblings.sort();
+    const childrenOf = (parent: string): string[] => children.get(parent) ?? [];
 
     const rows: FolderRow[] = [];
     const walk = (parent: string, depth: number): void => {

@@ -1,9 +1,10 @@
-import chokidar, { type FSWatcher } from 'chokidar';
+import watcher, { type AsyncSubscription } from '@parcel/watcher';
 import path from 'node:path';
 import { AppError } from '../../errors';
 import { Logger } from '../../logger';
 import type { Library } from '../../schemas/libraries';
-import { isPathAllowed } from '../../utils/scope';
+import { isPathAllowed, type LibraryScope } from '../../utils/scope';
+import { getDataPath } from '../../utils/paths';
 import type { LibrariesRepository } from '../libraries/libraries_repository';
 import type { LibraryLifecycleListener } from '../libraries/libraries_service';
 import type { SyncService } from './sync_service';
@@ -26,12 +27,12 @@ const MAX_RETRY_MS = 5 * 60 * 1000;
 // detection stays with sync; the watcher only decides *when* to run it, and for
 // which paths.
 //
-// chokidar rather than node:fs (§9.8): `fs.watch` reports a rename, a move and an
-// `rm -rf` identically, as one event naming only the source, so where a folder
-// went could not be known from an event at all. chokidar names both halves, which
-// is what lets a moved folder be recognised in the same debounce window it moved.
+// `@parcel/watcher` rather than node:fs or chokidar (§9.8), for two measured
+// reasons: it names the *destination* of a move, which fs.watch never does, and
+// it takes one inotify watch per directory rather than one per file, which is
+// what put chokidar 40x over a real library's watch budget.
 export class LibraryWatcher implements LibraryLifecycleListener {
-  private readonly watchers = new Map<string, FSWatcher>();
+  private readonly watchers = new Map<string, AsyncSubscription>();
   private readonly timers = new Map<string, Timer>();
   private readonly retryTimers = new Map<string, Timer>();
   private readonly retryDelays = new Map<string, number>();
@@ -40,11 +41,12 @@ export class LibraryWatcher implements LibraryLifecycleListener {
   // Changed relative paths accumulated per library during the debounce window; the
   // next run() reconciles just these (scoped sync) instead of the whole library.
   private readonly pending = new Map<string, Set<string>>();
-  // Resolves once a watcher has walked its tree and is delivering events. Unlike
-  // fs.watch, which was live the moment it returned, chokidar establishes itself
-  // asynchronously, so a change made in that window is only ever caught by the
-  // next full sync.
+  // Establishing a watch reads the tree, so it settles a moment after start().
+  // Held so a caller (and the tests) can wait for it rather than sleeping.
   private readonly ready = new Map<string, Promise<void>>();
+  // What each library was watched with, so a settings change only re-establishes
+  // the watch when it actually changed what the library contains.
+  private readonly watchedScopes = new Map<string, string>();
   private stopped = false;
 
   constructor(
@@ -74,11 +76,12 @@ export class LibraryWatcher implements LibraryLifecycleListener {
     // Set before clearing so an in-flight run()'s finally can't reschedule a sync
     // (or a retry timer fire and re-establish a watcher) after teardown.
     this.stopped = true;
-    for (const watcher of this.watchers.values()) void watcher.close();
+    for (const [id, sub] of this.watchers) void this.close(id, sub);
     for (const timer of this.timers.values()) clearTimeout(timer);
     for (const timer of this.retryTimers.values()) clearTimeout(timer);
     this.watchers.clear();
     this.ready.clear();
+    this.watchedScopes.clear();
     this.timers.clear();
     this.retryTimers.clear();
     this.retryDelays.clear();
@@ -105,64 +108,93 @@ export class LibraryWatcher implements LibraryLifecycleListener {
     this.pending.delete(libraryId);
   }
 
-  /** Re-reads a library whose scope changed, so an excluded folder stops waking syncs. */
+  // Re-establishing a watch re-reads the whole tree, so it is done only when the
+  // settings that decide what is watched actually moved. Every other library
+  // setting (a name, an ordering, what renditions to build) leaves it alone.
   onLibraryUpdated(library: Library): void {
-    if (!this.watchers.has(library.id)) return;
+    if (!this.watchers.has(library.id) && !this.ready.has(library.id)) return;
+    if (this.watchedScopes.get(library.id) === scopeKey(this.sync.scopeFor(library))) return;
     this.dropWatcher(library.id);
     this.watchLibrary(library);
   }
 
   private watchLibrary(library: Library): void {
-    if (this.stopped || this.watchers.has(library.id)) return;
+    if (this.stopped || this.watchers.has(library.id) || this.ready.has(library.id)) return;
     // A queued watch-error retry can land after the library was deleted; without
     // this, watchLibrary would re-create a live watcher (leaked inotify handles +
     // spurious syncs) that onLibraryDeleted can never tear down again.
     if (!this.libraries.getById(library.id)) return;
     const scope = this.sync.scopeFor(library);
-    try {
-      const watcher = chokidar.watch(library.root_path, {
-        ignoreInitial: true, // the tree as it stands is sync's job, not an event
-        // How far the library goes, expressed as depth rather than through
-        // `ignored` below: chokidar asks about a path both with and without
-        // `stats`, so a predicate needing to know a folder from a file would get
-        // it wrong on the stats-less call - and this is the one rule where a
-        // root-level folder and a root-level file differ.
-        depth: scope.includeSubfolders ? undefined : 0,
-        // The scan's own rules (§9.1), so the watcher and the scan cannot
-        // disagree about which folders the library contains. Consulted before
-        // chokidar descends, so an excluded subtree is never watched rather than
-        // being filtered after the fact.
-        ignored: (target) => {
-          const relPath = path.relative(library.root_path, target).split(path.sep).join('/');
-          if (relPath === '' || relPath.startsWith('..')) return false;
-          return !isPathAllowed(scope, relPath);
+    this.watchedScopes.set(library.id, scopeKey(scope));
+
+    const establishing = watcher
+      .subscribe(
+        library.root_path,
+        (err, events) => {
+          if (err != null) {
+            // A watch error (e.g. inotify ENOSPC) kills this watch; drop it and
+            // try to re-establish after a delay, else auto-sync stops for good.
+            log.error('watch dropped; will re-attempt', { library: library.id, err });
+            this.scheduleRetry(library);
+            return;
+          }
+          for (const event of events) {
+            const relPath = path.relative(library.root_path, event.path).split(path.sep).join('/');
+            if (relPath === '' || relPath.startsWith('..')) continue;
+            if (!this.inScope(scope, relPath)) continue;
+            this.record(library.id, relPath);
+          }
+          this.schedule(library.id);
         },
-      });
-      watcher.on('all', (_event, target) => {
-        const relPath = path.relative(library.root_path, target).split(path.sep).join('/');
-        if (relPath === '' || relPath.startsWith('..')) return;
-        this.record(library.id, relPath);
-        this.schedule(library.id);
-      });
-      watcher.on('error', (err) => {
-        // A watch error (e.g. inotify ENOSPC) kills this watcher; drop it and try
-        // to re-establish after a delay, else auto-sync silently stops for good.
-        log.error('watch dropped; will re-attempt', { library: library.id, err });
+        {
+          // Excluded subtrees are never watched rather than filtered afterwards,
+          // which is the difference between a folder costing nothing and costing
+          // an inotify watch per directory inside it. The callback still applies
+          // the scan's rules (§9.1), so this is an optimisation and not the
+          // correctness boundary.
+          ignore: this.ignoredPaths(library, scope),
+        },
+      )
+      .then((sub) => {
+        // Torn down while the walk was in flight: nothing is holding this
+        // subscription any more, so it would leak its watches.
+        if (this.stopped || !this.libraries.getById(library.id)) {
+          void sub.unsubscribe();
+          return;
+        }
+        this.watchers.set(library.id, sub);
+        log.info('watching', { library: library.id, root: library.root_path });
+        this.retryDelays.delete(library.id); // watching again: next failure starts from the short delay
+      })
+      .catch((err: unknown) => {
+        // Includes a root that is not there at all, which is an unmounted drive
+        // rather than a permanent condition.
+        log.error('could not watch; will re-attempt', { library: library.id, root: library.root_path, err });
         this.scheduleRetry(library);
+      })
+      .finally(() => {
+        this.ready.delete(library.id);
       });
-      this.watchers.set(library.id, watcher);
-      this.ready.set(
-        library.id,
-        new Promise<void>((resolve) => watcher.on('ready', () => resolve())),
-      );
-      log.info('watching', { library: library.id, root: library.root_path });
-      this.retryDelays.delete(library.id); // watching again: next failure starts from the short delay
-    } catch (err) {
-      // watch() itself failed (incl. a synchronous failure of a retry attempt);
-      // keep retrying so one bad attempt doesn't stop auto-sync for good.
-      log.error('could not watch; will re-attempt', { library: library.id, root: library.root_path, err });
-      this.scheduleRetry(library);
-    }
+
+    this.ready.set(library.id, establishing);
+  }
+
+  // Absolute paths kept out of the walk entirely. The per-event check below is
+  // what makes the rules hold; this is what makes them cheap.
+  private ignoredPaths(library: Library, scope: LibraryScope): string[] {
+    const ignored = [getDataPath(library), path.join(library.root_path, '.bowerbird')];
+    for (const folder of scope.excluded) ignored.push(path.join(library.root_path, folder));
+    return ignored;
+  }
+
+  // A path may name a file or a folder and the event does not say which, so this
+  // asks only what holds either way (§9.1). The one rule that does need to know
+  // is applied to files alone: a root-only library has no interest in anything
+  // below its root, and a stray folder path costs nothing downstream because the
+  // scoped sync tests it with `isDirInScope` before reading it.
+  private inScope(scope: LibraryScope, relPath: string): boolean {
+    if (!isPathAllowed(scope, relPath)) return false;
+    return scope.includeSubfolders || !relPath.includes('/');
   }
 
   // Backs off exponentially up to MAX_RETRY_MS. A root that is gone for good (an
@@ -183,9 +215,19 @@ export class LibraryWatcher implements LibraryLifecycleListener {
   }
 
   private dropWatcher(libraryId: string): void {
-    void this.watchers.get(libraryId)?.close();
+    const sub = this.watchers.get(libraryId);
+    if (sub != null) void this.close(libraryId, sub);
     this.watchers.delete(libraryId);
     this.ready.delete(libraryId);
+    this.watchedScopes.delete(libraryId);
+  }
+
+  private async close(libraryId: string, sub: AsyncSubscription): Promise<void> {
+    try {
+      await sub.unsubscribe();
+    } catch (err) {
+      log.warn('could not release a watch', { library: libraryId, err });
+    }
   }
 
   private record(libraryId: string, relPath: string): void {
@@ -241,4 +283,10 @@ export class LibraryWatcher implements LibraryLifecycleListener {
       if (this.dirty.delete(libraryId)) this.schedule(libraryId);
     }
   }
+}
+
+// What the watch was established with, so a settings change can be compared
+// against it. Only the parts that decide which paths are watched.
+function scopeKey(scope: LibraryScope): string {
+  return `${scope.includeSubfolders ? 1 : 0}|${scope.dataPath}|${[...scope.excluded].sort().join(',')}`;
 }

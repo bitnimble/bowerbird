@@ -7,6 +7,7 @@ import type { CreateShootRequest, Shoot, UpdateShootRequest } from '../../schema
 import type { Library } from '../../schemas/libraries';
 import { ensureDir, moveIntoDir } from '../../utils/files';
 import { containsPath, getDataPath, toLibraryRelative } from '../../utils/paths';
+import { isDirInScope, libraryScope, type LibraryScope } from '../../utils/scope';
 import { mostSpecificShoot } from '../../utils/shoots';
 import type { LibrariesRepository } from '../libraries/libraries_repository';
 import { deleteGeneratedFilesFor } from '../maintenance/prune_service';
@@ -27,16 +28,26 @@ export class ShootsService {
     const library = this.requireLibrary(request.library_id);
 
     const parentPath = request.parent_path.replace(/^\/+|\/+$/g, '');
-    const folderPath = parentPath === '' ? request.name : `${parentPath}/${request.name}`;
-    const absFolder = path.join(library.root_path, folderPath);
+    const absFolder = path.join(library.root_path, parentPath, request.name);
     if (!containsPath(library.root_path, absFolder)) {
-      throw new AppError('VALIDATION_ERROR', `shoot folder is outside the library: ${folderPath}`);
+      throw new AppError('VALIDATION_ERROR', `shoot folder is outside the library: ${parentPath}/${request.name}`);
     }
+    // Derived from the resolved path rather than pasted together from the
+    // request, so `./Trip` and `Trip//` cannot store a folder_path that never
+    // matches the folder actually created, leaving a shoot no photo can join.
+    const folderPath = toLibraryRelative(library.root_path, absFolder);
+
     // Everything under the data directory is disposable and goes with the
     // library when it is removed (§6), so a shoot there would be photographs
     // queued for deletion.
     if (containsPath(getDataPath(library), absFolder)) {
       throw new AppError('VALIDATION_ERROR', `shoot folder is inside the library's data directory: ${folderPath}`);
+    }
+    // A folder the scan will never look at cannot hold a shoot: a Bin, a
+    // dotfolder or one the user has excluded. Its photos would be moved in and
+    // then never seen again.
+    if (!isDirInScope(this.scopeFor(library), folderPath)) {
+      throw new AppError('VALIDATION_ERROR', `folder is not part of this library: ${folderPath}`);
     }
 
     if (this.shoots.getByFolderPath(library.id, folderPath)) {
@@ -64,6 +75,7 @@ export class ShootsService {
         name: request.name,
         description: request.description ?? null,
         ordering: request.ordering,
+        folder_dev: identity?.dev ?? null,
         folder_ino: identity?.ino ?? null,
         folder_birthtime: identity?.birthtimeMs ?? null,
       });
@@ -163,31 +175,41 @@ export class ShootsService {
   //
   // Both write a folder rule (§4.7), and they have to: without one, mirroring
   // recreates the shoot on the next sync and the delete reads as broken.
+  // Queued behind any in-flight sync (§9.9), which read the folder rules before it
+  // started scanning: a delete landing mid-scan would be invisible to it, and it
+  // would mirror the folder straight back into a shoot moments after the delete
+  // returned. The `remove` half needs the same fence for a harder reason - that
+  // sync can insert a photo pointing at the shoot this is about to delete.
   async delete(shootId: string, photos: 'keep' | 'remove'): Promise<void> {
     const shoot = this.shoots.getById(shootId);
     if (shoot == null) throw new AppError('NOT_FOUND', `shoot not found: ${shootId}`);
     const library = this.requireLibrary(shoot.library_id);
 
-    if (photos === 'keep') {
-      this.shoots.transaction(() => {
-        this.folderRules.set(library.id, shoot.folder_path, 'plain');
-        this.shoots.delete(shootId); // shoot_id clears via ON DELETE SET NULL
-      });
-      return;
-    }
+    await libraryMutex.run(library.id, async () => {
+      // Re-read inside the fence: the shoot may have gone while this queued.
+      if (!this.shoots.getById(shootId)) throw new AppError('NOT_FOUND', `shoot not found: ${shootId}`);
 
-    // Soft-deleted rows go too: their files sit in <folder>/Bin, inside the folder
-    // that is leaving the library, so a Bin they could be restored from no longer
-    // exists as far as the catalogue is concerned.
-    const doomed = this.photos.listUnderFolder(library.id, shoot.folder_path, true);
-    this.shoots.transaction(() => {
-      this.folderRules.set(library.id, shoot.folder_path, 'excluded');
-      this.photos.deleteByIds(doomed.map((p) => p.id));
-      this.shoots.delete(shootId);
+      if (photos === 'keep') {
+        this.shoots.transaction(() => {
+          this.folderRules.set(library.id, shoot.folder_path, 'plain');
+          this.shoots.delete(shootId); // shoot_id clears via ON DELETE SET NULL
+        });
+        return;
+      }
+
+      // Soft-deleted rows go too: their files sit in <folder>/Bin, inside the
+      // folder that is leaving the library, so a Bin they could be restored from
+      // no longer exists as far as the catalogue is concerned.
+      const doomed = this.photos.listUnderFolder(library.id, shoot.folder_path, true);
+      this.shoots.transaction(() => {
+        this.folderRules.set(library.id, shoot.folder_path, 'excluded');
+        this.photos.deleteByIds(doomed.map((p) => p.id));
+        this.shoots.delete(shootId);
+      });
+      // After the rows, so a failure here leaves files the sweep still reaps
+      // rather than renditions whose photos are alive.
+      await deleteGeneratedFilesFor(library, doomed.map((p) => p.id));
     });
-    // After the rows, so a failure here leaves files the sweep still reaps rather
-    // than renditions whose photos are alive.
-    await deleteGeneratedFilesFor(library, doomed.map((p) => p.id));
   }
 
   // A shoot's name is a label, not its folder: renaming one touches nothing on
@@ -225,6 +247,10 @@ export class ShootsService {
         this.photos.setShoot(photo.id, shootId);
       }
     }
+  }
+
+  private scopeFor(library: Library): LibraryScope {
+    return libraryScope(library, getDataPath(library), this.folderRules.pathsWithRule(library.id, 'excluded'));
   }
 
   private requireLibrary(libraryId: string): Library {

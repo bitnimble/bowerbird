@@ -1,4 +1,5 @@
 import path from 'node:path';
+import type { Library } from '../schemas/libraries';
 
 // What a library contains, as one question asked in one place (DESIGN §9.1).
 //
@@ -13,6 +14,23 @@ export interface LibraryScope {
   includeSubfolders: boolean;
   /** Root-relative folder paths carrying an `excluded` rule (§4.7). */
   excluded: ReadonlySet<string>;
+  /** `dataPath` already resolved, since every path test compares against it. */
+  readonly resolvedDataPath: string;
+}
+
+/** The one place a scope is assembled, so every caller asks the same question. */
+export function libraryScope(
+  library: Pick<Library, 'root_path' | 'include_subfolders'>,
+  dataPath: string,
+  excluded: ReadonlySet<string>,
+): LibraryScope {
+  return {
+    rootPath: library.root_path,
+    dataPath,
+    includeSubfolders: library.include_subfolders,
+    excluded,
+    resolvedDataPath: path.resolve(dataPath),
+  };
 }
 
 // Directory basenames never descended into. See DESIGN §6, §12.2.
@@ -26,9 +44,8 @@ function isExcludedName(name: string): boolean {
 // there is a file or a folder: every one of them is about a segment, so a path
 // under a skipped folder is skipped however it ends.
 //
-// Separate from `isDirInScope` because the watcher cannot always tell the two
-// apart - chokidar asks about a path both with and without `stats` - and this
-// half needs no such distinction.
+// Separate from `isDirInScope` because a watcher event names a path and not what
+// kind of thing is at it, and this half needs no such distinction.
 export function isPathAllowed(scope: LibraryScope, relPath: string): boolean {
   if (relPath === '') return true;
   const segments = relPath.split('/');
@@ -43,7 +60,7 @@ export function isPathAllowed(scope: LibraryScope, relPath: string): boolean {
   }
 
   const abs = path.resolve(scope.rootPath, relPath);
-  const data = path.resolve(scope.dataPath);
+  const data = scope.resolvedDataPath;
   return abs !== data && !abs.startsWith(`${data}${path.sep}`);
 }
 

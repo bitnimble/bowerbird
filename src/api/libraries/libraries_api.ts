@@ -1,7 +1,12 @@
 import { Hono } from 'hono';
-import { CreateLibraryRequestSchema, SetFolderRuleRequestSchema, UpdateLibraryRequestSchema } from '../../schemas/libraries';
-import { AppError } from '../../errors';
+import {
+  CreateLibraryRequestSchema,
+  FolderPathSchema,
+  SetFolderRuleRequestSchema,
+  UpdateLibraryRequestSchema,
+} from '../../schemas/libraries';
 import { browseUnder } from '../../utils/browse';
+import { isDirInScope } from '../../utils/scope';
 import type { LibrariesService } from '../../services/libraries/libraries_service';
 import type { FolderRulesRepository } from '../../services/shoots/folder_rules_repository';
 import type { SyncService } from '../../services/sync/sync_service';
@@ -26,9 +31,18 @@ export class LibrariesApi {
     // Folders inside this library, in the root-relative paths a shoot's folder
     // is stored as. Fenced at the root: a shoot's folder cannot be outside the
     // library it belongs to, so neither can the picker that chooses one.
-    app.get('/:id/browse', async (c) =>
-      c.json(await browseUnder(this.service.get(c.req.param('id')).root_path, c.req.query('path') ?? '')),
-    );
+    // Only folders the library actually contains: offering a Bin, a dotfolder or
+    // an excluded folder here would offer "Add as shoot" on a folder the scan is
+    // never going to look at, whose photos would be moved in and then vanish.
+    app.get('/:id/browse', async (c) => {
+      const library = this.service.get(c.req.param('id'));
+      const scope = this.sync.scopeFor(library);
+      const listing = await browseUnder(library.root_path, c.req.query('path') ?? '');
+      return c.json({
+        ...listing,
+        directories: listing.directories.filter((directory) => isDirInScope(scope, directory.path)),
+      });
+    });
 
     // Where a folder differs from what the library's settings say (§4.7). Reads
     // and writes go through the library so an id that does not exist is a 404
@@ -44,10 +58,7 @@ export class LibrariesApi {
 
     app.delete('/:id/folder-rules', (c) => {
       const library = this.service.get(c.req.param('id'));
-      const folderPath = c.req.query('folder_path');
-      if (folderPath == null || folderPath === '') {
-        throw new AppError('VALIDATION_ERROR', 'folder_path is required');
-      }
+      const folderPath = FolderPathSchema.parse(c.req.query('folder_path'));
       this.folderRules.clear(library.id, folderPath);
       return c.body(null, 204);
     });

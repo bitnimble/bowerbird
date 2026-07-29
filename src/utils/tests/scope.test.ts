@@ -1,17 +1,17 @@
 import { describe, it, expect } from 'bun:test';
 import path from 'node:path';
-import { isDirInScope, isFileInScope, isPathAllowed, type LibraryScope } from '../scope';
+import { isDirInScope, isFileInScope, isPathAllowed, libraryScope, type LibraryScope } from '../scope';
 
 const ROOT = '/lib';
 
-function scope(over: Partial<LibraryScope> = {}): LibraryScope {
-  return {
-    rootPath: ROOT,
-    dataPath: path.join(ROOT, '.bowerbird'),
-    includeSubfolders: true,
-    excluded: new Set<string>(),
-    ...over,
-  };
+// Built through the real constructor rather than as a literal, so the tests
+// cannot drift from how a scope is actually assembled.
+function scope(over: { dataPath?: string; includeSubfolders?: boolean; excluded?: Set<string> } = {}): LibraryScope {
+  return libraryScope(
+    { root_path: ROOT, include_subfolders: over.includeSubfolders ?? true },
+    over.dataPath ?? path.join(ROOT, '.bowerbird'),
+    over.excluded ?? new Set<string>(),
+  );
 }
 
 describe('isDirInScope', () => {
@@ -48,9 +48,8 @@ describe('isDirInScope', () => {
   });
 });
 
-// What the watcher asks, because chokidar cannot always tell it whether a path
-// is a folder or a file. Every rule here is about a segment, so both answers
-// have to agree.
+// What the watcher asks, because an event names a path and not what kind of thing
+// is at it. Every rule here is about a segment, so both answers have to agree.
 describe('isPathAllowed', () => {
   it('answers the same for a folder and for a file inside it', () => {
     const s = scope({ excluded: new Set(['Rejects']) });
@@ -60,8 +59,8 @@ describe('isPathAllowed', () => {
     expect(isPathAllowed(s, 'Trip/a.arw')).toBe(true);
   });
 
-  // The rule that does need to know, and so is `depth` on the watcher rather
-  // than part of this: a root-level file stays while a root-level folder goes.
+  // The rule that does need to know, and so is applied to files alone on the
+  // watcher: a root-level file stays while a root-level folder goes.
   it('says nothing about how deep the library goes', () => {
     const s = scope({ includeSubfolders: false });
     expect(isPathAllowed(s, 'Trip')).toBe(true);

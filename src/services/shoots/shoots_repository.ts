@@ -61,6 +61,7 @@ export interface NewShoot {
   name: string;
   description: string | null;
   ordering: Ordering;
+  folder_dev: number | null;
   folder_ino: number | null;
   folder_birthtime: number | null;
 }
@@ -70,8 +71,16 @@ export interface NewShoot {
 export interface ShootIdentity {
   id: string;
   folder_path: string;
+  folder_dev: number | null;
   folder_ino: number | null;
   folder_birthtime: number | null;
+}
+
+/** Just the columns the sync needs, without the banner subquery `SELECT` carries. */
+export interface ShootFolder {
+  id: string;
+  folder_path: string;
+  photo_count: number;
 }
 
 export class ShootsRepository {
@@ -84,8 +93,9 @@ export class ShootsRepository {
   insert(shoot: NewShoot): void {
     this.db
       .query(
-        `INSERT INTO shoots (id, parent_id, library_id, folder_path, name, description, ordering, folder_ino, folder_birthtime)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO shoots (id, parent_id, library_id, folder_path, name, description, ordering,
+                             folder_dev, folder_ino, folder_birthtime)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         shoot.id,
@@ -95,6 +105,7 @@ export class ShootsRepository {
         shoot.name,
         shoot.description,
         shoot.ordering,
+        shoot.folder_dev,
         shoot.folder_ino,
         shoot.folder_birthtime,
       );
@@ -114,12 +125,28 @@ export class ShootsRepository {
 
   listIdentities(libraryId: string): ShootIdentity[] {
     return this.db
-      .query('SELECT id, folder_path, folder_ino, folder_birthtime FROM shoots WHERE library_id = ?')
+      .query('SELECT id, folder_path, folder_dev, folder_ino, folder_birthtime FROM shoots WHERE library_id = ?')
       .all(libraryId) as ShootIdentity[];
   }
 
-  setIdentity(id: string, ino: number, birthtimeMs: number): void {
-    this.db.query('UPDATE shoots SET folder_ino = ?, folder_birthtime = ? WHERE id = ?').run(ino, birthtimeMs, id);
+  // What sync reads to decide membership and mirroring. Deliberately not the full
+  // `SELECT`: that resolves a banner per shoot through a correlated subquery with
+  // an unindexable ORDER BY, which costs more than everything else here put
+  // together once a library has a shoot per folder, and no caller reads it.
+  listFolders(libraryId: string): ShootFolder[] {
+    return this.db
+      .query(
+        `SELECT s.id, s.folder_path,
+           (SELECT COUNT(*) FROM photos p WHERE p.shoot_id = s.id AND p.is_deleted = 0) AS photo_count
+           FROM shoots s WHERE s.library_id = ? ORDER BY s.folder_path`,
+      )
+      .all(libraryId) as ShootFolder[];
+  }
+
+  setIdentity(id: string, dev: number, ino: number, birthtimeMs: number): void {
+    this.db
+      .query('UPDATE shoots SET folder_dev = ?, folder_ino = ?, folder_birthtime = ? WHERE id = ?')
+      .run(dev, ino, birthtimeMs, id);
   }
 
   listByLibrary(libraryId: string): Shoot[] {
@@ -142,8 +169,13 @@ export class ShootsRepository {
 
   // Points a shoot at the folder it was found at, taking its descendants with it:
   // a descendant's folder_path is this one's plus a suffix, so the whole subtree
-  // shifts by the same prefix swap (§9.5). The name is untouched; only where the
+  // shifts by the same prefix swap (§9.4.1). The name is untouched; only where the
   // shoot lives on disk changed.
+  //
+  // `parent_id` is re-derived afterwards because it carries `ON DELETE CASCADE`:
+  // a shoot moved out from under its old parent that still points at it would be
+  // destroyed, along with its label and its photos' membership, the next time
+  // that unrelated parent was deleted.
   relocate(shootId: string, oldFolderPath: string, newFolderPath: string): void {
     this.db
       .query(
@@ -153,6 +185,26 @@ export class ShootsRepository {
       )
       .run(newFolderPath, oldFolderPath.length + 1, shootId, `${oldFolderPath}/`, `${oldFolderPath}0`);
     this.db.query('UPDATE shoots SET folder_path = ? WHERE id = ?').run(newFolderPath, shootId);
+    this.rederiveParents(shootId);
+  }
+
+  // The enclosing shoot is a fact about where a folder sits, so it is read back
+  // off the paths rather than tracked: the deepest other shoot in the library
+  // whose folder is a prefix of this one's. Applied to the moved shoot and its
+  // descendants, which are the only ones whose enclosing folder can have changed.
+  private rederiveParents(shootId: string): void {
+    this.db
+      .query(
+        `UPDATE shoots AS s SET parent_id = (
+           SELECT p.id FROM shoots p
+            WHERE p.library_id = s.library_id AND p.id <> s.id
+              AND s.folder_path LIKE p.folder_path || '/%'
+            ORDER BY length(p.folder_path) DESC LIMIT 1)
+         WHERE s.library_id = (SELECT library_id FROM shoots WHERE id = ?)
+           AND (s.id = ?
+                OR s.folder_path LIKE (SELECT folder_path FROM shoots WHERE id = ?) || '/%')`,
+      )
+      .run(shootId, shootId, shootId);
   }
 
   delete(id: string): boolean {

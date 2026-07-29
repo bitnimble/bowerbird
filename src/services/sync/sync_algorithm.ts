@@ -1,4 +1,3 @@
-import { shootContains } from '../../utils/shoots';
 import type { ScannedDir } from '../../utils/scan';
 import type { ShootIdentity } from '../shoots/shoots_repository';
 import type { FileMetadata } from '../processing/metadata';
@@ -188,11 +187,16 @@ export function detectRelocationsByIdentity(
   dirs: readonly ScannedDir[],
   folderStillOnDisk: (folderPath: string) => boolean,
 ): ShootRelocation[] {
-  const byIno = new Map<number, ScannedDir[]>();
+  // Keyed on device *and* inode: inode numbers repeat across filesystems, so a
+  // library with a card reader or a share mounted inside it would otherwise
+  // match a shoot against a folder on the other volume and rewrite every one of
+  // its photos' paths.
+  const byIdentity = new Map<string, ScannedDir[]>();
   for (const dir of dirs) {
-    const list = byIno.get(dir.ino);
+    const key = `${dir.dev}:${dir.ino}`;
+    const list = byIdentity.get(key);
     if (list) list.push(dir);
-    else byIno.set(dir.ino, [dir]);
+    else byIdentity.set(key, [dir]);
   }
 
   const occupied = new Set(shoots.map((s) => s.folder_path));
@@ -200,10 +204,13 @@ export function detectRelocationsByIdentity(
   const claimed = new Set<string>();
 
   for (const shoot of shoots) {
-    if (shoot.folder_ino == null) continue; // never scanned: nothing recorded to match
+    // Nothing recorded to match: never scanned, or recorded before the device
+    // was part of the key, in which case guessing would be exactly the mistake
+    // the device is there to prevent.
+    if (shoot.folder_ino == null || shoot.folder_dev == null) continue;
     if (folderStillOnDisk(shoot.folder_path)) continue; // it did not go anywhere
 
-    const candidates = (byIno.get(shoot.folder_ino) ?? []).filter(
+    const candidates = (byIdentity.get(`${shoot.folder_dev}:${shoot.folder_ino}`) ?? []).filter(
       (dir) =>
         dir.relPath !== shoot.folder_path &&
         !occupied.has(dir.relPath) && // a folder another shoot already holds
@@ -257,13 +264,33 @@ export function detectShootRelocations(
   const relocations: ShootRelocation[] = [];
   const claimed = new Set<string>();
 
-  for (const shoot of shoots) {
-    if (folderStillOnDisk(shoot.folder_path)) continue; // it did not go anywhere
-    const under = dbPhotos.filter((p) => shootContains(shoot.folder_path, p.file_path));
-    if (under.length === 0) continue; // nothing to reason from
+  // Which shoots are even in question, before touching the photos. Mirroring
+  // makes shoots as numerous as folders, and scanning every row per shoot to find
+  // out is the difference between a few milliseconds and minutes when a volume
+  // goes away and every folder is missing at once.
+  const missing = shoots.filter((shoot) => !folderStillOnDisk(shoot.folder_path));
+  if (missing.length === 0) return relocations;
+
+  // One pass to bucket the photos under the shoots that need them, rather than a
+  // pass over every photo per shoot. A photo goes into *every* missing ancestor's
+  // bucket, not just the nearest, because a shoot is answered by everything
+  // beneath it - a parent whose own frames all live in a child folder still has
+  // to be able to see that they moved together.
+  const under = new Map<string, { file_path: string }[]>(missing.map((shoot) => [shoot.folder_path, []]));
+  for (const photo of dbPhotos) {
+    let prefix = '';
+    for (const segment of photo.file_path.split('/').slice(0, -1)) {
+      prefix = prefix === '' ? segment : `${prefix}/${segment}`;
+      under.get(prefix)?.push(photo);
+    }
+  }
+
+  for (const shoot of missing) {
+    const beneath = under.get(shoot.folder_path) ?? [];
+    if (beneath.length === 0) continue; // nothing to reason from
 
     let target: string | null = null;
-    const wholeFolderMoved = under.every((photo) => {
+    const wholeFolderMoved = beneath.every((photo) => {
       const to = movedTo.get(photo.file_path);
       if (to == null) return false; // this one stayed put: not a whole-folder move
       const tail = photo.file_path.slice(shoot.folder_path.length); // leading '/' included

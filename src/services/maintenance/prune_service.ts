@@ -36,15 +36,17 @@ const log = new Logger('prune');
 // same rule about which files a photo id owns, so a change to either is made once.
 export async function deleteGeneratedFilesFor(library: Library, photoIds: readonly string[]): Promise<void> {
   if (photoIds.length === 0) return;
-  const ids = new Set(photoIds);
   const dataPath = getDataPath(library);
-  for (const { dir } of generatedDirs(library)) {
-    const files = await readdir(dir).catch(() => []);
-    for (const file of files) {
-      if (!ids.has(file.replace(/\.[^.]+$/, ''))) continue;
-      // The sweep is the backstop, so a file that will not go now is not an error.
-      await deleteGeneratedFile(dataPath, path.join(dir, file)).catch((err: unknown) => {
-        log.warn('could not remove a rendition; the sweep will', { file, err });
+  // Named rather than searched for. The sweep reads whole directories because it
+  // is looking for files whose ids it does not know; here the ids are the input,
+  // and those directories hold one entry per photo in the library - millions of
+  // dirents read to delete a few hundred.
+  for (const { dir, ext } of generatedDirs(library)) {
+    for (const id of photoIds) {
+      // A rendition that was never built is not an error (`rm` is forced), and
+      // one that will not go now is not either: the sweep is the backstop.
+      await deleteGeneratedFile(dataPath, path.join(dir, `${id}${ext}`)).catch((err: unknown) => {
+        log.warn('could not remove a rendition; the sweep will', { id, dir, err });
       });
     }
   }

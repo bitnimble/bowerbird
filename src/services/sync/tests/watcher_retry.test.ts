@@ -5,12 +5,14 @@ import type { LibraryScope } from '../../../utils/scope';
 import type { SyncService } from '../sync_service';
 
 // Every attempt to watch fails, the way a permanently unmounted drive would.
-// Mocked rather than pointed at a path that does not exist, because chokidar
-// reports that asynchronously and this is about our own retry loop.
-mock.module('chokidar', () => ({
+// Mocked rather than pointed at a path that does not exist, so the test is about
+// our retry loop rather than about how the watcher reports a missing root.
+let attempts = 0;
+mock.module('@parcel/watcher', () => ({
   default: {
-    watch: () => {
-      throw new Error('ENOENT');
+    subscribe: () => {
+      attempts++;
+      return Promise.reject(new Error('ENOENT'));
     },
   },
 }));
@@ -24,6 +26,17 @@ const library: Library = { id: 'lib', root_path: '/definitely/not/a/real/root', 
 const DEBOUNCE = 1000;
 const TEN_MINUTES = 10 * 60 * 1000;
 
+// The failure arrives as a rejected promise, so the retry it schedules is only
+// armed once microtasks have run. Advancing fake timers alone would race it.
+async function advance(ms: number): Promise<void> {
+  const step = DEBOUNCE;
+  for (let elapsed = 0; elapsed < ms; elapsed += step) {
+    jest.advanceTimersByTime(step);
+    await Promise.resolve();
+    await Promise.resolve();
+  }
+}
+
 function build(): InstanceType<typeof LibraryWatcher> {
   const libraries = { list: () => [library], getById: () => library } as unknown as LibrariesRepository;
   const sync = {
@@ -33,6 +46,7 @@ function build(): InstanceType<typeof LibraryWatcher> {
       dataPath: '/x',
       includeSubfolders: true,
       excluded: new Set<string>(),
+      resolvedDataPath: '/x',
     }),
   } as unknown as SyncService;
   return new LibraryWatcher(libraries, sync, DEBOUNCE);
@@ -40,51 +54,46 @@ function build(): InstanceType<typeof LibraryWatcher> {
 
 describe('LibraryWatcher watch-error backoff', () => {
   let watcher: InstanceType<typeof LibraryWatcher>;
-  let attempts: number;
-  let error: ReturnType<typeof jest.spyOn>;
 
   beforeEach(() => {
     jest.useFakeTimers();
     attempts = 0;
-    // One log line per failed attempt is the thing that used to run away.
-    error = jest.spyOn(console, 'error').mockImplementation(() => {
-      attempts++;
-    });
     watcher = build();
   });
 
   afterEach(() => {
     watcher.stop();
-    error.mockRestore();
     jest.useRealTimers();
   });
 
-  it('re-attempts a handful of times over ten minutes, not once per debounce window', () => {
+  it('re-attempts a handful of times over ten minutes, not once per debounce window', async () => {
     watcher.start();
+    await Promise.resolve();
     expect(attempts).toBe(1); // the initial failure
 
-    jest.advanceTimersByTime(TEN_MINUTES);
+    await advance(TEN_MINUTES);
 
-    // A fixed DEBOUNCE-interval retry would have logged 600 times here.
+    // A fixed DEBOUNCE-interval retry would have attempted 600 times here.
     expect(attempts).toBeGreaterThan(1); // still retrying, not given up
     expect(attempts).toBeLessThan(20);
   });
 
-  it('keeps re-attempting at the capped interval rather than backing off to never', () => {
+  it('keeps re-attempting at the capped interval rather than backing off to never', async () => {
     watcher.start();
-    jest.advanceTimersByTime(TEN_MINUTES);
+    await advance(TEN_MINUTES);
     const afterTenMinutes = attempts;
 
-    jest.advanceTimersByTime(TEN_MINUTES);
+    await advance(TEN_MINUTES);
     // The cap means a drive that comes back is still picked up within minutes.
     expect(attempts).toBeGreaterThan(afterTenMinutes);
   });
 
-  it('stops re-attempting once torn down', () => {
+  it('stops re-attempting once torn down', async () => {
     watcher.start();
+    await Promise.resolve();
     watcher.stop();
     const atStop = attempts;
-    jest.advanceTimersByTime(TEN_MINUTES);
+    await advance(TEN_MINUTES);
     expect(attempts).toBe(atStop);
   });
 });

@@ -265,13 +265,16 @@ describe('detectShootRelocations', () => {
 });
 
 describe('detectRelocationsByIdentity', () => {
-  const shoot = (id: string, folder_path: string, folder_ino: number | null, folder_birthtime: number | null = 100) => ({
-    id,
-    folder_path,
-    folder_ino,
-    folder_birthtime,
-  });
-  const dir = (relPath: string, ino: number, birthtimeMs = 100): ScannedDir => ({ relPath, ino, birthtimeMs });
+  // One device throughout unless a test is about two, which is the ordinary case:
+  // a library on one filesystem.
+  const shoot = (
+    id: string,
+    folder_path: string,
+    folder_ino: number | null,
+    folder_birthtime: number | null = 100,
+    folder_dev: number | null = 1,
+  ) => ({ id, folder_path, folder_dev, folder_ino, folder_birthtime });
+  const dir = (relPath: string, ino: number, birthtimeMs = 100, dev = 1): ScannedDir => ({ relPath, dev, ino, birthtimeMs });
   const detect = (
     shoots: Parameters<typeof detectRelocationsByIdentity>[0],
     dirs: Parameters<typeof detectRelocationsByIdentity>[1],
@@ -325,5 +328,23 @@ describe('detectRelocationsByIdentity', () => {
   it('gives one target to at most one shoot', () => {
     const relocations = detect([shoot('s1', 'NYC', 7), shoot('s2', 'LA', 7)], [dir('NewYork', 7)]);
     expect(relocations).toHaveLength(1);
+  });
+
+  // Inode numbers repeat across filesystems, so a card reader or a share mounted
+  // inside the library would otherwise hand a dead shoot an unrelated folder and
+  // rewrite every one of its photos' paths onto the wrong volume.
+  it('refuses a match on another device, however well the inode agrees', () => {
+    expect(detect([shoot('s1', 'NYC', 7, 100, 1)], [dir('Import/Card', 7, 100, 2)])).toEqual([]);
+  });
+
+  it('matches within the device it recorded, alongside a twin inode elsewhere', () => {
+    const relocations = detect([shoot('s1', 'NYC', 7, 100, 1)], [dir('Import/Card', 7, 100, 2), dir('NewYork', 7, 100, 1)]);
+    expect(relocations).toEqual([{ shootId: 's1', oldFolderPath: 'NYC', newFolderPath: 'NewYork' }]);
+  });
+
+  // Recorded before the device was half the key, so the only safe reading is that
+  // it is not enough to identify anything.
+  it('has nothing to match on for a shoot with no recorded device', () => {
+    expect(detect([shoot('s1', 'NYC', 7, 100, null)], [dir('NewYork', 7)])).toEqual([]);
   });
 });

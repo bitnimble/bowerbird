@@ -36,6 +36,10 @@ function put(rel: string): void {
   copyFileSync(FIXTURE, abs(rel));
 }
 
+function shootsService(folderRules: FolderRulesRepository): ShootsService {
+  return new ShootsService(shoots, new PhotosRepository(db), new LibrariesRepository(db), folderRules);
+}
+
 function makeLibrary(over: { include_subfolders?: number; mirror_shoots?: number } = {}): void {
   db.query(
     'INSERT INTO libraries (id, root_path, ordering, include_subfolders, mirror_shoots) VALUES (?, ?, ?, ?, ?)',
@@ -145,6 +149,50 @@ test('a root-only library imports neither the subfolder photos nor their shoots'
 
   expect(photoCount()).toBe(1);
   expect(shootPaths()).toEqual([]);
+});
+
+// parent_id cascades, so discarding a folder that still holds a shoot would take
+// that shoot's label, its banner and its photos' membership with it - and those
+// photos are only "missing" in the sense that the whole subtree moved.
+test('never drops a shoot that still holds a shoot, however empty it is itself', async () => {
+  makeLibrary();
+  put('Trip/Day1/a.arw');
+  await sync.syncLibrary(LIB);
+  const day1 = shoots.listByLibrary(LIB).find((s) => s.folder_path === 'Trip/Day1')!;
+  shoots.updateFields(day1.id, { name: 'Day One, Reykjavik' });
+  // Trip holds no photographs of its own, so it is a pass-through folder with a
+  // shoot only because the user made one.
+  await shootsService(rules).create({ library_id: LIB, parent_path: '', name: 'Trip', ordering: 'taken_desc' });
+
+  renameSync(abs('Trip'), abs('Elsewhere'));
+  rmSync(abs('Elsewhere'), { recursive: true });
+  await sync.syncLibrary(LIB);
+
+  const after = shoots.listByLibrary(LIB);
+  expect(after.map((s) => s.name).sort()).toEqual(['Day One, Reykjavik', 'Trip']);
+  expect(shootOf('Trip/Day1/a.arw')).toBe(day1.id);
+});
+
+// Rename a folder and its child in one window: applying the parent first moves
+// the child's photos to a path the child's own rewrite then fails to match,
+// leaving rows pointing at a file that is not there while is_missing reads 0.
+test('follows a folder and its child renamed in the same sync', async () => {
+  makeLibrary();
+  put('X/top.arw');
+  put('X/W/a.arw');
+  await sync.syncLibrary(LIB);
+  expect(shootPaths()).toEqual(['X', 'X/W']);
+
+  renameSync(abs('X/W'), abs('X/V'));
+  renameSync(abs('X'), abs('Y'));
+  await sync.syncLibrary(LIB);
+
+  expect(shootPaths()).toEqual(['Y', 'Y/V']);
+  expect(shootOf('Y/V/a.arw')).not.toBeNull();
+  const orphans = db
+    .query("SELECT file_path FROM photos WHERE is_missing = 0 AND file_path NOT IN ('Y/top.arw', 'Y/V/a.arw')")
+    .all() as { file_path: string }[];
+  expect(orphans).toEqual([]);
 });
 
 test('drops a mirrored shoot whose folder is gone and which holds nothing', async () => {

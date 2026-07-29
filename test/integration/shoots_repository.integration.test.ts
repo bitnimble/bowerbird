@@ -19,6 +19,7 @@ function insertShoot(id: string, ordering: Ordering): void {
     name: id,
     description: null,
     ordering,
+    folder_dev: null,
     folder_ino: null,
     folder_birthtime: null,
   });

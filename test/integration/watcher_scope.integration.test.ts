@@ -11,7 +11,7 @@ import type { Library } from '../../src/schemas/libraries';
 import type { LibrariesRepository } from '../../src/services/libraries/libraries_repository';
 import { LibraryWatcher } from '../../src/services/sync/library_watcher';
 import type { SyncService } from '../../src/services/sync/sync_service';
-import type { LibraryScope } from '../../src/utils/scope';
+import { libraryScope, type LibraryScope } from '../../src/utils/scope';
 
 const LIB = 'lib-scope';
 const DEBOUNCE = 150;
@@ -49,12 +49,8 @@ beforeEach(async () => {
       }
       return {};
     },
-    scopeFor: (lib: Library): LibraryScope => ({
-      rootPath: lib.root_path,
-      dataPath: path.join(lib.root_path, '.bowerbird'),
-      includeSubfolders: true,
-      excluded: new Set<string>(),
-    }),
+    scopeFor: (lib: Library): LibraryScope =>
+      libraryScope(lib, path.join(lib.root_path, '.bowerbird'), new Set<string>()),
   } as unknown as SyncService;
   watcher = new LibraryWatcher(libraries, sync, DEBOUNCE);
   watcher.start();

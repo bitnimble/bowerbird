@@ -10,7 +10,7 @@ import type { Library } from '../../src/schemas/libraries';
 import type { LibrariesRepository } from '../../src/services/libraries/libraries_repository';
 import { LibraryWatcher } from '../../src/services/sync/library_watcher';
 import type { SyncService } from '../../src/services/sync/sync_service';
-import type { LibraryScope } from '../../src/utils/scope';
+import { libraryScope, type LibraryScope } from '../../src/utils/scope';
 
 const LIB = 'lib-ignores';
 const DEBOUNCE = 100;
@@ -35,13 +35,12 @@ async function start(over: Partial<LibraryScope>): Promise<void> {
       calls.push(scope);
       return {};
     },
-    scopeFor: (): LibraryScope => ({
-      rootPath: root,
-      dataPath: path.join(root, '.bowerbird'),
-      includeSubfolders: true,
-      excluded: new Set<string>(),
-      ...over,
-    }),
+    scopeFor: (): LibraryScope =>
+      libraryScope(
+        { root_path: root, include_subfolders: over.includeSubfolders ?? true },
+        over.dataPath ?? path.join(root, '.bowerbird'),
+        over.excluded ?? new Set<string>(),
+      ),
   } as unknown as SyncService;
   watcher = new LibraryWatcher(libraries, sync, DEBOUNCE);
   watcher.start();

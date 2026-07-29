@@ -43,8 +43,20 @@ export const FolderRuleSchema = z.object({
 });
 export type FolderRule = z.infer<typeof FolderRuleSchema>;
 
+// Root-relative, forward slashes, no trailing separator and no traversal. A rule
+// is matched against paths the scan builds segment by segment, so anything else
+// stores a row the UI lists as active while nothing it names is ever skipped.
+export const FolderPathSchema = z
+  .string()
+  .min(1)
+  .transform((p) => p.replace(/\\/g, '/').replace(/\/+/g, '/').replace(/\/+$/, ''))
+  .refine((p) => p !== '' && !p.startsWith('/') && !/^[A-Za-z]:/.test(p), { message: 'folder must be relative to the library root' })
+  .refine((p) => !p.split('/').some((segment) => segment === '.' || segment === '..' || segment === ''), {
+    message: 'folder must not contain "." or ".." segments',
+  });
+
 export const SetFolderRuleRequestSchema = z.object({
-  folder_path: z.string().min(1),
+  folder_path: FolderPathSchema,
   rule: FolderRuleKindSchema,
 });
 export type SetFolderRuleRequest = z.infer<typeof SetFolderRuleRequestSchema>;

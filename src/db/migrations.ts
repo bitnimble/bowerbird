@@ -44,6 +44,10 @@ CREATE TABLE IF NOT EXISTS shoots (
     CHECK (ordering IN ('taken_asc', 'taken_desc', 'added_asc', 'added_desc')),
   -- The folder's identity apart from its path, so a rename on disk is recognised
   -- rather than read as a delete plus a create (§9.4.1). NULL until first seen.
+  -- The device is half the key: inode numbers are only unique within one
+  -- filesystem, and a library with a second volume mounted inside it would
+  -- otherwise match a shoot against an unrelated folder.
+  folder_dev        INTEGER,
   folder_ino        INTEGER,
   folder_birthtime  REAL,
   -- A shoot is its folder; the name is a label on it. Two shoots in one folder is
@@ -264,9 +268,52 @@ function dropSupersededOrderingIndexes(db: Database): void {
   }
 }
 
+// Shoots were once unique by name, which mirroring (§9.4.1) makes false to disk:
+// a tree with NYC/Day1 and LA/Day1 is ordinary. No ALTER can swap a UNIQUE, and
+// leaving the old one in place is not an option - the first sync of a library
+// holding two like-named folders would throw out of the mirroring transaction on
+// every run, so sync would never complete and no renditions would ever be built.
+// So the table is rebuilt, which SQLite only supports the long way round.
+function migrateShootsToFolderUniqueness(db: Database): void {
+  const table = db.query("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'shoots'").get() as
+    | { sql: string }
+    | null;
+  if (table == null || !/UNIQUE\s*\(\s*library_id\s*,\s*name\s*\)/i.test(table.sql)) return;
+
+  db.exec('PRAGMA foreign_keys = OFF');
+  db.transaction(() => {
+    db.exec(`CREATE TABLE shoots_rebuilt (
+      id            TEXT PRIMARY KEY,
+      parent_id     TEXT REFERENCES shoots(id) ON DELETE CASCADE,
+      library_id    TEXT NOT NULL REFERENCES libraries(id) ON DELETE CASCADE,
+      folder_path   TEXT NOT NULL,
+      name          TEXT NOT NULL,
+      description   TEXT,
+      ordering      TEXT NOT NULL DEFAULT 'taken_asc'
+        CHECK (ordering IN ('taken_asc', 'taken_desc', 'added_asc', 'added_desc')),
+      folder_dev        INTEGER,
+      folder_ino        INTEGER,
+      folder_birthtime  REAL,
+      UNIQUE (library_id, folder_path)
+    )`);
+    // Two shoots already sharing a folder cannot both survive a constraint that
+    // says they may not; the older row keeps the folder, since the newer one is
+    // the one that should never have been allowed.
+    db.exec(`INSERT INTO shoots_rebuilt (id, parent_id, library_id, folder_path, name, description, ordering)
+             SELECT id, parent_id, library_id, folder_path, name, description, ordering FROM shoots
+             WHERE rowid IN (SELECT MIN(rowid) FROM shoots GROUP BY library_id, folder_path)`);
+    db.exec('DROP TABLE shoots');
+    db.exec('ALTER TABLE shoots_rebuilt RENAME TO shoots');
+  })();
+  db.exec('PRAGMA foreign_keys = ON');
+}
+
 export function runMigrations(db: Database): void {
   db.exec(SCHEMA);
   dropSupersededOrderingIndexes(db);
+  // Before the indexes and columns below, which are added to whichever table
+  // ends up standing.
+  migrateShootsToFolderUniqueness(db);
   renamePreviewColumnsToRenditions(db);
   // Additive columns, for DBs created before each feature landed. CREATE TABLE
   // above already has them, so these are no-ops on a fresh database.
@@ -298,13 +345,11 @@ export function runMigrations(db: Database): void {
   ensureColumn(db, 'libraries', 'rendition_hdr', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'libraries', 'rendition_hdr_video', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'libraries', 'name', 'TEXT'); // display name, NULL falls back to the root folder
-  // What the library contains, and whether its folders are shoots (§4.1). The
-  // shoots' UNIQUE moved from (library_id, name) to (library_id, folder_path) at
-  // the same time, which no ALTER can express: a database predating that keeps
-  // the old constraint and has to be recreated to lose it.
+  // What the library contains, and whether its folders are shoots (§4.1).
   ensureColumn(db, 'libraries', 'include_subfolders', 'INTEGER NOT NULL DEFAULT 1');
   ensureColumn(db, 'libraries', 'mirror_shoots', 'INTEGER NOT NULL DEFAULT 1');
-  ensureColumn(db, 'shoots', 'folder_ino', 'INTEGER'); // folder identity across a rename (§9.4.1)
+  ensureColumn(db, 'shoots', 'folder_dev', 'INTEGER'); // folder identity across a rename (§9.4.1)
+  ensureColumn(db, 'shoots', 'folder_ino', 'INTEGER');
   ensureColumn(db, 'shoots', 'folder_birthtime', 'REAL');
   migrateSelectedToTriage(db);
   ensureColumn(db, 'photos', 'needs_tile', 'INTEGER NOT NULL DEFAULT 1');
@@ -315,7 +360,14 @@ export function runMigrations(db: Database): void {
   // After the columns exist rather than in SCHEMA above: that runs first, and on a
   // database being upgraded the columns are added here, so indexing them up there
   // fails on every start until the table is recreated.
-  db.exec('CREATE INDEX IF NOT EXISTS idx_shoots_ino ON shoots(library_id, folder_ino)');
+  // Covers `listIdentities`, which every sync runs twice: with the identity
+  // columns in the index the read never touches the table. Indexing folder_ino
+  // alone would have been dead weight, since nothing queries by it - the inode
+  // map is built in memory from this very read.
+  db.exec('DROP INDEX IF EXISTS idx_shoots_ino');
+  db.exec(
+    'CREATE INDEX IF NOT EXISTS idx_shoots_identity ON shoots(library_id, folder_path, folder_dev, folder_ino, folder_birthtime)',
+  );
   db.exec('CREATE INDEX IF NOT EXISTS idx_photos_needs_tile ON photos(needs_tile) WHERE needs_tile = 1');
   db.exec('CREATE INDEX IF NOT EXISTS idx_photos_needs_renditions ON photos(needs_renditions) WHERE needs_renditions = 1');
 }
