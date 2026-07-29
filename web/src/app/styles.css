@@ -336,6 +336,11 @@ p.ui-text--mono {
   padding-left: 9px;
 }
 
+.ui-item--destructive,
+.ui-item--destructive[data-highlighted] {
+  color: var(--rose);
+}
+
 /* Right-aligned in a menu row, where the label is left of a wide popup; in a
    segmented button it sits against the label instead. */
 .ui-item .ui-btn__hint {

@@ -89,6 +89,9 @@ export interface Option<T extends string> {
   // Show the icon alone. The label still names the control for screen readers
   // and as a tooltip, so an icon-only button is never anonymous.
   iconOnly?: boolean;
+  // In a menu: red, and fenced off below a rule so it is not a neighbour of the
+  // action above it.
+  destructive?: boolean;
 }
 
 // One-of-N. The buttons are `.ui-btn`s like any other, so a filter chip and a
@@ -310,7 +313,11 @@ export function ActionMenu<T extends string>({
   onSelect: (value: T) => void;
 }): JSX.Element {
   const item = (option: Option<T>): JSX.Element => (
-    <Menu.Item key={option.value} className="ui-item ui-item--action" onClick={() => onSelect(option.value)}>
+    <Menu.Item
+      key={option.value}
+      className={`ui-item ui-item--action${option.destructive === true ? ' ui-item--destructive' : ''}`}
+      onClick={() => onSelect(option.value)}
+    >
       {option.icon}
       {option.label}
       {/* Out of the accessible name: it would read as part of the label ("Embedded
@@ -323,6 +330,8 @@ export function ActionMenu<T extends string>({
     </Menu.Item>
   );
 
+  const destructive = options.filter((o) => o.destructive === true);
+
   return (
     <Menu.Root>
       <Menu.Trigger className="ui-btn ui-btn--default">
@@ -332,7 +341,9 @@ export function ActionMenu<T extends string>({
       <Menu.Portal>
         <Menu.Positioner className="ui-positioner" sideOffset={4}>
           <Menu.Popup className="ui-popup">
-            {options.map(item)}
+            {options.filter((o) => o.destructive !== true).map(item)}
+            {destructive.length > 0 && <Menu.Separator className="ui-item__rule" />}
+            {destructive.map(item)}
             {toggles.length > 0 && <Menu.Separator className="ui-item__rule" />}
             {toggles.map((toggle) => (
               <Menu.CheckboxItem

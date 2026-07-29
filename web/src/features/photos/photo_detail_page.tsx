@@ -139,7 +139,10 @@ const RENDITIONS: Option<PreviewRendition>[] = [
   { value: 'max', label: 'From RAW (max quality)', icon: <Maximize2 size={ICON} /> },
 ];
 
-const ACTIONS: Option<'metadata'>[] = [{ value: 'metadata', label: 'Refresh metadata', icon: <RotateCw size={ICON} /> }];
+const ACTIONS: Option<'metadata' | 'delete'>[] = [
+  { value: 'metadata', label: 'Refresh metadata', icon: <RotateCw size={ICON} /> },
+  { value: 'delete', label: 'Move to Bin', icon: <Trash2 size={ICON} />, destructive: true },
+];
 
 // Where the reader can go from here, and what can be done to the photo they are
 // on. Its own observer so that a rebuild finishing, which flips `building…` on
@@ -197,7 +200,13 @@ const DetailNav = observer(function DetailNav({ photoId }: { photoId: string }):
           </>
         }
         options={ACTIONS}
-        onSelect={() => void photos.refreshMetadata([photoId])}
+        onSelect={(action) => {
+          if (action === 'delete') {
+            void photos.deletePhotos([photoId]);
+            return;
+          }
+          void photos.refreshMetadata([photoId]);
+        }}
       />
       <ActionMenu
         trigger={
@@ -212,12 +221,6 @@ const DetailNav = observer(function DetailNav({ photoId }: { photoId: string }):
         }}
       />
       {store.buildingRendition && <Text variant="mono">building…</Text>}
-      {photo != null && !photo.is_deleted && (
-        <Button variant="danger" onClick={() => void photos.deletePhotos([photo.id])}>
-          <Trash2 size={ICON} />
-          Move to Bin
-        </Button>
-      )}
     </div>
   );
 });
