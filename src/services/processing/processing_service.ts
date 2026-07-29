@@ -1,11 +1,11 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
-import type { Config } from '../../config';
 import { Logger } from '../../logger';
 import type { Library } from '../../schemas/libraries';
 import { deleteGeneratedFile } from '../../utils/deletions';
 import { dataPathFor, getDataPath, renditionPathFor } from '../../utils/paths';
 import type { PendingPhoto, PhotosRepository } from '../photos/photos_repository';
+import type { SettingsRepository } from '../settings/settings_repository';
 import type { HdrMedium, HdrVariant } from './hdr_media';
 import type {
   HdrGrade,
@@ -63,7 +63,7 @@ export class ProcessingService {
 
   constructor(
     private readonly photos: PhotosRepository,
-    private readonly config: Config,
+    private readonly settings: SettingsRepository,
   ) {}
 
   /** Called with each derived file written: which photo, which stage, and when. */
@@ -112,7 +112,7 @@ export class ProcessingService {
       // The on-demand rendition has to agree with the ones built at import, so it
       // obeys the same setting. The fit is deterministic, so refitting here lands
       // on the same transform rather than a second opinion.
-      matchEmbeddedJpeg: this.config.matchEmbeddedJpeg,
+      matchEmbeddedJpeg: this.settings.get().match_embedded_jpeg,
     });
   }
 
@@ -127,15 +127,16 @@ export class ProcessingService {
     hdr: boolean,
     source: RenditionSource,
   ): RenditionTarget {
+    const settings = this.settings.get();
     const sizes: Record<Rendition, number> = {
-      grid: this.config.gridRenditionSize,
-      full: this.config.fullRenditionSize,
+      grid: settings.grid_rendition_size,
+      full: settings.full_rendition_size,
       max: 0,
     };
     const qualities: Record<Rendition, number> = {
-      grid: this.config.gridRenditionQuality,
-      full: this.config.fullRenditionQuality,
-      max: this.config.losslessQuality,
+      grid: settings.grid_rendition_quality,
+      full: settings.full_rendition_quality,
+      max: settings.lossless_quality,
     };
     return {
       rendition,
@@ -145,13 +146,14 @@ export class ProcessingService {
       videoOutputPath: hdr && hdrVideo ? renditionPathFor(dataPath, photoId, rendition, hdr, true) : null,
       size: sizes[rendition],
       quality: qualities[rendition],
-      quantizer: rendition === 'max' ? this.config.losslessQuantizer : this.config.hdrCrf,
-      effort: this.config.renditionEffort,
-      preset: this.config.hdrPreset,
+      quantizer: rendition === 'max' ? settings.lossless_quantizer : settings.hdr_crf,
+      effort: settings.rendition_effort,
+      preset: settings.hdr_preset,
     };
   }
 
   renderHdr(rawFilePath: string, outputPath: string, photoId: string, medium: HdrMedium, variant: HdrVariant): Promise<void> {
+    const settings = this.settings.get();
     return this.runOneOff({
       kind: 'hdr',
       photoId,
@@ -160,17 +162,18 @@ export class ProcessingService {
       variant,
       medium,
       grade: this.grade(),
-      crf: this.config.hdrCrf,
-      preset: this.config.hdrPreset,
-      maxEdge: this.config.hdrMaxEdge,
+      crf: settings.hdr_crf,
+      preset: settings.hdr_preset,
+      maxEdge: settings.hdr_max_edge,
     });
   }
 
   private grade(): HdrGrade {
+    const settings = this.settings.get();
     return {
-      peakNits: this.config.hdrPeakNits,
-      referenceWhiteNits: this.config.hdrReferenceWhiteNits,
-      whiteQuantile: this.config.hdrWhiteQuantile,
+      peakNits: settings.hdr_peak_nits,
+      referenceWhiteNits: settings.hdr_reference_white_nits,
+      whiteQuantile: settings.hdr_white_quantile,
     };
   }
 
@@ -270,7 +273,7 @@ export class ProcessingService {
         photos: staged.length,
         tiles: staged.filter((p) => p.tile != null).length,
         renditions: staged.filter((p) => p.renditions != null).length,
-        workers: Math.min(this.config.processingConcurrency, staged.length),
+        workers: Math.min(this.settings.get().processing_concurrency, staged.length),
       });
       await this.runStaged(staged, stopped);
       log.info('batch done', {
@@ -434,7 +437,7 @@ export class ProcessingService {
       rawFilePath,
       dataPath,
       grade: this.grade(),
-      matchEmbeddedJpeg: this.config.matchEmbeddedJpeg,
+      matchEmbeddedJpeg: this.settings.get().match_embedded_jpeg,
     } as const;
 
     // Only the passes this photo still owes. A run interrupted between them - a
@@ -491,7 +494,7 @@ export class ProcessingService {
     onResult: (result: ProcessingResult, job: RenditionJob) => void,
     stopped?: () => boolean,
   ): Promise<void> {
-    const poolSize = Math.min(this.config.processingConcurrency, jobs.length);
+    const poolSize = Math.min(this.settings.get().processing_concurrency, jobs.length);
     return new Promise((resolve) => {
       let next = 0;
       let live = 0;

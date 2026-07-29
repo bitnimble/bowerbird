@@ -19,14 +19,10 @@ export default defineConfig({
       cwd: '..',
       url: `${API_URL}/api/libraries`,
       reuseExistingServer: false,
-      env: {
-        DB_PATH,
-        PORT: String(API_PORT),
-        HOST: '127.0.0.1',
-        CORS_ORIGINS: `http://127.0.0.1:${WEB_PORT}`,
-        // The daily reconcile would be a stray timer in a test run.
-        SYNC_FULL_AT: '',
-      },
+      // The three that are still environment (§15); the run's DB starts empty, so
+      // every setting is its default. The Vite server is on loopback, which the
+      // default CORS rule allows without being told the port.
+      env: { DB_PATH, PORT: String(API_PORT), HOST: '127.0.0.1' },
     },
     {
       command: `./node_modules/.bin/vite --port ${WEB_PORT} --strictPort`,

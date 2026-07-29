@@ -12,8 +12,6 @@ import { SyncPresenter } from '../features/sync/sync_presenter';
 import { SyncStore } from '../features/sync/sync_store';
 import { AppSettingsPresenter } from '../features/settings/app_settings_presenter';
 import { AppSettingsStore } from '../features/settings/app_settings_store';
-import { ServerConfigPresenter } from '../features/settings/server_config_presenter';
-import { ServerConfigStore } from '../features/settings/server_config_store';
 import { ToastsPresenter } from '../features/toasts/toasts_presenter';
 import { ToastsStore } from '../features/toasts/toasts_store';
 
@@ -25,7 +23,6 @@ const ShootsStoreContext = createContext<ShootsStore | null>(null);
 const AlbumsStoreContext = createContext<AlbumsStore | null>(null);
 const SyncStoreContext = createContext<SyncStore | null>(null);
 const ToastsStoreContext = createContext<ToastsStore | null>(null);
-const ServerConfigStoreContext = createContext<ServerConfigStore | null>(null);
 const AppSettingsStoreContext = createContext<AppSettingsStore | null>(null);
 
 interface Presenters {
@@ -35,7 +32,6 @@ interface Presenters {
   albums: AlbumsPresenter;
   sync: SyncPresenter;
   toasts: ToastsPresenter;
-  serverConfig: ServerConfigPresenter;
   appSettings: AppSettingsPresenter;
   events: EventsPresenter;
 }
@@ -54,7 +50,6 @@ function build(): { stores: Stores; presenters: Presenters } {
     albums: new AlbumsStore(),
     sync: new SyncStore(),
     toasts: new ToastsStore(),
-    serverConfig: new ServerConfigStore(),
     appSettings: appSettingsStore,
   };
 
@@ -78,7 +73,6 @@ function build(): { stores: Stores; presenters: Presenters } {
     albums,
     sync: new SyncPresenter(stores.sync, photos, libraries),
     toasts,
-    serverConfig: new ServerConfigPresenter(stores.serverConfig),
     appSettings,
     events,
   };
@@ -92,7 +86,6 @@ interface Stores {
   albums: AlbumsStore;
   sync: SyncStore;
   toasts: ToastsStore;
-  serverConfig: ServerConfigStore;
   appSettings: AppSettingsStore;
 }
 
@@ -106,9 +99,7 @@ export function StoresProvider({ children }: { children: ReactNode }): JSX.Eleme
             <AlbumsStoreContext.Provider value={stores.albums}>
               <SyncStoreContext.Provider value={stores.sync}>
                 <ToastsStoreContext.Provider value={stores.toasts}>
-                  <ServerConfigStoreContext.Provider value={stores.serverConfig}>
-                    <AppSettingsStoreContext.Provider value={stores.appSettings}>{children}</AppSettingsStoreContext.Provider>
-                  </ServerConfigStoreContext.Provider>
+                  <AppSettingsStoreContext.Provider value={stores.appSettings}>{children}</AppSettingsStoreContext.Provider>
                 </ToastsStoreContext.Provider>
               </SyncStoreContext.Provider>
             </AlbumsStoreContext.Provider>
@@ -130,6 +121,5 @@ export const useShootsStore = (): ShootsStore => required(useContext(ShootsStore
 export const useAlbumsStore = (): AlbumsStore => required(useContext(AlbumsStoreContext), 'AlbumsStore');
 export const useSyncStore = (): SyncStore => required(useContext(SyncStoreContext), 'SyncStore');
 export const useToastsStore = (): ToastsStore => required(useContext(ToastsStoreContext), 'ToastsStore');
-export const useServerConfigStore = (): ServerConfigStore => required(useContext(ServerConfigStoreContext), 'ServerConfigStore');
 export const useAppSettingsStore = (): AppSettingsStore => required(useContext(AppSettingsStoreContext), 'AppSettingsStore');
 export const usePresenters = (): Presenters => required(useContext(PresentersContext), 'Presenters');

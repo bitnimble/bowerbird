@@ -39,12 +39,19 @@ export class LibraryWatcher implements LibraryLifecycleListener {
   constructor(
     private readonly libraries: LibrariesRepository,
     private readonly sync: SyncService,
-    private readonly debounceMs: number,
+    private debounceMs: number,
   ) {}
 
   start(): void {
     this.stopped = false;
     for (const library of this.libraries.list()) this.watchLibrary(library);
+  }
+
+  /** Applies changed settings (§15) without a restart. */
+  configure(enabled: boolean, debounceMs: number): void {
+    this.debounceMs = debounceMs;
+    if (enabled) this.start();
+    else this.stop();
   }
 
   stop(): void {

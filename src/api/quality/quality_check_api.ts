@@ -3,11 +3,11 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Hono } from 'hono';
 import { AppError } from '../../errors';
-import type { Config } from '../../config';
 import { getOriginalPath } from '../../utils/paths';
 import type { LibrariesService } from '../../services/libraries/libraries_service';
 import type { PhotosService } from '../../services/photos/photos_service';
 import { decodeRawImage, freeImage, saveAvif } from '../../services/processing/rawshim_ops';
+import type { SettingsRepository } from '../../services/settings/settings_repository';
 
 // Which AVIF quality to ship renditions at. A diagnostic, like the HDR check
 // (§10.7): the trade is speed against artefacts, and only an eye at 1:1 settles
@@ -27,7 +27,7 @@ export class QualityCheckApi {
   constructor(
     private readonly photos: PhotosService,
     private readonly libraries: LibrariesService,
-    private readonly config: Config,
+    private readonly settings: SettingsRepository,
   ) {
     const app = new Hono();
 
@@ -61,7 +61,7 @@ export class QualityCheckApi {
           // whatever the quality, so including it would flatten the difference the
           // page exists to show.
           const started = Bun.nanoseconds();
-          saveAvif(image, this.config.fullRenditionSize, quality, EFFORT, file);
+          saveAvif(image, this.settings.get().full_rendition_size, quality, EFFORT, file);
           encodeMs = Math.round((Bun.nanoseconds() - started) / 1e6);
         } finally {
           freeImage(image);

@@ -5,7 +5,6 @@ import type { ViewerRendition, ViewerRenditionMode, Settings, UpdateSettingsRequ
 import type { CreateShootRequest, Shoot, UpdateShootRequest } from '../../../src/schemas/shoots';
 import type { Rendition } from '../../../src/services/processing/renditions';
 import type { ProcessingStage } from '../../../src/services/processing/processing_types';
-import type { ServerConfig } from '../features/settings/server_config_store';
 
 // Types come straight from the server's Zod schemas as type-only imports, so the
 // client can never drift from the API and nothing is added to the bundle.
@@ -18,6 +17,7 @@ export type {
   ViewerRendition,
   ViewerRenditionMode,
   Settings,
+  UpdateSettingsRequest,
   Shoot,
   Triage,
   UpdateLibraryRequest,
@@ -105,7 +105,6 @@ function query(params: PhotoListParams): string {
 }
 
 export const api = {
-  getConfig: (): Promise<ServerConfig> => request('GET', '/api/config'),
   getSettings: (): Promise<Settings> => request('GET', '/api/settings'),
   updateSettings: (body: UpdateSettingsRequest): Promise<Settings> => request('PATCH', '/api/settings', body),
   listLibraries: (): Promise<Library[]> => request('GET', '/api/libraries'),

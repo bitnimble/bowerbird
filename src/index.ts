@@ -18,7 +18,6 @@ import { EventsApi } from './api/events/events_api';
 import { ImageApi } from './api/image/image_api';
 import { HdrTestApi } from './api/hdr/hdr_test_api';
 import { QualityCheckApi } from './api/quality/quality_check_api';
-import { ConfigApi } from './api/config/config_api';
 import { SettingsApi } from './api/settings/settings_api';
 import { SettingsRepository } from './services/settings/settings_repository';
 import { SyncService } from './services/sync/sync_service';
@@ -27,19 +26,21 @@ import { DailySync } from './services/sync/daily_sync';
 import { PruneService, ScheduledPrune } from './services/maintenance/prune_service';
 import { ProcessingService } from './services/processing/processing_service';
 import { config } from './config';
-import { Logger } from './logger';
+import { Logger, setLogLevel } from './logger';
+import type { Settings } from './schemas/settings';
 
 const log = new Logger('server');
 const requestLog = new Logger('http');
 
 const db = createDatabase(config.dbPath);
 
+const settingsRepo = new SettingsRepository(db);
 const librariesRepo = new LibrariesRepository(db);
 const photosRepo = new PhotosRepository(db);
 const shootsRepo = new ShootsRepository(db);
 const albumsRepo = new AlbumsRepository(db);
 
-const processingService = new ProcessingService(photosRepo, config);
+const processingService = new ProcessingService(photosRepo, settingsRepo);
 
 const librariesService = new LibrariesService(librariesRepo);
 const photosService = new PhotosService(photosRepo, albumsRepo, shootsRepo, librariesRepo, processingService);
@@ -59,7 +60,14 @@ const imageApi = new ImageApi(photosService);
 // request arrived at (plus loopback). That lets the web client work on
 // localhost and over the LAN without knowing the server's address in advance,
 // while still refusing an arbitrary site on the internet.
-function sameHostOrigin(origin: string, c: Context): string | null {
+function allowedOrigin(origin: string, c: Context): string | null {
+  const configured = settingsRepo
+    .get()
+    .cors_origins.split(',')
+    .map((o) => o.trim())
+    .filter((o) => o !== '');
+  if (configured.includes('*')) return origin;
+  if (configured.length > 0) return configured.includes(origin) ? origin : null;
   if (origin === '') return null;
   let originHost: string;
   try {
@@ -78,7 +86,7 @@ const app = new Hono();
 app.use(
   '*',
   cors({
-    origin: config.corsOrigins ?? sameHostOrigin,
+    origin: allowedOrigin,
     allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     exposeHeaders: ['Content-Length', 'Content-Range', 'Accept-Ranges'],
   }),
@@ -102,9 +110,8 @@ app.use('*', async (c, next) => {
   const level = status >= 500 ? 'error' : status >= 400 ? 'warn' : c.req.method === 'GET' ? 'debug' : 'info';
   requestLog[level](`${c.req.method} ${c.req.path}`, { status, ms: Date.now() - started });
 });
-app.route('/api/config', new ConfigApi(config).routes);
 app.route('/api/events', new EventsApi(processingService).routes);
-app.route('/api/settings', new SettingsApi(new SettingsRepository(db)).routes);
+app.route('/api/settings', new SettingsApi(settingsRepo).routes);
 app.route('/api/libraries', librariesApi.routes);
 app.route('/api', photosApi.routes);
 app.route('/api', shootsApi.routes);
@@ -114,24 +121,24 @@ app.route('/image', imageApi.routes);
 // directly on an HDR machine, which may not be the one running the UI (§10.7).
 app.route('/hdr-check', new HdrTestApi(photosService, librariesService).routes);
 // Which AVIF quality to ship at: a diagnostic, same reasoning as the HDR check.
-app.route('/quality-check', new QualityCheckApi(photosService, librariesService, config).routes);
+app.route('/quality-check', new QualityCheckApi(photosService, librariesService, settingsRepo).routes);
 
-if (config.watchEnabled) {
-  const watcher = new LibraryWatcher(librariesRepo, syncService, config.watchDebounceMs);
-  librariesService.addLifecycleListener(watcher);
-  watcher.start();
-  log.info('filesystem watching enabled', { debounceMs: config.watchDebounceMs });
-}
+// Built once and re-configured on every edit, rather than read at startup: these
+// are settings now (§15), and a knob on the settings page that only takes effect
+// after a restart is a knob nobody trusts.
+const watcher = new LibraryWatcher(librariesRepo, syncService, settingsRepo.get().watch_debounce_ms);
+librariesService.addLifecycleListener(watcher);
+const dailySync = new DailySync(syncService);
+const scheduledPrune = new ScheduledPrune(new PruneService(librariesRepo, photosRepo));
 
-if (config.fullSyncAt !== '') {
-  new DailySync(syncService, config.fullSyncAt).start();
-  log.info('daily full reconcile scheduled', { at: config.fullSyncAt });
+function applySettings(settings: Settings): void {
+  setLogLevel(settings.log_level);
+  watcher.configure(settings.watch_enabled, settings.watch_debounce_ms);
+  dailySync.configure(settings.full_sync_at);
+  scheduledPrune.configure(settings.prune_every_days);
 }
-
-if (config.pruneEveryDays > 0) {
-  new ScheduledPrune(new PruneService(librariesRepo, photosRepo), config.pruneEveryDays).start();
-  log.info('orphaned-file prune scheduled', { everyDays: config.pruneEveryDays });
-}
+settingsRepo.onChange(applySettings);
+applySettings(settingsRepo.get());
 
 applyErrorHandler(app);
 
@@ -150,9 +157,10 @@ const server = Bun.serve({
   idleTimeout: IDLE_TIMEOUT_SECONDS,
   fetch: app.fetch,
 });
+const settings = settingsRepo.get();
 log.info(`listening on http://${config.host}:${server.port}`, {
   db: config.dbPath,
-  logLevel: config.logLevel,
-  processingConcurrency: config.processingConcurrency,
+  logLevel: settings.log_level,
+  processingConcurrency: settings.processing_concurrency,
   libraries: librariesRepo.list().length,
 });

@@ -1,9 +1,20 @@
 // Every server log line goes through here (DESIGN §14.3); oxlint's `no-console`
 // keeps it that way.
 
-import { config, type LogLevel } from './config';
+import { LOG_LEVELS, type LogLevel } from './schemas/settings';
 
 const SEVERITY: Record<LogLevel, number> = { debug: 10, info: 20, warn: 30, error: 40 };
+
+// The floor every Logger writes against, a setting in the database (§15) applied
+// at startup and again on edit. `LOG_LEVEL` pins it and wins: logging starts
+// before the database is open, and a server that will not boot cannot be turned
+// up from its own settings page.
+const override = LOG_LEVELS.find((level) => level === process.env.LOG_LEVEL) ?? null;
+let minimumLevel: LogLevel = override ?? 'info';
+
+export function setLogLevel(level: LogLevel): void {
+  if (override == null) minimumLevel = level;
+}
 
 export type Fields = Record<string, unknown>;
 
@@ -41,7 +52,9 @@ function stackOf(fields?: Fields): string | null {
 export class Logger {
   constructor(
     private readonly scope: string,
-    private readonly minimum: LogLevel = config.logLevel,
+    // Read per line rather than captured, because a Logger is built at import
+    // time and the level it should obey is only known once the database is open.
+    private readonly minimum?: LogLevel,
   ) {}
 
   debug(message: string, fields?: Fields): void {
@@ -61,7 +74,7 @@ export class Logger {
   }
 
   private write(level: LogLevel, message: string, fields?: Fields): void {
-    if (SEVERITY[level] < SEVERITY[this.minimum]) return;
+    if (SEVERITY[level] < SEVERITY[this.minimum ?? minimumLevel]) return;
     const line = format(level, this.scope, message, fields);
     if (SEVERITY[level] < SEVERITY.warn) {
       console.log(line);

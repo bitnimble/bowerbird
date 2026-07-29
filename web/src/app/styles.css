@@ -615,6 +615,31 @@ p.ui-text--mono {
   margin-top: 18px;
 }
 
+/* One tuning knob: what it is on the left, the control on the right, and why you
+   would move it underneath. */
+.setting {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 4px 12px;
+  padding: 8px 0;
+}
+
+.setting + .setting {
+  border-top: 1px solid var(--slate);
+}
+
+.setting__label,
+.setting__hint {
+  grid-column: 1;
+}
+
+/* Sized to the longest value any of these holds (a four-digit pixel edge), so a
+   column of them reads as a column. */
+.setting .ui-input input {
+  width: 7ch;
+}
+
 .error {
   border: 1px solid #4a2a2a;
   background: #1e1315;

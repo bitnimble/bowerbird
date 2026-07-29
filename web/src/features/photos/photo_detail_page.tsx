@@ -19,9 +19,9 @@ import { needsHdrVideo, renditionVideoUrl, viewerUrl, type PhotoDetail, type Vie
 import { captureDateTime, localDateTime } from '../../api/dates';
 import {
   useAlbumsStore,
+  useAppSettingsStore,
   usePhotosStore,
   usePresenters,
-  useServerConfigStore,
   useShootsStore,
 } from '../../app/stores_context';
 import { ActionMenu, Button, ICON, MoreLess, type Option, Text, TextArea } from '../../ui/ui';
@@ -375,14 +375,13 @@ const CameraPanel = observer(function CameraPanel({ photoId, defaultOpen }: { ph
 // frame decoding.
 const RenditionPanel = observer(function RenditionPanel({ photoId, defaultOpen }: { photoId: string; defaultOpen: boolean }): JSX.Element {
   const store = usePhotosStore();
-  const serverConfig = useServerConfigStore();
+  const settings = useAppSettingsStore();
   const photo = store.detailFor(photoId);
   const pending = pendingUntil(photo);
   const showing = store.showing;
   const shownFile = photo?.renditions?.[showing];
   const shownVideo = needsHdrVideo() ? (shownFile?.video ?? null) : null;
   const shownImage = store.shownImageOf(photoId, showing);
-  const encoding = serverConfig.config?.renditions;
 
   return (
     <MetaPanel
@@ -409,20 +408,20 @@ const RenditionPanel = observer(function RenditionPanel({ photoId, defaultOpen }
         [
           'Format',
           pending(() =>
-            shownVideo != null ? 'AV1 (MP4)' : showing === 'embedded' ? 'JPEG' : (encoding?.format.toUpperCase() ?? 'AVIF'),
+            shownVideo != null ? 'AV1 (MP4)' : showing === 'embedded' ? 'JPEG' : 'AVIF',
           ),
         ],
-        // The server config reports the SDR pipeline's output space; an HDR
-        // render leaves it for Rec.2020 primaries and a PQ transfer.
-        ['Colour space', pending(() => (shownFile?.hdr === true ? 'Rec.2020 PQ' : (encoding?.color_space ?? 'sRGB')))],
+        // The SDR pipeline's output space; an HDR render leaves it for Rec.2020
+        // primaries and a PQ transfer.
+        ['Colour space', pending(() => (shownFile?.hdr === true ? 'Rec.2020 PQ' : 'sRGB'))],
         [
           'Quality',
           pending(() =>
             showing === 'embedded'
               ? 'N/A'
-              : encoding == null
+              : settings.settings == null
                 ? 'unknown'
-                : `${encoding.full.quality} (longest edge ${encoding.full.size}px)`,
+                : `${settings.settings.full_rendition_quality} (longest edge ${settings.settings.full_rendition_size}px)`,
           ),
         ],
         // The camera's JPEG has no file of its own: this is the RAW it is lifted
@@ -522,12 +521,12 @@ const DetailKeys = observer(function DetailKeys({ photoId }: { photoId: string }
 export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element {
   const { photoId = '' } = useParams();
   const store = usePhotosStore();
-  const { photos, serverConfig: configPresenter } = usePresenters();
+  const { photos, appSettings } = usePresenters();
 
   useEffect(() => {
     void photos.openDetail(photoId);
-    void configPresenter.load();
-  }, [photoId, photos, configPresenter]);
+    void appSettings.load();
+  }, [photoId, photos, appSettings]);
 
   // Only once the read for *this* photo has come back empty. The fetch starts in
   // an effect, so the render that first sees a new id has nothing loaded and

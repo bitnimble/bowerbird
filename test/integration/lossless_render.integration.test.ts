@@ -7,7 +7,9 @@ import { mkdtempSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { Library } from '../../src/schemas/libraries';
+import { DEFAULT_SETTINGS, type Settings } from '../../src/schemas/settings';
 import { ProcessingService } from '../../src/services/processing/processing_service';
+import type { SettingsRepository } from '../../src/services/settings/settings_repository';
 import { decodeRaw } from '../../src/services/processing/raw_decoder';
 import { decodeImage, freeImage, pixels } from '../../src/services/processing/rawshim_ops';
 import { getRenditionPath } from '../../src/utils/paths';
@@ -35,13 +37,10 @@ const FIXTURE = `${import.meta.dir}/../fixtures/DSC02981.ARW`;
 const stamps = { markTileBuilt: () => {}, markRenditionsBuilt: () => {} } as never;
 
 function service(): ProcessingService {
-  return new ProcessingService(stamps, {
-    processingConcurrency: 1,
-    losslessQuality: 88,
-    losslessQuantizer: 8,
-    hdrPeakNits: 1000,
-    hdrPreset: 8,
-  } as never);
+  // Matching off: the assertion below is against a plain `decodeRaw`, and the
+  // camera's own colour treatment is exactly what would make the two differ.
+  const settings: Settings = { ...DEFAULT_SETTINGS, processing_concurrency: 1, match_embedded_jpeg: false };
+  return new ProcessingService(stamps, { get: () => settings } as SettingsRepository);
 }
 
 test('a 16-bit decode yields twice the bytes of an 8-bit one', () => {

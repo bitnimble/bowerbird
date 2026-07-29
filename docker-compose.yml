@@ -9,19 +9,13 @@ services:
     # user: "1000:1000"
     ports:
       - "${HOST_PORT:-3000}:3000"
+    # Only what has to be known before the catalogue can be opened. Everything
+    # else is a setting on the app's Settings page, stored in the DB (§15).
     environment:
       HOST: 0.0.0.0
       PORT: 3000
       # SQLite DB persists on the named volume below (not in the image).
       DB_PATH: /data/bowerbird.db
-      WATCH_ENABLED: ${WATCH_ENABLED:-true}
-      WATCH_DEBOUNCE_MS: ${WATCH_DEBOUNCE_MS:-2000}
-      SYNC_FULL_AT: ${SYNC_FULL_AT:-03:00}
-      PROCESSING_CONCURRENCY: ${PROCESSING_CONCURRENCY:-4}
-      GRID_RENDITION_SIZE: ${GRID_RENDITION_SIZE:-800}
-      FULL_RENDITION_SIZE: ${FULL_RENDITION_SIZE:-3840}
-      GRID_RENDITION_QUALITY: ${GRID_RENDITION_QUALITY:-80}
-      FULL_RENDITION_QUALITY: ${FULL_RENDITION_QUALITY:-90}
     volumes:
       # Your photo library. Create libraries via the API with a root_path under
       # /photos (e.g. {"root_path": "/photos"}). Mounted read-write: sync moves

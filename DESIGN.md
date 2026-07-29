@@ -1532,7 +1532,6 @@ All endpoints return JSON. Error responses use a standard envelope:
 | `GET` | `/api/photos/:id` | Get full photo detail |
 | `PATCH` | `/api/photos/:id` | Update photo metadata (rating, triage, notes) |
 | `POST` | `/api/photos/delete` | Soft-delete photos (body: `{ photo_ids: string[] }`) |
-| `GET` | `/api/config` | Rendition format, sizes and qualities, so a client can state what it is rendering |
 | `POST` | `/api/photos/restore` | Restore soft-deleted photos to where they were deleted from (§12.2) |
 | `POST` | `/api/photos/rebuild-tiles` | Rebuild the grid tiles of a selection, and nothing else (§10.3) |
 | `POST` | `/api/photos/refresh-metadata` | Re-read the RAW headers for a selection |
@@ -1646,12 +1645,11 @@ app.get('/image/:photoId/renditions/:rendition', async (c) => {
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/api/config` | Rendition format, sizes and qualities, so a client can state what it is rendering |
-| `GET` | `/api/settings` | App-wide preferences |
+| `GET` | `/api/settings` | Everything the user can change that is not a property of one library |
 | `PATCH` | `/api/settings` | Update them |
 | `GET` | `/api/events` | Server-sent events; `rendition` carries the id of a photo whose renditions were just written (§18.6) |
 
-Three different things, by how far their scope reaches: `config` is fixed by the deployment (environment variables, §15); the `libraries` row holds what belongs to one catalogue (the rendition source and HDR, §10.2); `settings` is app-wide and lives in a key/value table, holding `viewer_rendition_mode` and the rendition `remember` remembers. A table rather than a column per setting because they are read one at a time and never queried across, and adding one should not need a migration. A value the build no longer understands reads as its default rather than failing the request: these are preferences, and the viewer has to open with or without them.
+Two scopes, not three: the `libraries` row holds what belongs to one catalogue (the rendition source and HDR, §10.2), and `settings` holds everything app-wide - the viewer's `viewer_rendition_mode` and the rendition `remember` remembers, alongside the server's own tuning (§15). A key/value table rather than a column per setting because they are read one at a time and never queried across, and adding one should not need a migration; values are stored as text, and the default's type says what to read one back as. A value the build no longer understands reads as its default rather than failing the request: a bad row must not stop the viewer opening or the server booting.
 
 ---
 
@@ -1690,7 +1688,7 @@ Every line goes through `src/logger.ts`, and oxlint's `no-console` keeps it that
 
 Structured tail rather than a sentence: the counts are what an import is judged by, and `grep library=<id>` then follows one library through a log several are writing to. An `Error` passed as a field renders as its message, plus its stack on the following line at `error` level, so a failure is still traceable to the call that raised it. `warn` and `error` go to stderr, everything else to stdout.
 
-`LOG_LEVEL` (§15) picks the floor:
+The `log_level` setting picks the floor, applied at startup and again on edit; `LOG_LEVEL` overrides it (§15):
 
 | Level | What it adds |
 |---|---|
@@ -1705,34 +1703,64 @@ A scan reports progress every 500 files, because a 300k-frame import is hours of
 
 ## 15. Configuration
 
-The server is configured via environment variables:
+Three environment variables, and only three: what has to be known before the
+catalogue can be opened.
 
 | Variable | Default | Description |
 |---|---|---|
-| `PORT` | random | HTTP server port, printed on startup; `-p <port>` overrides it |
 | `HOST` | `0.0.0.0` | HTTP server bind address |
+| `PORT` | random | HTTP server port, printed on startup; `-p <port>` overrides it |
 | `DB_PATH` | `./bowerbird.db` | SQLite database file path |
-| `LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`; what the server logs (§14.3) |
-| `PROCESSING_CONCURRENCY` | `4` | Number of worker threads for rendition generation |
-| `GRID_RENDITION_QUALITY` | `80` | AVIF quality for the grid rendition, 1-100 (§10.1) |
-| `FULL_RENDITION_QUALITY` | `80` | AVIF quality for the full rendition, 1-100 (§10.1) |
-| `RENDITION_EFFORT` | `0` | AVIF effort, 0-9; the default of 4 is 10x slower for +0.5dB (§10.1) |
-| `GRID_RENDITION_SIZE` | `800` | Longest edge in pixels for the grid rendition |
-| `FULL_RENDITION_SIZE` | `3840` | Longest edge in pixels for the full rendition |
-| `MATCH_EMBEDDED_JPEG` | `true` | Give SDR renders the camera's own colour and lens correction, fitted per photo against the embedded JPEG; ~+2.4s on a 61MP frame (§10.8) |
-| `WATCH_ENABLED` | `true` | Auto-sync a library when its files change on disk (§9.8) |
-| `WATCH_DEBOUNCE_MS` | `2000` | Debounce window for coalescing filesystem events (§9.8) |
-| `SYNC_FULL_AT` | `03:00` | Local `HH:MM` for the daily full reconcile; `""` disables (§9.8) |
-| `PRUNE_EVERY_DAYS` | `7` | Interval for the orphaned-file sweep; `0` disables (§10.6) |
-| `LOSSLESS_QUALITY` | `88` | AVIF quality for the SDR full-resolution export (§10.5) |
-| `LOSSLESS_QUANTIZER` | `8` | avifenc max quantizer for the HDR one; lower is better (§10.5) |
-| `HDR_PEAK_NITS` | `1000` | Display peak the BT.2390 roll-off targets, and the declared mastering peak (§10.7.1) |
-| `HDR_REFERENCE_WHITE_NITS` | `203` | ITU-R BT.2408 HDR Reference White; what diffuse white is graded to (§10.7.1) |
-| `HDR_WHITE_QUANTILE` | `0.90` | Quantile of the frame taken as diffuse white (§10.7.1) |
-| `HDR_CRF` | `20` | Encoder quality for the HDR renditions; lower is better (§10.7) |
-| `HDR_PRESET` | `8` | Encoder speed; libaom `-cpu-used` 0-8 and avifenc `--speed` 0-10, both clamped (§10.7) |
-| `HDR_MAX_EDGE` | `3840` | Longest edge of an HDR rendition; AV1 cannot encode a full-size sensor frame (§10.7) |
-| `CORS_ORIGINS` | *(unset)* | Comma-separated origins allowed to call the API, or `*`. Unset means "any port on whatever host the request arrived at", so the client works on loopback and over the LAN without hardcoding an address, while an unrelated site on the internet is still refused. |
+
+Everything else is a **setting**, stored in the `settings` table (§13.6) and
+edited from the app's Settings page. Deployment config that can only be changed
+by editing a compose file and restarting is config the person looking at the
+photos cannot change, and every one of these is a knob you turn *because of what
+you just saw on screen* - a library that came out dark, an import that is too
+slow, a rendition that lost its shadows.
+
+Nothing here needs a restart. `src/schemas/settings.ts` holds the defaults and
+the bounds; the reasoning behind each number lives beside it there.
+
+| Setting | Default | Description |
+|---|---|---|
+| `log_level` | `info` | `debug`, `info`, `warn` or `error`; what the server logs (§14.3) |
+| `cors_origins` | `""` | Comma-separated origins allowed to call the API, or `*`. Empty means "any port on whatever host the request arrived at", so the client works on loopback and over the LAN without hardcoding an address, while an unrelated site on the internet is still refused. |
+| `processing_concurrency` | `4` | Number of worker threads for rendition generation |
+| `match_embedded_jpeg` | `true` | Give SDR renders the camera's own colour and lens correction, fitted per photo against the embedded JPEG; ~+2.4s on a 61MP frame (§10.8) |
+| `grid_rendition_size` | `800` | Longest edge in pixels for the grid rendition |
+| `grid_rendition_quality` | `80` | AVIF quality for the grid rendition, 1-100 (§10.1) |
+| `full_rendition_size` | `3840` | Longest edge in pixels for the full rendition |
+| `full_rendition_quality` | `80` | AVIF quality for the full rendition, 1-100 (§10.1) |
+| `rendition_effort` | `0` | AVIF effort, 0-9; the default of 4 is 10x slower for +0.5dB (§10.1) |
+| `lossless_quality` | `88` | AVIF quality for the SDR full-resolution export (§10.5) |
+| `lossless_quantizer` | `8` | avifenc max quantizer for the HDR one; lower is better (§10.5) |
+| `hdr_peak_nits` | `1000` | Display peak the BT.2390 roll-off targets, and the declared mastering peak (§10.7.1) |
+| `hdr_reference_white_nits` | `203` | ITU-R BT.2408 HDR Reference White; what diffuse white is graded to (§10.7.1) |
+| `hdr_white_quantile` | `0.90` | Quantile of the frame taken as diffuse white (§10.7.1) |
+| `hdr_crf` | `20` | Encoder quality for the HDR renditions; lower is better (§10.7) |
+| `hdr_preset` | `8` | Encoder speed; libaom `-cpu-used` 0-8 and avifenc `--speed` 0-10, both clamped (§10.7) |
+| `hdr_max_edge` | `3840` | Longest edge of an HDR rendition; AV1 cannot encode a full-size sensor frame (§10.7) |
+| `watch_enabled` | `true` | Auto-sync a library when its files change on disk (§9.8) |
+| `watch_debounce_ms` | `2000` | Debounce window for coalescing filesystem events (§9.8) |
+| `full_sync_at` | `03:00` | Local `HH:MM` for the daily full reconcile; `""` disables (§9.8) |
+| `prune_every_days` | `7` | Interval for the orphaned-file sweep; `0` disables (§10.6) |
+
+Two shapes of consumer, and they take a setting differently:
+
+- **Read per use.** Processing asks `SettingsRepository` for the size, quality
+  and grade of every job it builds, so an edit lands on the next photo without
+  anything being told about it.
+- **Configured, then re-configured.** The watcher, the daily reconcile, the
+  orphan sweep and the log level are established once at startup and re-applied
+  from `settingsRepo.onChange`. A `configure()` on each restarts only what
+  actually moved, so a knob on the Settings page never means "after the next
+  restart".
+
+`LOG_LEVEL` remains as an environment override, and wins where it is set:
+logging starts before the database is open, a server that will not boot cannot
+be turned up from its own settings page, and the test scripts use it to stay
+quiet.
 
 ---
 

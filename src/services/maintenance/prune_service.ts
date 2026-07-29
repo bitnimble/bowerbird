@@ -99,12 +99,21 @@ export class ScheduledPrune {
 
   constructor(
     private readonly prune: PruneService,
-    private readonly everyDays: number,
+    private everyDays = 0,
   ) {}
 
   start(): void {
     if (!(this.everyDays > 0) || this.timer != null) return;
     this.timer = setInterval(() => void this.fire(), this.everyDays * DAY_MS);
+    log.info('orphaned-file sweep scheduled', { everyDays: this.everyDays });
+  }
+
+  /** Applies a changed setting (§15) without a restart. */
+  configure(everyDays: number): void {
+    if (everyDays === this.everyDays) return;
+    this.stop();
+    this.everyDays = everyDays;
+    this.start();
   }
 
   stop(): void {

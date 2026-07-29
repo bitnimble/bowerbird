@@ -23,12 +23,21 @@ export class DailySync {
 
   constructor(
     private readonly sync: SyncService,
-    private readonly at: string,
+    private at = '',
   ) {}
 
   start(): void {
     if (this.at === '' || this.timer != null) return;
     this.schedule();
+    log.info('daily full reconcile scheduled', { at: this.at });
+  }
+
+  /** Applies a changed setting (§15) without a restart. */
+  configure(at: string): void {
+    if (at === this.at) return;
+    this.stop();
+    this.at = at;
+    this.start();
   }
 
   stop(): void {

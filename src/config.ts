@@ -1,55 +1,8 @@
-// Server configuration from environment variables (DESIGN §15).
+// Where the server listens and where its database is: the three things that
+// have to be known before the database can be opened. Everything else is a
+// setting in that database, editable from the app (DESIGN §15).
 
 import { parseArgs } from 'node:util';
-
-// Parses a numeric env var, failing fast (rather than propagating NaN, which
-// silently breaks e.g. the processing pool's Math.min bound).
-function envNumber(name: string, fallback: number): number {
-  const raw = process.env[name];
-  if (raw == null || raw === '') return fallback;
-  const value = Number(raw);
-  if (!Number.isFinite(value)) {
-    throw new Error(`Invalid ${name}: "${raw}" is not a number`);
-  }
-  return value;
-}
-
-// Parses a local time-of-day env var as "HH:MM", or "" to disable. Fails fast
-// rather than silently never firing.
-function envTimeOfDay(name: string, fallback: string): string {
-  const raw = process.env[name] ?? fallback;
-  if (raw === '') return '';
-  const match = /^(\d{1,2}):(\d{2})$/.exec(raw);
-  const hours = match ? Number(match[1]) : NaN;
-  const minutes = match ? Number(match[2]) : NaN;
-  if (!(hours >= 0 && hours < 24 && minutes >= 0 && minutes < 60)) {
-    throw new Error(`Invalid ${name}: "${raw}" is not a time of day (expected HH:MM, or "" to disable)`);
-  }
-  return raw;
-}
-
-const LOG_LEVELS = ['debug', 'info', 'warn', 'error'] as const;
-export type LogLevel = (typeof LOG_LEVELS)[number];
-
-function envLogLevel(name: string, fallback: LogLevel): LogLevel {
-  const raw = process.env[name] ?? fallback;
-  const level = LOG_LEVELS.find((l) => l === raw);
-  if (level == null) throw new Error(`Invalid ${name}: "${raw}" is not one of ${LOG_LEVELS.join(', ')}`);
-  return level;
-}
-
-// Comma-separated allowlist, '*' for any origin, or unset for the same-host
-// default (see corsOrigins below).
-function envOrigins(name: string): string[] | '*' | null {
-  const raw = (process.env[name] ?? '').trim();
-  if (raw === '') return null;
-  if (raw === '*') return '*';
-  const list = raw
-    .split(',')
-    .map((o) => o.trim())
-    .filter((o) => o !== '');
-  return list.length === 0 ? null : list;
-}
 
 // -p/--port, taking precedence over PORT so a specific port can be pinned
 // without editing the environment. Not strict: the flag has to coexist with
@@ -64,93 +17,18 @@ function argPort(): number | undefined {
   return value;
 }
 
-export const config = {
-  // 0 means "whatever the OS hands out", so several checkouts can run their own
-  // server (and their own E2E run) at once. The bound port is logged at startup.
-  port: argPort() ?? envNumber('PORT', 0),
-  host: process.env.HOST ?? '0.0.0.0',
-  // `debug` adds a line per HTTP request and per finished processing stage;
-  // everything an operator normally wants (imports, batches, failures) is `info`.
-  logLevel: envLogLevel('LOG_LEVEL', 'info'),
-  dbPath: process.env.DB_PATH ?? './bowerbird.db',
-  // The web client is a separate app on its own origin, so the API must opt it
-  // in. Unset (null) means "any port on whatever host this request reached the
-  // API by", which covers serving the client over loopback or the LAN without
-  // hardcoding an address. An explicit CORS_ORIGINS list, or '*', overrides it.
-  corsOrigins: envOrigins('CORS_ORIGINS'),
-  // Filesystem watching: auto-sync a library when its files change on disk.
-  watchEnabled: (process.env.WATCH_ENABLED ?? 'true') !== 'false',
-  watchDebounceMs: envNumber('WATCH_DEBOUNCE_MS', 2000),
-  // Daily full reconcile: the backstop that catches changes the watcher's
-  // (scoped, lossy-event-driven) syncs missed; dropped events, cross-dir moves,
-  // edits made while the server was down. Local "HH:MM"; "" disables. A full scan
-  // holds the library mutex, so the default is overnight, out of the way.
-  fullSyncAt: envTimeOfDay('SYNC_FULL_AT', '03:00'),
-  // Sweep for generated files whose photo no longer exists (§10.6). Weekly
-  // because it only has anything to do after a library is removed or a
-  // catalogue is rebuilt, and it reads every rendition directory. 0 disables.
-  pruneEveryDays: envNumber('PRUNE_EVERY_DAYS', 7),
-  // Full-resolution export (§10.5). libjxl butteraugli distance: 0 is
-  // mathematically lossless but ~50s and 80MB on a 24MP frame, where 0.3 is
-  // half a second and 9MB. Deliberately tighter than libjxl's "visually
-  // lossless" 1.0, because this view exists to be pixel-peeped.
-  // Full-resolution export (§10.5), AVIF. `quality` is libvips' 1-100 scale for
-  // the SDR path; `quantizer` is avifenc's 0-63 (lower is better) for the HDR
-  // one. Both are set tight rather than "visually lossless", because this is the
-  // view that exists to be pixel-peeped, and kept inside a ~20MB budget on a
-  // 60MP frame.
-  losslessQuality: envNumber('LOSSLESS_QUALITY', 88),
-  losslessQuantizer: envNumber('LOSSLESS_QUANTIZER', 8),
-  // Display peak the BT.2390 roll-off targets, and what the file declares as its
-  // mastering peak. No longer the exposure control: the grade anchors diffuse
-  // white independently, so this only sets how much headroom sits above it.
-  hdrPeakNits: envNumber('HDR_PEAK_NITS', 1000),
-  // ITU-R BT.2408 HDR Reference White, and the quantile of the frame taken to be
-  // diffuse white. Between them these decide how bright a photo renders, so they
-  // are the pair to reach for if a library comes out consistently dark or hot.
-  //
-  // A lower quantile renders *brighter*: it places diffuse white further down the
-  // histogram, so everything above it scales up. 0.99 was too high on a landscape
-  // - half sky means the brightest 1% is sky and speculars rather than a lit white
-  // surface - and capped a daylight frame at 470 nits with its greenery at 40.
-  // 0.90 puts the same frame's peak at 823 and its greenery at 70.
-  hdrReferenceWhiteNits: envNumber('HDR_REFERENCE_WHITE_NITS', 203),
-  hdrWhiteQuantile: envNumber('HDR_WHITE_QUANTILE', 0.9),
-  // SVT-AV1 quality and speed. A still is looked at rather than streamed, so
-  // this is tighter than a video default; 24MP takes about 2.5s at preset 8.
-  hdrCrf: envNumber('HDR_CRF', 20),
-  hdrPreset: envNumber('HDR_PRESET', 8),
-  // AV1 cannot encode a current sensor at native size (SVT-AV1 refuses a 60MP
-  // frame), and this still is for judging HDR on a monitor rather than for
-  // pixel-peeping, which the lossless export already covers. 4K shows 1:1 on
-  // the displays that do HDR.
-  hdrMaxEdge: envNumber('HDR_MAX_EDGE', 3840),
-  processingConcurrency: envNumber('PROCESSING_CONCURRENCY', 4),
-  gridRenditionSize: envNumber('GRID_RENDITION_SIZE', 800),
-  fullRenditionSize: envNumber('FULL_RENDITION_SIZE', 3840),
-  // AVIF quality, which is not WebP's scale: on a 24MP frame the full-size
-  // rendition is 375 kB at q60 against 1019 kB for the WebP q90 it replaces, and
-  // q90 here would be 2551 kB. The full rendition is the one actually looked at,
-  // so it gets the headroom.
-  // q60 and q70 visibly lose shadow detail on real frames, which is where a RAW
-  // has the most to give. q80 is 1361 kB on a 24MP frame against the 1019 kB of
-  // the WebP q90 it replaces, and encodes in 713ms at effort 0.
-  gridRenditionQuality: envNumber('GRID_RENDITION_QUALITY', 80),
-  fullRenditionQuality: envNumber('FULL_RENDITION_QUALITY', 80),
-  // AVIF effort, 0-9, and 0 because speed matters more here than size.
-  // The default of 4 is pathological either way: 13.6s for a 3840px frame
-  // against 0.6s at effort 0, for a file only ~15% smaller. This is also what
-  // the quality-check page encodes at, so what gets judged there is what ships.
-  renditionEffort: envNumber('RENDITION_EFFORT', 0),
-  // Give a render the camera's own colour treatment, by fitting the transform that
-  // takes it to the JPEG embedded in the same RAW (`jpeg_match.ts`). Applies to SDR
-  // renditions built from a render: an embedded-sourced grid already has the look,
-  // and an 8-bit SDR JPEG cannot teach the HDR path what to do above diffuse white.
-  //
-  // On by default: a render that does not look like the camera's own JPEG is the
-  // wrong picture, and the cost is a fraction of the decode it rides along with.
-  // Set MATCH_EMBEDDED_JPEG=false for an import where throughput matters more.
-  matchEmbeddedJpeg: (process.env.MATCH_EMBEDDED_JPEG ?? 'true') !== 'false',
-} as const;
+// 0 means "whatever the OS hands out", so several checkouts can run their own
+// server (and their own E2E run) at once. The bound port is logged at startup.
+function envPort(): number {
+  const raw = process.env.PORT;
+  if (raw == null || raw === '') return 0;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 0 || value > 65535) throw new Error(`Invalid PORT: "${raw}" is not a port number`);
+  return value;
+}
 
-export type Config = typeof config;
+export const config = {
+  port: argPort() ?? envPort(),
+  host: process.env.HOST ?? '0.0.0.0',
+  dbPath: process.env.DB_PATH ?? './bowerbird.db',
+} as const;

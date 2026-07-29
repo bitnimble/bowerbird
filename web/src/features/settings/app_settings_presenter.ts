@@ -1,5 +1,5 @@
 import { runInAction } from 'mobx';
-import { api, type ViewerRendition, type ViewerRenditionMode, type Settings } from '../../api/client';
+import { api, type ViewerRendition, type ViewerRenditionMode, type Settings, type UpdateSettingsRequest } from '../../api/client';
 import type { AppSettingsStore } from './app_settings_store';
 
 export class AppSettingsPresenter {
@@ -18,21 +18,22 @@ export class AppSettingsPresenter {
     }
   }
 
+  async update(patch: UpdateSettingsRequest): Promise<void> {
+    this.apply(await api.updateSettings(patch));
+  }
+
   async setViewerRenditionMode(mode: ViewerRenditionMode): Promise<void> {
-    this.apply(await api.updateSettings({ viewer_rendition_mode: mode }));
+    await this.update({ viewer_rendition_mode: mode });
   }
 
   // Recorded only in the mode that reads it back. The per-photo memory is the
   // photo's own column, written by the presenter that owns it.
   async rememberRendition(rendition: ViewerRendition): Promise<void> {
     if (this.store.viewerRenditionMode !== 'remember') return;
-    this.apply(await api.updateSettings({ last_viewer_rendition: rendition }));
+    await this.update({ last_viewer_rendition: rendition });
   }
 
   private apply(settings: Settings): void {
-    runInAction(() => {
-      this.store.viewerRenditionMode = settings.viewer_rendition_mode;
-      this.store.lastViewerRendition = settings.last_viewer_rendition;
-    });
+    runInAction(() => (this.store.settings = settings));
   }
 }
