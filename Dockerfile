@@ -1,15 +1,28 @@
-# Bowerbird backend. Every pixel operation goes through native/rawshim, which
-# links LibRaw and libvips, so the image ships both as system libraries.
-FROM oven/bun:1-debian AS base
+# Bowerbird backend. Every pixel operation goes through native/rawshim, which links
+# LibRaw, libvips and lensfun, so the image ships all three as system libraries.
+#
+# Debian rather than Alpine, which would save ~50MB of base: Alpine's `vips` package
+# is built without libheif, so it has no `heifsave` and cannot write a single AVIF -
+# which is every rendition this app produces. True on stable and on edge.
+FROM debian:trixie-slim AS base
 WORKDIR /app
 
-# libraw.so is dlopen'd at runtime (raw_decoder.ts, metadata.ts). The -dev package
-# provides the unversioned libraw.so symlink the FFI loader resolves.
-#
-# libvips is the image library sharp used to bundle; rawshim links it directly,
-# so it has to be present rather than arriving inside a node_modules prebuild.
-# The -dev package is what the native stage compiles against, and the runtime
-# stage inherits the same base layer, so one install serves both.
+# ~125MB of documentation, man pages and translations nothing in a container reads.
+# Excluded at unpack time rather than deleted afterwards: a later RUN that deletes
+# them leaves the bytes in the layer that installed them, so the image does not
+# shrink.
+RUN printf '%s\n' \
+      'path-exclude /usr/share/doc/*' \
+      'path-include /usr/share/doc/*/copyright' \
+      'path-exclude /usr/share/man/*' \
+      'path-exclude /usr/share/info/*' \
+      'path-exclude /usr/share/locale/*' \
+    > /etc/dpkg/dpkg.cfg.d/01-nodoc
+
+# Runtime libraries only. The headers rawshim compiles against belong to the build
+# stage and are installed there: libvips-dev alone drags 549MB of development tree
+# (libicu-dev, perl, libhdf5-dev, libc6-dev) against 127MB for the library itself,
+# and every byte of it was reaching the final image through this layer.
 #
 # libheif-plugin-aomenc is not optional and is easy to miss. Debian ships libheif's
 # codecs as separate plugin packages, and libvips pulls in only the *decoders*
@@ -27,15 +40,39 @@ WORKDIR /app
 # come from SVT-AV1. ffmpeg's own avif muxer writes no colr box, so it cannot
 # tag one as HDR at all.
 #
-# liblensfun-dev pulls its data package with it, and both halves are needed: the
+# liblensfun1 pulls its data package with it, and both halves are needed: the
 # library is what rawshim links, and the ~4MB of XML under /usr/share/lensfun is
 # where every lens profile lives. Without the data the database loads empty and
 # every Canon frame silently falls back to fitting its own geometry - twice the
 # time for a slightly worse grade, with nothing in the logs to say why.
+#
+# The purge is 192MB of Mesa and LLVM, reached only through ffmpeg -> libsdl2 ->
+# libgl1. SDL2 is ffplay's video output and dlopen's libGL when it opens a window,
+# which a headless encode never does. It runs in this RUN rather than a later one
+# for the same layer reason as the dpkg excludes above. libgbm1 stays: libsdl2 has
+# it as a real DT_NEEDED and ffmpeg will not start without it. Forcing past the
+# dependency leaves apt unable to resolve anything until it is repaired, which is
+# why the build stage below opens with --fix-broken.
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends libraw-dev libvips-dev libheif-plugin-aomenc ffmpeg libavif-bin \
-     liblensfun-dev \
+  && apt-get install -y --no-install-recommends \
+     libraw23t64 libvips42t64 liblensfun1 libheif-plugin-aomenc ffmpeg libavif-bin \
+  && dpkg --force-depends --purge libllvm19 libz3-4 mesa-libgallium libgl1-mesa-dri libglx-mesa0 \
   && rm -rf /var/lib/apt/lists/*
+
+# Bun's own image is Debian too, so the binary runs here unchanged and needs nothing
+# but libc. Taking just the binary rather than building on oven/bun:1-debian drops
+# that image's full-fat Debian base, 120MB against 78MB for slim.
+COPY --from=oven/bun:1-debian /usr/local/bin/bun /usr/local/bin/bun
+# The parts of oven/bun's setup that outlive its base image: uid 1000 (see USER
+# below), and the `node` shim packages shell out to.
+RUN groupadd --gid 1000 bun \
+  && useradd --uid 1000 --gid bun --shell /bin/sh --create-home bun \
+  && ln -s /usr/local/bin/bun /usr/local/bin/bunx \
+  && mkdir -p /usr/local/bun-node-fallback-bin \
+  && ln -s /usr/local/bin/bun /usr/local/bun-node-fallback-bin/node
+ENV PATH="${PATH}:/usr/local/bun-node-fallback-bin"
+ENV BUN_INSTALL_BIN=/usr/local/bin
+ENV BUN_RUNTIME_TRANSPILER_CACHE_PATH=0
 
 # Owned by `bun` (uid 1000) here, in the stage every other one inherits, because a
 # fresh Docker volume takes its ownership from the image directory it shadows. The
@@ -66,8 +103,20 @@ RUN bun install --frozen-lockfile --production
 # The entrypoint picks between them by running each, so nothing here has to predict
 # what the host supports.
 FROM base AS native
+# The -dev half of what base installs. build.rs generates the LibRaw bindings from
+# these headers, so this stage has to inherit base rather than fork beside it: the
+# generated field offsets are only right against the library the headers describe,
+# and inheriting is what makes them the same package at the same version.
+#
+# --fix-broken first because base amputated Mesa and LLVM out from under packages
+# that declare them, and apt refuses to resolve anything at all while that stands.
+# It puts them back, which this stage wants anyway: bindgen goes through libclang,
+# and libclang links libLLVM.
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends build-essential ca-certificates curl libclang-dev \
+  && apt-get install -y --fix-broken \
+  && apt-get install -y --no-install-recommends \
+     libraw-dev libvips-dev liblensfun-dev \
+     build-essential ca-certificates curl libclang-dev \
   && rm -rf /var/lib/apt/lists/*
 # Downloaded to a file rather than piped into sh: in a pipeline the exit status is
 # the *last* command's, so `curl ... | sh` reports success when curl fails and leaves
@@ -108,9 +157,9 @@ EXPOSE 3000
 # Everything the app writes lands on a bind mount - the photo library, its
 # renditions, the Bin - and as root every one of those files arrives owned by root
 # on the host, which is only discoverable after the fact and annoying to undo. uid
-# 1000 is the `bun` user this base image already ships and the usual first human
-# account on a Linux host, so the common case needs no configuration; a host whose
-# owner is not 1000 overrides it with `user:` in the compose file.
+# 1000 is the `bun` user base creates and the usual first human account on a Linux
+# host, so the common case needs no configuration; a host whose owner is not 1000
+# overrides it with `user:` in the compose file.
 USER bun
 # The entrypoint tunes the pixel library and then execs the command, so `docker run
 # … <anything>` still works and the app remains PID 1's exec target.
