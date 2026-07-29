@@ -187,6 +187,9 @@ const FolderSettings = observer(function FolderSettings({ library }: { library: 
           type="checkbox"
           aria-label="Make shoots from folders"
           checked={library.mirror_shoots}
+          // Every other SettingRow with a reason passes this too: a control that
+          // looks disabled and is not sends a request contradicting its tooltip.
+          disabled={!library.include_subfolders}
           onChange={(e) => void libraries.setMirrorShoots(library.id, e.currentTarget.checked)}
         />
       </SettingRow>

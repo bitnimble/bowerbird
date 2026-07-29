@@ -40,8 +40,11 @@ function ancestorsOf(folderPath: string): string[] {
   return found;
 }
 
-// What .list__row is fixed to, plus its border. A row that grew with its
-// contents would make the scroll's height a measurement rather than a sum.
+// The pitch every row is fixed to, handed to CSS as `--row-h` rather than
+// written down on both sides: a height the two disagreed on drifts a little on
+// every row, and a folder tree is enough rows for a little to become a lot
+// (§18.3.2 says the same of the grid). `box-sizing: border-box`, so this is the
+// whole row including its border.
 export const SHOOT_ROW_H = 47;
 
 export class ShootsStore {
@@ -53,6 +56,12 @@ export class ShootsStore {
   // every layout question below is a computed rather than a DOM read (§18.2).
   @observable accessor viewportHeight = 0;
   @observable accessor scrollTop = 0;
+  // Which row is being renamed, and what has been typed. Here rather than in the
+  // row's own state because rows are mounted only while they are on screen:
+  // scrolling unmounts one mid-edit, and React fires no blur on unmount, so a
+  // half-typed name simply disappeared.
+  @observable accessor renamingPath: string | null = null;
+  @observable accessor renameDraft = '';
   /** How many photographs the library holds that are in no shoot at all. */
   @observable accessor rootPhotoCount = 0;
   /** Folders whose children are drawn; every ancestor of a shoot is one. */
@@ -68,18 +77,9 @@ export class ShootsStore {
     return new Map(this.shoots.map((s) => [s.folder_path, s]));
   }
 
-  // Everything a delete would take with it, which is the whole subtree and not
-  // just the shoot's own members: removing a shoot's photographs removes every
-  // photograph under its folder, descendant shoots included. The dialog says this
-  // number out loud, so it has to be the one that is about to be true.
-  photosUnder(folderPath: string): number {
-    return this.shoots
-      .filter((s) => s.folder_path === folderPath || s.folder_path.startsWith(`${folderPath}/`))
-      .reduce((total, s) => total + s.photo_count, 0);
-  }
 
   @computed get isEmpty(): boolean {
-    return !this.loading && this.shoots.length === 0;
+    return !this.loading && this.rows.length === 0;
   }
 
   // Every folder the page knows of without asking: each shoot's own folder and

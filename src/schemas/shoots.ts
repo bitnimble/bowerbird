@@ -43,6 +43,17 @@ export const DeleteShootQuerySchema = z.object({
 });
 export type DeleteShootQuery = z.infer<typeof DeleteShootQuerySchema>;
 
+// What `photos: 'remove'` would actually destroy: every row under the folder,
+// which is not the same set as the shoot's members. Photos in a `plain`
+// subfolder belong to no shoot and are counted by neither `photo_count` nor a
+// descendant's, and binned rows are excluded from every count on screen - yet
+// both are deleted. The dialog states this number, so the server answers it with
+// the same query the delete uses rather than the client inferring one.
+export const ShootRemovalSchema = z.object({
+  photos: z.number().int(),
+});
+export type ShootRemoval = z.infer<typeof ShootRemovalSchema>;
+
 export const ShootSchema = z.object({
   id: UuidSchema,
   parent_id: UuidSchema.nullable(),

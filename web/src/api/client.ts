@@ -10,7 +10,7 @@ import type {
 } from '../../../src/schemas/libraries';
 import type { PhotoDetail, PhotoListResponse, PhotoSelection, PhotoTarget, Triage, UpdatePhotoRequest } from '../../../src/schemas/photos';
 import type { ViewerRendition, ViewerRenditionMode, Settings, UpdateSettingsRequest } from '../../../src/schemas/settings';
-import type { CreateShootRequest, Shoot, UpdateShootRequest } from '../../../src/schemas/shoots';
+import type { CreateShootRequest, Shoot, ShootRemoval, UpdateShootRequest } from '../../../src/schemas/shoots';
 import type { Rendition } from '../../../src/services/processing/renditions';
 import type { ProcessingStage } from '../../../src/services/processing/processing_types';
 
@@ -176,6 +176,9 @@ export const api = {
   getShoot: (id: string): Promise<Shoot> => request('GET', `/api/shoots/${id}`),
   createShoot: (body: CreateShootRequest): Promise<Shoot> => request('POST', '/api/shoots', body),
   updateShoot: (id: string, body: UpdateShootRequest): Promise<Shoot> => request('PATCH', `/api/shoots/${id}`, body),
+  // How many photo records `photos: 'remove'` would take, counted by the server
+  // with the same query the delete runs (§8.5).
+  getShootRemoval: (id: string): Promise<ShootRemoval> => request('GET', `/api/shoots/${id}/removal`),
   // 'remove' takes the photo records and their renditions with the shoot; the
   // files on disk are untouched either way (§8.5).
   deleteShoot: (id: string, photos: 'keep' | 'remove'): Promise<void> =>

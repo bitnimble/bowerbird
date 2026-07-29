@@ -65,6 +65,27 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
+// A shoot's claim covers its whole subtree, so a parent's is a superset of its
+// child's rather than a duplicate: the photographs sitting directly in the parent
+// are the ones only the parent's claim reaches, and nothing later repairs them.
+test('a parent folder keeps its own photos when a child folder is a shoot too', async () => {
+  makeLibrary();
+  put('Trip/top.arw');
+  put('Trip/Day1/a.arw');
+  put('Trip/Day1/Selects/b.arw');
+
+  await sync.syncLibrary(LIB);
+
+  const byPath = new Map(shoots.listByLibrary(LIB).map((s) => [s.folder_path, s]));
+  expect([...byPath.keys()].sort()).toEqual(['Trip', 'Trip/Day1', 'Trip/Day1/Selects']);
+  expect(shootOf('Trip/top.arw')).toBe(byPath.get('Trip')!.id);
+  expect(shootOf('Trip/Day1/a.arw')).toBe(byPath.get('Trip/Day1')!.id);
+  expect(shootOf('Trip/Day1/Selects/b.arw')).toBe(byPath.get('Trip/Day1/Selects')!.id);
+  // The counts the Shoots page and the delete dialog are read from.
+  expect(byPath.get('Trip')!.photo_count).toBe(1);
+  expect(byPath.get('Trip/Day1')!.photo_count).toBe(1);
+});
+
 test('a folder holding photos becomes a shoot, and the photos belong to it', async () => {
   makeLibrary();
   put('root.arw');
@@ -149,6 +170,51 @@ test('a root-only library imports neither the subfolder photos nor their shoots'
 
   expect(photoCount()).toBe(1);
   expect(shootPaths()).toEqual([]);
+});
+
+// parent_id cascades, so deleting a shoot would take its descendants with it -
+// and mirroring would then rebuild those folders as brand-new shoots with default
+// names, which is exactly what the dialog promises will not happen.
+test('deleting a shoot and keeping its photos leaves the shoots beneath it alone', async () => {
+  makeLibrary();
+  put('Trip/Day1/a.arw');
+  await sync.syncLibrary(LIB);
+  const service = shootsService(rules);
+  await service.create({ library_id: LIB, parent_path: '', name: 'Trip', ordering: 'taken_desc' });
+  const day1 = shoots.listByLibrary(LIB).find((s) => s.folder_path === 'Trip/Day1')!;
+  shoots.updateFields(day1.id, { name: 'Day One, Reykjavik', description: 'the good one' });
+  const trip = shoots.listByLibrary(LIB).find((s) => s.folder_path === 'Trip')!;
+
+  await service.delete(trip.id, 'keep');
+
+  const after = shoots.listByLibrary(LIB);
+  expect(after.map((s) => s.folder_path)).toEqual(['Trip/Day1']);
+  expect(after[0]!.id).toBe(day1.id); // the same shoot, not a rebuilt one
+  expect(after[0]!.name).toBe('Day One, Reykjavik');
+  expect(after[0]!.description).toBe('the good one');
+  expect(shootOf('Trip/Day1/a.arw')).toBe(day1.id);
+
+  // And the next sync leaves it alone rather than mirroring a duplicate beside it.
+  await sync.syncLibrary(LIB);
+  expect(shoots.listByLibrary(LIB).map((s) => s.folder_path)).toEqual(['Trip/Day1']);
+});
+
+// `_` is a LIKE wildcard, and folder_path is the user's own folder names.
+test('a folder with an underscore does not adopt an unrelated shoot', async () => {
+  makeLibrary({ mirror_shoots: 0 });
+  mkdirSync(abs('Old'));
+  mkdirSync(abs('2024xJapan/Day1'), { recursive: true });
+  const service = shootsService(rules);
+  const old = await service.create({ library_id: LIB, parent_path: '', name: 'Old', ordering: 'taken_desc' });
+  const unrelated = await service.create({ library_id: LIB, parent_path: '2024xJapan', name: 'Day1', ordering: 'taken_desc' });
+
+  renameSync(abs('Old'), abs('2024_Japan'));
+  await sync.syncLibrary(LIB); // relocates Old -> 2024_Japan and re-derives parents
+
+  await service.delete(old.id, 'keep');
+
+  // Not swept up by the cascade: '2024xJapan/Day1' is not under '2024_Japan/'.
+  expect(shoots.getById(unrelated.id)?.folder_path).toBe('2024xJapan/Day1');
 });
 
 // parent_id cascades, so discarding a folder that still holds a shoot would take

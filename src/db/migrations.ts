@@ -302,8 +302,26 @@ function migrateShootsToFolderUniqueness(db: Database): void {
     db.exec(`INSERT INTO shoots_rebuilt (id, parent_id, library_id, folder_path, name, description, ordering)
              SELECT id, parent_id, library_id, folder_path, name, description, ordering FROM shoots
              WHERE rowid IN (SELECT MIN(rowid) FROM shoots GROUP BY library_id, folder_path)`);
+    // Anything pointing at a row that just lost its folder is moved to the row
+    // that kept it. Foreign keys are off for the rebuild, so nothing would
+    // otherwise notice, and the photos would belong to a shoot that is gone:
+    // invisible in the catalogue, and binned to the library root rather than to
+    // their own folder's Bin.
+    const survivor = `(SELECT r.id FROM shoots_rebuilt r
+                        JOIN shoots old ON old.library_id = r.library_id AND old.folder_path = r.folder_path
+                       WHERE old.id = photos.shoot_id)`;
+    db.exec(`UPDATE photos SET shoot_id = COALESCE(${survivor}, shoot_id)
+              WHERE shoot_id IS NOT NULL AND shoot_id NOT IN (SELECT id FROM shoots_rebuilt)`);
+    db.exec(`DELETE FROM shoot_banners WHERE shoot_id NOT IN (SELECT id FROM shoots_rebuilt)`);
     db.exec('DROP TABLE shoots');
     db.exec('ALTER TABLE shoots_rebuilt RENAME TO shoots');
+    // The rebuilt table is a new table, so the indexes SCHEMA created above went
+    // with the old one. Recreated here rather than left to the next startup: the
+    // run that upgrades is exactly the run whose first mirroring sync inserts a
+    // shoot per folder, and idx_shoots_parent is what serves the cascade probe on
+    // every one of those writes.
+    db.exec('CREATE INDEX IF NOT EXISTS idx_shoots_library ON shoots(library_id)');
+    db.exec('CREATE INDEX IF NOT EXISTS idx_shoots_parent ON shoots(parent_id)');
   })();
   db.exec('PRAGMA foreign_keys = ON');
 }
@@ -360,13 +378,16 @@ export function runMigrations(db: Database): void {
   // After the columns exist rather than in SCHEMA above: that runs first, and on a
   // database being upgraded the columns are added here, so indexing them up there
   // fails on every start until the table is recreated.
-  // Covers `listIdentities`, which every sync runs twice: with the identity
-  // columns in the index the read never touches the table. Indexing folder_ino
-  // alone would have been dead weight, since nothing queries by it - the inode
-  // map is built in memory from this very read.
+  // Covers `listIdentities`, which every sync runs twice. `id` is in the key
+  // because it is a TEXT primary key rather than the rowid, so without it the
+  // index is not covering and the planner falls back to a table scan - which is
+  // the whole point of the index. Indexing folder_ino alone would have been dead
+  // weight, since nothing queries by it: the inode map is built in memory from
+  // this very read.
   db.exec('DROP INDEX IF EXISTS idx_shoots_ino');
   db.exec(
-    'CREATE INDEX IF NOT EXISTS idx_shoots_identity ON shoots(library_id, folder_path, folder_dev, folder_ino, folder_birthtime)',
+    `CREATE INDEX IF NOT EXISTS idx_shoots_identity
+       ON shoots(library_id, folder_path, id, folder_dev, folder_ino, folder_birthtime)`,
   );
   db.exec('CREATE INDEX IF NOT EXISTS idx_photos_needs_tile ON photos(needs_tile) WHERE needs_tile = 1');
   db.exec('CREATE INDEX IF NOT EXISTS idx_photos_needs_renditions ON photos(needs_renditions) WHERE needs_renditions = 1');

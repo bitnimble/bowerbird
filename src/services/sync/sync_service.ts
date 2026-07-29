@@ -60,12 +60,18 @@ interface ProcessingBatch {
 
 export type MetadataExtractor = (absPath: string) => Promise<FileMetadata>;
 
-// Which folders actually need their photographs re-assigned after mirroring made
-// new shoots. A shoot claims everything under its folder, so a claim by an
-// ancestor of another claimant is pure waste: the deeper one covers the same rows
-// and lands last. Only shoots at or under a newly created folder are in question
-// at all - the rest of the library was already right.
-function deepestClaims(created: readonly string[], byFolder: ReadonlyMap<string, string>): string[] {
+// Which shoots have to restate what they hold after mirroring made new ones, and
+// in which order. A shoot's claim covers its whole subtree, so an ancestor's is a
+// *superset* of its descendant's, not a duplicate of it: skipping the ancestor
+// leaves the photographs sitting directly in that folder claimed by nobody, which
+// nothing later repairs - the next sync has no new folders to react to. So every
+// touched folder is issued, shallowest first, and the deeper claim lands last on
+// the rows the two share.
+//
+// Only shoots at or under a newly created folder are in question at all; the rest
+// of the library was already right, which is what keeps a library with nothing to
+// mirror from rewriting a single row.
+function claimsToRestate(created: readonly string[], byFolder: ReadonlyMap<string, string>): string[] {
   if (created.length === 0) return [];
   const isNew = new Set(created);
 
@@ -73,30 +79,17 @@ function deepestClaims(created: readonly string[], byFolder: ReadonlyMap<string,
   // mirroring creates as many folders as the library has, and "is any of these
   // under any of those" over both lists is quadratic in exactly the case this
   // runs in.
-  const ancestors = (folder: string): string[] => {
-    const found: string[] = [];
+  const isTouched = (folder: string): boolean => {
+    if (isNew.has(folder)) return true;
     let prefix = '';
     for (const segment of folder.split('/').slice(0, -1)) {
       prefix = prefix === '' ? segment : `${prefix}/${segment}`;
-      found.push(prefix);
+      if (isNew.has(prefix)) return true;
     }
-    return found;
+    return false;
   };
 
-  const touched = new Set<string>();
-  for (const folder of byFolder.keys()) {
-    if (isNew.has(folder) || ancestors(folder).some((a) => isNew.has(a))) touched.add(folder);
-  }
-
-  // An ancestor's claim covers the same rows as its descendant's and is
-  // overwritten by it, so only the leaves of the touched set are worth issuing.
-  const covered = new Set<string>();
-  for (const folder of touched) {
-    for (const ancestor of ancestors(folder)) {
-      if (touched.has(ancestor)) covered.add(ancestor);
-    }
-  }
-  return [...touched].filter((folder) => !covered.has(folder));
+  return [...byFolder.keys()].filter(isTouched).sort((a, b) => a.split('/').length - b.split('/').length);
 }
 
 type Status = LibrarySyncStatus['status'];
@@ -700,11 +693,8 @@ export class SyncService implements LibraryLifecycleListener {
       }
 
       // A new shoot takes the photographs in its folder, including any a shallower
-      // shoot was holding for want of a closer one. Only the *deepest* shoot at or
-      // under each new folder is restated: a shallower claim over the same rows is
-      // overwritten by it immediately, so issuing both writes every row twice for
-      // nothing - two thirds of the row writes of a first mirroring sync.
-      for (const folder of deepestClaims(wanted, byFolder)) {
+      // shoot was holding for want of a closer one.
+      for (const folder of claimsToRestate(wanted, byFolder)) {
         this.photos.setShootForFolder(library.id, folder, byFolder.get(folder)!);
       }
 

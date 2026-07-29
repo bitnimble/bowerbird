@@ -8,7 +8,7 @@ import { ActionMenu, Button, Heading, ICON, Option, SegmentedControl, Text, Text
 import { libraryLabel } from '../libraries/library_label';
 import { AddShootDialog } from './add_shoot_dialog';
 import { DeleteShootDialog } from './delete_shoot_dialog';
-import type { FolderRow, ShootView } from './shoots_store';
+import { SHOOT_ROW_H, type FolderRow, type ShootView } from './shoots_store';
 
 const VIEWS: Option<ShootView>[] = [
   { value: 'flat', label: 'Flat' },
@@ -44,6 +44,27 @@ export const ShootsPage = observer(function ShootsPage(): JSX.Element {
     return () => observer.disconnect();
   }, [shoots]);
 
+  // Sampled once per frame rather than per event: the scroll position is the one
+  // number here read back off the DOM, and a wheel spin fires far more events
+  // than there are frames to render them in.
+  const pending = useRef(false);
+  const onScroll = (e: React.UIEvent<HTMLDivElement>): void => {
+    const element = e.currentTarget;
+    if (pending.current) return;
+    pending.current = true;
+    requestAnimationFrame(() => {
+      pending.current = false;
+      shoots.setScrollTop(element.scrollTop);
+    });
+  };
+
+  // The element keeps its own scroll position across a re-render, and row four
+  // thousand of one reading says nothing about row four thousand of another, so
+  // both readings start from the top. The presenter has already zeroed the store.
+  useEffect(() => {
+    if (scroller.current != null) scroller.current.scrollTop = 0;
+  }, [libraryId, store.view]);
+
   useEffect(() => {
     shoots.restoreView();
     void shoots.load(libraryId);
@@ -53,11 +74,6 @@ export const ShootsPage = observer(function ShootsPage(): JSX.Element {
   }, [libraryId, shoots, librariesPresenter]);
 
   const library = libraries.byId.get(libraryId);
-
-  function act(row: FolderRow, action: RowAction): void {
-    if (action === 'subfolder') setCreatingIn(row.folderPath);
-    else void shoots.create(libraryId, basename(row.folderPath), parentOf(row.folderPath), 'taken_asc');
-  }
 
   return (
     <div className="pad pad--fill">
@@ -85,7 +101,6 @@ export const ShootsPage = observer(function ShootsPage(): JSX.Element {
       />
       <DeleteShootDialog
         shoot={deleting?.shoot ?? null}
-        photoCount={deleting == null ? 0 : store.photosUnder(deleting.folderPath)}
         onOpenChange={(open) => !open && setDeleting(null)}
         onConfirm={(photos) => {
           const shoot = deleting?.shoot;
@@ -119,13 +134,17 @@ export const ShootsPage = observer(function ShootsPage(): JSX.Element {
         <div
           className="list__scroller"
           ref={scroller}
-          onScroll={(e) => shoots.setScrollTop(e.currentTarget.scrollTop)}
+          onScroll={onScroll}
           tabIndex={0}
           role="list"
           aria-label={`${store.rows.length} folders`}
+          style={{ '--row-h': `${SHOOT_ROW_H}px` } as React.CSSProperties}
         >
           <div className="list__content" role="presentation" style={{ height: store.scrollHeight }}>
             <div className="list__window" role="presentation" style={{ transform: `translateY(${store.visibleTop}px)` }}>
+              {/* Only stable props: a fresh arrow per row per render would defeat
+                  observer's memo and rebuild every mounted row on every scroll
+                  frame, so the row reaches for the presenter itself. */}
               {store.visibleRowsSlice.map((row, i) => (
                 <ShootRow
                   key={row.folderPath}
@@ -134,11 +153,8 @@ export const ShootsPage = observer(function ShootsPage(): JSX.Element {
                   // reader is told "folder 4,051 of 20,000".
                   position={store.visible.from + i + 1}
                   total={store.rows.length}
-                  expanded={store.expanded.has(row.folderPath)}
-                  onToggle={() => void shoots.toggleFolder(row.folderPath)}
-                  onRename={(name) => row.shoot != null && void shoots.rename(row.shoot.id, name)}
-                  onAction={(action) => act(row, action)}
-                  onDelete={() => setDeleting(row)}
+                  onCreateIn={setCreatingIn}
+                  onDelete={setDeleting}
                 />
               ))}
             </div>
@@ -146,11 +162,17 @@ export const ShootsPage = observer(function ShootsPage(): JSX.Element {
         </div>
       </div>
 
-      {store.rows.length === 0 && (
+      {store.loading && store.rows.length === 0 && (
         <div className="empty">
-          <div className="empty__title">No shoots yet</div>
+          <div className="empty__title">Reading the library&apos;s folders…</div>
+        </div>
+      )}
+
+      {store.isEmpty && (
+        <div className="empty">
+          <div className="empty__title">Nothing here yet</div>
           <Text as="p" variant="muted">
-            Switch to All folders to see what is on disk, and make a shoot of any folder from its + menu.
+            This library has no folders holding photographs. Sync it from Settings, or make a shoot with the + above.
           </Text>
         </div>
       )}
@@ -162,35 +184,25 @@ const ShootRow = observer(function ShootRow({
   row,
   position,
   total,
-  expanded,
-  onToggle,
-  onRename,
-  onAction,
+  onCreateIn,
   onDelete,
 }: {
   row: FolderRow;
   position: number;
   total: number;
-  expanded: boolean;
-  onToggle: () => void;
-  onRename: (name: string) => void;
-  onAction: (action: RowAction) => void;
-  onDelete: () => void;
+  onCreateIn: (folderPath: string) => void;
+  onDelete: (row: FolderRow) => void;
 }): JSX.Element {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(row.name);
+  const store = useShootsStore();
+  const { shoots } = usePresenters();
   // A shoot shows its first photo from the moment it has one, which is before
   // the import has built that photo's tile, so the banner is routinely asked for
   // a file that is not there yet.
   const [missingBanner, setMissingBanner] = useState<string | null>(null);
   const bannerId = row.shoot?.banner_photo_id ?? null;
   const banner = bannerId == null || bannerId === missingBanner ? null : bannerId;
-
-  function commit(): void {
-    const next = draft.trim();
-    setEditing(false);
-    if (next !== '' && next !== row.name) onRename(next);
-  }
+  const expanded = store.expanded.has(row.folderPath);
+  const editing = store.renamingPath === row.folderPath;
 
   const options: Option<RowAction>[] = [
     ...(row.shoot == null ? [{ value: 'adopt' as const, label: 'Add as shoot', icon: <Folder size={ICON} /> }] : []),
@@ -199,15 +211,21 @@ const ShootRow = observer(function ShootRow({
 
   return (
     <div
-      className={`list__row${row.shoot == null ? ' list__row--untracked' : ''}`}
+      className={`list__row${row.shoot == null ? ' list__row--untracked' : ''}${editing ? ' list__row--editing' : ''}`}
       role="listitem"
       aria-posinset={position}
       aria-setsize={total}
+      aria-level={row.depth + 1}
     >
       <span className="depth" style={{ width: row.depth * 16 }} />
 
       {row.expandable ? (
-        <Button iconOnly aria-label={expanded ? `Collapse ${row.name}` : `Expand ${row.name}`} onClick={onToggle}>
+        <Button
+          iconOnly
+          aria-label={expanded ? `Collapse ${row.name}` : `Expand ${row.name}`}
+          aria-expanded={expanded}
+          onClick={() => void shoots.toggleFolder(row.folderPath)}
+        >
           {expanded ? <ChevronDown size={ICON} /> : <ChevronRight size={ICON} />}
         </Button>
       ) : (
@@ -228,15 +246,12 @@ const ShootRow = observer(function ShootRow({
             grow
             autoFocus
             label={`Rename ${row.name}`}
-            value={draft}
-            onChange={setDraft}
-            onBlur={commit}
+            value={store.renameDraft}
+            onChange={shoots.setRenameDraft}
+            onBlur={() => void shoots.commitRename()}
             onKeyDown={(e) => {
-              if (e.key === 'Enter') commit();
-              if (e.key === 'Escape') {
-                setDraft(row.name);
-                setEditing(false);
-              }
+              if (e.key === 'Enter') void shoots.commitRename();
+              if (e.key === 'Escape') shoots.cancelRename();
             }}
           />
         ) : (
@@ -255,19 +270,22 @@ const ShootRow = observer(function ShootRow({
         </Button>
       )}
       {row.shoot != null && !editing && (
-        <Button
-          onClick={() => {
-            setDraft(row.name);
-            setEditing(true);
-          }}
-        >
+        <Button onClick={() => shoots.startRename(row.folderPath, row.name)}>
           <Pencil size={ICON} />
           Rename
         </Button>
       )}
-      <ActionMenu trigger={<Plus size={ICON} />} label={`Add to ${row.name}`} options={options} onSelect={onAction} />
+      <ActionMenu
+        trigger={<Plus size={ICON} />}
+        label={`Add to ${row.name}`}
+        options={options}
+        onSelect={(action) => {
+          if (action === 'subfolder') onCreateIn(row.folderPath);
+          else void shoots.adopt(row.folderPath);
+        }}
+      />
       {row.shoot != null && (
-        <Button variant="danger" onClick={onDelete}>
+        <Button variant="danger" onClick={() => onDelete(row)}>
           <Trash2 size={ICON} />
           Delete
         </Button>
@@ -275,12 +293,3 @@ const ShootRow = observer(function ShootRow({
     </div>
   );
 });
-
-function basename(folderPath: string): string {
-  return folderPath.slice(folderPath.lastIndexOf('/') + 1);
-}
-
-function parentOf(folderPath: string): string {
-  const slash = folderPath.lastIndexOf('/');
-  return slash < 0 ? '' : folderPath.slice(0, slash);
-}

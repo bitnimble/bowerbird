@@ -2,8 +2,25 @@ import type { Database } from 'bun:sqlite';
 import type { FolderRule, FolderRuleKind } from '../../schemas/libraries';
 
 // Where a folder differs from what the library's own settings say (DESIGN §4.7).
+//
+// Writes are announced, the way `SettingsRepository` announces its own: an
+// `excluded` rule is half of what the watcher decides which folders to watch by
+// (§9.8), and it is written from three places - the settings page, and both
+// halves of creating and deleting a shoot. A rule that only took effect after a
+// restart would leave an excluded folder waking a sync on every change, and a
+// folder rescued from exclusion unwatched until the daily full sync.
 export class FolderRulesRepository {
+  private readonly listeners: ((libraryId: string) => void)[] = [];
+
   constructor(private readonly db: Database) {}
+
+  onChange(listener: (libraryId: string) => void): void {
+    this.listeners.push(listener);
+  }
+
+  private announce(libraryId: string): void {
+    for (const listener of this.listeners) listener(libraryId);
+  }
 
   listByLibrary(libraryId: string): FolderRule[] {
     return this.db
@@ -27,10 +44,13 @@ export class FolderRulesRepository {
            ON CONFLICT(library_id, folder_path) DO UPDATE SET rule = excluded.rule`,
       )
       .run(libraryId, folderPath, rule);
+    this.announce(libraryId);
   }
 
   clear(libraryId: string, folderPath: string): boolean {
-    return this.db.query('DELETE FROM folder_rules WHERE library_id = ? AND folder_path = ?').run(libraryId, folderPath)
-      .changes > 0;
+    const cleared =
+      this.db.query('DELETE FROM folder_rules WHERE library_id = ? AND folder_path = ?').run(libraryId, folderPath).changes > 0;
+    if (cleared) this.announce(libraryId);
+    return cleared;
   }
 }

@@ -14,10 +14,15 @@ export class ShootsPresenter {
   constructor(private readonly store: ShootsStore) {}
 
   async load(libraryId: string): Promise<void> {
+    // The store outlives the page, so everything derived from the last library
+    // has to go or its folders appear as untracked rows in this one - each with
+    // an "Add as shoot" pointing at a path that may not even exist here.
+    if (this.libraryId !== libraryId) this.forgetLibrary();
     this.libraryId = libraryId;
     this.beginLoad();
     try {
       const [shoots, library] = await Promise.all([api.listShoots(libraryId), api.getLibrary(libraryId)]);
+      if (this.libraryId !== libraryId) return; // navigated away while this was in flight
       runInAction(() => {
         this.store.shoots = shoots;
         // A photo belongs to at most one shoot, so what the shoots do not account
@@ -33,9 +38,24 @@ export class ShootsPresenter {
         }
         this.store.loading = false;
       });
+      // The folders holding no photographs, which no shoot's path implies and
+      // nothing else would ever ask for. Without it "All folders" can only show
+      // what the shoots already say, so a library with none - which is exactly
+      // what mirroring turned off produces - shows an empty page under a message
+      // telling the reader to look here.
+      await this.browse('');
     } catch (err) {
       this.fail(message(err));
     }
+  }
+
+  @action.bound
+  private forgetLibrary(): void {
+    this.store.shoots = [];
+    this.store.browsed = new Map();
+    this.store.expanded = new Set(['']);
+    this.store.scrollTop = 0;
+    this.store.rootPhotoCount = 0;
   }
 
   // Which reading of the folders this is: about the machine you are sitting at
@@ -44,6 +64,9 @@ export class ShootsPresenter {
   @action.bound
   setView(view: ShootView): void {
     this.store.view = view;
+    // Row four thousand of the folder tree says nothing about row four thousand
+    // of the shoots alone, so the scroll starts over with the reading.
+    this.store.scrollTop = 0;
     localStorage.setItem(VIEW_KEY, view);
   }
 
@@ -60,6 +83,34 @@ export class ShootsPresenter {
   }
 
   @action.bound
+  startRename(folderPath: string, current: string): void {
+    this.store.renamingPath = folderPath;
+    this.store.renameDraft = current;
+  }
+
+  @action.bound
+  setRenameDraft(draft: string): void {
+    this.store.renameDraft = draft;
+  }
+
+  @action.bound
+  cancelRename(): void {
+    this.store.renamingPath = null;
+    this.store.renameDraft = '';
+  }
+
+  // Committed against the shoot at the folder being renamed rather than an id
+  // captured when the edit began: a sync landing mid-edit can replace the row.
+  async commitRename(): Promise<void> {
+    const folderPath = this.store.renamingPath;
+    const next = this.store.renameDraft.trim();
+    const shoot = folderPath == null ? undefined : this.store.shootByFolder.get(folderPath);
+    this.cancelRename();
+    if (shoot == null || next === '' || next === shoot.name) return;
+    await this.rename(shoot.id, next);
+  }
+
+  @action.bound
   restoreView(): void {
     const saved = localStorage.getItem(VIEW_KEY);
     if (saved === 'flat' || saved === 'tree' || saved === 'tree_full') this.store.view = saved;
@@ -73,9 +124,17 @@ export class ShootsPresenter {
       return;
     }
     this.expand(folderPath);
-    if (this.libraryId == null || this.store.browsed.has(folderPath)) return;
+    await this.browse(folderPath);
+  }
+
+  private async browse(folderPath: string): Promise<void> {
+    const libraryId = this.libraryId;
+    if (libraryId == null || this.store.browsed.has(folderPath)) return;
     try {
-      const listing = await api.browseLibrary(this.libraryId, folderPath);
+      const listing = await api.browseLibrary(libraryId, folderPath);
+      // A listing that lands after the reader opened another library describes
+      // folders that are not in front of them any more.
+      if (this.libraryId !== libraryId) return;
       this.putBrowsed(
         folderPath,
         listing.directories.map((d) => d.path),
@@ -113,6 +172,15 @@ export class ShootsPresenter {
     }
     await this.load(libraryId);
     return true;
+  }
+
+  // Takes a folder as it stands, photos and all: the shoot's name is the folder's
+  // own, and the server adopts what is already inside it (§8.5).
+  async adopt(folderPath: string): Promise<boolean> {
+    if (this.libraryId == null) return false;
+    const slash = folderPath.lastIndexOf('/');
+    const parentPath = slash < 0 ? '' : folderPath.slice(0, slash);
+    return this.create(this.libraryId, folderPath.slice(slash + 1), parentPath, 'taken_asc');
   }
 
   async rename(shootId: string, name: string): Promise<void> {

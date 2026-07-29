@@ -740,7 +740,7 @@ This service handles the full sync algorithm. See §9 for the detailed algorithm
 | `list(libraryId)` | Returns all shoots in a library. |
 | `addPhotos(shootId, photoIds)` | Moves photo files on disk into the shoot's folder. Updates each photo's `file_path` and `shoot_id` in the DB. A photo can only belong to one shoot; if it already belongs to another, it is moved out of the old shoot folder. If a file with the same name already exists in the destination folder, append a numeric suffix (e.g. `IMG_0001_1.ARW`, `IMG_0001_2.ARW`) so no existing file is overwritten and no two records share a `file_path` (§12.1). |
 | `removePhotos(shootId, photoIds)` | Moves photo files back to the library root. Updates each photo's `file_path` and clears its `shoot_id`. If a file with the same name already exists in the library root, append a numeric suffix (e.g. `IMG_0001_1.ARW`, `IMG_0001_2.ARW`) so no existing file is overwritten and no two records share a `file_path` (§12.1). |
-| `delete(shootId, photos)` | Deletes the shoot record. **No files or folders on disk are touched** (see principle above), whichever disposition is chosen. Child shoots cascade-delete as records. `photos: 'keep'` leaves every photo in the library and clears its `shoot_id` via `ON DELETE SET NULL`, writing a `plain` rule (§4.7) so mirroring does not recreate the shoot on the next sync. `photos: 'remove'` writes an `excluded` rule instead and **hard-deletes** the photo rows under the folder, along with their renditions (via `deletions.ts`, §10.6.1, rather than waiting for the sweep). The originals stay exactly where they are on disk; what goes is the catalogue's record of them, and with it their ratings, verdicts and notes. Clearing the rule later re-imports them as new photos, with new ids and rebuilt renditions. |
+| `delete(shootId, photos)` | Deletes the shoot record. **No files or folders on disk are touched** (see principle above), whichever disposition is chosen. Shoots *beneath* it survive: they are re-parented onto its own parent first, because `parent_id` cascades and mirroring would otherwise rebuild those folders as fresh shoots with default names, losing every label, description, banner and ordering they had. `photos: 'keep'` leaves every photo in the library and clears its `shoot_id` via `ON DELETE SET NULL`, writing a `plain` rule (§4.7) so mirroring does not recreate the shoot on the next sync. `photos: 'remove'` writes an `excluded` rule instead and **hard-deletes** the photo rows under the folder, along with their renditions (via `deletions.ts`, §10.6.1, rather than waiting for the sweep). The originals stay exactly where they are on disk; what goes is the catalogue's record of them, and with it their ratings, verdicts and notes. Clearing the rule later re-imports them as new photos, with new ids and rebuilt renditions. |
 | `update(shootId, updates)` | Updates mutable fields: `name`, `description`, `ordering`. A **name change is metadata only**: the name is a label, so nothing moves on disk and no `folder_path` or `file_path` is rewritten, and it cannot conflict, since a shoot is identified by its folder rather than its name (§4.3). Setting `banner_photo_id` upserts the `shoot_banners` row; clearing it (null) deletes that row; it is not a column on `shoots` (§4.6). |
 
 ### 8.6 Albums Service (`albums_service.ts`)
@@ -1715,6 +1715,7 @@ All boolean query params are parsed with `z.stringbool()`, so `?is_missing=false
 | `GET` | `/api/libraries/:libraryId/shoots` | List shoots in a library |
 | `GET` | `/api/shoots/:id` | Get a shoot |
 | `PATCH` | `/api/shoots/:id` | Update a shoot |
+| `GET` | `/api/shoots/:id/removal` | How many photo records `?photos=remove` would take, counted with the query the delete runs (§18.3.4) |
 | `DELETE` | `/api/shoots/:id` | Delete a shoot; `?photos=keep` (default) or `?photos=remove` decides whether its photographs stay in the library (§8.5) |
 | `POST` | `/api/shoots/:id/photos` | Add photos to a shoot (`PhotoTargetSchema`, §5.3) |
 | `DELETE` | `/api/shoots/:id/photos` | Remove photos from a shoot (`PhotoTargetSchema`) |
@@ -2155,6 +2156,8 @@ The `+` menu on a row is where shoots come from:
 - **Create shoot in subfolder** (every row) opens the surviving dialog for a name and an ordering, and makes the folder.
 
 Deleting a shoot asks what happens to the photographs rather than assuming, since one answer is reversible and the other is not: keep them in the library, or remove them from it. The second states plainly that the files stay on disk, that ratings and verdicts go, and how many photos it is about to be true of.
+
+**That number comes from the server**, and the irreversible button waits for it. What `remove` takes is every row under the folder, which is not the set the page can see: a photo in a subfolder kept `plain` belongs to no shoot and is counted by nobody, and binned photos are excluded from every count on screen - yet both are deleted. A count derived on the client from `photo_count` was smaller than the truth in exactly the cases that matter.
 
 ### 18.4 Culling
 

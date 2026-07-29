@@ -192,19 +192,35 @@ export class ShootsRepository {
   // off the paths rather than tracked: the deepest other shoot in the library
   // whose folder is a prefix of this one's. Applied to the moved shoot and its
   // descendants, which are the only ones whose enclosing folder can have changed.
+  // Range comparisons rather than LIKE: folder_path is the user's own folder
+  // names, and `_` is a LIKE wildcard, so `2024_Japan` would match `2024xJapan`
+  // and adopt an unrelated shoot - which `parent_id`'s ON DELETE CASCADE would
+  // then destroy along with its subtree. '/' is 0x2F and '0' is 0x30, so
+  // [P || '/', P || '0') is exactly the set of paths under P.
   private rederiveParents(shootId: string): void {
     this.db
       .query(
         `UPDATE shoots AS s SET parent_id = (
            SELECT p.id FROM shoots p
             WHERE p.library_id = s.library_id AND p.id <> s.id
-              AND s.folder_path LIKE p.folder_path || '/%'
+              AND s.folder_path >= p.folder_path || '/' AND s.folder_path < p.folder_path || '0'
             ORDER BY length(p.folder_path) DESC LIMIT 1)
          WHERE s.library_id = (SELECT library_id FROM shoots WHERE id = ?)
            AND (s.id = ?
-                OR s.folder_path LIKE (SELECT folder_path FROM shoots WHERE id = ?) || '/%')`,
+                OR (s.folder_path >= (SELECT folder_path FROM shoots WHERE id = ?) || '/'
+                    AND s.folder_path < (SELECT folder_path FROM shoots WHERE id = ?) || '0'))`,
       )
-      .run(shootId, shootId, shootId);
+      .run(shootId, shootId, shootId, shootId);
+  }
+
+  // Hands this shoot's children to its own parent, so deleting it takes only
+  // itself. Without this, `parent_id`'s ON DELETE CASCADE takes the whole subtree
+  // - and mirroring then rebuilds those folders as new shoots with default names,
+  // losing every label, description, banner and ordering the user had given them.
+  reparentChildren(shootId: string): void {
+    this.db
+      .query('UPDATE shoots SET parent_id = (SELECT parent_id FROM shoots WHERE id = ?) WHERE parent_id = ?')
+      .run(shootId, shootId);
   }
 
   delete(id: string): boolean {

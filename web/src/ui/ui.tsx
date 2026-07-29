@@ -63,6 +63,8 @@ export function Text({
   className?: string;
   children: ReactNode;
   title?: string;
+  /** So a control can point at this text with `aria-describedby`. */
+  id?: string;
   style?: React.CSSProperties;
 }): JSX.Element {
   return (

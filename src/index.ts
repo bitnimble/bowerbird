@@ -132,6 +132,13 @@ app.route('/quality-check', new QualityCheckApi(photosService, librariesService,
 // after a restart is a knob nobody trusts.
 const watcher = new LibraryWatcher(librariesRepo, syncService, settingsRepo.get().watch_debounce_ms);
 librariesService.addLifecycleListener(watcher);
+// An excluded folder is half of what the watcher decides what to watch by, and
+// it is written from the settings page and from both halves of creating and
+// deleting a shoot - none of which go through the library (§4.7).
+folderRulesRepo.onChange((libraryId) => {
+  const library = librariesRepo.getById(libraryId);
+  if (library != null) watcher.onLibraryUpdated(library);
+});
 const dailySync = new DailySync(syncService);
 const scheduledPrune = new ScheduledPrune(new PruneService(librariesRepo, photosRepo));
 

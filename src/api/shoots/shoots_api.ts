@@ -21,6 +21,9 @@ export class ShootsApi {
 
     app.patch('/shoots/:id', async (c) => c.json(await this.shoots.update(c.req.param('id'), UpdateShootRequestSchema.parse(await c.req.json()))));
 
+    // Read by the delete dialog before it offers the irreversible half.
+    app.get('/shoots/:id/removal', (c) => c.json({ photos: this.shoots.removalCount(c.req.param('id')) }));
+
     app.delete('/shoots/:id', async (c) => {
       const { photos } = DeleteShootQuerySchema.parse(c.req.query());
       await this.shoots.delete(c.req.param('id'), photos);

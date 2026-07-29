@@ -175,6 +175,14 @@ export class ShootsService {
   //
   // Both write a folder rule (§4.7), and they have to: without one, mirroring
   // recreates the shoot on the next sync and the delete reads as broken.
+  // What deleting this shoot with `photos: 'remove'` would take, answered with
+  // the same query the delete runs so the dialog cannot promise a smaller number
+  // than the one about to be true.
+  removalCount(shootId: string): number {
+    const shoot = this.get(shootId);
+    return this.photos.listUnderFolder(shoot.library_id, shoot.folder_path, true).length;
+  }
+
   // Queued behind any in-flight sync (§9.9), which read the folder rules before it
   // started scanning: a delete landing mid-scan would be invisible to it, and it
   // would mirror the folder straight back into a shoot moments after the delete
@@ -192,6 +200,12 @@ export class ShootsService {
       if (photos === 'keep') {
         this.shoots.transaction(() => {
           this.folderRules.set(library.id, shoot.folder_path, 'plain');
+          // Descendants are re-parented out of the way first: parent_id carries
+          // ON DELETE CASCADE, so they would otherwise go with this shoot - and
+          // then come back on the next sync as fresh mirrored shoots with default
+          // names and no description, banner or ordering. This delete is about one
+          // folder, and it says so on the dialog.
+          this.shoots.reparentChildren(shootId);
           this.shoots.delete(shootId); // shoot_id clears via ON DELETE SET NULL
         });
         return;

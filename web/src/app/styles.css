@@ -1668,11 +1668,24 @@ p.ui-text--mono {
   top: 0;
 }
 
-/* Fixed, because the scroll's height is the row count times this number rather
-   than something measured. Every part of a row has to fit inside it. */
+/* Handed down from SHOOT_ROW_H, because the scroll's height is the row count
+   times that number: the two working it out separately is how a list drifts
+   further out of place the further it is scrolled. Every part of a row has to
+   fit inside it, which is why the rename field is shrunk rather than allowed to
+   grow the row. */
 .list__scroller .list__row {
-  height: 47px;
+  height: var(--row-h);
   box-sizing: border-box;
+}
+
+.list__scroller .list__row .ui-input {
+  height: 24px;
+}
+
+/* A row being renamed trades its subtitle for the field, rather than stacking
+   both and spilling into its neighbours. */
+.list__row--editing .list__body > :not(.ui-input) {
+  display: none;
 }
 
 /* The library root: always present, never deletable, so it reads as the surface
