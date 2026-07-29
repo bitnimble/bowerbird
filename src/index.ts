@@ -19,6 +19,7 @@ import { ImageApi } from './api/image/image_api';
 import { HdrTestApi } from './api/hdr/hdr_test_api';
 import { QualityCheckApi } from './api/quality/quality_check_api';
 import { SettingsApi } from './api/settings/settings_api';
+import { BrowseApi } from './api/browse/browse_api';
 import { SettingsRepository } from './services/settings/settings_repository';
 import { SyncService } from './services/sync/sync_service';
 import { LibraryWatcher } from './services/sync/library_watcher';
@@ -112,6 +113,7 @@ app.use('*', async (c, next) => {
 });
 app.route('/api/events', new EventsApi(processingService).routes);
 app.route('/api/settings', new SettingsApi(settingsRepo).routes);
+app.route('/api/browse', new BrowseApi().routes);
 app.route('/api/libraries', librariesApi.routes);
 app.route('/api', photosApi.routes);
 app.route('/api', shootsApi.routes);
