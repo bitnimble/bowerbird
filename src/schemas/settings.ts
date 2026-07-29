@@ -97,13 +97,22 @@ export const SettingsSchema = z.object({
   // 0.90 puts the same frame's peak at 823 and its greenery at 70.
   hdr_reference_white_nits: z.number().min(1),
   hdr_white_quantile: z.number().min(0).max(1),
-  // SVT-AV1 quality and speed. A still is looked at rather than streamed, so
-  // this is tighter than a video default; 24MP takes about 2.5s at preset 8.
+  // libaom's quantizer and speed, for both HDR media. A still is looked at rather
+  // than streamed, so this is tighter than a video default.
+  //
+  // One scale, and it used to only look like one: the still went to avifenc, whose
+  // `--max` is libaom's quantizer, while the video went to SVT-AV1, whose `-crf` is
+  // its own - so the same number meant two different qualities, and the comment here
+  // named only the second. Both media are libaom now (§10.7), so it means one thing.
+  // `preset` is clamped per encoder rather than narrowed to the tighter of the two:
+  // avifenc's `--speed` takes 0-10, libaom's `-cpu-used` stops at 8.
   hdr_crf: z.number().int().min(0).max(63),
   hdr_preset: z.number().int().min(0).max(10),
-  // AV1 cannot encode a current sensor at native size (SVT-AV1 refuses a 60MP
-  // frame), and this still is for judging HDR on a monitor rather than for
-  // pixel-peeping, which the lossless export already covers. 4K shows 1:1 on
+  // A judging size, not a capability limit. It was both while the video went
+  // through SVT-AV1, which refuses a frame taller than 8704 rows; libaom takes a
+  // 60MP one in either orientation, so what is left is the reason that always
+  // mattered - this still is for judging HDR on a monitor rather than for
+  // pixel-peeping, which the lossless export already covers, and 4K shows 1:1 on
   // the displays that do HDR.
   hdr_max_edge: z.number().int().min(1),
 });

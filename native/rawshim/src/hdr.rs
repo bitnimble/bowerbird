@@ -227,22 +227,89 @@ fn encode_graded(graded: &[u16], width: usize, height: usize, options: &EncodeOp
     // A still goes through ffmpeg only to become y4m: ffmpeg's avif muxer writes no
     // colr box, so the primaries and transfer would be lost, and AVIF has no
     // equivalent of the bitstream filter to put them back. avifenc does the tagging.
-    let y4m_path = format!("{}.y4m", options.output_path);
-    let to_y4m = EncodeOptions { output_path: y4m_path.clone(), ..options.clone() };
-    let result = run(&hdr_args::ffmpeg_args(width as u32, height as u32, &to_y4m), Some(bytes))
-        .and_then(|()| run(&hdr_args::avifenc_args(options, &y4m_path), None));
-    let _ = std::fs::remove_file(&y4m_path);
-    result
+    //
+    // Down a pipe rather than through a file. The y4m is the whole frame uncompressed -
+    // 59MB at 3840 and ~366MB at native resolution - and writing it out only for
+    // avifenc to read it back in is a round trip through the page cache, or through the
+    // disk on a machine that is short of it, for bytes neither process wants kept.
+    let to_pipe = EncodeOptions { output_path: "-".to_string(), ..options.clone() };
+    pipe(
+        &hdr_args::ffmpeg_args(width as u32, height as u32, &to_pipe),
+        &hdr_args::avifenc_args(options, ""),
+        bytes,
+    )
+}
+
+/// Runs `first`, feeding it `stdin_data`, with its stdout piped into `second`.
+///
+/// Both are waited on, and both errors are reported: the interesting failure is
+/// usually the downstream one, but a first stage that died explains a second stage
+/// that saw no frames.
+fn pipe(first: &[String], second: &[String], stdin_data: &[u8]) -> Result<(), String> {
+    let (upstream, up_rest) = first.split_first().ok_or("no command to run")?;
+    let (downstream, down_rest) = second.split_first().ok_or("no command to pipe into")?;
+
+    let mut up = Command::new(upstream)
+        .args(up_rest)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("could not start {upstream}: {e}"))?;
+
+    let feed = up.stdout.take().ok_or("no stdout on the first stage")?;
+    let down = Command::new(downstream)
+        .args(down_rest)
+        .stdin(Stdio::from(feed))
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("could not start {downstream}: {e}"))?;
+
+    let mut stdin = up.stdin.take().ok_or("no stdin on the first stage")?;
+    let (up_out, down_out) = std::thread::scope(|scope| {
+        scope.spawn(move || {
+            let _ = stdin.write_all(stdin_data);
+        });
+        // Both waited on inside the scope, so neither can block on a full pipe while
+        // the other is still being read.
+        let down_out = scope.spawn(|| down.wait_with_output());
+        (up.wait_with_output(), down_out.join())
+    });
+
+    let down_out = down_out
+        .map_err(|_| format!("{downstream} panicked"))?
+        .map_err(|e| format!("{downstream} did not finish: {e}"))?;
+    let up_out = up_out.map_err(|e| format!("{upstream} did not finish: {e}"))?;
+    if !up_out.status.success() {
+        return Err(failure(upstream, &up_out));
+    }
+    if !down_out.status.success() {
+        return Err(failure(downstream, &down_out));
+    }
+    Ok(())
+}
+
+/// A child's exit code and the tail of whatever it had to say about it.
+fn failure(command: &str, output: &std::process::Output) -> String {
+    let text = String::from_utf8_lossy(&output.stderr);
+    let tail: Vec<&str> = text.trim().lines().rev().take(3).collect();
+    let tail = tail.into_iter().rev().collect::<Vec<_>>().join("; ");
+    format!(
+        "{command} failed ({}): {}",
+        output.status.code().unwrap_or(-1),
+        if tail.is_empty() { "no output" } else { &tail },
+    )
 }
 
 /// Grades and encodes one HDR rendition, and its one-frame video twin where one is
 /// asked for.
 ///
-/// The twin shares the grade. Both media run the same resize, warp and tone map and
-/// differ only in encoder, so the only thing that can separate them is size - and only
-/// SVT-AV1's 8704-row ceiling does that, which nothing but a native-resolution portrait
-/// frame reaches. Encoding them as two calls regraded the frame for the second, paying
-/// for the most expensive stage of the pipeline twice on every HDR import.
+/// The twin shares the grade outright. Both media run the same resize, warp and tone
+/// map, and now that the video is libaom rather than SVT-AV1 there is no encoder
+/// ceiling to make them different sizes either - so one graded frame serves both,
+/// always. It used to be regraded for the second encode, paying for the most expensive
+/// stage of the pipeline twice on every HDR import.
 pub fn encode_pair(
     source: &Source<'_>,
     options: &EncodeOptions,
@@ -257,15 +324,6 @@ pub fn encode_pair(
     };
     let video =
         EncodeOptions { medium: Medium::Video, output_path: video_path.to_string(), ..options.clone() };
-
-    let size = hdr_args::target_size(source.width as u32, source.height as u32, &video);
-    if size.width as usize != width || size.height as usize != height {
-        // The ceiling bit. Same levels, so the two still agree about where diffuse
-        // white and the scene peak sit; only the resize below them differs.
-        encode_graded(&frame, width, height, options)?;
-        let (frame, width, height) = graded_with(source, &video, matched, levels);
-        return encode_graded(&frame, width, height, &video);
-    }
 
     // Together rather than one after the other. Both only read the graded frame, and
     // both are mostly waiting on a child process, so the pair finishes in about the

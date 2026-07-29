@@ -128,17 +128,10 @@ fn target_for(variant: Variant, medium: Medium) -> Target {
 /// zscale names the identity matrix `gbr` and rejects `rgb` outright.
 const RGB_MATRIX: &str = "gbr";
 
-/// SVT-AV1's constraint, stated in its own words: "Source Height must be less than
-/// or equal to 8704". There is no matching width limit - 12288 wide encodes fine -
-/// so it is portrait frames that hit it, and a 60MP one does.
-///
-/// The asymmetry means a tall frame could be encoded rotated and turned back in the
-/// client, keeping the last 9% of its height. Not done: it is 9% of linear
-/// resolution on a view already past any display's row count, and the obvious way to
-/// signal the rotation - the MP4 display matrix - is exactly what Firefox 153 lists
-/// as "not shown as HDR", so it would have to be CSS in the one browser this file
-/// exists for.
-const MAX_VIDEO_HEIGHT: f64 = 8704.0;
+/// libaom's ceiling on `-cpu-used`. avifenc's `--speed` takes 0-10 and maps its own
+/// way in, so the two encoders are clamped separately rather than the setting being
+/// narrowed to the tighter of them.
+const MAX_CPU_USED: i32 = 8;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Size {
@@ -160,24 +153,16 @@ pub fn fitted(width: u32, height: u32, max_edge: f64) -> Size {
     Size { width: even(f64::from(width) * scale), height: even(f64::from(height) * scale) }
 }
 
-pub fn fitted_for_video(width: u32, height: u32, max_edge: f64) -> Size {
-    let first = fitted(width, height, max_edge);
-    if f64::from(first.height) <= MAX_VIDEO_HEIGHT {
-        return first;
-    }
-    Size {
-        width: even(f64::from(first.width) * (MAX_VIDEO_HEIGHT / f64::from(first.height))),
-        height: MAX_VIDEO_HEIGHT as u32,
-    }
-}
-
-/// What this rendition ends up as. Video has an encoder ceiling on top of the
-/// requested edge; a still does not.
+/// What this rendition ends up as - the requested edge, whichever medium asks.
+///
+/// The video used to have an encoder ceiling on top of it: SVT-AV1 refuses a source
+/// taller than 8704 rows, so a native-resolution portrait frame was squashed to fit and
+/// lost the last 9% of its height. libaom takes either orientation - measured, 6336x9504
+/// encodes in 721ms where SVT-AV1 declines it outright - so moving the video off SVT
+/// gave that back and removed the one case where a still and its twin could differ in
+/// size, which is the one case that needed grading twice.
 pub fn target_size(width: u32, height: u32, options: &EncodeOptions) -> Size {
-    match options.medium {
-        Medium::Video => fitted_for_video(width, height, options.max_edge),
-        _ => fitted(width, height, options.max_edge),
-    }
+    fitted(width, height, options.max_edge)
 }
 
 /// A number as JavaScript's `String()` would render it, since these strings are
@@ -189,16 +174,6 @@ fn num(value: f64) -> String {
         return format!("{}", value as i64);
     }
     format!("{value}")
-}
-
-/// Rec.2020 primaries and the D65 white point, as SMPTE ST 2086 expects them.
-fn mastering_display(peak_nits: f64) -> String {
-    format!(
-        "mastering-display=G(0.265,0.690)B(0.150,0.060)R(0.680,0.320)WP(0.3127,0.3290)L({},0.0001):content-light={},{}",
-        num(peak_nits),
-        num(peak_nits),
-        num((peak_nits / 2.0).round()),
-    )
 }
 
 /// The still is 4:4:4. It is a photograph, and 4:2:0 keeps luma at full resolution
@@ -303,15 +278,27 @@ pub fn ffmpeg_args(width: u32, height: u32, options: &EncodeOptions) -> Vec<Stri
         target.primaries.cicp, target.transfer.cicp, target.matrix.cicp,
     );
 
-    // SVT-AV1, which does Profile 0 only - exactly what is wanted here, and it is
-    // 2.4x faster than libaom and the only one of the two that can carry the
-    // mastering-display and content-light metadata through ffmpeg.
-    for arg in ["-c:v", "libsvtav1", "-preset"] {
+    // libaom in all-intra mode, which is what a one-frame video actually is.
+    //
+    // This was SVT-AV1, on the reasoning that it is 2.4x faster than libaom - which is
+    // true of libaom driven the way ffmpeg drives it by default, and beside the point.
+    // SVT-AV1 is built for sequences and cannot use the inter-frame parallelism its
+    // threading is designed around when handed a single frame; `-usage allintra` is
+    // what avifenc has been doing to libaom for the still all along. Measured at 3840
+    // on a 24MP frame, at matched quality (SSIM 0.97998 against 0.97986): 233ms against
+    // 1175ms, for a file of the same size.
+    //
+    // It also means both media now go through libaom, so `avifenc` is here for its
+    // container rather than its encoder - see `avifenc_args`.
+    for arg in ["-c:v", "libaom-av1", "-usage", "allintra", "-row-mt", "1", "-tiles", "2x2", "-cpu-used"] {
         args.push(arg.to_string());
     }
-    args.push(options.preset.to_string());
-    args.push("-crf".to_string());
-    args.push(options.crf.to_string());
+    args.push(options.preset.min(MAX_CPU_USED).to_string());
+    // `-b:v 0` is what puts libaom in constant-quality mode; without it `-crf` is a
+    // ceiling on a bitrate target rather than the quality knob it reads as.
+    for arg in ["-crf", &options.crf.to_string(), "-b:v", "0"] {
+        args.push(arg.to_string());
+    }
     for (flag, value) in [
         ("-color_primaries", target.primaries.name),
         ("-color_trc", target.transfer.name),
@@ -321,14 +308,11 @@ pub fn ffmpeg_args(width: u32, height: u32, options: &EncodeOptions) -> Vec<Stri
         args.push(flag.to_string());
         args.push(value.to_string());
     }
-    // SMPTE ST 2086 and MaxCLL/MaxFALL. Declared rather than measured: they are a
-    // hint for a display's tone mapping, and a histogram pass would not change what
-    // a panel does with one still. The SDR reference gets none, so there is nothing
-    // for it to be tone-mapped against.
-    if options.variant != Variant::Sdr {
-        args.push("-svtav1-params".to_string());
-        args.push(mastering_display(options.peak_nits));
-    }
+    // The SMPTE ST 2086 mastering-display and MaxCLL/MaxFALL block went with SVT-AV1,
+    // which reached it through `-svtav1-params` and which libaom has no equivalent for.
+    // No loss that anything reads: they are a hint for a display's tone mapping, and
+    // Firefox 153 - the only browser this file exists for - does none. The CICP below
+    // is the load-bearing signalling, and it survives.
     args.push("-bsf:v".to_string());
     args.push(metadata);
     // Seekable and decodable from the first byte, since it is displayed rather than
@@ -339,12 +323,16 @@ pub fn ffmpeg_args(width: u32, height: u32, options: &EncodeOptions) -> Vec<Stri
     args
 }
 
+/// The still's encode. `y4m_path` empty reads the frame from stdin instead of a file.
+///
+/// avifenc is here for its **container**, not its encoder: both media go through libaom
+/// now, and what avifenc adds is an explicit nclx `colr` box, which is what Chrome reads
+/// to decide a still is HDR. ffmpeg's avif muxer writes none, and AVIF has no equivalent
+/// of the bitstream filter that repairs it on the video side.
 pub fn avifenc_args(options: &EncodeOptions, y4m_path: &str) -> Vec<String> {
     let target = target_for(options.variant, options.medium);
     let mut args: Vec<String> = Vec::new();
     args.push("avifenc".to_string());
-    // The whole point of routing through avifenc: an explicit nclx colr box, which
-    // is what Chrome reads to decide a still is HDR.
     args.push("--cicp".to_string());
     args.push(format!("{}/{}/{}", target.primaries.cicp, target.transfer.cicp, target.matrix.cicp));
     for arg in ["--range", "limited", "--depth", "10", "--yuv"] {
@@ -361,10 +349,19 @@ pub fn avifenc_args(options: &EncodeOptions, y4m_path: &str) -> Vec<String> {
     args.push("--max".to_string());
     args.push(options.crf.to_string());
     // Single-threaded by default, and it is most of the encode time: 9.6s against
-    // 0.5s on a 24MP frame.
+    // 0.5s on a 24MP frame. The threads only go to work once there is something to
+    // divide, though - libaom parallelises across tiles, and with one tile `--jobs
+    // all` buys much less than it looks: 378ms to 265ms on a 3840px frame once the
+    // frame is tiled, for a file the same size to within 2kB.
     args.push("--jobs".to_string());
     args.push("all".to_string());
-    args.push(y4m_path.to_string());
+    args.push("--autotiling".to_string());
+    if y4m_path.is_empty() {
+        // Must come before the output path, and forbids an input one.
+        args.push("--stdin".to_string());
+    } else {
+        args.push(y4m_path.to_string());
+    }
     args.push(options.output_path.clone());
     args
 }
@@ -402,11 +399,16 @@ mod tests {
     }
 
     #[test]
-    fn a_tall_video_meets_the_encoder_ceiling_and_a_still_does_not() {
-        // SVT-AV1 refuses a source taller than 8704, so only the video is capped.
-        let video = fitted_for_video(6336, 9504, f64::INFINITY);
-        assert_eq!(video.height, 8704);
-        assert_eq!(fitted(6336, 9504, f64::INFINITY), Size { width: 6336, height: 9504 });
+    fn a_tall_video_keeps_its_full_height_now_that_the_encoder_takes_one() {
+        // SVT-AV1 refused a source taller than 8704 rows, so a native-resolution
+        // portrait frame was squashed to fit and lost the last 9% of its height.
+        // libaom takes either orientation - 6336x9504 encodes in 721ms where SVT
+        // declines it outright - so the video is the same size as the still beside it,
+        // which is what lets the two share one graded frame in every case.
+        let video = options(Variant::Pq, Medium::Video, f64::INFINITY);
+        let still = options(Variant::Pq, Medium::Still, f64::INFINITY);
+        assert_eq!(target_size(6336, 9504, &video), Size { width: 6336, height: 9504 });
+        assert_eq!(target_size(6336, 9504, &video), target_size(6336, 9504, &still));
     }
 
     #[test]
@@ -430,10 +432,39 @@ mod tests {
     }
 
     #[test]
-    fn the_sdr_reference_gets_no_pq_transfer_and_no_mastering_metadata() {
+    fn the_sdr_reference_gets_no_pq_transfer() {
         let args = ffmpeg_args(800, 533, &options(Variant::Sdr, Medium::Video, 3840.0));
         assert!(!args.iter().any(|a| a.contains("npl=")), "npl is meaningless without PQ");
-        assert!(!args.iter().any(|a| a == "-svtav1-params"), "nothing to tone-map against");
+    }
+
+    #[test]
+    fn the_video_is_libaom_in_all_intra_at_constant_quality() {
+        // Three flags that look incidental and are not. `allintra` is the whole
+        // speedup - a one-frame video is an intra frame, and SVT-AV1 spent 5x as long
+        // looking for the inter-frame parallelism that is not there. `-b:v 0` is what
+        // makes `-crf` mean constant quality rather than a cap on a bitrate target.
+        // And libaom parallelises across tiles, so without them the threads idle.
+        let args = ffmpeg_args(4024, 6024, &options(Variant::Pq, Medium::Video, 3840.0));
+        let at = |flag: &str| args.iter().position(|a| a == flag).map(|i| args[i + 1].clone());
+        assert_eq!(at("-c:v").as_deref(), Some("libaom-av1"));
+        assert_eq!(at("-usage").as_deref(), Some("allintra"));
+        assert_eq!(at("-b:v").as_deref(), Some("0"));
+        assert_eq!(at("-tiles").as_deref(), Some("2x2"));
+        // libaom's `-cpu-used` stops at 8 where avifenc's `--speed` takes 10, so the
+        // shared setting is clamped per encoder rather than narrowed to the tighter.
+        let fast = ffmpeg_args(800, 533, &EncodeOptions { preset: 10, ..options(Variant::Pq, Medium::Video, 3840.0) });
+        assert_eq!(fast.iter().position(|a| a == "-cpu-used").map(|i| fast[i + 1].clone()).as_deref(), Some("8"));
+    }
+
+    #[test]
+    fn a_still_reads_the_frame_from_stdin_when_no_y4m_is_named() {
+        // The y4m is the whole frame uncompressed - ~366MB at native resolution - so
+        // it goes down a pipe rather than through a file. avifenc requires `--stdin`
+        // before the output path and forbids an input one alongside it.
+        let args = avifenc_args(&options(Variant::Pq, Medium::Still, 3840.0), "");
+        let stdin = args.iter().position(|a| a == "--stdin").expect("--stdin");
+        assert_eq!(stdin, args.len() - 2, "must be the last flag before the output path");
+        assert!(args.iter().any(|a| a == "--autotiling"), "libaom needs tiles to use its threads");
     }
 
     #[test]

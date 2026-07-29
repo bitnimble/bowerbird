@@ -389,8 +389,9 @@ unsafe fn hdr_source<'a>(
 /// the graded frame is ~115MB at 24MP and ~366MB at 61MP.
 ///
 /// The twin is named here rather than encoded by a second call because the two share
-/// the grade: only SVT-AV1's row ceiling can give them different sizes, and nothing
-/// but a native-resolution portrait frame reaches it. An empty string asks for no twin.
+/// the grade outright - same resize, same warp, same tone map, and since the video
+/// moved off SVT-AV1 there is no encoder row ceiling to make them different sizes
+/// either. An empty string asks for no twin.
 ///
 /// `image` must be a 16-bit `rec2020-linear` decode, and `matched` a match from
 /// `bb_fit_hdr_match` or null for a neutral grade. Both are passed rather than derived
