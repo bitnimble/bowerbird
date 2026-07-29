@@ -213,16 +213,21 @@ interface DetailRow extends SummaryRow {
 // `date_taken IS NULL` first keeps NULL capture dates last in both directions (DESIGN §5.1).
 // `prefix` is the table's alias in the query being built, since the processing
 // queue joins photos as `p` and orders by the same rule the grid reads by.
+// The `id` tiebreak follows the direction of the sort it breaks, so a descending
+// listing is the ordering index walked backwards rather than a temp b-tree over
+// the whole library. Any total order will do - what matters is only that two
+// separate LIMIT/OFFSET queries agree about which photo sits at which position
+// (§18.3.3), which a tiebreak in either direction gives.
 function orderByClause(ordering: Ordering, prefix = 'photos.'): string {
   switch (ordering) {
     case 'added_asc':
       return `${prefix}date_added ASC, ${prefix}id ASC`;
     case 'added_desc':
-      return `${prefix}date_added DESC, ${prefix}id ASC`;
+      return `${prefix}date_added DESC, ${prefix}id DESC`;
     case 'taken_asc':
       return `${prefix}date_taken IS NULL, ${prefix}date_taken ASC, ${prefix}id ASC`;
     case 'taken_desc':
-      return `${prefix}date_taken IS NULL, ${prefix}date_taken DESC, ${prefix}id ASC`;
+      return `${prefix}date_taken IS NULL, ${prefix}date_taken DESC, ${prefix}id DESC`;
   }
 }
 
@@ -762,10 +767,17 @@ export class PhotosRepository {
     return { photos: rows.map((r) => toSummary(r, ordering)), total };
   }
 
-  // The ids at a run of positions in the same filtered, ordered listing the grid
+  // The ids at runs of positions in the same filtered, ordered listing the grid
   // is built from, which is how a selection made by position is acted on without
-  // any of those ids ever reaching a client (§18.3.3). One query per run, and a
-  // run costs the same whether it covers ten photos or a hundred thousand.
+  // any of those ids ever reaching a client (§18.3.3).
+  //
+  // One query for the whole selection, not one per run. A run costs the same
+  // whether it covers ten photos or a hundred thousand, but the *sort* costs the
+  // whole collection every time it is asked for - so resolving five hundred
+  // scattered picks as five hundred `LIMIT/OFFSET` queries meant five hundred
+  // sorts of the library, which at a million photos is seven minutes of
+  // uninterruptible server for a few hundred ctrl-clicks. Numbering the rows
+  // once and reading the runs out of that numbering is a single sort.
   private idsAt(
     fromWhere: string,
     baseParams: string[],
@@ -773,14 +785,22 @@ export class PhotosRepository {
     ranges: SelectionRanges,
     filters: PhotoListFilters,
   ): string[] {
+    if (ranges.length === 0) return [];
     const { where, params } = this.scoped(fromWhere, baseParams, filters);
-    const query = this.db.query(`SELECT id ${where} ORDER BY ${orderByClause(ordering)} LIMIT ? OFFSET ?`);
-    const ids: string[] = [];
-    for (const { start, end } of ranges) {
-      const rows = query.all(...params, end - start + 1, start) as { id: string }[];
-      for (const row of rows) ids.push(row.id);
-    }
-    return ids;
+    // The runs are ascending and disjoint (`PhotoSelectionSchema`), so the last
+    // one's end bounds the numbering: nothing past it is ever asked for.
+    const last = ranges[ranges.length - 1]!.end;
+    const spans = ranges.map(() => 'position BETWEEN ? AND ?').join(' OR ');
+    const bounds = ranges.flatMap(({ start, end }) => [start, end]);
+    const rows = this.db
+      .query(
+        `SELECT id FROM (
+           SELECT id, ROW_NUMBER() OVER (ORDER BY ${orderByClause(ordering)}) - 1 AS position
+           ${where} LIMIT ?
+         ) WHERE ${spans}`,
+      )
+      .all(...params, last + 1, ...bounds) as { id: string }[];
+    return rows.map((row) => row.id);
   }
 
   private scoped(

@@ -121,12 +121,28 @@ describe('PhotosService.listByLibrary', () => {
 describe('PhotosService.listMissing', () => {
   it('delegates to listByLibrary with is_missing=true', () => {
     const { service, photos } = build({ libraries: { getById: jest.fn(() => library) } });
-    service.listMissing('lib', { offset: 0, limit: 100 });
+    service.listMissing('lib', { offset: 0, limit: 100, include_deleted: false });
     expect(photos.listByLibrary).toHaveBeenCalledWith('lib', 'added_asc', 0, 100, {
       includeDeleted: false,
       isMissing: true,
       needsTile: undefined,
     });
+  });
+
+  // It takes the whole listing query, not just pagination. A client acting on a
+  // selection made in this view states the filters it was viewing under
+  // (§18.3.3), so filters dropped here would resolve a different set of photos
+  // than the grid ever showed.
+  it('carries the rest of the filters through', () => {
+    const { service, photos } = build({ libraries: { getById: jest.fn(() => library) } });
+    service.listMissing('lib', { offset: 0, limit: 100, include_deleted: false, rated: true, triage: ['picked'], q: 'DSC' });
+    expect(photos.listByLibrary).toHaveBeenCalledWith(
+      'lib',
+      'added_asc',
+      0,
+      100,
+      expect.objectContaining({ isMissing: true, rated: true, triage: ['picked'], search: 'DSC' }),
+    );
   });
 });
 

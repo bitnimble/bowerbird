@@ -367,7 +367,10 @@ export class PhotosStore {
   @computed get estimatedBlockHeight(): number {
     let total = 0;
     let measured = 0;
-    for (const height of this.blockHeights.values()) {
+    for (const [block, height] of this.blockHeights) {
+      // The last block holds whatever is left over, so its height describes a
+      // part-block and would drag every estimate below it low.
+      if (block === this.blockCount - 1) continue;
       total += height;
       measured++;
     }
@@ -423,10 +426,11 @@ export class PhotosStore {
       return block >= from && block < to ? null : (this.blockTops[block] ?? 0);
     }
     const top = Math.floor(this.focusIndex / this.columns) * this.rowHeight;
+    // The cell, not the row pitch: the gap under it is not part of the tile, and
+    // scrolling to clear it would overshoot by one gap every time.
+    const bottom = top + this.rowHeight - GRID_GAP;
     if (top < this.scrollTop) return top;
-    if (top + this.rowHeight > this.scrollTop + this.viewportHeight) {
-      return Math.max(0, top + this.rowHeight - this.viewportHeight);
-    }
+    if (bottom > this.scrollTop + this.viewportHeight) return Math.max(0, bottom - this.viewportHeight);
     return null;
   }
 

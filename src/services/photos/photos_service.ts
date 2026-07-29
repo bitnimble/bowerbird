@@ -2,7 +2,7 @@ import { existsSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { AppError } from '../../errors';
 import { Logger } from '../../logger';
-import type { Ordering, Pagination } from '../../schemas/common';
+import type { Ordering } from '../../schemas/common';
 import type { Library } from '../../schemas/libraries';
 import type { PhotoDetail, PhotoListQuery, PhotoListResponse, PhotoSelection, PhotoTarget, UpdatePhotoRequest } from '../../schemas/photos';
 import { deleteGeneratedFile } from '../../utils/deletions';
@@ -173,9 +173,9 @@ export class PhotosService {
     );
   }
 
-  listMissing(libraryId: string, pagination: Pagination): PhotoListResponse {
+  listMissing(libraryId: string, query: PhotoListQuery): PhotoListResponse {
     return this.listByLibrary(libraryId, {
-      ...pagination,
+      ...query,
       include_deleted: false,
       is_missing: true,
     });

@@ -1,5 +1,4 @@
 import { Hono } from 'hono';
-import { PaginationSchema } from '../../schemas/common';
 import { PhotoListQuerySchema, PhotoTargetSchema, UpdatePhotoRequestSchema } from '../../schemas/photos';
 import { AppError } from '../../errors';
 import { isRendition } from '../../services/processing/renditions';
@@ -18,9 +17,13 @@ export class PhotosApi {
   ) {
     const app = new Hono();
 
+    // The same query as any other listing, not just pagination: a client acting
+    // on a selection made here states the filters it was viewing under
+    // (§18.3.3), so a route that silently dropped them would resolve a different
+    // set of photos than the one on screen.
     app.get('/libraries/:libraryId/photos/missing', (c) => {
-      const pagination = PaginationSchema.parse(c.req.query());
-      return c.json(this.service.listMissing(c.req.param('libraryId'), pagination));
+      const query = PhotoListQuerySchema.parse(c.req.query());
+      return c.json(this.service.listMissing(c.req.param('libraryId'), query));
     });
 
     app.get('/libraries/:libraryId/photos', (c) => {

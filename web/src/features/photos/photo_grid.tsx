@@ -397,16 +397,19 @@ const GridScroller = observer(function GridScroller(): JSX.Element {
 
   const onMeasured = useCallback(
     (block: number, height: number): void => {
-      const previous = store.blockHeights.get(block) ?? store.estimatedBlockHeight;
-      if (Math.abs(previous - height) < 0.5) return;
-      const top = store.blockTops[block] ?? 0;
+      if (Math.abs((store.blockHeights.get(block) ?? store.estimatedBlockHeight) - height) < 0.5) return;
+      // Anchored on the first block on screen rather than on the block that
+      // measured. One measurement moves the average, and the average is what
+      // every *unmeasured* block's height is - so a block reporting 600 where
+      // 200 was assumed lifts every unmeasured block above the reader too, which
+      // is a far larger push than its own difference. The anchor's top before
+      // and after already accounts for all of it.
+      const anchor = store.visibleBlocks.from;
+      const before = store.blockTops[anchor] ?? 0;
       photos.measuredBlock(block, height);
-      // A block above the viewport turning out taller than the estimate the
-      // scroll was built from pushes everything below it down, photos being
-      // looked at included. Hand the difference back to the scroll so the view
-      // stays where the reader left it.
+      const shifted = (store.blockTops[anchor] ?? 0) - before;
       const element = scroller.current;
-      if (element != null && top + previous <= store.scrollTop) element.scrollTop = store.scrollTop + height - previous;
+      if (element != null && shifted !== 0) element.scrollTop = Math.max(0, store.scrollTop + shifted);
     },
     [store, photos],
   );

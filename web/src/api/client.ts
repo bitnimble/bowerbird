@@ -57,13 +57,14 @@ interface ErrorEnvelope {
   error?: { code?: string; message?: string };
 }
 
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+async function request<T>(method: string, path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
   let res: Response;
   try {
     res = await fetch(`${BASE}${path}`, {
       method,
       headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
       body: body === undefined ? undefined : JSON.stringify(body),
+      signal,
     });
   } catch (err) {
     // fetch only rejects on transport failure, so this is "API unreachable",
@@ -118,10 +119,13 @@ export const api = {
   cancelSync: (id: string): Promise<void> => request('DELETE', `/api/libraries/${id}/sync`),
   getSyncStatus: (id: string): Promise<LibrarySyncStatus> => request('GET', `/api/libraries/${id}/sync/status`),
 
-  listLibraryPhotos: (libraryId: string, params: PhotoListParams): Promise<PhotoListResponse> =>
-    request('GET', `/api/libraries/${libraryId}/photos${query(params)}`),
-  listMissingPhotos: (libraryId: string, params: PhotoListParams): Promise<PhotoListResponse> =>
-    request('GET', `/api/libraries/${libraryId}/photos/missing${query(params)}`),
+  // The list calls take a signal because a scroll abandons blocks faster than
+  // they answer: without it every request a flick started stays on the wire,
+  // competing with the ones the reader is actually waiting for.
+  listLibraryPhotos: (libraryId: string, params: PhotoListParams, signal?: AbortSignal): Promise<PhotoListResponse> =>
+    request('GET', `/api/libraries/${libraryId}/photos${query(params)}`, undefined, signal),
+  listMissingPhotos: (libraryId: string, params: PhotoListParams, signal?: AbortSignal): Promise<PhotoListResponse> =>
+    request('GET', `/api/libraries/${libraryId}/photos/missing${query(params)}`, undefined, signal),
   getPhoto: (id: string): Promise<PhotoDetail> => request('GET', `/api/photos/${id}`),
   updatePhoto: (id: string, body: UpdatePhotoRequest): Promise<PhotoDetail> => request('PATCH', `/api/photos/${id}`, body),
   // Every bulk call names its photos either by id or by position in a filtered
@@ -145,8 +149,8 @@ export const api = {
   addPhotosToShoot: (id: string, target: PhotoTarget): Promise<void> => request('POST', `/api/shoots/${id}/photos`, target),
   removePhotosFromShoot: (id: string, target: PhotoTarget): Promise<void> =>
     request('DELETE', `/api/shoots/${id}/photos`, target),
-  listShootPhotos: (id: string, params: PhotoListParams): Promise<PhotoListResponse> =>
-    request('GET', `/api/shoots/${id}/photos${query(params)}`),
+  listShootPhotos: (id: string, params: PhotoListParams, signal?: AbortSignal): Promise<PhotoListResponse> =>
+    request('GET', `/api/shoots/${id}/photos${query(params)}`, undefined, signal),
 
   listAlbums: (): Promise<Album[]> => request('GET', '/api/albums'),
   createAlbum: (body: CreateAlbumRequest): Promise<Album> => request('POST', '/api/albums', body),
@@ -155,8 +159,8 @@ export const api = {
   addPhotosToAlbum: (id: string, target: PhotoTarget): Promise<void> => request('POST', `/api/albums/${id}/photos`, target),
   removePhotosFromAlbum: (id: string, target: PhotoTarget): Promise<void> =>
     request('DELETE', `/api/albums/${id}/photos`, target),
-  listAlbumPhotos: (id: string, params: PhotoListParams): Promise<PhotoListResponse> =>
-    request('GET', `/api/albums/${id}/photos${query(params)}`),
+  listAlbumPhotos: (id: string, params: PhotoListParams, signal?: AbortSignal): Promise<PhotoListResponse> =>
+    request('GET', `/api/albums/${id}/photos${query(params)}`, undefined, signal),
 };
 
 // `version` is appended only once renditions have been rebuilt in this session:

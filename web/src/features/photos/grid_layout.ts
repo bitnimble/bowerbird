@@ -45,7 +45,13 @@ export function gridRowHeight(width: number, columns: number): number {
 
 export function visibleRows(scrollTop: number, viewportHeight: number, rowHeight: number, rowCount: number): Span {
   if (rowCount <= 0 || rowHeight <= 0) return { from: 0, to: 0 };
-  const from = Math.max(0, Math.floor(scrollTop / rowHeight) - OVERSCAN_ROWS);
+  // Clamped at the top as well as the bottom: the scroll position is sampled a
+  // frame behind the content height, so binning most of a library leaves a
+  // scrollTop pointing past the end of the collection it now describes. Read
+  // unclamped that produced `from > to`, which renders nothing and asks for no
+  // blocks - a grid that has silently given up.
+  const last = rowCount - 1;
+  const from = Math.min(last, Math.max(0, Math.floor(scrollTop / rowHeight) - OVERSCAN_ROWS));
   const to = Math.min(rowCount, Math.ceil((scrollTop + viewportHeight) / rowHeight) + OVERSCAN_ROWS);
   return { from, to: Math.max(from + 1, to) };
 }

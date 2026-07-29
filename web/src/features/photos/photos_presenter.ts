@@ -84,6 +84,9 @@ export class PhotosPresenter {
   // a collection that no longer exists, so it is dropped rather than written at
   // an index that now holds something else.
   private generation = 0;
+  // The re-read in flight, so the next one queues behind it rather than racing
+  // it (`refresh`).
+  private refreshing: Promise<void> = Promise.resolve();
   // Photos already asked for on-demand build. A stage that fails, is re-mounted
   // and fails again reports missing each time: without this every one of them
   // would queue the same job again.
@@ -730,7 +733,18 @@ export class PhotosPresenter {
   // under it, so every block is re-read. The rows themselves are left on screen
   // in the meantime: they are replaced in place as the answers land, which is
   // what keeps a bin, a restore or a sync poll from blanking the grid.
-  private async refresh(): Promise<void> {
+  //
+  // One at a time, always. Two of these overlap routinely - a sync poll ticking
+  // while a verdict is being set - and each rebases the selection against a
+  // snapshot the other has already moved, so the same shift is applied twice and
+  // the selection ends up naming photographs nobody chose.
+  private refresh(): Promise<void> {
+    const next = this.refreshing.then(() => this.readAgain());
+    this.refreshing = next.catch(() => undefined);
+    return next;
+  }
+
+  private async readAgain(): Promise<void> {
     if (this.store.source == null) return;
     // Where every row this client can name sat before the re-read. A scan
     // inserting under an open gallery renumbers positions, and the selection and
@@ -742,7 +756,11 @@ export class PhotosPresenter {
     this.invalidate();
     const blocks = this.refreshBlocks(held);
     await this.ensureBlocks(blocks);
-    this.rebasePositions(before, new Set(blocks), whole);
+    // Only the blocks that came back. A request that failed, or that a newer
+    // generation overtook, left its old rows sitting where they were - sampling
+    // those would report a move of zero that never happened.
+    const landed = blocks.filter((block) => held.has(block) && this.blocks.get(block) === 'loaded');
+    this.rebasePositions(before, landed, whole);
   }
 
   // What to re-read: what is on screen, plus the blocks the selection covers
@@ -762,40 +780,37 @@ export class PhotosPresenter {
   // Puts the selection and the cursor back on the photographs they were on,
   // against a listing whose positions may have moved under them.
   @action.bound
-  private rebasePositions(before: Map<string, number>, fetched: Set<number>, whole: boolean): void {
+  private rebasePositions(before: Map<string, number>, landed: number[], whole: boolean): void {
     // "Everything" survives as everything, including whatever arrived: it needs
     // no samples, and it is the one selection whose meaning is not a position.
     if (whole) {
       this.store.selection = SelectionRanges.of(0, this.store.total - 1);
       return;
     }
+    // The old positions this re-read can actually speak for: the blocks it both
+    // held rows for and read back. Everywhere else, a gap in the samples is
+    // indistinguishable from a removal, so nothing is claimed (`rebase`).
+    let domain = SelectionRanges.EMPTY;
+    for (const block of landed) domain = domain.add(block * BLOCK, (block + 1) * BLOCK - 1);
+
     const samples: IndexSample[] = [];
     for (const [index, row] of this.store.rows) {
-      // Only rows that were actually re-read: the others still sit where they
-      // were put, and would report a move of zero that never happened.
-      if (!fetched.has(Math.floor(index / BLOCK))) continue;
       const from = before.get(row.id);
-      if (from != null) samples.push({ from, to: index });
+      if (from != null && domain.has(from)) samples.push({ from, to: index });
     }
-    // Clamped to the collection, because a shift carried past the end of what
-    // was sampled can name positions that do not exist. Left in, they would
-    // count towards `selectionCount` - and a count that happened to reach the
-    // total would read as "everything is selected" and be treated as such on the
-    // next re-read.
-    const last = this.store.total - 1;
-    if (this.store.hasSelection) {
-      this.store.selection = rebase(this.store.selection, samples).remove(this.store.total, Number.MAX_SAFE_INTEGER);
-    }
-    this.store.focusIndex = Math.min(this.moved(this.store.focusIndex, samples), last);
-    const anchor = this.store.lastToggled == null ? null : this.moved(this.store.lastToggled, samples);
-    this.store.lastToggled = anchor != null && anchor <= last ? anchor : null;
+
+    if (this.store.hasSelection) this.store.selection = rebase(this.store.selection, samples, domain);
+    this.store.focusIndex = this.moved(this.store.focusIndex, samples, domain);
+    this.store.lastToggled = this.store.lastToggled == null ? null : this.moved(this.store.lastToggled, samples, domain);
   }
 
   // One position through the same mapping the selection goes through, so the
-  // cursor and the shift-click anchor stay on their own photographs too.
-  private moved(index: number, samples: IndexSample[]): number {
-    if (index < 0 || samples.length === 0) return index;
-    return rebase(SelectionRanges.of(index, index), samples).ranges[0]?.start ?? index;
+  // cursor and the shift-click anchor stay on their own photographs too. Left
+  // where it is when the re-read cannot speak for it, which is the same choice
+  // as leaving the scroll alone.
+  private moved(index: number, samples: IndexSample[], domain: SelectionRanges): number {
+    if (index < 0) return index;
+    return rebase(SelectionRanges.of(index, index), samples, domain).ranges[0]?.start ?? index;
   }
 
   // Requests whatever of these blocks is missing and drops what nothing needs
@@ -823,7 +838,7 @@ export class PhotosPresenter {
     });
 
     try {
-      const page = await this.fetchFor(source, this.params(block * BLOCK, BLOCK));
+      const page = await this.fetchFor(source, this.params(block * BLOCK, BLOCK), controller.signal);
       if (controller.signal.aborted || generation !== this.generation) return;
       runInAction(() => {
         this.merge(block, page.photos);
@@ -887,7 +902,9 @@ export class PhotosPresenter {
 
   private evict(keep: Set<number>): void {
     const drop: number[] = [];
-    let kept = 0;
+    // The blocks being kept count against the budget too, or the cache is
+    // MAX_BLOCKS *plus* whatever is on screen.
+    let kept = keep.size;
     for (const block of this.recent) {
       if (keep.has(block) || ++kept <= MAX_BLOCKS) continue;
       drop.push(block);
@@ -931,20 +948,20 @@ export class PhotosPresenter {
     this.store.scrollTop = 0;
   }
 
-  private fetchFor(source: PhotoSource, params: PhotoListParams): Promise<PhotoListResponse> {
+  private fetchFor(source: PhotoSource, params: PhotoListParams, signal?: AbortSignal): Promise<PhotoListResponse> {
     switch (source.kind) {
       case 'library':
-        return api.listLibraryPhotos(source.libraryId, params);
+        return api.listLibraryPhotos(source.libraryId, params, signal);
       case 'shoot':
-        return api.listShootPhotos(source.shootId, params);
+        return api.listShootPhotos(source.shootId, params, signal);
       case 'album':
-        return api.listAlbumPhotos(source.albumId, params);
+        return api.listAlbumPhotos(source.albumId, params, signal);
       case 'missing':
-        return api.listMissingPhotos(source.libraryId, params);
+        return api.listMissingPhotos(source.libraryId, params, signal);
       case 'bin':
         // include_deleted lifts the default exclusion, is_deleted narrows it back
         // to *only* the soft-deleted rows.
-        return api.listLibraryPhotos(source.libraryId, { ...params, include_deleted: true, is_deleted: true });
+        return api.listLibraryPhotos(source.libraryId, { ...params, include_deleted: true, is_deleted: true }, signal);
     }
   }
 

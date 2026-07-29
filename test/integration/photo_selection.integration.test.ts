@@ -73,3 +73,21 @@ test('a run reaching past the end stops at the end rather than erroring', () => 
   const resolved = photos.idsInLibrary(LIB, 'taken_asc', [{ start: COUNT - 2, end: COUNT + 1000 }], unfiltered);
   expect(resolved).toEqual([id(COUNT - 2), id(COUNT - 1)]);
 });
+
+// Every run resolves out of one numbering of the collection rather than one
+// sorted query each: a few hundred scattered picks used to mean a few hundred
+// sorts of the whole library.
+test('many scattered runs resolve to the same ids one query at a time would', () => {
+  const scattered = Array.from({ length: 60 }, (_, i) => ({ start: i * 4, end: i * 4 }));
+  const resolved = photos.idsInLibrary(LIB, 'taken_asc', scattered, unfiltered);
+  expect(resolved).toEqual(scattered.map(({ start }) => listed(unfiltered, start, 1)[0]!));
+});
+
+// The tiebreak follows the direction of the sort so a descending listing is the
+// index walked backwards; what matters is only that both sides agree.
+test('resolves against a descending ordering exactly as the grid lists it', () => {
+  for (const ordering of ['taken_desc', 'added_desc'] as const) {
+    const page = photos.listByLibrary(LIB, ordering, 40, 25, unfiltered).photos.map((p) => p.id);
+    expect(photos.idsInLibrary(LIB, ordering, [{ start: 40, end: 64 }], unfiltered)).toEqual(page);
+  }
+});

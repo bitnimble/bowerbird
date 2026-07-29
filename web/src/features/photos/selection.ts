@@ -83,6 +83,25 @@ export class SelectionRanges {
   toggle(index: number): SelectionRanges {
     return this.has(index) ? this.remove(index, index) : this.add(index, index);
   }
+
+  /** Only the positions that are in both. */
+  intersect(other: SelectionRanges): SelectionRanges {
+    const kept: SelectionRange[] = [];
+    let mine = 0;
+    let theirs = 0;
+    // Both sides are sorted and disjoint, so one pass down the pair of them
+    // finds every overlap without rescanning.
+    while (mine < this.ranges.length && theirs < other.ranges.length) {
+      const a = this.ranges[mine]!;
+      const b = other.ranges[theirs]!;
+      const start = Math.max(a.start, b.start);
+      const end = Math.min(a.end, b.end);
+      if (start <= end) kept.push({ start, end });
+      if (a.end < b.end) mine++;
+      else theirs++;
+    }
+    return new SelectionRanges(kept);
+  }
 }
 
 /** Where a photo that is still there sits now, against where it sat before. */
@@ -95,33 +114,48 @@ export interface IndexSample {
  * The same photographs, re-expressed against a collection whose positions have
  * moved - which is what a scan inserting rows under an open gallery does.
  *
- * Insertions show up as the shift stepping up, which **splits** a selected run
- * so the photo that appeared inside it is not selected: three photos selected
- * and one inserted between the first and the second leaves `{1} ∪ {3,4}`, not a
- * run of four. Removals show up as the shift stepping down, which drops the
- * photo that went and closes the run over it.
+ * `domain` is the old positions the caller can actually account for: the ones it
+ * held rows for *and* re-read. Inside it, every move is observed, so the answer
+ * is exact - insertions show up as the shift stepping up, which **splits** a
+ * selected run so the photo that appeared inside it is not selected (three
+ * selected and one inserted after the first leaves `{1} ∪ {3,4}`, not a run of
+ * four), and removals step it down, dropping the photo that went and closing the
+ * run over the gap.
  *
- * Empty when nothing recognisable survived: with no samples there is nothing to
- * re-express against, and a guess would put the ring on photographs the reader
- * never chose.
+ * **Outside the domain nothing is claimed.** Those positions are dropped from
+ * the selection rather than carried by the nearest shift: a photo below every
+ * sample may not have moved at all, a gap between two re-read blocks hides an
+ * unknown number of arrivals, and either guess silently renames photographs the
+ * reader chose. Losing part of a selection is visible; acting on the wrong
+ * photographs is not.
  */
-export function rebase(selection: SelectionRanges, samples: readonly IndexSample[]): SelectionRanges {
-  if (selection.size === 0 || samples.length === 0) return SelectionRanges.EMPTY;
+export function rebase(
+  selection: SelectionRanges,
+  samples: readonly IndexSample[],
+  domain: SelectionRanges,
+): SelectionRanges {
+  const known = selection.intersect(domain);
+  if (known.size === 0 || samples.length === 0) return SelectionRanges.EMPTY;
   // One entry per *change* of shift rather than per photo: a block of a hundred
   // rows that all moved by the same amount is one step, so this stays the size
   // of the edit rather than the size of the window.
   const steps: { from: number; shift: number }[] = [];
+  let unmoved = true;
   for (const sample of [...samples].sort((a, b) => a.from - b.from)) {
     const shift = sample.to - sample.from;
+    if (shift !== 0) unmoved = false;
     if (steps.at(-1)?.shift !== shift) steps.push({ from: sample.from, shift });
   }
+  // Nothing observed moved, so there is nothing to re-express - and in
+  // particular no reason to narrow the selection to the domain.
+  if (unmoved) return selection;
 
   let rebased = SelectionRanges.EMPTY;
-  for (const { start, end } of selection.ranges) {
+  for (const { start, end } of known.ranges) {
     let at = start;
-    // The step governing `at`: the last one starting at or before it, or the
-    // first of all for positions below every sample. Outside the sampled span
-    // there is nothing better to carry than the nearest shift observed.
+    // The step governing `at`: the last one starting at or before it. A position
+    // inside the domain but below every sample only happens when the rows before
+    // it were all removed, so the first step is the right one to carry.
     let step = 0;
     while (step + 1 < steps.length && steps[step + 1]!.from <= at) step++;
     while (at <= end) {

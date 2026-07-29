@@ -79,63 +79,114 @@ describe('rebase', () => {
   // sits now. `null` is a photo that went.
   const samples = (moved: (number | null)[]): IndexSample[] =>
     moved.flatMap((to, from) => (to == null ? [] : [{ from, to }]));
+  // Everything the caller re-read, which is what it may speak for.
+  const covering = (moved: (number | null)[]): SelectionRanges => SelectionRanges.of(0, moved.length - 1);
 
   test('an insert inside a selected run splits it around the new photo', () => {
     // A B C at 0,1,2, all selected; X arrives between A and B.
-    const selection = SelectionRanges.of(0, 2);
-    expect(ranges(rebase(selection, samples([0, 2, 3])))).toEqual([
+    const moved = [0, 2, 3];
+    expect(ranges(rebase(SelectionRanges.of(0, 2), samples(moved), covering(moved)))).toEqual([
       [0, 0],
       [2, 3],
     ]);
   });
 
   test('an insert before a selected run just shifts it', () => {
-    expect(ranges(rebase(SelectionRanges.of(10, 20), samples([1, 2, 3])))).toEqual([[11, 21]]);
+    const moved = [1, 2, 3, ...Array.from({ length: 18 }, (_, i) => i + 4)];
+    expect(ranges(rebase(SelectionRanges.of(10, 20), samples(moved), covering(moved)))).toEqual([[11, 21]]);
   });
 
   test('a removal inside a selected run drops that photo and closes the run', () => {
     // Eleven selected, the one at 5 is gone: ten remain, contiguous.
     const moved: (number | null)[] = [];
     for (let i = 0; i <= 10; i++) moved.push(i === 5 ? null : i < 5 ? i : i - 1);
-    const rebased = rebase(SelectionRanges.of(0, 10), samples(moved));
+    const rebased = rebase(SelectionRanges.of(0, 10), samples(moved), covering(moved));
     expect(ranges(rebased)).toEqual([[0, 9]]);
     expect(rebased.size).toBe(10);
   });
 
   test('several inserts break a run into as many pieces', () => {
     // Two photos arrive inside a run of five, at different places.
-    expect(ranges(rebase(SelectionRanges.of(0, 4), samples([0, 2, 3, 5, 6])))).toEqual([
+    const moved = [0, 2, 3, 5, 6];
+    expect(ranges(rebase(SelectionRanges.of(0, 4), samples(moved), covering(moved)))).toEqual([
       [0, 0],
       [2, 3],
       [5, 6],
     ]);
   });
 
-  test('leaves an untouched collection exactly as it was', () => {
-    const selection = SelectionRanges.EMPTY.add(0, 4).add(10, 14);
-    expect(ranges(rebase(selection, samples([0, 1, 2, 3, 4])))).toEqual([
+  // Nothing observed moved, so the selection is not narrowed to the domain
+  // either: a poll that finds the collection unchanged must leave it alone.
+  test('leaves an untouched collection exactly as it was, domain or no domain', () => {
+    const selection = SelectionRanges.EMPTY.add(0, 4).add(10_000, 14_000);
+    expect(ranges(rebase(selection, samples([0, 1, 2, 3, 4]), SelectionRanges.of(0, 4)))).toEqual([
       [0, 4],
-      [10, 14],
+      [10_000, 14_000],
     ]);
   });
 
-  test('carries the nearest observed shift past the end of what was sampled', () => {
-    // Only positions 0..2 were re-read; everything after them moved by the same
-    // one place, which is the best answer available for a run reaching beyond.
-    expect(ranges(rebase(SelectionRanges.of(0, 100), samples([1, 2, 3])))).toEqual([[1, 101]]);
-  });
-
   test('drops the selection when nothing recognisable came back', () => {
-    expect(rebase(SelectionRanges.of(0, 10), []).size).toBe(0);
+    expect(rebase(SelectionRanges.of(0, 10), [], SelectionRanges.of(0, 10)).size).toBe(0);
   });
 
   test('a scattered selection keeps its holes', () => {
     const selection = SelectionRanges.EMPTY.add(0, 1).add(4, 5);
     // One photo arrives at position 2, after the first pair.
-    expect(ranges(rebase(selection, samples([0, 1, 3, 4, 5, 6])))).toEqual([
+    const moved = [0, 1, 3, 4, 5, 6];
+    expect(ranges(rebase(selection, samples(moved), covering(moved)))).toEqual([
       [0, 1],
       [5, 6],
     ]);
+  });
+
+  // The three ways the old code claimed to know something it did not. Each one
+  // renamed photographs the reader had chosen, which for a bulk action is the
+  // one outcome worth losing part of a selection to avoid.
+
+  test('says nothing about positions past the end of what was re-read', () => {
+    // Only 0..2 were sampled; the rest of the run is unverifiable, not shifted.
+    expect(ranges(rebase(SelectionRanges.of(0, 100), samples([1, 2, 3]), SelectionRanges.of(0, 2)))).toEqual([[1, 3]]);
+  });
+
+  test('does not drag a selection that sits below every sample', () => {
+    // Viewport far down the collection, 200 photos removed above it, and one
+    // photo selected at position 5 in a block that was evicted long ago. It
+    // never moved, and the old code mapped it to -195.
+    const moved: (number | null)[] = [];
+    for (let i = 400; i < 500; i++) moved[i] = i - 200;
+    const domain = SelectionRanges.of(400, 499);
+    expect(rebase(SelectionRanges.of(5, 5), samples(moved), domain).size).toBe(0);
+  });
+
+  test('does not guess across a gap between two re-read blocks', () => {
+    // Blocks 0 and 5 re-read, 1-4 not, one photo inserted at old position 250.
+    // Read as one continuous sample set the split landed at 499 instead of 250,
+    // selecting the arrival and deselecting the reader's photo at 499.
+    const moved: (number | null)[] = [];
+    for (let i = 0; i < 100; i++) moved[i] = i;
+    for (let i = 500; i < 600; i++) moved[i] = i + 1;
+    const domain = SelectionRanges.EMPTY.add(0, 99).add(500, 599);
+    expect(ranges(rebase(SelectionRanges.of(0, 999), samples(moved), domain))).toEqual([
+      [0, 99],
+      [501, 600],
+    ]);
+  });
+});
+
+describe('intersect', () => {
+  test('keeps only what is in both', () => {
+    const a = SelectionRanges.EMPTY.add(0, 9).add(20, 29);
+    const b = SelectionRanges.EMPTY.add(5, 22).add(27, 40);
+    expect(ranges(a.intersect(b))).toEqual([
+      [5, 9],
+      [20, 22],
+      [27, 29],
+    ]);
+  });
+
+  test('is empty when they do not touch', () => {
+    expect(SelectionRanges.of(0, 4).intersect(SelectionRanges.of(5, 9)).size).toBe(0);
+    expect(SelectionRanges.of(0, 4).intersect(SelectionRanges.EMPTY).size).toBe(0);
   });
 });
 
