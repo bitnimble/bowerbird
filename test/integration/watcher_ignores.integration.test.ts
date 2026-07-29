@@ -13,7 +13,7 @@ import type { SyncService } from '../../src/services/sync/sync_service';
 import { libraryScope, type LibraryScope } from '../../src/utils/scope';
 
 const LIB = 'lib-ignores';
-const DEBOUNCE = 100;
+const DEBOUNCE = 30;
 
 let root: string;
 let watcher: LibraryWatcher;
@@ -24,7 +24,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // Long enough for a debounce plus a sync that was never going to come: the
 // assertion is an absence, so it has to outlast the thing it denies.
 async function quiet(): Promise<void> {
-  await sleep(DEBOUNCE * 6);
+  await sleep(DEBOUNCE * 6 + 100);
 }
 
 async function start(over: Partial<LibraryScope>): Promise<void> {

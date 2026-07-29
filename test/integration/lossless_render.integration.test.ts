@@ -10,7 +10,7 @@ import type { Library } from '../../src/schemas/libraries';
 import { DEFAULT_SETTINGS, type Settings } from '../../src/schemas/settings';
 import { ProcessingService } from '../../src/services/processing/processing_service';
 import type { SettingsRepository } from '../../src/services/settings/settings_repository';
-import { decodeRaw } from '../../src/services/processing/raw_decoder';
+import { decodeRaw, readRawHeader } from '../../src/services/processing/raw_decoder';
 import { decodeImage, freeImage, pixels } from '../../src/services/processing/rawshim_ops';
 import { getRenditionPath } from '../../src/utils/paths';
 
@@ -47,8 +47,11 @@ function service(): ProcessingService {
 }
 
 test('a 16-bit decode yields twice the bytes of an 8-bit one', () => {
-  const eight = decodeRaw(FIXTURE, 8);
-  const sixteen = decodeRaw(FIXTURE, 16);
+  // Half size: the subject is the sample width, and the two decodes have to agree
+  // about the frame, not fill it.
+  const half = { atLeastLongEdge: 1000 };
+  const eight = decodeRaw(FIXTURE, 8, 'srgb', half);
+  const sixteen = decodeRaw(FIXTURE, 16, 'srgb', half);
 
   expect(eight.depth).toBe(8);
   expect(sixteen.depth).toBe(16);
@@ -106,7 +109,8 @@ test('the HDR render is 10-bit PQ at full resolution', async () => {
       '-of', 'default=noprint_wrappers=1', output,
     ]);
     const info = proc.stdout.toString();
-    const expected = decodeRaw(FIXTURE, 8);
+    // The header's dimensions, not a decode's: raw_header pins that the two agree.
+    const expected = readRawHeader(FIXTURE);
 
     expect(info).toContain('pix_fmt=yuv444p10le');
     expect(info).toContain('color_transfer=smpte2084');

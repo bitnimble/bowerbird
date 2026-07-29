@@ -3,15 +3,16 @@
 // invisible until it reaches a display, so what is checkable here is that the
 // pixels are scene-referred and that the files say what they must say (§10.7).
 //   docker exec bowerbird-dev bun test test/integration
-import { expect, test } from 'bun:test';
+import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { type HdrMedium, type HdrVariant, extensionFor } from '../../src/services/processing/hdr_media';
 import { decodeRaw } from '../../src/services/processing/raw_decoder';
-import { decodeRawImage, encodeHdrRendition, freeImage } from '../../src/services/processing/rawshim_ops';
+import { decodeRawImage, encodeHdrRendition, freeImage, type ImageHandle } from '../../src/services/processing/rawshim_ops';
 
 const FIXTURE = `${import.meta.dir}/../fixtures/DSC02981.ARW`;
+const MAX_EDGE = 640;
 
 interface Probe {
   color_primaries?: string;
@@ -34,19 +35,21 @@ function probe(file: string): Probe {
 }
 
 // Small and fast: these assert tagging, which is independent of resolution, and
-// a full-size encode would put ~10s per case on the suite.
+// a full-size encode would put ~10s per case on the suite. One decode, asked for
+// no more than the encode will keep, serves every case.
+let linear: ImageHandle;
+beforeAll(() => {
+  linear = decodeRawImage(FIXTURE, 16, 'rec2020-linear', MAX_EDGE);
+});
+afterAll(() => freeImage(linear));
+
 async function encoded(medium: HdrMedium, variant: HdrVariant, run: (file: string) => void): Promise<void> {
   const dir = mkdtempSync(path.join(tmpdir(), 'bb-hdr-'));
   try {
-    const image = decodeRawImage(FIXTURE, 16, 'rec2020-linear', 0);
     // extensionFor, not a local guess: `still-baseline` is an AVIF too, and a
     // hand-rolled check that only knew about 'still' wrote it as .mp4.
     const outputPath = path.join(dir, `${variant}${extensionFor(medium)}`);
-    try {
-      encodeHdrRendition(image, null, { variant, medium, outputPath, peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.99, crf: 40, preset: 12, maxEdge: 640 });
-    } finally {
-      freeImage(image);
-    }
+    encodeHdrRendition(linear, null, { variant, medium, outputPath, peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.99, crf: 40, preset: 12, maxEdge: MAX_EDGE });
     run(outputPath);
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -54,8 +57,11 @@ async function encoded(medium: HdrMedium, variant: HdrVariant, run: (file: strin
 }
 
 test('a scene-linear decode keeps the highlight headroom an sRGB one spends', () => {
-  const display = decodeRaw(FIXTURE, 16);
-  const scene = decodeRaw(FIXTURE, 16, 'rec2020-linear');
+  // Half size: the subject is the levels the two decodes land on, which is a
+  // property of the tone curve rather than of the frame's size.
+  const half = { atLeastLongEdge: 1000 };
+  const display = decodeRaw(FIXTURE, 16, 'srgb', half);
+  const scene = decodeRaw(FIXTURE, 16, 'rec2020-linear', half);
 
   expect(scene.width).toBe(display.width);
   expect(scene.depth).toBe(16);
@@ -132,13 +138,8 @@ test('the SDR references are tagged so they can be compared against', async () =
 test('the still leaves no intermediate behind', async () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'bb-hdr-'));
   try {
-    const image = decodeRawImage(FIXTURE, 16, 'rec2020-linear', 0);
     const outputPath = path.join(dir, 'pq.avif');
-    try {
-      encodeHdrRendition(image, null, { variant: 'pq', medium: 'still', outputPath, peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.99, crf: 40, preset: 12, maxEdge: 640 });
-    } finally {
-      freeImage(image);
-    }
+    encodeHdrRendition(linear, null, { variant: 'pq', medium: 'still', outputPath, peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.99, crf: 40, preset: 12, maxEdge: MAX_EDGE });
     // The y4m is uncompressed 10-bit, so a leaked one is tens of megabytes per
     // photo sitting next to the output that replaced it.
     expect(await Bun.file(`${outputPath}.y4m`).exists()).toBe(false);
@@ -150,7 +151,7 @@ test('the still leaves no intermediate behind', async () => {
 test('an 8-bit decode is refused rather than encoded as something HDR-shaped', () => {
   // The samples would be read as 16-bit and half the frame would come out noise, so
   // this has to fail loudly rather than write a plausible-looking file.
-  const image = decodeRawImage(FIXTURE, 8, 'srgb', 640);
+  const image = decodeRawImage(FIXTURE, 8, 'srgb', MAX_EDGE);
   try {
     expect(() =>
       encodeHdrRendition(image, null, {
@@ -162,7 +163,7 @@ test('an 8-bit decode is refused rather than encoded as something HDR-shaped', (
         whiteQuantile: 0.99,
         crf: 40,
         preset: 12,
-        maxEdge: 640,
+        maxEdge: MAX_EDGE,
       }),
     ).toThrow(/16-bit/);
   } finally {

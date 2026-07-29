@@ -9,7 +9,7 @@
 // except the container - it is a TIFF, like the ARW - so what it would add is a
 // second proof that LibRaw reads Canon.
 //   docker exec bowerbird-dev bun test test/integration
-import { describe, expect, test } from 'bun:test';
+import { beforeAll, describe, expect, test } from 'bun:test';
 import { decodeRaw, readRawHeader } from '../../src/services/processing/raw_decoder';
 import { extractMetadata } from '../../src/services/processing/metadata';
 
@@ -66,8 +66,14 @@ describe.each([
   ['ARW', SONY, 4024, 6024],
   ['CR3', CANON, 3999, 5999],
 ])('%s', (_format, fixture, width, height) => {
+  // One decode for all three: they read the same frame, and decoding a 24MP RAW
+  // three times over is the bulk of this file's runtime.
+  let image: ReturnType<typeof decodeRaw>;
+  beforeAll(() => {
+    image = decodeRaw(fixture);
+  });
+
   test('decodes the frame the camera says it took', () => {
-    const image = decodeRaw(fixture);
     expect([image.width, image.height]).toEqual([width, height]);
   });
 
@@ -78,13 +84,11 @@ describe.each([
   // applied in one path and not the other.
   test('the recorded dimensions are the dimensions that get decoded', () => {
     const header = readRawHeader(fixture);
-    const image = decodeRaw(fixture);
     expect(image.width).toBe(header.width);
     expect(image.height).toBe(header.height);
   });
 
   test('the decoded image has no black border on any edge', () => {
-    const image = decodeRaw(fixture);
     const lit = (x: number, y: number): boolean => {
       const i = (y * image.width + x) * 3;
       return image.data[i]! + image.data[i + 1]! + image.data[i + 2]! > 24;

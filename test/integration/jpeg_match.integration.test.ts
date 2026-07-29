@@ -1,5 +1,12 @@
-import { describe, expect, test } from 'bun:test';
-import { applyColour, applyMatchProfile, deltaE76, fitMatchProfile, fitProfileFor } from '../../src/services/processing/jpeg_match';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import {
+  applyColour,
+  applyMatchProfile,
+  deltaE76,
+  fitMatchProfile,
+  fitProfileFor,
+  type MatchProfile,
+} from '../../src/services/processing/jpeg_match';
 import { SPLINE_UNIT } from '../../src/services/processing/lens_corrections';
 import {
   decodeEmbedded,
@@ -28,6 +35,19 @@ function take(image: ImageHandle): { width: number; height: number; data: Buffer
     freeImage(image);
   }
 }
+
+// The decode the worker would already have in hand, and the profile fitted from
+// it. Both are pure functions of the file, so one of each serves every case that
+// is not specifically about refitting.
+let render: ImageHandle;
+let profile: MatchProfile;
+
+beforeAll(() => {
+  render = decodeRawImage(FIXTURE, 8, 'srgb', 0);
+  profile = fitMatchProfile(FIXTURE, render)!;
+});
+
+afterAll(() => freeImage(render));
 
 describe('lens correction metadata', () => {
   test('reads the ILCE-6300 distortion spline out of a real ARW', () => {
@@ -92,24 +112,18 @@ describe('lens correction metadata', () => {
     // corner, and correcting by that much does not beat leaving it alone, so the
     // fit correctly settles on no geometry at all. What must never happen is the
     // database being consulted behind the body's back.
-    const image = decodeRawImage(FIXTURE, 8, 'srgb', 1600);
-    try {
-      expect(fitMatchProfile(FIXTURE, image)?.distortionSource).not.toBe('lensfun');
-    } finally {
-      freeImage(image);
-    }
+    expect(profile.distortionSource).not.toBe('lensfun');
   });
 });
 
 describe('fitMatchProfile', () => {
   test(
     'matches the camera JPEG far more closely than the raw render does',
-    async () => {
-      const profile = await fitMatchProfile(FIXTURE);
+    () => {
       expect(profile).not.toBeNull();
 
       // Held out inside the fit, so this is not a training score.
-      expect(profile!.deltaE).toBeLessThan(2.5);
+      expect(profile.deltaE).toBeLessThan(2.5);
 
       // What the render looks like before any transform, on the same pixels, to
       // show the fit is doing the work rather than the metric being generous.
@@ -126,7 +140,7 @@ describe('fitMatchProfile', () => {
         const target = [jpeg.data[i]!, jpeg.data[i + 1]!, jpeg.data[i + 2]!];
         const source = [plain.data[i]!, plain.data[i + 1]!, plain.data[i + 2]!];
         before += deltaE76(source, target);
-        after += deltaE76(applyColour(profile!.colour, source), target);
+        after += deltaE76(applyColour(profile.colour, source), target);
         counted += 1;
       }
       expect(counted).toBeGreaterThan(100);
@@ -137,7 +151,7 @@ describe('fitMatchProfile', () => {
 
   test(
     'recovers a distortion that was injected on purpose',
-    async () => {
+    () => {
       // The check this module exists to keep honest. Three earlier detectors
       // reported "no distortion" on a frame that had 4.4% of it, because a radial
       // model and a radial error will always find each other and a null result
@@ -189,13 +203,7 @@ describe('fitMatchProfile', () => {
 
       // Null knots force the fitted path: the question is whether the search finds
       // a displacement, not whether it can read one.
-      const render = decodeRawImage(FIXTURE, 8, 'srgb', 0);
-      let fitted;
-      try {
-        fitted = fitProfileFor(render, target, null);
-      } finally {
-        freeImage(render);
-      }
+      const fitted = fitProfileFor(render, target, null);
       expect(fitted).not.toBeNull();
       expect(fitted!.distortionSource).toBe('fitted');
 
@@ -217,17 +225,19 @@ describe('fitMatchProfile', () => {
       // the full view are fitted in one job, but the max-resolution export is built
       // on demand later and refits from scratch. If the fit were not deterministic
       // those two copies of one photo would be graded differently, and the only
-      // remedy would be persisting the profile.
-      const first = await fitMatchProfile(FIXTURE);
+      // remedy would be persisting the profile. `first` was fitted from a decode
+      // already in hand and `second` refits from the file, which is exactly the
+      // pair of paths that must agree.
+      const first = profile;
       const second = await fitMatchProfile(FIXTURE);
-      expect(first).not.toBeNull();
-      expect(second!.deltaE).toBe(first!.deltaE);
-      expect(second!.crop).toBe(first!.crop);
-      expect(second!.distortionSource).toBe(first!.distortionSource);
-      expect(second!.distortion).toEqual(first!.distortion);
-      expect(second!.colour.matrix).toEqual(first!.colour.matrix);
+      expect(second).not.toBeNull();
+      expect(second!.deltaE).toBe(first.deltaE);
+      expect(second!.crop).toBe(first.crop);
+      expect(second!.distortionSource).toBe(first.distortionSource);
+      expect(second!.distortion).toEqual(first.distortion);
+      expect(second!.colour.matrix).toEqual(first.colour.matrix);
       for (let channel = 0; channel < 3; channel += 1) {
-        expect(Array.from(second!.colour.curves[channel]!)).toEqual(Array.from(first!.colour.curves[channel]!));
+        expect(Array.from(second!.colour.curves[channel]!)).toEqual(Array.from(first.colour.curves[channel]!));
       }
     },
     TIMEOUT,
@@ -235,29 +245,22 @@ describe('fitMatchProfile', () => {
 
   test(
     'gives the same picture whether applied before or after the resize',
-    async () => {
+    () => {
       // The worker applies the profile to the *sized* image, because warping a
       // 60MP decode to produce an 800px tile costs seconds per rendition. That is
       // only legitimate if the order does not matter: the distortion model is in
       // normalised radii and the colour transform is a per-pixel lookup, so it
       // should not. This is the check on that reasoning.
-      const profile = (await fitMatchProfile(FIXTURE))!;
-      const render = decodeRawImage(FIXTURE, 8, 'srgb', 0);
       const SIZE = 800;
 
       let beforeResize: ReturnType<typeof take>;
-      let afterResize: ReturnType<typeof take>;
+      const graded = applyMatchProfile(render, profile);
       try {
-        const graded = applyMatchProfile(render, profile);
-        try {
-          beforeResize = take(renderImage(graded, null, SIZE));
-        } finally {
-          freeImage(graded);
-        }
-        afterResize = take(renderImage(render, profile, SIZE));
+        beforeResize = take(renderImage(graded, null, SIZE));
       } finally {
-        freeImage(render);
+        freeImage(graded);
       }
+      const afterResize = take(renderImage(render, profile, SIZE));
 
       expect(afterResize.width).toBe(beforeResize.width);
       expect(afterResize.height).toBe(beforeResize.height);
@@ -279,23 +282,15 @@ describe('fitMatchProfile', () => {
 
   test(
     'applying a profile leaves the render the same size and shape',
-    async () => {
-      const profile = await fitMatchProfile(FIXTURE);
-      const handle = decodeRawImage(FIXTURE, 8, 'srgb', 0);
-      let render: ReturnType<typeof take>;
-      let corrected: ReturnType<typeof take>;
-      try {
-        corrected = take(applyMatchProfile(handle, profile!));
-        render = { width: handle.width, height: handle.height, data: pixels(handle) };
-      } finally {
-        freeImage(handle);
-      }
+    () => {
+      const corrected = take(applyMatchProfile(render, profile));
+      const plain = pixels(render);
       expect(corrected.width).toBe(render.width);
       expect(corrected.height).toBe(render.height);
-      expect(corrected.data.length).toBe(render.data.length);
+      expect(corrected.data.length).toBe(plain.length);
       // A transform that returned the render untouched would pass every size
       // assertion above while doing nothing.
-      expect(corrected.data.equals(render.data)).toBe(false);
+      expect(corrected.data.equals(plain)).toBe(false);
     },
     TIMEOUT,
   );

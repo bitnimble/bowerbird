@@ -18,10 +18,10 @@
 // green:
 //   BOWERBIRD_UPDATE_PINS=1 bun test test/integration/hdr_pin.integration.test.ts
 //   docker exec bowerbird-dev bun test test/integration
-import { expect, test } from 'bun:test';
+import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { HDR_MEDIA, HDR_VARIANTS } from '../../src/services/processing/hdr_media';
-import { fitMatchProfile } from '../../src/services/processing/jpeg_match';
+import { fitMatchProfile, type MatchProfile } from '../../src/services/processing/jpeg_match';
 import {
   decodeRawImage,
   fitHdrMatch,
@@ -30,6 +30,7 @@ import {
   hdrArgv,
   hdrGradedSamples,
   type HdrOptions,
+  type ImageHandle,
 } from '../../src/services/processing/rawshim_ops';
 
 const FIXTURE = `${import.meta.dir}/../fixtures/DSC02981.ARW`;
@@ -55,6 +56,18 @@ function check(path: string, actual: string): void {
     expect(got[i], `row ${i + 1} of ${path}`).toBe(want[i]);
   }
 }
+
+// Both are pure functions of the file, so one of each serves every case below;
+// refitting per case was most of this file's runtime.
+let linear: ImageHandle;
+let sdr: MatchProfile | null;
+
+beforeAll(() => {
+  sdr = fitMatchProfile(FIXTURE);
+  linear = decodeRawImage(FIXTURE, 16, 'rec2020-linear', 0);
+});
+
+afterAll(() => freeImage(linear));
 
 const SIZES = [
   { width: 4024, height: 6024 }, // 24MP portrait
@@ -127,17 +140,15 @@ test(
 
       // The SDR fit supplies the geometry; the HDR colour is refitted inside the
       // grade, in the domain it works in.
-      const profile = withMatch ? fitMatchProfile(FIXTURE) : null;
+      const profile = withMatch ? sdr : null;
       if (withMatch) expect(profile, 'the SDR fit supplies the geometry this reuses').not.toBeNull();
 
-      const linear = decodeRawImage(FIXTURE, 16, 'rec2020-linear', 0);
       const matched = fitHdrMatch(linear, FIXTURE, options, profile);
       let graded: ReturnType<typeof hdrGradedSamples>;
       try {
         graded = hdrGradedSamples(linear, matched, options);
       } finally {
         if (matched != null) freeHdrMatch(matched);
-        freeImage(linear);
       }
 
       const samples = new Uint16Array(graded.data.buffer, graded.data.byteOffset, graded.data.byteLength / 2);

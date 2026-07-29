@@ -8,11 +8,11 @@
 // production path keeps every sample on the Rust side, and there is nothing to assert
 // about a picture that never comes back.
 //   docker exec bowerbird-dev bun test test/integration
-import { expect, test } from 'bun:test';
+import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { fitMatchProfile } from '../../src/services/processing/jpeg_match';
+import { fitMatchProfile, type MatchProfile } from '../../src/services/processing/jpeg_match';
 import {
   decodeRawImage,
   encodeHdrRendition,
@@ -47,28 +47,23 @@ function options(overrides: Partial<HdrOptions> = {}): HdrOptions {
   };
 }
 
-/** Runs `use` against a scene-linear decode and releases it. */
-function withLinear<T>(use: (linear: ImageHandle) => T): T {
-  const linear = decodeRawImage(FIXTURE, 16, 'rec2020-linear', 0);
-  try {
-    return use(linear);
-  } finally {
-    freeImage(linear);
-  }
-}
+// The decode and both fits are deterministic and take no account of anything a
+// test does with them, so they are shared: refitting per case was most of this
+// file's runtime.
+let profile: MatchProfile | null;
+let linear: ImageHandle;
+let matched: HdrMatchHandle | null;
 
-/** Runs `use` against a decode and the HDR match fitted from it, releasing both. */
-function withMatch<T>(use: (linear: ImageHandle, matched: HdrMatchHandle | null) => T): T {
-  const profile = fitMatchProfile(FIXTURE);
-  return withLinear((linear) => {
-    const matched = fitHdrMatch(linear, FIXTURE, options(), profile);
-    try {
-      return use(linear, matched);
-    } finally {
-      if (matched != null) freeHdrMatch(matched);
-    }
-  });
-}
+beforeAll(() => {
+  profile = fitMatchProfile(FIXTURE);
+  linear = decodeRawImage(FIXTURE, 16, 'rec2020-linear', 0);
+  matched = fitHdrMatch(linear, FIXTURE, options(), profile);
+});
+
+afterAll(() => {
+  if (matched != null) freeHdrMatch(matched);
+  freeImage(linear);
+});
 
 /** The luma quantiles of a graded frame, in nits. */
 function quantiles(data: Buffer): (q: number) => number {
@@ -78,19 +73,16 @@ function quantiles(data: Buffer): (q: number) => number {
     const i = p * 3;
     luma[p] = ((0.2627 * s[i]! + 0.678 * s[i + 1]! + 0.0593 * s[i + 2]!) / 65535) * PEAK;
   }
-  const sorted = Float64Array.from(luma).sort();
-  return (q: number) => sorted[Math.floor(q * (sorted.length - 1))]!;
+  luma.sort();
+  return (q: number) => luma[Math.floor(q * (luma.length - 1))]!;
 }
 
 test(
   'the fit reproduces the camera rendering, and reuses the geometry the SDR fit resolved',
   () => {
-    const profile = fitMatchProfile(FIXTURE);
     expect(profile).not.toBeNull();
-    const colour = withMatch((_, matched) => {
-      expect(matched).not.toBeNull();
-      return hdrMatchColour(matched!);
-    });
+    expect(matched).not.toBeNull();
+    const colour = hdrMatchColour(matched!);
     // The same bound the SDR path applies to itself. Above it the transform is not
     // worth applying and the caller renders untransformed.
     expect(colour.deltaE).toBeLessThan(6);
@@ -104,7 +96,7 @@ test(
 test(
   'the fitted transform is monotone, so a gradient cannot posterise',
   () => {
-    const colour = withMatch((_, matched) => hdrMatchColour(matched!));
+    const colour = hdrMatchColour(matched!);
     for (const curve of colour.curves) {
       for (let i = 1; i < curve.length; i += 1) expect(curve[i]!).toBeGreaterThanOrEqual(curve[i - 1]!);
     }
@@ -118,7 +110,7 @@ test(
 test(
   'the three channels leave the fit domain at comparable levels',
   () => {
-    const colour = withMatch((_, matched) => hdrMatchColour(matched!));
+    const colour = hdrMatchColour(matched!);
     const ends = colour.curves.map((curve: number[]) => curve[curve.length - 1]!);
     const spread = Math.max(...ends) / Math.min(...ends);
     expect(spread).toBeLessThan(1.5);
@@ -129,7 +121,7 @@ test(
 test(
   'grading with the match keeps diffuse white near the reference',
   () => {
-    const graded = withMatch((linear, matched) => hdrGradedSamples(linear, matched, options()));
+    const graded = hdrGradedSamples(linear, matched, options());
     const at = quantiles(graded.data);
 
     // The anchor is measured on the brightest component and this is luma, so the
@@ -146,15 +138,15 @@ test(
 test(
   'the neutral grade is reproducible, and differs from the matched one',
   () => {
-    const [first, second, matched] = withMatch((linear, fitted) => [
-      hdrGradedSamples(linear, null, options()),
-      hdrGradedSamples(linear, null, options()),
-      hdrGradedSamples(linear, fitted, options()),
-    ]);
+    // At a rendition's size, not the frame's: what is being compared is whether two
+    // grades agree, which no amount of resolution makes truer.
+    const small = options({ maxEdge: 800 });
+    const first = hdrGradedSamples(linear, null, small);
+    const second = hdrGradedSamples(linear, null, small);
     expect(Buffer.compare(first.data, second.data)).toBe(0);
     // Otherwise the profile is being dropped somewhere between here and the grade,
     // which is the failure this file was written for.
-    expect(Buffer.compare(first.data, matched.data)).not.toBe(0);
+    expect(Buffer.compare(first.data, hdrGradedSamples(linear, matched, small).data)).not.toBe(0);
   },
   TIMEOUT,
 );
@@ -168,15 +160,13 @@ test(
   () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'bb-hdr-match-'));
     try {
-      const plain = path.join(dir, 'plain.avif');
-      const matched = path.join(dir, 'matched.avif');
-      withMatch((linear, fitted) => {
-        encodeHdrRendition(linear, null, options({ outputPath: plain, maxEdge: 640 }));
-        encodeHdrRendition(linear, fitted, options({ outputPath: matched, maxEdge: 640 }));
-      });
+      const plainFile = path.join(dir, 'plain.avif');
+      const matchedFile = path.join(dir, 'matched.avif');
+      encodeHdrRendition(linear, null, options({ outputPath: plainFile, maxEdge: 640 }));
+      encodeHdrRendition(linear, matched, options({ outputPath: matchedFile, maxEdge: 640 }));
       // Same encoder, same size, same everything but the transform, so identical bytes
       // mean the transform never reached the encoder.
-      expect(Buffer.compare(readFileSync(plain), readFileSync(matched))).not.toBe(0);
+      expect(Buffer.compare(readFileSync(plainFile), readFileSync(matchedFile))).not.toBe(0);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -191,13 +181,11 @@ test(
 test(
   'every size of one photo grades to the same brightness',
   () => {
-    const median = (data: Buffer): number => quantiles(data)(0.5);
-    const [native, half, eighth] = withMatch((linear, matched) => [
-      median(hdrGradedSamples(linear, matched, options()).data),
-      median(hdrGradedSamples(linear, matched, options({ maxEdge: 3012 })).data),
-      median(hdrGradedSamples(linear, matched, options({ maxEdge: 753 })).data),
-    ]);
-    for (const other of [half, eighth]) expect(Math.abs(other - native) / native).toBeLessThan(0.05);
+    const median = (maxEdge: number): number => quantiles(hdrGradedSamples(linear, matched, options({ maxEdge })).data)(0.5);
+    const native = median(Number.POSITIVE_INFINITY);
+    for (const other of [median(3012), median(753)]) {
+      expect(Math.abs(other - native) / native).toBeLessThan(0.05);
+    }
   },
   TIMEOUT,
 );
