@@ -71,6 +71,7 @@ export class LibrariesService {
       id: randomUUID(),
       root_path: request.root_path,
       data_path: request.data_path ?? null,
+      name: request.name == null || request.name === '' ? null : request.name,
       ordering: request.ordering,
       // Matching the column defaults: the embedded JPEG needs no demosaic, and
       // HDR is opt-in because it only applies to a render.
@@ -129,6 +130,7 @@ export class LibrariesService {
   // an explicit rebuild (§10.2).
   update(libraryId: string, updates: UpdateLibraryRequest): Library {
     if (this.repo.getById(libraryId) == null) throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
+    if (updates.name != null) this.repo.setName(libraryId, updates.name === '' ? null : updates.name);
     if (updates.ordering != null) this.repo.setOrdering(libraryId, updates.ordering);
     if (updates.rendition_source != null) this.repo.setRenditionSource(libraryId, updates.rendition_source);
     if (updates.rendition_hdr != null) this.repo.setRenditionHdr(libraryId, updates.rendition_hdr);

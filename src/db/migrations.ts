@@ -7,6 +7,9 @@ CREATE TABLE IF NOT EXISTS libraries (
   id          TEXT PRIMARY KEY,
   root_path   TEXT NOT NULL UNIQUE,
   data_path   TEXT,
+  -- What the library is called in the UI. NULL falls back to the last segment of
+  -- root_path, which is what every library created before this shows.
+  name        TEXT,
   last_synced_at TEXT,          -- ISO datetime of the last completed sync; NULL if never synced
   ordering    TEXT NOT NULL DEFAULT 'taken_asc'
     CHECK (ordering IN ('taken_asc', 'taken_desc', 'added_asc', 'added_desc')),
@@ -234,6 +237,7 @@ export function runMigrations(db: Database): void {
   ensureColumn(db, 'libraries', 'rendition_source', "TEXT NOT NULL DEFAULT 'embedded'");
   ensureColumn(db, 'libraries', 'rendition_hdr', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'libraries', 'rendition_hdr_video', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(db, 'libraries', 'name', 'TEXT'); // display name, NULL falls back to the root folder
   migrateSelectedToTriage(db);
   ensureColumn(db, 'photos', 'needs_tile', 'INTEGER NOT NULL DEFAULT 1');
   ensureColumn(db, 'photos', 'needs_renditions', 'INTEGER NOT NULL DEFAULT 1');

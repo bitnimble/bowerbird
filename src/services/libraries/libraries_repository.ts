@@ -6,6 +6,7 @@ interface LibraryRow {
   id: string;
   root_path: string;
   data_path: string | null;
+  name: string | null;
   ordering: string;
   rendition_source: string;
   rendition_hdr: number;
@@ -16,17 +17,17 @@ interface LibraryRow {
 
 // photo_count excludes binned photos: it answers "how big is this library", and
 // the Bin has its own count in the UI.
-const SELECT = `SELECT l.id, l.root_path, l.data_path, l.ordering, l.rendition_source, l.rendition_hdr, l.rendition_hdr_video, l.last_synced_at,
+const SELECT = `SELECT l.id, l.root_path, l.data_path, l.name, l.ordering, l.rendition_source, l.rendition_hdr, l.rendition_hdr_video, l.last_synced_at,
   (SELECT COUNT(*) FROM photos p WHERE p.library_id = l.id AND p.is_deleted = 0) AS photo_count
   FROM libraries l`;
 
 export class LibrariesRepository {
   constructor(private readonly db: Database) {}
 
-  insert(library: Pick<Library, 'id' | 'root_path' | 'data_path' | 'ordering'>): void {
+  insert(library: Pick<Library, 'id' | 'root_path' | 'data_path' | 'name' | 'ordering'>): void {
     this.db
-      .query('INSERT INTO libraries (id, root_path, data_path, ordering) VALUES (?, ?, ?, ?)')
-      .run(library.id, library.root_path, library.data_path, library.ordering);
+      .query('INSERT INTO libraries (id, root_path, data_path, name, ordering) VALUES (?, ?, ?, ?, ?)')
+      .run(library.id, library.root_path, library.data_path, library.name, library.ordering);
   }
 
   getById(id: string): Library | null {
@@ -42,6 +43,10 @@ export class LibrariesRepository {
   list(): Library[] {
     const rows = this.db.query(`${SELECT} ORDER BY l.root_path`).all() as LibraryRow[];
     return rows.map(mapRow);
+  }
+
+  setName(id: string, name: string | null): boolean {
+    return this.db.query('UPDATE libraries SET name = ? WHERE id = ?').run(name, id).changes > 0;
   }
 
   setOrdering(id: string, ordering: Ordering): boolean {
@@ -76,6 +81,7 @@ function mapRow(row: LibraryRow): Library {
     id: row.id,
     root_path: row.root_path,
     data_path: row.data_path,
+    name: row.name,
     ordering: row.ordering as Ordering,
     rendition_source: row.rendition_source as RenditionSource,
     rendition_hdr: row.rendition_hdr === 1,

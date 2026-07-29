@@ -4,6 +4,9 @@ import { OrderingSchema, RenditionSourceSchema, UuidSchema } from './common';
 export const CreateLibraryRequestSchema = z.object({
   root_path: z.string().min(1),
   data_path: z.string().optional(),
+  // Omitted or blank means "call it after its root folder", which is what a
+  // library shows until someone gives it a name of its own.
+  name: z.string().trim().optional(),
   ordering: OrderingSchema.default('taken_asc'),
 });
 export type CreateLibraryRequest = z.infer<typeof CreateLibraryRequestSchema>;
@@ -12,6 +15,7 @@ export const LibrarySchema = z.object({
   id: UuidSchema,
   root_path: z.string(),
   data_path: z.string().nullable(),
+  name: z.string().nullable(),
   ordering: OrderingSchema,
   rendition_source: RenditionSourceSchema,
   rendition_hdr: z.boolean(),
@@ -24,6 +28,8 @@ export type Library = z.infer<typeof LibrarySchema>;
 // Every field optional: the settings UI changes one control at a time, and a
 // partial update must not reset the others to their defaults.
 export const UpdateLibraryRequestSchema = z.object({
+  // Blank clears it, so a library can be handed back to its folder name.
+  name: z.string().trim().optional(),
   ordering: OrderingSchema.optional(),
   rendition_source: RenditionSourceSchema.optional(),
   rendition_hdr: z.boolean().optional(),

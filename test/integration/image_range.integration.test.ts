@@ -31,6 +31,7 @@ beforeAll(() => {
     id: 'lib',
     root_path: root,
     data_path: null,
+    name: null,
     ordering: 'taken_desc',
     rendition_source: 'render',
     rendition_hdr: false,

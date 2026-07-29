@@ -34,7 +34,7 @@ function mockPhotos(over: Partial<PhotosRepository> = {}): PhotosRepository {
   } as unknown as PhotosRepository;
 }
 function library(root: string): Library {
-  return { id: 'lib', root_path: root, data_path: null, ordering: 'taken_desc',
+  return { id: 'lib', root_path: root, data_path: null, name: null, ordering: 'taken_desc',
   rendition_source: 'embedded' as const,
   rendition_hdr: false,
   rendition_hdr_video: false, last_synced_at: null, photo_count: 0 };
