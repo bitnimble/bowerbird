@@ -541,6 +541,49 @@ pub unsafe extern "C" fn bb_read_distortion_spline(path: *const c_char, out: *mu
     }
 }
 
+/// The lensfun correction for a lens, in SPLINE_UNITs, resolved from the strings a
+/// RAW carries.
+///
+/// Returns the knot count written to `out`, 0 when no plausible lens matches or the
+/// match carries no distortion data, or -1 on a bad argument. `bb_fit` does this
+/// itself; this is exposed for the test that holds the resolution and the sampled
+/// geometry against the database, which nothing on the fit's own path would notice
+/// going wrong - a silently absent profile just costs a slower fit.
+///
+/// # Safety
+/// The three strings must be NUL-terminated, and `out` valid for `max` f64s.
+#[no_mangle]
+pub unsafe extern "C" fn bb_lensfun_knots(
+    make: *const c_char,
+    model: *const c_char,
+    lens: *const c_char,
+    focal: f32,
+    aperture: f32,
+    width: u32,
+    height: u32,
+    out: *mut f64,
+    max: u32,
+) -> i32 {
+    if make.is_null() || model.is_null() || lens.is_null() || out.is_null() {
+        return -1;
+    }
+    let (Ok(make), Ok(model), Ok(lens)) = (
+        CStr::from_ptr(make).to_str(),
+        CStr::from_ptr(model).to_str(),
+        CStr::from_ptr(lens).to_str(),
+    ) else {
+        return -1;
+    };
+
+    let Some(knots) = crate::lensfun::knots(make, model, lens, focal, aperture, width as usize, height as usize)
+    else {
+        return 0;
+    };
+    let n = knots.len().min(max as usize);
+    std::ptr::copy_nonoverlapping(knots.as_ptr(), out, n);
+    n as i32
+}
+
 /// Takes a copy of an 8-bit RGB buffer JS already holds.
 ///
 /// The one place a picture legitimately travels the other way. Everything in the
@@ -590,16 +633,38 @@ pub unsafe extern "C" fn bb_fit(image: *const BbImage, raw_path: *const c_char, 
     let Ok(found) = distortion_of(path) else { return -1 };
     // The body's own word that it corrected nothing, which saves searching for a
     // correction that is not there (`fit.rs`). Only Sony states it; everything else
-    // reads as unstated and is fitted as before.
+    // reads as unstated and falls through.
     let geometry = match (found.applied, found.spline) {
         (Some(false), _) => fit::Geometry::Uncorrected,
         (_, Some(knots)) => fit::Geometry::Recorded(knots),
-        (_, None) => fit::Geometry::Unstated,
+        // Nothing in the file, so ask the database. The header read this needs is a
+        // second open of the same file, which is why it is here rather than above:
+        // a body that recorded its own spline never pays for it.
+        (_, None) => lensfun_geometry(path).unwrap_or(fit::Geometry::Unstated),
     };
 
     let fitted = crate::with_embedded_jpeg(raw_path, |jpeg| fit_against(image, jpeg, geometry, out));
     // No JPEG preview: nothing to match, and the caller renders untransformed.
     fitted.unwrap_or(-1)
+}
+
+/// The database's profile for whatever lens this file names.
+///
+/// None when the file names no lens, when nothing plausible matches, or when the
+/// match carries no distortion data - each of which leaves the geometry to be
+/// fitted, as it was before lensfun was here.
+fn lensfun_geometry(path: &str) -> Option<fit::Geometry> {
+    let header = crate::header::read_path(path)?;
+    let knots = crate::lensfun::knots(
+        crate::header::name(&header.camera_make),
+        crate::header::name(&header.camera_model),
+        crate::header::name(&header.lens_model),
+        header.focal,
+        header.aperture,
+        header.width as usize,
+        header.height as usize,
+    )?;
+    Some(fit::Geometry::Profiled(knots))
 }
 
 /// The fit itself, once its inputs are in hand.

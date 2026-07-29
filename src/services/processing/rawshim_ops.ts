@@ -235,6 +235,38 @@ export function readDistortionSpline(rawFilePath: string): number[] | null {
 }
 
 /**
+ * The lensfun correction for a lens, in `SPLINE_UNIT`s, or null when the database
+ * has nothing plausible for it.
+ *
+ * `fitProfile` does this itself; this is here so a test can hold the resolution and
+ * the sampled geometry against the database on real files.
+ */
+export function readLensfunKnots(
+  make: string,
+  model: string,
+  lens: string,
+  focal: number,
+  aperture: number,
+  width: number,
+  height: number,
+): number[] | null {
+  const knots = new Float64Array(64);
+  const count = shim().bb_lensfun_knots(
+    Buffer.from(`${make}\0`),
+    Buffer.from(`${model}\0`),
+    Buffer.from(`${lens}\0`),
+    focal,
+    aperture,
+    width,
+    height,
+    ptr(knots),
+    knots.length,
+  );
+  if (count < 0) throw new Error('rawshim could not read a lensfun profile');
+  return count === 0 ? null : Array.from(knots.subarray(0, count));
+}
+
+/**
  * A handle over a copy of RGB pixels JS already holds.
  *
  * The one direction that copies on purpose, and the app never needs it:
@@ -543,7 +575,7 @@ export interface FittedProfile {
   /** Overall rescale accompanying the distortion. */
   crop: number;
   /** Where the geometry came from, for reporting and for cache keys. */
-  distortionSource: 'none' | 'camera' | 'fitted';
+  distortionSource: 'none' | 'camera' | 'fitted' | 'lensfun';
   colour: ColourTransform;
   /** Held-out mean deltaE76 after the whole transform. */
   deltaE: number;
@@ -551,7 +583,7 @@ export interface FittedProfile {
   raw: Uint8Array;
 }
 
-const SOURCES = ['none', 'camera', 'fitted'] as const;
+const SOURCES = ['none', 'camera', 'fitted', 'lensfun'] as const;
 
 function profileBuffer(): Uint8Array {
   const size = Number(shim().bb_profile_size());

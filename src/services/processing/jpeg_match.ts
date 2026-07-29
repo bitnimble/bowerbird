@@ -17,10 +17,12 @@
 // including a 33^3 LUT - because no tone curve can map a pixel onto a different
 // pixel's colour.
 //
-// Geometry comes from the camera where it recorded it (`lens_corrections.ts`) and
-// is fitted otherwise, which in practice means Canon: of 1000 frames sampled across
-// the catalogue, every Sony one carried a spline and only the Canons went without.
-// Colour is always fitted, since nothing in the file describes the picture profile.
+// Geometry is taken from the camera where it recorded it (`lens_corrections.ts`),
+// from the lensfun database where it did not, and fitted only when neither knows the
+// lens. In practice the first tier is Sony and the second is Canon: of 1000 frames
+// sampled across the catalogue, every Sony one carried a spline and only the Canons
+// went without. Colour is always fitted, since nothing in the file describes the
+// picture profile.
 
 import {
   decodeRawImage,

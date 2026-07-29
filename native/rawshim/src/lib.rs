@@ -30,6 +30,7 @@ pub mod hdr_fit;
 pub mod header;
 pub mod image;
 pub mod lens;
+pub mod lensfun;
 pub mod tone;
 pub mod vips;
 
@@ -470,22 +471,14 @@ pub unsafe extern "C" fn bb_read_header(path: *const c_char, out: *mut header::B
     if path.is_null() || out.is_null() {
         return -1;
     }
-    let r = raw::libraw_init(0);
-    if r.is_null() {
-        return -1;
-    }
-
-    let status = match raw::libraw_open_file(r, path) {
-        0 => {
-            *out = header::read(r);
+    let Ok(path) = CStr::from_ptr(path).to_str() else { return -1 };
+    match header::read_path(path) {
+        Some(header) => {
+            *out = header;
             0
         }
-        _ => -1,
-    };
-
-    raw::libraw_recycle(r);
-    raw::libraw_close(r);
-    status
+        None => -1,
+    }
 }
 
 /// Size of `BbHeader`, which the caller checks against the layout it reads.

@@ -86,14 +86,22 @@ pub enum Geometry {
     Uncorrected,
     /// The spline the body recorded for this shot.
     Recorded(Vec<f64>),
-    /// The file states nothing either way, so it has to be fitted.
+    /// The lensfun database's profile for the lens, where the body recorded none.
+    Profiled(Vec<f64>),
+    /// Nothing knows this lens, so the geometry has to be fitted.
     Unstated,
 }
+
+pub const SOURCE_CAMERA: u32 = 1;
+pub const SOURCE_FITTED: u32 = 2;
+pub const SOURCE_LENSFUN: u32 = 3;
 
 pub struct Profile {
     pub knots: Option<Vec<f64>>,
     pub crop: f64,
-    /// 0 none, 1 the camera's own spline, 2 fitted here.
+    /// 0 none, or one of the `SOURCE_` codes. Reported so a rendition can be
+    /// re-cut when the cascade changes under it, and so the fit can be judged by
+    /// where its geometry came from.
     pub source: u32,
     pub delta_e: f64,
     pub colour: ColourTransform,
@@ -455,6 +463,22 @@ fn fit_crop(grids: &Grids, knots: &[f64], coarse: &[f64]) -> Option<(f64, f64)> 
     Some((crop, delta))
 }
 
+/// A curve someone else already knows, kept only if it corresponds better than
+/// leaving the frame alone.
+///
+/// Losing means correcting nothing rather than falling through to the search, which
+/// reads like a missing cascade and is not: a curve that cannot beat the identity is
+/// saying this JPEG was not corrected, and a fitted polynomial agrees. Over the 58
+/// sampled frames where this fired before the uncorrected flag caught most of them,
+/// forcing the search through improved 3 by a median of 0.07 deltaE and declined on
+/// half.
+fn with_curve(grids: &Grids, knots: Vec<f64>, baseline: f64, source: u32) -> (Option<Vec<f64>>, f64, u32) {
+    match fit_crop(grids, &knots, &scan_around(estimate_crop(&knots), 0.01, 3)) {
+        Some((crop, delta)) if delta < baseline => (Some(knots), crop, source),
+        _ => (None, 1.0, 0),
+    }
+}
+
 /// Radial polynomial plus crop, for bodies that record no correction of their own -
 /// every Canon, and anything old enough not to have written one. Two parameters
 /// reach the same residual as a camera's spline, but it is the expensive way there:
@@ -544,23 +568,12 @@ pub fn fit(render: RgbRef<'_>, jpeg_bytes: &[u8], geometry: Geometry) -> Result<
         // anyway. Skipping it took an ILCE-7CM2 fit from ~500ms to ~200ms with the
         // deltaE unchanged to two decimals on all 16 frames measured.
         Geometry::Uncorrected => (None, 1.0, 0),
-        Geometry::Recorded(knots) => {
-            // The camera's curve is the truth about the lens, but only if using it
-            // actually corresponds better.
-            //
-            // Losing means correcting nothing rather than falling through to the
-            // search below, which reads like a missing cascade and is not: a spline
-            // that cannot beat the identity is saying this JPEG was not corrected,
-            // and the polynomial agrees. Over the 58 sampled frames where this fired
-            // before the flag above caught most of them, forcing the search through
-            // improved 3 by a median of 0.07 deltaE and declined on half.
-            match fit_crop(&grids, &knots, &scan_around(estimate_crop(&knots), 0.01, 3)) {
-                Some((crop, delta)) if delta < baseline_delta => (Some(knots), crop, 1),
-                _ => (None, 1.0, 0),
-            }
-        }
+        Geometry::Recorded(knots) => with_curve(&grids, knots, baseline_delta, SOURCE_CAMERA),
+        Geometry::Profiled(knots) => with_curve(&grids, knots, baseline_delta, SOURCE_LENSFUN),
         Geometry::Unstated => match fit_polynomial(&grids) {
-            Some((k1, crop, delta)) if delta < baseline_delta => (Some(polynomial_knots(k1, 0.0, 16)), crop, 2),
+            Some((k1, crop, delta)) if delta < baseline_delta => {
+                (Some(polynomial_knots(k1, 0.0, 16)), crop, SOURCE_FITTED)
+            }
             _ => (None, 1.0, 0),
         },
     };

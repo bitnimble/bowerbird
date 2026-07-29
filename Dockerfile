@@ -26,8 +26,15 @@ WORKDIR /app
 # libavif-bin provides avifenc for the HDR still, which is 4:4:4 and so cannot
 # come from SVT-AV1. ffmpeg's own avif muxer writes no colr box, so it cannot
 # tag one as HDR at all.
+#
+# liblensfun-dev pulls its data package with it, and both halves are needed: the
+# library is what rawshim links, and the ~4MB of XML under /usr/share/lensfun is
+# where every lens profile lives. Without the data the database loads empty and
+# every Canon frame silently falls back to fitting its own geometry - twice the
+# time for a slightly worse grade, with nothing in the logs to say why.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends libraw-dev libvips-dev libheif-plugin-aomenc ffmpeg libavif-bin \
+     liblensfun-dev \
   && rm -rf /var/lib/apt/lists/*
 
 # Dependencies as a cacheable layer.

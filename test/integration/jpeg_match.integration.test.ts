@@ -9,11 +9,15 @@ import {
   imageFromRgb,
   pixels,
   readDistortionSpline,
+  readHeaderFields,
+  readLensfunKnots,
   renderImage,
   type ImageHandle,
 } from '../../src/services/processing/rawshim_ops';
 
 const FIXTURE = `${import.meta.dir}/../fixtures/DSC02981.ARW`;
+/// A body that records no spline of its own, so the database is the only geometry.
+const CANON_FIXTURE = `${import.meta.dir}/../fixtures/IMG_5360.CR3`;
 const TIMEOUT = 120_000;
 
 /** The handle's pixels, with the handle released. */
@@ -37,6 +41,63 @@ describe('lens correction metadata', () => {
     // Anchored at zero in the centre, and a small correction on a 50mm prime.
     expect(Math.abs(knots![0]!)).toBeLessThanOrEqual(2);
     expect(knots![knots!.length - 1]! / SPLINE_UNIT).toBeCloseTo(-0.0029, 3);
+  });
+
+  test('resolves a third-party lens name against the lensfun database', () => {
+    // The case the database exists for: a Canon body records no spline, and the
+    // string it writes matches nothing exactly - "TAMRON SP 70-200mm F/2.8 Di VC
+    // USD A009" against lensfun's "Tamron SP 70-200mm f/2.8 Di VC USD A009". Only
+    // a real database can say whether the scored search still lands on it.
+    const header = readHeaderFields(CANON_FIXTURE);
+    const knots = readLensfunKnots(
+      header.cameraMake!,
+      header.cameraModel!,
+      header.lensModel!,
+      header.focalLength!,
+      header.aperture!,
+      header.width,
+      header.height,
+    );
+    expect(knots).not.toBeNull();
+    expect(knots!.length).toBe(16);
+    expect(knots![0]).toBe(0);
+    // Barely anything at 70mm, which is where this lens crosses over.
+    expect(knots![15]! / SPLINE_UNIT).toBeCloseTo(-0.0024, 3);
+  });
+
+  test('refuses a lens the shot could not have been taken with', () => {
+    // The guard that makes the scored search safe to trust: it returns everything
+    // it scored above zero, so without a range check a 70-200 answers for a 24mm
+    // frame and the render gets warped by a curve from the wrong lens.
+    const header = readHeaderFields(CANON_FIXTURE);
+    const knots = readLensfunKnots(
+      header.cameraMake!,
+      header.cameraModel!,
+      header.lensModel!,
+      24,
+      2.8,
+      header.width,
+      header.height,
+    );
+    expect(knots).toBeNull();
+  });
+
+  test('never takes the database over a spline the body recorded', () => {
+    // The order is measured, not assumed: over 83 Sony frames carrying both, the
+    // spline beat lensfun 31 to 4, because a spline is recorded per shot and a
+    // profile is one average of every copy of the lens. lensfun has this exact
+    // lens, so nothing but the priority keeps it out.
+    //
+    // Not asserted as 'camera': this frame is a 50mm prime bent by 0.29% at the
+    // corner, and correcting by that much does not beat leaving it alone, so the
+    // fit correctly settles on no geometry at all. What must never happen is the
+    // database being consulted behind the body's back.
+    const image = decodeRawImage(FIXTURE, 8, 'srgb', 1600);
+    try {
+      expect(fitMatchProfile(FIXTURE, image)?.distortionSource).not.toBe('lensfun');
+    } finally {
+      freeImage(image);
+    }
   });
 });
 

@@ -17,7 +17,7 @@
 // call.
 
 use crate::raw;
-use std::ffi::c_char;
+use std::ffi::{c_char, CString};
 
 /// Unknown, for a field the camera did not record. LibRaw leaves these at 0, and
 /// a 0 that reached the catalogue would print as f/0 or 1970.
@@ -97,6 +97,33 @@ fn degrees(dms: &[f32; 3]) -> f64 {
 /// value beyond them is a misread rather than an unusual shot.
 fn plausible(value: f32, max: f32) -> f32 {
     if value.is_finite() && value > 0.0 && value < max { value } else { UNKNOWN }
+}
+
+/// The header of a file on disk, or None when LibRaw cannot open it.
+///
+/// The one place that opens a RAW purely for its metadata, so the init/open/recycle
+/// dance is written once - the fit reaches for this too, to name the lens.
+pub fn read_path(path: &str) -> Option<BbHeader> {
+    let path = CString::new(path).ok()?;
+    unsafe {
+        let r = raw::libraw_init(0);
+        if r.is_null() {
+            return None;
+        }
+        let header = match raw::libraw_open_file(r, path.as_ptr()) {
+            0 => Some(read(r)),
+            _ => None,
+        };
+        raw::libraw_recycle(r);
+        raw::libraw_close(r);
+        header
+    }
+}
+
+/// The name a field holds, or "" where the camera recorded none.
+pub fn name(field: &[u8]) -> &str {
+    let end = field.iter().position(|b| *b == 0).unwrap_or(field.len());
+    std::str::from_utf8(&field[..end]).unwrap_or("").trim()
 }
 
 /// Reads the header of an already-opened file. `r` must have had `open_file` run.
