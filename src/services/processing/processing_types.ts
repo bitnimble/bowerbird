@@ -51,8 +51,6 @@ export interface RenditionTarget {
   quality: number;
   /** avifenc max quantizer, 0-63 and lower is better, for the HDR path. */
   quantizer: number;
-  /** AVIF effort, 0-9. See config: the default of 4 is a pure loss. */
-  effort: number;
   /** Encoder speed for the HDR path. */
   preset: number;
 }

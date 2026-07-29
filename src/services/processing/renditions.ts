@@ -19,6 +19,10 @@
 export const RENDITIONS = ['grid', 'full', 'max'] as const;
 export type Rendition = (typeof RENDITIONS)[number];
 
+// libvips' AVIF effort, fixed rather than configurable: at a fixed quality it
+// buys 0.46dB for 10x the encode time and no reduction in file size (§10.1).
+export const AVIF_EFFORT = 0;
+
 export function isRendition(value: string): value is Rendition {
   return (RENDITIONS as readonly string[]).includes(value);
 }
