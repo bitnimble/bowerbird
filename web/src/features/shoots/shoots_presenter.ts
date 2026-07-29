@@ -55,6 +55,7 @@ export class ShootsPresenter {
     this.store.browsed = new Map();
     this.store.expanded = new Set(['']);
     this.store.scrollTop = 0;
+    this.store.cursorPath = null;
     this.store.rootPhotoCount = 0;
   }
 
@@ -80,6 +81,49 @@ export class ShootsPresenter {
   @action.bound
   setScrollTop(top: number): void {
     this.store.scrollTop = top;
+  }
+
+  // The keyboard cursor. Kept in the store rather than as focus on a row element,
+  // because rows are mounted only while they are on screen: scrolling past the
+  // cursor would otherwise drop it on the floor and leave the browser focusing
+  // the document body (§18.3.4).
+  @action.bound
+  setCursor(folderPath: string | null): void {
+    this.store.cursorPath = folderPath;
+  }
+
+  @action.bound
+  moveCursor(delta: number): void {
+    const rows = this.store.rows;
+    if (rows.length === 0) return;
+    // From the top on the first keystroke, so arrowing into an untouched list
+    // starts somewhere rather than nowhere.
+    const from = this.store.cursorIndex < 0 ? (delta > 0 ? -1 : rows.length) : this.store.cursorIndex;
+    const next = Math.max(0, Math.min(from + delta, rows.length - 1));
+    this.store.cursorPath = rows[next]!.folderPath;
+  }
+
+  // Right opens a folder and then walks into it; left closes one, or steps out to
+  // the parent when it is already closed. The arrows a tree is expected to answer.
+  async openCursor(): Promise<void> {
+    const row = this.store.cursorRow;
+    if (row == null) return;
+    if (row.expandable && !this.store.expanded.has(row.folderPath)) {
+      await this.toggleFolder(row.folderPath);
+      return;
+    }
+    this.moveCursor(1);
+  }
+
+  async closeCursor(): Promise<void> {
+    const row = this.store.cursorRow;
+    if (row == null) return;
+    if (row.expandable && this.store.expanded.has(row.folderPath)) {
+      await this.toggleFolder(row.folderPath);
+      return;
+    }
+    const slash = row.folderPath.lastIndexOf('/');
+    if (slash > 0) this.setCursor(row.folderPath.slice(0, slash));
   }
 
   @action.bound

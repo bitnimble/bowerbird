@@ -1682,6 +1682,18 @@ p.ui-text--mono {
   height: 24px;
 }
 
+/* Where the keyboard cursor is. Inset so it reads inside the row's own bounds
+   rather than growing it, which the fixed height has no room for. */
+.list__row--cursored {
+  box-shadow: inset 0 0 0 2px var(--satin);
+}
+
+/* The row is a tab stop only to carry the cursor; its own outline would sit on
+   top of the ring above and say the same thing twice. */
+.list__row--cursored:focus {
+  outline: none;
+}
+
 /* A row being renamed trades its subtitle for the field, rather than stacking
    both and spilling into its neighbours. */
 .list__row--editing .list__body > :not(.ui-input) {

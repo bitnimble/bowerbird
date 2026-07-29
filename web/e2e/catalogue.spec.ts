@@ -81,6 +81,52 @@ test('keeps the library in the shell when a shoot is opened by deep link', async
   await expect(page.locator(`.rail__link[title="${PHOTOS_DIR}"]`)).toBeVisible();
 });
 
+// The rows are virtualised, so a row scrolled out of the window is unmounted and
+// anything focused inside it used to fall to the document body - the next Tab
+// then restarted at the top of the page. The cursor is a value in the store, so
+// it survives that, and exactly one row is ever in the tab order.
+test('the folder list is walkable by keyboard, and Tab lands on the cursor', async ({ page }) => {
+  await page.goto('/settings');
+  await openLibrary(page, PHOTOS_DIR);
+  await page.getByRole('link', { name: 'Shoots', exact: true }).click();
+  await addShoot(page, 'Kelp');
+  await expect(page.locator('.list__name', { hasText: 'Kelp' })).toBeVisible();
+
+  // Nothing is cursored until the reader asks for one.
+  await expect(page.locator('.list__row--cursored')).toHaveCount(0);
+
+  // Onto the list first: closing the dialog hands focus back to the + menu, and
+  // a menu owns the arrow keys while it has focus - as it should.
+  await page.locator('.list__scroller').focus();
+
+  // Rows are ordered by folder path, so Kelp comes before Reef.
+  await page.keyboard.press('ArrowDown');
+  await expect(page.locator('.list__row--cursored')).toHaveCount(1);
+  await expect(page.locator('.list__row--cursored')).toContainText('Kelp');
+
+  await page.keyboard.press('ArrowDown');
+  await expect(page.locator('.list__row--cursored')).toContainText('Reef');
+
+  await page.keyboard.press('ArrowUp');
+  await expect(page.locator('.list__row--cursored')).toContainText('Kelp');
+
+  // One tab stop for the whole list, and it is the cursor.
+  await expect(page.locator('.list__row[tabindex="0"]')).toHaveCount(1);
+  await expect(page.locator('.list__row[tabindex="0"]')).toContainText('Kelp');
+
+  // Focusing inside a row moves the cursor there, so the ring and the focus can
+  // never disagree about where the reader is.
+  await page.locator('.list__row', { hasText: 'Reef' }).getByRole('button', { name: 'Rename' }).focus();
+  await expect(page.locator('.list__row--cursored')).toContainText('Reef');
+
+  // Put the list back as it was found: the rest of this file is one ordered
+  // journey through a single library. Deleting the shoot and keeping its photos
+  // is the reversible half of the dialog, which nothing else exercises.
+  await page.locator('.list__row', { hasText: 'Kelp' }).getByRole('button', { name: 'Delete' }).click();
+  await page.locator('.ui-modal').getByRole('button', { name: 'Delete shoot' }).click();
+  await expect(page.locator('.list__name', { hasText: 'Kelp' })).toHaveCount(0);
+});
+
 test('adding a photo to a shoot moves the file out of the library root on disk', async ({ page }) => {
   await page.goto('/settings');
   await openLibrary(page, PHOTOS_DIR);

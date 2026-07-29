@@ -62,6 +62,12 @@ export class ShootsStore {
   // half-typed name simply disappeared.
   @observable accessor renamingPath: string | null = null;
   @observable accessor renameDraft = '';
+  // The keyboard cursor, held as a folder path rather than a row index. Rows are
+  // renumbered by every expand, collapse and view change, so an index would point
+  // at a different folder afterwards; a path names the same folder whatever the
+  // list does around it. (The grid keys its cursor by index because a position is
+  // all a sparse collection has, §18.3.2.)
+  @observable accessor cursorPath: string | null = null;
   /** How many photographs the library holds that are in no shoot at all. */
   @observable accessor rootPhotoCount = 0;
   /** Folders whose children are drawn; every ancestor of a shoot is one. */
@@ -118,6 +124,34 @@ export class ShootsStore {
 
   @computed get visibleTop(): number {
     return this.visible.from * SHOOT_ROW_H;
+  }
+
+  @computed get rowIndexByPath(): Map<string, number> {
+    return new Map(this.rows.map((row, index) => [row.folderPath, index]));
+  }
+
+  /** Where the cursor sits now, or -1 if its folder is no longer on the list. */
+  @computed get cursorIndex(): number {
+    return this.cursorPath == null ? -1 : (this.rowIndexByPath.get(this.cursorPath) ?? -1);
+  }
+
+  @computed get cursorRow(): FolderRow | null {
+    return this.rows[this.cursorIndex] ?? null;
+  }
+
+  // Where the scroll has to go for the cursor to be on screen, or null if it
+  // already is. Computed from the store's own geometry rather than from the
+  // cursor's element, which is the whole point: the row it names may never have
+  // been mounted, so there is nothing to measure or to call scrollIntoView on.
+  @computed get cursorScrollTop(): number | null {
+    if (this.cursorIndex < 0) return null;
+    const top = this.cursorIndex * SHOOT_ROW_H;
+    if (top < this.scrollTop) return top;
+    // The row's own height, not the pitch past it: scrolling to clear the next
+    // row's edge would overshoot by a row every time.
+    const bottom = top + SHOOT_ROW_H;
+    if (bottom > this.scrollTop + this.viewportHeight) return bottom - this.viewportHeight;
+    return null;
   }
 
   @computed get scrollHeight(): number {

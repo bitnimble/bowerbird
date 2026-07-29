@@ -184,6 +184,9 @@ const SHORTCUTS: [string, string][] = [
   ['I', "Show the camera's JPEG (photo view)"],
   ['O', 'Show the render from RAW (photo view)'],
   ['Esc', 'Clear selection, or leave a photo'],
+  ['↑ ↓', 'Move between folders (Shoots)'],
+  ['→ ←', 'Open / close a folder (Shoots)'],
+  ['Home / End', 'First / last folder (Shoots)'],
 ];
 
 function ShortcutHelp(): JSX.Element {

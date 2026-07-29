@@ -65,6 +65,14 @@ export const ShootsPage = observer(function ShootsPage(): JSX.Element {
     if (scroller.current != null) scroller.current.scrollTop = 0;
   }, [libraryId, store.view]);
 
+  // Follow the cursor. Declared after the reset above so that switching view with
+  // a cursor set lands on the same folder rather than at the top - the cursor is
+  // a folder, and it means the same thing in every reading of the tree.
+  useEffect(() => {
+    const target = store.cursorScrollTop;
+    if (scroller.current != null && target != null) scroller.current.scrollTop = target;
+  }, [store.cursorIndex, store]);
+
   useEffect(() => {
     shoots.restoreView();
     void shoots.load(libraryId);
@@ -77,6 +85,7 @@ export const ShootsPage = observer(function ShootsPage(): JSX.Element {
 
   return (
     <div className="pad pad--fill">
+      <ShootKeys />
       <div className="row page__head">
         <Heading>Shoots</Heading>
         <span className="spacer" />
@@ -180,6 +189,55 @@ export const ShootsPage = observer(function ShootsPage(): JSX.Element {
   );
 });
 
+// Bound to the window rather than to a row, which is the point: the cursor is a
+// value in the store, so it survives the row it names being unmounted by a
+// scroll. Its own component so a keystroke re-renders nothing but the two rows
+// whose ring moved.
+const ShootKeys = observer(function ShootKeys(): null {
+  const store = useShootsStore();
+  const { shoots } = usePresenters();
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent): void {
+      const target = e.target as HTMLElement | null;
+      // A rename in progress owns the arrows, and a browser shortcut owns them
+      // whatever is on screen.
+      if (target != null && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+      switch (e.key) {
+        case 'ArrowDown':
+          shoots.moveCursor(1);
+          break;
+        case 'ArrowUp':
+          shoots.moveCursor(-1);
+          break;
+        case 'ArrowRight':
+          void shoots.openCursor();
+          break;
+        case 'ArrowLeft':
+          void shoots.closeCursor();
+          break;
+        case 'Home':
+          shoots.moveCursor(-store.rows.length);
+          break;
+        case 'End':
+          shoots.moveCursor(store.rows.length);
+          break;
+        default:
+          return;
+      }
+      // Only once a key was one of ours: the arrows still scroll the page when
+      // the cursor is not what the reader is driving.
+      e.preventDefault();
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [shoots, store]);
+
+  return null;
+});
+
 const ShootRow = observer(function ShootRow({
   row,
   position,
@@ -203,6 +261,7 @@ const ShootRow = observer(function ShootRow({
   const banner = bannerId == null || bannerId === missingBanner ? null : bannerId;
   const expanded = store.expanded.has(row.folderPath);
   const editing = store.renamingPath === row.folderPath;
+  const cursored = store.cursorPath === row.folderPath;
 
   const options: Option<RowAction>[] = [
     ...(row.shoot == null ? [{ value: 'adopt' as const, label: 'Add as shoot', icon: <Folder size={ICON} /> }] : []),
@@ -211,11 +270,20 @@ const ShootRow = observer(function ShootRow({
 
   return (
     <div
-      className={`list__row${row.shoot == null ? ' list__row--untracked' : ''}${editing ? ' list__row--editing' : ''}`}
+      className={`list__row${row.shoot == null ? ' list__row--untracked' : ''}${editing ? ' list__row--editing' : ''}${
+        cursored ? ' list__row--cursored' : ''
+      }`}
       role="listitem"
       aria-posinset={position}
       aria-setsize={total}
       aria-level={row.depth + 1}
+      // Roving: exactly one row is ever in the tab order, so tabbing past the
+      // scroller lands on the cursor rather than restarting at the top of the
+      // document - which is what scrolling a focused row out of the window used
+      // to cost. Focusing anything in a row moves the cursor there, so the two
+      // never disagree about where the reader is.
+      tabIndex={cursored ? 0 : -1}
+      onFocus={() => shoots.setCursor(row.folderPath)}
     >
       <span className="depth" style={{ width: row.depth * 16 }} />
 
