@@ -19,6 +19,8 @@ interface Probe {
   color_transfer?: string;
   color_space?: string;
   pix_fmt?: string;
+  width?: number;
+  height?: number;
 }
 
 function probe(file: string): Probe {
@@ -26,7 +28,7 @@ function probe(file: string): Probe {
     'ffprobe',
     '-hide_banner',
     '-loglevel', 'error',
-    '-show_entries', 'stream=color_primaries,color_transfer,color_space,pix_fmt',
+    '-show_entries', 'stream=color_primaries,color_transfer,color_space,pix_fmt,width,height',
     '-of', 'json',
     file,
   ]);
@@ -80,9 +82,6 @@ test('one call writes the still and its video twin, each tagged as its own mediu
 
     expect(Bun.file(still).size).toBeGreaterThan(0);
     expect(Bun.file(video).size).toBeGreaterThan(0);
-    // The y4m the still is muxed through is a temporary, and both encodes run at
-    // once - so a name either of them shared would survive as a stray file here.
-    expect(Bun.file(`${still}.y4m`).size).toBe(0);
 
     // Both must carry the PQ signalling, and each its own chroma: 4:4:4 for the
     // still because it is a photograph, 4:2:0 for the video because that is the
@@ -93,6 +92,14 @@ test('one call writes the still and its video twin, each tagged as its own mediu
       expect(found.color_primaries).toBe('bt2020');
       expect(found.pix_fmt).toBe(chroma);
     }
+
+    // The same size, which is the claim the whole shape rests on. One graded frame
+    // serves both encodes and there is no second-grade path any more, and what makes
+    // that legitimate is that nothing can give the two different dimensions - the
+    // 8704-row ceiling that used to impose one went with SVT-AV1. A regression that refitted the
+    // video on its own would show up here and nowhere else.
+    const [videoSize, stillSize] = [probe(video), probe(still)];
+    expect([videoSize.width, videoSize.height]).toEqual([stillSize.width, stillSize.height]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

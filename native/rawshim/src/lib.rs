@@ -83,6 +83,15 @@ pub struct BbImage {
     pub len: usize,
     /// Non-zero when the frame was decoded at half size.
     pub halved: u32,
+    /// Non-zero when the frame was read straight out of `imgdata.image` rather than
+    /// through `dcraw_make_mem_image`.
+    ///
+    /// Reported so the pin that holds the two against each other can check it actually
+    /// forked. `copy_processed` declines on five conditions, one of them a LibRaw
+    /// default it does not set - and a differential test whose two arms quietly become
+    /// the same arm passes while proving nothing (`raw_decode.integration.test.ts`).
+    /// Sits in padding the struct already had, so the layout is unchanged.
+    pub direct: u32,
     /// Kept so `bb_free` can drop the exact allocation it handed out.
     capacity: usize,
 }
@@ -100,6 +109,7 @@ impl BbImage {
             data: data.as_mut_ptr(),
             len: data.len(),
             halved: 0,
+            direct: 0,
             capacity: data.capacity(),
         }))
     }
@@ -257,11 +267,19 @@ fn reference_copy() -> bool {
 /// it means reproducing dcraw's `gamma_curve(gamm[0], gamm[1], 2, (t_white << 3) /
 /// bright)`. On the sRGB path `t_white` comes from a histogram scan against
 /// `auto_bright_thr`, which is a heuristic this has no business shadowing. On this path
-/// every input is a constant we set two dozen lines above: `no_auto_bright` pins
-/// `t_white` at 0x2000, `bright` is 1, and `gamm` is {1,1}. Solve dcraw's curve for
-/// those and g[3] converges to 1 with g[4] at 0, so the whole table collapses to
-/// `curve[i] = i`. Hence no lookup here at all - the identity is not an assumption
-/// about LibRaw, it is what those constants make the curve.
+/// the inputs are pinned instead. `no_auto_bright`, which this sets, short-circuits the
+/// histogram scan so `t_white` stays at 0x2000 and `imax` is exactly 65536; `gamm` is
+/// {1,1}, also set here; and `bright` is 1, which is LibRaw's *default* rather than
+/// anything this asks for - which is why the guard checks it rather than trusting it.
+/// With `g[0]` and `g[1]` both 1 and `g[4]` 0, *both* branches of dcraw's piecewise
+/// reduce to `r` - the linear arm is `r * g[1]`, the power arm `pow(r, g[0]) * (1 + g[4])
+/// - g[4]` - so the table is `curve[i] = i` for all 65536 entries. Confirmed by running
+/// dcraw's `gamma_curve(1.0, 1.0, 2, 65536)` and diffing against the identity: zero
+/// differing entries, `curve[65535] == 65535`. The knee the bisection lands on does not
+/// enter into it - it converges to 1 - 2^-48 rather than to 1, and it does not matter.
+///
+/// Hence no lookup here at all - the identity is not an assumption about LibRaw, it is
+/// what those constants make the curve.
 ///
 /// A pin holds the output byte-for-byte against `dcraw_make_mem_image`
 /// (`raw_decode.integration.test.ts`), because that reasoning is exactly the kind that
@@ -290,32 +308,45 @@ unsafe fn copy_processed(r: *mut raw::libraw_data_t, depth: u32, i: &Insets) -> 
         return None;
     }
 
-    // dcraw's own, so the orientation matches LibRaw's to the pixel.
-    let flip_index = |row: usize, col: usize| -> usize {
-        let (mut row, mut col) = if flip & 4 != 0 { (col, row) } else { (row, col) };
-        if flip & 2 != 0 {
-            row = iheight - 1 - row;
-        }
-        if flip & 1 != 0 {
-            col = iwidth - 1 - col;
-        }
-        row * iwidth + col
-    };
+    let flip_index = |row: usize, col: usize| flip_index(flip, iwidth, iheight, row, col);
 
     let planes = std::slice::from_raw_parts((*r).image, iwidth * iheight);
-    let stride = out_width * 3;
-    let mut out = vec![0u16; stride * out_height];
+    // Written as bytes rather than as `u16`s that are then reinterpreted. Rebuilding a
+    // `Vec<u8>` over a `Vec<u16>`'s allocation is undefined: `dealloc` has to be handed
+    // the same layout `alloc` got, and the alignment differs (2 against 1). The System
+    // allocator does not care, which is exactly what makes it the kind of thing that
+    // survives every test and then does not survive a different allocator.
+    //
+    // Native byte order, which is what every reader on this side assumes.
+    let stride = out_width * 6;
+    let mut out = vec![0u8; stride * out_height];
     out.par_chunks_mut(stride).enumerate().for_each(|(y, row)| {
         for x in 0..out_width {
             let px = planes[flip_index(y + i.top, x + i.left)];
-            row[x * 3..x * 3 + 3].copy_from_slice(&px[..3]);
+            for c in 0..3 {
+                let at = x * 6 + c * 2;
+                row[at..at + 2].copy_from_slice(&px[c].to_ne_bytes());
+            }
         }
     });
+    Some((out_width, out_height, out))
+}
 
-    // Native byte order, which is what every reader on this side assumes.
-    let mut out = std::mem::ManuallyDrop::new(out);
-    let bytes = Vec::from_raw_parts(out.as_mut_ptr() as *mut u8, out.len() * 2, out.capacity() * 2);
-    Some((out_width, out_height, bytes))
+/// dcraw's `flip_index`, which is what makes the orientation match LibRaw's to the pixel.
+///
+/// `iwidth`/`iheight` are the *processed* dimensions - `copy_mem_image` assigns
+/// `S.iwidth = S.width` and `S.iheight = S.height` before it indexes anything, and the
+/// struct's own `iwidth`/`iheight` are not those: `raw2image_start` leaves them shrunk
+/// by `IO.shrink`, so under `half_size` reading them would walk the wrong stride.
+fn flip_index(flip: c_int, iwidth: usize, iheight: usize, row: usize, col: usize) -> usize {
+    let (mut row, mut col) = if flip & 4 != 0 { (col, row) } else { (row, col) };
+    if flip & 2 != 0 {
+        row = iheight - 1 - row;
+    }
+    if flip & 1 != 0 {
+        col = iwidth - 1 - col;
+    }
+    row * iwidth + col
 }
 
 /// Copies the frame out of LibRaw's buffer with the crop applied on the way.
@@ -402,8 +433,9 @@ pub unsafe extern "C" fn bb_decode(
         // Straight out of `imgdata.image` where the curve is ours to know, which skips
         // the second whole-frame buffer `dcraw_make_mem_image` would allocate and the
         // copy back out of it.
-        let direct = if reference_copy() { None } else { copy_processed(r, depth, &insets) };
-        let (width, height, data) = match direct {
+        let taken = if reference_copy() { None } else { copy_processed(r, depth, &insets) };
+        let direct = taken.is_some();
+        let (width, height, data) = match taken {
             Some(done) => done,
             None => {
                 let mut err: c_int = 0;
@@ -435,6 +467,7 @@ pub unsafe extern "C" fn bb_decode(
             data: data.as_mut_ptr(),
             len: data.len(),
             halved: u32::from(halved),
+            direct: u32::from(direct),
             capacity: data.capacity(),
         }))
     })();
@@ -653,6 +686,56 @@ pub unsafe extern "C" fn bb_stack_groups(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Every orientation LibRaw can hand over, which the fixtures cannot give.
+    //
+    // Both test RAWs carry EXIF orientation 8, which dcraw maps to flip 5 - so the
+    // byte-for-byte pin against `dcraw_make_mem_image` covers one value out of eight,
+    // and *not* flip 0, an ordinary landscape photograph. The commit that added it
+    // claimed two. This is the coverage that claim wanted.
+    //
+    // Bijection is the property worth asserting rather than a table of expected
+    // indices: it says every output pixel reads exactly one source pixel and every
+    // source pixel is read exactly once, which is simultaneously "no index escapes the
+    // buffer", "no pixel is duplicated" and "none is dropped". A transposed axis or an
+    // inverted mirror breaks it immediately.
+    #[test]
+    fn every_orientation_maps_the_frame_onto_itself_exactly_once() {
+        for flip in 0..8 {
+            for (iwidth, iheight) in [(7usize, 5usize), (5, 7), (4, 4), (1, 6)] {
+                // What `copy_processed` derives: the quarter-turn swaps the output
+                // bounds, and only the output bounds.
+                let (width, height) =
+                    if flip & 4 == 0 { (iwidth, iheight) } else { (iheight, iwidth) };
+
+                let mut seen = vec![0u32; iwidth * iheight];
+                for row in 0..height {
+                    for col in 0..width {
+                        let at = flip_index(flip, iwidth, iheight, row, col);
+                        assert!(at < seen.len(), "flip {flip} {iwidth}x{iheight} escaped at {row},{col}");
+                        seen[at] += 1;
+                    }
+                }
+                assert!(
+                    seen.iter().all(|count| *count == 1),
+                    "flip {flip} on {iwidth}x{iheight} is not a bijection: {seen:?}",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_identity_orientation_is_row_major_order() {
+        // Flip 0 is the common case and the one the pin never sees, so it gets its
+        // exact indices rather than only the bijection property.
+        for (row, col, want) in [(0, 0, 0), (0, 3, 3), (1, 0, 7), (4, 6, 34)] {
+            assert_eq!(flip_index(0, 7, 5, row, col), want, "{row},{col}");
+        }
+        // Flip 5 is what both fixtures are: transpose, then mirror the column.
+        assert_eq!(flip_index(5, 7, 5, 0, 0), 6);
+        // Flip 3 is a half turn: last pixel first.
+        assert_eq!(flip_index(3, 7, 5, 0, 0), 34);
+    }
 
     #[test]
     fn normalises_the_as_shot_multipliers_to_green() {

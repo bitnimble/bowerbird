@@ -18,11 +18,21 @@ import { shim } from './rawshim';
 import type { OutputSpace } from './raw_decoder';
 
 // #[repr(C)] BbImage: u32 width, u32 height, u32 depth, 4 bytes padding, *mut u8
-// data, usize len, u32 halved, 4 bytes padding, usize capacity.
+// data, usize len, u32 halved, u32 direct, usize capacity. `direct` sits in padding
+// the struct already had, so the size is unchanged.
 //
 // Exported for `rawshim_pixels.ts` alone, which needs `data` and `len` to copy
 // the samples out. Nothing in `src/` may import that module.
-export const IMAGE = { width: 0, height: 4, depth: 8, data: 16, len: 24, halved: 32, size: 48 } as const;
+export const IMAGE = {
+  width: 0,
+  height: 4,
+  depth: 8,
+  data: 16,
+  len: 24,
+  halved: 32,
+  direct: 36,
+  size: 48,
+} as const;
 
 // BbBuffer is a data pointer, a length and a capacity, 8 bytes each.
 const BUFFER = { data: 0, len: 8, size: 24 } as const;
@@ -62,6 +72,15 @@ export interface ImageHandle {
   readonly depth: 8 | 16;
   /** Whether the RAW decode ran at half size. False for anything else. */
   readonly halved: boolean;
+  /**
+   * Whether the frame was read straight out of LibRaw's processed buffer rather than
+   * through `dcraw_make_mem_image` (§10.4).
+   *
+   * For the pin that holds the two against each other; nothing in the app branches on
+   * it. A differential test cannot tell a passing comparison from two runs that took
+   * the same path, and this is what lets it.
+   */
+  readonly direct: boolean;
 }
 
 export function handleOf(pointer: Pointer | null, what: string): ImageHandle {
@@ -74,6 +93,7 @@ export function handleOf(pointer: Pointer | null, what: string): ImageHandle {
     height: head.getUint32(IMAGE.height, true),
     depth: head.getUint32(IMAGE.depth, true) === 16 ? 16 : 8,
     halved: head.getUint32(IMAGE.halved, true) !== 0,
+    direct: head.getUint32(IMAGE.direct, true) !== 0,
   };
 }
 

@@ -103,8 +103,9 @@ function writeHdr(
       outputPath: target.outputPath,
       crf: target.quantizer,
       preset: target.preset,
-      // The still is never fitted past what was asked for; the video is, because
-      // the encoder caps height at 8704 and a max-resolution frame exceeds it.
+      // One edge for both media. The video used to have an encoder ceiling on top of
+      // it, which was SVT-AV1's own; libaom takes either orientation, so the twin is
+      // exactly as large as the still and the two can share a grade (§10.7).
       maxEdge: target.size === 0 ? Number.POSITIVE_INFINITY : target.size,
     },
     target.videoOutputPath ?? '',

@@ -68,7 +68,14 @@ fn pq_encode(graded: &[u16], peak_nits: f64) -> Vec<u16> {
 /// Encodes one graded frame as an AVIF still, straight to `out_path`.
 ///
 /// `graded` is interleaved 16-bit RGB, display-referred linear, as `tone::grade` leaves
-/// it. Nothing is copied out of it: the PQ pass produces the one buffer libavif reads.
+/// it, and PQ-encoded here rather than by a `zscale` in another process.
+///
+/// **This holds three frames at once**, which is the cost of not spawning anything: the
+/// caller's graded buffer, the PQ-encoded copy below, and the 10-bit planes libavif
+/// allocates to convert into. At 61MP that is roughly 1.1GB against the ~366MB the old
+/// path kept on this side, because the other two used to live in ffmpeg's and avifenc's
+/// address spaces and die with them. With `processing_concurrency` workers each holding
+/// a decode as well, that is the number to watch on a machine that starts OOM-killing.
 pub fn encode_still(
     graded: &[u16],
     width: usize,
@@ -126,12 +133,19 @@ pub fn encode_still(
 
                 let mut output = std::mem::zeroed::<raw::avifRWData>();
                 let status = raw::avifEncoderWrite(encoder, image, &mut output);
-                if status != AVIF_RESULT_OK {
-                    return Err(format!("libavif could not encode: {}", message(status)));
-                }
-                let bytes = std::slice::from_raw_parts(output.data, output.size).to_vec();
+                // Freed before the status is looked at: a write that fails part way
+                // has already allocated, and `avifRWDataFree` is defined on a zeroed
+                // struct, so the ordering costs nothing and the alternative leaks
+                // however much of the file got built.
+                let bytes = match (status, output.data.is_null()) {
+                    (AVIF_RESULT_OK, false) => {
+                        Ok(std::slice::from_raw_parts(output.data, output.size).to_vec())
+                    }
+                    (AVIF_RESULT_OK, true) => Err("libavif returned no bytes".to_string()),
+                    _ => Err(format!("libavif could not encode: {}", message(status))),
+                };
                 raw::avifRWDataFree(&mut output);
-                Ok(bytes)
+                bytes
             })();
             raw::avifEncoderDestroy(encoder);
             written

@@ -13,7 +13,7 @@
 // as a one-frame video, since its video pipeline does composite HDR by passing through
 // to the compositor.
 
-use crate::hdr_args::{self, EncodeOptions, Medium};
+use crate::hdr_args::{self, EncodeOptions, Medium, Variant};
 use crate::hdr_fit::{self, HdrMatch};
 use crate::image;
 use crate::tone::{self, GradeOptions};
@@ -119,7 +119,9 @@ pub fn fit_all(
 ) -> Option<(crate::fit::Profile, HdrMatch)> {
     crate::vips::init();
     let levels = tone::levels(source.samples, quantile);
-    if !(levels.peak > 0.0) {
+    // Diffuse white, not the peak: it is what both halves normalise by, and a frame
+    // with none has no exposure to fit against either.
+    if !(levels.white > 0.0) {
         return None;
     }
     let path = std::ffi::CString::new(raw_path).ok()?;
@@ -133,7 +135,10 @@ pub fn fit_all(
             let plane =
                 hdr_fit::fit_plane(source.samples, source.width, source.height, preview.width * 2);
 
-            let render = hdr_fit::render_srgb8(&plane, levels.peak);
+            // Both halves off the same plane and the same anchor: the geometry search
+            // wants a render that looks like an ordinary picture, the colour fit wants
+            // the grade's own domain, and diffuse white is what puts them there.
+            let render = hdr_fit::render_srgb8(&plane, levels.white);
             let profile = crate::fit::fit(render.as_ref(), jpeg, geometry).ok().flatten()?;
             let matched =
                 hdr_fit::fit(&plane, levels.white, &preview, profile.knots.clone(), profile.crop)?;
@@ -224,11 +229,23 @@ fn encode_graded(graded: &[u16], width: usize, height: usize, options: &EncodeOp
         return run(&hdr_args::ffmpeg_args(width as u32, height as u32, options), Some(bytes));
     }
 
-    // In this process. `avifenc` is a wrapper around libavif, and what it was adding
-    // over ffmpeg is the nclx `colr` box, which libavif writes just as well when called
-    // directly - so the frame stops being written to ffmpeg's stdin, converted, written
-    // again as y4m and read back, and becomes a pointer (`avif.rs`).
-    if !use_avifenc() {
+    // In this process, for a PQ still. `avifenc` is a wrapper around libavif, and what
+    // it was adding over ffmpeg is the nclx `colr` box, which libavif writes just as
+    // well when called directly - so the frame stops being written to ffmpeg's stdin,
+    // converted, written again as y4m and read back, and becomes a pointer (`avif.rs`).
+    //
+    // PQ only, and the exception is not caution. The grade hands over Rec.2020 linear,
+    // and for PQ that is already the output gamut, so all that is left is a transfer
+    // this crate owns and a matrix libavif owns. The SDR reference is a different
+    // picture: `zscale` was converting *primaries* for it, Rec.2020 to BT.709, and
+    // applying the sRGB transfer rather than PQ. libavif does neither - it applies the
+    // YCbCr matrix and writes whatever CICP it is told - so routing SDR through here
+    // tagged a PQ-encoded, Rec.2020-primaried frame as sRGB/BT.709 and called it a
+    // control. Measured at 23.5dB against the binary where PQ scores 65.9dB: not a
+    // rounding difference, a different photograph. A gamut conversion is exactly the
+    // thing this was not supposed to reimplement, so the SDR reference keeps the path
+    // that already owns one.
+    if !use_avifenc() && options.variant == Variant::Pq {
         let (primaries, transfer, matrix) = hdr_args::cicp(options.variant, options.medium);
         return crate::avif::encode_still(
             graded,
@@ -282,13 +299,26 @@ fn pipe(first: &[String], second: &[String], stdin_data: &[u8]) -> Result<(), St
         .map_err(|e| format!("could not start {upstream}: {e}"))?;
 
     let feed = up.stdout.take().ok_or("no stdout on the first stage")?;
+    // The builder is a temporary on purpose, and it is load-bearing: it owns the read
+    // end of the pipe until it is dropped at the end of this statement. Bind it to a
+    // `let` and the parent keeps that end open, the downstream never sees EOF, and this
+    // function hangs forever with both children alive.
     let down = Command::new(downstream)
         .args(down_rest)
         .stdin(Stdio::from(feed))
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("could not start {downstream}: {e}"))?;
+        .spawn();
+    // `Child` has no `Drop`, so returning here without this leaves the first stage
+    // running and then unreaped for the life of the process.
+    let down = match down {
+        Ok(child) => child,
+        Err(e) => {
+            let _ = up.kill();
+            let _ = up.wait();
+            return Err(format!("could not start {downstream}: {e}"));
+        }
+    };
 
     let mut stdin = up.stdin.take().ok_or("no stdin on the first stage")?;
     let (up_out, down_out) = std::thread::scope(|scope| {
@@ -305,11 +335,18 @@ fn pipe(first: &[String], second: &[String], stdin_data: &[u8]) -> Result<(), St
         .map_err(|_| format!("{downstream} panicked"))?
         .map_err(|e| format!("{downstream} did not finish: {e}"))?;
     let up_out = up_out.map_err(|e| format!("{upstream} did not finish: {e}"))?;
-    if !up_out.status.success() {
-        return Err(failure(upstream, &up_out));
-    }
+
+    // Downstream first, and that order is the whole point. When the second stage
+    // rejects its arguments and exits at once, the first is killed by SIGPIPE on its
+    // next write - so it fails too, with no exit code and, under `-loglevel error`,
+    // nothing on stderr because it never got as far as complaining. Reporting the
+    // first stage there hands back `ffmpeg failed (-1): no output` and discards the
+    // only message that says what is actually wrong.
     if !down_out.status.success() {
         return Err(failure(downstream, &down_out));
+    }
+    if !up_out.status.success() {
+        return Err(failure(upstream, &up_out));
     }
     Ok(())
 }

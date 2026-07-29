@@ -281,6 +281,22 @@ describe('fitMatchProfile', () => {
     TIMEOUT,
   );
 
+  /**
+   * How far apart two fits put a corner pixel, in pixels of a 3840px-long-edge frame.
+   *
+   * A radial model scales a pixel's distance from centre by `crop * (1 + knot/SPLINE)`,
+   * so the corner - where the spline's last knot applies and the lever is longest - is
+   * where any disagreement is largest. Reducing both fits to that one number is what
+   * makes them comparable when they took different routes: a tier, a knot count and a
+   * crop are three ways of saying something the eye only ever sees as displacement.
+   */
+  const cornerGap = (a: MatchProfile, b: MatchProfile): number => {
+    const scale = (p: MatchProfile): number => p.crop * (1 + (p.distortion?.at(-1) ?? 0) / 16384);
+    // Half-diagonal of a 3:2 frame at a 3840px long edge.
+    const radius = Math.hypot(3840 / 2, 2560 / 2);
+    return Math.abs(scale(a) - scale(b)) * radius;
+  };
+
   // An HDR job wants only the geometry, and holds a scene-linear decode already, so it
   // fits off that rather than demosaicing the file a second time in 8-bit. The two
   // renders differ in tone - LibRaw auto-brightens its sRGB path where the linear one
@@ -326,6 +342,18 @@ describe('fitMatchProfile', () => {
           // tone was too far off to search against would show up here as a match that
           // is plainly worse, not as one that took a different road to the same place.
           expect(viaLinear.deltaE).toBeLessThan(viaSdr!.deltaE + 0.1);
+
+          // And how far apart the two geometries actually put the picture, which is
+          // the thing that matters and the thing the tier is only a proxy for.
+          //
+          // Bounded rather than pinned, because on IMG_5360 the two land on opposite
+          // sides of a decision worth 0.0028 deltaE76 - lensfun's curve barely beats
+          // correcting nothing - and pinning the tier there pins a coin toss. What
+          // must not happen is the two disagreeing by a lot, which is what a linear
+          // fit that had quietly stopped resolving geometry at all would look like on
+          // a body that needs it: an uncorrected 4.5% barrel is ~100px at this radius,
+          // where the coin toss is 17.
+          expect(cornerGap(viaSdr!, viaLinear)).toBeLessThan(30);
 
           // Where both keep a curve it must be the same curve, since those knots are
           // read from the file or the database rather than fitted from pixels.

@@ -27,6 +27,7 @@ const image = decodeRawImage(file, Number(depth), space, Number(edge));
 console.log(JSON.stringify({
   shape: \`\${image.width}x\${image.height}\`,
   halved: image.halved,
+  direct: image.direct,
   digest: Bun.SHA1.hash(pixels(image), 'hex'),
 }));
 freeImage(image);
@@ -35,6 +36,7 @@ freeImage(image);
 interface Decoded {
   shape: string;
   halved: boolean;
+  direct: boolean;
   digest: string;
 }
 
@@ -65,6 +67,14 @@ for (const name of FIXTURES) {
         expect(direct.halved).toBe(edge > 0);
         expect(direct.shape).toBe(reference.shape);
         expect(direct.digest).toBe(reference.digest);
+
+        // And a guard on the fork itself. `copy_processed` declines - falling back to
+        // the very path this is comparing against - on any of five conditions, one of
+        // which is a curve parameter it does not set itself. If it ever starts
+        // declining, every assertion above passes with both arms on the reference
+        // path, and the thing under test is dead with nothing to say so.
+        expect(direct.direct).toBe(true);
+        expect(reference.direct).toBe(false);
       },
       180_000,
     );

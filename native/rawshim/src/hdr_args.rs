@@ -168,8 +168,23 @@ pub fn fitted(width: u32, height: u32, max_edge: f64) -> Size {
 /// encodes in 721ms where SVT-AV1 declines it outright - so moving the video off SVT
 /// gave that back and removed the one case where a still and its twin could differ in
 /// size, which is the one case that needed grading twice.
+///
+/// It also took away the thing that was accidentally keeping the video's dimensions
+/// even. `fitted` hands back the frame untouched when nothing needs shrinking, and a
+/// decode can arrive odd - the masked-border crop takes asymmetric insets off it - so a
+/// native-resolution 4:2:0 encode could be asked for an odd width and refuse outright.
+/// A still is 4:4:4 and does not care, which is why this is the one place the two media
+/// still differ.
 pub fn target_size(width: u32, height: u32, options: &EncodeOptions) -> Size {
-    fitted(width, height, options.max_edge)
+    let size = fitted(width, height, options.max_edge);
+    match options.medium {
+        // Down to even, never up. `even` rounds to nearest, which is right inside
+        // `fitted` where the number is already below the source, and wrong here: a
+        // 533-row frame would be asked for 534 and the encoder would be upscaling to
+        // invent a row. Losing one is the only direction available.
+        Medium::Video => Size { width: size.width & !1, height: size.height & !1 },
+        _ => size,
+    }
 }
 
 /// A number as JavaScript's `String()` would render it, since these strings are
@@ -403,6 +418,18 @@ mod tests {
     fn a_frame_already_inside_the_edge_is_left_alone() {
         assert_eq!(fitted(800, 533, 3840.0), Size { width: 800, height: 533 });
         assert_eq!(fitted(800, 533, f64::INFINITY), Size { width: 800, height: 533 });
+    }
+
+    #[test]
+    fn an_odd_frame_loses_a_row_to_the_video_rather_than_gaining_one() {
+        // 4:2:0 has no odd dimensions, and at native size nothing else is rounding
+        // them - the masked-border crop can leave a frame odd. It has to come down:
+        // asking a 533-row source for 534 makes the encoder invent a row.
+        let video = options(Variant::Pq, Medium::Video, f64::INFINITY);
+        assert_eq!(target_size(801, 533, &video), Size { width: 800, height: 532 });
+        // The still is 4:4:4 and keeps every pixel it was given.
+        let still = options(Variant::Pq, Medium::Still, f64::INFINITY);
+        assert_eq!(target_size(801, 533, &still), Size { width: 801, height: 533 });
     }
 
     #[test]

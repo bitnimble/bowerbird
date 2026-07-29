@@ -635,13 +635,27 @@ pub fn fit_plane(linear: &[u16], width: usize, height: usize, wide: usize) -> Pl
 /// That plane as an 8-bit sRGB render, for the geometry search.
 ///
 /// So the geometry fit can be driven off the HDR decode rather than a second, 8-bit one
-/// taken of the same file. LibRaw's sRGB path is linear, then auto-bright, then the
-/// sRGB gamma; this is the same shape with the frame's own peak standing in for
-/// auto-bright, which clips its brightest 0.01% where this clips none.
-pub fn render_srgb8(plane: &Plane, peak: f64) -> crate::vips::Rgb {
+/// taken of the same file. LibRaw's sRGB path is linear, then auto-bright, then the sRGB
+/// gamma, and this is the same shape.
+///
+/// **Normalised by diffuse white, not by the frame's peak**, and the difference is not
+/// cosmetic. LibRaw's auto-bright is a percentile - it clips its brightest ~1% on
+/// purpose. Dividing by the peak instead clips nothing, which sounds safer and is the
+/// bug: the peak is the maximum of a strided subsample, so a single specular sample - a
+/// sun, a chrome edge, a hot pixel - drags the whole render toward black by the
+/// peak/white ratio, which `tone.rs` documents as varying 10x across bodies. Measured on
+/// DSC02981 that took the render's mean from 88 to 51 against LibRaw's 115, about a stop
+/// and a fifth, and `fit::pairs` drops any pair whose darkest channel lands on 1 or
+/// below - so the shadows that error creates are not merely dark, they are discarded,
+/// and a frame can fall under `MIN_PAIRS` and lose its colour match altogether.
+///
+/// The quantile is also what keeps this stable across decode sizes, which the peak is
+/// not: two jobs fitting the same photo from differently-sized decodes have to arrive at
+/// the same geometry, since nothing is persisted between them (10.8).
+pub fn render_srgb8(plane: &Plane, white: f64) -> crate::vips::Rgb {
     let mut data = vec![0u8; plane.width * plane.height * 3];
     data.par_chunks_mut(3).zip(plane.data.par_chunks(3)).for_each(|(out, px)| {
-        let v = to_srgb8(px[0] / peak, px[1] / peak, px[2] / peak);
+        let v = to_srgb8(px[0] / white, px[1] / white, px[2] / white);
         for c in 0..3 {
             out[c] = v[c] as u8;
         }

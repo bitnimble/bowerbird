@@ -140,8 +140,8 @@ ${sections}
     'dynamic-range: high = ' + matchMedia('(dynamic-range: high)').matches +
     ' | video-dynamic-range: high = ' + matchMedia('(video-dynamic-range: high)').matches;
 
-  // AV1 cannot take a current sensor at native size, so the encode fits it to a
-  // long edge. Show what actually came back rather than implying full resolution.
+  // These are fitted to a judging size rather than shown at the sensor's own, so
+  // report what actually came back rather than implying full resolution.
   function label(cell, text) {
     document.querySelector('[data-size="' + cell + '"]').textContent = text;
   }
