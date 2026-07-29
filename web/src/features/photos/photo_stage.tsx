@@ -233,7 +233,13 @@ export function PhotoStage({ src, alt, filename, video, photoKey, hold, preloadS
     return () => {
       live = false;
     };
-  }, [incoming, src, hold, photoKey]);
+    // `failed` is a dependency because it decides whether the incoming element is
+    // mounted at all, and this reads it through a ref. A frame that failed
+    // unmounts, so when its rebuilt version arrives the effect runs against a
+    // null element and returns; clearing `failed` then remounts it without
+    // changing any of the other dependencies, and nothing would ask it to decode.
+    // The bytes arrive and the stage sits on them for the life of the page.
+  }, [incoming, src, hold, photoKey, failed]);
 
   // Measures here, outside the updater, so the updater itself stays pure.
   const zoomBy = useCallback(
