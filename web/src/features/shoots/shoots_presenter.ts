@@ -47,6 +47,18 @@ export class ShootsPresenter {
     localStorage.setItem(VIEW_KEY, view);
   }
 
+  // The scroller's own numbers, written straight to the store so nothing else
+  // has to read the DOM to know what is on screen (§18.2).
+  @action.bound
+  setViewport(height: number): void {
+    this.store.viewportHeight = height;
+  }
+
+  @action.bound
+  setScrollTop(top: number): void {
+    this.store.scrollTop = top;
+  }
+
   @action.bound
   restoreView(): void {
     const saved = localStorage.getItem(VIEW_KEY);

@@ -2147,6 +2147,8 @@ Tree (simple) is what a photographer wants from a deep tree: a shoot buried at `
 
 **The hierarchy is derived on the client from the shoots' `folder_path`s**, so every ancestor row is known without asking the server for anything. Only folders holding no photos are invisible that way, and those are exactly what expanding a row goes and fetches from `/api/libraries/:id/browse` - the endpoint the deleted picker already used, kept for the one job it is still needed for.
 
+**The rows scroll virtually**, on the same `visibleRows` the gallery uses (§18.3.2). Mirroring is what makes that necessary: a library with a shoot per folder has as many rows here as it has folders, and every rename re-reads and re-renders the list. The rows are uniform, so this is the easy half of what the gallery does - one row height, no blocks to fetch, no masonry to measure, and far short of the scroll ceiling `MAX_SCROLL` exists for. The **Library root** row sits outside the scroller, so the thing the page is anchored on never scrolls away. `aria-posinset` and `aria-setsize` count against the whole tree rather than the few rows mounted, as they do in the grid.
+
 The `+` menu on a row is where shoots come from:
 
 - **Add as shoot** (untracked rows only) adopts the folder as it stands, photos and all (§8.5).

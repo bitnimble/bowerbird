@@ -2,18 +2,8 @@ import { computed, observable } from 'mobx';
 import type { Ordering, PhotoDetail, PhotoSummary, Rendition, Triage, ViewerRendition } from '../../api/client';
 import type { LibrariesStore } from '../libraries/libraries_store';
 import type { AppSettingsStore } from '../settings/app_settings_store';
-import {
-  BLOCK,
-  GRID_GAP,
-  LIST_ROW_H,
-  MAX_SCROLL,
-  type Span,
-  blockTops,
-  gridColumns,
-  gridRowHeight,
-  visibleBlocks,
-  visibleRows,
-} from './grid_layout';
+import { type Span, visibleRows } from '../../ui/virtual_rows';
+import { BLOCK, GRID_GAP, LIST_ROW_H, MAX_SCROLL, blockTops, gridColumns, gridRowHeight, visibleBlocks } from './grid_layout';
 import { SelectionRanges } from './selection';
 
 // Which collection the grid is showing. One store serves the library, shoot,

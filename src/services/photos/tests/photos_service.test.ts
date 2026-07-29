@@ -254,10 +254,13 @@ describe('PhotosService.delete', () => {
         id: 'lib',
         root_path: root,
         data_path: null,
+        name: null,
         ordering: 'added_asc',
         rendition_source: 'embedded' as const,
         rendition_hdr: false,
         rendition_hdr_video: false,
+        include_subfolders: true,
+        mirror_shoots: true,
         last_synced_at: null,
         photo_count: 0,
       };

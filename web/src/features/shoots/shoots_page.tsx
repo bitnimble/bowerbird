@@ -1,5 +1,5 @@
 import { observer } from 'mobx-react-lite';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight, Folder, FolderPlus, Images, Pencil, Plus, Trash2 } from 'lucide-react';
 import { Link, useParams } from 'react-router-dom';
 import { renditionUrl } from '../../api/client';
@@ -29,6 +29,20 @@ export const ShootsPage = observer(function ShootsPage(): JSX.Element {
   const { shoots, libraries: librariesPresenter } = usePresenters();
   const [creatingIn, setCreatingIn] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<FolderRow | null>(null);
+  const scroller = useRef<HTMLDivElement>(null);
+
+  // The one height everything else is arithmetic over. Taken from the observer's
+  // own entry rather than by reading the element back, which would be a layout
+  // read in a resize handler.
+  useEffect(() => {
+    const element = scroller.current;
+    if (element == null) return;
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry != null) shoots.setViewport(entry.contentRect.height);
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [shoots]);
 
   useEffect(() => {
     shoots.restoreView();
@@ -46,7 +60,7 @@ export const ShootsPage = observer(function ShootsPage(): JSX.Element {
   }
 
   return (
-    <div className="pad">
+    <div className="pad pad--fill">
       <div className="row page__head">
         <Heading>Shoots</Heading>
         <span className="spacer" />
@@ -80,7 +94,7 @@ export const ShootsPage = observer(function ShootsPage(): JSX.Element {
         }}
       />
 
-      <div className="list">
+      <div className="list list--fill">
         {/* Permanent, undeletable, and the answer to "one photo at the root and
             one in a subfolder" reading as an empty page. */}
         <div className="list__row list__row--root">
@@ -98,17 +112,38 @@ export const ShootsPage = observer(function ShootsPage(): JSX.Element {
           />
         </div>
 
-        {store.rows.map((row) => (
-          <ShootRow
-            key={row.folderPath}
-            row={row}
-            expanded={store.expanded.has(row.folderPath)}
-            onToggle={() => void shoots.toggleFolder(row.folderPath)}
-            onRename={(name) => row.shoot != null && void shoots.rename(row.shoot.id, name)}
-            onAction={(action) => act(row, action)}
-            onDelete={() => setDeleting(row)}
-          />
-        ))}
+        {/* Mirroring makes this list as long as the folder tree, so only the rows
+            near the viewport are mounted (§18.3.4). The spacer carries the full
+            height and the window is translated into place; both are scaffolding
+            for the scroll rather than structure, so neither is announced. */}
+        <div
+          className="list__scroller"
+          ref={scroller}
+          onScroll={(e) => shoots.setScrollTop(e.currentTarget.scrollTop)}
+          tabIndex={0}
+          role="list"
+          aria-label={`${store.rows.length} folders`}
+        >
+          <div className="list__content" role="presentation" style={{ height: store.scrollHeight }}>
+            <div className="list__window" role="presentation" style={{ transform: `translateY(${store.visibleTop}px)` }}>
+              {store.visibleRowsSlice.map((row, i) => (
+                <ShootRow
+                  key={row.folderPath}
+                  row={row}
+                  // Against the whole tree rather than the few rows mounted, so a
+                  // reader is told "folder 4,051 of 20,000".
+                  position={store.visible.from + i + 1}
+                  total={store.rows.length}
+                  expanded={store.expanded.has(row.folderPath)}
+                  onToggle={() => void shoots.toggleFolder(row.folderPath)}
+                  onRename={(name) => row.shoot != null && void shoots.rename(row.shoot.id, name)}
+                  onAction={(action) => act(row, action)}
+                  onDelete={() => setDeleting(row)}
+                />
+              ))}
+            </div>
+          </div>
+        </div>
       </div>
 
       {store.rows.length === 0 && (
@@ -125,6 +160,8 @@ export const ShootsPage = observer(function ShootsPage(): JSX.Element {
 
 const ShootRow = observer(function ShootRow({
   row,
+  position,
+  total,
   expanded,
   onToggle,
   onRename,
@@ -132,6 +169,8 @@ const ShootRow = observer(function ShootRow({
   onDelete,
 }: {
   row: FolderRow;
+  position: number;
+  total: number;
   expanded: boolean;
   onToggle: () => void;
   onRename: (name: string) => void;
@@ -159,7 +198,12 @@ const ShootRow = observer(function ShootRow({
   ];
 
   return (
-    <div className={`list__row${row.shoot == null ? ' list__row--untracked' : ''}`}>
+    <div
+      className={`list__row${row.shoot == null ? ' list__row--untracked' : ''}`}
+      role="listitem"
+      aria-posinset={position}
+      aria-setsize={total}
+    >
       <span className="depth" style={{ width: row.depth * 16 }} />
 
       {row.expandable ? (

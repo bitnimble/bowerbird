@@ -1,5 +1,6 @@
 import { computed, observable } from 'mobx';
 import type { Shoot } from '../../api/client';
+import { type Span, visibleRows } from '../../ui/virtual_rows';
 
 // A folder tree and a list of shoots are both honest readings of the same thing,
 // so the page offers all three rather than picking one (§18.3.2).
@@ -39,11 +40,19 @@ function ancestorsOf(folderPath: string): string[] {
   return found;
 }
 
+// What .list__row is fixed to, plus its border. A row that grew with its
+// contents would make the scroll's height a measurement rather than a sum.
+export const SHOOT_ROW_H = 47;
+
 export class ShootsStore {
   @observable.shallow accessor shoots: Shoot[] = [];
   @observable accessor loading = false;
   @observable accessor error: string | null = null;
   @observable accessor view: ShootView = 'tree';
+  // Written by the presenter from a ResizeObserver and the scroll handler, so
+  // every layout question below is a computed rather than a DOM read (§18.2).
+  @observable accessor viewportHeight = 0;
+  @observable accessor scrollTop = 0;
   /** How many photographs the library holds that are in no shoot at all. */
   @observable accessor rootPhotoCount = 0;
   /** Folders whose children are drawn; every ancestor of a shoot is one. */
@@ -92,6 +101,27 @@ export class ShootsStore {
 
   @computed get rows(): FolderRow[] {
     return this.view === 'tree_full' ? this.fullTree : this.shootRows;
+  }
+
+  // Mirroring gives a library a shoot per folder, so this list is as long as the
+  // tree is: the same reason the gallery scrolls virtually (§18.3.2), reached
+  // from the other direction. Rows are uniform, so the whole thing is arithmetic
+  // over the viewport and one row height.
+  @computed get visible(): Span {
+    return visibleRows(this.scrollTop, this.viewportHeight, SHOOT_ROW_H, this.rows.length);
+  }
+
+  /** The rows actually mounted, and where to put the window holding them. */
+  @computed get visibleRowsSlice(): FolderRow[] {
+    return this.rows.slice(this.visible.from, this.visible.to);
+  }
+
+  @computed get visibleTop(): number {
+    return this.visible.from * SHOOT_ROW_H;
+  }
+
+  @computed get scrollHeight(): number {
+    return this.rows.length * SHOOT_ROW_H;
   }
 
   // Shoots alone: unnested and stating their whole path, or nested under the

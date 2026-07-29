@@ -18,10 +18,6 @@ export const TILE_ASPECT = 3 / 2;
 // more than one request, and it is small enough that dropping one costs little.
 export const BLOCK = 100;
 
-// Rows rendered either side of the viewport, so a flick lands on tiles that are
-// already mounted rather than on a gap.
-export const OVERSCAN_ROWS = 2;
-
 // The tallest scroll a browser will honour, less a wide margin. Chromium clamps
 // at 33,554,428px and Firefox at roughly half that, silently: past the clamp the
 // rest of the collection is simply unreachable, and the grid at its highest zoom
@@ -30,11 +26,7 @@ export const OVERSCAN_ROWS = 2;
 // rather than the collection being quietly truncated.
 export const MAX_SCROLL = 15_000_000;
 
-/** A half-open range: `from` inclusive, `to` exclusive. */
-export interface Span {
-  from: number;
-  to: number;
-}
+import type { Span } from '../../ui/virtual_rows';
 
 // Mirrors `repeat(auto-fill, minmax(tile, 1fr))`. The grid is told the count
 // through `--cols` rather than working it out itself: a number the two could
@@ -49,19 +41,6 @@ export function gridColumns(width: number, tileSize: number): number {
 export function gridRowHeight(width: number, columns: number): number {
   if (width <= 0) return LIST_ROW_H + GRID_GAP;
   return (width - GRID_GAP * (columns - 1)) / columns / TILE_ASPECT + GRID_GAP;
-}
-
-export function visibleRows(scrollTop: number, viewportHeight: number, rowHeight: number, rowCount: number): Span {
-  if (rowCount <= 0 || rowHeight <= 0) return { from: 0, to: 0 };
-  // Clamped at the top as well as the bottom: the scroll position is sampled a
-  // frame behind the content height, so binning most of a library leaves a
-  // scrollTop pointing past the end of the collection it now describes. Read
-  // unclamped that produced `from > to`, which renders nothing and asks for no
-  // blocks - a grid that has silently given up.
-  const last = rowCount - 1;
-  const from = Math.min(last, Math.max(0, Math.floor(scrollTop / rowHeight) - OVERSCAN_ROWS));
-  const to = Math.min(rowCount, Math.ceil((scrollTop + viewportHeight) / rowHeight) + OVERSCAN_ROWS);
-  return { from, to: Math.max(from + 1, to) };
 }
 
 // Where each masonry block starts, plus where the last one ends. Masonry packs

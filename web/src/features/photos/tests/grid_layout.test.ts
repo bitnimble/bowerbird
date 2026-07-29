@@ -1,15 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import {
-  BLOCK,
-  GRID_GAP,
-  MAX_SCROLL,
-  OVERSCAN_ROWS,
-  blockTops,
-  gridColumns,
-  gridRowHeight,
-  visibleBlocks,
-  visibleRows,
-} from '../grid_layout';
+import { BLOCK, GRID_GAP, MAX_SCROLL, blockTops, gridColumns, gridRowHeight, visibleBlocks } from '../grid_layout';
 
 describe('gridColumns', () => {
   test('fits as many tiles of the minimum size as the width allows', () => {
@@ -28,22 +18,6 @@ describe('gridRowHeight', () => {
   test('is the 3:2 cell plus the gap under it', () => {
     // Four columns of (1000 - 3*3)/4 = 247.75, at 3:2, plus the gap.
     expect(gridRowHeight(1000, 4)).toBeCloseTo(247.75 / 1.5 + GRID_GAP);
-  });
-});
-
-describe('visibleRows', () => {
-  test('covers the viewport with overscan either side', () => {
-    // Rows are 100 tall; the viewport shows rows 5 through 9.
-    expect(visibleRows(500, 500, 100, 1000)).toEqual({ from: 5 - OVERSCAN_ROWS, to: 10 + OVERSCAN_ROWS });
-  });
-
-  test('clamps to the collection at both ends', () => {
-    expect(visibleRows(0, 500, 100, 1000).from).toBe(0);
-    expect(visibleRows(99_500, 500, 100, 1000).to).toBe(1000);
-  });
-
-  test('renders nothing when there is nothing to render', () => {
-    expect(visibleRows(0, 500, 100, 0)).toEqual({ from: 0, to: 0 });
   });
 });
 

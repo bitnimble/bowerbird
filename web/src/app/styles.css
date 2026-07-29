@@ -1638,6 +1638,43 @@ p.ui-text--mono {
   vertical-align: middle;
 }
 
+/* A list that scrolls inside the page rather than taking the page with it, the
+   same bargain .pad--fill strikes for a gallery. Only on the lists long enough
+   to need it: Settings and Albums are short and stay in the document flow. */
+.list--fill {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Only the rows near the viewport are mounted, so the scroller holds a spacer of
+   the full height and a window translated into place. Same shape as the grid's
+   (.grid__scroller), for the same reason. */
+.list__scroller {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.list__content {
+  position: relative;
+}
+
+.list__window {
+  position: absolute;
+  inset-inline: 0;
+  top: 0;
+}
+
+/* Fixed, because the scroll's height is the row count times this number rather
+   than something measured. Every part of a row has to fit inside it. */
+.list__scroller .list__row {
+  height: 47px;
+  box-sizing: border-box;
+}
+
 /* The library root: always present, never deletable, so it reads as the surface
    the rest sit on rather than as one more shoot. */
 .list__row--root {
