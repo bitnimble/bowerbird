@@ -94,16 +94,17 @@ let cached: Shim | null = null;
 
 export function shim(): Shim {
   if (cached) return cached;
-  let lastError: unknown;
+  // Every candidate's error, not just the last: a build that exists but is stale
+  // fails on a missing symbol, and reporting only the last one blames the fallback
+  // path for never having existed and hides the one that did.
+  const failures: string[] = [];
   for (const candidate of CANDIDATES) {
     try {
       cached = dlopen(candidate, SYMBOLS).symbols;
       return cached;
     } catch (error) {
-      lastError = error;
+      failures.push(`  ${candidate}: ${String(error)}`);
     }
   }
-  throw new Error(
-    `could not load librawshim (tried ${CANDIDATES.join(', ')}). Run \`bun run build:native\`. Last error: ${String(lastError)}`,
-  );
+  throw new Error(`could not load librawshim. Run \`bun run build:native\`. Tried:\n${failures.join('\n')}`);
 }
