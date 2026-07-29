@@ -46,6 +46,7 @@ Bowerbird is a high-performance RAW photo management and cataloguing backend des
 |---|---|
 | `hono` | Web server and routing |
 | `zod` | Schema validation (v4) |
+| `chokidar` | Filesystem watching (§9.8) |
 
 There is no image-processing package. Everything that touches pixels is in `native/rawshim` (§10.4), which links libvips directly.
 
@@ -108,6 +109,7 @@ bowerbird/
 │   │   ├── shoots/
 │   │   │   ├── shoots_service.ts
 │   │   │   ├── shoots_repository.ts
+│   │   │   ├── folder_rules_repository.ts   # excluded / plain folders (§4.7)
 │   │   │   └── tests/
 │   │   │       └── shoots_service.test.ts
 │   │   ├── albums/
@@ -130,6 +132,7 @@ bowerbird/
 │   └── utils/
 │       ├── hash.ts                 # File hash computation
 │       ├── files.ts                # File system helpers (recursive listing, etc.)
+│       ├── scope.ts                # Is this path part of this library (§9.1); scan and watcher share it
 │       └── paths.ts                # Path computation helpers (rendition paths, bin paths)
 ├── test/
 │   ├── integration/               # bun:test suites needing real bun:sqlite + LibRaw (run in-container)
@@ -180,7 +183,11 @@ CREATE TABLE libraries (
   data_path   TEXT,  -- path to .bowerbird/ data folder; NULL means default (<root_path>/.bowerbird/)
   name        TEXT,  -- display name; NULL falls back to the last segment of root_path
   ordering    TEXT NOT NULL DEFAULT 'taken_asc'
-    CHECK (ordering IN ('taken_asc', 'taken_desc', 'added_asc', 'added_desc'))
+    CHECK (ordering IN ('taken_asc', 'taken_desc', 'added_asc', 'added_desc')),
+  -- How much of the folder tree this library is, and whether its folders are
+  -- shoots (§4.7).
+  include_subfolders INTEGER NOT NULL DEFAULT 1,
+  mirror_shoots      INTEGER NOT NULL DEFAULT 1
 );
 ```
 
@@ -188,6 +195,8 @@ CREATE TABLE libraries (
 - `data_path`, absolute path to the data directory for generated files. If NULL, defaults to `<root_path>/.bowerbird/`.
 - `name`, what the library is called in the rail and in Settings. NULL, which is what every library created before this column had, shows the root folder's name instead. Nullable rather than defaulted at insert so a folder that is later renamed on disk carries the new name through, as long as nobody has overridden it.
 - `ordering`, default ordering for photo listings in this library.
+- `include_subfolders`, whether the scan descends past the root at all (§9.1). A standing rule rather than a decision taken once at import: a folder created next month is out of scope for the same reason today's are, so turning it off writes no `folder_rules` rows and never needs revisiting. Off makes shoots meaningless for the library - a shoot *is* a subfolder, and its photos would never be scanned - so the UI disables the Shoots section and forces `mirror_shoots` off with that as the reason.
+- `mirror_shoots`, whether sync keeps shoots in step with the folders on disk (§9.4.1). On, every folder holding photos is a shoot and the catalogue cannot disagree with the tree; off, a shoot exists only where the user made one, and untracked folders are offered on the Shoots page instead (§18.3.4).
 
 ### 4.2 `photos` table
 
@@ -268,17 +277,22 @@ CREATE TABLE shoots (
   description   TEXT,
   ordering      TEXT NOT NULL DEFAULT 'taken_desc'
     CHECK (ordering IN ('taken_asc', 'taken_desc', 'added_asc', 'added_desc')),
-  UNIQUE (library_id, name)
+  -- The folder's identity independent of its name, so a rename on disk is
+  -- recognised rather than read as a delete plus a create (§9.4.1).
+  folder_ino        INTEGER,
+  folder_birthtime  REAL,
+  UNIQUE (library_id, folder_path)
 );
 
 CREATE INDEX idx_shoots_library ON shoots(library_id);
 CREATE INDEX idx_shoots_parent ON shoots(parent_id);
 ```
 
-- `folder_path` is the **full** path from the library root to this shoot's folder (forward slashes), e.g. `Weddings/2024/Smith`. It is *not* parent-relative: storing the full path lets sync reconciliation (§9.4) and create-adoption (§8.5) test membership with a `file_path` prefix check, and lets the most-specific (longest matching) shoot win for nested folders. On create it is the requested `parent_path` plus the name, and `parent_id` is then read back off it (§8.5) rather than chosen alongside it. It is **immutable thereafter**: `name` seeds the folder once and is a label from then on, so renaming a shoot never moves a file (§8.5).
+- `folder_path` is the **full** path from the library root to this shoot's folder (forward slashes), e.g. `Weddings/2024/Smith`. It is *not* parent-relative: storing the full path lets sync reconciliation (§9.4) and create-adoption (§8.5) test membership with a `file_path` prefix check, and lets the most-specific (longest matching) shoot win for nested folders. On create it is the requested `parent_path` plus the name, and `parent_id` is then read back off it (§8.5) rather than chosen alongside it. Nothing *in the app* rewrites it afterwards: `name` seeds the folder once and is a label from then on, so renaming a shoot never moves a file (§8.5). It does follow the folder when the folder itself moves **on disk**, which is the one writer (§9.5).
 - **Membership test (used everywhere "a file falls under a shoot" is checked):** a file belongs to a shoot iff `file_path` starts with `folder_path + '/'`; the trailing separator is required so shoot `NYC` (`folder_path` `NYC`) does not capture files in sibling shoot `NYC2`. "Directly under" a shoot means the remainder after that prefix contains no further `/` (deeper files belong to a descendant shoot). Among all matching shoots, the one with the longest `folder_path` wins.
 - When a photo is added to a shoot, its file is physically moved on disk into the shoot's folder.
-- Shoot names are **unique library-wide** (`UNIQUE (library_id, name)`), a deliberate simplification rather than the minimum needed. On-disk folder collisions are only possible between shoots sharing a folder (a shoot's folder is named after its `name`, created inside the chosen one), so a `(library_id, parent_id, name)` constraint would be the tight fit, but SQLite treats `NULL`s as distinct in UNIQUE constraints, so it would fail to catch collisions between root-level shoots (`parent_id IS NULL`). Library-wide uniqueness is a strict superset that closes that hole and keeps names unambiguous. Tradeoff: it disallows the same name under different parents (e.g. "Day1" under both "NYC" and "LA"). A create/rename to a name already used by any shoot in the library returns `CONFLICT`.
+- **A shoot is identified by its folder, not by its name** (`UNIQUE (library_id, folder_path)`). The folder is the thing that exists; the name is a label on it. Names were once unique library-wide, which mirroring (§9.5) makes simply false to disk: a tree with `NYC/Day1` and `LA/Day1` is ordinary, and a constraint that rejects it would have the catalogue refusing to describe folders the user already has. Uniqueness on `folder_path` is also *tighter* against the collision the old constraint was defending, two shoots sharing one folder, since that is the collision stated directly rather than inferred from names. Renaming a shoot therefore never conflicts.
+- `folder_ino` and `folder_birthtime` are the folder's identity independent of its path, `stat`'s `ino` and `birthtimeMs`, recorded on create and refreshed on every scan that sees the folder. A rename preserves both (verified on ZFS; POSIX guarantees the inode across a `rename(2)` within a filesystem), so a shoot whose folder_path has gone can be found again wherever it now sits (§9.4.1), including one holding no photos at all. `birthtime` guards against a recycled inode number silently adopting an unrelated folder, and is advisory: some filesystems report `0`, so it only rejects a match when both values are non-zero. Both are NULL for a shoot whose folder has never been scanned, and a move across filesystems changes the inode, which is what the fallback in §9.4.1 is for.
 - The banner photo, if any, lives in the `shoot_banners` table (§4.6), not on this table; a `banner_photo_id` column here would form a `photos` ↔ `shoots` FK cycle.
 
 ### 4.4 `albums` table
@@ -332,6 +346,25 @@ CREATE INDEX idx_album_banners_photo ON album_banners(photo_id);
 - `banner_photo_id` still appears in the `Shoot` and `Album` **response** schemas (§5.4, §5.5), resolved by joining the respective table.
 - These tables hold a **choice**, never a default. A shoot with no row falls back to its first photo in the shoot's own ordering, computed in the `SELECT` (`shoots_repository.ts`) rather than written at import. The first photo moves as photos are added, binned or re-dated, so a stored default would go stale, and once stored it could no longer be told apart from a photo the user actually picked. Binned photos are excluded, so the banner agrees with the photo count beside it. A row here still wins, and deleting it returns the shoot to its first photo rather than to no banner at all.
 
+### 4.7 `folder_rules` table
+
+```sql
+CREATE TABLE folder_rules (
+  library_id   TEXT NOT NULL REFERENCES libraries(id) ON DELETE CASCADE,
+  folder_path  TEXT NOT NULL,  -- root-relative, forward slashes, no trailing separator
+  rule         TEXT NOT NULL CHECK (rule IN ('excluded', 'plain')),
+  PRIMARY KEY (library_id, folder_path)
+);
+```
+
+The exceptions to what the two library settings (§4.1) say in general. Both are the user overruling a default about one folder, so they are one table with one primary key rather than two lists that could disagree about the same path.
+
+- **`excluded`**, the folder is not scanned, so nothing inside it is in the catalogue. Subtree-wide by construction: a folder that is never walked has no children to consider. This is the folder of rejects triaged years before the library existed, and the rest of the tree that is not photographs.
+- **`plain`**, the folder is scanned normally and its photos are in the library, but mirroring will not make it a shoot. Per-folder and **not** inherited: declaring `A` plain leaves `A/B` free to be a shoot, since "this folder is not a set of photographs" says nothing about what is filed beneath it.
+- A `plain` rule is what makes "delete this shoot but keep its photos" survive the next sync; without it, mirroring would recreate the shoot within seconds and the delete would read as broken (§8.5).
+- Both rules are recorded whether or not `mirror_shoots` is on, because deleting a shoot is a statement about the folder rather than about the current setting, and turning mirroring on later should not resurrect a shoot the user has already dismissed.
+- The `PRIMARY KEY` means one rule per folder: `excluded` and `plain` are answers to the same question ("what is this folder to the library"), so the second write replaces the first rather than stacking.
+
 ---
 
 ## 5. Schemas (Zod)
@@ -375,14 +408,38 @@ export const PhotoIdListSchema = z.object({
 export const CreateLibraryRequestSchema = z.object({
   root_path: z.string().min(1),
   data_path: z.string().optional(),
+  name: z.string().trim().optional(),          // blank means "call it after its root folder"
   ordering: OrderingSchema.default('taken_asc'),
+  include_subfolders: z.boolean().default(true),  // §4.1
+  mirror_shoots: z.boolean().default(true),
 });
 
 export const LibrarySchema = z.object({
   id: UuidSchema,
   root_path: z.string(),
   data_path: z.string().nullable(),
+  name: z.string().nullable(),
   ordering: OrderingSchema,
+  rendition_source: RenditionSourceSchema,
+  rendition_hdr: z.boolean(),
+  rendition_hdr_video: z.boolean(),
+  include_subfolders: z.boolean(),
+  mirror_shoots: z.boolean(),
+  last_synced_at: z.string().nullable(),
+  photo_count: z.number().int(),
+});
+
+// Every field optional: the settings UI changes one control at a time, and a
+// partial update must not reset the others to their defaults.
+export const UpdateLibraryRequestSchema = LibrarySchema
+  .pick({ ordering: true, rendition_source: true, rendition_hdr: true, rendition_hdr_video: true,
+          include_subfolders: true, mirror_shoots: true })
+  .extend({ name: z.string().trim() })  // blank clears it, handing the library back to its folder name
+  .partial();
+
+export const FolderRuleSchema = z.object({           // §4.7
+  folder_path: z.string(),
+  rule: z.enum(['excluded', 'plain']),
 });
 
 export const LibrarySyncStatusSchema = z.object({
@@ -501,7 +558,15 @@ export const ShootSchema = z.object({
   banner_photo_id: UuidSchema.nullable(),
   ordering: OrderingSchema,
 });
+
+// What becomes of the photographs, asked rather than assumed (§8.5). The
+// reversible answer is the default: 'remove' takes rows and renditions with it.
+export const DeleteShootQuerySchema = z.object({
+  photos: z.enum(['keep', 'remove']).default('keep'),
+});
 ```
+
+`folder_ino` / `folder_birthtime` (§4.3) are not in the response: they are how the server recognises a folder through a rename, and mean nothing to a client.
 
 ### 5.5 `albums.ts`
 
@@ -565,6 +630,8 @@ function getBinPath(library: Library): string {
 ### Sync Exclusion
 
 The scanner must skip the data directory (`.bowerbird/` or whatever `data_path` points to if it is a subdirectory of the library root) when recursively listing files. It should also skip any directory named `.bowerbird` to avoid picking up nested data directories.
+
+This is one of five rules that together answer "is this path part of this library", alongside hidden directories, `Bin/` (§12.2), the library's `include_subfolders` setting (§4.1) and its `excluded` folders (§4.7). They live together in `isInScope` (§9.1) rather than being restated by each caller, because the scan and the watcher answering it differently is not a visible failure - it is a folder that quietly still wakes syncs, or a sync queued for paths the scan will discard.
 
 ---
 
@@ -668,13 +735,13 @@ This service handles the full sync algorithm. See §9 for the detailed algorithm
 
 | Method | Description |
 |---|---|
-| `create(request)` | Creates a shoot record. The folder is named after the shoot `name`, created inside `parent_path` (the library root when it is empty); `folder_path` is stored as the full root-relative path (§4.3). A `parent_path` that resolves outside the library root, or inside its data directory (§6), is refused: a shoot's photographs must be inside the library and must not be in the tree that goes with it when it is removed. `parent_id` is **derived**, not requested: it is the most-specific shoot whose folder contains the new one, which is the same rule that decides which shoot a photo belongs to (§9.4), so the tree can never disagree with the folders on disk. That also means a shoot can sit under a plain folder that is not a shoot itself. If the folder does not exist, it is created. If it **already exists**, it is kept as-is and its photos are **adopted**: every existing non-deleted photo record whose `file_path` falls under this folder and for which this shoot is the most-specific matching shoot (i.e. not already claimed by a more-specific descendant shoot) has its `shoot_id` set to the new shoot. No files move on disk and no reprocessing occurs (renditions are keyed by photo UUID, unaffected by shoot membership). This mirrors the sync reconciliation rule (§9.4) and makes an orphaned folder from a prior shoot delete re-adoptable. RAW files physically present but not yet in the DB are picked up by the next sync, which will assign them to this shoot via the same reconciliation. |
+| `create(request)` | Creates a shoot record. The folder is named after the shoot `name`, created inside `parent_path` (the library root when it is empty); `folder_path` is stored as the full root-relative path (§4.3). A `parent_path` that resolves outside the library root, or inside its data directory (§6), is refused: a shoot's photographs must be inside the library and must not be in the tree that goes with it when it is removed. `parent_id` is **derived**, not requested: it is the most-specific shoot whose folder contains the new one, which is the same rule that decides which shoot a photo belongs to (§9.4), so the tree can never disagree with the folders on disk. That also means a shoot can sit under a plain folder that is not a shoot itself. If the folder does not exist, it is created. If it **already exists**, it is kept as-is and its photos are **adopted**: every existing non-deleted photo record whose `file_path` falls under this folder and for which this shoot is the most-specific matching shoot (i.e. not already claimed by a more-specific descendant shoot) has its `shoot_id` set to the new shoot. No files move on disk and no reprocessing occurs (renditions are keyed by photo UUID, unaffected by shoot membership). This mirrors the sync reconciliation rule (§9.4) and makes an orphaned folder from a prior shoot delete re-adoptable. RAW files physically present but not yet in the DB are picked up by the next sync, which will assign them to this shoot via the same reconciliation. The folder is `stat`ed either way and its identity recorded (§4.3), so a shoot can be followed through a rename from the moment it exists rather than from its first scan. Creating a shoot for a folder that carries a `plain` or `excluded` rule (§4.7) clears that rule: the user is answering the same question again, the other way. |
 | `get(shootId)` | Returns a shoot by ID. |
 | `list(libraryId)` | Returns all shoots in a library. |
 | `addPhotos(shootId, photoIds)` | Moves photo files on disk into the shoot's folder. Updates each photo's `file_path` and `shoot_id` in the DB. A photo can only belong to one shoot; if it already belongs to another, it is moved out of the old shoot folder. If a file with the same name already exists in the destination folder, append a numeric suffix (e.g. `IMG_0001_1.ARW`, `IMG_0001_2.ARW`) so no existing file is overwritten and no two records share a `file_path` (§12.1). |
 | `removePhotos(shootId, photoIds)` | Moves photo files back to the library root. Updates each photo's `file_path` and clears its `shoot_id`. If a file with the same name already exists in the library root, append a numeric suffix (e.g. `IMG_0001_1.ARW`, `IMG_0001_2.ARW`) so no existing file is overwritten and no two records share a `file_path` (§12.1). |
-| `delete(shootId)` | Deletes the shoot record only. **No files or folders on disk are touched** (see principle above): photos keep their `file_path` and remain physically in the (now-orphaned) folder, which the next sync treats as an ordinary subfolder. Their `shoot_id` is cleared via `ON DELETE SET NULL`, and child shoots cascade-delete as records (their photos' folders likewise untouched). |
-| `update(shootId, updates)` | Updates mutable fields: `name`, `description`, `ordering`. A **name change is metadata only**: the name is a label, so nothing moves on disk and no `folder_path` or `file_path` is rewritten. A rename to a name already used by any shoot in the same library returns `CONFLICT` (names are unique library-wide, §4.3). Setting `banner_photo_id` upserts the `shoot_banners` row; clearing it (null) deletes that row; it is not a column on `shoots` (§4.6). |
+| `delete(shootId, photos)` | Deletes the shoot record. **No files or folders on disk are touched** (see principle above), whichever disposition is chosen. Child shoots cascade-delete as records. `photos: 'keep'` leaves every photo in the library and clears its `shoot_id` via `ON DELETE SET NULL`, writing a `plain` rule (§4.7) so mirroring does not recreate the shoot on the next sync. `photos: 'remove'` writes an `excluded` rule instead and **hard-deletes** the photo rows under the folder, along with their renditions (via `deletions.ts`, §10.6.1, rather than waiting for the sweep). The originals stay exactly where they are on disk; what goes is the catalogue's record of them, and with it their ratings, verdicts and notes. Clearing the rule later re-imports them as new photos, with new ids and rebuilt renditions. |
+| `update(shootId, updates)` | Updates mutable fields: `name`, `description`, `ordering`. A **name change is metadata only**: the name is a label, so nothing moves on disk and no `folder_path` or `file_path` is rewritten, and it cannot conflict, since a shoot is identified by its folder rather than its name (§4.3). Setting `banner_photo_id` upserts the `shoot_banners` row; clearing it (null) deletes that row; it is not a column on `shoots` (§4.6). |
 
 ### 8.6 Albums Service (`albums_service.ts`)
 
@@ -703,10 +770,13 @@ The sync algorithm is the most complex component. It is a stateless comparison b
 For each library:
 
 1. Resolve the library's `root_path` and `data_path`.
-2. Recursively list all files under `root_path`, skipping:
+2. List all files under `root_path`, descending into subfolders only when the library's `include_subfolders` is set (§4.1), and skipping:
    - The data directory (`.bowerbird/` or custom `data_path` if it's under `root_path`).
    - Any hidden directories (starting with `.`).
    - Any directory named `Bin` (the deletion bins that live inside shoot folders, §12.2), so soft-deleted files are never re-imported.
+   - Any directory carrying an `excluded` rule (§4.7), and therefore everything beneath it.
+
+   These five questions are one predicate, `isInScope(library, relPath)` in `src/utils/scope.ts`, and the **watcher asks it too** (§9.8). It had its own copy of the first three rules, which is two lists to keep in agreement about what the library contains; with the last two added the cost of them drifting is a folder the user excluded still waking a sync on every change, and scoped syncs queued for paths the scan will then ignore.
 3. Filter to supported extensions only (`.arw`, `.cr3`). This yields the set of **present** file paths.
 4. Query the database for all non-deleted photo records in this library (each carries its stored `date_updated` = last-seen mtime and `file_size`).
 5. **Stat quick-check (avoid opening unchanged files).** For each present file, `stat` it (cheap; no open). If a DB record exists at that path **and** its stored `date_updated` and `file_size` both match the current mtime and size, the file is **unchanged**: reuse its stored hash and do **not** open it. Only files that are new, or whose mtime/size differ, are opened to extract metadata (§11) and compute the **file hash** (§9.2). Call this opened subset **changed**. A no-op sync therefore performs zero LibRaw opens. (Like rsync's default quick-check, this misses a content change that preserves *both* mtime and size, which is rare in practice; a forced full re-hash is the escape hatch if ever needed.)
@@ -825,7 +895,30 @@ Process in this order within a database transaction:
 
 **A run with no rows commits as it scans, in batches of 1000.** A first import is hours of opening and hashing, and one closing transaction makes all of it contingent on reaching the end: kill the server at hour three and three hours of decodes are gone, with the next run starting from nothing. Applying a *partial* scan is normally unsafe for the reason §9.10 gives (absence from a half-built `present` set reads as a removal), but that reasoning needs rows to be absent from. When `dbPhotos` is empty (a library's first sync, and a scoped sync whose paths are all new) the diff can only be additions: no removal can be derived, so no move can pair either. Each batch is then true on its own, whatever the scan goes on to find, and a killed import resumes at the batch it reached rather than at zero; the rows it wrote carry the mtime and size that make §9.1's quick-check skip them, so the resumed scan does not re-open them either.
 
-Only that case qualifies. Against a populated library an addition can still turn out to be the far half of a move, so its inserts stay in the closing transaction where move detection can still claim them. Shoot membership is safe to resolve early for the same reason a batch is: a shoot relocation (§9.3) takes existing photos to move, and a run with no rows has none.
+Only that case qualifies. Against a populated library an addition can still turn out to be the far half of a move, so its inserts stay in the closing transaction where move detection can still claim them. Shoot membership is safe to resolve early for the same reason a batch is: a shoot relocation (§9.4.1) takes existing photos to move, and a run with no rows has none.
+
+### 9.4.1 Shoot reconciliation
+
+Two steps wrap the apply phase, and both exist because **the folders on disk are the truth and the shoots are the catalogue's account of them**. Relocation runs *before* step 1, so membership is resolved against corrected paths rather than being cleared and rebuilt; mirroring runs *after* the transaction, once the scan's folders and photo counts are settled.
+
+**Relocation: a shoot's folder moved.** Nothing on disk distinguishes a renamed folder from one deleted and another created, and the watcher cannot help - the kernel pairs the two halves of a rename with a cookie that no portable JS watcher exposes. Two independent answers, tried in order:
+
+1. **The inode.** A shoot records its folder's `ino` and `birthtimeMs` (§4.3), and the scan already walks every directory, so it can key them by `dev:ino` as it goes (the same key `scanFiles` uses to collapse hardlink pairs). A shoot whose `folder_path` is gone, whose recorded identity turns up at another path, **is** that folder: not an inference, so no time window, no all-or-nothing photo test, and no need for the folder to hold any photos. It resolves a rename made while the server was down just as well as one made while it was running, which no watcher event can do.
+2. **The photos** (`detectShootRelocations`, `sync_algorithm.ts`). If every file that was under `A/` is now under `B/`, each keeping its position within the folder, then `A` became `B`. Deliberately all-or-nothing: a partial match means files were also added, removed or reshuffled, so the folder's identity is genuinely ambiguous and a wrong guess silently adopts someone else's folder. `folderStillOnDisk` separates a folder that moved from photos merely reorganised inside one that did not - sorting a shoot's frames into a new `Selects/` subfolder moves every one of them keeping each filename, which is indistinguishable from a rename by the paths alone.
+
+The second is not redundant once the first exists: a move to **another filesystem** (a copy under the covers) mints a new inode, and so does a restore from backup, where every inode in the library is new at once. The inode answers precisely, the photos answer approximately, and the cheap precise one is asked first.
+
+Either way the whole subtree follows by prefix, and descendant shoots come with it. A relocated shoot also answers every photo move beneath it at once - the paths shift by a prefix and membership does not change - so those moves drop out of the per-photo loop and the folder becomes two `UPDATE`s rather than one per frame.
+
+**The gap this leaves**, deliberately: create `B`, copy the photos over, then delete `A`, *while the server is running*. The sync after the copy imports `B` as new photos while `A` still exists, so when `A` goes there are no additions left to pair with its removals. No moves, therefore no relocation by either route - the shoot's photos go `is_missing` and the copies in `B` belong to no shoot. Reconciling that is a photo-level problem rather than a shoot-level one (the same thing happens to a single photo copied and deleted with no shoot involved), so it belongs to the deferred flow that lets the user pair a missing photo with its counterpart, not here. Done in one `mv`, or with the server down, it is a single diff and route 2 handles it.
+
+**Mirroring: folders become shoots.** With `mirror_shoots` set (§4.1), after the transaction:
+
+- Every folder holding at least one non-deleted photo, with no shoot and no `plain` rule (§4.7), gets one. `name` is the folder's own name, `parent_id` is derived from `folder_path` exactly as `create` derives it (§8.5), and the identity columns are filled from the walk.
+- Shoots whose folder no longer exists **and which hold no photos** are deleted. Both halves are required: a folder that is gone but still has rows is a library whose files went missing, not a shoot to discard.
+- Existing shoots are matched by `folder_path` **only, never by name**, so a shoot the user has renamed is not seen as absent and recreated as a duplicate beside itself.
+
+Folders that hold no photos of their own are **not** made into shoots, even when their descendants are. A pass-through folder is structure rather than a set of photographs, and the Shoots page draws the hierarchy from the shoots' own `folder_path`s (§18.3.4), so nothing is lost by leaving it out - and a shoot record that exists only to be a spacer is one more thing to name, count, delete and explain.
 
 ### 9.5 Phase 4: Trigger Processing
 
@@ -885,9 +978,15 @@ The in-memory `SyncStatus` (§9.6) is process-local and lost on restart; the per
 
 1. **Manual**, `POST /api/libraries/:id/sync`. A full scan (whole tree).
 2. **Scoped (watcher)**, the `LibraryWatcher` accumulates the changed relative paths in each debounce window and calls `syncLibrary(id, scopePaths)`. A scoped sync **does not walk the tree**: it `readdir`s only the changed paths' *parent directories* and reconciles their current files against the DB rows at the changed + discovered paths, plus every already-missing row (the move-source pool). This is cheap and its cost scales with the number of changed directories, not library size.
-   - **Why directory-scoped, not file-scoped:** Bun's recursive `fs.watch` delivers only **one** event for a rename (the old name), so a file-scoped sync could never see the move target. Reading the changed path's directory surfaces the target as a sibling, so an intra-directory rename still resolves to a move (§9.3). A cross-directory move (whose target event was dropped) marks the old path missing, then reunites with the original row via the missing pool on a later scoped sync of the target directory, or on the periodic full sync.
+   - Directory-scoped rather than file-scoped, so a move's target is seen even when only its source was reported. Reading the changed path's directory surfaces an intra-directory target as a sibling; a cross-directory one is named by its own `add` event and read the same way.
    - A debounce window with more than 256 distinct changed paths (bulk import) falls back to a full sync.
-3. **Daily full reconcile**, `DailySync` runs `syncAll()` once a day at `SYNC_FULL_AT` (local `HH:MM`, default `03:00`, `""` disables), overlap-guarded and re-scheduled each day so it holds its wall-clock time across DST. This is the correctness **backstop** for anything the scoped, event-driven watcher missed: `fs.watch` events Bun coalesced/dropped, cross-directory moves whose target event never arrived, and edits made while the server was down. It's overnight by default because a full scan holds the library mutex (§9.9) for its whole duration.
+3. **Daily full reconcile**, `DailySync` runs `syncAll()` once a day at `SYNC_FULL_AT` (local `HH:MM`, default `03:00`, `""` disables), overlap-guarded and re-scheduled each day so it holds its wall-clock time across DST. This is the correctness **backstop** for anything the event-driven watcher missed: dropped or coalesced events, and every edit made while the server was down. It's overnight by default because a full scan holds the library mutex (§9.9) for its whole duration.
+
+**The watcher is `chokidar`, not `node:fs`.** Measured against a real tree, Bun's recursive `fs.watch` reports a directory rename, a directory *move*, and an `rm -rf` identically: one `rename` event naming only the **source**. The destination is never named, even when it is inside the watched tree, and no per-file events are emitted for a subtree that moved atomically. That is enough to know something left and nothing about where it went, which is why the scoped sync could only ever catch a move to a *sibling* path, and why a folder rename waited for the nightly backstop to resolve.
+
+`chokidar` reports both halves with their paths (`unlinkDir`/`addDir`, `unlink`/`add`) for every shape of move - same level, into a subfolder, out to the root - and reports nested paths rather than dropping them. So a moved folder's destination is named directly and §9.4.1 resolves it in the same debounce window; a file moved across directories pairs into a move in one scoped run instead of sitting missing until morning. Its ignore patterns also take the scan's own scope predicate (§9.1), so the watcher and the scan cannot disagree about which folders the library contains.
+
+Chokidar's cost is one inotify watch per directory on Linux. `fs.watch`'s recursive mode is doing the same underneath, so this is not a new ceiling, and the existing watch-error retry (exponential, capped) already treats `ENOSPC` as a condition to back off from and re-attach after rather than as a reason to stop watching.
 
 ### 9.9 Library Mutex
 
@@ -1541,12 +1640,15 @@ All endpoints return JSON. Error responses use a standard envelope:
 | `POST` | `/api/libraries` | Create a library |
 | `GET` | `/api/libraries` | List all libraries |
 | `GET` | `/api/libraries/:id` | Get a library |
-| `PATCH` | `/api/libraries/:id` | Update a library (name, default ordering, rendition settings) |
+| `PATCH` | `/api/libraries/:id` | Update a library (name, default ordering, rendition settings, `include_subfolders`, `mirror_shoots`) |
 | `DELETE` | `/api/libraries/:id` | Delete a library |
 | `POST` | `/api/libraries/:id/sync` | Trigger sync for a library |
 | `DELETE` | `/api/libraries/:id/sync` | Stop the library's current sync (§9.10) |
 | `GET` | `/api/libraries/:id/sync/status` | Get sync/processing status |
-| `GET` | `/api/libraries/:id/browse` | Folders inside this library at `?path=` (root-relative, `''` is the root), for the picker that chooses a shoot's folder. Refuses a path outside the root. |
+| `GET` | `/api/libraries/:id/browse` | Folders inside this library at `?path=` (root-relative, `''` is the root), for expanding a folder the Shoots page cannot derive (§18.3.4). Refuses a path outside the root. |
+| `GET` | `/api/libraries/:id/folder-rules` | The library's `excluded` / `plain` folders (§4.7) |
+| `PUT` | `/api/libraries/:id/folder-rules` | Set one folder's rule (body: `{ folder_path, rule }`) |
+| `DELETE` | `/api/libraries/:id/folder-rules` | Clear one folder's rule (`?folder_path=`), returning it to what the library's settings say |
 
 ### 13.2 Photos
 
@@ -1605,7 +1707,7 @@ All boolean query params are parsed with `z.stringbool()`, so `?is_missing=false
 | `GET` | `/api/libraries/:libraryId/shoots` | List shoots in a library |
 | `GET` | `/api/shoots/:id` | Get a shoot |
 | `PATCH` | `/api/shoots/:id` | Update a shoot |
-| `DELETE` | `/api/shoots/:id` | Delete a shoot |
+| `DELETE` | `/api/shoots/:id` | Delete a shoot; `?photos=keep` (default) or `?photos=remove` decides whether its photographs stay in the library (§8.5) |
 | `POST` | `/api/shoots/:id/photos` | Add photos to a shoot (`PhotoTargetSchema`, §5.3) |
 | `DELETE` | `/api/shoots/:id/photos` | Remove photos from a shoot (`PhotoTargetSchema`) |
 | `GET` | `/api/shoots/:id/photos` | List photos in a shoot (paginated) |
@@ -1931,7 +2033,9 @@ Every registered library is listed permanently in the rail, and the active one e
 
 Adding a library is one button and a dialog, holding everything the library needs before it exists: the folder, a name, and the ordering its gallery starts in. The folder is walked with a picker over `/api/browse` as well as typed, because the path is read on the server, which may not be the machine the page is open on, so a path that exists in this browser's world is not necessarily one the server can open.
 
-Adding a shoot is the same dialog shape, and deliberately so: a shoot is a folder too, so it is created by choosing where the folder goes and naming it rather than by picking a parent shoot out of a list. Its picker is the same component pointed at `/api/libraries/:id/browse`, which starts at the library root and cannot climb out of it. The parent shoot then follows from where the folder landed (§8.5), so the choice on screen is "which folder", never "which folder, and separately which parent".
+Adding a library also decides how much of the folder tree it is and whether those folders are shoots (§4.1). Both belong in the dialog rather than in Settings afterwards, because the answers change what the first sync imports, and a library that has already spent an hour building renditions for a folder of decade-old rejects has answered the question the expensive way. They remain editable per library in Settings, where turning subfolders off disables the shoots controls and says why.
+
+Adding a shoot is **not** a dialog with a folder picker any more, for the reason the picker existed: a shoot is a folder, and the Shoots page is now a view of the folders themselves (§18.3.4), so the folder is chosen by pointing at it rather than by re-walking the tree inside a modal. What survives as a dialog is the part a folder cannot answer - a name for a folder that does not exist yet, and the shoot's own ordering.
 
 The rest of Settings is ordered by how often a decision is made rather than by which subsystem owns it. What a library builds and how photos open sit at the top; the encoder sizes, qualities, HDR grade and server knobs are numbers tuned once, so they live in one collapsed **Advanced settings** disclosure. The HDR settings are disabled, with the reason as their tooltip, while no library builds HDR renditions: nothing reads them until one does.
 
@@ -2016,6 +2120,31 @@ Two things escape that rule, both because they need no samples. A selection that
 **Re-reads are serialised.** Two of them overlap routinely, a sync poll ticking while a verdict is being set, and each would rebase against a snapshot the other had already moved - applying the same shift twice and walking the selection off its photographs by exactly the number of rows inserted.
 
 Opening a different collection, changing the filter or changing the sort still clears it outright: those are different listings, not the same one renumbered.
+
+### 18.3.4 The Shoots page
+
+The page shows **the library's folders**, with the shoots among them, rather than only the shoots. An empty Shoots list beside a library full of subfolders was the catalogue lying by omission: the photos had imported, the folders were right there on disk, and nothing on screen said so or offered to do anything about it. A folder that is not a shoot is drawn greyed, and every row carries a `+` menu, so the page answers "what have I got" and "make that a shoot" in the same place.
+
+A permanent **Library root** row sits at the top, undeletable, carrying the count of photos in no shoot. It is where the `+` menu goes for a top-level shoot, and it is the direct answer to the case that started all this - one photo at the root and one in a subfolder now reads as two rows with a count each, rather than as an empty page.
+
+Three views, because a folder tree and a list of shoots are both legitimate readings of the same thing:
+
+| View | Rows | Subtitle |
+|---|---|---|
+| **Flat** | Shoots only, unnested | the full `folder_path` |
+| **Tree (simple)** | Shoots only, nested under the nearest ancestor **shoot** | the path from that ancestor, so folders skipped on the way are named there |
+| **Tree (full)** | Every folder, shoots and untracked alike | the folder's own name, and only when the shoot's label differs from it |
+
+Tree (simple) is what a photographer wants from a deep tree: a shoot buried at `2024/Q3/September/Smith` under nothing else tracked appears as one row, with `2024/Q3/September/` in its subtitle rather than as four rows of scaffolding. Tree (full) is the file manager's answer, and is mostly interesting with mirroring off, where the untracked rows are the point.
+
+**The hierarchy is derived on the client from the shoots' `folder_path`s**, so every ancestor row is known without asking the server for anything. Only folders holding no photos are invisible that way, and those are exactly what expanding a row goes and fetches from `/api/libraries/:id/browse` - the endpoint the deleted picker already used, kept for the one job it is still needed for.
+
+The `+` menu on a row is where shoots come from:
+
+- **Add as shoot** (untracked rows only) adopts the folder as it stands, photos and all (§8.5).
+- **Create shoot in subfolder** (every row) opens the surviving dialog for a name and an ordering, and makes the folder.
+
+Deleting a shoot asks what happens to the photographs rather than assuming, since one answer is reversible and the other is not: keep them in the library, or remove them from it. The second states plainly that the files stay on disk, that ratings and verdicts go, and how many photos it is about to be true of.
 
 ### 18.4 Culling
 
