@@ -56,6 +56,48 @@ async function encoded(medium: HdrMedium, variant: HdrVariant, run: (file: strin
   }
 }
 
+// The shape an HDR rendition is actually built in: one call, two files, off one
+// graded frame and with the two encoders running together. Everything else here
+// asks for a single medium, so nothing covered the pair until this - and it is the
+// path with two threads writing two files, where a shared temporary or a dropped
+// error would show up as a rendition that silently never appeared.
+test('one call writes the still and its video twin, each tagged as its own medium', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'bb-hdr-pair-'));
+  try {
+    const still = path.join(dir, 'rendition.avif');
+    const video = path.join(dir, 'rendition.mp4');
+    const image = decodeRawImage(FIXTURE, 16, 'rec2020-linear', 0);
+    try {
+      encodeHdrRendition(
+        image,
+        null,
+        { variant: 'pq', medium: 'still', outputPath: still, peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.99, crf: 40, preset: 12, maxEdge: 640 },
+        video,
+      );
+    } finally {
+      freeImage(image);
+    }
+
+    expect(Bun.file(still).size).toBeGreaterThan(0);
+    expect(Bun.file(video).size).toBeGreaterThan(0);
+    // The y4m the still is muxed through is a temporary, and both encodes run at
+    // once - so a name either of them shared would survive as a stray file here.
+    expect(Bun.file(`${still}.y4m`).size).toBe(0);
+
+    // Both must carry the PQ signalling, and each its own chroma: 4:4:4 for the
+    // still because it is a photograph, 4:2:0 for the video because that is the
+    // only AV1 profile the browsers this file exists for will decode.
+    for (const [file, chroma] of [[still, 'yuv444p10le'], [video, 'yuv420p10le']] as const) {
+      const found = probe(file);
+      expect(found.color_transfer).toBe('smpte2084');
+      expect(found.color_primaries).toBe('bt2020');
+      expect(found.pix_fmt).toBe(chroma);
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}, 120_000);
+
 test('a scene-linear decode keeps the highlight headroom an sRGB one spends', () => {
   // Half size: the subject is the levels the two decodes land on, which is a
   // property of the tone curve rather than of the frame's size.

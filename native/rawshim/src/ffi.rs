@@ -640,8 +640,9 @@ pub unsafe extern "C" fn bb_fit(image: *const BbImage, raw_path: *const c_char, 
     }
     let Ok(path) = CStr::from_ptr(raw_path).to_str() else { return -1 };
     let Some(geometry) = geometry_for(path) else { return -1 };
+    let Some(render) = (*image).view() else { return -1 };
 
-    let fitted = crate::with_embedded_jpeg(raw_path, |jpeg| fit_against(image, jpeg, geometry, out));
+    let fitted = crate::with_embedded_jpeg(raw_path, |jpeg| fit_against(render, jpeg, geometry, out));
     // No JPEG preview: nothing to match, and the caller renders untransformed.
     fitted.unwrap_or(-1)
 }
@@ -703,14 +704,8 @@ pub unsafe extern "C" fn bb_fit_linear(
         crate::hdr_fit::fit_long_edge() * 2,
     );
 
-    let fitted = crate::with_embedded_jpeg(raw_path, |jpeg| match fit::fit(render.as_ref(), jpeg, geometry) {
-        Ok(Some(profile)) => {
-            *out = BbProfile::from(&profile);
-            0
-        }
-        Ok(None) => 1,
-        Err(_) => -1,
-    });
+    // Same search, same door: only where the render comes from differs.
+    let fitted = crate::with_embedded_jpeg(raw_path, |jpeg| fit_against(render.as_ref(), jpeg, geometry, out));
     fitted.unwrap_or(-1)
 }
 
@@ -734,13 +729,16 @@ fn lensfun_geometry(path: &str) -> Option<fit::Geometry> {
 }
 
 /// The fit itself, once its inputs are in hand.
+///
+/// Takes the render borrowed rather than as a handle, so the HDR path - which derives
+/// one from its scene-linear decode instead of demosaicing a second time in 8-bit -
+/// reaches the same search by the same door.
 unsafe fn fit_against(
-    image: *const BbImage,
+    render: vips::RgbRef<'_>,
     jpeg: &[u8],
     geometry: fit::Geometry,
     out: *mut BbProfile,
 ) -> i32 {
-    let Some(render) = (*image).view() else { return -1 };
     match fit::fit(render, jpeg, geometry) {
         Ok(Some(profile)) => {
             *out = BbProfile::from(&profile);
@@ -777,7 +775,8 @@ pub unsafe extern "C" fn bb_fit_against(
         true => fit::Geometry::Unstated,
         false => fit::Geometry::Recorded(std::slice::from_raw_parts(camera_knots, camera_knot_count as usize).to_vec()),
     };
-    fit_against(image, std::slice::from_raw_parts(jpeg, jpeg_len), geometry, out)
+    let Some(render) = (*image).view() else { return -1 };
+    fit_against(render, std::slice::from_raw_parts(jpeg, jpeg_len), geometry, out)
 }
 
 /// Fits an image to a longest edge and applies a profile, in that order.

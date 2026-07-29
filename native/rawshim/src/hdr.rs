@@ -199,20 +199,31 @@ pub fn encode_pair(
 ) -> Result<(), String> {
     let levels = tone::levels(source.samples, options.white_quantile);
     let (frame, width, height) = graded_with(source, options, matched, levels);
-    encode_graded(&frame, width, height, options)?;
 
-    let Some(video_path) = video_path else { return Ok(()) };
+    let Some(video_path) = video_path else {
+        return encode_graded(&frame, width, height, options);
+    };
     let video =
         EncodeOptions { medium: Medium::Video, output_path: video_path.to_string(), ..options.clone() };
 
     let size = hdr_args::target_size(source.width as u32, source.height as u32, &video);
-    if size.width as usize == width && size.height as usize == height {
+    if size.width as usize != width || size.height as usize != height {
+        // The ceiling bit. Same levels, so the two still agree about where diffuse
+        // white and the scene peak sit; only the resize below them differs.
+        encode_graded(&frame, width, height, options)?;
+        let (frame, width, height) = graded_with(source, &video, matched, levels);
         return encode_graded(&frame, width, height, &video);
     }
-    // The ceiling bit. Same levels, so the two still agree about where diffuse white
-    // and the scene peak sit; only the resize below them differs.
-    let (frame, width, height) = graded_with(source, &video, matched, levels);
-    encode_graded(&frame, width, height, &video)
+
+    // Together rather than one after the other. Both only read the graded frame, and
+    // both are mostly waiting on a child process, so the pair finishes in about the
+    // time the slower one takes on its own.
+    let (still, twin) = std::thread::scope(|scope| {
+        let twin = scope.spawn(|| encode_graded(&frame, width, height, &video));
+        (encode_graded(&frame, width, height, options), twin.join())
+    });
+    still?;
+    twin.map_err(|_| "the video encode panicked".to_string())?
 }
 
 #[cfg(test)]
