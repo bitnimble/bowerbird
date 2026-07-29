@@ -388,9 +388,14 @@ export class ProcessingService {
     const targets = [...(photo.tile?.targets ?? []), ...(photo.renditions?.targets ?? [])];
     this.sweepRenditions(
       photo,
-      new Set(
-        targets.flatMap((t) => (t.videoOutputPath == null ? [t.outputPath] : [t.outputPath, t.videoOutputPath])),
-      ),
+      new Set([
+        // The grid tile always survives, even when this run is not writing one. A
+        // run resumed at its second pass owes the renditions alone, and the tile
+        // its first pass wrote is of the same file: sweeping it leaves the grid
+        // blank with `needs_tile` already clear, so nothing ever rebuilds it.
+        renditionPathFor(photo.dataPath, photo.photoId, 'grid', false),
+        ...targets.flatMap((t) => (t.videoOutputPath == null ? [t.outputPath] : [t.outputPath, t.videoOutputPath])),
+      ]),
     );
   }
 

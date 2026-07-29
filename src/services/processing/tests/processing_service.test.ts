@@ -159,6 +159,30 @@ describe('ProcessingService.processUnprocessed', () => {
     expect(posted.map((job) => photoStage(job))).toEqual(['a:full']);
   });
 
+  it('keeps the grid tile a resumed run is not rebuilding', async () => {
+    // The sweep drops every derived copy this run did not write, because they are of
+    // the old file. The tile of a run resumed at its second pass is not: its own pass
+    // already rebuilt it, and `needs_tile` is clear - so deleting it left the grid
+    // blank with nothing that would ever build it again.
+    const gridDir = path.join(root, '.bowerbird', 'renditions', 'grid');
+    mkdirSync(gridDir, { recursive: true });
+    const tile = path.join(gridDir, 'a.avif');
+    writeFileSync(tile, 'kept');
+
+    const repo = {
+      listPendingProcessing: jest.fn(() => [{ ...pending('a'), needs_tile: 0 }]),
+      markTileBuilt: jest.fn(),
+      markRenditionsBuilt: jest.fn(),
+      markProcessingFailed: jest.fn(),
+    } as unknown as PhotosRepository;
+
+    await new ProcessingService(repo, config).processUnprocessed({ libraryId: 'lib' });
+
+    // The sweep is fire-and-forget, so give it the chance to be wrong.
+    await new Promise((r) => setTimeout(r, 50));
+    expect(existsSync(tile)).toBe(true);
+  });
+
   it('rebuilds a tile on its own without touching the renditions beside it', async () => {
     // The grid's own action, on a file whose pixels have not changed: stamping the
     // viewer's side here would sweep every rendition this run did not write, so
