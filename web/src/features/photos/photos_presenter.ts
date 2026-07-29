@@ -462,15 +462,19 @@ export class PhotosPresenter {
   // (§10.2). The viewer's renditions are left where they are: they are of the
   // same unchanged file, and rebuilding one is its own action in the viewer.
   //
-  // Queued server-side, so this reports that the work started rather than that it
-  // finished; every photo picks up its new file when the server announces it,
-  // which is also what tells the grid.
+  // The request only answers once every rendition is written and every row
+  // stamped, so the page is re-read from the collection rather than left to the
+  // announcements that arrived alongside it. They still move each tile as it
+  // lands, which is what fills the grid at the rebuild's pace - but one that goes
+  // missing left its tile stale until the user reloaded, with no second chance,
+  // and a bulk action reads back what it did (`bulk`).
   async rebuildGridRenditions(): Promise<void> {
     const photoIds = this.store.selectedIds;
     if (photoIds.length === 0) return;
     try {
       const { queued } = await api.rebuildTiles(photoIds);
       await this.refreshDetail();
+      await this.fetchPage();
       this.toasts.show(`Rebuilt ${plural(queued, 'grid rendition', 'grid renditions')}`);
     } catch (err) {
       this.fail(err);
