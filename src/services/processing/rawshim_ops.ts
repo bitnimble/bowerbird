@@ -634,6 +634,23 @@ export function fitProfile(render: ImageHandle, rawFilePath: string): FittedProf
 }
 
 /**
+ * `fitProfile` off a 16-bit scene-linear decode instead of an 8-bit sRGB one.
+ *
+ * The HDR path already holds that decode and wants only the geometry from this fit, so
+ * this answers whether the 8-bit decode beside it is needed at all.
+ */
+export function fitProfileFromLinear(
+  linear: ImageHandle,
+  rawFilePath: string,
+  whiteQuantile: number,
+): FittedProfile | null {
+  if (linear.depth !== 16) throw new Error(`the linear fit needs a 16-bit decode, got ${linear.depth}`);
+  const raw = profileBuffer();
+  const status = shim().bb_fit_linear(linear.pointer, Buffer.from(`${rawFilePath}\0`), whiteQuantile, ptr(raw));
+  return status === 1 ? null : readProfile(raw, status);
+}
+
+/**
  * `fitProfile` against a target the caller constructed rather than the file's own
  * preview. For the test that injects a known distortion and requires the fit to
  * recover it; nothing in the app uses it.

@@ -12,6 +12,7 @@ import {
   decodeEmbedded,
   decodeRawImage,
   encodeJpeg,
+  fitProfileFromLinear,
   freeImage,
   readDistortionSpline,
   readHeaderFields,
@@ -278,6 +279,49 @@ describe('fitMatchProfile', () => {
     },
     TIMEOUT,
   );
+
+  // An HDR job wants only the geometry, and holds a scene-linear decode already, so
+  // it fits off that rather than demosaicing the file a second time in 8-bit. The two
+  // renders differ in tone - LibRaw auto-brightens its sRGB path where the linear one
+  // is deliberately scene-referred - so this has to be checked rather than assumed.
+  // If it ever stops holding, the HDR rendition and its SDR twin disagree about where
+  // things in the frame are, which is the failure §10.8.1 exists to prevent.
+  for (const [body, file] of [
+    ['a body on the lensfun tier', CANON_FIXTURE],
+    ['a body that corrected nothing', FIXTURE],
+  ] as const) {
+    test(
+      `fits the same geometry off either decode, on ${body}`,
+      () => {
+        const sdr = decodeRawImage(file, 8, 'srgb', 640);
+        const linear = decodeRawImage(file, 16, 'rec2020-linear', 3840);
+        try {
+          const viaSdr = fitMatchProfile(file, sdr);
+          const viaLinear = fitProfileFromLinear(linear, file, 0.9);
+          expect(viaSdr).not.toBeNull();
+          expect(viaLinear).not.toBeNull();
+
+          // The tier decides how the geometry was arrived at; disagreeing here means
+          // one of them fell through to a different search entirely.
+          expect(viaLinear!.distortionSource).toBe(viaSdr!.distortionSource);
+          expect(viaLinear!.distortion == null).toBe(viaSdr!.distortion == null);
+
+          // The knots come off the file or the database, so they must be exact.
+          for (const [i, knot] of (viaSdr!.distortion ?? []).entries()) {
+            expect(viaLinear!.distortion![i]).toBe(knot);
+          }
+          // The crop is scanned against the render, so it is allowed to land a hair
+          // apart. 0.2% of the half-diagonal is ~4px at the corner of a 3840px frame,
+          // comfortably inside the bilinear resample that follows it.
+          expect(Math.abs(viaLinear!.crop - viaSdr!.crop)).toBeLessThan(0.002);
+        } finally {
+          freeImage(sdr);
+          freeImage(linear);
+        }
+      },
+      TIMEOUT,
+    );
+  }
 
   test(
     'applying a profile leaves the render the same size and shape',

@@ -77,6 +77,7 @@ const SYMBOLS = {
     returns: FFIType.i32,
   },
   bb_fit: { args: [FFIType.ptr, FFIType.cstring, FFIType.ptr], returns: FFIType.i32 },
+  bb_fit_linear: { args: [FFIType.ptr, FFIType.cstring, FFIType.f64, FFIType.ptr], returns: FFIType.i32 },
   bb_fit_against: {
     args: [FFIType.ptr, FFIType.ptr, FFIType.u64, FFIType.ptr, FFIType.u32, FFIType.ptr],
     returns: FFIType.i32,

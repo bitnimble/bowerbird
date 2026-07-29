@@ -7,6 +7,7 @@ import {
   describeForStacking,
   encodeHdrRendition,
   fitHdrMatch,
+  fitProfileFromLinear,
   freeHdrMatch,
   freeImage,
   renderImage,
@@ -32,12 +33,6 @@ declare const self: {
 function toAvif(image: ImageHandle, target: RenditionTarget): void {
   saveAvif(image, target.size, target.quality, AVIF_EFFORT, target.outputPath);
 }
-
-// The long edge the fit works at, so a decode nothing else reads can say so and be
-// halved on any sensor. It resizes to this before it looks at anything, and the
-// transform it produces is resolution-independent - radii normalised to the
-// half-diagonal, and a per-level colour lookup.
-const FIT_LONG_EDGE = 640;
 
 /**
  * The largest rendition of one dynamic range this job writes, or null when it writes
@@ -176,13 +171,12 @@ async function renditions(job: RenditionJob): Promise<Uint8Array | undefined> {
   // would be twice the memory for samples the encoder discards.
   // Telling the decoder the largest SDR size this job needs lets it halve the
   // decode on a sensor big enough to spare it (§10.8). A native-resolution target
-  // reports 0 and gets the whole frame. An all-HDR job writes no SDR rendition at
-  // all, which leaves the fit as this decode's only reader - so it asks for the fit's
-  // own grid rather than the whole frame it was demosaicing to feed a 640px search.
+  // reports 0 and gets the whole frame. Only ever reached when this job writes an
+  // SDR rendition, so the size is always there to ask for.
   let decoded: ImageHandle | null = null;
   const decode = (): ImageHandle => {
     if (decoded == null) {
-      decoded = decodeRawImage(job.rawFilePath, 8, 'srgb', largestSize(job.targets, false) ?? FIT_LONG_EDGE);
+      decoded = decodeRawImage(job.rawFilePath, 8, 'srgb', largestSize(job.targets, false) ?? 0);
       open.push(decoded);
     }
     return decoded;
@@ -218,8 +212,20 @@ async function renditions(job: RenditionJob): Promise<Uint8Array | undefined> {
     // nothing to match against, so the fit declines on its own.
     const rendersSdr = job.targets.some((target) => !target.hdr && target.source === 'render');
     const rendersHdr = job.targets.some((target) => target.hdr);
-    const profile =
-      job.matchEmbeddedJpeg && (rendersSdr || rendersHdr) ? await fitMatchProfile(job.rawFilePath, decode()) : null;
+    // An HDR job takes only the geometry from this fit - the colour half is refitted
+    // in the grade's own domain (§10.8.1) - and the search resizes whatever it is
+    // handed down to a 640px grid. So where nothing renders SDR, it is driven off the
+    // scene-linear decode this job is already holding rather than demosaicing the same
+    // file a second time in 8-bit. Measured across the fixtures the tier and the knots
+    // come out identical and the crop within 0.06%, which is ~1.4px at the corner of a
+    // 3840px frame; `fits_the_same_geometry_off_either_decode` pins it.
+    const profile = !job.matchEmbeddedJpeg
+      ? null
+      : rendersSdr
+        ? fitMatchProfile(job.rawFilePath, decode())
+        : rendersHdr
+          ? fitProfileFromLinear(linear(), job.rawFilePath, job.grade.whiteQuantile)
+          : null;
 
     // Built once at the largest SDR size the job asks for, then resized down for the
     // rest by the encoder. Every smaller rendition is a resize of this rather than

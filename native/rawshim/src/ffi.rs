@@ -639,22 +639,78 @@ pub unsafe extern "C" fn bb_fit(image: *const BbImage, raw_path: *const c_char, 
         return -1;
     }
     let Ok(path) = CStr::from_ptr(raw_path).to_str() else { return -1 };
+    let Some(geometry) = geometry_for(path) else { return -1 };
 
-    let Ok(found) = distortion_of(path) else { return -1 };
+    let fitted = crate::with_embedded_jpeg(raw_path, |jpeg| fit_against(image, jpeg, geometry, out));
+    // No JPEG preview: nothing to match, and the caller renders untransformed.
+    fitted.unwrap_or(-1)
+}
+
+/// Which geometry tier this file falls into, from the file alone - no pixels decoded.
+///
+/// None is a file that could not be read, which the callers report separately from a
+/// file that simply records no correction.
+fn geometry_for(path: &str) -> Option<fit::Geometry> {
+    let Ok(found) = distortion_of(path) else { return None };
     // The body's own word that it corrected nothing, which saves searching for a
     // correction that is not there (`fit.rs`). Only Sony states it; everything else
     // reads as unstated and falls through.
-    let geometry = match (found.applied, found.spline) {
+    Some(match (found.applied, found.spline) {
         (Some(false), _) => fit::Geometry::Uncorrected,
         (_, Some(knots)) => fit::Geometry::Recorded(knots),
         // Nothing in the file, so ask the database. The header read this needs is a
         // second open of the same file, which is why it is here rather than above:
         // a body that recorded its own spline never pays for it.
         (_, None) => lensfun_geometry(path).unwrap_or(fit::Geometry::Unstated),
-    };
+    })
+}
 
-    let fitted = crate::with_embedded_jpeg(raw_path, |jpeg| fit_against(image, jpeg, geometry, out));
-    // No JPEG preview: nothing to match, and the caller renders untransformed.
+/// `bb_fit` driven off a 16-bit scene-linear decode rather than an 8-bit sRGB one.
+///
+/// The HDR path already holds that decode, and the only thing it wants from the SDR
+/// fit is the geometry, so this exists to answer whether the second decode is needed
+/// at all. The render is derived at twice the fit grid and handed to the same search.
+///
+/// Returns as `bb_fit`: 0 fitted, 1 no usable match, -1 failure.
+///
+/// # Safety
+/// `image` must be a live 16-bit handle, `raw_path` a NUL-terminated C string, and
+/// `out` a writable `BbProfile`.
+#[no_mangle]
+pub unsafe extern "C" fn bb_fit_linear(
+    image: *const BbImage,
+    raw_path: *const c_char,
+    white_quantile: f64,
+    out: *mut BbProfile,
+) -> i32 {
+    vips::init();
+    if image.is_null() || raw_path.is_null() || out.is_null() {
+        return -1;
+    }
+    let Ok(path) = CStr::from_ptr(raw_path).to_str() else { return -1 };
+    let Some(samples) = (*image).view_u16() else { return -1 };
+    let Some(geometry) = geometry_for(path) else { return -1 };
+
+    let peak = crate::tone::levels(samples, white_quantile).peak;
+    if !(peak > 0.0) {
+        return -1;
+    }
+    let render = crate::hdr_fit::render_srgb8(
+        samples,
+        (*image).width as usize,
+        (*image).height as usize,
+        peak,
+        crate::hdr_fit::fit_long_edge() * 2,
+    );
+
+    let fitted = crate::with_embedded_jpeg(raw_path, |jpeg| match fit::fit(render.as_ref(), jpeg, geometry) {
+        Ok(Some(profile)) => {
+            *out = BbProfile::from(&profile);
+            0
+        }
+        Ok(None) => 1,
+        Err(_) => -1,
+    });
     fitted.unwrap_or(-1)
 }
 

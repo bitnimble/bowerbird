@@ -620,6 +620,39 @@ pub fn fit_long_edge() -> usize {
     FIT_LONG_EDGE
 }
 
+/// The scene-linear decode as an 8-bit sRGB render, at the size the SDR fit resizes to.
+///
+/// So the geometry fit can be driven off the HDR decode rather than a second, 8-bit one
+/// taken of the same file. LibRaw's sRGB path is linear, then auto-bright, then the
+/// sRGB gamma; this is the same shape with the frame's own peak standing in for
+/// auto-bright, which clips its brightest 0.01% where this clips none.
+///
+/// `long_edge` should be twice the fit grid: `fit::fit` resizes whatever it is handed
+/// to twice the preview's width, so arriving at that size makes its resize a no-op
+/// rather than a second resample.
+pub fn render_srgb8(
+    linear: &[u16],
+    width: usize,
+    height: usize,
+    peak: f64,
+    long_edge: usize,
+) -> crate::vips::Rgb {
+    let longest = width.max(height);
+    let scale = if long_edge >= longest { 1.0 } else { long_edge as f64 / longest as f64 };
+    let dw = ((width as f64 * scale).round() as usize).max(1);
+    let dh = ((height as f64 * scale).round() as usize).max(1);
+
+    let small = resample(linear, width, height, dw, dh, |v| f64::from(v) / peak);
+    let mut data = vec![0u8; dw * dh * 3];
+    data.par_chunks_mut(3).zip(small.par_chunks(3)).for_each(|(out, px)| {
+        let v = to_srgb8(px[0], px[1], px[2]);
+        for c in 0..3 {
+            out[c] = v[c] as u8;
+        }
+    });
+    crate::vips::Rgb { width: dw, height: dh, data }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
