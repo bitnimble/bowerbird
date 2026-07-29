@@ -38,8 +38,13 @@ export interface PhotoFilters {
 // another, and no combination of flags can describe a state that cannot happen.
 export type OpenPhoto = { id: string; status: 'loading' | 'ready' } | { id: string; status: 'missing'; error: string };
 
-/** The pixels the served image actually decoded to. */
+/**
+ * The pixels the served image actually decoded to, and which file that was:
+ * a reader must not be told the frame on screen is the size of one it is not.
+ */
 export interface ShownImage {
+  photoId: string;
+  rendition: PreviewRendition;
   width: number;
   height: number;
 }
@@ -143,10 +148,25 @@ export class PhotosStore {
   @observable accessor notesSavedAt: number | null = null;
   // What the viewer actually has on screen, measured off the decoded image
   // rather than taken from a column, which is the question a reader judging
-  // sharpness is asking. Null until something decodes, and cleared on every
-  // step - the panel must stop claiming the previous photo's resolution the
-  // moment the route changes.
+  // sharpness is asking. Null until something decodes, and replaced rather than
+  // cleared: it names the frame it measured, so `shownImageOf` can drop it for a
+  // photo it is not about without anything having to remember to clear it - a
+  // clear on the step reads as "loading" for good on any re-open that does not
+  // decode a fresh frame.
   @observable.ref accessor shownImage: ShownImage | null = null;
+
+  // Bumped whenever the event stream connects, which is the one signal a client
+  // gets that the server is up. A frame that failed is never asked for again on
+  // its own - the URL only moves when the file behind it is rebuilt - so a
+  // restart mid-request left the stage blank for the life of the page.
+  @observable accessor serverEpoch = 0;
+
+  // The decoded size of the frame this view is asking about, or null when what
+  // decoded last was some other photo or rendition.
+  shownImageOf(photoId: string, rendition: PreviewRendition): ShownImage | null {
+    const shown = this.shownImage;
+    return shown?.photoId === photoId && shown.rendition === rendition ? shown : null;
+  }
 
   // This photo's detail, or null while it is still the one before it. Every
   // consumer needs this check and none of them can be trusted to remember it:

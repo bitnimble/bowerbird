@@ -35,6 +35,8 @@ interface Props {
   onImageMissing?: () => void;
   /** Clears the stage when it changes. The photo, not the src: a rendition swap must hold the frame. */
   photoKey: string;
+  /** Ask again for a frame that failed. Changes when the server has proven it is back. */
+  retryEpoch?: number;
   /**
    * Keep preparing the frame but do not show it yet. For the moment before the
    * photo's own data arrives, when the panels around the stage have not settled:
@@ -94,7 +96,18 @@ function zoomAbout(view: View, next: number, box: DOMRect | null, point: { x: nu
 // The image viewport: fit/zoom, wheel zoom, drag-to-pan and fullscreen. All of
 // this is ephemeral view state, so it stays local rather than going through a
 // store; nothing outside this component needs to know the pan offset.
-export function PhotoStage({ src, alt, filename, video, photoKey, hold, preloadSrcs, onImageLoad, onImageMissing }: Props): JSX.Element {
+export function PhotoStage({
+  src,
+  alt,
+  filename,
+  video,
+  photoKey,
+  hold,
+  retryEpoch,
+  preloadSrcs,
+  onImageLoad,
+  onImageMissing,
+}: Props): JSX.Element {
   const stageRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
   const [view, setView] = useState<View>(FITTED);
@@ -174,7 +187,9 @@ export function PhotoStage({ src, alt, filename, video, photoKey, hold, preloadS
     return () => cancelAnimationFrame(frame);
   }, [retiring]);
 
-  useEffect(() => setFailed(false), [src]);
+  // Clearing this remounts the frame's element, which is what makes it ask again:
+  // a src that never moves is otherwise requested exactly once.
+  useEffect(() => setFailed(false), [src, retryEpoch]);
 
   // Through refs: callers pass inline callbacks, and a new identity per render
   // would restart the decode below on every render while one is in flight.

@@ -271,12 +271,13 @@ const DetailFrame = observer(function DetailFrame({ photoId }: { photoId: string
       // The panels decide which edge they take from this photo's shape, so until
       // that is known from somewhere the stage is not the size it will be.
       hold={store.photoFor(photoId) == null}
+      retryEpoch={store.serverEpoch}
       src={hdrVideo && showing !== 'embedded' ? renditionVideoUrl(photoId, showing, version) : stillSrc}
       video={hdrVideo}
       alt={filename}
       filename={filename}
       preloadSrcs={preloadSrcs}
-      onImageLoad={photos.imageShown}
+      onImageLoad={(width, height) => photos.imageShown(photoId, showing, width, height)}
       // Only the library's default is built on sight, and only when it is a
       // stored rendition: the camera's JPEG comes out of the RAW, so a 404 there
       // means the RAW is gone, which building cannot fix. A chosen rendition was
@@ -388,7 +389,7 @@ const PreviewPanel = observer(function PreviewPanel({ photoId, defaultOpen }: { 
   const showing = store.showing;
   const shownFile = photo?.renditions?.[showing];
   const shownVideo = needsHdrVideo() ? (shownFile?.video ?? null) : null;
-  const shownImage = store.shownImage;
+  const shownImage = store.shownImageOf(photoId, showing);
   const thumbs = serverConfig.config?.thumbnails;
 
   return (

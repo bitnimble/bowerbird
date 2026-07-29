@@ -209,11 +209,18 @@ export class PhotosPresenter {
     if (detail != null) detail[field] = version;
   }
 
-  // Reported by the stage when a frame has decoded, so the panel beside it can
-  // describe what is on screen rather than what a column claims.
   @action.bound
-  imageShown(width: number, height: number): void {
-    this.store.shownImage = { width, height };
+  serverReachable(): void {
+    this.store.serverEpoch++;
+  }
+
+  // Reported by the stage when a frame has decoded, so the panel beside it can
+  // describe what is on screen rather than what a column claims. Carries which
+  // file decoded, because the stage reports once per frame and the panel is read
+  // on every render after it.
+  @action.bound
+  imageShown(photoId: string, rendition: PreviewRendition, width: number, height: number): void {
+    this.store.shownImage = { photoId, rendition, width, height };
   }
 
   // Whether a photo is still the one the view is on. Every write that lands after
@@ -701,10 +708,6 @@ export class PhotosPresenter {
   private beginDetail(photoId: string): void {
     this.store.open = { id: photoId, status: 'loading' };
     this.store.notesSavedAt = null;
-    // On the step rather than when the next detail lands: the panel must stop
-    // claiming the previous photo's resolution the moment we navigate, and the
-    // new frame can take a while to decode.
-    this.store.shownImage = null;
     // Per photo, not sticky: the next photo may have no preview cached for the
     // rendition this one was showing, which would be a 404 rather than a picture.
     // Reopening it there is the setting's job, and it builds first.
