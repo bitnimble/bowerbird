@@ -275,7 +275,14 @@ export class SyncService implements LibraryLifecycleListener {
           insertPhoto(ad, nowUtc);
           added++;
         }
-        for (const photoId of diff.reappeared) this.photos.clearMissing(photoId);
+        for (const photoId of diff.reappeared) {
+          this.photos.clearMissing(photoId);
+          // A photo that went missing before its thumbnails were built is skipped
+          // by the queue while it is missing (§9.4 step 4), so the sync that
+          // brings it back is the one that owes them. Left out of a scoped run's
+          // batch it would sit there unbuilt until the daily full sync.
+          touched?.push(photoId);
+        }
         for (const rm of result.removed) {
           // Skips if a concurrent rename/move relocated the photo during the scan
           // (its file_path no longer matches what we scanned); it isn't missing.

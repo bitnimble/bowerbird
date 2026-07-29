@@ -694,7 +694,6 @@ export class PhotosPresenter {
     this.remember();
   }
 
-  @action.bound
   // Deliberately leaves `loadedDetail` alone: it is the previous photo's until
   // this one lands, and clearing it made library_id momentarily null, which
   // collapsed the rail and title on every next/prev and read as a flash.
