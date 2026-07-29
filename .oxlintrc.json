@@ -2,6 +2,7 @@
   "$schema": "./node_modules/oxlint/configuration_schema.json",
   "ignorePatterns": ["node_modules", "web/dist", "native", ".scratch-*.ts"],
   "rules": {
+    "no-console": "error",
     "no-restricted-imports": [
       "error",
       {
@@ -36,8 +37,12 @@
       "rules": { "no-restricted-imports": "off" }
     },
     {
-      "files": ["**/tests/**", "**/*.test.ts", "**/*.spec.ts", "test/**", "web/e2e/**"],
-      "rules": { "no-restricted-imports": "off" }
+      "files": ["src/logger.ts"],
+      "rules": { "no-console": "off" }
+    },
+    {
+      "files": ["**/tests/**", "**/*.test.ts", "**/*.spec.ts", "test/**", "web/**"],
+      "rules": { "no-restricted-imports": "off", "no-console": "off" }
     }
   ]
 }

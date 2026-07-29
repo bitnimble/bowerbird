@@ -3,12 +3,15 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { AppError } from '../../errors';
 import { isUniqueViolation } from '../../db/constraints';
+import { Logger } from '../../logger';
 import type { CreateLibraryRequest, Library, UpdateLibraryRequest } from '../../schemas/libraries';
 import { deleteDataDirectory } from '../../utils/deletions';
 import { ensureDir, moveIntoDir } from '../../utils/files';
 import { containsPath, dataPathFor, getBinPath, getDataPath } from '../../utils/paths';
 import { findOriginalsAnywhere } from '../../utils/scan';
 import type { LibrariesRepository } from './libraries_repository';
+
+const log = new Logger('libraries');
 
 export interface LibraryLifecycleListener {
   onLibraryCreated(library: Library): void;
@@ -29,7 +32,7 @@ export interface LibraryLifecycleListener {
 async function removeDataDirectory(library: Library): Promise<void> {
   const dataPath = getDataPath(library);
   if (containsPath(dataPath, library.root_path)) {
-    console.warn(`not removing data directory for ${library.id}: ${dataPath} contains the library root`);
+    log.warn('keeping the data directory: it contains the library root', { library: library.id, dataPath });
     return;
   }
   try {
@@ -38,11 +41,11 @@ async function removeDataDirectory(library: Library): Promise<void> {
       const bin = getBinPath(library);
       await ensureDir(bin);
       for (const stray of strays) await moveIntoDir(stray, bin, path.basename(stray));
-      console.warn(`moved ${strays.length} original file(s) out of ${dataPath} into ${bin} before removing it`);
+      log.warn('rescued originals from the data directory before removing it', { originals: strays.length, dataPath, bin });
     }
     await deleteDataDirectory(dataPath);
   } catch (err) {
-    console.error(`failed to remove data directory ${dataPath}: ${(err as Error).message}`);
+    log.error('could not remove the data directory', { dataPath, err });
   }
 }
 
@@ -88,6 +91,7 @@ export class LibrariesService {
       if (isUniqueViolation(err)) throw new AppError('CONFLICT', `library root already registered: ${request.root_path}`);
       throw err;
     }
+    log.info('library created', { library: library.id, root: library.root_path, data: getDataPath(library) });
     for (const listener of this.listeners) listener.onLibraryCreated(library);
     return library;
   }
@@ -138,6 +142,7 @@ export class LibrariesService {
     if (!this.repo.delete(libraryId)) {
       throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
     }
+    log.info('library deleted', { library: libraryId, root: library?.root_path });
     for (const listener of this.listeners) listener.onLibraryDeleted(libraryId);
     if (library != null) await removeDataDirectory(library);
   }

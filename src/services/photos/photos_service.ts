@@ -1,6 +1,7 @@
 import { existsSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { AppError } from '../../errors';
+import { Logger } from '../../logger';
 import type { Ordering, Pagination } from '../../schemas/common';
 import type { Library } from '../../schemas/libraries';
 import type { PhotoDetail, PhotoListQuery, PhotoListResponse, UpdatePhotoRequest } from '../../schemas/photos';
@@ -17,6 +18,8 @@ import type { ProcessingService } from '../processing/processing_service';
 import type { ShootsRepository } from '../shoots/shoots_repository';
 import { libraryMutex } from '../sync/library_mutex';
 import type { BasicPhoto, PhotoListFilters, PhotoListResult, PhotosRepository } from './photos_repository';
+
+const log = new Logger('photos');
 
 function toFilters(query: PhotoListQuery): PhotoListFilters {
   return {
@@ -81,7 +84,7 @@ export class PhotosService {
       // Always the embedded JPEG, matching the import: the grid wants a small SDR
       // thumbnail from the fastest source there is, whatever the viewer is set to.
       .renderOne(raw, photo.id, library, 'grid', false, 'embedded')
-      .catch((err: unknown) => console.error(`could not rebuild the grid tile for ${photo.id}: ${String(err)}`))
+      .catch((err: unknown) => log.error('could not rebuild a grid tile', { photo: photo.id, err }))
       .finally(() => this.repairing.delete(photo.id));
   }
 
@@ -219,9 +222,10 @@ export class PhotosService {
         updated++;
       } catch (err) {
         // One unreadable file must not abandon the rest of the selection.
-        console.error(`metadata refresh failed for ${photo.file_path}: ${(err as Error).message}`);
+        log.warn('metadata refresh failed', { photo: photoId, file: photo.file_path, err });
       }
     }
+    log.info('metadata refreshed', { asked: photoIds.length, updated });
     return updated;
   }
 
@@ -253,7 +257,9 @@ export class PhotosService {
     // "Input/output error" surfaces as a 500 that says nothing useful.
     const raw = getOriginalPath(library, photo.file_path);
     if (!existsSync(raw)) throw new AppError('NOT_FOUND', `original file not found: ${photo.file_path}`);
+    const startedAt = Date.now();
     await this.processing.renderOne(raw, photo.id, library, rendition, hdr);
+    log.info('rendition built on demand', { photo: photo.id, rendition, hdr, forced: force, ms: Date.now() - startedAt });
   }
 
   // Builds every rendition at once, both media and including the SDR
@@ -266,13 +272,17 @@ export class PhotosService {
     const source = getOriginalPath(library, photo.file_path);
     if (!existsSync(source)) throw new AppError('NOT_FOUND', `original file not found: ${photo.file_path}`);
 
+    const startedAt = Date.now();
+    let built = 0;
     for (const medium of HDR_MEDIA) {
       for (const variant of HDR_VARIANTS) {
         const output = getHdrPath(library, photo.id, medium, variant);
         if (existsSync(output)) continue; // the file is the cache, as with the lossless render
         await this.processing.renderHdr(source, output, photo.id, medium, variant);
+        built++;
       }
     }
+    log.info('HDR renditions built', { photo: photo.id, built, ms: Date.now() - startedAt });
   }
 
   update(photoId: string, updates: UpdatePhotoRequest): PhotoDetail {
@@ -323,8 +333,12 @@ export class PhotosService {
           // photo left is_deleted=0 with its file in the Bin is orphaned forever.
           // Move it back out so state stays consistent (as if delete never ran).
           if (movedToBin != null) {
-            await moveIntoDir(movedToBin, path.dirname(from), path.basename(from)).catch((e) =>
-              console.error(`failed to roll back Bin move for ${photo.id}: ${(e as Error).message}`),
+            await moveIntoDir(movedToBin, path.dirname(from), path.basename(from)).catch((e: unknown) =>
+              log.error('could not roll a Bin move back; the file is in the Bin but the photo is not deleted', {
+                photo: photo.id,
+                file: movedToBin,
+                err: e,
+              }),
             );
           }
           throw dbErr;
@@ -335,6 +349,7 @@ export class PhotosService {
         failures.push(`${id}: ${(err as Error).message}`);
       }
     }
+    log.info('photos deleted to the Bin', { asked: photoIds.length, failed: failures.length });
     if (failures.length > 0) {
       throw new AppError('IO_ERROR', `failed to delete ${failures.length} photo(s): ${failures.join('; ')}`);
     }
@@ -373,6 +388,7 @@ export class PhotosService {
         failures.push(`${id}: ${(err as Error).message}`);
       }
     }
+    log.info('photos restored from the Bin', { asked: photoIds.length, failed: failures.length });
     if (failures.length > 0) {
       throw new AppError('IO_ERROR', `failed to restore ${failures.length} photo(s): ${failures.join('; ')}`);
     }

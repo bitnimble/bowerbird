@@ -27,6 +27,10 @@ import { DailySync } from './services/sync/daily_sync';
 import { PruneService, ScheduledPrune } from './services/maintenance/prune_service';
 import { ProcessingService } from './services/processing/processing_service';
 import { config } from './config';
+import { Logger } from './logger';
+
+const log = new Logger('server');
+const requestLog = new Logger('http');
 
 const db = createDatabase(config.dbPath);
 
@@ -87,6 +91,17 @@ app.use('*', async (c, next) => {
   await next();
   c.header('X-Content-Type-Options', 'nosniff');
 });
+// A read is only worth a line when it went wrong: a grid scrolling through a
+// shoot is hundreds of thumbnail GETs a minute, and burying the import that is
+// actually running is how a log stops being read. Anything that changes state
+// is worth one whatever it returns.
+app.use('*', async (c, next) => {
+  const started = Date.now();
+  await next();
+  const status = c.res.status;
+  const level = status >= 500 ? 'error' : status >= 400 ? 'warn' : c.req.method === 'GET' ? 'debug' : 'info';
+  requestLog[level](`${c.req.method} ${c.req.path}`, { status, ms: Date.now() - started });
+});
 app.route('/api/config', new ConfigApi(config).routes);
 app.route('/api/events', new EventsApi(processingService).routes);
 app.route('/api/settings', new SettingsApi(new SettingsRepository(db)).routes);
@@ -105,17 +120,17 @@ if (config.watchEnabled) {
   const watcher = new LibraryWatcher(librariesRepo, syncService, config.watchDebounceMs);
   librariesService.addLifecycleListener(watcher);
   watcher.start();
-  console.log(`Filesystem watching enabled (debounce ${config.watchDebounceMs}ms)`);
+  log.info('filesystem watching enabled', { debounceMs: config.watchDebounceMs });
 }
 
 if (config.fullSyncAt !== '') {
   new DailySync(syncService, config.fullSyncAt).start();
-  console.log(`Daily full reconcile at ${config.fullSyncAt}`);
+  log.info('daily full reconcile scheduled', { at: config.fullSyncAt });
 }
 
 if (config.pruneEveryDays > 0) {
   new ScheduledPrune(new PruneService(librariesRepo, photosRepo), config.pruneEveryDays).start();
-  console.log(`Orphaned-file prune every ${config.pruneEveryDays} day(s)`);
+  log.info('orphaned-file prune scheduled', { everyDays: config.pruneEveryDays });
 }
 
 applyErrorHandler(app);
@@ -135,4 +150,9 @@ const server = Bun.serve({
   idleTimeout: IDLE_TIMEOUT_SECONDS,
   fetch: app.fetch,
 });
-console.log(`Listening on http://${config.host}:${server.port}`);
+log.info(`listening on http://${config.host}:${server.port}`, {
+  db: config.dbPath,
+  logLevel: config.logLevel,
+  processingConcurrency: config.processingConcurrency,
+  libraries: librariesRepo.list().length,
+});

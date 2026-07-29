@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import type { Config } from '../../config';
+import { Logger } from '../../logger';
 import type { Library } from '../../schemas/libraries';
 import { deleteGeneratedFile } from '../../utils/deletions';
 import { dataPathFor, getDataPath, renditionPathFor } from '../../utils/paths';
@@ -19,6 +20,8 @@ import type {
 import { renditionDirs, type Rendition } from './renditions';
 
 const WORKER_URL = new URL('./processing_worker.ts', import.meta.url).href;
+
+const log = new Logger('processing');
 
 // Orchestrates thumbnail generation across a pool of Bun workers (DESIGN §10.2).
 // Workers decode + encode; the main thread owns all DB writes so bun:sqlite is
@@ -260,7 +263,22 @@ export class ProcessingService {
       if (scope === undefined) return; // nothing asked for since the last pass
       const pending = this.photos.listPendingProcessing(libraryId, scope == null ? undefined : [...scope]);
       const staged = pending.map((p) => this.toStages(p));
-      if (staged.length > 0) await this.runStaged(staged, stopped);
+      if (staged.length === 0) continue;
+      const startedAt = Date.now();
+      log.info('batch start', {
+        library: libraryId,
+        photos: staged.length,
+        tiles: staged.filter((p) => p.tile != null).length,
+        renditions: staged.filter((p) => p.renditions != null).length,
+        workers: Math.min(this.config.processingConcurrency, staged.length),
+      });
+      await this.runStaged(staged, stopped);
+      log.info('batch done', {
+        library: libraryId,
+        photos: staged.length,
+        stopped: stopped?.() === true,
+        ms: Date.now() - startedAt,
+      });
     }
   }
 
@@ -338,8 +356,9 @@ export class ProcessingService {
       // After the writes, so a client told the file is ready cannot ask for it
       // before the row says so.
       this.announce(photoId, { stage, version });
+      log.debug('stage done', { photo: photoId, stage });
     } catch (err) {
-      console.error('stageDone failed for photo ' + photoId + ': ' + (err as Error).message);
+      log.error('could not record a finished stage', { photo: photoId, stage, err });
     }
   }
 
@@ -444,7 +463,11 @@ export class ProcessingService {
       // If the source file moved/was deleted since the job was queued (a move that
       // landed before the worker ran), don't burn it as a terminal failure: leave
       // its flags set so a later sync reprocesses it at its current path.
-      if (!existsSync(job.rawFilePath)) return;
+      if (!existsSync(job.rawFilePath)) {
+        log.debug('job source vanished, left pending', { photo: result.photoId, file: job.rawFilePath });
+        return;
+      }
+      log.warn('photo failed', { photo: result.photoId, file: job.rawFilePath, err: result.error });
       this.photos.markProcessingFailed(result.photoId, result.error);
       // Every derivative, not just the stage that failed. A photo is being
       // reprocessed because its pixels changed, so the ones this run did not reach -
@@ -454,7 +477,7 @@ export class ProcessingService {
       // still of the file it has.
       if (photo != null && photo.owesRenditions) this.sweepRenditions(photo, new Set());
     } catch (err) {
-      console.error(`recordFailure failed for photo ${result.photoId}: ${(err as Error).message}`);
+      log.error('could not record a failure', { photo: result.photoId, err });
     }
   }
 
@@ -476,7 +499,7 @@ export class ProcessingService {
         try {
           worker = new Worker(WORKER_URL);
         } catch (err) {
-          console.error(`could not spawn processing worker: ${(err as Error).message}`);
+          log.error('could not spawn a worker; its jobs stay pending', { err });
           return false;
         }
         live++;

@@ -1,4 +1,7 @@
+import { Logger } from '../../logger';
 import type { SyncService } from './sync_service';
+
+const log = new Logger('daily-sync');
 
 // Milliseconds until the next local-time occurrence of "HH:MM".
 export function msUntil(at: string, now = new Date()): number {
@@ -43,14 +46,20 @@ export class DailySync {
 
   private async fire(): Promise<void> {
     this.schedule(); // book tomorrow first, so a long sync can't skip a day
-    if (this.running) return;
+    if (this.running) {
+      log.warn('the previous full reconcile is still running; skipping this one');
+      return;
+    }
     this.running = true;
+    const startedAt = Date.now();
+    log.info('full reconcile start');
     try {
       await this.sync.syncAll();
+      log.info('full reconcile done', { ms: Date.now() - startedAt });
     } catch (err) {
       // syncAll isolates per-library failures; this only catches a failure
       // enumerating libraries, so tomorrow's run still happens.
-      console.error(`daily full sync failed: ${(err as Error).message}`);
+      log.error('full reconcile failed', { err });
     } finally {
       this.running = false;
     }

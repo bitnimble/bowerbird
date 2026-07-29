@@ -1,6 +1,7 @@
 import { watch, type FSWatcher } from 'node:fs';
 import path from 'node:path';
 import { AppError } from '../../errors';
+import { Logger } from '../../logger';
 import type { Library } from '../../schemas/libraries';
 import { getDataPath } from '../../utils/paths';
 import type { LibrariesRepository } from '../libraries/libraries_repository';
@@ -8,6 +9,8 @@ import type { LibraryLifecycleListener } from '../libraries/libraries_service';
 import type { SyncService } from './sync_service';
 
 type Timer = ReturnType<typeof setTimeout>;
+
+const log = new Logger('watcher');
 
 // Above this many distinct changed paths in one debounce window, a scoped sync's
 // IN(...) clause and per-path work stop being cheaper than a full walk (a bulk
@@ -97,15 +100,16 @@ export class LibraryWatcher implements LibraryLifecycleListener {
       watcher.on('error', (err) => {
         // A watch error (e.g. inotify ENOSPC) kills this watcher; drop it and try
         // to re-establish after a delay, else auto-sync silently stops for good.
-        console.error(`watcher error for library ${library.id}: ${err.message}; will re-attempt`);
+        log.error('watch dropped; will re-attempt', { library: library.id, err });
         this.scheduleRetry(library);
       });
       this.watchers.set(library.id, watcher);
+      log.info('watching', { library: library.id, root: library.root_path });
       this.retryDelays.delete(library.id); // watching again: next failure starts from the short delay
     } catch (err) {
       // watch() itself failed (incl. a synchronous failure of a retry attempt);
       // keep retrying so one bad attempt doesn't stop auto-sync for good.
-      console.error(`could not watch library ${library.id} (${library.root_path}): ${(err as Error).message}; will re-attempt`);
+      log.error('could not watch; will re-attempt', { library: library.id, root: library.root_path, err });
       this.scheduleRetry(library);
     }
   }
@@ -173,6 +177,8 @@ export class LibraryWatcher implements LibraryLifecycleListener {
     const scope = paths.size > 0 && paths.size <= MAX_SCOPE ? [...paths] : undefined;
 
     this.syncing.add(libraryId);
+    // Debug: the sync it is about to start says the same thing with its own counts.
+    log.debug('files changed on disk', { library: libraryId, changed: paths.size });
     try {
       await this.sync.syncLibrary(libraryId, scope);
     } catch (err) {
@@ -183,9 +189,10 @@ export class LibraryWatcher implements LibraryLifecycleListener {
       if (code === 'SYNC_IN_PROGRESS') {
         for (const p of paths) this.record(libraryId, p);
         this.dirty.add(libraryId);
+        log.debug('another sync holds the lock; re-queued', { library: libraryId, changed: paths.size });
       }
       // NOT_FOUND = library deleted mid-flight (benign, no retry). Anything else is real.
-      else if (code !== 'NOT_FOUND') console.error(`auto-sync failed for library ${libraryId}: ${(err as Error).message}`);
+      else if (code !== 'NOT_FOUND') log.error('auto-sync failed', { library: libraryId, err });
     } finally {
       this.syncing.delete(libraryId);
       if (this.dirty.delete(libraryId)) this.schedule(libraryId);

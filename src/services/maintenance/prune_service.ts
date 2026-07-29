@@ -1,5 +1,6 @@
 import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
+import { Logger } from '../../logger';
 import type { Library } from '../../schemas/libraries';
 import { deleteGeneratedFile } from '../../utils/deletions';
 import { getDataPath, getHdrPath } from '../../utils/paths';
@@ -27,6 +28,8 @@ function generatedDirs(library: Library): Array<{ dir: string; ext: string }> {
   );
   return [...renditions, ...hdrChecks];
 }
+
+const log = new Logger('prune');
 
 export interface PruneResult {
   removed: number;
@@ -75,7 +78,7 @@ export class PruneService {
           } catch (err) {
             // A concurrent processing run may have just replaced it. Skip and
             // let the next sweep decide.
-            console.error(`prune could not remove ${target}: ${(err as Error).message}`);
+            log.warn('could not remove an orphan; next sweep decides', { file: target, err });
           }
         }
       }
@@ -114,11 +117,12 @@ export class ScheduledPrune {
   private async fire(): Promise<void> {
     if (this.running) return; // a sweep of a huge library could outlast the interval
     this.running = true;
+    const startedAt = Date.now();
     try {
       const { removed, bytes } = await this.prune.prune();
-      if (removed > 0) console.log(`pruned ${removed} orphaned files (${(bytes / 1024 / 1024).toFixed(1)} MB)`);
+      log.info('sweep done', { removed, mb: (bytes / 1024 / 1024).toFixed(1), ms: Date.now() - startedAt });
     } catch (err) {
-      console.error(`prune failed: ${(err as Error).message}`);
+      log.error('sweep failed', { err });
     } finally {
       this.running = false;
     }

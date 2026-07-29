@@ -1,6 +1,9 @@
 import type { Hono } from 'hono';
 import { z } from 'zod';
 import { AppError } from '../errors';
+import { Logger } from '../logger';
+
+const log = new Logger('http');
 
 // Central error -> HTTP envelope mapping (DESIGN §14). Shared by the server and
 // API tests so both exercise the same behavior.
@@ -18,7 +21,7 @@ export function applyErrorHandler(app: Hono): void {
     if (err instanceof SyntaxError) {
       return c.json({ error: { code: 'VALIDATION_ERROR', message: 'Invalid JSON body' } }, 400);
     }
-    console.error(err);
+    log.error(`unhandled error on ${c.req.method} ${c.req.path}`, { err });
     // The real message, not a placeholder. This is a single-user server run
     // against the operator's own library; "Unexpected error" tells them nothing
     // and leaves no string to search the log for.

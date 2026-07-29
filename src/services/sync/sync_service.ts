@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { AppError } from '../../errors';
+import { Logger } from '../../logger';
 import type { Library, LibrarySyncStatus } from '../../schemas/libraries';
 import { isSupportedFile, listSupportedFiles, type ScannedFile } from '../../utils/scan';
 import { computeFileHash } from '../../utils/hash';
@@ -28,10 +29,17 @@ export interface ProcessingTrigger {
 // syncLibrary turns it back into an idle status, because that run applied nothing.
 class SyncCancelled extends Error {}
 
+const log = new Logger('sync');
+
 // How many photos a first scan holds before writing them down. Small enough that
 // a kill costs seconds of work rather than hours, large enough that the commit
 // itself is nowhere near the cost of the decodes that filled it.
 const INSERT_BATCH = 1000;
+
+// How often a running scan says where it has got to. A 300k-frame import is
+// hours of work, and a log that says nothing until it finishes is
+// indistinguishable from one that has hung.
+const SCAN_PROGRESS_EVERY = 500;
 
 // What the detached thumbnail batch a run hands off covers, kept so the status
 // endpoint can report progress against the same set the batch is working on.
@@ -102,7 +110,7 @@ export class SyncService implements LibraryLifecycleListener {
         // Never let one library abort the batch (§9.7): skip locked ones silently,
         // log anything else, and move on to the remaining libraries.
         if (!(err instanceof AppError && err.code === 'SYNC_IN_PROGRESS')) {
-          console.error(`syncAll: library ${library.id} failed: ${(err as Error).message}`);
+          log.error('library failed during syncAll', { library: library.id, err });
         }
       }
     }
@@ -118,6 +126,13 @@ export class SyncService implements LibraryLifecycleListener {
     const library = this.libraries.getById(libraryId);
     if (!library) throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
 
+    log.info('sync start', {
+      library: libraryId,
+      root: library.root_path,
+      mode: scopePaths == null ? 'full' : 'scoped',
+      paths: scopePaths?.length,
+    });
+    const startedAt = Date.now();
     const lockPath = acquireSyncLock(library.root_path);
     const token = new AbortController();
     this.generation.set(libraryId, token);
@@ -139,6 +154,9 @@ export class SyncService implements LibraryLifecycleListener {
       // lock is not released until after the scan, so nothing newer can exist.
       const reportScan = (scanned: number, toScan: number): void => {
         this.statuses.set(libraryId, { ...idle(libraryId, 'scanning'), photos_to_scan: toScan, photos_scanned: scanned });
+        if (scanned > 0 && scanned % SCAN_PROGRESS_EVERY === 0) {
+          log.info('scanning', { library: libraryId, scanned, of: toScan, ms: Date.now() - startedAt });
+        }
       };
       // Read before the scan rather than after it: a first scan places its photos
       // as it goes, so it needs the shoots up front. The mutex holds them still
@@ -200,6 +218,17 @@ export class SyncService implements LibraryLifecycleListener {
         reportScan,
         dbPhotos.length === 0 ? insertBatch : null,
       );
+      log.info('scan done', {
+        library: libraryId,
+        files: present.size,
+        rows: dbPhotos.length,
+        // The files whose stat changed, so the scan opened and hashed them; the
+        // rest cost a stat each. This is what a slow scan's time went on.
+        opened: changed.length + added,
+        unreadable: failed.size,
+        ms: Date.now() - startedAt,
+      });
+
       const diff = buildDiff(dbPhotos, present, changed, failed);
       const result = detectMoves(diff, (id) => this.albums.getAlbumIdsForPhoto(id).length > 0);
 
@@ -320,6 +349,17 @@ export class SyncService implements LibraryLifecycleListener {
         photos_processed: 0,
       };
       this.statuses.set(libraryId, status);
+      log.info('sync done', {
+        library: libraryId,
+        added,
+        removed,
+        moved,
+        relocatedShoots: relocations.length,
+        modified,
+        reappeared: diff.reappeared.length,
+        queuedForProcessing: queued,
+        ms: Date.now() - startedAt,
+      });
       return status;
       });
       syncedStatus = synced;
@@ -333,7 +373,13 @@ export class SyncService implements LibraryLifecycleListener {
       // transaction: nothing was applied and the library is simply idle again.
       // Not an error - the caller asked for it. syncedStatus stays null, so no
       // processing runs.
-      if (err instanceof SyncCancelled) return idle(libraryId);
+      if (err instanceof SyncCancelled) {
+        log.info('sync stopped', { library: libraryId, ms: Date.now() - startedAt });
+        return idle(libraryId);
+      }
+      // A library deleted mid-scan is a normal end for this run, not a fault.
+      if (err instanceof AppError && err.code === 'NOT_FOUND') log.info('sync abandoned: library deleted', { library: libraryId });
+      else log.error('sync failed', { library: libraryId, ms: Date.now() - startedAt, err });
       throw err;
     } finally {
       // Release the lock as soon as scan+apply is done. Thumbnail generation runs
@@ -349,12 +395,19 @@ export class SyncService implements LibraryLifecycleListener {
         const settle = (): void => {
           if (this.generation.get(libraryId) !== token) return;
           const stillPending = this.photos.countPendingProcessing(libraryId, scope.photoIds);
+          const processed = Math.max(0, finalStatus.photos_processing - stillPending);
           this.statuses.set(libraryId, {
             ...finalStatus,
             status: 'idle',
             photos_processing: stillPending,
-            photos_processed: Math.max(0, finalStatus.photos_processing - stillPending),
+            photos_processed: processed,
           });
+          // Only when there was something to build: a sync that queued nothing
+          // still settles, and saying so every time the watcher fires buries the
+          // runs that are doing work.
+          if (finalStatus.photos_processing > 0) {
+            log.info('processing settled', { library: libraryId, processed, stillPending, ms: Date.now() - startedAt });
+          }
         };
         // Asks about whichever generation is current rather than about this one:
         // a batch is per library and outlives the sync that started it, so a later
@@ -364,7 +417,7 @@ export class SyncService implements LibraryLifecycleListener {
         void Promise.resolve(this.processing.processUnprocessed(scope, stopped))
           .then(settle)
           .catch((err) => {
-            console.error(`processing failed for library ${libraryId}: ${(err as Error).message}`);
+            log.error('processing failed', { library: libraryId, err });
             settle();
           });
       }
@@ -377,6 +430,7 @@ export class SyncService implements LibraryLifecycleListener {
   // back to idle on their own; there is nothing to wait for here.
   cancelSync(libraryId: string): void {
     if (!this.libraries.getById(libraryId)) throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
+    log.info('stop requested', { library: libraryId });
     this.generation.get(libraryId)?.abort();
   }
 
@@ -558,7 +612,7 @@ export class SyncService implements LibraryLifecycleListener {
         // Unreadable/corrupt file: record it as failed so buildDiff leaves any
         // existing record untouched (not marked missing, and not falsely reappeared).
         failed.add(file.relPath);
-        console.error(`sync: could not read ${file.absPath}: ${(err as Error).message}`);
+        log.warn('unreadable file, left as it is', { file: file.absPath, err });
       }
     }
 

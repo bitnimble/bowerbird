@@ -7,8 +7,8 @@
     "start": "bun run src/index.ts",
     "dev": "bun --watch run src/index.ts",
     "lint": "oxlint",
-    "test": "bun test src",
-    "test:integration": "bun test test/integration",
+    "test": "LOG_LEVEL=warn bun test src",
+    "test:integration": "LOG_LEVEL=warn bun test test/integration",
     "test:native": "cargo test --release --manifest-path native/rawshim/Cargo.toml",
     "typecheck": "tsc --noEmit",
     "build:native": "cargo build --release --manifest-path native/rawshim/Cargo.toml"

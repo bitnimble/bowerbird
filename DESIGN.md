@@ -29,7 +29,7 @@ Bowerbird is a high-performance RAW photo management and cataloguing backend des
 | RAW decoding | Per-format dispatch (header sniff → fastest reader); Sony ARW and Canon CR3 via LibRaw `bun:ffi` |
 | Metadata extraction | LibRaw header parse (no pixel decode), per-format dispatch |
 | Testing | Bun's built-in test runner (`bun test`, run via `bun run test`) |
-| Logging | `console.log` / `console.info` / `console.error` |
+| Logging | `src/logger.ts`, levelled and scoped; `console` is banned everywhere else by lint (§14.3) |
 | Package manager | `bun install` (no npm/pnpm/yarn) |
 
 ### System Dependencies
@@ -65,6 +65,7 @@ No other third-party dependencies should be added without explicit approval.
 bowerbird/
 ├── src/
 │   ├── index.ts                    # Entry point: creates Hono app, wires dependencies, starts server
+│   ├── logger.ts                   # Levelled logging; the only module allowed to touch console (§14.3)
 │   ├── db/
 │   │   ├── connection.ts           # Creates and exports the bun:sqlite Database instance
 │   │   └── migrations.ts           # Schema creation / migration logic (runs on startup)
@@ -1678,6 +1679,27 @@ class AppError extends Error {
 }
 ```
 
+### 14.3 Logging
+
+Every line goes through `src/logger.ts`, and oxlint's `no-console` keeps it that way (the logger itself and the tests are the exceptions). A `Logger` is constructed per module with the scope it logs under - `sync`, `processing`, `watcher`, `libraries`, `photos`, `prune`, `daily-sync`, `http`, `server` - and writes one line per event:
+
+```
+2026-07-29T04:52:43.294Z INFO  [sync] scan done library=963e5039 files=42 rows=42 opened=0 unreadable=0 ms=3
+```
+
+Structured tail rather than a sentence: the counts are what an import is judged by, and `grep library=<id>` then follows one library through a log several are writing to. An `Error` passed as a field renders as its message, plus its stack on the following line at `error` level, so a failure is still traceable to the call that raised it. `warn` and `error` go to stderr, everything else to stdout.
+
+`LOG_LEVEL` (§15) picks the floor:
+
+| Level | What it adds |
+|---|---|
+| `debug` | A line per HTTP request (including the flood of thumbnail GETs), per finished processing stage, and per batch of filesystem events the watcher acts on |
+| `info` | The default. Imports (start, scan totals, diff counts, queued work), processing batches, library lifecycle, on-demand renditions, the scheduled jobs |
+| `warn` | Only what an operator should look at: an unreadable file, a photo that failed to process, a rescued original |
+| `error` | Only what failed outright |
+
+A scan reports progress every 500 files, because a 300k-frame import is hours of work and a log that says nothing until it finishes cannot be told from one that has hung.
+
 ---
 
 ## 15. Configuration
@@ -1689,6 +1711,7 @@ The server is configured via environment variables:
 | `PORT` | random | HTTP server port, printed on startup; `-p <port>` overrides it |
 | `HOST` | `0.0.0.0` | HTTP server bind address |
 | `DB_PATH` | `./bowerbird.db` | SQLite database file path |
+| `LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`; what the server logs (§14.3) |
 | `PROCESSING_CONCURRENCY` | `4` | Number of worker threads for thumbnail generation |
 | `SMALL_THUMBNAIL_QUALITY` | `80` | AVIF quality for small thumbnails, 1-100 (§10.1) |
 | `FULL_THUMBNAIL_QUALITY` | `80` | AVIF quality for full thumbnails, 1-100 (§10.1) |

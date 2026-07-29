@@ -28,6 +28,16 @@ function envTimeOfDay(name: string, fallback: string): string {
   return raw;
 }
 
+const LOG_LEVELS = ['debug', 'info', 'warn', 'error'] as const;
+export type LogLevel = (typeof LOG_LEVELS)[number];
+
+function envLogLevel(name: string, fallback: LogLevel): LogLevel {
+  const raw = process.env[name] ?? fallback;
+  const level = LOG_LEVELS.find((l) => l === raw);
+  if (level == null) throw new Error(`Invalid ${name}: "${raw}" is not one of ${LOG_LEVELS.join(', ')}`);
+  return level;
+}
+
 // Comma-separated allowlist, '*' for any origin, or unset for the same-host
 // default (see corsOrigins below).
 function envOrigins(name: string): string[] | '*' | null {
@@ -59,6 +69,9 @@ export const config = {
   // server (and their own E2E run) at once. The bound port is logged at startup.
   port: argPort() ?? envNumber('PORT', 0),
   host: process.env.HOST ?? '0.0.0.0',
+  // `debug` adds a line per HTTP request and per finished processing stage;
+  // everything an operator normally wants (imports, batches, failures) is `info`.
+  logLevel: envLogLevel('LOG_LEVEL', 'info'),
   dbPath: process.env.DB_PATH ?? './bowerbird.db',
   // The web client is a separate app on its own origin, so the API must opt it
   // in. Unset (null) means "any port on whatever host this request reached the
