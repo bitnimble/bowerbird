@@ -119,6 +119,11 @@ export const PhotoListResponseSchema = z.object({
   total: z.number().int(),
   offset: z.number().int(),
   limit: z.number().int(),
+  // The ordering this page was built in, which is the collection's stored one
+  // unless the request overrode it. Reported so a client never has to hold a
+  // guess at what the sort is: it renders the control from what it was served,
+  // and there is one copy of the answer (§18.3.1).
+  ordering: OrderingSchema,
 });
 export type PhotoListResponse = z.infer<typeof PhotoListResponseSchema>;
 
@@ -136,8 +141,10 @@ export type UpdatePhotoRequest = z.infer<typeof UpdatePhotoRequestSchema>;
 export const PhotoListQuerySchema = PaginationSchema
   .extend(SoftDeleteFilterSchema.shape)
   .extend({
-    // Overrides the collection's stored ordering for this request only, so the
-    // client can offer a sort control without mutating the library's default.
+    // Overrides the collection's stored ordering for this request only. The web
+    // client does not send it - it sorts by editing the collection (§18.3.1), so
+    // that the sort is the same on the next device - and this is for a caller
+    // that wants one page in a different order without changing anything.
     ordering: OrderingSchema.optional(),
     // Case-insensitive substring match on file_path: how a photographer looks a
     // frame up, by filename.

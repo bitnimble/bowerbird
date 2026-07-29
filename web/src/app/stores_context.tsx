@@ -64,13 +64,13 @@ function build(): { stores: Stores; presenters: Presenters } {
   const shoots = new ShootsPresenter(stores.shoots);
   const albums = new AlbumsPresenter(stores.albums);
   const appSettings = new AppSettingsPresenter(stores.appSettings);
-  const photos = new PhotosPresenter(stores.photos, shoots, albums, toasts, stores.appSettings, appSettings);
+  // A finished sync moves the library's photo count, and sorting a gallery edits
+  // the collection it is of, so both write through the presenter that owns it.
+  const libraries = new LibrariesPresenter(stores.libraries);
+  const photos = new PhotosPresenter(stores.photos, libraries, shoots, albums, toasts, stores.appSettings, appSettings);
   // Announcements land on the rows the views render from, so this writes through
   // the presenter that owns them.
   const events = new EventsPresenter(photos);
-  // A finished sync moves the library's photo count, so sync re-reads the list
-  // through the presenter that owns it.
-  const libraries = new LibrariesPresenter(stores.libraries);
   const presenters: Presenters = {
     libraries,
     photos,

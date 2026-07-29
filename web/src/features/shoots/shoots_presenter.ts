@@ -68,6 +68,18 @@ export class ShootsPresenter {
     await this.reload();
   }
 
+  // How this shoot is sorted, which is the shoot's own property rather than a
+  // per-browser preference, so it is the same wherever it is opened (§18.3.1).
+  async setOrdering(shootId: string, ordering: Ordering): Promise<void> {
+    try {
+      await api.updateShoot(shootId, { ordering });
+    } catch (err) {
+      this.fail(message(err));
+      return;
+    }
+    await this.reload();
+  }
+
   async remove(shootId: string): Promise<void> {
     try {
       await api.deleteShoot(shootId);

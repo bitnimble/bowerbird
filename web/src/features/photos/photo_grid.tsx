@@ -108,7 +108,11 @@ const Tile = observer(function Tile({
   const list = store.mode === 'list';
   // ordering_date is date_taken under a taken_* ordering and date_added otherwise,
   // and those are not the same kind of timestamp (§11.1).
-  const orderingDate = store.ordering.startsWith('taken_') ? captureDateTime(photo.ordering_date) : localDateTime(photo.ordering_date);
+  // A tile only exists once a page has landed, so the ordering is known by now;
+  // reading it as a capture date is the right guess for the one that never is.
+  const orderingDate = store.ordering?.startsWith('added_')
+    ? localDateTime(photo.ordering_date)
+    : captureDateTime(photo.ordering_date);
 
   // Keep the keyboard cursor on screen when it walks off the visible rows.
   useEffect(() => {

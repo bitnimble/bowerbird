@@ -3,7 +3,7 @@ import { OrderingSchema, UuidSchema } from './common';
 
 export const CreateAlbumRequestSchema = z.object({
   name: z.string().min(1),
-  ordering: OrderingSchema.default('taken_desc'),
+  ordering: OrderingSchema.default('taken_asc'),
 });
 export type CreateAlbumRequest = z.infer<typeof CreateAlbumRequestSchema>;
 

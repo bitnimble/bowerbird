@@ -43,6 +43,18 @@ export class AlbumsPresenter {
     await this.load();
   }
 
+  // How this album is sorted, which is the album's own property rather than a
+  // per-browser preference, so it is the same wherever it is opened (§18.3.1).
+  async setOrdering(albumId: string, ordering: Ordering): Promise<void> {
+    try {
+      await api.updateAlbum(albumId, { ordering });
+    } catch (err) {
+      this.fail(message(err));
+      return;
+    }
+    await this.load();
+  }
+
   async remove(albumId: string): Promise<void> {
     try {
       await api.deleteAlbum(albumId);

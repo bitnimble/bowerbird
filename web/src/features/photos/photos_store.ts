@@ -92,7 +92,11 @@ export class PhotosStore {
   @observable accessor error: string | null = null;
 
   @observable accessor filters: PhotoFilters = {};
-  @observable accessor ordering: Ordering = 'taken_asc';
+  // The collection's own sort, as the server reported serving it. Null until the
+  // first page lands, because a default invented here would be a second answer to
+  // a question the collection already answers, and the two would disagree the
+  // moment either changed (§18.3.1).
+  @observable accessor ordering: Ordering | null = null;
 
   // Minimum tile width in px, driven by the grid's zoom slider.
   @observable accessor thumbSize = 240;

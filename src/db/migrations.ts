@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS shoots (
   folder_path   TEXT NOT NULL,
   name          TEXT NOT NULL,
   description   TEXT,
-  ordering      TEXT NOT NULL DEFAULT 'taken_desc'
+  ordering      TEXT NOT NULL DEFAULT 'taken_asc'
     CHECK (ordering IN ('taken_asc', 'taken_desc', 'added_asc', 'added_desc')),
   UNIQUE (library_id, name)
 );
@@ -99,7 +99,7 @@ CREATE INDEX IF NOT EXISTS idx_photos_is_deleted ON photos(library_id, is_delete
 CREATE TABLE IF NOT EXISTS albums (
   id              TEXT PRIMARY KEY,
   name            TEXT NOT NULL,
-  ordering        TEXT NOT NULL DEFAULT 'taken_desc'
+  ordering        TEXT NOT NULL DEFAULT 'taken_asc'
     CHECK (ordering IN ('taken_asc', 'taken_desc', 'added_asc', 'added_desc'))
 );
 

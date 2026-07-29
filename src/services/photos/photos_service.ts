@@ -1,7 +1,7 @@
 import { existsSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { AppError } from '../../errors';
-import type { Pagination } from '../../schemas/common';
+import type { Ordering, Pagination } from '../../schemas/common';
 import type { Library } from '../../schemas/libraries';
 import type { PhotoDetail, PhotoListQuery, PhotoListResponse, UpdatePhotoRequest } from '../../schemas/photos';
 import { deleteGeneratedFile } from '../../utils/deletions';
@@ -136,15 +136,19 @@ export class PhotosService {
     return readEmbeddedJpeg(raw)?.length ?? null;
   }
 
+  // The collection's stored ordering is the answer unless the request names one,
+  // and either way the response says which was used. The sort is the collection's
+  // own property, held in one place, rather than something every client keeps a
+  // copy of and can disagree with (§18.3.1).
   listByLibrary(libraryId: string, query: PhotoListQuery): PhotoListResponse {
     const library = this.libraries.getById(libraryId);
     if (!library) throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
-    // The request's ordering wins over the collection's stored default, so a sort
-    // control is a per-view choice rather than an edit to the library.
+    const ordering = query.ordering ?? library.ordering;
     return this.respond(
-      this.photos.listByLibrary(libraryId, query.ordering ?? library.ordering, query.offset, query.limit, toFilters(query)),
+      this.photos.listByLibrary(libraryId, ordering, query.offset, query.limit, toFilters(query)),
       query.offset,
       query.limit,
+      ordering,
     );
   }
 
@@ -159,20 +163,24 @@ export class PhotosService {
   listByShoot(shootId: string, query: PhotoListQuery): PhotoListResponse {
     const shoot = this.shoots.getById(shootId);
     if (!shoot) throw new AppError('NOT_FOUND', `shoot not found: ${shootId}`);
+    const ordering = query.ordering ?? shoot.ordering;
     return this.respond(
-      this.photos.listByShoot(shootId, query.ordering ?? shoot.ordering, query.offset, query.limit, toFilters(query)),
+      this.photos.listByShoot(shootId, ordering, query.offset, query.limit, toFilters(query)),
       query.offset,
       query.limit,
+      ordering,
     );
   }
 
   listByAlbum(albumId: string, query: PhotoListQuery): PhotoListResponse {
     const album = this.albums.getById(albumId);
     if (!album) throw new AppError('NOT_FOUND', `album not found: ${albumId}`);
+    const ordering = query.ordering ?? album.ordering;
     return this.respond(
-      this.photos.listByAlbum(albumId, query.ordering ?? album.ordering, query.offset, query.limit, toFilters(query)),
+      this.photos.listByAlbum(albumId, ordering, query.offset, query.limit, toFilters(query)),
       query.offset,
       query.limit,
+      ordering,
     );
   }
 
@@ -379,7 +387,7 @@ export class PhotosService {
     return getBinPath(library);
   }
 
-  private respond(result: PhotoListResult, offset: number, limit: number): PhotoListResponse {
-    return { photos: result.photos, total: result.total, offset, limit };
+  private respond(result: PhotoListResult, offset: number, limit: number, ordering: Ordering): PhotoListResponse {
+    return { photos: result.photos, total: result.total, offset, limit, ordering };
   }
 }

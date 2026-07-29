@@ -31,6 +31,31 @@ test('indexes a library and shows a thumbnail for every RAW file', async ({ page
   await expect(page.locator('.tile__pending')).toHaveCount(0);
 });
 
+test('the sort follows the collection rather than the browser it was set in', async ({ page }) => {
+  // The point of storing it on the collection: clearing this browser's state is
+  // what a second device looks like, and the sort has to survive it. Held in
+  // localStorage, as it was, the reload below came back sorted by the default.
+  await page.goto('/settings');
+  await openLibrary(page, PHOTOS_DIR);
+  const sort = page.getByRole('combobox', { name: 'Sort photos' });
+  await expect(sort).toHaveText('Oldest first');
+
+  await sort.click();
+  await page.getByRole('option', { name: 'Recently added' }).click();
+  await expect(sort).toHaveText('Recently added');
+
+  await page.evaluate(() => localStorage.clear());
+  await page.reload();
+  await openLibrary(page, PHOTOS_DIR);
+  await expect(sort).toHaveText('Recently added');
+
+  // Put it back, so the ordered journey the rest of this file depends on carries
+  // on in the order it expects.
+  await sort.click();
+  await page.getByRole('option', { name: 'Oldest first' }).click();
+  await expect(sort).toHaveText('Oldest first');
+});
+
 test('keeps the library in the shell when a shoot is opened by deep link', async ({ page }) => {
   await page.goto('/settings');
   await openLibrary(page, PHOTOS_DIR);

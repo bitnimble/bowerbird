@@ -17,7 +17,7 @@ export const CreateShootRequestSchema = z.object({
   parent_id: UuidSchema.optional(),
   name: ShootNameSchema,
   description: z.string().optional(),
-  ordering: OrderingSchema.default('taken_desc'),
+  ordering: OrderingSchema.default('taken_asc'),
 });
 export type CreateShootRequest = z.infer<typeof CreateShootRequestSchema>;
 

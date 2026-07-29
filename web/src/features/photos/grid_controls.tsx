@@ -256,7 +256,12 @@ export const GridControls = observer(function GridControls(): JSX.Element {
       <CustomFilter />
       <DateRangeFilter />
       <SearchBox />
-      <Select label="Sort photos" options={ORDERINGS} value={store.ordering} onChange={(o) => void photos.setOrdering(o)} />
+      {/* Rendered once the collection has said how it is sorted, which arrives
+          with the first page. Showing a value before then would be this control
+          inventing one, and it would jump when the real answer landed. */}
+      {store.ordering != null && (
+        <Select label="Sort photos" options={ORDERINGS} value={store.ordering} onChange={(o) => void photos.setOrdering(o)} />
+      )}
 
       <Button onClick={photos.selectAllOnPage} disabled={store.photos.length === 0}>
         <SquareCheck size={ICON} />

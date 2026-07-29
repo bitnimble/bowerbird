@@ -112,7 +112,9 @@ describe('PhotosService.listByLibrary', () => {
       isMissing: true,
       needsTile: undefined,
     });
-    expect(res).toEqual({ photos: [], total: 0, offset: 5, limit: 10 });
+    // The ordering it actually sorted by travels back with the page, so a client
+    // never has to hold its own copy of what the sort is (§18.3.1).
+    expect(res).toEqual({ photos: [], total: 0, offset: 5, limit: 10, ordering: 'added_asc' });
   });
 });
 

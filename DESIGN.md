@@ -435,6 +435,7 @@ export const PhotoListResponseSchema = z.object({
   total: z.number().int(),
   offset: z.number().int(),
   limit: z.number().int(),
+  ordering: OrderingSchema, // the ordering this page was built in (§18.3.1)
 });
 
 export const UpdatePhotoRequestSchema = z.object({
@@ -1847,13 +1848,19 @@ Only `/libraries/*` names the library in the URL. Shoot and photo routes resolve
 
 Five named views (Active, Untriaged, Picks, Rejects, All) answer the questions asked constantly and cost one click. Everything rarer lives behind a **Custom** menu of checkboxes that sends `match=any`, so ticking several means "any of these" rather than an empty intersection. A calendar range, a filename search, a sort and a thumbnail-size slider complete the row.
 
-There is no "clear filters" button and no "default order" entry: All is the clear, and the sort always shows the concrete ordering in effect rather than an indirection through the collection's stored default.
+There is no "clear filters" button and no "default order" entry: All is the clear, and the sort always shows the concrete ordering in effect.
+
+**The sort belongs to the collection, and there is exactly one copy of it.** It lives in `libraries.ordering` / `shoots.ordering` / `albums.ordering`, which every list read already falls back to. So the client sends no `ordering` at all: it asks for a page, and the response states the ordering it was built in (`PhotoListResponse.ordering`), which is what the control renders from. Sorting a gallery `PATCH`es the collection and re-reads, rather than setting a local value and hoping the write landed.
+
+That is why the store starts at `null` rather than at a default: a value invented client-side would be a second answer to a question the collection already answers, and the two diverge the moment either moves - which is what a per-browser sort did. Opening the same shoot on a phone found it sorted differently to the desktop, and the thumbnail queue, which is built server-side in the collection's order (§10.2), could not follow a preference it was unable to see. The control renders once the first page has landed; there is no frame in which it shows a guess.
+
+The bin and the missing view sort by their library's ordering, since they are slices of it rather than collections owning one.
 
 Presets are named points in the same space as Custom, so selecting one shows its constituents already ticked there rather than leaving the menu looking untouched.
 
 Three view modes share the same tiles: **grid** crops nothing but gives every photo a uniform cell so rows line up, **masonry** lets each keep its own shape (CSS columns, since `grid-template-rows: masonry` is not shipping), **list** trades density for filename and date. The zoom slider runs from many-across to a single photo filling the width.
 
-Sort, filter, tile size and view mode are remembered per collection in `localStorage`, so returning to a shoot finds it as you left it. The filename search and the date range deliberately are not: those are questions asked in the moment, not preferences.
+Filter, tile size and view mode are remembered per collection in `localStorage`: those are about the machine you are sitting at, and a tile size chosen for a 32" display is wrong on a phone. The sort is not among them, for the reason above. The filename search and the date range are not remembered either, being questions asked in the moment rather than preferences.
 
 Rating and verdict sit on every tile, always visible and clickable, because a cull is mostly those two decisions and routing them through the detail view is what turns a ten-minute pass into an hour. Clicking the verdict a photo already has, or the star it already sits on, clears it.
 

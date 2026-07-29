@@ -17,7 +17,7 @@ export const AlbumsPage = observer(function AlbumsPage(): JSX.Element {
   async function submit(e: React.FormEvent): Promise<void> {
     e.preventDefault();
     if (name.trim() === '') return;
-    if (await albums.create(name.trim(), 'taken_desc')) setName('');
+    if (await albums.create(name.trim(), 'taken_asc')) setName('');
   }
 
   return (

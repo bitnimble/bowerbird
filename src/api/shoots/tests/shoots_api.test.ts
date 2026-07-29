@@ -11,7 +11,7 @@ import { ShootsApi } from '../shoots_api';
 const LIB = '00000000-0000-4000-8000-000000000001';
 const PID = '11111111-1111-4111-8111-111111111111';
 const shoot: Shoot = { id: 's1', parent_id: null, library_id: LIB, folder_path: 'Trip', name: 'Trip', description: null, banner_photo_id: null, ordering: 'taken_desc', photo_count: 0 };
-const emptyList: PhotoListResponse = { photos: [], total: 0, offset: 0, limit: 100 };
+const emptyList: PhotoListResponse = { photos: [], total: 0, offset: 0, limit: 100, ordering: 'taken_asc' };
 
 function buildApp(shoots: Partial<ShootsService> = {}, photos: Partial<PhotosService> = {}) {
   const shootsSvc = {

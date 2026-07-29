@@ -12,6 +12,7 @@ import {
   type Triage,
 } from '../../api/client';
 import type { AlbumsPresenter } from '../albums/albums_presenter';
+import type { LibrariesPresenter } from '../libraries/libraries_presenter';
 import type { AppSettingsPresenter } from '../settings/app_settings_presenter';
 import type { AppSettingsStore } from '../settings/app_settings_store';
 import type { ShootsPresenter } from '../shoots/shoots_presenter';
@@ -50,6 +51,7 @@ export class PhotosPresenter {
 
   constructor(
     private readonly store: PhotosStore,
+    private readonly libraries: LibrariesPresenter,
     private readonly shoots: ShootsPresenter,
     private readonly albums: AlbumsPresenter,
     private readonly toasts: ToastsPresenter,
@@ -82,8 +84,30 @@ export class PhotosPresenter {
     await this.fetchPage();
   }
 
+  // Sorting a gallery edits the collection, because the sort *is* the
+  // collection's, and that is what makes it the same on the next device to open
+  // it. Written through the presenter that owns the entity, then re-read: the
+  // next page comes back stating the ordering it was built in, so nothing here
+  // has to assume the write landed.
   async setOrdering(ordering: Ordering): Promise<void> {
-    this.applyOrdering(ordering);
+    const source = this.store.source;
+    if (source == null) return;
+    runInAction(() => (this.store.offset = 0)); // a different sort is a different first page
+    switch (source.kind) {
+      case 'shoot':
+        await this.shoots.setOrdering(source.shootId, ordering);
+        break;
+      case 'album':
+        await this.albums.setOrdering(source.albumId, ordering);
+        break;
+      // The bin and the missing view are slices of the library, so they sort by
+      // the library's own ordering rather than owning one.
+      case 'library':
+      case 'bin':
+      case 'missing':
+        await this.libraries.setOrdering(source.libraryId, ordering);
+        break;
+    }
     await this.fetchPage();
   }
 
@@ -587,7 +611,8 @@ export class PhotosPresenter {
       taken_from: f.takenFrom,
       taken_to: f.takenTo,
       match: f.match,
-      ordering: this.store.ordering,
+      // No ordering: the collection's own is the answer, and asking for it back
+      // rather than stating it is what keeps there being one copy of it.
       ...(f.search != null && f.search !== '' ? { q: f.search } : {}),
     };
 
@@ -597,6 +622,7 @@ export class PhotosPresenter {
       runInAction(() => {
         this.store.photos = this.reconcile(page.photos);
         this.store.total = page.total;
+        this.store.ordering = page.ordering; // what it was actually sorted by, not what we hoped
         this.store.loading = false;
         // Keep the keyboard cursor inside the new page: binning the last photo
         // would otherwise leave focus pointing past the end.
@@ -638,12 +664,14 @@ export class PhotosPresenter {
     // The Bin and the missing view are already a specific slice, so a triage
     // default there would fight the thing the user opened.
     this.store.filters = source.kind === 'library' || source.kind === 'shoot' || source.kind === 'album' ? activeFilters() : {};
-    this.store.ordering = 'taken_asc';
+    // Not guessed at: the collection states its own sort, and the first page
+    // carries it. Until then the control has nothing to show, which is honest -
+    // a value here would be a second answer racing the real one.
+    this.store.ordering = null;
     this.store.error = null;
 
     // Anything the user chose last time they were here wins over those defaults.
     const saved = loadViewState(source);
-    if (saved?.ordering != null) this.store.ordering = saved.ordering;
     if (saved?.filters != null) this.store.filters = saved.filters;
     if (saved?.thumbSize != null) this.store.thumbSize = saved.thumbSize;
     if (saved?.mode != null) this.store.mode = saved.mode;
@@ -653,7 +681,6 @@ export class PhotosPresenter {
     const source = this.store.source;
     if (source == null) return;
     saveViewState(source, {
-      ordering: this.store.ordering,
       filters: this.store.filters,
       thumbSize: this.store.thumbSize,
       mode: this.store.mode,
@@ -668,12 +695,6 @@ export class PhotosPresenter {
   }
 
   @action.bound
-  private applyOrdering(ordering: Ordering): void {
-    this.store.ordering = ordering;
-    this.store.offset = 0;
-    this.remember();
-  }
-
   // Deliberately leaves `loadedDetail` alone: it is the previous photo's until
   // this one lands, and clearing it made library_id momentarily null, which
   // collapsed the rail and title on every next/prev and read as a flash.

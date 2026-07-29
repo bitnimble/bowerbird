@@ -10,7 +10,7 @@ import { AlbumsApi } from '../albums_api';
 
 const PID = '11111111-1111-4111-8111-111111111111';
 const album: Album = { id: 'a1', name: 'Faves', ordering: 'taken_desc', banner_photo_id: null, photo_count: 0 };
-const emptyList: PhotoListResponse = { photos: [], total: 0, offset: 0, limit: 100 };
+const emptyList: PhotoListResponse = { photos: [], total: 0, offset: 0, limit: 100, ordering: 'taken_asc' };
 
 function buildApp(albums: Partial<AlbumsService> = {}, photos: Partial<PhotosService> = {}) {
   const albumsSvc = {

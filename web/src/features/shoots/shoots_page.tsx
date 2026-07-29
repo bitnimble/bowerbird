@@ -20,7 +20,7 @@ export const ShootsPage = observer(function ShootsPage(): JSX.Element {
   async function submit(e: React.FormEvent): Promise<void> {
     e.preventDefault();
     if (name.trim() === '') return;
-    if (await shoots.create(libraryId, name.trim(), parentId === '' ? null : parentId, 'taken_desc')) {
+    if (await shoots.create(libraryId, name.trim(), parentId === '' ? null : parentId, 'taken_asc')) {
       setName('');
       setParentId('');
     }

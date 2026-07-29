@@ -1,10 +1,11 @@
-import type { Ordering } from '../../api/client';
 import type { PhotoFilters, PhotoSource, ViewMode } from './photos_store';
 
-// How a collection was last being looked at. Persisted per collection, so
-// returning to a shoot finds the sort, filter and tile size you left it with.
+// How a collection was last being looked at, on this device. Deliberately not
+// the sort: that belongs to the collection and is stored with it, so it follows
+// you to the next browser (§18.3.1). What is left is genuinely about the machine
+// you are sitting at - how big the tiles are on this screen, which layout, and
+// the filter you were last narrowing by.
 export interface ViewState {
-  ordering: Ordering;
   filters: PhotoFilters;
   thumbSize: number;
   mode: ViewMode;
@@ -50,7 +51,6 @@ export function loadViewState(source: PhotoSource): Partial<ViewState> | null {
     // Hand-edited or written by an older version: take only what is usable
     // rather than letting a bad shape break opening the collection.
     return {
-      ...(typeof parsed.ordering === 'string' ? { ordering: parsed.ordering } : {}),
       ...(parsed.filters != null && typeof parsed.filters === 'object' ? { filters: durable(parsed.filters) } : {}),
       ...(typeof parsed.thumbSize === 'number' && parsed.thumbSize > 0 ? { thumbSize: parsed.thumbSize } : {}),
       ...(parsed.mode === 'grid' || parsed.mode === 'masonry' || parsed.mode === 'list' ? { mode: parsed.mode } : {}),

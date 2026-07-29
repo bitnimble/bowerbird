@@ -7,7 +7,7 @@ import type { PhotosService } from '../../../services/photos/photos_service';
 import type { ProcessingService } from '../../../services/processing/processing_service';
 import { PhotosApi } from '../photos_api';
 
-const emptyList: PhotoListResponse = { photos: [], total: 0, offset: 0, limit: 100 };
+const emptyList: PhotoListResponse = { photos: [], total: 0, offset: 0, limit: 100, ordering: 'taken_asc' };
 
 function buildApp(over: Partial<PhotosService> = {}) {
   const service = {
