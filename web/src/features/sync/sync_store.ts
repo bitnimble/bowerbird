@@ -21,6 +21,11 @@ export class SyncStore {
   @computed get progress(): { done: number; total: number; noun: string } | null {
     const s = this.status;
     if (s == null) return null;
+    // An idle library still reports what it owes - a killed import leaves its
+    // flags in the rows - but a bar beside the word "idle" reads as a run that
+    // has stalled rather than one nothing is doing. The count is worth saying,
+    // the progress is not.
+    if (s.status === 'idle') return null;
     const scanning = s.status === 'scanning';
     const done = scanning ? s.photos_scanned : s.photos_processed;
     const total = scanning ? s.photos_to_scan : s.photos_processing + s.photos_processed;

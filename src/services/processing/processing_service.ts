@@ -216,7 +216,23 @@ export class ProcessingService {
     this.widen(key, scope.photoIds);
     const existing = this.inFlight.get(key);
     if (existing) return existing;
-    const run = this.drain(scope.libraryId, key, stopped).finally(() => this.inFlight.delete(key));
+    return this.start(scope.libraryId, key, stopped);
+  }
+
+  // `drain` is async, so its return resolves a promise and the cleanup below runs
+  // a microtask later. A call landing in that gap finds this key still in flight,
+  // is handed a batch that has already settled, and leaves what it asked for in
+  // `queued` with nothing running to take it. So the same check that ends a batch
+  // is made again after it is out of the map, and starts the next one.
+  private start(libraryId: string | undefined, key: string, stopped?: () => boolean): Promise<void> {
+    const run = this.drain(libraryId, key, stopped).finally(() => {
+      this.inFlight.delete(key);
+      // Not while stopped: `drain` returns without consuming `queued` in that
+      // case, so relaunching on it would spin.
+      if (stopped?.() !== true && this.queued.has(key)) void this.start(libraryId, key, stopped);
+    });
+    // Before any `.finally` callback can run, since those are microtasks and this
+    // is not - so the key is never deleted before it is set.
     this.inFlight.set(key, run);
     return run;
   }

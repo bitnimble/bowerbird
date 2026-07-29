@@ -34,6 +34,10 @@ export const SyncStrip = observer(function SyncStrip(): JSX.Element | null {
       <span className="strip__label">
         {sync.label}
         {progress != null && ` · ${progress.done}/${progress.total} ${progress.noun}`}
+        {/* What an idle library still owes, which is not nothing after a stopped
+            or killed import. Said rather than drawn: a bar would read as a run
+            in progress. A sync is what picks the work back up. */}
+        {status.status === 'idle' && status.photos_processing > 0 && ` · ${status.photos_processing} thumbnails outstanding`}
         {!scanning && status.photos_scanned > 0 && ` · ${status.photos_scanned} scanned`}
         {!scanning && status.photos_added > 0 && ` · +${status.photos_added}`}
         {!scanning && status.photos_moved > 0 && ` · ${status.photos_moved} moved`}
