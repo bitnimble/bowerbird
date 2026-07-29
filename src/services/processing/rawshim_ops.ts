@@ -415,16 +415,22 @@ export function freeHdrMatch(matched: HdrMatchHandle): void {
 }
 
 /**
- * Builds one HDR rendition, from a scene-linear decode to the file on disk.
+ * Builds one HDR rendition, and the one-frame video twin `videoOutputPath` names,
+ * from a scene-linear decode to the files on disk.
  *
  * The fit to size, the warp, the grade, and ffmpeg - with avifenc after it for a
  * still. None of the samples cross the boundary: the graded frame is ~115MB at 24MP
  * and ~366MB at 61MP. `matched` null grades neutrally.
+ *
+ * The twin is named here rather than asked for by a second call because the two share
+ * the grade - the resize, the warp and the tone map - and only the encoder's row
+ * ceiling can ever give them different sizes.
  */
 export function encodeHdrRendition(
   linear: ImageHandle,
   matched: HdrMatchHandle | null,
   options: HdrOptions,
+  videoOutputPath = '',
 ): void {
   if (linear.depth !== 16) throw new Error(`the HDR encode needs a 16-bit decode, got ${linear.depth}`);
   const status = shim().bb_encode_hdr(
@@ -432,6 +438,7 @@ export function encodeHdrRendition(
     matched == null ? null : matched.pointer,
     Buffer.from(`${options.outputPath}\0`),
     ptr(hdrOptionsBuffer(options)),
+    Buffer.from(`${videoOutputPath}\0`),
   );
   if (status !== 0) throw new Error(`rawshim could not encode ${options.outputPath}`);
 }

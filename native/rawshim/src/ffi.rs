@@ -381,11 +381,16 @@ unsafe fn hdr_source<'a>(
     ))
 }
 
-/// Builds one HDR rendition, from a scene-linear decode to the file on disk.
+/// Builds one HDR rendition, and its one-frame video twin where `video_output_path`
+/// names one, from a scene-linear decode to the files on disk.
 ///
 /// The fit to size, the warp, the grade, and ffmpeg - with avifenc after it for a
 /// still. None of the samples cross the boundary, which is the reason for the shape:
 /// the graded frame is ~115MB at 24MP and ~366MB at 61MP.
+///
+/// The twin is named here rather than encoded by a second call because the two share
+/// the grade: only SVT-AV1's row ceiling can give them different sizes, and nothing
+/// but a native-resolution portrait frame reaches it. An empty string asks for no twin.
 ///
 /// `image` must be a 16-bit `rec2020-linear` decode, and `matched` a match from
 /// `bb_fit_hdr_match` or null for a neutral grade. Both are passed rather than derived
@@ -394,24 +399,29 @@ unsafe fn hdr_source<'a>(
 /// 0 on success, -1 on failure.
 ///
 /// # Safety
-/// `image` must be a live handle, `output_path` a NUL-terminated C string, `options`
-/// readable, `matched` null or a live handle.
+/// `image` must be a live handle, `output_path` and `video_output_path` NUL-terminated
+/// C strings, `options` readable, `matched` null or a live handle.
 #[no_mangle]
 pub unsafe extern "C" fn bb_encode_hdr(
     image: *const BbImage,
     matched: *const BbHdrMatch,
     output_path: *const c_char,
     options: *const BbHdrOptions,
+    video_output_path: *const c_char,
 ) -> i32 {
     vips::init();
-    if output_path.is_null() {
+    if output_path.is_null() || video_output_path.is_null() {
         return -1;
     }
-    let Ok(out) = CStr::from_ptr(output_path).to_str() else { return -1 };
+    let (Ok(out), Ok(video)) =
+        (CStr::from_ptr(output_path).to_str(), CStr::from_ptr(video_output_path).to_str())
+    else {
+        return -1;
+    };
     let Some((source, built)) = hdr_source(image, options, out) else { return -1 };
     let matched = matched.as_ref().map(|m| &m.inner);
 
-    match crate::hdr::encode(&source, &built, matched) {
+    match crate::hdr::encode_pair(&source, &built, (!video.is_empty()).then_some(video), matched) {
         Ok(()) => 0,
         Err(detail) => {
             eprintln!("bb_encode_hdr: {detail}");

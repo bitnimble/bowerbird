@@ -33,10 +33,20 @@ function toAvif(image: ImageHandle, target: RenditionTarget): void {
   saveAvif(image, target.size, target.quality, AVIF_EFFORT, target.outputPath);
 }
 
-/** 0 (native) beats any bounded size, since it is the whole frame. */
-function largestSdrSize(targets: readonly RenditionTarget[]): number {
-  const sdr = targets.filter((target) => !target.hdr);
-  return sdr.some((target) => target.size === 0) ? 0 : Math.max(...sdr.map((target) => target.size));
+// The long edge the fit works at, so a decode nothing else reads can say so and be
+// halved on any sensor. It resizes to this before it looks at anything, and the
+// transform it produces is resolution-independent - radii normalised to the
+// half-diagonal, and a per-level colour lookup.
+const FIT_LONG_EDGE = 640;
+
+/**
+ * The largest rendition of one dynamic range this job writes, or null when it writes
+ * none. 0 (native) beats any bounded size, since it is the whole frame.
+ */
+function largestSize(targets: readonly RenditionTarget[], hdr: boolean): number | null {
+  const wanted = targets.filter((target) => target.hdr === hdr);
+  if (wanted.length === 0) return null;
+  return wanted.some((target) => target.size === 0) ? 0 : Math.max(...wanted.map((target) => target.size));
 }
 
 // The embedded JPEG carries its own EXIF orientation, so it needs rotating; a
@@ -79,59 +89,66 @@ function writeSdr(
 //
 // The decode and the fitted match are both passed in, so a still and its video twin
 // share one of each - and so the ~115MB of graded samples never reach this side: the
-// grade, the colour fit and both encoders are in `native/rawshim` (§10.7).
+// grade, the colour fit and both encoders are in `native/rawshim` (§10.7). The twin's
+// path goes down with the still rather than into a second call, because the two share
+// the grade as well (§10.7).
 function writeHdr(
   job: RenditionJob,
   target: RenditionTarget,
   linear: () => ImageHandle,
   matched: HdrMatchHandle | null,
 ): void {
-  const common = {
-    ...job.grade,
-    crf: target.quantizer,
-    preset: target.preset,
-    // The still is never fitted past what was asked for; the video is, because
-    // the encoder caps height at 8704 and a max-resolution frame exceeds it.
-    maxEdge: target.size === 0 ? Number.POSITIVE_INFINITY : target.size,
-  } as const;
-  const image = linear();
-  encodeHdrRendition(image, matched, { ...common, variant: 'pq', medium: 'still', outputPath: target.outputPath });
-  if (target.videoOutputPath == null) return;
-  encodeHdrRendition(image, matched, {
-    ...common,
-    variant: 'pq',
-    medium: 'video',
-    outputPath: target.videoOutputPath,
-  });
+  encodeHdrRendition(
+    linear(),
+    matched,
+    {
+      ...job.grade,
+      variant: 'pq',
+      medium: 'still',
+      outputPath: target.outputPath,
+      crf: target.quantizer,
+      preset: target.preset,
+      // The still is never fitted past what was asked for; the video is, because
+      // the encoder caps height at 8704 and a max-resolution frame exceeds it.
+      maxEdge: target.size === 0 ? Number.POSITIVE_INFINITY : target.size,
+    },
+    target.videoOutputPath ?? '',
+  );
 }
 
-// One HDR rendition for the check page: an AVIF still for Chrome, or a one-frame
-// video for Firefox, which applies a PQ transfer to nothing else (§10.7).
+// The check page's HDR renditions: AVIF stills for Chrome and Safari, one-frame
+// videos for Firefox, which applies a PQ transfer to nothing else (§10.7).
+//
+// Every one of them off a single decode. They are the same photograph and diverge
+// only past the grade, so asking for them one job each demosaiced the frame six
+// times to compare six ways of writing it down.
 async function hdr(job: HdrJob): Promise<void> {
-  const image = decodeRawImage(job.rawFilePath, 16, 'rec2020-linear', 0);
+  const image = decodeRawImage(job.rawFilePath, 16, 'rec2020-linear', job.maxEdge);
   try {
-    encodeHdrRendition(
-      image,
-      // The check page renders the neutral grade on purpose: it exists to judge the
-      // tone mapping, and the camera's colour on top would be one more variable.
-      null,
-      {
-        variant: job.variant,
-        medium: job.medium,
-        outputPath: job.outputPath,
-        ...job.grade,
-        crf: job.crf,
-        preset: job.preset,
-        maxEdge: job.maxEdge,
-      },
-    );
+    for (const output of job.outputs) {
+      encodeHdrRendition(
+        image,
+        // The check page renders the neutral grade on purpose: it exists to judge the
+        // tone mapping, and the camera's colour on top would be one more variable.
+        null,
+        {
+          variant: output.variant,
+          medium: output.medium,
+          outputPath: output.outputPath,
+          ...job.grade,
+          crf: job.crf,
+          preset: job.preset,
+          maxEdge: job.maxEdge,
+        },
+      );
+    }
   } finally {
     freeImage(image);
   }
 }
 
 function outputsOf(job: WorkerJob): string[] {
-  if (job.kind === 'hdr') return [job.outputPath];
+  if (job.kind === 'hdr') return job.outputs.map((output) => output.outputPath);
   return job.targets.flatMap((t) => (t.videoOutputPath == null ? [t.outputPath] : [t.outputPath, t.videoOutputPath]));
 }
 
@@ -159,11 +176,13 @@ async function renditions(job: RenditionJob): Promise<Uint8Array | undefined> {
   // would be twice the memory for samples the encoder discards.
   // Telling the decoder the largest SDR size this job needs lets it halve the
   // decode on a sensor big enough to spare it (§10.8). A native-resolution target
-  // reports 0 and gets the whole frame.
+  // reports 0 and gets the whole frame. An all-HDR job writes no SDR rendition at
+  // all, which leaves the fit as this decode's only reader - so it asks for the fit's
+  // own grid rather than the whole frame it was demosaicing to feed a 640px search.
   let decoded: ImageHandle | null = null;
   const decode = (): ImageHandle => {
     if (decoded == null) {
-      decoded = decodeRawImage(job.rawFilePath, 8, 'srgb', largestSdrSize(job.targets));
+      decoded = decodeRawImage(job.rawFilePath, 8, 'srgb', largestSize(job.targets, false) ?? FIT_LONG_EDGE);
       open.push(decoded);
     }
     return decoded;
@@ -171,10 +190,14 @@ async function renditions(job: RenditionJob): Promise<Uint8Array | undefined> {
 
   // The scene-linear decode, shared the same way: an HDR job builds a still and its
   // video twin from one of these, and the colour fit reads the same samples again.
+  // Sized like the SDR one, and for the same reason: the grade box-resizes to the
+  // largest edge asked for before it does anything else, so a full 61MP demosaic to
+  // build a 3840px rendition threw away fifteen sixteenths of itself. A
+  // max-resolution target reports 0 and is never halved, which is what it exists for.
   let decodedLinear: ImageHandle | null = null;
   const linear = (): ImageHandle => {
     if (decodedLinear == null) {
-      decodedLinear = decodeRawImage(job.rawFilePath, 16, 'rec2020-linear', 0);
+      decodedLinear = decodeRawImage(job.rawFilePath, 16, 'rec2020-linear', largestSize(job.targets, true) ?? 0);
       open.push(decodedLinear);
     }
     return decodedLinear;
@@ -233,7 +256,7 @@ async function renditions(job: RenditionJob): Promise<Uint8Array | undefined> {
     let base: ImageHandle | null = null;
     const sdrBase = (): ImageHandle => {
       if (base == null) {
-        const size = largestSdrSize(job.targets);
+        const size = largestSize(job.targets, false) ?? 0;
         const source = decode();
         // A native-resolution target with no match asks for neither a resize nor
         // a grade, and `renderImage` would answer with a 190MB copy of the frame.

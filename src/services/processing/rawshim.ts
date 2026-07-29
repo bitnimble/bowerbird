@@ -52,7 +52,10 @@ const SYMBOLS = {
   bb_hdr_match_free: { args: [FFIType.ptr], returns: FFIType.void },
   bb_hdr_match_colour: { args: [FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
   bb_hdr_colour_size: { args: [], returns: FFIType.u64 },
-  bb_encode_hdr: { args: [FFIType.ptr, FFIType.ptr, FFIType.cstring, FFIType.ptr], returns: FFIType.i32 },
+  bb_encode_hdr: {
+    args: [FFIType.ptr, FFIType.ptr, FFIType.cstring, FFIType.ptr, FFIType.cstring],
+    returns: FFIType.i32,
+  },
   bb_hdr_graded: { args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.ptr },
   bb_header_size: { args: [], returns: FFIType.u64 },
   bb_decode_file: { args: [FFIType.cstring, FFIType.u32], returns: FFIType.ptr },

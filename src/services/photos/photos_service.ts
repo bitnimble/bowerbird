@@ -366,25 +366,26 @@ export class PhotosService {
 
   // Builds every rendition at once, both media and including the SDR
   // references: the point of the exercise is comparing them on real hardware,
-  // and a browser that does one may not do the other. Sequential rather than
-  // parallel because each is a full-resolution decode and encode.
+  // and a browser that does one may not do the other.
+  //
+  // One job for the lot, rather than one each. They are six ways of writing down the
+  // same photograph and share everything up to the grade, so a job each paid for a
+  // full-resolution decode six times over.
   async buildHdr(photoId: string): Promise<void> {
     const { photo, library } = this.locate(photoId);
 
     const source = getOriginalPath(library, photo.file_path);
     if (!existsSync(source)) throw new AppError('NOT_FOUND', `original file not found: ${photo.file_path}`);
 
+    // The file is the cache, as with the lossless render.
+    const outputs = HDR_MEDIA.flatMap((medium) =>
+      HDR_VARIANTS.map((variant) => ({ medium, variant, outputPath: getHdrPath(library, photo.id, medium, variant) })),
+    ).filter((output) => !existsSync(output.outputPath));
+    if (outputs.length === 0) return;
+
     const startedAt = Date.now();
-    let built = 0;
-    for (const medium of HDR_MEDIA) {
-      for (const variant of HDR_VARIANTS) {
-        const output = getHdrPath(library, photo.id, medium, variant);
-        if (existsSync(output)) continue; // the file is the cache, as with the lossless render
-        await this.processing.renderHdr(source, output, photo.id, medium, variant);
-        built++;
-      }
-    }
-    log.info('HDR renditions built', { photo: photo.id, built, ms: Date.now() - startedAt });
+    await this.processing.renderHdr(source, outputs, photo.id);
+    log.info('HDR renditions built', { photo: photo.id, built: outputs.length, ms: Date.now() - startedAt });
   }
 
   update(photoId: string, updates: UpdatePhotoRequest): PhotoDetail {

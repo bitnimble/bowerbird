@@ -71,7 +71,7 @@ function cells(medium: HdrMedium): string {
 const HEADING: Record<HdrMedium, string> = {
   still: 'Stills, AVIF 4:4:4 (Advanced profile)',
   'still-baseline': 'Stills, AVIF 4:2:0 (Baseline, control)',
-  video: 'Video, one-frame AV1 4:4:4',
+  video: 'Video, one-frame AV1 4:2:0 (Profile 0)',
 };
 
 // The renditions are built by the POST the page fires on load, so a first visit

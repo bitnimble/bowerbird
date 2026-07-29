@@ -6,10 +6,10 @@ import { deleteGeneratedFile } from '../../utils/deletions';
 import { dataPathFor, getDataPath, renditionPathFor } from '../../utils/paths';
 import type { PendingPhoto, PhotosRepository } from '../photos/photos_repository';
 import type { SettingsRepository } from '../settings/settings_repository';
-import type { HdrMedium, HdrVariant } from './hdr_media';
 import type {
   HdrGrade,
   HdrJob,
+  HdrOutput,
   ProcessingResult,
   ProcessingStage,
   RenditionJob,
@@ -165,15 +165,15 @@ export class ProcessingService {
     };
   }
 
-  renderHdr(rawFilePath: string, outputPath: string, photoId: string, medium: HdrMedium, variant: HdrVariant): Promise<void> {
+  // Every HDR rendition the check page wants, in one job: they all grade the same
+  // decode, so a job each demosaiced the frame once per way of writing it down.
+  renderHdr(rawFilePath: string, outputs: HdrOutput[], photoId: string): Promise<void> {
     const settings = this.settings.get();
     return this.runOneOff({
       kind: 'hdr',
       photoId,
       rawFilePath,
-      outputPath,
-      variant,
-      medium,
+      outputs,
       grade: this.grade(),
       crf: settings.hdr_crf,
       preset: settings.hdr_preset,

@@ -4,6 +4,7 @@
 // is only the radial warp and the spline it follows.
 
 use crate::vips::{Rgb, RgbRef};
+use rayon::prelude::*;
 
 pub const SPLINE_UNIT: f64 = 16384.0;
 
@@ -88,8 +89,11 @@ pub fn warp(source: RgbRef<'_>, width: usize, height: usize, knots: &[f64], crop
 /// samples and on the f64 planes it derives from them. Two copies of a warp is two
 /// places for a sign to be wrong in, so the arithmetic lives here once and the
 /// caller supplies the conversions.
+///
+/// A row at a time across cores. `warp` deliberately is not: it runs inside the fit's
+/// own candidate scan, which is already parallel.
 #[allow(clippy::too_many_arguments)]
-pub fn warp_planar<T: Copy + Default>(
+pub fn warp_planar<T: Copy + Default + Send + Sync>(
     src: &[T],
     source_width: usize,
     source_height: usize,
@@ -97,8 +101,8 @@ pub fn warp_planar<T: Copy + Default>(
     height: usize,
     knots: &[f64],
     crop: f64,
-    to_f64: impl Fn(T) -> f64,
-    from_f64: impl Fn(f64) -> T,
+    to_f64: impl Fn(T) -> f64 + Sync,
+    from_f64: impl Fn(f64) -> T + Sync,
 ) -> Vec<T> {
     let mut out = vec![T::default(); width * height * 3];
     let half = ((width as f64 / 2.0).powi(2) + (height as f64 / 2.0).powi(2)).sqrt();
@@ -109,7 +113,7 @@ pub fn warp_planar<T: Copy + Default>(
     let (step_x, step_y) = (half * scale_x, half * scale_y);
     let (edge_x, edge_y) = ((sw - 1) as f64, (sh - 1) as f64);
 
-    for y in 0..height {
+    out.par_chunks_mut(width * 3).enumerate().for_each(|(y, row)| {
         let dy = (y as f64 - height as f64 / 2.0) / half;
         let dy2 = dy * dy;
         for x in 0..width {
@@ -120,7 +124,6 @@ pub fn warp_planar<T: Copy + Default>(
             let ratio = low + (ratios[slot + 1] - low) * (t - slot as f64);
             let px = centre_x + dx * ratio * step_x;
             let py = centre_y + dy * ratio * step_y;
-            let o = (y * width + x) * 3;
             if px < 0.0 || py < 0.0 || px >= edge_x || py >= edge_y {
                 continue;
             }
@@ -129,7 +132,7 @@ pub fn warp_planar<T: Copy + Default>(
             let i00 = (y0 * sw + x0) * 3;
             let i01 = i00 + sw * 3;
             for c in 0..3 {
-                out[o + c] = from_f64(
+                row[x * 3 + c] = from_f64(
                     to_f64(src[i00 + c]) * (1.0 - fx) * (1.0 - fy)
                         + to_f64(src[i00 + 3 + c]) * fx * (1.0 - fy)
                         + to_f64(src[i01 + c]) * (1.0 - fx) * fy
@@ -137,7 +140,7 @@ pub fn warp_planar<T: Copy + Default>(
                 );
             }
         }
-    }
+    });
     out
 }
 
@@ -164,7 +167,9 @@ pub fn box_resize_u16(
     let mut out = vec![0u16; width * height * 3];
     let xs = sw as f64 / width as f64;
     let ys = sh as f64 / height as f64;
-    for dy in 0..height {
+    // A row at a time across cores: this reads every sample of the decode, which on a
+    // 61MP frame is 183M of them for one 3840px rendition.
+    out.par_chunks_mut(width * 3).enumerate().for_each(|(dy, out_row)| {
         let y0 = (dy as f64 * ys).floor() as usize;
         let y1 = (((dy + 1) as f64 * ys).floor() as usize).max(y0 + 1);
         for dx in 0..width {
@@ -181,12 +186,11 @@ pub fn box_resize_u16(
                 }
             }
             let n = ((y1 - y0) * (x1 - x0)) as f64;
-            let o = (dy * width + dx) * 3;
             for c in 0..3 {
-                out[o + c] = (acc[c] / n).round() as u16;
+                out_row[dx * 3 + c] = (acc[c] / n).round() as u16;
             }
         }
-    }
+    });
     Some(out)
 }
 

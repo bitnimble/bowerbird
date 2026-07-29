@@ -25,6 +25,10 @@ use std::process::{Command, Stdio};
 /// The write runs on its own thread. ~366MB down a pipe will fill it long before the
 /// child has read it all, so writing inline and only then waiting deadlocks whenever
 /// the child also has something to say on stderr.
+///
+/// Scoped rather than spawned, so the thread borrows the graded frame instead of
+/// taking a copy of it: that copy was a second ~366MB allocation on every encode, for
+/// bytes this frame already owns and outlives the write.
 fn run(args: &[String], stdin_data: Option<&[u8]>) -> Result<(), String> {
     let (command, rest) = args.split_first().ok_or("no command to run")?;
     let mut child = Command::new(command)
@@ -35,17 +39,22 @@ fn run(args: &[String], stdin_data: Option<&[u8]>) -> Result<(), String> {
         .spawn()
         .map_err(|e| format!("could not start {command}: {e}"))?;
 
-    if let Some(data) = stdin_data {
-        let mut stdin = child.stdin.take().ok_or("no stdin on the child")?;
-        // Owned by the thread, since it outlives this frame only until the join below.
-        let copy = data.to_vec();
-        let writer = std::thread::spawn(move || stdin.write_all(&copy));
-        // A broken pipe here means the child died early; its stderr says why, so the
-        // write error is the less useful of the two and is dropped.
-        let _ = writer.join();
-    }
+    let waited = match stdin_data {
+        None => child.wait_with_output(),
+        Some(data) => {
+            let mut stdin = child.stdin.take().ok_or("no stdin on the child")?;
+            std::thread::scope(|scope| {
+                // A broken pipe here means the child died early; its stderr says why,
+                // so the write error is the less useful of the two and is dropped.
+                scope.spawn(move || {
+                    let _ = stdin.write_all(data);
+                });
+                child.wait_with_output()
+            })
+        }
+    };
 
-    let output = child.wait_with_output().map_err(|e| format!("{command} did not finish: {e}"))?;
+    let output = waited.map_err(|e| format!("{command} did not finish: {e}"))?;
     if output.status.success() {
         return Ok(());
     }
@@ -91,15 +100,26 @@ pub fn graded(
     options: &EncodeOptions,
     matched: Option<&HdrMatch>,
 ) -> (Vec<u16>, usize, usize) {
+    // The levels come from the decode rather than the fitted copy: averaging pulls a
+    // specular peak in, so measuring after the resize would give the full-size
+    // rendition and the max-resolution one different anchors for the same photo.
+    graded_with(source, options, matched, tone::levels(source.samples, options.white_quantile))
+}
+
+/// `graded`, against levels the caller already measured.
+///
+/// Split out for `encode_pair`, which writes two files off one decode and must anchor
+/// both on the same reading whether or not it regrades between them.
+fn graded_with(
+    source: &Source<'_>,
+    options: &EncodeOptions,
+    matched: Option<&HdrMatch>,
+    levels: tone::Levels,
+) -> (Vec<u16>, usize, usize) {
     // Fit before grading, not after. zscale would have done the same resize in the
     // same linear light, but only once the whole frame had been graded - so a 61MP
     // decode was tone-mapped in full to produce a 3840px rendition and 15/16 of that
     // work was thrown away.
-    //
-    // The levels come from the decode rather than the fitted copy: averaging pulls a
-    // specular peak in, so measuring after the resize would give the full-size
-    // rendition and the max-resolution one different anchors for the same photo.
-    let levels = tone::levels(source.samples, options.white_quantile);
     let size = hdr_args::target_size(source.width as u32, source.height as u32, options);
 
     let fitted = image::box_resize_u16(
@@ -141,14 +161,12 @@ pub fn graded(
     (out.unwrap_or_else(|| shaped.to_vec()), width, height)
 }
 
-/// Grades and encodes one HDR rendition.
-pub fn encode(source: &Source<'_>, options: &EncodeOptions, matched: Option<&HdrMatch>) -> Result<(), String> {
-    let (graded, width, height) = graded(source, options, matched);
-
+/// Encodes samples that have already been graded, at the size they arrived at.
+fn encode_graded(graded: &[u16], width: usize, height: usize, options: &EncodeOptions) -> Result<(), String> {
     // Native byte order, which is what `-pixel_format rgb48le` says on the little-
     // endian targets this ships for.
     let bytes: &[u8] =
-        unsafe { std::slice::from_raw_parts(graded.as_ptr() as *const u8, std::mem::size_of_val(&graded[..])) };
+        unsafe { std::slice::from_raw_parts(graded.as_ptr() as *const u8, std::mem::size_of_val(graded)) };
 
     if options.medium == Medium::Video {
         return run(&hdr_args::ffmpeg_args(width as u32, height as u32, options), Some(bytes));
@@ -158,27 +176,43 @@ pub fn encode(source: &Source<'_>, options: &EncodeOptions, matched: Option<&Hdr
     // colr box, so the primaries and transfer would be lost, and AVIF has no
     // equivalent of the bitstream filter to put them back. avifenc does the tagging.
     let y4m_path = format!("{}.y4m", options.output_path);
-    let to_y4m = EncodeOptions { output_path: y4m_path.clone(), ..clone_options(options) };
+    let to_y4m = EncodeOptions { output_path: y4m_path.clone(), ..options.clone() };
     let result = run(&hdr_args::ffmpeg_args(width as u32, height as u32, &to_y4m), Some(bytes))
         .and_then(|()| run(&hdr_args::avifenc_args(options, &y4m_path), None));
     let _ = std::fs::remove_file(&y4m_path);
     result
 }
 
-/// `EncodeOptions` holds a `String`, so it is not `Copy`; this is the one place that
-/// needs a second one differing only in its output path.
-fn clone_options(options: &EncodeOptions) -> EncodeOptions {
-    EncodeOptions {
-        variant: options.variant,
-        medium: options.medium,
-        output_path: options.output_path.clone(),
-        peak_nits: options.peak_nits,
-        reference_white_nits: options.reference_white_nits,
-        white_quantile: options.white_quantile,
-        crf: options.crf,
-        preset: options.preset,
-        max_edge: options.max_edge,
+/// Grades and encodes one HDR rendition, and its one-frame video twin where one is
+/// asked for.
+///
+/// The twin shares the grade. Both media run the same resize, warp and tone map and
+/// differ only in encoder, so the only thing that can separate them is size - and only
+/// SVT-AV1's 8704-row ceiling does that, which nothing but a native-resolution portrait
+/// frame reaches. Encoding them as two calls regraded the frame for the second, paying
+/// for the most expensive stage of the pipeline twice on every HDR import.
+pub fn encode_pair(
+    source: &Source<'_>,
+    options: &EncodeOptions,
+    video_path: Option<&str>,
+    matched: Option<&HdrMatch>,
+) -> Result<(), String> {
+    let levels = tone::levels(source.samples, options.white_quantile);
+    let (frame, width, height) = graded_with(source, options, matched, levels);
+    encode_graded(&frame, width, height, options)?;
+
+    let Some(video_path) = video_path else { return Ok(()) };
+    let video =
+        EncodeOptions { medium: Medium::Video, output_path: video_path.to_string(), ..options.clone() };
+
+    let size = hdr_args::target_size(source.width as u32, source.height as u32, &video);
+    if size.width as usize == width && size.height as usize == height {
+        return encode_graded(&frame, width, height, &video);
     }
+    // The ceiling bit. Same levels, so the two still agree about where diffuse white
+    // and the scene peak sit; only the resize below them differs.
+    let (frame, width, height) = graded_with(source, &video, matched, levels);
+    encode_graded(&frame, width, height, &video)
 }
 
 #[cfg(test)]

@@ -66,6 +66,7 @@ impl Medium {
     }
 }
 
+#[derive(Clone)]
 pub struct EncodeOptions {
     pub variant: Variant,
     pub medium: Medium,

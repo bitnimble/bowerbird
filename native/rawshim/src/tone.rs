@@ -17,6 +17,7 @@
 // tuning if a library renders consistently dark or hot.
 
 use crate::hdr_fit::{self, HdrColour};
+use rayon::prelude::*;
 
 const MAX: usize = 65535;
 
@@ -166,9 +167,7 @@ pub fn grade(source: &[u16], options: &GradeOptions<'_>) -> Option<Vec<u16>> {
             let nits = eetf((level as f64 / white) * reference, source_peak_nits, peak);
             lut[level] = ((nits / peak).min(1.0) * MAX as f64).round() as u16;
         }
-        for (o, s) in out.iter_mut().zip(source) {
-            *o = lut[*s as usize];
-        }
+        out.par_iter_mut().zip(source.par_iter()).for_each(|(o, s)| *o = lut[*s as usize]);
         return Some(out);
     };
 
@@ -180,18 +179,19 @@ pub fn grade(source: &[u16], options: &GradeOptions<'_>) -> Option<Vec<u16>> {
     // nits to find the exact maximum wanted a buffer the size of the frame - 720MB on
     // a 60MP photo - to save clamping a handful of specular samples that the roll-off
     // was compressing into the peak anyway.
-    let mut scene_peak = 0.0f64;
-    let mut i = 0usize;
-    while i + 2 < source.len() {
-        let v = hdr_fit::apply_hdr_colour(
-            colour,
-            f64::from(source[i]) / white,
-            f64::from(source[i + 1]) / white,
-            f64::from(source[i + 2]) / white,
-        );
-        scene_peak = scene_peak.max(v[0]).max(v[1]).max(v[2]);
-        i += 3 * QUANTILE_STRIDE;
-    }
+    let mut scene_peak = source
+        .par_chunks_exact(3)
+        .step_by(QUANTILE_STRIDE)
+        .map(|px| {
+            let v = hdr_fit::apply_hdr_colour(
+                colour,
+                f64::from(px[0]) / white,
+                f64::from(px[1]) / white,
+                f64::from(px[2]) / white,
+            );
+            v[0].max(v[1]).max(v[2])
+        })
+        .reduce(|| 0.0f64, f64::max);
     scene_peak *= reference;
     if !(scene_peak > 0.0) {
         return None;
@@ -215,13 +215,16 @@ pub fn grade(source: &[u16], options: &GradeOptions<'_>) -> Option<Vec<u16>> {
     // Flat and scalar on purpose. Written with the tuple-returning helpers it was
     // three allocations per pixel, 180M on a 60MP frame, and the collector cost more
     // than all the arithmetic put together.
+    //
+    // Across cores because every pixel is independent of every other, and this is the
+    // most expensive stage of an HDR rendition: 180M pixels of matrix, lookup and
+    // roll-off on a 60MP export.
     let m = &colour.matrix;
     let sat = colour.saturation;
     let scale = (ROLL_BINS - 1) as f64 / scene_peak;
 
-    let mut i = 0usize;
-    while i + 2 < source.len() {
-        let (r, g, b) = (source[i], source[i + 1], source[i + 2]);
+    out.par_chunks_exact_mut(3).zip(source.par_chunks_exact(3)).for_each(|(out_px, px)| {
+        let (r, g, b) = (px[0], px[1], px[2]);
 
         let (tr, tg, tb) = if f64::from(r) <= ceiling && f64::from(g) <= ceiling && f64::from(b) <= ceiling {
             (
@@ -249,10 +252,9 @@ pub fn grade(source: &[u16], options: &GradeOptions<'_>) -> Option<Vec<u16>> {
             let t = nits * scale;
             let lo = (t.floor() as usize).min(ROLL_BINS - 2);
             let rolled = table[lo] + (table[lo + 1] - table[lo]) * (t - lo as f64);
-            out[i + c] = ((rolled / peak).min(1.0) * MAX as f64).round() as u16;
+            out_px[c] = ((rolled / peak).min(1.0) * MAX as f64).round() as u16;
         }
-        i += 3;
-    }
+    });
     Some(out)
 }
 

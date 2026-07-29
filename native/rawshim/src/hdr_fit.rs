@@ -14,6 +14,7 @@
 // BT.2390 take over above it (10.7.1).
 
 use crate::image::warp_planar;
+use rayon::prelude::*;
 
 /// Long edge of the grid the fit runs on. Matching the SDR fit: fitting small and
 /// applying at full resolution is free, and a 60MP fit is minutes of work for the
@@ -136,11 +137,22 @@ pub struct Plane {
 /// across the whole fit domain once it was normalised, and the curve fitted from that
 /// staircase was visibly contrasty. Doing both sides here also means neither gets a
 /// filter the other did not.
-fn resample(src: &[f64], sw: usize, sh: usize, dw: usize, dh: usize) -> Vec<f64> {
+///
+/// `to_f64` converts each sample on the way in, which is what keeps the decode out of
+/// this in its own right: normalising a 61MP frame to diffuse white beforehand meant a
+/// 1.46GB f64 copy of it, built only to be averaged down to ~1280px on the next line.
+fn resample<T: Copy + Sync>(
+    src: &[T],
+    sw: usize,
+    sh: usize,
+    dw: usize,
+    dh: usize,
+    to_f64: impl Fn(T) -> f64 + Sync,
+) -> Vec<f64> {
     let mut out = vec![0.0f64; dw * dh * 3];
     let xs = sw as f64 / dw as f64;
     let ys = sh as f64 / dh as f64;
-    for dy in 0..dh {
+    out.par_chunks_mut(dw * 3).enumerate().for_each(|(dy, out_row)| {
         let y0 = (dy as f64 * ys).floor() as usize;
         let y1 = (((dy + 1) as f64 * ys).floor() as usize).max(y0 + 1);
         for dx in 0..dw {
@@ -151,17 +163,16 @@ fn resample(src: &[f64], sw: usize, sh: usize, dw: usize, dh: usize) -> Vec<f64>
                 for x in x0..x1 {
                     let i = (y * sw + x) * 3;
                     for c in 0..3 {
-                        acc[c] += src[i + c];
+                        acc[c] += to_f64(src[i + c]);
                     }
                 }
             }
             let n = ((y1 - y0) * (x1 - x0)) as f64;
-            let o = (dy * dw + dx) * 3;
             for c in 0..3 {
-                out[o + c] = acc[c] / n;
+                out_row[dx * 3 + c] = acc[c] / n;
             }
         }
-    }
+    });
     out
 }
 
@@ -581,8 +592,9 @@ pub fn fit(
     // warping at full resolution took the fit from under a second to 17.
     let wide = width.min(jpeg.width * 2);
     let tall = (((height as f64 / width as f64) * wide as f64).round() as usize).max(1);
-    let scaled: Vec<f64> = linear.iter().map(|v| f64::from(*v) / anchor).collect();
-    let small = resample(&scaled, width, height, wide, tall);
+    // Normalised to diffuse white inside the resample, so the decode is read where it
+    // lies rather than copied into a frame-sized f64 plane first.
+    let small = resample(linear, width, height, wide, tall, |v| f64::from(v) / anchor);
 
     // Through the same geometry the SDR fit resolved, so a pair is two views of one
     // point in the scene.
@@ -594,7 +606,7 @@ pub fn fit(
     let mut render = Plane {
         width: jpeg.width,
         height: jpeg.height,
-        data: resample(&warped, wide, tall, jpeg.width, jpeg.height),
+        data: resample(&warped, wide, tall, jpeg.width, jpeg.height, |v| v),
     };
     blur_plane(&mut render, FIT_BLUR_RADIUS);
 
