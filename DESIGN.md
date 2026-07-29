@@ -178,14 +178,16 @@ CREATE TABLE libraries (
   id          TEXT PRIMARY KEY,
   root_path   TEXT NOT NULL UNIQUE,
   data_path   TEXT,  -- path to .bowerbird/ data folder; NULL means default (<root_path>/.bowerbird/)
+  name        TEXT,  -- display name; NULL falls back to the last segment of root_path
   ordering    TEXT NOT NULL DEFAULT 'taken_asc'
     CHECK (ordering IN ('taken_asc', 'taken_desc', 'added_asc', 'added_desc'))
 );
 ```
 
-- `root_path` — absolute path to the library root folder on disk.
+- `root_path`, absolute path to the library root folder on disk.
 - `data_path`, absolute path to the data directory for generated files. If NULL, defaults to `<root_path>/.bowerbird/`.
-- `ordering` — default ordering for photo listings in this library.
+- `name`, what the library is called in the rail and in Settings. NULL, which is what every library created before this column had, shows the root folder's name instead. Nullable rather than defaulted at insert so a folder that is later renamed on disk carries the new name through, as long as nobody has overridden it.
+- `ordering`, default ordering for photo listings in this library.
 
 ### 4.2 `photos` table
 
@@ -269,10 +271,10 @@ CREATE INDEX idx_shoots_library ON shoots(library_id);
 CREATE INDEX idx_shoots_parent ON shoots(parent_id);
 ```
 
-- `folder_path` is the **full** path from the library root to this shoot's folder (forward slashes), e.g. `Weddings/2024/Smith`. It is *not* parent-relative: storing the full path lets sync reconciliation (§9.4) and create-adoption (§8.5) test membership with a `file_path` prefix check, and lets the most-specific (longest matching) shoot win for nested folders. On create it is computed as `parent ? parent.folder_path + '/' + name : name`, and it is **immutable thereafter**: `name` seeds the folder once and is a label from then on, so renaming a shoot never moves a file (§8.5).
+- `folder_path` is the **full** path from the library root to this shoot's folder (forward slashes), e.g. `Weddings/2024/Smith`. It is *not* parent-relative: storing the full path lets sync reconciliation (§9.4) and create-adoption (§8.5) test membership with a `file_path` prefix check, and lets the most-specific (longest matching) shoot win for nested folders. On create it is the requested `parent_path` plus the name, and `parent_id` is then read back off it (§8.5) rather than chosen alongside it. It is **immutable thereafter**: `name` seeds the folder once and is a label from then on, so renaming a shoot never moves a file (§8.5).
 - **Membership test (used everywhere "a file falls under a shoot" is checked):** a file belongs to a shoot iff `file_path` starts with `folder_path + '/'`; the trailing separator is required so shoot `NYC` (`folder_path` `NYC`) does not capture files in sibling shoot `NYC2`. "Directly under" a shoot means the remainder after that prefix contains no further `/` (deeper files belong to a descendant shoot). Among all matching shoots, the one with the longest `folder_path` wins.
 - When a photo is added to a shoot, its file is physically moved on disk into the shoot's folder.
-- Shoot names are **unique library-wide** (`UNIQUE (library_id, name)`), a deliberate simplification rather than the minimum needed. On-disk folder collisions are only possible between shoots sharing a parent (a shoot's folder is named after its `name`, created under the parent's folder), so a `(library_id, parent_id, name)` constraint would be the tight fit, but SQLite treats `NULL`s as distinct in UNIQUE constraints, so it would fail to catch collisions between root-level shoots (`parent_id IS NULL`). Library-wide uniqueness is a strict superset that closes that hole and keeps names unambiguous. Tradeoff: it disallows the same name under different parents (e.g. "Day1" under both "NYC" and "LA"). A create/rename to a name already used by any shoot in the library returns `CONFLICT`.
+- Shoot names are **unique library-wide** (`UNIQUE (library_id, name)`), a deliberate simplification rather than the minimum needed. On-disk folder collisions are only possible between shoots sharing a folder (a shoot's folder is named after its `name`, created inside the chosen one), so a `(library_id, parent_id, name)` constraint would be the tight fit, but SQLite treats `NULL`s as distinct in UNIQUE constraints, so it would fail to catch collisions between root-level shoots (`parent_id IS NULL`). Library-wide uniqueness is a strict superset that closes that hole and keeps names unambiguous. Tradeoff: it disallows the same name under different parents (e.g. "Day1" under both "NYC" and "LA"). A create/rename to a name already used by any shoot in the library returns `CONFLICT`.
 - The banner photo, if any, lives in the `shoot_banners` table (§4.6), not on this table; a `banner_photo_id` column here would form a `photos` ↔ `shoots` FK cycle.
 
 ### 4.4 `albums` table
@@ -324,6 +326,7 @@ CREATE INDEX idx_album_banners_photo ON album_banners(photo_id);
 - `ON DELETE CASCADE` on the owner column removes the banner row automatically when the shoot/album is deleted (a DB-record delete, not a disk operation, §8). No app-level bookkeeping needed.
 - `ON DELETE CASCADE` on `photo_id` removes the association if the underlying photo is hard-deleted (only via library-delete cascade; soft-delete leaves the record and its banner intact).
 - `banner_photo_id` still appears in the `Shoot` and `Album` **response** schemas (§5.4, §5.5), resolved by joining the respective table.
+- These tables hold a **choice**, never a default. A shoot with no row falls back to its first photo in the shoot's own ordering, computed in the `SELECT` (`shoots_repository.ts`) rather than written at import. The first photo moves as photos are added, binned or re-dated, so a stored default would go stale, and once stored it could no longer be told apart from a photo the user actually picked. Binned photos are excluded, so the banner agrees with the photo count beside it. A row here still wins, and deleting it returns the shoot to its first photo rather than to no banner at all.
 
 ---
 
@@ -460,7 +463,7 @@ export const PhotoListQuerySchema = PaginationSchema
 ```typescript
 export const CreateShootRequestSchema = z.object({
   library_id: UuidSchema,
-  parent_id: UuidSchema.optional(),
+  parent_path: z.string().default(''),  // root-relative folder the shoot's folder goes in; '' is the library root
   name: z.string().min(1),
   description: z.string().optional(),
   ordering: OrderingSchema.default('taken_desc'),
@@ -650,7 +653,7 @@ This service handles the full sync algorithm. See §9 for the detailed algorithm
 
 | Method | Description |
 |---|---|
-| `create(request)` | Creates a shoot record. The folder is named after the shoot `name`, created under the parent shoot's folder (or the library root if no parent); `folder_path` is stored as the full root-relative path (§4.3). If the folder does not exist, it is created. If it **already exists**, it is kept as-is and its photos are **adopted**: every existing non-deleted photo record whose `file_path` falls under this folder and for which this shoot is the most-specific matching shoot (i.e. not already claimed by a more-specific descendant shoot) has its `shoot_id` set to the new shoot. No files move on disk and no reprocessing occurs (renditions are keyed by photo UUID, unaffected by shoot membership). This mirrors the sync reconciliation rule (§9.4) and makes an orphaned folder from a prior shoot delete re-adoptable. RAW files physically present but not yet in the DB are picked up by the next sync, which will assign them to this shoot via the same reconciliation. |
+| `create(request)` | Creates a shoot record. The folder is named after the shoot `name`, created inside `parent_path` (the library root when it is empty); `folder_path` is stored as the full root-relative path (§4.3). A `parent_path` that resolves outside the library root, or inside its data directory (§6), is refused: a shoot's photographs must be inside the library and must not be in the tree that goes with it when it is removed. `parent_id` is **derived**, not requested: it is the most-specific shoot whose folder contains the new one, which is the same rule that decides which shoot a photo belongs to (§9.4), so the tree can never disagree with the folders on disk. That also means a shoot can sit under a plain folder that is not a shoot itself. If the folder does not exist, it is created. If it **already exists**, it is kept as-is and its photos are **adopted**: every existing non-deleted photo record whose `file_path` falls under this folder and for which this shoot is the most-specific matching shoot (i.e. not already claimed by a more-specific descendant shoot) has its `shoot_id` set to the new shoot. No files move on disk and no reprocessing occurs (renditions are keyed by photo UUID, unaffected by shoot membership). This mirrors the sync reconciliation rule (§9.4) and makes an orphaned folder from a prior shoot delete re-adoptable. RAW files physically present but not yet in the DB are picked up by the next sync, which will assign them to this shoot via the same reconciliation. |
 | `get(shootId)` | Returns a shoot by ID. |
 | `list(libraryId)` | Returns all shoots in a library. |
 | `addPhotos(shootId, photoIds)` | Moves photo files on disk into the shoot's folder. Updates each photo's `file_path` and `shoot_id` in the DB. A photo can only belong to one shoot; if it already belongs to another, it is moved out of the old shoot folder. If a file with the same name already exists in the destination folder, append a numeric suffix (e.g. `IMG_0001_1.ARW`, `IMG_0001_2.ARW`) so no existing file is overwritten and no two records share a `file_path` (§12.1). |
@@ -933,7 +936,7 @@ Two encoder settings were measured rather than inherited, and both defaults were
   | 4 | 5318 | 5.646MB | 40.59 |
   | 9 | 132601 | 5.713MB | - |
 
-  Effort 4 is 10x the time for +0.46dB at the same size; effort 9 is 260x the time for a file 0.8% *larger*. On the 800px grid tile it is worse still, 15ms to 1626ms for +0.33dB and a bigger file. `RENDITION_EFFORT` is 0.
+  Effort 4 is 10x the time for +0.46dB at the same size; effort 9 is 260x the time for a file 0.8% *larger*. On the 800px grid tile it is worse still, 15ms to 1626ms for +0.33dB and a bigger file. So effort is pinned at 0 in `renditions.ts` rather than offered as a setting: there is no value of it worth choosing, and a knob whose every other position is a loss is a knob that only costs the reader time.
 
   This previously claimed effort 4 was 13.6s against 0.6s "for a file only ~15% smaller". The time ratio was roughly right; the 15% was not - the file is not smaller at all. Worth correcting because it framed effort as a size/speed trade with a real size on one side, when at fixed `Q` there is nothing on that side.
 - **AVIF quality is not WebP's scale.** Carrying the old 90 across would have produced 2551 kB renditions, 2.5x larger than what they replace. q80 is where shadow detail stops visibly degrading on real frames; q60 and q70 lose it. Quality is nearly free once effort is 0 (596ms at q60 against 898ms at q85), so this is chosen on appearance, not cost.
@@ -1517,11 +1520,12 @@ All endpoints return JSON. Error responses use a standard envelope:
 | `POST` | `/api/libraries` | Create a library |
 | `GET` | `/api/libraries` | List all libraries |
 | `GET` | `/api/libraries/:id` | Get a library |
-| `PATCH` | `/api/libraries/:id` | Update a library (default ordering) |
+| `PATCH` | `/api/libraries/:id` | Update a library (name, default ordering, rendition settings) |
 | `DELETE` | `/api/libraries/:id` | Delete a library |
 | `POST` | `/api/libraries/:id/sync` | Trigger sync for a library |
 | `DELETE` | `/api/libraries/:id/sync` | Stop the library's current sync (§9.10) |
 | `GET` | `/api/libraries/:id/sync/status` | Get sync/processing status |
+| `GET` | `/api/libraries/:id/browse` | Folders inside this library at `?path=` (root-relative, `''` is the root), for the picker that chooses a shoot's folder. Refuses a path outside the root. |
 
 ### 13.2 Photos
 
@@ -1648,6 +1652,7 @@ app.get('/image/:photoId/renditions/:rendition', async (c) => {
 | `GET` | `/api/settings` | Everything the user can change that is not a property of one library |
 | `PATCH` | `/api/settings` | Update them |
 | `GET` | `/api/events` | Server-sent events; `rendition` carries the id of a photo whose renditions were just written (§18.6) |
+| `GET` | `/api/browse` | Directories inside `?path=`, or the home directory when it is omitted, for the folder picker that adds a library. Absolute paths, and unfenced: a library root can be on any mount, and `POST /api/libraries` already accepts any absolute path. The per-library form (§13.1) is fenced, because there a folder outside the root is wrong rather than merely unhelpful. |
 
 Two scopes, not three: the `libraries` row holds what belongs to one catalogue (the rendition source and HDR, §10.2), and `settings` holds everything app-wide - the viewer's `viewer_rendition_mode` and the rendition `remember` remembers, alongside the server's own tuning (§15). A key/value table rather than a column per setting because they are read one at a time and never queried across, and adding one should not need a migration; values are stored as text, and the default's type says what to read one back as. A value the build no longer understands reads as its default rather than failing the request: a bad row must not stop the viewer opening or the server booting.
 
@@ -1732,7 +1737,6 @@ the bounds; the reasoning behind each number lives beside it there.
 | `grid_rendition_quality` | `80` | AVIF quality for the grid rendition, 1-100 (§10.1) |
 | `full_rendition_size` | `3840` | Longest edge in pixels for the full rendition |
 | `full_rendition_quality` | `80` | AVIF quality for the full rendition, 1-100 (§10.1) |
-| `rendition_effort` | `0` | AVIF effort, 0-9; the default of 4 is 10x slower for +0.5dB (§10.1) |
 | `lossless_quality` | `88` | AVIF quality for the SDR full-resolution export (§10.5) |
 | `lossless_quantizer` | `8` | avifenc max quantizer for the HDR one; lower is better (§10.5) |
 | `hdr_peak_nits` | `1000` | Display peak the BT.2390 roll-off targets, and the declared mastering peak (§10.7.1) |
@@ -1896,9 +1900,15 @@ MobX strict mode is on, so a mutation attempted outside an action warns in the c
 
 ### 18.3 Screens
 
-`/settings` (add / remove libraries, per-library ordering and sync), `/libraries/:id` (grid, filters, selection, bulk actions), `/libraries/:id/shoots` (tree + create), `/libraries/:id/bin`, `/shoots/:id`, `/albums`, `/albums/:id`, `/photos/:id`.
+`/settings` (add / remove libraries, per-library name, renditions and sync, and the app's own settings), `/libraries/:id` (grid, filters, selection, bulk actions), `/libraries/:id/shoots` (tree + create), `/libraries/:id/bin`, `/shoots/:id`, `/albums`, `/albums/:id`, `/photos/:id`.
 
 Every registered library is listed permanently in the rail, and the active one expands to its sections. There is no "choose a library" screen: adding one is a setup step that belongs in Settings, not a gate you pass through on each visit. Syncing lives in Settings for the same reason: it is maintenance on the library, and the gallery is for looking at photos. Settings and the shortcut sheet sit together at the foot of the rail, apart from the catalogue links, because they are about the app rather than the photographs.
+
+Adding a library is one button and a dialog, holding everything the library needs before it exists: the folder, a name, and the ordering its gallery starts in. The folder is walked with a picker over `/api/browse` as well as typed, because the path is read on the server, which may not be the machine the page is open on, so a path that exists in this browser's world is not necessarily one the server can open.
+
+Adding a shoot is the same dialog shape, and deliberately so: a shoot is a folder too, so it is created by choosing where the folder goes and naming it rather than by picking a parent shoot out of a list. Its picker is the same component pointed at `/api/libraries/:id/browse`, which starts at the library root and cannot climb out of it. The parent shoot then follows from where the folder landed (§8.5), so the choice on screen is "which folder", never "which folder, and separately which parent".
+
+The rest of Settings is ordered by how often a decision is made rather than by which subsystem owns it. What a library builds and how photos open sit at the top; the encoder sizes, qualities, HDR grade and server knobs are numbers tuned once, so they live in one collapsed **Advanced settings** disclosure. The HDR settings are disabled, with the reason as their tooltip, while no library builds HDR renditions: nothing reads them until one does.
 
 There is no title bar. It only ever restated the library the rail already highlights, and the vertical space is worth more to the photographs.
 
