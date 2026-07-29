@@ -550,13 +550,16 @@ The scanner must skip the data directory (`.bowerbird/` or whatever `data_path` 
 
 ## 7. Supported File Formats
 
-Sony ARW (`.arw`) and Canon CR3 (`.cr3`), case-insensitive.
+Sony ARW (`.arw`) and Canon CR2/CR3 (`.cr2`, `.cr3`), case-insensitive.
 
 The sync scanner matches files by extension. All other files are silently ignored. The extension set is the *scan filter*; the actual decoder/metadata reader is chosen later by header sniff (§10, §11), so a further format is added by registering a reader plus extending this set. The same table carries the media type the original is served under (§13.5).
+
+The table is the *only* gate, because everything asking "is this one of ours" goes through `isSupportedFile`: the full walk, the watcher's scoped `readdir`, and `findOriginalsAnywhere`, which is what carries a stray original out of a data directory before that directory is deleted (§8.1). A format added here is therefore both ingested and protected from that sweep, in one edit; one added to only half of them would be imported and then deleted with the renditions.
 
 ```typescript
 const RAW_MEDIA_TYPES = new Map([
   ['.arw', 'image/x-sony-arw'],
+  ['.cr2', 'image/x-canon-cr2'],
   ['.cr3', 'image/x-canon-cr3'],
 ]);
 
@@ -570,6 +573,8 @@ function isSupportedFile(filename: string): boolean {
 - **The capture zone.** `exif_zone.ts` read the offset tags straight out of the TIFF header a RAW "already is". A CR3 is an ISO base-media file; its EXIF sits in a `CMT2` box under `moov`, as a complete little TIFF of its own. Walking the box tree that far and handing the block to the same IFD reader is the whole of it (§11.1).
 - **The masked-border crop.** Measured against the raw frame rather than against the window LibRaw already emits, so on every body that declares an inset crop - which is every Canon - it was applied twice. See §10.4.
 - **GPS.** Canon reports a parsed fix on every frame and zeroes it when there was none, which read as 0,0: a real place, in the Gulf of Guinea. An all-zero triple is now "not recorded".
+
+**CR2 came for free on top of that**, and is the case the split was meant to make cheap: it is a plain TIFF, so the capture-zone reader takes its first branch rather than the box walk, and the crop and GPS fixes above are per-body rather than per-format. Verified on EOS 600D frames - 18MP at the dimensions the header states, portrait orientation, lens and exposure, and an embedded JPEG for the grid tile. A 2011 body predates EXIF 2.31, so it records no capture zone at all and reports `null`, which is the absence the tag is nullable for rather than anything unread.
 
 **CR2 is not in the set.** It is TIFF-based and LibRaw reads it, so it is likely a one-line addition, but nothing here has been run against one.
 

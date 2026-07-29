@@ -21,10 +21,12 @@ describe('isSupportedFile', () => {
   it('matches every supported extension case-insensitively and rejects others', () => {
     expect(isSupportedFile('IMG_0001.ARW')).toBe(true);
     expect(isSupportedFile('IMG_0001.arw')).toBe(true);
+    expect(isSupportedFile('IMG_0001.CR2')).toBe(true);
+    expect(isSupportedFile('IMG_0001.cr2')).toBe(true);
     expect(isSupportedFile('IMG_0001.CR3')).toBe(true);
     expect(isSupportedFile('IMG_0001.cr3')).toBe(true);
     expect(isSupportedFile('IMG_0001.jpg')).toBe(false);
-    expect(isSupportedFile('IMG_0001.cr2')).toBe(false);
+    expect(isSupportedFile('IMG_0001.cr')).toBe(false);
     expect(isSupportedFile('noext')).toBe(false);
   });
 });
@@ -32,6 +34,7 @@ describe('isSupportedFile', () => {
 describe('rawMediaType', () => {
   it('names each format, and refuses to guess at one it does not scan', () => {
     expect(rawMediaType('IMG_0001.ARW')).toBe('image/x-sony-arw');
+    expect(rawMediaType('IMG_0001.cr2')).toBe('image/x-canon-cr2');
     expect(rawMediaType('IMG_0001.cr3')).toBe('image/x-canon-cr3');
     expect(rawMediaType('IMG_0001.dng')).toBe('application/octet-stream');
   });
@@ -44,9 +47,10 @@ describe('listSupportedFiles', () => {
     writeFileSync(path.join(root, 'd.CR3'), '');
     mkdirSync(path.join(root, 'Day1'));
     writeFileSync(path.join(root, 'Day1', 'c.ARW'), '');
+    writeFileSync(path.join(root, 'Day1', 'e.cr2'), '');
 
     const found = await listSupportedFiles(root, path.join(root, '.bowerbird'));
-    expect(found.map((f) => f.relPath).sort()).toEqual(['Day1/c.ARW', 'a.arw', 'd.CR3']);
+    expect(found.map((f) => f.relPath).sort()).toEqual(['Day1/c.ARW', 'Day1/e.cr2', 'a.arw', 'd.CR3']);
   }));
 
   it('skips excluded dirs (dotfolders, Bin) and the data dir', withRoot(async (root) => {

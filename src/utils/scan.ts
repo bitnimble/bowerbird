@@ -6,6 +6,7 @@ import path from 'node:path';
 // by whichever reader already handles it.
 const RAW_MEDIA_TYPES = new Map([
   ['.arw', 'image/x-sony-arw'],
+  ['.cr2', 'image/x-canon-cr2'],
   ['.cr3', 'image/x-canon-cr3'],
 ]);
 
