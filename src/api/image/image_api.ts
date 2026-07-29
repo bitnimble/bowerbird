@@ -17,7 +17,7 @@ import type { PhotosService } from '../../services/photos/photos_service';
 //
 // A BasicPhoto, not a PhotoDetail: serving bytes needs an id, a library and a
 // file path, and asking for the detail payload put a second query and a stat per
-// rendition on every thumbnail in the grid (§8.2 `locate`).
+// rendition on every rendition in the grid (§8.2 `locate`).
 type PathFor = (library: Library, photo: BasicPhoto) => string;
 
 const JPEG_QUALITY = 92;
@@ -34,6 +34,18 @@ const TIMING_ALLOW_ORIGIN = { 'Timing-Allow-Origin': '*' };
 // on disk is free to contain either.
 function attachment(filename: string): string {
   return `attachment; filename="${filename.replace(/["\\]/g, '')}"`;
+}
+
+// Never cached: a download is a one-off, and the bytes for two of the four forms
+// are produced per request anyway.
+function download(body: Blob | Uint8Array, contentType: string, filename: string): Response {
+  return new Response(body, {
+    headers: {
+      'Content-Type': contentType,
+      'Content-Disposition': attachment(filename),
+      'Cache-Control': 'no-cache',
+    },
+  });
 }
 
 // Streams straight from disk via Bun.file (no buffering); Bun.serve applies Range
@@ -55,24 +67,16 @@ export class ImageApi {
       if (suffix != null && suffix !== 'video') throw new AppError('NOT_FOUND', `unknown rendition form: ${suffix}`);
       const video = suffix === 'video';
       return this.serve(c, renditionContentType(video), (lib, photo) =>
-        getRenditionPath(lib, photo.id, rendition, lib.preview_hdr, video),
+        getRenditionPath(lib, photo.id, rendition, lib.rendition_hdr, video),
       );
     });
-    // Served as the camera wrote it, never resized or transcoded into a rendition
-    // of its own (§10.2). The RAW itself goes the same way.
+    // Served as the camera wrote it, never resized or transcoded into a stored
+    // rendition of its own (§10.2). The RAW itself goes the same way.
     app.get('/:photoId/embedded.jpg', (c) => this.serveEmbedded(c));
-    // No extension in the URL and none assumed: a catalogue holds more than one
-    // RAW format, so both the media type and the name the download lands under
-    // come off the file itself.
-    app.get('/:photoId/original', (c) =>
-      this.serve(
-        c,
-        (photo) => rawMediaType(photo.file_path),
-        (lib, photo) => getOriginalPath(lib, photo.file_path),
-        (photo) => photo.file_path.split('/').pop() ?? photo.id,
-      ),
-    );
-    app.get('/:photoId/full.jpg', (c) => this.serveJpeg(c));
+    // Every form the viewer offers to take away, as an attachment: the RAW, the
+    // camera's JPEG, and either rendered rendition transcoded to JPEG. One route
+    // because the menu offering them is one list and only the bytes differ.
+    app.get('/:photoId/download/:form', (c) => this.serveDownload(c));
     // HDR renditions: an AVIF still and a one-frame video, one per transfer,
     // each with an SDR reference (§10.7).
     app.get('/:photoId/hdr/:medium/:variant', (c) => {
@@ -94,40 +98,62 @@ export class ImageApi {
     const { photo, library } = this.photos.locate(photoId);
 
     const jpeg = readEmbeddedJpeg(getOriginalPath(library, photo.file_path));
-    if (jpeg == null) throw new AppError('NOT_FOUND', `this file has no embedded JPEG preview: ${photoId}`);
+    if (jpeg == null) throw new AppError('NOT_FOUND', `this file has no embedded JPEG: ${photoId}`);
     return new Response(new Uint8Array(jpeg), {
       headers: { 'Content-Type': 'image/jpeg', 'Cache-Control': 'no-cache', ...TIMING_ALLOW_ORIGIN },
     });
   }
 
-  // A JPEG of the full-size rendition, transcoded on request. Nothing is stored:
-  // a download is occasional, and a third derivative per photo on disk would cost
-  // more than the transcode does. Downloading the RAW is the other route.
-  private async serveJpeg(c: Context): Promise<Response> {
+  // One of the four things a photo can be taken away as. The RAW goes over as it
+  // is; the camera's JPEG is lifted out of it; `full` and `max` are transcoded
+  // from the stored rendition on request, because a download is occasional and a
+  // JPEG per rendition on disk would cost more than the transcode does.
+  //
+  // The rendition has to be on disk already: building it is the viewer's request
+  // (`POST /api/photos/:id/renditions/:r`), and a download that silently took
+  // minutes would look like a hung browser.
+  private async serveDownload(c: Context): Promise<Response> {
+    const form = c.req.param('form') ?? '';
+    // The RAW goes out through the file path every other stored file takes, so a
+    // client can still seek inside a 25MB download (§13.5). No extension assumed
+    // in the URL: a catalogue holds more than one RAW format, so both the media
+    // type and the name it lands under come off the file itself.
+    if (form === 'original') {
+      return this.serve(
+        c,
+        (photo) => rawMediaType(photo.file_path),
+        (lib, photo) => getOriginalPath(lib, photo.file_path),
+        (photo) => photo.file_path.split('/').pop() ?? photo.id,
+      );
+    }
+
     const photoId = c.req.param('photoId');
     if (photoId == null) throw new AppError('NOT_FOUND', 'photo not found');
     const { photo, library } = this.photos.locate(photoId);
+    const stem = (photo.file_path.split('/').pop() ?? photo.id).replace(/\.[^.]+$/, '');
 
-    const file = Bun.file(getRenditionPath(library, photo.id, 'full', library.preview_hdr));
-    if (!(await file.exists())) throw new AppError('NOT_FOUND', `image not found on disk: ${photoId}`);
+    if (form === 'embedded') {
+      const jpeg = readEmbeddedJpeg(getOriginalPath(library, photo.file_path));
+      if (jpeg == null) throw new AppError('NOT_FOUND', `this file has no embedded JPEG: ${photoId}`);
+      return download(new Uint8Array(jpeg), 'image/jpeg', `${stem}-embedded.jpg`);
+    }
 
-    // Decoded from the path: the rendition's bytes have no business on this side, and
-    // only the JPEG does - because that is what goes into the response.
-    const rendition = decodeFile(getRenditionPath(library, photo.id, 'full', library.preview_hdr));
+    if (form !== 'full' && form !== 'max') throw new AppError('NOT_FOUND', `unknown download: ${form}`);
+    const renditionPath = getRenditionPath(library, photo.id, form, library.rendition_hdr);
+    if (!(await Bun.file(renditionPath).exists())) throw new AppError('NOT_FOUND', `image not found on disk: ${photoId}`);
+
+    // Decoded from the path: the rendition's bytes have no business on this side,
+    // and only the JPEG does - because that is what goes into the response.
+    const decoded = decodeFile(renditionPath);
     let jpeg: Buffer;
     try {
-      jpeg = encodeJpeg(rendition, 0, JPEG_QUALITY);
+      jpeg = encodeJpeg(decoded, 0, JPEG_QUALITY);
     } finally {
-      freeImage(rendition);
+      freeImage(decoded);
     }
-    const name = (photo.file_path.split('/').pop() ?? photo.id).replace(/\.[^.]+$/, '');
-    return new Response(new Uint8Array(jpeg), {
-      headers: {
-        'Content-Type': 'image/jpeg',
-        'Content-Disposition': attachment(`${name}.jpg`),
-        'Cache-Control': 'no-cache',
-      },
-    });
+    // Suffixed, because a reader comparing the two renders wants both in the same
+    // folder and `name.jpg` twice is one file and a copy.
+    return download(new Uint8Array(jpeg), 'image/jpeg', `${stem}-${form === 'max' ? 'rendered-max' : 'rendered'}.jpg`);
   }
 
   // 404s go through AppError (not c.notFound()) so every not-available response
@@ -149,7 +175,7 @@ export class ImageApi {
     const file = Bun.file(pathFor(library, photo));
     if (!(await file.exists())) throw new AppError('NOT_FOUND', `image not found on disk: ${photoId}`);
 
-    // Thumbnails are regenerated in place under a stable URL, so the response has
+    // Renditions are rebuilt in place under a stable URL, so the response has
     // to carry a validator or a client keeps showing the old picture: with no
     // ETag, no Last-Modified and no Cache-Control the browser caches
     // heuristically and has nothing to revalidate against. `no-cache` still

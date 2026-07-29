@@ -63,7 +63,7 @@ test('setMissing marks missing only when file_path still matches the scanned pat
   expect(missingOf('mv')).toBe(1);
 });
 
-// The thumbnail queue is built in the order the grid will show it, so the first
+// The rendition queue is built in the order the grid will show it, so the first
 // screenful of a large import is the first to fill in (§10.2). Insertion order is
 // deliberately the reverse of capture order here: returning these in the order
 // they were written is exactly the failure, and it is invisible on a small library.

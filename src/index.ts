@@ -92,7 +92,7 @@ app.use('*', async (c, next) => {
   c.header('X-Content-Type-Options', 'nosniff');
 });
 // A read is only worth a line when it went wrong: a grid scrolling through a
-// shoot is hundreds of thumbnail GETs a minute, and burying the import that is
+// shoot is hundreds of rendition GETs a minute, and burying the import that is
 // actually running is how a log stops being read. Anything that changes state
 // is worth one whatever it returns.
 app.use('*', async (c, next) => {

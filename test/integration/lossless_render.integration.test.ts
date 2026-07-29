@@ -20,9 +20,9 @@ function library(dataPath: string, hdr: boolean): Library {
     root_path: dataPath,
     data_path: dataPath,
     ordering: 'added_desc',
-    preview_source: 'render',
-    preview_hdr: hdr,
-    preview_hdr_video: false,
+    rendition_source: 'render',
+    rendition_hdr: hdr,
+    rendition_hdr_video: false,
     last_synced_at: null,
     photo_count: 0,
   };

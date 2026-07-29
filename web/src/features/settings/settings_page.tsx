@@ -1,8 +1,9 @@
 import { observer } from 'mobx-react-lite';
 import { useEffect, useState } from 'react';
 import { CircleStop, FolderPlus, History, Maximize2, RefreshCw, Sparkles, Trash2, Wand2 } from 'lucide-react';
-import type { Library, PreviewRenditionMode, PreviewSource } from '../../api/client';
+import type { Library, ViewerRenditionMode, RenditionSource } from '../../api/client';
 import { useAppSettingsStore, useLibrariesStore, usePresenters, useSyncStore } from '../../app/stores_context';
+import { renditionLabel } from '../photos/renditions';
 import { Button, Heading, ICON, type Option, SegmentedControl, Text, TextField } from '../../ui/ui';
 import { SyncStrip } from '../sync/sync_strip';
 
@@ -35,7 +36,7 @@ const LibrarySettings = observer(function LibrarySettings(): JSX.Element {
               {library.last_synced_at == null ? 'never synced' : `synced ${relativeTime(library.last_synced_at)}`}
             </Text>
             {sync.libraryId === library.id && <SyncStrip />}
-            <PreviewSettings library={library} />
+            <RenditionSettings library={library} />
           </div>
 
           {/* The same slot, because stopping is what you want from a run in
@@ -74,14 +75,16 @@ const LibrarySettings = observer(function LibrarySettings(): JSX.Element {
   );
 });
 
-const SOURCES: Option<PreviewSource>[] = [
-  { value: 'embedded', label: 'Camera JPEG', icon: <Sparkles size={ICON} /> },
-  { value: 'render', label: 'Render the RAW', icon: <Wand2 size={ICON} /> },
+// Named as the viewer names the rendition each one produces, so the setting and
+// the picker are visibly the same two choices.
+const SOURCES: Option<RenditionSource>[] = [
+  { value: 'embedded', label: renditionLabel('embedded'), icon: <Sparkles size={ICON} /> },
+  { value: 'render', label: renditionLabel('full'), icon: <Wand2 size={ICON} /> },
 ];
 
 // What this browser and display say they can do. Reported, never enforced: HDR
 // support is negotiated between the browser, the compositor and the monitor's
-// EDID, and a wrong "no" here should not stop anyone building HDR previews for
+// EDID, and a wrong "no" here should not stop anyone building HDR renditions for
 // a machine they will open them on later.
 function hdrCapability(): string {
   if (typeof window === 'undefined' || window.matchMedia == null) return 'unknown';
@@ -93,57 +96,57 @@ function hdrCapability(): string {
 // retroactive: it decides what gets built next, and rebuilding an existing
 // catalogue is a job you ask for explicitly, not something a preference does to
 // thousands of files behind your back.
-const PreviewSettings = observer(function PreviewSettings({ library }: { library: Library }): JSX.Element {
+const RenditionSettings = observer(function RenditionSettings({ library }: { library: Library }): JSX.Element {
   const { libraries } = usePresenters();
 
   return (
     <div className="panel">
       <SegmentedControl
-        label="Thumbnails and previews from"
+        label="Build renditions from"
         options={SOURCES}
-        value={library.preview_source}
-        onChange={(source) => void libraries.setPreviewSource(library.id, source)}
+        value={library.rendition_source}
+        onChange={(source) => void libraries.setRenditionSource(library.id, source)}
       />
       <Text variant="mono" as="p">
-        The camera JPEG needs no demosaic, so it is much faster, and carries the maker&apos;s colour, but is only as large as the body
+        The embedded JPEG needs no demosaic, so it is much faster, and carries the maker&apos;s colour, but is only as large as the body
         embedded. Rendering demosaics the RAW at full resolution.
       </Text>
 
       {/* Only offered for a render: an embedded JPEG is 8-bit SDR, so there is
           no headroom in it to carry however the setting is left. */}
-      {library.preview_source === 'render' && (
+      {library.rendition_source === 'render' && (
         <label className="row">
           <input
             type="checkbox"
-            checked={library.preview_hdr}
-            onChange={(e) => void libraries.setPreviewHdr(library.id, e.currentTarget.checked)}
+            checked={library.rendition_hdr}
+            onChange={(e) => void libraries.setRenditionHdr(library.id, e.currentTarget.checked)}
           />
           <span>
-            HDR previews <Text variant="mono">({hdrCapability()})</Text>
+            HDR renditions <Text variant="mono">({hdrCapability()})</Text>
           </span>
         </label>
       )}
-      {library.preview_source === 'render' && (
+      {library.rendition_source === 'render' && (
         <Text variant="mono" as="p">
-          Renders the full-size preview as PQ HDR. Chrome and Safari display it; Firefox does not, and shows it dark. The grid stays
+          Renders the full-size rendition as PQ HDR. Chrome and Safari display it; Firefox does not, and shows it dark. The grid stays
           SDR either way. Nothing checks your display first, so you can build HDR here and look at it somewhere else.
         </Text>
       )}
 
       {/* Nested under HDR because it is a second encode of the same render, and
           meaningless without one. */}
-      {library.preview_source === 'render' && library.preview_hdr && (
+      {library.rendition_source === 'render' && library.rendition_hdr && (
         <>
           <label className="row">
             <input
               type="checkbox"
-              checked={library.preview_hdr_video}
-              onChange={(e) => void libraries.setPreviewHdrVideo(library.id, e.currentTarget.checked)}
+              checked={library.rendition_hdr_video}
+              onChange={(e) => void libraries.setRenditionHdrVideo(library.id, e.currentTarget.checked)}
             />
             <span>Also encode for Firefox on Windows</span>
           </label>
           <Text variant="mono" as="p">
-            Writes a second copy of each HDR preview as a one-frame video, which is the only form Firefox will display in HDR. Costs
+            Writes a second copy of each HDR rendition as a one-frame video, which is the only form Firefox will display in HDR. Costs
             roughly another second per photo on import, for a file no other browser ever reads, so leave it off unless you use
             Firefox on an HDR display.
           </Text>
@@ -153,10 +156,12 @@ const PreviewSettings = observer(function PreviewSettings({ library }: { library
   );
 });
 
-const RENDITION_MODES: Option<PreviewRenditionMode>[] = [
-  { value: 'embedded', label: 'Camera JPEG', icon: <Sparkles size={ICON} /> },
-  { value: 'full', label: 'From RAW', icon: <Wand2 size={ICON} /> },
-  { value: 'max', label: 'Max quality', icon: <Maximize2 size={ICON} /> },
+// The three renditions under the names the viewer gives them, then the two modes
+// that follow whatever was chosen there.
+const RENDITION_MODES: Option<ViewerRenditionMode>[] = [
+  { value: 'embedded', label: renditionLabel('embedded'), icon: <Sparkles size={ICON} /> },
+  { value: 'full', label: renditionLabel('full'), icon: <Wand2 size={ICON} /> },
+  { value: 'max', label: renditionLabel('max'), icon: <Maximize2 size={ICON} /> },
   { value: 'remember', label: 'Last used', icon: <History size={ICON} /> },
   { value: 'remember_per_photo', label: 'Last used per photo', icon: <History size={ICON} /> },
 ];
@@ -175,13 +180,13 @@ const ViewingSettings = observer(function ViewingSettings(): JSX.Element {
       <SegmentedControl
         label="Open photos at"
         options={RENDITION_MODES}
-        value={settings.previewRenditionMode}
-        onChange={(mode) => void appSettings.setPreviewRenditionMode(mode)}
+        value={settings.viewerRenditionMode}
+        onChange={(mode) => void appSettings.setViewerRenditionMode(mode)}
       />
       <Text variant="mono" as="p">
-        The same picture at three quality levels: the camera&apos;s own JPEG, a render of the RAW, and a full-resolution render. Each is
-        built the first time it is asked for and cached, so anything above the one your library builds on import costs a wait the first
-        time you open a photo.
+        The same picture as three renditions: the camera&apos;s own JPEG, a render of the RAW, and a full-resolution render. Each is built
+        the first time it is asked for and cached, so anything above the one your library builds on import costs a wait the first time
+        you open a photo.
       </Text>
     </div>
   );

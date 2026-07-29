@@ -24,7 +24,7 @@ const REPLAY = 512;
 // a silent socket out well before a quiet library produces an event (index.ts).
 const HEARTBEAT_MS = 20_000;
 
-// Tells clients which photos have a freshly built thumbnail. Thumbnails are
+// Tells clients which photos have a freshly built rendition. Renditions are
 // written asynchronously, so a tile rendered during an import asks for a file
 // that is not there yet; this is how it learns to ask again, for that one photo,
 // at the moment there is something to fetch (DESIGN §18.6).
@@ -52,7 +52,7 @@ export class EventsApi {
 
         const send = (event: PhotoEvent): void => {
           const data = JSON.stringify({ id: event.photoId, stage: event.written.stage, version: event.written.version });
-          void write({ id: String(event.id), event: 'thumbnail', data });
+          void write({ id: String(event.id), event: 'rendition', data });
         };
         for (const event of this.since(c.req.header('Last-Event-ID'))) send(event);
         this.clients.add(send);

@@ -641,7 +641,7 @@ p.ui-text--mono {
 }
 
 /* ---------- collection strip: the signature element ----------
-   One cell per photo queued by the current sync run, filling as thumbnails
+   One cell per photo queued by the current sync run, filling as renditions
    land. Reads photos_processed / photos_processing straight off the status
    endpoint, so it is a picture of the actual queue draining. */
 
@@ -849,7 +849,7 @@ p.ui-text--mono {
   flex-direction: column;
 }
 
-/* A row per photo: the thumbnail shrinks to a fixed strip and the foot spreads
+/* A row per photo: the rendition shrinks to a fixed strip and the foot spreads
    out, trading density for legible filenames and dates. */
 .grid--list .tile {
   aspect-ratio: auto;
@@ -931,7 +931,7 @@ p.ui-text--mono {
   height: 100%;
 }
 
-/* Rings are drawn by an overlay rather than an inset shadow: the thumbnail is a
+/* Rings are drawn by an overlay rather than an inset shadow: the rendition is a
    child element and paints over any shadow the tile itself casts inward. */
 .tile--selected::after,
 .tile--focused::after {

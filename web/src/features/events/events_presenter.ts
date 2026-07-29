@@ -16,7 +16,7 @@ export class EventsPresenter {
     // Fires on every (re)connect, so a server that went away and came back tells
     // the views holding a request that died with it to ask again.
     source.addEventListener('open', () => this.photos.serverReachable());
-    source.addEventListener('thumbnail', (event) => {
+    source.addEventListener('rendition', (event) => {
       // The announcement carries the row's new value rather than a bare "it
       // changed", so nothing has to be re-read to act on it.
       const { id, stage, version } = JSON.parse((event as MessageEvent<string>).data) as {

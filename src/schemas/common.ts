@@ -13,6 +13,15 @@ export type Pagination = z.infer<typeof PaginationSchema>;
 
 export const UuidSchema = z.uuid();
 
+// Where a rendition's pixels come from (§10.2). 'embedded' lifts the camera's own
+// JPEG out of the RAW, which needs no demosaic; 'render' demosaics at full
+// resolution and is the only source with the headroom for HDR. Shared because the
+// library states which one to build with and each photo records which one was
+// actually used, and the two must not drift apart.
+export const RENDITION_SOURCES = ['embedded', 'render'] as const;
+export const RenditionSourceSchema = z.enum(RENDITION_SOURCES);
+export type RenditionSource = z.infer<typeof RenditionSourceSchema>;
+
 // Every list endpoint accepts this filter. Default excludes soft-deleted rows.
 // stringbool(), not coerce.boolean(): Boolean("false") is true, so
 // ?include_deleted=false would wrongly parse as true under coercion.

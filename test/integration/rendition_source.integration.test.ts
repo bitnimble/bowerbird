@@ -41,7 +41,7 @@ test('the embedded preview carries its own EXIF orientation', () => {
   }
 });
 
-test('the preview settings live on the library and round-trip', () => {
+test('the rendition settings live on the library and round-trip', () => {
   const db = createDatabase(':memory:');
   const libraries = new LibrariesRepository(db);
   const id = '00000000-0000-4000-8000-0000000000c1';
@@ -51,27 +51,27 @@ test('the preview settings live on the library and round-trip', () => {
     // The default is the embedded JPEG, which needs no demosaic, and HDR is off
     // because it only means anything for a render.
     const created = libraries.getById(id)!;
-    expect(created.preview_source).toBe('embedded');
-    expect(created.preview_hdr).toBe(false);
+    expect(created.rendition_source).toBe('embedded');
+    expect(created.rendition_hdr).toBe(false);
 
     // The video is its own opt-in, off even once HDR is on: it is a second
     // encode per photo for a file only Firefox reads (§10.7).
-    expect(created.preview_hdr_video).toBe(false);
+    expect(created.rendition_hdr_video).toBe(false);
 
-    libraries.setPreviewSource(id, 'render');
-    libraries.setPreviewHdr(id, true);
+    libraries.setRenditionSource(id, 'render');
+    libraries.setRenditionHdr(id, true);
     const hdrOnly = libraries.getById(id)!;
-    expect(hdrOnly.preview_source).toBe('render');
-    expect(hdrOnly.preview_hdr).toBe(true);
-    expect(hdrOnly.preview_hdr_video).toBe(false);
+    expect(hdrOnly.rendition_source).toBe('render');
+    expect(hdrOnly.rendition_hdr).toBe(true);
+    expect(hdrOnly.rendition_hdr_video).toBe(false);
 
-    libraries.setPreviewHdrVideo(id, true);
+    libraries.setRenditionHdrVideo(id, true);
     const withVideo = libraries.getById(id)!;
-    expect(withVideo.preview_hdr_video).toBe(true);
+    expect(withVideo.rendition_hdr_video).toBe(true);
 
     // Stored as integers, so they have to come back booleans rather than 1.
-    expect(typeof withVideo.preview_hdr).toBe('boolean');
-    expect(typeof withVideo.preview_hdr_video).toBe('boolean');
+    expect(typeof withVideo.rendition_hdr).toBe('boolean');
+    expect(typeof withVideo.rendition_hdr_video).toBe('boolean');
   } finally {
     db.close();
   }

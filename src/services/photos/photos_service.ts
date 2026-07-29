@@ -60,7 +60,7 @@ export class PhotosService {
       original_path: library == null ? null : getOriginalPath(library, photo.file_path),
       // A library that serves the camera's JPEG has no full-size rendition built,
       // so opening at one would mean waiting for a render nobody asked for.
-      default_rendition: library?.preview_source === 'embedded' ? 'embedded' : 'full',
+      default_rendition: library?.rendition_source === 'embedded' ? 'embedded' : 'full',
       renditions: library == null ? null : this.renditionsOf(library, photo.id, photo.file_path),
     };
   }
@@ -82,7 +82,7 @@ export class PhotosService {
     this.repairing.add(photo.id);
     void this.processing
       // Always the embedded JPEG, matching the import: the grid wants a small SDR
-      // thumbnail from the fastest source there is, whatever the viewer is set to.
+      // rendition from the fastest source there is, whatever the viewer is set to.
       .renderOne(raw, photo.id, library, 'grid', false, 'embedded')
       .catch((err: unknown) => log.error('could not rebuild a grid tile', { photo: photo.id, err }))
       .finally(() => this.repairing.delete(photo.id));
@@ -106,7 +106,7 @@ export class PhotosService {
   // and a client asking for a file that was never built would sit on a retrying
   // 404 rather than showing what is actually there.
   private renditionsOf(library: Library, photoId: string, filePath: string): PhotoDetail['renditions'] {
-    const hdr = library.preview_hdr;
+    const hdr = library.rendition_hdr;
     const stored = (rendition: Rendition) => {
       const file = getRenditionPath(library, photoId, rendition, hdr);
       const twin = getRenditionPath(library, photoId, rendition, hdr, true);
@@ -189,7 +189,7 @@ export class PhotosService {
 
   // Re-reads the RAW header and updates the stored metadata. Sync only re-opens
   // a file whose stat changed, so photos catalogued before a metadata field
-  // existed keep NULLs forever without this. Thumbnails are untouched: nothing
+  // existed keep NULLs forever without this. Renditions are untouched: nothing
   // about the pixels changed.
   async refreshMetadata(photoIds: string[]): Promise<number> {
     let updated = 0;
@@ -239,7 +239,7 @@ export class PhotosService {
 
     // Both renditions follow the library's HDR setting: they are the same render
     // from the same RAW, and dropping one to SDR would make it the odd one out.
-    const hdr = library.preview_hdr;
+    const hdr = library.rendition_hdr;
     const output = getRenditionPath(library, photo.id, rendition, hdr);
     // The file *is* the cache, so forcing a rebuild means removing it: the
     // builder returns early on a file that already exists, and would otherwise
@@ -292,7 +292,7 @@ export class PhotosService {
     return this.get(photoId);
   }
 
-  // Soft-delete: move the RAW to a Bin and flag is_deleted (§12). Thumbnails are
+  // Soft-delete: move the RAW to a Bin and flag is_deleted (§12). Renditions are
   // deliberately KEPT: the Bin exists to be browsed and restored from, which is
   // impossible without them, and a WebP pair is ~1% of the RAW the Bin is already
   // holding. Each photo is isolated so one failure doesn't abandon the rest.

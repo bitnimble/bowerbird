@@ -59,7 +59,7 @@ test('prune removes generated files whose photo is gone and keeps the rest', asy
 
   const keptSmall = seedFile('renditions/grid', `${LIVE}.avif`);
   const keptFull = seedFile('renditions/full', `${LIVE}.avif`);
-  // A binned photo keeps its row, and its thumbnails are what make the Bin
+  // A binned photo keeps its row, and its renditions are what make the Bin
   // browsable, so it must survive.
   const keptBin = seedFile('renditions/grid', `${BINNED}.avif`);
   const orphanSmall = seedFile('renditions/grid', `${GONE}.avif`);
@@ -82,7 +82,7 @@ test('prune removes a live photo’s render left behind by an earlier output for
   // The full-resolution view has been PNG, then JPEG XL, now AVIF. Each switch
   // writes a new file rather than replacing the old one, so without this the
   // superseded renders sit there forever - and it is what sweeps the WebP
-  // thumbnails left by the move to AVIF, with no migration step to run.
+  // renditions left by the move to AVIF, with no migration step to run.
   const supersededPng = seedFile('renditions/max', `${LIVE}.png`);
   const supersededJxl = seedFile('renditions/max', `${LIVE}.jxl`);
   const current = seedFile('renditions/max', `${LIVE}.avif`);

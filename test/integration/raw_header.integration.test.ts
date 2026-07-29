@@ -73,7 +73,7 @@ describe.each([
 
   // Bodies that state a visible frame inside the raw frame (the ILCE-7CR does) get
   // cropped to it, or the masked border decodes as black bars down two edges. The
-  // stored dimensions have to describe the same picture the thumbnail shows, so
+  // stored dimensions have to describe the same picture the rendition shows, so
   // these two must never disagree -- that is what breaks first if the crop is
   // applied in one path and not the other.
   test('the recorded dimensions are the dimensions that get decoded', () => {

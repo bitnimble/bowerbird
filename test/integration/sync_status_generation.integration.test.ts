@@ -1,4 +1,4 @@
-// The sync lock is released before the detached thumbnail processing runs, so a
+// The sync lock is released before the detached rendition processing runs, so a
 // newer sync can start while an older generation's processing tail is still going.
 // The older tail's status write must not stomp the newer generation's status.
 //   docker exec bowerbird-dev bun test test/integration

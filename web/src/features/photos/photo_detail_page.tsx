@@ -5,7 +5,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Download,
-  FileImage,
   FileType,
   Image as ImageIcon,
   Maximize2,
@@ -16,15 +15,7 @@ import {
   Wand2,
 } from 'lucide-react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import {
-  jpegUrl,
-  needsHdrVideo,
-  originalUrl,
-  renditionVideoUrl,
-  viewerUrl,
-  type PhotoDetail,
-  type PreviewRendition,
-} from '../../api/client';
+import { needsHdrVideo, renditionVideoUrl, viewerUrl, type PhotoDetail, type ViewerRendition } from '../../api/client';
 import { captureDateTime, localDateTime } from '../../api/dates';
 import {
   useAlbumsStore,
@@ -34,7 +25,7 @@ import {
   useShootsStore,
 } from '../../app/stores_context';
 import { ActionMenu, Button, ICON, MoreLess, type Option, Text, TextArea } from '../../ui/ui';
-import { renditionLabel } from './photos_presenter';
+import { renditionLabel } from './renditions';
 import { PhotoStage } from './photo_stage';
 import { TRIAGE_KEYS, TriageControl } from './triage_control';
 
@@ -108,8 +99,8 @@ function bodyLabel(make: string | null, model: string | null): string {
 
 // Empty once both passes have landed, which is the usual state.
 function stageLabel(photo: PhotoDetail): string {
-  if (photo.needs_tile) return ' · building the grid thumbnail';
-  return photo.needs_renditions ? ' · building the full-size image this view shows' : '';
+  if (photo.needs_tile) return ' · building the grid rendition';
+  return photo.needs_renditions ? ' · building the rendition this view shows' : '';
 }
 
 function fileSizeLabel(bytes: number): string {
@@ -124,19 +115,22 @@ function takenLabel(iso: string | null, offset: string | null): string {
   return offset == null ? wallClock : `${wallClock} (UTC${offset.replace(/:00$/, '')})`;
 }
 
-const DOWNLOADS: Option<'raw' | 'jpeg'>[] = [
-  { value: 'raw', label: 'Original RAW', icon: <FileType size={ICON} /> },
-  { value: 'jpeg', label: 'JPEG', icon: <FileImage size={ICON} /> },
-];
-
 // Renditions of the same frame rather than commands: each is built once and
 // cached, so these read as "which one am I looking at", not "rebuild it now".
 // All three stay on offer whichever is showing, including the step back down to
 // the camera's JPEG: comparing a render against it is a reason to switch.
-const RENDITIONS: Option<PreviewRendition>[] = [
-  { value: 'embedded', label: 'Embedded JPEG', icon: <Sparkles size={ICON} />, hint: 'I' },
-  { value: 'full', label: 'From RAW', icon: <Wand2 size={ICON} />, hint: 'O' },
-  { value: 'max', label: 'From RAW (max quality)', icon: <Maximize2 size={ICON} /> },
+const RENDITIONS: Option<ViewerRendition>[] = [
+  { value: 'embedded', label: renditionLabel('embedded'), icon: <Sparkles size={ICON} />, hint: 'I' },
+  { value: 'full', label: renditionLabel('full'), icon: <Wand2 size={ICON} />, hint: 'O' },
+  { value: 'max', label: renditionLabel('max'), icon: <Maximize2 size={ICON} /> },
+];
+
+// The same three, plus the RAW they all come from. Named off the list above so a
+// rendition cannot be called one thing in the viewer and another in the download
+// it produces; the keyboard hints are dropped, since nothing downloads on a key.
+const DOWNLOADS: Option<'original' | ViewerRendition>[] = [
+  { value: 'original', label: 'Original RAW', icon: <FileType size={ICON} /> },
+  ...RENDITIONS.map(({ value, label, icon }) => ({ value, label, icon })),
 ];
 
 const ACTIONS: Option<'metadata' | 'delete'>[] = [
@@ -178,13 +172,13 @@ const DetailNav = observer(function DetailNav({ photoId }: { photoId: string }):
         trigger={
           <>
             <ImageIcon size={ICON} />
-            Image source
+            Rendition
           </>
         }
         options={RENDITIONS}
         toggles={[
           {
-            label: 'Disable cache when changing preview',
+            label: 'Disable cache when changing rendition',
             icon: <RefreshCw size={ICON} />,
             checked: store.forceRebuild,
             onChange: photos.setForceRebuild,
@@ -216,9 +210,7 @@ const DetailNav = observer(function DetailNav({ photoId }: { photoId: string }):
           </>
         }
         options={DOWNLOADS}
-        onSelect={(kind) => {
-          window.location.href = kind === 'raw' ? originalUrl(photoId) : jpegUrl(photoId);
-        }}
+        onSelect={(form) => void photos.download(photoId, form)}
       />
       {store.buildingRendition && <Text variant="mono">building…</Text>}
     </div>
@@ -381,7 +373,7 @@ const CameraPanel = observer(function CameraPanel({ photoId, defaultOpen }: { ph
 
 // What is actually on screen, which is the only panel that has to hear about a
 // frame decoding.
-const PreviewPanel = observer(function PreviewPanel({ photoId, defaultOpen }: { photoId: string; defaultOpen: boolean }): JSX.Element {
+const RenditionPanel = observer(function RenditionPanel({ photoId, defaultOpen }: { photoId: string; defaultOpen: boolean }): JSX.Element {
   const store = usePhotosStore();
   const serverConfig = useServerConfigStore();
   const photo = store.detailFor(photoId);
@@ -390,17 +382,17 @@ const PreviewPanel = observer(function PreviewPanel({ photoId, defaultOpen }: { 
   const shownFile = photo?.renditions?.[showing];
   const shownVideo = needsHdrVideo() ? (shownFile?.video ?? null) : null;
   const shownImage = store.shownImageOf(photoId, showing);
-  const thumbs = serverConfig.config?.thumbnails;
+  const encoding = serverConfig.config?.renditions;
 
   return (
     <MetaPanel
-      title="Image preview details"
+      title="Rendition details"
       defaultOpen={defaultOpen}
       rows={[
         // The rendition actually on screen, which is the chosen one when the user
         // has switched away from the photo's own. Always knowable: it is what the
         // viewer asked for, not something a column has to have recorded.
-        ['Source', renditionLabel(showing)],
+        ['Showing', renditionLabel(showing)],
         // Named and ordered as in Original RAW below, so the same fact about two
         // files reads the same way in both panels. The pixels come off the
         // decoded image, the weight off the file the server served it from.
@@ -416,15 +408,21 @@ const PreviewPanel = observer(function PreviewPanel({ photoId, defaultOpen }: { 
         // the other two are built with say nothing about it.
         [
           'Format',
-          pending(() => (shownVideo != null ? 'AV1 (MP4)' : showing === 'embedded' ? 'JPEG' : (thumbs?.format.toUpperCase() ?? 'WEBP'))),
+          pending(() =>
+            shownVideo != null ? 'AV1 (MP4)' : showing === 'embedded' ? 'JPEG' : (encoding?.format.toUpperCase() ?? 'AVIF'),
+          ),
         ],
         // The server config reports the SDR pipeline's output space; an HDR
         // render leaves it for Rec.2020 primaries and a PQ transfer.
-        ['Colour space', pending(() => (shownFile?.hdr === true ? 'Rec.2020 PQ' : (thumbs?.color_space ?? 'sRGB')))],
+        ['Colour space', pending(() => (shownFile?.hdr === true ? 'Rec.2020 PQ' : (encoding?.color_space ?? 'sRGB')))],
         [
           'Quality',
           pending(() =>
-            showing === 'embedded' ? 'N/A' : thumbs == null ? 'unknown' : `${thumbs.full.quality} (longest edge ${thumbs.full.size}px)`,
+            showing === 'embedded'
+              ? 'N/A'
+              : encoding == null
+                ? 'unknown'
+                : `${encoding.full.quality} (longest edge ${encoding.full.size}px)`,
           ),
         ],
         // The camera's JPEG has no file of its own: this is the RAW it is lifted
@@ -574,7 +572,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
           <TriagePanel photoId={photoId} />
           <NotesPanel photoId={photoId} />
           <CameraPanel photoId={photoId} defaultOpen={expanded} />
-          <PreviewPanel photoId={photoId} defaultOpen={expanded} />
+          <RenditionPanel photoId={photoId} defaultOpen={expanded} />
           <RawPanel photoId={photoId} defaultOpen={expanded} />
         </div>
       </div>

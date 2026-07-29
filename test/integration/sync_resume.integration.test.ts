@@ -1,5 +1,5 @@
 // What a killed process leaves behind, and what the next one does with it: a
-// first scan commits as it goes (§9.4), a scoped run hands its thumbnail batch
+// first scan commits as it goes (§9.4), a scoped run hands its rendition batch
 // only the files it reconciled (§9.5), and a fresh process reports the backlog
 // rather than a flat idle (§9.6).
 //   docker exec bowerbird-dev bun test test/integration
@@ -92,7 +92,7 @@ test('a first scan writes its photos down as it goes, not all at the end', async
   expect(count()).toBe(1001);
 });
 
-test('a scoped run hands the thumbnail batch its own files, not the library backlog', async () => {
+test('a scoped run hands the rendition batch its own files, not the library backlog', async () => {
   for (const name of ['a.arw', 'b.arw', 'c.arw']) writeFileSync(path.join(root, name), name);
 
   const scopes: (ProcessingScope | undefined)[] = [];
@@ -115,7 +115,7 @@ test('a scoped run hands the thumbnail batch its own files, not the library back
   const added = db.query('SELECT id FROM photos WHERE file_path = ?').get('d.arw') as { id: string };
   expect(scopes[1]?.photoIds).toEqual([added.id]);
   // The status counts that run's own work too, or one changed file would report
-  // itself as four thumbnails outstanding.
+  // itself as four renditions outstanding.
   expect(status.photos_processing).toBe(1);
 });
 

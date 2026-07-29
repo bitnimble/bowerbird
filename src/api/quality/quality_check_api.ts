@@ -9,7 +9,7 @@ import type { LibrariesService } from '../../services/libraries/libraries_servic
 import type { PhotosService } from '../../services/photos/photos_service';
 import { decodeRawImage, freeImage, saveAvif } from '../../services/processing/rawshim_ops';
 
-// Which AVIF quality to ship thumbnails at. A diagnostic, like the HDR check
+// Which AVIF quality to ship renditions at. A diagnostic, like the HDR check
 // (§10.7): the trade is speed against artefacts, and only an eye at 1:1 settles
 // where it stops mattering. Effort is pinned at 0 because that is where the
 // speed is - 0.59s against 13.6s at the encoder's default on a 3840px frame - so
@@ -61,7 +61,7 @@ export class QualityCheckApi {
           // whatever the quality, so including it would flatten the difference the
           // page exists to show.
           const started = Bun.nanoseconds();
-          saveAvif(image, this.config.fullThumbnailSize, quality, EFFORT, file);
+          saveAvif(image, this.config.fullRenditionSize, quality, EFFORT, file);
           encodeMs = Math.round((Bun.nanoseconds() - started) / 1e6);
         } finally {
           freeImage(image);
@@ -119,7 +119,7 @@ function page(photoId: string): string {
   code { color: #7fd; }
   label { color: #ddd; }
 </style>
-<h1>AVIF quality, effort ${EFFORT}, at the full preview size</h1>
+<h1>AVIF quality, effort ${EFFORT}, at the full rendition size</h1>
 <p>
   Shown at <strong>1:1</strong>, not scaled: artefacts vanish in a downscaled view.
   Drag any panel to pan them all. <code id="note"></code>

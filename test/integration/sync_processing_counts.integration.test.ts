@@ -1,4 +1,4 @@
-// DESIGN §9.6: the per-library status reports thumbnailing progress
+// DESIGN §9.6: the per-library status reports rendition building progress
 // (photos_processing / photos_processed) while the detached processing tail runs.
 // The counts are derived live from needs_processing, so they must track the DB.
 //   docker exec bowerbird-dev bun test test/integration
@@ -35,7 +35,7 @@ afterAll(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
-test('processing counts track thumbnail progress, then settle when the tail finishes', async () => {
+test('processing counts track rendition progress, then settle when the tail finishes', async () => {
   let release!: () => void;
   const blocked = new Promise<void>((r) => (release = r));
   const sync = new SyncService(
@@ -49,7 +49,7 @@ test('processing counts track thumbnail progress, then settle when the tail fini
 
   const status = await sync.syncLibrary(LIB);
   expect(status.photos_added).toBe(3);
-  // All three were queued for thumbnailing by the sync that just inserted them.
+  // All three were queued for rendition building by the sync that just inserted them.
   expect(status.photos_processing).toBe(3);
   expect(status.photos_processed).toBe(0);
 

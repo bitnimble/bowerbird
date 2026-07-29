@@ -37,7 +37,7 @@ export interface PruneResult {
 }
 
 // Deletes generated files whose photo no longer exists. Nothing else in the
-// system does: thumbnails are written by processing and rewritten in place, so
+// system does: renditions are written by processing and rewritten in place, so
 // the only way one is left behind is for its row to vanish underneath it, which
 // happens when a catalogue is rebuilt (ids are minted per insert, so the same
 // files come back with new ones).

@@ -38,7 +38,7 @@ beforeAll(() => {
   db.query('INSERT INTO libraries (id, root_path, ordering) VALUES (?, ?, ?)').run(LIB, root, 'taken_desc');
   photos = new PhotosRepository(db);
   // No-op processing trigger: this suite exercises scan/diff detection with real
-  // metadata, not thumbnail generation (validated separately).
+  // metadata, not rendition generation (validated separately).
   const countingExtract = async (p: string) => {
     opens++;
     return extractMetadata(p);

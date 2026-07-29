@@ -47,9 +47,9 @@ function build(over: {
 }
 
 const library: Library = { id: 'lib', root_path: '/r', data_path: null, ordering: 'added_asc',
-  preview_source: 'embedded' as const,
-  preview_hdr: false,
-  preview_hdr_video: false, last_synced_at: null, photo_count: 0 };
+  rendition_source: 'embedded' as const,
+  rendition_hdr: false,
+  rendition_hdr_video: false, last_synced_at: null, photo_count: 0 };
 const shoot: Shoot = { id: 'sh', parent_id: null, library_id: 'lib', folder_path: 'Trip', name: 'Trip', description: null, banner_photo_id: null, ordering: 'taken_asc', photo_count: 0 };
 const album: Album = { id: 'al', name: 'Faves', ordering: 'taken_desc', banner_photo_id: null, photo_count: 0 };
 const detail = { id: 'p1', file_path: 'a.arw' } as PhotoDetail;
@@ -73,7 +73,7 @@ describe('PhotosService.get', () => {
     try {
       writeFileSync(path.join(root, 'a.arw'), 'raw');
       const photo = { ...detail, rendition_source: 'embedded' } as PhotoDetail;
-      const lib = { ...library, root_path: root, preview_source: 'render' as const };
+      const lib = { ...library, root_path: root, rendition_source: 'render' as const };
       const { service, processing } = build({
         photos: { getById: jest.fn(() => photo) },
         libraries: { getById: jest.fn(() => lib) },
@@ -149,20 +149,20 @@ describe('PhotosService scoped listing uses the owner ordering', () => {
 });
 
 describe('PhotosService.delete', () => {
-  it('moves the RAW into the library Bin, flags is_deleted, and keeps the thumbnails', async () => {
+  it('moves the RAW into the library Bin, flags is_deleted, and keeps the renditions', async () => {
     const root = mkdtempSync(path.join(tmpdir(), 'bb-'));
     try {
       const dataDir = path.join(root, '.bowerbird');
-      mkdirSync(path.join(dataDir, 'thumbnails', 'small'), { recursive: true });
-      mkdirSync(path.join(dataDir, 'thumbnails', 'full'), { recursive: true });
+      mkdirSync(path.join(dataDir, 'renditions', 'small'), { recursive: true });
+      mkdirSync(path.join(dataDir, 'renditions', 'full'), { recursive: true });
       writeFileSync(path.join(root, 'a.arw'), '');
-      writeFileSync(path.join(dataDir, 'thumbnails', 'small', 'p1.webp'), '');
-      writeFileSync(path.join(dataDir, 'thumbnails', 'full', 'p1.webp'), '');
+      writeFileSync(path.join(dataDir, 'renditions', 'small', 'p1.webp'), '');
+      writeFileSync(path.join(dataDir, 'renditions', 'full', 'p1.webp'), '');
 
       const lib: Library = { id: 'lib', root_path: root, data_path: null, ordering: 'added_asc',
-  preview_source: 'embedded' as const,
-  preview_hdr: false,
-  preview_hdr_video: false, last_synced_at: null, photo_count: 0 };
+  rendition_source: 'embedded' as const,
+  rendition_hdr: false,
+  rendition_hdr_video: false, last_synced_at: null, photo_count: 0 };
       const markDeleted = jest.fn();
       const photo = { id: 'p1', library_id: 'lib', shoot_id: null, file_path: 'a.arw', is_deleted: false } as PhotoDetail;
       const { service } = build({
@@ -176,8 +176,8 @@ describe('PhotosService.delete', () => {
       expect(existsSync(path.join(root, 'Bin', 'a.arw'))).toBe(true);
       // Kept, not deleted: the Bin is browsable and restorable only if the
       // binned photos can still be seen.
-      expect(existsSync(path.join(dataDir, 'thumbnails', 'small', 'p1.webp'))).toBe(true);
-      expect(existsSync(path.join(dataDir, 'thumbnails', 'full', 'p1.webp'))).toBe(true);
+      expect(existsSync(path.join(dataDir, 'renditions', 'small', 'p1.webp'))).toBe(true);
+      expect(existsSync(path.join(dataDir, 'renditions', 'full', 'p1.webp'))).toBe(true);
       // The pre-delete path is recorded so restore can put the file back there.
       expect(markDeleted).toHaveBeenCalledWith('p1', 'a.arw');
     } finally {
@@ -190,9 +190,9 @@ describe('PhotosService.delete', () => {
     try {
       writeFileSync(path.join(root, 'a.arw'), 'raw');
       const lib: Library = { id: 'lib', root_path: root, data_path: null, ordering: 'added_asc',
-  preview_source: 'embedded' as const,
-  preview_hdr: false,
-  preview_hdr_video: false, last_synced_at: null, photo_count: 0 };
+  rendition_source: 'embedded' as const,
+  rendition_hdr: false,
+  rendition_hdr_video: false, last_synced_at: null, photo_count: 0 };
       const photo = { id: 'p1', library_id: 'lib', shoot_id: null, file_path: 'a.arw', is_deleted: false } as PhotoDetail;
       const { service } = build({
         photos: {
@@ -251,14 +251,14 @@ describe('PhotosService renditions', () => {
 
   it('opens at the camera JPEG for a library that serves it, and at the full render otherwise', () => {
     expect(detailFor(library).default_rendition).toBe('embedded');
-    expect(detailFor({ ...library, preview_source: 'render' }).default_rendition).toBe('full');
+    expect(detailFor({ ...library, rendition_source: 'render' }).default_rendition).toBe('full');
   });
 
   // The file is the cache, so an SDR copy built before the setting was turned on
   // must not answer an HDR request under the same name.
   it('keeps HDR and SDR apart', () => {
     const sdr = detailFor(library).renditions?.full;
-    const hdr = detailFor({ ...library, preview_hdr: true }).renditions?.full;
+    const hdr = detailFor({ ...library, rendition_hdr: true }).renditions?.full;
     expect(hdr?.path).not.toBe(sdr?.path);
     expect(hdr?.path).toContain('full-hdr');
     expect(hdr?.hdr).toBe(true);
@@ -292,7 +292,7 @@ describe('PhotosService renditions', () => {
       mkdirSync(dir, { recursive: true });
       writeFileSync(path.join(dir, 'p1.mp4'), 'x'.repeat(11));
 
-      const withVideo = detailFor({ ...library, root_path: root, preview_hdr: true }).renditions;
+      const withVideo = detailFor({ ...library, root_path: root, rendition_hdr: true }).renditions;
       expect(withVideo?.full.video).toEqual({ path: path.join(dir, 'p1.mp4'), bytes: 11 });
       // Only `full` has one on disk, and an SDR library never gets one at all.
       expect(withVideo?.max.video).toBeNull();

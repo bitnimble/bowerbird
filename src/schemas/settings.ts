@@ -1,26 +1,27 @@
 import { z } from 'zod';
 
-// What the viewer can show, in quality order. `full` and `max` are renditions in
-// the storage sense (§10.2) - a demosaiced render fitted to the preview size, and
-// one at native resolution. `embedded` is not: it is the camera's own JPEG,
+// The renditions the viewer offers, in quality order, and what the UI names
+// "Rendition". `full` and `max` are stored renditions (§10.2) - a demosaiced
+// render fitted to the viewer's size, and one at native resolution. `embedded`
+// is one only to the reader choosing between them: it is the camera's own JPEG,
 // served straight out of the RAW rather than resized into HDR or transcoded into
-// AVIF and cached as a rendition of its own.
-export const PREVIEW_RENDITIONS = ['embedded', 'full', 'max'] as const;
-export const PreviewRenditionSchema = z.enum(PREVIEW_RENDITIONS);
-export type PreviewRendition = z.infer<typeof PreviewRenditionSchema>;
+// AVIF and cached as a file of its own.
+export const VIEWER_RENDITIONS = ['embedded', 'full', 'max'] as const;
+export const ViewerRenditionSchema = z.enum(VIEWER_RENDITIONS);
+export type ViewerRendition = z.infer<typeof ViewerRenditionSchema>;
 
 // Which of them the viewer opens a photo at. The first three pin it; the last
 // two follow whatever was chosen last, either across the catalogue or for the
 // photo being opened.
-export const PreviewRenditionModeSchema = z.enum(['embedded', 'full', 'max', 'remember', 'remember_per_photo']);
-export type PreviewRenditionMode = z.infer<typeof PreviewRenditionModeSchema>;
+export const ViewerRenditionModeSchema = z.enum(['embedded', 'full', 'max', 'remember', 'remember_per_photo']);
+export type ViewerRenditionMode = z.infer<typeof ViewerRenditionModeSchema>;
 
 export const SettingsSchema = z.object({
-  preview_rendition_mode: PreviewRenditionModeSchema,
+  viewer_rendition_mode: ViewerRenditionModeSchema,
   // What 'remember' remembers. Null until something has been chosen, which is
-  // why that mode falls back to the photo's own thumbnail rather than building
-  // a rendition nobody asked for.
-  last_preview_rendition: PreviewRenditionSchema.nullable(),
+  // why that mode falls back to the library's own rendition rather than building
+  // one nobody asked for.
+  last_viewer_rendition: ViewerRenditionSchema.nullable(),
 });
 export type Settings = z.infer<typeof SettingsSchema>;
 

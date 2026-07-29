@@ -1,5 +1,5 @@
 import { computed, observable } from 'mobx';
-import type { Ordering, PhotoDetail, PhotoSummary, PreviewRendition, Rendition, Triage } from '../../api/client';
+import type { Ordering, PhotoDetail, PhotoSummary, Rendition, Triage, ViewerRendition } from '../../api/client';
 import type { LibrariesStore } from '../libraries/libraries_store';
 import type { AppSettingsStore } from '../settings/app_settings_store';
 
@@ -44,7 +44,7 @@ export type OpenPhoto = { id: string; status: 'loading' | 'ready' } | { id: stri
  */
 export interface ShownImage {
   photoId: string;
-  rendition: PreviewRendition;
+  rendition: ViewerRendition;
   width: number;
   height: number;
 }
@@ -63,7 +63,7 @@ export type PhotoStamps = Pick<PhotoSummary, 'tile_built_at' | 'renditions_built
 // none of which a version a client made up for itself could manage (§13.5). 0
 // before that file has ever been written, which leaves the URL plain and the
 // ETag in charge.
-export function renditionVersion(photo: PhotoStamps | null | undefined, rendition: Rendition | PreviewRendition): number {
+export function renditionVersion(photo: PhotoStamps | null | undefined, rendition: Rendition | ViewerRendition): number {
   const stamp =
     rendition === 'grid' ? photo?.tile_built_at : rendition === 'embedded' ? photo?.date_updated : photo?.renditions_built_at;
   return stamp == null ? 0 : Date.parse(stamp);
@@ -104,7 +104,7 @@ export class PhotosStore {
   @observable accessor ordering: Ordering | null = null;
 
   // Minimum tile width in px, driven by the grid's zoom slider.
-  @observable accessor thumbSize = 240;
+  @observable accessor tileSize = 240;
   @observable accessor mode: ViewMode = 'grid';
 
   // A Map, not a Set, purely for observability: mobx's ObservableSet reports its
@@ -122,7 +122,7 @@ export class PhotosStore {
   // picture at one of three quality levels, each built on request and cached
   // (§10.2). Null until something is picked, which is the usual state - the
   // setting answers for the rest, and `showing` is what is actually on screen.
-  @observable accessor rendition: PreviewRendition | null = null;
+  @observable accessor rendition: ViewerRendition | null = null;
   @observable accessor buildingRendition = false;
 
   // Rebuild a rendition even when one is already on disk. Session-scoped and off
@@ -163,7 +163,7 @@ export class PhotosStore {
 
   // The decoded size of the frame this view is asking about, or null when what
   // decoded last was some other photo or rendition.
-  shownImageOf(photoId: string, rendition: PreviewRendition): ShownImage | null {
+  shownImageOf(photoId: string, rendition: ViewerRendition): ShownImage | null {
     const shown = this.shownImage;
     return shown?.photoId === photoId && shown.rendition === rendition ? shown : null;
   }
@@ -187,7 +187,7 @@ export class PhotosStore {
   // For a photo the view knows only by id - the neighbours the viewer warms.
   // Anything holding the row itself reads `renditionVersion` off it directly,
   // which is both cheaper and narrower to observe.
-  renditionVersionOf(photoId: string | null, rendition: Rendition | PreviewRendition): number {
+  renditionVersionOf(photoId: string | null, rendition: Rendition | ViewerRendition): number {
     if (photoId == null) return 0;
     return renditionVersion(this.photoFor(photoId), rendition);
   }
@@ -245,28 +245,28 @@ export class PhotosStore {
   // off the detail it was a fetch behind, which is what made the viewer paint a
   // render for a reader set to the camera's JPEG and swap it out a moment later;
   // and in an album spanning two libraries it was the previous photo's answer.
-  @computed get defaultRendition(): PreviewRendition {
+  @computed get defaultRendition(): ViewerRendition {
     const library = this.libraries.byId.get(this.openPhoto?.library_id ?? '');
     // Unknown only until the collection loads, and the camera's JPEG is the one
     // rendition every photo has, so it is the safe answer to guess with.
-    return library?.preview_source === 'render' ? 'full' : 'embedded';
+    return library?.rendition_source === 'render' ? 'full' : 'embedded';
   }
 
   // What the setting says to open at. Null only when nothing has been chosen for
   // it to remember: the per-photo memory is on the row like everything else the
   // first frame needs, so "last used per photo" no longer has to wait for the
   // detail and paint the library's default in the meantime.
-  @computed get preferredRendition(): PreviewRendition | null {
-    const mode = this.settings.previewRenditionMode;
-    if (mode === 'remember') return this.settings.lastPreviewRendition;
-    if (mode === 'remember_per_photo') return this.openPhoto?.preview_rendition ?? null;
+  @computed get preferredRendition(): ViewerRendition | null {
+    const mode = this.settings.viewerRenditionMode;
+    if (mode === 'remember') return this.settings.lastViewerRendition;
+    if (mode === 'remember_per_photo') return this.openPhoto?.viewer_rendition ?? null;
     return mode;
   }
 
   // The rendition on screen. Answered from the setting wherever it can be, so
   // stepping to the next photo asks for the file the reader actually wants on
   // the first frame instead of painting the library's default and swapping.
-  @computed get showing(): PreviewRendition {
+  @computed get showing(): ViewerRendition {
     if (this.rendition != null) return this.rendition;
     const preferred = this.preferredRendition;
     return preferred != null && this.isAlwaysBuilt(preferred) ? preferred : this.defaultRendition;
@@ -276,7 +276,7 @@ export class PhotosStore {
   // photo's own detail says whether it does: the camera's JPEG is extracted from
   // the RAW on demand, and the library's default is built on import. The other
   // two are built on request, and asking early is a 404, not a picture.
-  isAlwaysBuilt(rendition: PreviewRendition): boolean {
+  isAlwaysBuilt(rendition: ViewerRendition): boolean {
     return rendition === 'embedded' || rendition === this.defaultRendition;
   }
 

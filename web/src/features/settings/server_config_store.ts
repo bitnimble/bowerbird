@@ -1,16 +1,16 @@
 import { observable } from 'mobx';
 
-export interface ThumbnailProfile {
+export interface RenditionProfile {
   size: number;
   quality: number;
 }
 
 export interface ServerConfig {
-  thumbnails: {
+  renditions: {
     format: string;
     color_space: string;
-    small: ThumbnailProfile;
-    full: ThumbnailProfile;
+    grid: RenditionProfile;
+    full: RenditionProfile;
   };
 }
 

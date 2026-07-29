@@ -26,7 +26,7 @@ export class SyncPresenter {
   ) {}
 
   // Poll while a sync/processing run is in flight so the grid fills in as
-  // thumbnails land, then stop: an idle library needs no traffic.
+  // renditions land, then stop: an idle library needs no traffic.
   async watch(libraryId: string): Promise<void> {
     this.stop();
     this.setLibrary(libraryId);
@@ -99,7 +99,7 @@ export class SyncPresenter {
 
     // The grid is re-read for the rows a scan inserts, and once more on the tick
     // that finds the run finished. Not through the processing phase, which is the
-    // long one: the row set is settled by then and thumbnails arrive by
+    // long one: the row set is settled by then and renditions arrive by
     // announcement (§18.6), so a list request per second would answer with the
     // page the grid already has - unless the view is filtering on what processing
     // changes, which is the one thing a refetch is still the only way to learn.

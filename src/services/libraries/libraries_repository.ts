@@ -1,22 +1,22 @@
 import type { Database } from 'bun:sqlite';
-import type { Ordering } from '../../schemas/common';
-import type { Library, PreviewSource } from '../../schemas/libraries';
+import type { Ordering, RenditionSource } from '../../schemas/common';
+import type { Library } from '../../schemas/libraries';
 
 interface LibraryRow {
   id: string;
   root_path: string;
   data_path: string | null;
   ordering: string;
-  preview_source: string;
-  preview_hdr: number;
-  preview_hdr_video: number;
+  rendition_source: string;
+  rendition_hdr: number;
+  rendition_hdr_video: number;
   last_synced_at: string | null;
   photo_count: number;
 }
 
 // photo_count excludes binned photos: it answers "how big is this library", and
 // the Bin has its own count in the UI.
-const SELECT = `SELECT l.id, l.root_path, l.data_path, l.ordering, l.preview_source, l.preview_hdr, l.preview_hdr_video, l.last_synced_at,
+const SELECT = `SELECT l.id, l.root_path, l.data_path, l.ordering, l.rendition_source, l.rendition_hdr, l.rendition_hdr_video, l.last_synced_at,
   (SELECT COUNT(*) FROM photos p WHERE p.library_id = l.id AND p.is_deleted = 0) AS photo_count
   FROM libraries l`;
 
@@ -48,16 +48,16 @@ export class LibrariesRepository {
     return this.db.query('UPDATE libraries SET ordering = ? WHERE id = ?').run(ordering, id).changes > 0;
   }
 
-  setPreviewSource(id: string, source: PreviewSource): boolean {
-    return this.db.query('UPDATE libraries SET preview_source = ? WHERE id = ?').run(source, id).changes > 0;
+  setRenditionSource(id: string, source: RenditionSource): boolean {
+    return this.db.query('UPDATE libraries SET rendition_source = ? WHERE id = ?').run(source, id).changes > 0;
   }
 
-  setPreviewHdr(id: string, hdr: boolean): boolean {
-    return this.db.query('UPDATE libraries SET preview_hdr = ? WHERE id = ?').run(hdr ? 1 : 0, id).changes > 0;
+  setRenditionHdr(id: string, hdr: boolean): boolean {
+    return this.db.query('UPDATE libraries SET rendition_hdr = ? WHERE id = ?').run(hdr ? 1 : 0, id).changes > 0;
   }
 
-  setPreviewHdrVideo(id: string, enabled: boolean): boolean {
-    return this.db.query('UPDATE libraries SET preview_hdr_video = ? WHERE id = ?').run(enabled ? 1 : 0, id).changes > 0;
+  setRenditionHdrVideo(id: string, enabled: boolean): boolean {
+    return this.db.query('UPDATE libraries SET rendition_hdr_video = ? WHERE id = ?').run(enabled ? 1 : 0, id).changes > 0;
   }
 
   // Stamped when a sync finishes, so the UI can say how stale the catalogue is
@@ -77,9 +77,9 @@ function mapRow(row: LibraryRow): Library {
     root_path: row.root_path,
     data_path: row.data_path,
     ordering: row.ordering as Ordering,
-    preview_source: row.preview_source as PreviewSource,
-    preview_hdr: row.preview_hdr === 1,
-    preview_hdr_video: row.preview_hdr_video === 1,
+    rendition_source: row.rendition_source as RenditionSource,
+    rendition_hdr: row.rendition_hdr === 1,
+    rendition_hdr_video: row.rendition_hdr_video === 1,
     last_synced_at: row.last_synced_at,
     photo_count: row.photo_count,
   };

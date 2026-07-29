@@ -1,7 +1,7 @@
 import type { Album, CreateAlbumRequest, UpdateAlbumRequest } from '../../../src/schemas/albums';
 import type { CreateLibraryRequest, Library, LibrarySyncStatus, UpdateLibraryRequest } from '../../../src/schemas/libraries';
 import type { PhotoDetail, PhotoListResponse, Triage, UpdatePhotoRequest } from '../../../src/schemas/photos';
-import type { PreviewRendition, PreviewRenditionMode, Settings, UpdateSettingsRequest } from '../../../src/schemas/settings';
+import type { ViewerRendition, ViewerRenditionMode, Settings, UpdateSettingsRequest } from '../../../src/schemas/settings';
 import type { CreateShootRequest, Shoot, UpdateShootRequest } from '../../../src/schemas/shoots';
 import type { Rendition } from '../../../src/services/processing/renditions';
 import type { ProcessingStage } from '../../../src/services/processing/processing_types';
@@ -15,8 +15,8 @@ export type {
   LibrarySyncStatus,
   PhotoDetail,
   PhotoListResponse,
-  PreviewRendition,
-  PreviewRenditionMode,
+  ViewerRendition,
+  ViewerRenditionMode,
   Settings,
   Shoot,
   Triage,
@@ -25,9 +25,9 @@ export type {
 export type PhotoSummary = PhotoListResponse['photos'][number];
 export type { Rendition, ProcessingStage };
 export type Ordering = Library['ordering'];
-export type PreviewSource = Library['preview_source'];
-// NonNullable: the column is null until a photo has been processed once.
-export type ThumbnailSource = NonNullable<PhotoDetail['rendition_source']>;
+// One type for both: the library states which source to build renditions from,
+// and each photo records the one it was actually built with.
+export type RenditionSource = Library['rendition_source'];
 
 // Default to the API on the same host the page was served from. Hardcoding
 // localhost only works when the browser runs on the server; reached over the
@@ -156,7 +156,7 @@ export const api = {
     request('GET', `/api/albums/${id}/photos${query(params)}`),
 };
 
-// `version` is appended only once thumbnails have been rebuilt in this session:
+// `version` is appended only once renditions have been rebuilt in this session:
 // the file changes behind a stable URL, and an image already decoded in the page
 // is never re-requested without it.
 // One URL shape for every stored rendition, and `video` for the one-frame AV1
@@ -194,23 +194,21 @@ export function embeddedUrl(photoId: string, version = 0): string {
   return version === 0 ? url : `${url}?v=${version}`;
 }
 
-// Server-sent events: which photos have a thumbnail worth re-requesting.
+// Server-sent events: which photos have a rendition worth re-requesting.
 export function eventsUrl(): string {
   return `${BASE}/api/events`;
 }
 
-// No extension: the catalogue holds several RAW formats, and the server names the
-// download off the file itself.
-export function originalUrl(photoId: string): string {
-  return `${BASE}/image/${photoId}/original`;
-}
-
-export function jpegUrl(photoId: string): string {
-  return `${BASE}/image/${photoId}/full.jpg`;
+// One of the four things a photo can be taken away as: the RAW itself, or any of
+// the three renditions the viewer offers. No extension in the URL - the
+// catalogue holds several RAW formats, and the server names the download off the
+// file it served.
+export function downloadUrl(photoId: string, form: 'original' | ViewerRendition): string {
+  return `${BASE}/image/${photoId}/download/${form}`;
 }
 
 // What the viewer shows for one of its three choices: the camera's JPEG served
 // directly, or a stored rendition.
-export function viewerUrl(photoId: string, rendition: PreviewRendition, version = 0): string {
+export function viewerUrl(photoId: string, rendition: ViewerRendition, version = 0): string {
   return rendition === 'embedded' ? embeddedUrl(photoId, version) : renditionUrl(photoId, rendition, version);
 }

@@ -15,7 +15,7 @@ import type {
   RenditionJob,
   RenditionTarget,
   RenditionWritten,
-  ThumbnailSource,
+  RenditionSource,
 } from './processing_types';
 import { renditionDirs, type Rendition } from './renditions';
 
@@ -23,7 +23,7 @@ const WORKER_URL = new URL('./processing_worker.ts', import.meta.url).href;
 
 const log = new Logger('processing');
 
-// Orchestrates thumbnail generation across a pool of Bun workers (DESIGN §10.2).
+// Orchestrates rendition generation across a pool of Bun workers (DESIGN §10.2).
 // Workers decode + encode; the main thread owns all DB writes so bun:sqlite is
 // only ever touched from one thread.
 /** One photo's import, as the two passes a batch runs it in. */
@@ -100,14 +100,14 @@ export class ProcessingService {
     library: Library,
     rendition: Rendition,
     hdr: boolean,
-    source: ThumbnailSource = 'render',
+    source: RenditionSource = 'render',
   ): Promise<void> {
     return this.runOneOff({
       kind: 'rendition',
       photoId,
       rawFilePath,
       dataPath: getDataPath(library),
-      targets: [this.target(getDataPath(library), library.preview_hdr_video, photoId, rendition, hdr, source)],
+      targets: [this.target(getDataPath(library), library.rendition_hdr_video, photoId, rendition, hdr, source)],
       grade: this.grade(),
       // The on-demand rendition has to agree with the ones built at import, so it
       // obeys the same setting. The fit is deterministic, so refitting here lands
@@ -117,7 +117,7 @@ export class ProcessingService {
   }
 
   // Size, quality and encoder settings for one rendition. The grid and the
-  // full-size view share the thumbnail settings; the max-resolution one is native
+  // full-size view share the rendition settings; the max-resolution one is native
   // size at the tighter lossless quality, because it exists to be pixel-peeped.
   private target(
     dataPath: string,
@@ -125,16 +125,16 @@ export class ProcessingService {
     photoId: string,
     rendition: Rendition,
     hdr: boolean,
-    source: ThumbnailSource,
+    source: RenditionSource,
   ): RenditionTarget {
     const sizes: Record<Rendition, number> = {
-      grid: this.config.smallThumbnailSize,
-      full: this.config.fullThumbnailSize,
+      grid: this.config.gridRenditionSize,
+      full: this.config.fullRenditionSize,
       max: 0,
     };
     const qualities: Record<Rendition, number> = {
-      grid: this.config.smallThumbnailQuality,
-      full: this.config.fullThumbnailQuality,
+      grid: this.config.gridRenditionQuality,
+      full: this.config.fullRenditionQuality,
       max: this.config.losslessQuality,
     };
     return {
@@ -146,7 +146,7 @@ export class ProcessingService {
       size: sizes[rendition],
       quality: qualities[rendition],
       quantizer: rendition === 'max' ? this.config.losslessQuantizer : this.config.hdrCrf,
-      effort: this.config.thumbnailEffort,
+      effort: this.config.renditionEffort,
       preset: this.config.hdrPreset,
     };
   }
@@ -176,7 +176,7 @@ export class ProcessingService {
 
   // One photo, on demand, outside the pending queue: a single explicit request
   // the user is waiting on, not background work to batch. Its own worker, so a
-  // render that takes seconds cannot occupy a pool slot the thumbnail queue
+  // render that takes seconds cannot occupy a pool slot the rendition queue
   // needs.
   private async runOneOff(job: RenditionJob | HdrJob): Promise<void> {
     const worker = new Worker(WORKER_URL);
@@ -371,7 +371,7 @@ export class ProcessingService {
     // JPEG whatever the library says, so recording that would tell the next import
     // there are no renditions to build - and `dropStaleRenditions` would then
     // delete the ones there are, with nothing to ever rebuild them.
-    const source: ThumbnailSource = photo == null || photo.renditions != null ? 'render' : 'embedded';
+    const source: RenditionSource = photo == null || photo.renditions != null ? 'render' : 'embedded';
     this.photos.markRenditionsBuilt(photoId, new Date().toISOString(), source);
     if (photo != null) this.dropStaleRenditions(photo);
   }
@@ -419,8 +419,8 @@ export class ProcessingService {
     const dataPath = dataPathFor(pending.root_path, pending.data_path);
     // NULL for rows queued before the setting existed, and for anything the sync
     // inserted without naming one; the library's default answers both.
-    const source = pending.rendition_source ?? pending.preview_source;
-    const hdrVideo = pending.preview_hdr_video === 1;
+    const source = pending.rendition_source ?? pending.library_rendition_source;
+    const hdrVideo = pending.rendition_hdr_video === 1;
     const photoId = pending.photo_id;
     const rawFilePath = path.join(pending.root_path, pending.file_path);
     const common = {
@@ -444,7 +444,7 @@ export class ProcessingService {
       source === 'render' && owesRenditions
         ? {
             ...common,
-            targets: [this.target(dataPath, hdrVideo, photoId, 'full', pending.preview_hdr === 1, 'render')],
+            targets: [this.target(dataPath, hdrVideo, photoId, 'full', pending.rendition_hdr === 1, 'render')],
           }
         : null;
 
