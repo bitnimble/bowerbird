@@ -1372,6 +1372,14 @@ p.ui-text--mono {
 .meta dd {
   margin: 0;
   word-break: break-all;
+  min-width: 0;
+}
+
+.meta__clip {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Same size and family as the rows it hides, so it reads as part of the list

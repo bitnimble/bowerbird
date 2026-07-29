@@ -351,7 +351,14 @@ const CameraPanel = observer(function CameraPanel({ photoId, defaultOpen }: { ph
       defaultOpen={defaultOpen}
       rows={[
         ['Body', pending((p) => bodyLabel(p.camera_make, p.camera_model))],
-        ['Lens', pending((p) => p.lens_model ?? 'not recorded')],
+        [
+          'Lens',
+          pending((p) => (
+            <span className="meta__clip" title={p.lens_model ?? undefined}>
+              {p.lens_model ?? 'not recorded'}
+            </span>
+          )),
+        ],
         ['ISO', pending((p) => p.iso ?? 'not recorded')],
         ['Shutter', pending((p) => (p.shutter_speed == null ? 'not recorded' : shutterLabel(p.shutter_speed)))],
         ['Aperture', pending((p) => (p.aperture == null ? 'not recorded' : `f/${p.aperture.toFixed(1)}`))],
