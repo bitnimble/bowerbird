@@ -557,9 +557,7 @@ pub fn apply_geometry(samples: &[u16], width: usize, height: usize, m: &HdrMatch
 /// whatever the exposure. None when there are too few usable pairs to fit from, in
 /// which case the caller grades untransformed.
 pub fn fit(
-    linear: &[u16],
-    width: usize,
-    height: usize,
+    plane: &Plane,
     anchor: f64,
     preview: &crate::vips::Rgb,
     distortion: Option<Vec<f64>>,
@@ -586,15 +584,14 @@ pub fn fit(
     let mut jpeg = Plane { width: preview.width, height: preview.height, data: full };
     blur_plane(&mut jpeg, FIT_BLUR_RADIUS);
 
-    // Down to twice the fit grid *before* warping, the same order the SDR fit uses.
-    // Warping 60MP with bilinear taps and resampling afterwards is both slower and
-    // worse: it aliases going in, and it blurs the geometry going out. Measured,
-    // warping at full resolution took the fit from under a second to 17.
-    let wide = width.min(jpeg.width * 2);
-    let tall = (((height as f64 / width as f64) * wide as f64).round() as usize).max(1);
-    // Normalised to diffuse white inside the resample, so the decode is read where it
-    // lies rather than copied into a frame-sized f64 plane first.
-    let small = resample(linear, width, height, wide, tall, |v| f64::from(v) / anchor);
+    // Already down to twice the fit grid, and down there *before* the warp - the same
+    // order the SDR fit uses. Warping 60MP with bilinear taps and resampling afterwards
+    // is both slower and worse: it aliases going in, and it blurs the geometry going
+    // out. Measured, warping at full resolution took the fit from under a second to 17.
+    let (wide, tall) = (plane.width, plane.height);
+    // Only the normalisation is per-fit, so this is a pass over ~1.1M pixels rather
+    // than over the frame the plane was averaged from.
+    let small: Vec<f64> = plane.data.par_iter().map(|v| v / anchor).collect();
 
     // Through the same geometry the SDR fit resolved, so a pair is two views of one
     // point in the scene.
@@ -620,37 +617,36 @@ pub fn fit_long_edge() -> usize {
     FIT_LONG_EDGE
 }
 
-/// The scene-linear decode as an 8-bit sRGB render, at the size the SDR fit resizes to.
+/// The decode box-averaged to the grid both fits work on, in the decode's own units.
+///
+/// Shared rather than built twice. The geometry search and the colour fit want exactly
+/// this same average and differ only in the scalar they normalise it by, so walking a
+/// 61MP frame once each was a whole extra pass over 15.8M pixels for the same answer.
+/// Left unnormalised for that reason: each consumer divides by its own level.
+///
+/// `wide` should be twice the preview's width, which is what `fit::fit` resizes to -
+/// so arriving at that size makes its own resize a no-op rather than a second resample.
+pub fn fit_plane(linear: &[u16], width: usize, height: usize, wide: usize) -> Plane {
+    let wide = width.min(wide).max(1);
+    let tall = (((height as f64 / width as f64) * wide as f64).round() as usize).max(1);
+    Plane { width: wide, height: tall, data: resample(linear, width, height, wide, tall, f64::from) }
+}
+
+/// That plane as an 8-bit sRGB render, for the geometry search.
 ///
 /// So the geometry fit can be driven off the HDR decode rather than a second, 8-bit one
 /// taken of the same file. LibRaw's sRGB path is linear, then auto-bright, then the
 /// sRGB gamma; this is the same shape with the frame's own peak standing in for
 /// auto-bright, which clips its brightest 0.01% where this clips none.
-///
-/// `long_edge` should be twice the fit grid: `fit::fit` resizes whatever it is handed
-/// to twice the preview's width, so arriving at that size makes its resize a no-op
-/// rather than a second resample.
-pub fn render_srgb8(
-    linear: &[u16],
-    width: usize,
-    height: usize,
-    peak: f64,
-    long_edge: usize,
-) -> crate::vips::Rgb {
-    let longest = width.max(height);
-    let scale = if long_edge >= longest { 1.0 } else { long_edge as f64 / longest as f64 };
-    let dw = ((width as f64 * scale).round() as usize).max(1);
-    let dh = ((height as f64 * scale).round() as usize).max(1);
-
-    let small = resample(linear, width, height, dw, dh, |v| f64::from(v) / peak);
-    let mut data = vec![0u8; dw * dh * 3];
-    data.par_chunks_mut(3).zip(small.par_chunks(3)).for_each(|(out, px)| {
-        let v = to_srgb8(px[0], px[1], px[2]);
+pub fn render_srgb8(plane: &Plane, peak: f64) -> crate::vips::Rgb {
+    let mut data = vec![0u8; plane.width * plane.height * 3];
+    data.par_chunks_mut(3).zip(plane.data.par_chunks(3)).for_each(|(out, px)| {
+        let v = to_srgb8(px[0] / peak, px[1] / peak, px[2] / peak);
         for c in 0..3 {
             out[c] = v[c] as u8;
         }
     });
-    crate::vips::Rgb { width: dw, height: dh, data }
+    crate::vips::Rgb { width: plane.width, height: plane.height, data }
 }
 
 #[cfg(test)]

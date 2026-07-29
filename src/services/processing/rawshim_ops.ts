@@ -634,20 +634,30 @@ export function fitProfile(render: ImageHandle, rawFilePath: string): FittedProf
 }
 
 /**
- * `fitProfile` off a 16-bit scene-linear decode instead of an 8-bit sRGB one.
+ * The whole camera match for an HDR rendition, off the scene-linear decode alone.
  *
- * The HDR path already holds that decode and wants only the geometry from this fit, so
- * this answers whether the 8-bit decode beside it is needed at all.
+ * For a job that renders no SDR: there is then no 8-bit render to take geometry from
+ * and no reason to make one, so the geometry search and the colour fit both run off
+ * this decode, in one pass over it. The profile comes back alongside the match because
+ * the search resolved it; the caller wants it only for reporting.
+ *
+ * Null when the file embeds no preview or the fit found nothing worth applying, in
+ * which case the caller grades neutrally. Release with `freeHdrMatch`.
  */
-export function fitProfileFromLinear(
+export function fitHdrFromLinear(
   linear: ImageHandle,
   rawFilePath: string,
-  whiteQuantile: number,
-): FittedProfile | null {
-  if (linear.depth !== 16) throw new Error(`the linear fit needs a 16-bit decode, got ${linear.depth}`);
+  options: HdrOptions,
+): { profile: FittedProfile; match: HdrMatchHandle } | null {
+  if (linear.depth !== 16) throw new Error(`the HDR fit needs a 16-bit decode, got ${linear.depth}`);
   const raw = profileBuffer();
-  const status = shim().bb_fit_linear(linear.pointer, Buffer.from(`${rawFilePath}\0`), whiteQuantile, ptr(raw));
-  return status === 1 ? null : readProfile(raw, status);
+  const pointer = shim().bb_fit_hdr(
+    linear.pointer,
+    Buffer.from(`${rawFilePath}\0`),
+    ptr(hdrOptionsBuffer(options)),
+    ptr(raw),
+  );
+  return pointer ? { profile: readProfile(raw, 0), match: { pointer } } : null;
 }
 
 /**

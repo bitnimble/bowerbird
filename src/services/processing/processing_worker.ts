@@ -6,8 +6,8 @@ import {
   decodeRawImage,
   describeForStacking,
   encodeHdrRendition,
+  fitHdrFromLinear,
   fitHdrMatch,
-  fitProfileFromLinear,
   freeHdrMatch,
   freeImage,
   renderImage,
@@ -212,20 +212,9 @@ async function renditions(job: RenditionJob): Promise<Uint8Array | undefined> {
     // nothing to match against, so the fit declines on its own.
     const rendersSdr = job.targets.some((target) => !target.hdr && target.source === 'render');
     const rendersHdr = job.targets.some((target) => target.hdr);
-    // An HDR job takes only the geometry from this fit - the colour half is refitted
-    // in the grade's own domain (§10.8.1) - and the search resizes whatever it is
-    // handed down to a 640px grid. So where nothing renders SDR, it is driven off the
-    // scene-linear decode this job is already holding rather than demosaicing the same
-    // file a second time in 8-bit. Measured across the fixtures the tier and the knots
-    // come out identical and the crop within 0.06%, which is ~1.4px at the corner of a
-    // 3840px frame; `fits_the_same_geometry_off_either_decode` pins it.
-    const profile = !job.matchEmbeddedJpeg
-      ? null
-      : rendersSdr
-        ? fitMatchProfile(job.rawFilePath, decode())
-        : rendersHdr
-          ? fitProfileFromLinear(linear(), job.rawFilePath, job.grade.whiteQuantile)
-          : null;
+    // The SDR renders need geometry *and* 8-bit colour, so they fit off their own
+    // render. Nothing else does.
+    const profile = job.matchEmbeddedJpeg && rendersSdr ? fitMatchProfile(job.rawFilePath, decode()) : null;
 
     // Built once at the largest SDR size the job asks for, then resized down for the
     // rest by the encoder. Every smaller rendition is a resize of this rather than
@@ -242,21 +231,26 @@ async function renditions(job: RenditionJob): Promise<Uint8Array | undefined> {
     // and every rendition has to use the same one anyway, so folding it into the
     // encode - which is how this was first ported - paid for it twice on any job with
     // a video twin.
-    if (profile != null && rendersHdr) {
-      hdrMatch = fitHdrMatch(
-        linear(),
-        job.rawFilePath,
-        {
-          ...job.grade,
-          variant: 'pq',
-          medium: 'still',
-          outputPath: '',
-          crf: 0,
-          preset: 0,
-          maxEdge: Number.POSITIVE_INFINITY,
-        },
-        profile,
-      );
+    if (job.matchEmbeddedJpeg && rendersHdr) {
+      const options = {
+        ...job.grade,
+        variant: 'pq',
+        medium: 'still',
+        outputPath: '',
+        crf: 0,
+        preset: 0,
+        maxEdge: Number.POSITIVE_INFINITY,
+      } as const;
+      hdrMatch = rendersSdr
+        ? // The geometry is already paid for, off the 8-bit render the SDR targets
+          // needed anyway, so only the colour is refitted here.
+          profile == null
+          ? null
+          : fitHdrMatch(linear(), job.rawFilePath, options, profile)
+        : // Nothing renders SDR, so there is no 8-bit render to take geometry from and
+          // no reason to make one: both halves run off this decode, and off one pass
+          // over it, since they want the same downscale, preview and levels (§10.8).
+          (fitHdrFromLinear(linear(), job.rawFilePath, options)?.match ?? null);
     }
 
     let base: ImageHandle | null = null;

@@ -666,47 +666,52 @@ fn geometry_for(path: &str) -> Option<fit::Geometry> {
     })
 }
 
-/// `bb_fit` driven off a 16-bit scene-linear decode rather than an 8-bit sRGB one.
+/// The whole camera match for an HDR rendition, off the scene-linear decode alone.
 ///
-/// The HDR path already holds that decode, and the only thing it wants from the SDR
-/// fit is the geometry, so this exists to answer whether the second decode is needed
-/// at all. The render is derived at twice the fit grid and handed to the same search.
+/// Where nothing in the job renders SDR there is no 8-bit render to take geometry from
+/// and no reason to make one, so the geometry search and the colour fit both run off
+/// this decode - and off one pass over it, since they want the same downscale, the same
+/// preview and the same levels. `out` receives the geometry the search settled on, for
+/// reporting and for the test that holds it against the 8-bit path.
 ///
-/// Returns as `bb_fit`: 0 fitted, 1 no usable match, -1 failure.
+/// Null when there is no usable match, which is not an error: the caller grades
+/// neutrally. Release the result with `bb_hdr_match_free`.
 ///
 /// # Safety
-/// `image` must be a live 16-bit handle, `raw_path` a NUL-terminated C string, and
-/// `out` a writable `BbProfile`.
+/// `image` must be a live 16-bit handle, `raw_path` a NUL-terminated C string,
+/// `options` readable, and `out` a writable `BbProfile`.
 #[no_mangle]
-pub unsafe extern "C" fn bb_fit_linear(
+pub unsafe extern "C" fn bb_fit_hdr(
     image: *const BbImage,
     raw_path: *const c_char,
-    white_quantile: f64,
+    options: *const BbHdrOptions,
     out: *mut BbProfile,
-) -> i32 {
+) -> *mut BbHdrMatch {
     vips::init();
-    if image.is_null() || raw_path.is_null() || out.is_null() {
-        return -1;
+    if image.is_null() || raw_path.is_null() || options.is_null() || out.is_null() {
+        return std::ptr::null_mut();
     }
-    let Ok(path) = CStr::from_ptr(raw_path).to_str() else { return -1 };
-    let Some(samples) = (*image).view_u16() else { return -1 };
-    let Some(geometry) = geometry_for(path) else { return -1 };
+    let (Ok(path), Some(built), Some(samples)) = (
+        CStr::from_ptr(raw_path).to_str(),
+        (*options).to_options(""),
+        (*image).view_u16(),
+    ) else {
+        return std::ptr::null_mut();
+    };
+    let Some(geometry) = geometry_for(path) else { return std::ptr::null_mut() };
 
-    let peak = crate::tone::levels(samples, white_quantile).peak;
-    if !(peak > 0.0) {
-        return -1;
-    }
-    let render = crate::hdr_fit::render_srgb8(
+    let source = crate::hdr::Source {
         samples,
-        (*image).width as usize,
-        (*image).height as usize,
-        peak,
-        crate::hdr_fit::fit_long_edge() * 2,
-    );
-
-    // Same search, same door: only where the render comes from differs.
-    let fitted = crate::with_embedded_jpeg(raw_path, |jpeg| fit_against(render.as_ref(), jpeg, geometry, out));
-    fitted.unwrap_or(-1)
+        width: (*image).width as usize,
+        height: (*image).height as usize,
+    };
+    match crate::hdr::fit_all(path, &source, built.white_quantile, geometry) {
+        Some((profile, inner)) => {
+            *out = BbProfile::from(&profile);
+            Box::into_raw(Box::new(BbHdrMatch { inner }))
+        }
+        None => std::ptr::null_mut(),
+    }
 }
 
 /// The database's profile for whatever lens this file names.

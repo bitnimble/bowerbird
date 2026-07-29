@@ -77,6 +77,9 @@ pub struct Source<'a> {
 
 /// Fits the camera's colour for the HDR grade, reusing geometry the SDR fit resolved.
 ///
+/// For a job that renders SDR too, where that geometry has already been paid for off an
+/// 8-bit render. Where nothing renders SDR, `fit_all` does both halves in one pass.
+///
 /// The preview is decoded here rather than passed in, so the JPEG never leaves this
 /// side. None when the file embeds no preview, or when there are too few usable pairs.
 pub fn fit_match(
@@ -88,7 +91,56 @@ pub fn fit_match(
 ) -> Option<HdrMatch> {
     let anchor = tone::levels(source.samples, quantile).white;
     let preview = crate::decode_embedded_rgb(raw_path, hdr_fit::fit_long_edge())?;
-    hdr_fit::fit(source.samples, source.width, source.height, anchor, &preview, distortion, crop)
+    let plane = hdr_fit::fit_plane(source.samples, source.width, source.height, preview.width * 2);
+    hdr_fit::fit(&plane, anchor, &preview, distortion, crop)
+}
+
+/// The whole camera match for an HDR rendition - the geometry and the colour - off one
+/// pass over the decode.
+///
+/// Both halves want the same three things: the frame's levels, the camera's preview,
+/// and the decode box-averaged to twice that preview's width. Asked for as two calls
+/// they each measured the levels, each pulled the 5-14MB preview back out of the file,
+/// and each walked the whole frame to build the same average. They differ only in what
+/// they normalise that average by - the scene peak for the geometry search, since it
+/// stands in for LibRaw's auto-brightening, and diffuse white for the colour fit, since
+/// that is the domain the grade works in.
+///
+/// Geometry first and colour second, which is not negotiable: the colour is fitted from
+/// pixel pairs that only correspond through the warp (10.8).
+///
+/// None when the file embeds no preview, when the fit found nothing worth applying, or
+/// when there were too few usable pairs - in each case the caller grades neutrally.
+pub fn fit_all(
+    raw_path: &str,
+    source: &Source<'_>,
+    quantile: f64,
+    geometry: crate::fit::Geometry,
+) -> Option<(crate::fit::Profile, HdrMatch)> {
+    crate::vips::init();
+    let levels = tone::levels(source.samples, quantile);
+    if !(levels.peak > 0.0) {
+        return None;
+    }
+    let path = std::ffi::CString::new(raw_path).ok()?;
+
+    // SAFETY: the CString outlives the call.
+    let fitted = unsafe {
+        crate::with_embedded_jpeg(path.as_ptr(), |jpeg| {
+            let preview = crate::vips::Pipeline::thumbnail(jpeg, hdr_fit::fit_long_edge())
+                .and_then(crate::vips::Pipeline::finish)
+                .ok()?;
+            let plane =
+                hdr_fit::fit_plane(source.samples, source.width, source.height, preview.width * 2);
+
+            let render = hdr_fit::render_srgb8(&plane, levels.peak);
+            let profile = crate::fit::fit(render.as_ref(), jpeg, geometry).ok().flatten()?;
+            let matched =
+                hdr_fit::fit(&plane, levels.white, &preview, profile.knots.clone(), profile.crop)?;
+            Some((profile, matched))
+        })
+    };
+    fitted.flatten()
 }
 
 /// Everything `encode` does up to the point of handing bytes to ffmpeg.
