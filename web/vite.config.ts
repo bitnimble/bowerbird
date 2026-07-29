@@ -12,9 +12,9 @@ export default defineConfig({
   build: { target: 'es2022' },
   server: {
     // Random rather than fixed, so several checkouts can run a dev server at
-    // once; Vite prints the one it settled on. `vite --port N` pins it (Vite's
-    // CLI has no -p). Not port 0: Vite reads that as "unset" and falls back to
-    // its own default, which is the collision this avoids.
+    // once; Vite prints the one it settled on. `-p N` / `--port N` pins it.
+    // Not port 0: Vite reads that as "unset" and falls back to its own default,
+    // which is the collision this avoids.
     port: 20000 + Math.floor(Math.random() * 20000),
     host: true,
     // The client talks to the API directly on its own origin, so these are not
