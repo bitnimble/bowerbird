@@ -2,6 +2,12 @@
 // LibRaw upgrade that reorders a field degrades silently to plausible garbage.
 // These are the known-correct values for the checked-in files (§11.1), one per
 // format: an ARW, which is a TIFF, and a CR3, which is an ISO base-media file.
+//
+// CR2 is scanned and imported (§7) but deliberately not pinned here. A fixture is
+// a photograph committed to the repository for good, and the only CR2s to hand are
+// portraits of people who did not agree to that. It shares every path this covers
+// except the container - it is a TIFF, like the ARW - so what it would add is a
+// second proof that LibRaw reads Canon.
 //   docker exec bowerbird-dev bun test test/integration
 import { describe, expect, test } from 'bun:test';
 import { decodeRaw, readRawHeader } from '../../src/services/processing/raw_decoder';
