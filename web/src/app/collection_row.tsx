@@ -31,6 +31,12 @@ export function CollectionRow({
 }: Props): JSX.Element {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(name);
+  // A shoot shows its first photo from the moment it has one, which is before
+  // the import has built that photo's tile, so the banner is routinely asked for
+  // a file that is not there yet. Held per photo id rather than as a flag, so a
+  // different banner is tried rather than tarred by the last one's failure.
+  const [missingBanner, setMissingBanner] = useState<string | null>(null);
+  const banner = bannerPhotoId == null || bannerPhotoId === missingBanner ? null : bannerPhotoId;
 
   function commit(): void {
     const next = draft.trim();
@@ -43,7 +49,11 @@ export function CollectionRow({
       <span className="depth" style={{ width: indent * 16 }} />
 
       <span className="list__banner" aria-hidden="true">
-        {bannerPhotoId == null ? <span className="list__banner--none" /> : <img src={renditionUrl(bannerPhotoId, 'grid')} alt="" />}
+        {banner == null ? (
+          <span className="list__banner--none" />
+        ) : (
+          <img src={renditionUrl(banner, 'grid')} alt="" onError={() => setMissingBanner(banner)} />
+        )}
       </span>
 
       <div className="list__body">
