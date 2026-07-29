@@ -19,6 +19,7 @@
 
 #![allow(non_upper_case_globals, non_camel_case_types, non_snake_case)]
 
+use rayon::prelude::*;
 use std::ffi::CStr;
 use std::os::raw::{c_char, c_int};
 
@@ -233,8 +234,93 @@ fn camera_multipliers(cam_mul: &[f32; 4]) -> Option<[f32; 4]> {
     Some([r / g, 1.0, b / g, if g2 > 0.0 { g2 / g } else { 1.0 }])
 }
 
-/// Copies the frame out of LibRaw's buffer with the crop applied on the way, which
-/// is the only copy: doing it whole and then cropping moves ~190MB twice.
+/// Take the `dcraw_make_mem_image` path even where `copy_processed` would serve.
+///
+/// For the test that holds the two against each other; nothing else sets it.
+fn reference_copy() -> bool {
+    std::env::var("BOWERBIRD_REFERENCE_COPY").is_ok_and(|value| value == "1")
+}
+
+/// `dcraw_make_mem_image` and the copy after it, done in one pass, for the scene-linear
+/// decode only.
+///
+/// `dcraw_process` leaves the frame in `imgdata.image`: four `ushort` planes, in sensor
+/// orientation. `dcraw_make_mem_image` allocates a second whole frame to interleave it
+/// into, and this used to copy *that* out again to apply the crop - measured at 153ms
+/// and ~80ms against a 534ms decode, nearly half of it spent moving bytes already
+/// computed. Here the interleave, the orientation and the crop happen once, in parallel.
+///
+/// **Only for the scene-linear decode**, and the guard below is the reason rather than
+/// caution. `copy_mem_image` rebuilds `imgdata.color.curve` before reading it - the
+/// table sitting in the struct is not the one LibRaw is about to use - so reproducing
+/// it means reproducing dcraw's `gamma_curve(gamm[0], gamm[1], 2, (t_white << 3) /
+/// bright)`. On the sRGB path `t_white` comes from a histogram scan against
+/// `auto_bright_thr`, which is a heuristic this has no business shadowing. On this path
+/// every input is a constant we set two dozen lines above: `no_auto_bright` pins
+/// `t_white` at 0x2000, `bright` is 1, and `gamm` is {1,1}. Solve dcraw's curve for
+/// those and g[3] converges to 1 with g[4] at 0, so the whole table collapses to
+/// `curve[i] = i`. Hence no lookup here at all - the identity is not an assumption
+/// about LibRaw, it is what those constants make the curve.
+///
+/// A pin holds the output byte-for-byte against `dcraw_make_mem_image`
+/// (`raw_decode.integration.test.ts`), because that reasoning is exactly the kind that
+/// looks right and renders half a frame wrong.
+///
+/// None when the frame is not what is expected, which leaves the caller on the LibRaw
+/// path rather than guessing.
+unsafe fn copy_processed(r: *mut raw::libraw_data_t, depth: u32, i: &Insets) -> Option<(usize, usize, Vec<u8>)> {
+    let p = &(*r).params;
+    let identity_curve =
+        p.no_auto_bright == 1 && p.gamm[0] == 1.0 && p.gamm[1] == 1.0 && p.bright == 1.0;
+    if depth != 16 || !identity_curve || (*r).image.is_null() || (*r).idata.colors != 3 {
+        return None;
+    }
+
+    let s = &(*r).sizes;
+    let flip = s.flip;
+    // `copy_mem_image` overwrites `S.iwidth`/`S.iheight` with `S.width`/`S.height`
+    // before indexing, so the stride `flip_index` walks is the processed width.
+    let (iwidth, iheight) = (s.width as usize, s.height as usize);
+    // The quarter-turn swap applies to the output loop bounds only, after that.
+    let (width, height) = if flip & 4 == 0 { (iwidth, iheight) } else { (iheight, iwidth) };
+    let out_width = width.saturating_sub(i.left + i.right);
+    let out_height = height.saturating_sub(i.top + i.bottom);
+    if out_width == 0 || out_height == 0 {
+        return None;
+    }
+
+    // dcraw's own, so the orientation matches LibRaw's to the pixel.
+    let flip_index = |row: usize, col: usize| -> usize {
+        let (mut row, mut col) = if flip & 4 != 0 { (col, row) } else { (row, col) };
+        if flip & 2 != 0 {
+            row = iheight - 1 - row;
+        }
+        if flip & 1 != 0 {
+            col = iwidth - 1 - col;
+        }
+        row * iwidth + col
+    };
+
+    let planes = std::slice::from_raw_parts((*r).image, iwidth * iheight);
+    let stride = out_width * 3;
+    let mut out = vec![0u16; stride * out_height];
+    out.par_chunks_mut(stride).enumerate().for_each(|(y, row)| {
+        for x in 0..out_width {
+            let px = planes[flip_index(y + i.top, x + i.left)];
+            row[x * 3..x * 3 + 3].copy_from_slice(&px[..3]);
+        }
+    });
+
+    // Native byte order, which is what every reader on this side assumes.
+    let mut out = std::mem::ManuallyDrop::new(out);
+    let bytes = Vec::from_raw_parts(out.as_mut_ptr() as *mut u8, out.len() * 2, out.capacity() * 2);
+    Some((out_width, out_height, bytes))
+}
+
+/// Copies the frame out of LibRaw's buffer with the crop applied on the way.
+///
+/// The `dcraw_make_mem_image` path: what the sRGB decode uses, and the reference
+/// `copy_processed` is pinned against.
 unsafe fn copy_cropped(src: *const u8, w: usize, h: usize, bytes_per_px: usize, i: &Insets) -> Vec<u8> {
     let width = w.saturating_sub(i.left + i.right);
     let height = h.saturating_sub(i.top + i.bottom);
@@ -311,30 +397,35 @@ pub unsafe extern "C" fn bb_decode(
         if raw::libraw_unpack(r) != 0 || raw::libraw_dcraw_process(r) != 0 {
             return None;
         }
-        let mut err: c_int = 0;
-        let image = raw::libraw_dcraw_make_mem_image(r, &mut err);
-        if image.is_null() || err != 0 {
-            return None;
-        }
 
-        let w = (*image).width as usize;
-        let h = (*image).height as usize;
-        let colors = (*image).colors;
-        let bits = (*image).bits as u32;
-        let data = copy_cropped(
-            (*image).data.as_ptr(),
-            w,
-            h,
-            3 * (depth as usize / 8),
-            &insets,
-        );
-        raw::libraw_dcraw_clear_mem(image);
-        if colors != 3 || bits != depth {
-            return None;
-        }
+        // Straight out of `imgdata.image` where the curve is ours to know, which skips
+        // the second whole-frame buffer `dcraw_make_mem_image` would allocate and the
+        // copy back out of it.
+        let direct = if reference_copy() { None } else { copy_processed(r, depth, &insets) };
+        let (width, height, data) = match direct {
+            Some(done) => done,
+            None => {
+                let mut err: c_int = 0;
+                let image = raw::libraw_dcraw_make_mem_image(r, &mut err);
+                if image.is_null() || err != 0 {
+                    return None;
+                }
+                let w = (*image).width as usize;
+                let h = (*image).height as usize;
+                let colors = (*image).colors;
+                let bits = (*image).bits as u32;
+                let data =
+                    copy_cropped((*image).data.as_ptr(), w, h, 3 * (depth as usize / 8), &insets);
+                raw::libraw_dcraw_clear_mem(image);
+                if colors != 3 || bits != depth {
+                    return None;
+                }
+                (w - insets.left - insets.right, h - insets.top - insets.bottom, data)
+            }
+        };
 
-        let width = (w - insets.left - insets.right) as u32;
-        let height = (h - insets.top - insets.bottom) as u32;
+        let width = width as u32;
+        let height = height as u32;
         let mut data = std::mem::ManuallyDrop::new(data);
         Some(Box::new(BbImage {
             width,
