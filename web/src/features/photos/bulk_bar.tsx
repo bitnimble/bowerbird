@@ -26,8 +26,10 @@ export const BulkBar = observer(function BulkBar({ removeFrom }: Props): JSX.Ele
 
   return (
     <div className="bulkbar">
+      {/* "all" rather than the bare count when it is the whole collection: at
+          six figures the number alone does not tell you whether you got it. */}
       <Text variant="mono" className="bulkbar__count">
-        {store.selectionCount} selected
+        {store.allSelected ? `all ${store.selectionCount} selected` : `${store.selectionCount} selected`}
       </Text>
       <Button variant="ghost" onClick={photos.clearSelection}>
         <X size={ICON} />

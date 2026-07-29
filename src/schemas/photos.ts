@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { OrderingSchema, PaginationSchema, RenditionSourceSchema, SoftDeleteFilterSchema, UuidSchema } from './common';
+import { OrderingSchema, PaginationSchema, PhotoIdListSchema, RenditionSourceSchema, SoftDeleteFilterSchema, UuidSchema } from './common';
 import { ViewerRenditionSchema } from './settings';
 
 // The cull verdict. 'untriaged' is the wire spelling of a NULL column: a photo
@@ -169,3 +169,57 @@ export const PhotoListQuerySchema = PaginationSchema
     match: z.enum(['all', 'any']).optional(),
   });
 export type PhotoListQuery = z.infer<typeof PhotoListQuerySchema>;
+
+// The same filters as a list query, in JSON rather than in a query string, so a
+// body can carry them without the string coercions the URL form needs.
+export const PhotoFiltersSchema = z.object({
+  include_deleted: z.boolean().optional(),
+  is_deleted: z.boolean().optional(),
+  is_missing: z.boolean().optional(),
+  needs_tile: z.boolean().optional(),
+  rated: z.boolean().optional(),
+  triage: z.array(TriageSchema).min(1).optional(),
+  q: z.string().min(1).optional(),
+  taken_from: z.iso.date().optional(),
+  taken_to: z.iso.date().optional(),
+  match: z.enum(['all', 'any']).optional(),
+});
+export type PhotoFilters = z.infer<typeof PhotoFiltersSchema>;
+
+/**
+ * A set of photos named by where they sit in a filtered collection rather than
+ * by id (§18.3.3). Both ends of a range are inclusive.
+ */
+export const PhotoSelectionSchema = z.object({
+  // Which collection the positions are into. The bin and the missing view are
+  // the library plus a filter, so they need no kind of their own.
+  scope: z.discriminatedUnion('kind', [
+    z.object({ kind: z.literal('library'), id: UuidSchema }),
+    z.object({ kind: z.literal('shoot'), id: UuidSchema }),
+    z.object({ kind: z.literal('album'), id: UuidSchema }),
+  ]),
+  filters: PhotoFiltersSchema.default({}),
+  // No ordering: positions are into the collection's own sort, which the
+  // collection answers for and there is exactly one copy of (§18.3.1). A client
+  // stating it here could name an order the selection was never made in.
+  ranges: z
+    .array(z.object({ start: z.number().int().min(0), end: z.number().int().min(0) }))
+    .min(1)
+    // Bounds the body, not the selection: a run costs one entry however long it
+    // is, so this only refuses a pathologically scattered pick.
+    .max(10_000)
+    // Ascending and disjoint, which is what the client's own representation
+    // guarantees. It also bounds the work: overlapping runs could name the same
+    // photo any number of times, so ten thousand copies of one whole-library run
+    // would resolve to ten thousand times the library's ids.
+    .refine((ranges) => ranges.every((range, i) => range.end >= range.start && (i === 0 || range.start > ranges[i - 1]!.end)), {
+      message: 'ranges must be ascending, non-overlapping, and end at or after they start',
+    }),
+});
+export type PhotoSelection = z.infer<typeof PhotoSelectionSchema>;
+
+// What a bulk action applies to: a list of ids, or a selection the server
+// resolves to ids itself. The second is what lets a client act on more photos
+// than it could ever hold the ids for.
+export const PhotoTargetSchema = z.union([PhotoIdListSchema, z.object({ selection: PhotoSelectionSchema })]);
+export type PhotoTarget = z.infer<typeof PhotoTargetSchema>;

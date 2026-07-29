@@ -4,6 +4,9 @@ import type { PhotoDetail, PhotoSummary, Triage } from '../../schemas/photos';
 import type { ViewerRendition } from '../../schemas/settings';
 import type { RenditionSource } from '../processing/processing_types';
 
+/** Runs of positions in a filtered listing, both ends inclusive (§18.3.3). */
+export type SelectionRanges = readonly { start: number; end: number }[];
+
 export interface PhotoListFilters {
   includeDeleted: boolean;
   isMissing?: boolean;
@@ -329,6 +332,24 @@ export class PhotosRepository {
       ordering,
       offset,
       limit,
+      filters,
+    );
+  }
+
+  idsInLibrary(libraryId: string, ordering: Ordering, ranges: SelectionRanges, filters: PhotoListFilters): string[] {
+    return this.idsAt('FROM photos WHERE library_id = ?', [libraryId], ordering, ranges, filters);
+  }
+
+  idsInShoot(shootId: string, ordering: Ordering, ranges: SelectionRanges, filters: PhotoListFilters): string[] {
+    return this.idsAt('FROM photos WHERE shoot_id = ?', [shootId], ordering, ranges, filters);
+  }
+
+  idsInAlbum(albumId: string, ordering: Ordering, ranges: SelectionRanges, filters: PhotoListFilters): string[] {
+    return this.idsAt(
+      'FROM photos JOIN album_photos ap ON ap.photo_id = photos.id WHERE ap.album_id = ?',
+      [albumId],
+      ordering,
+      ranges,
       filters,
     );
   }
@@ -732,6 +753,41 @@ export class PhotosRepository {
     limit: number,
     filters: PhotoListFilters,
   ): PhotoListResult {
+    const { where, params } = this.scoped(fromWhere, baseParams, filters);
+    const total = (this.db.query(`SELECT COUNT(*) AS n ${where}`).get(...params) as { n: number }).n;
+    const rows = this.db
+      .query(`SELECT ${SUMMARY_COLS} ${where} ORDER BY ${orderByClause(ordering)} LIMIT ? OFFSET ?`)
+      .all(...params, limit, offset) as SummaryRow[];
+
+    return { photos: rows.map((r) => toSummary(r, ordering)), total };
+  }
+
+  // The ids at a run of positions in the same filtered, ordered listing the grid
+  // is built from, which is how a selection made by position is acted on without
+  // any of those ids ever reaching a client (§18.3.3). One query per run, and a
+  // run costs the same whether it covers ten photos or a hundred thousand.
+  private idsAt(
+    fromWhere: string,
+    baseParams: string[],
+    ordering: Ordering,
+    ranges: SelectionRanges,
+    filters: PhotoListFilters,
+  ): string[] {
+    const { where, params } = this.scoped(fromWhere, baseParams, filters);
+    const query = this.db.query(`SELECT id ${where} ORDER BY ${orderByClause(ordering)} LIMIT ? OFFSET ?`);
+    const ids: string[] = [];
+    for (const { start, end } of ranges) {
+      const rows = query.all(...params, end - start + 1, start) as { id: string }[];
+      for (const row of rows) ids.push(row.id);
+    }
+    return ids;
+  }
+
+  private scoped(
+    fromWhere: string,
+    baseParams: string[],
+    filters: PhotoListFilters,
+  ): { where: string; params: (string | number)[] } {
     // Scope says which rows are in play at all; user holds the filter chips. They
     // are built separately because only the chips honour `match`.
     const scope: string[] = [];
@@ -787,14 +843,9 @@ export class PhotosRepository {
 
     const combined = filters.match === 'any' && user.length > 1 ? [`(${user.join(' OR ')})`] : user;
     const clauses = [...scope, ...combined];
-    const params: (string | number)[] = [...baseParams, ...scopeParams, ...userParams];
-    const where = clauses.length ? `${fromWhere} AND ${clauses.join(' AND ')}` : fromWhere;
-
-    const total = (this.db.query(`SELECT COUNT(*) AS n ${where}`).get(...params) as { n: number }).n;
-    const rows = this.db
-      .query(`SELECT ${SUMMARY_COLS} ${where} ORDER BY ${orderByClause(ordering)} LIMIT ? OFFSET ?`)
-      .all(...params, limit, offset) as SummaryRow[];
-
-    return { photos: rows.map((r) => toSummary(r, ordering)), total };
+    return {
+      where: clauses.length ? `${fromWhere} AND ${clauses.join(' AND ')}` : fromWhere,
+      params: [...baseParams, ...scopeParams, ...userParams],
+    };
   }
 }

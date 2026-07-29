@@ -453,6 +453,17 @@ export const PhotoListQuerySchema = PaginationSchema
     is_missing: z.stringbool().optional(),
     needs_tile: z.stringbool().optional(),
   });
+
+// What a bulk action applies to. The same filters as a list query, in JSON
+// rather than in a query string, plus runs of positions in the collection they
+// describe (§18.3.3). No ordering: the collection owns that (§18.3.1).
+export const PhotoSelectionSchema = z.object({
+  scope: z.discriminatedUnion('kind', [ /* library | shoot | album */ ]),
+  filters: PhotoFiltersSchema.default({}),
+  ranges: z.array(z.object({ start: z.number().int().min(0), end: z.number().int().min(0) })).min(1).max(10_000),
+});
+
+export const PhotoTargetSchema = z.union([PhotoIdListSchema, z.object({ selection: PhotoSelectionSchema })]);
 ```
 
 ### 5.4 `shoots.ts`
@@ -1531,10 +1542,12 @@ All endpoints return JSON. Error responses use a standard envelope:
 | `GET` | `/api/libraries/:libraryId/photos/missing` | List missing photos in a library |
 | `GET` | `/api/photos/:id` | Get full photo detail |
 | `PATCH` | `/api/photos/:id` | Update photo metadata (rating, triage, notes) |
-| `POST` | `/api/photos/delete` | Soft-delete photos (body: `{ photo_ids: string[] }`) |
+| `POST` | `/api/photos/delete` | Soft-delete photos; answers `{ photo_ids }` with what it binned, which is what an undo restores |
 | `POST` | `/api/photos/restore` | Restore soft-deleted photos to where they were deleted from (§12.2) |
 | `POST` | `/api/photos/rebuild-tiles` | Rebuild the grid tiles of a selection, and nothing else (§10.3) |
 | `POST` | `/api/photos/refresh-metadata` | Re-read the RAW headers for a selection |
+
+**Every bulk route takes the same two body shapes** (`PhotoTargetSchema`): `{ photo_ids: string[] }`, capped at a thousand, or `{ selection }`; a collection, the filters it was viewed under, and runs of positions in it (§18.3.3). The second exists because a client holds only a window of a large collection and can never have the ids for the rest: the server reads them off the same filtered, collection-ordered listing the grid was built from, one query per run, so acting on a hundred thousand photos is one small request. A selection states no ordering; the collection owns that (§18.3.1), and a client naming one could describe an order the selection was never made in.
 | `POST` | `/api/photos/:id/lossless` | Build the full-resolution lossless render (§10.5) |
 | `POST` | `/api/photos/:id/hdr` | Build the HDR renditions, both media, all variants (§10.7) |
 
@@ -1577,8 +1590,8 @@ All boolean query params are parsed with `z.stringbool()`, so `?is_missing=false
 | `GET` | `/api/shoots/:id` | Get a shoot |
 | `PATCH` | `/api/shoots/:id` | Update a shoot |
 | `DELETE` | `/api/shoots/:id` | Delete a shoot |
-| `POST` | `/api/shoots/:id/photos` | Add photos to a shoot (body: `{ photo_ids }`) |
-| `DELETE` | `/api/shoots/:id/photos` | Remove photos from a shoot (body: `{ photo_ids }`) |
+| `POST` | `/api/shoots/:id/photos` | Add photos to a shoot (`PhotoTargetSchema`, §5.3) |
+| `DELETE` | `/api/shoots/:id/photos` | Remove photos from a shoot (`PhotoTargetSchema`) |
 | `GET` | `/api/shoots/:id/photos` | List photos in a shoot (paginated) |
 
 ### 13.4 Albums
@@ -1590,8 +1603,8 @@ All boolean query params are parsed with `z.stringbool()`, so `?is_missing=false
 | `GET` | `/api/albums/:id` | Get an album |
 | `PATCH` | `/api/albums/:id` | Update an album |
 | `DELETE` | `/api/albums/:id` | Delete an album |
-| `POST` | `/api/albums/:id/photos` | Add photos to an album (body: `{ photo_ids }`) |
-| `DELETE` | `/api/albums/:id/photos` | Remove photos from an album (body: `{ photo_ids }`) |
+| `POST` | `/api/albums/:id/photos` | Add photos to an album (`PhotoTargetSchema`, §5.3) |
+| `DELETE` | `/api/albums/:id/photos` | Remove photos from an album (`PhotoTargetSchema`) |
 | `GET` | `/api/albums/:id/photos` | List photos in an album (paginated) |
 
 ### 13.5 Image Streaming
@@ -1924,13 +1937,55 @@ Filter, tile size and view mode are remembered per collection in `localStorage`:
 
 Rating and verdict sit on every tile, always visible and clickable, because a cull is mostly those two decisions and routing them through the detail view is what turns a ten-minute pass into an hour. Clicking the verdict a photo already has, or the star it already sits on, clears it.
 
-A verdict or rating can move a photo out of the slice being viewed, so a change re-reads the page when a triage or rating filter is active. Filtering locally instead would mean a second copy of the server's filter logic, free to drift.
+A verdict or rating can move a photo out of the slice being viewed, so a change re-reads the collection (§18.3.2) when a triage or rating filter is active. Filtering locally instead would mean a second copy of the server's filter logic, free to drift.
 
 **Shift-click extends from the anchor on either half of a tile**, the frame and the tick box: the box is the visible handle for selecting, so a range built by clicking one box and shift-clicking another has to work. The anchor is the last photo toggled on its own, falling back to the keyboard cursor when nothing has been - arrowing to a photo and shift-clicking another is the same gesture as in a file manager, and a first shift-click has nothing else to reach for. Extending moves the cursor itself rather than leaving that to the caller, which would have to know to focus *after* extending: with focus as the fallback anchor, focusing first makes every range start and end on the photo just clicked.
 
 The bulk action bar sits directly under the filters, where the selection was made, rather than at the foot of a grid the user has scrolled away from. Its actions include rebuilding renditions for the selection from either source (§10.3). While a selection exists the keyboard cursor's ring is suppressed: two different rings on one tile only invites "why is this one different".
 
 Rebuilt renditions change behind a URL that does not, so the client appends a version to image URLs once a rebuild has happened in the session. The server's `ETag` covers a fresh page load; this covers an image already decoded in the current one.
+
+### 18.3.2 One scroll over the whole collection
+
+There are no pages. A gallery is a single scroll the length of the collection, and the client holds only what is near the viewport: a library of two hundred thousand photos scrolls as one list, in a page that mounts a few dozen tiles and caches a few thousand rows.
+
+**Rows are held sparsely, by position.** `PhotosStore.rows` is a `Map` from a photo's index in the collection to its row, filled a **block** of 100 at a time - the same 100 one list request covers. The presenter asks for the blocks the viewport (and the photo the viewer is on) needs, and drops the least recently needed once more than 24 are held. A position whose row has been dropped, or is still in flight, keeps its cell as an empty tile rather than letting the ones after it close the gap, so nothing shifts under the reader when the block lands.
+
+Everything is therefore expressed in absolute indices: the keyboard cursor, shift-click ranges, the viewer's prev/next. A row only knows its own id, so the store keeps one `indexById` to answer the other direction.
+
+**Nothing measures the DOM to decide what to render.** The scroller writes three numbers into the store - width and height from a `ResizeObserver`, scroll position from its own handler, sampled once per frame - and every layout question is a computed over those, which is what keeps §18.2's rule against layout reads in hot paths. That `scrollTop` is the one read left in the app, because no event carries the scroll position; it is taken inside the frame, where the layout has already settled, and written straight to the store everything else reads from.
+
+**Grid and list are arithmetic; masonry has to be laid out.** Uniform rows need only a column count and a row height, so those two modes need no measurement and no estimate at any size. Both numbers are handed to CSS, through `--cols` and `--row-h`, rather than each side working them out: a track size the two disagreed on drifts a little on every row, and a hundred thousand photos is enough rows for a little to become a lot.
+
+Masonry packs its lines from each photo's own shape, which is unknowable for a photo the client has never fetched. So it renders one block at a time - each block the same flex container the whole grid used to be - and each block reports the height it settled at through a `ResizeObserver`, which delivers that height in the entry rather than forcing a layout to read it. Blocks not yet laid out are estimated from the average of those that have been, and when a block above the viewport turns out taller than its estimate the difference is handed back to the scroll, so correcting a guess never slides the photos being looked at.
+
+Two costs there, both deliberate: a masonry line breaks at every block boundary, so the right edge is ragged once every hundred photos; and a partly-visible block mounts whole, which is a few hundred tiles rather than a few dozen. The alternative is holding every photo's dimensions for the whole collection, which is the one thing this design exists to avoid.
+
+**A mutation re-reads rather than patching positions.** Binning, restoring, a move into a shoot, a verdict under a triage filter - all of them change which photo sits at which index, so they abandon the requests in flight, forget which blocks are held, and ask again for what is on screen. The rows stay up while that lands: `merge` writes the server's fields into the row object already being rendered wherever the same photo is still at the same position, which is what keeps a bin, an undo or a sync poll from blanking the grid.
+
+The keyboard cursor is the exception to all that clearing. A filter is a narrower view of the same photographs and a cull works through them by keyboard, so switching to Rejects keeps the cursor and lets the next block clamp it into range; only opening a different collection takes it away.
+
+### 18.3.3 Selection is runs of positions
+
+The selection is not bounded by what is loaded. `SelectionRanges` holds it as sorted, non-overlapping, non-touching runs of positions - `{start, end}` pairs - so **selecting a library of two hundred thousand photos is one pair of numbers**, not two hundred thousand entries. Runs that come to touch coalesce, or a range built a photo at a time would fragment into one entry each and never recover. A scattered pick degrades to a run per photo, which is the worst case and no worse than the set of ids it replaces.
+
+Positions rather than ids, because positions are the only thing a client holding a window of the collection has for the rest of it (§18.3.2). The value is immutable and the store holds it by reference, so a selection change is one notification rather than one per photo. Every mounted tile re-renders on it, which is affordable precisely because what is mounted is now bounded by the viewport rather than by the collection.
+
+**Select all** is therefore offered whatever the library's size, beside **Select visible** for the narrower gesture of acting on the run currently on screen. The bulk bar says "all 1200 selected" rather than the bare count when the selection is the whole collection: at five figures the number alone does not tell you whether you got everything.
+
+**No ids are ever read back to act on it.** A bulk request carries the selection itself - the collection, the filters, the runs - and the server resolves the ids off the same filtered, collection-ordered listing the grid was built from (`PhotoTargetSchema`, §14). So binning a hundred thousand photos is one small request, and nothing is fetched to *make* a selection at all. The one path still named by id is the undo of a bin: the delete answers with what it took, because the selection it came from resolves to different photographs once those have left the collection.
+
+#### Positions move, so the selection is rebased rather than dropped
+
+A scan inserting rows under an open gallery renumbers everything after the insertion point, and the selection, the keyboard cursor and the shift-click anchor are all positions. Dropping them on every poll tick would mean a library could not be indexed and culled at the same time, which is exactly when a photographer is doing both.
+
+So each re-read is diffed. The client snapshots where every row it can name sat, re-reads the blocks on screen **plus the blocks the selection covers that it still holds**, and compares: a photo that moved gives one sample, and consecutive samples that moved by the same amount collapse into one step. `rebase` then maps each selected run through those steps.
+
+That falls out exactly right in both directions. An insertion steps the shift **up**, which splits a run so the photo that appeared inside it is not selected - three selected and one inserted after the first leaves `{1} ∪ {3,4}`, not a run of four. A removal steps it **down**, which drops the photo that went and closes the run over the gap. Everything the sample covers is exact.
+
+Two edges, both deliberate. A run reaching past what was re-read carries the nearest observed shift, which is right whenever nothing was inserted in the unsampled part and merely generous when something was - a photo that appeared inside a run the reader drew across ten thousand frames is inside what they asked for. And a selection that was the *whole* collection stays the whole collection, without needing samples at all: "everything" is the one selection whose meaning is not a position. When nothing recognisable comes back the selection is dropped rather than guessed at.
+
+Opening a different collection, changing the filter or changing the sort still clears it outright: those are different listings, not the same one renumbered.
 
 ### 18.4 Culling
 
@@ -2034,9 +2089,9 @@ The sync status bar renders one cell per item the run's current phase is countin
 
 A finished run also re-reads the **library list**, which is where the row's photo count and "synced 3m ago" come from; nothing else re-reads it while the settings page stays open, so a sync completed under the user's eyes would otherwise leave both saying what they said before it started.
 
-**The poll re-reads the grid for rows, not for renditions.** It does so while the *scan* is inserting them and once more on the tick that finds the run finished - not through the processing phase, which is the long one. By then the row set is settled and each rendition announces itself, so a list request per second would answer with the page the grid already has, filtered and counted over the whole library to say so. The exception is a view filtering on what processing changes ("No rendition"), which a refetch is still the only way to learn.
+**The poll re-reads the grid for rows, not for renditions.** It does so while the *scan* is inserting them and once more on the tick that finds the run finished - not through the processing phase, which is the long one. By then the row set is settled and each rendition announces itself, so a list request per second would answer with the rows the grid already has, filtered and counted over the whole library to say so. The exception is a view filtering on what processing changes ("No rendition"), which a refetch is still the only way to learn.
 
-**A refetch that returns the same page changes nothing observable.** `reconcile` writes the server's fields into the row objects already on screen rather than replacing them, and hands back the *same array* when the ids and their order are unchanged; a fresh array notifies everything reading the list, which during a sync is the whole grid, once a second, for a page that did not move. In the same spirit the emptiness checks test `photos.length` before `loading`, so a populated grid short-circuits away its dependency on a flag that toggles twice per fetch.
+**A refetch that returns the same rows changes nothing observable.** `merge` writes the server's fields into the row objects already on screen rather than replacing them (§18.3.2); a fresh object invalidates that tile's observable, so during a sync the whole grid would re-render once a second for rows that had not moved. In the same spirit the emptiness checks test `total` before `loading`, so a populated grid short-circuits away its dependency on a flag that toggles for every block a scroll asks for.
 
 ### 18.7 Running and testing
 

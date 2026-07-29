@@ -19,7 +19,7 @@ export const AlbumPhotosPage = observer(function AlbumPhotosPage(): JSX.Element 
   }, [albumId, photos, albums, albumsStore]);
 
   return (
-    <div className="pad">
+    <div className="pad pad--fill">
       <Heading>{album?.name ?? 'Album'}</Heading>
 
       <GridControls />

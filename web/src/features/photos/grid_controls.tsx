@@ -12,6 +12,7 @@ import {
   Search,
   SlidersHorizontal,
   SquareCheck,
+  SquareDashed,
   Star,
   ThumbsDown,
   ThumbsUp,
@@ -219,7 +220,7 @@ const TileZoom = observer(function TileZoom(): JSX.Element {
       <ViewModes />
       <Slider label="Tile size" min={120} max={MAX_TILE} step={20} value={store.tileSize} onChange={photos.setTileSize} />
       <Text variant="mono" className="controls__count">
-        {store.total === 0 ? 'none' : `${store.pageStart}–${store.pageEnd} of ${store.total}`}
+        {store.total === 0 ? 'none' : `${store.total} photos`}
       </Text>
     </span>
   );
@@ -263,9 +264,17 @@ export const GridControls = observer(function GridControls(): JSX.Element {
         <Select label="Sort photos" options={ORDERINGS} value={store.ordering} onChange={(o) => void photos.setOrdering(o)} />
       )}
 
-      <Button onClick={photos.selectAllOnPage} disabled={store.photos.length === 0}>
+      {/* The whole collection costs the same as one photo to hold (§18.3.3), so
+          it is offered whatever the library's size; "visible" is the narrower
+          gesture, for acting on the run currently on screen. */}
+      <Button onClick={photos.selectAll} disabled={store.total === 0}>
         <SquareCheck size={ICON} />
-        Select page
+        Select all
+      </Button>
+
+      <Button onClick={photos.selectVisible} disabled={store.total === 0}>
+        <SquareDashed size={ICON} />
+        Select visible
       </Button>
 
       <TileZoom />

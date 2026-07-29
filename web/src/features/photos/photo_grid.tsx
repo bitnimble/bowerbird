@@ -1,12 +1,13 @@
 import { observer } from 'mobx-react-lite';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Check, ChevronLeft, ChevronRight, ThumbsDown, ThumbsUp } from 'lucide-react';
+import { Check, ThumbsDown, ThumbsUp } from 'lucide-react';
 import { captureDateTime, localDateTime } from '../../api/dates';
 import { renditionUrl, type PhotoSummary } from '../../api/client';
 import { usePhotosStore, usePresenters } from '../../app/stores_context';
-import { Button, ICON, Text } from '../../ui/ui';
-import { renditionVersion } from './photos_store';
+import { Text } from '../../ui/ui';
+import { BLOCK, GRID_GAP } from './grid_layout';
+import { renditionVersion, type PhotosStore } from './photos_store';
 
 function filename(filePath: string, id: string): string {
   return filePath.split('/').pop() ?? id.slice(0, 8);
@@ -103,8 +104,7 @@ const Tile = observer(function Tile({
   // A tile that failed and has since been told to try again is not failed any
   // more; without this the placeholder outlives the rendition arriving.
   useEffect(() => setFailed(false), [src]);
-  const selected = store.selected.has(photo.id);
-  const ref = useRef<HTMLDivElement>(null);
+  const selected = store.selection.has(index);
   const list = store.mode === 'list';
   // ordering_date is date_taken under a taken_* ordering and date_added otherwise,
   // and those are not the same kind of timestamp (§11.1).
@@ -114,14 +114,8 @@ const Tile = observer(function Tile({
     ? localDateTime(photo.ordering_date)
     : captureDateTime(photo.ordering_date);
 
-  // Keep the keyboard cursor on screen when it walks off the visible rows.
-  useEffect(() => {
-    if (isFocused) ref.current?.scrollIntoView({ block: 'nearest' });
-  }, [isFocused]);
-
   return (
     <div
-      ref={ref}
       className={`tile${selected ? ' tile--selected' : ''}${isFocused ? ' tile--focused' : ''}`}
       data-triage={photo.triage}
       // Masonry sizes a tile from the photo's own shape. Off the stored
@@ -133,11 +127,11 @@ const Tile = observer(function Tile({
         className="tile__hit"
         onClick={(e) => {
           // extendTo moves the cursor itself, so it is not preceded by focusAt.
-          if (e.shiftKey) return photos.extendTo(photo.id);
+          if (e.shiftKey) return photos.extendTo(index);
           photos.focusAt(index);
           // Once a selection exists the grid is in "choose things" mode, so a
           // plain click keeps building it instead of navigating away from it.
-          if (e.metaKey || e.ctrlKey || store.hasSelection) photos.toggle(photo.id);
+          if (e.metaKey || e.ctrlKey || store.hasSelection) photos.toggle(index);
           else navigate(`/photos/${photo.id}`);
         }}
         aria-label={`photo ${filename(photo.file_path, photo.id)}`}
@@ -168,9 +162,9 @@ const Tile = observer(function Tile({
         // Shift works on the box as well as on the frame: it is the visible
         // handle for selecting, so it is where a range gets built from.
         onClick={(e) => {
-          if (e.shiftKey) return photos.extendTo(photo.id);
+          if (e.shiftKey) return photos.extendTo(index);
           photos.focusAt(index);
-          photos.toggle(photo.id);
+          photos.toggle(index);
         }}
         aria-label={selected ? 'Deselect photo' : 'Select photo'}
         aria-pressed={selected}
@@ -192,36 +186,65 @@ const Tile = observer(function Tile({
   );
 });
 
-const Pager = observer(function Pager(): JSX.Element | null {
-  const store = usePhotosStore();
-  const { photos } = usePresenters();
-  if (store.pageCount <= 1) return null;
+// The tiles for one span of the collection. A row the client is not holding -
+// evicted behind the scroll, or still in flight - keeps its place as an empty
+// cell rather than closing the gap, so nothing shifts under the reader when it
+// lands.
+function tilesFor(store: PhotosStore, from: number, to: number): JSX.Element[] {
+  const tiles: JSX.Element[] = [];
+  for (let index = from; index < to; index++) {
+    const photo = store.rows.get(index);
+    if (photo == null) {
+      // Still carries the selection ring: the selection is positions, so it
+      // covers rows this client has never held, and a blank cell reading as
+      // unselected in the middle of "select all" would be a lie about what the
+      // next action is going to touch.
+      const selected = store.selection.has(index) ? ' tile--selected' : '';
+      tiles.push(<div key={index} className={`tile tile--waiting${selected}`} style={{ '--ar': '1.5' } as React.CSSProperties} />);
+      continue;
+    }
+    // The keyboard cursor is meaningless once a selection is being assembled by
+    // mouse: two rings on the same tile only raises "why is this one different".
+    tiles.push(
+      <Tile key={photo.id} photo={photo} index={index} isFocused={store.focusIndex === index && !store.hasSelection} />,
+    );
+  }
+  return tiles;
+}
 
-  // A window around the current page, so 400 pages don't render 400 buttons.
-  const current = store.pageIndex;
-  const from = Math.max(0, Math.min(current - 2, store.pageCount - 5));
-  const pages = Array.from({ length: Math.min(5, store.pageCount) }, (_, i) => from + i);
+// Masonry packs its lines from each photo's own shape, so a block's height is
+// not arithmetic the way a uniform row's is - it has to be laid out to be known.
+// One block is one flex container, exactly as the whole grid used to be, and it
+// reports the height it settled at so the scroll above and below it is built
+// from a measurement rather than a guess (§18.3.2).
+const MasonryBlock = observer(function MasonryBlock({
+  block,
+  top,
+  onMeasured,
+}: {
+  block: number;
+  top: number;
+  onMeasured: (block: number, height: number) => void;
+}): JSX.Element {
+  const store = usePhotosStore();
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const element = ref.current;
+    if (element == null) return;
+    // An observer rather than a read after paint: the height arrives in the
+    // entry, so learning what masonry packed never forces a layout.
+    const observer = new ResizeObserver(([entry]) => {
+      const height = entry?.contentRect.height;
+      if (height != null && height > 0) onMeasured(block, height);
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [block, onMeasured]);
 
   return (
-    <div className="pager">
-      <Button iconOnly aria-label="Previous page" disabled={!store.hasPrevPage} onClick={() => void photos.prevPage()}>
-        <ChevronLeft size={ICON} />
-      </Button>
-      {from > 0 && <Text variant="muted">…</Text>}
-      {pages.map((p) => (
-        <Button
-          key={p}
-          variant={p === current ? 'primary' : 'default'}
-          aria-current={p === current ? 'page' : undefined}
-          onClick={() => void photos.goToPage(p)}
-        >
-          {p + 1}
-        </Button>
-      ))}
-      {from + pages.length < store.pageCount && <Text variant="muted">…</Text>}
-      <Button iconOnly aria-label="Next page" disabled={!store.hasNextPage} onClick={() => void photos.nextPage()}>
-        <ChevronRight size={ICON} />
-      </Button>
+    <div ref={ref} className="grid grid--masonry grid__block" style={{ top }}>
+      {tilesFor(store, block * BLOCK, Math.min(store.total, (block + 1) * BLOCK))}
     </div>
   );
 });
@@ -238,7 +261,9 @@ const GridKeys = observer(function GridKeys(): null {
       if (target != null && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
 
-      const columns = 6; // matches the grid's auto-fill minimum at the common width
+      // The real count, which the grid is laid out from rather than guessed at:
+      // a fixed six sent the cursor to the wrong row at every other zoom.
+      const columns = store.columns;
       switch (e.key) {
         case 'ArrowRight':
           photos.moveFocus(1);
@@ -266,7 +291,7 @@ const GridKeys = observer(function GridKeys(): null {
           void photos.binFocused();
           break;
         case ' ':
-          if (store.focusedPhoto != null) photos.toggle(store.focusedPhoto.id);
+          photos.toggle(store.focusIndex);
           break;
         case 'Escape':
           photos.clearSelection();
@@ -287,9 +312,9 @@ const GridKeys = observer(function GridKeys(): null {
 export const PhotoGrid = observer(function PhotoGrid({ emptyHint }: { emptyHint: string }): JSX.Element {
   const store = usePhotosStore();
 
-  // Length first: short-circuiting leaves a populated grid unsubscribed from
-  // `loading`, which toggles twice on every refetch.
-  if (store.photos.length === 0 && store.loading) return <Text variant="muted">Loading photos…</Text>;
+  // Count first: short-circuiting leaves a populated grid unsubscribed from
+  // `loading`, which toggles for every block a scroll asks for.
+  if (store.total === 0 && store.loading) return <Text variant="muted">Loading photos…</Text>;
 
   // A failed fetch also leaves nothing to show, and "Nothing here yet" would be a
   // lie about a library that is merely unreachable.
@@ -318,19 +343,104 @@ export const PhotoGrid = observer(function PhotoGrid({ emptyHint }: { emptyHint:
   return (
     <>
       <GridKeys />
-      <div className={`grid grid--${store.mode}`} style={{ '--tile': `${store.tileSize}px` } as React.CSSProperties}>
-        {store.photos.map((p, i) => (
-          // The keyboard cursor is meaningless once a selection is being assembled
-          // by mouse: two rings on the same tile only raises "why is this one
-          // different".
-          <Tile key={p.id} photo={p} index={i} isFocused={store.focusIndex === i && !store.hasSelection} />
-        ))}
-      </div>
-
-      <div className="row" style={{ marginTop: 10 }}>
-        <div className="spacer" />
-        <Pager />
-      </div>
+      <GridScroller />
     </>
+  );
+});
+
+// One scroll over the whole collection, holding only the tiles near the viewport
+// (§18.3.2). Everything it renders from - the column count, the row height, the
+// span of indices on screen - is read off the store, which the two handlers here
+// are the only writers of.
+const GridScroller = observer(function GridScroller(): JSX.Element {
+  const store = usePhotosStore();
+  const { photos } = usePresenters();
+  const scroller = useRef<HTMLDivElement>(null);
+  const sampling = useRef(false);
+
+  useEffect(() => {
+    const element = scroller.current;
+    if (element == null) return;
+    const observer = new ResizeObserver(([entry]) => {
+      const box = entry?.contentRect;
+      if (box != null) photos.setViewport(box.width, box.height);
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [photos]);
+
+  // Back to the top when the collection changes under the scroll: position four
+  // thousand of a library says nothing about position four thousand of a filter.
+  useEffect(() => {
+    if (scroller.current != null) scroller.current.scrollTop = 0;
+  }, [store.source, store.filters]);
+
+  // Follow the keyboard cursor. Off the store's own geometry rather than the
+  // focused tile, which may never have been mounted (`focusScrollTop`).
+  useEffect(() => {
+    const target = store.focusScrollTop;
+    if (scroller.current != null && target != null) scroller.current.scrollTop = target;
+  }, [store.focusIndex, store]);
+
+  const onScroll = (): void => {
+    if (sampling.current) return;
+    sampling.current = true;
+    // The one layout read left in the app, and nothing else can answer it: no
+    // event carries the scroll position. Sampled once per frame, from inside the
+    // frame, where the layout has already settled - and written straight into
+    // the store, which is where every consumer reads it from.
+    requestAnimationFrame(() => {
+      sampling.current = false;
+      if (scroller.current != null) photos.setScrollTop(scroller.current.scrollTop);
+    });
+  };
+
+  const onMeasured = useCallback(
+    (block: number, height: number): void => {
+      const previous = store.blockHeights.get(block) ?? store.estimatedBlockHeight;
+      if (Math.abs(previous - height) < 0.5) return;
+      const top = store.blockTops[block] ?? 0;
+      photos.measuredBlock(block, height);
+      // A block above the viewport turning out taller than the estimate the
+      // scroll was built from pushes everything below it down, photos being
+      // looked at included. Hand the difference back to the scroll so the view
+      // stays where the reader left it.
+      const element = scroller.current;
+      if (element != null && top + previous <= store.scrollTop) element.scrollTop = store.scrollTop + height - previous;
+    },
+    [store, photos],
+  );
+
+  const blocks: number[] = [];
+  if (store.mode === 'masonry') for (let b = store.visibleBlocks.from; b < store.visibleBlocks.to; b++) blocks.push(b);
+
+  return (
+    <div
+      className="grid__scroller"
+      ref={scroller}
+      onScroll={onScroll}
+      style={{ '--tile': `${store.tileSize}px` } as React.CSSProperties}
+    >
+      <div className="grid__content" style={{ height: store.contentHeight }}>
+        {store.mode === 'masonry' ? (
+          blocks.map((block) => (
+            <MasonryBlock key={block} block={block} top={store.blockTops[block] ?? 0} onMeasured={onMeasured} />
+          ))
+        ) : (
+          <div
+            className={`grid grid--${store.mode} grid__window`}
+            style={
+              {
+                transform: `translateY(${store.visibleTop}px)`,
+                '--cols': store.columns,
+                '--row-h': `${store.rowHeight - GRID_GAP}px`,
+              } as React.CSSProperties
+            }
+          >
+            {tilesFor(store, store.visible.from, store.visible.to)}
+          </div>
+        )}
+      </div>
+    </div>
   );
 });

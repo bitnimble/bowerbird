@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
-import { PaginationSchema, PhotoIdListSchema } from '../../schemas/common';
-import { PhotoListQuerySchema, UpdatePhotoRequestSchema } from '../../schemas/photos';
+import { PaginationSchema } from '../../schemas/common';
+import { PhotoListQuerySchema, PhotoTargetSchema, UpdatePhotoRequestSchema } from '../../schemas/photos';
 import { AppError } from '../../errors';
 import { isRendition } from '../../services/processing/renditions';
 import type { PhotosService } from '../../services/photos/photos_service';
@@ -28,15 +28,17 @@ export class PhotosApi {
       return c.json(this.service.listByLibrary(c.req.param('libraryId'), query));
     });
 
+    // Answers with the ids it binned rather than 204, because that is what the
+    // client's undo restores: a selection resolves to a different set of photos
+    // once they have left the collection it was made in (§18.3.3).
     app.post('/photos/delete', async (c) => {
-      const { photo_ids } = PhotoIdListSchema.parse(await c.req.json());
-      await this.service.delete(photo_ids);
-      return c.body(null, 204);
+      const photoIds = this.target(await c.req.json());
+      await this.service.delete(photoIds);
+      return c.json({ photo_ids: photoIds });
     });
 
     app.post('/photos/restore', async (c) => {
-      const { photo_ids } = PhotoIdListSchema.parse(await c.req.json());
-      await this.service.restore(photo_ids);
+      await this.service.restore(this.target(await c.req.json()));
       return c.body(null, 204);
     });
 
@@ -44,15 +46,13 @@ export class PhotosApi {
     // and rebuilt on their own (§10.3). Separate from PATCH because it is work to
     // schedule, not a field to set, and it applies to a whole selection.
     app.post('/photos/rebuild-tiles', async (c) => {
-      const { photo_ids } = PhotoIdListSchema.parse(await c.req.json());
-      return c.json({ queued: await this.processing.rebuildTiles(photo_ids) });
+      return c.json({ queued: await this.processing.rebuildTiles(this.target(await c.req.json())) });
     });
 
     // Re-reads the RAW headers. Sync only re-opens a file whose stat changed, so
     // photos catalogued before a field existed need an explicit nudge.
     app.post('/photos/refresh-metadata', async (c) => {
-      const { photo_ids } = PhotoIdListSchema.parse(await c.req.json());
-      return c.json({ updated: await this.service.refreshMetadata(photo_ids) });
+      return c.json({ updated: await this.service.refreshMetadata(this.target(await c.req.json())) });
     });
 
     // Ensures one rendition exists. Returns at once when it is already cached,
@@ -86,5 +86,11 @@ export class PhotosApi {
     });
 
     this.routes = app;
+  }
+
+  // Every bulk route takes the same two shapes: the ids, or the positions to
+  // read them from.
+  private target(body: unknown): string[] {
+    return this.service.resolve(PhotoTargetSchema.parse(body));
   }
 }

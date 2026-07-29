@@ -22,7 +22,7 @@ export const LibraryPhotosPage = observer(function LibraryPhotosPage(): JSX.Elem
   }, [libraryId, photos, shoots, albums, sync]);
 
   return (
-    <div className="pad">
+    <div className="pad pad--fill">
       <GridControls />
       <BulkBar />
       <PhotoGrid emptyHint="Sync this library from Settings to index the RAW files in its folder." />

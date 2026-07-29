@@ -5,7 +5,9 @@
     "moduleResolution": "bundler",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "jsx": "react-jsx",
-    "types": ["vite/client"],
+    // @types/bun for the `bun:test` imports under src/**/tests; it resolves out
+    // of the repo root, which is where the test runner lives too.
+    "types": ["vite/client", "@types/bun"],
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,

@@ -1,5 +1,5 @@
 import { action, runInAction } from 'mobx';
-import { ApiError, api, type Ordering } from '../../api/client';
+import { ApiError, api, type Ordering, type PhotoTarget } from '../../api/client';
 import type { AlbumsStore } from './albums_store';
 
 function message(err: unknown): string {
@@ -66,12 +66,12 @@ export class AlbumsPresenter {
   }
 
   // Called by PhotosPresenter for bulk actions (see ShootsPresenter.addPhotos).
-  async addPhotos(albumId: string, photoIds: string[]): Promise<void> {
-    await api.addPhotosToAlbum(albumId, photoIds);
+  async addPhotos(albumId: string, target: PhotoTarget): Promise<void> {
+    await api.addPhotosToAlbum(albumId, target);
   }
 
-  async removePhotos(albumId: string, photoIds: string[]): Promise<void> {
-    await api.removePhotosFromAlbum(albumId, photoIds);
+  async removePhotos(albumId: string, target: PhotoTarget): Promise<void> {
+    await api.removePhotosFromAlbum(albumId, target);
   }
 
   @action.bound

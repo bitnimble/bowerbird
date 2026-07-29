@@ -1,6 +1,6 @@
 import type { Album, CreateAlbumRequest, UpdateAlbumRequest } from '../../../src/schemas/albums';
 import type { CreateLibraryRequest, Library, LibrarySyncStatus, UpdateLibraryRequest } from '../../../src/schemas/libraries';
-import type { PhotoDetail, PhotoListResponse, Triage, UpdatePhotoRequest } from '../../../src/schemas/photos';
+import type { PhotoDetail, PhotoListResponse, PhotoSelection, PhotoTarget, Triage, UpdatePhotoRequest } from '../../../src/schemas/photos';
 import type { ViewerRendition, ViewerRenditionMode, Settings, UpdateSettingsRequest } from '../../../src/schemas/settings';
 import type { CreateShootRequest, Shoot, UpdateShootRequest } from '../../../src/schemas/shoots';
 import type { Rendition } from '../../../src/services/processing/renditions';
@@ -14,6 +14,8 @@ export type {
   LibrarySyncStatus,
   PhotoDetail,
   PhotoListResponse,
+  PhotoSelection,
+  PhotoTarget,
   ViewerRendition,
   ViewerRenditionMode,
   Settings,
@@ -122,12 +124,16 @@ export const api = {
     request('GET', `/api/libraries/${libraryId}/photos/missing${query(params)}`),
   getPhoto: (id: string): Promise<PhotoDetail> => request('GET', `/api/photos/${id}`),
   updatePhoto: (id: string, body: UpdatePhotoRequest): Promise<PhotoDetail> => request('PATCH', `/api/photos/${id}`, body),
-  deletePhotos: (photoIds: string[]): Promise<void> => request('POST', '/api/photos/delete', { photo_ids: photoIds }),
-  restorePhotos: (photoIds: string[]): Promise<void> => request('POST', '/api/photos/restore', { photo_ids: photoIds }),
-  rebuildTiles: (photoIds: string[]): Promise<{ queued: number }> =>
-    request('POST', '/api/photos/rebuild-tiles', { photo_ids: photoIds }),
-  refreshMetadata: (photoIds: string[]): Promise<{ updated: number }> =>
-    request('POST', '/api/photos/refresh-metadata', { photo_ids: photoIds }),
+  // Every bulk call names its photos either by id or by position in a filtered
+  // collection (§18.3.3), so a selection of a hundred thousand is one small
+  // request rather than a client reading back every id first.
+  // Delete answers with what it binned, which is what an undo restores: the same
+  // selection resolves elsewhere once those photos have left the collection.
+  deletePhotos: (target: PhotoTarget): Promise<{ photo_ids: string[] }> => request('POST', '/api/photos/delete', target),
+  restorePhotos: (target: PhotoTarget): Promise<void> => request('POST', '/api/photos/restore', target),
+  rebuildTiles: (target: PhotoTarget): Promise<{ queued: number }> => request('POST', '/api/photos/rebuild-tiles', target),
+  refreshMetadata: (target: PhotoTarget): Promise<{ updated: number }> =>
+    request('POST', '/api/photos/refresh-metadata', target),
   buildRendition: (photoId: string, rendition: Rendition, force = false): Promise<void> =>
     request('POST', `/api/photos/${photoId}/renditions/${rendition}${force ? '?force=true' : ''}`),
 
@@ -136,10 +142,9 @@ export const api = {
   createShoot: (body: CreateShootRequest): Promise<Shoot> => request('POST', '/api/shoots', body),
   updateShoot: (id: string, body: UpdateShootRequest): Promise<Shoot> => request('PATCH', `/api/shoots/${id}`, body),
   deleteShoot: (id: string): Promise<void> => request('DELETE', `/api/shoots/${id}`),
-  addPhotosToShoot: (id: string, photoIds: string[]): Promise<void> =>
-    request('POST', `/api/shoots/${id}/photos`, { photo_ids: photoIds }),
-  removePhotosFromShoot: (id: string, photoIds: string[]): Promise<void> =>
-    request('DELETE', `/api/shoots/${id}/photos`, { photo_ids: photoIds }),
+  addPhotosToShoot: (id: string, target: PhotoTarget): Promise<void> => request('POST', `/api/shoots/${id}/photos`, target),
+  removePhotosFromShoot: (id: string, target: PhotoTarget): Promise<void> =>
+    request('DELETE', `/api/shoots/${id}/photos`, target),
   listShootPhotos: (id: string, params: PhotoListParams): Promise<PhotoListResponse> =>
     request('GET', `/api/shoots/${id}/photos${query(params)}`),
 
@@ -147,10 +152,9 @@ export const api = {
   createAlbum: (body: CreateAlbumRequest): Promise<Album> => request('POST', '/api/albums', body),
   updateAlbum: (id: string, body: UpdateAlbumRequest): Promise<Album> => request('PATCH', `/api/albums/${id}`, body),
   deleteAlbum: (id: string): Promise<void> => request('DELETE', `/api/albums/${id}`),
-  addPhotosToAlbum: (id: string, photoIds: string[]): Promise<void> =>
-    request('POST', `/api/albums/${id}/photos`, { photo_ids: photoIds }),
-  removePhotosFromAlbum: (id: string, photoIds: string[]): Promise<void> =>
-    request('DELETE', `/api/albums/${id}/photos`, { photo_ids: photoIds }),
+  addPhotosToAlbum: (id: string, target: PhotoTarget): Promise<void> => request('POST', `/api/albums/${id}/photos`, target),
+  removePhotosFromAlbum: (id: string, target: PhotoTarget): Promise<void> =>
+    request('DELETE', `/api/albums/${id}/photos`, target),
   listAlbumPhotos: (id: string, params: PhotoListParams): Promise<PhotoListResponse> =>
     request('GET', `/api/albums/${id}/photos${query(params)}`),
 };

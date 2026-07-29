@@ -19,7 +19,7 @@ export const ShootPhotosPage = observer(function ShootPhotosPage(): JSX.Element 
   }, [shootId, photos, shoots]);
 
   return (
-    <div className="pad">
+    <div className="pad pad--fill">
       <Heading>{shoot?.name ?? 'Shoot'}</Heading>
       <Text variant="mono" as="p">
         {shoot?.folder_path ?? shootId}

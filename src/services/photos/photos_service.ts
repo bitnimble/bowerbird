@@ -4,7 +4,7 @@ import { AppError } from '../../errors';
 import { Logger } from '../../logger';
 import type { Ordering, Pagination } from '../../schemas/common';
 import type { Library } from '../../schemas/libraries';
-import type { PhotoDetail, PhotoListQuery, PhotoListResponse, UpdatePhotoRequest } from '../../schemas/photos';
+import type { PhotoDetail, PhotoListQuery, PhotoListResponse, PhotoSelection, PhotoTarget, UpdatePhotoRequest } from '../../schemas/photos';
 import { deleteGeneratedFile } from '../../utils/deletions';
 import { getBinPath, getDataPath, getHdrPath, getOriginalPath, getRenditionPath, toLibraryRelative } from '../../utils/paths';
 import { ensureDir, moveIntoDir } from '../../utils/files';
@@ -33,6 +33,24 @@ function toFilters(query: PhotoListQuery): PhotoListFilters {
     takenFrom: query.taken_from,
     takenTo: query.taken_to,
     match: query.match,
+  };
+}
+
+// The same shape from a JSON body rather than a query string. include_deleted
+// defaults to false here as it does there, so a selection made outside the Bin
+// can never resolve to a photo already in it.
+function fromSelectionFilters(filters: PhotoSelection['filters']): PhotoListFilters {
+  return {
+    includeDeleted: filters.include_deleted ?? false,
+    isMissing: filters.is_missing,
+    needsTile: filters.needs_tile,
+    isDeleted: filters.is_deleted,
+    rated: filters.rated,
+    triage: filters.triage,
+    search: filters.q,
+    takenFrom: filters.taken_from,
+    takenTo: filters.taken_to,
+    match: filters.match,
   };
 }
 
@@ -185,6 +203,35 @@ export class PhotosService {
       query.limit,
       ordering,
     );
+  }
+
+  // What a bulk action applies to. A client that named its photos by id gets
+  // them straight back; one that named them by position in a filtered collection
+  // (§18.3.3) has them resolved here, against the same query and the same
+  // collection-owned ordering the grid was listed with - so a selection of a
+  // hundred thousand photos is one small request rather than a client reading
+  // back every id first.
+  resolve(target: PhotoTarget): string[] {
+    if ('photo_ids' in target) return target.photo_ids;
+    const { scope, filters, ranges } = target.selection;
+    const listFilters = fromSelectionFilters(filters);
+    switch (scope.kind) {
+      case 'library': {
+        const library = this.libraries.getById(scope.id);
+        if (!library) throw new AppError('NOT_FOUND', `library not found: ${scope.id}`);
+        return this.photos.idsInLibrary(scope.id, library.ordering, ranges, listFilters);
+      }
+      case 'shoot': {
+        const shoot = this.shoots.getById(scope.id);
+        if (!shoot) throw new AppError('NOT_FOUND', `shoot not found: ${scope.id}`);
+        return this.photos.idsInShoot(scope.id, shoot.ordering, ranges, listFilters);
+      }
+      case 'album': {
+        const album = this.albums.getById(scope.id);
+        if (!album) throw new AppError('NOT_FOUND', `album not found: ${scope.id}`);
+        return this.photos.idsInAlbum(scope.id, album.ordering, ranges, listFilters);
+      }
+    }
   }
 
   // Re-reads the RAW header and updates the stored metadata. Sync only re-opens
