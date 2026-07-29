@@ -28,11 +28,15 @@ export interface PhotoListFilters {
   // 'any' unions the rated/triage/isMissing/needsTile filters instead of
   // intersecting them. Scope (deleted, search, dates) always intersects.
   match?: 'all' | 'any';
+  // Whether to answer with how many match. Defaults on; a client walking a
+  // collection block by block turns it off after the first (§18.3.2).
+  count?: boolean;
 }
 
 export interface PhotoListResult {
   photos: PhotoSummary[];
-  total: number;
+  /** Absent when the caller asked not to count (`PhotoListFilters.count`). */
+  total?: number;
 }
 
 export interface SyncInsert {
@@ -120,6 +124,11 @@ export interface BasicPhoto {
   library_id: string;
   file_path: string;
   shoot_id: string | null;
+}
+
+/** A binned row and where it came from, which is everything a restore needs (§12.3). */
+export interface DeletedPhoto extends BasicPhoto {
+  deleted_from_path: string | null;
 }
 
 // Bounds selecting exactly the file_paths under `folderPath` (prefix + '/').
@@ -461,10 +470,34 @@ export class PhotosRepository {
   // Records where the file was before the Bin move so restore can put it back
   // exactly there (§12.3). shoot_id and album membership are deliberately left
   // alone, so those survive the round trip without any extra bookkeeping.
-  markDeleted(id: string, deletedFromPath: string): void {
+  markDeleted(id: string, deletedFromPath: string, batch?: string): void {
     this.db
-      .query('UPDATE photos SET is_deleted = 1, needs_tile = 0, needs_renditions = 0, deleted_from_path = ? WHERE id = ?')
-      .run(deletedFromPath, id);
+      .query(
+        'UPDATE photos SET is_deleted = 1, needs_tile = 0, needs_renditions = 0, deleted_from_path = ?, deleted_batch = ? WHERE id = ?',
+      )
+      .run(deletedFromPath, batch ?? null, id);
+  }
+
+  // Everything one bin took. What an undo restores, so it never has to be handed
+  // back the ids: a selection of a million would be a 36MB response, and the
+  // positions it was made from name different photographs once these have left
+  // the collection (§12.3).
+  idsDeletedInBatch(batch: string): string[] {
+    const rows = this.db.query('SELECT id FROM photos WHERE deleted_batch = ? AND is_deleted = 1').all(batch) as { id: string }[];
+    return rows.map((row) => row.id);
+  }
+
+  // The binned rows a restore needs, with where each came from - the mirror of
+  // getBasicByIds, which excludes exactly the rows this wants. One query rather
+  // than a detail payload and a second lookup for the origin path per photo.
+  getDeletedByIds(ids: string[]): DeletedPhoto[] {
+    if (ids.length === 0) return [];
+    const placeholders = ids.map(() => '?').join(', ');
+    return this.db
+      .query(
+        `SELECT id, library_id, file_path, shoot_id, deleted_from_path FROM photos WHERE id IN (${placeholders}) AND is_deleted = 1`,
+      )
+      .all(...ids) as DeletedPhoto[];
   }
 
   // The path this photo was at when it was binned, or null if it predates the
@@ -759,7 +792,11 @@ export class PhotosRepository {
     filters: PhotoListFilters,
   ): PhotoListResult {
     const { where, params } = this.scoped(fromWhere, baseParams, filters);
-    const total = (this.db.query(`SELECT COUNT(*) AS n ${where}`).get(...params) as { n: number }).n;
+    // Counted only when asked. No ordering index can cover it - the filter chips
+    // vary, so it is a scan of everything that matches - and at a million photos
+    // it is 774ms of a 792ms listing, re-run for each of ten thousand blocks a
+    // scroll walks through, for a number that cannot move underneath it.
+    const total = filters.count === false ? undefined : (this.db.query(`SELECT COUNT(*) AS n ${where}`).get(...params) as { n: number }).n;
     const rows = this.db
       .query(`SELECT ${SUMMARY_COLS} ${where} ORDER BY ${orderByClause(ordering)} LIMIT ? OFFSET ?`)
       .all(...params, limit, offset) as SummaryRow[];

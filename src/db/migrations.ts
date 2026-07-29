@@ -76,6 +76,7 @@ CREATE TABLE IF NOT EXISTS photos (
   camera_model      TEXT,
   lens_model        TEXT,
   deleted_from_path TEXT,           -- file_path before the Bin move, so restore can put it back (§12.3)
+  deleted_batch     TEXT,           -- which bin took it, so an undo names the operation not every id (§12.3)
   rating            INTEGER NOT NULL DEFAULT 0 CHECK (rating >= 0 AND rating <= 5),
   -- Cull verdict. NULL means untriaged, which is a real third state: "not yet
   -- judged" is what a photographer filters on, and a boolean cannot say it.
@@ -259,6 +260,11 @@ export function runMigrations(db: Database): void {
   ensureColumn(db, 'photos', 'viewer_rendition', 'TEXT'); // per-photo viewer memory (§10.2)
   migrateThumbnailsToRenditions(db);
   ensureColumn(db, 'photos', 'deleted_from_path', 'TEXT'); // Bin restore (§12.2)
+  // Which bin took this photo, so an undo can name that one operation instead of
+  // shipping back every id it touched (§12.3). Stamped by the client, so the
+  // undo works even if the answer to the delete never arrived.
+  ensureColumn(db, 'photos', 'deleted_batch', 'TEXT');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_photos_deleted_batch ON photos(deleted_batch) WHERE deleted_batch IS NOT NULL');
   ensureColumn(db, 'libraries', 'last_synced_at', 'TEXT'); // §9.6
   // Per-library rendition settings, replacing the global import.thumbnail_source
   // (§10.2). The default matches what that setting shipped with.

@@ -31,6 +31,7 @@ function buildApp(over: Partial<PhotosService> = {}) {
 }
 
 const PID = '11111111-1111-4111-8111-111111111111';
+const BATCH = '22222222-2222-4222-8222-222222222222';
 
 const selectionStatus = async (app: Hono, ranges: { start: number; end: number }[]): Promise<number> => {
   const res = await app.request('/api/photos/delete', {
@@ -82,19 +83,33 @@ describe('PhotosApi', () => {
     expect(res.status).toBe(400);
   });
 
-  // Answers with what it binned rather than 204: that list is what the client's
-  // undo restores, and the selection it came from would resolve elsewhere now.
-  it('deletes photos and answers with the ids it binned', async () => {
+  // Answers with a count, not with the ids: the undo names the batch the client
+  // stamped the request with, so a bin of a million is not a 36MB response
+  // (§12.3).
+  it('deletes photos, stamps the batch, and answers with a count', async () => {
     const del = jest.fn(async () => {});
     const { app } = buildApp({ delete: del });
     const res = await app.request('/api/photos/delete', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ photo_ids: [PID] }),
+      body: JSON.stringify({ photo_ids: [PID], batch: BATCH }),
     });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ photo_ids: [PID] });
-    expect(del).toHaveBeenCalledWith([PID]);
+    expect(await res.json()).toEqual({ deleted: 1 });
+    expect(del).toHaveBeenCalledWith([PID], BATCH);
+  });
+
+  // And the undo names that batch rather than carrying the ids back.
+  it('restores everything one batch took', async () => {
+    const restore = jest.fn(async () => {});
+    const { app, service } = buildApp({ restore });
+    const res = await app.request('/api/photos/restore', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ batch: BATCH }),
+    });
+    expect(res.status).toBe(204);
+    expect(service.resolve).toHaveBeenCalledWith({ batch: BATCH });
   });
 
   // A client holding a window of a huge collection names its photos by where
@@ -114,7 +129,7 @@ describe('PhotosApi', () => {
     });
     expect(res.status).toBe(200);
     expect(service.resolve).toHaveBeenCalledWith({ selection: { ...selection, filters: { triage: ['picked'] } } });
-    expect(del).toHaveBeenCalledWith([PID]);
+    expect(del).toHaveBeenCalledWith([PID], undefined);
   });
 
   it('rejects a selection whose range ends before it starts', async () => {

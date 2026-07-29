@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { PhotoListQuerySchema, PhotoTargetSchema, UpdatePhotoRequestSchema } from '../../schemas/photos';
+import { DeletePhotosRequestSchema, PhotoListQuerySchema, PhotoTargetSchema, UpdatePhotoRequestSchema } from '../../schemas/photos';
 import { AppError } from '../../errors';
 import { isRendition } from '../../services/processing/renditions';
 import type { PhotosService } from '../../services/photos/photos_service';
@@ -31,13 +31,17 @@ export class PhotosApi {
       return c.json(this.service.listByLibrary(c.req.param('libraryId'), query));
     });
 
-    // Answers with the ids it binned rather than 204, because that is what the
-    // client's undo restores: a selection resolves to a different set of photos
-    // once they have left the collection it was made in (§18.3.3).
+    // Answers with a count, not with the ids. The undo restores by the batch id
+    // the client stamped the request with (§12.3): the selection those photos
+    // came from resolves to different ones now that they have left the
+    // collection, and handing back a million ids would be a 36MB response the
+    // client only needs in order to say "that one bin".
     app.post('/photos/delete', async (c) => {
-      const photoIds = this.target(await c.req.json());
-      await this.service.delete(photoIds);
-      return c.json({ photo_ids: photoIds });
+      const body: unknown = await c.req.json();
+      const { batch } = DeletePhotosRequestSchema.parse(body);
+      const photoIds = this.target(body);
+      await this.service.delete(photoIds, batch);
+      return c.json({ deleted: photoIds.length });
     });
 
     app.post('/photos/restore', async (c) => {

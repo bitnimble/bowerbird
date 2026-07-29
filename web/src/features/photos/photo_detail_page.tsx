@@ -196,7 +196,7 @@ const DetailNav = observer(function DetailNav({ photoId }: { photoId: string }):
         options={ACTIONS}
         onSelect={(action) => {
           if (action === 'delete') {
-            void photos.deletePhotos({ photo_ids: [photoId] }, 1);
+            void photos.deletePhotos({ photo_ids: [photoId] });
             return;
           }
           void photos.refreshMetadata({ photo_ids: [photoId] });

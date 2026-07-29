@@ -85,6 +85,8 @@ async function request<T>(method: string, path: string, body?: unknown, signal?:
 export interface PhotoListParams {
   offset?: number;
   limit?: number;
+  /** Defaults on. Off for blocks after the first of a pass, which cannot change the total. */
+  count?: boolean;
   is_missing?: boolean;
   needs_tile?: boolean;
   include_deleted?: boolean;
@@ -131,9 +133,13 @@ export const api = {
   // Every bulk call names its photos either by id or by position in a filtered
   // collection (§18.3.3), so a selection of a hundred thousand is one small
   // request rather than a client reading back every id first.
-  // Delete answers with what it binned, which is what an undo restores: the same
-  // selection resolves elsewhere once those photos have left the collection.
-  deletePhotos: (target: PhotoTarget): Promise<{ photo_ids: string[] }> => request('POST', '/api/photos/delete', target),
+  // The bin stamps its rows with a batch the caller generates, and the undo names
+  // that batch rather than every id: the selection resolves elsewhere once those
+  // photos have left the collection, and a million ids would be a 36MB round
+  // trip in each direction (§12.3). Generated client-side so the undo still
+  // works if the answer never arrives.
+  deletePhotos: (target: PhotoTarget, batch: string): Promise<{ deleted: number }> =>
+    request('POST', '/api/photos/delete', { ...target, batch }),
   restorePhotos: (target: PhotoTarget): Promise<void> => request('POST', '/api/photos/restore', target),
   rebuildTiles: (target: PhotoTarget): Promise<{ queued: number }> => request('POST', '/api/photos/rebuild-tiles', target),
   refreshMetadata: (target: PhotoTarget): Promise<{ updated: number }> =>

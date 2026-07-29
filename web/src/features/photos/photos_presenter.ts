@@ -31,17 +31,6 @@ import { loadViewState, saveViewState } from './view_state';
 // that the whole cache is a few megabytes whatever the library's size.
 const MAX_BLOCKS = 24;
 
-// Ids per request on the paths that still name photos by id - undoing a bin,
-// which puts back exactly what it took. `PhotoIdListSchema` refuses more, so a
-// longer list is sent as several requests rather than being capped.
-const ID_BATCH = 1000;
-
-function batches(ids: string[]): string[][] {
-  const batched: string[][] = [];
-  for (let from = 0; from < ids.length; from += ID_BATCH) batched.push(ids.slice(from, from + ID_BATCH));
-  return batched;
-}
-
 // The collection a selection's positions are into. The bin and the missing view
 // are the library plus a filter, so the server needs no scope of its own for
 // them (§18.3.3).
@@ -84,6 +73,9 @@ export class PhotosPresenter {
   // a collection that no longer exists, so it is dropped rather than written at
   // an index that now holds something else.
   private generation = 0;
+  // Whether this generation still owes a count. Set when one starts, cleared by
+  // the first block to ask (`fetchBlock`).
+  private needsCount = true;
   // The re-read in flight, so the next one queues behind it rather than racing
   // it (`refresh`).
   private refreshing: Promise<void> = Promise.resolve();
@@ -449,7 +441,7 @@ export class PhotosPresenter {
   async binFocused(): Promise<void> {
     const photo = this.store.focusedPhoto;
     if (photo == null || photo.is_deleted) return;
-    await this.deletePhotos({ photo_ids: [photo.id] }, 1);
+    await this.deletePhotos({ photo_ids: [photo.id] });
   }
 
   // --- selection ---
@@ -540,7 +532,7 @@ export class PhotosPresenter {
   async deleteSelected(): Promise<void> {
     const target = this.selectionTarget();
     if (target == null) return;
-    await this.deletePhotos(target, this.store.selectionCount);
+    await this.deletePhotos(target);
   }
 
   async restoreSelected(): Promise<void> {
@@ -608,21 +600,25 @@ export class PhotosPresenter {
   }
 
   // Binning is reversible, so it reports with an undo rather than asking first.
-  // `count` is only for the message; the request answers with what it actually
-  // binned, which is what the undo puts back - the selection it was made from
-  // resolves to different photos now that these have left the collection.
-  async deletePhotos(target: PhotoTarget, count: number): Promise<void> {
-    let binned: string[];
+  // The batch is stamped on the rows the bin takes, and the undo names it: the
+  // selection this was made from resolves to different photographs now that
+  // these have left the collection, and the ids themselves are something neither
+  // side should be carrying a million of (§12.3).
+  async deletePhotos(target: PhotoTarget): Promise<void> {
+    const batch = crypto.randomUUID();
+    let deleted: number;
     try {
-      binned = (await api.deletePhotos(target)).photo_ids;
+      // How many it took, from the server: a selection can name positions that
+      // no longer hold a photo, so the count on screen is not the answer.
+      deleted = (await api.deletePhotos(target, batch)).deleted;
     } catch (err) {
       this.fail(err);
       return;
     }
     this.clearSelection();
     await this.refresh();
-    this.toasts.showUndoable(`${plural(count, 'photo', 'photos')} moved to the Bin`, 'Undo', async () => {
-      for (const batch of batches(binned)) await api.restorePhotos({ photo_ids: batch });
+    this.toasts.showUndoable(`${plural(deleted, 'photo', 'photos')} moved to the Bin`, 'Undo', async () => {
+      await api.restorePhotos({ batch });
       await this.refresh();
     });
   }
@@ -837,17 +833,26 @@ export class PhotosPresenter {
       this.store.error = null;
     });
 
+    // Only the first block of a generation asks for the total. Counting is a
+    // scan of everything that matches - 774ms of a 792ms block at a million
+    // photos - and nothing can change the count without starting a generation.
+    const counting = this.needsCount;
+    this.needsCount = false;
+
     try {
-      const page = await this.fetchFor(source, this.params(block * BLOCK, BLOCK), controller.signal);
+      const page = await this.fetchFor(source, this.params(block * BLOCK, BLOCK, counting), controller.signal);
       if (controller.signal.aborted || generation !== this.generation) return;
       runInAction(() => {
         this.merge(block, page.photos);
-        this.store.total = page.total;
+        if (page.total != null) this.store.total = page.total;
         this.store.ordering = page.ordering; // what it was actually sorted by, not what we hoped
         this.pruneBeyondTotal();
       });
       this.blocks.set(block, 'loaded');
     } catch (err) {
+      // The count went out with a request that never landed, so the next block
+      // of this generation has to ask for it again.
+      if (counting) this.needsCount = true;
       if (controller.signal.aborted || generation !== this.generation) return;
       this.blocks.delete(block); // a failed block is not a loaded one; scrolling back asks again
       runInAction(() => (this.store.error = message(err)));
@@ -860,11 +865,12 @@ export class PhotosPresenter {
     }
   }
 
-  private params(offset: number, limit: number): PhotoListParams {
+  private params(offset: number, limit: number, count = true): PhotoListParams {
     const f = this.store.filters;
     return {
       offset,
       limit,
+      count,
       rated: f.rated,
       triage: f.triage,
       is_missing: f.isMissing,
@@ -926,6 +932,7 @@ export class PhotosPresenter {
   // touching the rows themselves.
   private invalidate(): void {
     this.generation++;
+    this.needsCount = true; // a new pass over the collection, so the total is asked for again
     for (const controller of this.controllers.values()) controller.abort();
     this.controllers.clear();
     this.blocks.clear();
