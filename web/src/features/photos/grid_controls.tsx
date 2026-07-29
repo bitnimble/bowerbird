@@ -22,7 +22,7 @@ import { usePhotosStore, usePresenters } from '../../app/stores_context';
 import { Button, CheckMenu, ICON, type Option, PopoverButton, SegmentedControl, Select, Slider, Text, TextField } from '../../ui/ui';
 import { activeFilters, type PhotoFilters, type ViewMode } from './photos_store';
 
-const ORDERINGS: Option<Ordering>[] = [
+export const ORDERINGS: Option<Ordering>[] = [
   { value: 'taken_desc', label: 'Newest first' },
   { value: 'taken_asc', label: 'Oldest first' },
   { value: 'added_desc', label: 'Recently added' },

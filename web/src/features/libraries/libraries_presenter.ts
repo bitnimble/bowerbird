@@ -1,5 +1,12 @@
 import { action, runInAction } from 'mobx';
-import { ApiError, api, type Ordering, type RenditionSource, type UpdateLibraryRequest } from '../../api/client';
+import {
+  ApiError,
+  api,
+  type CreateLibraryRequest,
+  type Ordering,
+  type RenditionSource,
+  type UpdateLibraryRequest,
+} from '../../api/client';
 import type { LibrariesStore } from './libraries_store';
 
 function message(err: unknown): string {
@@ -22,10 +29,10 @@ export class LibrariesPresenter {
     }
   }
 
-  async create(rootPath: string, ordering: Ordering): Promise<boolean> {
+  async create(request: CreateLibraryRequest): Promise<boolean> {
     this.beginLoad();
     try {
-      await api.createLibrary({ root_path: rootPath, ordering });
+      await api.createLibrary(request);
     } catch (err) {
       this.fail(message(err));
       return false;
@@ -36,6 +43,11 @@ export class LibrariesPresenter {
 
   async setOrdering(libraryId: string, ordering: Ordering): Promise<void> {
     await this.update(libraryId, { ordering });
+  }
+
+  // Blank hands the library back to its root folder's name.
+  async setName(libraryId: string, name: string): Promise<void> {
+    await this.update(libraryId, { name });
   }
 
   // Which pixels new photos get their renditions from, and whether the full-size

@@ -1,10 +1,12 @@
 import { observer } from 'mobx-react-lite';
 import { useEffect, useState, type ReactNode } from 'react';
-import { CircleStop, FolderPlus, History, Maximize2, RefreshCw, Sparkles, Trash2, Wand2 } from 'lucide-react';
+import { CircleStop, FolderPlus, RefreshCw, Trash2 } from 'lucide-react';
 import type { Library, Settings, UpdateSettingsRequest, ViewerRenditionMode, RenditionSource } from '../../api/client';
 import { useAppSettingsStore, useLibrariesStore, usePresenters, useSyncStore } from '../../app/stores_context';
+import { AddLibraryDialog } from '../libraries/add_library_dialog';
+import { libraryLabel } from '../libraries/library_label';
 import { renditionLabel } from '../photos/renditions';
-import { Button, Heading, ICON, type Option, SegmentedControl, Select, Text, TextField } from '../../ui/ui';
+import { Button, Heading, ICON, type Option, Select, Text, TextField } from '../../ui/ui';
 import { SyncStrip } from '../sync/sync_strip';
 
 // "3 minutes ago" answers "is my catalogue stale?" at a glance; a timestamp does not.
@@ -18,9 +20,36 @@ function relativeTime(iso: string): string {
   return `${Math.round(hours / 24)}d ago`;
 }
 
+// One tuning knob: what it is, the control, and why you would move it. A reason
+// rather than a boolean for `disabled`, because a control that cannot be used
+// and does not say why is worse than one that is simply missing.
+function SettingRow({
+  label,
+  hint,
+  disabledReason,
+  children,
+}: {
+  label: string;
+  hint?: ReactNode;
+  disabledReason?: string;
+  children: ReactNode;
+}): JSX.Element {
+  return (
+    <div className={`setting${disabledReason == null ? '' : ' setting--off'}`} title={disabledReason}>
+      <span className="setting__label">{label}</span>
+      {children}
+      {hint != null && (
+        <Text variant="mono" as="p" className="setting__hint">
+          {hint}
+        </Text>
+      )}
+    </div>
+  );
+}
+
 // Syncing lives here, not on the gallery: it is a maintenance action on the
 // library, and the gallery is for looking at photos.
-const LibrarySettings = observer(function LibrarySettings(): JSX.Element {
+const LibraryList = observer(function LibraryList(): JSX.Element {
   const store = useLibrariesStore();
   const sync = useSyncStore();
   const { libraries, sync: syncPresenter } = usePresenters();
@@ -30,56 +59,86 @@ const LibrarySettings = observer(function LibrarySettings(): JSX.Element {
       {store.libraries.map((library) => (
         <div className="list__row" key={library.id}>
           <div className="list__body">
-            <span className="list__name">{library.root_path}</span>
+            <div className="row">
+              <LibraryName library={library} />
+              <span className="spacer" />
+
+              {/* The same slot, because stopping is what you want from a run in
+                  flight and starting another is not on offer anyway. */}
+              {sync.isBusy && sync.libraryId === library.id ? (
+                <Button onClick={() => void syncPresenter.cancel(library.id)}>
+                  <CircleStop size={ICON} />
+                  Stop
+                </Button>
+              ) : (
+                <Button onClick={() => void syncPresenter.trigger(library.id)}>
+                  <RefreshCw size={ICON} />
+                  Sync now
+                </Button>
+              )}
+
+              <Button
+                variant="danger"
+                onClick={() => {
+                  // Removing a library cascades away every rating, note, verdict,
+                  // album membership and shoot assignment. The RAW files survive,
+                  // the catalogue does not, and there is no undo.
+                  const warning =
+                    `Remove "${libraryLabel(library)}" from Bowerbird?\n\n` +
+                    `Your ${library.photo_count} photo file(s) stay on disk, but all ratings, notes, ` +
+                    `picks, album memberships and shoot assignments for them are deleted. This cannot be undone.`;
+                  if (window.confirm(warning)) void libraries.remove(library.id);
+                }}
+              >
+                <Trash2 size={ICON} />
+                Remove
+              </Button>
+            </div>
+
             <Text variant="mono" as="div">
-              {library.photo_count} {library.photo_count === 1 ? 'photo' : 'photos'} ·{' '}
+              {library.root_path} · {library.photo_count} {library.photo_count === 1 ? 'photo' : 'photos'} ·{' '}
               {library.last_synced_at == null ? 'never synced' : `synced ${relativeTime(library.last_synced_at)}`}
             </Text>
             {sync.libraryId === library.id && <SyncStrip />}
             <RenditionSettings library={library} />
           </div>
-
-          {/* The same slot, because stopping is what you want from a run in
-              flight and starting another is not on offer anyway. */}
-          {sync.isBusy && sync.libraryId === library.id ? (
-            <Button onClick={() => void syncPresenter.cancel(library.id)}>
-              <CircleStop size={ICON} />
-              Stop
-            </Button>
-          ) : (
-            <Button onClick={() => void syncPresenter.trigger(library.id)}>
-              <RefreshCw size={ICON} />
-              Sync now
-            </Button>
-          )}
-
-          <Button
-            variant="danger"
-            onClick={() => {
-              // Removing a library cascades away every rating, note, verdict,
-              // album membership and shoot assignment. The RAW files survive,
-              // the catalogue does not, and there is no undo.
-              const warning =
-                `Remove "${library.root_path}" from Bowerbird?\n\n` +
-                `Your ${library.photo_count} photo file(s) stay on disk, but all ratings, notes, ` +
-                `picks, album memberships and shoot assignments for them are deleted. This cannot be undone.`;
-              if (window.confirm(warning)) void libraries.remove(library.id);
-            }}
-          >
-            <Trash2 size={ICON} />
-            Remove
-          </Button>
         </div>
       ))}
     </div>
   );
 });
 
+// Empty hands the library back to its root folder's name, which is what the
+// placeholder shows.
+const LibraryName = observer(function LibraryName({ library }: { library: Library }): JSX.Element {
+  const { libraries } = usePresenters();
+  const [draft, setDraft] = useState(library.name ?? '');
+
+  useEffect(() => setDraft(library.name ?? ''), [library.name]);
+
+  function commit(): void {
+    if (draft.trim() !== (library.name ?? '')) void libraries.setName(library.id, draft.trim());
+  }
+
+  return (
+    <span className="list__name">
+      <TextField
+        label="Library name"
+        placeholder={libraryLabel(library)}
+        value={draft}
+        onChange={setDraft}
+        onBlur={commit}
+        onKeyDown={(e) => e.key === 'Enter' && commit()}
+      />
+    </span>
+  );
+});
+
 // Named as the viewer names the rendition each one produces, so the setting and
 // the picker are visibly the same two choices.
 const SOURCES: Option<RenditionSource>[] = [
-  { value: 'embedded', label: renditionLabel('embedded'), icon: <Sparkles size={ICON} /> },
-  { value: 'render', label: renditionLabel('full'), icon: <Wand2 size={ICON} /> },
+  { value: 'embedded', label: renditionLabel('embedded') },
+  { value: 'render', label: renditionLabel('full') },
 ];
 
 // What this browser and display say they can do. Reported, never enforced: HDR
@@ -98,59 +157,56 @@ function hdrCapability(): string {
 // thousands of files behind your back.
 const RenditionSettings = observer(function RenditionSettings({ library }: { library: Library }): JSX.Element {
   const { libraries } = usePresenters();
+  const rendered = library.rendition_source === 'render';
 
   return (
     <div className="panel">
-      <SegmentedControl
-        label="Build renditions from"
-        options={SOURCES}
-        value={library.rendition_source}
-        onChange={(source) => void libraries.setRenditionSource(library.id, source)}
-      />
-      <Text variant="mono" as="p">
-        The embedded JPEG needs no demosaic, so it is much faster, and carries the maker&apos;s colour, but is only as large as the body
-        embedded. Rendering demosaics the RAW at full resolution.
+      <Text variant="label" as="div" className="panel__title">
+        Renditions
       </Text>
+
+      <SettingRow
+        label="Build renditions from"
+        hint="The camera's JPEG is much faster and carries the colour the camera chose, but it is only as large as the camera saved it. Rendering develops the RAW at full resolution and is the only source that can produce HDR."
+      >
+        <Select
+          label="Build renditions from"
+          options={SOURCES}
+          value={library.rendition_source}
+          onChange={(source) => void libraries.setRenditionSource(library.id, source)}
+        />
+      </SettingRow>
 
       {/* Only offered for a render: an embedded JPEG is 8-bit SDR, so there is
           no headroom in it to carry however the setting is left. */}
-      {library.rendition_source === 'render' && (
-        <label className="row">
+      {rendered && (
+        <SettingRow
+          label="Build HDR renditions"
+          hint={`Stores the large rendition in high dynamic range. Chrome and Safari display it, and Firefox shows it too dark. The grid stays standard range either way (${hdrCapability()}).`}
+        >
           <input
             type="checkbox"
+            aria-label="Build HDR renditions"
             checked={library.rendition_hdr}
             onChange={(e) => void libraries.setRenditionHdr(library.id, e.currentTarget.checked)}
           />
-          <span>
-            HDR renditions <Text variant="mono">({hdrCapability()})</Text>
-          </span>
-        </label>
-      )}
-      {library.rendition_source === 'render' && (
-        <Text variant="mono" as="p">
-          Renders the full-size rendition as PQ HDR. Chrome and Safari display it; Firefox does not, and shows it dark. The grid stays
-          SDR either way. Nothing checks your display first, so you can build HDR here and look at it somewhere else.
-        </Text>
+        </SettingRow>
       )}
 
       {/* Nested under HDR because it is a second encode of the same render, and
           meaningless without one. */}
-      {library.rendition_source === 'render' && library.rendition_hdr && (
-        <>
-          <label className="row">
-            <input
-              type="checkbox"
-              checked={library.rendition_hdr_video}
-              onChange={(e) => void libraries.setRenditionHdrVideo(library.id, e.currentTarget.checked)}
-            />
-            <span>Also encode for Firefox on Windows</span>
-          </label>
-          <Text variant="mono" as="p">
-            Writes a second copy of each HDR rendition as a one-frame video, which is the only form Firefox will display in HDR. Costs
-            roughly another second per photo on import, for a file no other browser ever reads, so leave it off unless you use
-            Firefox on an HDR display.
-          </Text>
-        </>
+      {rendered && library.rendition_hdr && (
+        <SettingRow
+          label="Also encode for Firefox on Windows"
+          hint="Writes a second copy of each HDR rendition as a one-frame video, which is the only form Firefox can display in HDR. It costs about another second per photo and no other browser reads it."
+        >
+          <input
+            type="checkbox"
+            aria-label="Also encode for Firefox on Windows"
+            checked={library.rendition_hdr_video}
+            onChange={(e) => void libraries.setRenditionHdrVideo(library.id, e.currentTarget.checked)}
+          />
+        </SettingRow>
       )}
     </div>
   );
@@ -159,11 +215,11 @@ const RenditionSettings = observer(function RenditionSettings({ library }: { lib
 // The three renditions under the names the viewer gives them, then the two modes
 // that follow whatever was chosen there.
 const RENDITION_MODES: Option<ViewerRenditionMode>[] = [
-  { value: 'embedded', label: renditionLabel('embedded'), icon: <Sparkles size={ICON} /> },
-  { value: 'full', label: renditionLabel('full'), icon: <Wand2 size={ICON} /> },
-  { value: 'max', label: renditionLabel('max'), icon: <Maximize2 size={ICON} /> },
-  { value: 'remember', label: 'Last used', icon: <History size={ICON} /> },
-  { value: 'remember_per_photo', label: 'Last used per photo', icon: <History size={ICON} /> },
+  { value: 'embedded', label: renditionLabel('embedded') },
+  { value: 'full', label: renditionLabel('full') },
+  { value: 'max', label: renditionLabel('max') },
+  { value: 'remember', label: 'Last used' },
+  { value: 'remember_per_photo', label: 'Last used per photo' },
 ];
 
 // Global rather than per library: it is about how you look at photos, not about
@@ -177,17 +233,17 @@ const ViewingSettings = observer(function ViewingSettings(): JSX.Element {
 
   return (
     <div className="panel">
-      <SegmentedControl
-        label="Open photos at"
-        options={RENDITION_MODES}
-        value={settings.viewerRenditionMode}
-        onChange={(mode) => void appSettings.setViewerRenditionMode(mode)}
-      />
-      <Text variant="mono" as="p">
-        The same picture as three renditions: the camera&apos;s own JPEG, a render of the RAW, and a full-resolution render. Each is built
-        the first time it is asked for and cached, so anything above the one your library builds on import costs a wait the first time
-        you open a photo.
-      </Text>
+      <SettingRow
+        label="Default rendition in photo viewer"
+        hint="Each rendition is built the first time it is asked for and then kept, so opening at a larger one than your library builds costs a wait the first time you open a photo."
+      >
+        <Select
+          label="Default rendition in photo viewer"
+          options={RENDITION_MODES}
+          value={settings.viewerRenditionMode}
+          onChange={(mode) => void appSettings.setViewerRenditionMode(mode)}
+        />
+      </SettingRow>
     </div>
   );
 });
@@ -209,30 +265,18 @@ function useSettingWriter(): (patch: UpdateSettingsRequest) => Promise<void> {
   };
 }
 
-function SettingRow({ label, hint, children }: { label: string; hint?: ReactNode; children: ReactNode }): JSX.Element {
-  return (
-    <div className="setting">
-      <span className="setting__label">{label}</span>
-      {children}
-      {hint != null && (
-        <Text variant="mono" as="p" className="setting__hint">
-          {hint}
-        </Text>
-      )}
-    </div>
-  );
-}
-
 // Committed on blur or Enter rather than per keystroke: every character of "3840"
 // would otherwise be a round trip, and "3" is a size the server would accept.
 const NumberSetting = observer(function NumberSetting({
   field,
   label,
   hint,
+  disabledReason,
 }: {
   field: SettingOf<number>;
   label: string;
   hint?: ReactNode;
+  disabledReason?: string;
 }): JSX.Element {
   const store = useAppSettingsStore();
   const write = useSettingWriter();
@@ -250,10 +294,11 @@ const NumberSetting = observer(function NumberSetting({
   }
 
   return (
-    <SettingRow label={label} hint={hint}>
+    <SettingRow label={label} hint={hint} disabledReason={disabledReason}>
       <TextField
         label={label}
         value={draft}
+        disabled={disabledReason != null}
         onChange={setDraft}
         onBlur={() => void commit()}
         onKeyDown={(e) => e.key === 'Enter' && void commit()}
@@ -330,34 +375,80 @@ const LOG_LEVELS: Option<Settings['log_level']>[] = [
   { value: 'error', label: 'error' },
 ];
 
-const ServerSettings = observer(function ServerSettings(): JSX.Element | null {
+function GroupTitle({ children }: { children: ReactNode }): JSX.Element {
+  return (
+    <Text variant="label" as="div" className="panel__title settings__group">
+      {children}
+    </Text>
+  );
+}
+
+// The two decisions worth making without reading anything, then everything else
+// behind one disclosure. Nothing until the settings arrive: a field pre-filled
+// with a default the server may not hold invites editing a value that was never
+// real.
+const AppSettings = observer(function AppSettings(): JSX.Element | null {
   const store = useAppSettingsStore();
-  const write = useSettingWriter();
-  // Nothing until the settings arrive: a field pre-filled with a default the
-  // server may not hold invites editing a value that was never real.
   if (store.settings == null) return null;
 
   return (
     <>
-      <Text variant="label" as="div" className="panel__title settings__group">
-        Import
-      </Text>
+      <GroupTitle>Processing</GroupTitle>
+      <div className="panel">
+        <ToggleSetting
+          field="match_embedded_jpeg"
+          label="Match the camera's colour"
+          hint="Renders each RAW to look like the JPEG the camera made from it, rather than to a neutral starting point. It costs a couple of seconds per photo."
+        />
+      </div>
+
+      <GroupTitle>Syncing</GroupTitle>
+      <div className="panel">
+        <ToggleSetting
+          field="watch_enabled"
+          label="Watch libraries for changes"
+          hint="Syncs a library as soon as its files change on disk, without waiting to be asked."
+        />
+        <TextSetting
+          field="full_sync_at"
+          label="Daily full scan at"
+          placeholder="03:00"
+          hint="Local time as HH:MM, or empty to turn it off. A full scan catches anything the watcher missed, and it locks the library while it runs, so pick a quiet hour."
+        />
+      </div>
+
+      <AdvancedSettings />
+    </>
+  );
+});
+
+// Everything that is a number to tune rather than a decision to make, one click
+// away. These are read per job, so a change lands on the next photo processed.
+const AdvancedSettings = observer(function AdvancedSettings(): JSX.Element | null {
+  const store = useAppSettingsStore();
+  const libraries = useLibrariesStore();
+  const write = useSettingWriter();
+  // Every HDR setting below is read while building an HDR rendition, so with no
+  // library asking for one there is nothing for them to change.
+  const noHdr = libraries.libraries.every((library) => !library.rendition_hdr);
+  const hdrOff = noHdr ? 'No library builds HDR renditions. Turn on HDR for a library to use these.' : undefined;
+
+  if (store.settings == null) return null;
+
+  return (
+    <details className="advanced">
+      <summary className="advanced__summary">Advanced settings</summary>
+
+      <GroupTitle>Import</GroupTitle>
       <div className="panel">
         <NumberSetting
           field="processing_concurrency"
           label="Worker threads"
-          hint="How many photos are decoded and encoded at once. Each worker is a whole RAW decode in memory, so more is not free."
-        />
-        <ToggleSetting
-          field="match_embedded_jpeg"
-          label="Match the camera's own rendering"
-          hint="Fits the render to the JPEG the body embedded in the same RAW, so a photo comes out the maker's colour rather than a neutral one. Roughly +2.4s on a 61MP frame."
+          hint="How many photos are processed at once. Each worker holds a whole RAW in memory, so more of them is not always faster."
         />
       </div>
 
-      <Text variant="label" as="div" className="panel__title settings__group">
-        Renditions
-      </Text>
+      <GroupTitle>Rendition size and quality</GroupTitle>
       <div className="panel">
         <NumberSetting field="grid_rendition_size" label="Grid tile, longest edge (px)" />
         <NumberSetting field="grid_rendition_quality" label="Grid tile quality (1-100)" />
@@ -365,81 +456,81 @@ const ServerSettings = observer(function ServerSettings(): JSX.Element | null {
         <NumberSetting
           field="full_rendition_quality"
           label="Viewer rendition quality (1-100)"
-          hint="AVIF, which is not WebP's scale: 60 and 70 visibly lose the shadow detail a RAW has the most to give."
+          hint="This is the rendition you spend the most time looking at. Below about 80 the shadows visibly lose detail."
         />
         <NumberSetting
-          field="rendition_effort"
-          label="AVIF effort (0-9)"
-          hint="Encoder search depth. 4 costs 13.6s against 0.6s at 0 on a 3840px frame, for a file ~15% smaller."
+          field="lossless_quality"
+          label="Full-resolution quality (1-100)"
+          hint="Quality of the native-resolution rendition, which exists to be inspected at 100 percent."
         />
-        <NumberSetting field="lossless_quality" label="Full-resolution quality (1-100)" />
         <NumberSetting
           field="lossless_quantizer"
-          label="Full-resolution HDR quantizer (0-63)"
-          hint="avifenc's scale for the HDR export; lower is better. Both of these are set tight, because this is the view that exists to be pixel-peeped."
+          label="Full-resolution HDR quality (0-63)"
+          hint="The same rendition in libraries that build HDR. Lower numbers are better quality."
+          disabledReason={hdrOff}
         />
       </div>
 
-      <Text variant="label" as="div" className="panel__title settings__group">
-        HDR
-      </Text>
+      <GroupTitle>HDR brightness</GroupTitle>
       <div className="panel">
         <NumberSetting
           field="hdr_reference_white_nits"
           label="Reference white (nits)"
-          hint="What diffuse white is graded to (ITU-R BT.2408). With the quantile below, this is the pair to reach for if a library comes out consistently dark or hot."
+          hint="How bright plain white is rendered. This and the quantile below are the pair to reach for when a library comes out consistently dark or too hot."
+          disabledReason={hdrOff}
         />
         <NumberSetting
           field="hdr_white_quantile"
-          label="Diffuse-white quantile (0-1)"
-          hint="Which part of the histogram is taken to be diffuse white. Lower renders brighter: it places white further down, so everything above it scales up."
+          label="Plain-white quantile (0-1)"
+          hint="Which part of the histogram is taken to be plain white. Lower values render brighter, because they place white further down and everything above it scales up."
+          disabledReason={hdrOff}
         />
         <NumberSetting
           field="hdr_peak_nits"
-          label="Peak (nits)"
-          hint="Display peak the roll-off targets, and what the file declares as its mastering peak. Only sets how much headroom sits above diffuse white."
-        />
-        <NumberSetting field="hdr_crf" label="Encoder quality (0-63)" hint="Lower is better." />
-        <NumberSetting field="hdr_preset" label="Encoder speed (0-10)" />
-        <NumberSetting
-          field="hdr_max_edge"
-          label="Longest edge (px)"
-          hint="AV1 cannot encode a current sensor at native size. 4K shows 1:1 on the displays that do HDR."
+          label="Peak brightness (nits)"
+          hint="The display brightness the roll-off aims at, and what the file declares it was graded on. It sets how much headroom sits above plain white."
+          disabledReason={hdrOff}
         />
       </div>
 
-      <Text variant="label" as="div" className="panel__title settings__group">
-        Sync and maintenance
-      </Text>
+      <GroupTitle>HDR encoding</GroupTitle>
       <div className="panel">
-        <ToggleSetting
-          field="watch_enabled"
-          label="Watch libraries for changes"
-          hint="Syncs a library when its files change on disk, without waiting to be asked."
+        <NumberSetting
+          field="hdr_crf"
+          label="HDR quality (0-63)"
+          hint="Quality of both the HDR image and the video copy built for Firefox. Lower numbers are better quality and larger files."
+          disabledReason={hdrOff}
         />
         <NumberSetting
-          field="watch_debounce_ms"
-          label="Debounce window (ms)"
-          hint="How long changes are collected before a sync starts, so a copy of a hundred files is one sync rather than a hundred."
+          field="hdr_preset"
+          label="HDR encoder speed (0-10)"
+          hint="Also applies to both. Higher numbers encode faster for a larger file at the same quality."
+          disabledReason={hdrOff}
         />
-        <TextSetting
-          field="full_sync_at"
-          label="Daily full reconcile at"
-          placeholder="03:00"
-          hint="Local HH:MM; empty disables. The backstop for changes the watcher missed. It holds the library lock while it scans, so pick a quiet hour."
+        <NumberSetting
+          field="hdr_max_edge"
+          label="HDR check page, longest edge (px)"
+          hint="Longest edge of the images built by the HDR check page, which is a diagnostic for judging HDR on a real display. It does not affect renditions."
+        />
+      </div>
+
+      <GroupTitle>Maintenance</GroupTitle>
+      <div className="panel">
+        <NumberSetting
+          field="watch_debounce_ms"
+          label="Change debounce (ms)"
+          hint="How long changes on disk are collected before a sync starts, so copying a hundred files causes one sync rather than a hundred."
         />
         <NumberSetting
           field="prune_every_days"
           label="Orphan sweep every (days)"
-          hint="Deletes generated files whose photo no longer exists. 0 disables. It only has anything to do after a library is removed or a catalogue rebuilt."
+          hint="Deletes generated files whose photo no longer exists. 0 turns it off, and it only has work to do after a library is removed or a catalogue is rebuilt."
         />
       </div>
 
-      <Text variant="label" as="div" className="panel__title settings__group">
-        Server
-      </Text>
+      <GroupTitle>Server</GroupTitle>
       <div className="panel">
-        <SettingRow label="Log level" hint="debug adds a line per HTTP request and per finished processing stage.">
+        <SettingRow label="Log level" hint="debug adds a line for every request and every finished processing stage.">
           <Select
             label="Log level"
             options={LOG_LEVELS}
@@ -451,36 +542,26 @@ const ServerSettings = observer(function ServerSettings(): JSX.Element | null {
           field="cors_origins"
           label="Allowed origins"
           placeholder="any origin on this host"
-          hint="Comma-separated, or * for any. Empty means any port on whatever host the request arrived at, which covers loopback and the LAN without hardcoding an address."
+          hint="Which origins may call the API, comma-separated, or * for any. Empty allows any port on the host the request arrived at, which covers this machine and the local network."
         />
         <Text variant="mono" as="p">
-          The listen address and the database path are not here: they are read before this catalogue can be opened, so they stay in the
-          environment (HOST, PORT, DB_PATH).
+          The listen address and the database file are read before the catalogue can be opened, so they stay in the environment as
+          HOST, PORT and DB_PATH.
         </Text>
       </div>
-    </>
+    </details>
   );
 });
 
 export const SettingsPage = observer(function SettingsPage(): JSX.Element {
   const store = useLibrariesStore();
-  const { libraries } = usePresenters();
-  const [rootPath, setRootPath] = useState('');
-
-  const { appSettings } = usePresenters();
+  const { libraries, appSettings } = usePresenters();
+  const [adding, setAdding] = useState(false);
 
   useEffect(() => {
     void libraries.load();
     void appSettings.load();
   }, [libraries, appSettings]);
-
-  async function submit(e: React.FormEvent): Promise<void> {
-    e.preventDefault();
-    if (rootPath.trim() === '') return;
-    // Sort order is a per-view choice made in the gallery, not a property of the
-    // library, so adding one asks for a path and nothing else.
-    if (await libraries.create(rootPath.trim(), 'taken_asc')) setRootPath('');
-  }
 
   return (
     <div className="pad">
@@ -493,22 +574,17 @@ export const SettingsPage = observer(function SettingsPage(): JSX.Element {
         </div>
       )}
 
-      <Text variant="label" as="div" className="panel__title">
-        Libraries
-      </Text>
-
-      <div className="panel">
-        <form className="row" onSubmit={(e) => void submit(e)}>
-          <TextField grow label="Library root path" placeholder="/photos" value={rootPath} onChange={setRootPath} />
-          <Button variant="primary" type="submit" disabled={store.loading}>
-            <FolderPlus size={ICON} />
-            Add library
-          </Button>
-        </form>
-        <Text variant="mono" as="p">
-          The path is read on the server, not this browser. It must already exist.
+      <div className="row page__head">
+        <Text variant="label" as="div" className="panel__title">
+          Libraries
         </Text>
+        <span className="spacer" />
+        <Button variant="primary" onClick={() => setAdding(true)}>
+          <FolderPlus size={ICON} />
+          Add library
+        </Button>
       </div>
+      <AddLibraryDialog open={adding} onOpenChange={setAdding} />
 
       {store.isEmpty ? (
         <div className="empty">
@@ -518,15 +594,13 @@ export const SettingsPage = observer(function SettingsPage(): JSX.Element {
           </Text>
         </div>
       ) : (
-        <LibrarySettings />
+        <LibraryList />
       )}
 
-      <Text variant="label" as="div" className="panel__title settings__group">
-        Viewing
-      </Text>
+      <GroupTitle>Viewing</GroupTitle>
       <ViewingSettings />
 
-      <ServerSettings />
+      <AppSettings />
     </div>
   );
 });
