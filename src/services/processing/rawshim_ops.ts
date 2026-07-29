@@ -101,7 +101,7 @@ export function decodeRawImage(
  * Decodes the camera's embedded preview from a RAW, fitted to `longEdge`. 0 leaves
  * it at whatever size the body embedded.
  *
- * The whole of an import's thumbnail stage in one call. Null when the file has no
+ * The whole of an import's rendition stage in one call. Null when the file has no
  * JPEG preview, which is a property of the file rather than an error: the caller
  * falls back to a render.
  */

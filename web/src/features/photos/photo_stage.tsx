@@ -30,7 +30,7 @@ interface Props {
   // Frames to warm the cache with once this one is up: the neighbours either way,
   // minus any whose rendition is not knowable from here.
   preloadSrcs?: string[];
-  // The preview does not exist yet. Called once per src, before the retries
+  // The rendition does not exist yet. Called once per src, before the retries
   // start, so the caller can build the thing the retries are waiting for.
   onImageMissing?: () => void;
   /** Clears the stage when it changes. The photo, not the src: a rendition swap must hold the frame. */
@@ -400,7 +400,7 @@ export function PhotoStage({
             A frame belonging to the *previous* photo is not a candidate - the cap
             above has already dropped it by the time any of this can matter. */}
         {failed && painted == null ? (
-          <span className="tile__pending">no thumbnail yet</span>
+          <span className="tile__pending">no rendition yet</span>
         ) : (
           // One list, keyed by src, so promoting the incoming one keeps its
           // element: rendered as two slots React would unmount it and the

@@ -71,9 +71,9 @@ export const BulkBar = observer(function BulkBar({ removeFrom }: Props): JSX.Ele
             />
           )}
 
-          <Button onClick={() => void photos.regenerateThumbnails()}>
+          <Button onClick={() => void photos.rebuildGridRenditions()}>
             <Sparkles size={ICON} />
-            Regenerate thumbnails
+            Rebuild grid renditions
           </Button>
 
           <Button onClick={() => void photos.refreshMetadataForSelection()}>

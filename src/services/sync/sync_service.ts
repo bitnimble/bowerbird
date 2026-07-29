@@ -41,7 +41,7 @@ const INSERT_BATCH = 1000;
 // indistinguishable from one that has hung.
 const SCAN_PROGRESS_EVERY = 500;
 
-// What the detached thumbnail batch a run hands off covers, kept so the status
+// What the detached rendition batch a run hands off covers, kept so the status
 // endpoint can report progress against the same set the batch is working on.
 interface ProcessingBatch {
   queued: number;
@@ -70,7 +70,7 @@ function idle(libraryId: string, status: Status = 'idle'): LibrarySyncStatus {
 
 export class SyncService implements LibraryLifecycleListener {
   private readonly statuses = new Map<string, LibrarySyncStatus>();
-  // What this library's current run queued for thumbnailing. Held so
+  // What this library's current run queued for rendition building. Held so
   // getSyncStatus can report processed = queued - still-pending without any
   // background bookkeeping: the live pending count comes from the DB on read.
   private readonly processingBatch = new Map<string, ProcessingBatch>();
@@ -138,7 +138,7 @@ export class SyncService implements LibraryLifecycleListener {
     this.generation.set(libraryId, token);
     let syncedStatus: LibrarySyncStatus | null = null;
     // The photos this run created or rewrote, for a scoped run to hand its
-    // thumbnail batch. Null once the run is a full one, whose batch is the
+    // rendition batch. Null once the run is a full one, whose batch is the
     // library's whole backlog.
     let processingIds: readonly string[] | null = null;
     try {
@@ -306,7 +306,7 @@ export class SyncService implements LibraryLifecycleListener {
         }
         for (const photoId of diff.reappeared) {
           this.photos.clearMissing(photoId);
-          // A photo that went missing before its thumbnails were built is skipped
+          // A photo that went missing before its renditions were built is skipped
           // by the queue while it is missing (§9.4 step 4), so the sync that
           // brings it back is the one that owes them. Left out of a scoped run's
           // batch it would sit there unbuilt until the daily full sync.
@@ -382,7 +382,7 @@ export class SyncService implements LibraryLifecycleListener {
       else log.error('sync failed', { library: libraryId, ms: Date.now() - startedAt, err });
       throw err;
     } finally {
-      // Release the lock as soon as scan+apply is done. Thumbnail generation runs
+      // Release the lock as soon as scan+apply is done. Rendition generation runs
       // detached (§9.5/§9.6: background work, client polls status), so POST /sync
       // returns promptly and re-syncs aren't blocked for the whole processing run.
       releaseSyncLock(lockPath);
@@ -434,7 +434,7 @@ export class SyncService implements LibraryLifecycleListener {
     this.generation.get(libraryId)?.abort();
   }
 
-  // While thumbnailing runs (detached, §9.5), the counts are computed live from the
+  // While rendition building runs (detached, §9.5), the counts are computed live from the
   // DB rather than pushed from the worker pool: one COUNT per poll, no cross-thread
   // progress plumbing.
   getSyncStatus(libraryId: string): LibrarySyncStatus {
@@ -443,7 +443,7 @@ export class SyncService implements LibraryLifecycleListener {
     // Nothing in memory: this process has not synced the library. The flags a
     // killed process left behind are still in the rows, though, so report what is
     // outstanding rather than a flat zero - the catalogue really does owe that
-    // many thumbnails. Reading it starts nothing; a sync is still what picks the
+    // many renditions. Reading it starts nothing; a sync is still what picks the
     // work up (§9.6).
     if (status == null) {
       return { ...idle(libraryId), photos_processing: this.photos.countPendingProcessing(libraryId) };
@@ -457,7 +457,7 @@ export class SyncService implements LibraryLifecycleListener {
   }
 
   // One new photo, at the shoot its path falls under. Returns its id, which the
-  // run collects so a scoped one can hand the thumbnail batch its own photos.
+  // run collects so a scoped one can hand the rendition batch its own photos.
   private insertAdded(libraryId: string, entry: AddedEntry, shootId: string | null, addedAt: string): string {
     const id = randomUUID();
     this.photos.insertFromSync({

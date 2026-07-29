@@ -74,9 +74,9 @@ export class LibrariesService {
       ordering: request.ordering,
       // Matching the column defaults: the embedded JPEG needs no demosaic, and
       // HDR is opt-in because it only applies to a render.
-      preview_source: 'embedded',
-      preview_hdr: false,
-      preview_hdr_video: false,
+      rendition_source: 'embedded',
+      rendition_hdr: false,
+      rendition_hdr_video: false,
       last_synced_at: null,
       photo_count: 0,
     };
@@ -124,15 +124,15 @@ export class LibrariesService {
   }
 
   // A partial update: the settings UI changes one control at a time, and every
-  // field left out keeps its stored value. Changing a preview setting does not
+  // field left out keeps its stored value. Changing a rendition setting does not
   // touch existing photos - it is the default for what gets built next, and for
   // an explicit rebuild (§10.2).
   update(libraryId: string, updates: UpdateLibraryRequest): Library {
     if (this.repo.getById(libraryId) == null) throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
     if (updates.ordering != null) this.repo.setOrdering(libraryId, updates.ordering);
-    if (updates.preview_source != null) this.repo.setPreviewSource(libraryId, updates.preview_source);
-    if (updates.preview_hdr != null) this.repo.setPreviewHdr(libraryId, updates.preview_hdr);
-    if (updates.preview_hdr_video != null) this.repo.setPreviewHdrVideo(libraryId, updates.preview_hdr_video);
+    if (updates.rendition_source != null) this.repo.setRenditionSource(libraryId, updates.rendition_source);
+    if (updates.rendition_hdr != null) this.repo.setRenditionHdr(libraryId, updates.rendition_hdr);
+    if (updates.rendition_hdr_video != null) this.repo.setRenditionHdrVideo(libraryId, updates.rendition_hdr_video);
     return this.get(libraryId);
   }
 

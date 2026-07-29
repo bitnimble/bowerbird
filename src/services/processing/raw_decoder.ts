@@ -7,14 +7,14 @@ import { extractEmbedded, decodeRawImage, freeImage, pixels, readHeaderFields } 
 // hardcoded byte offsets into five of them, one reached by assuming where `sizes`
 // sits inside `libraw_data_t`. The offsets were right and were checked against real
 // files from several bodies, but nothing kept them right, and the failure would have
-// been a silent one - a photo dated 1970, or every thumbnail sideways. bindgen
+// been a silent one - a photo dated 1970, or every rendition sideways. bindgen
 // resolves the fields in Rust from the headers the runtime library was built from.
 
 export interface DecodedImage {
   width: number;
   height: number;
   channels: 3;
-  // 8 for thumbnails, 16 for a full-depth export.
+  // 8 for renditions, 16 for a full-depth export.
   depth: 8 | 16;
   data: Buffer; // interleaved RGB, already rotated to display orientation
 }

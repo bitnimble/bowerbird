@@ -7,7 +7,7 @@ import type { PhotoFilters, PhotoSource, ViewMode } from './photos_store';
 // the filter you were last narrowing by.
 export interface ViewState {
   filters: PhotoFilters;
-  thumbSize: number;
+  tileSize: number;
   mode: ViewMode;
 }
 
@@ -52,7 +52,7 @@ export function loadViewState(source: PhotoSource): Partial<ViewState> | null {
     // rather than letting a bad shape break opening the collection.
     return {
       ...(parsed.filters != null && typeof parsed.filters === 'object' ? { filters: durable(parsed.filters) } : {}),
-      ...(typeof parsed.thumbSize === 'number' && parsed.thumbSize > 0 ? { thumbSize: parsed.thumbSize } : {}),
+      ...(typeof parsed.tileSize === 'number' && parsed.tileSize > 0 ? { tileSize: parsed.tileSize } : {}),
       ...(parsed.mode === 'grid' || parsed.mode === 'masonry' || parsed.mode === 'list' ? { mode: parsed.mode } : {}),
     };
   } catch {

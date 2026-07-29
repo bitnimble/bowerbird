@@ -27,6 +27,20 @@ CREATE TABLE photos (
 CREATE INDEX idx_photos_needs_processing ON photos(needs_processing) WHERE needs_processing = 1;
 `;
 
+// The library columns and settings keys as they stood while a rendition was
+// called a preview.
+const OLD_PREVIEW_NAMES = `
+CREATE TABLE libraries (
+  id                TEXT PRIMARY KEY,
+  root_path         TEXT NOT NULL UNIQUE,
+  data_path         TEXT,
+  preview_source    TEXT NOT NULL DEFAULT 'embedded',
+  preview_hdr       INTEGER NOT NULL DEFAULT 0,
+  preview_hdr_video INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+`;
+
 function oldDatabase(): Database {
   const db = new Database(':memory:');
   db.exec(OLD_PHOTOS);
@@ -88,6 +102,34 @@ describe('migrations: splitting the import into two stages', () => {
     expect((db.query("SELECT tile_built_at FROM photos WHERE id = 'built'").get() as { tile_built_at: string }).tile_built_at).toBe(
       '2026-02-02T03:04:05.000Z',
     );
+  });
+
+  it('renames the preview-named columns and settings keys, keeping their values', () => {
+    const db = new Database(':memory:');
+    db.exec(OLD_PREVIEW_NAMES);
+    db.exec(
+      `INSERT INTO libraries (id, root_path, preview_source, preview_hdr, preview_hdr_video) VALUES ('lib', '/photos', 'render', 1, 1);
+       INSERT INTO settings (key, value) VALUES ('preview_rendition_mode', 'max'), ('last_preview_rendition', 'full')`,
+    );
+    db.exec(OLD_PHOTOS);
+    db.exec(
+      `INSERT INTO photos (id, library_id, file_path, width, height, date_added, preview_rendition)
+       VALUES ('p', 'lib', 'a.arw', 100, 100, '2026-01-01T00:00:00.000Z', 'max')`,
+    );
+
+    runMigrations(db);
+
+    expect(columns(db).has('preview_rendition')).toBe(false);
+    expect(db.query("SELECT viewer_rendition FROM photos WHERE id = 'p'").get()).toEqual({ viewer_rendition: 'max' });
+    expect(db.query("SELECT rendition_source, rendition_hdr, rendition_hdr_video FROM libraries WHERE id = 'lib'").get()).toEqual({
+      rendition_source: 'render',
+      rendition_hdr: 1,
+      rendition_hdr_video: 1,
+    });
+    expect(db.query('SELECT key, value FROM settings ORDER BY key').all()).toEqual([
+      { key: 'last_viewer_rendition', value: 'full' },
+      { key: 'viewer_rendition_mode', value: 'max' },
+    ]);
   });
 
   it('creates a fresh database with the stages already split', () => {

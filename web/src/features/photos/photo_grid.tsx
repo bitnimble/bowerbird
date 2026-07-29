@@ -87,7 +87,7 @@ const Tile = observer(function Tile({
   const { photos } = usePresenters();
   const navigate = useNavigate();
   const [loaded, setLoaded] = useState(false);
-  // A thumbnail 404s while processing is still writing it, and the announcement
+  // A rendition 404s while processing is still writing it, and the announcement
   // is what brings it back: the version is this row's own `date_reprocessed`,
   // which the announcement for this photo writes into it, so a new URL is one
   // tile asking again for itself the moment there is something to fetch. No
@@ -101,7 +101,7 @@ const Tile = observer(function Tile({
   const src = renditionUrl(photo.id, 'grid', version);
   const [failed, setFailed] = useState(false);
   // A tile that failed and has since been told to try again is not failed any
-  // more; without this the placeholder outlives the thumbnail arriving.
+  // more; without this the placeholder outlives the rendition arriving.
   useEffect(() => setFailed(false), [src]);
   const selected = store.selected.has(photo.id);
   const ref = useRef<HTMLDivElement>(null);
@@ -144,7 +144,7 @@ const Tile = observer(function Tile({
       >
         {/* The image is always mounted and the placeholder sits behind it until
             something decodes. Swapping the two made each list refresh blink every
-            un-thumbnailed tile: the placeholder came down, the request 404'd
+            un-rendered tile: the placeholder came down, the request 404'd
             again, and it went back up. */}
         <img
           src={src}
@@ -154,7 +154,7 @@ const Tile = observer(function Tile({
           onLoad={() => setLoaded(true)}
           onError={() => setFailed(true)}
         />
-        {!loaded && <span className="tile__pending">{failed ? 'no thumbnail yet' : null}</span>}
+        {!loaded && <span className="tile__pending">{failed ? 'no rendition yet' : null}</span>}
       </button>
 
       <div className="tile__badges">
@@ -318,7 +318,7 @@ export const PhotoGrid = observer(function PhotoGrid({ emptyHint }: { emptyHint:
   return (
     <>
       <GridKeys />
-      <div className={`grid grid--${store.mode}`} style={{ '--tile': `${store.thumbSize}px` } as React.CSSProperties}>
+      <div className={`grid grid--${store.mode}`} style={{ '--tile': `${store.tileSize}px` } as React.CSSProperties}>
         {store.photos.map((p, i) => (
           // The keyboard cursor is meaningless once a selection is being assembled
           // by mouse: two rings on the same tile only raises "why is this one

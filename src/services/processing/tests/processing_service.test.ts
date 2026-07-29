@@ -5,7 +5,7 @@ import path from 'node:path';
 import type { Config } from '../../../config';
 import type { PendingPhoto, PhotosRepository } from '../../photos/photos_repository';
 import { ProcessingService } from '../processing_service';
-import type { RenditionJob, ProcessingResult, ThumbnailSource } from '../processing_types';
+import type { RenditionJob, ProcessingResult, RenditionSource } from '../processing_types';
 
 const CRASH = 'crash-photo';
 
@@ -30,10 +30,10 @@ class MockWorker {
 
 const config = {
   processingConcurrency: 2,
-  smallThumbnailSize: 800,
-  fullThumbnailSize: 3840,
-  smallThumbnailQuality: 80,
-  fullThumbnailQuality: 90,
+  gridRenditionSize: 800,
+  fullRenditionSize: 3840,
+  gridRenditionQuality: 80,
+  fullRenditionQuality: 90,
 } as Config;
 
 function photoStage(job: { photoId: string; targets: { rendition: string }[] }): string {
@@ -62,9 +62,9 @@ describe('ProcessingService.processUnprocessed', () => {
       rendition_source: 'render',
       needs_tile: 1,
       needs_renditions: 1,
-      preview_source: 'render',
-      preview_hdr: 0,
-      preview_hdr_video: 0,
+      library_rendition_source: 'render',
+      rendition_hdr: 0,
+      rendition_hdr_video: 0,
     };
   }
 
@@ -186,7 +186,7 @@ describe('ProcessingService.processUnprocessed', () => {
   it('rebuilds a tile on its own without touching the renditions beside it', async () => {
     // The grid's own action, on a file whose pixels have not changed: stamping the
     // viewer's side here would sweep every rendition this run did not write, so
-    // regenerating a thumbnail deleted the photo view's copies behind it.
+    // regenerating a rendition deleted the photo view's copies behind it.
     const fullDir = path.join(root, '.bowerbird', 'renditions', 'full');
     mkdirSync(fullDir, { recursive: true });
     const full = path.join(fullDir, 'a.avif');
@@ -243,11 +243,11 @@ describe('ProcessingService.processUnprocessed', () => {
     // tile's own source instead put 'embedded' there for every photo, whatever the
     // library said - so the second import built the tile alone, and the sweep then
     // deleted the `full` it had declined to rebuild, with nothing to ever restore it.
-    let stored: ThumbnailSource | null = 'render';
+    let stored: RenditionSource | null = 'render';
     const repo = {
       listPendingProcessing: jest.fn(() => [{ ...pending('a'), rendition_source: stored }]),
       markTileBuilt: jest.fn(),
-      markRenditionsBuilt: jest.fn((_id: string, _at: string, source: ThumbnailSource) => {
+      markRenditionsBuilt: jest.fn((_id: string, _at: string, source: RenditionSource) => {
         stored = source;
       }),
       markProcessingFailed: jest.fn(),

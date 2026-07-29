@@ -136,7 +136,7 @@ export class LibraryWatcher implements LibraryLifecycleListener {
     this.watchers.delete(libraryId);
   }
 
-  // Ignore the data dir (thumbnails/bin, where processing writes, so watching it
+  // Ignore the data dir (renditions/bin, where processing writes, so watching it
   // would loop), Bin folders, and hidden entries (incl. the sync lock file).
   private isRelevant(rootPath: string, dataDir: string, filename: string): boolean {
     const segments = filename.split(path.sep).join('/').split('/');

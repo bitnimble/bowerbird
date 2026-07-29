@@ -1,5 +1,5 @@
 import { runInAction } from 'mobx';
-import { api, type PreviewRendition, type PreviewRenditionMode, type Settings } from '../../api/client';
+import { api, type ViewerRendition, type ViewerRenditionMode, type Settings } from '../../api/client';
 import type { AppSettingsStore } from './app_settings_store';
 
 export class AppSettingsPresenter {
@@ -14,25 +14,25 @@ export class AppSettingsPresenter {
       this.loaded = true;
     } catch {
       // Non-fatal: the store's defaults are the shipped behaviour, and a photo
-      // opening at its own thumbnail is better than not opening.
+      // opening at its own rendition is better than not opening.
     }
   }
 
-  async setPreviewRenditionMode(mode: PreviewRenditionMode): Promise<void> {
-    this.apply(await api.updateSettings({ preview_rendition_mode: mode }));
+  async setViewerRenditionMode(mode: ViewerRenditionMode): Promise<void> {
+    this.apply(await api.updateSettings({ viewer_rendition_mode: mode }));
   }
 
   // Recorded only in the mode that reads it back. The per-photo memory is the
   // photo's own column, written by the presenter that owns it.
-  async rememberRendition(rendition: PreviewRendition): Promise<void> {
-    if (this.store.previewRenditionMode !== 'remember') return;
-    this.apply(await api.updateSettings({ last_preview_rendition: rendition }));
+  async rememberRendition(rendition: ViewerRendition): Promise<void> {
+    if (this.store.viewerRenditionMode !== 'remember') return;
+    this.apply(await api.updateSettings({ last_viewer_rendition: rendition }));
   }
 
   private apply(settings: Settings): void {
     runInAction(() => {
-      this.store.previewRenditionMode = settings.preview_rendition_mode;
-      this.store.lastPreviewRendition = settings.last_preview_rendition;
+      this.store.viewerRenditionMode = settings.viewer_rendition_mode;
+      this.store.lastViewerRendition = settings.last_viewer_rendition;
     });
   }
 }

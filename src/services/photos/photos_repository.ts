@@ -1,13 +1,13 @@
 import type { Database } from 'bun:sqlite';
 import { OrderingSchema, type Ordering } from '../../schemas/common';
 import type { PhotoDetail, PhotoSummary, Triage } from '../../schemas/photos';
-import type { PreviewRendition } from '../../schemas/settings';
-import type { ThumbnailSource } from '../processing/processing_types';
+import type { ViewerRendition } from '../../schemas/settings';
+import type { RenditionSource } from '../processing/processing_types';
 
 export interface PhotoListFilters {
   includeDeleted: boolean;
   isMissing?: boolean;
-  // Photos with no grid tile yet, which is what a gallery means by "no thumbnail".
+  // Photos with no grid tile yet, which is what a gallery means by "no rendition".
   needsTile?: boolean;
   // Only meaningful together with includeDeleted, which lifts the blanket
   // is_deleted = 0 clause this then narrows back down (the Bin view).
@@ -102,12 +102,13 @@ export interface PendingPhoto {
   needs_renditions: number;
   // The source requested for this photo; NULL for rows queued before the setting
   // existed, which the service resolves to the library's default.
-  rendition_source: ThumbnailSource | null;
-  // The library's preview settings, carried along so the pool needs no second
-  // lookup per job (§10.2).
-  preview_source: ThumbnailSource;
-  preview_hdr: number;
-  preview_hdr_video: number;
+  rendition_source: RenditionSource | null;
+  // The library's rendition settings, carried along so the pool needs no second
+  // lookup per job (§10.2). Aliased in the query because the photo carries a
+  // column of the same name: what it was built with, against what to build next.
+  library_rendition_source: RenditionSource;
+  rendition_hdr: number;
+  rendition_hdr_video: number;
 }
 
 // Minimal shape for file/shoot bookkeeping (moves, adoption, reconciliation).
@@ -128,9 +129,9 @@ function folderRange(folderPath: string): [string, string] {
 // Qualified with `photos.` because listByAlbum joins album_photos, which also has
 // a date_added column (bare names would be ambiguous).
 const SUMMARY_COLS =
-  'photos.id, photos.library_id, photos.shoot_id, photos.file_path, photos.width, photos.height, photos.date_taken, photos.date_added, photos.date_updated, photos.tile_built_at, photos.renditions_built_at, photos.preview_rendition, photos.triage, photos.rating, photos.is_missing, photos.is_deleted';
+  'photos.id, photos.library_id, photos.shoot_id, photos.file_path, photos.width, photos.height, photos.date_taken, photos.date_added, photos.date_updated, photos.tile_built_at, photos.renditions_built_at, photos.viewer_rendition, photos.triage, photos.rating, photos.is_missing, photos.is_deleted';
 
-// A photo the thumbnail queue owes work on. `prefix` is the table alias the
+// A photo the rendition queue owes work on. `prefix` is the table alias the
 // caller's query uses, empty when it has none.
 const PENDING_PROCESSING = (prefix: string): string =>
   `(${prefix}needs_tile = 1 OR ${prefix}needs_renditions = 1) AND ${prefix}is_missing = 0 AND ${prefix}is_deleted = 0`;
@@ -160,7 +161,7 @@ const DETAIL_COLS = `photos.id, photos.library_id, photos.shoot_id, photos.width
   photos.needs_tile, photos.needs_renditions, photos.processing_error,
   photos.latitude, photos.longitude, photos.rating, photos.triage, photos.is_missing,
   photos.is_deleted, photos.notes, photos.file_size, photos.iso, photos.shutter_speed, photos.aperture,
-  photos.focal_length, photos.camera_make, photos.camera_model, photos.lens_model, photos.rendition_source, photos.preview_rendition`;
+  photos.focal_length, photos.camera_make, photos.camera_model, photos.lens_model, photos.rendition_source, photos.viewer_rendition`;
 
 interface SummaryRow {
   id: string;
@@ -174,7 +175,7 @@ interface SummaryRow {
   date_updated: string | null;
   tile_built_at: string | null;
   renditions_built_at: string | null;
-  preview_rendition: PreviewRendition | null;
+  viewer_rendition: ViewerRendition | null;
   triage: string | null;
   rating: number;
   is_missing: number;
@@ -202,7 +203,7 @@ interface DetailRow extends SummaryRow {
   camera_make: string | null;
   camera_model: string | null;
   lens_model: string | null;
-  rendition_source: ThumbnailSource | null;
+  rendition_source: RenditionSource | null;
   lib_ordering: string; // the owning library's ordering, for ordering_date
 }
 
@@ -247,7 +248,7 @@ function toSummary(row: SummaryRow, ordering: Ordering): PhotoSummary {
     date_updated: row.date_updated,
     tile_built_at: row.tile_built_at,
     renditions_built_at: row.renditions_built_at,
-    preview_rendition: row.preview_rendition,
+    viewer_rendition: row.viewer_rendition,
   };
 }
 
@@ -287,9 +288,9 @@ function toDetail(row: DetailRow, albumIds: string[]): PhotoDetail {
     camera_model: row.camera_model,
     lens_model: row.lens_model,
     rendition_source: row.rendition_source,
-    preview_rendition: row.preview_rendition,
+    viewer_rendition: row.viewer_rendition,
     // All resolved by the service, which knows the library: they need its data
-    // directory to stat or to build a path from, and its preview settings. The
+    // directory to stat or to build a path from, and its rendition settings. The
     // repository has no business doing either.
     original_path: null,
     default_rendition: 'embedded',
@@ -332,7 +333,7 @@ export class PhotosRepository {
     );
   }
 
-  update(id: string, fields: { rating?: number; triage?: Triage; notes?: string | null; preview_rendition?: PreviewRendition }): boolean {
+  update(id: string, fields: { rating?: number; triage?: Triage; notes?: string | null; viewer_rendition?: ViewerRendition }): boolean {
     const sets: string[] = [];
     const params: (string | number | null)[] = [];
     if (fields.rating != null) {
@@ -348,9 +349,9 @@ export class PhotosRepository {
       sets.push('notes = ?');
       params.push(fields.notes);
     }
-    if (fields.preview_rendition != null) {
-      sets.push('preview_rendition = ?');
-      params.push(fields.preview_rendition);
+    if (fields.viewer_rendition != null) {
+      sets.push('viewer_rendition = ?');
+      params.push(fields.viewer_rendition);
     }
     if (sets.length === 0) return this.db.query('SELECT 1 FROM photos WHERE id = ?').get(id) != null;
     params.push(id);
@@ -602,7 +603,7 @@ export class PhotosRepository {
   }
 
   // Every id in the catalogue, including soft-deleted rows: a binned photo still
-  // has its thumbnails, which is what makes the Bin browsable (§12.1).
+  // has its renditions, which is what makes the Bin browsable (§12.1).
   allIds(): string[] {
     return (this.db.query('SELECT id FROM photos').all() as { id: string }[]).map((r) => r.id);
   }
@@ -620,7 +621,7 @@ export class PhotosRepository {
 
   // --- processing (DESIGN §10) ---
 
-  // Photos awaiting thumbnails, joined with their library paths. is_missing is
+  // Photos awaiting renditions, joined with their library paths. is_missing is
   // excluded so a photo whose file vanished mid-queue is not failed against it.
   // `photoIds` narrows to a named set: a scoped sync processes the files it
   // reconciled rather than draining whatever else the library still owes (§9.5).
@@ -635,7 +636,7 @@ export class PhotosRepository {
     const order = libraryId == null ? '' : `ORDER BY ${orderByClause(this.libraryOrdering(libraryId), 'p.')}`;
     const query = (idClause: string): string =>
       `SELECT p.id AS photo_id, p.file_path, p.rendition_source, p.needs_tile, p.needs_renditions,
-              l.root_path, l.data_path, l.preview_source, l.preview_hdr, l.preview_hdr_video
+              l.root_path, l.data_path, l.rendition_source AS library_rendition_source, l.rendition_hdr, l.rendition_hdr_video
        FROM photos p JOIN libraries l ON l.id = p.library_id
        WHERE ${PENDING_PROCESSING('p.')} ${where} ${idClause} ${order}`;
 
@@ -668,7 +669,7 @@ export class PhotosRepository {
 
   // The viewer's renditions have landed, which is also when `rendition_source`
   // becomes true: it records what the viewer is served (§10.2).
-  markRenditionsBuilt(id: string, builtAtIso: string, source: ThumbnailSource): void {
+  markRenditionsBuilt(id: string, builtAtIso: string, source: RenditionSource): void {
     this.db
       .query(
         `UPDATE photos SET needs_renditions = 0, renditions_built_at = ?, processing_error = NULL,
@@ -681,7 +682,7 @@ export class PhotosRepository {
   // of the same unchanged file, so this leaves `needs_renditions` and
   // `rendition_source` where they are: setting either would have the run stamp the
   // viewer's side and sweep the renditions it did not rewrite (§10.3), which is a
-  // rebuild of the thumbnail deleting the photo view's copies behind it.
+  // rebuild of the rendition deleting the photo view's copies behind it.
   //
   // Returns how many rows were actually queued, so a request naming missing or
   // binned photos reports it.
@@ -765,7 +766,7 @@ export class PhotosRepository {
       user.push('is_missing = ?');
       userParams.push(filters.isMissing ? 1 : 0);
     }
-    // "No thumbnail" is about the grid tile: the renditions behind it are the
+    // "No rendition" is about the grid tile: the renditions behind it are the
     // viewer's business and a photo with a tile is not a hole in the gallery.
     if (filters.needsTile != null) {
       user.push('needs_tile = ?');

@@ -2,14 +2,15 @@ import { action, runInAction } from 'mobx';
 import {
   ApiError,
   api,
+  downloadUrl,
   type Ordering,
   type PhotoListParams,
   type PhotoListResponse,
   type PhotoSummary,
-  type PreviewRendition,
   type ProcessingStage,
   type Rendition,
   type Triage,
+  type ViewerRendition,
 } from '../../api/client';
 import type { AlbumsPresenter } from '../albums/albums_presenter';
 import type { LibrariesPresenter } from '../libraries/libraries_presenter';
@@ -35,11 +36,6 @@ function plural(n: number, one: string, many: string): string {
   return `${n} ${n === 1 ? one : many}`;
 }
 
-export function renditionLabel(rendition: PreviewRendition): string {
-  if (rendition === 'embedded') return 'embedded JPEG';
-  return rendition === 'full' ? 'RAW render' : 'RAW render (max quality)';
-}
-
 export class PhotosPresenter {
   // Only the newest list request may write to the store; an older one that
   // resolves late (slow page of a big library) would otherwise overwrite it.
@@ -47,7 +43,7 @@ export class PhotosPresenter {
   // Photos already asked for on-demand build. A stage that fails, is re-mounted
   // and fails again reports missing each time: without this every one of them
   // would queue the same job again.
-  private readonly previewBuilds = new Set<string>();
+  private readonly renditionBuilds = new Set<string>();
 
   constructor(
     private readonly store: PhotosStore,
@@ -69,10 +65,10 @@ export class PhotosPresenter {
     await this.fetchPage();
   }
 
-  // Whether what this view shows depends on which photos have been thumbnailed,
+  // Whether what this view shows depends on which photos have a grid rendition,
   // and so goes stale as a run works through them. Only the filter does: the rows
   // themselves are settled once the scan has finished inserting them, and their
-  // thumbnails arrive by announcement (§18.6) rather than by re-reading the list.
+  // renditions arrive by announcement (§18.6) rather than by re-reading the list.
   get tracksProcessing(): boolean {
     return this.store.filters.needsTile != null;
   }
@@ -112,8 +108,8 @@ export class PhotosPresenter {
   }
 
   @action.bound
-  setThumbSize(px: number): void {
-    this.store.thumbSize = px;
+  setTileSize(px: number): void {
+    this.store.tileSize = px;
     this.remember();
   }
 
@@ -150,10 +146,10 @@ export class PhotosPresenter {
   // The rendition the user asked for, which is also the one to reopen at: which
   // of those two memories it lands in is the setting's business, not this one's
   // (§10.2).
-  async chooseRendition(photoId: string, rendition: PreviewRendition): Promise<void> {
+  async chooseRendition(photoId: string, rendition: ViewerRendition): Promise<void> {
     await this.showRendition(photoId, rendition);
     if (this.store.rendition !== rendition) return; // the build failed; nothing to remember
-    if (this.settings.previewRenditionMode === 'remember_per_photo') await this.patch(photoId, { preview_rendition: rendition });
+    if (this.settings.viewerRenditionMode === 'remember_per_photo') await this.patch(photoId, { viewer_rendition: rendition });
     else await this.settingsPresenter.rememberRendition(rendition);
   }
 
@@ -166,9 +162,29 @@ export class PhotosPresenter {
     this.store.forceRebuild = force;
   }
 
-  // Builds the rendition the first time and serves the cached file every time
-  // after. The camera's JPEG is never built: it is the RAW's own bytes (§10.2).
-  private async showRendition(photoId: string, rendition: PreviewRendition): Promise<void> {
+  // The RAW, or any of the three renditions - built first when it is not on disk,
+  // so the menu can offer all of them whatever happens to be cached. The server
+  // refuses to build during a download, and a 404 in a navigation is the
+  // browser's error page rather than something this app could report.
+  async download(photoId: string, form: 'original' | ViewerRendition): Promise<void> {
+    // The RAW and the camera's JPEG are both read out of a file that is already
+    // there; only a render can be missing.
+    if ((form === 'full' || form === 'max') && !(await this.ensureBuilt(photoId, form))) return;
+    window.location.href = downloadUrl(photoId, form);
+  }
+
+  // Puts a rendition on screen, building it first if it is not on disk.
+  private async showRendition(photoId: string, rendition: ViewerRendition): Promise<void> {
+    if (!(await this.ensureBuilt(photoId, rendition))) return;
+    if (!this.isCurrent(photoId)) return;
+    runInAction(() => (this.store.rendition = rendition));
+  }
+
+  // Builds the rendition the first time and leaves the cached file alone every
+  // time after. The camera's JPEG is never built: it is the RAW's own bytes
+  // (§10.2). False when the build failed, so a caller does not go on to ask for a
+  // file that is not there.
+  private async ensureBuilt(photoId: string, rendition: ViewerRendition): Promise<boolean> {
     // The camera's JPEG comes straight out of the RAW, so there is no cached
     // build to force past.
     const force = this.store.forceRebuild && rendition !== 'embedded';
@@ -184,10 +200,10 @@ export class PhotosPresenter {
       // detail knows whether one exists. Without this, Firefox keeps showing the
       // dark still until the page is reloaded (§10.7).
       await this.refreshDetail();
-      if (!this.isCurrent(photoId)) return;
-      runInAction(() => (this.store.rendition = rendition));
+      return true;
     } catch (err) {
       this.fail(err);
+      return false;
     } finally {
       runInAction(() => (this.store.buildingRendition = false));
     }
@@ -219,7 +235,7 @@ export class PhotosPresenter {
   // file decoded, because the stage reports once per frame and the panel is read
   // on every render after it.
   @action.bound
-  imageShown(photoId: string, rendition: PreviewRendition, width: number, height: number): void {
+  imageShown(photoId: string, rendition: ViewerRendition, width: number, height: number): void {
     this.store.shownImage = { photoId, rendition, width, height };
   }
 
@@ -235,7 +251,7 @@ export class PhotosPresenter {
   // What still has to be applied to open this photo where the setting asks, or
   // null when the viewer resolved that from the row on its own - which is the
   // usual answer now that every fact the setting reads is on the row.
-  private renditionToApply(): PreviewRendition | null {
+  private renditionToApply(): ViewerRendition | null {
     const target = this.store.preferredRendition;
     return target == null || target === this.store.showing ? null : target;
   }
@@ -442,20 +458,20 @@ export class PhotosPresenter {
     await this.bulk(() => api.restorePhotos(ids), `Restored ${plural(ids.length, 'photo', 'photos')}`);
   }
 
-  // The grid tile alone, from the camera's JPEG an import builds it from (§10.2).
-  // The photo view's renditions are left where they are: they are of the same
-  // unchanged file, and rebuilding one is its own action in the viewer.
+  // The grid rendition alone, from the camera's JPEG an import builds it from
+  // (§10.2). The viewer's renditions are left where they are: they are of the
+  // same unchanged file, and rebuilding one is its own action in the viewer.
   //
   // Queued server-side, so this reports that the work started rather than that it
   // finished; every photo picks up its new file when the server announces it,
   // which is also what tells the grid.
-  async regenerateThumbnails(): Promise<void> {
+  async rebuildGridRenditions(): Promise<void> {
     const photoIds = this.store.selectedIds;
     if (photoIds.length === 0) return;
     try {
       const { queued } = await api.rebuildTiles(photoIds);
       await this.refreshDetail();
-      this.toasts.show(`Rebuilt ${plural(queued, 'thumbnail', 'thumbnails')}`);
+      this.toasts.show(`Rebuilt ${plural(queued, 'grid rendition', 'grid renditions')}`);
     } catch (err) {
       this.fail(err);
     }
@@ -463,15 +479,15 @@ export class PhotosPresenter {
   }
 
   // A photo whose processing never ran, or failed, has no rendition to serve and
-  // nothing queued to change that, so the detail view would sit on "no preview
+  // nothing queued to change that, so the detail view would sit on "no rendition
   // yet" indefinitely. Builds the one that is actually missing rather than
-  // reprocessing from the embedded JPEG: that rebuilds the grid tile, which is
-  // not what the viewer is asking for, so a library that renders would ask again
-  // on the next paint and never stop.
+  // reprocessing from the embedded JPEG: that rebuilds the grid rendition, which
+  // is not what the viewer is asking for, so a library that renders would ask
+  // again on the next paint and never stop.
   async buildMissingRendition(photoId: string, rendition: Rendition): Promise<void> {
     const key = `${photoId}:${rendition}`;
-    if (this.previewBuilds.has(key)) return;
-    this.previewBuilds.add(key);
+    if (this.renditionBuilds.has(key)) return;
+    this.renditionBuilds.add(key);
     try {
       await api.buildRendition(photoId, rendition);
       await this.refreshDetail();
@@ -482,7 +498,7 @@ export class PhotosPresenter {
       // failed - a RAW that was briefly unreadable, a worker that could not spawn
       // - was never attempted again for the life of the tab, and the set grew
       // with every photo that ever asked.
-      this.previewBuilds.delete(key);
+      this.renditionBuilds.delete(key);
     }
   }
 
@@ -543,7 +559,7 @@ export class PhotosPresenter {
         // fields that moved then notify, so rating a photo leaves the camera
         // settings and the paths beside it alone. Minus the two a patch cannot
         // change, which arrive as fresh objects every time and would look like a
-        // change to whoever reads them - the frame and the preview panel, for a
+        // change to whoever reads them - the frame and the rendition panel, for a
         // star. What does move them says so itself (§18.6).
         const { renditions: _renditions, album_ids: _albums, ...changed } = updated;
         if (this.store.loadedDetail?.id === photoId) Object.assign(this.store.loadedDetail, changed);
@@ -556,7 +572,7 @@ export class PhotosPresenter {
           row.triage = updated.triage;
           // The row answers which rendition to reopen this photo at, so a choice
           // written only to the detail would be forgotten on the step back to it.
-          row.preview_rendition = updated.preview_rendition;
+          row.viewer_rendition = updated.viewer_rendition;
         }
       });
       // Only the field that changed can move a photo out of the slice being
@@ -680,7 +696,7 @@ export class PhotosPresenter {
     // Anything the user chose last time they were here wins over those defaults.
     const saved = loadViewState(source);
     if (saved?.filters != null) this.store.filters = saved.filters;
-    if (saved?.thumbSize != null) this.store.thumbSize = saved.thumbSize;
+    if (saved?.tileSize != null) this.store.tileSize = saved.tileSize;
     if (saved?.mode != null) this.store.mode = saved.mode;
   }
 
@@ -689,7 +705,7 @@ export class PhotosPresenter {
     if (source == null) return;
     saveViewState(source, {
       filters: this.store.filters,
-      thumbSize: this.store.thumbSize,
+      tileSize: this.store.tileSize,
       mode: this.store.mode,
     });
   }
@@ -708,7 +724,7 @@ export class PhotosPresenter {
   private beginDetail(photoId: string): void {
     this.store.open = { id: photoId, status: 'loading' };
     this.store.notesSavedAt = null;
-    // Per photo, not sticky: the next photo may have no preview cached for the
+    // Per photo, not sticky: the next photo may have nothing cached for the
     // rendition this one was showing, which would be a 404 rather than a picture.
     // Reopening it there is the setting's job, and it builds first.
     this.store.rendition = null;

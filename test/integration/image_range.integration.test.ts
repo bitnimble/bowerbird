@@ -32,9 +32,9 @@ beforeAll(() => {
     root_path: root,
     data_path: null,
     ordering: 'taken_desc',
-    preview_source: 'render',
-    preview_hdr: false,
-    preview_hdr_video: false,
+    rendition_source: 'render',
+    rendition_hdr: false,
+    rendition_hdr_video: false,
     last_synced_at: null,
     photo_count: 1,
   };
@@ -61,7 +61,7 @@ afterAll(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
-test('a full thumbnail response carries Content-Length and advertises range support', async () => {
+test('a full rendition response carries Content-Length and advertises range support', async () => {
   const res = await fetch(`${origin}/image/p1/renditions/grid`);
   expect(res.status).toBe(200);
   expect(res.headers.get('content-length')).toBe(String(BODY.length));
@@ -70,7 +70,7 @@ test('a full thumbnail response carries Content-Length and advertises range supp
 });
 
 test('a ranged request on the original returns 206 with just that slice', async () => {
-  const res = await fetch(`${origin}/image/p1/original`, { headers: { Range: 'bytes=4-7' } });
+  const res = await fetch(`${origin}/image/p1/download/original`, { headers: { Range: 'bytes=4-7' } });
   expect(res.status).toBe(206);
   expect(res.headers.get('content-range')).toBe(`bytes 4-7/${BODY.length}`);
   expect(res.headers.get('content-length')).toBe('4');
@@ -78,12 +78,12 @@ test('a ranged request on the original returns 206 with just that slice', async 
 });
 
 test('an open-ended range serves through to the end of the file', async () => {
-  const res = await fetch(`${origin}/image/p1/original`, { headers: { Range: 'bytes=12-' } });
+  const res = await fetch(`${origin}/image/p1/download/original`, { headers: { Range: 'bytes=12-' } });
   expect(res.status).toBe(206);
   expect(await res.text()).toBe('CDEF');
 });
 
 test('an unsatisfiable range is rejected rather than served as a full body', async () => {
-  const res = await fetch(`${origin}/image/p1/original`, { headers: { Range: 'bytes=99-200' } });
+  const res = await fetch(`${origin}/image/p1/download/original`, { headers: { Range: 'bytes=99-200' } });
   expect(res.status).toBe(416);
 });

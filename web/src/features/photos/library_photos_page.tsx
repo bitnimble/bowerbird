@@ -15,7 +15,7 @@ export const LibraryPhotosPage = observer(function LibraryPhotosPage(): JSX.Elem
     // Shoots and albums load here too: the bulk bar offers them as destinations.
     void shoots.load(libraryId);
     void albums.load();
-    // Still watches the sync status so the grid fills in as thumbnails land, but
+    // Still watches the sync status so the grid fills in as renditions land, but
     // the controls for starting one live in Settings.
     void sync.watch(libraryId);
     return () => sync.stop();

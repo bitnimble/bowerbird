@@ -1,7 +1,7 @@
 import type { Database } from 'bun:sqlite';
 import {
-  PreviewRenditionModeSchema,
-  PreviewRenditionSchema,
+  ViewerRenditionModeSchema,
+  ViewerRenditionSchema,
   type Settings,
   type UpdateSettingsRequest,
 } from '../../schemas/settings';
@@ -17,11 +17,11 @@ export class SettingsRepository {
     // Anything the app has never written, or wrote under an older spelling, is
     // read as the default rather than failing the whole request: these are
     // preferences, and the viewer has to open with or without them.
-    const mode = PreviewRenditionModeSchema.safeParse(this.read('preview_rendition_mode'));
-    const last = PreviewRenditionSchema.safeParse(this.read('last_preview_rendition'));
+    const mode = ViewerRenditionModeSchema.safeParse(this.read('viewer_rendition_mode'));
+    const last = ViewerRenditionSchema.safeParse(this.read('last_viewer_rendition'));
     return {
-      preview_rendition_mode: mode.success ? mode.data : 'remember',
-      last_preview_rendition: last.success ? last.data : null,
+      viewer_rendition_mode: mode.success ? mode.data : 'remember',
+      last_viewer_rendition: last.success ? last.data : null,
     };
   }
 

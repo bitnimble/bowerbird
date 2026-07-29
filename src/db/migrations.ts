@@ -10,19 +10,19 @@ CREATE TABLE IF NOT EXISTS libraries (
   last_synced_at TEXT,          -- ISO datetime of the last completed sync; NULL if never synced
   ordering    TEXT NOT NULL DEFAULT 'taken_asc'
     CHECK (ordering IN ('taken_asc', 'taken_desc', 'added_asc', 'added_desc')),
-  -- Where thumbnails and previews get their pixels, and whether the full-size
-  -- render is HDR (§10.2). Per library rather than global: one catalogue may be
+  -- Where this library's renditions get their pixels, and whether the full-size
+  -- one is HDR (§10.2). Per library rather than global: one catalogue may be
   -- scanned JPEGs where the camera's rendering is the point, another RAWs worth
   -- demosaicing. 'embedded' is the default because it needs no demosaic.
-  preview_source TEXT NOT NULL DEFAULT 'embedded'
-    CHECK (preview_source IN ('embedded', 'render')),
+  rendition_source TEXT NOT NULL DEFAULT 'embedded'
+    CHECK (rendition_source IN ('embedded', 'render')),
   -- Only meaningful with 'render': an embedded JPEG is 8-bit SDR, so there is no
   -- headroom in it to carry.
-  preview_hdr INTEGER NOT NULL DEFAULT 0,
-  -- Also encode the HDR preview as a one-frame AV1. Off by default: it is a
+  rendition_hdr INTEGER NOT NULL DEFAULT 0,
+  -- Also encode the HDR rendition as a one-frame AV1. Off by default: it is a
   -- second encode per photo for a file only Firefox on Windows ever reads, and
   -- most installs never serve one.
-  preview_hdr_video INTEGER NOT NULL DEFAULT 0
+  rendition_hdr_video INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS shoots (
@@ -167,8 +167,27 @@ function migrateThumbnailsToRenditions(db: Database): void {
     db.exec('ALTER TABLE photos DROP COLUMN thumbnail_source');
   }
   if (cols.has('thumbnail_hdr')) db.exec('ALTER TABLE photos DROP COLUMN thumbnail_hdr');
-  db.exec("UPDATE photos SET preview_rendition = 'full' WHERE preview_rendition = 'render'");
-  db.exec("UPDATE settings SET value = 'full' WHERE value = 'render' AND key IN ('preview_rendition_mode', 'last_preview_rendition')");
+  db.exec("UPDATE photos SET viewer_rendition = 'full' WHERE viewer_rendition = 'render'");
+  db.exec("UPDATE settings SET value = 'full' WHERE value = 'render' AND key IN ('viewer_rendition_mode', 'last_viewer_rendition')");
+}
+
+// "Preview" was a second word for a rendition, and the columns and settings keys
+// spelled with it disagreed with everything else the schema calls these files
+// (§10.2). Renamed rather than dual-read, so there is one name per fact.
+//
+// Runs before every ensureColumn below: adding the new column first would leave
+// the rename with a name already taken, and the old column's values stranded.
+function renamePreviewColumnsToRenditions(db: Database): void {
+  const rename = (table: string, from: string, to: string): void => {
+    const cols = columnNames(db, table);
+    if (cols.has(from) && !cols.has(to)) db.exec(`ALTER TABLE ${table} RENAME COLUMN ${from} TO ${to}`);
+  };
+  rename('photos', 'preview_rendition', 'viewer_rendition');
+  rename('libraries', 'preview_source', 'rendition_source');
+  rename('libraries', 'preview_hdr', 'rendition_hdr');
+  rename('libraries', 'preview_hdr_video', 'rendition_hdr_video');
+  db.exec("UPDATE settings SET key = 'viewer_rendition_mode' WHERE key = 'preview_rendition_mode'");
+  db.exec("UPDATE settings SET key = 'last_viewer_rendition' WHERE key = 'last_preview_rendition'");
 }
 
 // One pending flag and one timestamp became two of each, because the import runs
@@ -190,6 +209,7 @@ function migrateProcessingStages(db: Database): void {
 
 export function runMigrations(db: Database): void {
   db.exec(SCHEMA);
+  renamePreviewColumnsToRenditions(db);
   // Additive columns, for DBs created before each feature landed. CREATE TABLE
   // above already has them, so these are no-ops on a fresh database.
   ensureColumn(db, 'photos', 'file_size', 'INTEGER'); // stat quick-check (§9.1)
@@ -205,15 +225,15 @@ export function runMigrations(db: Database): void {
   // older than EXIF 2.31; a re-read of the header fills it in.
   ensureColumn(db, 'photos', 'date_taken_offset', 'TEXT');
   ensureColumn(db, 'photos', 'rendition_source', 'TEXT'); // §10.2
-  ensureColumn(db, 'photos', 'preview_rendition', 'TEXT'); // per-photo viewer memory (§10.2)
+  ensureColumn(db, 'photos', 'viewer_rendition', 'TEXT'); // per-photo viewer memory (§10.2)
   migrateThumbnailsToRenditions(db);
   ensureColumn(db, 'photos', 'deleted_from_path', 'TEXT'); // Bin restore (§12.2)
   ensureColumn(db, 'libraries', 'last_synced_at', 'TEXT'); // §9.6
-  // Per-library preview settings, replacing the global import.thumbnail_source
+  // Per-library rendition settings, replacing the global import.thumbnail_source
   // (§10.2). The default matches what that setting shipped with.
-  ensureColumn(db, 'libraries', 'preview_source', "TEXT NOT NULL DEFAULT 'embedded'");
-  ensureColumn(db, 'libraries', 'preview_hdr', 'INTEGER NOT NULL DEFAULT 0');
-  ensureColumn(db, 'libraries', 'preview_hdr_video', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(db, 'libraries', 'rendition_source', "TEXT NOT NULL DEFAULT 'embedded'");
+  ensureColumn(db, 'libraries', 'rendition_hdr', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(db, 'libraries', 'rendition_hdr_video', 'INTEGER NOT NULL DEFAULT 0');
   migrateSelectedToTriage(db);
   ensureColumn(db, 'photos', 'needs_tile', 'INTEGER NOT NULL DEFAULT 1');
   ensureColumn(db, 'photos', 'needs_renditions', 'INTEGER NOT NULL DEFAULT 1');

@@ -14,15 +14,15 @@ function repo(): { settings: SettingsRepository; db: Database } {
 
 test('an untouched catalogue opens photos wherever they were left', () => {
   const { settings, db } = repo();
-  expect(settings.get()).toEqual({ preview_rendition_mode: 'remember', last_preview_rendition: null });
+  expect(settings.get()).toEqual({ viewer_rendition_mode: 'remember', last_viewer_rendition: null });
   db.close();
 });
 
 test('each setting is written and read back independently', () => {
   const { settings, db } = repo();
-  settings.update({ preview_rendition_mode: 'max' });
-  settings.update({ last_preview_rendition: 'full' });
-  expect(settings.get()).toEqual({ preview_rendition_mode: 'max', last_preview_rendition: 'full' });
+  settings.update({ viewer_rendition_mode: 'max' });
+  settings.update({ last_viewer_rendition: 'full' });
+  expect(settings.get()).toEqual({ viewer_rendition_mode: 'max', last_viewer_rendition: 'full' });
   db.close();
 });
 
@@ -30,15 +30,15 @@ test('each setting is written and read back independently', () => {
 // the viewer down with it: these are preferences, and a photo has to open.
 test('a value the app no longer understands reads as the default', () => {
   const { settings, db } = repo();
-  db.query("INSERT INTO settings (key, value) VALUES ('preview_rendition_mode', 'holographic')").run();
-  expect(settings.get().preview_rendition_mode).toBe('remember');
+  db.query("INSERT INTO settings (key, value) VALUES ('viewer_rendition_mode', 'holographic')").run();
+  expect(settings.get().viewer_rendition_mode).toBe('remember');
   db.close();
 });
 
 test('null clears what was remembered rather than storing it', () => {
   const { settings, db } = repo();
-  settings.update({ last_preview_rendition: 'max' });
-  expect(settings.update({ last_preview_rendition: null }).last_preview_rendition).toBeNull();
-  expect(db.query("SELECT COUNT(*) n FROM settings WHERE key = 'last_preview_rendition'").get()).toEqual({ n: 0 });
+  settings.update({ last_viewer_rendition: 'max' });
+  expect(settings.update({ last_viewer_rendition: null }).last_viewer_rendition).toBeNull();
+  expect(db.query("SELECT COUNT(*) n FROM settings WHERE key = 'last_viewer_rendition'").get()).toEqual({ n: 0 });
   db.close();
 });

@@ -1,15 +1,11 @@
 import { z } from 'zod';
-import { OrderingSchema, PaginationSchema, SoftDeleteFilterSchema, UuidSchema } from './common';
-import { PreviewRenditionSchema } from './settings';
+import { OrderingSchema, PaginationSchema, RenditionSourceSchema, SoftDeleteFilterSchema, UuidSchema } from './common';
+import { ViewerRenditionSchema } from './settings';
 
 // The cull verdict. 'untriaged' is the wire spelling of a NULL column: a photo
 // the user has not judged yet, which is the set they most often want to see.
 export const TriageSchema = z.enum(['untriaged', 'picked', 'rejected']);
 export type Triage = z.infer<typeof TriageSchema>;
-
-// 'embedded' = the camera's own JPEG lifted out of the RAW, 'render' = a full
-// demosaic. See §10.3 for the trade-off.
-export const ThumbnailSourceSchema = z.enum(['embedded', 'render']);
 
 export const PhotoSummarySchema = z.object({
   id: UuidSchema,
@@ -40,7 +36,7 @@ export const PhotoSummarySchema = z.object({
   // reopens it there. On the summary for the same reason as the field above: the
   // viewer has to know which file to ask for before it has fetched anything, or
   // it opens at the library's default and swaps a moment later (§18.5).
-  preview_rendition: PreviewRenditionSchema.nullable(),
+  viewer_rendition: ViewerRenditionSchema.nullable(),
 });
 export type PhotoSummary = z.infer<typeof PhotoSummarySchema>;
 
@@ -56,7 +52,7 @@ export const PhotoDetailSchema = PhotoSummarySchema.extend({
   date_added: z.string(),
   // Which passes this photo still owes: the grid tile the gallery shows, then the
   // viewer's renditions (§10.2). Separate so a view can say which one it is
-  // waiting on rather than reporting "thumbnailing" for both.
+  // waiting on rather than reporting "rendition building" for both.
   needs_tile: z.boolean(),
   needs_renditions: z.boolean(),
   processing_error: z.string().nullable(),
@@ -77,14 +73,14 @@ export const PhotoDetailSchema = PhotoSummarySchema.extend({
   camera_model: z.string().nullable(),
   lens_model: z.string().nullable(),
   // Which pixels the grid tile was built from; NULL before first processing.
-  rendition_source: ThumbnailSourceSchema.nullable(),
+  rendition_source: RenditionSourceSchema.nullable(),
   // Where the bytes actually live on the server, so the detail panel can name the
   // file it is showing. Resolved by the service, which holds the library: null on
   // the repository's own read, and for a photo whose library has gone.
   original_path: z.string().nullable(),
   // What the viewer opens this photo at when nothing has been picked: the camera's
   // JPEG for a library that serves it directly, the full-size rendition otherwise.
-  default_rendition: PreviewRenditionSchema,
+  default_rendition: ViewerRenditionSchema,
   // One entry per rendition the viewer can show rather than one for whichever is
   // on screen, because the server does not know which that is and each is a
   // different file. Every field is answered from disk rather than from a column:
@@ -92,7 +88,7 @@ export const PhotoDetailSchema = PhotoSummarySchema.extend({
   // after an import has renditions that predate the setting (§10.2).
   renditions: z
     .record(
-      PreviewRenditionSchema,
+      ViewerRenditionSchema,
       z.object({
         path: z.string(),
         built: z.boolean(),
@@ -133,7 +129,7 @@ export const UpdatePhotoRequestSchema = z.object({
   notes: z.string().optional(),
   // Which rendition this photo was last looked at in, for the viewer setting
   // that reopens it there (§10.2).
-  preview_rendition: PreviewRenditionSchema.optional(),
+  viewer_rendition: ViewerRenditionSchema.optional(),
 });
 export type UpdatePhotoRequest = z.infer<typeof UpdatePhotoRequestSchema>;
 

@@ -88,7 +88,7 @@ export const config = {
   fullSyncAt: envTimeOfDay('SYNC_FULL_AT', '03:00'),
   // Sweep for generated files whose photo no longer exists (§10.6). Weekly
   // because it only has anything to do after a library is removed or a
-  // catalogue is rebuilt, and it reads every thumbnail directory. 0 disables.
+  // catalogue is rebuilt, and it reads every rendition directory. 0 disables.
   pruneEveryDays: envNumber('PRUNE_EVERY_DAYS', 7),
   // Full-resolution export (§10.5). libjxl butteraugli distance: 0 is
   // mathematically lossless but ~50s and 80MB on a 24MP frame, where 0.3 is
@@ -126,22 +126,22 @@ export const config = {
   // the displays that do HDR.
   hdrMaxEdge: envNumber('HDR_MAX_EDGE', 3840),
   processingConcurrency: envNumber('PROCESSING_CONCURRENCY', 4),
-  smallThumbnailSize: envNumber('SMALL_THUMBNAIL_SIZE', 800),
-  fullThumbnailSize: envNumber('FULL_THUMBNAIL_SIZE', 3840),
+  gridRenditionSize: envNumber('GRID_RENDITION_SIZE', 800),
+  fullRenditionSize: envNumber('FULL_RENDITION_SIZE', 3840),
   // AVIF quality, which is not WebP's scale: on a 24MP frame the full-size
   // rendition is 375 kB at q60 against 1019 kB for the WebP q90 it replaces, and
-  // q90 here would be 2551 kB. The full preview is the one actually looked at,
+  // q90 here would be 2551 kB. The full rendition is the one actually looked at,
   // so it gets the headroom.
   // q60 and q70 visibly lose shadow detail on real frames, which is where a RAW
   // has the most to give. q80 is 1361 kB on a 24MP frame against the 1019 kB of
   // the WebP q90 it replaces, and encodes in 713ms at effort 0.
-  smallThumbnailQuality: envNumber('SMALL_THUMBNAIL_QUALITY', 80),
-  fullThumbnailQuality: envNumber('FULL_THUMBNAIL_QUALITY', 80),
+  gridRenditionQuality: envNumber('GRID_RENDITION_QUALITY', 80),
+  fullRenditionQuality: envNumber('FULL_RENDITION_QUALITY', 80),
   // AVIF effort, 0-9, and 0 because speed matters more here than size.
   // The default of 4 is pathological either way: 13.6s for a 3840px frame
   // against 0.6s at effort 0, for a file only ~15% smaller. This is also what
   // the quality-check page encodes at, so what gets judged there is what ships.
-  thumbnailEffort: envNumber('THUMBNAIL_EFFORT', 0),
+  renditionEffort: envNumber('RENDITION_EFFORT', 0),
   // Give a render the camera's own colour treatment, by fitting the transform that
   // takes it to the JPEG embedded in the same RAW (`jpeg_match.ts`). Applies to SDR
   // renditions built from a render: an embedded-sourced grid already has the look,

@@ -15,15 +15,15 @@ import type { PhotosService } from '../../src/services/photos/photos_service';
 // Serving bytes needs an id, a library and a file path and nothing else, so the
 // API asks for `locate` rather than the detail payload (§8.2). Stubbing `get` here
 // instead left every one of these tests failing with a 500.
-function buildApp(root: string, photo: BasicPhoto | null, previewHdr = false) {
+function buildApp(root: string, photo: BasicPhoto | null, renditionHdr = false) {
   const library: Library = {
     id: 'lib',
     root_path: root,
     data_path: null,
     ordering: 'taken_desc',
-    preview_source: 'render',
-    preview_hdr: previewHdr,
-    preview_hdr_video: false,
+    rendition_source: 'render',
+    rendition_hdr: renditionHdr,
+    rendition_hdr_video: false,
     last_synced_at: null,
     photo_count: 1,
   };
@@ -76,7 +76,7 @@ test('serves the grid tile of an HDR library from the SDR directory', withRoot(a
 
 test('serves the original under its own format and filename', withRoot(async (root) => {
   writeFileSync(path.join(root, 'a.arw'), 'RAWBYTES');
-  const res = await buildApp(root, photo({})).request('/image/p1/original');
+  const res = await buildApp(root, photo({})).request('/image/p1/download/original');
   expect(res.status).toBe(200);
   expect(res.headers.get('content-type')).toBe('image/x-sony-arw');
   expect(res.headers.get('content-disposition')).toBe('attachment; filename="a.arw"');
@@ -85,7 +85,7 @@ test('serves the original under its own format and filename', withRoot(async (ro
 test('serves a Canon original under its own format and filename', withRoot(async (root) => {
   mkdirSync(path.join(root, 'Trip'), { recursive: true });
   writeFileSync(path.join(root, 'Trip', 'IMG_0116.CR3'), 'RAWBYTES');
-  const res = await buildApp(root, photo({ file_path: 'Trip/IMG_0116.CR3' })).request('/image/p1/original');
+  const res = await buildApp(root, photo({ file_path: 'Trip/IMG_0116.CR3' })).request('/image/p1/download/original');
   expect(res.status).toBe(200);
   expect(res.headers.get('content-type')).toBe('image/x-canon-cr3');
   // The name on disk, not the shoot-qualified path it is stored under.
@@ -103,7 +103,7 @@ test('still serves a soft-deleted photo, so the Bin can be browsed', withRoot(as
   mkdirSync(path.join(root, '.bowerbird', 'renditions', 'grid'), { recursive: true });
   writeFileSync(path.join(root, '.bowerbird', 'renditions', 'grid', 'p1.avif'), 'AVIFDATA');
   // Deletion is not something this path can filter on even by accident: `locate`
-  // returns a BasicPhoto, which carries no deletion flag, so the Bin's thumbnails
+  // returns a BasicPhoto, which carries no deletion flag, so the Bin's renditions
   // keep working by construction (§12.1).
   const res = await buildApp(root, photo({})).request('/image/p1/renditions/grid');
   expect(res.status).toBe(200);

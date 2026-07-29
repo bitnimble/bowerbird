@@ -1,5 +1,5 @@
 import { action, runInAction } from 'mobx';
-import { ApiError, api, type Ordering, type PreviewSource, type UpdateLibraryRequest } from '../../api/client';
+import { ApiError, api, type Ordering, type RenditionSource, type UpdateLibraryRequest } from '../../api/client';
 import type { LibrariesStore } from './libraries_store';
 
 function message(err: unknown): string {
@@ -38,19 +38,19 @@ export class LibrariesPresenter {
     await this.update(libraryId, { ordering });
   }
 
-  // Which pixels new photos get their thumbnails and previews from, and whether
-  // the full-size one is HDR. Not retroactive: it decides what gets built next,
-  // and rebuilding an existing catalogue is an explicit action (§10.2).
-  async setPreviewSource(libraryId: string, preview_source: PreviewSource): Promise<void> {
-    await this.update(libraryId, { preview_source });
+  // Which pixels new photos get their renditions from, and whether the full-size
+  // one is HDR. Not retroactive: it decides what gets built next, and rebuilding
+  // an existing catalogue is an explicit action (§10.2).
+  async setRenditionSource(libraryId: string, rendition_source: RenditionSource): Promise<void> {
+    await this.update(libraryId, { rendition_source });
   }
 
-  async setPreviewHdr(libraryId: string, preview_hdr: boolean): Promise<void> {
-    await this.update(libraryId, { preview_hdr });
+  async setRenditionHdr(libraryId: string, rendition_hdr: boolean): Promise<void> {
+    await this.update(libraryId, { rendition_hdr });
   }
 
-  async setPreviewHdrVideo(libraryId: string, preview_hdr_video: boolean): Promise<void> {
-    await this.update(libraryId, { preview_hdr_video });
+  async setRenditionHdrVideo(libraryId: string, rendition_hdr_video: boolean): Promise<void> {
+    await this.update(libraryId, { rendition_hdr_video });
   }
 
   private async update(libraryId: string, body: UpdateLibraryRequest): Promise<void> {

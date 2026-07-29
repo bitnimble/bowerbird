@@ -39,7 +39,7 @@ describe('EventsApi', () => {
     // The exact wire format, because an EventSource that cannot parse it reports
     // nothing at all rather than failing.
     expect(await readChunk(reader)).toBe(
-      'event: thumbnail\ndata: {"id":"photo-a","stage":"tile","version":"2026-07-28T00:00:00.000Z"}\nid: 1\n\n',
+      'event: rendition\ndata: {"id":"photo-a","stage":"tile","version":"2026-07-28T00:00:00.000Z"}\nid: 1\n\n',
     );
     await reader.cancel();
   });

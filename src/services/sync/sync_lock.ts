@@ -52,7 +52,7 @@ export function acquireSyncLock(rootPath: string): string {
     throw new AppError('SYNC_IN_PROGRESS', 'a sync is already running for this library');
   }
   // finally so the fd is closed even if writeSync throws (e.g. ENOSPC while the
-  // very sync this guards is filling the disk with thumbnails), otherwise a
+  // very sync this guards is filling the disk with renditions), otherwise a
   // persistent low-disk condition leaks one fd per attempt up to the ulimit.
   try {
     writeSync(fd, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }));

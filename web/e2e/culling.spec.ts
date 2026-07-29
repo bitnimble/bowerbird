@@ -226,7 +226,7 @@ test('restoring from the Bin returns the photo to the library', async ({ page })
 
   await page.getByRole('link', { name: 'Bin', exact: true }).click();
   await expect(page.locator('.tile')).toHaveCount(1);
-  // Regression: the Bin used to hold thumbnail-less grey boxes because
+  // Regression: the Bin used to hold rendition-less grey boxes because
   // soft-delete removed the WebPs, making it impossible to find anything.
   await expect(page.locator('.tile__pending')).toHaveCount(0);
 
@@ -270,13 +270,13 @@ test('the detail view shows shooting metadata, the triage control and steps betw
   await expect(triage.getByRole('button', { name: 'Undecided' })).toBeVisible();
   await expect(triage.getByRole('button', { name: 'Pick' })).toBeVisible();
 
-  // The served preview reports where its pixels came from and how it was encoded.
+  // The served rendition reports where its pixels came from and how it was encoded.
   // This library serves the camera's JPEG, which is passed through untouched, so
   // the encoder settings the built renditions carry do not describe it.
-  const preview = panel('IMAGE PREVIEW DETAILS');
-  await expect(preview.getByText('Source', { exact: true })).toBeVisible();
-  await expect(preview.getByText('JPEG', { exact: true })).toBeVisible();
-  await expect(preview.getByText('N/A')).toBeVisible();
+  const renditionPanel = panel('RENDITION DETAILS');
+  await expect(renditionPanel.getByText('Showing', { exact: true })).toBeVisible();
+  await expect(renditionPanel.getByText('JPEG', { exact: true })).toBeVisible();
+  await expect(renditionPanel.getByText('N/A')).toBeVisible();
 
   // Both panels name the file on the server they are describing. This library
   // serves the camera's JPEG, so the photo opens at the RAW's own bytes rather
@@ -369,17 +369,17 @@ test("a selection's grid tiles can be rebuilt from the bulk bar", async ({ page 
   await expect(page.locator('.tile')).toHaveCount(PHOTO_NAMES.length);
 
   await page.getByRole('button', { name: 'Select photo' }).first().click();
-  await page.getByRole('button', { name: 'Regenerate thumbnails' }).click();
-  await expect(page.getByText(/Rebuilt 1 thumbnail/)).toBeVisible();
+  await page.getByRole('button', { name: 'Rebuild grid renditions' }).click();
+  await expect(page.getByText(/Rebuilt 1 grid rendition/)).toBeVisible();
 
   // What the viewer is served is recorded per photo and a tile rebuild says
   // nothing about it, so the detail view reads the same afterwards.
   await page.locator('.tile__hit').first().click();
-  const preview = page.locator('.panel', { hasText: 'IMAGE PREVIEW DETAILS' });
-  await expect(preview.getByText('embedded JPEG')).toBeVisible({ timeout: 30_000 });
+  const renditionPanel = page.locator('.panel', { hasText: 'RENDITION DETAILS' });
+  await expect(renditionPanel.getByText('Embedded JPEG')).toBeVisible({ timeout: 30_000 });
 });
 
-test('a rebuilt thumbnail is pushed to the tile that changed, and to no other', async ({ page }) => {
+test('a rebuilt rendition is pushed to the tile that changed, and to no other', async ({ page }) => {
   await page.goto('/settings');
   await openLibrary(page, CULL_PHOTOS_DIR);
   await expect(page.locator('.tile')).toHaveCount(PHOTO_NAMES.length);
@@ -387,7 +387,7 @@ test('a rebuilt thumbnail is pushed to the tile that changed, and to no other', 
   const [rebuilt, untouched] = [await src(0), await src(1)];
 
   await page.getByRole('button', { name: 'Select photo' }).first().click();
-  await page.getByRole('button', { name: 'Regenerate thumbnails' }).click();
+  await page.getByRole('button', { name: 'Rebuild grid renditions' }).click();
 
   // The server names the photo it just wrote and the tile asks again for that one
   // alone. Nothing here polls, and no version lands on a photo that did not move.
@@ -400,7 +400,7 @@ test('a rebuilt thumbnail is pushed to the tile that changed, and to no other', 
 test('rebuilding a photo rendition leaves its grid tile where it is', async ({ page }) => {
   test.setTimeout(240_000);
   await page.goto('/settings');
-  await libraryRow(page, CULL_PHOTOS_DIR).getByRole('button', { name: 'Render the RAW' }).click();
+  await libraryRow(page, CULL_PHOTOS_DIR).getByRole('button', { name: 'Rendered RAW' }).click();
   await openLibrary(page, CULL_PHOTOS_DIR);
   await expect(page.locator('.tile')).toHaveCount(PHOTO_NAMES.length);
 
@@ -426,7 +426,7 @@ test('rebuilding a photo rendition leaves its grid tile where it is', async ({ p
 // A photo can be marked processed while its renditions are gone: a failed build,
 // a half-finished copy, a pruned data directory. Nothing would ever queue it
 // again, so the detail view has to notice and build the one it needs rather than
-// sit on "no preview yet".
+// sit on "no rendition yet".
 //
 // Rebuilding must be the *missing* rendition and not simply a reprocess: that
 // writes the grid tile, which is not what the viewer asked for, so a library
@@ -441,12 +441,12 @@ test('opening a photo whose rendition is gone builds that rendition back', async
   await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
   const photoId = new URL(page.url()).pathname.split('/').pop() ?? '';
 
-  // A library that serves the camera's JPEG cannot lose its preview - those bytes
+  // A library that serves the camera's JPEG cannot lose its rendition - those bytes
   // come out of a RAW that is still on disk - so the gap only exists for one that
   // renders. Switching it is also what makes the reload open at the full-size
   // rendition rather than at the JPEG.
   await page.goto('/settings');
-  await libraryRow(page, CULL_PHOTOS_DIR).getByRole('button', { name: 'Render the RAW' }).click();
+  await libraryRow(page, CULL_PHOTOS_DIR).getByRole('button', { name: 'Rendered RAW' }).click();
   const full = path.join(CULL_PHOTOS_DIR, '.bowerbird', 'renditions', 'full', `${photoId}.avif`);
 
   await page.goto(`/photos/${photoId}`);
@@ -460,7 +460,7 @@ test('opening a photo whose rendition is gone builds that rendition back', async
 
 // The point of caching the renditions is that switching back to one already seen
 // costs nothing.
-test('a chosen preview rendition is cached on disk, and survives a tile rebuild', async ({ page }) => {
+test('a chosen rendition is cached on disk, and survives a tile rebuild', async ({ page }) => {
   await page.goto('/settings');
   await openLibrary(page, CULL_PHOTOS_DIR);
   await page.locator('.tile__hit').first().click();
@@ -468,16 +468,16 @@ test('a chosen preview rendition is cached on disk, and survives a tile rebuild'
   const photoId = new URL(page.url()).pathname.split('/').pop() ?? '';
 
   const showRendition = async (label: string): Promise<void> => {
-    await page.getByRole('button', { name: 'Image source' }).click();
+    await page.getByRole('button', { name: 'Rendition' }).click();
     await page.getByRole('menuitem', { name: label, exact: true }).click();
   };
 
-  const preview = page.locator('.panel', { hasText: 'IMAGE PREVIEW DETAILS' });
-  await showRendition('From RAW');
-  await expect(preview.getByText('RAW render')).toBeVisible({ timeout: 60_000 });
+  const renditionPanel = page.locator('.panel', { hasText: 'RENDITION DETAILS' });
+  await showRendition('Rendered RAW');
+  await expect(renditionPanel.getByText('Rendered RAW')).toBeVisible({ timeout: 60_000 });
   await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
 
-  // The photo's own thumbnails are the embedded rendition, so only the render had
+  // The photo's own renditions are the embedded rendition, so only the render had
   // to be built and stored; the embedded one is served from what already existed.
   const cached = path.join(CULL_PHOTOS_DIR, '.bowerbird', 'renditions', 'full', `${photoId}.avif`);
   expect(existsSync(cached)).toBe(true);
@@ -485,18 +485,18 @@ test('a chosen preview rendition is cached on disk, and survives a tile rebuild'
   // Every rendition stays on offer whichever one is showing, the camera's JPEG
   // included: comparing a render against it is a reason to step back down.
   await showRendition('Embedded JPEG');
-  await expect(preview.getByText('embedded JPEG')).toBeVisible({ timeout: 60_000 });
-  await showRendition('From RAW');
-  await expect(preview.getByText('RAW render')).toBeVisible({ timeout: 60_000 });
+  await expect(renditionPanel.getByText('Embedded JPEG')).toBeVisible({ timeout: 60_000 });
+  await showRendition('Rendered RAW');
+  await expect(renditionPanel.getByText('Rendered RAW')).toBeVisible({ timeout: 60_000 });
 
   // The grid's rebuild is the grid tile and nothing else. It used to queue both
   // stages, which had the run sweep every rendition it did not itself write - so
-  // regenerating a thumbnail deleted the render the viewer was holding, and the
+  // regenerating a rendition deleted the render the viewer was holding, and the
   // next look paid for it again.
   await openLibrary(page, CULL_PHOTOS_DIR);
   await page.getByRole('button', { name: 'Select photo' }).first().click();
-  await page.getByRole('button', { name: 'Regenerate thumbnails' }).click();
-  await expect(page.getByText(/Rebuilt 1 thumbnail/)).toBeVisible({ timeout: 60_000 });
+  await page.getByRole('button', { name: 'Rebuild grid renditions' }).click();
+  await expect(page.getByText(/Rebuilt 1 grid rendition/)).toBeVisible({ timeout: 60_000 });
   await page.waitForTimeout(2000); // the sweep that must not happen is fire-and-forget
   expect(existsSync(cached)).toBe(true);
 });
@@ -512,26 +512,26 @@ test('i and o switch between the camera JPEG and the render, and the cache can b
   await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
   const photoId = new URL(page.url()).pathname.split('/').pop() ?? '';
 
-  const preview = page.locator('.panel', { hasText: 'IMAGE PREVIEW DETAILS' });
+  const renditionPanel = page.locator('.panel', { hasText: 'RENDITION DETAILS' });
   await page.keyboard.press('o');
-  await expect(preview.getByText('RAW render')).toBeVisible({ timeout: 60_000 });
+  await expect(renditionPanel.getByText('Rendered RAW')).toBeVisible({ timeout: 60_000 });
   await page.keyboard.press('i');
-  await expect(preview.getByText('embedded JPEG')).toBeVisible({ timeout: 60_000 });
+  await expect(renditionPanel.getByText('Embedded JPEG')).toBeVisible({ timeout: 60_000 });
 
   // The file is the cache, so nothing rebuilds a rendition once it exists. This
   // is the escape hatch for working on the pipeline: the same choice, but the
   // stored copy is dropped first.
   const cached = path.join(CULL_PHOTOS_DIR, '.bowerbird', 'renditions', 'full', `${photoId}.avif`);
   const before = statSync(cached).mtimeMs;
-  await page.getByRole('button', { name: 'Image source' }).click();
-  await page.getByRole('menuitemcheckbox', { name: 'Disable cache when changing preview' }).click();
+  await page.getByRole('button', { name: 'Rendition' }).click();
+  await page.getByRole('menuitemcheckbox', { name: 'Disable cache when changing rendition' }).click();
   // The toggle leaves the menu open on purpose - it says what the actions above
   // it will do. Close it, then put focus back on the page: an open menu makes
   // everything behind it inert, and its trigger eats letter keys as typeahead.
-  await page.getByRole('button', { name: 'Image source' }).click();
+  await page.getByRole('button', { name: 'Rendition' }).click();
   await page.locator('.detail__nav .ui-text--mono').click();
   await page.keyboard.press('o');
-  await expect(preview.getByText('RAW render')).toBeVisible({ timeout: 120_000 });
+  await expect(renditionPanel.getByText('Rendered RAW')).toBeVisible({ timeout: 120_000 });
   await expect.poll(() => statSync(cached).mtimeMs, { timeout: 120_000 }).toBeGreaterThan(before);
 
   // Rewriting the file is only half of it: the URL is stable, so the stage would
@@ -550,7 +550,7 @@ test('the max-quality rendition is served as a full-resolution AVIF', async ({ p
 
   const shown = page.locator('.stage__viewport img.is-ready');
   expect(await shown.evaluate((i: HTMLImageElement) => i.src)).toContain('/renditions/max');
-  // Full resolution, not the 3840-edge preview it replaced.
+  // Full resolution, not the 3840-edge rendition it replaced.
   expect(await shown.evaluate((i: HTMLImageElement) => i.naturalWidth)).toBeGreaterThan(3840);
 });
 
@@ -634,11 +634,11 @@ test('the next photo is fetched while the current one is on screen', async ({ pa
   // nothing to preload, so say which kind this is rather than inheriting it from
   // whichever test ran last.
   await page.goto('/settings');
-  await libraryRow(page, CULL_PHOTOS_DIR).getByRole('button', { name: 'Render the RAW' }).click();
+  await libraryRow(page, CULL_PHOTOS_DIR).getByRole('button', { name: 'Rendered RAW' }).click();
   // And which rendition it opens at, for the same reason: "last used" is global
   // and a test above leaves the max-quality one behind, which is chosen rather
   // than the library's default and so deliberately never warmed.
-  await page.getByRole('group', { name: 'Open photos at' }).getByRole('button', { name: 'From RAW', exact: true }).click();
+  await page.getByRole('group', { name: 'Open photos at' }).getByRole('button', { name: 'Rendered RAW', exact: true }).click();
   await openLibrary(page, CULL_PHOTOS_DIR);
   await page.locator('.tile__hit').first().click();
   await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible();
@@ -659,8 +659,8 @@ test('a reader set to the camera JPEG never loads the render', async ({ page }) 
   page.on('request', (r) => requested.push(r.url()));
 
   await page.goto('/settings');
-  await libraryRow(page, CULL_PHOTOS_DIR).getByRole('button', { name: 'Render the RAW' }).click();
-  await page.getByRole('group', { name: 'Open photos at' }).getByRole('button', { name: 'Camera JPEG', exact: true }).click();
+  await libraryRow(page, CULL_PHOTOS_DIR).getByRole('button', { name: 'Rendered RAW' }).click();
+  await page.getByRole('group', { name: 'Open photos at' }).getByRole('button', { name: 'Embedded JPEG', exact: true }).click();
   await openLibrary(page, CULL_PHOTOS_DIR);
   await page.locator('.tile__hit').first().click();
   await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
@@ -686,7 +686,7 @@ test('a photo reopens at the rendition it was last read in, without the library 
   page.on('request', (r) => requested.push(r.url()));
 
   await page.goto('/settings');
-  await libraryRow(page, CULL_PHOTOS_DIR).getByRole('button', { name: 'Render the RAW' }).click();
+  await libraryRow(page, CULL_PHOTOS_DIR).getByRole('button', { name: 'Rendered RAW' }).click();
   await page.getByRole('group', { name: 'Open photos at' }).getByRole('button', { name: 'Last used per photo' }).click();
   await openLibrary(page, CULL_PHOTOS_DIR);
   await page.locator('.tile__hit').first().click();
@@ -695,8 +695,8 @@ test('a photo reopens at the rendition it was last read in, without the library 
 
   // Read it in the camera's JPEG, which this library does not default to.
   await page.keyboard.press('i');
-  const preview = page.locator('.panel', { hasText: 'IMAGE PREVIEW DETAILS' });
-  await expect(preview.getByText('embedded JPEG')).toBeVisible({ timeout: 60_000 });
+  const renditionPanel = page.locator('.panel', { hasText: 'RENDITION DETAILS' });
+  await expect(renditionPanel.getByText('Embedded JPEG')).toBeVisible({ timeout: 60_000 });
 
   await page.keyboard.press('Escape');
   await expect(page.locator('.tile')).toHaveCount(PHOTO_NAMES.length);
@@ -722,8 +722,8 @@ interface Sample {
 test('stepping through photos shows no empty stage and never the wrong rendition', async ({ page }) => {
   test.setTimeout(240_000);
   await page.goto('/settings');
-  await libraryRow(page, CULL_PHOTOS_DIR).getByRole('button', { name: 'Render the RAW' }).click();
-  await page.getByRole('group', { name: 'Open photos at' }).getByRole('button', { name: 'Camera JPEG', exact: true }).click();
+  await libraryRow(page, CULL_PHOTOS_DIR).getByRole('button', { name: 'Rendered RAW' }).click();
+  await page.getByRole('group', { name: 'Open photos at' }).getByRole('button', { name: 'Embedded JPEG', exact: true }).click();
   await openLibrary(page, CULL_PHOTOS_DIR);
   await expect(page.locator('.tile')).toHaveCount(PHOTO_NAMES.length);
   await page.locator('.tile__hit').first().click();
@@ -916,7 +916,7 @@ test('the frame being replaced is held opaque under its replacement for a beat',
   });
 
   await page.keyboard.press('o');
-  await expect(page.locator('.panel', { hasText: 'IMAGE PREVIEW DETAILS' }).getByText('RAW render')).toBeVisible({ timeout: 120_000 });
+  await expect(page.locator('.panel', { hasText: 'RENDITION DETAILS' }).getByText('Rendered RAW')).toBeVisible({ timeout: 120_000 });
   await page.waitForTimeout(1000);
 
   const counts = await page.evaluate(() => (window as unknown as { opaque: number[] }).opaque);

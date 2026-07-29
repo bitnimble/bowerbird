@@ -9,8 +9,8 @@ Bowerbird is a high-performance RAW photo management and cataloguing backend des
 - Library management (create, sync)
 - Photo listing, filtering, and metadata
 - Shoots and albums
-- Thumbnail generation (small + full-size AVIF)
-- Streaming access to thumbnails and original RAW files
+- Rendition building (grid + full-size AVIF)
+- Streaming access to renditions and original RAW files
 - Deletion with soft-delete and Bin folder
 - Missing file detection
 
@@ -121,7 +121,7 @@ bowerbird/
 │   │   │       ├── sync_algorithm.test.ts  # pure diff / move-detection
 │   │   │       └── sync_lock.test.ts       # lock-file module
 │   │   └── processing/
-│   │       ├── processing_service.ts  # Thumbnail generation orchestrator
+│   │       ├── processing_service.ts  # Rendition generation orchestrator
 │   │       ├── processing_worker.ts   # Bun worker thread for image processing
 │   │       ├── raw_decoder.ts         # LibRaw FFI bindings
 │   │       ├── metadata.ts            # Per-format metadata extraction (LibRaw header parse)
@@ -130,7 +130,7 @@ bowerbird/
 │   └── utils/
 │       ├── hash.ts                 # File hash computation
 │       ├── files.ts                # File system helpers (recursive listing, etc.)
-│       └── paths.ts                # Path computation helpers (thumbnail paths, bin paths)
+│       └── paths.ts                # Path computation helpers (rendition paths, bin paths)
 ├── test/
 │   ├── integration/               # bun:test suites needing real bun:sqlite + LibRaw (run in-container)
 │   └── fixtures/                  # one real file per format (ARW, CR3) for decode/metadata tests
@@ -199,7 +199,7 @@ CREATE TABLE photos (
   file_size         INTEGER,        -- bytes at last scan; with date_updated, the sync stat quick-check (§9.1)
   width             INTEGER NOT NULL,  -- display (upright) pixel width, post-orientation
   height            INTEGER NOT NULL,  -- display (upright) pixel height, post-orientation
-  orientation       INTEGER NOT NULL DEFAULT 0,  -- LibRaw flip orientation code; informational + hash input only, NOT to be applied to thumbnails (§11)
+  orientation       INTEGER NOT NULL DEFAULT 0,  -- LibRaw flip orientation code; informational + hash input only, NOT to be applied to renditions (§11)
   is_missing        INTEGER NOT NULL DEFAULT 0,
   is_deleted        INTEGER NOT NULL DEFAULT 0,
   date_taken        TEXT,
@@ -213,7 +213,7 @@ CREATE TABLE photos (
   needs_renditions  INTEGER NOT NULL DEFAULT 1,
   tile_built_at     TEXT,
   renditions_built_at TEXT,
-  processing_error  TEXT,  -- last thumbnail-generation error; NULL if none/succeeded (§10.2)
+  processing_error  TEXT,  -- last rendition-generation error; NULL if none/succeeded (§10.2)
   latitude          REAL,
   longitude         REAL,
   -- Shooting metadata off the RAW header (§11.1). shutter_speed is seconds.
@@ -398,7 +398,7 @@ export const PhotoSummarySchema = z.object({
   id: UuidSchema,
   library_id: UuidSchema,
   shoot_id: UuidSchema.nullable(),
-  width: z.number().int().positive(),   // display/upright dims, match the served thumbnail
+  width: z.number().int().positive(),   // display/upright dims, match the served rendition
   height: z.number().int().positive(),
   ordering_date: z.string().nullable(),  // ISO datetime, resolved based on library/shoot/album ordering; NULL for a taken_* ordering when date_taken is NULL (sorts last, §5.1)
   triage: TriageSchema,
@@ -410,7 +410,7 @@ export const PhotoSummarySchema = z.object({
 export const PhotoDetailSchema = PhotoSummarySchema.extend({
   file_path: z.string(),
   file_hash: z.string().nullable(),
-  orientation: z.number().int(),  // LibRaw flip orientation code; informational only, thumbnails are already upright (§11), do NOT rotate them by this
+  orientation: z.number().int(),  // LibRaw flip orientation code; informational only, renditions are already upright (§11), do NOT rotate them by this
   date_taken: z.string().nullable(),
   date_added: z.string(),
   date_updated: z.string().nullable(),
@@ -613,7 +613,7 @@ function isSupportedFile(filename: string): boolean {
 | `listByAlbum(albumId, pagination, filters?)` | Returns paginated `PhotoSummary` list for an album. Accepts the same `include_deleted` filter, excluding soft-deleted by default. |
 | `listMissing(libraryId, pagination)` | Convenience method: calls `listByLibrary` with `is_missing: true` filter. |
 | `update(photoId, updates)` | Updates mutable fields: `rating`, `triage`, `notes`. |
-| `delete(photoIds)` | Soft-deletes photos: moves RAW files to Bin, sets `is_deleted = 1`. Thumbnails are kept so the Bin stays browsable. See §12. |
+| `delete(photoIds)` | Soft-deletes photos: moves RAW files to Bin, sets `is_deleted = 1`. Renditions are kept so the Bin stays browsable. See §12. |
 | `getAlbumMemberships(photoId)` | Returns list of album IDs the photo belongs to. |
 
 ### 8.3 Sync Service (`sync_service.ts`)
@@ -639,7 +639,7 @@ This service handles the full sync algorithm. See §9 for the detailed algorithm
 | Method | Description |
 |---|---|
 | `processUnprocessed(libraryId?)` | Queries for photos owing either stage (`needs_tile` or `needs_renditions`) with `is_missing = 0`, spawns Bun worker threads (up to configured concurrency) to generate them. Each stage clears its own flag and stamps its own `*_built_at` as it lands. |
-| `processPhoto(photoId)` | Processes a single photo on the main thread: resolves the raw file and thumbnail output paths from the repositories, dispatches the job to a worker (§10.2, §10.3), and persists the result. |
+| `processPhoto(photoId)` | Processes a single photo on the main thread: resolves the raw file and rendition output paths from the repositories, dispatches the job to a worker (§10.2, §10.3), and persists the result. |
 | `getProcessingStatus(libraryId)` | Returns count of photos pending/completed processing. |
 
 ### 8.5 Shoots Service (`shoots_service.ts`)
@@ -650,7 +650,7 @@ This service handles the full sync algorithm. See §9 for the detailed algorithm
 
 | Method | Description |
 |---|---|
-| `create(request)` | Creates a shoot record. The folder is named after the shoot `name`, created under the parent shoot's folder (or the library root if no parent); `folder_path` is stored as the full root-relative path (§4.3). If the folder does not exist, it is created. If it **already exists**, it is kept as-is and its photos are **adopted**: every existing non-deleted photo record whose `file_path` falls under this folder and for which this shoot is the most-specific matching shoot (i.e. not already claimed by a more-specific descendant shoot) has its `shoot_id` set to the new shoot. No files move on disk and no reprocessing occurs (thumbnails are keyed by photo UUID, unaffected by shoot membership). This mirrors the sync reconciliation rule (§9.4) and makes an orphaned folder from a prior shoot delete re-adoptable. RAW files physically present but not yet in the DB are picked up by the next sync, which will assign them to this shoot via the same reconciliation. |
+| `create(request)` | Creates a shoot record. The folder is named after the shoot `name`, created under the parent shoot's folder (or the library root if no parent); `folder_path` is stored as the full root-relative path (§4.3). If the folder does not exist, it is created. If it **already exists**, it is kept as-is and its photos are **adopted**: every existing non-deleted photo record whose `file_path` falls under this folder and for which this shoot is the most-specific matching shoot (i.e. not already claimed by a more-specific descendant shoot) has its `shoot_id` set to the new shoot. No files move on disk and no reprocessing occurs (renditions are keyed by photo UUID, unaffected by shoot membership). This mirrors the sync reconciliation rule (§9.4) and makes an orphaned folder from a prior shoot delete re-adoptable. RAW files physically present but not yet in the DB are picked up by the next sync, which will assign them to this shoot via the same reconciliation. |
 | `get(shootId)` | Returns a shoot by ID. |
 | `list(libraryId)` | Returns all shoots in a library. |
 | `addPhotos(shootId, photoIds)` | Moves photo files on disk into the shoot's folder. Updates each photo's `file_path` and `shoot_id` in the DB. A photo can only belong to one shoot; if it already belongs to another, it is moved out of the old shoot folder. If a file with the same name already exists in the destination folder, append a numeric suffix (e.g. `IMG_0001_1.ARW`, `IMG_0001_2.ARW`) so no existing file is overwritten and no two records share a `file_path` (§12.1). |
@@ -813,7 +813,7 @@ Only that case qualifies. Against a populated library an addition can still turn
 
 After all changes are applied, call `ProcessingService.processUnprocessed()` to begin background generation for every photo owing either stage (`needs_tile` or `needs_renditions`) with `is_missing = 0`.
 
-**A scoped run passes the photos it reconciled; a full run passes none, meaning the whole library.** The watcher fires on one changed file, and draining everything the library still owes off the back of that is not what the change asked for, quite apart from making the strip report that one file as a thousand outstanding thumbnails. So a scoped sync hands over the ids it inserted or modified (moves and reappearances changed no pixels, so they owe nothing), and the status counts against that same set.
+**A scoped run passes the photos it reconciled; a full run passes none, meaning the whole library.** The watcher fires on one changed file, and draining everything the library still owes off the back of that is not what the change asked for, quite apart from making the strip report that one file as a thousand outstanding renditions. So a scoped sync hands over the ids it inserted or modified (moves and reappearances changed no pixels, so they owe nothing), and the status counts against that same set.
 
 That leaves the backlog to the two triggers that are *about* the whole library: a manual `POST /sync` and the daily reconcile (§9.8). This is deliberate, and it is what picks up work a killed process left half-done; nothing runs at startup (§9.6).
 
@@ -840,11 +840,11 @@ interface SyncStatus {
 
 This is updated as the sync progresses and is exposed via the API for client polling.
 
-**Both phases of a run report progress, not just the second one.** `photosProcessed` against what was queued covers thumbnailing; `photosScanned` against `photosToScan` covers the scan, which on a first import is the longer of the two: minutes of opening and hashing every file, during which a status that only carried zeros left the client with nothing to say but "scanning". The counters are updated from the loop that opens and hashes, which is where a scan's whole cost is (the `stat` pass before it opens nothing), and `photosToScan` is only known once that pass has collapsed hardlink pairs, so a run reads 0/0 for the walk and the stats, then counts through the files. Both settle on the number of files found, so the client renders one bar per phase off the same pair of numbers.
+**Both phases of a run report progress, not just the second one.** `photosProcessed` against what was queued covers rendition building; `photosScanned` against `photosToScan` covers the scan, which on a first import is the longer of the two: minutes of opening and hashing every file, during which a status that only carried zeros left the client with nothing to say but "scanning". The counters are updated from the loop that opens and hashes, which is where a scan's whole cost is (the `stat` pass before it opens nothing), and `photosToScan` is only known once that pass has collapsed hardlink pairs, so a run reads 0/0 for the walk and the stats, then counts through the files. Both settle on the number of files found, so the client renders one bar per phase off the same pair of numbers.
 
 No generation guard on those writes, unlike the ones after the scan: the sync lock is not released until scan and apply are both done, so no newer generation of the same library can exist to stomp.
 
-**A process with no status in memory reads the outstanding work off the database.** The status object does not survive a restart, but the work does: `needs_tile` / `needs_renditions` are columns, so a library the last process had half-imported comes back owing exactly what it owed. Reporting a flat `idle` with zeros there is a lie the client cannot see past; the strip would show nothing to do while thousands of thumbnails were missing. `getSyncStatus` therefore falls back to `countPendingProcessing` and reports it as `photosProcessing` against `idle`: work waiting, not work running.
+**A process with no status in memory reads the outstanding work off the database.** The status object does not survive a restart, but the work does: `needs_tile` / `needs_renditions` are columns, so a library the last process had half-imported comes back owing exactly what it owed. Reporting a flat `idle` with zeros there is a lie the client cannot see past; the strip would show nothing to do while thousands of renditions were missing. `getSyncStatus` therefore falls back to `countPendingProcessing` and reports it as `photosProcessing` against `idle`: work waiting, not work running.
 
 **Nothing starts it.** Startup wires the watcher, the daily reconcile and the prune, and triggers no sync (`src/index.ts`); reading the status does not either. A restart mid-import resumes when the user asks, when the watcher sees a file change, or at `SYNC_FULL_AT`, and the status is what tells them there is something to ask for. Automatic resume would mean a server that comes back up saturating its cores on a job the user may have killed it to stop.
 
@@ -888,7 +888,7 @@ What a stop means depends on which phase it lands in, and neither leaves anythin
 - **During the scan**, the loop that opens and hashes checks between files, so a stop lands within one file's decode rather than at the end of the walk. On a populated library every write is a single transaction *after* the scan, so abandoning it applies nothing: `syncLibrary` returns an idle status rather than raising, because the caller asked for this, and the detached processing in its `finally` never starts.
   - **Except on a first scan, which keeps what it reached.** A half-built `present` set is normally unusable, and dangerously so: absence from it is how §9.1 detects a removal, so applying a truncated scan would mark every file it had not got to as missing. That reasoning needs rows to be absent from. When the run has none - `dbPhotos` is empty, which is a library's first sync, and also a scoped sync whose paths are all new - no removal can be derived, and therefore no move either, since a move pairs a removal with an addition. All a stopped scan can then hold is "these files are new", which is as true of a scan that saw half the library as of one that saw all of it, so it is applied and the files it never reached are simply added by the next sync. Otherwise a stopped 50k-frame import would throw away every file it had already read and hashed.
   - That case is exactly the one §9.4 commits in batches, so most of what a stop keeps is already on disk before the stop arrives; all the stop itself adds is the tail of the batch in hand. A kill is the same event without the courtesy of asking, and it keeps the same work for the same reason.
-  - The stop is still a stop: the processing that follows a partial commit is handed the same aborted generation, so it queues nothing and the photos land owing their thumbnails. `last_synced_at` is stamped, which says when a sync last ran rather than that the catalogue is complete.
+  - The stop is still a stop: the processing that follows a partial commit is handed the same aborted generation, so it queues nothing and the photos land owing their renditions. `last_synced_at` is stamped, which says when a sync last ran rather than that the catalogue is complete.
 - **During processing**, the pool retires each worker as its current job lands instead of killing it mid-encode, which would leave a half-written rendition. What is already on disk stays - a tile is valid whether or not the rest of the run finished - and the photos it never reached keep their `needs_tile` / `needs_renditions` flags, so the next sync picks them up. The status settles to idle through the same tail that a completed run does.
 
 **The pool is asked whether to stop, rather than handed a signal.** A batch is keyed by library and outlives the sync that started it: a later sync of the same library coalesces into the running batch (§10.2) and whatever it passed is dropped by that dedup. Given a fixed `AbortSignal`, the batch would go on watching a generation that has already finished, and a stop aimed at the current one would reach nothing; the button would do exactly nothing, silently, and only when two syncs happened to overlap. `SyncService` therefore passes a predicate that reads whichever generation is current at the moment it is asked.
@@ -907,8 +907,8 @@ Processing converts RAW files into **renditions**: derived copies of one photo, 
 
 | Rendition | Constraint | Why it exists | Output path |
 |---|---|---|---|
-| `grid` | Longest edge = `SMALL_THUMBNAIL_SIZE` (default 800px) | The library grid. Always SDR | `<data_path>/renditions/grid/<photo_uuid>.avif` |
-| `full` | Longest edge = `FULL_THUMBNAIL_SIZE` (default 3840px) | The photo view | `<data_path>/renditions/full[-hdr]/<photo_uuid>.avif` |
+| `grid` | Longest edge = `GRID_RENDITION_SIZE` (default 800px) | The library grid. Always SDR | `<data_path>/renditions/grid/<photo_uuid>.avif` |
+| `full` | Longest edge = `FULL_RENDITION_SIZE` (default 3840px) | The photo view | `<data_path>/renditions/full[-hdr]/<photo_uuid>.avif` |
 | `max` | Native resolution, never fitted | Pixel-peeping (§10.5) | `<data_path>/renditions/max[-hdr]/<photo_uuid>.avif` |
 
 Sizes and quality come from configuration (§15). Nothing in the pipeline hardcodes them.
@@ -919,7 +919,7 @@ These were three trees under three names - `thumbnails/`, `previews/` and `lossl
 
 **Dynamic range is in the directory, not the filename**, because the file is the cache: a copy built while the library was SDR would otherwise be handed back forever, so turning HDR on and asking for the full-size view returned the old sRGB AVIF and nothing ever rebuilt it. HDR is stored *beside* the SDR copy rather than replacing it, so turning the setting off does not throw away work that turning it back on would redo. The video twin gets its own `-hdr-video` directory: the orphan sweep keys on the one extension a directory is supposed to hold, and two in one directory would have it delete the video as a superseded format on every pass (§10.6).
 
-**Everything is AVIF**, thumbnails, previews, the full-resolution export (§10.5) and the HDR renditions (§10.7). It decodes natively in every current browser with no polyfill, it is the only format here that carries HDR to Chrome and Safari alike, and at matched quality it is smaller than the WebP it replaced: the full-size rendition is 375 kB at q60 against 1019 kB for WebP q90. Nothing migrates existing files; the orphan sweep keys on the extension a directory is supposed to hold, so stranded WebP is collected on the next pass (§10.6).
+**Everything is AVIF**, every rendition, the full-resolution export (§10.5) and the HDR renditions (§10.7). It decodes natively in every current browser with no polyfill, it is the only format here that carries HDR to Chrome and Safari alike, and at matched quality it is smaller than the WebP it replaced: the full-size rendition is 375 kB at q60 against 1019 kB for WebP q90. Nothing migrates existing files; the orphan sweep keys on the extension a directory is supposed to hold, so stranded WebP is collected on the next pass (§10.6).
 
 Two encoder settings were measured rather than inherited, and both defaults were wrong:
 
@@ -933,30 +933,30 @@ Two encoder settings were measured rather than inherited, and both defaults were
   | 4 | 5318 | 5.646MB | 40.59 |
   | 9 | 132601 | 5.713MB | - |
 
-  Effort 4 is 10x the time for +0.46dB at the same size; effort 9 is 260x the time for a file 0.8% *larger*. On the 800px grid tile it is worse still, 15ms to 1626ms for +0.33dB and a bigger file. `THUMBNAIL_EFFORT` is 0.
+  Effort 4 is 10x the time for +0.46dB at the same size; effort 9 is 260x the time for a file 0.8% *larger*. On the 800px grid tile it is worse still, 15ms to 1626ms for +0.33dB and a bigger file. `RENDITION_EFFORT` is 0.
 
   This previously claimed effort 4 was 13.6s against 0.6s "for a file only ~15% smaller". The time ratio was roughly right; the 15% was not - the file is not smaller at all. Worth correcting because it framed effort as a size/speed trade with a real size on one side, when at fixed `Q` there is nothing on that side.
-- **AVIF quality is not WebP's scale.** Carrying the old 90 across would have produced 2551 kB thumbnails, 2.5x larger than what they replace. q80 is where shadow detail stops visibly degrading on real frames; q60 and q70 lose it. Quality is nearly free once effort is 0 (596ms at q60 against 898ms at q85), so this is chosen on appearance, not cost.
+- **AVIF quality is not WebP's scale.** Carrying the old 90 across would have produced 2551 kB renditions, 2.5x larger than what they replace. q80 is where shadow detail stops visibly degrading on real frames; q60 and q70 lose it. Quality is nearly free once effort is 0 (596ms at q60 against 898ms at q85), so this is chosen on appearance, not cost.
 
-**The grid tile is always the camera's embedded JPEG**, whatever the library is set to. It is a small SDR thumbnail, so the only thing worth optimising is how fast it appears, and the embedded preview is the fastest source there is: ~125ms against ~1.5s to demosaic (§10.3). A body that embeds no JPEG falls back to a render inside the worker, so this is "the fastest source available" rather than "always the JPEG".
+**The grid tile is always the camera's embedded JPEG**, whatever the library is set to. It is a small SDR rendition, so the only thing worth optimising is how fast it appears, and the embedded preview is the fastest source there is: ~125ms against ~1.5s to demosaic (§10.3). A body that embeds no JPEG falls back to a render inside the worker, so this is "the fastest source available" rather than "always the JPEG".
 
-**`preview_source` governs the photo viewer, not the grid**: `embedded` serves the camera's JPEG in the viewer as itself and builds no rendition at all, `render` builds the full-size view by demosaicing. Alongside `preview_hdr` and `preview_hdr_video` it lives on the `libraries` row, not the server: one catalogue may be scanned JPEGs where the camera's rendering is the point and another RAWs worth demosaicing. `embedded` is the default. Changing any of them is deliberately **not retroactive**; it decides what gets built next, and rebuilding a catalogue is an explicit action.
+**`rendition_source` governs the photo viewer, not the grid**: `embedded` serves the camera's JPEG in the viewer as itself and builds no rendition at all, `render` builds the full-size view by demosaicing. Alongside `rendition_hdr` and `rendition_hdr_video` it lives on the `libraries` row, not the server: one catalogue may be scanned JPEGs where the camera's rendering is the point and another RAWs worth demosaicing. `embedded` is the default. Changing any of them is deliberately **not retroactive**; it decides what gets built next, and rebuilding a catalogue is an explicit action.
 
 **Only `full` and `max` are ever HDR.** The grid stays SDR whatever the library says: a wall of HDR tiles is punishing to look at, and it would put a LibRaw linear decode and two encoder passes on every photo in an import rather than one AVIF encode.
 
 **An import builds `grid` always, and `full` only when the library renders.** A library serving the camera's JPEG has nothing to build for the photo view - it hands over the RAW's own bytes - so it pays one small encode per photo and no demosaic at all. `max` is never built at import: it is native resolution and tens of megabytes, so it happens on request and only once.
 
-With `preview_hdr_video` also set, the worker writes the one-frame AV1 twin off the same decode. Firefox applies a PQ transfer to nothing but video and renders an HDR still dark, so that file is the only rendition reaching an HDR display there, and the client serves it in place of the AVIF on Firefox alone (§10.7). It is a separate opt-in rather than implied by HDR because it is a second encode per photo - roughly another second - for a file no other browser ever reads. `renditions[x].video` carries that file's path and weight rather than a boolean, so the panel describing what is on screen names the MP4 the viewer is actually watching instead of the AVIF beside it.
+With `rendition_hdr_video` also set, the worker writes the one-frame AV1 twin off the same decode. Firefox applies a PQ transfer to nothing but video and renders an HDR still dark, so that file is the only rendition reaching an HDR display there, and the client serves it in place of the AVIF on Firefox alone (§10.7). It is a separate opt-in rather than implied by HDR because it is a second encode per photo - roughly another second - for a file no other browser ever reads. `renditions[x].video` carries that file's path and weight rather than a boolean, so the panel describing what is on screen names the MP4 the viewer is actually watching instead of the AVIF beside it.
 
 **Every rendition reports its weight, the stills included.** It used to be read in the browser off the Resource Timing entry for the response that had already arrived, which cost the server nothing and described what the reader actually paid. It only worked in Chromium: Firefox leaves `encodedBodySize` at 0 for a cross-origin resource whatever `Timing-Allow-Origin` says, and the app and the API are always separate origins, so the panel read "unknown" there for every photo. It comes off the same stat that answers `built` now - free for a stored rendition - and for the camera's JPEG, which has no file of its own, off lifting it out of the RAW: a header read and a copy, about a millisecond, on a single-photo read.
 
-**The viewer sees a three-step quality ladder**: the camera's JPEG, `full`, and `max`. They are the same picture at different costs, so it treats them as interchangeable and `preview_rendition_mode` (§13.6) decides which one a photo opens at: pinned to one of the three, or reopened at whatever was chosen last, either across the catalogue (`remember`) or for that photo (`remember_per_photo`, stored on `photos.preview_rendition` and carried on the summary so the viewer can act on it before it has fetched anything, §18.5). Server-side rather than in the browser because the same catalogue is opened from a phone, a laptop and whatever is plugged into the good monitor, and "where I left off" is worth nothing if it only holds on one of them. All three stay on offer whichever is showing, the step back down to the camera's JPEG included: comparing a render against it is a reason to switch.
+**The viewer sees a three-step quality ladder**: the camera's JPEG, `full`, and `max`. They are the same picture at different costs, so it treats them as interchangeable and `viewer_rendition_mode` (§13.6) decides which one a photo opens at: pinned to one of the three, or reopened at whatever was chosen last, either across the catalogue (`remember`) or for that photo (`remember_per_photo`, stored on `photos.viewer_rendition` and carried on the summary so the viewer can act on it before it has fetched anything, §18.5). Server-side rather than in the browser because the same catalogue is opened from a phone, a laptop and whatever is plugged into the good monitor, and "where I left off" is worth nothing if it only holds on one of them. All three stay on offer whichever is showing, the step back down to the camera's JPEG included: comparing a render against it is a reason to switch.
 
 Comparing two of them is the reason to have three, so `I` and `O` switch straight to the camera's JPEG and to the render, and the stage holds the frame it is already showing until the next one has decoded rather than dropping to the background between them - a flash on a swap between two files that are both already cached says "loading" where nothing was loaded. The same decode-then-swap covers a genuinely slow one; only a photo *change* clears the stage, because there the previous frame is the wrong picture.
 
 The incoming frame is **mounted as a second, invisible element over the current one** and that element is then kept rather than replaced. Decoding into a detached `new Image()` first is not enough: the browser decodes for the size an element is drawn at, so the visible element decoded the file a second time when it took the src, and a 3840px AVIF flashed on the way in while the 1080px camera JPEG - the same swap in the other direction - did not. Firefox's video twin swaps the same way, promoted on `loadeddata` since a `<video>` has no `decode()`; it is a rendition comparison like any other and would otherwise be the one path that still flashes.
 
-Against that, the file being the cache means a change to the pipeline is invisible on every photo already looked at. **"Disable cache when changing preview"** (`?force=true`) removes the stored copy and its video twin before building, so choosing the same rendition again renders it afresh. It is a checkbox under the Image source menu rather than a fourth entry in the ladder because it modifies the choice rather than being one, and it is off by default and per-session: it is for working on the renderer, not for looking at photographs. The camera's JPEG ignores it, having no build to force past.
+Against that, the file being the cache means a change to the pipeline is invisible on every photo already looked at. **"Disable cache when changing rendition"** (`?force=true`) removes the stored copy and its video twin before building, so choosing the same rendition again renders it afresh. It is a checkbox under the Rendition menu rather than a fourth entry in the ladder because it modifies the choice rather than being one, and it is off by default and per-session: it is for working on the renderer, not for looking at photographs. The camera's JPEG ignores it, having no build to force past.
 
 `PhotoDetail.renditions` answers the client's questions from **disk rather than from a column** - what each one's path is, whether it is built, whether it is HDR, whether a video twin exists - because settings are not retroactive and a library switched to HDR after an import still has SDR files. `default_rendition` is what the viewer opens at when nothing has been chosen, so the client never has to re-derive it from what happened to be built.
 
@@ -964,7 +964,7 @@ Against that, the file being the cache means a change to the pipeline is invisib
 
 **Reprocessing clears every rendition it does not itself rewrite.** A photo is reprocessed because its pixels changed, so the copies beside it are of the old file and nothing else would ever notice - the max-resolution export in particular would be served forever. The ones the job is about to write are exempt, or the sweep would delete what it just made.
 
-**A run that owes only the tile sweeps nothing.** `POST /api/photos/rebuild-tiles` sets `needs_tile` alone, and a run that was never going to write a rendition neither stamps `rendition_source` nor sweeps: nothing said the pixels changed, so the viewer's copies are still of the file it has. Sweeping there made regenerating a grid thumbnail delete the render the photo view was holding, which the next look then paid for again.
+**A run that owes only the tile sweeps nothing.** `POST /api/photos/rebuild-tiles` sets `needs_tile` alone, and a run that was never going to write a rendition neither stamps `rendition_source` nor sweeps: nothing said the pixels changed, so the viewer's copies are still of the file it has. Sweeping there made regenerating a grid rendition delete the render the photo view was holding, which the next look then paid for again.
 
 Every writer on this path fails on a missing directory rather than creating one, and ffmpeg fails the whole job rather than the one output, so the worker creates the directory for each of its job's outputs before it runs. At the call site instead, each new rendition is a directory somebody has to remember, and the one that was forgotten took the still down with it.
 
@@ -972,7 +972,7 @@ Every writer on this path fails on a missing directory rather than creating one,
 
 Processing uses **Bun worker threads** for parallelism. The concurrency level is configurable (default: 4 workers).
 
-**The queue is built in the order the grid will show it.** `listPendingProcessing` orders by the library's own `ordering` (`taken_asc` by default, so oldest capture first), using the same clause the gallery reads by, NULL capture dates included. A 50k-frame import otherwise filled in whatever order the rows happened to be inserted, which is the scan's order and therefore the filesystem's - so the first screenful was among the last to get its thumbnails, and the user watched an empty grid while work was being done on photos three thousand rows down. Both passes follow it, since each iterates the same staged list.
+**The queue is built in the order the grid will show it.** `listPendingProcessing` orders by the library's own `ordering` (`taken_asc` by default, so oldest capture first), using the same clause the gallery reads by, NULL capture dates included. A 50k-frame import otherwise filled in whatever order the rows happened to be inserted, which is the scan's order and therefore the filesystem's - so the first screenful was among the last to get its renditions, and the user watched an empty grid while work was being done on photos three thousand rows down. Both passes follow it, since each iterates the same staged list.
 
 Only applied when the run names a single library: a batch spanning several has no one ordering to follow, and those runs are always an explicit set of ids the user just asked to rebuild. Above one `IN (...)` chunk the order is per chunk rather than global, which affects only sets far larger than a scoped sync ever carries (the watcher falls back to a full sync past 256 paths, §9.8).
 
@@ -982,7 +982,7 @@ The orchestrator (`processing_service.ts`):
 3. Spawns up to N Bun `Worker` instances, each running `processing_worker.ts`.
 4. Sends photo processing jobs to workers via `postMessage`.
 5. Workers send completion/error messages back.
-6. On a success message, the orchestrator clears the flag for the stage that landed and stamps its `*_built_at`; the renditions stage also writes `rendition_source` and clears `processing_error`. On a failure message, it clears *both* flags (so the photo is not silently reprocessed on every subsequent sync, and a file whose tile could not be built is not asked for renditions), records the worker's `error` string in `processing_error`, leaves the stamps unchanged, and logs via `console.error`. Such a photo has no thumbnail on disk (the worker deletes any partial or stale output on failure, §10.3), so the image endpoints 404 (§13.5), but `processing_error` distinguishes a failed photo from an unprocessed one.
+6. On a success message, the orchestrator clears the flag for the stage that landed and stamps its `*_built_at`; the renditions stage also writes `rendition_source` and clears `processing_error`. On a failure message, it clears *both* flags (so the photo is not silently reprocessed on every subsequent sync, and a file whose tile could not be built is not asked for renditions), records the worker's `error` string in `processing_error`, leaves the stamps unchanged, and logs via `console.error`. Such a photo has no rendition on disk (the worker deletes any partial or stale output on failure, §10.3), so the image endpoints 404 (§13.5), but `processing_error` distinguishes a failed photo from an unprocessed one.
 
 ### 10.3 Worker Implementation (`processing_worker.ts`)
 
@@ -991,7 +991,7 @@ Each worker:
 2. Decodes the RAW once, through `native/rawshim` (§10.4) → an RGB bitmap **already rotated to display orientation** (the decoder applies the EXIF flip; the raw buffer carries no EXIF for a downstream library to auto-rotate from).
 3. Fits the camera-match profile once, if the library asked for it (§10.8).
 4. Builds one graded base at the largest SDR size any target needs, and writes each target's AVIF from it.
-5. On any failure, deletes every output the job names, if present (best-effort unlink), before reporting - so a failed job leaves no partial rendition and a failed reprocess does not leave the prior run's stale ones on disk (both share the UUID-keyed path). This upholds the §10.2 no-thumbnail invariant.
+5. On any failure, deletes every output the job names, if present (best-effort unlink), before reporting - so a failed job leaves no partial rendition and a failed reprocess does not leave the prior run's stale ones on disk (both share the UUID-keyed path). This upholds the §10.2 no-rendition invariant.
 6. Sends back `{ photoId, success: true, source }` or `{ photoId, success: false, error: string }`.
 
 **The decode never enters the JS heap.** Steps 2-4 pass a handle - an opaque pointer to a bitmap Rust owns - so a 60MP frame is decoded, fitted, graded and encoded without its pixels crossing the FFI boundary. The worker holds every handle it opens in one list and frees them in a `finally`, because nothing on the JS side collects them: a 60MP decode and its graded copy are ~380MB between them. The two places that genuinely need samples in JS - the scene-linear decode ffmpeg encodes (§10.7) and the HDR fit that reads the same pixels - copy explicitly, through `pixels()`.
@@ -1000,11 +1000,11 @@ Each worker:
 
 **An import runs in two passes, tiles before renditions.** Both cover the same photos, so this is purely an ordering choice, and it is the reason the stages are split at all: measured over 23 real ARWs, a tile is 124ms where a rendition is 1518ms, and at concurrency 8 that is 30 img/s against 3. On a 2000-frame shoot the whole grid is browsable in about a minute rather than after the eleven minutes the renders take.
 
-**The pending flag is per stage, because everything that reads it wants to know which one.** `needs_tile` and `needs_renditions` each clear as their own pass lands, so a run interrupted between them resumes at the second rather than redoing a tile already on disk; the queue asks for either (`countPendingProcessing` counts photos owing one, since the sync strip counts photos rather than stages); the gallery's "No thumbnail" filter means `needs_tile`, a photo with a tile being no hole in the grid; and the detail panel can say which of the two it is waiting on rather than reporting one word for two rather different waits. A failure clears both: the failure is the file, not the stage.
+**The pending flag is per stage, because everything that reads it wants to know which one.** `needs_tile` and `needs_renditions` each clear as their own pass lands, so a run interrupted between them resumes at the second rather than redoing a tile already on disk; the queue asks for either (`countPendingProcessing` counts photos owing one, since the sync strip counts photos rather than stages); the gallery's "No rendition" filter means `needs_tile`, a photo with a tile being no hole in the grid; and the detail panel can say which of the two it is waiting on rather than reporting one word for two rather different waits. A failure clears both: the failure is the file, not the stage.
 
-A failure sweeps *every* derivative of that photo, not just the stage that failed. A photo is being reprocessed because its pixels changed, so a rendition the failed run never reached is of the old file and would otherwise be served forever with nothing to notice. The exception is a run that owed the tile alone (§10.3): nothing there says the pixels changed, so a failed thumbnail rebuild leaves the viewer's copies where they are.
+A failure sweeps *every* derivative of that photo, not just the stage that failed. A photo is being reprocessed because its pixels changed, so a rendition the failed run never reached is of the old file and would otherwise be served forever with nothing to notice. The exception is a run that owed the tile alone (§10.3): nothing there says the pixels changed, so a failed rendition rebuild leaves the viewer's copies where they are.
 
-**Thumbnail source.** The job names where the pixels come from:
+**Rendition source.** The job names where the pixels come from:
 
 | Source | What it does | Trade-off |
 |---|---|---|
@@ -1035,7 +1035,7 @@ const libraw = dlopen('libraw.so', {
 ```
 
 The decoder function:
-1. Calls `libraw_init(0)` to create a processor. LibRaw's default `user_flip = -1` already applies the camera's EXIF orientation during `dcraw_process`, so the output RGB buffer is upright (a raw bitmap carries no EXIF, so nothing downstream can rotate on its own). **Do not override `user_flip` to `0`**; that would emit unrotated pixels and misorient landscape/portrait thumbnails. Relying on the default also avoids poking a struct field by offset through FFI, which is version-fragile.
+1. Calls `libraw_init(0)` to create a processor. LibRaw's default `user_flip = -1` already applies the camera's EXIF orientation during `dcraw_process`, so the output RGB buffer is upright (a raw bitmap carries no EXIF, so nothing downstream can rotate on its own). **Do not override `user_flip` to `0`**; that would emit unrotated pixels and misorient landscape/portrait renditions. Relying on the default also avoids poking a struct field by offset through FFI, which is version-fragile.
 2. Opens the file with `libraw_open_file`.
 3. Calls `libraw_unpack` and `libraw_dcraw_process`.
 4. Calls `libraw_dcraw_make_mem_image` to get the processed image in memory.
@@ -1102,7 +1102,7 @@ By stage on the 24MP frame, which is the clearest because nothing is halved: dec
 
 The grade is where the boundary shows: it was a JS loop over 72MB with a sharp resize round-trip on either side, and is now one pass in Rust. The encoders are roughly 2x, which is not our work but the system libvips 8.15.1 build against sharp's bundled one. **The fit is not where it shows** - it was already in Rust before the handles, at 451ms, so removing its copy is inside the noise. Worth stating plainly, because "we removed three 45MB copies" invites the assumption that the copies were the cost; on the fit they were not.
 
-The thumbnail and header paths (§11.1) still use LibRaw's C API through `bun:ffi` directly: they touch no struct that lacks an accessor, so they have nothing to gain from crossing into Rust.
+The embedded-preview and header paths (§11.1) still use LibRaw's C API through `bun:ffi` directly: they touch no struct that lacks an accessor, so they have nothing to gain from crossing into Rust.
 
 `bun run build:native` builds it, at cargo's stock release profile; the Docker build does so in its own stage and copies only the `.so` forward, keeping rustc, cargo and libclang out of the shipped image.
 
@@ -1138,11 +1138,11 @@ A shoot import is three different jobs with three different costs, measured over
 | B, grid tile from the embedded JPEG | **124ms** | **30.1 img/s** |
 | C, full render and 3840px AVIF | 1501ms | 3.08 img/s |
 
-**B is ten times the throughput of C**, which is what makes staging worth doing rather than interleaving: on a 2000-frame shoot, doing every tile first fills the whole grid in about a minute, where a combined job would take the full eleven that C needs before the last thumbnail appeared.
+**B is ten times the throughput of C**, which is what makes staging worth doing rather than interleaving: on a 2000-frame shoot, doing every tile first fills the whole grid in about a minute, where a combined job would take the full eleven that C needs before the last rendition appeared.
 
-**Opening the RAW is not a time sink, so B and C need not share one.** The suspicion was that a fused pass would be needed to avoid opening each file twice, but extracting the embedded preview - `libraw_open_file` plus `unpack_thumb` - is **5ms of B's 124ms**. LibRaw reads headers lazily and the thumbnail is a few MB, so B never touches the sensor data C needs. They can be scheduled independently, which is the whole point.
+**Opening the RAW is not a time sink, so B and C need not share one.** The suspicion was that a fused pass would be needed to avoid opening each file twice, but extracting the embedded preview - `libraw_open_file` plus `unpack_thumb` - is **5ms of B's 124ms**. LibRaw reads headers lazily and the embedded preview is a few MB, so B never touches the sensor data C needs. They can be scheduled independently, which is the whole point.
 
-**A 61MP body embeds a full-resolution preview**, 9504x6336 and 5-14MB of JPEG, not the small thumbnail the name suggests - only the 24MP body in the corpus embeds something small (1080x1616). Decoding that whole to make an 800px tile was most of stage B: 458ms per file, of which 230-540ms was the JPEG decode and, on portrait frames, half of *that* was `autorot` shuffling 60MP. Shrinking during the decode instead (`shrink=` on the loader, then a reduce for the rest) takes B to 105ms.
+**A 61MP body embeds a full-resolution preview**, 9504x6336 and 5-14MB of JPEG, not the small preview the name suggests - only the 24MP body in the corpus embeds something small (1080x1616). Decoding that whole to make an 800px tile was most of stage B: 458ms per file, of which 230-540ms was the JPEG decode and, on portrait frames, half of *that* was `autorot` shuffling 60MP. Shrinking during the decode instead (`shrink=` on the loader, then a reduce for the rest) takes B to 105ms.
 
 **The DCT is asked to go all the way to the target**, rather than stopping a factor of two short and leaving the reduce something to work with. It is a quality trade, because libjpeg's scaling and libvips' reduce are different filters: measured against decoding whole and reducing once, an 800px tile moves from deltaE 0.29 mean to 0.63, and its worst pixels from 7 to 24. The error is confined to fine detail where the two filters disagree - foliage, not sky - and at tile size it is invisible even under a 1:1 crop, which is the whole argument for taking it. Worth 105ms per file against 125ms.
 
@@ -1203,7 +1203,7 @@ That is why the encoder is named rather than left at libheif's `auto`, which pic
 
 ### 10.5 Lossless export
 
-`POST /api/photos/:id/lossless` renders one photo at full resolution into an AVIF kept beside the thumbnails. It exists because a 3840px preview is not what you check focus or gradients on, and it is opt-in per photo because it takes real time to build. Unlike every other rendition it is never fitted to a maximum edge: this is the view that gets pixel-peeped. The file is the cache: a second request finds it already there, and `PhotoDetail.renditions.max.built` is a `stat` rather than a column, so it cannot disagree with the disk.
+`POST /api/photos/:id/lossless` renders one photo at full resolution into an AVIF kept beside the renditions. It exists because a 3840px rendition is not what you check focus or gradients on, and it is opt-in per photo because it takes real time to build. Unlike every other rendition it is never fitted to a maximum edge: this is the view that gets pixel-peeped. The file is the cache: a second request finds it already there, and `PhotoDetail.renditions.max.built` is a `stat` rather than a column, so it cannot disagree with the disk.
 
 It follows the library's HDR setting, since it is the same render from the same RAW and it would be odd for "view original" to be the one rendition that disagrees with the rest. That includes the Firefox video twin (§10.7): every rendition is the same picture at a different quality level, and they are interchangeable, so each has a video beside it wherever HDR applies. Only this one cannot stay at native size, SVT-AV1 refuses a source taller than 8704, so the video alone is fitted to that ceiling while the still stays full resolution.
 
@@ -1229,11 +1229,11 @@ On the wasm path HDR signalling rides on a PNG **cICP** chunk (9/16/0/1 = BT.202
 
 `libraw_set_output_color` currently pins sRGB, so nothing produced today is HDR: the delivery path is ready for it, the decode is not.
 
-The default for newly indexed photos is the library's `preview_source` (§10.1). Changing it is deliberately not retroactive: rebuilding an existing catalogue is a job the user asks for explicitly, not something a preference does to thousands of files in the background. `POST /api/photos/:id/renditions/:r?force=true` is that explicit request, one photo at a time, from the viewer that is showing it - there is no bulk re-render, because a selection's worth of RAW renders is minutes of work for pixels nobody has asked to look at.
+The default for newly indexed photos is the library's `rendition_source` (§10.1). Changing it is deliberately not retroactive: rebuilding an existing catalogue is a job the user asks for explicitly, not something a preference does to thousands of files in the background. `POST /api/photos/:id/renditions/:r?force=true` is that explicit request, one photo at a time, from the viewer that is showing it - there is no bulk re-render, because a selection's worth of RAW renders is minutes of work for pixels nobody has asked to look at.
 
 ### 10.6 Orphaned files
 
-Generated files are named `<photoId>.<ext>`, and photo ids are minted per insert, so a catalogue rebuilt over the same folder gives every file a new id and strands the old ones. Nothing in the normal write path notices: processing rewrites thumbnails in place, and the only unlink is a failed job cleaning up its own partial output.
+Generated files are named `<photoId>.<ext>`, and photo ids are minted per insert, so a catalogue rebuilt over the same folder gives every file a new id and strands the old ones. Nothing in the normal write path notices: processing rewrites renditions in place, and the only unlink is a failed job cleaning up its own partial output.
 
 Two things close that off:
 
@@ -1394,7 +1394,7 @@ For every supported format, metadata comes from **LibRaw's header parse**: `libr
 
 **A parsed GPS block is not the same as a fix.** Canon sets `gpsparsed` on every frame and leaves the degree triples at zero when the body had no fix, so trusting the flag alone put a whole catalogue at 0,0 - which is not a null, it is a point in the Gulf of Guinea, and it maps. An all-zero latitude *and* longitude therefore reads as "not recorded".
 
-`width`/`height` are the **display (upright) dimensions**, i.e. after the orientation flip is applied. At `open_file` time LibRaw's `sizes.iwidth`/`iheight` are still in **sensor orientation** (the 90°/270° swap is applied only by `dcraw_process` or by an explicit `libraw_adjust_sizes_info_only()` call), so the reader must call `libraw_adjust_sizes_info_only()` after `open_file` and then read the now flip-adjusted `iwidth`/`iheight`. This is deliberate: the generated thumbnails are baked upright (§10.4), so storing upright dimensions means `width`/`height` always match the served thumbnail's aspect. `orientation` is retained separately (as the LibRaw flip orientation code) only as informational metadata and as a file-hash input (§9.2); **clients must not apply it to the served thumbnails, which are already upright** (doing so would double-rotate).
+`width`/`height` are the **display (upright) dimensions**, i.e. after the orientation flip is applied. At `open_file` time LibRaw's `sizes.iwidth`/`iheight` are still in **sensor orientation** (the 90°/270° swap is applied only by `dcraw_process` or by an explicit `libraw_adjust_sizes_info_only()` call), so the reader must call `libraw_adjust_sizes_info_only()` after `open_file` and then read the now flip-adjusted `iwidth`/`iheight`. This is deliberate: the generated renditions are baked upright (§10.4), so storing upright dimensions means `width`/`height` always match the served rendition's aspect. `orientation` is retained separately (as the LibRaw flip orientation code) only as informational metadata and as a file-hash input (§9.2); **clients must not apply it to the served renditions, which are already upright** (doing so would double-rotate).
 
 ```typescript
 interface FileMetadata {
@@ -1424,7 +1424,7 @@ async function extractMetadata(filePath: string): Promise<FileMetadata> {
 
 Body and lens come from `libraw_get_iparams()` (`normalized_make`/`normalized_model`, falling back to the raw `make`/`model`) and `libraw_get_lensinfo()` (`Lens`). LibRaw leaves the lens blank or `---` on fixed-lens bodies, and both spellings are stored as NULL: "unknown" rather than a lens named `---`.
 
-**Sensor crop.** Some bodies (the ILCE-7CR among them) report masked border columns as part of LibRaw's "visible" area, `sizes.width`/`height` equal `raw_width`/`raw_height` with zero margins, while the file separately states the real picture in `sizes.raw_inset_crops[0]`. Decoding the visible area verbatim then bakes black bars down two edges of every thumbnail. Both the header read and the decode therefore crop to that inset when the file states a usable one (an origin of `65535` means "not stated", and a crop that does not fit the raw frame means the struct layout drifted; either way, no crop). `dcraw_process` emits an upright image, so the sensor-space margins are rotated by the same flip before being applied. The two paths must agree: the stored `width`/`height` describe the picture the thumbnail shows.
+**Sensor crop.** Some bodies (the ILCE-7CR among them) report masked border columns as part of LibRaw's "visible" area, `sizes.width`/`height` equal `raw_width`/`raw_height` with zero margins, while the file separately states the real picture in `sizes.raw_inset_crops[0]`. Decoding the visible area verbatim then bakes black bars down two edges of every rendition. Both the header read and the decode therefore crop to that inset when the file states a usable one (an origin of `65535` means "not stated", and a crop that does not fit the raw frame means the struct layout drifted; either way, no crop). `dcraw_process` emits an upright image, so the sensor-space margins are rotated by the same flip before being applied. The two paths must agree: the stored `width`/`height` describe the picture the rendition shows.
 
 **The inset is measured against what LibRaw already trims, not against the sensor.** The emitted frame starts at `left_margin`/`top_margin` and is `width`x`height`; only the part of the camera's crop falling outside *that* window is still ours to remove. Subtracting the crop from the raw frame instead double-applies it on every body where `left_margin` is already the crop origin - which is every Canon. An EOS R8 lost a further 168 columns and 108 rows, and because the excess came off two sides rather than four the result was not a smaller picture but a differently framed one: 5811x3879 where the camera's own JPEG is 6000x4000, shifted up and left. It also cost the JPEG match (§10.5), which models an overall rescale but has no term for a translation: acceptance across 27 EOS R8 frames was 15/27 before and 27/27 after, median deltaE 4.11 to 1.89, against 27/27 and 1.35 for a Sony set of the same size. Three Sony geometries were over-cropped by 8-32 columns on the right edge by the same arithmetic, which is why this is not a Canon special case.
 
@@ -1464,7 +1464,7 @@ When a user requests deletion of one or more photos:
 
 For each photo:
 
-1. **Keep the thumbnails.** They are *not* removed. The Bin is a view the user browses to find something to restore, and it is useless if every frame in it is a grey placeholder. The two AVIFs are roughly 1% of the size of the RAW the Bin is already retaining, so deleting them saves almost nothing and costs the feature. They are removed only when a photo is permanently purged.
+1. **Keep the renditions.** They are *not* removed. The Bin is a view the user browses to find something to restore, and it is useless if every frame in it is a grey placeholder. The two AVIFs are roughly 1% of the size of the RAW the Bin is already retaining, so deleting them saves almost nothing and costs the feature. They are removed only when a photo is permanently purged.
 
 2. **Move RAW file to Bin:**
    - Determine the bin path:
@@ -1532,7 +1532,7 @@ All endpoints return JSON. Error responses use a standard envelope:
 | `GET` | `/api/photos/:id` | Get full photo detail |
 | `PATCH` | `/api/photos/:id` | Update photo metadata (rating, triage, notes) |
 | `POST` | `/api/photos/delete` | Soft-delete photos (body: `{ photo_ids: string[] }`) |
-| `GET` | `/api/config` | Thumbnail format, sizes and qualities, so a client can state what it is rendering |
+| `GET` | `/api/config` | Rendition format, sizes and qualities, so a client can state what it is rendering |
 | `POST` | `/api/photos/restore` | Restore soft-deleted photos to where they were deleted from (§12.2) |
 | `POST` | `/api/photos/rebuild-tiles` | Rebuild the grid tiles of a selection, and nothing else (§10.3) |
 | `POST` | `/api/photos/refresh-metadata` | Re-read the RAW headers for a selection |
@@ -1602,14 +1602,15 @@ All boolean query params are parsed with `z.stringbool()`, so `?is_missing=false
 | `GET` | `/image/:photoId/renditions/:rendition` | Stream one rendition: `grid`, `full` or `max` (§10.1) |
 | `GET` | `/image/:photoId/renditions/:rendition/video` | The one-frame AV1 twin of an HDR rendition (§10.7) |
 | `GET` | `/image/:photoId/embedded.jpg` | The camera's own JPEG, lifted out of the RAW unchanged |
-| `GET` | `/image/:photoId/original` | Stream original RAW file (media type and download name from the file's own extension) |
-| `GET` | `/image/:photoId/full.jpg` | The full rendition transcoded to JPEG, as an attachment |
+| `GET` | `/image/:photoId/download/:form` | As an attachment: `original` (the RAW), `embedded`, `full` or `max` |
 
-**Dynamic range is not in the URL.** The library decides it, so a client naming `full-hdr` would be guessing at a file that may never have been built; the route resolves it from `preview_hdr` instead, and `PhotoDetail.renditions` tells the client what it is looking at.
+**Dynamic range is not in the URL.** The library decides it, so a client naming `full-hdr` would be guessing at a file that may never have been built; the route resolves it from `rendition_hdr` instead, and `PhotoDetail.renditions` tells the client what it is looking at.
 
-`embedded.jpg` and `full.jpg` are produced per request and never stored: extraction is a header read plus a copy, a download is occasional, and another derivative per photo on disk would cost more than either does.
+**One download route rather than four**, because the menu offering them is one list and only the bytes differ: the RAW streams from disk, the camera's JPEG is lifted out of it, and `full` / `max` are transcoded from the stored AVIF. Nothing here is stored - extraction is a header read plus a copy, a download is occasional, and a JPEG per rendition on disk would cost more than either does. `full` and `max` must already be built: building one is the viewer's own request (`POST /api/photos/:id/renditions/:r`), and a download that silently took minutes would look like a hung browser, so the client builds first and then navigates.
 
-**Caching.** Thumbnails are rebuilt in place under a stable URL, so every image response carries an `ETag` (file size + mtime) and `Cache-Control: no-cache`. Without a validator the browser caches heuristically with nothing to revalidate against, and keeps showing the pre-rebuild picture; `no-cache` still caches, it just always asks first, which is a 304 in the common case. `If-None-Match` is answered directly.
+The RAW download goes through the same file path as the renditions rather than being buffered, so a client can seek inside a 25MB original (`Accept-Ranges`, 206 partial content).
+
+**Caching.** Renditions are rebuilt in place under a stable URL, so every image response carries an `ETag` (file size + mtime) and `Cache-Control: no-cache`. Without a validator the browser caches heuristically with nothing to revalidate against, and keeps showing the pre-rebuild picture; `no-cache` still caches, it just always asks first, which is a 304 in the common case. `If-None-Match` is answered directly.
 
 That covers everything that *asks*, which is every fresh page load. But an `<img>` whose `src` attribute has not changed never asks at all, so a rebuild is invisible to the copy already decoded in a live page; and a fresh element with the same `src` is handed that copy without revalidating, so remounting does not ask either. Every image URL therefore carries a version (§18.6): the stamp of whatever produces its bytes - `tile_built_at` for the grid, `renditions_built_at` for the viewer's two, `date_updated` for the camera's JPEG, which is lifted out of the RAW per request. Stamped by whatever wrote the file and delivered on the row, so it is right from the first render, identical in every client, stable across reloads, and moves only when its own file did. Two URLs, two cache entries; the ETag then keeps each of them honest.
 
@@ -1621,7 +1622,7 @@ These endpoints:
 - Return 404 if the file does not exist on disk. Soft-deleted photos **are** served: the row and both files still exist, and the Bin view depends on being able to render them (§12.1).
 - Support `Range` requests for partial content (HTTP 206), enabling seeking for large files. `Bun.serve` answers these against a `BunFile` body (including `Content-Range` and a 416 for an unsatisfiable range) but does not advertise the capability, so the handler sets `Accept-Ranges: bytes` itself.
 
-The served thumbnails are already rotated to display orientation (baked in during processing, §10.4), and the `width`/`height` in photo responses are the matching upright dimensions. Clients render them as-is and must **not** apply the photo's `orientation` value to them.
+The served renditions are already rotated to display orientation (baked in during processing, §10.4), and the `width`/`height` in photo responses are the matching upright dimensions. Clients render them as-is and must **not** apply the photo's `orientation` value to them.
 
 Implementation approach:
 ```typescript
@@ -1630,7 +1631,7 @@ app.get('/image/:photoId/renditions/:rendition', async (c) => {
   if (!photo) return c.notFound();
   
   const library = await librariesService.get(photo.library_id);
-  const filePath = getRenditionPath(library, photo.id, rendition, library.preview_hdr);
+  const filePath = getRenditionPath(library, photo.id, rendition, library.rendition_hdr);
   
   const file = Bun.file(filePath);
   if (!await file.exists()) return c.notFound();
@@ -1645,12 +1646,12 @@ app.get('/image/:photoId/renditions/:rendition', async (c) => {
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/api/config` | Thumbnail format, sizes and qualities, so a client can state what it is rendering |
+| `GET` | `/api/config` | Rendition format, sizes and qualities, so a client can state what it is rendering |
 | `GET` | `/api/settings` | App-wide preferences |
 | `PATCH` | `/api/settings` | Update them |
-| `GET` | `/api/events` | Server-sent events; `thumbnail` carries the id of a photo whose renditions were just written (§18.6) |
+| `GET` | `/api/events` | Server-sent events; `rendition` carries the id of a photo whose renditions were just written (§18.6) |
 
-Three different things, by how far their scope reaches: `config` is fixed by the deployment (environment variables, §15); the `libraries` row holds what belongs to one catalogue (the preview source and HDR, §10.2); `settings` is app-wide and lives in a key/value table, holding `preview_rendition_mode` and the rendition `remember` remembers. A table rather than a column per setting because they are read one at a time and never queried across, and adding one should not need a migration. A value the build no longer understands reads as its default rather than failing the request: these are preferences, and the viewer has to open with or without them.
+Three different things, by how far their scope reaches: `config` is fixed by the deployment (environment variables, §15); the `libraries` row holds what belongs to one catalogue (the rendition source and HDR, §10.2); `settings` is app-wide and lives in a key/value table, holding `viewer_rendition_mode` and the rendition `remember` remembers. A table rather than a column per setting because they are read one at a time and never queried across, and adding one should not need a migration. A value the build no longer understands reads as its default rather than failing the request: these are preferences, and the viewer has to open with or without them.
 
 ---
 
@@ -1693,7 +1694,7 @@ Structured tail rather than a sentence: the counts are what an import is judged 
 
 | Level | What it adds |
 |---|---|
-| `debug` | A line per HTTP request (including the flood of thumbnail GETs), per finished processing stage, and per batch of filesystem events the watcher acts on |
+| `debug` | A line per HTTP request (including the flood of rendition GETs), per finished processing stage, and per batch of filesystem events the watcher acts on |
 | `info` | The default. Imports (start, scan totals, diff counts, queued work), processing batches, library lifecycle, on-demand renditions, the scheduled jobs |
 | `warn` | Only what an operator should look at: an unreadable file, a photo that failed to process, a rescued original |
 | `error` | Only what failed outright |
@@ -1712,12 +1713,12 @@ The server is configured via environment variables:
 | `HOST` | `0.0.0.0` | HTTP server bind address |
 | `DB_PATH` | `./bowerbird.db` | SQLite database file path |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`; what the server logs (§14.3) |
-| `PROCESSING_CONCURRENCY` | `4` | Number of worker threads for thumbnail generation |
-| `SMALL_THUMBNAIL_QUALITY` | `80` | AVIF quality for small thumbnails, 1-100 (§10.1) |
-| `FULL_THUMBNAIL_QUALITY` | `80` | AVIF quality for full thumbnails, 1-100 (§10.1) |
-| `THUMBNAIL_EFFORT` | `0` | AVIF effort, 0-9; the default of 4 is 10x slower for +0.5dB (§10.1) |
-| `SMALL_THUMBNAIL_SIZE` | `800` | Longest edge in pixels for small thumbnails |
-| `FULL_THUMBNAIL_SIZE` | `3840` | Longest edge in pixels for full thumbnails |
+| `PROCESSING_CONCURRENCY` | `4` | Number of worker threads for rendition generation |
+| `GRID_RENDITION_QUALITY` | `80` | AVIF quality for the grid rendition, 1-100 (§10.1) |
+| `FULL_RENDITION_QUALITY` | `80` | AVIF quality for the full rendition, 1-100 (§10.1) |
+| `RENDITION_EFFORT` | `0` | AVIF effort, 0-9; the default of 4 is 10x slower for +0.5dB (§10.1) |
+| `GRID_RENDITION_SIZE` | `800` | Longest edge in pixels for the grid rendition |
+| `FULL_RENDITION_SIZE` | `3840` | Longest edge in pixels for the full rendition |
 | `MATCH_EMBEDDED_JPEG` | `true` | Give SDR renders the camera's own colour and lens correction, fitted per photo against the embedded JPEG; ~+2.4s on a 61MP frame (§10.8) |
 | `WATCH_ENABLED` | `true` | Auto-sync a library when its files change on disk (§9.8) |
 | `WATCH_DEBOUNCE_MS` | `2000` | Debounce window for coalescing filesystem events (§9.8) |
@@ -1770,7 +1771,7 @@ The sync-service, photo-deletion, and image-streaming cases below run in the int
 - Stopping (§9.10): a stopped rescan applies nothing and marks nothing missing, opens no further files and returns an idle status; a stopped *first* scan keeps the photos it reached (nothing to be absent from) and adds no missing rows; mid-processing the run ends rather than waiting itself out, leaving the unreached photos pending; a batch a later sync coalesced into is still what a stop reaches
 
 **Photo deletion:**
-- Thumbnails are kept, so the Bin can be browsed
+- Renditions are kept, so the Bin can be browsed
 - RAW file is moved to correct Bin location (shoot vs library)
 - DB record is marked `is_deleted = 1`, not removed
 - Filename collision in Bin (numeric suffix)
@@ -1820,12 +1821,12 @@ The following order respects dependency chains — each step depends on the step
 7. **RAW decoder / FFI**: `raw_decoder.ts` LibRaw FFI bindings and the per-format dispatch (header sniff). Needed before metadata since ARW metadata is read via LibRaw's header parse.
 8. **Metadata extraction**: `metadata.ts` (per-format header parse; LibRaw for ARW and CR3).
 9. **Photos service + API**: CRUD, listing, filtering.
-10. **Processing service**: Worker-based thumbnail generation (reuses the RAW decoder).
-11. **Sync service**: Full sync algorithm with move detection, reappearance handling, shoot-membership reconciliation, and the per-library sync lock (§9.7). Depends on the processing service (§8.4), which it calls to trigger thumbnail generation (§9.5).
+10. **Processing service**: Worker-based rendition generation (reuses the RAW decoder).
+11. **Sync service**: Full sync algorithm with move detection, reappearance handling, shoot-membership reconciliation, and the per-library sync lock (§9.7). Depends on the processing service (§8.4), which it calls to trigger rendition generation (§9.5).
 12. **Shoots service + API**: CRUD, photo assignment with file moves.
 13. **Albums service + API**: CRUD, photo assignment.
 14. **Image streaming API**: Static-path file streaming endpoints.
-15. **Deletion flow**: Soft-delete with Bin and thumbnail cleanup.
+15. **Deletion flow**: Soft-delete with Bin and rendition cleanup.
 16. **Integration wiring**: `index.ts` — dependency injection, Hono app setup, server start.
 
 ---
@@ -1877,13 +1878,13 @@ Only `/libraries/*` names the library in the URL. Shoot and photo routes resolve
 
 ### 18.3.1 Gallery controls
 
-Five named views (Active, Untriaged, Picks, Rejects, All) answer the questions asked constantly and cost one click. Everything rarer lives behind a **Custom** menu of checkboxes that sends `match=any`, so ticking several means "any of these" rather than an empty intersection. A calendar range, a filename search, a sort and a thumbnail-size slider complete the row.
+Five named views (Active, Untriaged, Picks, Rejects, All) answer the questions asked constantly and cost one click. Everything rarer lives behind a **Custom** menu of checkboxes that sends `match=any`, so ticking several means "any of these" rather than an empty intersection. A calendar range, a filename search, a sort and a rendition-size slider complete the row.
 
 There is no "clear filters" button and no "default order" entry: All is the clear, and the sort always shows the concrete ordering in effect.
 
 **The sort belongs to the collection, and there is exactly one copy of it.** It lives in `libraries.ordering` / `shoots.ordering` / `albums.ordering`, which every list read already falls back to. So the client sends no `ordering` at all: it asks for a page, and the response states the ordering it was built in (`PhotoListResponse.ordering`), which is what the control renders from. Sorting a gallery `PATCH`es the collection and re-reads, rather than setting a local value and hoping the write landed.
 
-That is why the store starts at `null` rather than at a default: a value invented client-side would be a second answer to a question the collection already answers, and the two diverge the moment either moves - which is what a per-browser sort did. Opening the same shoot on a phone found it sorted differently to the desktop, and the thumbnail queue, which is built server-side in the collection's order (§10.2), could not follow a preference it was unable to see. The control renders once the first page has landed; there is no frame in which it shows a guess.
+That is why the store starts at `null` rather than at a default: a value invented client-side would be a second answer to a question the collection already answers, and the two diverge the moment either moves - which is what a per-browser sort did. Opening the same shoot on a phone found it sorted differently to the desktop, and the rendition queue, which is built server-side in the collection's order (§10.2), could not follow a preference it was unable to see. The control renders once the first page has landed; there is no frame in which it shows a guess.
 
 The bin and the missing view sort by their library's ordering, since they are slices of it rather than collections owning one.
 
@@ -1899,9 +1900,9 @@ A verdict or rating can move a photo out of the slice being viewed, so a change 
 
 **Shift-click extends from the anchor on either half of a tile**, the frame and the tick box: the box is the visible handle for selecting, so a range built by clicking one box and shift-clicking another has to work. The anchor is the last photo toggled on its own, falling back to the keyboard cursor when nothing has been - arrowing to a photo and shift-clicking another is the same gesture as in a file manager, and a first shift-click has nothing else to reach for. Extending moves the cursor itself rather than leaving that to the caller, which would have to know to focus *after* extending: with focus as the fallback anchor, focusing first makes every range start and end on the photo just clicked.
 
-The bulk action bar sits directly under the filters, where the selection was made, rather than at the foot of a grid the user has scrolled away from. Its actions include rebuilding thumbnails for the selection from either source (§10.3). While a selection exists the keyboard cursor's ring is suppressed: two different rings on one tile only invites "why is this one different".
+The bulk action bar sits directly under the filters, where the selection was made, rather than at the foot of a grid the user has scrolled away from. Its actions include rebuilding renditions for the selection from either source (§10.3). While a selection exists the keyboard cursor's ring is suppressed: two different rings on one tile only invites "why is this one different".
 
-Rebuilt thumbnails change behind a URL that does not, so the client appends a version to image URLs once a rebuild has happened in the session. The server's `ETag` covers a fresh page load; this covers an image already decoded in the current one.
+Rebuilt renditions change behind a URL that does not, so the client appends a version to image URLs once a rebuild has happened in the session. The server's `ETag` covers a fresh page load; this covers an image already decoded in the current one.
 
 ### 18.4 Culling
 
@@ -1959,13 +1960,13 @@ That hold is only reachable because **the detail page no longer tears itself dow
 
 The setting can only be trusted for a rendition every photo is certain to have (`isAlwaysBuilt`): the camera's JPEG, extracted from the RAW on demand, and the library's own default, built on import. The other two are built on request, so asking early is a 404 rather than a picture, and they wait for `openDetail`. That same test decides what is worth warming, so the neighbours are only ever fetched at the rendition on screen.
 
-**Both facts it needs are on the row, and neither is read off the detail.** `defaultRendition` reads `preview_source` from the **library**, found through the row's `library_id`, rather than the `default_rendition` the server puts on the detail: the server derives that from exactly the same library setting (§13.2), so this is the same answer a round trip earlier - and it is per photo, which matters in an album spanning two libraries, where the detail on hand belongs to a photo from the other one. `preferredRendition` reads `preview_rendition` from the row for the same reason, which is what lets "last used per photo" answer on the first frame; on the detail alone, that mode painted the library's default and swapped to the reader's own choice a moment later - the original complaint, in the one mode that still had it.
+**Both facts it needs are on the row, and neither is read off the detail.** `defaultRendition` reads `rendition_source` from the **library**, found through the row's `library_id`, rather than the `default_rendition` the server puts on the detail: the server derives that from exactly the same library setting (§13.2), so this is the same answer a round trip earlier - and it is per photo, which matters in an album spanning two libraries, where the detail on hand belongs to a photo from the other one. `preferredRendition` reads `viewer_rendition` from the row for the same reason, which is what lets "last used per photo" answer on the first frame; on the detail alone, that mode painted the library's default and swapped to the reader's own choice a moment later - the original complaint, in the one mode that still had it.
 
-**The page is a layout and seven observers, not one.** The nav, the frame, and each panel read only what they show - the notes box holds its own draft, the triage panel reads the verdict and rating off the row, the camera panel reads the camera fields, the preview panel is the only one that hears a frame decode. As one component they all re-rendered on anything any of them watched: a keystroke in the notes box redrew the stage, and a star redrew the camera settings.
+**The page is a layout and seven observers, not one.** The nav, the frame, and each panel read only what they show - the notes box holds its own draft, the triage panel reads the verdict and rating off the row, the camera panel reads the camera fields, the rendition panel is the only one that hears a frame decode. As one component they all re-rendered on anything any of them watched: a keystroke in the notes box redrew the stage, and a star redrew the camera settings.
 
 Splitting the components is only half of it, because **`loadedDetail` is deep-observed and written into rather than replaced.** A fresh object notifies everyone reading any part of it, which is what `reconcile` already avoids for grid rows; `patch` therefore assigns the changed fields into the detail the panels are holding, minus `renditions` and `album_ids` - a patch cannot change those, but they arrive as new objects every time and would read as a change to the two components that watch them. A rating click now re-renders the triage panel and nothing else.
 
-A "Thumbnail on screen" panel reports what is actually being displayed (its source, pixel dimensions, format, colour space and encode quality) separately from the original RAW's size and dimensions, because the two are easy to confuse and only one of them is what you are judging sharpness on.
+A "Rendition details" panel reports what is actually being displayed (its source, pixel dimensions, format, colour space and encode quality) separately from the original RAW's size and dimensions, because the two are easy to confuse and only one of them is what you are judging sharpness on.
 
 Every metadata panel shows its two most important rows and hides the rest behind a same-size toggle, so each costs the same three lines however much a camera recorded. Download (RAW or JPEG), the rebuild actions and Bin live in the page header beside the prev/next controls, which keeps every action on the photo in one place rather than buried at the bottom of a panel column.
 
@@ -1973,9 +1974,9 @@ Landing straight on `/photos/:id` used to leave prev/next dead: the neighbours c
 
 Destructive actions split by reversibility. Binning is undoable, so it just happens and reports with an undo toast wired to `POST /api/photos/restore`. Deleting a library, shoot or album is not undoable, so each asks first via a native `confirm()` that names the specific consequence (removing a library keeps the RAW files but destroys every rating, note, pick and membership).
 
-### 18.6 Thumbnails and the sync strip
+### 18.6 Renditions and the sync strip
 
-Thumbnails are generated asynchronously, so a tile's first request can 404 while processing is still writing the file, and nothing in the page can know when that changes. **The server says so**: `ProcessingService` announces each photo whose renditions it has just written, and `GET /api/events` streams those announcements to every connected client as `event: thumbnail` (`EventsApi`).
+Renditions are generated asynchronously, so a tile's first request can 404 while processing is still writing the file, and nothing in the page can know when that changes. **The server says so**: `ProcessingService` announces each photo whose renditions it has just written, and `GET /api/events` streams those announcements to every connected client as `event: rendition` (`EventsApi`).
 
 **The version is a column, and it travels on the row.** `photos.tile_built_at` and `photos.renditions_built_at` each mean "when was this file last written", which is exactly what a URL has to name; both are on `PhotoSummary`, so every view that renders a photo is already holding them. Appending it is the only thing that makes a rebuilt file visible to an `<img>` that has already decoded the old one (§13.5). Remounting the element is not an alternative: three fresh `<img>`s with the same `src` produce one network request between them, because the browser hands the later ones the copy already in its in-memory resource cache without revalidating. The URL itself has to differ.
 
@@ -1995,17 +1996,17 @@ The stamp is what makes each of those announceable rather than merely true: a cl
 
 Which puts the whole weight on the announcement being *acted* on, and the stage had one way of dropping it. A frame whose decode fails is unmounted, so the element the promotion effect reaches through a ref becomes null; the rebuilt version then arrives, the effect runs against nothing and returns, and clearing the failure remounts the element without changing any of that effect's other dependencies. Nothing asked the new bytes to decode. They were fetched - 200, in milliseconds - and the viewer sat on them for the life of the page, which is the one outcome the announcement exists to prevent. `failed` is a dependency of that effect for this reason.
 
-The version is told rather than guessed, and that is the whole point. What it replaced was a pair of global flags: `reloadToken`, bumped on every completed list fetch, so the grid re-requested *all* of its thumbnails whenever anything refetched the list and re-rendered every tile to do it, at a poll a second for the length of an import, which is exactly when the grid is largest and the least of it has changed. The other was `rebuiltAt`, a session timestamp that made every *subsequent* photo in the viewer miss the browser cache once because one photo had been rebuilt.
+The version is told rather than guessed, and that is the whole point. What it replaced was a pair of global flags: `reloadToken`, bumped on every completed list fetch, so the grid re-requested *all* of its renditions whenever anything refetched the list and re-rendered every tile to do it, at a poll a second for the length of an import, which is exactly when the grid is largest and the least of it has changed. The other was `rebuiltAt`, a session timestamp that made every *subsequent* photo in the viewer miss the browser cache once because one photo had been rebuilt.
 
 The stream carries an `id:` per event and keeps the last few hundred in a ring buffer, so a browser reconnecting after a blip replays what it missed through `Last-Event-ID` rather than losing it. An id from a previous run of the server (one at or beyond the current counter) replays nothing rather than the whole buffer; a restart mid-import is therefore a gap in the announcements, and a reload is what closes it. A heartbeat every 20s keeps the connection from being idled out (`idleTimeout`, §index.ts), and waits on the disconnect as well as the timer, so a departed client is dropped at once rather than at the next beat.
 
-The sync status bar renders one cell per item the run's current phase is counting through, filling as it climbs: the files while the library is scanning, then the photos queued for thumbnailing (§9.6). One bar for two phases rather than one per phase, because they are consecutive and only ever one is live; which one it is names itself in the label, so an import reads `scanning · 1204/50000 files` and then `processing · 32/50000 thumbnails`. The tallies beside it (added, moved, missing) are what the *scan* concluded, so they are shown only once it has. It stops polling as soon as the library reports idle, and while a run is in flight the row's Sync button becomes Stop (§9.10) - starting a second one is not on offer anyway, so the slot is worth more as the control that ends the first.
+The sync status bar renders one cell per item the run's current phase is counting through, filling as it climbs: the files while the library is scanning, then the photos queued for rendition building (§9.6). One bar for two phases rather than one per phase, because they are consecutive and only ever one is live; which one it is names itself in the label, so an import reads `scanning · 1204/50000 files` and then `processing · 32/50000 renditions`. The tallies beside it (added, moved, missing) are what the *scan* concluded, so they are shown only once it has. It stops polling as soon as the library reports idle, and while a run is in flight the row's Sync button becomes Stop (§9.10) - starting a second one is not on offer anyway, so the slot is worth more as the control that ends the first.
 
 **The poll runs alongside the triggering request, not after it.** `POST /sync` only answers once the scan has finished, which on a library's first import is minutes of opening and hashing every file - and for the whole of it the run is already under way and the status endpoint has been reporting it. Awaiting the request first meant a freshly added library sat at "0 photos, never synced" with the button still offering a sync that was already running, and then jumped to a moving progress bar minutes later, which reads as the click having done nothing and the catalogue having refreshed itself. Until that request answers, an `idle` status report is a run the server has not started recording yet rather than the truth, so it neither paints the strip idle nor stops the poll.
 
 A finished run also re-reads the **library list**, which is where the row's photo count and "synced 3m ago" come from; nothing else re-reads it while the settings page stays open, so a sync completed under the user's eyes would otherwise leave both saying what they said before it started.
 
-**The poll re-reads the grid for rows, not for thumbnails.** It does so while the *scan* is inserting them and once more on the tick that finds the run finished - not through the processing phase, which is the long one. By then the row set is settled and each thumbnail announces itself, so a list request per second would answer with the page the grid already has, filtered and counted over the whole library to say so. The exception is a view filtering on what processing changes ("No thumbnail"), which a refetch is still the only way to learn.
+**The poll re-reads the grid for rows, not for renditions.** It does so while the *scan* is inserting them and once more on the tick that finds the run finished - not through the processing phase, which is the long one. By then the row set is settled and each rendition announces itself, so a list request per second would answer with the page the grid already has, filtered and counted over the whole library to say so. The exception is a view filtering on what processing changes ("No rendition"), which a refetch is still the only way to learn.
 
 **A refetch that returns the same page changes nothing observable.** `reconcile` writes the server's fields into the row objects already on screen rather than replacing them, and hands back the *same array* when the ids and their order are unchanged; a fresh array notifies everything reading the list, which during a sync is the whole grid, once a second, for a page that did not move. In the same spirit the emptiness checks test `photos.length` before `loading`, so a populated grid short-circuits away its dependency on a flag that toggles twice per fetch.
 

@@ -7,7 +7,7 @@ import { addLibrary, openLibrary, syncLibrary } from './helpers';
 // produced, which is also how the bugs below were originally found.
 test.describe.configure({ mode: 'serial' });
 
-test('indexes a library and shows a thumbnail for every RAW file', async ({ page }) => {
+test('indexes a library and shows a rendition for every RAW file', async ({ page }) => {
   await addLibrary(page, PHOTOS_DIR);
   await syncLibrary(page, PHOTOS_DIR);
   await openLibrary(page, PHOTOS_DIR);
@@ -17,7 +17,7 @@ test('indexes a library and shows a thumbnail for every RAW file', async ({ page
   // fixture and the machine rather than with the UI.
   await expect(page.locator('.tile')).toHaveCount(PHOTO_NAMES.length, { timeout: 45_000 });
 
-  // Regression: thumbnails are requested before processing has written them, so
+  // Regression: renditions are requested before processing has written them, so
   // the first request 404s, and the tile has nothing to do but wait for the
   // server to say its photo is built. Every tile must end up showing decoded
   // pixels, and none may be left on the placeholder.

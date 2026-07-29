@@ -29,7 +29,7 @@ export function getDataPath(library: Library): string {
 // One directory per rendition *and* per dynamic range, so every generated file
 // stays `<photoId>.<ext>` and the orphan sweep can keep reading a filename as an
 // id. Range is in the directory rather than the filename because the file is the
-// cache: a preview built before HDR was turned on would otherwise be served
+// cache: a rendition built before HDR was turned on would otherwise be served
 // forever under the same name.
 export function renditionPathFor(
   dataPath: string,

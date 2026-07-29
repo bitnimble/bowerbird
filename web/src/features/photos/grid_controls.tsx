@@ -53,7 +53,7 @@ const CUSTOM: Option<CustomKey>[] = [
   { value: 'unrated', label: 'Unrated', icon: <Star size={ICON} /> },
   { value: 'rated', label: 'Rated', icon: <Star size={ICON} /> },
   { value: 'missing', label: 'Missing file', icon: <Unplug size={ICON} /> },
-  { value: 'pending', label: 'No thumbnail', icon: <ImageOff size={ICON} /> },
+  { value: 'pending', label: 'No rendition', icon: <ImageOff size={ICON} /> },
 ];
 
 function customToFilters(keys: CustomKey[]): PhotoFilters {
@@ -217,7 +217,7 @@ const TileZoom = observer(function TileZoom(): JSX.Element {
   return (
     <span className="controls__zoom">
       <ViewModes />
-      <Slider label="Thumbnail size" min={120} max={MAX_TILE} step={20} value={store.thumbSize} onChange={photos.setThumbSize} />
+      <Slider label="Tile size" min={120} max={MAX_TILE} step={20} value={store.tileSize} onChange={photos.setTileSize} />
       <Text variant="mono" className="controls__count">
         {store.total === 0 ? 'none' : `${store.pageStart}–${store.pageEnd} of ${store.total}`}
       </Text>

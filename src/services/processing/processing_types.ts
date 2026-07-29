@@ -1,12 +1,8 @@
+import { RENDITION_SOURCES, type RenditionSource } from '../../schemas/common';
 import type { HdrMedium, HdrVariant } from './hdr_media';
 import type { Rendition } from './renditions';
 
-// Where a rendition's pixels come from. 'embedded' lifts the camera's own JPEG
-// out of the RAW: no demosaic, so it is much faster and carries the maker's
-// colour treatment, but it is only as large as the body chose to embed (anything
-// from 640x480 to full sensor). 'render' demosaics the RAW at full resolution.
-export const THUMBNAIL_SOURCES = ['embedded', 'render'] as const;
-export type ThumbnailSource = (typeof THUMBNAIL_SOURCES)[number];
+export type { RenditionSource };
 
 // The two halves of an import, which land at different times and are worth
 // telling apart everywhere: the grid tile the gallery shows (~125ms), then the
@@ -20,8 +16,8 @@ export interface RenditionWritten {
   version: string;
 }
 
-export function isThumbnailSource(value: string): value is ThumbnailSource {
-  return (THUMBNAIL_SOURCES as readonly string[]).includes(value);
+export function isRenditionSource(value: string): value is RenditionSource {
+  return (RENDITION_SOURCES as readonly string[]).includes(value);
 }
 
 // How a scene-linear decode is graded to display-referred (§10.7). The three
@@ -47,10 +43,10 @@ export interface RenditionTarget {
   /** Longest edge, or 0 for native resolution. */
   size: number;
   // Which pixels to start from. Only the grid is ever built from the camera's
-  // JPEG, and only because a 9504px preview cannot be a 800px tile; everywhere
+  // JPEG, and only because a 9504px embedded JPEG cannot be a 800px tile; everywhere
   // else the embedded JPEG is served as itself rather than rendered into a
   // rendition (§10.2).
-  source: ThumbnailSource;
+  source: RenditionSource;
   /** AVIF quality, 1-100, for the SDR path. */
   quality: number;
   /** avifenc max quantizer, 0-63 and lower is better, for the HDR path. */
