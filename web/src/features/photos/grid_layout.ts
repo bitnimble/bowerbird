@@ -29,9 +29,12 @@ export const TILE_ASPECT = 3 / 2;
 export const BAND_LINE_CAP = 1.3;
 
 // The breathing room inside a band's outline, on top of what its members already
-// keep for themselves (`TILE_PAD`). One value for every view (`.grid__band`'s
-// padding), which is what makes a band look like the same thing in all three.
-export const BAND_PAD = 2;
+// keep for themselves (`TILE_PAD`) - which is why it is none: a band's ring is the
+// same distance from a member on every side, and the sides can only be the cell edge
+// (anything else narrows its columns, and its members are the collection's tiles at
+// the collection's places). Mirrors `.grid__band`'s vertical padding, and the row
+// arithmetic carries it through `BAND_EXTRA` if it is ever anything else.
+export const BAND_PAD = 0;
 
 // What a band adds to the height of the display rows it covers: its own inset, top
 // and bottom. Its rows are the grid's rows and its members the grid's cells, so it

@@ -34,8 +34,9 @@
   --grid-gap: 2px;
   /* Mirrors TILE_PAD: the ring, and the room it stands off the photograph. */
   --tile-pad: 4px;
-  /* Mirrors BAND_PAD: what a band keeps beyond what its members keep (§19.6). */
-  --band-pad: 2px;
+  /* Mirrors BAND_PAD: what a band keeps beyond what its members keep - which is
+     none, since they keep their own (§19.6). */
+  --band-pad: 0px;
   /* One ring, worn by a selected tile, an open stack's tile and that stack's band
      (§19.6): three parts of one thing, so the weight is one value rather than
      three that drifted apart. The radius is `--radius`, and the tile carries it
@@ -44,6 +45,10 @@
 
   /* Chrome above and below the photo stage: the .pad box plus the nav row. */
   --detail-chrome: 84px;
+
+  /* A page's side inset. The grid's scrollbar bleeds through it to the window
+     edge, so it has to be readable from there. */
+  --pad-x: 14px;
 }
 
 * {
@@ -517,7 +522,7 @@ p.ui-text--mono {
    as .pad, so it lands on the page's first control row rather than beside it. */
 .rail__toggle {
   position: absolute;
-  left: 14px;
+  left: var(--pad-x);
   top: 12px;
   z-index: 20;
 }
@@ -673,7 +678,7 @@ p.ui-text--mono {
 }
 
 .pad {
-  padding: 12px 14px 20px;
+  padding: 12px var(--pad-x) 20px;
 }
 
 /* A gallery page owns the height it was given: the controls keep their row and
@@ -964,6 +969,11 @@ p.ui-text--mono {
   flex: 1;
   min-height: 0;
   display: flex;
+  /* Out through the page's inset to the window edge: the bar centres its thumb in
+     its own width, so stopping short of the edge left the thumb sitting a pad
+     closer to the tiles than to the window. */
+  margin-right: calc(-1 * var(--pad-x));
+  --bar-w: calc(24px + var(--pad-x));
 }
 
 /* The gallery's one scroll. Only the tiles near the viewport are mounted, and
@@ -978,9 +988,9 @@ p.ui-text--mono {
   /* The gutter .grid__bar floats in. Constant whether or not a bar is drawn, which
      is what stops the bar's own presence from changing the column count and so the
      content height that decides whether a bar is needed; and a ResizeObserver's
-     contentRect excludes it, so `viewportWidth` never sees it move. Without it, a
-     24px pointer target has to reach over the rightmost tile. */
-  padding-right: 24px;
+     contentRect excludes it, so `viewportWidth` never sees it move. Without it, the
+     bar's pointer target has to reach over the rightmost tile. */
+  padding-right: var(--bar-w);
   /* The rail is not the collection, so the native thumb would describe a
      hundred thousand pixels somewhere in the middle of it. .grid__bar is what
      replaces it. */
@@ -1003,8 +1013,9 @@ p.ui-text--mono {
    drives the column count and every row's height, so a bar that took space
    changed the very content height that decides whether a bar is needed.
 
-   It floats in .grid__scroller's padding, so its 24px pointer target (WCAG 2.5.8)
-   reaches over nothing. The track itself takes no pointer events: it spans the
+   It floats in .grid__scroller's padding, so its pointer target (WCAG 2.5.8 wants
+   24px; this is that plus the page's inset) reaches over nothing. The track itself
+   takes no pointer events: it spans the
    grid's whole height, and events there would swallow a click, a wheel notch or a
    touch pan anywhere down that edge. */
 .grid__bar {
@@ -1012,7 +1023,7 @@ p.ui-text--mono {
   top: 0;
   right: 0;
   bottom: 0;
-  width: 24px;
+  width: var(--bar-w);
   pointer-events: none;
   user-select: none;
   /* Above .tile__stack (1) and the focus ring (2), which are only trapped below
@@ -1021,7 +1032,7 @@ p.ui-text--mono {
   z-index: 3;
 }
 
-/* The whole 24px of the track's width, and the only thing in here that takes the
+/* The whole of the track's width, and the only thing in here that takes the
    pointer. */
 .grid__bar-thumb {
   position: absolute;
@@ -1038,8 +1049,8 @@ p.ui-text--mono {
   position: absolute;
   top: 0;
   bottom: 0;
-  left: 9px;
-  right: 9px;
+  left: calc((var(--bar-w) - 6px) / 2);
+  right: calc((var(--bar-w) - 6px) / 2);
   border-radius: var(--radius);
   /* --bone-dim, not a divider tint: on --ink a #232833 thumb is 1.2:1 and simply
      cannot be seen, and hiding the native bar means this is the only readout of

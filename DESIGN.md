@@ -2843,16 +2843,18 @@ below is displaced downwards and otherwise untouched. Band rows are ordinary til
 rows at the same cell geometry, marked by their background rather than their size.
 
 **A member is the tile the collection would have drawn**: the same size, in the same
-column, so its edges line up with the rows above and below. A band is **inset from
-its outline** by the same amount in every view (`BAND_PAD`) - it is the same object
-in all three, and one whose members sat on its ring did not read as a box - and what
-pays for that inset is **the band's own height**: it covers the display rows the row
-arithmetic gave it *plus* `BAND_EXTRA`. The alternative, taking it off the cells,
-which is all a uniform pitch could afford, drew the same frame at two sizes.
+column, so its edges line up with the rows above and below. A band's outline is
+therefore the **same distance from a member on every side** - which is none of it, the
+cell edge, since the sides can only be that (anything else narrows its columns) and
+an outline nearer the photographs on two sides than the other two reads as a mistake.
+`BAND_PAD` is that distance and is zero today; where it would be paid for, if it were
+anything else, is **the band's own height**: it covers the display rows the row
+arithmetic gave it *plus* `BAND_EXTRA`, which is the one thing a uniform pitch cannot
+express and the reason for the conversion below.
 
-The inset is **top and bottom only**, and the sides need none, because **every tile
-holds its photograph inside its cell** (`TILE_PAD`). That is the piece that makes the
-rest of it work:
+None of that leaves a ring drawn over a photograph, because **every tile holds its
+photograph inside its cell** (`TILE_PAD`). That is the piece that makes the rest of it
+work:
 
 - A **ring at the cell's edge frames the photograph instead of cropping it.** The
   selection's ring did sit on the picture, which is what made a band's ring landing
@@ -2870,14 +2872,16 @@ The 3:2 therefore belongs to the photograph rather than the cell, and
 `gridRowHeight` says so: a cell is the 3:2 picture plus its inset, or every frame in
 the collection would carry a hairline bar.
 
-So **the pitch is uniform except for the bands**, which is one special case in one
-place: `topOfRow` and `rowAtTop` in `bands.ts` are the only conversions between
-display rows and content pixels, and every one of the store's - the scroll height,
-the visible span, where a section is drawn, where the cursor is - goes through them.
-The walk they share is over the open bands, which is a handful of entries; the
-scroll is still arithmetic over numbers the store already holds, and nothing
-measures the DOM. What that buys is worth the case: a band that has to fit inside a
-whole number of rows can only be given padding by taking it off the photographs.
+So **the pitch is uniform except for what a band adds to itself**, and that is one
+special case in one place: `topOfRow` and `rowAtTop` in `bands.ts` are the only
+conversions between display rows and content pixels, and every one of the store's -
+the scroll height, the visible span, where a section is drawn, where the cursor is -
+goes through them. The walk they share is over the open bands, which is a handful of
+entries; the scroll is still arithmetic over numbers the store already holds, and
+nothing measures the DOM. With `BAND_EXTRA` at zero the two are a multiplication
+again, and they stay because they are what a band being taller than its rows costs -
+without them the only way to inset a band is to take it off the photographs, which is
+what this went through to get away from.
 
 It also collapses the two scroll corrections into one. Opening or closing a band
 above the reader, and re-placing every band at once, are both "keep the reader's row

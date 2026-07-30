@@ -26,18 +26,18 @@ async function openBand(page: import('@playwright/test').Page, dir: string): Pro
 
 const box = async (locator: import('@playwright/test').Locator) => (await locator.boundingBox())!;
 
-// Every view insets its members from the top and bottom of the band's outline by
-// the same amount, so a band reads as the same box in all three (`BAND_PAD`). The
-// sides have nowhere to put an inset: a band's columns are the collection's columns
-// (§19.6), so the outermost members reach its edges.
+// A band's outline is the same distance from a member on every side, which is the
+// cell edge: its members are the collection's tiles at the collection's places, and
+// they hold their own inset (`TILE_PAD`), so its ring lands on no photograph. What
+// this asserts is that none of them hangs *outside* it, in any view.
 async function expectInsetFromBand(page: import('@playwright/test').Page, where: string): Promise<void> {
   const band = await box(page.locator('.grid__band'));
   const members = await page.locator('.grid__band .tile').all();
   for (const locator of members) {
     const member = await box(locator);
     expect(member.height, `${where}: a member with no height`).toBeGreaterThan(0);
-    expect(member.y - band.y, `${where}: top inset`).toBeGreaterThanOrEqual(1.5);
-    expect(band.y + band.height - (member.y + member.height), `${where}: bottom inset`).toBeGreaterThanOrEqual(1.5);
+    expect(member.y, `${where}: top edge`).toBeGreaterThanOrEqual(band.y - 0.5);
+    expect(member.y + member.height, `${where}: bottom edge`).toBeLessThanOrEqual(band.y + band.height + 0.5);
     expect(member.x, `${where}: left edge`).toBeGreaterThanOrEqual(band.x - 0.5);
     expect(member.x + member.width, `${where}: right edge`).toBeLessThanOrEqual(band.x + band.width + 0.5);
   }
