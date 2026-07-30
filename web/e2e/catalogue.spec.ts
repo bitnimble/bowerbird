@@ -275,8 +275,23 @@ test('the home page lands in a library, and a narrow screen gets the rail as a d
   // And the whole height of it: the page's bottom inset was outside the scroller,
   // so it was a strip of window no photograph could reach and the last row was cut
   // off above it.
-  const scroller = (await page.locator('.grid__scroller').boundingBox())!;
-  expect(scroller.y + scroller.height).toBeCloseTo(800, 0);
+  const scroller = page.locator('.grid__scroller');
+  const scrollerBox = (await scroller.boundingBox())!;
+  expect(scrollerBox.y + scrollerBox.height).toBeCloseTo(800, 0);
+
+  // The inset itself is inside the scroll, so at the end of it the last row clears
+  // the window by a pad instead of sitting against it. A window short enough that a
+  // couple of photographs scroll at all.
+  await page.setViewportSize({ width: 420, height: 460 });
+  await scroller.evaluate((el) => el.scrollTo({ top: el.scrollHeight }));
+  const last = page.locator('.tile').last();
+  await expect
+    .poll(async () => {
+      const box = (await last.boundingBox())!;
+      return Math.round(box.y + box.height);
+    })
+    .toBe(460 - 20);
+  await page.setViewportSize({ width: 420, height: 800 });
 
   await toggle.click();
   await expect(rail).toBeVisible();

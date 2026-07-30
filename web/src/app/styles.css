@@ -46,6 +46,10 @@
   /* A page's side inset. The grid's scrollbar bleeds through it to the window
      edge, so it has to be readable from there. */
   --pad-x: 14px;
+  /* A page's inset from the bottom of the window. On a page that fills its height
+     it belongs to whatever scrolls inside it (`.pad--fill`), which is why it is a
+     value both can read rather than a number in `.pad` alone. */
+  --pad-b: 20px;
 }
 
 * {
@@ -675,7 +679,7 @@ p.ui-text--mono {
 }
 
 .pad {
-  padding: 12px var(--pad-x) 20px;
+  padding: 12px var(--pad-x) var(--pad-b);
 }
 
 /* A gallery page owns the height it was given: the controls keep their row and
@@ -686,9 +690,9 @@ p.ui-text--mono {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  /* .pad's is outside the scroller, so it is a strip of window the photographs
-     never reach and the last row is cut off above - worth a fifth of a row on a
-     phone. What scrolls runs to the window's edge. */
+  /* The bottom inset goes to what scrolls (`--pad-b` there), not to the page: here
+     it was a strip of window outside the scroller that no photograph could reach,
+     and the last row was cut off above it - a fifth of a row on a phone. */
   padding-bottom: 0;
 }
 
@@ -992,6 +996,12 @@ p.ui-text--mono {
      contentRect excludes it, so `viewportWidth` never sees it move. Without it, the
      bar's pointer target has to reach over the rightmost tile. */
   padding-right: var(--bar-w);
+  /* The page's bottom inset, kept inside the scroll rather than under it: the
+     scroller runs to the window's edge, and the last row clears that edge by a pad
+     once the reader is at the end. Both sides of the row arithmetic stay in step
+     with it - `scrollHeight` grows by it, and the ResizeObserver's contentRect
+     excludes it, so `viewportHeight` is the height the rows are drawn in. */
+  padding-bottom: var(--pad-b);
   /* The rail is not the collection, so the native thumb would describe a
      hundred thousand pixels somewhere in the middle of it. .grid__bar is what
      replaces it. */
@@ -2024,6 +2034,9 @@ p.ui-text--mono {
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
+  /* Inside the scroll, as the grid's is: the page gave it up so this could reach
+     the window's edge. */
+  padding-bottom: var(--pad-b);
 }
 
 .list__content {
