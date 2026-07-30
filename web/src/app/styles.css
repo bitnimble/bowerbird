@@ -34,9 +34,6 @@
   --grid-gap: 2px;
   /* Mirrors TILE_PAD: the ring, and the room it stands off the photograph. */
   --tile-pad: 4px;
-  /* Mirrors BAND_PAD: what a band keeps beyond what its members keep - which is
-     none, since they keep their own (§19.6). */
-  --band-pad: 0px;
   /* One ring, worn by a selected tile, an open stack's tile and that stack's band
      (§19.6): three parts of one thing, so the weight is one value rather than
      three that drifted apart. The radius is `--radius`, and the tile carries it
@@ -1190,7 +1187,9 @@ p.ui-text--mono {
 .tile {
   position: relative;
   aspect-ratio: 3 / 2;
-  background: #090b0e;
+  /* No backdrop of its own: it would show in the inset as a frame around every
+     tile. The photograph's backdrop is the hit overlay's, clipped to the inset. */
+  background: none;
   overflow: hidden;
   cursor: pointer;
   display: block;
@@ -1204,6 +1203,11 @@ p.ui-text--mono {
    the gap, so nothing shifts under the reader when the block lands. */
 .tile--waiting {
   cursor: default;
+  /* No hit overlay to carry the backdrop, so the cell wears it - inset the same
+     amount, so a row that has not landed is the shape of the ones that have. */
+  padding: var(--tile-pad);
+  background: #090b0e;
+  background-clip: content-box;
 }
 
 /* Covers the tile so a click anywhere selects the photo; the badges and marks sit
@@ -1219,7 +1223,10 @@ p.ui-text--mono {
   inset: 0;
   padding: var(--tile-pad);
   border: 0;
-  background: none;
+  /* Clipped to the content box, which is the photograph's own area: what shows in
+     the inset is then the bed the grid sits on, the same as between two tiles. */
+  background: #090b0e;
+  background-clip: content-box;
   cursor: pointer;
 }
 
@@ -1390,19 +1397,13 @@ p.ui-text--mono {
    and a border would spend rows' worth of it and push the last row into the grid
    below.
 
-   The inset is **outside** the members rather than taken off them, and it is the
-   band that is taller for it (`BAND_EXTRA`, which the row arithmetic accounts for):
-   a band's columns are the collection's columns, so a member is the same tile at the
-   same place as the one above it. Which leaves the inset for the top and bottom
-   only - the sides have nowhere to put it. A band that was wider than the grid
-   instead put a 6px kink in the one line the eye follows: its own edge against the
-   edge of the tile it is joined to (§19.6). The ring lands on the outermost members
-   the way a selection ring lands on its own tile, which is how every ring here is
-   drawn. */
+   Its outline is the cell edge on every side, so a band is exactly the rows it
+   covers and a member is the same tile at the same place as the one above it. It
+   needs no inset of its own: every tile holds its photograph inside its cell
+   (`TILE_PAD`), so the outline lands on no photograph (§19.6). */
 .grid__band {
   background: rgba(120, 140, 180, 0.1);
   border-radius: var(--radius);
-  padding: var(--band-pad) 0;
 }
 
 .grid__band::after {

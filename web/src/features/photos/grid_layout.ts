@@ -28,22 +28,6 @@ export const TILE_ASPECT = 3 / 2;
 // rather than as part of the one being worked through (§19.6).
 export const BAND_LINE_CAP = 1.3;
 
-// The breathing room inside a band's outline, on top of what its members already
-// keep for themselves (`TILE_PAD`) - which is why it is none: a band's ring is the
-// same distance from a member on every side, and the sides can only be the cell edge
-// (anything else narrows its columns, and its members are the collection's tiles at
-// the collection's places). Mirrors `.grid__band`'s vertical padding, and the row
-// arithmetic carries it through `BAND_EXTRA` if it is ever anything else.
-export const BAND_PAD = 0;
-
-// What a band adds to the height of the display rows it covers: its own inset, top
-// and bottom. Its rows are the grid's rows and its members the grid's cells, so it
-// is the *band* that is taller than the rows it occupies - the alternative was
-// taking the inset off its cells, which drew the same photograph at two sizes
-// (§19.6). The one place the scroll's pitch is not uniform, and `bands.ts` is where
-// that is dealt with.
-export const BAND_EXTRA = 2 * BAND_PAD;
-
 // How many photos one list request covers, and the unit rows are cached and
 // evicted by. A hundred is a screenful at any zoom, so a scroll never waits on
 // more than one request, and it is small enough that dropping one costs little.
@@ -123,18 +107,6 @@ export function gridRowHeight(width: number, columns: number): number {
   // The 3:2 belongs to the *photograph*, not the cell: the cell is that plus the
   // room the tile keeps around it, or every frame would carry a hairline bar.
   return (cell - 2 * TILE_PAD) / TILE_ASPECT + 2 * TILE_PAD + GRID_GAP;
-}
-
-/**
- * Cell height for the rows inside a band, which is **the grid's own**.
- *
- * A member is the same photograph as any other row of the collection, drawn at the
- * same size. What the band's inset costs is the band's own height: it covers the
- * display rows the row arithmetic gave it *plus* `BAND_EXTRA` (§19.6).
- */
-export function bandRowHeight(rows: number, rowHeight: number): number {
-  if (rows <= 0) return 0;
-  return Math.max(1, rowHeight - GRID_GAP);
 }
 
 /**

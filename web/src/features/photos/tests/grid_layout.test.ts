@@ -1,14 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import {
-  BAND_EXTRA,
-  BAND_PAD,
   BLOCK,
-  TILE_PAD,
   GRID_GAP,
   RAIL_HEIGHT,
+  TILE_PAD,
   anchorLimit,
   atRailWall,
-  bandRowHeight,
   blockTops,
   gridColumns,
   gridRowHeight,
@@ -37,32 +34,6 @@ describe('gridRowHeight', () => {
   test('is the 3:2 photograph, its own inset, and the gap under it', () => {
     const cell = (1000 - 3 * GRID_GAP) / 4;
     expect(gridRowHeight(1000, 4)).toBeCloseTo((cell - 2 * TILE_PAD) / 1.5 + 2 * TILE_PAD + GRID_GAP);
-  });
-});
-
-describe('bandRowHeight', () => {
-  // A member is the same photograph as any other row of the collection, so it is
-  // the same cell. What the inset costs is the band's own height (§19.6).
-  test('is the grid\'s own cell, whatever the band holds', () => {
-    for (const rows of [1, 2, 7]) expect(bandRowHeight(rows, 200)).toBe(200 - GRID_GAP);
-  });
-
-  test('a band fits its rows and its inset inside the height it is given', () => {
-    const rowHeight = 200;
-    for (const rows of [1, 2, 7]) {
-      const cell = bandRowHeight(rows, rowHeight);
-      // What the band occupies, and the slot the row arithmetic gives it: its rows
-      // plus its own inset, plus the gap that separates it from what follows.
-      // Anything over is the last row of members hanging through the bottom of the
-      // band and over the grid below it.
-      const occupies = rows * cell + (rows - 1) * GRID_GAP + 2 * BAND_PAD + GRID_GAP;
-      expect(occupies).toBeCloseTo(rows * rowHeight + BAND_EXTRA, 6);
-    }
-  });
-
-  test('stays positive when the band is given less height than its padding', () => {
-    expect(bandRowHeight(1, 4)).toBeGreaterThan(0);
-    expect(bandRowHeight(0, 200)).toBe(0);
   });
 });
 

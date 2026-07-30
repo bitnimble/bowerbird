@@ -7,8 +7,7 @@ import { captureDateTime, localDateTime } from '../../api/dates';
 import { renditionUrl, type PhotoSummary } from '../../api/client';
 import { usePhotosStore, usePresenters } from '../../app/stores_context';
 import { Text } from '../../ui/ui';
-import { BAND_LINE_CAP, BLOCK, GRID_GAP, TILE_ASPECT, bandRowHeight, masonryLineStarts } from './grid_layout';
-import { bandRows } from './bands';
+import { BAND_LINE_CAP, BLOCK, GRID_GAP, TILE_ASPECT, masonryLineStarts } from './grid_layout';
 import { renditionVersion, type Expansion, type PhotosStore } from './photos_store';
 import type { Span } from '../../ui/virtual_rows';
 
@@ -489,7 +488,6 @@ const BandTiles = observer(function BandTiles({
   fused: boolean;
 }): JSX.Element {
   const store = usePhotosStore();
-  const rows = bandRows(expansion.photos.length, store.columns);
   const placed = top != null;
   const join = fused ? joinTo(store, expansion, placed) : null;
   // How tall a line of members may get, in masonry only: nothing there bounds one,
@@ -513,9 +511,8 @@ const BandTiles = observer(function BandTiles({
           ...join?.vars,
           ...(cap == null ? {} : { '--band-cap': `${cap * BAND_LINE_CAP}px` }),
           // A band gets exactly the display rows the row arithmetic gave it, and its
-          // cells are the grid's own; what pays for the padding is the one gap those
-          // rows have spare (`bandRowHeight`).
-          '--row-h': `${bandRowHeight(rows, store.rowHeight)}px`,
+          // cells are the collection's own.
+          '--row-h': `${store.rowHeight - GRID_GAP}px`,
         } as React.CSSProperties
       }
     >

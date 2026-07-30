@@ -20,7 +20,7 @@ import type { AppSettingsPresenter } from '../settings/app_settings_presenter';
 import type { AppSettingsStore } from '../settings/app_settings_store';
 import type { ShootsPresenter } from '../shoots/shoots_presenter';
 import type { ToastsPresenter } from '../toasts/toasts_presenter';
-import { displayRowOf, rowAt, rowAtTop, topOfRow } from './bands';
+import { displayRowOf, rowAt } from './bands';
 import { BLOCK, atRailWall, recentred } from './grid_layout';
 import {
   activeFilters,
@@ -912,32 +912,28 @@ export class PhotosPresenter {
   // has changed under them. The row at the top of the viewport and where it was
   // drawn are what let a change to *several* bands at once be undone
   // (`replaceBands`), not just a change to one.
-  private anchoredPosition(): { anchorTop: number; gridRow: number; rowTop: number } {
+  private anchoredPosition(): { anchorTop: number; gridRow: number; displayRow: number } {
     const columns = this.store.columns;
     const bands = this.store.bands;
-    const height = this.store.rowHeight;
-    const at = rowAt(rowAtTop(this.store.virtualTop, bands, columns, height), bands, columns);
+    const at = rowAt(Math.floor(this.store.virtualTop / this.store.rowHeight), bands, columns);
     const gridRow = at.kind === 'grid' ? at.row : Math.floor(at.band.position / columns);
     return {
       anchorTop: this.store.anchorTop,
       gridRow,
-      // Where that row is drawn *now*, in content pixels. What the correction below
+      // Which display row that row is drawn on *now*. What the correction below
       // compares against, so it needs no separate account of what moved.
-      rowTop: topOfRow(displayRowOf(gridRow, bands, columns), bands, columns, height),
+      displayRow: displayRowOf(gridRow, bands, columns),
     };
   }
 
   // Keeps the reader on the same row of the collection through anything that moves
   // where it is drawn: one band opening or closing, or an arbitrary set of them
-  // re-placed at once. Off how far the row's own top moved, in pixels, which is the
-  // one form that describes all of it - a band adds its rows *and* its inset, and a
-  // band at or below the reader's row moves that row not at all.
+  // re-placed at once. Off how far the row itself moved, which is the one form that
+  // describes all of it - a band at or below the reader's row moves it not at all.
   private holdRowThroughBands(was: ReturnType<PhotosPresenter['anchoredPosition']>): void {
     if (this.store.mode === 'masonry') return;
-    const bands = this.store.bands;
-    const columns = this.store.columns;
-    const now = topOfRow(displayRowOf(was.gridRow, bands, columns), bands, columns, this.store.rowHeight);
-    this.shiftView(now - was.rowTop, was.anchorTop);
+    const moved = displayRowOf(was.gridRow, this.store.bands, this.store.columns) - was.displayRow;
+    this.shiftView(moved * this.store.rowHeight, was.anchorTop);
   }
 
   /**

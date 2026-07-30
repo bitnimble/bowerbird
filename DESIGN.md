@@ -2843,51 +2843,38 @@ below is displaced downwards and otherwise untouched. Band rows are ordinary til
 rows at the same cell geometry, marked by their background rather than their size.
 
 **A member is the tile the collection would have drawn**: the same size, in the same
-column, so its edges line up with the rows above and below. A band's outline is
-therefore the **same distance from a member on every side** - which is none of it, the
-cell edge, since the sides can only be that (anything else narrows its columns) and
-an outline nearer the photographs on two sides than the other two reads as a mistake.
-`BAND_PAD` is that distance and is zero today; where it would be paid for, if it were
-anything else, is **the band's own height**: it covers the display rows the row
-arithmetic gave it *plus* `BAND_EXTRA`, which is the one thing a uniform pitch cannot
-express and the reason for the conversion below.
+column, so its edges line up with the rows above and below. A band's outline is at the
+**cell edge on every side**, so it is exactly the display rows it covers - which keeps
+the scroll's pitch uniform, and a row of members the same height as a row of the
+collection.
 
-None of that leaves a ring drawn over a photograph, because **every tile holds its
-photograph inside its cell** (`TILE_PAD`). That is the piece that makes the rest of it
-work:
+It needs no inset of its own, because **every tile holds its photograph inside its
+cell** (`TILE_PAD`), and that one piece is what makes the rest of it work:
 
 - A **ring at the cell's edge frames the photograph instead of cropping it.** The
   selection's ring did sit on the picture, which is what made a band's ring landing
   on its outermost members look like a mistake rather than an outline.
 - A band's ring can therefore be **at the cell edge**, which is where the ring of the
-  tile it is joined to is: one straight line down the two of them. A band wider than
-  the grid, with its columns inside its own side padding, was tried instead and put a
-  kink in the one line the eye actually follows.
+  tile it is joined to is: one straight line down the two of them. A band inset from
+  its own outline was tried, first by taking it off the cells - which drew the same
+  photograph at two sizes - and then by making the band wider than the grid, which put
+  a kink in the one line the eye actually follows.
 - The **gap between two photographs is the gap plus two insets** (`GRID_GAP` plus
   twice `TILE_PAD`), which is where the air between frames comes from. `GRID_GAP`
   itself stays small, because it is what separates two *rings*, and two rings a
   photograph's width apart do not read as a pair.
+- A tile has **no backdrop of its own**: the photograph's is the hit overlay's,
+  clipped to the inset, so what shows between two frames is the bed the grid sits on.
+  On the tile it showed in the inset as a dark border round every cell.
 
-The 3:2 therefore belongs to the photograph rather than the cell, and
-`gridRowHeight` says so: a cell is the 3:2 picture plus its inset, or every frame in
-the collection would carry a hairline bar.
+The 3:2 therefore belongs to the photograph rather than the cell, and `gridRowHeight`
+says so: a cell is the 3:2 picture plus its inset, or every frame in the collection
+would carry a hairline bar.
 
-So **the pitch is uniform except for what a band adds to itself**, and that is one
-special case in one place: `topOfRow` and `rowAtTop` in `bands.ts` are the only
-conversions between display rows and content pixels, and every one of the store's -
-the scroll height, the visible span, where a section is drawn, where the cursor is -
-goes through them. The walk they share is over the open bands, which is a handful of
-entries; the scroll is still arithmetic over numbers the store already holds, and
-nothing measures the DOM. With `BAND_EXTRA` at zero the two are a multiplication
-again, and they stay because they are what a band being taller than its rows costs -
-without them the only way to inset a band is to take it off the photographs, which is
-what this went through to get away from.
-
-It also collapses the two scroll corrections into one. Opening or closing a band
-above the reader, and re-placing every band at once, are both "keep the reader's row
-where it was", and the row's own **pixel top** describes all of it - a band adds its
-rows *and* its inset, and a band at or below that row moves it not at all. There is
-no longer a separate correction that counts a band's rows.
+One scroll correction covers the bands, not two. Opening or closing one above the
+reader, and re-placing every band at once, are both "keep the reader's row where it
+was", and how far that row moved describes all of it - including a band at or below it,
+which moves it not at all.
 
 The member fills its column and states the grid's **3:2** itself, which is what
 gives it the grid's height - the ratio rather than the row, because `.grid--grid
