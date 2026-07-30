@@ -277,6 +277,7 @@ impl<'a> Pipeline<'a> {
         let image = self.finish()?;
         let mut buffer: *mut c_void = std::ptr::null_mut();
         let mut len: u64 = 0;
+        #[expect(unsafe_code)]
         writer("jpegsave_buffer", &image, |source| unsafe {
             bindings::vips_jpegsave_buffer(
                 source,
@@ -292,6 +293,7 @@ impl<'a> Pipeline<'a> {
         }
         // SAFETY: libvips allocated `len` bytes at `buffer` and hands over
         // ownership; g_free is the matching release.
+        #[expect(unsafe_code)]
         unsafe {
             let bytes = std::slice::from_raw_parts(buffer as *const u8, len as usize).to_vec();
             bindings::g_free(buffer);
@@ -325,6 +327,7 @@ fn writer(name: &str, image: &Rgb, save: impl FnOnce(*mut libvips::bindings::Vip
 
     // SAFETY: `image` outlives the call, so the pixels the VipsImage references
     // stay valid until it is unreffed below.
+    #[expect(unsafe_code)]
     let status = unsafe {
         let source = bindings::vips_image_new_from_memory(
             image.data.as_ptr() as *const c_void,

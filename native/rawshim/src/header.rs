@@ -105,6 +105,7 @@ fn plausible(value: f32, max: f32) -> f32 {
 /// dance is written once - the fit reaches for this too, to name the lens.
 pub fn read_path(path: &str) -> Option<BbHeader> {
     let path = CString::new(path).ok()?;
+    #[expect(unsafe_code)]
     unsafe {
         let r = raw::libraw_init(0);
         if r.is_null() {
@@ -130,6 +131,7 @@ pub fn name(field: &[u8]) -> &str {
 ///
 /// # Safety
 /// `r` must be a live `libraw_data_t` from `libraw_init`.
+#[expect(unsafe_code)]
 pub unsafe fn read(r: *mut raw::libraw_data_t) -> BbHeader {
     let mut out = BbHeader::blank();
 

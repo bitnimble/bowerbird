@@ -114,6 +114,7 @@ fn shrinks(image: &vips::RgbRef<'_>, long_edge: u32) -> bool {
 ///
 /// # Safety
 /// `path` must be a NUL-terminated C string. Release with `bb_free`.
+#[expect(unsafe_code)]
 #[no_mangle]
 pub unsafe extern "C" fn bb_decode_file(path: *const c_char, long_edge: u32) -> *mut BbImage {
     vips::init();
@@ -136,6 +137,7 @@ pub unsafe extern "C" fn bb_decode_file(path: *const c_char, long_edge: u32) -> 
 ///
 /// # Safety
 /// `bytes` must be valid for `len`. The result must be released with `bb_free`.
+#[expect(unsafe_code)]
 #[no_mangle]
 pub unsafe extern "C" fn bb_decode_image(bytes: *const u8, len: usize, long_edge: u32) -> *mut BbImage {
     vips::init();
@@ -182,6 +184,7 @@ pub struct BbHdrOptions {
 }
 
 impl BbHdrOptions {
+    #[expect(unsafe_code)]
     unsafe fn to_options(&self, output_path: &str) -> Option<hdr_args::EncodeOptions> {
         Some(hdr_args::EncodeOptions {
             medium: match self.medium {
@@ -205,6 +208,7 @@ impl BbHdrOptions {
 }
 
 /// Size of `BbHdrOptions`, checked by the caller against the layout it writes.
+#[expect(unsafe_code)]
 #[no_mangle]
 pub extern "C" fn bb_hdr_options_size() -> usize {
     std::mem::size_of::<BbHdrOptions>()
@@ -220,6 +224,7 @@ pub extern "C" fn bb_hdr_options_size() -> usize {
 /// # Safety
 /// `options` must be a readable `BbHdrOptions`, the paths NUL-terminated C strings.
 /// Release with `bb_buffer_free`.
+#[expect(unsafe_code)]
 #[no_mangle]
 pub unsafe extern "C" fn bb_hdr_argv(
     options: *const BbHdrOptions,
@@ -270,6 +275,7 @@ pub struct BbHdrMatch {
 /// # Safety
 /// `image` must be a live 16-bit handle, `raw_path` a NUL-terminated C string.
 /// Release with `bb_hdr_match_free`.
+#[expect(unsafe_code)]
 #[no_mangle]
 pub unsafe extern "C" fn bb_fit_hdr_match(
     image: *const BbImage,
@@ -312,6 +318,7 @@ pub unsafe extern "C" fn bb_fit_hdr_match(
 ///
 /// # Safety
 /// `matched` must have come from this module and not been freed already.
+#[expect(unsafe_code)]
 #[no_mangle]
 pub unsafe extern "C" fn bb_hdr_match_free(matched: *mut BbHdrMatch) {
     if !matched.is_null() {
@@ -333,6 +340,7 @@ pub struct BbHdrColour {
 }
 
 /// Size of `BbHdrColour`, checked by the caller against the layout it reads.
+#[expect(unsafe_code)]
 #[no_mangle]
 pub extern "C" fn bb_hdr_colour_size() -> usize {
     std::mem::size_of::<BbHdrColour>()
@@ -347,6 +355,7 @@ pub extern "C" fn bb_hdr_colour_size() -> usize {
 ///
 /// # Safety
 /// `matched` must be a live handle and `out` a writable `BbHdrColour`.
+#[expect(unsafe_code)]
 #[no_mangle]
 pub unsafe extern "C" fn bb_hdr_match_colour(matched: *const BbHdrMatch, out: *mut BbHdrColour) -> i32 {
     if matched.is_null() || out.is_null() {
@@ -371,6 +380,7 @@ pub unsafe extern "C" fn bb_hdr_match_colour(matched: *const BbHdrMatch, out: *m
 }
 
 /// The decode and settings both encode entry points need.
+#[expect(unsafe_code)]
 unsafe fn hdr_source<'a>(
     image: *const BbImage,
     options: *const BbHdrOptions,
@@ -416,6 +426,7 @@ unsafe fn hdr_source<'a>(
 /// `image` must be a live handle, `output_path` and `video_output_path` NUL-terminated
 /// C strings, `options` readable, `matched` null or a live handle. With
 /// `release_source` set, nothing may read `image`'s pixels after this returns.
+#[expect(unsafe_code)]
 #[no_mangle]
 pub unsafe extern "C" fn bb_encode_hdr(
     image: *mut BbImage,
@@ -468,6 +479,7 @@ pub unsafe extern "C" fn bb_encode_hdr(
 /// # Safety
 /// As `bb_encode_hdr`, with `out_size` valid for two u32s. Release with
 /// `bb_buffer_free`.
+#[expect(unsafe_code)]
 #[no_mangle]
 pub unsafe extern "C" fn bb_hdr_graded(
     image: *const BbImage,
@@ -501,6 +513,7 @@ pub unsafe extern "C" fn bb_hdr_graded(
 ///
 /// # Safety
 /// `path` must be a NUL-terminated C string. Release with `bb_buffer_free`.
+#[expect(unsafe_code)]
 #[no_mangle]
 pub unsafe extern "C" fn bb_extract_embedded(path: *const c_char) -> *mut BbBuffer {
     if path.is_null() {
@@ -559,6 +572,7 @@ fn distortion_of(path: &str) -> std::io::Result<crate::lens::Distortion> {
 ///
 /// # Safety
 /// `path` must be a NUL-terminated C string and `out` valid for `max` f64s.
+#[expect(unsafe_code)]
 #[no_mangle]
 pub unsafe extern "C" fn bb_read_distortion_spline(path: *const c_char, out: *mut f64, max: u32) -> i32 {
     if path.is_null() || out.is_null() {
@@ -588,6 +602,7 @@ pub unsafe extern "C" fn bb_read_distortion_spline(path: *const c_char, out: *mu
 ///
 /// # Safety
 /// The three strings must be NUL-terminated, and `out` valid for `max` f64s.
+#[expect(unsafe_code)]
 #[no_mangle]
 pub unsafe extern "C" fn bb_lensfun_knots(
     make: *const c_char,
@@ -629,6 +644,7 @@ pub unsafe extern "C" fn bb_lensfun_knots(
 /// # Safety
 /// `data` must be valid for `width * height * 3` bytes. The result must be
 /// released with `bb_free`.
+#[expect(unsafe_code)]
 #[no_mangle]
 pub unsafe extern "C" fn bb_image_from_rgb(data: *const u8, width: u32, height: u32) -> *mut BbImage {
     vips::init();
@@ -658,6 +674,7 @@ pub unsafe extern "C" fn bb_image_from_rgb(data: *const u8, width: u32, height: 
 /// # Safety
 /// `image` must be a live handle from this library, `raw_path` a NUL-terminated C
 /// string, and `out` a writable `BbProfile`.
+#[expect(unsafe_code)]
 #[no_mangle]
 pub unsafe extern "C" fn bb_fit(image: *const BbImage, raw_path: *const c_char, out: *mut BbProfile) -> i32 {
     vips::init();
@@ -706,6 +723,7 @@ fn geometry_for(path: &str) -> Option<fit::Geometry> {
 /// # Safety
 /// `image` must be a live 16-bit handle, `raw_path` a NUL-terminated C string,
 /// `options` readable, and `out` a writable `BbProfile`.
+#[expect(unsafe_code)]
 #[no_mangle]
 pub unsafe extern "C" fn bb_fit_hdr(
     image: *const BbImage,
@@ -767,6 +785,7 @@ fn lensfun_geometry(path: &str) -> Option<fit::Geometry> {
 /// Takes the render borrowed rather than as a handle, so the HDR path - which derives
 /// one from its scene-linear decode instead of demosaicing a second time in 8-bit -
 /// reaches the same search by the same door.
+#[expect(unsafe_code)]
 unsafe fn fit_against(
     render: vips::RgbRef<'_>,
     jpeg: &[u8],
@@ -796,6 +815,7 @@ unsafe fn fit_against(
 ///
 /// # Safety
 /// As `bb_fit`, with `jpeg` valid for `jpeg_len`.
+#[expect(unsafe_code)]
 #[no_mangle]
 pub unsafe extern "C" fn bb_fit_against(
     image: *const BbImage,
@@ -832,6 +852,7 @@ pub unsafe extern "C" fn bb_fit_against(
 /// # Safety
 /// `image` must be a live handle from this library. The result must be released
 /// with `bb_free`.
+#[expect(unsafe_code)]
 #[no_mangle]
 pub unsafe extern "C" fn bb_render(image: *const BbImage, profile: *const BbProfile, long_edge: u32) -> *mut BbImage {
     vips::init();
@@ -843,6 +864,7 @@ pub unsafe extern "C" fn bb_render(image: *const BbImage, profile: *const BbProf
 }
 
 /// The warp and the resize, where a panic would otherwise reach the FFI boundary.
+#[expect(unsafe_code)]
 unsafe fn render(source: vips::RgbRef<'_>, profile: *const BbProfile, long_edge: u32) -> *mut BbImage {
     if !shrinks(&source, long_edge) {
         return match profile.is_null() {
@@ -871,6 +893,7 @@ unsafe fn render(source: vips::RgbRef<'_>, profile: *const BbProfile, long_edge:
 /// # Safety
 /// `image` must be a live handle from this library and `path` a NUL-terminated C
 /// string.
+#[expect(unsafe_code)]
 #[no_mangle]
 pub unsafe extern "C" fn bb_save_avif(
     image: *const BbImage,
@@ -945,6 +968,7 @@ pub unsafe extern "C" fn bb_save_avif(
 /// # Safety
 /// `image` must be a live handle from this library. The result must be released
 /// with `bb_buffer_free`.
+#[expect(unsafe_code)]
 #[no_mangle]
 pub unsafe extern "C" fn bb_encode_jpeg(image: *const BbImage, long_edge: u32, quality: i32) -> *mut BbBuffer {
     vips::init();
@@ -967,6 +991,7 @@ pub unsafe extern "C" fn bb_encode_jpeg(image: *const BbImage, long_edge: u32, q
 ///
 /// # Safety
 /// `buffer` must have come from this module and not been freed already.
+#[expect(unsafe_code)]
 #[no_mangle]
 pub unsafe extern "C" fn bb_buffer_free(buffer: *mut BbBuffer) {
     if buffer.is_null() {
@@ -990,6 +1015,7 @@ pub unsafe extern "C" fn bb_buffer_free(buffer: *mut BbBuffer) {
 /// faults the moment the warp runs. So this grades through a real distortion,
 /// which is `warp` plus the folded colour lookup - the hot loops - and puts the
 /// result through libvips to confirm the linkage too.
+#[expect(unsafe_code)]
 #[no_mangle]
 pub extern "C" fn bb_selftest() -> i32 {
     vips::init();
@@ -1028,6 +1054,7 @@ pub extern "C" fn bb_selftest() -> i32 {
 
 /// Size of `BbProfile`, so the caller can allocate it without hardcoding a layout
 /// that changes when a field is added.
+#[expect(unsafe_code)]
 #[no_mangle]
 pub extern "C" fn bb_profile_size() -> usize {
     std::mem::size_of::<BbProfile>()
@@ -1038,12 +1065,14 @@ pub extern "C" fn bb_profile_size() -> usize {
 /// The reader needs the offsets of `data` and `len`, and a size alone cannot give
 /// it those - but adding a field changes the size, so comparing it turns what
 /// would be a silent misread of every buffer into an immediate, explained failure.
+#[expect(unsafe_code)]
 #[no_mangle]
 pub extern "C" fn bb_buffer_header_size() -> usize {
     std::mem::size_of::<BbBuffer>()
 }
 
 /// Size of `BbImage`, checked by the caller for the same reason as `BbBuffer`.
+#[expect(unsafe_code)]
 #[no_mangle]
 pub extern "C" fn bb_image_header_size() -> usize {
     std::mem::size_of::<BbImage>()

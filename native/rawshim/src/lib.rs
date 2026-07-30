@@ -18,6 +18,30 @@
 // `bb_read_header`. Types that stay on this side are named normally.
 
 #![allow(non_upper_case_globals, non_camel_case_types, non_snake_case)]
+// Unsafe is denied crate-wide and exempted one statement at a time, never one
+// module or one function at a time. The three lints are a set and none of them
+// does the job alone:
+//
+//   unsafe_code                   nothing may reach for unsafe unmarked.
+//   unfulfilled_lint_expectations paired with `#[expect(unsafe_code)]` rather than
+//                                 `#[allow]`, this makes a *stale* exemption an
+//                                 error too - so unsafe that gets refactored away
+//                                 takes its marker with it in the same commit.
+//
+// Together they hold one invariant: a marker cannot outlive what it was for, and
+// new unsafe cannot appear without one. `grep -rn "expect(unsafe_code)"
+// native/rawshim/src` is the audit, and the count only ever goes down.
+#![deny(unsafe_code)]
+#![deny(unfulfilled_lint_expectations)]
+// The third of the set, and not on yet: `unsafe_op_in_unsafe_fn` stops an
+// `unsafe fn` body being one implicit blanket, so each operation inside needs its
+// own visible block and the surface stays countable. Turning it on today means
+// reshaping 162 operations, ~150 of them inside the sixteen boundary functions this
+// refactor is collapsing into one - throwaway work on code that is going. It goes
+// on in the commit that finishes the boundary, when what is left is small enough
+// that the count means something. Until then a marked `unsafe fn` does cover its
+// whole body, which is the weaker invariant.
+//#![deny(unsafe_op_in_unsafe_fn)]
 
 use rayon::prelude::*;
 use std::ffi::CStr;
@@ -153,6 +177,7 @@ impl BbImage {
     ///
     /// # Safety
     /// `data` must still point at the allocation this handle was built with.
+    #[expect(unsafe_code)]
     pub unsafe fn view_u16(&self) -> Option<&[u16]> {
         if self.depth != 16 || self.data.is_null() {
             return None;
@@ -162,6 +187,7 @@ impl BbImage {
 
     /// # Safety
     /// `data` must still point at the allocation this handle was built with.
+    #[expect(unsafe_code)]
     pub unsafe fn view(&self) -> Option<vips::RgbRef<'_>> {
         if self.depth != 8 || self.data.is_null() {
             return None;
@@ -190,6 +216,7 @@ impl BbImage {
     /// # Safety
     /// `data` must still point at the allocation this handle was built with, and no
     /// borrow of it may outlive the call.
+    #[expect(unsafe_code)]
     pub unsafe fn release_pixels(&mut self) {
         if self.data.is_null() {
             return;
@@ -255,6 +282,7 @@ pub(crate) fn insets_of(w: &Window) -> Insets {
 
 /// # Safety
 /// `r` must be a live `libraw_data_t` with `open_file` already run.
+#[expect(unsafe_code)]
 pub(crate) unsafe fn read_insets(r: *mut raw::libraw_data_t) -> Insets {
     let s = &(*r).sizes;
     let crop = s.raw_inset_crops[0];
@@ -405,6 +433,7 @@ fn reference_copy() -> bool {
 ///
 /// None when the frame is not what is expected, which leaves the caller on the LibRaw
 /// path rather than guessing.
+#[expect(unsafe_code)]
 unsafe fn copy_processed(
     r: *mut raw::libraw_data_t,
     depth: u32,
@@ -531,6 +560,7 @@ fn flip_index(flip: c_int, iwidth: usize, iheight: usize, row: usize, col: usize
 ///
 /// The `dcraw_make_mem_image` path: what the sRGB decode uses, and the reference
 /// `copy_processed` is pinned against.
+#[expect(unsafe_code)]
 unsafe fn copy_cropped(src: *const u8, w: usize, h: usize, bytes_per_px: usize, i: &Insets) -> Vec<u8> {
     let width = w.saturating_sub(i.left + i.right);
     let height = h.saturating_sub(i.top + i.bottom);
@@ -556,6 +586,7 @@ unsafe fn copy_cropped(src: *const u8, w: usize, h: usize, bytes_per_px: usize, 
 ///
 /// # Safety
 /// `path` must be a NUL-terminated C string.
+#[expect(unsafe_code)]
 #[no_mangle]
 pub unsafe extern "C" fn bb_decode(
     path: *const c_char,
@@ -702,6 +733,7 @@ const LIBRAW_IMAGE_JPEG: raw::LibRaw_image_formats = 1;
 ///
 /// # Safety
 /// `path` must be a NUL-terminated C string.
+#[expect(unsafe_code)]
 unsafe fn with_embedded_jpeg<T>(path: *const c_char, use_bytes: impl FnOnce(&[u8]) -> T) -> Option<T> {
     let r = raw::libraw_init(0);
     if r.is_null() {
@@ -740,6 +772,7 @@ pub fn decode_embedded_rgb(path: &str, long_edge: usize) -> Option<vips::Rgb> {
     vips::init();
     let c_path = std::ffi::CString::new(path).ok()?;
     // SAFETY: the CString outlives the call.
+    #[expect(unsafe_code)]
     let decoded = unsafe {
         with_embedded_jpeg(c_path.as_ptr(), |bytes| {
             vips::Pipeline::thumbnail(bytes, long_edge).and_then(vips::Pipeline::finish)
@@ -768,6 +801,7 @@ pub fn decode_embedded_rgb(path: &str, long_edge: usize) -> Option<vips::Rgb> {
 ///
 /// # Safety
 /// `path` must be a NUL-terminated C string. Release with `bb_free`.
+#[expect(unsafe_code)]
 #[no_mangle]
 pub unsafe extern "C" fn bb_decode_embedded(path: *const c_char, long_edge: u32) -> *mut BbImage {
     vips::init();
@@ -801,6 +835,7 @@ pub unsafe extern "C" fn bb_decode_embedded(path: *const c_char, long_edge: u32)
 ///
 /// # Safety
 /// `path` must be a NUL-terminated C string and `out` a writable `BbHeader`.
+#[expect(unsafe_code)]
 #[no_mangle]
 pub unsafe extern "C" fn bb_read_header(path: *const c_char, out: *mut header::BbHeader) -> c_int {
     if path.is_null() || out.is_null() {
@@ -818,6 +853,7 @@ pub unsafe extern "C" fn bb_read_header(path: *const c_char, out: *mut header::B
 }
 
 /// Size of `BbHeader`, which the caller checks against the layout it reads.
+#[expect(unsafe_code)]
 #[no_mangle]
 pub extern "C" fn bb_header_size() -> usize {
     std::mem::size_of::<header::BbHeader>()
@@ -827,6 +863,7 @@ pub extern "C" fn bb_header_size() -> usize {
 ///
 /// # Safety
 /// `image` must have come from `bb_decode` and not been freed already.
+#[expect(unsafe_code)]
 #[no_mangle]
 pub unsafe extern "C" fn bb_free(image: *mut BbImage) {
     if image.is_null() {
@@ -840,6 +877,7 @@ pub unsafe extern "C" fn bb_free(image: *mut BbImage) {
 
 /// How many bytes `bb_descriptor` writes, so the caller can size its buffer and
 /// the database column without either guessing.
+#[expect(unsafe_code)]
 #[no_mangle]
 pub extern "C" fn bb_descriptor_size() -> usize {
     stacks::DESCRIPTOR_BYTES
@@ -852,6 +890,7 @@ pub extern "C" fn bb_descriptor_size() -> usize {
 /// # Safety
 /// `image` must be a live handle and `out` must have room for
 /// `bb_descriptor_size()` bytes.
+#[expect(unsafe_code)]
 #[no_mangle]
 pub unsafe extern "C" fn bb_descriptor(image: *const BbImage, out: *mut u8) -> c_int {
     if image.is_null() || out.is_null() {
@@ -876,6 +915,7 @@ pub unsafe extern "C" fn bb_descriptor(image: *const BbImage, out: *mut u8) -> c
 /// # Safety
 /// `descriptors` must hold `count * bb_descriptor_size()` bytes, and
 /// `timestamps` and `out` must each hold `count` elements.
+#[expect(unsafe_code)]
 #[no_mangle]
 pub unsafe extern "C" fn bb_stack_groups(
     descriptors: *const u8,
@@ -905,6 +945,7 @@ mod tests {
         // answers "no pixels" instead of handing out a freed buffer - so a caller that
         // releases too soon gets a refused encode rather than a wrong one.
         let image = BbImage::own(vips::Rgb { width: 2, height: 2, data: vec![7u8; 12] });
+        #[expect(unsafe_code)]
         unsafe {
             assert!((*image).view().is_some(), "the handle starts with pixels");
             (*image).release_pixels();

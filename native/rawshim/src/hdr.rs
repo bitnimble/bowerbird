@@ -127,6 +127,7 @@ pub fn fit_all(
     let path = std::ffi::CString::new(raw_path).ok()?;
 
     // SAFETY: the CString outlives the call.
+    #[expect(unsafe_code)]
     let fitted = unsafe {
         crate::with_embedded_jpeg(path.as_ptr(), |jpeg| {
             let preview = crate::vips::Pipeline::thumbnail(jpeg, hdr_fit::fit_long_edge())
@@ -232,6 +233,7 @@ fn graded_with(
 fn as_bytes(graded: &[u16]) -> &[u8] {
     // SAFETY: `u16` has no padding and every bit pattern of it is a valid `u8` pair, so
     // this is a reinterpret of the same allocation rather than a copy of it.
+    #[expect(unsafe_code)]
     unsafe { std::slice::from_raw_parts(graded.as_ptr() as *const u8, std::mem::size_of_val(graded)) }
 }
 
