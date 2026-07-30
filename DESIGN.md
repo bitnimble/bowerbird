@@ -2750,10 +2750,20 @@ and pays for that padding out of the height of its own cells (`bandRowHeight`)
 rather than out of the collection below it.
 
 **Masonry** has no row model to hang a band off, so an open stack's members break
-the line themselves: the band is a full-width item on the block's own flex line,
-directly after the tile it came from. A block's height is measured rather than
-computed, so the scroll learns the band is there without being told, and the
-scroll correction opening one usually needs is not owed at all.
+the line themselves: the band is a full-width item on the block's own flex line.
+It waits for the **end of the line its tile sits on** rather than following that
+tile straight away - a band in the middle of a line cuts the line short, and the
+tiles left on it grow into the space the band walked off with, which stretched a
+stack opened at the start of a line across the whole grid and pushed its
+neighbours below the band. Which tile ends a line is the one thing the photos'
+shapes decide rather than the row arithmetic, so `masonryLineStarts` replays the
+wrap from the same flex bases the container packs from; nothing is measured. A
+band flushed after the block's *last* line takes the `::after` that eats that
+line's free space with it, so that line is given an end of its own.
+
+A block's height is measured rather than computed, so the scroll learns the band
+is there without being told, and the scroll correction opening one usually needs
+is not owed at all.
 
 Any number of stacks may be open. Expansions are a list of `(position, member
 count)` sorted by position; `rowCount` is the base rows plus each band's

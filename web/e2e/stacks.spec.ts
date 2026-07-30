@@ -73,6 +73,26 @@ test('every view opens the band, and none of them draws it over the grid', async
   }
 });
 
+test('a masonry band leaves the line it broke at the size it was', async ({ page }) => {
+  await page.goto('/settings');
+  await openLibrary(page, STACK_PHOTOS_DIR);
+  await expect(page.locator('.tile__stack')).toBeVisible({ timeout: 45_000 });
+  await page.getByRole('button', { name: 'Masonry' }).click();
+
+  const tile = page.locator('.tile:not(.tile--member)');
+  const before = (await tile.boundingBox())!;
+  await tile.locator('.tile__hit').click();
+  await expect(page.locator('.grid__band')).toHaveCount(1);
+
+  // The band is a full-width item and goes after the line its tile sits on, so
+  // nothing on that line changes size: a band that broke the line where the tile
+  // was handed it the width the band took, stretching the stack across the grid.
+  expect((await tile.boundingBox())!.width).toBeCloseTo(before.width, 0);
+
+  await tile.locator('.tile__hit').click();
+  await expect(page.locator('.grid__band')).toHaveCount(0);
+});
+
 test('a list row opens its stack from anywhere along it, not just the thumbnail', async ({ page }) => {
   await page.goto('/settings');
   await openLibrary(page, STACK_PHOTOS_DIR);

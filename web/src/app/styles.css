@@ -1088,6 +1088,13 @@ p.ui-text--mono {
   flex: 1000000 0 0;
 }
 
+/* The same job, for a block whose last line opened a stack: the band goes after
+   that line and takes the ::after with it, so the line is handed an end of its
+   own rather than stretching to fill the width the band left behind. */
+.grid--masonry .grid__line-end {
+  flex: 1000000 0 0;
+}
+
 .grid--list {
   display: flex;
   flex-direction: column;

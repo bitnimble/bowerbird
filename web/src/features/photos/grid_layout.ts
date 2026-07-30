@@ -107,6 +107,32 @@ export function bandRowHeight(rows: number, rowHeight: number): number {
   return Math.max(1, (rows * rowHeight - (rows - 1) * GRID_GAP - 2 * BAND_PAD) / rows);
 }
 
+/**
+ * Which tiles begin a line of masonry, from the shapes alone.
+ *
+ * The wrap replayed rather than measured: a tile's hypothetical width is its flex
+ * basis, `--ar * --tile`, and a line takes tiles until the next one no longer
+ * fits. Bands are not in it because a band is a full-width item and so never
+ * shares a line - it sits between one line and the next, and the tiles either
+ * side pack exactly as they would without it.
+ *
+ * What it buys is where a band goes: at the end of the line its stack's tile sits
+ * on rather than directly after that tile, which cut the line short and handed
+ * its free space to the tiles left on it - a stack opened at the start of a line
+ * was stretched across the whole grid, and its neighbours pushed below the band.
+ */
+export function masonryLineStarts(ratios: readonly number[], width: number, tileSize: number): Set<number> {
+  const starts = new Set<number>();
+  let line = 0;
+  for (let i = 0; i < ratios.length; i++) {
+    const basis = Math.max(1, ratios[i]! * tileSize);
+    if (line > 0 && line + GRID_GAP + basis > width) line = 0;
+    if (line === 0) starts.add(i);
+    line += (line > 0 ? GRID_GAP : 0) + basis;
+  }
+  return starts;
+}
+
 // Where each masonry block starts, plus where the last one ends. Masonry packs
 // lines from each photo's own shape, so a block's height is only known once it
 // has been laid out; the rest are estimated. That estimate is what lets the

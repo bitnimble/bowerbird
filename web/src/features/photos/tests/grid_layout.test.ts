@@ -10,6 +10,7 @@ import {
   blockTops,
   gridColumns,
   gridRowHeight,
+  masonryLineStarts,
   railHeight,
   recentred,
   visibleBlocks,
@@ -152,6 +153,26 @@ describe('the rail', () => {
     const put = recentred(5_000_000, V, HUGE, V);
     const toWall = RAIL_HEIGHT - V - V * 2 - put.railTop;
     expect(toWall).toBeGreaterThan(RAIL_HEIGHT / 3);
+  });
+});
+
+describe('masonryLineStarts', () => {
+  // 240px tiles at 3:2 are 360 wide, and a portrait 2:3 is 158.4; four of the
+  // landscape and their gaps want 1449, three of them and the portrait 1247.4.
+  const RATIOS = [1.5, 1.5, 2 / 3, 1.5, 1.5, 1.5];
+
+  test('a line takes tiles until the next one no longer fits', () => {
+    expect([...masonryLineStarts(RATIOS, 1200, 240)]).toEqual([0, 3]);
+    // Room for the portrait as well, so the break moves along by one.
+    expect([...masonryLineStarts(RATIOS, 1250, 240)]).toEqual([0, 4]);
+  });
+
+  test('a tile too wide for the line still gets a line, rather than none', () => {
+    expect([...masonryLineStarts([1.5, 8, 1.5], 400, 240)]).toEqual([0, 1, 2]);
+  });
+
+  test('no width yet is one tile per line rather than a divide by zero', () => {
+    expect([...masonryLineStarts([1.5, 1.5], 0, 240)]).toEqual([0, 1]);
   });
 });
 

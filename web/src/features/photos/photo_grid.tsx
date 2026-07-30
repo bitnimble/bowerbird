@@ -7,7 +7,7 @@ import { captureDateTime, localDateTime } from '../../api/dates';
 import { renditionUrl, type PhotoSummary } from '../../api/client';
 import { usePhotosStore, usePresenters } from '../../app/stores_context';
 import { Text } from '../../ui/ui';
-import { BLOCK, GRID_GAP, bandRowHeight } from './grid_layout';
+import { BLOCK, GRID_GAP, TILE_ASPECT, bandRowHeight, masonryLineStarts } from './grid_layout';
 import { bandRows } from './bands';
 import { renditionVersion, type Expansion, type PhotosStore } from './photos_store';
 import type { Span } from '../../ui/virtual_rows';
@@ -352,7 +352,29 @@ const BandMember = observer(function BandMember({ photo }: { photo: PhotoSummary
 // lands.
 function tilesFor(store: PhotosStore, from: number, to: number): JSX.Element[] {
   const tiles: JSX.Element[] = [];
+  // Masonry has no row model to hang a band off, so an open stack's members take
+  // a full-width band on the block's own flex line. It waits for the end of the
+  // line its tile sits on rather than following that tile straight away: a band
+  // in the middle of a line cuts it short, and the tiles left on it take the
+  // space the band walked off with (§19.6). Which tile ends a line is the one
+  // thing the shapes decide rather than the row arithmetic, so it is replayed
+  // from them - still no measurement.
+  const masonry = store.mode === 'masonry';
+  const lineStarts = masonry
+    ? masonryLineStarts(ratiosFor(store, from, to), store.viewportWidth, store.tileSize)
+    : new Set<number>();
+  const pending: Expansion[] = [];
+  const flush = (last: boolean): void => {
+    if (pending.length === 0) return;
+    // The block's own ::after is what leaves its last line at the size the photos
+    // want rather than stretched across the width; a band after that line takes
+    // the ::after off it, so the line is given one of its own.
+    if (last) tiles.push(<span key="line-end" className="grid__line-end" aria-hidden="true" />);
+    for (const open of pending.splice(0)) tiles.push(<BandTiles key={`band-${open.stackId}`} expansion={open} />);
+  };
+
   for (let index = from; index < to; index++) {
+    if (lineStarts.has(index - from)) flush(false);
     const photo = store.rows.get(index);
     if (photo == null) {
       // Still carries the selection ring: the selection is positions, so it
@@ -384,14 +406,25 @@ function tilesFor(store: PhotosStore, from: number, to: number): JSX.Element[] {
         isFocused={store.focusIndex === index && !store.hasSelection}
       />,
     );
-    // Masonry has no row model to hang a band off, so an open stack's members
-    // break the line themselves and take a full-width band directly after the
-    // tile they came from. A block's height is measured rather than computed, so
-    // the scroll learns the band is there without being told (§19.6).
-    const open = store.mode === 'masonry' ? store.expansionAt(index) : null;
-    if (open != null) tiles.push(<BandTiles key={`band-${open.stackId}`} expansion={open} />);
+    const open = masonry ? store.expansionAt(index) : null;
+    if (open != null) pending.push(open);
   }
+  // Whatever is still open on the block's last line, which has no line after it
+  // to be flushed by.
+  flush(true);
   return tiles;
+}
+
+// The shapes the wrap is replayed from. A row the client is not holding is the
+// 3:2 its waiting cell is drawn at, so a page landing under the reader does not
+// move a line break that was already decided.
+function ratiosFor(store: PhotosStore, from: number, to: number): number[] {
+  const ratios: number[] = [];
+  for (let index = from; index < to; index++) {
+    const photo = store.rows.get(index);
+    ratios.push(photo == null ? TILE_ASPECT : photo.width / photo.height);
+  }
+  return ratios;
 }
 
 // The members of one open stack, as a band. Without a top it is masonry's: a
