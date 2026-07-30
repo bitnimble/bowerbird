@@ -48,10 +48,14 @@ describe('bandRowHeight', () => {
     }
   });
 
-  // The whole point of the budget: a member is the same size as any other row of
-  // the collection, so the same frame is not drawn at two shapes (§19.6).
-  test('is the grid\'s own cell height, whatever the band holds', () => {
-    for (const rows of [1, 2, 7]) expect(bandRowHeight(rows, 200)).toBe(200 - GRID_GAP);
+  // The cost of the inset, and the reason a member is a *smaller* cell rather than
+  // a letterboxed one: the shortfall against the grid's own cell is the padding the
+  // band's rows have to find, spread over however many of them there are (§19.6).
+  test('falls short of the grid\'s cell by the padding its rows cannot find', () => {
+    for (const rows of [1, 2, 7]) {
+      const shortfall = 200 - GRID_GAP - bandRowHeight(rows, 200);
+      expect(shortfall).toBeCloseTo((2 * BAND_PAD - GRID_GAP) / rows, 6);
+    }
   });
 
   test('stays positive when the band is given less height than its padding', () => {

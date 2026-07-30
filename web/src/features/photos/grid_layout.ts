@@ -21,13 +21,9 @@ export const TILE_ASPECT = 3 / 2;
 export const BAND_LINE_CAP = 1.3;
 
 // The breathing room inside a band's outline, so its members do not sit on it.
-//
-// Half the gap, top and bottom, because that is the whole budget: the row model
-// gives a band `rows * rowHeight`, its cells and the gaps between them take
-// `rows * (rowHeight - GRID_GAP) + (rows - 1) * GRID_GAP`, and what is left over is
-// one gap. Spending more meant taking it off the cells, which drew the same
-// photograph at two shapes (§19.6). Mirrored by `.grid__band`'s padding.
-export const BAND_PAD = GRID_GAP / 2;
+// One value for every view (`.grid__band`'s padding), which is what makes a band
+// look like the same thing in all three.
+export const BAND_PAD = 6;
 
 // How many photos one list request covers, and the unit rows are cached and
 // evicted by. A hundred is a screenful at any zoom, so a scroll never waits on
@@ -108,18 +104,20 @@ export function gridRowHeight(width: number, columns: number): number {
 }
 
 /**
- * Cell height for the rows inside a band, which is **the grid's own**.
+ * Cell height for the rows inside a band, which is a little under the grid's.
  *
- * A member is the same photograph as any other row of the collection and is drawn
- * at the same size: it was a fraction shorter for a while, to pay for the band's
- * padding out of its own cells, and that was enough to letterbox a frame that
- * filled its cell in the grid. A band occupies exactly the display rows the row
- * arithmetic gave it either way; what pays for the padding is the one gap those
- * rows have spare (`BAND_PAD`).
+ * A band occupies exactly the display rows the row arithmetic gave it, so its
+ * padding has to come out of its own cells: what the rows have spare is one gap,
+ * and the inset wants two of `BAND_PAD`, so the difference is shared between them.
+ * Masonry pays nothing for it, being outside the row model altogether (§19.6).
+ *
+ * The cell keeps the grid's *shape* whatever its height, since the member states
+ * the ratio itself - it is a smaller 3:2 cell rather than a 3:2 photograph
+ * letterboxed inside a wider one, which is what this looked like before.
  */
 export function bandRowHeight(rows: number, rowHeight: number): number {
   if (rows <= 0) return 0;
-  return Math.max(1, rowHeight - GRID_GAP);
+  return Math.max(1, (rows * rowHeight - (rows - 1) * GRID_GAP - 2 * BAND_PAD) / rows);
 }
 
 /**

@@ -1355,14 +1355,16 @@ p.ui-text--mono {
    and a border would spend rows' worth of it and push the last row into the grid
    below.
 
-   The padding is half a gap, which is the whole budget: the row model gives a band
-   `rows * rowHeight` and its cells - the grid's own, so a member is drawn at the
-   size any other row is - leave exactly one gap over (`BAND_PAD`). More than that
-   came off the cells, and drew the same photograph at two shapes. */
+   One inset for every view, so a band looks like the same thing in all three
+   (`BAND_PAD`). In the two with a row model it is the cells that pay for it - the
+   row arithmetic gives a band a fixed height and its rows have only one gap
+   spare - so a member there is a slightly smaller cell than the grid's, which is
+   the price of the band reading as a box at all. It keeps the grid's *shape*
+   either way, which is what stopped it being a letterboxed photograph. */
 .grid__band {
   background: rgba(120, 140, 180, 0.1);
   border-radius: var(--radius);
-  padding: calc(var(--grid-gap) / 2);
+  padding: 6px;
 }
 
 .grid__band::after {
@@ -1483,17 +1485,11 @@ p.ui-text--mono {
   justify-self: center;
 }
 
-/* Masonry's band is not in the row model at all - the block it sits in reports the
-   height it laid out to (§18.3.2) - so its padding can be the full inset without
-   coming off its members, which is what the other two modes cannot afford.
-   And a line of its members is capped: a band of two portrait frames stretched to
-   the width of the grid is a stack drawn several times the size of the collection
+/* A line of a masonry band's members is capped: nothing there bounds one - the band
+   is a full-width flex line - so a band of two portrait frames stretched to the
+   width of the grid and drew the stack several times the size of the collection
    around it. Capping the width caps the height through the ratio, and flex leaves
    the space it no longer wants to the right of them. */
-.grid--masonry.grid__band {
-  padding: 6px;
-}
-
 .grid--masonry.grid__band .tile {
   max-width: calc(var(--band-cap, 100%) * var(--ar));
 }

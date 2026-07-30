@@ -2821,25 +2821,31 @@ size - `visibleRows` takes **one** row height for the whole list, so anything
 that gave a band its own height would put the scroll height back into the DOM,
 which the virtual grid exists to avoid.
 
-**A member is drawn at the grid's own cell size**, since it is the same photograph
-as any other row of the collection. The band is drawn inset from its outline, and
-what pays for that inset is **the one gap its rows have spare**: the row model gives
-a band `rows * rowHeight`, and its cells plus the gaps between them come to
-`rows * rowHeight - GRID_GAP`, so half a gap top and bottom is the entire budget
-(`BAND_PAD`). It used to take 6px off every cell instead, which made a member a
-fraction shorter than the grid's cell - enough to letterbox a frame that filled
-its cell in the grid, the one place the same photograph was drawn at two shapes.
-The 3:2 the cell height implies is stated on the member as well, so the sliver the
-band's own side padding takes off its cell does not come back as a bar; it is
-centred, and the halves of that sliver fall in the gaps either side. **The height is
-stated too**, rather than left to `align-self: stretch`: stretch against an aspect
-ratio is a corner the engines read differently, and Firefox took neither axis as
-definite and laid every member out at no height at all. That, and the capped flex
-line below, is why one E2E file runs in both engines (`band_layout.spec.ts`).
+**A band is inset from its outline by the same amount in every view** (`BAND_PAD`),
+because it is the same object in all three and a band whose members sat on its ring
+did not read as a box at all. In the two views with a row model, **the cells pay for
+it**: the row arithmetic gives a band `rows * rowHeight`, its cells and the gaps
+between them come to `rows * rowHeight - GRID_GAP`, so all those rows have spare is
+one gap and the rest of the inset comes off their height - `(2 * BAND_PAD -
+GRID_GAP) / rows` per cell, which is a twentieth of a cell in a one-row band. The
+alternative is a band with a height of its own, which is what the uniform row pitch
+exists to avoid: it would put a per-band pixel offset into every mapping between
+rows and pixels, and the scroll's arithmetic is the last place to want a special
+case. An inset the reader can see is worth a cell a twentieth short.
+
+What that must *not* cost is the shape. The 3:2 the grid gives every photo is
+stated on the member as well, so a member is a slightly smaller 3:2 cell rather
+than a 3:2 photograph letterboxed inside a wider one - which is what taking the
+inset off the height alone looked like, and the one place the same photograph was
+drawn at two shapes. **The height is stated too**, rather than left to
+`align-self: stretch`: stretch against an aspect ratio is a corner the engines read
+differently, and Firefox took neither axis as definite and laid every member out at
+no height at all. That, and the capped flex line below, is why one E2E file runs in
+both engines (`band_layout.spec.ts`).
 
 **Masonry's band is not in the row model at all** - the block it sits in reports the
-height it laid out to (§18.3.2) - so it can afford the full inset without taking it
-off its members, and its rows are **capped** instead: a band is a full-width flex
+height it laid out to (§18.3.2) - so its inset costs its members nothing, and its
+rows are **capped** instead: a band is a full-width flex
 line, so two portrait frames alone on one stretched to the width of the grid and
 drew the stack several times the size of the collection around it. The cap is
 `BAND_LINE_CAP` times the stack's own tile, which is the size the reader is already

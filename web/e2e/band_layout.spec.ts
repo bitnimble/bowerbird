@@ -26,17 +26,35 @@ async function openBand(page: import('@playwright/test').Page, dir: string): Pro
 
 const box = async (locator: import('@playwright/test').Locator) => (await locator.boundingBox())!;
 
-test('a band draws its members at the size the view around them uses', async ({ page }, info) => {
+// Every view insets its members from the band's outline by the same amount, so a
+// band reads as the same box in all three (`BAND_PAD`).
+async function expectInsetFromBand(page: import('@playwright/test').Page, where: string): Promise<void> {
+  const band = await box(page.locator('.grid__band'));
+  const members = await page.locator('.grid__band .tile').all();
+  for (const locator of members) {
+    const member = await box(locator);
+    expect(member.height, `${where}: a member with no height`).toBeGreaterThan(0);
+    expect(member.y - band.y, `${where}: top inset`).toBeGreaterThanOrEqual(5);
+    expect(band.y + band.height - (member.y + member.height), `${where}: bottom inset`).toBeGreaterThanOrEqual(5);
+    expect(member.x - band.x, `${where}: left inset`).toBeGreaterThanOrEqual(5);
+    expect(band.x + band.width - (member.x + member.width), `${where}: right inset`).toBeGreaterThanOrEqual(5);
+  }
+}
+
+test('a band insets its members, at the shape of the view around them', async ({ page }, info) => {
   await openBand(page, path.join(E2E_ROOT, `band-layout-${info.project.name}`));
   const tile = page.locator('.tile:not(.tile--member)').first();
   const member = page.locator('.grid__band .tile').first();
 
-  // Grid: exactly the collection's own cell. Firefox laid these out at no height at
-  // all while the height was left to `align-self: stretch` against an aspect ratio.
+  // Grid: the collection's own 3:2 cell, a little smaller for the inset its rows
+  // have to find. Firefox laid these out at no height at all while the height was
+  // left to `align-self: stretch` against an aspect ratio.
   const gridTile = await box(tile);
   const gridMember = await box(member);
-  expect(gridMember.height).toBeCloseTo(gridTile.height, 0);
-  expect(gridMember.width).toBeCloseTo(gridTile.width, 0);
+  expect(gridMember.width / gridMember.height).toBeCloseTo(gridTile.width / gridTile.height, 1);
+  expect(gridMember.height).toBeLessThanOrEqual(gridTile.height);
+  expect(gridMember.height).toBeGreaterThan(gridTile.height - 16);
+  await expectInsetFromBand(page, 'grid');
 
   // Masonry: nothing bounds a band's line there, so it is capped against the stack's
   // own tile - and what it no longer takes is left empty to the right of it.
@@ -45,15 +63,17 @@ test('a band draws its members at the size the view around them uses', async ({ 
   const masonryTile = await box(tile);
   const masonryMember = await box(member);
   const band = await box(page.locator('.grid__band'));
-  expect(masonryMember.height).toBeGreaterThan(0);
   expect(masonryMember.height).toBeLessThanOrEqual(masonryTile.height * 1.3 + 1);
   expect(masonryMember.width * NAMES.length).toBeLessThan(band.width - 100);
+  await expectInsetFromBand(page, 'masonry');
 
-  // List: the collection's own row height.
+  // List: the collection's own row, less the same inset.
   await page.getByRole('button', { name: 'List', exact: true }).click();
   const listTile = await box(tile);
   const listMember = await box(member);
-  expect(listMember.height).toBeCloseTo(listTile.height, 0);
+  expect(listMember.height).toBeLessThanOrEqual(listTile.height);
+  expect(listMember.height).toBeGreaterThan(listTile.height - 16);
+  await expectInsetFromBand(page, 'list');
 
   await page.getByRole('button', { name: 'Grid', exact: true }).click();
 });
