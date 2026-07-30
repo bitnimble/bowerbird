@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { PhotoSummary } from '../../../api/client';
-import { PhotosStore } from '../photos_store';
+import { BAND_COLOURS, PhotosStore } from '../photos_store';
 import type { AppSettingsStore } from '../../settings/app_settings_store';
 import type { LibrariesStore } from '../../libraries/libraries_store';
 
@@ -120,6 +120,41 @@ describe('the rendered window keeps its identity while it scrolls', () => {
     const after = store.sections.filter((section) => section.kind === 'grid').at(-1)!.key;
 
     expect(after).toBe(before);
+  });
+});
+
+describe('open stacks are coloured so a tile can be matched to its band', () => {
+  test('colours run down the collection and wrap, whatever order stacks were opened in', () => {
+    const store = storeWith(40, { rowHeight: 65, columns: 1 });
+    const members = [photo('m0'), photo('m1')];
+    store.expansions = new Map([
+      ['s3', { stackId: 's3', position: 12, photos: members }],
+      ['s1', { stackId: 's1', position: 3, photos: members }],
+      ['s2', { stackId: 's2', position: 9, photos: members }],
+    ]);
+
+    expect(store.bandColours.get('s1')).toBe(0);
+    expect(store.bandColours.get('s2')).toBe(1);
+    expect(store.bandColours.get('s3')).toBe(2);
+  });
+
+  test('one open stack is the first colour, so the ordinary case is never a colour to decode', () => {
+    const store = storeWith(40, { rowHeight: 65, columns: 1 });
+    store.expansions = new Map([['s9', { stackId: 's9', position: 30, photos: [photo('m0')] }]]);
+
+    expect(store.bandColours.get('s9')).toBe(0);
+  });
+
+  test('more open stacks than colours wrap rather than run out', () => {
+    const store = storeWith(40, { rowHeight: 65, columns: 1 });
+    store.expansions = new Map(
+      Array.from({ length: BAND_COLOURS + 1 }, (_, i) => [
+        `s${i}`,
+        { stackId: `s${i}`, position: i, photos: [photo(`m${i}`)] },
+      ]),
+    );
+
+    expect(store.bandColours.get(`s${BAND_COLOURS}`)).toBe(0);
   });
 });
 

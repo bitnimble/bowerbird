@@ -1,5 +1,15 @@
 import { describe, expect, test } from 'bun:test';
-import { BLOCK, GRID_GAP, MAX_SCROLL, blockTops, gridColumns, gridRowHeight, visibleBlocks } from '../grid_layout';
+import {
+  BAND_PAD,
+  BLOCK,
+  GRID_GAP,
+  MAX_SCROLL,
+  bandRowHeight,
+  blockTops,
+  gridColumns,
+  gridRowHeight,
+  visibleBlocks,
+} from '../grid_layout';
 
 describe('gridColumns', () => {
   test('fits as many tiles of the minimum size as the width allows', () => {
@@ -18,6 +28,24 @@ describe('gridRowHeight', () => {
   test('is the 3:2 cell plus the gap under it', () => {
     // Four columns of (1000 - 3*3)/4 = 247.75, at 3:2, plus the gap.
     expect(gridRowHeight(1000, 4)).toBeCloseTo(247.75 / 1.5 + GRID_GAP);
+  });
+});
+
+describe('bandRowHeight', () => {
+  test('a band fits its padding and its rows inside the height the row model gave it', () => {
+    const rowHeight = 200;
+    for (const rows of [1, 2, 7]) {
+      const cell = bandRowHeight(rows, rowHeight);
+      // What the band actually occupies: its cells, the gaps between them, and
+      // the padding inside its outline. Anything over is the last row of members
+      // hanging through the bottom of the band and over the grid below it.
+      expect(rows * cell + (rows - 1) * GRID_GAP + 2 * BAND_PAD).toBeCloseTo(rows * rowHeight, 6);
+    }
+  });
+
+  test('stays positive when the band is given less height than its padding', () => {
+    expect(bandRowHeight(1, 4)).toBeGreaterThan(0);
+    expect(bandRowHeight(0, 200)).toBe(0);
   });
 });
 

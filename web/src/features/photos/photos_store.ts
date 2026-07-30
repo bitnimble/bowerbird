@@ -7,6 +7,9 @@ import { BLOCK, GRID_GAP, LIST_ROW_H, MAX_SCROLL, blockTops, gridColumns, gridRo
 import { SelectionRanges } from './selection';
 import { type Band, displayRowOf, rowAt, runStart, totalRows } from './bands';
 
+/** How many colours open stacks are told apart by before they repeat (`[data-band]`). */
+export const BAND_COLOURS = 4;
+
 /** A stack the reader has opened, and the members it is showing. */
 export interface Expansion {
   stackId: string;
@@ -406,6 +409,19 @@ export class PhotosStore {
   /** The open stacks, as the row arithmetic wants them (§19.6). */
   @computed get bands(): Band[] {
     return [...this.expansions.values()].map((open) => ({ position: open.position, members: open.photos.length }));
+  }
+
+  /**
+   * The colour each open stack is drawn in, by stack id.
+   *
+   * Its tile and its band wear the same one, which is the only thing tying the
+   * two together once several stacks on one row are open at once. Numbered from
+   * the top of the collection down, so the first one open is always the same
+   * colour and the numbering does not depend on the order they were opened in.
+   */
+  @computed get bandColours(): Map<string, number> {
+    const open = [...this.expansions.values()].sort((a, b) => a.position - b.position);
+    return new Map(open.map((expansion, i) => [expansion.stackId, i % BAND_COLOURS]));
   }
 
   /**

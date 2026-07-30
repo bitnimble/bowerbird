@@ -1,13 +1,14 @@
 import { observer } from 'mobx-react-lite';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Check, ChevronDown, EyeOff, Layers, ThumbsDown, ThumbsUp } from 'lucide-react';
+import { Check, ChevronUp, EyeOff, Layers, ThumbsDown, ThumbsUp } from 'lucide-react';
 import { captureDateTime, localDateTime } from '../../api/dates';
 import { renditionUrl, type PhotoSummary } from '../../api/client';
 import { usePhotosStore, usePresenters } from '../../app/stores_context';
 import { Text } from '../../ui/ui';
-import { BLOCK, GRID_GAP } from './grid_layout';
-import { renditionVersion, type PhotosStore } from './photos_store';
+import { BLOCK, GRID_GAP, bandRowHeight } from './grid_layout';
+import { bandRows } from './bands';
+import { renditionVersion, type Expansion, type PhotosStore } from './photos_store';
 
 function filename(filePath: string, id: string): string {
   return filePath.split('/').pop() ?? id.slice(0, 8);
@@ -109,14 +110,7 @@ const Tile = observer(function Tile({
   useEffect(() => setFailed(false), [src]);
   const selected = store.selection.has(index);
   const expanded = photo.stack_id != null && store.expansions.has(photo.stack_id);
-  const list = store.mode === 'list';
-  // ordering_date is date_taken under a taken_* ordering and date_added otherwise,
-  // and those are not the same kind of timestamp (§11.1).
-  // A tile only exists once a page has landed, so the ordering is known by now;
-  // reading it as a capture date is the right guess for the one that never is.
-  const orderingDate = store.ordering?.startsWith('added_')
-    ? localDateTime(photo.ordering_date)
-    : captureDateTime(photo.ordering_date);
+  const stacked = photo.stack_id != null && photo.stack_size > 1;
 
   return (
     // The set size and position are stated because only a few dozen tiles are in
@@ -142,9 +136,20 @@ const Tile = observer(function Tile({
           // Once a selection exists the grid is in "choose things" mode, so a
           // plain click keeps building it instead of navigating away from it.
           if (e.metaKey || e.ctrlKey || store.hasSelection) photos.toggle(index);
+          // A stack's tile stands for the whole stack, so it opens the band of
+          // members below this row rather than the one photo it happens to show;
+          // a member is reached from the band.
+          else if (stacked) void photos.toggleBand(photo.stack_id!, index).then((shift) => onBandToggled?.(shift));
           else navigate(`/photos/${photo.id}`);
         }}
-        aria-label={`photo ${filename(photo.file_path, photo.id)}`}
+        aria-expanded={stacked ? expanded : undefined}
+        aria-label={
+          stacked
+            ? expanded
+              ? 'Collapse this stack'
+              : `Expand this stack of ${photo.stack_size} photos`
+            : `photo ${filename(photo.file_path, photo.id)}`
+        }
       >
         {/* The image is always mounted and the placeholder sits behind it until
             something decodes. Swapping the two made each list refresh blink every
@@ -166,29 +171,21 @@ const Tile = observer(function Tile({
         {photo.is_deleted && <span className="badge badge--deleted">binned</span>}
       </div>
 
-      {/* The stack's own control, and the only one it has: clicking the tile
-          opens the band of members below this row, and clicking it again closes
-          it. Expanded, the tile takes a dark overlay and turns its layers into a
-          chevron, so the thing that opened the band is visibly the thing that
-          will close it (§19.6).
-
-          Not offered in masonry, where rows are packed from each photo's own
-          shape rather than laid out on a row model there is anywhere to insert a
-          band into. A badge there did nothing but move the scroll. */}
-      {photo.stack_id != null && photo.stack_size > 1 && store.mode !== 'masonry' && (
-        <button
-          type="button"
+      {/* Marks the tile as a stack and says which way it is; the tile itself is
+          the control. Not a target of its own: `pointer-events: none` hands the
+          click to the frame underneath so both halves of the tile do the same
+          thing (§19.6). */}
+      {stacked && (
+        <span
           className={`tile__stack${expanded ? ' tile__stack--open' : ''}`}
-          onClick={(e) => {
-            e.stopPropagation();
-            void photos.toggleBand(photo.stack_id!, index).then((shift) => onBandToggled?.(shift));
-          }}
-          aria-expanded={expanded}
-          aria-label={expanded ? 'Collapse this stack' : `Expand this stack of ${photo.stack_size} photos`}
+          // Open, the tile is ringed in the colour of the band it opened, which
+          // is what pairs the two when several stacks on one row are open.
+          data-band={expanded ? store.bandColours.get(photo.stack_id!) : undefined}
+          aria-hidden="true"
         >
-          {expanded ? <ChevronDown size={14} /> : <Layers size={12} />}
+          {expanded ? <ChevronUp size={22} /> : <Layers size={12} />}
           {!expanded && <span className="tile__stack-count">{photo.stack_size}</span>}
-        </button>
+        </span>
       )}
 
       <button
@@ -207,16 +204,33 @@ const Tile = observer(function Tile({
         <Check size={12} strokeWidth={3} />
       </button>
 
-      <div className="tile__foot">
-        <span className="tile__name" title={photo.file_path}>
-          {filename(photo.file_path, photo.id)}
-        </span>
-        {list && <Text variant="mono">{orderingDate ?? 'no date'}</Text>}
-        <span className="tile__marks">
-          <TriageButtons photo={photo} />
-          <Rating photo={photo} />
-        </span>
-      </div>
+      <TileFoot photo={photo} />
+    </div>
+  );
+});
+
+// The row of names and marks under a tile. Shared so a band member in list mode
+// says as much about itself as any other row does.
+const TileFoot = observer(function TileFoot({ photo }: { photo: PhotoSummary }): JSX.Element {
+  const store = usePhotosStore();
+  // ordering_date is date_taken under a taken_* ordering and date_added otherwise,
+  // and those are not the same kind of timestamp (§11.1).
+  // A tile only exists once a page has landed, so the ordering is known by now;
+  // reading it as a capture date is the right guess for the one that never is.
+  const orderingDate = store.ordering?.startsWith('added_')
+    ? localDateTime(photo.ordering_date)
+    : captureDateTime(photo.ordering_date);
+
+  return (
+    <div className="tile__foot">
+      <span className="tile__name" title={photo.file_path}>
+        {filename(photo.file_path, photo.id)}
+      </span>
+      {store.mode === 'list' && <Text variant="mono">{orderingDate ?? 'no date'}</Text>}
+      <span className="tile__marks">
+        <TriageButtons photo={photo} />
+        <Rating photo={photo} />
+      </span>
     </div>
   );
 });
@@ -275,15 +289,7 @@ const BandMember = observer(function BandMember({ photo }: { photo: PhotoSummary
         <Check size={12} strokeWidth={3} />
       </button>
 
-      <div className="tile__foot">
-        <span className="tile__name" title={photo.file_path}>
-          {filename(photo.file_path, photo.id)}
-        </span>
-        <span className="tile__marks">
-          <TriageButtons photo={photo} />
-          <Rating photo={photo} />
-        </span>
-      </div>
+      <TileFoot photo={photo} />
     </div>
   );
 });
@@ -326,9 +332,53 @@ function tilesFor(store: PhotosStore, from: number, to: number, onBandToggled?: 
         onBandToggled={onBandToggled}
       />,
     );
+    // Masonry has no row model to hang a band off, so an open stack's members
+    // break the line themselves and take a full-width band directly after the
+    // tile they came from. A block's height is measured rather than computed, so
+    // the scroll learns the band is there without being told (§19.6).
+    const open = store.mode === 'masonry' ? store.expansionAt(index) : null;
+    if (open != null) tiles.push(<BandTiles key={`band-${open.stackId}`} expansion={open} />);
   }
   return tiles;
 }
+
+// The members of one open stack, as a band. Without a top it is masonry's: a
+// full-width item inside the block's own flex line, rather than a section the
+// row arithmetic placed at a height of its own.
+const BandTiles = observer(function BandTiles({
+  expansion,
+  top,
+}: {
+  expansion: Expansion;
+  top?: number;
+}): JSX.Element {
+  const store = usePhotosStore();
+  const rows = bandRows(expansion.photos.length, store.columns);
+  const placed = top != null;
+
+  return (
+    <div
+      className={`grid grid--${store.mode} grid__band${placed ? ' grid__window' : ' grid__band--inline'}`}
+      data-band={store.bandColours.get(expansion.stackId)}
+      role="group"
+      aria-label={`${expansion.photos.length} photos in this stack`}
+      style={
+        {
+          ...(placed ? { transform: `translateY(${store.domTop(top)}px)` } : {}),
+          '--cols': store.columns,
+          // A band gets exactly the display rows the row arithmetic gave it, so
+          // the padding inside its outline comes out of its own cells rather than
+          // out of the collection below it.
+          '--row-h': `${bandRowHeight(rows, store.rowHeight)}px`,
+        } as React.CSSProperties
+      }
+    >
+      {expansion.photos.map((photo) => (
+        <BandMember key={photo.id} photo={photo} />
+      ))}
+    </div>
+  );
+});
 
 // Masonry packs its lines from each photo's own shape, so a block's height is
 // not arithmetic the way a uniform row's is - it has to be laid out to be known.
@@ -586,23 +636,7 @@ const GridScroller = observer(function GridScroller(): JSX.Element {
                 {tilesFor(store, section.from, section.to, onBandToggled)}
               </div>
             ) : (
-              <div
-                key={section.key}
-                className={`grid grid--${store.mode} grid__window grid__band`}
-                role="group"
-                aria-label={`${section.photos.length} photos in this stack`}
-                style={
-                  {
-                    transform: `translateY(${store.domTop(section.top)}px)`,
-                    '--cols': store.columns,
-                    '--row-h': `${store.rowHeight - GRID_GAP}px`,
-                  } as React.CSSProperties
-                }
-              >
-                {section.photos.map((photo) => (
-                  <BandMember key={photo.id} photo={photo} />
-                ))}
-              </div>
+              <BandTiles key={section.key} expansion={section} top={section.top} />
             ),
           )
         )}

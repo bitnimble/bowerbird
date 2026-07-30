@@ -2529,8 +2529,9 @@ that album holds. A shoot needs no such argument - each row carries its own
 ### 19.6 The grid (`bands.ts`)
 
 Clicking a stack tile opens a **band of fresh rows directly below the row that
-tile sits in**. The tile stays where it is and takes a dark overlay with a down
-chevron, which is also how the stack closes.
+tile sits in** - the tile stands for the stack, not for the one member it shows,
+so it never opens that member's detail view. The tile stays where it is and takes
+a dark overlay with an up chevron, which is also how the stack closes.
 
 The members live alone in that band and never share a row with photos outside
 the stack, so no tile ever changes which neighbours it sits beside: the grid
@@ -2538,12 +2539,26 @@ below is displaced downwards and otherwise untouched. Band rows are ordinary til
 rows at the same cell geometry, marked by their background rather than their
 size - `visibleRows` takes **one** row height for the whole list, so anything
 that gave a band its own height would put the scroll height back into the DOM,
-which the virtual grid exists to avoid.
+which the virtual grid exists to avoid. A band is drawn inset from its outline,
+and pays for that padding out of the height of its own cells (`bandRowHeight`)
+rather than out of the collection below it.
+
+**Masonry** has no row model to hang a band off, so an open stack's members break
+the line themselves: the band is a full-width item on the block's own flex line,
+directly after the tile it came from. A block's height is measured rather than
+computed, so the scroll learns the band is there without being told, and the
+scroll correction opening one usually needs is not owed at all.
 
 Any number of stacks may be open. Expansions are a list of `(position, member
 count)` sorted by position; `rowCount` is the base rows plus each band's
 `ceil(members / columns)`, and mapping a display row to a collection position is
 a prefix-sum walk over that list.
+
+An open stack's tile and its band are ringed in **the same colour**, numbered
+down the collection and wrapping after four. Several stacks open on one row put
+several bands beneath it in a run, and the colour is the only thing saying which
+band came from which tile. The first is the house blue, so the ordinary case of
+one open stack is not a colour to decode.
 
 #### 19.6.1 Keeping bands and the scroll put
 

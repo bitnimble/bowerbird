@@ -13,6 +13,9 @@ export const LIST_ROW_H = 62;
 // .grid--grid gives every photo the same 3:2 cell.
 export const TILE_ASPECT = 3 / 2;
 
+// The breathing room inside a band's outline, so its members do not sit on it.
+export const BAND_PAD = 6;
+
 // How many photos one list request covers, and the unit rows are cached and
 // evicted by. A hundred is a screenful at any zoom, so a scroll never waits on
 // more than one request, and it is small enough that dropping one costs little.
@@ -41,6 +44,19 @@ export function gridColumns(width: number, tileSize: number): number {
 export function gridRowHeight(width: number, columns: number): number {
   if (width <= 0) return LIST_ROW_H + GRID_GAP;
   return (width - GRID_GAP * (columns - 1)) / columns / TILE_ASPECT + GRID_GAP;
+}
+
+/**
+ * Cell height for the rows inside a band, which are shorter than the grid's.
+ *
+ * A band occupies exactly the display rows the row arithmetic gave it, so the
+ * padding inside its outline has to come out of its own cells rather than out of
+ * the collection below it - which is what pushed the last row of members through
+ * the bottom of the band.
+ */
+export function bandRowHeight(rows: number, rowHeight: number): number {
+  if (rows <= 0) return 0;
+  return Math.max(1, (rows * rowHeight - (rows - 1) * GRID_GAP - 2 * BAND_PAD) / rows);
 }
 
 // Where each masonry block starts, plus where the last one ends. Masonry packs

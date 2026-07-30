@@ -1000,11 +1000,6 @@ p.ui-text--mono {
   flex: 1000000 0 0;
 }
 
-.grid--list .tile img {
-  position: static;
-  height: auto;
-}
-
 .grid--list {
   display: flex;
   flex-direction: column;
@@ -1023,17 +1018,30 @@ p.ui-text--mono {
   height: var(--row-h, 62px);
 }
 
-.grid--list .tile__hit {
-  position: static;
-  height: 56px;
+/* The whole row is the click target, not the thumbnail alone: a row reads as one
+   object, and clicking the half of it that says which photo it is did nothing.
+   So the hit stays the tile-wide overlay it is everywhere else and the rendition
+   is painted at the left of it, with the foot in the column beside. */
+.grid--list .tile__hit img {
+  width: 120px;
+  height: 100%;
+  padding: 3px 0;
 }
 
+/* The name and the date sit over that overlay, so they hand their clicks back to
+   it; the marks are controls and keep theirs. */
 .grid--list .tile__foot {
   position: static;
+  grid-column: 2;
+  pointer-events: none;
   background: none;
   padding: 0 10px 0 0;
   align-items: center;
   gap: 14px;
+}
+
+.grid--list .tile__marks {
+  pointer-events: auto;
 }
 
 .grid--list .tile__name {
@@ -1162,14 +1170,14 @@ p.ui-text--mono {
   top: 30px;
 }
 
-/* Photo stacks (§19). The badge is the stack's only control: it opens the band
-   of members below this row, and clicking it again closes it.
+/* Photo stacks (§19). A mark, not a control: the tile is what opens and closes
+   the band, and the click has to reach the frame under this.
 
-   Top left rather than top right, where the select box already lives: two
-   controls in one corner is the later one in the DOM quietly swallowing the
-   other's clicks. The missing/binned badges share this corner but are rare and
-   flow beside it (`.tile__badges`). */
+   Top left rather than top right, where the select box already lives. The
+   missing/binned badges share this corner but are rare and flow beside it
+   (`.tile__badges`). */
 .tile__stack {
+  pointer-events: none;
   position: absolute;
   left: 6px;
   top: 6px;
@@ -1184,20 +1192,43 @@ p.ui-text--mono {
   color: var(--bone);
   font-family: var(--mono);
   font-size: 10px;
-  cursor: pointer;
-}
-
-.tile__stack:hover {
-  background: rgba(10, 12, 16, 0.95);
 }
 
 /* Expanded, the tile itself is what closes the band, so it says so: the whole
-   frame dims and the layers become a chevron pointing at the band below it. */
+   frame dims and the layers become a chevron pointing back up at the tile. */
 .tile__stack--open {
   inset: 0;
   border-radius: 0;
   justify-content: center;
   background: rgba(10, 12, 16, 0.62);
+  box-shadow: inset 0 0 0 2px var(--band);
+}
+
+/* One colour per open stack, worn by both its tile and its band: several stacks
+   open on one row put several bands under it, and the colour is the only thing
+   saying which came from which. The first is the house blue, so the ordinary
+   case of one open stack is not a colour to decode (§19.6). */
+[data-band] {
+  --band: var(--satin);
+}
+
+[data-band='1'] {
+  --band: #9d7ce8;
+}
+
+[data-band='2'] {
+  --band: #d96bb0;
+}
+
+[data-band='3'] {
+  --band: #d9b23a;
+}
+
+/* The ring still goes round the whole row, but the chevron belongs over the
+   thumbnail: centred, it floats in the middle of a row that is mostly text. */
+.grid--list .tile__stack--open {
+  justify-content: flex-start;
+  padding-left: 49px; /* half the 120px thumbnail, less half the chevron */
 }
 
 .tile__stack-count {
@@ -1206,11 +1237,28 @@ p.ui-text--mono {
 
 /* The band itself: members of one stack, alone on their own rows, marked as a
    run rather than as part of the grid around them. */
+/* Outlined rather than bordered: a band's height is the row model's, and a
+   border would spend rows' worth of it and push the last row into the grid
+   below. The padding is paid for by the shorter cells the band hands its rows
+   (`bandRowHeight`), for the same reason. */
 .grid__band {
-  background: rgba(120, 140, 180, 0.07);
-  border-top: 1px solid rgba(120, 140, 180, 0.28);
-  border-bottom: 1px solid rgba(120, 140, 180, 0.28);
-  box-sizing: border-box;
+  background: rgba(120, 140, 180, 0.1);
+  outline: 2px solid var(--band);
+  outline-offset: -2px;
+  border-radius: 4px;
+  padding: 6px;
+}
+
+/* Masonry has no rows to place a band between, so it is a full-width item on the
+   block's own flex line, breaking it directly after the tile it belongs to. */
+.grid__band--inline {
+  flex: 0 0 100%;
+}
+
+/* Indented, because a list row is read from its left edge: the members of a
+   stack start further in than the collection they hang under. */
+.grid--list.grid__band {
+  padding-left: 28px;
 }
 
 /* A shoot shows a stack whole and dims the members that are not in it, which is
