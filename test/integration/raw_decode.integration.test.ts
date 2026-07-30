@@ -19,19 +19,17 @@ const FIXTURES = ['DSC02981.ARW', 'IMG_5360.CR3'];
 // Both decodes in one child, so a case costs one process rather than two, and the
 // digests being compared cannot come from different builds of the library.
 const PROBE = `
-import { decodeRawImage, freeImage } from '${import.meta.dir}/../../src/services/processing/rawshim_ops';
-import { pixels } from '${import.meta.dir}/../../src/services/processing/rawshim_pixels';
+import { decodeSummary } from '${import.meta.dir}/../../src/services/processing/rawshim_debug';
 // The tail, not an offset: \`bun -e\` does not put its own arguments where a script
 // file's would be, so counting from the front picks up the wrong one.
 const [file, depth, space, edge] = process.argv.slice(-4);
-const image = decodeRawImage(file, Number(depth), space, Number(edge));
+const image = decodeSummary(file, { depth: Number(depth), space, atLeastLongEdge: Number(edge) });
 console.log(JSON.stringify({
   shape: \`\${image.width}x\${image.height}\`,
   halved: image.halved,
   direct: image.direct,
-  digest: Bun.SHA1.hash(pixels(image), 'hex'),
+  digest: image.sha1,
 }));
-freeImage(image);
 `;
 
 interface Decoded {

@@ -36,10 +36,17 @@ export interface DecodeSummary {
   channels: ChannelStats[];
 }
 
+export interface Comparison {
+  width: number;
+  height: number;
+  /** Null when the two images are identical, PSNR being infinite there. */
+  psnr: number | null;
+}
+
 interface DebugReply {
   ok: boolean;
   error?: string;
-  reply?: { summary?: DecodeSummary; written?: number };
+  reply?: { summary?: DecodeSummary; written?: number; comparison?: Comparison };
 }
 
 // Comfortably past any reply: a summary is a few hundred bytes.
@@ -76,6 +83,18 @@ export function decodeSummary(path: string, request: DecodeRequest = {}): Decode
   });
   if (reply?.summary == null) throw new Error(`no summary for ${path}`);
   return reply.summary;
+}
+
+/**
+ * A written image against an 8-bit decode of the RAW it came from.
+ *
+ * The comparison happens where both sets of pixels already are; what comes back is
+ * the number the assertion was going to reduce them to anyway.
+ */
+export function comparePsnr(imagePath: string, rawPath: string): Comparison {
+  const reply = ask({ kind: 'comparePsnr', imagePath, rawPath });
+  if (reply?.comparison == null) throw new Error(`no comparison for ${imagePath}`);
+  return reply.comparison;
 }
 
 /**

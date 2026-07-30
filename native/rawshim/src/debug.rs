@@ -191,15 +191,25 @@ pub enum Command {
         at_least_long_edge: u32,
         out_path: String,
     },
+    /// A written image against a decode of the RAW it came from, by PSNR.
+    ///
+    /// "The rendition is the picture that went in" is a scalar question, so it is
+    /// answered here rather than by shipping both images over to be subtracted.
+    ComparePsnr {
+        image_path: String,
+        raw_path: String,
+    },
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Reply {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summary: Option<DecodeSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub written: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub comparison: Option<Comparison>,
 }
 
 pub fn run(command: &Command) -> Result<Reply, String> {
@@ -207,13 +217,56 @@ pub fn run(command: &Command) -> Result<Reply, String> {
         Command::DecodeSummary { path, depth, rec2020_linear, at_least_long_edge } => {
             let frame = crate::decode_frame(path, *depth, *rec2020_linear, *at_least_long_edge)
                 .ok_or("could not decode")?;
-            Ok(Reply { summary: Some(summarise(&frame)), written: None })
+            Ok(Reply { summary: Some(summarise(&frame)), ..Reply::default() })
         }
         Command::DumpDecode { path, depth, rec2020_linear, at_least_long_edge, out_path } => {
             let frame = crate::decode_frame(path, *depth, *rec2020_linear, *at_least_long_edge)
                 .ok_or("could not decode")?;
-            Ok(Reply { summary: Some(summarise(&frame)), written: Some(dump_samples(&frame, out_path)?) })
+            Ok(Reply {
+                summary: Some(summarise(&frame)),
+                written: Some(dump_samples(&frame, out_path)?),
+                ..Reply::default()
+            })
         }
+        Command::ComparePsnr { image_path, raw_path } => {
+            let encoded = std::fs::read(image_path)
+                .map_err(|e| format!("could not read {image_path}: {e}"))?;
+            let written = crate::vips::Pipeline::decode_upright(&encoded)
+                .and_then(crate::vips::Pipeline::finish)
+                .map_err(|e| format!("could not decode {image_path}: {e}"))?;
+            let expected = crate::decode_frame(raw_path, 8, false, 0).ok_or("could not decode")?;
+            let expected = expected.rgb8().ok_or("the comparison needs an 8-bit decode")?;
+            Ok(Reply {
+                comparison: Some(compare(written.as_ref(), expected)),
+                ..Reply::default()
+            })
+        }
+    }
+}
+
+/// How close two images are.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Comparison {
+    pub width: usize,
+    pub height: usize,
+    /// Mean PSNR in dB. `None` when the two are identical, since the value is not
+    /// finite and JSON has no way to say so.
+    pub psnr: Option<f64>,
+}
+
+fn compare(written: crate::vips::RgbRef<'_>, expected: crate::vips::RgbRef<'_>) -> Comparison {
+    let n = written.data.len().min(expected.data.len());
+    let mut sum = 0f64;
+    for i in 0..n {
+        let delta = f64::from(written.data[i]) - f64::from(expected.data[i]);
+        sum += delta * delta;
+    }
+    let mse = sum / n.max(1) as f64;
+    Comparison {
+        width: written.width,
+        height: written.height,
+        psnr: (mse > 0.0).then(|| 10.0 * (255.0f64 * 255.0 / mse).log10()),
     }
 }
 
