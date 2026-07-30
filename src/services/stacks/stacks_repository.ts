@@ -146,9 +146,9 @@ export class StacksRepository {
    * running: the unique index allows only one flagged member per stack, so
    * setting the new one first would collide with the old.
    *
-   * A photograph that leaves a stack keeps whatever flag it had, which is
-   * correct - out of a stack it stands for itself, and that is what the flag
-   * means.
+   * Only ever touches rows still in the stack. A photograph on its way out is
+   * flagged by whoever releases it, because out of a stack it stands for itself
+   * and the listing shows it on that flag alone (`representativeFilter`).
    */
   refreshRepresentative(stackId: string): void {
     this.db.query('UPDATE photos SET is_representative = 0 WHERE stack_id = ?').run(stackId);
@@ -175,8 +175,13 @@ export class StacksRepository {
   /** Returns how many photographs actually left, which may be none of them. */
   removePhotos(stackId: string, photoIds: readonly string[], released: boolean): number {
     const state = released ? 'unstacked' : 'none';
+    // `is_representative = 1`, like `dissolve`: out of a stack a photograph stands
+    // for itself, and `representativeFilter` shows a row with no stack on that
+    // flag alone. Left at 0 - which is what every member but one carries - the
+    // photograph vanished from every listing while `total` went on counting it,
+    // for good, with nothing on screen to say where it had gone.
     const statement = this.db.query(
-      `UPDATE photos SET stack_id = NULL, stack_state = '${state}' WHERE id = ? AND stack_id = ?`,
+      `UPDATE photos SET stack_id = NULL, stack_state = '${state}', is_representative = 1 WHERE id = ? AND stack_id = ?`,
     );
     let removed = 0;
     for (const photoId of photoIds) removed += statement.run(photoId, stackId).changes;

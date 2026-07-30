@@ -175,6 +175,28 @@ describe('stacks', () => {
     expect(repo.get(stack.id)).toBeNull();
   });
 
+  // Regression: a listing shows a photo with no stack on `is_representative`
+  // alone, and only the newest member of a stack carries that flag. Removing any
+  // of the others left it at 0, so the photograph disappeared from every listing
+  // - for good, and while `total` went on counting it - with nothing on screen to
+  // say where it had gone. Three members, because with two the only one you can
+  // remove and still leave a stack behind is the representative.
+  test('a member taken out of a stack is still in the listing it came from', () => {
+    const { db, stacks, photos } = context;
+    const ids = [1, 2, 3].map((n) => insertPhoto(db, n, { minute: n }));
+    const stack = stacks.create(ids);
+
+    // The oldest, which is never the one standing for the stack.
+    stacks.removePhotos(stack.id, [ids[0]!]);
+
+    const listing = photos.listByLibrary(LIBRARY, 'taken_desc', 0, 100, NO_FILTERS);
+    // The stack's remaining two collapse to one row, and the one that left is a
+    // photograph again beside it.
+    expect(listing.photos.map((photo) => photo.id)).toContain(ids[0]!);
+    expect(listing.photos).toHaveLength(2);
+    expect(listing.total).toBe(2);
+  });
+
   test('stacking photos already in a stack moves them and cleans up behind them', () => {
     const { db, stacks, repo } = context;
     const first = [1, 2].map((n) => insertPhoto(db, n, { minute: n }));
