@@ -6,6 +6,7 @@ interface LibraryRow {
   id: string;
   root_path: string;
   data_path: string | null;
+  bin_name: string;
   name: string | null;
   ordering: string;
   rendition_source: string;
@@ -22,7 +23,7 @@ interface LibraryRow {
 
 // photo_count excludes binned photos: it answers "how big is this library", and
 // the Bin has its own count in the UI.
-const SELECT = `SELECT l.id, l.root_path, l.data_path, l.name, l.ordering, l.rendition_source, l.rendition_hdr, l.rendition_hdr_video,
+const SELECT = `SELECT l.id, l.root_path, l.data_path, l.bin_name, l.name, l.ordering, l.rendition_source, l.rendition_hdr, l.rendition_hdr_video,
   l.include_subfolders, l.mirror_shoots, l.auto_stack, l.auto_stack_similarity, l.auto_stack_window_seconds, l.last_synced_at,
   (SELECT COUNT(*) FROM photos p WHERE p.library_id = l.id AND p.is_deleted = 0) AS photo_count
   FROM libraries l`;
@@ -31,17 +32,21 @@ export class LibrariesRepository {
   constructor(private readonly db: Database) {}
 
   insert(
-    library: Pick<Library, 'id' | 'root_path' | 'data_path' | 'name' | 'ordering' | 'include_subfolders' | 'mirror_shoots'>,
+    library: Pick<
+      Library,
+      'id' | 'root_path' | 'data_path' | 'bin_name' | 'name' | 'ordering' | 'include_subfolders' | 'mirror_shoots'
+    >,
   ): void {
     this.db
       .query(
-        `INSERT INTO libraries (id, root_path, data_path, name, ordering, include_subfolders, mirror_shoots)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO libraries (id, root_path, data_path, bin_name, name, ordering, include_subfolders, mirror_shoots)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         library.id,
         library.root_path,
         library.data_path,
+        library.bin_name,
         library.name,
         library.ordering,
         library.include_subfolders ? 1 : 0,
@@ -120,6 +125,7 @@ function mapRow(row: LibraryRow): Library {
     id: row.id,
     root_path: row.root_path,
     data_path: row.data_path,
+    bin_name: row.bin_name,
     name: row.name,
     ordering: row.ordering as Ordering,
     rendition_source: row.rendition_source as RenditionSource,

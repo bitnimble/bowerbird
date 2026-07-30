@@ -148,12 +148,13 @@ test('moving a file into a known shoot folder reconciles shoot_id', async () => 
 // per-file move detection -> whole-folder inference -> bulk prefix rewrite.
 test('a shoot folder renamed on disk relocates the shoot instead of orphaning its photos', async () => {
   const folderPath = () => (db.query('SELECT folder_path FROM shoots WHERE id = ?').get('sh1') as { folder_path: string }).folder_path;
-  // A soft-deleted photo in the shoot's Bin. Sync never scans these, so nothing
-  // in the move detection can speak for them; only the prefix rewrite can.
+  // A photo binned out of the shoot. Its file is in the library's one bin, which
+  // sync never scans, so nothing in the move detection can speak for it; only the
+  // prefix rewrite can.
   db.query(
-    `INSERT INTO photos (id, library_id, shoot_id, file_path, file_hash, width, height, orientation,
-       date_added, file_size, is_deleted) VALUES (?, ?, ?, ?, 'h', 1, 1, 1, '2024-01-01', 1, 1)`,
-  ).run('binned', LIB, 'sh1', 'ShootFolder/Bin/old.arw');
+    `INSERT INTO photos (id, library_id, shoot_id, file_path, deleted_from_path, file_hash, width, height, orientation,
+       date_added, file_size, is_deleted) VALUES (?, ?, ?, ?, ?, 'h', 1, 1, 1, '2024-01-01', 1, 1)`,
+  ).run('binned', LIB, 'sh1', 'Bin/ShootFolder/old.arw', 'ShootFolder/old.arw');
 
   renameSync(abs('ShootFolder'), abs('Renamed'));
   const status = await sync.syncLibrary(LIB);
@@ -163,12 +164,15 @@ test('a shoot folder renamed on disk relocates the shoot instead of orphaning it
   expect(row('Renamed/renamed.arw')?.shoot_id).toBe('sh1');
   expect(row('ShootFolder/renamed.arw')).toBeNull();
   expect(row('Renamed/renamed.arw')?.is_missing).toBe(0);
-  // The binned photo travelled with the folder, and stayed binned.
-  const binned = db.query('SELECT file_path, is_deleted FROM photos WHERE id = ?').get('binned') as {
+  // The binned photo's file is in the bin and did not move with the folder, so
+  // its path is untouched; what follows the rename is where a restore puts it
+  // back, which is the folder under its new name (§12.3).
+  const binned = db.query('SELECT file_path, deleted_from_path, is_deleted FROM photos WHERE id = ?').get('binned') as {
     file_path: string;
+    deleted_from_path: string;
     is_deleted: number;
   };
-  expect(binned).toEqual({ file_path: 'Renamed/Bin/old.arw', is_deleted: 1 });
+  expect(binned).toEqual({ file_path: 'Bin/ShootFolder/old.arw', deleted_from_path: 'Renamed/old.arw', is_deleted: 1 });
   // Counted as moved, and emphatically not as removed-and-added.
   expect(status.photos_moved).toBe(1);
   expect(status.photos_removed).toBe(0);

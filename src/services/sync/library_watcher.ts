@@ -4,7 +4,7 @@ import { AppError } from '../../errors';
 import { Logger } from '../../logger';
 import type { Library } from '../../schemas/libraries';
 import { isPathAllowed, type LibraryScope } from '../../utils/scope';
-import { getDataPath } from '../../utils/paths';
+import { getBinPath, getDataPath } from '../../utils/paths';
 import type { LibrariesRepository } from '../libraries/libraries_repository';
 import type { LibraryLifecycleListener } from '../libraries/libraries_service';
 import type { SyncService } from './sync_service';
@@ -182,7 +182,11 @@ export class LibraryWatcher implements LibraryLifecycleListener {
   // Absolute paths kept out of the walk entirely. The per-event check below is
   // what makes the rules hold; this is what makes them cheap.
   private ignoredPaths(library: Library, scope: LibraryScope): string[] {
-    const ignored = [getDataPath(library), path.join(library.root_path, '.bowerbird')];
+    // The bin belongs here for the same reason an excluded folder does, and more
+    // so: it is one known path (§12.3) that only ever grows, mirroring the whole
+    // folder tree as photographs are binned, and nothing inside it is ever the
+    // library's to look at.
+    const ignored = [getDataPath(library), path.join(library.root_path, '.bowerbird'), getBinPath(library)];
     for (const folder of scope.excluded) ignored.push(path.join(library.root_path, folder));
     return ignored;
   }

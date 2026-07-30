@@ -275,6 +275,11 @@ p.ui-text--mono {
   flex: 1 1 200px;
 }
 
+.ui-input--invalid {
+  border-color: #4a2a2a;
+  background: #1e1315;
+}
+
 .ui-input input {
   background: none;
   border: 0;
@@ -793,6 +798,10 @@ p.ui-text--mono {
   display: flex;
   gap: 12px;
   align-items: center;
+}
+
+.field__error {
+  color: #f0a9a3;
 }
 
 .empty {

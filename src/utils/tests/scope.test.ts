@@ -6,9 +6,9 @@ const ROOT = '/lib';
 
 // Built through the real constructor rather than as a literal, so the tests
 // cannot drift from how a scope is actually assembled.
-function scope(over: { dataPath?: string; includeSubfolders?: boolean; excluded?: Set<string> } = {}): LibraryScope {
+function scope(over: { dataPath?: string; includeSubfolders?: boolean; excluded?: Set<string>; binName?: string } = {}): LibraryScope {
   return libraryScope(
-    { root_path: ROOT, include_subfolders: over.includeSubfolders ?? true },
+    { root_path: ROOT, include_subfolders: over.includeSubfolders ?? true, bin_name: over.binName ?? 'Bin' },
     over.dataPath ?? path.join(ROOT, '.bowerbird'),
     over.excluded ?? new Set<string>(),
   );
@@ -19,11 +19,28 @@ describe('isDirInScope', () => {
     expect(isDirInScope(scope({ includeSubfolders: false }), '')).toBe(true);
   });
 
-  it('skips dotfolders and Bin at any depth', () => {
+  it('skips dotfolders at any depth', () => {
     expect(isDirInScope(scope(), 'Trip/.git')).toBe(false);
-    expect(isDirInScope(scope(), 'Trip/Bin')).toBe(false);
-    expect(isDirInScope(scope(), 'Trip/Bin/Deeper')).toBe(false);
-    expect(isDirInScope(scope(), 'Trip/Binnacle')).toBe(true); // not the Bin
+    expect(isDirInScope(scope(), '.git/objects')).toBe(false);
+  });
+
+  // The bin is one tree at the root, so that is the only place the name means
+  // anything: a folder of the user's own called Bin further down is theirs, and
+  // dropping it would take its photographs out of the library in silence.
+  it('skips the bin at the root, and only there', () => {
+    expect(isDirInScope(scope(), 'Bin')).toBe(false);
+    expect(isDirInScope(scope(), 'Bin/Trip/2019')).toBe(false);
+    expect(isDirInScope(scope(), 'Trip/Bin')).toBe(true);
+    expect(isDirInScope(scope(), 'Binnacle')).toBe(true); // prefix, not the bin
+  });
+
+  // The name is the library's, so a root that already had a Bin of the user's own
+  // keeps it and skips whatever the bin was named instead.
+  it('skips the library\'s own bin name, and nothing else', () => {
+    const renamed = scope({ binName: 'Deleted' });
+    expect(isDirInScope(renamed, 'Deleted')).toBe(false);
+    expect(isDirInScope(renamed, 'Deleted/Trip')).toBe(false);
+    expect(isDirInScope(renamed, 'Bin')).toBe(true);
   });
 
   it('skips the data directory, wherever it is configured', () => {
@@ -69,8 +86,8 @@ describe('isPathAllowed', () => {
 
   it('still refuses the Bin, dotfolders and the data directory', () => {
     const s = scope();
-    expect(isPathAllowed(s, 'Trip/Bin')).toBe(false);
-    expect(isPathAllowed(s, 'Trip/Bin/a.arw')).toBe(false);
+    expect(isPathAllowed(s, 'Bin')).toBe(false);
+    expect(isPathAllowed(s, 'Bin/Trip/a.arw')).toBe(false);
     expect(isPathAllowed(s, '.bowerbird/renditions/x.avif')).toBe(false);
   });
 });
@@ -81,7 +98,7 @@ describe('isFileInScope', () => {
     expect(isFileInScope(s, 'a.arw')).toBe(true);
     expect(isFileInScope(s, 'Trip/a.arw')).toBe(true);
     expect(isFileInScope(s, 'Rejects/a.arw')).toBe(false);
-    expect(isFileInScope(s, 'Trip/Bin/a.arw')).toBe(false);
+    expect(isFileInScope(s, 'Bin/Trip/a.arw')).toBe(false);
   });
 
   // A root-only library still has its own root.

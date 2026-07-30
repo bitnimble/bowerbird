@@ -79,7 +79,10 @@ test('restore returns the file to the exact path it was deleted from', async () 
   await service.delete([PHOTO]);
   expect(photoRow().is_deleted).toBe(1);
   expect(existsSync(path.join(root, 'Trip', 'a.arw'))).toBe(false);
-  expect(existsSync(path.join(root, 'Trip', 'Bin', 'a.arw'))).toBe(true);
+  // The one bin at the root, mirroring the folder the photo came from - not a
+  // bin inside the shoot folder (§12.3).
+  expect(existsSync(path.join(root, 'Trip', 'Bin'))).toBe(false);
+  expect(existsSync(path.join(root, 'Bin', 'Trip', 'a.arw'))).toBe(true);
 
   await service.restore([PHOTO]);
 
@@ -87,7 +90,7 @@ test('restore returns the file to the exact path it was deleted from', async () 
   expect(row.is_deleted).toBe(0);
   expect(row.file_path).toBe('Trip/a.arw');
   expect(existsSync(path.join(root, 'Trip', 'a.arw'))).toBe(true);
-  expect(existsSync(path.join(root, 'Trip', 'Bin', 'a.arw'))).toBe(false);
+  expect(existsSync(path.join(root, 'Bin', 'Trip', 'a.arw'))).toBe(false);
 });
 
 test('shoot and album membership survive the delete/restore round trip', async () => {
@@ -112,9 +115,9 @@ test('restoring onto an occupied path suffixes rather than overwriting a live ph
   expect(existsSync(path.join(root, 'Trip', 'a_1.arw'))).toBe(true);
 });
 
-// The data directory is disposable, so a photo outside every shoot bins to the
-// library root rather than under `.bowerbird` (DESIGN §12.3).
-test('a photo in no shoot bins to <root>/Bin, never into the data directory', async () => {
+// The data directory is disposable, so a photo in the library root bins to the
+// bin's own root rather than under `.bowerbird` (DESIGN §12.3).
+test('a photo in the library root bins to <root>/Bin, never into the data directory', async () => {
   const LOOSE = '00000000-0000-4000-8000-0000000000be';
   writeFileSync(path.join(root, 'loose.arw'), 'RAW');
   db.query(

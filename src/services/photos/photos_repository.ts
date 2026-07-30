@@ -525,17 +525,26 @@ export class PhotosRepository {
       .all(...ids) as BasicPhoto[];
   }
 
-  // Photos whose file_path is under `folderPath` (any depth). Excludes
-  // soft-deleted photos unless includeDeleted (the shoot-rename cascade needs
-  // them: they live in <folder>/Bin and physically move with the folder).
+  // Photos belonging to `folderPath` (any depth), which for a live photo is where
+  // its file is and for a soft-deleted one is where its file came from: the bin
+  // is one tree at the library root (§12.3), so a binned photo's `file_path` sits
+  // under the bin rather than under the folder it was taken from, and only
+  // `deleted_from_path` still points at that folder.
   listUnderFolder(libraryId: string, folderPath: string, includeDeleted = false): BasicPhoto[] {
     const [lo, hi] = folderRange(folderPath);
-    const deletedClause = includeDeleted ? '' : 'AND is_deleted = 0 ';
+    const live = 'is_deleted = 0 AND file_path >= ? AND file_path < ?';
+    if (!includeDeleted) {
+      return this.db
+        .query(`SELECT id, library_id, file_path, shoot_id FROM photos WHERE library_id = ? AND ${live}`)
+        .all(libraryId, lo, hi) as BasicPhoto[];
+    }
     return this.db
       .query(
-        `SELECT id, library_id, file_path, shoot_id FROM photos WHERE library_id = ? ${deletedClause}AND file_path >= ? AND file_path < ?`,
+        `SELECT id, library_id, file_path, shoot_id FROM photos
+           WHERE library_id = ?
+             AND ((${live}) OR (is_deleted = 1 AND deleted_from_path >= ? AND deleted_from_path < ?))`,
       )
-      .all(libraryId, lo, hi) as BasicPhoto[];
+      .all(libraryId, lo, hi, lo, hi) as BasicPhoto[];
   }
 
   // Hands every photo under `folderPath` to that folder's shoot. Callers run it
@@ -568,8 +577,12 @@ export class PhotosRepository {
   //
   // The non-deleted rows are provably present at the new prefix; the move is
   // only inferred when every one of them was found there; so is_missing clears.
-  // The soft-deleted ones live in <folder>/Bin and were never scanned, so their
-  // path travels with the folder but their state is left alone.
+  //
+  // A soft-deleted row's file is in the bin at the library root and did not move
+  // with the folder, so its `file_path` is left exactly as it is. What does have
+  // to follow is `deleted_from_path`: it is where a restore puts the photo back,
+  // and left pointing at the old prefix a restore would recreate the folder that
+  // was renamed away and put the photo outside the shoot it still belongs to.
   rewritePathPrefix(libraryId: string, oldFolderPath: string, newFolderPath: string): void {
     const [lo, hi] = folderRange(oldFolderPath);
     const tailFrom = oldFolderPath.length + 1; // 1-based: first char after the old prefix
@@ -579,20 +592,12 @@ export class PhotosRepository {
            WHERE library_id = ? AND is_deleted = 0 AND file_path >= ? AND file_path < ?`,
       )
       .run(newFolderPath, tailFrom, libraryId, lo, hi);
-    // `deleted_from_path` travels with the file, or a restore after the folder
-    // moved would recreate the old folder and put the photo back outside the
-    // shoot it still belongs to. It is rewritten by the same prefix, and only
-    // where it points inside the folder that moved.
     this.db
       .query(
-        `UPDATE photos
-            SET file_path = ? || substr(file_path, ?),
-                deleted_from_path = CASE
-                  WHEN deleted_from_path >= ? AND deleted_from_path < ? THEN ? || substr(deleted_from_path, ?)
-                  ELSE deleted_from_path END
-           WHERE library_id = ? AND is_deleted = 1 AND file_path >= ? AND file_path < ?`,
+        `UPDATE photos SET deleted_from_path = ? || substr(deleted_from_path, ?)
+           WHERE library_id = ? AND is_deleted = 1 AND deleted_from_path >= ? AND deleted_from_path < ?`,
       )
-      .run(newFolderPath, tailFrom, lo, hi, newFolderPath, tailFrom, libraryId, lo, hi);
+      .run(newFolderPath, tailFrom, libraryId, lo, hi);
   }
 
   setShoot(photoId: string, shootId: string | null): void {

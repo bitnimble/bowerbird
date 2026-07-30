@@ -30,7 +30,12 @@ CREATE TABLE IF NOT EXISTS libraries (
   -- shoots (§4.1). Standing rules, not import-time choices: a folder created
   -- next month is in or out for the same reason today's are.
   include_subfolders INTEGER NOT NULL DEFAULT 1,
-  mirror_shoots      INTEGER NOT NULL DEFAULT 1
+  mirror_shoots      INTEGER NOT NULL DEFAULT 1,
+  -- The folder soft-deleted RAWs are moved into, and the folder name the scan
+  -- skips everywhere (§12.3). Per library because it is chosen against the root's
+  -- existing contents: a root already holding a 'Bin' of the user's own gets a
+  -- different name rather than having that folder quietly excluded.
+  bin_name    TEXT NOT NULL DEFAULT 'Bin'
 );
 
 CREATE TABLE IF NOT EXISTS shoots (
@@ -383,6 +388,8 @@ export function runMigrations(db: Database): void {
   // What the library contains, and whether its folders are shoots (§4.1).
   ensureColumn(db, 'libraries', 'include_subfolders', 'INTEGER NOT NULL DEFAULT 1');
   ensureColumn(db, 'libraries', 'mirror_shoots', 'INTEGER NOT NULL DEFAULT 1');
+  // The default is what every library predating the column already has on disk.
+  ensureColumn(db, 'libraries', 'bin_name', "TEXT NOT NULL DEFAULT 'Bin'");
   ensureColumn(db, 'shoots', 'folder_dev', 'INTEGER'); // folder identity across a rename (§9.4.1)
   ensureColumn(db, 'shoots', 'folder_ino', 'INTEGER');
   ensureColumn(db, 'shoots', 'folder_birthtime', 'REAL');

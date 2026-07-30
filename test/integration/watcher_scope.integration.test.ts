@@ -34,6 +34,7 @@ beforeEach(async () => {
     id: LIB,
     root_path: root,
     data_path: null,
+    bin_name: 'Bin',
     ordering: 'taken_desc',
     include_subfolders: true,
     mirror_shoots: true,

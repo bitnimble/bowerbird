@@ -1,9 +1,24 @@
 import { z } from 'zod';
 import { OrderingSchema, RenditionSourceSchema, UuidSchema } from './common';
 
+// One folder name, not a path: it names the library's single bin, at its root,
+// and the rest of that bin's layout mirrors the folders photographs came from
+// (§12.3).
+export const BinNameSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .refine((name) => !/[/\\]/.test(name), { message: 'bin folder name must be a single folder name' })
+  .refine((name) => name !== '.' && name !== '..', { message: 'bin folder name must not be "." or ".."' });
+
 export const CreateLibraryRequestSchema = z.object({
   root_path: z.string().min(1),
   data_path: z.string().optional(),
+  // Asked at creation and never after: the name is what the scan skips, so
+  // changing it later would strand every already-binned RAW in a folder the scan
+  // would then walk back in (§12.3). A root that already holds this folder is
+  // refused rather than adopted, since its contents would silently never import.
+  bin_name: BinNameSchema.default('Bin'),
   // Omitted or blank means "call it after its root folder", which is what a
   // library shows until someone gives it a name of its own.
   name: z.string().trim().optional(),
@@ -20,6 +35,7 @@ export const LibrarySchema = z.object({
   id: UuidSchema,
   root_path: z.string(),
   data_path: z.string().nullable(),
+  bin_name: z.string(),
   name: z.string().nullable(),
   ordering: OrderingSchema,
   rendition_source: RenditionSourceSchema,

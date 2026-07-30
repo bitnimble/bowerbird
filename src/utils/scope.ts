@@ -12,6 +12,8 @@ export interface LibraryScope {
   rootPath: string;
   dataPath: string;
   includeSubfolders: boolean;
+  /** The library's bin folder, skipped along with everything under it (§12.3). */
+  binName: string;
   /** Root-relative folder paths carrying an `excluded` rule (§4.7). */
   excluded: ReadonlySet<string>;
   /** `dataPath` already resolved, since every path test compares against it. */
@@ -20,7 +22,7 @@ export interface LibraryScope {
 
 /** The one place a scope is assembled, so every caller asks the same question. */
 export function libraryScope(
-  library: Pick<Library, 'root_path' | 'include_subfolders'>,
+  library: Pick<Library, 'root_path' | 'include_subfolders' | 'bin_name'>,
   dataPath: string,
   excluded: ReadonlySet<string>,
 ): LibraryScope {
@@ -28,16 +30,16 @@ export function libraryScope(
     rootPath: library.root_path,
     dataPath,
     includeSubfolders: library.include_subfolders,
+    binName: library.bin_name,
     excluded,
     resolvedDataPath: path.resolve(dataPath),
   };
 }
 
-// Directory basenames never descended into. See DESIGN §6, §12.2.
-//  - hidden dirs (leading '.') covers `.bowerbird` and other dotfolders
-//  - `Bin` covers the deletion bins so soft-deleted files aren't re-imported
-function isExcludedName(name: string): boolean {
-  return name.startsWith('.') || name === 'Bin';
+// Hidden dirs (leading '.') at any depth: `.bowerbird` and other dotfolders.
+// See DESIGN §6.
+function isHidden(name: string): boolean {
+  return name.startsWith('.');
 }
 
 // The rules that read the path itself, which answer the same whether what sits
@@ -49,7 +51,12 @@ function isExcludedName(name: string): boolean {
 export function isPathAllowed(scope: LibraryScope, relPath: string): boolean {
   if (relPath === '') return true;
   const segments = relPath.split('/');
-  if (segments.some(isExcludedName)) return false;
+  if (segments.some(isHidden)) return false;
+  // The library's one bin, and everything it holds. Anchored at the root rather
+  // than matched at every depth because that is the only place a bin is ever made
+  // (§12.3): a folder of the user's own called `Bin` further down is theirs, and
+  // excluding it by name would drop its photographs from the import in silence.
+  if (segments[0] === scope.binName) return false;
 
   // Excluded is subtree-wide: a folder that is never walked has no children to
   // consider, so an ancestor's rule answers for everything beneath it.

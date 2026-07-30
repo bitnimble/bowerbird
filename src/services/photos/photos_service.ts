@@ -388,9 +388,9 @@ export class PhotosService {
   // holding. A photo that fails is reported and the rest still go.
   //
   // Everything that is not per-file is done per *batch* (§12.1): the rows are
-  // read in one query rather than one detail payload each, the library and its
-  // Bin directory are resolved once, the library's sync lock is taken once, and
-  // the flags are committed a chunk at a time. Done per photo - which is what
+  // read in one query rather than one detail payload each, each bin directory is
+  // created once however many photos land in it, the library's sync lock is taken
+  // once, and the flags are committed a chunk at a time. Done per photo - which is what
   // this was - binning a selection of a million cost 34 minutes before a single
   // byte moved on disk.
   async delete(photoIds: string[], batch?: string): Promise<void> {
@@ -414,7 +414,7 @@ export class PhotosService {
                 moved.push({ id: photo.id, from, to: from, binRelPath: photo.file_path, wasAt: photo.file_path });
                 continue;
               }
-              const binDir = this.binDir(library, photo.shoot_id);
+              const binDir = getBinPath(library, path.dirname(photo.file_path));
               if (!binDirs.has(binDir)) {
                 await ensureDir(binDir);
                 binDirs.add(binDir);
@@ -553,15 +553,6 @@ export class PhotosService {
       }
     }
     return grouped;
-  }
-
-  // Bin lives inside the shoot folder for shoot photos, else at the library root.
-  private binDir(library: Library, shootId: string | null): string {
-    if (shootId) {
-      const shoot = this.shoots.getById(shootId);
-      if (shoot) return path.join(library.root_path, shoot.folder_path, 'Bin');
-    }
-    return getBinPath(library);
   }
 
   private respond(result: PhotoListResult, offset: number, limit: number, ordering: Ordering): PhotoListResponse {

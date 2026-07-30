@@ -28,7 +28,7 @@ async function quiet(): Promise<void> {
 }
 
 async function start(over: Partial<LibraryScope>): Promise<void> {
-  const library = { id: LIB, root_path: root, data_path: null, ordering: 'taken_desc' } as Library;
+  const library = { id: LIB, root_path: root, data_path: null, bin_name: 'Bin', ordering: 'taken_desc' } as Library;
   const libraries = { list: () => [library], getById: () => library } as unknown as LibrariesRepository;
   const sync = {
     syncLibrary: async (_id: string, scope?: readonly string[]) => {
@@ -37,7 +37,7 @@ async function start(over: Partial<LibraryScope>): Promise<void> {
     },
     scopeFor: (): LibraryScope =>
       libraryScope(
-        { root_path: root, include_subfolders: over.includeSubfolders ?? true },
+        { root_path: root, include_subfolders: over.includeSubfolders ?? true, bin_name: over.binName ?? 'Bin' },
         over.dataPath ?? path.join(root, '.bowerbird'),
         over.excluded ?? new Set<string>(),
       ),
@@ -85,12 +85,24 @@ test('a root-only library is woken by its root and not by its subfolders', async
 });
 
 test('the Bin and the data directory never wake a sync', async () => {
-  mkdirSync(path.join(root, 'Trip', 'Bin'), { recursive: true });
+  mkdirSync(path.join(root, 'Bin', 'Trip'), { recursive: true });
   mkdirSync(path.join(root, '.bowerbird'), { recursive: true });
   await start({});
 
-  writeFileSync(path.join(root, 'Trip', 'Bin', 'binned.arw'), '');
+  writeFileSync(path.join(root, 'Bin', 'Trip', 'binned.arw'), '');
   writeFileSync(path.join(root, '.bowerbird', 'stray.arw'), '');
   await quiet();
   expect(calls).toEqual([]);
+});
+
+// The bin is one folder at the root, so the name means nothing anywhere else: a
+// folder of the user's own called Bin is theirs, and its photographs are the
+// library's (§12.3).
+test('a folder called Bin below the root is watched like any other', async () => {
+  mkdirSync(path.join(root, 'Trip', 'Bin'), { recursive: true });
+  await start({});
+
+  writeFileSync(path.join(root, 'Trip', 'Bin', 'kept.arw'), '');
+  await quiet();
+  expect(calls.flatMap((c) => c ?? [])).toContain('Trip/Bin/kept.arw');
 });

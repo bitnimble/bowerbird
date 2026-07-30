@@ -36,6 +36,7 @@ export const AddLibraryDialog = observer(function AddLibraryDialog({
   const [browser, setBrowser] = useState(newBrowser);
   const [path, setPath] = useState('');
   const [name, setName] = useState('');
+  const [binName, setBinName] = useState('Bin');
   const [ordering, setOrdering] = useState<Ordering>('taken_asc');
   const [includeSubfolders, setIncludeSubfolders] = useState(true);
   const [mirrorShoots, setMirrorShoots] = useState(true);
@@ -48,6 +49,7 @@ export const AddLibraryDialog = observer(function AddLibraryDialog({
   useEffect(() => {
     if (!open) return;
     setName('');
+    setBinName('Bin');
     setOrdering('taken_asc');
     setIncludeSubfolders(true);
     setMirrorShoots(true);
@@ -59,11 +61,25 @@ export const AddLibraryDialog = observer(function AddLibraryDialog({
     void next.presenter.open();
   }, [open, libraries]);
 
+  // The scan skips whatever sits at this name in the root, so a folder the user
+  // already keeps there would be adopted as the bin and everything inside it
+  // would silently never import. The server refuses that outright; asking here
+  // means the answer arrives while the name is still being chosen.
+  //
+  // Only answerable while the walk is standing on the folder the box names, which
+  // is every path reached by clicking. A path typed but not opened leaves the
+  // question to the create.
+  const root = path.trim();
+  const bin = binName.trim();
+  const listing = browser.store.listing;
+  const binTaken = bin !== '' && listing?.path === root && listing.directories.some((directory) => directory.name === bin);
+
   async function submit(): Promise<void> {
     setSaving(true);
     const created = await libraries.create({
-      root_path: path.trim(),
+      root_path: root,
       name: name.trim(),
+      bin_name: bin,
       ordering,
       include_subfolders: includeSubfolders,
       mirror_shoots: mirrorShoots,
@@ -106,6 +122,18 @@ export const AddLibraryDialog = observer(function AddLibraryDialog({
 
         <div className="field">
           <Text variant="label" as="span">
+            Bin folder name
+          </Text>
+          <TextField grow label="Bin folder name" value={binName} onChange={setBinName} invalid={binTaken} />
+          <Text variant="mono" as="p" className={binTaken ? 'field__error' : undefined}>
+            {binTaken
+              ? `${root} already has a folder called "${bin}". Pick another name: the library never scans this folder, so everything already inside it would be left out.`
+              : 'Deleted photographs are moved into a folder of this name, beside the photographs they came from. It is never scanned.'}
+          </Text>
+        </div>
+
+        <div className="field">
+          <Text variant="label" as="span">
             Sort photos by
           </Text>
           <Select label="Sort photos by" options={ORDERINGS} value={ordering} onChange={setOrdering} />
@@ -140,7 +168,7 @@ export const AddLibraryDialog = observer(function AddLibraryDialog({
 
         <div className="dialog__actions">
           <Button onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button variant="primary" disabled={path.trim() === '' || saving} onClick={() => void submit()}>
+          <Button variant="primary" disabled={root === '' || bin === '' || binTaken || saving} onClick={() => void submit()}>
             Add library
           </Button>
         </div>
