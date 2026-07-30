@@ -20,7 +20,6 @@ import { StacksService } from './services/stacks/stacks_service';
 import { StacksRepository } from './services/stacks/stacks_repository';
 import { EventsApi } from './api/events/events_api';
 import { ImageApi } from './api/image/image_api';
-import { HdrTestApi } from './api/hdr/hdr_test_api';
 import { QualityCheckApi } from './api/quality/quality_check_api';
 import { SettingsApi } from './api/settings/settings_api';
 import { BrowseApi } from './api/browse/browse_api';
@@ -151,7 +150,6 @@ app.route('/api/stacks', stacksApi.routes);
 app.route('/image', imageApi.routes);
 // Served by the API rather than the web client because it has to be opened
 // directly on an HDR machine, which may not be the one running the UI (§10.7).
-app.route('/hdr-check', new HdrTestApi(photosService, librariesService).routes);
 // Which AVIF quality to ship at: a diagnostic, same reasoning as the HDR check.
 app.route('/quality-check', new QualityCheckApi(photosService, librariesService, settingsRepo).routes);
 

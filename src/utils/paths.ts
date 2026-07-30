@@ -1,6 +1,5 @@
 import path from 'node:path';
 import type { Library } from '../schemas/libraries';
-import { extensionFor, type HdrMedium, type HdrVariant } from '../services/processing/hdr_media';
 import { renditionDir, renditionExtension, type Rendition } from '../services/processing/renditions';
 
 // Whether `child` is `parent` or sits beneath it. Resolved first, so a relative
@@ -50,13 +49,6 @@ export function getRenditionPath(
   video = false,
 ): string {
   return renditionPathFor(getDataPath(library), photoId, rendition, hdr, video);
-}
-
-// One directory per medium and variant, so every generated file stays
-// `<photoId>.<ext>` and the orphan sweep can keep reading a filename as an id
-// (§10.6).
-export function getHdrPath(library: Library, photoId: string, medium: HdrMedium, variant: HdrVariant): string {
-  return path.join(getDataPath(library), 'hdr', medium, variant, `${photoId}${extensionFor(medium)}`);
 }
 
 // The Bin holds originals, which is why it lives beside the photographs and not

@@ -7,7 +7,6 @@ import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { type HdrMedium, type HdrVariant, extensionFor } from '../../src/services/processing/hdr_media';
 import { decodeRaw } from '../../src/services/processing/rawshim_pixels';
 import { decodeRawImage, encodeHdrRendition, freeImage, type ImageHandle } from '../../src/services/processing/rawshim_ops';
 
@@ -39,18 +38,20 @@ function probe(file: string): Probe {
 // Small and fast: these assert tagging, which is independent of resolution, and
 // a full-size encode would put ~10s per case on the suite. One decode, asked for
 // no more than the encode will keep, serves every case.
+type Medium = 'still' | 'video';
+type Variant = 'pq';
+
 let linear: ImageHandle;
 beforeAll(() => {
   linear = decodeRawImage(FIXTURE, 16, 'rec2020-linear', MAX_EDGE);
 });
 afterAll(() => freeImage(linear));
 
-async function encoded(medium: HdrMedium, variant: HdrVariant, run: (file: string) => void): Promise<void> {
+async function encoded(medium: Medium, variant: Variant, run: (file: string) => void): Promise<void> {
   const dir = mkdtempSync(path.join(tmpdir(), 'bb-hdr-'));
   try {
-    // extensionFor, not a local guess: `still-baseline` is an AVIF too, and a
-    // hand-rolled check that only knew about 'still' wrote it as .mp4.
-    const outputPath = path.join(dir, `${variant}${extensionFor(medium)}`);
+    // Only two media now, so the extension is one check rather than a table.
+    const outputPath = path.join(dir, `${variant}${medium === 'video' ? '.mp4' : '.avif'}`);
     encodeHdrRendition(linear, null, { variant, medium, outputPath, peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.99, crf: 40, preset: 12, maxEdge: MAX_EDGE });
     run(outputPath);
   } finally {
@@ -157,33 +158,6 @@ test('the still declares BT.2020 and PQ, which ffmpeg cannot mux into an AVIF at
     expect(stream.pix_fmt).toBe('yuv444p10le');
   });
 });
-
-test('the baseline control is the same picture at 4:2:0, differing in chroma alone', async () => {
-  // It exists to isolate one variable on a decoder that may implement only
-  // AVIF Baseline: same transfer, same primaries, quarter the chroma samples.
-  await encoded('still-baseline', 'pq', (file) => {
-    const stream = probe(file);
-    expect(stream.pix_fmt).toBe('yuv420p10le');
-    expect(stream.color_transfer).toBe('smpte2084');
-    expect(stream.color_primaries).toBe('bt2020');
-  });
-});
-
-test('the SDR references are tagged so they can be compared against', async () => {
-  await encoded('video', 'sdr', (file) => {
-    const stream = probe(file);
-    expect(stream.color_primaries).toBe('bt709');
-    expect(stream.color_transfer).toBe('bt709');
-  });
-  // A still control is sRGB rather than BT.709: same primaries, but a browser
-  // renders an untagged still against sRGB.
-  await encoded('still', 'sdr', (file) => {
-    const stream = probe(file);
-    expect(stream.color_primaries).toBe('bt709');
-    expect(stream.color_transfer).toBe('iec61966-2-1');
-  });
-});
-
 test('the still leaves no intermediate behind', async () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'bb-hdr-'));
   try {

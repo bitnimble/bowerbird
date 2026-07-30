@@ -8,8 +8,6 @@ import type { PendingPhoto, PhotosRepository } from '../photos/photos_repository
 import type { SettingsRepository } from '../settings/settings_repository';
 import type {
   HdrGrade,
-  HdrJob,
-  HdrOutput,
   ProcessingResult,
   ProcessingStage,
   RenditionJob,
@@ -165,22 +163,6 @@ export class ProcessingService {
     };
   }
 
-  // Every HDR rendition the check page wants, in one job: they all grade the same
-  // decode, so a job each demosaiced the frame once per way of writing it down.
-  renderHdr(rawFilePath: string, outputs: HdrOutput[], photoId: string): Promise<void> {
-    const settings = this.settings.get();
-    return this.runOneOff({
-      kind: 'hdr',
-      photoId,
-      rawFilePath,
-      outputs,
-      grade: this.grade(),
-      crf: settings.hdr_crf,
-      preset: settings.hdr_preset,
-      maxEdge: settings.hdr_max_edge,
-    });
-  }
-
   private grade(): HdrGrade {
     const settings = this.settings.get();
     return {
@@ -194,7 +176,7 @@ export class ProcessingService {
   // the user is waiting on, not background work to batch. Its own worker, so a
   // render that takes seconds cannot occupy a pool slot the rendition queue
   // needs.
-  private async runOneOff(job: RenditionJob | HdrJob): Promise<void> {
+  private async runOneOff(job: RenditionJob): Promise<void> {
     const worker = new Worker(WORKER_URL);
     try {
       await new Promise<void>((resolve, reject) => {
@@ -209,7 +191,7 @@ export class ProcessingService {
       // view reads them off a rendition URL, so only a rendition is worth saying.
       // Which stamp it moves follows which file it wrote: a repaired grid tile is
       // the gallery's, anything else is the viewer's.
-      if (job.kind === 'rendition') {
+      {
         const stage: ProcessingStage = job.targets.every((t) => t.rendition === 'grid') ? 'tile' : 'renditions';
         const version = new Date().toISOString();
         if (stage === 'tile') this.photos.markTileBuilt(job.photoId, version);

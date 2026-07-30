@@ -15,7 +15,7 @@ import {
   type HdrMatchHandle,
   type ImageHandle,
 } from './rawshim_ops';
-import type { HdrJob, ProcessingResult, RenditionJob, RenditionTarget, WorkerJob } from './processing_types';
+import type { ProcessingResult, RenditionJob, RenditionTarget, WorkerJob } from './processing_types';
 import { AVIF_EFFORT } from './renditions';
 
 // Bun worker thread (DESIGN §10.3). Writes renditions of one photo - the grid
@@ -112,39 +112,7 @@ function writeHdr(
   );
 }
 
-// The check page's HDR renditions: AVIF stills for Chrome and Safari, one-frame
-// videos for Firefox, which applies a PQ transfer to nothing else (§10.7).
-//
-// Every one of them off a single decode. They are the same photograph and diverge
-// only past the grade, so asking for them one job each demosaiced the frame six
-// times to compare six ways of writing it down.
-async function hdr(job: HdrJob): Promise<void> {
-  const image = decodeRawImage(job.rawFilePath, 16, 'rec2020-linear', job.maxEdge);
-  try {
-    for (const output of job.outputs) {
-      encodeHdrRendition(
-        image,
-        // The check page renders the neutral grade on purpose: it exists to judge the
-        // tone mapping, and the camera's colour on top would be one more variable.
-        null,
-        {
-          variant: output.variant,
-          medium: output.medium,
-          outputPath: output.outputPath,
-          ...job.grade,
-          crf: job.crf,
-          preset: job.preset,
-          maxEdge: job.maxEdge,
-        },
-      );
-    }
-  } finally {
-    freeImage(image);
-  }
-}
-
 function outputsOf(job: WorkerJob): string[] {
-  if (job.kind === 'hdr') return job.outputs.map((output) => output.outputPath);
   return job.targets.flatMap((t) => (t.videoOutputPath == null ? [t.outputPath] : [t.outputPath, t.videoOutputPath]));
 }
 
@@ -308,11 +276,6 @@ self.onmessage = async (event) => {
   const job = event.data;
   try {
     await ensureOutputDirs(job);
-    if (job.kind === 'hdr') {
-      await hdr(job);
-      self.postMessage({ photoId: job.photoId, success: true });
-      return;
-    }
     const descriptor = await renditions(job);
     self.postMessage({ photoId: job.photoId, success: true, descriptor });
   } catch (err) {

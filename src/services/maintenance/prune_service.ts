@@ -3,8 +3,7 @@ import path from 'node:path';
 import { Logger } from '../../logger';
 import type { Library } from '../../schemas/libraries';
 import { deleteGeneratedFile } from '../../utils/deletions';
-import { getDataPath, getHdrPath } from '../../utils/paths';
-import { HDR_MEDIA, HDR_VARIANTS } from '../processing/hdr_media';
+import { getDataPath } from '../../utils/paths';
 import { renditionDirs } from '../processing/renditions';
 import type { LibrariesRepository } from '../libraries/libraries_repository';
 import type { PhotosRepository } from '../photos/photos_repository';
@@ -20,13 +19,7 @@ function generatedDirs(library: Library): Array<{ dir: string; ext: string }> {
     dir: path.join(getDataPath(library), 'renditions', dir),
     ext: extension,
   }));
-  const hdrChecks = HDR_MEDIA.flatMap((medium) =>
-    HDR_VARIANTS.map((variant) => {
-      const sample = getHdrPath(library, 'id', medium, variant);
-      return { dir: path.dirname(sample), ext: path.extname(sample) };
-    }),
-  );
-  return [...renditions, ...hdrChecks];
+  return renditions;
 }
 
 const log = new Logger('prune');

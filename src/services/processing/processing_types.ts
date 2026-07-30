@@ -1,5 +1,4 @@
 import { RENDITION_SOURCES, type RenditionSource } from '../../schemas/common';
-import type { HdrMedium, HdrVariant } from './hdr_media';
 import type { Rendition } from './renditions';
 
 export type { RenditionSource };
@@ -74,33 +73,7 @@ export interface RenditionJob {
   matchEmbeddedJpeg: boolean;
 }
 
-/** One HDR rendition of the check page: which curve, which container, and where. */
-export interface HdrOutput {
-  variant: HdrVariant;
-  medium: HdrMedium;
-  outputPath: string;
-}
-
-// The check page's HDR renditions: AVIF stills for Chrome and Safari, one-frame
-// videos for Firefox, which applies a PQ transfer to nothing else (§10.7). Same cost
-// profile as the lossless export, so they are asked for explicitly too.
-export interface HdrJob {
-  kind: 'hdr';
-  photoId: string;
-  rawFilePath: string;
-  /**
-   * Every rendition to write, off one decode. The page asks for all six at once and
-   * they are the same photograph, diverging only past the grade, so a job each
-   * demosaiced the frame six times over (§10.7).
-   */
-  outputs: HdrOutput[];
-  grade: HdrGrade;
-  crf: number;
-  preset: number;
-  maxEdge: number;
-}
-
-export type WorkerJob = RenditionJob | HdrJob;
+export type WorkerJob = RenditionJob;
 
 export type ProcessingResult =
   // `descriptor` rides back with the grid tile that produced it (§19.3). Computed

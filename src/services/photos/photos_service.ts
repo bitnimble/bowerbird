@@ -14,9 +14,8 @@ import type {
   UpdatePhotoRequest,
 } from '../../schemas/photos';
 import { deleteGeneratedFile } from '../../utils/deletions';
-import { getBinPath, getDataPath, getHdrPath, getOriginalPath, getRenditionPath, toLibraryRelative } from '../../utils/paths';
+import { getBinPath, getDataPath, getOriginalPath, getRenditionPath, toLibraryRelative } from '../../utils/paths';
 import { ensureDir, moveIntoDir } from '../../utils/files';
-import { HDR_MEDIA, HDR_VARIANTS } from '../processing/hdr_media';
 import type { Rendition } from '../processing/renditions';
 import { extractMetadata, type FileMetadata } from '../processing/metadata';
 import { readEmbeddedJpeg } from '../processing/raw_decoder';
@@ -362,30 +361,6 @@ export class PhotosService {
     const startedAt = Date.now();
     await this.processing.renderOne(raw, photo.id, library, rendition, hdr);
     log.info('rendition built on demand', { photo: photo.id, rendition, hdr, forced: force, ms: Date.now() - startedAt });
-  }
-
-  // Builds every rendition at once, both media and including the SDR
-  // references: the point of the exercise is comparing them on real hardware,
-  // and a browser that does one may not do the other.
-  //
-  // One job for the lot, rather than one each. They are six ways of writing down the
-  // same photograph and share everything up to the grade, so a job each paid for a
-  // full-resolution decode six times over.
-  async buildHdr(photoId: string): Promise<void> {
-    const { photo, library } = this.locate(photoId);
-
-    const source = getOriginalPath(library, photo.file_path);
-    if (!existsSync(source)) throw new AppError('NOT_FOUND', `original file not found: ${photo.file_path}`);
-
-    // The file is the cache, as with the lossless render.
-    const outputs = HDR_MEDIA.flatMap((medium) =>
-      HDR_VARIANTS.map((variant) => ({ medium, variant, outputPath: getHdrPath(library, photo.id, medium, variant) })),
-    ).filter((output) => !existsSync(output.outputPath));
-    if (outputs.length === 0) return;
-
-    const startedAt = Date.now();
-    await this.processing.renderHdr(source, outputs, photo.id);
-    log.info('HDR renditions built', { photo: photo.id, built: outputs.length, ms: Date.now() - startedAt });
   }
 
   update(photoId: string, updates: UpdatePhotoRequest): PhotoDetail {

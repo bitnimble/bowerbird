@@ -648,11 +648,6 @@ const AdvancedSettings = observer(function AdvancedSettings(): JSX.Element | nul
           hint="Also applies to both. Higher numbers encode faster for a larger file at the same quality."
           disabledReason={hdrOff}
         />
-        <NumberSetting
-          field="hdr_max_edge"
-          label="HDR check page, longest edge (px)"
-          hint="Longest edge of the images built by the HDR check page, which is a diagnostic for judging HDR on a real display. It does not affect renditions."
-        />
       </div>
 
       <GroupTitle>Maintenance</GroupTitle>

@@ -116,13 +116,6 @@ export const SettingsSchema = z.object({
   // avifenc's `--speed` takes 0-10, libaom's `-cpu-used` stops at 8.
   hdr_crf: z.number().int().min(0).max(63),
   hdr_preset: z.number().int().min(0).max(10),
-  // A judging size, not a capability limit. It was both while the video went
-  // through SVT-AV1, which refuses a frame taller than 8704 rows; libaom takes a
-  // 60MP one in either orientation, so what is left is the reason that always
-  // mattered - this still is for judging HDR on a monitor rather than for
-  // pixel-peeping, which the lossless export already covers, and 4K shows 1:1 on
-  // the displays that do HDR.
-  hdr_max_edge: z.number().int().min(1),
 });
 export type Settings = z.infer<typeof SettingsSchema>;
 
@@ -153,7 +146,6 @@ export const DEFAULT_SETTINGS: Settings = {
   hdr_white_quantile: 0.9,
   hdr_crf: 20,
   hdr_preset: 8,
-  hdr_max_edge: 3840,
 };
 
 export const UpdateSettingsRequestSchema = SettingsSchema.partial();

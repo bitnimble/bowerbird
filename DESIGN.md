@@ -38,7 +38,7 @@ Bowerbird is a high-performance RAW photo management and cataloguing backend des
 - **libvips**, resize, blur and the AVIF/JPEG encoders. Linked by `native/rawshim` rather than dlopen'd, so it is needed to build as well as to run: `apt install libvips-dev` / `brew install vips`. This is the library sharp used to bundle; see §10.4 for why it moved out of node_modules.
 - **libheif's aomenc plugin**, `apt install libheif-plugin-aomenc`. Easy to miss and not optional: Debian ships libheif's codecs as separate plugin packages and libvips pulls in only the *decoders*, so an image without this reads AVIF perfectly and cannot write a single one - which is every rendition this app produces. `bun native/smoke_avif.ts` proves an install has an encoder rather than only a decoder.
 - **ffmpeg**, applies the PQ transfer and encodes the HDR video (§10.7). Needs libzimg for the `zscale` filter and **libaom** for the video; a build missing either cannot produce one. libaom is driven with `-usage allintra`, which is what a one-frame video actually is.
-- **libavif**, which encodes the HDR still *in process* (`avif.rs`, §10.7) - so `libavif-dev` at build time and `libavif16` at runtime. ffmpeg's own avif muxer writes no `colr` box and so cannot tag a still as HDR at all, which is the whole reason this library rather than that muxer. `libavif-bin` comes too, for the `avifenc` the linked path is pinned against.
+- **libavif**, which encodes every AVIF this app writes, in process (`avif.rs`, §10.7) - so `libavif-dev` at build time and `libavif16` at runtime. ffmpeg's own avif muxer writes no `colr` box and so cannot tag a still as HDR at all, which is the whole reason this library rather than that muxer. `libavif-bin` comes too, for the `avifenc` the linked path is pinned against.
 
 ### NPM Dependencies
 
@@ -611,7 +611,6 @@ Each library has a **data directory** for generated files. By default, this is `
 │   ├── max-hdr/
 │   └── max-hdr-video/
 │       └── <photo_uuid>.avif   # every rendition is named by photo id
-└── hdr/                # the HDR check page's renditions (§10.7)
 ```
 
 ### Path Resolution
@@ -1401,7 +1400,9 @@ It runs on an interval rather than at startup: a restart is no evidence anything
 
 Two browsers, two answers. **Chrome** renders HDR stills, on desktop and on Android 14+, from a PQ- or HLG-tagged image. **Firefox** honours no HDR image tagging at all: a flat 50% grey reads 128 whether it carries a PQ cICP chunk or nothing, through a PNG and through a natively decoded JXL alike (§10.5). Its **video** pipeline does composite HDR, on Windows only, by passing the frame through to the compositor and the monitor. The underlying reason is the same for images on every platform and for video on most of them: Gecko's compositor is still 32-bit SDR, and RGBA16F framebuffers (bug 1889288) gate all of it.
 
-So `POST /api/photos/:id/hdr` builds **six** renditions of one photo: a 4:4:4 AVIF still, a 4:2:0 AVIF baseline control and a one-frame AV1 video, each as **PQ** and an **SDR reference**. HLG was dropped: everything that renders HDR renders PQ, and PQ is absolute where HLG is relative to the display's own range. The comparison is the point; a single HDR file on an unknown display proves nothing. Encoding client-side was ruled out. Firefox 153 exposes no `VideoEncoder`, and `VideoFrame` rejects every 10-bit pixel format (`I420P10 is unsupported`), so there is neither an encoder to call nor a way to hand it HDR pixels.
+So an HDR rendition is **two** files: a 4:4:4 AVIF still and a one-frame AV1 video beside it, both PQ.
+
+There were six for a while, and a page at `/hdr-check` to look at them on: the same photo also as a 4:2:0 AVIF baseline control, and each of the three with an SDR reference to compare against. It answered the question it was built for - HDR output cannot be observed from script, since anything read back through a canvas has already been tone-mapped, so the only way to know whether a file lights up a panel was to put it next to one that should not and look. Once that was settled the page was a diagnostic nothing in the product reached, and it kept a whole second encode path alive behind it: an SDR variant with its own transfer and gamut conversion, a 4:2:0 medium, six renditions per photo, and a directory tree of its own under the data path. It is gone, and this section describes what ships. HLG was dropped: everything that renders HDR renders PQ, and PQ is absolute where HLG is relative to the display's own range. Encoding client-side was ruled out. Firefox 153 exposes no `VideoEncoder`, and `VideoFrame` rejects every 10-bit pixel format (`I420P10 is unsupported`), so there is neither an encoder to call nor a way to hand it HDR pixels.
 
 **Decode.** This is the path that makes anything HDR, and until it existed nothing the server produced was. `decodeRaw(..., 'rec2020-linear')` asks LibRaw for Rec.2020 primaries (`output_color=8`), an identity gamma curve, and `no_auto_bright`. The last one matters most: auto-brightening normalises exposure, which spends exactly the headroom above diffuse white that carries the HDR. The result is scene-referred, so a normally exposed frame's mean sits far below the sRGB render's; which is what the integration test asserts, since a decode that quietly stopped applying these would still produce a plausible-looking file.
 
@@ -1455,7 +1456,7 @@ The **mastering-display and content-light metadata** went with SVT-AV1 too, reac
 
 **The rule holds again.** §10.4 states it as *pixels cross only on their way into an HTTP response* - and the encoders were the standing exception, three full-frame transfers across two process boundaries on every HDR still. With libavif linked, the still obeys it. The video does not yet, and that is the one place left where a frame leaves this process for anything but a socket.
 
-**One decode serves all six.** They are six ways of writing down the same photograph and share everything up to the grade, so `POST /api/photos/:id/hdr` is one worker job over a list of outputs rather than a job each. A job each demosaiced the frame six times over - about fifteen seconds of pure repetition on a 61MP body - to compare six containers. The decode is also fitted to `HDR_MAX_EDGE` rather than taken whole, since that is the size every one of them is graded down to.
+**One decode serves the still and its twin.** They are two ways of writing down the same photograph and share everything up to the grade, so they are one worker job with one decode and one graded frame between them (§10.8.1).
 
 ### 10.7.1 Grading scene-linear to display-referred
 
@@ -1481,7 +1482,7 @@ The curve is baked into a 65536-entry lookup table, because a 60MP frame is 180M
 Three traps, all silent:
 
 - **The encoder discards the primaries and transfer** however the `-color_*` options are set, producing a file that reports `color_primaries=unknown`. Measured on SVT-AV1 and still true of libaom, which is why the `av1_metadata` bitstream filter writes them back into the sequence header on whichever encoder is in use. Without it the encode succeeds and the result is not HDR, which is why a unit test pins the exact CICP numbers and an integration test reads them back with `ffprobe`.
-- **Frames are fitted to `HDR_MAX_EDGE`** (default 3840), in linear light before the transfer is applied - resizing after it would average PQ code values and darken the result. The fit is done by `box_resize_u16` before the grade rather than by `zscale` after it, since grading 61MP to produce a 3840px rendition threw away fifteen sixteenths of the most expensive stage (§10.8.1). The check page reports each rendition's actual dimensions rather than implying full resolution.
+- **Frames are fitted to the rendition's own longest edge**, in linear light before the transfer is applied - resizing after it would average PQ code values and darken the result. The fit is done by `box_resize_u16` before the grade rather than by `zscale` after it, since grading 61MP to produce a 3840px rendition threw away fifteen sixteenths of the most expensive stage (§10.8.1).
 - **The renditions outlast a request.** `Bun.serve` idles a connection out after 10s by default and the client sees a closed socket rather than an error, which reads as a crash. `idleTimeout` is raised to Bun's 255s maximum; the lossless render (§10.5) was already close to the old limit on a large frame.
 
 The SDR still is tagged sRGB where the SDR video is tagged BT.709: they share primaries, but BT.709's transfer is a camera OETF and a browser renders an untagged still against sRGB, so sRGB is what makes the control look like an ordinary picture. Stills are 10-bit for every variant, so the control differs from the HDR ones in transfer alone; the SDR video stays 8-bit, which is what an SDR video is.
@@ -1562,7 +1563,7 @@ That reordering costs one thing: the levels can no longer be measured where they
 
 **`match` is required, not optional, everywhere it is passed.** These option objects are built by spread, TypeScript does not excess-check a spread, and an *optional* field a caller forgets is dropped in silence - which is exactly what happened: `HdrEncodeOptions` never declared it, the worker spread it in, and the product rendered unmatched while a unit test calling `grade` directly went on passing. Written `match: HdrMatch | null`, every call site has to say which it means, and an integration test drives `encodeHdr` rather than `grade` so the wiring itself is covered.
 
-**Verification stops at the signalling.** `ffprobe` confirms BT.2020/PQ/BT.2020-ncl and 10-bit on both media, and that each SDR reference is tagged as intended. Whether any of it lights up a panel is not observable from script: the frame goes to the compositor, and anything read back through a canvas has already been tone-mapped. `GET /hdr-check/:photoId` serves a page putting all six side by side, for looking at on real hardware. It is served by the API rather than the web client because the HDR machine may not be the one running the UI.
+**Verification stops at the signalling.** `ffprobe` confirms BT.2020/PQ/BT.2020-ncl and 10-bit on both media, which `hdr_media.integration.test.ts` does on every run. Whether any of it lights up a panel is not observable from script: the frame goes to the compositor, and anything read back through a canvas has already been tone-mapped. The page that used to put six renditions side by side for looking at on real hardware is gone - it answered that question once, and kept a second encode path alive for years afterwards to keep asking it.
 
 ---
 
@@ -1939,7 +1940,6 @@ the bounds; the reasoning behind each number lives beside it there.
 | `hdr_white_quantile` | `0.90` | Quantile of the frame taken as diffuse white (§10.7.1) |
 | `hdr_crf` | `20` | Encoder quality for the HDR renditions; lower is better (§10.7) |
 | `hdr_preset` | `8` | Encoder speed; libaom `-cpu-used` 0-8 and avifenc `--speed` 0-10, both clamped (§10.7) |
-| `hdr_max_edge` | `3840` | Longest edge of an HDR rendition. A judging size, not a capability limit - libaom takes a 60MP frame in either orientation (§10.7) |
 | `watch_enabled` | `true` | Auto-sync a library when its files change on disk (§9.8) |
 | `watch_debounce_ms` | `2000` | Debounce window for coalescing filesystem events (§9.8) |
 | `full_sync_at` | `03:00` | Local `HH:MM` for the daily full reconcile; `""` disables (§9.8) |

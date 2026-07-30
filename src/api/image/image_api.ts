@@ -2,11 +2,10 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { AppError } from '../../errors';
 import type { Library } from '../../schemas/libraries';
-import { getHdrPath, getOriginalPath, getRenditionPath } from '../../utils/paths';
+import { getOriginalPath, getRenditionPath } from '../../utils/paths';
 import { rawMediaType } from '../../utils/scan';
 import { readEmbeddedJpeg } from '../../services/processing/raw_decoder';
 import { decodeFile, encodeJpeg, freeImage } from '../../services/processing/rawshim_ops';
-import { contentTypeFor, isHdrMedium, isHdrVariant } from '../../services/processing/hdr_media';
 import { isRendition, renditionContentType } from '../../services/processing/renditions';
 import type { BasicPhoto } from '../../services/photos/photos_repository';
 import type { PhotosService } from '../../services/photos/photos_service';
@@ -77,15 +76,6 @@ export class ImageApi {
     // camera's JPEG, and either rendered rendition transcoded to JPEG. One route
     // because the menu offering them is one list and only the bytes differ.
     app.get('/:photoId/download/:form', (c) => this.serveDownload(c));
-    // HDR renditions: an AVIF still and a one-frame video, one per transfer,
-    // each with an SDR reference (§10.7).
-    app.get('/:photoId/hdr/:medium/:variant', (c) => {
-      const medium = c.req.param('medium') ?? '';
-      const variant = c.req.param('variant') ?? '';
-      if (!isHdrMedium(medium)) throw new AppError('NOT_FOUND', `unknown HDR medium: ${medium}`);
-      if (!isHdrVariant(variant)) throw new AppError('NOT_FOUND', `unknown HDR variant: ${variant}`);
-      return this.serve(c, contentTypeFor(medium), (lib, photo) => getHdrPath(lib, photo.id, medium, variant));
-    });
     this.routes = app;
   }
 

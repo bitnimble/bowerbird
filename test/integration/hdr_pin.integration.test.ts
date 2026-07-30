@@ -20,7 +20,6 @@
 //   docker exec bowerbird-dev bun test test/integration
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { readFileSync, writeFileSync } from 'node:fs';
-import { HDR_MEDIA, HDR_VARIANTS } from '../../src/services/processing/hdr_media';
 import { fitMatchProfile, type MatchProfile } from '../../src/services/processing/jpeg_match';
 import {
   decodeRawImage,
@@ -79,8 +78,8 @@ const EDGES = [3840, 800, Number.POSITIVE_INFINITY];
 
 test('every argv the encoder builds, across the variant and medium matrix', () => {
   const rows: string[] = [];
-  for (const variant of HDR_VARIANTS) {
-    for (const medium of HDR_MEDIA) {
+  for (const variant of ['pq'] as const) {
+    for (const medium of ['still', 'video'] as const) {
       for (const size of SIZES) {
         for (const maxEdge of EDGES) {
           const options: HdrOptions = {
