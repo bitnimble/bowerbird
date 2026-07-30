@@ -18,7 +18,7 @@ import { SelectionRanges } from './selection';
 import { type Band, displayRowOf, rowAt, runStart, totalRows } from './bands';
 
 /** How many colours open stacks are told apart by before they repeat (`[data-band]`). */
-export const BAND_COLOURS = 4;
+export const BAND_COLOURS = 3;
 
 /** A stack the reader has opened, and the members it is showing. */
 export interface Expansion {

@@ -2254,7 +2254,7 @@ A verdict or rating can move a photo out of the slice being viewed, so a change 
 
 **The ring is drawn off the selection alone**, not off "selected or the cursor". Both were tried; the cursor half is wrong because cmd-clicking a selected photo moves the cursor onto the very photo it deselects, which left a ring on a photo nothing was about to act on. Keeping them in step is therefore the job of the gestures, and of one rule afterwards: an action that has consumed a selection leaves **the cursor, selected** - so a cull that bins the photo it is on carries on from the row that took its place, with the ring saying which row that is rather than `Del` acting on a photo nothing marks. The exception is a collection whose positions now hold something else (a filter change): there the positions go and the cursor stays bare, because until the next block lands it may name a row this collection does not have.
 
-The surviving ring is the **house blue** (`--satin`), which is also an open stack's first band colour, and its weight and corner are one token each (`--ring`, `--radius`) shared with the ring on an open stack's tile and the outline round that stack's band - three parts of one thing, drawn three ways until they were pulled together. A tile carries the same corner as the ring on it, so the ring follows its edge. And a selected tile whose stack is open draws *only* the band's ring: the band colour is the only thing pairing a tile with the rows it opened (§19.6), so a selection ring over the top of it would break the pair.
+The surviving ring is the **house blue** (`--satin`), which no band colour is allowed to be (§19.6), and its weight and corner are one token each (`--ring`, `--radius`) shared with the ring on an open stack's tile and the outline round that stack's band - three parts of one thing, drawn three ways until they were pulled together. A tile carries the same corner as the ring on it, so the ring follows its edge. And a selected tile whose stack is open draws *only* the band's ring: the band colour is the only thing pairing a tile with the rows it opened (§19.6), so a selection ring over the top of it would break the pair.
 
 `Enter` is the double-click for the keyboard, and it has to `preventDefault`, since the frame under the cursor is a button and its own click would otherwise fire behind the navigation and cut the selection down to that one photo. It is the one cull key that is *not* global: every other button, link, menu item and dialog owns its own `Enter`. So that it is not dead for a reader who arrived by clicking the rail link, **an arrow key hands the focus to the scroller** - arrowing the cursor is the reader taking the grid over, and the tab order should follow them there.
 
@@ -2792,10 +2792,12 @@ count)` sorted by position; `rowCount` is the base rows plus each band's
 a prefix-sum walk over that list.
 
 An open stack's tile and its band are ringed in **the same colour**, numbered
-down the collection and wrapping after four. Several stacks open on one row put
+down the collection and wrapping after three. Several stacks open on one row put
 several bands beneath it in a run, and the colour is the only thing saying which
-band came from which tile. The first is the house blue, so the ordinary case of
-one open stack is not a colour to decode.
+band came from which tile. **None of the three is the house blue**, which belongs
+to the selection (§18.3.1): the first used to be, and since a click both selects a
+stack and opens it, that ring beside a genuinely selected photo read as two photos
+selected when only one was.
 
 #### 19.6.1 Keeping bands and the scroll put
 

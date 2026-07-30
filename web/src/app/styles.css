@@ -1301,21 +1301,20 @@ p.ui-text--mono {
 
 /* One colour per open stack, worn by both its tile and its band: several stacks
    open on one row put several bands under it, and the colour is the only thing
-   saying which came from which. The first is the house blue, so the ordinary
-   case of one open stack is not a colour to decode (§19.6). */
-[data-band] {
-  --band: var(--satin);
-}
+   saying which came from which.
 
-[data-band='1'] {
+   None of them is the house blue, which the selection has (§18.3.1): an open
+   stack rings its own tile, and in blue that read as a second photo selected
+   beside whichever one actually was. */
+[data-band] {
   --band: #9d7ce8;
 }
 
-[data-band='2'] {
+[data-band='1'] {
   --band: #d96bb0;
 }
 
-[data-band='3'] {
+[data-band='2'] {
   --band: #d9b23a;
 }
 
