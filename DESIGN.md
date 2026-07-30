@@ -2280,6 +2280,8 @@ Everything is therefore expressed in absolute indices: the keyboard cursor, shif
 
 **Nothing measures the DOM to decide what to render.** The scroller writes width and height into the store from a `ResizeObserver` and its scroll position from its own handler, and every layout question is a computed over those, which is what keeps §18.2's rule against layout reads in hot paths. That `scrollTop` is the one read left in the grid's hot path, because no event carries the scroll position; it is taken in the handler, where the scroll has already been committed so nothing is invalidated and no layout is forced, and written straight to the store everything else reads from.
 
+Masonry is the exception, twice, and both times because its packing is a function of the photographs' shapes rather than of a row model: a block reports the height it laid out to (below), and a tile whose band is joined to it reports where the line put it (§19.6). Both are read in a `ResizeObserver` callback, where layout is already settled, and both are per-block or per-line rather than per-tile.
+
 **A scroll re-renders per row crossed, not per scroll event.** Which rows are on screen changes only when the viewport crosses a row boundary, so `visibleSpan` is its own `computed.struct`: comparing the *value* rather than its inputs means the sections, the tiles and the blocks to fetch are invalidated per row crossed rather than per event. What moves in between is the native scroll, not React - the mounted windows are placed against the anchor (below), which does not move on an ordinary scroll, so their transforms are unchanged for the whole run of frames between one row and the next. Chromium and Firefox both dispatch at most one scroll event per animation frame (measured), so per-event and per-frame are the same thing in practice, and the figures below hold either way.
 
 Three honest limits on that. The span's two edges cross their boundaries at different offsets unless the viewport is an exact multiple of the row pitch, so the real figure at a normal window height is **two** renders per row rather than one. A frame that covers more than a row renders anyway: measured in grid mode on a 100k-photo library at 823px of viewport, a 480px/s scroll renders 6 times in 60 frames and a 1200px/s scroll 14 times, but a 7200px/s fling renders 54 and a 12000px/s one all 60. Masonry is far cheaper (a block pitch is 3,400px, so 0-5 renders across the same range) and list far dearer (65px rows: 14 and 37). And the scrollbar re-renders on every event by design, since drawing the position is its whole job - it is two elements, kept out of `GridScroller` precisely so the thumb moving does not take the mounted tiles with it.
@@ -2760,18 +2762,37 @@ closes it again, which is the same tile doing the same thing twice. The tile sta
 where it is and takes a dark overlay with an up chevron, which is also how the
 stack closes.
 
-**The tile and its band are drawn as one shape**, joined across the row gap: the
-tile leaves its bottom edge open, the band leaves the tile's own column out of its
-top edge, and two stubs carry the sides over the gap between them. So the band
-reads as belonging to that tile rather than to the row, which is the whole question
-a reader asks of it. Only **one band per row** can be joined - the one immediately
-below it, which is the lowest position of that row's open stacks; the rest are
-separated from their tiles by another band and keep a ring of their own, where the
-colour is what pairs them. Masonry joins nothing: its bands break into the flex
-line rather than sitting below a row, and a tile packed by its own shape has no
-column for the gap to be cut from. The gap in the top edge is a mask over the
-ring rather than a redrawn edge, so the ring keeps its exact corners, and the
-column's width is arithmetic over `--cols` - nothing is measured (§18.2).
+**The tile and its band are drawn as one shape**, joined across the gap between
+them: the tile leaves its bottom edge open, the band leaves the tile's own width
+out of its top edge, and two stubs carry the sides over the gap. So the band reads
+as belonging to that tile rather than to the row, which is the whole question a
+reader asks of it. Only **one band per row** is joined - the one immediately below
+it, which is the lowest position of that row's open stacks; the rest are separated
+from their tiles by another band and keep a ring of their own, where the colour is
+what pairs them. Masonry is the same rule per **line**, decided where the lines are
+replayed rather than in the store.
+
+Three details, each of which was wrong first:
+
+- The gap is a **mask over the ring** rather than a redrawn edge, so the ring keeps
+  its exact geometry, and it is cut at the tile's *outer* edges - a gap ending at
+  the tile's inner edge left the corner short by a ring's width and read as broken.
+- A gap that reaches an end of the band **squares that corner off**. The tile's own
+  edge runs straight down into it, and against the 4px arc that left a nick on one
+  side and a broken corner on the other. Both ends at once is the single-column
+  case, where the top edge disappears entirely and the two boxes are one.
+- The stubs set `box-sizing` themselves: the reset's `*` does not match
+  pseudo-elements, so their two borders were added outside the width and the right
+  one landed a ring's width past the tile's edge.
+
+Where the tile is comes from arithmetic where there is a row model - a column
+index, and CSS works the width out from `--cols` - and from a **measurement** in
+masonry, which is the one place it cannot be computed: a line grows its tiles from
+their own shapes or hands the slack to a spacer depending on what follows it, so a
+tile's place on one is not arithmetic the way a column is. The joined tile reports
+its own offset and width (`fusedTileBoxes`), which is at most one tile per line and
+the same exception, for the same reason, as a masonry block reporting its height
+(§18.3.2). Until it lands the band is drawn whole for a frame.
 
 The members live alone in that band and never share a row with photos outside
 the stack, so no tile ever changes which neighbours it sits beside: the grid

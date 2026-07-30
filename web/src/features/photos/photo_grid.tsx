@@ -117,10 +117,13 @@ const Tile = observer(function Tile({
   photo,
   index,
   isFocused,
+  fused,
 }: {
   photo: PhotoSummary;
   index: number;
   isFocused: boolean;
+  /** Whether this tile's band is the one drawn joined to it (§19.6). */
+  fused: boolean;
 }): JSX.Element {
   const store = usePhotosStore();
   const { photos } = usePresenters();
@@ -140,6 +143,22 @@ const Tile = observer(function Tile({
     if (!isFocused || store.mode !== 'masonry') return;
     frame.current?.scrollIntoView({ block: 'nearest' });
   }, [isFocused, store.mode, store.tileSize, store.viewportWidth]);
+  // Where a joined masonry tile sits on its line, reported for its band to cut its
+  // top edge to (`fusedTileBoxes`). The one thing about the join that cannot be
+  // computed: a line grows its tiles from their own shapes, or hands the slack to a
+  // spacer, depending on what follows it. Off the tile that is actually joined, so
+  // at most one per line - and re-run on the two inputs the packing is a function
+  // of, since a resize or a zoom moves the tile without resizing every one of them.
+  const stackId = photo.stack_id;
+  useEffect(() => {
+    const element = frame.current;
+    if (!fused || store.mode !== 'masonry' || element == null || stackId == null) return;
+    const report = (): void => photos.measuredFusedTile(stackId, element.offsetLeft, element.offsetWidth);
+    report();
+    const observer = new ResizeObserver(report);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [fused, stackId, store.mode, store.tileSize, store.viewportWidth, photos]);
   // A rendition 404s while processing is still writing it, and the announcement
   // is what brings it back: the version is this row's own `date_reprocessed`,
   // which the announcement for this photo writes into it, so a new URL is one
@@ -165,7 +184,6 @@ const Tile = observer(function Tile({
   const selected = store.selection.has(index);
   const expanded = photo.stack_id != null && store.expansions.has(photo.stack_id);
   const stacked = photo.stack_id != null && photo.stack_size > 1;
-  const fused = expanded && store.fusedStacks.has(photo.stack_id!);
 
   return (
     // The set size and position are stated because only a few dozen tiles are in
@@ -362,7 +380,10 @@ function tilesFor(store: PhotosStore, from: number, to: number): JSX.Element[] {
     // want rather than stretched across the width; a band after that line takes
     // the ::after off it, so the line is given one of its own.
     if (last) tiles.push(<span key="line-end" className="grid__line-end" aria-hidden="true" />);
-    for (const open of pending.splice(0)) tiles.push(<BandTiles key={`band-${open.stackId}`} expansion={open} />);
+    // The first of a line's bands is the one drawn joined to its tile: the others
+    // are separated from theirs by a band, and their colour is what pairs them.
+    for (const [i, open] of pending.splice(0).entries())
+      tiles.push(<BandTiles key={`band-${open.stackId}`} expansion={open} fused={i === 0} />);
   };
 
   for (let index = from; index < to; index++) {
@@ -388,8 +409,13 @@ function tilesFor(store: PhotosStore, from: number, to: number): JSX.Element[] {
       );
       continue;
     }
-    tiles.push(<Tile key={photo.id} photo={photo} index={index} isFocused={store.focusIndex === index} />);
     const open = masonry ? store.expansionAt(index) : null;
+    // In masonry the joined band is the first one open on the line, since a line's
+    // bands follow it in a run; with a row model the store answers it (§19.6).
+    const fused = masonry
+      ? open != null && pending.length === 0
+      : photo.stack_id != null && store.fusedStacks.has(photo.stack_id);
+    tiles.push(<Tile key={photo.id} photo={photo} index={index} isFocused={store.focusIndex === index} fused={fused} />);
     if (open != null) pending.push(open);
   }
   // Whatever is still open on the block's last line, which has no line after it
@@ -410,26 +436,65 @@ function ratiosFor(store: PhotosStore, from: number, to: number): number[] {
   return ratios;
 }
 
+/**
+ * Where a joined band cuts the gap in its top edge, and whether that gap reaches
+ * either end of it (§19.6).
+ *
+ * A gap that ends where the band's own corner is has to square that corner off:
+ * the tile's edge above runs straight into it, and against a 4px arc it read as a
+ * broken corner on one side and a nick on the other.
+ *
+ * Two ways of knowing where the tile is. With a row model it is a column, so the
+ * offsets are arithmetic CSS can do from the count alone. In masonry it is
+ * whatever the line's packing made it, which the tile measures and reports
+ * (`fusedTileBoxes`); until that lands there is nothing to cut, so the band is
+ * drawn whole for a frame.
+ */
+function joinTo(
+  store: PhotosStore,
+  expansion: Expansion,
+  placed: boolean,
+): { first: boolean; last: boolean; vars: React.CSSProperties } | null {
+  if (!placed) {
+    const box = store.fusedTileBoxes.get(expansion.stackId);
+    if (box == null) return null;
+    return {
+      first: box.x <= 0.5,
+      last: box.x + box.width >= store.viewportWidth - 0.5,
+      vars: { '--fuse-x': `${box.x}px`, '--fuse-w': `${box.width}px` } as React.CSSProperties,
+    };
+  }
+  const column = expansion.position % store.columns;
+  return {
+    first: column === 0,
+    last: column === store.columns - 1,
+    vars: { '--fuse-col': column } as React.CSSProperties,
+  };
+}
+
 // The members of one open stack, as a band. Without a top it is masonry's: a
 // full-width item inside the block's own flex line, rather than a section the
 // row arithmetic placed at a height of its own.
 const BandTiles = observer(function BandTiles({
   expansion,
   top,
+  fused,
 }: {
   expansion: Expansion;
   top?: number;
+  /** Whether this band is the one drawn joined to its own tile (§19.6). */
+  fused: boolean;
 }): JSX.Element {
   const store = usePhotosStore();
   const rows = bandRows(expansion.photos.length, store.columns);
   const placed = top != null;
-  const fused = store.fusedStacks.has(expansion.stackId);
+  const join = fused ? joinTo(store, expansion, placed) : null;
 
   return (
     <div
       className={`grid grid--${store.mode} grid__band${placed ? ' grid__window' : ' grid__band--inline'}${
-        fused ? ' grid__band--fused' : ''
-      }`}
+        join == null ? '' : ' grid__band--fused'
+      }${join?.first === true ? ' grid__band--fuse-first' : ''}${join?.last === true ? ' grid__band--fuse-last' : ''}`}
       data-band={store.bandColours.get(expansion.stackId)}
       role="group"
       aria-label={`${expansion.photos.length} photos in this stack`}
@@ -437,10 +502,7 @@ const BandTiles = observer(function BandTiles({
         {
           ...(placed ? { transform: `translateY(${store.railPositionOf(top)}px)` } : {}),
           '--cols': store.columns,
-          // Which column the stack's own tile sits in, so the joined edge leaves a
-          // gap exactly that wide (§19.6). The width itself is arithmetic CSS can
-          // do from the column count, so nothing here is measured.
-          ...(fused ? { '--fuse-col': expansion.position % store.columns } : {}),
+          ...join?.vars,
           // A band gets exactly the display rows the row arithmetic gave it, so
           // the padding inside its outline comes out of its own cells rather than
           // out of the collection below it.
@@ -896,7 +958,12 @@ const GridScroller = observer(function GridScroller(): JSX.Element {
                   {tilesFor(store, section.from, section.to)}
                 </div>
               ) : (
-                <BandTiles key={section.key} expansion={section} top={section.top} />
+                <BandTiles
+                  key={section.key}
+                  expansion={section}
+                  top={section.top}
+                  fused={store.fusedStacks.has(section.stackId)}
+                />
               ),
             )
           )}

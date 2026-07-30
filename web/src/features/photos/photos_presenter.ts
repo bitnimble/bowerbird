@@ -254,6 +254,27 @@ export class PhotosPresenter {
   }
 
   /**
+   * A joined masonry tile reporting where it ended up on its line, so its band can
+   * cut the gap in its top edge to match (§19.6).
+   */
+  // A measurement outlives the band it was taken for otherwise, and a stack the
+  // reader keeps opening and closing would leave one behind every time.
+  @action
+  private forgetFusedTiles(open: ReadonlyMap<string, Expansion>): void {
+    if (this.store.fusedTileBoxes.size === 0) return;
+    this.store.fusedTileBoxes = new Map([...this.store.fusedTileBoxes].filter(([stackId]) => open.has(stackId)));
+  }
+
+  @action.bound
+  measuredFusedTile(stackId: string, x: number, width: number): void {
+    const held = this.store.fusedTileBoxes.get(stackId);
+    if (held != null && Math.abs(held.x - x) < 0.5 && Math.abs(held.width - width) < 0.5) return;
+    const next = new Map(this.store.fusedTileBoxes);
+    next.set(stackId, { x, width });
+    this.store.fusedTileBoxes = next;
+  }
+
+  /**
    * A masonry block reporting the height it actually laid out to, replacing the
    * estimate the scroll was built from.
    */
@@ -847,6 +868,7 @@ export class PhotosPresenter {
       const next = new Map(this.store.expansions);
       next.delete(stackId);
       this.store.expansions = next;
+      this.forgetFusedTiles(next);
       this.bandShift(position, -rows, was);
       return;
     }
@@ -972,6 +994,7 @@ export class PhotosPresenter {
           kept.set(stackId, { ...open, position, photos });
         }
         this.store.expansions = kept;
+        this.forgetFusedTiles(kept);
         // A re-read closes bands whose stack has left and re-places the rest, all
         // of it above the reader as often as not, so the view has to be put back on
         // the row it was on - the same correction one band's own toggle makes.

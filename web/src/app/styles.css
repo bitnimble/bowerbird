@@ -1380,6 +1380,18 @@ p.ui-text--mono {
   --fuse-r: calc(var(--fuse-x) + var(--fuse-w));
 }
 
+/* A gap that reaches an end of the band squares that corner off: the tile's own
+   edge runs straight down into it, and a 4px arc between the two read as a broken
+   corner. Masonry sets the offsets in pixels instead, so the same two rules serve
+   both (`joinTo`). */
+.grid__band--fuse-first {
+  border-top-left-radius: 0;
+}
+
+.grid__band--fuse-last {
+  border-top-right-radius: 0;
+}
+
 /* The hole is the tile's *interior*, so the top edge still runs under the tile's
    two sides and turns the corner into them; cut at the tile's outer edge instead,
    the line stopped a ring's width short and read as a broken corner. */
@@ -1393,6 +1405,10 @@ p.ui-text--mono {
 .grid__band--fused::before {
   content: '';
   position: absolute;
+  /* The reset's `*` does not match pseudo-elements, so without this the two
+     borders are added *outside* the width and the right one lands a ring's width
+     past the tile's own edge. */
+  box-sizing: border-box;
   left: var(--fuse-x);
   width: var(--fuse-w);
   top: calc(-1 * var(--grid-gap));

@@ -169,6 +169,16 @@ export class PhotosStore {
   // collection changed underneath it.
   @observable accessor expansions = new Map<string, Expansion>();
 
+  // Where a joined masonry tile sits on its line, by stack id: the offset and
+  // width its band cuts the gap in its top edge from (§19.6).
+  //
+  // Measured, and the only geometry in the grid that is. A masonry line grows its
+  // tiles from their own shapes *or* hands the slack to a spacer depending on what
+  // follows the line, so where a tile ended up on one is not arithmetic the way a
+  // column is - the same reason a masonry block's height is measured rather than
+  // computed (§18.3.2). One tile per line, and only while it is joined.
+  @observable accessor fusedTileBoxes = new Map<string, { x: number; width: number }>();
+
   // Which members of open bands are selected, by id.
   //
   // Ids rather than positions, and legitimately so: the listing is collapsed, so
@@ -469,8 +479,8 @@ export class PhotosStore {
    * from. The rest are separated from their tiles by another band and keep a ring
    * of their own; the colour is what ties those to their tiles (§19.6).
    *
-   * Masonry has no row model to be immediately below, and packs its bands into the
-   * flex line instead, so nothing there is joined.
+   * Masonry answers this per *line* rather than per row, and it does so where the
+   * lines are replayed (`tilesFor`); this is for the two modes with a row model.
    */
   @computed get fusedStacks(): Set<string> {
     if (this.mode === 'masonry') return new Set();

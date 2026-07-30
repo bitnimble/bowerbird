@@ -59,6 +59,9 @@ test('every view opens the band, and none of them draws it over the grid', async
     const band = page.locator('.grid__band');
     await expect(band).toHaveCount(1);
     await expect(page.locator('.grid__band .tile')).toHaveCount(PHOTO_NAMES.length);
+    // Joined to the tile that opened it in every view, masonry included - where the
+    // tile's place on its line has to be measured before the edge can be cut.
+    await expect(page.locator('.grid__band--fused')).toHaveCount(1);
 
     // The members sit inside the outline rather than on it: the band pays for
     // that padding out of its own cells, so its last row cannot hang through the
