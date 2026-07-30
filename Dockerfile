@@ -1,9 +1,12 @@
 # Bowerbird backend. Every pixel operation goes through native/rawshim, which links
-# LibRaw, libvips and lensfun, so the image ships all three as system libraries.
+# LibRaw, libvips, libavif and lensfun, so the image ships all four as system
+# libraries.
 #
-# Debian rather than Alpine, which would save ~50MB of base: Alpine's `vips` package
-# is built without libheif, so it has no `heifsave` and cannot write a single AVIF -
-# which is every rendition this app produces. True on stable and on edge.
+# Debian rather than Alpine, which would save ~50MB of base. The original reason no
+# longer holds - it was that Alpine's `vips` is built without libheif and so cannot
+# write an AVIF, which stopped mattering when the encode moved to libavif - so this
+# is now inertia rather than a constraint. Alpine is untested; musl against LibRaw
+# and lensfun is the part to check before trying it.
 FROM debian:trixie-slim AS base
 WORKDIR /app
 
@@ -24,19 +27,13 @@ RUN printf '%s\n' \
 # (libicu-dev, perl, libhdf5-dev, libc6-dev) against 127MB for the library itself,
 # and every byte of it was reaching the final image through this layer.
 #
-# libheif-plugin-aomenc is not optional and is easy to miss. Debian ships libheif's
-# codecs as separate plugin packages, and libvips pulls in only the *decoders*
-# (dav1d, libde265) - so without this the image reads AVIF perfectly and cannot
-# write a single one, which is every rendition this app produces. It surfaces as
-# `heifsave` returning an error and nothing more specific.
-#
 # ffmpeg applies the PQ transfer and encodes the HDR video (§10.7). It needs
-# libzimg for the zscale filter, which is what applies the transfer, and
-# libsvtav1 for the video. SVT-AV1 implements AV1 Profile 0 only, which is
-# exactly what is wanted: 4:4:4 is Profile 1, which no hardware decoder will
-# take, and the video exists to reach a hardware HDR path.
+# libzimg for the zscale filter, which is what applies the transfer, and libaom
+# for the video, driven with `-usage allintra`. Profile 0 (4:2:0) is exactly what
+# is wanted there: 4:4:4 is Profile 1, which no hardware decoder will take, and
+# the video exists to reach a hardware HDR path.
 #
-# libavif is what writes the HDR still. rawshim links it directly (`avif.rs`), so
+# libavif is what writes every AVIF. rawshim links it directly (`avif.rs`), so
 # the runtime needs the library rather than the binary: the frame is handed over as
 # a pointer instead of being written to ffmpeg's stdin, converted, written again as
 # y4m and read back by avifenc. libavif-bin comes along anyway because `avifenc` is
@@ -60,7 +57,7 @@ RUN printf '%s\n' \
 # why the build stage below opens with --fix-broken.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
-     libraw23t64 libvips42t64 liblensfun1 libheif-plugin-aomenc ffmpeg libavif16 libavif-bin \
+     libraw23t64 libvips42t64 liblensfun1 ffmpeg libavif16 libavif-bin \
   && dpkg --force-depends --purge libllvm19 libz3-4 mesa-libgallium libgl1-mesa-dri libglx-mesa0 \
   && rm -rf /var/lib/apt/lists/*
 
@@ -153,7 +150,7 @@ COPY --from=native --chown=bun:bun /build/x86-64-v3/release/librawshim.so ./nati
 COPY --from=native --chown=bun:bun /build/x86-64-v4/release/librawshim.so ./native/librawshim.v4.so
 # native/ stays writable rather than read-only: the entrypoint symlinks the variant
 # it picked into it on every start.
-COPY --chown=bun:bun native/entrypoint.sh native/verify_shim.ts native/smoke_avif.ts ./native/
+COPY --chown=bun:bun native/entrypoint.sh native/verify_shim.ts ./native/
 RUN chmod +x ./native/entrypoint.sh
 COPY --chown=bun:bun package.json bun.lock tsconfig.json ./
 COPY --chown=bun:bun src ./src

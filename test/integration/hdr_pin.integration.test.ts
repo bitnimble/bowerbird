@@ -76,30 +76,27 @@ const SIZES = [
 ];
 const EDGES = [3840, 800, Number.POSITIVE_INFINITY];
 
-test('every argv the encoder builds, across the variant and medium matrix', () => {
+test('every argv the encoder builds, across the medium and size matrix', () => {
   const rows: string[] = [];
-  for (const variant of ['pq'] as const) {
-    for (const medium of ['still', 'video'] as const) {
-      for (const size of SIZES) {
-        for (const maxEdge of EDGES) {
-          const options: HdrOptions = {
-            variant,
-            medium,
-            outputPath: '/out/rendition' + (medium === 'video' ? '.mp4' : '.avif'),
-            peakNits: 1000,
-            referenceWhiteNits: 203,
-            whiteQuantile: 0.9,
-            crf: 8,
-            preset: 8,
-            maxEdge,
-          };
-          const key = `${variant}|${medium}|${size.width}x${size.height}|edge=${maxEdge}`;
-          rows.push(`${key}\tsize\t${hdrArgv(options, size.width, size.height, 'size')[0]}`);
-          rows.push(`${key}\tffmpeg\t${hdrArgv(options, size.width, size.height, 'ffmpeg').join(SEP)}`);
-          if (medium !== 'video') {
-            const argv = hdrArgv(options, size.width, size.height, 'avifenc', '/out/rendition.avif.y4m');
-            rows.push(`${key}\tavifenc\t${argv.join(SEP)}`);
-          }
+  for (const medium of ['still', 'video'] as const) {
+    for (const size of SIZES) {
+      for (const maxEdge of EDGES) {
+        const options: HdrOptions = {
+          medium,
+          outputPath: '/out/rendition' + (medium === 'video' ? '.mp4' : '.avif'),
+          peakNits: 1000,
+          referenceWhiteNits: 203,
+          whiteQuantile: 0.9,
+          crf: 8,
+          preset: 8,
+          maxEdge,
+        };
+        const key = `${medium}|${size.width}x${size.height}|edge=${maxEdge}`;
+        rows.push(`${key}\tsize\t${hdrArgv(options, size.width, size.height, 'size')[0]}`);
+        rows.push(`${key}\tffmpeg\t${hdrArgv(options, size.width, size.height, 'ffmpeg').join(SEP)}`);
+        if (medium !== 'video') {
+          const argv = hdrArgv(options, size.width, size.height, 'avifenc', '/out/rendition.avif.y4m');
+          rows.push(`${key}\tavifenc\t${argv.join(SEP)}`);
         }
       }
     }
@@ -126,7 +123,6 @@ test(
       ['matched-rolloff', true, 800, 203],
     ] as const) {
       const options: HdrOptions = {
-        variant: 'pq',
         medium: 'still',
         outputPath: '/dev/null',
         peakNits,

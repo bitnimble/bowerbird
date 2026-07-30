@@ -34,7 +34,6 @@ const TIMEOUT = 180_000;
 
 function options(overrides: Partial<HdrOptions> = {}): HdrOptions {
   return {
-    variant: 'pq',
     medium: 'still',
     outputPath: '/dev/null',
     peakNits: PEAK,

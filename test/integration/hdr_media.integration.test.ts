@@ -39,7 +39,6 @@ function probe(file: string): Probe {
 // a full-size encode would put ~10s per case on the suite. One decode, asked for
 // no more than the encode will keep, serves every case.
 type Medium = 'still' | 'video';
-type Variant = 'pq';
 
 let linear: ImageHandle;
 beforeAll(() => {
@@ -47,12 +46,12 @@ beforeAll(() => {
 });
 afterAll(() => freeImage(linear));
 
-async function encoded(medium: Medium, variant: Variant, run: (file: string) => void): Promise<void> {
+async function encoded(medium: Medium, run: (file: string) => void): Promise<void> {
   const dir = mkdtempSync(path.join(tmpdir(), 'bb-hdr-'));
   try {
     // Only two media now, so the extension is one check rather than a table.
-    const outputPath = path.join(dir, `${variant}${medium === 'video' ? '.mp4' : '.avif'}`);
-    encodeHdrRendition(linear, null, { variant, medium, outputPath, peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.99, crf: 40, preset: 12, maxEdge: MAX_EDGE });
+    const outputPath = path.join(dir, medium === 'video' ? 'pq.mp4' : 'pq.avif');
+    encodeHdrRendition(linear, null, { medium, outputPath, peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.99, crf: 40, preset: 12, maxEdge: MAX_EDGE });
     run(outputPath);
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -74,7 +73,7 @@ test('one call writes the still and its video twin, each tagged as its own mediu
       encodeHdrRendition(
         image,
         null,
-        { variant: 'pq', medium: 'still', outputPath: still, peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.99, crf: 40, preset: 12, maxEdge: 640 },
+        { medium: 'still', outputPath: still, peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.99, crf: 40, preset: 12, maxEdge: 640 },
         video,
       );
     } finally {
@@ -135,7 +134,7 @@ test('a scene-linear decode keeps the highlight headroom an sRGB one spends', ()
 });
 
 test('the video declares BT.2020 and PQ, which no encoder option alone achieves', async () => {
-  await encoded('video', 'pq', (file) => {
+  await encoded('video', (file) => {
     const stream = probe(file);
     expect(stream.color_primaries).toBe('bt2020');
     expect(stream.color_transfer).toBe('smpte2084');
@@ -150,7 +149,7 @@ test('the video declares BT.2020 and PQ, which no encoder option alone achieves'
 test('the still declares BT.2020 and PQ, which ffmpeg cannot mux into an AVIF at all', async () => {
   // ffmpeg's avif muxer writes no colr box, so this is what proves the detour
   // through avifenc is doing its job.
-  await encoded('still', 'pq', (file) => {
+  await encoded('still', (file) => {
     const stream = probe(file);
     expect(stream.color_primaries).toBe('bt2020');
     expect(stream.color_transfer).toBe('smpte2084');
@@ -162,7 +161,7 @@ test('the still leaves no intermediate behind', async () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'bb-hdr-'));
   try {
     const outputPath = path.join(dir, 'pq.avif');
-    encodeHdrRendition(linear, null, { variant: 'pq', medium: 'still', outputPath, peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.99, crf: 40, preset: 12, maxEdge: MAX_EDGE });
+    encodeHdrRendition(linear, null, { medium: 'still', outputPath, peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.99, crf: 40, preset: 12, maxEdge: MAX_EDGE });
     // The y4m is uncompressed 10-bit, so a leaked one is tens of megabytes per
     // photo sitting next to the output that replaced it.
     expect(await Bun.file(`${outputPath}.y4m`).exists()).toBe(false);
@@ -178,7 +177,6 @@ test('an 8-bit decode is refused rather than encoded as something HDR-shaped', (
   try {
     expect(() =>
       encodeHdrRendition(image, null, {
-        variant: 'pq',
         medium: 'still',
         outputPath: '/tmp/never.avif',
         peakNits: 1000,

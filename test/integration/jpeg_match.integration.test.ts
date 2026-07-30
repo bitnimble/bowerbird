@@ -324,7 +324,6 @@ describe('fitMatchProfile', () => {
         try {
           const viaSdr = fitMatchProfile(file, sdr);
           fitted = fitHdrFromLinear(linear, file, {
-            variant: 'pq',
             medium: 'still',
             outputPath: '',
             peakNits: 1000,

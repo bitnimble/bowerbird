@@ -30,24 +30,6 @@ fn thread_count() -> i32 {
         .unwrap_or_else(|| std::thread::available_parallelism().map(|n| n.get() as i32).unwrap_or(4))
 }
 
-/// Which AV1 encoder libheif should use for AVIF, overridable with
-/// BOWERBIRD_AVIF_ENCODER (aom, rav1e, svt).
-///
-/// Named rather than `auto` on purpose; see `save_avif`. Anything unrecognised
-/// falls back to aom rather than to libheif's plugin ordering, because the failure
-/// this guards against is a silent one.
-fn avif_encoder() -> u32 {
-    use libvips::bindings as b;
-    match std::env::var("BOWERBIRD_AVIF_ENCODER").unwrap_or_default().as_str() {
-        "rav1e" => b::VipsForeignHeifEncoder_VIPS_FOREIGN_HEIF_ENCODER_RAV1E,
-        "svt" => b::VipsForeignHeifEncoder_VIPS_FOREIGN_HEIF_ENCODER_SVT,
-        // libheif's own pick, by plugin priority. What this did before the encoder
-        // was named, and kept only so that behaviour stays reachable for testing.
-        "auto" => b::VipsForeignHeifEncoder_VIPS_FOREIGN_HEIF_ENCODER_AUTO,
-        _ => b::VipsForeignHeifEncoder_VIPS_FOREIGN_HEIF_ENCODER_AOM,
-    }
-}
-
 /// The largest 1/2, 1/4 or 1/8 DCT scale that still covers `target`.
 ///
 /// libjpeg can only scale by these factors during the transform, so this gets as
@@ -288,45 +270,6 @@ impl<'a> Pipeline<'a> {
         to_rgb(&self.image)
     }
 
-    /// AVIF, 4:4:4. Chroma is kept at full resolution because these are
-    /// photographs: 4:2:0 smears the saturated edges a photo is judged on
-    /// (DESIGN 10.1).
-    ///
-    /// The encoder is named rather than left to libheif's plugin priority, and
-    /// that is load-bearing: 4:4:4 is an AV1 profile, not a setting, and SVT-AV1
-    /// implements Profile 0 only while *converting silently* (DESIGN 10.7). If a
-    /// deployment happened to have the svtenc plugin at a higher priority, `auto`
-    /// would quietly ship 4:2:0. BOWERBIRD_AVIF_ENCODER overrides for measurement.
-    pub fn save_avif(self, quality: i32, effort: i32, out_path: &str) -> Result<()> {
-        use libvips::bindings;
-        use std::ffi::{c_char, CString};
-
-        let path = CString::new(out_path).map_err(|_| "output path contains a NUL".to_string())?;
-        let image = self.finish()?;
-        let encoder = avif_encoder();
-
-        // SAFETY: as `writer`. The property names are NUL-terminated literals and
-        // the list is NULL-terminated, as the varargs contract requires.
-        writer("heifsave", &image, |source| unsafe {
-            bindings::vips_heifsave(
-                source,
-                path.as_ptr(),
-                c"Q".as_ptr() as *const c_char,
-                quality,
-                c"compression".as_ptr() as *const c_char,
-                bindings::VipsForeignHeifCompression_VIPS_FOREIGN_HEIF_COMPRESSION_AV1,
-                c"effort".as_ptr() as *const c_char,
-                effort,
-                c"subsample_mode".as_ptr() as *const c_char,
-                bindings::VipsForeignSubsample_VIPS_FOREIGN_SUBSAMPLE_OFF,
-                c"encoder".as_ptr() as *const c_char,
-                encoder,
-                std::ptr::null::<c_char>(),
-            )
-        })?;
-        Ok(())
-    }
-
     pub fn encode_jpeg(self, quality: i32) -> Result<Vec<u8>> {
         use libvips::bindings;
         use std::ffi::{c_char, c_void};
@@ -357,15 +300,15 @@ impl<'a> Pipeline<'a> {
     }
 }
 
-/// Runs one of libvips' savers over `image`.
+/// Runs a libvips saver over `image`.
 ///
 /// Through the raw bindings rather than the crate's `*_with_opts` helpers, which
-/// send every property their options struct knows about - `tune` for heifsave,
-/// a `keep` flag for jpegsave - and libvips 8.15, the version Debian and Ubuntu
-/// ship, has neither. heifsave failed outright with "no property named `tune`";
-/// jpegsave only logged a GLib critical, which is worse, because it looked like
-/// it worked. Naming the properties here means sending exactly the ones each
-/// saver needs, and it keeps the version-coupled part of the dependency here.
+/// send every property their options struct knows about - a `keep` flag for
+/// jpegsave - which libvips 8.15, the version Debian and Ubuntu ship, does not
+/// have. It logs a GLib critical rather than failing, which is worse, because it
+/// looks like it worked. Naming the properties here means sending exactly the
+/// ones the saver needs, and it keeps the version-coupled part of the dependency
+/// here.
 ///
 /// Materialises first, which the rest of a chain does not have to: the crate
 /// keeps the underlying `VipsImage` pointer private, so the only way to reach a
@@ -469,21 +412,6 @@ mod tests {
         let decoded = Pipeline::decode_upright(&encoded).unwrap().finish().unwrap();
         assert_eq!((decoded.width, decoded.height), (80, 40));
         assert_eq!(decoded.data.len(), 80 * 40 * 3);
-    }
-
-    #[test]
-    fn writes_an_avif_that_reads_back_at_the_same_size() {
-        init();
-        let path = std::env::temp_dir().join("rawshim-avif-test.avif");
-        let out = path.to_str().unwrap();
-        let source = gradient(120, 90);
-        // 4:4:4 and effort 0, the settings the renditions use.
-        Pipeline::from_rgb(source.as_ref()).unwrap().save_avif(80, 0, out).unwrap();
-        let bytes = std::fs::read(out).unwrap();
-        assert!(bytes.len() > 64, "an AVIF of a gradient should not be empty");
-        let back = Pipeline::decode_upright(&bytes).unwrap().finish().unwrap();
-        assert_eq!((back.width, back.height), (120, 90));
-        std::fs::remove_file(out).ok();
     }
 
     #[test]

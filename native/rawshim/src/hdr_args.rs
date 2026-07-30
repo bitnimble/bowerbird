@@ -7,68 +7,38 @@
 
 use std::fmt::Write as _;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Variant {
-    /// PQ, the only HDR transfer anything renders. HLG was carried for a while and
-    /// never earned it: PQ is absolute where HLG is relative to the display's own
-    /// range, which makes it the wrong curve for judging whether a panel reaches a
-    /// given nits value.
-    Pq,
-    /// The SDR reference the HDR one is compared against.
-    Sdr,
-}
+// There is one transfer, and no enum for it. PQ is absolute where HLG is relative
+// to the display's own range, which makes HLG the wrong curve for judging whether a
+// panel reaches a given nits value - it was carried for a while and dropped. The SDR
+// reference that used to sit beside every HDR file went with the check page it was
+// built to be compared against; what the app serves has never been anything else.
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Medium {
     /// AVIF, 4:4:4. Chrome renders it as HDR on Android 14+ and desktop, Safari on
     /// macOS.
     Still,
-    /// The same AVIF at 4:2:0, a control. 4:4:4 is AVIF's Advanced profile, which a
-    /// decoder may refuse while still claiming AVIF support - only Baseline is
-    /// mandatory - so without this beside it, a still failing on an Apple device
-    /// cannot be told from a failure to handle HDR at all.
-    StillBaseline,
     /// One-frame AV1 in MP4, for Firefox, which honours no HDR image tagging but
     /// does composite HDR video.
     Video,
-}
-
-impl Variant {
-    pub fn parse(name: &str) -> Option<Variant> {
-        match name {
-            "pq" => Some(Variant::Pq),
-            "sdr" => Some(Variant::Sdr),
-            _ => None,
-        }
-    }
 }
 
 impl Medium {
     pub fn parse(name: &str) -> Option<Medium> {
         match name {
             "still" => Some(Medium::Still),
-            "still-baseline" => Some(Medium::StillBaseline),
             "video" => Some(Medium::Video),
             _ => None,
         }
     }
 
     fn is_still(self) -> bool {
-        !matches!(self, Medium::Video)
-    }
-
-    /// 4:2:0 only for the control; everything else keeps full chroma.
-    fn chroma(self) -> &'static str {
-        match self {
-            Medium::StillBaseline => "420",
-            _ => "444",
-        }
+        matches!(self, Medium::Still)
     }
 }
 
 #[derive(Clone)]
 pub struct EncodeOptions {
-    pub variant: Variant,
     pub medium: Medium,
     pub output_path: String,
     /// Display peak the grade rolls highlights into, and the declared mastering peak.
@@ -102,33 +72,24 @@ struct Target {
 
 const BT2020: Coding = Coding { name: "bt2020", cicp: 9 };
 const BT2020_NCL: Coding = Coding { name: "bt2020nc", cicp: 9 };
-const BT709: Coding = Coding { name: "bt709", cicp: 1 };
 
-/// A still's SDR reference is tagged sRGB rather than BT.709. They share primaries,
-/// but BT.709's transfer is a camera OETF, and a browser renders an untagged still
-/// against sRGB - so sRGB is what makes the control look like an ordinary picture.
-/// Video keeps BT.709, which is what a video decoder expects.
-const STILL_SDR_TRANSFER: Coding = Coding { name: "iec61966-2-1", cicp: 13 };
-
-/// The CICP triple this rendition is tagged with, for the encoder that sets it
+/// The CICP triple every HDR rendition is tagged with, for the encoder that sets it
 /// directly rather than through a command line.
-pub fn cicp(variant: Variant, medium: Medium) -> (u16, u16, u16) {
-    let target = target_for(variant, medium);
+///
+/// The same three whichever medium asks, now that there is one transfer: BT.2020
+/// primaries, PQ, and the non-constant-luminance BT.2020 matrix. It is a function
+/// rather than a constant because it is the answer to "what does this file claim to
+/// be", and that is worth asking in one place.
+pub fn cicp() -> (u16, u16, u16) {
+    let target = target_for();
     (target.primaries.cicp as u16, target.transfer.cicp as u16, target.matrix.cicp as u16)
 }
 
-fn target_for(variant: Variant, medium: Medium) -> Target {
-    match variant {
-        Variant::Pq => Target {
-            primaries: BT2020,
-            transfer: Coding { name: "smpte2084", cicp: 16 },
-            matrix: BT2020_NCL,
-        },
-        Variant::Sdr => Target {
-            primaries: BT709,
-            transfer: if medium.is_still() { STILL_SDR_TRANSFER } else { BT709 },
-            matrix: BT709,
-        },
+fn target_for() -> Target {
+    Target {
+        primaries: BT2020,
+        transfer: Coding { name: "smpte2084", cicp: 16 },
+        matrix: BT2020_NCL,
     }
 }
 
@@ -210,17 +171,10 @@ fn num(value: f64) -> String {
 /// transfer applied, which is what a decode that never reaches the HDR compositor
 /// looks like.
 ///
-/// A still is 10-bit whatever the variant, so its SDR reference differs from the HDR
-/// ones only in transfer and tagging. Video keeps 8-bit SDR, which is what an SDR
-/// video actually is.
-fn pixel_format(variant: Variant, medium: Medium) -> String {
-    if medium.is_still() {
-        return format!("yuv{}p10le", medium.chroma());
-    }
-    match variant {
-        Variant::Sdr => "yuv420p".to_string(),
-        Variant::Pq => "yuv420p10le".to_string(),
-    }
+/// Both are 10-bit, which is what a PQ curve's shadows need: 8 bits band visibly
+/// where it stretches them.
+fn pixel_format(medium: Medium) -> &'static str {
+    if medium.is_still() { "yuv444p10le" } else { "yuv420p10le" }
 }
 
 /// The grade hands back display-referred Rec.2020 linear at full range, so the input
@@ -228,11 +182,10 @@ fn pixel_format(variant: Variant, medium: Medium) -> String {
 /// carries none. npl ties linear 1.0 to absolute brightness, and the grade has
 /// already put the display's peak there.
 fn filter_chain(options: &EncodeOptions, resize: Option<Size>) -> String {
-    let target = target_for(options.variant, options.medium);
-    let npl = match options.variant {
-        Variant::Sdr => String::new(),
-        Variant::Pq => format!(":npl={}", num(options.peak_nits)),
-    };
+    let target = target_for();
+    // npl ties linear 1.0 to absolute brightness, which only a PQ signal has a use
+    // for - and PQ is all there is.
+    let npl = format!(":npl={}", num(options.peak_nits));
     // Resizing inside zscale keeps it in the linear light the decode handed over,
     // which is where downscaling is correct; a resize after the transfer would
     // average PQ code values and darken the result.
@@ -247,13 +200,13 @@ fn filter_chain(options: &EncodeOptions, resize: Option<Size>) -> String {
         target.transfer.name,
         target.matrix.name,
         target.primaries.name,
-        pixel_format(options.variant, options.medium),
+        pixel_format(options.medium),
     );
     chain
 }
 
 pub fn ffmpeg_args(width: u32, height: u32, options: &EncodeOptions) -> Vec<String> {
-    let target = target_for(options.variant, options.medium);
+    let target = target_for();
     let size = target_size(width, height, options);
     let resize = if size.width == width && size.height == height { None } else { Some(size) };
 
@@ -352,7 +305,7 @@ pub fn ffmpeg_args(width: u32, height: u32, options: &EncodeOptions) -> Vec<Stri
 /// to decide a still is HDR. ffmpeg's avif muxer writes none, and AVIF has no equivalent
 /// of the bitstream filter that repairs it on the video side.
 pub fn avifenc_args(options: &EncodeOptions, y4m_path: &str) -> Vec<String> {
-    let target = target_for(options.variant, options.medium);
+    let target = target_for();
     let mut args: Vec<String> = Vec::new();
     args.push("avifenc".to_string());
     args.push("--cicp".to_string());
@@ -362,8 +315,8 @@ pub fn avifenc_args(options: &EncodeOptions, y4m_path: &str) -> Vec<String> {
     }
     // avifenc takes the chroma from the y4m and this flag only has to agree with it:
     // passing 444 while feeding a 4:2:0 y4m silently encoded 4:2:0 anyway, which is
-    // how the subsampling went unnoticed.
-    args.push(options.medium.chroma().to_string());
+    // how the subsampling went unnoticed once.
+    args.push("444".to_string());
     args.push("--speed".to_string());
     args.push(options.preset.min(10).to_string());
     args.push("--min".to_string());
@@ -392,9 +345,8 @@ pub fn avifenc_args(options: &EncodeOptions, y4m_path: &str) -> Vec<String> {
 mod tests {
     use super::*;
 
-    fn options(variant: Variant, medium: Medium, max_edge: f64) -> EncodeOptions {
+    fn options(medium: Medium, max_edge: f64) -> EncodeOptions {
         EncodeOptions {
-            variant,
             medium,
             output_path: "/out/rendition.avif".to_string(),
             peak_nits: 1000.0,
@@ -425,10 +377,10 @@ mod tests {
         // 4:2:0 has no odd dimensions, and at native size nothing else is rounding
         // them - the masked-border crop can leave a frame odd. It has to come down:
         // asking a 533-row source for 534 makes the encoder invent a row.
-        let video = options(Variant::Pq, Medium::Video, f64::INFINITY);
+        let video = options(Medium::Video, f64::INFINITY);
         assert_eq!(target_size(801, 533, &video), Size { width: 800, height: 532 });
         // The still is 4:4:4 and keeps every pixel it was given.
-        let still = options(Variant::Pq, Medium::Still, f64::INFINITY);
+        let still = options(Medium::Still, f64::INFINITY);
         assert_eq!(target_size(801, 533, &still), Size { width: 801, height: 533 });
     }
 
@@ -439,36 +391,30 @@ mod tests {
         // libaom takes either orientation - 6336x9504 encodes in 721ms where SVT
         // declines it outright - so the video is the same size as the still beside it,
         // which is what lets the two share one graded frame in every case.
-        let video = options(Variant::Pq, Medium::Video, f64::INFINITY);
-        let still = options(Variant::Pq, Medium::Still, f64::INFINITY);
+        let video = options(Medium::Video, f64::INFINITY);
+        let still = options(Medium::Still, f64::INFINITY);
         assert_eq!(target_size(6336, 9504, &video), Size { width: 6336, height: 9504 });
         assert_eq!(target_size(6336, 9504, &video), target_size(6336, 9504, &still));
     }
 
     #[test]
     fn the_still_is_converted_by_ffmpeg_but_tagged_by_avifenc() {
-        let args = ffmpeg_args(800, 533, &options(Variant::Pq, Medium::Still, 3840.0));
+        let args = ffmpeg_args(800, 533, &options(Medium::Still, 3840.0));
         assert!(args.contains(&"yuv4mpegpipe".to_string()), "a still leaves ffmpeg as y4m");
         assert!(!args.iter().any(|a| a.contains("av1_metadata")), "and is not encoded here");
 
-        let avif = avifenc_args(&options(Variant::Pq, Medium::Still, 3840.0), "/tmp/x.y4m");
+        let avif = avifenc_args(&options(Medium::Still, 3840.0), "/tmp/x.y4m");
         let cicp = avif.iter().position(|a| a == "--cicp").expect("--cicp");
         assert_eq!(avif[cicp + 1], "9/16/9", "bt2020 / smpte2084 / bt2020nc");
     }
 
     #[test]
     fn the_video_restates_the_signalling_the_encoder_drops() {
-        let args = ffmpeg_args(800, 533, &options(Variant::Pq, Medium::Video, 3840.0));
+        let args = ffmpeg_args(800, 533, &options(Medium::Video, 3840.0));
         let bsf = args.iter().find(|a| a.contains("av1_metadata")).expect("the bitstream filter");
         assert!(bsf.contains("color_primaries=9"));
         assert!(bsf.contains("transfer_characteristics=16"));
         assert!(bsf.contains("matrix_coefficients=9"));
-    }
-
-    #[test]
-    fn the_sdr_reference_gets_no_pq_transfer() {
-        let args = ffmpeg_args(800, 533, &options(Variant::Sdr, Medium::Video, 3840.0));
-        assert!(!args.iter().any(|a| a.contains("npl=")), "npl is meaningless without PQ");
     }
 
     #[test]
@@ -478,7 +424,7 @@ mod tests {
         // looking for the inter-frame parallelism that is not there. `-b:v 0` is what
         // makes `-crf` mean constant quality rather than a cap on a bitrate target.
         // And libaom parallelises across tiles, so without them the threads idle.
-        let args = ffmpeg_args(4024, 6024, &options(Variant::Pq, Medium::Video, 3840.0));
+        let args = ffmpeg_args(4024, 6024, &options(Medium::Video, 3840.0));
         let at = |flag: &str| args.iter().position(|a| a == flag).map(|i| args[i + 1].clone());
         assert_eq!(at("-c:v").as_deref(), Some("libaom-av1"));
         assert_eq!(at("-usage").as_deref(), Some("allintra"));
@@ -486,7 +432,7 @@ mod tests {
         assert_eq!(at("-tiles").as_deref(), Some("2x2"));
         // libaom's `-cpu-used` stops at 8 where avifenc's `--speed` takes 10, so the
         // shared setting is clamped per encoder rather than narrowed to the tighter.
-        let fast = ffmpeg_args(800, 533, &EncodeOptions { preset: 10, ..options(Variant::Pq, Medium::Video, 3840.0) });
+        let fast = ffmpeg_args(800, 533, &EncodeOptions { preset: 10, ..options(Medium::Video, 3840.0) });
         assert_eq!(fast.iter().position(|a| a == "-cpu-used").map(|i| fast[i + 1].clone()).as_deref(), Some("8"));
     }
 
@@ -495,35 +441,15 @@ mod tests {
         // The y4m is the whole frame uncompressed - ~366MB at native resolution - so
         // it goes down a pipe rather than through a file. avifenc requires `--stdin`
         // before the output path and forbids an input one alongside it.
-        let args = avifenc_args(&options(Variant::Pq, Medium::Still, 3840.0), "");
+        let args = avifenc_args(&options(Medium::Still, 3840.0), "");
         let stdin = args.iter().position(|a| a == "--stdin").expect("--stdin");
         assert_eq!(stdin, args.len() - 2, "must be the last flag before the output path");
         assert!(args.iter().any(|a| a == "--autotiling"), "libaom needs tiles to use its threads");
     }
 
     #[test]
-    fn a_still_sdr_reference_is_tagged_srgb_where_the_video_one_is_bt709() {
-        let still = avifenc_args(&options(Variant::Sdr, Medium::Still, 3840.0), "/tmp/x.y4m");
-        let cicp = still.iter().position(|a| a == "--cicp").expect("--cicp");
-        assert_eq!(still[cicp + 1], "1/13/1", "sRGB transfer, not BT.709's camera OETF");
-
-        let video = ffmpeg_args(800, 533, &options(Variant::Sdr, Medium::Video, 3840.0));
-        let trc = video.iter().position(|a| a == "-color_trc").expect("-color_trc");
-        assert_eq!(video[trc + 1], "bt709");
-    }
-
-    #[test]
-    fn the_baseline_control_differs_in_chroma_and_nothing_else() {
-        let full = ffmpeg_args(800, 533, &options(Variant::Pq, Medium::Still, 3840.0));
-        let base = ffmpeg_args(800, 533, &options(Variant::Pq, Medium::StillBaseline, 3840.0));
-        let differing: Vec<_> = full.iter().zip(&base).filter(|(a, b)| a != b).collect();
-        assert_eq!(differing.len(), 1, "one argument apart: {differing:?}");
-        assert!(differing[0].0.contains("yuv444p10le") && differing[0].1.contains("yuv420p10le"));
-    }
-
-    #[test]
     fn the_resize_happens_in_linear_light_before_the_transfer() {
-        let args = ffmpeg_args(4024, 6024, &options(Variant::Pq, Medium::Still, 3840.0));
+        let args = ffmpeg_args(4024, 6024, &options(Medium::Still, 3840.0));
         let chain = args.iter().find(|a| a.starts_with("zscale")).expect("the filter chain");
         let resize = chain.find("w=2566").expect("the resize");
         let format = chain.find(",format=").expect("the pixel format");

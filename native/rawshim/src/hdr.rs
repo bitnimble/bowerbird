@@ -13,7 +13,7 @@
 // as a one-frame video, since its video pipeline does composite HDR by passing through
 // to the compositor.
 
-use crate::hdr_args::{self, EncodeOptions, Medium, Variant};
+use crate::hdr_args::{self, EncodeOptions, Medium};
 use crate::hdr_fit::{self, HdrMatch};
 use crate::image;
 use crate::tone::{self, GradeOptions};
@@ -202,14 +202,7 @@ fn graded_with(
         shaped,
         &GradeOptions {
             reference_white_nits: options.reference_white_nits,
-            // The SDR reference has no headroom above white, so its peak is its
-            // reference: the roll-off then lands diffuse white on display white, and
-            // it renders identically to the HDR one everywhere below that. Differing
-            // only above diffuse white is what makes it a control.
-            peak_nits: match options.variant {
-                hdr_args::Variant::Sdr => options.reference_white_nits,
-                hdr_args::Variant::Pq => options.peak_nits,
-            },
+            peak_nits: options.peak_nits,
             match_colour: matched.map(|m| &m.colour),
             levels,
         },
@@ -234,34 +227,22 @@ fn encode_graded(graded: &[u16], width: usize, height: usize, options: &EncodeOp
     // well when called directly - so the frame stops being written to ffmpeg's stdin,
     // converted, written again as y4m and read back, and becomes a pointer (`avif.rs`).
     //
-    // Both variants, but not by the same route through it. PQ's output gamut is
-    // Rec.2020, which is what the grade hands over, so only the transfer is left. The
-    // SDR reference also needs its primaries converted to BT.709, which `zscale` was
-    // doing and libavif does not - it applies the YCbCr matrix and writes whatever CICP
-    // it is told. Routing SDR through the PQ arm once shipped a control that was
-    // PQ-encoded and tagged sRGB on unconverted primaries: white at about half
-    // luminance, 23.5dB against the binary where PQ scores 65.9dB.
-    //
-    // The conversion is not new code so much as code that was already here for another
-    // reason: the fit measures its deltaE in sRGB, so `hdr_fit` has owned this exact
-    // matrix and this exact curve all along.
+    // The grade hands over Rec.2020 linear and PQ's output gamut is Rec.2020, so all
+    // that is left between here and a file is the transfer - which this crate owns -
+    // and the YCbCr matrix, which libavif does.
     if !use_avifenc() {
-        let (primaries, transfer, matrix) = hdr_args::cicp(options.variant, options.medium);
+        let (primaries, transfer, matrix) = hdr_args::cicp();
         return crate::avif::encode_still(
             graded,
             width,
             height,
             &crate::avif::StillOptions {
                 cicp: crate::avif::Cicp { primaries, transfer, matrix },
-                subsample_420: options.medium == Medium::StillBaseline,
                 quantizer: options.crf,
                 speed: options.preset.min(10),
-                // The grade normalised full range to the display peak for PQ and to
-                // diffuse white for SDR, which is why the peak only travels with one.
-                transfer: match options.variant {
-                    Variant::Pq => crate::avif::Transfer::Pq { peak_nits: options.peak_nits },
-                    Variant::Sdr => crate::avif::Transfer::Srgb,
-                },
+                // What the grade normalised full range to, which is what the transfer
+                // has to be told to undo.
+                peak_nits: options.peak_nits,
             },
             &options.output_path,
         );

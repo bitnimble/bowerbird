@@ -98,7 +98,6 @@ function writeHdr(
     matched,
     {
       ...job.grade,
-      variant: 'pq',
       medium: 'still',
       outputPath: target.outputPath,
       crf: target.hdrQuantizer,
@@ -203,7 +202,6 @@ async function renditions(job: RenditionJob): Promise<Uint8Array | undefined> {
     if (job.matchEmbeddedJpeg && rendersHdr) {
       const options = {
         ...job.grade,
-        variant: 'pq',
         medium: 'still',
         outputPath: '',
         crf: 0,

@@ -167,9 +167,7 @@ fn decode_encoded(encoded: &[u8], long_edge: u32) -> *mut BbImage {
 /// The HDR encode's settings, flat so TypeScript can fill it with one DataView.
 #[repr(C)]
 pub struct BbHdrOptions {
-    /// 0 pq, 1 sdr.
-    pub variant: u32,
-    /// 0 still, 1 still-baseline, 2 video.
+    /// 0 still, 1 video.
     pub medium: u32,
     pub peak_nits: f64,
     pub reference_white_nits: f64,
@@ -183,15 +181,9 @@ pub struct BbHdrOptions {
 impl BbHdrOptions {
     unsafe fn to_options(&self, output_path: &str) -> Option<hdr_args::EncodeOptions> {
         Some(hdr_args::EncodeOptions {
-            variant: match self.variant {
-                0 => hdr_args::Variant::Pq,
-                1 => hdr_args::Variant::Sdr,
-                _ => return None,
-            },
             medium: match self.medium {
                 0 => hdr_args::Medium::Still,
-                1 => hdr_args::Medium::StillBaseline,
-                2 => hdr_args::Medium::Video,
+                1 => hdr_args::Medium::Video,
                 _ => return None,
             },
             output_path: output_path.to_string(),

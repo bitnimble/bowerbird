@@ -314,11 +314,10 @@ export function encodeJpeg(image: ImageHandle, longEdge: number, quality: number
   return bytes;
 }
 
-// #[repr(C)] BbHdrOptions: u32 variant, u32 medium, f64 peak/referenceWhite
+// #[repr(C)] BbHdrOptions: u32 medium, 4 bytes padding, f64 peak/referenceWhite
 // /whiteQuantile, i32 crf, i32 preset, f64 maxEdge.
 const HDR_OPTIONS = {
-  variant: 0,
-  medium: 4,
+  medium: 0,
   peakNits: 8,
   referenceWhiteNits: 16,
   whiteQuantile: 24,
@@ -328,11 +327,11 @@ const HDR_OPTIONS = {
   size: 48,
 } as const;
 
-const VARIANTS = ['pq', 'sdr'] as const;
-const MEDIA = ['still', 'still-baseline', 'video'] as const;
+// One transfer, two media. The SDR reference and the 4:2:0 baseline control went
+// with the check page they were built to be compared on.
+const MEDIA = ['still', 'video'] as const;
 
 export interface HdrOptions {
-  variant: (typeof VARIANTS)[number];
   medium: (typeof MEDIA)[number];
   outputPath: string;
   peakNits: number;
@@ -353,7 +352,6 @@ export function hdrOptionsBuffer(options: HdrOptions): Uint8Array {
   }
   const raw = new Uint8Array(size);
   const view = new DataView(raw.buffer);
-  view.setUint32(HDR_OPTIONS.variant, VARIANTS.indexOf(options.variant), true);
   view.setUint32(HDR_OPTIONS.medium, MEDIA.indexOf(options.medium), true);
   view.setFloat64(HDR_OPTIONS.peakNits, options.peakNits, true);
   view.setFloat64(HDR_OPTIONS.referenceWhiteNits, options.referenceWhiteNits, true);
