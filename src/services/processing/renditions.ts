@@ -19,8 +19,12 @@
 export const RENDITIONS = ['grid', 'full', 'max'] as const;
 export type Rendition = (typeof RENDITIONS)[number];
 
-// libvips' AVIF effort, fixed rather than configurable: at a fixed quality it
-// buys 0.46dB for 10x the encode time and no reduction in file size (§10.1).
+// Fixed rather than configurable: at a fixed quality it buys 0.46dB for 10x the
+// encode time and no reduction in file size (§10.1).
+//
+// Still on libvips' scale, where 0 is fastest, because that is the scale the
+// measurement was taken on and the number here is that measurement's conclusion.
+// `bb_save_avif` inverts it into libavif's `speed`, where 10 is fastest.
 export const AVIF_EFFORT = 0;
 
 export function isRendition(value: string): value is Rendition {
