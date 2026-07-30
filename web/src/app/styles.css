@@ -1151,6 +1151,7 @@ p.ui-text--mono {
    measurement rather than a sum. */
 .grid--list .tile {
   aspect-ratio: auto;
+  padding: 0;
   display: grid;
   grid-template-columns: 120px minmax(0, 1fr);
   align-items: center;
@@ -1164,7 +1165,7 @@ p.ui-text--mono {
    is painted at the left of it, with the foot in the column beside. */
 /* A row is read from its left edge, and its thumbnail keeps its own inset. */
 .grid--list .tile__hit {
-  padding: 0;
+  inset: 0;
 }
 
 .grid--list .tile__hit img {
@@ -1197,14 +1198,16 @@ p.ui-text--mono {
 .tile {
   position: relative;
   aspect-ratio: 3 / 2;
-  /* No backdrop of its own: it would show in the inset as a frame around every
-     tile. The photograph's backdrop is the hit overlay's, clipped to the inset. */
   background: none;
   overflow: hidden;
   cursor: pointer;
   display: block;
   border: 0;
-  padding: 0;
+  /* The room the ring stands off the photograph. The picture and its backdrop are
+     the hit overlay, inset by exactly this, so what shows here is the bed the grid
+     sits on - a background on the tile itself showed as a border round every
+     cell. */
+  padding: var(--tile-pad);
   border-radius: var(--radius);
 }
 
@@ -1213,30 +1216,21 @@ p.ui-text--mono {
    the gap, so nothing shifts under the reader when the block lands. */
 .tile--waiting {
   cursor: default;
-  /* No hit overlay to carry the backdrop, so the cell wears it - inset the same
-     amount, so a row that has not landed is the shape of the ones that have. */
-  padding: var(--tile-pad);
+  /* No hit overlay to carry the backdrop, so the cell is the backdrop. */
+  padding: 0;
   background: #090b0e;
-  background-clip: content-box;
 }
 
-/* Covers the tile so a click anywhere selects the photo; the badges and marks sit
-   above it.
-
-   The padding is what holds the photograph inside its cell, so the ring at the
-   cell's edge frames it rather than cropping it - and so a band's ring, which lands
-   on its outermost members' cells, lands on no photograph either (§19.6). It is here
-   rather than on `.tile` because an `inset: 0` child resolves against the padding
-   box, which padding does not shrink; and the whole cell stays one pointer target. */
+/* The photograph's own area inside the cell: its backdrop, and the target for a
+   click anywhere on it. Inset by the tile's padding, which is what keeps the ring at
+   the cell's edge off the picture - and keeps a band's ring, which lands on its
+   outermost members' cells, off it too (§19.6). The badges and marks sit above. */
 .tile__hit {
   position: absolute;
-  inset: 0;
-  padding: var(--tile-pad);
+  inset: var(--tile-pad);
+  padding: 0;
   border: 0;
-  /* Clipped to the content box, which is the photograph's own area: what shows in
-     the inset is then the bed the grid sits on, the same as between two tiles. */
   background: #090b0e;
-  background-clip: content-box;
   cursor: pointer;
 }
 
@@ -1260,8 +1254,8 @@ p.ui-text--mono {
    tile. Declared after the list override, which it ties with on specificity. */
 .tile img:not(.is-loaded) {
   position: absolute;
-  inset: var(--tile-pad);
-  height: auto;
+  inset: 0;
+  height: 100%;
 }
 
 /* The ring is drawn by an overlay rather than an inset shadow: the rendition is a
@@ -1308,15 +1302,15 @@ p.ui-text--mono {
 
 .tile__badges {
   position: absolute;
-  left: 6px;
-  top: 6px;
+  left: calc(var(--tile-pad) + 6px);
+  top: calc(var(--tile-pad) + 6px);
   display: flex;
   gap: 4px;
 }
 
 /* Pushed clear of the stack badge, which owns this corner when there is one. */
 .tile:has(.tile__stack) .tile__badges {
-  top: 30px;
+  top: calc(var(--tile-pad) + 30px);
 }
 
 /* Photo stacks (§19). A mark, not a control: the tile is what opens and closes
@@ -1328,8 +1322,8 @@ p.ui-text--mono {
 .tile__stack {
   pointer-events: none;
   position: absolute;
-  left: 6px;
-  top: 6px;
+  left: calc(var(--tile-pad) + 6px);
+  top: calc(var(--tile-pad) + 6px);
   z-index: 1;
   display: inline-flex;
   align-items: center;
@@ -1598,9 +1592,9 @@ p.ui-text--mono {
 
 .tile__foot {
   position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  left: var(--tile-pad);
+  right: var(--tile-pad);
+  bottom: var(--tile-pad);
   padding: 14px 7px 5px;
   background: linear-gradient(transparent, rgba(6, 8, 11, 0.9));
   display: flex;
