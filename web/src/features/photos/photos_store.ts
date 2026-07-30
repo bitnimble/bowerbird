@@ -48,6 +48,22 @@ export type PhotoSource =
   | { kind: 'bin'; libraryId: string }
   | { kind: 'missing'; libraryId: string };
 
+/** What names one collection, and so tells two of them apart. */
+export function sourceKey(source: PhotoSource): string {
+  switch (source.kind) {
+    case 'library':
+      return `library.${source.libraryId}`;
+    case 'shoot':
+      return `shoot.${source.shootId}`;
+    case 'album':
+      return `album.${source.albumId}`;
+    case 'bin':
+      return `bin.${source.libraryId}`;
+    case 'missing':
+      return `missing.${source.libraryId}`;
+  }
+}
+
 // grid crops every tile to one aspect so rows line up and the eye can scan;
 // masonry keeps each photo's own shape; list trades density for metadata.
 export type ViewMode = 'grid' | 'masonry' | 'list';
@@ -357,6 +373,29 @@ export class PhotosStore {
   // library never re-renders the rail or the title bar.
   @computed get detailLibraryId(): string | null {
     return this.loadedDetail?.library_id ?? null;
+  }
+
+  // Where leaving the viewer goes, and what to call it: the collection the photo
+  // was opened from, so a shoot or an album returns to itself rather than to the
+  // whole library. Struct, so stepping between photos of one collection does not
+  // re-render the bar the button sits in.
+  @computed.struct get openedFrom(): { path: string; label: string } {
+    const source = this.source;
+    switch (source?.kind) {
+      case 'shoot':
+        return { path: `/shoots/${source.shootId}`, label: 'Shoot' };
+      case 'album':
+        return { path: `/albums/${source.albumId}`, label: 'Album' };
+      case 'bin':
+        return { path: `/libraries/${source.libraryId}/bin`, label: 'Bin' };
+      case 'library':
+      case 'missing':
+        return { path: `/libraries/${source.libraryId}`, label: 'Library' };
+      default:
+        // A deep link, for the moment before the library it loads behind itself
+        // becomes the collection.
+        return { path: this.detailLibraryId == null ? '/' : `/libraries/${this.detailLibraryId}`, label: 'Library' };
+    }
   }
 
   // The open photo as the client already knows it: the row the grid loaded, or

@@ -24,6 +24,7 @@ import { displayRowOf, rowAt } from './bands';
 import { BLOCK, atRailWall, recentred } from './grid_layout';
 import {
   activeFilters,
+  sourceKey,
   type Expansion,
   type PhotoFilters,
   type PhotoSource,
@@ -127,6 +128,16 @@ export class PhotosPresenter {
   }
 
   async open(source: PhotoSource): Promise<void> {
+    const held = this.store.source;
+    // Stepping back out of the viewer re-opens the collection the reader never
+    // left, so its rows, its scroll and its open bands are kept: a reset would
+    // land them at the top of a gallery they were a thousand photos into. It is
+    // still re-read in place, since something may have changed it while they
+    // were away.
+    if (held != null && sourceKey(held) === sourceKey(source)) {
+      await this.refresh();
+      return;
+    }
     this.beginLoad(source);
     await this.ensureBlocks(this.store.neededBlocks);
   }
@@ -545,6 +556,19 @@ export class PhotosPresenter {
   focusAt(index: number): void {
     if (this.store.total === 0) return;
     this.store.focusIndex = Math.max(0, Math.min(index, this.store.total - 1));
+  }
+
+  // Leaves the cursor on the photo the viewer was showing, so the grid it returns
+  // to scrolls to where the reader got to rather than to where they went in. Only
+  // the cursor: a reader who selected a set and opened one of them with Enter has
+  // not asked for that set to be cut down to the photo they stepped to.
+  //
+  // A photo whose row this client is not holding cannot be scrolled to at all -
+  // the grid works in positions - so the view is left where it was.
+  @action.bound
+  focusOpenPhoto(): void {
+    const at = this.store.detailIndex;
+    if (at >= 0) this.store.focusIndex = at;
   }
 
   // The cursor and the selection are one thing, so arrowing onto a photo selects

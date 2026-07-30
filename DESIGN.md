@@ -2437,7 +2437,7 @@ Rating a shoot is the daily job, so it must not require opening each frame. The 
 | `Enter` | Open the photo, or the stack's band |
 | `F` | Fullscreen, in the photo view |
 | `I` / `O` | The camera's JPEG / the render, in the photo view (§10.1) |
-| `Esc` | Clear the selection |
+| `Esc` | Clear the selection, or leave the photo for the collection it was opened from (§18.5) |
 | `?` | Shortcut overlay |
 
 `Z`, `X` and `C` are deliberately adjacent, in that order left to right, matching the Undecided / Reject / Pick order of the control: the left hand rests on them while the right drives the arrows. Each button shows its key, so the shortcut is learned from the control rather than from a help sheet. They work in the photo view as well as the grid, because that is where a close look leads to a verdict. `X` for reject also matches the convention photographers already have from Lightroom. Both keys toggle, so the same key that sets a verdict clears it.
@@ -2489,6 +2489,10 @@ A "Rendition details" panel reports what is actually being displayed (its source
 Every metadata panel shows its two most important rows and hides the rest behind a same-size toggle, so each costs the same three lines however much a camera recorded. Download (RAW or JPEG), the rebuild actions and Bin live in the page header beside the prev/next controls, which keeps every action on the photo in one place rather than buried at the bottom of a panel column.
 
 Landing straight on `/photos/:id` used to leave prev/next dead: the neighbours come from the loaded collection, and a deep link has none. Opening the detail with no collection loaded now opens the photo's library as well.
+
+**The way out is the grid the reader came in by**, on the button and on `Esc` alike: a photo opened from a shoot, an album or the Bin returns there rather than to the whole library, and the button is named for where it goes. `PhotosStore.source` already answers it - opening a photo does not change which collection is loaded - so nothing has to be carried through the route, and a deep link inherits the library it loads behind itself.
+
+**And it returns to the photo, not to the top.** Two things had to change for that. The grid page opens its collection on mount, which for the collection the reader never left is now a re-read in place rather than a reset: the rows, the scroll position and the open bands are all still describing the same listing, and dropping them landed a reader a thousand photos into a gallery back at its first row. Then leaving the viewer puts the keyboard cursor on the photo that was on screen, which the grid already scrolls to (`focusContentTop`) - so a reader who stepped forward a thousand frames comes back to the thousandth. Only the cursor moves: someone who selected a set and opened one of them with `Enter` has not asked for that set to be cut down to wherever they stepped to.
 
 Destructive actions split by reversibility. Binning is undoable, so it just happens and reports with an undo toast wired to `POST /api/photos/restore`. Deleting a library, shoot or album is not undoable, so each asks first via a native `confirm()` that names the specific consequence (removing a library keeps the RAW files but destroys every rating, note, pick and membership).
 

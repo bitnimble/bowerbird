@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { readdirSync } from 'node:fs';
 import { PHOTOS_DIR, PHOTO_NAMES } from './fixture_library';
-import { addLibrary, addShoot, bulkAction, openLibrary, selectPhoto, syncLibrary } from './helpers';
+import { addLibrary, addShoot, bulkAction, openLibrary, openPhoto, selectPhoto, syncLibrary } from './helpers';
 
 // One ordered journey: each step depends on the catalogue state the previous one
 // produced, which is also how the bugs below were originally found.
@@ -200,6 +200,31 @@ test('adding a photo to a shoot moves the file out of the library root on disk',
   const atRoot = readdirSync(PHOTOS_DIR).filter((f) => f.endsWith('.arw'));
   expect(atRoot).toHaveLength(PHOTO_NAMES.length - 1);
   expect(atRoot).not.toContain(inShoot[0]);
+});
+
+// The way out of the viewer is the grid the reader came in by: a photo opened
+// from a shoot returns to the shoot, not to the library it happens to live in.
+test('leaving a photo returns to the collection it was opened from', async ({ page }) => {
+  await page.goto('/settings');
+  await openLibrary(page, PHOTOS_DIR);
+  await page.getByRole('link', { name: 'Shoots', exact: true }).click();
+  await page.getByRole('link', { name: 'View photos' }).first().click();
+  await expect(page.locator('.tile')).toHaveCount(1);
+  const shoot = page.url();
+
+  await openPhoto(page);
+  await expect(page).toHaveURL(/\/photos\//);
+  const back = page.locator('.detail__nav').getByRole('link', { name: 'Shoot', exact: true });
+  // Named for where it goes, so it is not offering "Library" from inside a shoot.
+  await expect(back).toBeVisible();
+
+  await page.keyboard.press('Escape');
+  await expect(page).toHaveURL(shoot);
+
+  await openPhoto(page);
+  await expect(page).toHaveURL(/\/photos\//);
+  await back.click();
+  await expect(page).toHaveURL(shoot);
 });
 
 test('a photo can be taken back out of a shoot', async ({ page }) => {

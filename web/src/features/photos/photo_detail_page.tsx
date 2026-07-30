@@ -148,13 +148,17 @@ const DetailNav = observer(function DetailNav({ photoId }: { photoId: string }):
   const photo = store.detailFor(photoId);
   const prevId = store.prevPhotoId;
   const nextId = store.nextPhotoId;
-  const libraryId = store.detailLibraryId;
+  // The grid this photo was opened from - the shoot, the album, the Bin - rather
+  // than always the library.
+  const back = store.openedFrom;
 
   return (
     <div className="row detail__nav">
-      <Button render={<Link to={libraryId == null ? '/' : `/libraries/${libraryId}`} />}>
+      {/* Still a link, so it can be opened in a tab of its own; the cursor is put
+          on this photo on the way out so the grid comes back to it. */}
+      <Button render={<Link to={back.path} />} onClick={photos.focusOpenPhoto}>
         <ArrowLeft size={ICON} />
-        Library
+        {back.label}
       </Button>
       <Button iconOnly aria-label="Previous photo" disabled={prevId == null} onClick={() => prevId != null && navigate(`/photos/${prevId}`)}>
         <ChevronLeft size={ICON} />
@@ -497,7 +501,7 @@ const DetailKeys = observer(function DetailKeys({ photoId }: { photoId: string }
   const navigate = useNavigate();
   const prevId = store.prevPhotoId;
   const nextId = store.nextPhotoId;
-  const libraryId = store.detailLibraryId;
+  const back = store.openedFrom.path;
 
   useEffect(() => {
     function onKey(e: KeyboardEvent): void {
@@ -512,13 +516,16 @@ const DetailKeys = observer(function DetailKeys({ photoId }: { photoId: string }
       else if (e.key === 'o') void photos.chooseRendition(photoId, 'full');
       else if (e.key === 'ArrowLeft' && prevId != null) navigate(`/photos/${prevId}`);
       else if (e.key === 'ArrowRight' && nextId != null) navigate(`/photos/${nextId}`);
-      else if (e.key === 'Escape' && document.fullscreenElement == null && libraryId != null) navigate(`/libraries/${libraryId}`);
-      else return;
+      // Fullscreen owns Escape: there it leaves the fullscreen frame, not the photo.
+      else if (e.key === 'Escape' && document.fullscreenElement == null) {
+        photos.focusOpenPhoto();
+        navigate(back);
+      } else return;
       e.preventDefault();
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [prevId, nextId, navigate, libraryId, photoId, photos]);
+  }, [prevId, nextId, navigate, back, photoId, photos]);
 
   return null;
 });
