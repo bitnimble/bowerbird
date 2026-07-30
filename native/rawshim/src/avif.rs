@@ -8,11 +8,16 @@
 // that is 56MB at 3840 and ~366MB at native resolution, none of which any of the three
 // processes wanted kept.
 //
-// What ffmpeg was doing here was `zscale`, and it is two things this crate already
-// owns: the PQ transfer, which is `tone::pq`, and the Rec.2020 matrix with its
-// limited-range quantisation, which is `avifImageRGBToYUV`. So nothing is
-// reimplemented that libavif or this crate did not already have.
+// What ffmpeg was doing here was `zscale` - zimg behind a filter, which converts
+// transfer, primaries, matrix, range and depth in one pass. Every one of those already
+// had an owner on this side: the PQ transfer is `tone::pq`, the same curve the grade
+// rolls highlights with; the sRGB transfer and the Rec.2020-to-BT.709 primaries matrix
+// are `hdr_fit`'s, which has needed both all along because the fit measures its deltaE
+// in sRGB; and the YCbCr matrix with its limited-range quantisation is libavif's own
+// `avifImageRGBToYUV`. So no stage of it is reimplemented here - they are called from
+// here instead of from another process.
 
+use crate::hdr_fit;
 use crate::raw;
 use crate::tone;
 use rayon::prelude::*;
@@ -32,8 +37,8 @@ pub struct StillOptions {
     pub quantizer: i32,
     /// avifenc's `--speed`.
     pub speed: i32,
-    /// Display peak the graded samples are scaled against, for the PQ transfer.
-    pub peak_nits: f64,
+    /// The curve and gamut the tagging claims, which the samples have to be put into.
+    pub transfer: Transfer,
 }
 
 // avifenc's `--range limited`, and the depth every still is written at.
@@ -44,34 +49,74 @@ const AVIF_PIXEL_FORMAT_YUV420: u32 = 3;
 const AVIF_RGB_FORMAT_RGB: u32 = 0;
 const AVIF_RESULT_OK: u32 = 0;
 
-/// The graded frame, PQ-encoded, at 16 bits.
+/// What the frame has to be turned into before libavif will take it.
 ///
-/// `tone::grade` hands back display-referred linear where full range is the display's
-/// peak, which is what `zscale`'s `npl` used to be told. The transfer is applied here
-/// instead, off the same curve the grade rolls highlights with, and the result is what
-/// libavif's own converter takes to YCbCr - so the matrix and the limited-range
-/// quantisation stay libavif's rather than being written out a second time here.
-fn pq_encode(graded: &[u16], peak_nits: f64) -> Vec<u16> {
+/// The two differ by more than a curve, which is the trap: PQ's output gamut is
+/// Rec.2020, the same space the grade hands over, so nothing but the transfer is left.
+/// The SDR reference is BT.709, so its primaries have to be converted as well - and
+/// routing it through the PQ arm once shipped a control that rendered white at about
+/// half luminance, because the transfer was wrong and the gamut was not converted at
+/// all.
+#[derive(Clone, Copy)]
+pub enum Transfer {
+    /// SMPTE ST 2084, against the display peak the grade normalised to.
+    Pq { peak_nits: f64 },
+    /// IEC 61966-2-1, with the Rec.2020 to BT.709 primaries conversion in front of it.
+    Srgb,
+}
+
+/// The graded frame in the transfer and gamut the tagging claims, at 16 bits.
+///
+/// `tone::grade` hands back display-referred linear, full range being whatever the
+/// variant normalised to - the display peak for PQ, diffuse white for SDR. That is what
+/// `zscale` was being told through `npl` and `tin=linear`. Whatever comes out of here is
+/// what libavif's own converter takes to YCbCr, so the matrix and the limited-range
+/// quantisation stay libavif's rather than being written a second time here.
+fn transfer_encode(graded: &[u16], transfer: Transfer) -> Vec<u16> {
     // One curve covers all 65536 inputs, so the per-sample work is a lookup rather
     // than a pow(): a 24MP frame is 30M samples and a 60MP one 180M.
-    let lut: Vec<u16> = (0..=u16::MAX)
-        .map(|level| {
-            let nits = (f64::from(level) / f64::from(u16::MAX)) * peak_nits;
-            (tone::pq(nits) * f64::from(u16::MAX)).round() as u16
-        })
-        .collect();
+    let full = f64::from(u16::MAX);
+    let curve = |value: f64| -> u16 {
+        let encoded = match transfer {
+            Transfer::Pq { peak_nits } => tone::pq(value * peak_nits),
+            Transfer::Srgb => hdr_fit::srgb_oetf(value),
+        };
+        (encoded * full).round() as u16
+    };
+    let lut: Vec<u16> = (0..=u16::MAX).map(|level| curve(f64::from(level) / full)).collect();
+
     let mut out = vec![0u16; graded.len()];
-    out.par_iter_mut().zip(graded.par_iter()).for_each(|(o, s)| *o = lut[*s as usize]);
+    let Transfer::Srgb = transfer else {
+        // PQ leaves the gamut alone, so every sample is independent and this is a
+        // straight lookup.
+        out.par_iter_mut().zip(graded.par_iter()).for_each(|(o, s)| *o = lut[*s as usize]);
+        return out;
+    };
+
+    // sRGB has a primaries conversion in front of the curve, which is cross-channel -
+    // so the pixel is mixed first and only then looked up. Built once rather than per
+    // pixel, which is the whole difference between this and a 3x3 in the inner loop.
+    let m = hdr_fit::rec2020_to_srgb();
+    out.par_chunks_exact_mut(3).zip(graded.par_chunks_exact(3)).for_each(|(out_px, px)| {
+        let (r, g, b) = (f64::from(px[0]) / full, f64::from(px[1]) / full, f64::from(px[2]) / full);
+        for c in 0..3 {
+            let mixed = m[c][0] * r + m[c][1] * g + m[c][2] * b;
+            // Back onto the lookup's grid, clamped: Rec.2020 holds colours BT.709
+            // cannot, and they come out of the matrix negative or past one.
+            out_px[c] = lut[(mixed.clamp(0.0, 1.0) * full).round() as usize];
+        }
+    });
     out
 }
 
 /// Encodes one graded frame as an AVIF still, straight to `out_path`.
 ///
 /// `graded` is interleaved 16-bit RGB, display-referred linear, as `tone::grade` leaves
-/// it, and PQ-encoded here rather than by a `zscale` in another process.
+/// it, put into its output transfer and gamut here rather than by a `zscale` in another
+/// process.
 ///
 /// **This holds three frames at once**, which is the cost of not spawning anything: the
-/// caller's graded buffer, the PQ-encoded copy below, and the 10-bit planes libavif
+/// caller's graded buffer, the transfer-encoded copy below, and the 10-bit planes libavif
 /// allocates to convert into. At 61MP that is roughly 1.1GB against the ~366MB the old
 /// path kept on this side, because the other two used to live in ffmpeg's and avifenc's
 /// address spaces and die with them. With `processing_concurrency` workers each holding
@@ -86,7 +131,7 @@ pub fn encode_still(
     if graded.len() < width * height * 3 {
         return Err(format!("frame is {} samples, expected {}", graded.len(), width * height * 3));
     }
-    let encoded = pq_encode(graded, options.peak_nits);
+    let encoded = transfer_encode(graded, options.transfer);
 
     // SAFETY: every pointer below is either freshly created by libavif or points into
     // `encoded`, which outlives the call. The image is destroyed on every path.
@@ -180,7 +225,7 @@ mod tests {
         // of counts at 1 nit, and a test written that way measures the quantisation
         // rather than the curve.
         let levels: Vec<u16> = [0u16, 1, 66, 13303, 32768, u16::MAX].to_vec();
-        let out = pq_encode(&levels, 1000.0);
+        let out = transfer_encode(&levels, Transfer::Pq { peak_nits: 1000.0 });
         for (i, level) in levels.iter().enumerate() {
             let nits = (f64::from(*level) / f64::from(u16::MAX)) * 1000.0;
             let want = (tone::pq(nits) * f64::from(u16::MAX)).round() as u16;
@@ -195,7 +240,7 @@ mod tests {
         // Normalising it to full scale would be the mistake `npl` exists to prevent:
         // the file would then claim its diffuse white is 10000 nits.
         let ramp: Vec<u16> = (0..=255).map(|i| i * 257).collect();
-        let out = pq_encode(&ramp, 1000.0);
+        let out = transfer_encode(&ramp, Transfer::Pq { peak_nits: 1000.0 });
         assert_eq!(out[0], 0, "black must stay black");
         let peak = *out.last().expect("a last sample");
         assert_eq!(peak, (tone::pq(1000.0) * f64::from(u16::MAX)).round() as u16);
@@ -212,7 +257,7 @@ mod tests {
             subsample_420: false,
             quantizer: 20,
             speed: 8,
-            peak_nits: 1000.0,
+            transfer: Transfer::Pq { peak_nits: 1000.0 },
         };
         let short = vec![0u16; 8 * 8 * 3 - 1];
         assert!(encode_still(&short, 8, 8, &options, "/dev/null").is_err());

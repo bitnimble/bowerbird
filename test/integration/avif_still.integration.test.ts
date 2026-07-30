@@ -66,42 +66,55 @@ function psnr(a: string, b: string): number {
   return found[1] === 'inf' ? Number.POSITIVE_INFINITY : Number(found[1]);
 }
 
-// Both media, because they differ in the one field most easily got wrong: the baseline
-// control is 4:2:0 where the still is 4:4:4, and libavif takes that as a pixel format
-// on the image rather than as a flag beside it.
+// Every combination, because each one differs from the others in the field most easily
+// got wrong. The baseline control is 4:2:0 where the still is 4:4:4, and libavif takes
+// that as a pixel format on the image rather than a flag beside it. And the SDR
+// reference is a different *picture*, not a different tag: `zscale` converts its
+// primaries from Rec.2020 to BT.709 and applies the sRGB curve where PQ applies none
+// and neither. That combination shipped broken once, encoded as PQ on unconverted
+// primaries, and every test then in the suite passed - so it is enumerated here rather
+// than left to the one variant that happened to work.
 for (const medium of ['still', 'still-baseline'] as const) {
-  test(
-    `the linked encoder agrees with avifenc, ${medium}`,
-    async () => {
+  for (const variant of ['pq', 'sdr'] as const) {
+    test(
+      `the linked encoder agrees with avifenc, ${variant} ${medium}`,
+      async () => {
       const dir = mkdtempSync(path.join(tmpdir(), 'bb-avif-'));
       try {
         const linked = path.join(dir, 'linked.avif');
         const spawned = path.join(dir, 'spawned.avif');
-        await encode(linked, medium, false);
-        await encode(spawned, medium, true);
+        await encode(linked, medium, false, variant);
+        await encode(spawned, medium, true, variant);
 
         // Everything a browser reads to decide what the file is, including the CICP
         // that decides whether it is treated as HDR at all.
         expect(probe(linked)).toBe(probe(spawned));
         expect(probe(linked)).toContain(medium === 'still' ? 'pix_fmt=yuv444p10le' : 'pix_fmt=yuv420p10le');
-        expect(probe(linked)).toContain('color_transfer=smpte2084');
-        expect(probe(linked)).toContain('color_primaries=bt2020');
+        expect(probe(linked)).toContain(
+          variant === 'pq' ? 'color_transfer=smpte2084' : 'color_transfer=iec61966-2-1',
+        );
+        expect(probe(linked)).toContain(variant === 'pq' ? 'color_primaries=bt2020' : 'color_primaries=bt709');
 
         // ~1 code value at 10 bits is the intermediate quantisation; a picture apart
-        // would be tens of dB below this.
+        // would be tens of dB below this. The SDR arm is looser: it is not only a
+        // quantisation apart from zimg but a whole gamut conversion done by different
+        // arithmetic, and out-of-gamut colours land wherever each side's clamp puts
+        // them. Still an order of magnitude above what a wrong curve scores - the
+        // version that shipped PQ here measured 23.5.
         const score = psnr(linked, spawned);
-        expect(score).toBeGreaterThan(50);
+        expect(score).toBeGreaterThan(variant === 'pq' ? 50 : 40);
         // Not infinite, because infinite means both runs took the same path and this
         // compared a file with itself. That is how a differential test dies quietly:
         // rename the environment variable, or let the guard in `encode_graded` start
         // declining, and every assertion above still passes having tested nothing.
         expect(score).not.toBe(Number.POSITIVE_INFINITY);
-      } finally {
-        rmSync(dir, { recursive: true, force: true });
-      }
-    },
-    180_000,
-  );
+        } finally {
+          rmSync(dir, { recursive: true, force: true });
+        }
+      },
+      180_000,
+    );
+  }
 }
 
 /** Mean of the decoded frame as 8-bit grey, which is enough to catch a wrong transfer. */

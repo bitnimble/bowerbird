@@ -421,15 +421,30 @@ fn solve_row(matrix: &[[f64; 3]; 3], rhs: &[f64; 3]) -> Option<[f64; 3]> {
 /// deltaE76 wants 8-bit sRGB, which is also the only space the two fits report in
 /// comparably. Values above diffuse white have nowhere to go in it, but the mask has
 /// already excluded those.
+/// Rec.2020 linear to sRGB linear - the primaries conversion, and nothing else.
+///
+/// A fixed 3x3, because the two share a white point and so there is no chromatic
+/// adaptation in it. This is what `zscale`'s `pin=bt2020 ... p=bt709` was doing for the
+/// SDR still (sRGB and BT.709 have the same primaries and differ only in transfer), and
+/// it is here rather than there so the still's encode can stay in this process.
+///
+/// Returned rather than applied, so a caller converting a whole frame builds it once:
+/// this used to be multiplied out per pixel inside the fit's measurement loop.
+pub fn rec2020_to_srgb() -> [[f64; 3]; 3] {
+    multiply(&XYZ_TO_SRGB, &REC2020_TO_XYZ)
+}
+
+/// The sRGB transfer, IEC 61966-2-1. Out-of-gamut values clamp, which is what zimg does
+/// with them too - neither of us is gamut-mapping, just refusing to encode a negative.
+pub fn srgb_oetf(value: f64) -> f64 {
+    let c = value.clamp(0.0, 1.0);
+    if c <= 0.0031308 { 12.92 * c } else { 1.055 * c.powf(1.0 / 2.4) - 0.055 }
+}
+
 fn to_srgb8(r: f64, g: f64, b: f64) -> [f64; 3] {
     // Back to sRGB primaries first; the fit works in Rec.2020.
-    let m = multiply(&XYZ_TO_SRGB, &REC2020_TO_XYZ);
-    let v = apply3(&m, r, g, b);
-    let oetf = |value: f64| -> f64 {
-        let c = value.clamp(0.0, 1.0);
-        (255.0 * if c <= 0.0031308 { 12.92 * c } else { 1.055 * c.powf(1.0 / 2.4) - 0.055 }).round()
-    };
-    [oetf(v[0]), oetf(v[1]), oetf(v[2])]
+    let v = apply3(&rec2020_to_srgb(), r, g, b);
+    [0, 1, 2].map(|c| (255.0 * srgb_oetf(v[c])).round())
 }
 
 fn measure(colour: &HdrColour, render: &Plane, jpeg: &Plane, bits: &[u8]) -> (f64, f64) {
