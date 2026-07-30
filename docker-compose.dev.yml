@@ -21,7 +21,7 @@ services:
     # photo library, same as production did.
     user: "1000:1000"
     working_dir: /app
-    command: sh -c "bun install --frozen-lockfile && bun --watch run src/index.ts"
+    command: sh -c "bun install --frozen-lockfile && bun run build:native && bun --watch run src/index.ts"
     # The web service shares this network namespace, so its published port lives
     # here too.
     ports:
