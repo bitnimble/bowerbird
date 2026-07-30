@@ -18,6 +18,9 @@ export const PHOTOS_DIR = path.join(E2E_ROOT, 'photos');
 export const CULL_PHOTOS_DIR = path.join(E2E_ROOT, 'cull-photos');
 export const STACK_PHOTOS_DIR = path.join(E2E_ROOT, 'stack-photos');
 export const PHONE_PHOTOS_DIR = path.join(E2E_ROOT, 'phone-photos');
+// Triage writes a verdict onto every member it judges, so it gets a library of
+// its own rather than leaving the stacks spec's frames triaged behind it.
+export const TRIAGE_PHOTOS_DIR = path.join(E2E_ROOT, 'triage-photos');
 export const DB_PATH = path.join(E2E_ROOT, 'e2e.db');
 // Playwright has to know both URLs before it launches anything, so these can't
 // be port 0 - pick one and publish it. The config process picks first and the
@@ -41,6 +44,12 @@ const FIXTURE = path.join(E2E_DIR, '../../test/fixtures/DSC02981.ARW');
 // paging work, without a 24MB decode per extra frame.
 export const PHOTO_NAMES = ['alpha.arw', 'beta.arw'];
 
+// The stacks library gets a third. Triage is a tournament, and two photos is a
+// single round: it cannot show a winner being held over, a second entry in the
+// queue, or a rewind to anything but the start. Its own list rather than a longer
+// PHOTO_NAMES, which the catalogue and culling specs count tiles against.
+export const STACK_PHOTO_NAMES = [...PHOTO_NAMES, 'gamma.arw'];
+
 // Called from playwright.config.ts at import time, not from globalSetup: the
 // webServers launch before globalSetup runs, and the API cannot open its DB
 // until this directory exists.
@@ -58,8 +67,10 @@ export function prepareFixture(): void {
   // byte-identical is what makes it a stack: detection has nothing to tell them
   // apart, which is the correct answer and the reason the other libraries turn
   // it off (`addLibrary`).
-  for (const dir of [PHOTOS_DIR, CULL_PHOTOS_DIR, STACK_PHOTOS_DIR, PHONE_PHOTOS_DIR]) {
+  const stacked = new Set([STACK_PHOTOS_DIR, TRIAGE_PHOTOS_DIR]);
+  for (const dir of [PHOTOS_DIR, CULL_PHOTOS_DIR, STACK_PHOTOS_DIR, PHONE_PHOTOS_DIR, TRIAGE_PHOTOS_DIR]) {
     mkdirSync(dir, { recursive: true });
-    for (const name of PHOTO_NAMES) copyFileSync(FIXTURE, path.join(dir, name));
+    const names = stacked.has(dir) ? STACK_PHOTO_NAMES : PHOTO_NAMES;
+    for (const name of names) copyFileSync(FIXTURE, path.join(dir, name));
   }
 }

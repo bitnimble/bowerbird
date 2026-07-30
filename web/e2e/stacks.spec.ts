@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { PHOTO_NAMES, STACK_PHOTOS_DIR } from './fixture_library';
+import { STACK_PHOTO_NAMES, STACK_PHOTOS_DIR } from './fixture_library';
 import { addLibrary, bulkAction, openLibrary, syncLibrary, waitForSyncSettled } from './helpers';
 
 // Stacks, driven through the real grid (DESIGN §19).
@@ -20,11 +20,11 @@ test('identical frames collapse into one tile that says how many it stands for',
   await syncLibrary(page, STACK_PHOTOS_DIR);
   // Detection runs as part of settling, so the grid has to be opened after it
   // rather than during the import.
-  await waitForSyncSettled(page, STACK_PHOTOS_DIR, PHOTO_NAMES.length);
+  await waitForSyncSettled(page, STACK_PHOTOS_DIR, STACK_PHOTO_NAMES.length);
   await openLibrary(page, STACK_PHOTOS_DIR);
 
   await expect(page.locator('.tile')).toHaveCount(1, { timeout: 45_000 });
-  await expect(page.locator('.tile__stack-count')).toHaveText(String(PHOTO_NAMES.length));
+  await expect(page.locator('.tile__stack-count')).toHaveText(String(STACK_PHOTO_NAMES.length));
 });
 
 test('the tile opens a band of members below the row, and closes it again', async ({ page }) => {
@@ -35,7 +35,7 @@ test('the tile opens a band of members below the row, and closes it again', asyn
 
   await tile.click();
   await expect(page.locator('.grid__band')).toHaveCount(1);
-  await expect(page.locator('.grid__band .tile')).toHaveCount(PHOTO_NAMES.length);
+  await expect(page.locator('.grid__band .tile')).toHaveCount(STACK_PHOTO_NAMES.length);
   // The stack's own tile stays where it is, now marked as what closes the band.
   await expect(page.locator('.tile__stack--open')).toHaveCount(1);
 
@@ -58,7 +58,7 @@ test('every view opens the band, and none of them draws it over the grid', async
     await tile.click();
     const band = page.locator('.grid__band');
     await expect(band).toHaveCount(1);
-    await expect(page.locator('.grid__band .tile')).toHaveCount(PHOTO_NAMES.length);
+    await expect(page.locator('.grid__band .tile')).toHaveCount(STACK_PHOTO_NAMES.length);
     // Joined to the tile that opened it in every view, masonry included - where the
     // tile's place on its line has to be measured before the edge can be cut.
     await expect(page.locator('.grid__band--fused')).toHaveCount(1);
@@ -125,22 +125,24 @@ test('a selection spans the grid and the contents of a stack', async ({ page }) 
   await openLibrary(page, STACK_PHOTOS_DIR);
   const stack = page.locator('.tile:not(.tile--member) .tile__hit');
   await stack.click();
-  await expect(page.locator('.grid__band .tile')).toHaveCount(PHOTO_NAMES.length);
+  await expect(page.locator('.grid__band .tile')).toHaveCount(STACK_PHOTO_NAMES.length);
   // Opening it selected nothing: a stack's tile is a disclosure (§19.6). Cmd-click
   // is what selects the row, and it leaves the band open.
   await expect(page.locator('.tile--selected')).toHaveCount(0);
   await stack.click({ modifiers: ['ControlOrMeta'] });
-  await expect(page.locator('.grid__band .tile')).toHaveCount(PHOTO_NAMES.length);
+  await expect(page.locator('.grid__band .tile')).toHaveCount(STACK_PHOTO_NAMES.length);
 
   // Cmd-clicking a member of it adds to that same selection rather than replacing it.
   await page.locator('.grid__band .tile__hit').first().click({ modifiers: ['ControlOrMeta'] });
   await expect(page.locator('.bulkbar__count')).toHaveText('2 selected');
   await expect(page.locator('.tile--selected')).toHaveCount(2);
 
-  // And one action reaches both. The row resolves to the whole stack and the
-  // member is one of those photos, so the server takes each of them once.
+  // And one action reaches both. Two *entries* is the whole stack plus one of its
+  // members, so the photographs are the stack's members and no more: the row
+  // resolves to all of them, the member is already one of those, and the server
+  // takes the union rather than acting on it twice.
   await bulkAction(page, 'Rebuild thumbnails');
-  await expect(page.getByText('Rebuilt 2 thumbnails')).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText(`Rebuilt ${STACK_PHOTO_NAMES.length} thumbnails`)).toBeVisible({ timeout: 30_000 });
 
   // Closing the band takes its members out of the selection, since a closed stack
   // would leave them acted on with nothing on screen saying so - and leaves the
@@ -154,7 +156,7 @@ test('a selection spans the grid and the contents of a stack', async ({ page }) 
   // empty and the ids carry it. The band is still open - a rebuild re-reads the
   // collection and keeps the bands it had (§19.6.1) - so a plain click on a member
   // is all it takes, which replaces the selection rather than adding to it.
-  await expect(page.locator('.grid__band .tile')).toHaveCount(PHOTO_NAMES.length);
+  await expect(page.locator('.grid__band .tile')).toHaveCount(STACK_PHOTO_NAMES.length);
   await page.locator('.grid__band .tile__hit').first().click();
   await expect(page.locator('.tile--selected')).toHaveCount(1);
   await bulkAction(page, 'Rebuild thumbnails');
@@ -165,26 +167,37 @@ test('a member picked out of the band can be removed from the stack', async ({ p
   await page.goto('/settings');
   await openLibrary(page, STACK_PHOTOS_DIR);
   await page.locator('.tile:not(.tile--member) .tile__hit').click();
-  await expect(page.locator('.grid__band .tile')).toHaveCount(PHOTO_NAMES.length);
+  await expect(page.locator('.grid__band .tile')).toHaveCount(STACK_PHOTO_NAMES.length);
 
-  await page.locator('.grid__band .tile__hit').first().click();
+  // Two of the three, so one member is left and the stack dissolves: a stack of
+  // one is a photograph, and that is the half of this worth asserting.
+  const members = page.locator('.grid__band .tile__hit');
+  await members.nth(0).click();
+  await members.nth(1).click({ modifiers: ['ControlOrMeta'] });
   const remove = page.getByRole('button', { name: 'Remove from stack' });
   await expect(remove).toBeVisible();
   await remove.click();
 
   // One member left is a photograph rather than a stack, so the badge goes and
-  // the collection is two ordinary tiles again.
+  // the collection is ordinary tiles again.
   await expect(page.locator('.tile__stack')).toHaveCount(0, { timeout: 20_000 });
-  await expect(page.locator('.tile')).toHaveCount(PHOTO_NAMES.length);
+  await expect(page.locator('.tile')).toHaveCount(STACK_PHOTO_NAMES.length);
 });
 
 test('a stack made by hand can be unstacked again', async ({ page }) => {
   await page.goto('/settings');
   await openLibrary(page, STACK_PHOTOS_DIR);
-  await expect(page.locator('.tile')).toHaveCount(PHOTO_NAMES.length, { timeout: 45_000 });
+  await expect(page.locator('.tile')).toHaveCount(STACK_PHOTO_NAMES.length, { timeout: 45_000 });
 
-  // Cmd-click, because a plain click means "this one instead" (§18.3.1).
-  for (const tile of await page.locator('.tile__hit').all()) await tile.click({ modifiers: ['ControlOrMeta'] });
+  // Cmd-click, because a plain click means "this one instead" (§18.3.1). Waiting
+  // on each selection rather than clicking straight through: the bulk bar appears
+  // under the first one and moves the grid, so a blind loop can land a click on a
+  // tile that is no longer where it was.
+  const tiles = page.locator('.tile__hit');
+  for (let index = 0; index < STACK_PHOTO_NAMES.length; index++) {
+    await tiles.nth(index).click({ modifiers: ['ControlOrMeta'] });
+    await expect(page.locator('.tile--selected')).toHaveCount(index + 1);
+  }
   await page.getByRole('button', { name: 'Stack', exact: true }).click();
   await expect(page.locator('.tile')).toHaveCount(1);
 
@@ -192,5 +205,5 @@ test('a stack made by hand can be unstacked again', async ({ page }) => {
   // it, and Unstack is offered for a selection of one stack (§19.6).
   await page.locator('.tile__hit').click({ modifiers: ['ControlOrMeta'] });
   await page.getByRole('button', { name: 'Unstack' }).click();
-  await expect(page.locator('.tile')).toHaveCount(PHOTO_NAMES.length);
+  await expect(page.locator('.tile')).toHaveCount(STACK_PHOTO_NAMES.length);
 });
