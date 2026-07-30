@@ -7,7 +7,9 @@ export class LibrariesStore {
   // Per library, keyed by id, because only the library being looked at in
   // Settings has ever had its rules read.
   @observable.shallow accessor folderRules = new Map<string, FolderRule[]>();
-  @observable accessor loading = false;
+  // True until the first load lands: an unread list is not an empty one, and
+  // callers branch on emptiness to decide where to send the user.
+  @observable accessor loading = true;
   @observable accessor error: string | null = null;
 
   @computed get byId(): Map<string, Library> {

@@ -254,3 +254,24 @@ test('the bin shows only soft-deleted photos, and the library hides them', async
   await expect(page.locator('.tile')).toHaveCount(1);
   await expect(page.locator('.badge--deleted')).toHaveCount(1);
 });
+
+test('the home page lands in a library, and a narrow screen gets the rail as a drawer', async ({ page }) => {
+  await page.goto('/');
+  await expect(page).toHaveURL(/\/libraries\//);
+
+  await page.setViewportSize({ width: 420, height: 800 });
+  const rail = page.locator('.rail');
+  await expect(rail).toHaveCount(0);
+
+  await page.getByRole('button', { name: 'Show sidebar' }).click();
+  await expect(rail).toBeVisible();
+
+  // Over the content rather than beside it: the page keeps the full width it had.
+  const railBox = (await rail.boundingBox())!;
+  const contentBox = (await page.locator('.content').boundingBox())!;
+  expect(contentBox.x).toBeLessThan(railBox.x + railBox.width);
+
+  // Navigating is what the drawer was opened for, so it closes behind the link.
+  await page.getByRole('link', { name: 'Albums' }).click();
+  await expect(rail).toHaveCount(0);
+});

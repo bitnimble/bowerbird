@@ -224,13 +224,48 @@ function ShortcutHelp(): JSX.Element {
 }
 
 const RAIL_KEY = 'bowerbird.rail.collapsed';
+const MOBILE = '(max-width: 860px)';
+
+// A narrow screen has no column to spare, so the rail overlays the content
+// there. That makes its open state a different thing: transient, closed by
+// default, rather than the remembered chrome preference it is on a desktop.
+function useIsMobile(): boolean {
+  const [mobile, setMobile] = useState(() => window.matchMedia(MOBILE).matches);
+  useEffect(() => {
+    const query = window.matchMedia(MOBILE);
+    setMobile(query.matches);
+    const onChange = (e: MediaQueryListEvent): void => setMobile(e.matches);
+    query.addEventListener('change', onChange);
+    return () => query.removeEventListener('change', onChange);
+  }, []);
+  return mobile;
+}
+
+// Nothing to land on until the libraries are known: with one registered the
+// photographs are the home screen, and only a fresh install starts in Settings.
+const Home = observer(function Home(): JSX.Element | null {
+  const libraries = useLibrariesStore();
+  if (libraries.loading) return null;
+  const first = libraries.libraries[0];
+  return <Navigate to={first == null ? '/settings' : `/libraries/${first.id}`} replace />;
+});
 
 export function App(): JSX.Element {
+  const mobile = useIsMobile();
   // Remembered, because the rail is chrome: having to re-hide it on every visit
   // is the same annoyance as it never collapsing at all.
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem(RAIL_KEY) === '1');
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const { pathname } = useLocation();
+
+  // Tapping a link asked for the page, not for the drawer to stay over it.
+  useEffect(() => setDrawerOpen(false), [pathname]);
 
   function toggleRail(): void {
+    if (mobile) {
+      setDrawerOpen((was) => !was);
+      return;
+    }
     setCollapsed((was) => {
       const next = !was;
       localStorage.setItem(RAIL_KEY, next ? '1' : '0');
@@ -238,15 +273,18 @@ export function App(): JSX.Element {
     });
   }
 
+  const railOpen = mobile ? drawerOpen : !collapsed;
+
   return (
-    <div className={`shell${collapsed ? ' shell--collapsed' : ''}`}>
+    <div className={`shell${railOpen && !mobile ? '' : ' shell--collapsed'}`}>
       <EnsureLibraries />
       <ServerEvents />
-      {!collapsed && <Rail onCollapse={toggleRail} />}
+      {mobile && drawerOpen && <div className="rail__scrim" onClick={toggleRail} />}
+      {railOpen && <Rail onCollapse={toggleRail} />}
       <div className="main">
         {/* Only the expand button floats over the content; collapsing is done
             from inside the rail, where there is a row to put it in. */}
-        {collapsed && (
+        {!railOpen && (
           <Button className="rail__toggle" iconOnly aria-label="Show sidebar" aria-expanded={false} onClick={toggleRail}>
             <PanelLeftOpen size={ICON} />
           </Button>
@@ -254,7 +292,7 @@ export function App(): JSX.Element {
         <Toasts />
         <div className="content">
           <Routes>
-            <Route path="/" element={<Navigate to="/settings" replace />} />
+            <Route path="/" element={<Home />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/libraries/:libraryId" element={<LibraryPhotosPage />} />
             <Route path="/libraries/:libraryId/shoots" element={<ShootsPage />} />
