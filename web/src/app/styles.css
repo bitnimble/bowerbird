@@ -973,7 +973,7 @@ p.ui-text--mono {
      its own width, so stopping short of the edge left the thumb sitting a pad
      closer to the tiles than to the window. */
   margin-right: calc(-1 * var(--pad-x));
-  --bar-w: calc(24px + var(--pad-x));
+  --bar-w: 24px;
 }
 
 /* The gallery's one scroll. Only the tiles near the viewport are mounted, and
@@ -1013,9 +1013,8 @@ p.ui-text--mono {
    drives the column count and every row's height, so a bar that took space
    changed the very content height that decides whether a bar is needed.
 
-   It floats in .grid__scroller's padding, so its pointer target (WCAG 2.5.8 wants
-   24px; this is that plus the page's inset) reaches over nothing. The track itself
-   takes no pointer events: it spans the
+   It floats in .grid__scroller's padding, so its 24px pointer target (WCAG 2.5.8)
+   reaches over nothing. The track itself takes no pointer events: it spans the
    grid's whole height, and events there would swallow a click, a wheel notch or a
    touch pan anywhere down that edge. */
 .grid__bar {
