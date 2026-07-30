@@ -4,6 +4,7 @@ import { expect, test } from '@playwright/test';
 import { API_URL, CULL_PHOTOS_DIR, PHOTO_NAMES } from './fixture_library';
 import {
   addLibrary,
+  bulkAction,
   openLibrary,
   openPhoto,
   selectPhoto,
@@ -112,12 +113,17 @@ test('a click selects the photo alone and a double-click opens it', async ({ pag
   await tiles.first().locator('.tile__hit').click({ modifiers: ['ControlOrMeta'] });
   await expect(page.locator('.tile--selected')).toHaveCount(2);
 
-  // One ring for the selection and the cursor alike, so dropping the selection
-  // leaves nothing ringed at all - a ring behind an empty selection is a photo the
-  // cull keys still act on with nothing saying so.
+  // Regression: cmd-clicking a selected photo moves the cursor onto the very photo
+  // it deselects, and a ring drawn for the cursor as well as for the selection left
+  // that photo ringed with nothing about to act on it.
+  await tiles.first().locator('.tile__hit').click({ modifiers: ['ControlOrMeta'] });
+  await expect(page.locator('.tile--selected')).toHaveCount(1);
+  await expect(tiles.first()).not.toHaveClass(/tile--selected/);
+
+  // The ring is the selection, so dropping it leaves nothing ringed at all.
   await page.keyboard.press('Escape');
   await expect(page.locator('.tile--selected')).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Move to Bin' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'More actions' })).toBeDisabled();
 
   await openPhoto(page, 0);
   await expect(page).toHaveURL(/\/photos\//);
@@ -149,9 +155,7 @@ test('shift-click extends the selection from the anchor', async ({ page }) => {
   // from, not what happens to be selected.
   await tiles.last().locator('.tile__hit').click();
   await tiles.last().locator('.tile__hit').click({ modifiers: ['ControlOrMeta'] });
-  // Off the bar rather than off the ring: the tile is still where the cursor is,
-  // and the ring says so.
-  await expect(page.getByRole('button', { name: 'Move to Bin' })).toBeDisabled();
+  await expect(page.locator('.tile--selected')).toHaveCount(0);
 
   await tiles.first().locator('.tile__hit').click({ modifiers: ['Shift'] });
   await expect(page.locator('.tile--selected')).toHaveCount(PHOTO_NAMES.length);
@@ -271,7 +275,7 @@ test('restoring from the Bin returns the photo to the library', async ({ page })
   await openLibrary(page, CULL_PHOTOS_DIR);
 
   await selectPhoto(page);
-  await page.getByRole('button', { name: 'Move to Bin' }).click();
+  await bulkAction(page, 'Move to Bin');
   await expect(page.locator('.tile')).toHaveCount(PHOTO_NAMES.length - 1);
 
   await page.getByRole('link', { name: 'Bin', exact: true }).click();
@@ -419,8 +423,8 @@ test("a selection's grid tiles can be rebuilt from the bulk bar", async ({ page 
   await expect(page.locator('.tile')).toHaveCount(PHOTO_NAMES.length);
 
   await selectPhoto(page);
-  await page.getByRole('button', { name: 'Rebuild grid renditions' }).click();
-  await expect(page.getByText(/Rebuilt 1 grid rendition/)).toBeVisible();
+  await bulkAction(page, 'Rebuild thumbnails');
+  await expect(page.getByText(/Rebuilt 1 thumbnail/)).toBeVisible();
 
   // What the viewer is served is recorded per photo and a tile rebuild says
   // nothing about it, so the detail view reads the same afterwards.
@@ -437,7 +441,7 @@ test('a rebuilt rendition is pushed to the tile that changed, and to no other', 
   const [rebuilt, untouched] = [await src(0), await src(1)];
 
   await selectPhoto(page);
-  await page.getByRole('button', { name: 'Rebuild grid renditions' }).click();
+  await bulkAction(page, 'Rebuild thumbnails');
 
   // The server names the photo it just wrote and the tile asks again for that one
   // alone. Nothing here polls, and no version lands on a photo that did not move.
@@ -545,8 +549,8 @@ test('a chosen rendition is cached on disk, and survives a tile rebuild', async 
   // next look paid for it again.
   await openLibrary(page, CULL_PHOTOS_DIR);
   await selectPhoto(page);
-  await page.getByRole('button', { name: 'Rebuild grid renditions' }).click();
-  await expect(page.getByText(/Rebuilt 1 grid rendition/)).toBeVisible({ timeout: 60_000 });
+  await bulkAction(page, 'Rebuild thumbnails');
+  await expect(page.getByText(/Rebuilt 1 thumbnail/)).toBeVisible({ timeout: 60_000 });
   await page.waitForTimeout(2000); // the sweep that must not happen is fire-and-forget
   expect(existsSync(cached)).toBe(true);
 });

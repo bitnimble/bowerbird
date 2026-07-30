@@ -1,7 +1,7 @@
 import { observer } from 'mobx-react-lite';
-import { FolderInput, Images, Layers, Layers2, RotateCcw, RotateCw, Sparkles, Trash2, X } from 'lucide-react';
+import { Ellipsis, FolderInput, Images, Layers, Layers2, RotateCcw, RotateCw, Sparkles, Trash2, X } from 'lucide-react';
 import { useAlbumsStore, usePhotosStore, usePresenters, useShootsStore } from '../../app/stores_context';
-import { Button, CheckMenu, ICON, Text } from '../../ui/ui';
+import { ActionMenu, Button, CheckMenu, ICON, type Option, Text } from '../../ui/ui';
 
 // What can be done to photos picked out inside an open stack. Only the two
 // actions that are about the stack: everything else here works on positions,
@@ -26,6 +26,17 @@ const MemberBar = observer(function MemberBar(): JSX.Element {
     </div>
   );
 });
+
+// Behind the overflow, so the bar's own row holds only what is about *this*
+// selection - where it goes and what it becomes. These three are maintenance:
+// reached deliberately, and two of them rarely.
+type Overflow = 'thumbnails' | 'metadata' | 'bin';
+
+const OVERFLOW: Option<Overflow>[] = [
+  { value: 'thumbnails', label: 'Rebuild thumbnails', icon: <Sparkles size={ICON} /> },
+  { value: 'metadata', label: 'Refresh metadata', icon: <RotateCw size={ICON} /> },
+  { value: 'bin', label: 'Move to Bin', icon: <Trash2 size={ICON} />, destructive: true },
+];
 
 interface Props {
   // Set on a shoot or album page so the selection can be removed from it, not
@@ -81,18 +92,22 @@ export const BulkBar = observer(function BulkBar({ removeFrom }: Props): JSX.Ele
 
       <div className="spacer" />
 
-      {!inBin && (
-        <>
-          <Button disabled={count < 2} onClick={() => void photos.stackSelection()}>
-            <Layers size={ICON} />
-            Stack
-          </Button>
+      {/* Conditional rather than disabled, unlike the rest of the bar: these two
+          are not "this action, once you have a selection" but statements about
+          what the selection *is* - two photos to fuse, or one stack to break -
+          and greyed out they read as actions the reader has failed to reach. */}
+      {!inBin && count > 1 && (
+        <Button onClick={() => void photos.stackSelection()}>
+          <Layers size={ICON} />
+          Stack
+        </Button>
+      )}
 
-          <Button disabled={store.selectedStackId == null} onClick={() => void photos.unstack(store.selectedStackId!)}>
-            <Layers2 size={ICON} />
-            Unstack
-          </Button>
-        </>
+      {!inBin && store.selectedStackId != null && (
+        <Button onClick={() => void photos.unstack(store.selectedStackId!)}>
+          <Layers2 size={ICON} />
+          Unstack
+        </Button>
       )}
 
       {inBin ? (
@@ -137,16 +152,6 @@ export const BulkBar = observer(function BulkBar({ removeFrom }: Props): JSX.Ele
             />
           )}
 
-          <Button disabled={none} onClick={() => void photos.rebuildGridRenditions()}>
-            <Sparkles size={ICON} />
-            Rebuild grid renditions
-          </Button>
-
-          <Button disabled={none} onClick={() => void photos.refreshMetadataForSelection()}>
-            <RotateCw size={ICON} />
-            Refresh metadata
-          </Button>
-
           {removeFrom != null && (
             <Button
               disabled={none}
@@ -161,10 +166,17 @@ export const BulkBar = observer(function BulkBar({ removeFrom }: Props): JSX.Ele
             </Button>
           )}
 
-          <Button variant="danger" disabled={none} onClick={() => void photos.deleteSelected()}>
-            <Trash2 size={ICON} />
-            Move to Bin
-          </Button>
+          <ActionMenu
+            label="More actions"
+            disabled={none}
+            trigger={<Ellipsis size={ICON} />}
+            options={OVERFLOW}
+            onSelect={(action) => {
+              if (action === 'thumbnails') void photos.rebuildGridRenditions();
+              else if (action === 'metadata') void photos.refreshMetadataForSelection();
+              else void photos.deleteSelected();
+            }}
+          />
         </>
       )}
     </div>

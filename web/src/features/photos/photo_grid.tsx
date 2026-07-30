@@ -156,12 +156,13 @@ const Tile = observer(function Tile({
   // A tile that failed and has since been told to try again is not failed any
   // more; without this the placeholder outlives the rendition arriving.
   useEffect(() => setFailed(false), [src]);
-  // One ring for one idea. The cursor and the selection are kept in step by every
-  // gesture that moves either - an arrow key selects, a click focuses - so drawing
-  // them differently only ever raised "why is this one different"; where they do
-  // come apart (Space toggling the cursor's photo off, an action that has just
-  // consumed the selection) the ring means "here, and what a key acts on".
-  const selected = store.selection.has(index) || isFocused;
+  // One ring for one idea: the selection. The cursor is kept inside it by every
+  // gesture that moves either - an arrow key selects what it lands on, a click
+  // focuses what it selected - so a second ring for the cursor only ever raised
+  // "why is this one different". Off the selection alone rather than "or the
+  // cursor", because cmd-clicking a selected photo moves the cursor onto the very
+  // photo it deselects, and that left a ring on a photo nothing would act on.
+  const selected = store.selection.has(index);
   const expanded = photo.stack_id != null && store.expansions.has(photo.stack_id);
   const stacked = photo.stack_id != null && photo.stack_size > 1;
 

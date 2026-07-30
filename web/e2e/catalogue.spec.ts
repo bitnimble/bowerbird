@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { readdirSync } from 'node:fs';
 import { PHOTOS_DIR, PHOTO_NAMES } from './fixture_library';
-import { addLibrary, addShoot, openLibrary, selectPhoto, syncLibrary } from './helpers';
+import { addLibrary, addShoot, bulkAction, openLibrary, selectPhoto, syncLibrary } from './helpers';
 
 // One ordered journey: each step depends on the catalogue state the previous one
 // produced, which is also how the bugs below were originally found.
@@ -247,7 +247,7 @@ test('the bin shows only soft-deleted photos, and the library hides them', async
   await expect(page.locator('.tile')).toHaveCount(PHOTO_NAMES.length);
 
   await selectPhoto(page);
-  await page.getByRole('button', { name: 'Move to Bin' }).click();
+  await bulkAction(page, 'Move to Bin');
   await expect(page.locator('.tile')).toHaveCount(PHOTO_NAMES.length - 1);
 
   // Regression: include_deleted alone returns live + deleted, so the Bin showed

@@ -316,6 +316,7 @@ export function ActionMenu<T extends string>({
   options,
   toggles = [],
   onSelect,
+  disabled = false,
 }: {
   trigger: ReactNode;
   /** Required when the trigger is an icon, which carries no accessible name. */
@@ -324,6 +325,7 @@ export function ActionMenu<T extends string>({
   /** Shown below the actions, since these change what the actions do. */
   toggles?: ActionToggle[];
   onSelect: (value: T) => void;
+  disabled?: boolean;
 }): JSX.Element {
   const item = (option: Option<T>): JSX.Element => (
     <Menu.Item
@@ -347,7 +349,7 @@ export function ActionMenu<T extends string>({
 
   return (
     <Menu.Root>
-      <Menu.Trigger className="ui-btn ui-btn--default" aria-label={label}>
+      <Menu.Trigger className="ui-btn ui-btn--default" aria-label={label} disabled={disabled}>
         {trigger}
         <ChevronDown size={ICON} className="ui-btn__caret" />
       </Menu.Trigger>

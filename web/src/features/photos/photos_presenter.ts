@@ -336,7 +336,7 @@ export class PhotosPresenter {
     const target = this.selectionTarget();
     if (target == null) return;
     await this.refreshMetadata(target);
-    this.clearSelectedPositions();
+    this.reselectCursor();
   }
 
   // The rendition the user asked for, which is also the one to reopen at: which
@@ -644,14 +644,26 @@ export class PhotosPresenter {
     this.store.focusIndex = -1;
   }
 
-  // The positions alone, for an action that has just consumed them or a
-  // collection whose positions now hold something else. The cursor stays: a cull
-  // that bins the photo it is on carries on from where it was, and the row that
-  // took its place is what the next keystroke should reach.
+  // The positions alone, for a collection whose positions now hold something else.
+  // The cursor stays, since a filter is a narrower view of the same photographs
+  // (§18.3.2) - and it is not selected here, because until the next block lands it
+  // may name a row this collection does not have.
   @action
   private clearSelectedPositions(): void {
     this.store.selection = SelectionRanges.EMPTY;
     this.store.lastToggled = null;
+  }
+
+  // What an action leaves behind, once the photos it acted on are no longer the
+  // selection: the cursor, selected. A cull that bins the photo it is on carries
+  // on from the row that took its place, and the ring goes on saying which row
+  // that is - a bare cursor would leave `Del` acting on a photo nothing marks.
+  @action
+  private reselectCursor(): void {
+    this.store.lastToggled = null;
+    const at = Math.min(this.store.focusIndex, this.store.total - 1);
+    this.store.focusIndex = at;
+    this.store.selection = at < 0 ? SelectionRanges.EMPTY : SelectionRanges.of(at, at);
   }
 
   // Whichever selection was last touched is the live one, and the other is
@@ -724,11 +736,11 @@ export class PhotosPresenter {
       const { queued } = await api.rebuildTiles(target);
       await this.refreshDetail();
       await this.refresh();
-      this.toasts.show(`Rebuilt ${plural(queued, 'grid rendition', 'grid renditions')}`);
+      this.toasts.show(`Rebuilt ${plural(queued, 'thumbnail', 'thumbnails')}`);
     } catch (err) {
       this.fail(err);
     }
-    this.clearSelectedPositions();
+    this.reselectCursor();
   }
 
   // A photo whose processing never ran, or failed, has no rendition to serve and
@@ -782,6 +794,7 @@ export class PhotosPresenter {
     }
     this.clearSelectedPositions();
     await this.refresh();
+    this.reselectCursor();
     this.toasts.showUndoable(`${plural(deleted, 'photo', 'photos')} moved to the Bin`, 'Undo', async () => {
       await api.restorePhotos({ batch });
       await this.refresh();
@@ -810,6 +823,7 @@ export class PhotosPresenter {
     // rather than patching rows locally and drifting from the server.
     this.clearSelectedPositions();
     await this.refresh();
+    this.reselectCursor();
     this.toasts.show(success(count));
   }
 
@@ -1019,6 +1033,7 @@ export class PhotosPresenter {
       await api.createStack(target);
       this.clearSelectedPositions();
       await this.refresh();
+      this.reselectCursor();
     } catch (err) {
       this.fail(err);
     }
@@ -1034,6 +1049,7 @@ export class PhotosPresenter {
       });
       this.clearSelectedPositions();
       await this.refresh();
+      this.reselectCursor();
     } catch (err) {
       this.fail(err);
     }

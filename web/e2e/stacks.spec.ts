@@ -50,7 +50,6 @@ test('every view opens the band, and none of them draws it over the grid', async
   await expect(page.locator('.tile__stack')).toBeVisible({ timeout: 45_000 });
 
   for (const view of ['Masonry', 'List', 'Grid']) {
-    // Exact, because the persistent bulk bar has a "Rebuild grid renditions" in it.
     await page.getByRole('button', { name: view, exact: true }).click();
     // Masonry packs from each photo's shape rather than on a row model, and used
     // to offer no way into a stack at all.

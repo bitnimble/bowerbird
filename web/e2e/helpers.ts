@@ -87,6 +87,13 @@ export async function openLibrary(page: Page, rootPath: string): Promise<void> {
   await page.locator(`.rail__link[title="${rootPath}"]`).click();
 }
 
+// Maintenance actions on the selection live behind the bulk bar's overflow, so
+// the bar's own row holds only what the selection becomes (§18.3.1).
+export async function bulkAction(page: Page, name: string): Promise<void> {
+  await page.getByRole('button', { name: 'More actions' }).click();
+  await page.getByRole('menuitem', { name }).click();
+}
+
 // A tile's frame selects on one click and opens the photo on two (§18.3.1), so
 // every spec that wants the detail view goes through here rather than clicking.
 export function openPhoto(page: Page, nth = 0): Promise<void> {
