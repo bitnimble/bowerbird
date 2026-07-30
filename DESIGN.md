@@ -1437,7 +1437,19 @@ Four buffers went, in every case because nothing else was reading them:
 
 **What is left is libaom, and it is most of it.** Probed inside `write_avif` on the same frame: entering the encode is 239MB, the YUV planes add 138MB, dropping the RGB gives that back, and `avifEncoderWrite` alone then takes the peak to ~950MB. So roughly **700MB is libaom's own working set** for a 24MP 10-bit 4:4:4 all-intra frame, against ~145MB of ours. Two things follow. Copy elimination is close to done - the only frame this side still holds through the encode is the YUV planes libaom is reading. And that working set is *not* a threading trade: measured under `taskset`, two cores against eight moved the peak by under 30MB, so it is per-frame state and there is nothing to buy back by capping `maxThreads` or the tile count. Going lower means a different encoder, or an API that encodes in tiles, and libavif exposes neither.
 
-Removing three transfers of a frame across a process boundary and keeping the rest in the server is the shape of the deal. Budget roughly **1GB per concurrent worker** on native-resolution HDR, most of it the encoder rather than the pixels.
+Removing three transfers of a frame across a process boundary and keeping the rest in the server is the shape of the deal.
+
+**Budget off the rendition, not off the sensor.** The native-resolution export above is the on-demand `max` path, one photo at a time. What runs `processing_concurrency` deep is the import, and that builds `full` - so the numbers to plan a machine around are these, measured the same way:
+
+| | peak RSS |
+|---|---|
+| `full` at 3840, still only | 455MB |
+| `full` at 3840, still + video twin | 510MB |
+| `max` at native resolution | 954MB |
+
+The twin costs one graded frame, being the one case that cannot PQ-encode in place, and ffmpeg's own process sits on top of all of these.
+
+**A larger sensor does not cost more here**, which is worth writing down because it reads backwards. Both terms that scale are driven by the *output*: the graded frame is the rendition's size, and libaom's working set runs about 25MB per megapixel of it. The decode is the only term the sensor drives, and the bigger sensor is the one that gets halved - a 61MP frame at 3840 halves to 15MP, where a 24MP frame at 3840 does not halve at all and so decodes *larger*. Measured on the 24MP fixture, asking for an edge low enough to trigger the halving takes the decode's transient from 420MB to 178MB. A 61MP `full` therefore lands within noise of the same ~455MB, and only `max` - where the output *is* the sensor - grows with it.
 
 **Held to the binary rather than argued about** (`avif_still.integration.test.ts`). `BOWERBIRD_AVIFENC=1` puts the encode back on the two child processes, and the two are required to agree on everything a browser reads: dimensions, pixel format, range, and the CICP triple. They are not bit-identical and are not expected to be - the linked path quantises to 16-bit PQ before libavif takes it to 10-bit YCbCr where zscale goes straight there - so the pixels are compared rather than hashed: measured at **59.7dB PSNR**, about one code value at 10 bits, against a threshold of 50. The `colr` box itself comes out byte-for-byte identical, which is the part that decides whether the file is HDR at all.
 
