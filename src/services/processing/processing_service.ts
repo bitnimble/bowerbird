@@ -214,11 +214,18 @@ export class ProcessingService {
   // needs.
   private async runOneOff(job: RenditionJob): Promise<void> {
     const worker = new Worker(WORKER_URL);
+    // A grid tile computes one whichever path built it, so the repair on a detail
+    // read has to hand it over exactly as the queue does. Dropping it here left a
+    // photo whose tile was rebuilt unable to stack, silently and for good: nothing
+    // revisits a tile that is now on disk.
+    let descriptor: Uint8Array | undefined;
     try {
       await new Promise<void>((resolve, reject) => {
         worker.onmessage = (event: MessageEvent<ProcessingResult>) => {
-          if (event.data.success) resolve();
-          else reject(new Error(event.data.error));
+          if (event.data.success) {
+            descriptor = event.data.descriptor;
+            resolve();
+          } else reject(new Error(event.data.error));
         };
         worker.onerror = (event: ErrorEvent) => reject(new Error(`worker crashed: ${event.message}`));
         worker.postMessage(job);
@@ -233,6 +240,8 @@ export class ProcessingService {
         if (stage === 'tile') this.photos.markTileBuilt(job.photoId, version);
         else this.photos.markRenditionsBuilt(job.photoId, version, 'render');
         this.announce(job.photoId, { stage, version });
+        // After the writes, and best-effort, for the reasons `stageDone` gives.
+        if (descriptor != null) for (const listener of this.described) listener(job.photoId, descriptor);
       }
     } finally {
       worker.terminate();

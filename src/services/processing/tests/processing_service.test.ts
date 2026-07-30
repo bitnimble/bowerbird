@@ -13,6 +13,8 @@ const CRASH = 'crash-photo';
 /** Every job the service handed to a worker, so its shape can be asserted. */
 const posted: RenditionJob[] = [];
 
+const DESCRIPTOR = new Uint8Array([1, 2, 3]);
+
 // Fake Worker: a job for CRASH fires onerror (a native-crash-like event, which
 // skips the worker's own catch); everything else reports success.
 class MockWorker {
@@ -22,10 +24,16 @@ class MockWorker {
   postMessage(job: RenditionJob): void {
     posted.push(job);
     queueMicrotask(() => {
-      if (job.photoId === CRASH) this.onerror?.({ message: 'segfault' });
-      else this.onmessage?.({ data: { photoId: job.photoId, success: true } });
+      if (job.photoId === CRASH) return this.onerror?.({ message: 'segfault' });
+      // As the real worker does: a descriptor rides back with a grid tile and with
+      // nothing else, since that is the one pass computing it (§19.3).
+      const tile = job.targets.every((target) => target.rendition === 'grid');
+      this.onmessage?.({
+        data: { photoId: job.photoId, success: true, ...(tile ? { descriptor: DESCRIPTOR } : {}) },
+      });
     });
   }
+
   terminate(): void {}
 }
 
@@ -117,6 +125,28 @@ describe('ProcessingService.processUnprocessed', () => {
     const full = targets.find((target) => target.rendition === 'full');
     expect(full?.hdr).toBe(true);
     expect(full?.sdrFullChroma).toBe(true);
+  });
+
+  it('hands over the descriptor from a tile repaired on demand, not just a queued one', async () => {
+    // The repair path builds a grid tile outside the queue (§18.6), so it computes a
+    // descriptor exactly as an import does - and used to drop it on the floor, which
+    // left a photo whose tile had been rebuilt permanently unstackable. Nothing
+    // revisits a tile that is now on disk, so there was no second chance at it.
+    const repo = { markTileBuilt: jest.fn(), markRenditionsBuilt: jest.fn() } as unknown as PhotosRepository;
+    const service = new ProcessingService(repo, settingsWith({}));
+    const seen: { photoId: string; descriptor: Uint8Array }[] = [];
+    service.onDescribed((photoId, descriptor) => seen.push({ photoId, descriptor }));
+
+    const library = { id: 'lib', root_path: root, data_path: null, rendition_hdr_video: 0 } as never;
+    await service.renderOne('/lib/a.arw', 'p1', library, 'grid', false, 'embedded');
+
+    expect(seen).toEqual([{ photoId: 'p1', descriptor: DESCRIPTOR }]);
+
+    // A viewer rendition produces none, so this is not just "forward whatever came
+    // back" - it is the tile that carries one.
+    seen.length = 0;
+    await service.renderOne('/lib/a.arw', 'p1', library, 'full', false);
+    expect(seen).toEqual([]);
   });
 
   it('refuses an HDR grid tile rather than quietly building an SDR one', async () => {
