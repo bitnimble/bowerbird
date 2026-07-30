@@ -1898,6 +1898,19 @@ p.ui-text--mono {
   }
 }
 
+/* The other half of a pair: decoded, mounted, and hidden until the photographer
+   flips to it (§20.4). `will-change` is what makes that flip free - it puts the
+   frame on its own compositor layer, so it keeps a raster while hidden and being
+   revealed is an opacity change with no repaint. Without it this is an ordinary
+   opacity: 0 element, which is never rasterised, and every press and release of
+   the flip button would stall for the frame or two the raster takes to build -
+   the exact stall RETIRED_FRAMES exists to paper over on a photo change, in the
+   one gesture that cannot afford it. */
+.stage__viewport .stage__content--layer {
+  will-change: opacity;
+}
+
+
 /* The warmed neighbours: decoys covering the frame, never pictures to interact
    with. Left hit-testable they take the pointer, and a browser that ignores
    -webkit-user-drag (Firefox) starts an image drag that cancels the pan. */

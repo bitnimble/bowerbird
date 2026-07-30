@@ -18,6 +18,11 @@ const STALE_FRAME_MS = 100;
 // background showing through for exactly that long, on every swap. Nothing in
 // the page can observe a raster landing - `decode()` resolves well before it -
 // so this is a count rather than a signal.
+//
+// The same fact is why a mounted-but-hidden member of a `sources` pair gets its
+// own compositor layer (`.stage__content--layer`): it is revealed by an opacity
+// change with no repaint, so it has to keep the raster it would otherwise throw
+// away. Without that, stack triage's flip stalls on every press.
 const RETIRED_FRAMES = 3;
 
 // Kept in step with the enter/exit animations in styles.css: the frame being
@@ -26,8 +31,9 @@ const RETIRED_FRAMES = 3;
 const STEP_MS = 130;
 
 // Which way the last step went, so the two frames slide the way the reader
-// moved. Null for anything that is not a step - a rendition swap, or the first
-// frame after opening a photo - which then just appears.
+// moved. Null for anything that is not a step - a rendition swap, a flip between
+// a round's two frames, or the first frame after opening a photo - which then
+// just appears.
 type Step = 'next' | 'prev' | null;
 
 // How far a finger has to travel across the frame to count as a step rather
@@ -37,22 +43,34 @@ const SWIPE_MIN_PX = 48;
 const SWIPE_STRAIGHTNESS = 1.5;
 
 interface Props {
-  src: string;
+  /**
+   * The frames this photo can show, in slot order. Usually one.
+   *
+   * Two is stack triage's flip mode (DESIGN §20.3.1): both are mounted and decoded
+   * under a single `photoKey`, so alternating between them keeps the zoom and pan
+   * the photographer set up, and costs no decode.
+   */
+  sources: string[];
+  /** Which of `sources` is on screen. */
+  showing?: number;
   alt: string;
   filename: string;
-  onImageLoad: (width: number, height: number) => void;
+  /** The decoded size of a frame, reported once per source. */
+  onImageLoad: (source: string, width: number, height: number) => void;
   // Render a <video> rather than an <img>: the HDR rendition Firefox needs.
   video?: boolean;
   // Frames to warm the cache with once this one is up: the neighbours either way,
   // minus any whose rendition is not knowable from here.
   preloadSrcs?: string[];
-  // The rendition does not exist yet. Called once per src, before the retries
+  // A source does not exist yet. Called once per source, before the retries
   // start, so the caller can build the thing the retries are waiting for.
-  onImageMissing?: () => void;
-  /** Clears the stage when it changes. The photo, not the src: a rendition swap must hold the frame. */
+  onImageMissing?: (source: string) => void;
+  /** Clears the stage when it changes. The photo, not the source: a rendition swap must hold the frame. */
   photoKey: string;
   /** Position of this photo in the collection, which is what makes a step a direction. -1 when unknown. */
   index: number;
+  /** A touch dragged across the frame, which is how a phone steps between photos. Ignored while zoomed, where the same gesture pans. */
+  onSwipe?: (step: 'next' | 'prev') => void;
   /** Ask again for a frame that failed. Changes when the server has proven it is back. */
   retryEpoch?: number;
   /**
@@ -62,8 +80,11 @@ interface Props {
    * and then jump as the layout resolved under it.
    */
   hold?: boolean;
-  /** A touch dragged across the frame, which is how a phone steps between photos. Ignored while zoomed, where the same gesture pans. */
-  onSwipe?: (step: 'next' | 'prev') => void;
+  /**
+   * Bind this stage's window-level keys. Off for the second of two mounted
+   * stages, which would otherwise both act on one `f`.
+   */
+  keyboard?: boolean;
 }
 
 // Scale and pan are one value, not two pieces of state. Zooming about a point
@@ -78,11 +99,19 @@ interface View {
 
 const FITTED: View = { scale: MIN_SCALE, x: 0, y: 0 };
 
+interface Size {
+  width: number;
+  height: number;
+}
+
+const NO_SIZE: Size = { width: 0, height: 0 };
+
 // The direction rides on the frame rather than on the stage, so the one leaving
 // and the one arriving keep animating the way the step that produced them went
 // even if the next step comes in before they are done.
-function contentClass(state: 'is-ready' | 'is-retiring', step: Step): string {
-  return `${state} stage__content${step == null ? '' : ` is-stepping-${step}`}`;
+function contentClass(state: 'is-ready' | 'is-retiring' | 'is-layer' | null, step: Step): string {
+  const base = state === 'is-layer' ? 'stage__content stage__content--layer' : `${state == null ? '' : `${state} `}stage__content`;
+  return step == null ? base : `${base} is-stepping-${step}`;
 }
 
 // How much of the photo is off-screen on each axis at this scale, halved: past
@@ -95,7 +124,7 @@ function panLimit(viewport: number, content: number): number {
 // viewport scaled down to fit, then scaled up by the zoom. `box` is passed in
 // rather than measured here so the caller does the layout read, keeping this a
 // pure function safe to run inside a state updater.
-function clampPan(view: View, box: DOMRect | null, natural: { width: number; height: number }): View {
+function clampPan(view: View, box: DOMRect | null, natural: Size): View {
   if (box == null || natural.width === 0 || natural.height === 0) return view;
   const fit = Math.min(box.width / natural.width, box.height / natural.height);
   const maxX = panLimit(box.width, natural.width * fit * view.scale);
@@ -120,22 +149,111 @@ function zoomAbout(view: View, next: number, box: DOMRect | null, point: { x: nu
   return { scale, x: dx - ratio * (dx - view.x), y: dy - ratio * (dy - view.y) };
 }
 
+// One mounted frame, owning its own decode.
+//
+// A component per source rather than one effect over a list, because a decode is
+// per element and hooks cannot be: this is what lets the stage hold two frames of
+// one round, each arriving when it arrives. Keyed by source by the caller, so
+// promotion keeps the element and what it decoded is what gets painted.
+function StageFrame({
+  source,
+  video,
+  alt,
+  className,
+  transform,
+  onDecoded,
+  onMissing,
+}: {
+  source: string;
+  video: boolean;
+  alt: string;
+  className: string;
+  transform: string;
+  onDecoded: (source: string, width: number, height: number) => void;
+  onMissing: (source: string) => void;
+}): JSX.Element {
+  const elementRef = useRef<HTMLImageElement | HTMLVideoElement | null>(null);
+  // Through refs: callers pass inline callbacks, and a new identity per render
+  // would restart the decode below while one is in flight.
+  const decoded = useRef(onDecoded);
+  decoded.current = onDecoded;
+  const missing = useRef(onMissing);
+  missing.current = onMissing;
+
+  useEffect(() => {
+    const element = elementRef.current;
+    if (element == null) return;
+    let live = true;
+
+    const report = (): void => {
+      if (!live) return;
+      const width = element instanceof HTMLVideoElement ? element.videoWidth : element.naturalWidth;
+      const height = element instanceof HTMLVideoElement ? element.videoHeight : element.naturalHeight;
+      decoded.current(source, width, height);
+    };
+
+    // An image when it has decoded, a video when it has a frame to show
+    // (`loadeddata`; `decode()` is an image method, and `loadedmetadata` knows
+    // the size and nothing else).
+    if (element instanceof HTMLVideoElement) {
+      if (element.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) report();
+      else element.addEventListener('loadeddata', report);
+      return () => {
+        live = false;
+        element.removeEventListener('loadeddata', report);
+      };
+    }
+
+    void element.decode().then(report, () => {
+      if (!live) return;
+      // Never for a blob: a decoded image in hand cannot be missing server-side.
+      if (!source.startsWith('blob:')) missing.current(source);
+    });
+    return () => {
+      live = false;
+    };
+  }, [source]);
+
+  const capture = useCallback((element: HTMLImageElement | HTMLVideoElement | null): void => {
+    elementRef.current = element;
+  }, []);
+
+  if (video) {
+    return (
+      <video
+        ref={capture}
+        src={source}
+        autoPlay
+        loop
+        muted
+        playsInline
+        className={className}
+        style={{ transform }}
+        onError={() => missing.current(source)}
+      />
+    );
+  }
+  return <img ref={capture} src={source} alt={alt} draggable={false} className={className} style={{ transform }} />;
+}
+
 // The image viewport: fit/zoom, wheel zoom, drag-to-pan and fullscreen. All of
 // this is ephemeral view state, so it stays local rather than going through a
 // store; nothing outside this component needs to know the pan offset.
 export function PhotoStage({
-  src,
+  sources,
+  showing = 0,
   alt,
   filename,
-  video,
+  video = false,
   photoKey,
   index,
+  onSwipe,
   hold,
   retryEpoch,
   preloadSrcs,
+  keyboard = true,
   onImageLoad,
   onImageMissing,
-  onSwipe,
 }: Props): JSX.Element {
   const stageRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -143,53 +261,74 @@ export function PhotoStage({
   const [dragging, setDragging] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const [toolbarVisible, setToolbarVisible] = useState(false);
-  const [failed, setFailed] = useState(false);
-  // The src actually shown, which lags the one asked for until it has decoded,
-  // with the photo it belongs to: for a moment after a step that is the previous
-  // one, and everything driven by "this photo is up" has to tell the two apart.
+  const [failed, setFailed] = useState<ReadonlySet<string>>(new Set());
+  // The sources actually on screen, with the photo they belong to: for a moment
+  // after a step that is the previous photo's, and everything driven by "this
+  // photo is up" has to tell the two apart.
   //
   // Swapping one element's src means a frame with nothing decoded to show and
   // the stage background coming through - a flash on every rendition change,
   // including between two that were already cached, where there is no wait to
-  // justify it. So the next src is mounted as a second, invisible <img> over the
-  // current one and only becomes the visible one once it has decoded; the
-  // element is then kept rather than replaced, so what it decoded is what gets
-  // painted. Decoding off-screen in a detached `new Image()` is not enough: the
-  // browser decodes for the size an element is drawn at, so the visible element
-  // decoded a 3840px AVIF a second time at paint and flashed anyway.
-  const [painted, setPainted] = useState<{ src: string; photoKey: string; step: Step } | null>(null);
-  const currentFrame = painted?.photoKey === photoKey ? painted.src : null;
-  const ready = currentFrame != null;
-  // The frame `painted` just replaced, kept mounted and opaque underneath it for
-  // RETIRED_FRAMES. Its raster is the one the browser already has, so it is what
-  // shows through while the replacement's is being built.
-  const [retiring, setRetiring] = useState<{ src: string; step: Step } | null>(null);
+  // justify it. So a source is mounted invisibly and only becomes a painted one
+  // once it has decoded; the element is then kept rather than replaced, so what
+  // it decoded is what gets painted. Decoding off-screen in a detached
+  // `new Image()` is not enough: the browser decodes for the size an element is
+  // drawn at, so the visible element decoded a 3840px AVIF a second time at paint
+  // and flashed anyway.
+  const [painted, setPainted] = useState<{ sources: readonly string[]; photoKey: string; step: Step } | null>(null);
+  // The decoded size of each painted source. Per source, because a `sources` pair
+  // holds two frames that may differ in shape, and `clampPan` is computed from
+  // whichever of them is on screen.
+  const [naturals, setNaturals] = useState<ReadonlyMap<string, Size>>(new Map());
+  // The frames `painted` just replaced, kept mounted and opaque underneath for
+  // RETIRED_FRAMES. Their rasters are the ones the browser already has, so they
+  // are what shows through while the replacements' are being built.
+  const [retiring, setRetiring] = useState<{ sources: readonly string[]; step: Step }>({ sources: [], step: null });
   // The photo last promoted, which is what the next promotion is a step away
   // from. Not `painted`: that is dropped once it goes stale, and a photo whose
   // rendition had to be built is still a step from the one before it.
   const stepped = useRef<{ photoKey: string; index: number } | null>(null);
-  // Read by the promote below, which runs off a decode promise: `painted` there
-  // would be whatever was on screen when that decode started.
-  const paintedSrc = useRef<string | null>(null);
-  paintedSrc.current = painted?.src ?? null;
-  // Drives the stage's aspect-ratio, so the bordered box is the photo rather
-  // than a letterboxed container with black margins inside it.
-  const [natural, setNatural] = useState({ width: 0, height: 0 });
   const dragStart = useRef({ x: 0, y: 0, offsetX: 0, offsetY: 0 });
   // How far the pointer travelled in the gesture that just ended, which is what
   // separates the click that closes a tap from the one that closes a drag.
   const travelled = useRef(0);
+
+  // Everything with a raster, whichever photo it belongs to. The previous
+  // photo's frames stay in here until the stale cap drops them, which is what
+  // keeps a step from blinking the stage background.
+  const paintedSources = painted?.sources ?? [];
+  const isThisPhoto = painted?.photoKey === photoKey;
+  // What is up: this photo's frames in slot order, or - for the beat after a step -
+  // the previous photo's, still standing in.
+  const up = isThisPhoto ? sources.filter((source) => paintedSources.includes(source)) : paintedSources;
+  // The chosen slot once it has decoded, else whatever else is up: a pair whose
+  // second frame is still decoding shows the first rather than nothing.
+  const chosen = isThisPhoto ? sources[showing] : undefined;
+  const visible = chosen != null && up.includes(chosen) ? chosen : up[0];
+  const ready = visible != null && isThisPhoto;
+  const natural = (visible == null ? undefined : naturals.get(visible)) ?? NO_SIZE;
 
   const zoomed = view.scale > MIN_SCALE;
 
   const reset = useCallback(() => setView(FITTED), []);
 
   // A new photo starts fitted; carrying a pan offset across frames would show
-  // the next one scrolled to a corner. Keyed on the photo rather than the src, so
-  // that switching rendition holds the frame it is already showing.
+  // the next one scrolled to a corner. Keyed on the photo rather than the source,
+  // so switching rendition - or flipping between a round's two frames - holds the
+  // view it is already at.
   useEffect(reset, [photoKey, reset]);
 
-  // The previous photo's frame is left up for a beat rather than cleared on the
+  // Flipping to a differently-shaped frame can leave an offset that was legal for
+  // the frame before it and is not for this one. `clampPan` is otherwise applied
+  // only while zooming or panning, so without this the photo stays out of range
+  // until the next drag.
+  useEffect(() => {
+    if (natural.width === 0) return;
+    const box = viewportRef.current?.getBoundingClientRect() ?? null;
+    setView((currentView) => clampPan(currentView, box, natural));
+  }, [natural.width, natural.height]);
+
+  // The previous photo's frames are left up for a beat rather than cleared on the
   // step: both neighbours are warmed, so the next one usually decodes within a
   // frame or two, and dropping the old one first turns every step into a blink of
   // stage background. Capped, because the picture and the panels beside it
@@ -205,119 +344,136 @@ export function PhotoStage({
     if (!stale) return;
     const timer = setTimeout(() => {
       setPainted(null);
-      // Or the frame it was covering, which is older still, would be left as the
-      // only thing on the stage - the wrong picture, which is what the cap above
-      // exists to prevent.
-      setRetiring(null);
+      // Or the frames it was covering, which are older still, would be left as
+      // the only thing on the stage - the wrong picture, which is what the cap
+      // above exists to prevent.
+      setRetiring({ sources: [], step: null });
     }, STALE_FRAME_MS);
     return () => clearTimeout(timer);
   }, [stale]);
 
   useEffect(() => {
-    if (retiring == null) return;
+    if (retiring.sources.length === 0) return;
+    const done = (): void => setRetiring({ sources: [], step: null });
     // A stepped-away frame is animating out, so it is timed rather than counted:
     // unmounted after a few frames it would vanish part-way through its exit.
     if (retiring.step != null) {
-      const timer = setTimeout(() => setRetiring(null), STEP_MS);
+      const timer = setTimeout(done, STEP_MS);
       return () => clearTimeout(timer);
     }
     let left = RETIRED_FRAMES;
     let frame = requestAnimationFrame(function tick(): void {
       if (left-- > 0) frame = requestAnimationFrame(tick);
-      else setRetiring(null);
+      else done();
     });
     return () => cancelAnimationFrame(frame);
   }, [retiring]);
 
-  // Clearing this remounts the frame's element, which is what makes it ask again:
-  // a src that never moves is otherwise requested exactly once.
-  useEffect(() => setFailed(false), [src, retryEpoch]);
+  const key = sources.join(' ');
+  // Clearing this remounts the frames' elements, which is what makes them ask
+  // again: a source that never moves is otherwise requested exactly once.
+  useEffect(() => setFailed(new Set()), [key, retryEpoch]);
 
-  // Through refs: callers pass inline callbacks, and a new identity per render
-  // would restart the decode below on every render while one is in flight.
-  const onMissing = useRef(onImageMissing);
-  onMissing.current = onImageMissing;
   const onLoaded = useRef(onImageLoad);
   onLoaded.current = onImageLoad;
+  const onMissing = useRef(onImageMissing);
+  onMissing.current = onImageMissing;
+
+  const wanted = sources.filter((source) => !failed.has(source));
+  // Mounted for this photo but not yet painted. A frame painted for the photo
+  // before this one does not count as up, however identical the URL: it is on its
+  // way out, and this photo still has to decode its own.
+  const incoming = wanted.filter((source) => !(isThisPhoto && paintedSources.includes(source)));
+
+  // Read inside the promote below, which runs off a decode: the prop captured in
+  // that closure would be whatever was asked for when the decode started.
+  const sourcesRef = useRef(sources);
+  sourcesRef.current = sources;
   // Through a ref so a photo leaving the collection, which shuffles every index
   // after it, cannot restart a decode that is in flight.
   const currentIndex = useRef(index);
   currentIndex.current = index;
 
-  // The src being prepared, mounted but invisible until it can be shown.
-  const incoming = src === currentFrame ? null : src;
-  // Switching back before the hold expires asks for the frame on its way out,
-  // and one src is one element: the hold is dropped rather than duplicated, which
-  // costs nothing here - the frame it was covering is still the one on screen.
-  const retired = retiring?.src === incoming ? null : retiring;
-  // A callback ref, not a RefObject: refs are invariant, so one object cannot be
-  // handed to both an <img> and a <video>.
-  const incomingRef = useRef<HTMLImageElement | HTMLVideoElement | null>(null);
-  const captureIncoming = useCallback((element: HTMLImageElement | HTMLVideoElement | null) => {
-    incomingRef.current = element;
-  }, []);
-
-  // Promotion, for both media: an image when it has decoded, a video when it has
-  // a frame to show (`loadeddata`; `decode()` is an image method, and
-  // `loadedmetadata` knows the size and nothing else). `hold` is a dependency, so
-  // a frame prepared while the layout was still settling goes up the moment it is.
-  useEffect(() => {
-    const element = incomingRef.current;
-    if (hold === true || incoming == null || element == null) return;
-    let live = true;
-
-    const promote = (): void => {
-      if (!live) return;
-      const width = element instanceof HTMLVideoElement ? element.videoWidth : element.naturalWidth;
-      const height = element instanceof HTMLVideoElement ? element.videoHeight : element.naturalHeight;
-      setNatural({ width, height });
-      onLoaded.current(width, height);
+  const promote = useCallback(
+    (source: string, width: number, height: number) => {
+      if (hold === true) return;
+      setNaturals((previous) => {
+        const next = new Map(previous);
+        next.set(source, { width, height });
+        return next;
+      });
+      onLoaded.current(source, width, height);
+      // Which way this photo is from the one before it, so the frames slide the
+      // way the reader moved. Computed once per photo: the frames of one round
+      // are the same photograph, so flipping between them is not a step.
       const from = stepped.current;
       const to = currentIndex.current;
-      const step: Step = from == null || from.photoKey === photoKey || from.index < 0 || to < 0 ? null : from.index < to ? 'next' : 'prev';
-      stepped.current = { photoKey, index: to };
-      if (paintedSrc.current != null && paintedSrc.current !== incoming) setRetiring({ src: paintedSrc.current, step });
-      setPainted({ src: incoming, photoKey, step });
-    };
+      const step: Step =
+        from == null || from.photoKey === photoKey || from.index < 0 || to < 0 ? null : from.index < to ? 'next' : 'prev';
+      if (from == null || from.photoKey !== photoKey) stepped.current = { photoKey, index: to };
+      setPainted((previous) => {
+        // A decode that landed after the stage moved on: those frames belong to
+        // the photo before this one, so they retire rather than joining this one.
+        if (previous != null && previous.photoKey !== photoKey) {
+          setRetiring({ sources: previous.sources, step });
+          return { sources: [source], photoKey, step };
+        }
+        const asked = sourcesRef.current;
+        // A frame nobody is asking for any more - the rendition was swapped
+        // underneath it - retires rather than lingering as a hidden layer. Only a
+        // source still in `sources` is the other half of a pair.
+        const kept = (previous?.sources ?? []).filter((held) => asked.includes(held));
+        const dropped = (previous?.sources ?? []).filter((held) => !asked.includes(held));
+        // A rendition swap is not a step, so what it retires does not slide.
+        if (dropped.length > 0) setRetiring({ sources: dropped, step: null });
+        if (kept.includes(source)) return previous;
+        return { sources: [...kept, source], photoKey, step: previous?.step ?? step };
+      });
+    },
+    [hold, photoKey],
+  );
 
-    if (element instanceof HTMLVideoElement) {
-      if (element.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) promote();
-      else element.addEventListener('loadeddata', promote);
-      return () => {
-        live = false;
-        element.removeEventListener('loadeddata', promote);
-      };
+  // `hold` releasing puts up whatever has already decoded. The elements are
+  // mounted and their decodes are done, so nothing has to be asked for again.
+  const wasHeld = useRef(false);
+  useEffect(() => {
+    if (hold === true) {
+      wasHeld.current = true;
+      return;
     }
+    if (!wasHeld.current) return;
+    wasHeld.current = false;
+    const decodedNow = sources.filter((source) => naturals.has(source));
+    // No step: a frame released from a hold is the photo being opened, not a
+    // move between two of them.
+    if (decodedNow.length > 0) setPainted({ sources: decodedNow, photoKey, step: null });
+  }, [hold, photoKey, key, naturals]);
 
-    element.decode().then(promote, () => {
-      if (!live) return;
-      setFailed(true);
-      // Never for a blob: a decoded image in hand cannot be missing server-side.
-      if (!src.startsWith('blob:')) onMissing.current?.();
+  const reportMissing = useCallback((source: string) => {
+    setFailed((previous) => {
+      const next = new Set(previous);
+      next.add(source);
+      return next;
     });
-    return () => {
-      live = false;
-    };
-    // `failed` is a dependency because it decides whether the incoming element is
-    // mounted at all, and this reads it through a ref. A frame that failed
-    // unmounts, so when its rebuilt version arrives the effect runs against a
-    // null element and returns; clearing `failed` then remounts it without
-    // changing any of the other dependencies, and nothing would ask it to decode.
-    // The bytes arrive and the stage sits on them for the life of the page.
-  }, [incoming, src, hold, photoKey, failed]);
+    onMissing.current?.(source);
+  }, []);
 
   // Measures here, outside the updater, so the updater itself stays pure.
   const zoomBy = useCallback(
     (nextScale: (current: number) => number, point: { x: number; y: number } | null) => {
       const box = viewportRef.current?.getBoundingClientRect() ?? null;
-      setView((current) => clampPan(zoomAbout(current, nextScale(current.scale), box, point), box, natural));
+      setView((currentView) => clampPan(zoomAbout(currentView, nextScale(currentView.scale), box, point), box, natural));
     },
     [natural],
   );
 
+  // This stage's own fullscreen, not the document's. Two stages are mounted side
+  // by side in stack triage's split mode, and reading the global put the other one
+  // into the fullscreen presentation as well - black background, 100vh viewport,
+  // tools gone - over a stage that was not fullscreen at all.
   useEffect(() => {
     function onChange(): void {
-      const active = document.fullscreenElement != null;
+      const active = document.fullscreenElement === stageRef.current;
       setFullscreen(active);
       if (!active) setToolbarVisible(false);
     }
@@ -325,15 +481,19 @@ export function PhotoStage({
     return () => document.removeEventListener('fullscreenchange', onChange);
   }, []);
 
-  async function toggleFullscreen(): Promise<void> {
-    if (document.fullscreenElement != null) {
+  const toggleFullscreen = useCallback(async (): Promise<void> => {
+    // Only this stage's own: with two mounted, exiting on the global would leave
+    // the button on stage B turning stage A's fullscreen off instead of turning
+    // B's on.
+    if (document.fullscreenElement === stageRef.current) {
       await document.exitFullscreen();
       return;
     }
     await stageRef.current?.requestFullscreen();
-  }
+  }, []);
 
   useEffect(() => {
+    if (!keyboard) return;
     function onKey(e: KeyboardEvent): void {
       const target = e.target as HTMLElement | null;
       if (target != null && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
@@ -344,7 +504,7 @@ export function PhotoStage({
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  }, [keyboard, toggleFullscreen]);
 
   // Non-passive so preventDefault actually stops the page scrolling underneath.
   useEffect(() => {
@@ -353,7 +513,7 @@ export function PhotoStage({
 
     function onWheel(e: WheelEvent): void {
       e.preventDefault();
-      zoomBy((current) => current * (1 - e.deltaY * WHEEL_SENSITIVITY), { x: e.clientX, y: e.clientY });
+      zoomBy((currentScale) => currentScale * (1 - e.deltaY * WHEEL_SENSITIVITY), { x: e.clientX, y: e.clientY });
     }
     stage.addEventListener('wheel', onWheel, { passive: false });
     return () => stage.removeEventListener('wheel', onWheel);
@@ -381,10 +541,10 @@ export function PhotoStage({
   function onPointerMove(e: React.PointerEvent): void {
     if (!dragging) return;
     const box = viewportRef.current?.getBoundingClientRect() ?? null;
-    setView((current) =>
+    setView((currentView) =>
       clampPan(
         {
-          scale: current.scale,
+          scale: currentView.scale,
           x: dragStart.current.offsetX + (e.clientX - dragStart.current.x),
           y: dragStart.current.offsetY + (e.clientY - dragStart.current.y),
         },
@@ -428,6 +588,30 @@ export function PhotoStage({
     else zoomBy(() => 2, { x: e.clientX, y: e.clientY });
   }
 
+  const transform = `translate(${view.x}px, ${view.y}px) scale(${view.scale})`;
+  // Switching back before the hold expires asks for a frame on its way out, and
+  // one source is one element: the hold is dropped rather than duplicated, which
+  // costs nothing - the frames it was covering are still what is on screen.
+  const retired = retiring.sources.filter((source) => !incoming.includes(source) && !paintedSources.includes(source));
+  // Bottom to top: the frames on their way out, the ones on screen, the ones being
+  // prepared. Nothing here moves on promotion - a promoted source keeps the slot
+  // it already had - so no element is reinserted into the DOM mid-swap.
+  const mounted = [...retired, ...paintedSources, ...incoming.filter((source) => !paintedSources.includes(source))];
+  const allFailed = sources.length > 0 && wanted.length === 0;
+
+  function classOf(source: string): string {
+    // The step rides on the frame, so the one arriving and the one leaving each
+    // keep sliding the way the step that produced them went even if the next step
+    // lands before they are done.
+    if (source === visible) return contentClass('is-ready', painted?.step ?? null);
+    if (retired.includes(source)) return contentClass('is-retiring', retiring.step);
+    // Painted but not showing: the other half of a pair. It keeps its raster on
+    // its own layer so revealing it is an opacity change with no repaint - and it
+    // does not slide, because a flip is not a step.
+    if (isThisPhoto && paintedSources.includes(source)) return contentClass('is-layer', null);
+    return contentClass(null, null);
+  }
+
   return (
     <div
       ref={stageRef}
@@ -466,64 +650,22 @@ export function PhotoStage({
         {/* A frame that failed replaces the incoming one, not the picture already
             on screen: switching to a rendition that 404s should leave the one
             being compared against up, not blank the stage. Nothing to hold means
-            there is nothing to say but this.
-            A frame belonging to the *previous* photo is not a candidate - the cap
-            above has already dropped it by the time any of this can matter. */}
-        {failed && painted == null ? (
+            there is nothing to say but this. */}
+        {allFailed && painted == null ? (
           <span className="tile__pending">no rendition yet</span>
         ) : (
-          // One list, keyed by src, so promoting the incoming one keeps its
-          // element: rendered as two slots React would unmount it and the
-          // browser would decode the same file over again to paint it.
-          //
-          // Bottom to top: the frame on its way out, the one on screen, the one
-          // being prepared. Nothing here is a move on promotion - the incoming
-          // one keeps the slot it already had and the retiring one takes the slot
-          // below it, so no element is reinserted into the DOM mid-swap.
-          [
-            retired == null ? null : { src: retired.src, className: contentClass('is-retiring', retired.step) },
-            painted == null ? null : { src: painted.src, className: contentClass('is-ready', painted.step) },
-            failed || incoming == null ? null : { src: incoming, className: 'stage__content' },
-          ].map((frame) => {
-            if (frame == null) return false;
-            const { src: source, className } = frame;
-            const transform = `translate(${view.x}px, ${view.y}px) scale(${view.scale})`;
-            // A one-frame video, the only way an HDR photo reaches a Firefox
-            // display (§10.7). Muted and inline so autoplay is allowed at all,
-            // and it carries the same transform as the <img> so zoom and pan are
-            // unchanged.
-            if (video) {
-              return (
-                <video
-                  key={source}
-                  ref={source === incoming ? captureIncoming : null}
-                  src={source}
-                  autoPlay
-                  loop
-                  muted
-                  playsInline
-                  className={className}
-                  style={{ transform }}
-                  onError={() => {
-                    if (source !== incoming) return;
-                    setFailed(true);
-                    onMissing.current?.();
-                  }}
-                />
-              );
-            }
-            return (
-              <img
-                key={source}
-                ref={source === incoming ? captureIncoming : null}
-                src={source}
-                alt={alt}
-                draggable={false}
-                className={className}
-                style={{ transform }}
-              />
-            );
-          })
+          mounted.map((source) => (
+            <StageFrame
+              key={source}
+              source={source}
+              video={video}
+              alt={alt}
+              className={classOf(source)}
+              transform={transform}
+              onDecoded={promote}
+              onMissing={reportMissing}
+            />
+          ))
         )}
 
         {/* The neighbouring photos, warmed only once this one is up: started any

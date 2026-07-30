@@ -291,7 +291,7 @@ const DetailFrame = observer(function DetailFrame({ photoId }: { photoId: string
       // that is known from somewhere the stage is not the size it will be.
       hold={store.photoFor(photoId) == null}
       retryEpoch={store.serverEpoch}
-      src={hdrVideo && showing !== 'embedded' ? renditionVideoUrl(photoId, showing, version) : stillSrc}
+      sources={[hdrVideo && showing !== 'embedded' ? renditionVideoUrl(photoId, showing, version) : stillSrc]}
       video={hdrVideo}
       alt={filename}
       filename={filename}
@@ -299,7 +299,7 @@ const DetailFrame = observer(function DetailFrame({ photoId }: { photoId: string
       // No arrow keys on a phone, so the frame itself is the control: the same
       // step the bar's buttons take, taken by dragging the picture aside.
       onSwipe={step}
-      onImageLoad={(width, height) => photos.imageShown(photoId, showing, width, height)}
+      onImageLoad={(_source, width, height) => photos.imageShown(photoId, showing, width, height)}
       // Only the library's default is built on sight, and only when it is a
       // stored rendition: the camera's JPEG comes out of the RAW, so a 404 there
       // means the RAW is gone, which building cannot fix. A chosen rendition was

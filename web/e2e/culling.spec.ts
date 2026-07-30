@@ -1024,3 +1024,48 @@ test('stepping to a neighbour slides in from the side it came from', async ({ pa
   // step comes in from the side the reader is heading towards.
   expect(arriving?.x ?? 0).toBeGreaterThan(viewport?.x ?? 0);
 });
+
+// The stage's view state is keyed on the photo, never on the file being shown.
+// Stack triage's flip mode is built entirely on this (§20.4): it holds two
+// frames of one round under a single photoKey, so that alternating between them
+// keeps the zoom and pan the photographer set up. These two pin the property from
+// the viewer's side, where it is also what makes "compare this render against the
+// camera's JPEG" a comparison rather than a reset.
+test('zoom survives a rendition change, so two files can be compared at the same magnification', async ({ page }) => {
+  await page.goto('/settings');
+  await setRenditionSource(page, CULL_PHOTOS_DIR, 'Rendered RAW');
+  await setViewerRendition(page, 'Rendered RAW');
+  await openLibrary(page, CULL_PHOTOS_DIR);
+  await openPhoto(page);
+  await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
+
+  const scale = (): Promise<number> =>
+    page.locator('.stage__viewport img.is-ready').evaluate((img) => {
+      const match = /scale\(([\d.]+)\)/.exec((img as HTMLElement).style.transform);
+      return match == null ? 1 : Number(match[1]);
+    });
+
+  await page.getByRole('button', { name: 'Zoom in' }).click();
+  expect(await scale()).toBeGreaterThan(1);
+  const before = await scale();
+
+  // A different file for the same photograph: photoKey does not move, so nothing
+  // about the view should.
+  await page.keyboard.press('i');
+  await expect(page.locator('.stage__viewport img.is-ready')).toHaveAttribute('src', /embedded\.jpg/, { timeout: 60_000 });
+  expect(await scale()).toBe(before);
+});
+
+test('zoom resets on a step to the next photo, which is a different photograph', async ({ page }) => {
+  await page.goto('/settings');
+  await openLibrary(page, CULL_PHOTOS_DIR);
+  await openPhoto(page);
+  await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
+
+  await page.getByRole('button', { name: 'Zoom in' }).click();
+  await expect(page.locator('.stage--zoomed')).toBeVisible();
+
+  // Carrying the offset across would open the next frame scrolled into a corner.
+  await page.getByRole('button', { name: 'Next photo' }).click();
+  await expect(page.locator('.stage--zoomed')).toHaveCount(0);
+});
