@@ -31,7 +31,7 @@ declare const self: {
 // through this at all and has its own encoder (§10.2). Chroma subsampling is the
 // encoder's own business; see `vips.rs` for why it is off.
 function toAvif(image: ImageHandle, target: RenditionTarget): void {
-  saveAvif(image, target.size, target.quality, AVIF_EFFORT, target.outputPath);
+  saveAvif(image, target.size, target.sdrQuantizer, AVIF_EFFORT, target.outputPath);
 }
 
 /**
@@ -101,7 +101,7 @@ function writeHdr(
       variant: 'pq',
       medium: 'still',
       outputPath: target.outputPath,
-      crf: target.quantizer,
+      crf: target.hdrQuantizer,
       preset: target.preset,
       // One edge for both media. The video used to have an encoder ceiling on top of
       // it, which was SVT-AV1's own; libaom takes either orientation, so the twin is

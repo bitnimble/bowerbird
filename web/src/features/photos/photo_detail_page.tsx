@@ -428,7 +428,7 @@ const RenditionPanel = observer(function RenditionPanel({ photoId, defaultOpen }
               ? 'N/A'
               : settings.settings == null
                 ? 'unknown'
-                : `${settings.settings.full_rendition_quality} (longest edge ${settings.settings.full_rendition_size}px)`,
+                : `${settings.settings.full_rendition_quantizer} (longest edge ${settings.settings.full_rendition_size}px)`,
           ),
         ],
         // The camera's JPEG has no file of its own: this is the RAW it is lifted

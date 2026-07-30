@@ -147,10 +147,10 @@ export class ProcessingService {
       full: settings.full_rendition_size,
       max: 0,
     };
-    const qualities: Record<Rendition, number> = {
-      grid: settings.grid_rendition_quality,
-      full: settings.full_rendition_quality,
-      max: settings.lossless_quality,
+    const quantizers: Record<Rendition, number> = {
+      grid: settings.grid_rendition_quantizer,
+      full: settings.full_rendition_quantizer,
+      max: settings.lossless_sdr_quantizer,
     };
     return {
       rendition,
@@ -159,8 +159,8 @@ export class ProcessingService {
       outputPath: renditionPathFor(dataPath, photoId, rendition, hdr),
       videoOutputPath: hdr && hdrVideo ? renditionPathFor(dataPath, photoId, rendition, hdr, true) : null,
       size: sizes[rendition],
-      quality: qualities[rendition],
-      quantizer: rendition === 'max' ? settings.lossless_quantizer : settings.hdr_crf,
+      sdrQuantizer: quantizers[rendition],
+      hdrQuantizer: rendition === 'max' ? settings.lossless_quantizer : settings.hdr_crf,
       preset: settings.hdr_preset,
     };
   }

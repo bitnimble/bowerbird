@@ -592,15 +592,15 @@ const AdvancedSettings = observer(function AdvancedSettings(): JSX.Element | nul
       <GroupTitle>Rendition size and quality</GroupTitle>
       <div className="panel">
         <NumberSetting field="grid_rendition_size" label="Grid tile, longest edge (px)" />
-        <NumberSetting field="grid_rendition_quality" label="Grid tile quality (1-100)" />
+        <NumberSetting field="grid_rendition_quantizer" label="Grid tile quantizer (0-63, lower is better)" />
         <NumberSetting field="full_rendition_size" label="Viewer rendition, longest edge (px)" />
         <NumberSetting
-          field="full_rendition_quality"
+          field="full_rendition_quantizer"
           label="Viewer rendition quality (1-100)"
           hint="This is the rendition you spend the most time looking at. Below about 80 the shadows visibly lose detail."
         />
         <NumberSetting
-          field="lossless_quality"
+          field="lossless_sdr_quantizer"
           label="Full-resolution quality (1-100)"
           hint="Quality of the native-resolution rendition, which exists to be inspected at 100 percent."
         />

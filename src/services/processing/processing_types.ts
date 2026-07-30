@@ -47,10 +47,10 @@ export interface RenditionTarget {
   // else the embedded JPEG is served as itself rather than rendered into a
   // rendition (§10.2).
   source: RenditionSource;
-  /** AVIF quality, 1-100, for the SDR path. */
-  quality: number;
-  /** avifenc max quantizer, 0-63 and lower is better, for the HDR path. */
-  quantizer: number;
+  /** libaom quantizer, 0-63 and lower is better, for the SDR path. */
+  sdrQuantizer: number;
+  /** The same scale for the HDR path, which lands at a different depth. */
+  hdrQuantizer: number;
   /** Encoder speed for the HDR path. */
   preset: number;
 }

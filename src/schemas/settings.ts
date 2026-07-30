@@ -64,22 +64,30 @@ export const SettingsSchema = z.object({
   match_embedded_jpeg: z.boolean(),
   grid_rendition_size: z.number().int().min(1),
   full_rendition_size: z.number().int().min(1),
-  // AVIF quality, which is not WebP's scale: on a 24MP frame the full-size
-  // rendition is 375 kB at q60 against 1019 kB for the WebP q90 it replaces, and
-  // q90 here would be 2551 kB. The full rendition is the one actually looked at,
-  // so it gets the headroom.
-  // q60 and q70 visibly lose shadow detail on real frames, which is where a RAW
-  // has the most to give. q80 is 1361 kB on a 24MP frame against the 1019 kB of
-  // the WebP q90 it replaces, and encodes in 713ms at effort 0.
-  grid_rendition_quality: z.number().int().min(1).max(100),
-  full_rendition_quality: z.number().int().min(1).max(100),
+  // libaom's quantizer, 0-63, **lower is better** - the same scale as the HDR ones
+  // below, because every AVIF this app writes now goes through libavif (§10.7).
+  //
+  // These were libvips' 1-100 quality, where higher was better, until the SDR
+  // encoder moved off libheif. The numbers here are the measured equivalents of what
+  // was tuned on that scale rather than a fresh guess: matched on SSIM against the
+  // frames the old values were chosen on, Q80 lands on 26 and Q88 on 16, both within
+  // 0.0002 SSIM and half a percent of file size. **The direction inverted**, so a
+  // value carried over from the old scale reads as its opposite - 80 here is not
+  // "good", it is nearly the worst this will produce.
+  //
+  // The reasoning behind the original choice still applies: the full rendition is
+  // the one actually looked at, so it gets the headroom, and the settings that lose
+  // visible shadow detail on real frames - the old q60 and q70, which are 51 and 39
+  // here - are where a RAW has the most to give and are worth avoiding.
+  grid_rendition_quantizer: z.number().int().min(0).max(63),
+  full_rendition_quantizer: z.number().int().min(0).max(63),
 
-  // Full-resolution export (§10.5), AVIF. `quality` is libvips' 1-100 scale for
-  // the SDR path; `quantizer` is avifenc's 0-63 (lower is better) for the HDR
-  // one. Both are set tight rather than "visually lossless", because this is the
-  // view that exists to be pixel-peeped, and kept inside a ~20MB budget on a
-  // 60MP frame.
-  lossless_quality: z.number().int().min(1).max(100),
+  // Full-resolution export (§10.5), AVIF. Two numbers because the two paths land at
+  // different depths and chroma - 8-bit 4:4:4 for SDR, 10-bit for HDR - so the same
+  // quantizer does not buy the same picture. Both are set tight rather than
+  // "visually lossless", because this is the view that exists to be pixel-peeped,
+  // and kept inside a ~20MB budget on a 60MP frame.
+  lossless_sdr_quantizer: z.number().int().min(0).max(63),
   lossless_quantizer: z.number().int().min(0).max(63),
 
   // Display peak the BT.2390 roll-off targets, and what the file declares as its
@@ -134,10 +142,10 @@ export const DEFAULT_SETTINGS: Settings = {
   match_embedded_jpeg: true,
   grid_rendition_size: 800,
   full_rendition_size: 3840,
-  grid_rendition_quality: 80,
-  full_rendition_quality: 80,
+  grid_rendition_quantizer: 26,
+  full_rendition_quantizer: 26,
 
-  lossless_quality: 88,
+  lossless_sdr_quantizer: 16,
   lossless_quantizer: 8,
 
   hdr_peak_nits: 1000,
