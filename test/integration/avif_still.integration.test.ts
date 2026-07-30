@@ -22,18 +22,13 @@ import path from 'node:path';
 const FIXTURE = `${import.meta.dir}/../fixtures/DSC02981.ARW`;
 
 const PROBE = `
-import { decodeRawImage, encodeHdrRendition, freeImage } from '${import.meta.dir}/../../src/services/processing/rawshim_ops';
+import { encodeHdr } from '${import.meta.dir}/../../src/services/processing/rawshim_debug';
 const [file, out, medium, chroma] = process.argv.slice(-4);
-const image = decodeRawImage(file, 16, 'rec2020-linear', 640);
-try {
-  encodeHdrRendition(image, null, {
-    medium, outputPath: out, peakNits: 1000, referenceWhiteNits: 203,
-    whiteQuantile: 0.9, crf: 30, preset: 10, maxEdge: 640,
-    stillFullChroma: chroma === '444',
-  });
-} finally {
-  freeImage(image);
-}
+encodeHdr(file, {
+  medium, outputPath: out, peakNits: 1000, referenceWhiteNits: 203,
+  whiteQuantile: 0.9, crf: 30, preset: 10, maxEdge: 640,
+  stillFullChroma: chroma === '444',
+}, { decodeSize: 640 });
 `;
 
 async function encode(out: string, medium: string, viaAvifenc: boolean, chroma: string): Promise<void> {

@@ -1,54 +1,30 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import {
-  applyColour,
-  applyMatchProfile,
-  deltaE76,
-  fitMatchProfile,
-  fitProfileFor,
-  type MatchProfile,
-} from '../../src/services/processing/jpeg_match_test_only';
+import { beforeAll, describe, expect, test } from 'bun:test';
 import { SPLINE_UNIT } from '../../src/services/processing/lens_corrections';
 import {
-  decodeEmbedded,
-  decodeRawImage,
-  encodeJpeg,
-  fitHdrFromLinear,
-  freeHdrMatch,
-  freeImage,
   readDistortionSpline,
   readHeaderFields,
   readLensfunKnots,
-  renderImage,
-  type ImageHandle,
 } from '../../src/services/processing/rawshim_ops';
-import { imageFromRgb, pixels } from '../../src/services/processing/rawshim_pixels';
+import {
+  compareRenders,
+  fitInjected,
+  fitSummary,
+  matchAgainstPreview,
+  type ProfileSummary,
+} from '../../src/services/processing/rawshim_debug';
 
 const FIXTURE = `${import.meta.dir}/../fixtures/DSC02981.ARW`;
 /// A body that records no spline of its own, so the database is the only geometry.
 const CANON_FIXTURE = `${import.meta.dir}/../fixtures/IMG_5360.CR3`;
 const TIMEOUT = 120_000;
 
-/** The handle's pixels, with the handle released. */
-function take(image: ImageHandle): { width: number; height: number; data: Buffer } {
-  try {
-    return { width: image.width, height: image.height, data: pixels(image) };
-  } finally {
-    freeImage(image);
-  }
-}
-
-// The decode the worker would already have in hand, and the profile fitted from
-// it. Both are pure functions of the file, so one of each serves every case that
-// is not specifically about refitting.
-let render: ImageHandle;
-let profile: MatchProfile;
+// A pure function of the file, so one serves every case that is not specifically
+// about refitting.
+let profile: ProfileSummary;
 
 beforeAll(() => {
-  render = decodeRawImage(FIXTURE, 8, 'srgb', 0);
-  profile = fitMatchProfile(FIXTURE, render)!;
+  profile = fitSummary(FIXTURE);
 });
-
-afterAll(() => freeImage(render));
 
 describe('lens correction metadata', () => {
   test('reads the ILCE-6300 distortion spline out of a real ARW', () => {
@@ -121,31 +97,19 @@ describe('fitMatchProfile', () => {
   test(
     'matches the camera JPEG far more closely than the raw render does',
     () => {
-      expect(profile).not.toBeNull();
-
       // Held out inside the fit, so this is not a training score.
       expect(profile.deltaE).toBeLessThan(2.5);
 
-      // What the render looks like before any transform, on the same pixels, to
-      // show the fit is doing the work rather than the metric being generous.
-      const jpeg = take(decodeEmbedded(FIXTURE, 400)!);
-      const plain = take(renderImage(decodeRawImage(FIXTURE, 8, 'srgb', 400), null, 400));
+      // The render before any transform against the render with the colour half
+      // applied, both measured against the camera's own preview - so the fit is
+      // shown to be doing the work rather than the metric being generous.
+      const { meanDeltaE, counted, sizes, preview } = matchAgainstPreview(FIXTURE, 400);
       // Both fitted to the same long edge, and the render and its own embedded
       // preview share an aspect, so this is a like-for-like comparison.
-      expect([plain.width, plain.height]).toEqual([jpeg.width, jpeg.height]);
-
-      let before = 0;
-      let after = 0;
-      let counted = 0;
-      for (let i = 0; i < plain.data.length; i += 3 * 37) {
-        const target = [jpeg.data[i]!, jpeg.data[i + 1]!, jpeg.data[i + 2]!];
-        const source = [plain.data[i]!, plain.data[i + 1]!, plain.data[i + 2]!];
-        before += deltaE76(source, target);
-        after += deltaE76(applyColour(profile.colour, source), target);
-        counted += 1;
-      }
+      expect(sizes[0]).toEqual(preview);
       expect(counted).toBeGreaterThan(100);
-      expect(after / counted).toBeLessThan(before / counted);
+      const [before, after] = meanDeltaE;
+      expect(after!).toBeLessThan(before!);
     },
     TIMEOUT,
   );
@@ -158,60 +122,19 @@ describe('fitMatchProfile', () => {
       // model and a radial error will always find each other and a null result
       // looks the same as no sensitivity. So: warp the camera's JPEG by a known
       // amount, hand it back as the target, and require the fit to notice.
-      const upright = take(decodeEmbedded(FIXTURE)!);
-      const { width, height } = upright;
-
-      // A 3% centre-to-corner pincushion, applied by resampling the JPEG.
+      //
+      // The warp runs natively, since the alternative is shipping the preview out
+      // to be distorted here and the distorted copy back in. The fit is forced onto
+      // its fitted path: the question is whether the search finds a displacement,
+      // not whether it can read one off the file.
       const K1 = 0.03;
-      const distorted = Buffer.allocUnsafe(width * height * 3);
-      const half = Math.hypot(width / 2, height / 2);
-      for (let y = 0; y < height; y += 1) {
-        const dy = (y - height / 2) / half;
-        for (let x = 0; x < width; x += 1) {
-          const dx = (x - width / 2) / half;
-          const factor = 1 + K1 * (dx * dx + dy * dy);
-          const px = width / 2 + dx * factor * half;
-          const py = height / 2 + dy * factor * half;
-          const o = (y * width + x) * 3;
-          if (px < 0 || py < 0 || px >= width - 1 || py >= height - 1) {
-            distorted[o] = 0;
-            distorted[o + 1] = 0;
-            distorted[o + 2] = 0;
-            continue;
-          }
-          const x0 = Math.floor(px);
-          const y0 = Math.floor(py);
-          const fx = px - x0;
-          const fy = py - y0;
-          const i00 = (y0 * width + x0) * 3;
-          const i01 = i00 + width * 3;
-          for (let c = 0; c < 3; c += 1) {
-            distorted[o + c] =
-              upright.data[i00 + c]! * (1 - fx) * (1 - fy) +
-              upright.data[i00 + 3 + c]! * fx * (1 - fy) +
-              upright.data[i01 + c]! * (1 - fx) * fy +
-              upright.data[i01 + 3 + c]! * fx * fy;
-          }
-        }
-      }
-      const injected = imageFromRgb(distorted, width, height);
-      let target: Buffer;
-      try {
-        target = encodeJpeg(injected, 0, 95);
-      } finally {
-        freeImage(injected);
-      }
-
-      // Null knots force the fitted path: the question is whether the search finds
-      // a displacement, not whether it can read one.
-      const fitted = fitProfileFor(render, target, null);
-      expect(fitted).not.toBeNull();
-      expect(fitted!.distortionSource).toBe('fitted');
+      const fitted = fitInjected(FIXTURE, K1);
+      expect(fitted.distortionSource).toBe('fitted');
 
       // The target samples outward, so the map from target back to render carries
       // the same sign as the injected coefficient. Compare centre-to-corner
       // displacement rather than raw coefficients, since crop and knots trade off.
-      const knots = fitted!.distortion!;
+      const knots = fitted.distortion!;
       const recovered = (knots[knots.length - 1]! - knots[0]!) / SPLINE_UNIT;
       expect(recovered).toBeGreaterThan(K1 / 2);
       expect(recovered).toBeLessThan(K1 * 2);
@@ -221,25 +144,23 @@ describe('fitMatchProfile', () => {
 
   test(
     'fits the same profile twice, so renditions built at different times agree',
-    async () => {
+    () => {
       // Load-bearing: the profile is deliberately not stored anywhere. The grid and
       // the full view are fitted in one job, but the max-resolution export is built
       // on demand later and refits from scratch. If the fit were not deterministic
       // those two copies of one photo would be graded differently, and the only
-      // remedy would be persisting the profile. `first` was fitted from a decode
-      // already in hand and `second` refits from the file, which is exactly the
-      // pair of paths that must agree.
-      const first = profile;
-      const second = await fitMatchProfile(FIXTURE);
-      expect(second).not.toBeNull();
-      expect(second!.deltaE).toBe(first.deltaE);
-      expect(second!.crop).toBe(first.crop);
-      expect(second!.distortionSource).toBe(first.distortionSource);
-      expect(second!.distortion).toEqual(first.distortion);
-      expect(second!.colour.matrix).toEqual(first.colour.matrix);
-      for (let channel = 0; channel < 3; channel += 1) {
-        expect(Array.from(second!.colour.curves[channel]!)).toEqual(Array.from(first.colour.curves[channel]!));
-      }
+      // remedy would be persisting the profile.
+      //
+      // Two genuinely separate fits, which is why `fitSummary` is the one call in
+      // this module that is never memoised: a cache would answer both with the same
+      // object and this test would pass without the fit being deterministic at all.
+      const second = fitSummary(FIXTURE);
+      expect(second.deltaE).toBe(profile.deltaE);
+      expect(second.crop).toBe(profile.crop);
+      expect(second.distortionSource).toBe(profile.distortionSource);
+      expect(second.distortion).toEqual(profile.distortion);
+      expect(second.matrix).toEqual(profile.matrix);
+      expect(second.curves).toEqual(profile.curves);
     },
     TIMEOUT,
   );
@@ -253,30 +174,16 @@ describe('fitMatchProfile', () => {
       // normalised radii and the colour transform is a per-pixel lookup, so it
       // should not. This is the check on that reasoning.
       const SIZE = 800;
+      const compared = compareRenders(
+        FIXTURE,
+        { matched: true, size: SIZE, beforeResize: true },
+        { matched: true, size: SIZE },
+      );
 
-      let beforeResize: ReturnType<typeof take>;
-      const graded = applyMatchProfile(render, profile);
-      try {
-        beforeResize = take(renderImage(graded, null, SIZE));
-      } finally {
-        freeImage(graded);
-      }
-      const afterResize = take(renderImage(render, profile, SIZE));
-
-      expect(afterResize.width).toBe(beforeResize.width);
-      expect(afterResize.height).toBe(beforeResize.height);
-      let total = 0;
-      let counted = 0;
-      for (let i = 0; i < afterResize.data.length; i += 3) {
-        total += deltaE76(
-          [beforeResize.data[i]!, beforeResize.data[i + 1]!, beforeResize.data[i + 2]!],
-          [afterResize.data[i]!, afterResize.data[i + 1]!, afterResize.data[i + 2]!],
-        );
-        counted += 1;
-      }
+      expect(compared.b).toEqual(compared.a);
       // Resampling order still moves a few edge pixels, so this is "the same
       // picture", not "the same bytes".
-      expect(total / counted).toBeLessThan(1);
+      expect(compared.meanDeltaE).toBeLessThan(1);
     },
     TIMEOUT,
   );
@@ -290,8 +197,8 @@ describe('fitMatchProfile', () => {
    * makes them comparable when they took different routes: a tier, a knot count and a
    * crop are three ways of saying something the eye only ever sees as displacement.
    */
-  const cornerGap = (a: MatchProfile, b: MatchProfile): number => {
-    const scale = (p: MatchProfile): number => p.crop * (1 + (p.distortion?.at(-1) ?? 0) / 16384);
+  const cornerGap = (a: ProfileSummary, b: ProfileSummary): number => {
+    const scale = (p: ProfileSummary): number => p.crop * (1 + (p.distortion?.at(-1) ?? 0) / 16384);
     // Half-diagonal of a 3:2 frame at a 3840px long edge.
     const radius = Math.hypot(3840 / 2, 2560 / 2);
     return Math.abs(scale(a) - scale(b)) * radius;
@@ -318,54 +225,32 @@ describe('fitMatchProfile', () => {
     test(
       `matches the camera as closely off either decode, on ${body}`,
       () => {
-        const sdr = decodeRawImage(file, 8, 'srgb', 640);
-        const linear = decodeRawImage(file, 16, 'rec2020-linear', 3840);
-        let fitted: ReturnType<typeof fitHdrFromLinear> = null;
-        try {
-          const viaSdr = fitMatchProfile(file, sdr);
-          fitted = fitHdrFromLinear(linear, file, {
-            medium: 'still',
-            outputPath: '',
-            peakNits: 1000,
-            referenceWhiteNits: 203,
-            whiteQuantile: 0.9,
-            crf: 0,
-            preset: 0,
-            stillFullChroma: false,
-            maxEdge: Number.POSITIVE_INFINITY,
-          });
-          expect(viaSdr).not.toBeNull();
-          expect(fitted).not.toBeNull();
-          const viaLinear = fitted!.profile;
+        const viaSdr = fitSummary(file, { size: 640 });
+        const viaLinear = fitSummary(file, { viaLinear: true, size: 3840 });
 
-          // The point of the fit: how close to the camera it lands. A render whose
-          // tone was too far off to search against would show up here as a match that
-          // is plainly worse, not as one that took a different road to the same place.
-          expect(viaLinear.deltaE).toBeLessThan(viaSdr!.deltaE + 0.1);
+        // The point of the fit: how close to the camera it lands. A render whose
+        // tone was too far off to search against would show up here as a match that
+        // is plainly worse, not as one that took a different road to the same place.
+        expect(viaLinear.deltaE).toBeLessThan(viaSdr.deltaE + 0.1);
 
-          // And how far apart the two geometries actually put the picture, which is
-          // the thing that matters and the thing the tier is only a proxy for.
-          //
-          // Bounded rather than pinned, because on IMG_5360 the two land on opposite
-          // sides of a decision worth 0.0028 deltaE76 - lensfun's curve barely beats
-          // correcting nothing - and pinning the tier there pins a coin toss. What
-          // must not happen is the two disagreeing by a lot, which is what a linear
-          // fit that had quietly stopped resolving geometry at all would look like on
-          // a body that needs it: an uncorrected 4.5% barrel is ~100px at this radius,
-          // where the coin toss is 17.
-          expect(cornerGap(viaSdr!, viaLinear)).toBeLessThan(30);
+        // And how far apart the two geometries actually put the picture, which is
+        // the thing that matters and the thing the tier is only a proxy for.
+        //
+        // Bounded rather than pinned, because on IMG_5360 the two land on opposite
+        // sides of a decision worth 0.0028 deltaE76 - lensfun's curve barely beats
+        // correcting nothing - and pinning the tier there pins a coin toss. What
+        // must not happen is the two disagreeing by a lot, which is what a linear
+        // fit that had quietly stopped resolving geometry at all would look like on
+        // a body that needs it: an uncorrected 4.5% barrel is ~100px at this radius,
+        // where the coin toss is 17.
+        expect(cornerGap(viaSdr, viaLinear)).toBeLessThan(30);
 
-          // Where both keep a curve it must be the same curve, since those knots are
-          // read from the file or the database rather than fitted from pixels.
-          if (viaLinear.distortion != null && viaSdr!.distortion != null) {
-            expect(viaLinear.distortion).toEqual(viaSdr!.distortion);
-            // The crop is scanned against the render, so it may land a hair apart.
-            expect(Math.abs(viaLinear.crop - viaSdr!.crop)).toBeLessThan(0.002);
-          }
-        } finally {
-          if (fitted != null) freeHdrMatch(fitted.match);
-          freeImage(sdr);
-          freeImage(linear);
+        // Where both keep a curve it must be the same curve, since those knots are
+        // read from the file or the database rather than fitted from pixels.
+        if (viaLinear.distortion != null && viaSdr.distortion != null) {
+          expect(viaLinear.distortion).toEqual(viaSdr.distortion);
+          // The crop is scanned against the render, so it may land a hair apart.
+          expect(Math.abs(viaLinear.crop - viaSdr.crop)).toBeLessThan(0.002);
         }
       },
       TIMEOUT,
@@ -375,14 +260,11 @@ describe('fitMatchProfile', () => {
   test(
     'applying a profile leaves the render the same size and shape',
     () => {
-      const corrected = take(applyMatchProfile(render, profile));
-      const plain = pixels(render);
-      expect(corrected.width).toBe(render.width);
-      expect(corrected.height).toBe(render.height);
-      expect(corrected.data.length).toBe(plain.length);
+      const compared = compareRenders(FIXTURE, { matched: true }, {});
+      expect(compared.a).toEqual(compared.b);
       // A transform that returned the render untouched would pass every size
       // assertion above while doing nothing.
-      expect(corrected.data.equals(plain)).toBe(false);
+      expect(compared.identical).toBe(false);
     },
     TIMEOUT,
   );

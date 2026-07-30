@@ -6,10 +6,7 @@ import { afterAll, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { deltaE76 } from '../../src/services/processing/jpeg_match_test_only';
-import { readEmbeddedJpeg } from '../../src/services/processing/raw_decoder';
-import { decodeImage, freeImage, type ImageHandle } from '../../src/services/processing/rawshim_ops';
-import { pixels } from '../../src/services/processing/rawshim_pixels';
+import { deltaEToPreview } from '../../src/services/processing/rawshim_debug';
 import type { ProcessingResult, RenditionJob, RenditionTarget } from '../../src/services/processing/processing_types';
 
 const FIXTURE = `${import.meta.dir}/../fixtures/DSC02981.ARW`;
@@ -57,28 +54,7 @@ function runJob(job: RenditionJob): Promise<ProcessingResult> {
   });
 }
 
-/** The handle's pixels, with the handle released. */
-function take(image: ImageHandle): { width: number; height: number; data: Buffer } {
-  try {
-    return { width: image.width, height: image.height, data: pixels(image) };
-  } finally {
-    freeImage(image);
-  }
-}
-
-async function readImage(file: string, longEdge = 0): Promise<ReturnType<typeof take>> {
-  return take(decodeImage(Buffer.from(await Bun.file(file).arrayBuffer()), longEdge));
-}
-
-/** The pixel at a fractional position, so images of different shapes compare. */
-function at(image: ReturnType<typeof take>, u: number, v: number): [number, number, number] {
-  const x = Math.min(image.width - 1, Math.floor(u * image.width));
-  const y = Math.min(image.height - 1, Math.floor(v * image.height));
-  const i = (y * image.width + x) * 3;
-  return [image.data[i]!, image.data[i + 1]!, image.data[i + 2]!];
-}
-
-async function render(matchEmbeddedJpeg: boolean, name: string): Promise<ReturnType<typeof take>> {
+async function render(matchEmbeddedJpeg: boolean, name: string): Promise<string> {
   const outputPath = path.join(root, `${name}.avif`);
   const result = await runJob({
     kind: 'rendition',
@@ -90,39 +66,29 @@ async function render(matchEmbeddedJpeg: boolean, name: string): Promise<ReturnT
     matchEmbeddedJpeg,
   });
   expect(result.success).toBe(true);
-  return readImage(outputPath);
+  return outputPath;
 }
 
 test(
   'the worker applies the match when the job asks for it, and not otherwise',
   async () => {
     const [plain, matched] = await Promise.all([render(false, 'plain'), render(true, 'matched')]);
-    expect(matched.data.length).toBe(plain.data.length);
 
     // The camera's own JPEG is what both are trying to look like, so the test is
-    // not "the bytes changed" but "the render moved towards the target".
-    const jpeg = readEmbeddedJpeg(FIXTURE)!;
-    const reference = take(decodeImage(jpeg, Math.max(plain.width, plain.height)));
-
+    // not "the bytes changed" but "the render moved towards the target". Which of
+    // two files landed closer is a pair of scalars, so it is measured where the
+    // three images already are rather than by reading them all back.
+    //
     // Sampled on a normalised grid rather than by buffer index, because the three
-    // images are not the same shape: the JPEG is distortion-cropped, so at an 800px
-    // long edge it comes out 534 wide against the render's 535, and walking a shared
+    // are not the same shape: the JPEG is distortion-cropped, so at an 800px long
+    // edge it comes out 534 wide against the render's 535, and walking a shared
     // index would slide a pixel per row and compare different parts of the scene.
-    let plainError = 0;
-    let matchedError = 0;
-    let counted = 0;
-    for (let step = 0; step < 4000; step += 1) {
-      const u = (step % 61) / 61;
-      const v = (step / 4000) % 1;
-      const target = at(reference, u, v);
-      plainError += deltaE76(at(plain, u, v), target);
-      matchedError += deltaE76(at(matched, u, v), target);
-      counted += 1;
-    }
+    const { meanDeltaE, counted, sizes } = deltaEToPreview([plain, matched], FIXTURE);
+    expect(sizes[0]).toEqual(sizes[1]!);
     expect(counted).toBeGreaterThan(100);
     // A flag that never reaches the worker makes these two equal, which is exactly
     // the failure this test exists to catch: every module test would still pass.
-    expect(matchedError / counted).toBeLessThan(plainError / counted);
+    expect(meanDeltaE[1]!).toBeLessThan(meanDeltaE[0]!);
   },
   TIMEOUT,
 );

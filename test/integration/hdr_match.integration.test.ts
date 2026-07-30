@@ -3,10 +3,9 @@
 // rendering, and the failure modes that mattered were all "the fit ran and the picture
 // was wrong" (§10.8).
 //
-// The fit, the grade and both encoders are in `native/rawshim` now, so these reach them
-// through the shim. `fitHdrColour` and `hdrGradedSamples` exist for exactly this: the
-// production path keeps every sample on the Rust side, and there is nothing to assert
-// about a picture that never comes back.
+// The fit, the grade and both encoders are in `native/rawshim`, and no sample ever
+// comes back: what these assert on is a digest, a quantile or a curve, each computed
+// where the pixels are (`rawshim_debug.ts`).
 //   docker exec bowerbird-dev bun test test/integration
 import { expect, test } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -124,8 +123,8 @@ test(
     try {
       const plainFile = path.join(dir, 'plain.avif');
       const matchedFile = path.join(dir, 'matched.avif');
-      encodeHdr(FIXTURE, grade({ outputPath: plainFile, maxEdge: 640 }), false);
-      encodeHdr(FIXTURE, grade({ outputPath: matchedFile, maxEdge: 640 }), true);
+      encodeHdr(FIXTURE, grade({ outputPath: plainFile, maxEdge: 640 }));
+      encodeHdr(FIXTURE, grade({ outputPath: matchedFile, maxEdge: 640 }), { withMatch: true });
       // Same encoder, same size, same everything but the transform, so identical bytes
       // mean the transform never reached the encoder.
       expect(Buffer.compare(readFileSync(plainFile), readFileSync(matchedFile))).not.toBe(0);

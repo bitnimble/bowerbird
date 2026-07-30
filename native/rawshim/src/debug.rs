@@ -289,13 +289,86 @@ pub enum Command {
         path: String,
         grade: GradeSpec,
     },
-    /// One HDR still, encoded to `grade.output_path`.
+    /// One HDR rendition, encoded to `grade.output_path`.
     EncodeHdr {
         path: String,
         #[serde(default)]
         with_match: bool,
         grade: GradeSpec,
+        /// The one-frame AV1 twin, where one is wanted.
+        #[serde(default)]
+        video_output_path: String,
+        /// Decode to this longest edge before grading. 0 takes the whole frame, which
+        /// is what the pins want and what the encode tests cannot afford.
+        #[serde(default)]
+        decode_size: u32,
     },
+    /// The camera's embedded preview, described.
+    PreviewSummary {
+        path: String,
+        #[serde(default)]
+        size: u32,
+    },
+    /// The camera match, fitted and reported.
+    ///
+    /// Never memoised, unlike the fit the HDR commands share: two of the assertions
+    /// on it are that fitting twice agrees and that fitting off either decode agrees,
+    /// and a cache would answer both with the same object and prove nothing.
+    FitSummary {
+        path: String,
+        /// Fit off a scene-linear decode rather than an 8-bit render (10.8.1).
+        #[serde(default)]
+        via_linear: bool,
+        /// Longest edge to decode to, or 0 for the whole frame.
+        #[serde(default)]
+        size: u32,
+    },
+    /// The fit against the camera's own preview warped by a known amount.
+    ///
+    /// The check the fit is kept honest by: a radial model and a radial error always
+    /// find each other, so a null result looks identical to no sensitivity. The warp
+    /// happens here because the alternative is shipping a preview out to be distorted
+    /// and the distorted copy back in.
+    FitInjected {
+        path: String,
+        /// Centre-to-corner pincushion to inject, as a fraction.
+        k1: f64,
+    },
+    /// A render against the camera's preview, before and after the colour transform.
+    MatchAgainstPreview {
+        path: String,
+        size: u32,
+    },
+    /// Two renders of one file, compared.
+    CompareRenders {
+        path: String,
+        a: RenderSpec,
+        b: RenderSpec,
+    },
+    /// Written images against the preview of the RAW they were built from.
+    ///
+    /// For the worker test, whose question is which of two renditions landed closer
+    /// to what the camera produced - a pair of scalars, not three images.
+    DeltaEToPreview {
+        image_paths: Vec<String>,
+        raw_path: String,
+    },
+}
+
+/// One way of rendering a file, for a comparison against another.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RenderSpec {
+    /// Apply the fitted camera match.
+    #[serde(default)]
+    matched: bool,
+    /// Longest edge, or 0 for the whole frame.
+    #[serde(default)]
+    size: u32,
+    /// Apply the match before the resize rather than after, which is the order the
+    /// worker does *not* use and the reason the comparison exists.
+    #[serde(default)]
+    before_resize: bool,
 }
 
 /// The parts of an HDR encode a pin varies.
@@ -314,12 +387,19 @@ pub struct GradeSpec {
     pub max_edge: Option<f64>,
     #[serde(default)]
     pub still_full_chroma: bool,
+    /// "still" or "video". A still gets avifenc after ffmpeg; a video does not, and
+    /// has no say in its chroma.
+    #[serde(default)]
+    pub medium: Option<String>,
 }
 
 impl GradeSpec {
     fn options(&self) -> crate::hdr_args::EncodeOptions {
         crate::hdr_args::EncodeOptions {
-            medium: crate::hdr_args::Medium::Still,
+            medium: match self.medium.as_deref() {
+                Some(name) => crate::hdr_args::Medium::parse(name).unwrap_or(crate::hdr_args::Medium::Still),
+                None => crate::hdr_args::Medium::Still,
+            },
             still_chroma: match self.still_full_chroma {
                 true => crate::hdr_args::Chroma::Yuv444,
                 false => crate::hdr_args::Chroma::Yuv420,
@@ -348,6 +428,49 @@ pub struct Reply {
     pub graded: Option<GradedSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub colour: Option<HdrColour>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile: Option<ProfileSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub renders: Option<RenderComparison>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub against_preview: Option<AgainstPreview>,
+}
+
+/// A fitted camera match, described. Everything the assertions on the fit read.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileSummary {
+    /// Held-out mean deltaE76 after the whole transform, so not a training score.
+    pub delta_e: f64,
+    pub crop: f64,
+    pub distortion_source: &'static str,
+    pub distortion: Option<Vec<f64>>,
+    pub matrix: Vec<Vec<f64>>,
+    pub curves: Vec<Vec<u8>>,
+}
+
+/// Two renders of one file, compared.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RenderComparison {
+    pub a: [usize; 2],
+    pub b: [usize; 2],
+    /// Mean deltaE76 over every pixel the two share.
+    pub mean_delta_e: f64,
+    /// Whether the two came out byte for byte the same, which is how "the transform
+    /// did nothing" shows up.
+    pub identical: bool,
+}
+
+/// How close one or more images sit to the camera's own preview.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgainstPreview {
+    /// One mean deltaE76 per image, in the order asked for.
+    pub mean_delta_e: Vec<f64>,
+    pub counted: usize,
+    pub sizes: Vec<[usize; 2]>,
+    pub preview: [usize; 2],
 }
 
 /// A graded HDR frame, described.
@@ -538,8 +661,16 @@ pub fn run(command: &Command) -> Result<Reply, String> {
                 ..Reply::default()
             })
         }
-        Command::EncodeHdr { path, with_match, grade } => {
-            let linear = linear_decode(path)?;
+        Command::EncodeHdr { path, with_match, grade, video_output_path, decode_size } => {
+            // Only the whole-frame decode is shared: it is the one the pins reuse, and
+            // a sized one is cheap enough that caching it would only risk handing back
+            // the wrong size.
+            let linear = match decode_size {
+                0 => linear_decode(path)?,
+                size => std::sync::Arc::new(
+                    crate::decode_frame(path, 16, true, *size).ok_or("could not decode")?,
+                ),
+            };
             let matched = match with_match {
                 false => None,
                 true => hdr_match(path, &linear, grade)?,
@@ -553,12 +684,300 @@ pub fn run(command: &Command) -> Result<Reply, String> {
             crate::hdr::encode_pair(
                 crate::hdr::Decode::Borrowed(source),
                 &grade.options(),
-                None,
+                match video_output_path.is_empty() {
+                    true => None,
+                    false => Some(video_output_path),
+                },
                 matched.as_ref(),
             )?;
             Ok(Reply::default())
         }
+        Command::PreviewSummary { path, size } => {
+            let preview = crate::decode_embedded_rgb(path, *size as usize).ok_or("no embedded preview")?;
+            let pixels = Pixels::Eight(preview.data);
+            Ok(Reply {
+                summary: Some(DecodeSummary {
+                    width: preview.width,
+                    height: preview.height,
+                    depth: 8,
+                    samples: pixels.len(),
+                    bytes: pixels.len(),
+                    halved: false,
+                    direct: false,
+                    sha1: sha1_hex(&to_bytes(&pixels)),
+                    channels: channels(&pixels),
+                }),
+                ..Reply::default()
+            })
+        }
+        Command::FitSummary { path, via_linear, size } => {
+            let profile = match via_linear {
+                false => {
+                    let render = crate::decode_frame(path, 8, false, *size).ok_or("could not decode")?;
+                    crate::fit_profile_for(&render, path)
+                }
+                true => {
+                    let linear = crate::decode_frame(path, 16, true, *size).ok_or("could not decode")?;
+                    let samples = linear.samples16().ok_or("the linear fit needs a 16-bit decode")?;
+                    let source = crate::hdr::Source {
+                        samples,
+                        width: linear.width,
+                        height: linear.height,
+                    };
+                    let geometry = crate::ffi::geometry_for(path).ok_or("no geometry for this file")?;
+                    // 0.9 is the white quantile every HDR job grades against, and the
+                    // fit normalises by diffuse white.
+                    crate::hdr::fit_all(path, &source, 0.9, geometry).map(|(profile, _)| profile)
+                }
+            };
+            let profile = profile.ok_or("the fit found no match worth applying")?;
+            Ok(Reply { profile: Some(describe_profile(&profile)), ..Reply::default() })
+        }
+        Command::FitInjected { path, k1 } => {
+            let preview = crate::decode_embedded_rgb(path, 0).ok_or("no embedded preview")?;
+            let distorted = pincushion(preview.as_ref(), *k1);
+            let target = crate::vips::Pipeline::from_rgb(distorted.as_ref())
+                .and_then(|p| p.encode_jpeg(95))
+                .map_err(|e| format!("could not encode the injected target: {e}"))?;
+            let render = crate::decode_frame(path, 8, false, 0).ok_or("could not decode")?;
+            let source = render.rgb8().ok_or("the fit needs an 8-bit render")?;
+            // Unstated forces the fitted path: the question is whether the search
+            // finds a displacement, not whether it can read one off the file.
+            let profile = crate::fit::fit(source, &target, crate::fit::Geometry::Unstated)
+                .map_err(|e| format!("the fit failed: {e}"))?
+                .ok_or("the fit found no match worth applying")?;
+            Ok(Reply { profile: Some(describe_profile(&profile)), ..Reply::default() })
+        }
+        Command::MatchAgainstPreview { path, size } => {
+            let preview = crate::decode_embedded_rgb(path, *size as usize).ok_or("no embedded preview")?;
+            let decoded = crate::decode_frame(path, 8, false, *size).ok_or("could not decode")?;
+            let render = render_rgb(decoded.rgb8().ok_or("the render must be 8-bit")?, None, *size)?;
+            let full = crate::decode_frame(path, 8, false, 0).ok_or("could not decode")?;
+            let profile = crate::fit_profile_for(&full, path).ok_or("the fit found no match")?;
+            drop(full);
+
+            // Every 37th pixel, which is what the assertion sampled: enough of the
+            // frame to be a mean rather than a spot check, cheap enough to be free.
+            let (mut plain, mut corrected, mut counted) = (0f64, 0f64, 0usize);
+            let n = render.data.len().min(preview.data.len()) / 3;
+            for p in (0..n).step_by(37) {
+                let i = p * 3;
+                let target = [
+                    f64::from(preview.data[i]),
+                    f64::from(preview.data[i + 1]),
+                    f64::from(preview.data[i + 2]),
+                ];
+                let source = [
+                    f64::from(render.data[i]),
+                    f64::from(render.data[i + 1]),
+                    f64::from(render.data[i + 2]),
+                ];
+                plain += crate::fit::delta_e76(&source, &target);
+                corrected += crate::fit::delta_e76(&colour_at(&profile.colour, source), &target);
+                counted += 1;
+            }
+            let mean = |total: f64| match counted {
+                0 => 0.0,
+                _ => total / counted as f64,
+            };
+            Ok(Reply {
+                against_preview: Some(AgainstPreview {
+                    mean_delta_e: vec![mean(plain), mean(corrected)],
+                    counted,
+                    sizes: vec![[render.width, render.height]],
+                    preview: [preview.width, preview.height],
+                }),
+                ..Reply::default()
+            })
+        }
+        Command::CompareRenders { path, a, b } => {
+            let decoded = crate::decode_frame(path, 8, false, 0).ok_or("could not decode")?;
+            let source = decoded.rgb8().ok_or("the render must be 8-bit")?;
+            let profile = crate::fit_profile_for(&decoded, path).ok_or("the fit found no match")?;
+            let one = render_spec(source, &profile, a)?;
+            let two = render_spec(source, &profile, b)?;
+
+            let n = one.data.len().min(two.data.len()) / 3;
+            let mut total = 0f64;
+            for p in 0..n {
+                let i = p * 3;
+                total += crate::fit::delta_e76(
+                    &[f64::from(one.data[i]), f64::from(one.data[i + 1]), f64::from(one.data[i + 2])],
+                    &[f64::from(two.data[i]), f64::from(two.data[i + 1]), f64::from(two.data[i + 2])],
+                );
+            }
+            Ok(Reply {
+                renders: Some(RenderComparison {
+                    a: [one.width, one.height],
+                    b: [two.width, two.height],
+                    mean_delta_e: match n {
+                        0 => 0.0,
+                        _ => total / n as f64,
+                    },
+                    identical: one.data == two.data,
+                }),
+                ..Reply::default()
+            })
+        }
+        Command::DeltaEToPreview { image_paths, raw_path } => {
+            let images: Vec<crate::vips::Rgb> = image_paths
+                .iter()
+                .map(|path| {
+                    let encoded = std::fs::read(path).map_err(|e| format!("could not read {path}: {e}"))?;
+                    crate::vips::Pipeline::decode_upright(&encoded)
+                        .and_then(crate::vips::Pipeline::finish)
+                        .map_err(|e| format!("could not decode {path}: {e}"))
+                })
+                .collect::<Result<_, String>>()?;
+            let longest = images
+                .iter()
+                .map(|image| image.width.max(image.height))
+                .max()
+                .unwrap_or(0);
+            let preview = crate::decode_embedded_rgb(raw_path, longest).ok_or("no embedded preview")?;
+
+            // Sampled on a normalised grid rather than by index, because the images
+            // are not the same shape: the preview is distortion-cropped, so at an
+            // 800px long edge it comes out a pixel narrower than the render and a
+            // shared index would slide a pixel per row.
+            let mut totals = vec![0f64; images.len()];
+            let mut counted = 0usize;
+            for step in 0..4000u32 {
+                let u = f64::from(step % 61) / 61.0;
+                let v = (f64::from(step) / 4000.0) % 1.0;
+                let target = sample(preview.as_ref(), u, v);
+                for (total, image) in totals.iter_mut().zip(&images) {
+                    *total += crate::fit::delta_e76(&sample(image.as_ref(), u, v), &target);
+                }
+                counted += 1;
+            }
+            Ok(Reply {
+                against_preview: Some(AgainstPreview {
+                    mean_delta_e: totals.iter().map(|t| t / counted as f64).collect(),
+                    counted,
+                    sizes: images.iter().map(|i| [i.width, i.height]).collect(),
+                    preview: [preview.width, preview.height],
+                }),
+                ..Reply::default()
+            })
+        }
     }
+}
+
+fn describe_profile(profile: &crate::fit::Profile) -> ProfileSummary {
+    ProfileSummary {
+        delta_e: profile.delta_e,
+        crop: profile.crop,
+        distortion_source: match profile.source {
+            crate::fit::SOURCE_CAMERA => "camera",
+            crate::fit::SOURCE_FITTED => "fitted",
+            crate::fit::SOURCE_LENSFUN => "lensfun",
+            _ => "none",
+        },
+        distortion: profile.knots.clone(),
+        matrix: profile.colour.matrix.iter().map(|row| row.to_vec()).collect(),
+        curves: profile.colour.curves.iter().map(|curve| curve.to_vec()).collect(),
+    }
+}
+
+/// The colour half of a profile, for one pixel.
+fn colour_at(transform: &crate::fit::ColourTransform, rgb: [f64; 3]) -> [f64; 3] {
+    let channel = |c: usize| {
+        f64::from(transform.curves[c][rgb[c].round().clamp(0.0, 255.0) as usize])
+    };
+    let (r, g, b) = (channel(0), channel(1), channel(2));
+    let out = |row: usize| {
+        (transform.matrix[row][0] * r + transform.matrix[row][1] * g + transform.matrix[row][2] * b)
+            .clamp(0.0, 255.0)
+    };
+    [out(0), out(1), out(2)]
+}
+
+/// The warp and the resize, in the order the worker applies them.
+fn render_rgb(
+    source: crate::vips::RgbRef<'_>,
+    profile: Option<&crate::fit::Profile>,
+    long_edge: u32,
+) -> Result<crate::vips::Rgb, String> {
+    let fits = long_edge == 0 || source.width.max(source.height) <= long_edge as usize;
+    let resized = match fits {
+        true => crate::vips::Rgb {
+            width: source.width,
+            height: source.height,
+            data: source.data.to_vec(),
+        },
+        false => crate::vips::Pipeline::from_rgb(source)
+            .and_then(|pipeline| pipeline.resize_to_fit(long_edge as usize))
+            .and_then(crate::vips::Pipeline::finish)
+            .map_err(|e| format!("could not resize: {e}"))?,
+    };
+    Ok(match profile {
+        None => resized,
+        Some(profile) => crate::fit::apply(resized.as_ref(), profile),
+    })
+}
+
+fn render_spec(
+    source: crate::vips::RgbRef<'_>,
+    profile: &crate::fit::Profile,
+    spec: &RenderSpec,
+) -> Result<crate::vips::Rgb, String> {
+    let profile = spec.matched.then_some(profile);
+    if !spec.before_resize {
+        return render_rgb(source, profile, spec.size);
+    }
+    let warped = match profile {
+        None => crate::vips::Rgb { width: source.width, height: source.height, data: source.data.to_vec() },
+        Some(profile) => crate::fit::apply(source, profile),
+    };
+    render_rgb(warped.as_ref(), None, spec.size)
+}
+
+/// The pixel at a fractional position, so images of different shapes compare.
+fn sample(image: crate::vips::RgbRef<'_>, u: f64, v: f64) -> [f64; 3] {
+    let x = ((u * image.width as f64) as usize).min(image.width.saturating_sub(1));
+    let y = ((v * image.height as f64) as usize).min(image.height.saturating_sub(1));
+    let i = (y * image.width + x) * 3;
+    match image.data.get(i + 2) {
+        None => [0.0, 0.0, 0.0],
+        Some(_) => [
+            f64::from(image.data[i]),
+            f64::from(image.data[i + 1]),
+            f64::from(image.data[i + 2]),
+        ],
+    }
+}
+
+/// A centre-to-corner pincushion of `k1`, applied by resampling.
+fn pincushion(source: crate::vips::RgbRef<'_>, k1: f64) -> crate::vips::Rgb {
+    let (width, height) = (source.width, source.height);
+    let mut out = vec![0u8; width * height * 3];
+    let half = ((width as f64 / 2.0).powi(2) + (height as f64 / 2.0).powi(2)).sqrt();
+    for y in 0..height {
+        let dy = (y as f64 - height as f64 / 2.0) / half;
+        for x in 0..width {
+            let dx = (x as f64 - width as f64 / 2.0) / half;
+            let factor = 1.0 + k1 * (dx * dx + dy * dy);
+            let px = width as f64 / 2.0 + dx * factor * half;
+            let py = height as f64 / 2.0 + dy * factor * half;
+            let o = (y * width + x) * 3;
+            if px < 0.0 || py < 0.0 || px >= width as f64 - 1.0 || py >= height as f64 - 1.0 {
+                continue;
+            }
+            let (x0, y0) = (px as usize, py as usize);
+            let (fx, fy) = (px - x0 as f64, py - y0 as f64);
+            let i00 = (y0 * width + x0) * 3;
+            let i01 = i00 + width * 3;
+            for c in 0..3 {
+                out[o + c] = (f64::from(source.data[i00 + c]) * (1.0 - fx) * (1.0 - fy)
+                    + f64::from(source.data[i00 + 3 + c]) * fx * (1.0 - fy)
+                    + f64::from(source.data[i01 + c]) * (1.0 - fx) * fy
+                    + f64::from(source.data[i01 + 3 + c]) * fx * fy)
+                    as u8;
+            }
+        }
+    }
+    crate::vips::Rgb { width, height, data: out }
 }
 
 /// How close two images are.

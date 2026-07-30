@@ -68,6 +68,32 @@ export interface HdrColour {
   distortionSource: 'none' | 'camera' | 'fitted' | 'lensfun';
 }
 
+export interface ProfileSummary {
+  /** Held-out mean deltaE76 after the whole transform, so not a training score. */
+  deltaE: number;
+  crop: number;
+  distortionSource: 'none' | 'camera' | 'fitted' | 'lensfun';
+  distortion: number[] | null;
+  matrix: number[][];
+  curves: number[][];
+}
+
+export interface RenderComparison {
+  a: [number, number];
+  b: [number, number];
+  meanDeltaE: number;
+  /** How "the transform did nothing" shows up. */
+  identical: boolean;
+}
+
+export interface AgainstPreview {
+  /** One mean deltaE76 per image, in the order asked for. */
+  meanDeltaE: number[];
+  counted: number;
+  sizes: [number, number][];
+  preview: [number, number];
+}
+
 interface DebugReply {
   ok: boolean;
   error?: string;
@@ -77,6 +103,9 @@ interface DebugReply {
     comparison?: Comparison;
     graded?: GradedSummary;
     colour?: HdrColour;
+    profile?: ProfileSummary;
+    renders?: RenderComparison;
+    againstPreview?: AgainstPreview;
   };
 }
 
@@ -142,6 +171,8 @@ export interface GradeSpec {
   maxEdge: number;
   stillFullChroma?: boolean;
   outputPath?: string;
+  /** A still gets avifenc after ffmpeg; a video does not. Defaults to a still. */
+  medium?: 'still' | 'video';
 }
 
 function gradeArgs(grade: GradeSpec): Record<string, unknown> {
@@ -182,9 +213,95 @@ export function hdrMatchColour(path: string, grade: GradeSpec): HdrColour {
   return reply.colour;
 }
 
-/** One HDR still, encoded to `grade.outputPath`. */
-export function encodeHdr(path: string, grade: GradeSpec, withMatch: boolean): void {
-  ask({ kind: 'encodeHdr', path, withMatch, grade: gradeArgs(grade) });
+/**
+ * One HDR rendition, encoded to `grade.outputPath`, plus the video twin where one is
+ * named.
+ *
+ * `decodeSize` bounds the decode before the grade. 0 takes the whole frame, which the
+ * pins want and the encode tests cannot afford.
+ */
+export function encodeHdr(
+  path: string,
+  grade: GradeSpec,
+  options: { withMatch?: boolean; videoOutputPath?: string; decodeSize?: number } = {},
+): void {
+  ask({
+    kind: 'encodeHdr',
+    path,
+    withMatch: options.withMatch ?? false,
+    grade: gradeArgs(grade),
+    videoOutputPath: options.videoOutputPath ?? '',
+    decodeSize: options.decodeSize ?? 0,
+  });
+}
+
+/** The camera's embedded preview, described. */
+export function previewSummary(path: string, size = 0): DecodeSummary {
+  const reply = ask({ kind: 'previewSummary', path, size });
+  if (reply?.summary == null) throw new Error(`no preview for ${path}`);
+  return reply.summary;
+}
+
+/**
+ * The camera match, fitted and reported.
+ *
+ * Never memoised, unlike the fit the HDR calls share: two of the assertions on it are
+ * that fitting twice agrees and that fitting off either decode agrees, and a cache
+ * would answer both with the same object and prove nothing.
+ */
+export function fitSummary(
+  path: string,
+  options: { viaLinear?: boolean; size?: number } = {},
+): ProfileSummary {
+  const reply = ask({
+    kind: 'fitSummary',
+    path,
+    viaLinear: options.viaLinear ?? false,
+    size: options.size ?? 0,
+  });
+  if (reply?.profile == null) throw new Error(`no fit for ${path}`);
+  return reply.profile;
+}
+
+/**
+ * The fit against the camera's own preview warped by a known amount.
+ *
+ * The warp happens natively because the alternative is shipping a preview out to be
+ * distorted and the distorted copy back in.
+ */
+export function fitInjected(path: string, k1: number): ProfileSummary {
+  const reply = ask({ kind: 'fitInjected', path, k1 });
+  if (reply?.profile == null) throw new Error(`no fit for ${path}`);
+  return reply.profile;
+}
+
+/** A render against the camera's preview, before and after the colour transform. */
+export function matchAgainstPreview(path: string, size: number): AgainstPreview {
+  const reply = ask({ kind: 'matchAgainstPreview', path, size });
+  if (reply?.againstPreview == null) throw new Error(`no comparison for ${path}`);
+  return reply.againstPreview;
+}
+
+export interface RenderSpec {
+  matched?: boolean;
+  /** Longest edge, or 0 for the whole frame. */
+  size?: number;
+  /** Apply the match before the resize rather than after. */
+  beforeResize?: boolean;
+}
+
+/** Two renders of one file, compared. */
+export function compareRenders(path: string, a: RenderSpec, b: RenderSpec): RenderComparison {
+  const reply = ask({ kind: 'compareRenders', path, a, b });
+  if (reply?.renders == null) throw new Error(`no comparison for ${path}`);
+  return reply.renders;
+}
+
+/** Written images against the preview of the RAW they were built from. */
+export function deltaEToPreview(imagePaths: string[], rawPath: string): AgainstPreview {
+  const reply = ask({ kind: 'deltaEToPreview', imagePaths, rawPath });
+  if (reply?.againstPreview == null) throw new Error(`no comparison for ${rawPath}`);
+  return reply.againstPreview;
 }
 
 /**
