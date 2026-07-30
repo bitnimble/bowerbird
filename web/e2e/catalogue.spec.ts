@@ -272,6 +272,12 @@ test('the home page lands in a library, and a narrow screen gets the rail as a d
   const tileBox = (await page.locator('.tile').first().boundingBox())!;
   expect(tileBox.x).toBeLessThan(toggleBox.x + toggleBox.width);
 
+  // And the whole height of it: the page's bottom inset was outside the scroller,
+  // so it was a strip of window no photograph could reach and the last row was cut
+  // off above it.
+  const scroller = (await page.locator('.grid__scroller').boundingBox())!;
+  expect(scroller.y + scroller.height).toBeCloseTo(800, 0);
+
   await toggle.click();
   await expect(rail).toBeVisible();
 

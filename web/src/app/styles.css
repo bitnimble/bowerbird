@@ -689,6 +689,10 @@ p.ui-text--mono {
   min-height: 0;
   display: flex;
   flex-direction: column;
+  /* .pad's is outside the scroller, so it is a strip of window the photographs
+     never reach and the last row is cut off above - worth a fifth of a row on a
+     phone. What scrolls runs to the window's edge. */
+  padding-bottom: 0;
 }
 
 .spacer {
