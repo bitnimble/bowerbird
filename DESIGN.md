@@ -3004,3 +3004,252 @@ cannot know the sizes of stacks in a selection covering rows it has never held.
 Stacking a selection that already contains stacked photos moves those photos into
 the new stack; any stack left with fewer than two members is deleted, because a
 stack of one is a photograph.
+
+## 20. Stack Triage
+
+A stack (§19) is several takes of one scene, and picking the keepers means
+comparing every take against every other: N² judgements, which reads as work
+rather than as photography. **Stack triage** replaces that with a run of binary
+questions. Two photos, one question, until the pool is a set of photographs
+nothing has beaten.
+
+Terms, used exactly and only this way: a **round** is one pair put to the
+photographer; the **pool** is the photos still in contention; **decisive** means
+*A better* or *B better*, where exactly one photo leaves; a **draw** is *Both*.
+**A** and **B** are the two slots on screen, never photo names.
+
+### 20.1 The tournament
+
+`web/src/features/photos/stack_triage.ts`, pure, and where the correctness of the
+feature lives.
+
+```ts
+interface Session { alive: readonly string[]; seen: ReadonlySet<string>; stopped: boolean }
+```
+
+`seen` holds every pair already judged, keyed by the two ids sorted and joined
+with `|`. **Decisive pairs go in as well**, though a decisive pair can never recur
+on its own, because it makes "a pair is never offered twice" a local property of
+`nextRound` rather than a consequence of removed photos never returning, and
+because it makes "this photo has been judged" derivable rather than a second set
+to carry.
+
+`nextRound` is one scan: the first pair in index order over the pool, `(0,1)`,
+`(0,2)`, … then `(1,2)`, whose key is not in `seen`. That is the whole rule.
+
+| verdict | the pool |
+|---|---|
+| A better | B removed, A moved to the **front** |
+| B better | A removed, B moved to the front |
+| Both | A then B moved to the back, in that order |
+| Neither | both removed |
+
+**The winner to the front is what holds it over.** The next round is then `(0,1)`:
+the winner against the first photo it has not met. When it has met everyone left,
+every `(0,k)` is judged and the scan walks on to a pair that cannot contain it, so
+the stand-down needs no branch. An earlier draft carried a `champion` field to
+express this, with a branch, an invariant tying it to the pool, and an argument
+about when a stale one is cleared; the queue order produces the identical schedule
+with none of that.
+
+The drawn pair to the back is what spreads the work: without it the same two
+photos sit at the front and every later round pairs one of them with someone new.
+
+**Neither may empty the pool.** A stack where every frame is soft has no keeper.
+
+**What it guarantees.** Every round either removes a photo or adds a pair, both
+monotone and bounded, so a session terminates and no round repeats. A session that
+ends by *exhaustion* returns a keep set that is a **clique of mutual draws**: every
+pair of survivors was judged, and any decisive judgement would have removed one of
+them. No photo is kept without having been held up against every other kept photo.
+Keep the rest forfeits that knowingly, for the rounds never asked.
+
+N−1 rounds when every verdict is decisive, which is optimal for finding a maximum;
+N(N−1)/2 when every one is a draw, and the bound is tight. The alternative, treat
+draws as transitive, so `p`≈`q` and `q`≈`r` skips `p` against `r`, was rejected
+because it is not true, and because it would spend the guarantee silently on every
+session where Keep the rest spends it only on request.
+
+### 20.2 What is written
+
+Elimination is the only final verdict, so it is the only one written during the
+session.
+
+- A loser is `PATCH`ed to `triage: 'rejected'` as the verdict lands; `Neither`
+  writes both.
+- **A win writes nothing**: the winner can still be eliminated two rounds later.
+- When the session ends, each survivor **that appears in some judged pair** is
+  written `picked`. One in no pair has never been on screen, which Keep the rest
+  can leave, and `Neither` can leave by emptying the pool around it; and is left
+  exactly as it was, rather than claimed as a considered keeper.
+
+Every value a session writes is `rejected`, `picked`, or the photo's triage when
+the session opened. That baseline is captured once, stored, and is what every undo
+restores against, so an entry records only *which* photos it wrote. It is never
+re-read from the member rows, which after a reload carry the session's own
+rejections.
+
+Writes go through `PhotosPresenter.setTriage`, which returns whether the write
+landed and takes `quiet` to suppress its toast for a caller that reports failures
+itself. **A failure is reported, not compensated**: both directions are already
+safe, where rewinding would discard every verdict after the failed round to make
+up for a write that under-applied, along a path that is itself failing.
+
+Two root-cause fixes in `PhotosPresenter` fall out of this and are not triage's
+alone: writes are **serialised** through one promise chain, since `api.updatePhoto`
+is a bare fetch and a verdict followed quickly by an undo could otherwise land the
+restore first; and `refresh()` **coalesces** rather than queueing a full re-read per
+call, which the grid already hit by holding a cull key on the Active filter.
+
+### 20.3 History, undo, and the queue
+
+Every action pushes `{ session (as it was before), showing, choice, changed }`.
+`choice` is stored because Completed has to show it and it is otherwise only
+recoverable by diffing against the following entry, which the newest one lacks.
+
+**Rewinding to entry `i`** restores that session and slot, re-writes every id in
+`changed` from `i` onward; deduplicated, so one write per photo, to a value that
+does not depend on which entry named it, and **truncates the history to `i`**.
+Truncating is not bookkeeping: without it the abandoned branch stays reachable, and
+a later undo restores a pool with photos missing from it that no write ever
+rejected. Undo is a rewind to the last entry; the queue is a rewind to any.
+
+Ending the session belongs to the action that ended it, so the closing `picked`
+writes join that entry and undo from the summary re-opens the round. A separate
+entry would restore a state for which there is still no round, landing back on the
+summary it was pressed from. Ids are appended when a write is **issued**, not when
+it lands, or undo pressed on the summary would miss a write still in flight.
+
+The **queue** lists **Completed** (newest first, each round's thumbnails and its
+verdict; selecting one rewinds to it) and **Upcoming**, read-only. Upcoming assumes
+**every remaining round draws**, which is the run the pure functions produce for
+`Both` repeated, and the only assumption under which the list *only shrinks*.
+Assuming the winner keeps winning would make it grow whenever the winner lost.
+Capped at 20, with the overflow counted from `remainingPairs`.
+
+`status` is computed, never assigned, for the same reason `stopped` lives inside
+the session: undo restores a session and nothing else, so a `status` field would
+strand the photographer on a summary for a tournament that had just resumed.
+
+### 20.4 The two presentations
+
+**Flip** is one `PhotoStage` holding both frames of the round under a single
+`photoKey`, so zoom and pan survive the toggle, both frames at 100% over the same
+detail, alternating, which is the gesture the mode exists for. That needed the
+stage to hold several frames at once (§18.6): a frame per source, each owning its
+own decode. A mounted-but-hidden frame gets its own compositor layer, because an
+`opacity: 0` element is never rasterised and revealing one would otherwise stall
+for the frame or two a raster takes to build.
+
+A peek suppresses the verdict keys while held, and clears on release, on
+`pointercancel` and on the window losing focus: Shift-then-arrow is an easy
+accident that casts the exact inverse of what is on screen, and a modifier held
+across a `Cmd+Tab` never delivers its keyup.
+
+The showing slot is kept when slot A holds the same photo it just held, and reset
+to A when it does not. A held-over winner sits in A, so voting while looking at B
+opens the next round still on B, the challenger, the one photo of the two not yet
+seen.
+
+**Split** draws both at once, each at the **same displayed area**, in whichever of
+row or column makes that area largest. With aspect `a`, area `S`, `s = √S`, and
+`gap` the gutter:
+
+- row: `s = min( max(0, W − gap) / (√aA + √aB),  H · min(√aA, √aB) )`
+- column: `s = min( max(0, H − gap) / (1/√aA + 1/√aB),  W / max(√aA, √aB) )`
+
+Each constraint is a linear upper bound on `s`, so the smaller is the maximum. The
+larger `s` wins; a tie goes to the row. The clamp is *inside* the expression
+because `s²` squares away a negative sign, so a box narrower than the gutter would
+otherwise render two photos in a container of negative width.
+
+Equal area rather than a common extent, which hands the two photos areas in the
+ratio `aA/aB` exactly, 2.25× on a 3:2 beside a 2:3, and size is persuasive in a
+tool whose job is a fair comparison. It is not even reliably the smaller picture:
+where width binds it uses *more* of the screen than a common height. Aspects come
+from `PhotoSummary.width`/`.height`, which are display-upright and on the list row,
+so the arrangement is known before a pixel decodes; `W` and `H` are observables the
+presenter writes from a `ResizeObserver`, which is the one input that cannot come
+from a store already held.
+
+Flip does **not** equalise area, and is priced as a limit: stack members are takes
+of one scene and almost always share an aspect, and forcing it would mean a second
+layout system inside the mode whose appeal is that both frames occupy the same
+pixels.
+
+### 20.5 The screen
+
+Header (back, the stack's size, the queue, the flip/split switch), then the frames,
+then the verdicts, deliberately apart, because a misclick here rejects a
+photograph. The bottom bar carries the four verdicts, Undo, Keep the rest, and
+*n left · up to k rounds*, an upper bound labelled as one.
+
+Keys: `←` A better, `→` B better, `↓`/`Space` Both, hold `Shift` to peek, `⌘Z` or
+`Backspace` undo, `Tab` to switch presentation, `Esc` to leave. `⌘Z` is the only
+modified chord accepted; every other modifier is ignored, because `Cmd+←` is the
+browser's Back and casting a verdict on the way out is not a verdict anybody made.
+`Neither` stays click-only: the one key left is `↑`, directly above a verdict that
+destroys nothing, which is the wrong neighbour for the one that destroys two. It
+reports through the bin's report-with-an-undo pattern rather than confirming.
+
+The verdict bar is disabled until both frames have decoded. **Prefetch** is the
+first ten survivors, and only the four that can open the *next* round are drawn at
+stage size, a decode is for the size an element is drawn at, and ten
+full-resolution rasters is hundreds of megabytes.
+
+The session is judged at **one rendition throughout**, resolved by the triage store
+from a member's own `library_id` against `LibrariesStore` and `AppSettingsStore`.
+Not `PhotosStore`: `showing`, `preferredRendition`, `defaultRendition` and
+`isAlwaysBuilt` are every one of them a function of `openPhoto`, which on this
+route is either the entry photo; pinning one photo's remembered choice onto every
+member, or nothing, where the library lookup misses and every session silently
+becomes the camera's JPEG.
+
+The session ends on a **summary**: Kept, Rejected, and Not saved when a write
+failed, with Undo and the way back. A survivor that was never compared is drawn in
+Kept and marked *not compared*. It is a screen rather than a return to the viewer
+because the rejects have left the gallery's default filter, so the grid would
+otherwise show a stack that silently lost members.
+
+### 20.6 Entering, leaving, surviving a reload
+
+`DetailNav` gains **Triage stack** when the photo has `stack_id != null`, not the
+grid tile's `stack_id != null && stack_size > 1`. `stack_size` is a property of a
+collapsed listing row: `toDetail` and the band-member listing both hardcode it to
+1, so the tile's condition would hide the button on every route that actually
+reaches the viewer from a stack. A stack has two or more members by construction.
+
+Leaving is an explicit route to the entry photo, falling back to its library; not
+`navigate(-1)`, which nothing in the app uses and which strands anyone who
+refreshed.
+
+The session is stored under `bowerbird.triage.<stackId>` in `sessionStorage` with
+its history, baseline and entry photo, and cleared only once the closing writes
+land, replaced by a `done` marker, so a reload on the summary redraws it instead
+of starting a fresh tournament over photographs it just judged. `seen` is stored as
+an **array**: `JSON.stringify` renders a `Set` as `{}`, which would return every
+session to a blank draw history and break §20.1's guarantee where nothing would
+notice. History is capped at 50 entries, since each snapshots a whole session.
+
+On open the stored session is **pruned, never re-derived**: an id that is no longer
+a live member is dropped from the pool, and `seen` is deliberately left alone,
+because a pair naming a departed photo can never be offered again and dropping it
+would demote a considered keeper out of the closing write. Re-deriving the pool
+would return every eliminated photo to contention having already lost.
+
+### 20.7 Tests
+
+`stack_triage.ts` takes the unit tests: the N−1 decisive run, the 6-round all-draw
+over four, a randomised sweep asserting no repeated round and that every keep set
+is a clique of mutual draws, the worked case where two drawn photos still meet the
+winner, `Neither` emptying the pool, the `upcomingRounds` cap and shrinkage, and
+`arrangement` by aspect number rather than by adjective, a 3:1 panorama beside a
+portrait chooses the *row*, and only turns over past about 4.5:1.
+
+`PhotoStage`'s existing behaviour was pinned by e2e before the refactor: zoom
+survives a rendition change and resets on a photo change. The screen takes an e2e
+of its own over a three-frame fixture stack, in its own library because a session
+writes over every member it judges.
+
+No new API: `listStackPhotos` (§19.5.3) supplies the members and
+`PATCH /api/photos/:id` records the verdicts.
