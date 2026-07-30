@@ -572,7 +572,7 @@ const GridScroller = observer(function GridScroller(): JSX.Element {
           store.sections.map((section) =>
             section.kind === 'grid' ? (
               <div
-                key={`grid-${section.from}`}
+                key={section.key}
                 className={`grid grid--${store.mode} grid__window`}
                 role="presentation"
                 style={
@@ -587,7 +587,7 @@ const GridScroller = observer(function GridScroller(): JSX.Element {
               </div>
             ) : (
               <div
-                key={`band-${section.stackId}`}
+                key={section.key}
                 className={`grid grid--${store.mode} grid__window grid__band`}
                 role="group"
                 aria-label={`${section.photos.length} photos in this stack`}

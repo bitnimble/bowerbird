@@ -5,7 +5,7 @@ import type { AppSettingsStore } from '../settings/app_settings_store';
 import { type Span, visibleRows } from '../../ui/virtual_rows';
 import { BLOCK, GRID_GAP, LIST_ROW_H, MAX_SCROLL, blockTops, gridColumns, gridRowHeight, visibleBlocks } from './grid_layout';
 import { SelectionRanges } from './selection';
-import { type Band, displayRowOf, rowAt, totalRows } from './bands';
+import { type Band, displayRowOf, rowAt, runStart, totalRows } from './bands';
 
 /** A stack the reader has opened, and the members it is showing. */
 export interface Expansion {
@@ -15,10 +15,16 @@ export interface Expansion {
   photos: PhotoSummary[];
 }
 
-/** A run of display rows showing one kind of thing. */
+/**
+ * A run of display rows showing one kind of thing.
+ *
+ * `key` names the run rather than the window over it, so scrolling re-positions
+ * the element React already has instead of replacing it: a new key unmounts every
+ * tile in the run, which throws away each one's decoded image and re-requests it.
+ */
 export type GridSection =
-  | { kind: 'grid'; top: number; from: number; to: number }
-  | { kind: 'band'; top: number; stackId: string; position: number; photos: PhotoSummary[] };
+  | { kind: 'grid'; key: string; top: number; from: number; to: number }
+  | { kind: 'band'; key: string; top: number; stackId: string; position: number; photos: PhotoSummary[] };
 
 // Which collection the grid is showing. One store serves the library, shoot,
 // album, bin and missing views because they differ only in the fetch call.
@@ -419,7 +425,14 @@ export class PhotosStore {
         const from = at.row * this.columns;
         const to = Math.min(this.total, from + this.columns);
         if (last?.kind === 'grid' && last.to === from) last.to = to;
-        else sections.push({ kind: 'grid', top: display * this.rowHeight, from, to });
+        else
+          sections.push({
+            kind: 'grid',
+            key: `grid-${runStart(at.row, this.bands, this.columns)}`,
+            top: display * this.rowHeight,
+            from,
+            to,
+          });
         continue;
       }
       const open = this.expansionAt(at.band.position);
@@ -430,7 +443,14 @@ export class PhotosStore {
       // it to the visible row would slide the whole band down by however much of
       // it is above the fold and paint it over the grid below.
       const top = (display - at.offset) * this.rowHeight;
-      sections.push({ kind: 'band', top, stackId: open.stackId, position: open.position, photos: open.photos });
+      sections.push({
+        kind: 'band',
+        key: `band-${open.stackId}`,
+        top,
+        stackId: open.stackId,
+        position: open.position,
+        photos: open.photos,
+      });
     }
     return sections;
   }
@@ -540,11 +560,6 @@ export class PhotosStore {
     const anchor = this.sections[0];
     const position = anchor?.kind === 'band' ? anchor.position : 0;
     return { from: position, to: Math.min(this.total, position + 1) };
-  }
-
-  /** Where the rendered window sits inside the scroller (uniform modes). */
-  @computed get visibleTop(): number {
-    return this.domTop(this.sections[0]?.top ?? 0);
   }
 
   // Where the scroll has to be for the keyboard cursor to be on screen, or null

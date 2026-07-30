@@ -77,6 +77,22 @@ export function rowAt(displayRow: number, bands: readonly Band[], columns: numbe
   return { kind: 'grid', row: displayRow - shift };
 }
 
+/**
+ * First row of the unbroken run of collection rows this row belongs to.
+ *
+ * Bands break the collection into runs, and a run is what the grid renders as one
+ * element - so this is the run's name, and the only part of it that does not move
+ * when the viewport does.
+ */
+export function runStart(gridRow: number, bands: readonly Band[], columns: number): number {
+  let start = 0;
+  for (const band of ordered(bands, columns)) {
+    const anchor = anchorRow(band, columns);
+    if (anchor < gridRow) start = anchor + 1;
+  }
+  return start;
+}
+
 /** Where a row of the collection ends up on screen once the bands are in. */
 export function displayRowOf(gridRow: number, bands: readonly Band[], columns: number): number {
   let shift = 0;

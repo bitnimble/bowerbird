@@ -92,6 +92,37 @@ describe('the keyboard cursor accounts for open bands', () => {
   });
 });
 
+describe('the rendered window keeps its identity while it scrolls', () => {
+  test('a scroll does not change the key the grid window is reconciled by', () => {
+    const store = storeWith(400, { rowHeight: 65, columns: 1 });
+    store.scrollTop = 10 * store.rowHeight;
+    const before = store.sections.filter((section) => section.kind === 'grid');
+
+    store.scrollTop = 11 * store.rowHeight;
+    const after = store.sections.filter((section) => section.kind === 'grid');
+
+    // The window has genuinely moved...
+    expect(after[0]!.from).not.toBe(before[0]!.from);
+    // ...and React is told it is the same element, so the tiles inside it keep
+    // their decoded images instead of being unmounted and re-fetched.
+    expect(after.map((section) => section.key)).toEqual(before.map((section) => section.key));
+  });
+
+  test('a band leaving the top of the window does not re-key the grid below it', () => {
+    const store = storeWith(400, { rowHeight: 65, columns: 1 });
+    const members = Array.from({ length: 4 }, (_, i) => photo(`m${i}`));
+    store.expansions = new Map([['s1', { stackId: 's1', position: 10, photos: members }]]);
+    // The band spans display rows 11-14; start with it in view, then scroll past it.
+    store.scrollTop = 12 * store.rowHeight;
+    const before = store.sections.filter((section) => section.kind === 'grid').at(-1)!.key;
+
+    store.scrollTop = 30 * store.rowHeight;
+    const after = store.sections.filter((section) => section.kind === 'grid').at(-1)!.key;
+
+    expect(after).toBe(before);
+  });
+});
+
 describe('members of an open band are findable by id', () => {
   test('a photo held only in a band can still be located', () => {
     const store = storeWith(4, { rowHeight: 65, columns: 1 });
