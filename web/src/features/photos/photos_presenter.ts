@@ -20,8 +20,8 @@ import type { AppSettingsPresenter } from '../settings/app_settings_presenter';
 import type { AppSettingsStore } from '../settings/app_settings_store';
 import type { ShootsPresenter } from '../shoots/shoots_presenter';
 import type { ToastsPresenter } from '../toasts/toasts_presenter';
-import { bandRows, displayRowOf } from './bands';
-import { BLOCK } from './grid_layout';
+import { bandRows, displayRowOf, rowAt } from './bands';
+import { BLOCK, atRailWall, recentred } from './grid_layout';
 import {
   activeFilters,
   type Expansion,
@@ -145,8 +145,8 @@ export class PhotosPresenter {
   }
 
   // --- the scroller ---
-  // The three facts every layout question is answered from. Written here so no
-  // view has to measure the DOM to ask one (§18.3.2).
+  // Every layout question is answered from these, so no view has to measure the
+  // DOM to ask one (§18.3.2).
 
   @action.bound
   setViewport(width: number, height: number): void {
@@ -157,16 +157,105 @@ export class PhotosPresenter {
     this.store.viewportHeight = height;
   }
 
+  /** Where the scroller has got to. */
   @action.bound
-  setScrollTop(top: number): void {
-    this.store.scrollTop = top;
+  setRailTop(top: number): void {
+    this.store.railTop = top;
+    // The one place the rail is moved rather than followed. Writing `scrollTop`
+    // mid-fling cancels the fling, so it waits until the reader is near an end.
+    if (!atRailWall(top, this.store.contentHeight, this.store.viewportHeight)) return;
+    const put = recentred(this.store.anchorTop, top, this.store.contentHeight, this.store.viewportHeight);
+    this.store.railAnchor = put.anchorTop;
+    this.store.railTop = put.railTop;
   }
 
-  // A masonry block reporting the height it actually laid out to, replacing the
-  // estimate the scroll was built from.
+  // Moves the view `dy` content pixels from where it was anchored. Whatever the
+  // anchor cannot absorb goes to `railTop`, which the view follows (§18.3.2);
+  // that only happens once the anchor is out of travel, which for a collection
+  // shorter than the rail is always.
+  //
+  // `wasAnchoredAt` has to be read *before* whatever displaced the reader, because
+  // every caller shrinks the collection as it displaces them. Read after,
+  // `anchorTop` has already been clamped down by a smaller `anchorLimit` and `dy`
+  // counts that clamp a second time: closing a band with the anchor at its limit
+  // threw the reader a band-height past the band, and a masonry block measuring
+  // shorter than its estimate threw them from 80% of the collection to near the
+  // top.
+  @action.bound
+  private shiftView(dy: number, wasAnchoredAt: number): void {
+    if (dy === 0) return;
+    const target = wasAnchoredAt + dy;
+    const anchor = Math.min(this.store.anchorLimit, Math.max(0, target));
+    this.store.railAnchor = anchor;
+    // Clamped to the rail rather than left for the browser to clamp on the write:
+    // a collection that lost most of its height under the reader - every masonry
+    // block measuring far short of its estimate - has no such position any more,
+    // and the store must not claim one it would only be corrected out of a frame
+    // later by a scroll event.
+    const reach = Math.max(0, this.store.railHeight - this.store.viewportHeight);
+    this.store.railTop = Math.min(reach, Math.max(0, this.store.railTop + (target - anchor)));
+  }
+
+  /**
+   * Put a content position at the top of the viewport, for a jump the reader asked
+   * for - the keyboard cursor leaving the window, Home, End, the thumb, the wheel
+   * over the bar.
+   */
+  @action.bound
+  scrollTo(contentTop: number): void {
+    // Clamped, because masonry answers `focusContentTop` with a block top, and the
+    // last block is often shorter than the viewport - so the target can sit past
+    // where the collection can actually be scrolled to.
+    const travel = Math.max(0, this.store.contentHeight - this.store.viewportHeight);
+    const target = Math.min(travel, Math.max(0, contentTop));
+    // Leaving the rail where it is whenever the target is inside it keeps arrowing
+    // through a collection an ordinary scroll rather than a re-anchor per keystroke.
+    const within = target - this.store.anchorTop;
+    const reachable = within >= 0 && within <= this.store.railHeight - this.store.viewportHeight;
+    const put = reachable
+      ? { anchorTop: this.store.anchorTop, railTop: within }
+      : recentred(target, 0, this.store.contentHeight, this.store.viewportHeight);
+    this.store.railAnchor = put.anchorTop;
+    this.store.railTop = put.railTop;
+  }
+
+  /** Jump to a fraction of the collection: the thumb, and Home and End. */
+  @action.bound
+  scrollToProgress(progress: number): void {
+    const travel = Math.max(0, this.store.contentHeight - this.store.viewportHeight);
+    this.scrollTo(Math.min(1, Math.max(0, progress)) * travel);
+  }
+
+  // How long the collection is, as the server just reported it.
+  //
+  // The last masonry block holds whatever is left over, so its measured height
+  // describes a part-block. That is only true while it *is* last: an import moves
+  // the end past it, and the height then reads as a full block - a tenth of one, in
+  // a library that grew from 930 photos to 2,430 - and drags every estimate below it
+  // with it. `estimatedBlockHeight` cannot tell, because by then it has no idea what
+  // the count used to be, so the height is dropped here instead.
+  @action.bound
+  private setTotal(total: number): void {
+    const wasLast = Math.ceil(this.store.total / BLOCK) - 1;
+    if (Math.ceil(total / BLOCK) - 1 !== wasLast) this.store.blockHeights.delete(wasLast);
+    this.store.total = total;
+  }
+
+  /**
+   * A masonry block reporting the height it actually laid out to, replacing the
+   * estimate the scroll was built from.
+   */
   @action.bound
   measuredBlock(block: number, height: number): void {
+    const anchoredAt = this.store.anchorTop;
+    // The first block on screen, not the one that measured. One measurement moves
+    // the average, and the average is what every *unmeasured* block's height is, so
+    // a block reporting 600 where 200 was assumed lifts every unmeasured block above
+    // the reader too - a far larger push than its own difference.
+    const first = this.store.visibleBlocks.from;
+    const before = this.store.blockTops[first] ?? 0;
     this.store.blockHeights.set(block, height);
+    this.shiftView((this.store.blockTops[first] ?? 0) - before, anchoredAt);
   }
 
   // Sorting a gallery edits the collection, because the sort *is* the
@@ -692,63 +781,92 @@ export class PhotosPresenter {
   /**
    * Opens or closes a stack's band of member rows.
    *
-   * Opening one above the viewport displaces everything below it, so the scroll
-   * is corrected by exactly the height the band inserted and the view does not
-   * move. Every input is a number the store already holds, which is what lets
-   * this be arithmetic rather than a measurement.
+   * Opening one above the viewport displaces everything below it, so the view is
+   * moved by exactly the height the band inserted and nothing appears to move.
+   * Every input is a number the store already holds, which is what lets this be
+   * arithmetic rather than a measurement.
    */
   @action.bound
-  async toggleBand(stackId: string, position: number): Promise<number> {
+  async toggleBand(stackId: string, position: number): Promise<void> {
     const open = this.store.expansions.get(stackId);
     if (open != null) {
       const rows = bandRows(open.photos.length, this.store.columns);
+      const was = this.anchoredPosition();
       const next = new Map(this.store.expansions);
       next.delete(stackId);
       this.store.expansions = next;
-      return this.scrollShift(position, -rows);
+      this.bandShift(position, -rows, was);
+      return;
     }
     // A second click while the members are still in flight would otherwise open
     // the band once and correct the scroll twice, because both calls see it
     // closed. The reader asked for open-then-closed, so the second click is
     // dropped rather than queued: the band is about to be open either way.
-    if (this.opening.has(stackId)) return 0;
+    if (this.opening.has(stackId)) return;
     this.opening.add(stackId);
     const source = this.store.source;
     const generation = this.generation;
     try {
       const photos = await api.listStackPhotos(stackId, this.bandScope());
-      return runInAction(() => {
+      runInAction(() => {
         // The collection this was opened against may have been replaced while
         // the members were on the wire, and those positions describe a listing
         // that no longer exists.
-        if (this.generation !== generation || this.store.source !== source) return 0;
+        if (this.generation !== generation || this.store.source !== source) return;
+        const rows = bandRows(photos.length, this.store.columns);
+        const was = this.anchoredPosition();
         const next = new Map(this.store.expansions);
         next.set(stackId, { stackId, position, photos });
         this.store.expansions = next;
-        return this.scrollShift(position, bandRows(photos.length, this.store.columns));
+        this.bandShift(position, rows, was);
       });
     } catch (err) {
       this.fail(err);
-      return 0;
     } finally {
       this.opening.delete(stackId);
     }
   }
 
-  // How far the scroller has to move for the view to stay still, in scroll
-  // pixels. A band opening at or below the first visible row displaces nothing
+  // Where the reader is, for handing to `shiftView` after the collection's height
+  // has changed under them. The row at the top of the viewport and where it was
+  // drawn are what let a change to *several* bands at once be undone
+  // (`replaceBands`), not just a change to one.
+  private anchoredPosition(): { anchorTop: number; virtualTop: number; gridRow: number; displayRow: number } {
+    const columns = this.store.columns;
+    const at = rowAt(Math.floor(this.store.virtualTop / this.store.rowHeight), this.store.bands, columns);
+    const gridRow = at.kind === 'grid' ? at.row : Math.floor(at.band.position / columns);
+    return {
+      anchorTop: this.store.anchorTop,
+      virtualTop: this.store.virtualTop,
+      gridRow,
+      displayRow: displayRowOf(gridRow, this.store.bands, columns),
+    };
+  }
+
+  // Moves the view by what a band opening or closing above the reader displaced,
+  // so it stays still. A band at or below the first visible row displaces nothing
   // the reader can see, so it is left alone.
   //
-  // Both sides of that comparison have to be *display* rows. The stack's row in
-  // the collection is not where it is drawn once anything above it is expanded,
-  // so comparing one against the other jerks the view by the height of every
-  // band above whenever a stack on screen is opened.
-  private scrollShift(position: number, rows: number): number {
-    if (rows === 0 || this.store.mode === 'masonry') return 0;
+  // Both sides of that comparison have to be *display* rows, and both have to be
+  // read from before the band changed: the stack's row in the collection is not
+  // where it is drawn once anything above it is expanded, so comparing one against
+  // the other jerks the view by the height of every band above whenever a stack on
+  // screen is opened.
+  private bandShift(position: number, rows: number, was: ReturnType<PhotosPresenter['anchoredPosition']>): void {
+    if (rows === 0 || this.store.mode === 'masonry') return;
     const bandRow = displayRowOf(Math.floor(position / this.store.columns), this.store.bands, this.store.columns);
-    const firstVisible = Math.floor(this.store.virtualTop / this.store.rowHeight);
-    if (bandRow >= firstVisible) return 0;
-    return rows * this.store.rowHeight * this.store.scrollScale;
+    const firstVisible = Math.floor(was.virtualTop / this.store.rowHeight);
+    if (bandRow >= firstVisible) return;
+    this.shiftView(rows * this.store.rowHeight, was.anchorTop);
+  }
+
+  // Keeps the reader on the same row of the collection after an arbitrary set of
+  // bands has been re-placed, opened or closed at once - which one band's own row
+  // count cannot describe. Off how far the reader's row itself moved.
+  private holdRowThroughBands(was: ReturnType<PhotosPresenter['anchoredPosition']>): void {
+    if (this.store.mode === 'masonry') return;
+    const moved = displayRowOf(was.gridRow, this.store.bands, this.store.columns) - was.displayRow;
+    this.shiftView(moved * this.store.rowHeight, was.anchorTop);
   }
 
   /**
@@ -781,6 +899,7 @@ export class PhotosPresenter {
       ]);
       runInAction(() => {
         if (this.generation !== generation || this.store.source !== source) return;
+        const was = this.anchoredPosition();
         const fresh = new Map(members);
         const kept = new Map<string, Expansion>();
         for (const [stackId, open] of this.store.expansions) {
@@ -801,6 +920,10 @@ export class PhotosPresenter {
           kept.set(stackId, { ...open, position, photos });
         }
         this.store.expansions = kept;
+        // A re-read closes bands whose stack has left and re-places the rest, all
+        // of it above the reader as often as not, so the view has to be put back on
+        // the row it was on - the same correction one band's own toggle makes.
+        this.holdRowThroughBands(was);
         // Members that have left every open band cannot be acted on any more.
         const live = new Set([...kept.values()].flatMap((band) => band.photos.map((photo) => photo.id)));
         this.store.selectedMembers = new Set([...this.store.selectedMembers].filter((id) => live.has(id)));
@@ -1084,7 +1207,7 @@ export class PhotosPresenter {
       if (controller.signal.aborted || generation !== this.generation) return;
       runInAction(() => {
         this.merge(block, page.photos);
-        if (page.total != null) this.store.total = page.total;
+        if (page.total != null) this.setTotal(page.total);
         this.store.ordering = page.ordering; // what it was actually sorted by, not what we hoped
         this.pruneBeyondTotal();
       });
@@ -1192,7 +1315,8 @@ export class PhotosPresenter {
     this.store.rows.clear();
     this.store.blockHeights.clear();
     this.store.total = 0;
-    this.store.scrollTop = 0;
+    this.store.railTop = 0;
+    this.store.railAnchor = 0;
   }
 
   private fetchFor(source: PhotoSource, params: PhotoListParams, signal?: AbortSignal): Promise<PhotoListResponse> {

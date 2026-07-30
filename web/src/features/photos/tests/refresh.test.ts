@@ -71,7 +71,7 @@ async function openAt(count: number): Promise<{ store: PhotosStore; presenter: P
   const built = build();
   built.presenter.setViewport(1000, 400);
   await built.presenter.open({ kind: 'library', libraryId: LIB });
-  built.presenter.setScrollTop(0);
+  built.presenter.setRailTop(0);
   await tick();
   return built;
 }
@@ -118,7 +118,7 @@ test('two overlapping re-reads move the selection once, not twice', async () => 
 test('a block whose re-read failed is not treated as confirmation', async () => {
   const { store, presenter } = await openAt(300);
   // Reach far enough down that blocks 0 and 1 are both held.
-  presenter.setScrollTop(0);
+  presenter.setRailTop(0);
   store.selection = SelectionRanges.of(20, 150);
   await tick();
 

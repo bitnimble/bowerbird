@@ -105,9 +105,9 @@ export function displayRowOf(gridRow: number, bands: readonly Band[], columns: n
 /**
  * How far the content below a band moves when it opens, in rows.
  *
- * What the scroll correction is computed from: opening a stack above the
- * viewport displaces everything below it, so the action adds this many rows'
- * worth of pixels to `scrollTop` and the view does not move (§19.6.1).
+ * What the correction that holds the reader's place is computed from: opening a
+ * stack above the viewport displaces everything below it, so the view moves this
+ * many rows' worth of pixels down the collection (§19.6.1).
  */
 export function rowsInsertedAbove(position: number, bands: readonly Band[], columns: number): number {
   let rows = 0;

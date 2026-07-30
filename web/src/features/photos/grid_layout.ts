@@ -21,15 +21,63 @@ export const BAND_PAD = 6;
 // more than one request, and it is small enough that dropping one costs little.
 export const BLOCK = 100;
 
-// The tallest scroll a browser will honour, less a wide margin. Chromium clamps
-// at 33,554,428px and Firefox at roughly half that, silently: past the clamp the
-// rest of the collection is simply unreachable, and the grid at its highest zoom
-// hits it at thirty thousand photos - one column of thousand-pixel rows. Beyond
-// this the scroll is compressed and positions are scaled into it (`scrollScale`)
-// rather than the collection being quietly truncated.
-export const MAX_SCROLL = 15_000_000;
+// How tall the scroller itself is, whatever the collection behind it (§18.3.2).
+//
+// Large enough that recentring is rare: the rail is only put back to its middle
+// once the reader is near an end of it (`atRailWall`), and that write cancels an
+// in-flight fling on macOS - so the distance between the walls is what buys the
+// smooth scroll. A hundred-odd viewports at a typical window height, sixty at a
+// very tall one.
+export const RAIL_HEIGHT = 100_000;
+
+// How close to an end of the rail the reader gets before it is recentred under
+// them, as a multiple of the viewport. Wide enough that the overscan is never
+// asked for rows outside the rail.
+const RAIL_MARGIN_VIEWPORTS = 2;
 
 import type { Span } from '../../ui/virtual_rows';
+
+function clamp(value: number, max: number): number {
+  return Math.min(max, Math.max(0, value));
+}
+
+/** How tall the scroller is: the whole collection, until that exceeds the rail. */
+export function railHeight(contentHeight: number): number {
+  return clamp(contentHeight, RAIL_HEIGHT);
+}
+
+// How far the rail's origin can travel down the collection. Zero for a
+// collection shorter than the rail, which is what makes those a plain native
+// scroll with none of this machinery engaged.
+export function anchorLimit(contentHeight: number): number {
+  return Math.max(0, contentHeight - railHeight(contentHeight));
+}
+
+// Whether the reader has come close enough to an end of the rail that it has to
+// be moved under them. A rail that *is* the collection has no walls: its ends
+// are the collection's ends, and the reader is meant to reach them.
+export function atRailWall(railTop: number, contentHeight: number, viewportHeight: number): boolean {
+  if (anchorLimit(contentHeight) === 0) return false;
+  const margin = viewportHeight * RAIL_MARGIN_VIEWPORTS;
+  return railTop < margin || railTop > railHeight(contentHeight) - viewportHeight - margin;
+}
+
+/**
+ * The rail put back to its middle, with the anchor moved by exactly as much.
+ *
+ * `anchorTop + railTop` is where the reader is in the collection, and it is the
+ * same before and after: the rail moves and nothing on screen does.
+ */
+export function recentred(
+  anchorTop: number,
+  railTop: number,
+  contentHeight: number,
+  viewportHeight: number,
+): { anchorTop: number; railTop: number } {
+  const middle = Math.max(0, (railHeight(contentHeight) - viewportHeight) / 2);
+  const moved = clamp(anchorTop + railTop - middle, anchorLimit(contentHeight)) - anchorTop;
+  return { anchorTop: anchorTop + moved, railTop: railTop - moved };
+}
 
 // Mirrors `repeat(auto-fill, minmax(tile, 1fr))`. The grid is told the count
 // through `--cols` rather than working it out itself: a number the two could

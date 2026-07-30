@@ -1,5 +1,6 @@
+import { reaction } from 'mobx';
 import { observer } from 'mobx-react-lite';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Check, ChevronUp, EyeOff, Layers, ThumbsDown, ThumbsUp } from 'lucide-react';
 import { captureDateTime, localDateTime } from '../../api/dates';
@@ -13,6 +14,16 @@ import { renditionVersion, type Expansion, type PhotosStore } from './photos_sto
 function filename(filePath: string, id: string): string {
   return filePath.split('/').pop() ?? id.slice(0, 8);
 }
+
+// The scroller's id, so the grid's own scrollbar can name what it controls.
+const SCROLLER_ID = 'grid-scroller';
+
+// Shortest the thumb is drawn: a screenful of a hundred thousand photos is a
+// thumb a fraction of a pixel tall. In pixels rather than a fraction of the
+// track, because it is also the pointer target (WCAG 2.5.8) and a fraction that
+// clears 24px on a tall window does not on a short one.
+const THUMB_MIN_PX = 24;
+
 
 // Rating and verdict are set straight from the tile: a cull is mostly these two
 // decisions, and making them cost a round trip through the detail view is what
@@ -80,13 +91,10 @@ const Tile = observer(function Tile({
   photo,
   index,
   isFocused,
-  onBandToggled,
 }: {
   photo: PhotoSummary;
   index: number;
   isFocused: boolean;
-  /** How far to move the scroller so opening a band above does not shift the view. */
-  onBandToggled?: (shift: number) => void;
 }): JSX.Element {
   const store = usePhotosStore();
   const { photos } = usePresenters();
@@ -139,7 +147,7 @@ const Tile = observer(function Tile({
           // A stack's tile stands for the whole stack, so it opens the band of
           // members below this row rather than the one photo it happens to show;
           // a member is reached from the band.
-          else if (stacked) void photos.toggleBand(photo.stack_id!, index).then((shift) => onBandToggled?.(shift));
+          else if (stacked) void photos.toggleBand(photo.stack_id!, index);
           else navigate(`/photos/${photo.id}`);
         }}
         aria-expanded={stacked ? expanded : undefined}
@@ -298,7 +306,7 @@ const BandMember = observer(function BandMember({ photo }: { photo: PhotoSummary
 // evicted behind the scroll, or still in flight - keeps its place as an empty
 // cell rather than closing the gap, so nothing shifts under the reader when it
 // lands.
-function tilesFor(store: PhotosStore, from: number, to: number, onBandToggled?: (shift: number) => void): JSX.Element[] {
+function tilesFor(store: PhotosStore, from: number, to: number): JSX.Element[] {
   const tiles: JSX.Element[] = [];
   for (let index = from; index < to; index++) {
     const photo = store.rows.get(index);
@@ -329,7 +337,6 @@ function tilesFor(store: PhotosStore, from: number, to: number, onBandToggled?: 
         photo={photo}
         index={index}
         isFocused={store.focusIndex === index && !store.hasSelection}
-        onBandToggled={onBandToggled}
       />,
     );
     // Masonry has no row model to hang a band off, so an open stack's members
@@ -364,7 +371,7 @@ const BandTiles = observer(function BandTiles({
       aria-label={`${expansion.photos.length} photos in this stack`}
       style={
         {
-          ...(placed ? { transform: `translateY(${store.domTop(top)}px)` } : {}),
+          ...(placed ? { transform: `translateY(${store.railPositionOf(top)}px)` } : {}),
           '--cols': store.columns,
           // A band gets exactly the display rows the row arithmetic gave it, so
           // the padding inside its outline comes out of its own cells rather than
@@ -516,15 +523,104 @@ export const PhotoGrid = observer(function PhotoGrid({ emptyHint }: { emptyHint:
   );
 });
 
+// The scroll position, drawn, because the native scrollbar now describes the rail
+// rather than the collection and is hidden (§18.3.2).
+//
+// Its own component because it is the one thing that does read the scroll position
+// every sampled frame: kept inside GridScroller, the thumb moving would re-render
+// every mounted tile with it.
+const GridScrollbar = observer(function GridScrollbar({
+  onDragged,
+  onWheeled,
+}: {
+  /** Where in the collection the reader dragged to, as a fraction. */
+  onDragged: (progress: number) => void;
+  /** A wheel notch over the bar, in pixels. */
+  onWheeled: (deltaY: number) => void;
+}): JSX.Element | null {
+  const store = usePhotosStore();
+  // The grabbed point, as the progress the drag started from plus where in the
+  // track the pointer was, so the thumb keeps hold of the point it was taken by
+  // rather than snapping its middle to the pointer. A progress rather than an
+  // offset within the thumb, because the thumb's own length changes mid-drag
+  // whenever a masonry block measures.
+  const grab = useRef({ at: 0, progress: 0, top: 0, height: 1 });
+
+  // Nothing to scroll, so nothing to draw. Safe to unmount because the gutter it
+  // floats in belongs to the scroller and stays there either way.
+  if (store.viewportFraction >= 1) return null;
+
+  // Never exactly 1: it is the divisor in `progressAt`, and a viewport shorter than
+  // the thumb's own floor would otherwise put NaN into the scroll position.
+  const length = Math.min(0.999, Math.max(THUMB_MIN_PX / Math.max(1, store.viewportHeight), store.viewportFraction));
+  const offset = store.scrollProgress * (1 - length);
+
+  // Off the track measured once at the press, not per move: a drag writes
+  // `scrollTop` on every move, so reading the rect again each time would force a
+  // layout per frame for the length of the drag (§18.2).
+  const progressAt = (clientY: number): number => {
+    const held = grab.current;
+    return held.progress + ((clientY - held.top) / held.height - held.at) / (1 - length);
+  };
+
+  return (
+    <div
+      className="grid__bar"
+      role="scrollbar"
+      aria-orientation="vertical"
+      aria-controls={SCROLLER_ID}
+      aria-label="Scroll through the collection"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={Math.round(store.scrollProgress * 100)}
+      // Off the progress rather than off `visible.from`, which is the first
+      // *mounted* index: that is two overscan rows early in the grid and up to a
+      // whole block early in masonry, so it named a photo the reader is not at.
+      aria-valuetext={`photo ${Math.round(store.scrollProgress * Math.max(0, store.total - 1)) + 1} of ${store.total}`}
+    >
+      <div
+        className="grid__bar-thumb"
+        style={{ top: `${offset * 100}%`, height: `${length * 100}%` }}
+        onPointerDown={(e) => {
+          if (!e.isPrimary || e.button !== 0) return;
+          const box = e.currentTarget.parentElement?.getBoundingClientRect();
+          const height = box != null && box.height > 0 ? box.height : 1;
+          const top = box?.top ?? 0;
+          grab.current = { at: (e.clientY - top) / height, progress: store.scrollProgress, top, height };
+          // Keeps the focus on the scroller: without it the press moves focus to
+          // the body, and Page Up/Down and Home/End have nothing to act on after.
+          e.preventDefault();
+          e.currentTarget.setPointerCapture(e.pointerId);
+        }}
+        onPointerMove={(e) => {
+          if (e.currentTarget.hasPointerCapture(e.pointerId)) onDragged(progressAt(e.clientY));
+        }}
+        // The bar is a sibling of the scroller, so a wheel notch over it has
+        // nothing scrollable to bubble to and the grid would simply not move.
+        // `deltaMode` because Firefox reports a wheel mouse in lines, not pixels.
+        onWheel={(e) => onWheeled(e.deltaY * (e.deltaMode === 1 ? store.rowHeight : e.deltaMode === 2 ? store.viewportHeight : 1))}
+      />
+    </div>
+  );
+});
+
 // One scroll over the whole collection, holding only the tiles near the viewport
 // (§18.3.2). Everything it renders from - the column count, the row height, the
-// span of indices on screen - is read off the store, which the two handlers here
-// are the only writers of.
+// span of indices on screen - is read off the store, which the handlers here are
+// the only writers of.
+//
+// It deliberately does not read `store.railTop`. That is written on every sampled
+// frame, and the sections are placed in *content* pixels offset by the anchor,
+// which moves only when the rail is recentred - so a scroll that stays within one
+// row re-renders nothing at all, and the native scroll does the moving.
 const GridScroller = observer(function GridScroller(): JSX.Element {
   const store = usePhotosStore();
   const { photos } = usePresenters();
   const scroller = useRef<HTMLDivElement>(null);
-  const sampling = useRef(false);
+  // What the scroller last told us it was at, so the writers below can tell a
+  // position the store *learnt* from the element from one it wants the element to
+  // move to.
+  const sampled = useRef(0);
 
   useEffect(() => {
     const element = scroller.current;
@@ -537,109 +633,173 @@ const GridScroller = observer(function GridScroller(): JSX.Element {
     return () => observer.disconnect();
   }, [photos]);
 
-  // Back to the top when the collection changes under the scroll: position four
-  // thousand of a library says nothing about position four thousand of a filter.
-  useEffect(() => {
-    if (scroller.current != null) scroller.current.scrollTop = 0;
-  }, [store.source, store.filters]);
+  // The scroller follows `store.railTop`. A reaction rather than an effect, so that
+  // observing a value written on every sampled frame does not re-render the grid on
+  // every sampled frame.
+  //
+  // Here as well as in the layout effect below because it lands in the same frame as
+  // the anchor change it belongs with, which is what keeps a correction from being
+  // visible as a jump. It cannot be the only one: it runs before React has committed
+  // the rail's new height, so a position legal against the collection as it now is
+  // can still be clamped by the element as it still is.
+  useEffect(
+    () =>
+      reaction(
+        () => store.railTop,
+        (railTop) => {
+          const element = scroller.current;
+          if (element == null || railTop === sampled.current) return;
+          element.scrollTop = railTop;
+          // What the element took, so the layout effect can tell a write that was
+          // clamped - the case it exists for - from one that landed and has since
+          // been scrolled past. Left stale, it wrote this position again on the
+          // next commit and undid whatever movement had arrived in between.
+          sampled.current = element.scrollTop;
+        },
+      ),
+    [store],
+  );
+
+  // After every commit the element is as tall as the store says, so a position the
+  // reaction could not reach is reachable now.
+  //
+  // Load-bearing twice over. A `scrollTop` write the browser clamps to where the
+  // element already sits fires no scroll event, so without this nothing corrects the
+  // store and the grid draws a screenful the scroller is not looking at until the
+  // reader scrolls by hand. And it is the only thing that puts a freshly mounted
+  // element where the store already is: a collection that empties and refills
+  // without going through `resetRows` - an undone bin - mounts a scroller at zero
+  // under a store forty thousand pixels down.
+  useLayoutEffect(() => {
+    const element = scroller.current;
+    if (element == null) return;
+    // Past the rail's own reach as well as out of step with the element: a
+    // collection that shrank under the reader leaves `railTop` describing a
+    // position the rail no longer has, and nothing else clamps it the way
+    // `anchorTop` clamps the anchor.
+    const reach = Math.max(0, store.railHeight - store.viewportHeight);
+    if (store.railTop === sampled.current && store.railTop <= reach) return;
+    element.scrollTop = store.railTop;
+    sampled.current = element.scrollTop;
+    // What the scroller would not take is not a position this collection has.
+    if (element.scrollTop !== store.railTop) photos.setRailTop(element.scrollTop);
+  });
 
   // Follow the keyboard cursor. Off the store's own geometry rather than the
-  // focused tile, which may never have been mounted (`focusScrollTop`).
+  // focused tile, which may never have been mounted (`focusContentTop`).
   useEffect(() => {
-    const target = store.focusScrollTop;
-    if (scroller.current != null && target != null) scroller.current.scrollTop = target;
-  }, [store.focusIndex, store]);
+    const target = store.focusContentTop;
+    if (target != null) photos.scrollTo(target);
+  }, [store.focusIndex, store, photos]);
 
-  const onScroll = (): void => {
-    if (sampling.current) return;
-    sampling.current = true;
-    // The one layout read left in the app, and nothing else can answer it: no
-    // event carries the scroll position. Sampled once per frame, from inside the
-    // frame, where the layout has already settled - and written straight into
-    // the store, which is where every consumer reads it from.
-    requestAnimationFrame(() => {
-      sampling.current = false;
-      if (scroller.current != null) photos.setScrollTop(scroller.current.scrollTop);
-    });
+  // The one layout read left in the grid's hot path, and nothing else can answer
+  // it: no event carries the scroll position.
+  //
+  // Read in the handler rather than deferred to the next frame, and it is cheap
+  // there because a scroll event is dispatched after the scroll has been committed
+  // - nothing is invalidated, so this forces no layout. Deferring it left the store
+  // up to a frame behind the element, and a correction landing in that window -
+  // a band whose members arrive mid-fling - was measured from where the reader had
+  // been rather than where they are, and threw them back by the difference.
+  const onScroll = (e: React.UIEvent<HTMLDivElement>): void => {
+    const top = e.currentTarget.scrollTop;
+    sampled.current = top;
+    photos.setRailTop(top);
   };
 
   const onMeasured = useCallback(
     (block: number, height: number): void => {
-      if (Math.abs((store.blockHeights.get(block) ?? store.estimatedBlockHeight) - height) < 0.5) return;
-      // Anchored on the first block on screen rather than on the block that
-      // measured. One measurement moves the average, and the average is what
-      // every *unmeasured* block's height is - so a block reporting 600 where
-      // 200 was assumed lifts every unmeasured block above the reader too, which
-      // is a far larger push than its own difference. The anchor's top before
-      // and after already accounts for all of it.
-      const anchor = store.visibleBlocks.from;
-      const before = store.blockTops[anchor] ?? 0;
+      // Against the height already recorded for this block, never against the
+      // estimate: a block that lays out at exactly what was guessed for it is a
+      // real measurement, and skipping it left the guess in place to be replaced
+      // by the next one.
+      const known = store.blockHeights.get(block);
+      if (known != null && Math.abs(known - height) < 0.5) return;
       photos.measuredBlock(block, height);
-      const shifted = ((store.blockTops[anchor] ?? 0) - before) * store.scrollScale;
-      const element = scroller.current;
-      if (element != null && shifted !== 0) element.scrollTop = Math.max(0, store.scrollTop + shifted);
     },
     [store, photos],
   );
 
-  // Opening a stack above the viewport displaces everything below it, so the
-  // scroller moves by exactly what the band inserted and the view stays put. The
-  // presenter works the distance out from numbers the store holds; writing it is
-  // the view's job, as it is for a measured masonry block (§19.6.1).
-  const onBandToggled = useCallback((shift: number) => {
-    const element = scroller.current;
-    if (element != null && shift !== 0) element.scrollTop = Math.max(0, element.scrollTop + shift);
-  }, []);
+  // Home and End have to be handled rather than left to the scroller: natively
+  // they go to the ends of the *rail*, which is a hundred thousand pixels
+  // somewhere in the middle of the collection, so End advanced the reader by a
+  // rail's worth and stopped. Page Up/Down are relative and need nothing.
+  const onKeyDown = (e: React.KeyboardEvent): void => {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.key !== 'Home' && e.key !== 'End') return;
+    photos.scrollToProgress(e.key === 'Home' ? 0 : 1);
+    e.preventDefault();
+  };
 
   const blocks: number[] = [];
   if (store.mode === 'masonry') for (let b = store.visibleBlocks.from; b < store.visibleBlocks.to; b++) blocks.push(b);
 
   return (
-    // Focusable and labelled because it is a scrollable region holding content
-    // no tab stop of its own would reach: without it Page Up/Down, Home and End
-    // have nothing to act on until a tile happens to be focused.
-    <div
-      className="grid__scroller"
-      ref={scroller}
-      onScroll={onScroll}
-      tabIndex={0}
-      role="list"
-      aria-label={`${store.total} photos`}
-      style={{ '--tile': `${store.tileSize}px` } as React.CSSProperties}
-    >
-      {/* The spacer and the window are scaffolding for the scroll, not structure:
-          announced, they would sit between the list and its items. */}
-      <div className="grid__content" role="presentation" style={{ height: store.scrollHeight }}>
-        {store.mode === 'masonry' ? (
-          blocks.map((block) => (
-            <MasonryBlock key={block} block={block} top={store.domTop(store.blockTops[block] ?? 0)} onMeasured={onMeasured} />
-          ))
-        ) : (
-          // One element per section rather than one window over a contiguous
-          // run: an open stack's band sits between rows of the collection, and a
-          // band several rows tall has to be one bordered box rather than one
-          // per row (§19.6).
-          store.sections.map((section) =>
-            section.kind === 'grid' ? (
-              <div
-                key={section.key}
-                className={`grid grid--${store.mode} grid__window`}
-                role="presentation"
-                style={
-                  {
-                    transform: `translateY(${store.domTop(section.top)}px)`,
-                    '--cols': store.columns,
-                    '--row-h': `${store.rowHeight - GRID_GAP}px`,
-                  } as React.CSSProperties
-                }
-              >
-                {tilesFor(store, section.from, section.to, onBandToggled)}
-              </div>
-            ) : (
-              <BandTiles key={section.key} expansion={section} top={section.top} />
-            ),
-          )
-        )}
+    // The scrollbar comes first in the DOM and is floated to the right edge from
+    // there: after the scroller, a screen reader in browse mode would have to cross
+    // every mounted tile to reach it, and `scrollbar` is in no quick-nav list.
+    <div className="grid__viewport">
+      <GridScrollbar
+        onDragged={photos.scrollToProgress}
+        // Straight at the element, not through the store: the store is only as
+        // fresh as the last scroll event, and a notch computed from behind rewinds
+        // the reader by whatever the compositor has already moved. The scroll event
+        // this provokes brings the store along.
+        onWheeled={(deltaY) => scroller.current?.scrollBy({ top: deltaY })}
+      />
+      {/* Focusable and labelled because it is a scrollable region holding content
+          no tab stop of its own would reach: without it Page Up/Down, Home and End
+          have nothing to act on until a tile happens to be focused. */}
+      <div
+        className="grid__scroller"
+        id={SCROLLER_ID}
+        ref={scroller}
+        onScroll={onScroll}
+        onKeyDown={onKeyDown}
+        tabIndex={0}
+        role="list"
+        aria-label={`${store.total} photos`}
+        style={{ '--tile': `${store.tileSize}px` } as React.CSSProperties}
+      >
+        {/* The rail and the window are scaffolding for the scroll, not structure:
+            announced, they would sit between the list and its items. */}
+        <div className="grid__content" role="presentation" style={{ height: store.railHeight }}>
+          {store.mode === 'masonry' ? (
+            blocks.map((block) => (
+              <MasonryBlock
+                key={block}
+                block={block}
+                top={store.railPositionOf(store.blockTops[block] ?? 0)}
+                onMeasured={onMeasured}
+              />
+            ))
+          ) : (
+            // One element per section rather than one window over a contiguous
+            // run: an open stack's band sits between rows of the collection, and a
+            // band several rows tall has to be one bordered box rather than one
+            // per row (§19.6).
+            store.sections.map((section) =>
+              section.kind === 'grid' ? (
+                <div
+                  key={section.key}
+                  className={`grid grid--${store.mode} grid__window`}
+                  role="presentation"
+                  style={
+                    {
+                      transform: `translateY(${store.railPositionOf(section.top)}px)`,
+                      '--cols': store.columns,
+                      '--row-h': `${store.rowHeight - GRID_GAP}px`,
+                    } as React.CSSProperties
+                  }
+                >
+                  {tilesFor(store, section.from, section.to)}
+                </div>
+              ) : (
+                <BandTiles key={section.key} expansion={section} top={section.top} />
+              ),
+            )
+          )}
+        </div>
       </div>
     </div>
   );

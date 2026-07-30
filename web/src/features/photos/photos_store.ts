@@ -3,7 +3,17 @@ import type { Ordering, PhotoDetail, PhotoSummary, Rendition, Triage, ViewerRend
 import type { LibrariesStore } from '../libraries/libraries_store';
 import type { AppSettingsStore } from '../settings/app_settings_store';
 import { type Span, visibleRows } from '../../ui/virtual_rows';
-import { BLOCK, GRID_GAP, LIST_ROW_H, MAX_SCROLL, blockTops, gridColumns, gridRowHeight, visibleBlocks } from './grid_layout';
+import {
+  BLOCK,
+  GRID_GAP,
+  LIST_ROW_H,
+  anchorLimit,
+  blockTops,
+  gridColumns,
+  gridRowHeight,
+  railHeight,
+  visibleBlocks,
+} from './grid_layout';
 import { SelectionRanges } from './selection';
 import { type Band, displayRowOf, rowAt, runStart, totalRows } from './bands';
 
@@ -131,7 +141,20 @@ export class PhotosStore {
   // no render, reaction or scroll frame reads the layout back out of the DOM.
   @observable accessor viewportWidth = 0;
   @observable accessor viewportHeight = 0;
-  @observable accessor scrollTop = 0;
+
+  // Where the scroller is scrolled to, inside a rail that is `RAIL_HEIGHT` tall
+  // however long the collection is. The single truth for the element's `scrollTop`
+  // in both directions: the scroll handler samples into it, and everything that
+  // moves the reader writes it and lets the view follow (§18.3.2).
+  @observable accessor railTop = 0;
+  // Which content pixel the rail's origin sits at. The reader's position in the
+  // collection is `anchorTop + railTop`, and moving one while moving the other
+  // the opposite way is how the scroller is rewritten without the view moving.
+  //
+  // Raw: read it through `anchorTop`, which clamps it to a collection that may
+  // have shrunk under it since - a band closing, a masonry block measuring
+  // shorter than it was estimated at.
+  @observable accessor railAnchor = 0;
 
   // Measured pixel height per block, for masonry alone: it packs lines from each
   // photo's own shape, so a block's height is not knowable until it has been
@@ -411,6 +434,16 @@ export class PhotosStore {
     return [...this.expansions.values()].map((open) => ({ position: open.position, members: open.photos.length }));
   }
 
+  // Which display rows are on screen.
+  //
+  // Struct, which is the whole reason it is its own computed: the scroll position
+  // is sampled once a frame, and comparing the value rather than its inputs is
+  // what keeps everything downstream - the sections, the tiles, the blocks to
+  // fetch - invalidated per row crossed instead of per frame.
+  @computed.struct get visibleSpan(): Span {
+    return visibleRows(this.virtualTop, this.viewportHeight, this.rowHeight, this.rowCount);
+  }
+
   /**
    * The colour each open stack is drawn in, by stack id.
    *
@@ -430,9 +463,13 @@ export class PhotosStore {
    *
    * Consecutive rows of a kind are one section, so a band several rows tall is
    * one bordered box rather than one per row.
+   *
+   * Positions are in content pixels, which the view turns into rail positions
+   * (`railPositionOf`): held against the rail they would all have to be rewritten
+   * every time it was recentred.
    */
   @computed get sections(): GridSection[] {
-    const span = visibleRows(this.virtualTop, this.viewportHeight, this.rowHeight, this.rowCount);
+    const span = this.visibleSpan;
     const sections: GridSection[] = [];
     for (let display = span.from; display < span.to; display++) {
       const at = rowAt(display, this.bands, this.columns);
@@ -506,8 +543,12 @@ export class PhotosStore {
     let measured = 0;
     for (const [block, height] of this.blockHeights) {
       // The last block holds whatever is left over, so its height describes a
-      // part-block and would drag every estimate below it low.
-      if (block === this.blockCount - 1) continue;
+      // part-block and would drag every estimate below it low. `>=` rather than
+      // `===` because heights measured against a longer collection outlive it: an
+      // import or a filter moves which block is last, and a part-block left in the
+      // average as a full one had a 1,000-photo library describing itself as a
+      // tenth of its height.
+      if (block >= this.blockCount - 1) continue;
       total += height;
       measured++;
     }
@@ -527,32 +568,31 @@ export class PhotosStore {
     return this.rowCount * this.rowHeight - GRID_GAP;
   }
 
-  /** How tall the scroller actually is, which past `MAX_SCROLL` is not how tall the collection is. */
-  @computed get scrollHeight(): number {
-    return Math.min(this.contentHeight, MAX_SCROLL);
+  @computed get railHeight(): number {
+    return railHeight(this.contentHeight);
   }
 
-  // Scroll pixels per content pixel: 1 until the collection is taller than a
-  // browser will scroll, and below 1 after that. Everything the grid lays out is
-  // in content pixels; only the scroller itself is in scroll pixels.
-  @computed get scrollScale(): number {
-    const content = this.contentHeight - this.viewportHeight;
-    if (content <= 0 || this.contentHeight <= MAX_SCROLL) return 1;
-    return (this.scrollHeight - this.viewportHeight) / content;
+  /** How far the rail's origin can travel; 0 for a collection the rail covers whole. */
+  @computed get anchorLimit(): number {
+    return anchorLimit(this.contentHeight);
+  }
+
+  @computed get anchorTop(): number {
+    return Math.min(this.anchorLimit, Math.max(0, this.railAnchor));
   }
 
   /** Where the viewport is in the collection, in content pixels. */
   @computed get virtualTop(): number {
-    return this.scrollTop / this.scrollScale;
+    return this.anchorTop + this.railTop;
   }
 
-  /** A position in content pixels, as a position inside the scroller. */
-  domTop(contentTop: number): number {
-    return this.scrollTop - (this.virtualTop - contentTop);
+  /** A position in content pixels, as a position inside the rail. */
+  railPositionOf(contentTop: number): number {
+    return contentTop - this.anchorTop;
   }
 
-  /** Masonry only: the blocks whose tiles are mounted. */
-  @computed get visibleBlocks(): Span {
+  /** Masonry only: the blocks whose tiles are mounted. Struct, as `visibleSpan` is. */
+  @computed.struct get visibleBlocks(): Span {
     return visibleBlocks(this.blockTops, this.virtualTop, this.viewportHeight);
   }
 
@@ -578,21 +618,33 @@ export class PhotosStore {
     return { from: position, to: Math.min(this.total, position + 1) };
   }
 
-  // Where the scroll has to be for the keyboard cursor to be on screen, or null
-  // when it already is. Answered here rather than by asking the focused tile to
-  // scroll itself into view: key repeat outruns rendering, so the cursor lands
-  // several rows outside the window it was moved from, and a tile that was never
-  // mounted cannot scroll anything - the cull simply lost sight of the cursor.
-  @computed get focusScrollTop(): number | null {
+  /** How far through the collection the viewport has got, 0 to 1. */
+  @computed get scrollProgress(): number {
+    const travel = this.contentHeight - this.viewportHeight;
+    if (travel <= 0) return 0;
+    return Math.min(1, Math.max(0, this.virtualTop / travel));
+  }
+
+  /** How much of the collection is on screen, 0 to 1, which is how long the thumb is. */
+  @computed get viewportFraction(): number {
+    if (this.contentHeight <= 0) return 1;
+    return Math.min(1, this.viewportHeight / this.contentHeight);
+  }
+
+  // Where the viewport has to start, in content pixels, for the keyboard cursor
+  // to be on screen - or null when it already is. Answered here rather than by
+  // asking the focused tile to scroll itself into view: key repeat outruns
+  // rendering, so the cursor lands several rows outside the window it was moved
+  // from, and a tile that was never mounted cannot scroll anything - the cull
+  // simply lost sight of the cursor.
+  @computed get focusContentTop(): number | null {
     if (this.focusIndex < 0 || this.total === 0) return null;
-    // Answered in scroll pixels, because it is assigned straight to the element.
-    const scrolled = (contentTop: number): number => Math.max(0, contentTop) * this.scrollScale;
     if (this.mode === 'masonry') {
       // No row arithmetic to land on, so this goes as far as the block: within
       // one, the tile is mounted and near enough.
       const block = Math.floor(this.focusIndex / BLOCK);
       const { from, to } = this.visibleBlocks;
-      return block >= from && block < to ? null : scrolled(this.blockTops[block] ?? 0);
+      return block >= from && block < to ? null : Math.max(0, this.blockTops[block] ?? 0);
     }
     // Through the bands, because the scroll is in display rows: with one open
     // above the cursor, the row the photo is drawn on is further down than its
@@ -603,8 +655,8 @@ export class PhotosStore {
     // The cell, not the row pitch: the gap under it is not part of the tile, and
     // scrolling to clear it would overshoot by one gap every time.
     const bottom = top + this.rowHeight - GRID_GAP;
-    if (top < this.virtualTop) return scrolled(top);
-    if (bottom > this.virtualTop + this.viewportHeight) return scrolled(bottom - this.viewportHeight);
+    if (top < this.virtualTop) return Math.max(0, top);
+    if (bottom > this.virtualTop + this.viewportHeight) return Math.max(0, bottom - this.viewportHeight);
     return null;
   }
 
