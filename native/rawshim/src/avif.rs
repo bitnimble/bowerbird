@@ -47,8 +47,23 @@ const AVIF_RANGE_LIMITED: u32 = 0;
 const AVIF_RANGE_FULL: u32 = 1;
 const AVIF_DEPTH: u32 = 10;
 const AVIF_PIXEL_FORMAT_YUV444: u32 = 1;
+const AVIF_PIXEL_FORMAT_YUV420: u32 = 3;
 const AVIF_RGB_FORMAT_RGB: u32 = 0;
 const AVIF_RESULT_OK: u32 = 0;
+
+/// Chroma for the HDR still, overridable with BOWERBIRD_STILL_CHROMA=420.
+///
+/// 4:4:4 by default and for the reason DESIGN 10.1 gives: 4:2:0 keeps luma whole and
+/// throws away three quarters of the chroma samples, which smears exactly the saturated
+/// edges a photograph is judged on. The knob exists because it is also the single
+/// largest lever on the encoder's working set, and what that trade is actually worth is
+/// a measurement rather than an opinion.
+fn still_chroma() -> u32 {
+    match std::env::var("BOWERBIRD_STILL_CHROMA").as_deref() {
+        Ok("420") => AVIF_PIXEL_FORMAT_YUV420,
+        _ => AVIF_PIXEL_FORMAT_YUV444,
+    }
+}
 
 /// PQ-encodes the graded frame in place, at 16 bits.
 ///
@@ -103,7 +118,7 @@ pub fn encode_still(
     let mut encoded = graded.into_owned();
     pq_encode(&mut encoded, options.peak_nits);
     write_avif(encoded.into(), 16, AVIF_RANGE_LIMITED, width, height, AVIF_DEPTH,
-        AVIF_PIXEL_FORMAT_YUV444, &options.cicp, options.quantizer, options.speed, out_path)
+        still_chroma(), &options.cicp, options.quantizer, options.speed, out_path)
 }
 
 /// An 8-bit sRGB rendition, straight to disk.

@@ -1437,6 +1437,22 @@ Four buffers went, in every case because nothing else was reading them:
 
 **What is left is libaom, and it is most of it.** Probed inside `write_avif` on the same frame: entering the encode is 239MB, the YUV planes add 138MB, dropping the RGB gives that back, and `avifEncoderWrite` alone then takes the peak to ~950MB. So roughly **700MB is libaom's own working set** for a 24MP 10-bit 4:4:4 all-intra frame, against ~145MB of ours. Two things follow. Copy elimination is close to done - the only frame this side still holds through the encode is the YUV planes libaom is reading. And that working set is *not* a threading trade: measured under `taskset`, two cores against eight moved the peak by under 30MB, so it is per-frame state and there is nothing to buy back by capping `maxThreads` or the tile count. Going lower means a different encoder, or an API that encodes in tiles, and libavif exposes neither.
 
+**4:2:0 is the one lever that moves the encoder, and it is measured rather than assumed** (`BOWERBIRD_STILL_CHROMA=420`). Dropping the still's chroma to a quarter of its samples halves what libaom has to carry. On the 24MP fixture, everything else held - same decode, same fit, same grade, same speed:
+
+| | wall | CPU | peak RSS | bytes | SSIM |
+|---|---|---|---|---|---|
+| 4:4:4, `full` at 3840 | 456ms | 1.90s | 457MB | 1.09MB | 0.9793 |
+| 4:2:0, same quantizer | 330ms | 1.45s | 420MB | 0.41MB | 0.9681 |
+| 4:2:0, quantizer matched to that SSIM | 339ms | 1.71s | 420MB | 1.64MB | 0.9791 |
+| 4:4:4, `max` native | 1181ms | 4.03s | 960MB | 3.40MB | |
+| 4:2:0, `max` native | 805ms | 3.07s | **586MB** | 1.76MB | |
+
+**Its rate-distortion is worse, and that is the finding rather than a caveat.** Read the first two rows together and 4:2:0 looks free - a third off the clock and 62% off the file - but they are not the same picture. Held to the same SSIM it needs **51% more bytes than 4:4:4**, which is what 4:4:4 being the right default for a photograph looks like when it is measured. What 4:2:0 buys is not quality per byte, it is time and memory: ~26% off the wall clock and 37% off the peak even at matched quality, and at native resolution it takes the peak from 960MB to 586MB.
+
+So it is a knob for a machine that is short of memory, not a better encode - which is why it is an environment variable here rather than a default, and why a setting for it should be described in those terms.
+
+Note where the peak lands once it is on: at 4:2:0 the encode falls to 420MB, which is exactly the decode's transient, so the binding constraint moves off libaom and onto LibRaw (§10.4) and further encoder tuning stops paying.
+
 Removing three transfers of a frame across a process boundary and keeping the rest in the server is the shape of the deal.
 
 **Budget off the rendition, not off the sensor.** The native-resolution export above is the on-demand `max` path, one photo at a time. What runs `processing_concurrency` deep is the import, and that builds `full` - so the numbers to plan a machine around are these, measured the same way:
