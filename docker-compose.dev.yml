@@ -1,6 +1,9 @@
 # Dev variant: no app build. Uses the Dockerfile's `base` stage (bun and the pixel
-# libraries), live-mounts this repo, and runs bun in watch mode.
+# libraries), live-mounts this repo, and runs the API in watch mode plus the web
+# dev server.
 #   docker compose -f docker-compose.dev.yml up
+#
+# Ports: HOST_PORT (API, default 3000) and WEB_PORT (web, default 5173).
 #
 # rawshim itself is not in that stage: `base` carries the runtime libraries but not
 # the headers, so build it on the host with `bun run build:native` - which is what
@@ -19,13 +22,19 @@ services:
     user: "1000:1000"
     working_dir: /app
     command: sh -c "bun install --frozen-lockfile && bun --watch run src/index.ts"
+    # The web service shares this network namespace, so its published port lives
+    # here too.
     ports:
-      - "${HOST_PORT:-3000}:3000"
+      - "${HOST_PORT:-3000}:${HOST_PORT:-3000}"
+      - "${WEB_PORT:-5173}:${WEB_PORT:-5173}"
     # Only what has to be known before the catalogue can be opened. Everything
     # else is a setting on the app's Settings page, stored in the DB (§15).
     environment:
       HOST: 0.0.0.0
-      PORT: 3000
+      # Host and container port are the same number so a URL means the same thing
+      # on both sides: the browser's API base and the dev server's proxy target
+      # are one port, whatever it is set to.
+      PORT: ${HOST_PORT:-3000}
       DB_PATH: /data/bowerbird.db
     volumes:
       # This repo, live-mounted for hot reload. REPO_DIR must be set in .env to the
@@ -34,8 +43,33 @@ services:
       # node_modules stays container-side (installed on first run): the host copy is
       # not shadowed/overwritten and platform binaries match the image.
       - /app/node_modules
+      - /app/web/node_modules
       - "${PHOTOS_DIR:-./photos}:/photos"
       - bowerbird-db-dev:/data
+
+  # Vite dev server for web/. Same image - it needs bun and nothing else, and
+  # reusing it means no second build.
+  bowerbird-web-dev:
+    image: bowerbird:dev-base
+    depends_on:
+      - bowerbird-dev
+    container_name: bowerbird-web-dev
+    user: "1000:1000"
+    working_dir: /app/web
+    command: sh -c "bun install --frozen-lockfile && bun run dev.ts --port ${WEB_PORT:-5173}"
+    # Shares the API container's network stack rather than linking to it, so
+    # 127.0.0.1:$PORT reaches the API from here exactly as it does from the host.
+    # That keeps the dev server's proxy (the /hdr-check and /quality-check pages)
+    # working off one port number with no container-only hostname anywhere.
+    network_mode: "service:bowerbird-dev"
+    environment:
+      # Where the browser should reach the API. The page is served from the web
+      # port, so the port cannot be inferred from the URL it was loaded from.
+      VITE_API_PORT: ${HOST_PORT:-3000}
+    volumes:
+      - "${REPO_DIR:?set REPO_DIR in .env to this repo's absolute path on the docker host}:/app"
+      - /app/node_modules
+      - /app/web/node_modules
 
 volumes:
   bowerbird-db-dev:

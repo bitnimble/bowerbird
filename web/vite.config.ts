@@ -25,7 +25,11 @@ export default defineConfig({
     proxy: Object.fromEntries(
       ['/hdr-check', '/quality-check', '/api', '/image'].map((path) => [
         path,
-        { target: process.env.VITE_API_URL ?? 'http://127.0.0.1:3000', changeOrigin: true },
+        {
+          target:
+            process.env.VITE_API_URL ?? `http://127.0.0.1:${process.env.VITE_API_PORT ?? '3000'}`,
+          changeOrigin: true,
+        },
       ]),
     ),
   },

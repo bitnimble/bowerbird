@@ -54,10 +54,12 @@ export type RenditionSource = Library['rendition_source'];
 // Default to the API on the same host the page was served from. Hardcoding
 // localhost only works when the browser runs on the server; reached over the
 // network, "localhost" is the viewer's own machine and every call fails.
-// VITE_API_URL overrides this when the API lives elsewhere.
+// VITE_API_PORT covers the common case of the API on the same host at another
+// port; VITE_API_URL overrides the whole base when it lives elsewhere.
 function defaultApiBase(): string {
-  if (typeof window === 'undefined') return 'http://localhost:3000';
-  return `${window.location.protocol}//${window.location.hostname}:3000`;
+  const port = import.meta.env.VITE_API_PORT ?? '3000';
+  if (typeof window === 'undefined') return `http://localhost:${port}`;
+  return `${window.location.protocol}//${window.location.hostname}:${port}`;
 }
 
 const BASE: string = import.meta.env.VITE_API_URL ?? defaultApiBase();

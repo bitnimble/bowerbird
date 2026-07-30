@@ -79,7 +79,7 @@ ENV BUN_RUNTIME_TRANSPILER_CACHE_PATH=0
 # dev compose file mounts an anonymous volume over node_modules, and a named one
 # over /data in both; created against a root-owned path they arrive root-owned and
 # the app cannot write its own database.
-RUN mkdir -p /app/node_modules /data && chown -R bun:bun /app /data
+RUN mkdir -p /app/node_modules /app/web/node_modules /data && chown -R bun:bun /app /data
 
 # Dependencies as a cacheable layer.
 FROM base AS deps
