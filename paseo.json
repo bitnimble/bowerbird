@@ -1,0 +1,8 @@
+{
+  "worktree": {
+    "setup": [
+      "bun install && bun run build:native",
+      "cd web && bun install"
+    ]
+  }
+}
