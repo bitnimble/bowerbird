@@ -384,6 +384,78 @@ pub fn avifenc_args(options: &EncodeOptions, y4m_path: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    /// Every argv the encoder builds, across the medium, chroma and size matrix.
+    ///
+    /// Chroma is a dimension because it reaches three separate arguments that have to
+    /// agree - zscale's output format, avifenc's `--yuv`, and whether the target size
+    /// is forced even - and 4:2:0 with an odd dimension is refused outright rather
+    /// than rounded. It is fixed on the video, which has no choice about it (§10.7).
+    ///
+    /// The argv carries colour signalling whose loss is invisible until a browser
+    /// refuses to treat a file as HDR, which is why this is pinned rather than
+    /// asserted piecewise.
+    #[test]
+    fn every_argv_the_encoder_builds() {
+        // Unit separator, so a row survives arguments that contain spaces.
+        const SEP: &str = " \x1f ";
+        const SIZES: [(u32, u32); 4] = [
+            (4024, 6024), // 24MP portrait
+            (9504, 6336), // 61MP landscape
+            (6336, 9504), // 61MP portrait: the one that meets SVT's height ceiling
+            (800, 533),   // already inside any edge
+        ];
+
+        let mut rows: Vec<String> = Vec::new();
+        for medium in [Medium::Still, Medium::Video] {
+            for still_full_chroma in [false, true] {
+                for (width, height) in SIZES {
+                    for max_edge in [3840.0, 800.0, f64::INFINITY] {
+                        let options = EncodeOptions {
+                            medium,
+                            still_chroma: match still_full_chroma {
+                                true => Chroma::Yuv444,
+                                false => Chroma::Yuv420,
+                            },
+                            output_path: match medium {
+                                Medium::Video => "/out/rendition.mp4".to_string(),
+                                Medium::Still => "/out/rendition.avif".to_string(),
+                            },
+                            peak_nits: 1000.0,
+                            reference_white_nits: 203.0,
+                            white_quantile: 0.9,
+                            crf: 8,
+                            preset: 8,
+                            max_edge,
+                        };
+                        let chroma = match still_full_chroma {
+                            true => "444",
+                            false => "420",
+                        };
+                        // `Infinity`, not Rust's `inf`: the recorded rows came from
+                        // JavaScript and the label is part of what is pinned.
+                        let edge = match max_edge.is_finite() {
+                            true => format!("{max_edge}"),
+                            false => "Infinity".to_string(),
+                        };
+                        let key = format!("{}|{chroma}|{width}x{height}|edge={edge}", match medium { Medium::Still => "still", Medium::Video => "video" });
+
+                        let size = target_size(width, height, &options);
+                        rows.push(format!("{key}\tsize\t{}x{}", size.width, size.height));
+                        rows.push(format!(
+                            "{key}\tffmpeg\t{}",
+                            ffmpeg_args(width, height, &options).join(SEP)
+                        ));
+                        if medium != Medium::Video {
+                            let argv = avifenc_args(&options, "/out/rendition.avif.y4m");
+                            rows.push(format!("{key}\tavifenc\t{}", argv.join(SEP)));
+                        }
+                    }
+                }
+            }
+        }
+        crate::pin::check("hdr_argv.pin.txt", &format!("{}\n", rows.join("\n")));
+    }
+
     use super::*;
 
     fn options(medium: Medium, max_edge: f64) -> EncodeOptions {

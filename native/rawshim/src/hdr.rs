@@ -75,6 +75,41 @@ pub struct Source<'a> {
     pub height: usize,
 }
 
+/// The decode an encode reads, either borrowed or handed over outright.
+///
+/// This is what replaced a `release_source` flag on the old boundary. The problem it
+/// existed for is real - the decode is 366MB at 61MP and holding it across the
+/// encode, the longest stage of the job, is the peak - but the flag solved it by
+/// freeing a buffer the caller still held a pointer to, and could only be made safe
+/// by nulling that pointer and re-checking it at every accessor.
+///
+/// Owning it says the same thing to the compiler. `Owned` is dropped the moment the
+/// grade has copied out, and anything that tried to read it afterwards would not
+/// build. `Borrowed` is for a caller with another rendition still to write off the
+/// same frame; it keeps its decode and pays for it.
+pub enum Decode<'a> {
+    /// For a caller with another rendition still to write off the same frame. It
+    /// keeps its decode and pays for it.
+    Borrowed(Source<'a>),
+    /// For the last reader. Dropped once the grade has copied out, which is what
+    /// hands 366MB back before the encode allocates anything.
+    Owned(crate::frame::Frame),
+}
+
+impl Decode<'_> {
+    fn source(&self) -> Result<Source<'_>, String> {
+        match self {
+            Decode::Borrowed(source) => {
+                Ok(Source { samples: source.samples, width: source.width, height: source.height })
+            }
+            Decode::Owned(frame) => {
+                let samples = frame.samples16().ok_or("the HDR encode needs a 16-bit decode")?;
+                Ok(Source { samples, width: frame.width, height: frame.height })
+            }
+        }
+    }
+}
+
 /// Fits the camera's colour for the HDR grade, reusing geometry the SDR fit resolved.
 ///
 /// For a job that renders SDR too, where that geometry has already been paid for off an
@@ -127,6 +162,7 @@ pub fn fit_all(
     let path = std::ffi::CString::new(raw_path).ok()?;
 
     // SAFETY: the CString outlives the call.
+    #[expect(unsafe_code)]
     let fitted = unsafe {
         crate::with_embedded_jpeg(path.as_ptr(), |jpeg| {
             let preview = crate::vips::Pipeline::thumbnail(jpeg, hdr_fit::fit_long_edge())
@@ -232,6 +268,7 @@ fn graded_with(
 fn as_bytes(graded: &[u16]) -> &[u8] {
     // SAFETY: `u16` has no padding and every bit pattern of it is a valid `u8` pair, so
     // this is a reinterpret of the same allocation rather than a copy of it.
+    #[expect(unsafe_code)]
     unsafe { std::slice::from_raw_parts(graded.as_ptr() as *const u8, std::mem::size_of_val(graded)) }
 }
 
@@ -387,21 +424,22 @@ fn failure(command: &str, output: &std::process::Output) -> String {
 /// always. It used to be regraded for the second encode, paying for the most expensive
 /// stage of the pipeline twice on every HDR import.
 pub fn encode_pair(
-    source: Source<'_>,
+    decode: Decode<'_>,
     options: &EncodeOptions,
     video_path: Option<&str>,
     matched: Option<&HdrMatch>,
-    done_with_source: impl FnOnce(),
 ) -> Result<(), String> {
-    let levels = tone::levels(source.samples, options.white_quantile);
-    let (frame, width, height) = graded_with(&source, options, matched, levels);
+    let (frame, width, height) = {
+        let source = decode.source()?;
+        let levels = tone::levels(source.samples, options.white_quantile);
+        graded_with(&source, options, matched, levels)
+    };
 
-    // Taken by value and dropped here so that "the decode is finished with" is a fact
-    // the compiler holds rather than a comment: everything below reads `frame`, and the
-    // caller is free to reclaim 366MB of scene-linear samples before the encode - the
-    // most expensive stage - even starts.
-    drop(source);
-    done_with_source();
+    // Dropped here, before the encode allocates anything: everything below reads the
+    // graded frame, and where the caller handed its decode over outright this is where
+    // 366MB of scene-linear samples go back. The compiler holds that rather than a
+    // comment - `decode` cannot be named again after this line.
+    drop(decode);
 
     let Some(video_path) = video_path else {
         // Handed over rather than lent: with no twin reading it, the still's transfer

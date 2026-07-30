@@ -1,6 +1,11 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "ignorePatterns": ["node_modules", "web/dist", "native", ".scratch-*.ts"],
+  "ignorePatterns": [
+    "node_modules",
+    "web/dist",
+    "native",
+    ".scratch-*.ts"
+  ],
   "rules": {
     "no-console": "error",
     "no-restricted-imports": [
@@ -9,29 +14,54 @@
         "paths": [
           {
             "name": "node:fs",
-            "importNames": ["rm", "rmSync", "rmdir", "rmdirSync", "unlink", "unlinkSync"],
+            "importNames": [
+              "rm",
+              "rmSync",
+              "rmdir",
+              "rmdirSync",
+              "unlink",
+              "unlinkSync"
+            ],
             "message": "Deleting from disk goes through src/utils/deletions.ts, which proves the target is not an original first."
           },
           {
             "name": "node:fs/promises",
-            "importNames": ["rm", "rmdir", "unlink"],
+            "importNames": [
+              "rm",
+              "rmdir",
+              "unlink"
+            ],
             "message": "Deleting from disk goes through src/utils/deletions.ts, which proves the target is not an original first."
           },
           {
             "name": "fs",
-            "importNames": ["rm", "rmSync", "rmdir", "rmdirSync", "unlink", "unlinkSync"],
+            "importNames": [
+              "rm",
+              "rmSync",
+              "rmdir",
+              "rmdirSync",
+              "unlink",
+              "unlinkSync"
+            ],
             "message": "Deleting from disk goes through src/utils/deletions.ts, which proves the target is not an original first."
           },
           {
             "name": "fs/promises",
-            "importNames": ["rm", "rmdir", "unlink"],
+            "importNames": [
+              "rm",
+              "rmdir",
+              "unlink"
+            ],
             "message": "Deleting from disk goes through src/utils/deletions.ts, which proves the target is not an original first."
           }
         ],
         "patterns": [
           {
-            "group": ["**/rawshim_pixels", "./rawshim_pixels"],
-            "message": "Pixel work belongs in native/rawshim. Only handles and encoded files cross into TypeScript; rawshim_pixels reads samples back and is for tests alone."
+            "group": [
+              "**/rawshim_for_testing",
+              "./rawshim_for_testing"
+            ],
+            "message": "Pixel work belongs in native/rawshim. Only commands and encoded files cross into TypeScript; rawshim_for_testing asks questions about samples on behalf of the tests that still live here; the rest of them are Rust fixture tests now. Nothing in src/ may reach it."
           }
         ]
       }
@@ -39,16 +69,33 @@
   },
   "overrides": [
     {
-      "files": ["src/utils/deletions.ts"],
-      "rules": { "no-restricted-imports": "off" }
+      "files": [
+        "src/utils/deletions.ts"
+      ],
+      "rules": {
+        "no-restricted-imports": "off"
+      }
     },
     {
-      "files": ["src/logger.ts"],
-      "rules": { "no-console": "off" }
+      "files": [
+        "src/logger.ts"
+      ],
+      "rules": {
+        "no-console": "off"
+      }
     },
     {
-      "files": ["**/tests/**", "**/*.test.ts", "**/*.spec.ts", "test/**", "web/**"],
-      "rules": { "no-restricted-imports": "off", "no-console": "off" }
+      "files": [
+        "**/tests/**",
+        "**/*.test.ts",
+        "**/*.spec.ts",
+        "test/**",
+        "web/**"
+      ],
+      "rules": {
+        "no-restricted-imports": "off",
+        "no-console": "off"
+      }
     }
   ]
 }

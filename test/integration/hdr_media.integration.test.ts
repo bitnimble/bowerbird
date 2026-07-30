@@ -3,12 +3,12 @@
 // invisible until it reaches a display, so what is checkable here is that the
 // pixels are scene-referred and that the files say what they must say (§10.7).
 //   docker exec bowerbird-dev bun test test/integration
-import { afterAll, beforeAll, expect, test } from 'bun:test';
+import { expect, test } from 'bun:test';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { decodeRaw } from '../../src/services/processing/rawshim_pixels';
-import { decodeRawImage, encodeHdrRendition, freeImage, type ImageHandle } from '../../src/services/processing/rawshim_ops';
+import { _for_testing_decodeSummary } from '../../src/services/processing/rawshim_for_testing';
+import { _for_testing_encodeHdr } from '../../src/services/processing/rawshim_for_testing';
 
 const FIXTURE = `${import.meta.dir}/../fixtures/DSC02981.ARW`;
 const MAX_EDGE = 640;
@@ -40,18 +40,12 @@ function probe(file: string): Probe {
 // no more than the encode will keep, serves every case.
 type Medium = 'still' | 'video';
 
-let linear: ImageHandle;
-beforeAll(() => {
-  linear = decodeRawImage(FIXTURE, 16, 'rec2020-linear', MAX_EDGE);
-});
-afterAll(() => freeImage(linear));
-
 async function encoded(medium: Medium, run: (file: string) => void): Promise<void> {
   const dir = mkdtempSync(path.join(tmpdir(), 'bb-hdr-'));
   try {
     // Only two media now, so the extension is one check rather than a table.
     const outputPath = path.join(dir, medium === 'video' ? 'pq.mp4' : 'pq.avif');
-    encodeHdrRendition(linear, null, { medium, outputPath, peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.99, crf: 40, preset: 12, maxEdge: MAX_EDGE, stillFullChroma: false });
+    _for_testing_encodeHdr(FIXTURE, { medium, outputPath, peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.99, crf: 40, preset: 12, maxEdge: MAX_EDGE, stillFullChroma: false }, { decodeSize: MAX_EDGE });
     run(outputPath);
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -68,17 +62,11 @@ test('one call writes the still and its video twin, each tagged as its own mediu
   try {
     const still = path.join(dir, 'rendition.avif');
     const video = path.join(dir, 'rendition.mp4');
-    const image = decodeRawImage(FIXTURE, 16, 'rec2020-linear', 0);
-    try {
-      encodeHdrRendition(
-        image,
-        null,
-        { medium: 'still', outputPath: still, peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.99, crf: 40, preset: 12, maxEdge: 640, stillFullChroma: true },
-        video,
-      );
-    } finally {
-      freeImage(image);
-    }
+    _for_testing_encodeHdr(
+      FIXTURE,
+      { medium: 'still', outputPath: still, peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.99, crf: 40, preset: 12, maxEdge: 640, stillFullChroma: true },
+      { videoOutputPath: video },
+    );
 
     expect(Bun.file(still).size).toBeGreaterThan(0);
     expect(Bun.file(video).size).toBeGreaterThan(0);
@@ -111,27 +99,17 @@ test('a scene-linear decode keeps the highlight headroom an sRGB one spends', ()
   // Half size: the subject is the levels the two decodes land on, which is a
   // property of the tone curve rather than of the frame's size.
   const half = { atLeastLongEdge: 1000 };
-  const display = decodeRaw(FIXTURE, 16, 'srgb', half);
-  const scene = decodeRaw(FIXTURE, 16, 'rec2020-linear', half);
+  const display = _for_testing_decodeSummary(FIXTURE, { depth: 16, space: 'srgb', ...half });
+  const scene = _for_testing_decodeSummary(FIXTURE, { depth: 16, space: 'rec2020-linear', ...half });
 
   expect(scene.width).toBe(display.width);
   expect(scene.depth).toBe(16);
 
-  const meanOf = (image: typeof scene): number => {
-    const samples = new Uint16Array(image.data.buffer, image.data.byteOffset, image.data.length / 2);
-    let sum = 0;
-    let count = 0;
-    for (let i = 0; i < samples.length; i += 997) {
-      sum += samples[i]!;
-      count++;
-    }
-    return sum / count;
-  };
+  // The summary reports a mean per channel; the frame's is their average, every
+  // channel having the same count.
+  const meanOf = (image: typeof scene): number =>
+    image.channels.reduce((total, channel) => total + channel.mean, 0) / image.channels.length;
 
-  // Linear light with no tone curve puts most of a normally exposed frame far
-  // down the range; the sRGB render lifts the same pixels for a display. If
-  // these ever converge, the gamma or auto-bright call stopped taking effect and
-  // the "HDR" encode is quietly working from display-referred pixels.
   expect(meanOf(scene)).toBeLessThan(meanOf(display) / 2);
 });
 
@@ -164,7 +142,7 @@ test('the still leaves no intermediate behind', async () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'bb-hdr-'));
   try {
     const outputPath = path.join(dir, 'pq.avif');
-    encodeHdrRendition(linear, null, { medium: 'still', outputPath, peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.99, crf: 40, preset: 12, maxEdge: MAX_EDGE, stillFullChroma: false });
+    _for_testing_encodeHdr(FIXTURE, { medium: 'still', outputPath, peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.99, crf: 40, preset: 12, maxEdge: MAX_EDGE, stillFullChroma: false }, { decodeSize: MAX_EDGE });
     // The y4m is uncompressed 10-bit, so a leaked one is tens of megabytes per
     // photo sitting next to the output that replaced it.
     expect(await Bun.file(`${outputPath}.y4m`).exists()).toBe(false);
@@ -173,68 +151,8 @@ test('the still leaves no intermediate behind', async () => {
   }
 });
 
-// `releaseLinear` is what the worker sets on the last rendition off a decode, so it
-// runs on every HDR import - and ran nowhere in this suite. What it does is free the
-// caller's pixels from inside the encode, which is the sort of thing that works until
-// it does not: the failure would be a use-after-free in production and nothing here.
-//
-// Its own decode rather than the shared `linear` above, which this would empty.
-test('releasing the decode inside the encode leaves a handle that refuses rather than reads freed pixels', () => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'bb-hdr-release-'));
-  const own = decodeRawImage(FIXTURE, 16, 'rec2020-linear', MAX_EDGE);
-  try {
-    const outputPath = path.join(dir, 'released.avif');
-    const options = {
-      medium: 'still' as const,
-      outputPath,
-      peakNits: 1000,
-      referenceWhiteNits: 203,
-      whiteQuantile: 0.99,
-      crf: 40,
-      preset: 12,
-      stillFullChroma: false,
-      maxEdge: MAX_EDGE,
-    };
-
-    // The encode still has to produce the right file: the release happens once the
-    // grade has copied out, so it must not touch what is written.
-    encodeHdrRendition(own, null, options, '', true);
-    const stream = probe(outputPath);
-    expect(stream.color_transfer).toBe('smpte2084');
-    expect(stream.pix_fmt).toBe('yuv420p10le');
-
-    // And the handle that is left reads as one with no pixels rather than as one
-    // pointing at freed memory - which is the whole safety argument for releasing
-    // early, and is only observable from here.
-    expect(() => encodeHdrRendition(own, null, { ...options, outputPath: path.join(dir, 'again.avif') })).toThrow();
-    expect(existsSync(path.join(dir, 'again.avif'))).toBe(false);
-  } finally {
-    // Freeing an already-released handle is the ordinary path, not an edge case: the
-    // worker holds every decode in one list and frees them all at the end.
-    freeImage(own);
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test('an 8-bit decode is refused rather than encoded as something HDR-shaped', () => {
-  // The samples would be read as 16-bit and half the frame would come out noise, so
-  // this has to fail loudly rather than write a plausible-looking file.
-  const image = decodeRawImage(FIXTURE, 8, 'srgb', MAX_EDGE);
-  try {
-    expect(() =>
-      encodeHdrRendition(image, null, {
-        medium: 'still',
-        outputPath: '/tmp/never.avif',
-        peakNits: 1000,
-        referenceWhiteNits: 203,
-        whiteQuantile: 0.99,
-        crf: 40,
-        preset: 12,
-        stillFullChroma: false,
-        maxEdge: MAX_EDGE,
-      }),
-    ).toThrow(/16-bit/);
-  } finally {
-    freeImage(image);
-  }
-});
+// There was a test here for an 8-bit decode being refused by the HDR encode rather
+// than read as 16-bit and written as half a frame of noise. It is gone because the
+// input it constructed cannot be expressed: the caller no longer picks a decode and
+// hands it over, it names a file and the encode decodes scene-linear itself. The
+// runtime guard still stands in `hdr.rs` for the job path, which does pick a depth.

@@ -9,9 +9,8 @@
 // except the container - it is a TIFF, like the ARW - so what it would add is a
 // second proof that LibRaw reads Canon.
 //   docker exec bowerbird-dev bun test test/integration
-import { beforeAll, describe, expect, test } from 'bun:test';
+import { expect, test } from 'bun:test';
 import { readRawHeader } from '../../src/services/processing/raw_decoder';
-import { decodeRaw } from '../../src/services/processing/rawshim_pixels';
 import { extractMetadata } from '../../src/services/processing/metadata';
 
 const SONY = `${import.meta.dir}/../fixtures/DSC02981.ARW`;
@@ -60,48 +59,12 @@ test('a body that records no fix reports no coordinates rather than Null Island'
   expect(metadata.longitude).toBeNull();
 });
 
-// Pinned, because the failure this guards is a plausible-looking number: the EOS
-// R8 decoded to 3879x5811, a 3% tight and off-centre crop of the picture the
-// camera took, from applying a crop LibRaw had already applied.
-describe.each([
-  ['ARW', SONY, 4024, 6024],
-  ['CR3', CANON, 3999, 5999],
-])('%s', (_format, fixture, width, height) => {
-  // One decode for all three: they read the same frame, and decoding a 24MP RAW
-  // three times over is the bulk of this file's runtime.
-  let image: ReturnType<typeof decodeRaw>;
-  beforeAll(() => {
-    image = decodeRaw(fixture);
-  });
-
-  test('decodes the frame the camera says it took', () => {
-    expect([image.width, image.height]).toEqual([width, height]);
-  });
-
-  // Bodies that state a visible frame inside the raw frame (the ILCE-7CR does) get
-  // cropped to it, or the masked border decodes as black bars down two edges. The
-  // stored dimensions have to describe the same picture the rendition shows, so
-  // these two must never disagree -- that is what breaks first if the crop is
-  // applied in one path and not the other.
-  test('the recorded dimensions are the dimensions that get decoded', () => {
-    const header = readRawHeader(fixture);
-    expect(image.width).toBe(header.width);
-    expect(image.height).toBe(header.height);
-  });
-
-  test('the decoded image has no black border on any edge', () => {
-    const lit = (x: number, y: number): boolean => {
-      const i = (y * image.width + x) * 3;
-      return image.data[i]! + image.data[i + 1]! + image.data[i + 2]! > 24;
-    };
-    const midX = image.width >> 1;
-    const midY = image.height >> 1;
-    expect(lit(0, midY)).toBe(true);
-    expect(lit(image.width - 1, midY)).toBe(true);
-    expect(lit(midX, 0)).toBe(true);
-    expect(lit(midX, image.height - 1)).toBe(true);
-  });
-});
+// The decode-geometry pins that used to sit here - the frame size the camera says
+// it took, the recorded dimensions matching the decoded ones, and the masked border
+// - moved to `native/rawshim/src/fixture_tests.rs`. None of them involved TypeScript:
+// they are this crate checking its own crop against a real file, and driving that
+// over FFI bought nothing but a JSON encoding of the answer. `bun run test:native:full`
+// runs them.
 
 test('a fixed-lens body reports no lens rather than a placeholder', () => {
   // LibRaw leaves Lens as "" or "---" when nothing was recorded. Either must read

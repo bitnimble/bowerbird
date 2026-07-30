@@ -105,6 +105,7 @@ fn plausible(value: f32, max: f32) -> f32 {
 /// dance is written once - the fit reaches for this too, to name the lens.
 pub fn read_path(path: &str) -> Option<BbHeader> {
     let path = CString::new(path).ok()?;
+    #[expect(unsafe_code)]
     unsafe {
         let r = raw::libraw_init(0);
         if r.is_null() {
@@ -130,6 +131,7 @@ pub fn name(field: &[u8]) -> &str {
 ///
 /// # Safety
 /// `r` must be a live `libraw_data_t` from `libraw_init`.
+#[expect(unsafe_code)]
 pub unsafe fn read(r: *mut raw::libraw_data_t) -> BbHeader {
     let mut out = BbHeader::blank();
 
@@ -140,17 +142,17 @@ pub unsafe fn read(r: *mut raw::libraw_data_t) -> BbHeader {
     // on, and 270 is not even in the range this field is documented to hold. It used to
     // fall outside the 0..=8 guard below and be stored as 0, which reads as "no
     // rotation" for a frame that is turned a quarter turn.
-    let flip = crate::normalised_flip((*r).sizes.flip);
+    let flip = crate::normalised_flip(unsafe { (*r).sizes }.flip);
     out.orientation = if (0..=8).contains(&flip) { flip } else { 0 };
 
     // The stored dimensions describe the picture that gets thumbnailed, so they
     // carry the same crop the decode applies.
-    let insets = crate::rotate_insets(crate::read_insets(r), flip);
-    raw::libraw_adjust_sizes_info_only(r);
-    out.width = u32::from((*r).sizes.iwidth).saturating_sub((insets.left + insets.right) as u32);
-    out.height = u32::from((*r).sizes.iheight).saturating_sub((insets.top + insets.bottom) as u32);
+    let insets = crate::rotate_insets(unsafe { crate::read_insets(r) }, flip);
+    unsafe { raw::libraw_adjust_sizes_info_only(r) };
+    out.width = u32::from(unsafe { (*r).sizes }.iwidth).saturating_sub((insets.left + insets.right) as u32);
+    out.height = u32::from(unsafe { (*r).sizes }.iheight).saturating_sub((insets.top + insets.bottom) as u32);
 
-    let other = &(*r).other;
+    let other = &unsafe { (*r).other };
     out.iso = plausible(other.iso_speed, 4_000_000.0);
     out.shutter = plausible(other.shutter, 3600.0);
     out.aperture = plausible(other.aperture, 256.0);
@@ -178,10 +180,10 @@ pub unsafe fn read(r: *mut raw::libraw_data_t) -> BbHeader {
         }
     }
 
-    let idata = &(*r).idata;
+    let idata = &unsafe { (*r).idata };
     preferred(&idata.normalized_make, &idata.make, &mut out.camera_make);
     preferred(&idata.normalized_model, &idata.model, &mut out.camera_model);
-    copy_name(&mut out.lens_model, &(*r).lens.Lens);
+    copy_name(&mut out.lens_model, &unsafe { (*r).lens }.Lens);
 
     out
 }

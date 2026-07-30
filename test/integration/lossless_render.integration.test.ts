@@ -11,8 +11,7 @@ import { DEFAULT_SETTINGS, type Settings } from '../../src/schemas/settings';
 import { ProcessingService } from '../../src/services/processing/processing_service';
 import type { SettingsRepository } from '../../src/services/settings/settings_repository';
 import { readRawHeader } from '../../src/services/processing/raw_decoder';
-import { decodeImage, freeImage } from '../../src/services/processing/rawshim_ops';
-import { decodeRaw, pixels } from '../../src/services/processing/rawshim_pixels';
+import { _for_testing_comparePsnr, _for_testing_decodeSummary } from '../../src/services/processing/rawshim_for_testing';
 import { getRenditionPath } from '../../src/utils/paths';
 
 // The output path is the library's business now, so the test asks for it the
@@ -57,16 +56,19 @@ test('a 16-bit decode yields twice the bytes of an 8-bit one', () => {
   // out of LibRaw (§10.4), where the 8-bit path uses it only to decide whether to
   // halve. So asking both for 1000 returned 668x1000 and 2012x3012 - a real
   // difference, correctly reported, that this test is not about.
-  const whole = { atLeastLongEdge: 0 };
-  const eight = decodeRaw(FIXTURE, 8, 'srgb', whole);
-  const sixteen = decodeRaw(FIXTURE, 16, 'srgb', whole);
+  const whole = { atLeastLongEdge: 0 } as const;
+  const eight = _for_testing_decodeSummary(FIXTURE, { depth: 8, space: 'srgb', ...whole });
+  const sixteen = _for_testing_decodeSummary(FIXTURE, { depth: 16, space: 'srgb', ...whole });
 
   expect(eight.depth).toBe(8);
   expect(sixteen.depth).toBe(16);
   // Same picture, same crop: only the sample size differs.
   expect(sixteen.width).toBe(eight.width);
   expect(sixteen.height).toBe(eight.height);
-  expect(sixteen.data.length).toBe(eight.data.length * 2);
+  // Same count of samples, twice the bytes - which is the whole claim, and says it
+  // more directly than comparing two buffer lengths did.
+  expect(sixteen.samples).toBe(eight.samples);
+  expect(sixteen.bytes).toBe(eight.bytes * 2);
 });
 
 // Goes through the real worker, not a copy of its logic: an earlier bug here
@@ -79,8 +81,12 @@ test('the SDR render the service produces decodes back to the image that went in
   try {
     await service().renderOne(FIXTURE, 'test-photo', lib, 'max', false);
 
-    const expected = decodeRaw(FIXTURE, 8);
-    const written = decodeImage(Buffer.from(await Bun.file(output).arrayBuffer()));
+    // The pixels, not just the dimensions. A wrong-depth read produces a file of
+    // exactly the right size full of garbage, which only a comparison catches - so
+    // the comparison is made where both images already are, and what comes back is
+    // the number this was going to reduce them to.
+    const expected = _for_testing_decodeSummary(FIXTURE, { depth: 8 });
+    const written = _for_testing_comparePsnr(output, FIXTURE);
     // Full resolution: this is the view that gets pixel-peeped, so unlike every
     // other rendition it is never fitted to a maximum edge.
     expect(written.width).toBe(expected.width);
@@ -98,17 +104,11 @@ test('the SDR render the service produces decodes back to the image that went in
     ]);
     expect(probe.stdout.toString()).toContain('pix_fmt=yuv420p');
 
-    // The pixels, not just the dimensions. A wrong-depth read produces a file of
-    // exactly the right size full of garbage, which only a comparison catches.
-    const actual = pixels(written);
-    freeImage(written);
-    let sum = 0;
-    for (let i = 0; i < actual.length; i++) sum += (actual[i]! - expected.data[i]!) ** 2;
-    const psnr = 10 * Math.log10(255 ** 2 / (sum / actual.length));
     // Sensor noise is what a lossy encoder discards first, so PSNR runs low on
     // RAW-derived pixels even when the result is perceptually identical. The
     // bound is set to catch a wrong-pixels bug, which lands far below this.
-    expect(psnr).toBeGreaterThan(30);
+    expect(written.psnr).not.toBeNull();
+    expect(written.psnr!).toBeGreaterThan(30);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

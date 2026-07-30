@@ -10,6 +10,7 @@
     "test": "LOG_LEVEL=warn bun test src",
     "test:integration": "LOG_LEVEL=warn bun test test/integration",
     "test:native": "cargo test --release --manifest-path native/rawshim/Cargo.toml",
+    "test:native:full": "cargo test --release --manifest-path native/rawshim/Cargo.toml --features fixtures",
     "typecheck": "tsc --noEmit",
     "build:native": "cargo build --release --manifest-path native/rawshim/Cargo.toml"
   },

@@ -42,7 +42,9 @@ const SCALE: f32 = 1.0;
 struct Db(*mut raw::lfDatabase);
 // The database is read-only once loaded and every entry point here only searches
 // it. Rust cannot see that through a raw pointer, so it is asserted.
+#[expect(unsafe_code)]
 unsafe impl Send for Db {}
+#[expect(unsafe_code)]
 unsafe impl Sync for Db {}
 
 /// A database entry and the crop factor of the body it was matched for.
@@ -62,6 +64,7 @@ struct Resolved {
 /// the geometry instead.
 fn db() -> Option<&'static Db> {
     static DB: OnceLock<Option<Db>> = OnceLock::new();
+    #[expect(unsafe_code)]
     DB.get_or_init(|| unsafe {
         let handle = raw::lf_db_new();
         if handle.is_null() {
@@ -113,30 +116,32 @@ fn covers(min_focal: f32, max_focal: f32, min_aperture: f32, focal: f32, apertur
     true
 }
 
+#[expect(unsafe_code)]
 unsafe fn plausible(lens: *const raw::lfLens, focal: f32, aperture: f32) -> bool {
-    let lens = &*lens;
+    let lens = &unsafe { *lens };
     covers(lens.MinFocal, lens.MaxFocal, lens.MinAperture, focal, aperture)
 }
 
 /// The best entry the database has for this body and lens string.
+#[expect(unsafe_code)]
 unsafe fn search(make: &str, model: &str, lens: &str, focal: f32, aperture: f32) -> Option<Resolved> {
     let db = db()?;
     let (c_make, c_model) = (CString::new(make).ok()?, CString::new(model).ok()?);
     let c_lens = CString::new(lens).ok()?;
 
-    let cameras = raw::lf_db_find_cameras_ext(db.0, c_make.as_ptr(), c_model.as_ptr(), raw::LF_SEARCH_LOOSE as i32);
-    if cameras.is_null() || (*cameras).is_null() {
+    let cameras = unsafe { raw::lf_db_find_cameras_ext(db.0, c_make.as_ptr(), c_model.as_ptr(), raw::LF_SEARCH_LOOSE as i32) };
+    if cameras.is_null() || unsafe { (*cameras).is_null() } {
         return None;
     }
-    let camera = *cameras;
-    let crop = (*camera).CropFactor;
+    let camera = unsafe { *cameras };
+    let crop = unsafe { (*camera).CropFactor };
 
     // A null pattern asks for whatever lens this body has, which is the query a
     // fixed-lens compact needs: it writes no lens name, and the database files its
     // optics under a mount only that body has.
     let pattern = if lens.is_empty() { std::ptr::null() } else { c_lens.as_ptr() };
-    let found = raw::lf_db_find_lenses_hd(db.0, camera, std::ptr::null(), pattern, raw::LF_SEARCH_LOOSE as i32);
-    raw::lf_free(cameras as *mut _);
+    let found = unsafe { raw::lf_db_find_lenses_hd(db.0, camera, std::ptr::null(), pattern, raw::LF_SEARCH_LOOSE as i32) };
+    unsafe { raw::lf_free(cameras as *mut _) };
     if found.is_null() {
         return None;
     }
@@ -145,15 +150,15 @@ unsafe fn search(make: &str, model: &str, lens: &str, focal: f32, aperture: f32)
     // does not contradict rather than re-ranking.
     let mut result = None;
     let mut i = 0;
-    while !(*found.add(i)).is_null() {
-        let entry = *found.add(i);
-        if plausible(entry, focal, aperture) {
+    while !unsafe { (*found.add(i)).is_null() } {
+        let entry = unsafe { *found.add(i) };
+        if unsafe { plausible(entry, focal, aperture) } {
             result = Some(Resolved { lens: entry as usize, crop });
             break;
         }
         i += 1;
     }
-    raw::lf_free(found as *mut _);
+    unsafe { raw::lf_free(found as *mut _) };
     result
 }
 
@@ -165,6 +170,7 @@ fn resolve(make: &str, model: &str, lens: &str, focal: f32, aperture: f32) -> Op
     let key = format!("{make}|{model}|{lens}");
     if let Some(hit) = cache().lock().ok()?.get(&key).copied() {
         return match hit {
+            #[expect(unsafe_code)]
             Some(entry) if unsafe { plausible(entry.lens as *const raw::lfLens, focal, aperture) } => Some(entry),
             // A hit that this frame contradicts is not a miss to re-search: the same
             // string resolved to the same entry last time, and re-running the search
@@ -173,6 +179,7 @@ fn resolve(make: &str, model: &str, lens: &str, focal: f32, aperture: f32) -> Op
         };
     }
 
+    #[expect(unsafe_code)]
     let found = unsafe { search(make, model, lens, focal, aperture) };
     if let Ok(mut cache) = cache().lock() {
         cache.insert(key, found);
@@ -200,6 +207,7 @@ pub fn knots(
     // can, and passing it one way keeps it out.
     let (long, short) = (width.max(height) as i32, width.min(height) as i32);
 
+    #[expect(unsafe_code)]
     unsafe {
         let modifier = raw::lf_modifier_new(entry, resolved.crop, long, short);
         if modifier.is_null() {

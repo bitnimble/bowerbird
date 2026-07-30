@@ -18,14 +18,45 @@
 // `bb_read_header`. Types that stay on this side are named normally.
 
 #![allow(non_upper_case_globals, non_camel_case_types, non_snake_case)]
+// Unsafe is denied crate-wide and exempted one statement at a time, never one
+// module or one function at a time. The three lints are a set and none of them
+// does the job alone:
+//
+//   unsafe_code                   nothing may reach for unsafe unmarked.
+//   unsafe_op_in_unsafe_fn        an `unsafe fn` body is not a blanket over its
+//                                 contents, so each operation inside one needs its
+//                                 own visible block and the surface stays
+//                                 countable rather than being one marker per
+//                                 function.
+//   unfulfilled_lint_expectations paired with `#[expect(unsafe_code)]` rather than
+//                                 `#[allow]`, this makes a *stale* exemption an
+//                                 error too - so unsafe that gets refactored away
+//                                 takes its marker with it in the same commit.
+//
+// Together they hold one invariant: the only things marked are those directly
+// performing an unsafe operation. A caller cannot be marked to cover a callee, and
+// a marker cannot outlive what it was for. `grep -rn "expect(unsafe_code)"
+// native/rawshim/src` is the audit, and the count only ever goes down.
+//
+// What is left is the irreducible part: reading the one command buffer at an entry
+// point, and calling LibRaw, libvips, libavif and lensfun, which are C. Nothing is
+// marked for our own memory any more - a `Frame` is an owned Rust value with a real
+// lifetime, and the handle API that needed raw pointers for it survives only behind
+// a lint fence, for tests.
+#![deny(unsafe_code)]
+#![deny(unfulfilled_lint_expectations)]
+#![deny(unsafe_op_in_unsafe_fn)]
 
 use rayon::prelude::*;
 use std::ffi::CStr;
 use std::os::raw::{c_char, c_int};
 
 pub mod avif;
+pub mod debug;
 pub mod ffi;
 pub mod fit;
+pub mod frame;
+pub mod job;
 pub mod hdr;
 pub mod hdr_args;
 pub mod hdr_fit;
@@ -90,117 +121,6 @@ fn demosaic() -> c_int {
 const OUTPUT_SRGB: c_int = 1;
 const OUTPUT_REC2020: c_int = 8;
 
-/// A decoded image, owned by this library for as long as JS holds the pointer.
-///
-/// Handed to JS as an opaque handle, not as pixels. Every operation - fit, grade,
-/// resize, encode - takes the handle back and works on the buffer where it lies,
-/// so a 60MP render never crosses the boundary. It used to: the decode copied
-/// into a JS `Buffer` and each call copied it back into a `Vec`, three ~45MB
-/// moves of pixels no JavaScript ever looked at.
-///
-/// Still `#[repr(C)]` with plain fields, because the two paths that genuinely do
-/// want the samples in JS - the 16-bit scene-linear decode the HDR encoder pipes
-/// to ffmpeg, and the fit that grades it - read them through a DataView.
-#[repr(C)]
-pub struct BbImage {
-    pub width: u32,
-    pub height: u32,
-    pub depth: u32,
-    pub data: *mut u8,
-    pub len: usize,
-    /// Non-zero when the frame was decoded at half size.
-    pub halved: u32,
-    /// Non-zero when the frame was read straight out of `imgdata.image` rather than
-    /// through `dcraw_make_mem_image`.
-    ///
-    /// Reported so the pin that holds the two against each other can check it actually
-    /// forked. `copy_processed` declines on five conditions, one of them a LibRaw
-    /// default it does not set - and a differential test whose two arms quietly become
-    /// the same arm passes while proving nothing (`raw_decode.integration.test.ts`).
-    /// Sits in padding the struct already had, so the layout is unchanged.
-    pub direct: u32,
-    /// Kept so `bb_free` can drop the exact allocation it handed out.
-    capacity: usize,
-}
-
-impl BbImage {
-    /// Takes ownership of an 8-bit RGB buffer and hands back a handle to it.
-    pub fn own(image: vips::Rgb) -> *mut BbImage {
-        let width = image.width as u32;
-        let height = image.height as u32;
-        let mut data = std::mem::ManuallyDrop::new(image.data);
-        Box::into_raw(Box::new(BbImage {
-            width,
-            height,
-            depth: 8,
-            data: data.as_mut_ptr(),
-            len: data.len(),
-            halved: 0,
-            direct: 0,
-            capacity: data.capacity(),
-        }))
-    }
-
-    /// The pixels, borrowed. None for a 16-bit decode, which the image operations
-    /// have no path for - they are all 8-bit sRGB, and reading a 16-bit buffer as
-    /// though it were 8-bit would silently render half the frame.
-    ///
-    /// The samples of a 16-bit decode, borrowed. None for an 8-bit one.
-    ///
-    /// Separate from `view` because the two are not interchangeable: the image
-    /// operations are all 8-bit sRGB, and the HDR grade is all 16-bit scene-linear.
-    /// Reading either buffer as the other silently renders half a frame.
-    ///
-    /// # Safety
-    /// `data` must still point at the allocation this handle was built with.
-    pub unsafe fn view_u16(&self) -> Option<&[u16]> {
-        if self.depth != 16 || self.data.is_null() {
-            return None;
-        }
-        Some(std::slice::from_raw_parts(self.data as *const u16, self.len / 2))
-    }
-
-    /// # Safety
-    /// `data` must still point at the allocation this handle was built with.
-    pub unsafe fn view(&self) -> Option<vips::RgbRef<'_>> {
-        if self.depth != 8 || self.data.is_null() {
-            return None;
-        }
-        Some(vips::RgbRef {
-            width: self.width as usize,
-            height: self.height as usize,
-            data: std::slice::from_raw_parts(self.data, self.len),
-        })
-    }
-
-    /// Drops the pixels while the handle itself stays alive.
-    ///
-    /// For the last reader of a decode, which knows the frame is finished with long
-    /// before the JavaScript that owns the handle will get round to freeing it. A
-    /// 61MP scene-linear decode is 366MB, and holding it through an encode that has
-    /// already copied everything it needs out of it is the largest avoidable
-    /// allocation left on either path.
-    ///
-    /// Both views check `data`, so what is left behind reads as a handle with no
-    /// pixels rather than as a dangling one. Callers still holding a borrow taken
-    /// before this must not use it afterwards - which is why it takes `&mut self`,
-    /// so the borrow checker refuses the overlap wherever the reference is a Rust
-    /// one rather than a pointer from across the boundary.
-    ///
-    /// # Safety
-    /// `data` must still point at the allocation this handle was built with, and no
-    /// borrow of it may outlive the call.
-    pub unsafe fn release_pixels(&mut self) {
-        if self.data.is_null() {
-            return;
-        }
-        drop(Vec::from_raw_parts(self.data, self.len, self.capacity));
-        self.data = std::ptr::null_mut();
-        self.len = 0;
-        self.capacity = 0;
-    }
-}
-
 pub struct Insets {
     pub left: usize,
     pub top: usize,
@@ -255,8 +175,9 @@ pub(crate) fn insets_of(w: &Window) -> Insets {
 
 /// # Safety
 /// `r` must be a live `libraw_data_t` with `open_file` already run.
+#[expect(unsafe_code)]
 pub(crate) unsafe fn read_insets(r: *mut raw::libraw_data_t) -> Insets {
-    let s = &(*r).sizes;
+    let s = &unsafe { (*r).sizes };
     let crop = s.raw_inset_crops[0];
     insets_of(&Window {
         raw_width: s.raw_width,
@@ -355,13 +276,6 @@ fn camera_multipliers(cam_mul: &[f32; 4]) -> Option<[f32; 4]> {
     Some([r / g, 1.0, b / g, if g2 > 0.0 { g2 / g } else { 1.0 }])
 }
 
-/// Take the `dcraw_make_mem_image` path even where `copy_processed` would serve.
-///
-/// For the test that holds the two against each other; nothing else sets it.
-fn reference_copy() -> bool {
-    std::env::var("BOWERBIRD_REFERENCE_COPY").is_ok_and(|value| value == "1")
-}
-
 /// `dcraw_make_mem_image` and the copy after it, done in one pass, for the scene-linear
 /// decode only.
 ///
@@ -405,20 +319,21 @@ fn reference_copy() -> bool {
 ///
 /// None when the frame is not what is expected, which leaves the caller on the LibRaw
 /// path rather than guessing.
+#[expect(unsafe_code)]
 unsafe fn copy_processed(
     r: *mut raw::libraw_data_t,
     depth: u32,
     i: &Insets,
     long_edge: u32,
-) -> Option<(usize, usize, Vec<u8>)> {
-    let p = &(*r).params;
+) -> Option<(usize, usize, Vec<u16>)> {
+    let p = &unsafe { (*r).params };
     let identity_curve =
         p.no_auto_bright == 1 && p.gamm[0] == 1.0 && p.gamm[1] == 1.0 && p.bright == 1.0;
-    if depth != 16 || !identity_curve || (*r).image.is_null() || (*r).idata.colors != 3 {
+    if depth != 16 || !identity_curve || unsafe { (*r).image }.is_null() || unsafe { (*r).idata }.colors != 3 {
         return None;
     }
 
-    let s = &(*r).sizes;
+    let s = &unsafe { (*r).sizes };
     let flip = s.flip;
     // `copy_mem_image` overwrites `S.iwidth`/`S.iheight` with `S.width`/`S.height`
     // before indexing, so the stride `flip_index` walks is the processed width.
@@ -435,28 +350,24 @@ unsafe fn copy_processed(
 
     let (tw, th) = decode_target(out_width, out_height, long_edge);
 
-    let planes = std::slice::from_raw_parts((*r).image, iwidth * iheight);
-    // Written as bytes rather than as `u16`s that are then reinterpreted. Rebuilding a
-    // `Vec<u8>` over a `Vec<u16>`'s allocation is undefined: `dealloc` has to be handed
-    // the same layout `alloc` got, and the alignment differs (2 against 1). The System
-    // allocator does not care, which is exactly what makes it the kind of thing that
-    // survives every test and then does not survive a different allocator.
-    //
-    // Native byte order, which is what every reader on this side assumes.
+    let planes = unsafe { std::slice::from_raw_parts((*r).image, iwidth * iheight) };
+    // `u16` samples in a `Vec<u16>`. This used to write bytes and have every reader
+    // reinterpret them, because the buffer was leaked across the FFI boundary as one
+    // `*mut u8` and freed as one `Vec<u8>` - and rebuilding a `Vec<u16>` over that
+    // allocation is undefined, the allocator being owed the layout it gave out. Now
+    // the frame is an owned Rust value that never crosses, so it can hold the type it
+    // actually is (`frame.rs`), and the shuffle through `to_ne_bytes` goes with it.
     //
     // `box_resize_u16` declines an enlargement or an identity, and so does this: the
     // two have to agree about when a fit happens or the grade would resize a frame this
     // already did.
     if tw >= out_width || th >= out_height {
-        let stride = out_width * 6;
-        let mut out = vec![0u8; stride * out_height];
+        let stride = out_width * 3;
+        let mut out = vec![0u16; stride * out_height];
         out.par_chunks_mut(stride).enumerate().for_each(|(y, row)| {
             for x in 0..out_width {
                 let px = planes[flip_index(y + i.top, x + i.left)];
-                for c in 0..3 {
-                    let at = x * 6 + c * 2;
-                    row[at..at + 2].copy_from_slice(&px[c].to_ne_bytes());
-                }
+                row[x * 3..x * 3 + 3].copy_from_slice(&px[..3]);
             }
         });
         return Some((out_width, out_height, out));
@@ -467,8 +378,8 @@ unsafe fn copy_processed(
     // innermost, matching it exactly, so the result is the same to the bit.
     let xs = out_width as f64 / tw as f64;
     let ys = out_height as f64 / th as f64;
-    let stride = tw * 6;
-    let mut out = vec![0u8; stride * th];
+    let stride = tw * 3;
+    let mut out = vec![0u16; stride * th];
     out.par_chunks_mut(stride).enumerate().for_each(|(dy, row)| {
         let y0 = (dy as f64 * ys).floor() as usize;
         let y1 = (((dy + 1) as f64 * ys).floor() as usize).max(y0 + 1);
@@ -486,9 +397,7 @@ unsafe fn copy_processed(
             }
             let n = ((y1 - y0) * (x1 - x0)) as f64;
             for c in 0..3 {
-                let value = (acc[c] / n).round() as u16;
-                let at = dx * 6 + c * 2;
-                row[at..at + 2].copy_from_slice(&value.to_ne_bytes());
+                row[dx * 3 + c] = (acc[c] / n).round() as u16;
             }
         }
     });
@@ -531,50 +440,87 @@ fn flip_index(flip: c_int, iwidth: usize, iheight: usize, row: usize, col: usize
 ///
 /// The `dcraw_make_mem_image` path: what the sRGB decode uses, and the reference
 /// `copy_processed` is pinned against.
+#[expect(unsafe_code)]
 unsafe fn copy_cropped(src: *const u8, w: usize, h: usize, bytes_per_px: usize, i: &Insets) -> Vec<u8> {
     let width = w.saturating_sub(i.left + i.right);
     let height = h.saturating_sub(i.top + i.bottom);
     if width == 0 || height == 0 || (i.left | i.top | i.right | i.bottom) == 0 {
-        return std::slice::from_raw_parts(src, w * h * bytes_per_px).to_vec();
+        return unsafe { std::slice::from_raw_parts(src, w * h * bytes_per_px) }.to_vec();
     }
     let stride = w * bytes_per_px;
     let row_bytes = width * bytes_per_px;
     let mut out = Vec::with_capacity(width * height * bytes_per_px);
     for row in 0..height {
         let from = (row + i.top) * stride + i.left * bytes_per_px;
-        out.extend_from_slice(std::slice::from_raw_parts(src.add(from), row_bytes));
+        out.extend_from_slice(unsafe { std::slice::from_raw_parts(src.add(from), row_bytes) });
     }
     out
 }
 
-/// Decodes a RAW to an upright RGB bitmap.
+/// Decodes a RAW to an owned frame.
 ///
-/// `at_least_long_edge` is the longest edge the caller needs; when halving still
-/// clears it the decode runs at half size. 0 means the whole frame.
-///
-/// Returns null on any failure. The result must be released with `bb_free`.
-///
-/// # Safety
-/// `path` must be a NUL-terminated C string.
-#[no_mangle]
-pub unsafe extern "C" fn bb_decode(
-    path: *const c_char,
+/// The body of what `bb_decode` used to be, with the handle taken off the end. Every
+/// caller on this side wants a `Frame`; only the boundary wanted a pointer, and it
+/// is the one place that still builds one.
+pub fn decode_frame(
+    path: &str,
     depth: u32,
-    rec2020_linear: c_int,
+    rec2020_linear: bool,
     at_least_long_edge: u32,
-) -> *mut BbImage {
-    if path.is_null() || (depth != 8 && depth != 16) {
-        return std::ptr::null_mut();
+) -> Option<frame::Frame> {
+    decode_frame_via(path, depth, rec2020_linear, at_least_long_edge, false)
+}
+
+/// `decode_frame`, on LibRaw's own `dcraw_make_mem_image` path rather than the fused
+/// one (§10.4).
+///
+/// Only the differential pin wants this, and it wants it because the two routes must
+/// agree to the byte. It used to be an environment variable read inside the library,
+/// which meant a subprocess per case to set it; a parameter says the same thing and
+/// lets both arms run in one process.
+#[cfg(all(test, feature = "fixtures"))]
+pub fn _for_testing_decode_frame_reference(
+    path: &str,
+    depth: u32,
+    rec2020_linear: bool,
+    at_least_long_edge: u32,
+) -> Option<frame::Frame> {
+    decode_frame_via(path, depth, rec2020_linear, at_least_long_edge, true)
+}
+
+fn decode_frame_via(
+    path: &str,
+    depth: u32,
+    rec2020_linear: bool,
+    at_least_long_edge: u32,
+    reference: bool,
+) -> Option<frame::Frame> {
+    if depth != 8 && depth != 16 {
+        return None;
     }
-    let r = raw::libraw_init(0);
+    let path = std::ffi::CString::new(path).ok()?;
+    decode_with_libraw(&path, depth, rec2020_linear, at_least_long_edge, reference)
+}
+
+#[expect(unsafe_code)]
+fn decode_with_libraw(
+    path: &std::ffi::CStr,
+    depth: u32,
+    rec2020_linear: bool,
+    at_least_long_edge: u32,
+    reference: bool,
+) -> Option<frame::Frame> {
+    let r = unsafe { raw::libraw_init(0) };
     if r.is_null() {
-        return std::ptr::null_mut();
+        return None;
     }
 
     // Guarded around the closure rather than outside `libraw_init`, so a panic still
     // reaches the `recycle`/`close` below instead of leaking the processor with it.
-    let result = guard("bb_decode", None, || (|| -> Option<Box<BbImage>> {
-        if raw::libraw_open_file(r, CStr::from_ptr(path).as_ptr()) != 0 {
+    let result = guard("bb_decode", None, || (|| -> Option<frame::Frame> {
+        #[expect(unsafe_code)]
+        unsafe {
+        if raw::libraw_open_file(r, path.as_ptr()) != 0 {
             return None;
         }
 
@@ -597,7 +543,7 @@ pub unsafe extern "C" fn bb_decode(
         }
         (*r).params.user_qual = demosaic();
         (*r).params.output_bps = depth as c_int;
-        if rec2020_linear != 0 {
+        if rec2020_linear {
             (*r).params.output_color = OUTPUT_REC2020;
             // Identity curve, so samples stay proportional to the light that made
             // them, and no auto-brightening to normalise away HDR headroom.
@@ -616,10 +562,10 @@ pub unsafe extern "C" fn bb_decode(
         // the second whole-frame buffer `dcraw_make_mem_image` would allocate and the
         // copy back out of it.
         let taken =
-            if reference_copy() { None } else { copy_processed(r, depth, &insets, at_least_long_edge) };
+            if reference { None } else { copy_processed(r, depth, &insets, at_least_long_edge) };
         let direct = taken.is_some();
         let (width, height, data) = match taken {
-            Some(done) => done,
+            Some((w, h, samples)) => (w, h, frame::Pixels::Sixteen(samples)),
             None => {
                 let mut err: c_int = 0;
                 let image = raw::libraw_dcraw_make_mem_image(r, &mut err);
@@ -637,52 +583,135 @@ pub unsafe extern "C" fn bb_decode(
                     return None;
                 }
                 let (cw, ch) = (w - insets.left - insets.right, h - insets.top - insets.bottom);
-                // The fit the direct path fuses into its copy, applied here as the
-                // separate pass it used to be. That is what keeps the two comparable:
-                // `raw_decode.integration.test.ts` holds them against each other, and
-                // it is now pinning the fusion as well as the interleave.
-                //
-                // Round-tripping through `Vec<u16>` rather than viewing the bytes as
-                // one, because a `Vec<u8>` is only guaranteed to be byte-aligned. This
-                // is the reference path, taken by that test alone, so the extra copy
-                // costs nothing anybody waits for.
-                let (tw, th) = decode_target(cw, ch, at_least_long_edge);
-                if depth != 16 || (tw, th) == (cw, ch) {
-                    (cw, ch, data)
+                if depth != 16 {
+                    (cw, ch, frame::Pixels::Eight(data))
                 } else {
+                    // Bytes out of LibRaw's buffer, into the `u16`s they are. Both arms
+                    // hand back the same type, which is what lets the differential test
+                    // compare them at all.
                     let samples: Vec<u16> =
                         data.chunks_exact(2).map(|b| u16::from_ne_bytes([b[0], b[1]])).collect();
-                    let resized = image::box_resize_u16(&samples, cw, ch, tw, th)?;
-                    let mut bytes = Vec::with_capacity(resized.len() * 2);
-                    for sample in resized {
-                        bytes.extend_from_slice(&sample.to_ne_bytes());
+                    // The fit the direct path fuses into its copy, applied here as the
+                    // separate pass it used to be. That is what keeps the two
+                    // comparable: `raw_decode.integration.test.ts` holds them against
+                    // each other, so it pins the fusion as well as the interleave.
+                    let (tw, th) = decode_target(cw, ch, at_least_long_edge);
+                    match (tw, th) == (cw, ch) {
+                        true => (cw, ch, frame::Pixels::Sixteen(samples)),
+                        false => (
+                            tw,
+                            th,
+                            frame::Pixels::Sixteen(image::box_resize_u16(&samples, cw, ch, tw, th)?),
+                        ),
                     }
-                    (tw, th, bytes)
                 }
             }
         };
 
-        let width = width as u32;
-        let height = height as u32;
-        let mut data = std::mem::ManuallyDrop::new(data);
-        Some(Box::new(BbImage {
-            width,
-            height,
-            depth,
-            data: data.as_mut_ptr(),
-            len: data.len(),
-            halved: u32::from(halved),
-            direct: u32::from(direct),
-            capacity: data.capacity(),
-        }))
+        let mut built = frame::Frame::new(width, height, data);
+        built.halved = halved;
+        built.direct = direct;
+        Some(built)
+        }
     })());
 
-    raw::libraw_recycle(r);
-    raw::libraw_close(r);
-    match result {
-        Some(image) => Box::into_raw(image),
-        None => std::ptr::null_mut(),
+    #[expect(unsafe_code)]
+    unsafe {
+        raw::libraw_recycle(r);
+        raw::libraw_close(r);
     }
+    result
+}
+
+/// The camera's embedded preview as an owned frame, fitted to `long_edge`.
+///
+/// The whole of an import's tile pass in one call. None when the file embeds no
+/// JPEG preview, which is a property of the file rather than an error: the caller
+/// falls back to a render.
+pub fn decode_embedded_frame(path: &str, long_edge: u32) -> Option<frame::Frame> {
+    vips::init();
+    let path = std::ffi::CString::new(path).ok()?;
+    let decoded = guard("decode_embedded_frame", None, || {
+        #[expect(unsafe_code)]
+        unsafe {
+            with_embedded_jpeg(path.as_ptr(), |jpeg| match long_edge {
+                0 => vips::Pipeline::decode_upright(jpeg).and_then(vips::Pipeline::finish),
+                edge => vips::Pipeline::thumbnail(jpeg, edge as usize).and_then(vips::Pipeline::finish),
+            })
+        }
+    })?;
+    let image = decoded.ok()?;
+    Some(frame::Frame::new(image.width, image.height, frame::Pixels::Eight(image.data)))
+}
+
+/// The camera match for an 8-bit render, fitted against the embedded JPEG (10.8).
+///
+/// None when the file embeds no preview, when the fit found nothing worth applying,
+/// or when there were too few usable pairs - in each case the caller renders
+/// untransformed.
+pub fn fit_profile_for(render: &frame::Frame, raw_path: &str) -> Option<fit::Profile> {
+    vips::init();
+    let source = render.rgb8()?;
+    let geometry = ffi::geometry_for(raw_path)?;
+    let path = std::ffi::CString::new(raw_path).ok()?;
+    let fitted = guard("fit_profile_for", None, || {
+        #[expect(unsafe_code)]
+        unsafe {
+            with_embedded_jpeg(path.as_ptr(), |jpeg| fit::fit(source, jpeg, geometry).ok().flatten())
+        }
+    })?;
+    fitted
+}
+
+/// The camera match for the HDR grade, in the domain the grade works in (10.8.1).
+///
+/// Reuses the geometry an SDR fit already resolved where there is one; where nothing
+/// renders SDR both halves run off this decode in a single pass over it.
+pub fn fit_hdr_for(
+    linear: &frame::Frame,
+    raw_path: &str,
+    quantile: f64,
+    profile: Option<&fit::Profile>,
+) -> Option<hdr_fit::HdrMatch> {
+    let samples = linear.samples16()?;
+    let source = hdr::Source { samples, width: linear.width, height: linear.height };
+    guard("fit_hdr_for", None, || match profile {
+        Some(profile) => {
+            hdr::fit_match(raw_path, &source, quantile, profile.knots.clone(), profile.crop)
+        }
+        None => {
+            let geometry = ffi::geometry_for(raw_path)?;
+            hdr::fit_all(raw_path, &source, quantile, geometry).map(|(_, matched)| matched)
+        }
+    })
+}
+
+/// Fits an image to a longest edge and writes it as an AVIF, in that order.
+///
+/// The resize is skipped where the frame already fits, which is not the rare case:
+/// the job builds its base at the largest size it asks for, so the biggest rendition
+/// of every photo arrives here already the right size (10.1).
+pub fn save_avif_frame(
+    source: vips::RgbRef<'_>,
+    long_edge: u32,
+    quantizer: i32,
+    effort: i32,
+    full_chroma: bool,
+    out_path: &str,
+) -> Result<(), String> {
+    vips::init();
+    // libvips counted effort up from 0 as *fastest*; libavif counts speed down from
+    // 10 as fastest. Same knob, opposite ends.
+    let speed = (10 - effort).clamp(0, 10);
+    if long_edge == 0 || source.width.max(source.height) <= long_edge as usize {
+        return avif::encode_rendition(source.data.into(), source.width, source.height, quantizer, speed, full_chroma, out_path);
+    }
+    let resized = vips::Pipeline::from_rgb(source)
+        .and_then(|pipeline| pipeline.resize_to_fit(long_edge as usize))
+        .and_then(vips::Pipeline::finish)
+        .map_err(|e| format!("could not resize for the encode: {e}"))?;
+    let (width, height) = (resized.width, resized.height);
+    avif::encode_rendition(resized.data.into(), width, height, quantizer, speed, full_chroma, out_path)
 }
 
 /// `libraw_image_formats_t`: a preview is either a JPEG or a bare bitmap.
@@ -702,35 +731,36 @@ const LIBRAW_IMAGE_JPEG: raw::LibRaw_image_formats = 1;
 ///
 /// # Safety
 /// `path` must be a NUL-terminated C string.
+#[expect(unsafe_code)]
 unsafe fn with_embedded_jpeg<T>(path: *const c_char, use_bytes: impl FnOnce(&[u8]) -> T) -> Option<T> {
-    let r = raw::libraw_init(0);
+    let r = unsafe { raw::libraw_init(0) };
     if r.is_null() {
         return None;
     }
 
     let result = (|| -> Option<T> {
-        if raw::libraw_open_file(r, path) != 0 || raw::libraw_unpack_thumb(r) != 0 {
+        if unsafe { raw::libraw_open_file(r, path) } != 0 || unsafe { raw::libraw_unpack_thumb(r) } != 0 {
             return None;
         }
         let mut err: c_int = 0;
-        let thumb = raw::libraw_dcraw_make_mem_thumb(r, &mut err);
+        let thumb = unsafe { raw::libraw_dcraw_make_mem_thumb(r, &mut err) };
         if thumb.is_null() || err != 0 {
             return None;
         }
         // Freed on every path below, including the one where the format is wrong.
         let out = (|| {
-            let size = (*thumb).data_size as usize;
-            if (*thumb).type_ != LIBRAW_IMAGE_JPEG || size == 0 {
+            let size = unsafe { (*thumb).data_size } as usize;
+            if unsafe { (*thumb).type_ } != LIBRAW_IMAGE_JPEG || size == 0 {
                 return None;
             }
-            Some(use_bytes(std::slice::from_raw_parts((*thumb).data.as_ptr(), size)))
+            Some(use_bytes(unsafe { std::slice::from_raw_parts((*thumb).data.as_ptr(), size) }))
         })();
-        raw::libraw_dcraw_clear_mem(thumb);
+        unsafe { raw::libraw_dcraw_clear_mem(thumb) };
         out
     })();
 
-    raw::libraw_recycle(r);
-    raw::libraw_close(r);
+    unsafe { raw::libraw_recycle(r) };
+    unsafe { raw::libraw_close(r) };
     result
 }
 
@@ -740,6 +770,7 @@ pub fn decode_embedded_rgb(path: &str, long_edge: usize) -> Option<vips::Rgb> {
     vips::init();
     let c_path = std::ffi::CString::new(path).ok()?;
     // SAFETY: the CString outlives the call.
+    #[expect(unsafe_code)]
     let decoded = unsafe {
         with_embedded_jpeg(c_path.as_ptr(), |bytes| {
             vips::Pipeline::thumbnail(bytes, long_edge).and_then(vips::Pipeline::finish)
@@ -755,45 +786,6 @@ pub fn decode_embedded_rgb(path: &str, long_edge: usize) -> Option<vips::Rgb> {
     }
 }
 
-/// Decodes the camera's embedded preview to an upright RGB bitmap, fitted to
-/// `long_edge`. 0 leaves it at the size the body embedded.
-///
-/// This is the whole of an import's thumbnail stage: extract, decode, shrink. It
-/// used to be three steps with the JPEG copied into a JavaScript `Buffer` in the
-/// middle, which was both the largest thing crossing the boundary and the reason
-/// libvips' operation cache had to go - a cached graph held a pointer into bytes
-/// that JavaScript was free to collect (`vips.rs`).
-///
-/// Returns null when the file has no JPEG preview, which is not an error.
-///
-/// # Safety
-/// `path` must be a NUL-terminated C string. Release with `bb_free`.
-#[no_mangle]
-pub unsafe extern "C" fn bb_decode_embedded(path: *const c_char, long_edge: u32) -> *mut BbImage {
-    vips::init();
-    if path.is_null() {
-        return std::ptr::null_mut();
-    }
-
-    // The grid tile of every photo in an import comes through here, off a JPEG the
-    // camera wrote and nothing has validated.
-    let decoded = guard("bb_decode_embedded", None, || {
-        with_embedded_jpeg(path, |bytes| match long_edge {
-            0 => vips::Pipeline::decode_upright(bytes).and_then(vips::Pipeline::finish),
-            edge => vips::Pipeline::thumbnail(bytes, edge as usize).and_then(vips::Pipeline::finish),
-        })
-    });
-
-    match decoded {
-        Some(Ok(image)) => BbImage::own(image),
-        Some(Err(detail)) => {
-            eprintln!("bb_decode_embedded: {detail}");
-            std::ptr::null_mut()
-        }
-        None => std::ptr::null_mut(),
-    }
-}
-
 /// Reads what the catalogue needs from a RAW without decoding a pixel.
 ///
 /// Returns 0 on success, -1 if the file could not be opened. See `header.rs` for
@@ -801,16 +793,17 @@ pub unsafe extern "C" fn bb_decode_embedded(path: *const c_char, long_edge: u32)
 ///
 /// # Safety
 /// `path` must be a NUL-terminated C string and `out` a writable `BbHeader`.
+#[expect(unsafe_code)]
 #[no_mangle]
 pub unsafe extern "C" fn bb_read_header(path: *const c_char, out: *mut header::BbHeader) -> c_int {
     if path.is_null() || out.is_null() {
         return -1;
     }
-    let Ok(path) = CStr::from_ptr(path).to_str() else { return -1 };
+    let Ok(path) = unsafe { CStr::from_ptr(path) }.to_str() else { return -1 };
     // Runs on every file of a scan, and parses maker notes off untrusted bytes.
     match guard("bb_read_header", None, || header::read_path(path)) {
         Some(header) => {
-            *out = header;
+            unsafe { *out = header; }
             0
         }
         None => -1,
@@ -818,51 +811,18 @@ pub unsafe extern "C" fn bb_read_header(path: *const c_char, out: *mut header::B
 }
 
 /// Size of `BbHeader`, which the caller checks against the layout it reads.
+#[expect(unsafe_code)]
 #[no_mangle]
 pub extern "C" fn bb_header_size() -> usize {
     std::mem::size_of::<header::BbHeader>()
 }
 
-/// Releases an image from `bb_decode`. Safe to call with null.
-///
-/// # Safety
-/// `image` must have come from `bb_decode` and not been freed already.
-#[no_mangle]
-pub unsafe extern "C" fn bb_free(image: *mut BbImage) {
-    if image.is_null() {
-        return;
-    }
-    let mut image = Box::from_raw(image);
-    // Null when the last reader already released the pixels, and `from_raw_parts`
-    // takes no null pointer even at length zero.
-    image.release_pixels();
-}
-
-/// How many bytes `bb_descriptor` writes, so the caller can size its buffer and
-/// the database column without either guessing.
+/// How many bytes a stacking descriptor occupies, so the caller can size its
+/// buffer and the database column without either guessing.
+#[expect(unsafe_code)]
 #[no_mangle]
 pub extern "C" fn bb_descriptor_size() -> usize {
     stacks::DESCRIPTOR_BYTES
-}
-
-/// Writes the stacking descriptor for an 8-bit image into `out`.
-///
-/// Returns 0 on success, -1 when the handle holds no 8-bit samples.
-///
-/// # Safety
-/// `image` must be a live handle and `out` must have room for
-/// `bb_descriptor_size()` bytes.
-#[no_mangle]
-pub unsafe extern "C" fn bb_descriptor(image: *const BbImage, out: *mut u8) -> c_int {
-    if image.is_null() || out.is_null() {
-        return -1;
-    }
-    let Some(view) = (*image).view() else {
-        return -1;
-    };
-    let descriptor = stacks::describe(view);
-    std::ptr::copy_nonoverlapping(descriptor.as_ptr(), out, descriptor.len());
-    0
 }
 
 /// Groups frames into stacks, writing one group index per frame into `out`, or
@@ -876,6 +836,7 @@ pub unsafe extern "C" fn bb_descriptor(image: *const BbImage, out: *mut u8) -> c
 /// # Safety
 /// `descriptors` must hold `count * bb_descriptor_size()` bytes, and
 /// `timestamps` and `out` must each hold `count` elements.
+#[expect(unsafe_code)]
 #[no_mangle]
 pub unsafe extern "C" fn bb_stack_groups(
     descriptors: *const u8,
@@ -888,33 +849,26 @@ pub unsafe extern "C" fn bb_stack_groups(
     if descriptors.is_null() || timestamps.is_null() || out.is_null() {
         return -1;
     }
-    let descriptors = std::slice::from_raw_parts(descriptors, count * stacks::DESCRIPTOR_BYTES);
-    let timestamps = std::slice::from_raw_parts(timestamps, count);
+    let descriptors = unsafe { std::slice::from_raw_parts(descriptors, count * stacks::DESCRIPTOR_BYTES) };
+    let timestamps = unsafe { std::slice::from_raw_parts(timestamps, count) };
     let groups = stacks::group(descriptors, timestamps, threshold, window_seconds);
-    std::ptr::copy_nonoverlapping(groups.as_ptr(), out, count);
+    unsafe { std::ptr::copy_nonoverlapping(groups.as_ptr(), out, count) };
     0
 }
+
+/// Holding behaviour to a recorded copy of it, shared by the argv pin (synthetic) and
+/// the grade pin (fixture-backed).
+#[cfg(test)]
+mod pin;
+
+/// The tests that decode a real RAW, behind the `fixtures` feature so the default
+/// suite stays fast enough to run on every edit.
+#[cfg(all(test, feature = "fixtures"))]
+mod fixture_tests;
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_released_handle_reads_as_empty_rather_than_dangling() {
-        // The whole safety argument for releasing early is that what is left behind
-        // answers "no pixels" instead of handing out a freed buffer - so a caller that
-        // releases too soon gets a refused encode rather than a wrong one.
-        let image = BbImage::own(vips::Rgb { width: 2, height: 2, data: vec![7u8; 12] });
-        unsafe {
-            assert!((*image).view().is_some(), "the handle starts with pixels");
-            (*image).release_pixels();
-            assert!((*image).view().is_none(), "a released handle must not hand out pixels");
-            // Idempotent, which is what lets `bb_free` run the same path unconditionally
-            // rather than branching on whether someone got there first.
-            (*image).release_pixels();
-            bb_free(image);
-        }
-    }
 
     // Every orientation LibRaw can hand over, which the fixtures cannot give.
     //
