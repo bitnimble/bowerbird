@@ -10,11 +10,8 @@
 // second proof that LibRaw reads Canon.
 //   docker exec bowerbird-dev bun test test/integration
 import { beforeAll, describe, expect, test } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import path from 'node:path';
 import { readRawHeader } from '../../src/services/processing/raw_decoder';
-import { decodeSummary, dumpDecode } from '../../src/services/processing/rawshim_debug';
+import { decodeSummary, pixelsAt } from '../../src/services/processing/rawshim_debug';
 import { extractMetadata } from '../../src/services/processing/metadata';
 
 const SONY = `${import.meta.dir}/../fixtures/DSC02981.ARW`;
@@ -92,30 +89,24 @@ describe.each([
     expect(image.height).toBe(header.height);
   });
 
-  // The one assertion here that wants the samples themselves rather than a
-  // statistic about them: it reads four specific pixels, one per edge. So it takes
-  // the guarded door - the decode is written to a file and read back, rather than a
-  // buffer crossing in memory - and the native side logs a warning when it does.
+  // A body whose masked border was not cropped decodes as black bars down two
+  // edges, and that shows up nowhere in an aggregate: the frame is mostly picture,
+  // so a bar barely moves a mean. It needs the edges themselves - four of them,
+  // which is small enough to come back as a summary like any other.
   test('the decoded image has no black border on any edge', () => {
-    const dir = mkdtempSync(path.join(tmpdir(), 'bb-border-'));
-    try {
-      const dump = path.join(dir, 'decode.bin');
-      const summary = dumpDecode(fixture, dump);
-      const data = readFileSync(dump);
-      expect(data.length).toBe(summary.bytes);
-
-      const lit = (x: number, y: number): boolean => {
-        const i = (y * summary.width + x) * 3;
-        return data[i]! + data[i + 1]! + data[i + 2]! > 24;
-      };
-      const midX = summary.width >> 1;
-      const midY = summary.height >> 1;
-      expect(lit(0, midY)).toBe(true);
-      expect(lit(summary.width - 1, midY)).toBe(true);
-      expect(lit(midX, 0)).toBe(true);
-      expect(lit(midX, summary.height - 1)).toBe(true);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
+    const midX = image.width >> 1;
+    const midY = image.height >> 1;
+    const edges = pixelsAt(fixture, [
+      [0, midY],
+      [image.width - 1, midY],
+      [midX, 0],
+      [midX, image.height - 1],
+    ]);
+    for (const pixel of edges) {
+      // Null means the point fell outside the frame, which is a failure of this
+      // test's arithmetic rather than a dark pixel.
+      expect(pixel).not.toBeNull();
+      expect(pixel![0] + pixel![1] + pixel![2]).toBeGreaterThan(24);
     }
   });
 });

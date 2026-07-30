@@ -199,8 +199,7 @@ pub struct BbHdrOptions {
 }
 
 impl BbHdrOptions {
-    #[expect(unsafe_code)]
-    unsafe fn to_options(&self, output_path: &str) -> Option<hdr_args::EncodeOptions> {
+    fn to_options(&self, output_path: &str) -> Option<hdr_args::EncodeOptions> {
         Some(hdr_args::EncodeOptions {
             medium: match self.medium {
                 0 => hdr_args::Medium::Still,

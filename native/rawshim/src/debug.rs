@@ -11,10 +11,10 @@
 // buffer crosses and no lifetime has to be managed to make it possible. The
 // commands below are that: questions in, numbers out.
 //
-// Where a test genuinely needs the bytes - and after this there is one, the fit's
-// injected-distortion case, which has to get an image *in* - they go through a file
-// on disk rather than through memory. `dump_samples` is the only door and it
-// announces itself in the log, so a production call is visible rather than silent.
+// There turned out to be no exception. The last candidate was a black-border check
+// that reads four specific pixels, one per edge - which no aggregate replaces, since
+// the frame is mostly picture and a bar barely moves a mean, but which is four
+// triples and so a summary like any other (`PixelsAt`). No samples leave this side.
 
 use crate::frame::{Frame, Pixels};
 use serde::{Deserialize, Serialize};
@@ -221,27 +221,6 @@ fn sha256_hex(data: &[u8]) -> String {
     h.iter().map(|word| format!("{word:08x}")).collect()
 }
 
-/// Writes a frame's samples to a file, in native order.
-///
-/// **The only door that hands pixels over, and it goes through the filesystem.**
-/// One test genuinely needs bytes rather than a summary, and rather than open a
-/// buffer path for it - which is the thing every other part of this refactor
-/// exists to close - it writes them somewhere and the caller reads them back.
-///
-/// It says so in the log every time. Nothing in the product calls this, and if a
-/// line ever appears in a production log then something does and the log is where
-/// that shows up rather than in a review that did not happen.
-pub fn dump_samples(frame: &Frame, out_path: &str) -> Result<usize, String> {
-    let bytes = to_bytes(&frame.pixels);
-    eprintln!(
-        "rawshim: WARNING bb_debug wrote {} bytes of pixel data to {out_path}. This is a \
-         test and debug path; nothing in the product should reach it.",
-        bytes.len(),
-    );
-    std::fs::write(out_path, &bytes).map_err(|e| format!("could not write {out_path}: {e}"))?;
-    Ok(bytes.len())
-}
-
 /// What a debug command asks for.
 #[derive(Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
@@ -254,16 +233,6 @@ pub enum Command {
         rec2020_linear: bool,
         #[serde(default)]
         at_least_long_edge: u32,
-    },
-    /// A decode's samples, written to a file. The guarded door.
-    DumpDecode {
-        path: String,
-        depth: u32,
-        #[serde(default)]
-        rec2020_linear: bool,
-        #[serde(default)]
-        at_least_long_edge: u32,
-        out_path: String,
     },
     /// A written image against a decode of the RAW it came from, by PSNR.
     ///
@@ -308,6 +277,24 @@ pub enum Command {
         path: String,
         #[serde(default)]
         size: u32,
+    },
+    /// Named pixels of a decode, and nothing else.
+    ///
+    /// For the assertions that read specific positions rather than a statistic over
+    /// all of them - a black masked border shows up at the edges and nowhere in any
+    /// aggregate, because the frame is mostly picture and a bar on one edge barely
+    /// moves a mean. A handful of triples is still a summary, so it comes back as
+    /// one rather than through the file the whole decode used to take.
+    PixelsAt {
+        path: String,
+        depth: u32,
+        #[serde(default)]
+        rec2020_linear: bool,
+        #[serde(default)]
+        at_least_long_edge: u32,
+        /// `[x, y]` each, in pixels. Out of range reads as absent rather than as
+        /// black, so a wrong coordinate cannot pass as a dark pixel.
+        points: Vec<[i64; 2]>,
     },
     /// The camera match, fitted and reported.
     ///
@@ -421,8 +408,6 @@ pub struct Reply {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summary: Option<DecodeSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub written: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub comparison: Option<Comparison>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub graded: Option<GradedSummary>,
@@ -434,6 +419,9 @@ pub struct Reply {
     pub renders: Option<RenderComparison>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub against_preview: Option<AgainstPreview>,
+    /// One entry per requested point, null where it fell outside the frame.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pixels: Option<Vec<Option<[u32; 3]>>>,
 }
 
 /// A fitted camera match, described. Everything the assertions on the fit read.
@@ -590,15 +578,6 @@ pub fn run(command: &Command) -> Result<Reply, String> {
                 .ok_or("could not decode")?;
             Ok(Reply { summary: Some(summarise(&frame)), ..Reply::default() })
         }
-        Command::DumpDecode { path, depth, rec2020_linear, at_least_long_edge, out_path } => {
-            let frame = crate::decode_frame(path, *depth, *rec2020_linear, *at_least_long_edge)
-                .ok_or("could not decode")?;
-            Ok(Reply {
-                summary: Some(summarise(&frame)),
-                written: Some(dump_samples(&frame, out_path)?),
-                ..Reply::default()
-            })
-        }
         Command::ComparePsnr { image_path, raw_path } => {
             let encoded = std::fs::read(image_path)
                 .map_err(|e| format!("could not read {image_path}: {e}"))?;
@@ -691,6 +670,26 @@ pub fn run(command: &Command) -> Result<Reply, String> {
                 matched.as_ref(),
             )?;
             Ok(Reply::default())
+        }
+        Command::PixelsAt { path, depth, rec2020_linear, at_least_long_edge, points } => {
+            let frame = crate::decode_frame(path, *depth, *rec2020_linear, *at_least_long_edge)
+                .ok_or("could not decode")?;
+            let at = |[x, y]: [i64; 2]| {
+                let (width, height) = (frame.width as i64, frame.height as i64);
+                if x < 0 || y < 0 || x >= width || y >= height {
+                    return None;
+                }
+                let i = (y as usize * frame.width + x as usize) * 3;
+                let sample = |k: usize| match &frame.pixels {
+                    Pixels::Eight(data) => data.get(k).map(|v| u32::from(*v)),
+                    Pixels::Sixteen(data) => data.get(k).map(|v| u32::from(*v)),
+                };
+                Some([sample(i)?, sample(i + 1)?, sample(i + 2)?])
+            };
+            Ok(Reply {
+                pixels: Some(points.iter().map(|p| at(*p)).collect()),
+                ..Reply::default()
+            })
         }
         Command::PreviewSummary { path, size } => {
             let preview = crate::decode_embedded_rgb(path, *size as usize).ok_or("no embedded preview")?;

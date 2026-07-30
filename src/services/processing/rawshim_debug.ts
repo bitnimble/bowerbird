@@ -7,8 +7,8 @@
 // is a digest or a statistic, and both are cheaper to compute where the pixels
 // already are.
 //
-// Lint keeps this out of `src/**`. It is not a production API and the one door in it
-// that does hand bytes over, `dumpDecode`, goes through a file and says so in the log.
+// Lint keeps this out of `src/**`. Nothing here hands samples over, including the one
+// call that reads individual pixels: four triples is a summary like any other.
 import { ptr } from 'bun:ffi';
 import { shim } from './rawshim';
 
@@ -68,6 +68,8 @@ export interface HdrColour {
   distortionSource: 'none' | 'camera' | 'fitted' | 'lensfun';
 }
 
+export type RgbTriple = [number, number, number];
+
 export interface ProfileSummary {
   /** Held-out mean deltaE76 after the whole transform, so not a training score. */
   deltaE: number;
@@ -99,13 +101,13 @@ interface DebugReply {
   error?: string;
   reply?: {
     summary?: DecodeSummary;
-    written?: number;
     comparison?: Comparison;
     graded?: GradedSummary;
     colour?: HdrColour;
     profile?: ProfileSummary;
     renders?: RenderComparison;
     againstPreview?: AgainstPreview;
+    pixels?: (RgbTriple | null)[];
   };
 }
 
@@ -305,23 +307,29 @@ export function deltaEToPreview(imagePaths: string[], rawPath: string): AgainstP
 }
 
 /**
- * A decode's samples, written to `outPath`, plus its summary.
+ * Named pixels of a decode, and nothing else.
  *
- * The only way to get pixels out, and it goes through the filesystem on purpose:
- * opening a buffer path for the one test that needs bytes would reopen the thing
- * this whole boundary exists to close. The native side logs a warning every time,
- * so a production call shows up in the logs rather than in a review that did not
- * happen.
+ * For the assertions that read specific positions rather than a statistic over all of
+ * them. A masked border that was not cropped shows up as black at the frame's edges
+ * and in no aggregate at all, because the frame is mostly picture and a bar on one
+ * edge barely moves a mean.
+ *
+ * A point outside the frame comes back null rather than black, so a wrong coordinate
+ * cannot pass for a dark pixel.
  */
-export function dumpDecode(path: string, outPath: string, request: DecodeRequest = {}): DecodeSummary {
+export function pixelsAt(
+  path: string,
+  points: readonly (readonly [number, number])[],
+  request: DecodeRequest = {},
+): (RgbTriple | null)[] {
   const reply = ask({
-    kind: 'dumpDecode',
+    kind: 'pixelsAt',
     path,
     depth: request.depth ?? 8,
     rec2020Linear: request.space === 'rec2020-linear',
     atLeastLongEdge: request.atLeastLongEdge ?? 0,
-    outPath,
+    points,
   });
-  if (reply?.summary == null) throw new Error(`no summary for ${path}`);
-  return reply.summary;
+  if (reply?.pixels == null) throw new Error(`no pixels for ${path}`);
+  return reply.pixels;
 }
