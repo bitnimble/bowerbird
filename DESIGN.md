@@ -2831,7 +2831,21 @@ fraction shorter than the grid's cell - enough to letterbox a frame that filled
 its cell in the grid, the one place the same photograph was drawn at two shapes.
 The 3:2 the cell height implies is stated on the member as well, so the sliver the
 band's own side padding takes off its cell does not come back as a bar; it is
-centred, and the halves of that sliver fall in the gaps either side.
+centred, and the halves of that sliver fall in the gaps either side. **The height is
+stated too**, rather than left to `align-self: stretch`: stretch against an aspect
+ratio is a corner the engines read differently, and Firefox took neither axis as
+definite and laid every member out at no height at all. That, and the capped flex
+line below, is why one E2E file runs in both engines (`band_layout.spec.ts`).
+
+**Masonry's band is not in the row model at all** - the block it sits in reports the
+height it laid out to (§18.3.2) - so it can afford the full inset without taking it
+off its members, and its rows are **capped** instead: a band is a full-width flex
+line, so two portrait frames alone on one stretched to the width of the grid and
+drew the stack several times the size of the collection around it. The cap is
+`BAND_LINE_CAP` times the stack's own tile, which is the size the reader is already
+looking at, and it is applied to the width - the ratio carries it to the height, and
+flex leaves the space it no longer wants to the right of them. A masonry line's
+tiles all share one height by construction, so capping one caps the line.
 
 **Masonry** has no row model to hang a band off, so an open stack's members break
 the line themselves: the band is a full-width item on the block's own flex line.

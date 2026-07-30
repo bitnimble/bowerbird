@@ -7,7 +7,7 @@ import { captureDateTime, localDateTime } from '../../api/dates';
 import { renditionUrl, type PhotoSummary } from '../../api/client';
 import { usePhotosStore, usePresenters } from '../../app/stores_context';
 import { Text } from '../../ui/ui';
-import { BLOCK, GRID_GAP, TILE_ASPECT, bandRowHeight, masonryLineStarts } from './grid_layout';
+import { BAND_LINE_CAP, BLOCK, GRID_GAP, TILE_ASPECT, bandRowHeight, masonryLineStarts } from './grid_layout';
 import { bandRows } from './bands';
 import { renditionVersion, type Expansion, type PhotosStore } from './photos_store';
 import type { Span } from '../../ui/virtual_rows';
@@ -143,22 +143,6 @@ const Tile = observer(function Tile({
     if (!isFocused || store.mode !== 'masonry') return;
     frame.current?.scrollIntoView({ block: 'nearest' });
   }, [isFocused, store.mode, store.tileSize, store.viewportWidth]);
-  // Where a joined masonry tile sits on its line, reported for its band to cut its
-  // top edge to (`fusedTileBoxes`). The one thing about the join that cannot be
-  // computed: a line grows its tiles from their own shapes, or hands the slack to a
-  // spacer, depending on what follows it. Off the tile that is actually joined, so
-  // at most one per line - and re-run on the two inputs the packing is a function
-  // of, since a resize or a zoom moves the tile without resizing every one of them.
-  const stackId = photo.stack_id;
-  useEffect(() => {
-    const element = frame.current;
-    if (!fused || store.mode !== 'masonry' || element == null || stackId == null) return;
-    const report = (): void => photos.measuredFusedTile(stackId, element.offsetLeft, element.offsetWidth);
-    report();
-    const observer = new ResizeObserver(report);
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [fused, stackId, store.mode, store.tileSize, store.viewportWidth, photos]);
   // A rendition 404s while processing is still writing it, and the announcement
   // is what brings it back: the version is this row's own `date_reprocessed`,
   // which the announcement for this photo writes into it, so a new URL is one
@@ -184,6 +168,24 @@ const Tile = observer(function Tile({
   const selected = store.selection.has(index);
   const expanded = photo.stack_id != null && store.expansions.has(photo.stack_id);
   const stacked = photo.stack_id != null && photo.stack_size > 1;
+
+  // Where this tile ended up on its masonry line, reported for the band it opened
+  // (`stackTileBoxes`): the offsets its top edge is cut to, and the height its rows
+  // are capped against. The one thing about a band in masonry that cannot be
+  // computed: a line grows its tiles from their own shapes, or hands the slack to a
+  // spacer, depending on what follows it. Off the tiles that have a band, so at most
+  // one per open stack - and re-run on the two inputs the packing is a function of,
+  // since a resize or a zoom moves the tile without resizing every one of them.
+  const stackId = photo.stack_id;
+  useEffect(() => {
+    const element = frame.current;
+    if (!expanded || store.mode !== 'masonry' || element == null || stackId == null) return;
+    const report = (): void => photos.measuredStackTile(stackId, element.offsetLeft, element.offsetWidth, element.offsetHeight);
+    report();
+    const observer = new ResizeObserver(report);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [expanded, stackId, store.mode, store.tileSize, store.viewportWidth, photos]);
 
   return (
     // The set size and position are stated because only a few dozen tiles are in
@@ -448,7 +450,7 @@ function ratiosFor(store: PhotosStore, from: number, to: number): number[] {
  * Two ways of knowing where the tile is. With a row model it is a column, so the
  * offsets are arithmetic CSS can do from the count alone. In masonry it is
  * whatever the line's packing made it, which the tile measures and reports
- * (`fusedTileBoxes`); until that lands there is nothing to cut, so the band is
+ * (`stackTileBoxes`); until that lands there is nothing to cut, so the band is
  * drawn whole for a frame.
  */
 function joinTo(
@@ -457,7 +459,7 @@ function joinTo(
   placed: boolean,
 ): { first: boolean; last: boolean; vars: React.CSSProperties } | null {
   if (!placed) {
-    const box = store.fusedTileBoxes.get(expansion.stackId);
+    const box = store.stackTileBoxes.get(expansion.stackId);
     if (box == null) return null;
     return {
       first: box.x <= 0.5,
@@ -490,6 +492,11 @@ const BandTiles = observer(function BandTiles({
   const rows = bandRows(expansion.photos.length, store.columns);
   const placed = top != null;
   const join = fused ? joinTo(store, expansion, placed) : null;
+  // How tall a line of members may get, in masonry only: nothing there bounds one,
+  // so a band of two portrait frames stretched to the width of the grid and drew
+  // the stack several times the size of the collection around it. Against the
+  // stack's own tile, which is the size the reader is already looking at.
+  const cap = placed ? null : store.stackTileBoxes.get(expansion.stackId)?.height;
 
   return (
     <div
@@ -504,9 +511,10 @@ const BandTiles = observer(function BandTiles({
           ...(placed ? { transform: `translateY(${store.railPositionOf(top)}px)` } : {}),
           '--cols': store.columns,
           ...join?.vars,
-          // A band gets exactly the display rows the row arithmetic gave it, so
-          // the padding inside its outline comes out of its own cells rather than
-          // out of the collection below it.
+          ...(cap == null ? {} : { '--band-cap': `${cap * BAND_LINE_CAP}px` }),
+          // A band gets exactly the display rows the row arithmetic gave it, and its
+          // cells are the grid's own; what pays for the padding is the one gap those
+          // rows have spare (`bandRowHeight`).
           '--row-h': `${bandRowHeight(rows, store.rowHeight)}px`,
         } as React.CSSProperties
       }

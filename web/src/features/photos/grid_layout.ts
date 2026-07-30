@@ -13,6 +13,13 @@ export const LIST_ROW_H = 62;
 // .grid--grid gives every photo the same 3:2 cell.
 export const TILE_ASPECT = 3 / 2;
 
+// How much taller than the stack's own tile a line of its members may be drawn, in
+// masonry. Nothing else bounds one there - the band is a full-width flex line, so
+// two portrait frames alone on it stretch to the width of the grid - and a stack
+// several times the size of the collection around it reads as a different view
+// rather than as part of the one being worked through (§19.6).
+export const BAND_LINE_CAP = 1.3;
+
 // The breathing room inside a band's outline, so its members do not sit on it.
 //
 // Half the gap, top and bottom, because that is the whole budget: the row model

@@ -13,6 +13,14 @@ export default defineConfig({
   timeout: 60_000,
   expect: { timeout: 15_000 },
   use: { baseURL: `http://127.0.0.1:${WEB_PORT}`, trace: 'retain-on-failure' },
+  // One engine for the app's behaviour, and a second for the layout the two of them
+  // read differently: aspect ratios against stretched grid rows and capped flex
+  // lines are where they disagree, and a band of photographs is all three at once.
+  // A whole suite in both would double the run for one file's worth of risk.
+  projects: [
+    { name: 'chromium', use: { browserName: 'chromium' } },
+    { name: 'firefox', use: { browserName: 'firefox' }, testMatch: /band_layout\.spec\.ts/ },
+  ],
   webServer: [
     {
       command: 'bun run src/index.ts',

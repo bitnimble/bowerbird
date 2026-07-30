@@ -169,15 +169,16 @@ export class PhotosStore {
   // collection changed underneath it.
   @observable accessor expansions = new Map<string, Expansion>();
 
-  // Where a joined masonry tile sits on its line, by stack id: the offset and
-  // width its band cuts the gap in its top edge from (§19.6).
+  // Where an open stack's tile sits on its masonry line, by stack id: the offset and
+  // width its band cuts the gap in its top edge from, and the height its band caps
+  // its own rows against (§19.6).
   //
   // Measured, and the only geometry in the grid that is. A masonry line grows its
   // tiles from their own shapes *or* hands the slack to a spacer depending on what
   // follows the line, so where a tile ended up on one is not arithmetic the way a
   // column is - the same reason a masonry block's height is measured rather than
-  // computed (§18.3.2). One tile per line, and only while it is joined.
-  @observable accessor fusedTileBoxes = new Map<string, { x: number; width: number }>();
+  // computed (§18.3.2). One tile per open stack, and only while it is open.
+  @observable accessor stackTileBoxes = new Map<string, { x: number; width: number; height: number }>();
 
   // Which members of open bands are selected, by id.
   //

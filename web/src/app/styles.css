@@ -1471,11 +1471,31 @@ p.ui-text--mono {
    band's own padding leaves, so it is centred and the halves of a hair fall in the
    gaps either side. Without the ratio a member was letterboxed by whatever the
    padding took off, which is the one place the same photograph was drawn at two
-   shapes. */
+   shapes.
+
+   The height is stated rather than left to `align-self: stretch`. Stretch plus an
+   aspect ratio is a corner the engines disagree on: Firefox took neither axis as
+   definite and laid every member out at no height at all. */
 .grid--grid.grid__band .tile {
   aspect-ratio: 3 / 2;
+  height: var(--row-h);
   width: auto;
   justify-self: center;
+}
+
+/* Masonry's band is not in the row model at all - the block it sits in reports the
+   height it laid out to (§18.3.2) - so its padding can be the full inset without
+   coming off its members, which is what the other two modes cannot afford.
+   And a line of its members is capped: a band of two portrait frames stretched to
+   the width of the grid is a stack drawn several times the size of the collection
+   around it. Capping the width caps the height through the ratio, and flex leaves
+   the space it no longer wants to the right of them. */
+.grid--masonry.grid__band {
+  padding: 6px;
+}
+
+.grid--masonry.grid__band .tile {
+  max-width: calc(var(--band-cap, 100%) * var(--ar));
 }
 
 /* Masonry has no rows to place a band between, so it is a full-width item on the
