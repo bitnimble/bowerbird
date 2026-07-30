@@ -3,11 +3,15 @@ import {
   BAND_PAD,
   BLOCK,
   GRID_GAP,
-  MAX_SCROLL,
+  RAIL_HEIGHT,
+  anchorLimit,
+  atRailWall,
   bandRowHeight,
   blockTops,
   gridColumns,
   gridRowHeight,
+  railHeight,
+  recentred,
   visibleBlocks,
 } from '../grid_layout';
 
@@ -73,24 +77,81 @@ describe('visibleBlocks', () => {
   });
 });
 
-// A browser silently clamps a scroll past ~33.5M px (half that in Firefox), and
-// the grid at its highest zoom - one column of thousand-pixel rows - reaches
-// that at thirty thousand photos. Past the clamp the rest of the collection is
-// simply unreachable, which is the one failure the virtual scroll exists to
-// avoid, so the numbers that decide when scaling kicks in are worth pinning.
-describe('MAX_SCROLL', () => {
-  test('leaves room under the tightest browser limit', () => {
-    const FIREFOX = 17_895_697;
-    expect(MAX_SCROLL).toBeLessThan(FIREFOX);
+// The rail is what replaced scaling a scroller into a browser's scroll ceiling.
+// Everything here is about the two invariants that make it safe: the reader can
+// still reach the end of the collection, and recentring the rail never moves what
+// they are looking at.
+describe('the rail', () => {
+  const V = 800;
+  const HUGE = 40_000_000; // a hundred thousand photos, one column, at maximum zoom
+
+  test('is an element height every browser will honour', () => {
+    // The whole point of the rail: the height handed to the browser no longer
+    // describes the collection, so it never approaches a clamp. Firefox's is the
+    // tightest at ~17.9M, Chromium's is 33,554,428.
+    expect(RAIL_HEIGHT).toBeLessThan(17_895_697);
+    expect(railHeight(HUGE)).toBeLessThan(17_895_697);
   });
 
-  test('the zoom that used to truncate a library is inside it', () => {
-    // One column at the 1600px maximum tile: a 3:2 cell plus its gap.
-    const pitch = gridRowHeight(1600, 1);
-    expect(Math.floor(MAX_SCROLL / pitch)).toBeGreaterThan(13_000);
-    // Unscaled this wanted 33.4M px for 31,370 rows, which is where Chromium cut
-    // the collection off. Scaling is what keeps the tail reachable instead.
-    expect(31_370 * pitch).toBeGreaterThan(MAX_SCROLL);
+  test('is the collection itself while the collection fits in it', () => {
+    expect(railHeight(50_000)).toBe(50_000);
+    expect(anchorLimit(50_000)).toBe(0);
+  });
+
+  test('caps at RAIL_HEIGHT, and the anchor covers the rest', () => {
+    expect(railHeight(HUGE)).toBe(RAIL_HEIGHT);
+    expect(anchorLimit(HUGE)).toBe(HUGE - RAIL_HEIGHT);
+  });
+
+  // The reachability of the tail is asserted against the presenter in
+  // rail_scroll.test.ts, where it is a property of the wall logic rather than the
+  // algebraic identity it is here.
+
+  test('a collection the rail covers has no walls to be pushed off', () => {
+    // Its ends are the collection's ends, and the reader is meant to reach them:
+    // recentring there would refuse to let them scroll to the last row.
+    expect(atRailWall(0, 50_000, V)).toBe(false);
+    expect(atRailWall(50_000 - V, 50_000, V)).toBe(false);
+  });
+
+  test('a wall is only near an end of the rail', () => {
+    expect(atRailWall(RAIL_HEIGHT / 2, HUGE, V)).toBe(false);
+    // The margin is two viewports, so one viewport in is already inside it.
+    expect(atRailWall(V * 2, HUGE, V)).toBe(false);
+    expect(atRailWall(V * 2 - 1, HUGE, V)).toBe(true);
+    expect(atRailWall(RAIL_HEIGHT - V - V * 2 + 1, HUGE, V)).toBe(true);
+  });
+
+  test('recentring leaves the reader exactly where they were', () => {
+    const anchor = 5_000_000;
+    const rail = 200; // right up against the top wall
+    const put = recentred(anchor, rail, HUGE, V);
+    expect(put.anchorTop + put.railTop).toBe(anchor + rail);
+    expect(put.railTop).toBeCloseTo((RAIL_HEIGHT - V) / 2, 6);
+  });
+
+  test('near the top the anchor runs out first, and the position still holds', () => {
+    // The rail cannot be centred without an anchor above zero to take it, so it
+    // is left off-centre rather than the reader being moved to suit it.
+    const put = recentred(0, 300, HUGE, V);
+    expect(put.anchorTop).toBe(0);
+    expect(put.railTop).toBe(300);
+  });
+
+  test('near the bottom the anchor stops at its limit, position intact', () => {
+    const limit = anchorLimit(HUGE);
+    const rail = RAIL_HEIGHT - V - 100;
+    const put = recentred(limit, rail, HUGE, V);
+    expect(put.anchorTop).toBe(limit);
+    expect(put.anchorTop + put.railTop).toBe(limit + rail);
+  });
+
+  test('recentring from a wall puts the next wall a long way off', () => {
+    // What buys the smooth scroll: writing scrollTop cancels a fling on macOS, so
+    // the walls have to be far enough apart that a fling rarely reaches one.
+    const put = recentred(5_000_000, V, HUGE, V);
+    const toWall = RAIL_HEIGHT - V - V * 2 - put.railTop;
+    expect(toWall).toBeGreaterThan(RAIL_HEIGHT / 3);
   });
 });
 

@@ -47,7 +47,7 @@ describe('a band is drawn at its own first row', () => {
     const members = Array.from({ length: 10 }, (_, i) => photo(`m${i}`));
     store.expansions = new Map([['s1', { stackId: 's1', position: 0, photos: members }]]);
     // Far enough in that the band's first rows are above the fold.
-    store.scrollTop = 5 * store.rowHeight;
+    store.railTop = 5 * store.rowHeight;
 
     const band = store.sections.find((section) => section.kind === 'band');
     expect(band).toBeDefined();
@@ -64,7 +64,7 @@ describe('a band never starves the grid of blocks', () => {
     const members = Array.from({ length: 40 }, (_, i) => photo(`m${i}`));
     store.expansions = new Map([['s1', { stackId: 's1', position: 7, photos: members }]]);
     // Inside the band, where no row of the collection is on screen at all.
-    store.scrollTop = 12 * store.rowHeight;
+    store.railTop = 12 * store.rowHeight;
 
     expect(store.sections.every((section) => section.kind === 'band')).toBe(true);
     // Answering "nothing visible" here stopped every fetch and made Select
@@ -79,14 +79,14 @@ describe('the keyboard cursor accounts for open bands', () => {
     const store = storeWith(40, { rowHeight: 65, columns: 1 });
     const members = Array.from({ length: 6 }, (_, i) => photo(`m${i}`));
     store.expansions = new Map([['s1', { stackId: 's1', position: 0, photos: members }]]);
-    store.scrollTop = 0;
+    store.railTop = 0;
     store.focusIndex = 20;
 
     // Photo 20 sits on collection row 20, but six band rows are inserted above
     // it, so it is drawn on display row 26. Targeting row 20 left the cursor a
     // whole band-height off screen.
     const drawnAt = 26 * store.rowHeight;
-    const target = store.focusScrollTop;
+    const target = store.focusContentTop;
     expect(target).not.toBeNull();
     expect(target).toBeCloseTo(drawnAt + store.rowHeight - 3 - store.viewportHeight, 0);
   });
@@ -95,10 +95,10 @@ describe('the keyboard cursor accounts for open bands', () => {
 describe('the rendered window keeps its identity while it scrolls', () => {
   test('a scroll does not change the key the grid window is reconciled by', () => {
     const store = storeWith(400, { rowHeight: 65, columns: 1 });
-    store.scrollTop = 10 * store.rowHeight;
+    store.railTop = 10 * store.rowHeight;
     const before = store.sections.filter((section) => section.kind === 'grid');
 
-    store.scrollTop = 11 * store.rowHeight;
+    store.railTop = 11 * store.rowHeight;
     const after = store.sections.filter((section) => section.kind === 'grid');
 
     // The window has genuinely moved...
@@ -113,10 +113,10 @@ describe('the rendered window keeps its identity while it scrolls', () => {
     const members = Array.from({ length: 4 }, (_, i) => photo(`m${i}`));
     store.expansions = new Map([['s1', { stackId: 's1', position: 10, photos: members }]]);
     // The band spans display rows 11-14; start with it in view, then scroll past it.
-    store.scrollTop = 12 * store.rowHeight;
+    store.railTop = 12 * store.rowHeight;
     const before = store.sections.filter((section) => section.kind === 'grid').at(-1)!.key;
 
-    store.scrollTop = 30 * store.rowHeight;
+    store.railTop = 30 * store.rowHeight;
     const after = store.sections.filter((section) => section.kind === 'grid').at(-1)!.key;
 
     expect(after).toBe(before);

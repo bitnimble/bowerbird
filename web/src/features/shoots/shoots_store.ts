@@ -123,7 +123,12 @@ export class ShootsStore {
   // tree is: the same reason the gallery scrolls virtually (§18.3.2), reached
   // from the other direction. Rows are uniform, so the whole thing is arithmetic
   // over the viewport and one row height.
-  @computed get visible(): Span {
+  //
+  // Struct, as the gallery's `visibleSpan` is: the scroll position is sampled once
+  // a frame but the rows on screen change only when one crosses the fold, and
+  // comparing the value rather than its inputs is what keeps the slice below - and
+  // so every mounted row - out of the per-frame path.
+  @computed.struct get visible(): Span {
     return visibleRows(this.scrollTop, this.viewportHeight, SHOOT_ROW_H, this.rows.length);
   }
 

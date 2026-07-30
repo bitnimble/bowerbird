@@ -934,17 +934,105 @@ p.ui-text--mono {
 
 /* ---------- grid ---------- */
 
-/* The gallery's one scroll, over the whole collection. Only the tiles near the
-   viewport are mounted; .grid__content stands in for the rest of the height. */
+/* The scroller, with the grid's own scrollbar floating over its right edge. */
+.grid__viewport {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+/* The gallery's one scroll. Only the tiles near the viewport are mounted, and
+   .grid__content is a fixed-height rail rather than the collection's own height:
+   the anchor says which content pixel its origin is (§18.3.2). */
 .grid__scroller {
   flex: 1;
+  min-width: 0;
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
+  /* The gutter .grid__bar floats in. Constant whether or not a bar is drawn, which
+     is what stops the bar's own presence from changing the column count and so the
+     content height that decides whether a bar is needed; and a ResizeObserver's
+     contentRect excludes it, so `viewportWidth` never sees it move. Without it, a
+     24px pointer target has to reach over the rightmost tile's select box. */
+  padding-right: 24px;
+  /* The rail is not the collection, so the native thumb would describe a
+     hundred thousand pixels somewhere in the middle of it. .grid__bar is what
+     replaces it. */
+  scrollbar-width: none;
+}
+
+.grid__scroller::-webkit-scrollbar {
+  display: none;
 }
 
 .grid__content {
   position: relative;
+  /* Load-bearing: the browser's own scroll anchoring picks a row to hold still
+     and adjusts scrollTop to keep it there, which fights every anchor write and
+     leaves the rail somewhere neither side agrees on. */
+  overflow-anchor: none;
+}
+
+/* Out of the flow rather than a gutter beside the scroller: the scroller's width
+   drives the column count and every row's height, so a bar that took space
+   changed the very content height that decides whether a bar is needed.
+
+   It floats in .grid__scroller's padding, so its 24px pointer target (WCAG 2.5.8)
+   reaches over nothing. The track itself takes no pointer events: it spans the
+   grid's whole height, and events there would swallow a click, a wheel notch or a
+   touch pan anywhere down that edge. */
+.grid__bar {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 24px;
+  pointer-events: none;
+  user-select: none;
+  /* Above .tile__stack (1) and the focus ring (2), which are only trapped below
+     this by .grid__window's transform - a masonry block positions with `top` and
+     so makes no stacking context at all. Still under .bulkbar (5) and up. */
+  z-index: 3;
+}
+
+/* The whole 24px of the track's width, and the only thing in here that takes the
+   pointer. */
+.grid__bar-thumb {
+  position: absolute;
+  left: 0;
+  right: 0;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+/* The 6px the reader sees, centred in the gutter; the rest of the thumb is grab
+   room over empty padding. */
+.grid__bar-thumb::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 9px;
+  right: 9px;
+  border-radius: var(--radius);
+  /* --bone-dim, not a divider tint: on --ink a #232833 thumb is 1.2:1 and simply
+     cannot be seen, and hiding the native bar means this is the only readout of
+     where in the collection the reader is. */
+  background: var(--bone-dim);
+}
+
+.grid__bar-thumb:hover::after {
+  background: var(--bone);
+}
+
+/* Forced colours flatten a bare background to Canvas, and the OS is not drawing
+   this scrollbar for us any more. */
+@media (forced-colors: active) {
+  .grid__bar-thumb::after {
+    background: CanvasText;
+  }
 }
 
 /* The mounted rows, parked at the scroll offset they belong to. */
