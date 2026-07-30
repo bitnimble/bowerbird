@@ -529,19 +529,16 @@ unsafe fn hdr_source<'a>(
 /// `bb_fit_hdr_match` or null for a neutral grade. Both are passed rather than derived
 /// here so a still and its video twin share one decode and one fit.
 ///
-/// `release_source` frees the decode's pixels as soon as the grade has copied out of
-/// them, rather than leaving 366MB of a 61MP frame resident until JavaScript drops the
-/// handle - which is after the encode, the longest stage of the job. Only the *last*
-/// rendition off a decode may set it; the handle stays valid either way and reads as
-/// one with no pixels, so a caller that sets it too early gets a refused encode rather
-/// than a wrong one.
+/// Always borrows the decode. Handing one over before the encode allocates is the
+/// peak that matters, and it is the job path's business (`job.rs`) - there the frame
+/// is owned and the compiler sees it dropped, where here it is a pointer this
+/// function did not allocate and has no right to free.
 ///
 /// 0 on success, -1 on failure.
 ///
 /// # Safety
 /// `image` must be a live handle, `output_path` and `video_output_path` NUL-terminated
-/// C strings, `options` readable, `matched` null or a live handle. With
-/// `release_source` set, nothing may read `image`'s pixels after this returns.
+/// C strings, `options` readable, `matched` null or a live handle.
 #[expect(unsafe_code)]
 #[no_mangle]
 pub unsafe extern "C" fn bb_encode_hdr(
@@ -550,7 +547,6 @@ pub unsafe extern "C" fn bb_encode_hdr(
     output_path: *const c_char,
     options: *const BbHdrOptions,
     video_output_path: *const c_char,
-    release_source: i32,
 ) -> i32 {
     vips::init();
     if output_path.is_null() || video_output_path.is_null() {
@@ -565,21 +561,12 @@ pub unsafe extern "C" fn bb_encode_hdr(
     let matched = unsafe { matched.as_ref() }.map(|m| &m.inner);
 
     let encoded = crate::guard("bb_encode_hdr", Err("panicked".to_string()), || {
-        // Runs once the grade has its own buffer and `source` has been dropped, so the
-        // borrow this releases is provably over by the time it does.
-        let release = || {
-            if release_source != 0 {
-                unsafe { (*image).release_pixels() };
-            }
-        };
-        let owned = crate::frame::Frame::new(
-            source.width,
-            source.height,
-            crate::frame::Pixels::Sixteen(source.samples.to_vec()),
-        );
-        release();
+        // Always borrowed here. Handing a decode over is the job path's business
+        // (`job.rs`), where the frame is owned and the compiler can see it dropped;
+        // this entry point holds a pointer it did not allocate and has nothing to
+        // give away.
         crate::hdr::encode_pair(
-            crate::hdr::Decode::Owned(owned),
+            crate::hdr::Decode::Borrowed(source),
             &built,
             (!video.is_empty()).then_some(video),
             matched,

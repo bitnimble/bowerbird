@@ -467,17 +467,17 @@ export function freeHdrMatch(matched: HdrMatchHandle): void {
  * the grade - the resize, the warp and the tone map - and only the encoder's row
  * ceiling can ever give them different sizes.
  *
- * `releaseLinear` hands the decode's pixels back the moment the grade has copied out of
- * them, instead of holding 366MB of a 61MP frame across the encode as well. Only the
- * last rendition off a decode may pass it: the handle survives either way and has to be
- * freed as usual, but it is empty afterwards and any further encode off it is refused.
+ * Always borrows the decode. Handing one over early - the peak that matters, since a
+ * 61MP frame is 366MB held across the longest stage - is the job path's business
+ * (`rawshim_job.ts`), where the frame is owned in Rust and the compiler can see it
+ * dropped. This entry point is for tests, and a caller holding a handle has nothing
+ * to give away.
  */
 export function encodeHdrRendition(
   linear: ImageHandle,
   matched: HdrMatchHandle | null,
   options: HdrOptions,
   videoOutputPath = '',
-  releaseLinear = false,
 ): void {
   if (linear.depth !== 16) throw new Error(`the HDR encode needs a 16-bit decode, got ${linear.depth}`);
   const status = shim().bb_encode_hdr(
@@ -486,7 +486,6 @@ export function encodeHdrRendition(
     Buffer.from(`${options.outputPath}\0`),
     ptr(hdrOptionsBuffer(options)),
     Buffer.from(`${videoOutputPath}\0`),
-    releaseLinear ? 1 : 0,
   );
   if (status !== 0) throw new Error(`rawshim could not encode ${options.outputPath}`);
 }

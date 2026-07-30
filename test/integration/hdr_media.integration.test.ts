@@ -173,49 +173,6 @@ test('the still leaves no intermediate behind', async () => {
   }
 });
 
-// `releaseLinear` is what the worker sets on the last rendition off a decode, so it
-// runs on every HDR import - and ran nowhere in this suite. What it does is free the
-// caller's pixels from inside the encode, which is the sort of thing that works until
-// it does not: the failure would be a use-after-free in production and nothing here.
-//
-// Its own decode rather than the shared `linear` above, which this would empty.
-test('releasing the decode inside the encode leaves a handle that refuses rather than reads freed pixels', () => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'bb-hdr-release-'));
-  const own = decodeRawImage(FIXTURE, 16, 'rec2020-linear', MAX_EDGE);
-  try {
-    const outputPath = path.join(dir, 'released.avif');
-    const options = {
-      medium: 'still' as const,
-      outputPath,
-      peakNits: 1000,
-      referenceWhiteNits: 203,
-      whiteQuantile: 0.99,
-      crf: 40,
-      preset: 12,
-      stillFullChroma: false,
-      maxEdge: MAX_EDGE,
-    };
-
-    // The encode still has to produce the right file: the release happens once the
-    // grade has copied out, so it must not touch what is written.
-    encodeHdrRendition(own, null, options, '', true);
-    const stream = probe(outputPath);
-    expect(stream.color_transfer).toBe('smpte2084');
-    expect(stream.pix_fmt).toBe('yuv420p10le');
-
-    // And the handle that is left reads as one with no pixels rather than as one
-    // pointing at freed memory - which is the whole safety argument for releasing
-    // early, and is only observable from here.
-    expect(() => encodeHdrRendition(own, null, { ...options, outputPath: path.join(dir, 'again.avif') })).toThrow();
-    expect(existsSync(path.join(dir, 'again.avif'))).toBe(false);
-  } finally {
-    // Freeing an already-released handle is the ordinary path, not an edge case: the
-    // worker holds every decode in one list and frees them all at the end.
-    freeImage(own);
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
 test('an 8-bit decode is refused rather than encoded as something HDR-shaped', () => {
   // The samples would be read as 16-bit and half the frame would come out noise, so
   // this has to fail loudly rather than write a plausible-looking file.

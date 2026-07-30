@@ -77,26 +77,35 @@ pub struct Source<'a> {
 
 /// The decode an encode reads, either borrowed or handed over outright.
 ///
-/// This is what replaced the `release_source` flag and `BbImage::release_pixels`.
-/// The problem both existed for is real - the decode is 366MB at 61MP and holding
-/// it across the encode, the longest stage of the job, is the peak - but the flag
-/// solved it by freeing a buffer the caller still held a pointer to, and could only
-/// be made safe by nulling that pointer and re-checking it everywhere.
+/// This is what replaced a `release_source` flag on the old boundary. The problem it
+/// existed for is real - the decode is 366MB at 61MP and holding it across the
+/// encode, the longest stage of the job, is the peak - but the flag solved it by
+/// freeing a buffer the caller still held a pointer to, and could only be made safe
+/// by nulling that pointer and re-checking it at every accessor.
 ///
 /// Owning it says the same thing to the compiler. `Owned` is dropped the moment the
 /// grade has copied out, and anything that tried to read it afterwards would not
 /// build. `Borrowed` is for a caller with another rendition still to write off the
 /// same frame; it keeps its decode and pays for it.
 pub enum Decode<'a> {
-    Borrowed(&'a crate::frame::Frame),
+    /// For a caller with another rendition still to write off the same frame. It
+    /// keeps its decode and pays for it.
+    Borrowed(Source<'a>),
+    /// For the last reader. Dropped once the grade has copied out, which is what
+    /// hands 366MB back before the encode allocates anything.
     Owned(crate::frame::Frame),
 }
 
 impl Decode<'_> {
-    fn frame(&self) -> &crate::frame::Frame {
+    fn source(&self) -> Result<Source<'_>, String> {
         match self {
-            Decode::Borrowed(frame) => frame,
-            Decode::Owned(frame) => frame,
+            Decode::Borrowed(source) => {
+                Ok(Source { samples: source.samples, width: source.width, height: source.height })
+            }
+            Decode::Owned(frame) => {
+                let samples = frame.samples16().ok_or("the HDR encode needs a 16-bit decode")?;
+                Ok(Source { samples, width: frame.width, height: frame.height })
+            }
         }
     }
 }
@@ -421,9 +430,7 @@ pub fn encode_pair(
     matched: Option<&HdrMatch>,
 ) -> Result<(), String> {
     let (frame, width, height) = {
-        let source = decode.frame();
-        let samples = source.samples16().ok_or("the HDR encode needs a 16-bit decode")?;
-        let source = Source { samples, width: source.width, height: source.height };
+        let source = decode.source()?;
         let levels = tone::levels(source.samples, options.white_quantile);
         graded_with(&source, options, matched, levels)
     };

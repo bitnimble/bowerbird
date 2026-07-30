@@ -278,7 +278,15 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
             // anything. Anything earlier keeps it, having another rendition to write.
             let decode = match Some(index) == last_hdr {
                 true => hdr::Decode::Owned(linear.take().ok_or("an HDR target with no decode")?),
-                false => hdr::Decode::Borrowed(linear.as_ref().ok_or("an HDR target with no decode")?),
+                false => {
+                    let frame = linear.as_ref().ok_or("an HDR target with no decode")?;
+                    let samples = frame.samples16().ok_or("the HDR encode needs a 16-bit decode")?;
+                    hdr::Decode::Borrowed(hdr::Source {
+                        samples,
+                        width: frame.width,
+                        height: frame.height,
+                    })
+                }
             };
             hdr::encode_pair(decode, &options, target.video_output_path.as_deref(), matched.as_ref())?;
             continue;

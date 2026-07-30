@@ -150,7 +150,7 @@ unsafe fn search(make: &str, model: &str, lens: &str, focal: f32, aperture: f32)
     // does not contradict rather than re-ranking.
     let mut result = None;
     let mut i = 0;
-    while !unsafe { (*found.add(i)) }.is_null() {
+    while !unsafe { (*found.add(i)).is_null() } {
         let entry = unsafe { *found.add(i) };
         if unsafe { plausible(entry, focal, aperture) } {
             result = Some(Resolved { lens: entry as usize, crop });
