@@ -7,7 +7,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { decodeRaw } from '../../src/services/processing/rawshim_pixels';
+import { decodeSummary } from '../../src/services/processing/rawshim_debug';
 import { decodeRawImage, encodeHdrRendition, freeImage, type ImageHandle } from '../../src/services/processing/rawshim_ops';
 
 const FIXTURE = `${import.meta.dir}/../fixtures/DSC02981.ARW`;
@@ -111,27 +111,17 @@ test('a scene-linear decode keeps the highlight headroom an sRGB one spends', ()
   // Half size: the subject is the levels the two decodes land on, which is a
   // property of the tone curve rather than of the frame's size.
   const half = { atLeastLongEdge: 1000 };
-  const display = decodeRaw(FIXTURE, 16, 'srgb', half);
-  const scene = decodeRaw(FIXTURE, 16, 'rec2020-linear', half);
+  const display = decodeSummary(FIXTURE, { depth: 16, space: 'srgb', ...half });
+  const scene = decodeSummary(FIXTURE, { depth: 16, space: 'rec2020-linear', ...half });
 
   expect(scene.width).toBe(display.width);
   expect(scene.depth).toBe(16);
 
-  const meanOf = (image: typeof scene): number => {
-    const samples = new Uint16Array(image.data.buffer, image.data.byteOffset, image.data.length / 2);
-    let sum = 0;
-    let count = 0;
-    for (let i = 0; i < samples.length; i += 997) {
-      sum += samples[i]!;
-      count++;
-    }
-    return sum / count;
-  };
+  // The summary reports a mean per channel; the frame's is their average, every
+  // channel having the same count.
+  const meanOf = (image: typeof scene): number =>
+    image.channels.reduce((total, channel) => total + channel.mean, 0) / image.channels.length;
 
-  // Linear light with no tone curve puts most of a normally exposed frame far
-  // down the range; the sRGB render lifts the same pixels for a display. If
-  // these ever converge, the gamma or auto-bright call stopped taking effect and
-  // the "HDR" encode is quietly working from display-referred pixels.
   expect(meanOf(scene)).toBeLessThan(meanOf(display) / 2);
 });
 

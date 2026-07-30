@@ -58,12 +58,12 @@
         "patterns": [
           {
             "group": [
-              "**/rawshim_pixels",
-              "./rawshim_pixels",
+              "**/rawshim_debug",
+              "./rawshim_debug",
               "**/jpeg_match_test_only",
               "./jpeg_match_test_only"
             ],
-            "message": "Pixel work belongs in native/rawshim. Only commands and encoded files cross into TypeScript; rawshim_pixels reads samples back and jpeg_match_test_only drives the fit over handles, and both are for tests alone."
+            "message": "Pixel work belongs in native/rawshim. Only commands and encoded files cross into TypeScript; rawshim_debug asks about samples and jpeg_match_test_only drives the old handle API, and both are for tests alone."
           }
         ]
       }

@@ -282,6 +282,59 @@ pub unsafe extern "C" fn bb_transcode_jpeg(
     encoded.len() as isize
 }
 
+/// Answers a question about pixels, for the tests and pins.
+///
+/// Same shape as `bb_run_job` and the same rule: JSON in, JSON out, into a buffer
+/// the caller owns. It exists because the pins have to assert on what this library
+/// produced, and reading samples back used to be the only way - which is what kept
+/// the handle API alive after its last production caller went. A digest and a
+/// per-channel stat answer the same questions without a buffer crossing.
+///
+/// # Safety
+/// As `bb_run_job`.
+#[expect(unsafe_code)]
+#[no_mangle]
+pub unsafe extern "C" fn bb_debug(
+    command: *const u8,
+    command_len: usize,
+    out: *mut u8,
+    out_cap: usize,
+) -> isize {
+    vips::init();
+    if command.is_null() {
+        return -1;
+    }
+    let bytes = unsafe { std::slice::from_raw_parts(command, command_len) };
+    let parsed: Result<crate::debug::Command, _> = serde_json::from_slice(bytes);
+    let result = match parsed {
+        Err(error) => Err(format!("could not read the debug command: {error}")),
+        Ok(parsed) => {
+            crate::guard("bb_debug", Err("panicked".to_string()), || crate::debug::run(&parsed))
+        }
+    };
+
+    let payload = match result {
+        Ok(reply) => serde_json::to_vec(&DebugReply { ok: true, error: None, reply: Some(reply) }),
+        Err(error) => serde_json::to_vec(&DebugReply { ok: false, error: Some(error), reply: None }),
+    };
+    let Ok(payload) = payload else { return -1 };
+    if payload.len() > out_cap || out.is_null() {
+        return payload.len() as isize;
+    }
+    let destination = unsafe { std::slice::from_raw_parts_mut(out, payload.len()) };
+    destination.copy_from_slice(&payload);
+    payload.len() as isize
+}
+
+#[derive(serde::Serialize)]
+struct DebugReply {
+    ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reply: Option<crate::debug::Reply>,
+}
+
 /// The HDR encode's settings, flat so TypeScript can fill it with one DataView.
 #[repr(C)]
 pub struct BbHdrOptions {

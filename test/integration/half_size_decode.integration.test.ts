@@ -4,7 +4,7 @@
 //   docker exec bowerbird-dev bun test test/integration
 import { describe, expect, test } from 'bun:test';
 import { existsSync } from 'node:fs';
-import { decodeRaw } from '../../src/services/processing/rawshim_pixels';
+import { decodeSummary } from '../../src/services/processing/rawshim_debug';
 
 // The fixture is 24MP, which is below the threshold by design, so the halving side
 // needs a sensor big enough to halve. There is no committed fixture that large - a
@@ -22,8 +22,8 @@ describe('half-size decoding', () => {
   withBig(
     'halves a 61MP frame, because 4864 still clears a 3840 rendition',
     async () => {
-      const whole = decodeRaw(BIG, 8, 'srgb');
-      const halved = decodeRaw(BIG, 8, 'srgb', { atLeastLongEdge: FULL_RENDITION });
+      const whole = decodeSummary(BIG);
+      const halved = decodeSummary(BIG, { atLeastLongEdge: FULL_RENDITION });
       expect(longEdge(halved)).toBeLessThan(longEdge(whole));
       expect(longEdge(halved)).toBeGreaterThanOrEqual(FULL_RENDITION);
       // Close to exactly half; LibRaw rounds and the masked-border crop is halved
@@ -42,8 +42,8 @@ describe('half-size decoding', () => {
     async () => {
       // 6024 halves to about 3012, under the 3840 a full rendition wants, so
       // asking for that size must not get a half decode.
-      const whole = decodeRaw(SMALL, 8, 'srgb');
-      const asked = decodeRaw(SMALL, 8, 'srgb', { atLeastLongEdge: FULL_RENDITION });
+      const whole = decodeSummary(SMALL);
+      const asked = decodeSummary(SMALL, { atLeastLongEdge: FULL_RENDITION });
       expect(longEdge(asked)).toBe(longEdge(whole));
       expect(asked.width).toBe(whole.width);
       expect(asked.height).toBe(whole.height);
@@ -56,9 +56,9 @@ describe('half-size decoding', () => {
     async () => {
       // A max-resolution rendition passes 0, which has to mean "the whole frame"
       // rather than "no constraint, do as you like".
-      const whole = decodeRaw(BIG, 8, 'srgb');
+      const whole = decodeSummary(BIG);
       for (const options of [{}, { atLeastLongEdge: 0 }]) {
-        const image = decodeRaw(BIG, 8, 'srgb', options);
+        const image = decodeSummary(BIG, options);
         expect(image.width).toBe(whole.width);
         expect(image.height).toBe(whole.height);
       }
@@ -73,23 +73,14 @@ describe('half-size decoding', () => {
       // offset. A wrong address would land on a neighbouring field - four_color_rgb
       // and use_auto_wb are both nearby - so this checks the result still looks
       // like the same photograph rather than only checking its dimensions.
-      const halved = decodeRaw(BIG, 8, 'srgb', { atLeastLongEdge: FULL_RENDITION });
-      const whole = decodeRaw(BIG, 8, 'srgb');
+      const halved = decodeSummary(BIG, { atLeastLongEdge: FULL_RENDITION });
+      const whole = decodeSummary(BIG);
 
-      const mean = (image: { width: number; height: number; data: Buffer }): [number, number, number] => {
-        const totals = [0, 0, 0];
-        let counted = 0;
-        for (let i = 0; i + 2 < image.data.length; i += 3 * 997) {
-          totals[0]! += image.data[i]!;
-          totals[1]! += image.data[i + 1]!;
-          totals[2]! += image.data[i + 2]!;
-          counted += 1;
-        }
-        return [totals[0]! / counted, totals[1]! / counted, totals[2]! / counted];
-      };
-
-      const a = mean(whole);
-      const b = mean(halved);
+      // The per-channel means the summary already reports: a whole-frame average
+      // would hide a shift in one channel, which is what a stray white-balance
+      // write looks like.
+      const a = whole.channels.map((channel) => channel.mean);
+      const b = halved.channels.map((channel) => channel.mean);
       // Same exposure and same white balance: a stray write to use_auto_wb or
       // four_color_rgb would move these well beyond a few levels.
       for (let channel = 0; channel < 3; channel += 1) {

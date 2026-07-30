@@ -91,6 +91,8 @@ const SYMBOLS = {
     args: [FFIType.cstring, FFIType.u32, FFIType.i32, FFIType.ptr, FFIType.u64],
     returns: FFIType.i64,
   },
+  // Questions about pixels, for tests and pins. Same shape as bb_run_job.
+  bb_debug: { args: [FFIType.ptr, FFIType.u64, FFIType.ptr, FFIType.u64], returns: FFIType.i64 },
   bb_run_job: { args: [FFIType.ptr, FFIType.u64, FFIType.ptr, FFIType.u64], returns: FFIType.i64 },
   bb_save_avif: {
     args: [FFIType.ptr, FFIType.u32, FFIType.i32, FFIType.i32, FFIType.i32, FFIType.cstring],

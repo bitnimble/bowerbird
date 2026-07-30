@@ -10,8 +10,11 @@
 // second proof that LibRaw reads Canon.
 //   docker exec bowerbird-dev bun test test/integration
 import { beforeAll, describe, expect, test } from 'bun:test';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { readRawHeader } from '../../src/services/processing/raw_decoder';
-import { decodeRaw } from '../../src/services/processing/rawshim_pixels';
+import { decodeSummary, dumpDecode } from '../../src/services/processing/rawshim_debug';
 import { extractMetadata } from '../../src/services/processing/metadata';
 
 const SONY = `${import.meta.dir}/../fixtures/DSC02981.ARW`;
@@ -69,9 +72,9 @@ describe.each([
 ])('%s', (_format, fixture, width, height) => {
   // One decode for all three: they read the same frame, and decoding a 24MP RAW
   // three times over is the bulk of this file's runtime.
-  let image: ReturnType<typeof decodeRaw>;
+  let image: ReturnType<typeof decodeSummary>;
   beforeAll(() => {
-    image = decodeRaw(fixture);
+    image = decodeSummary(fixture);
   });
 
   test('decodes the frame the camera says it took', () => {
@@ -89,17 +92,31 @@ describe.each([
     expect(image.height).toBe(header.height);
   });
 
+  // The one assertion here that wants the samples themselves rather than a
+  // statistic about them: it reads four specific pixels, one per edge. So it takes
+  // the guarded door - the decode is written to a file and read back, rather than a
+  // buffer crossing in memory - and the native side logs a warning when it does.
   test('the decoded image has no black border on any edge', () => {
-    const lit = (x: number, y: number): boolean => {
-      const i = (y * image.width + x) * 3;
-      return image.data[i]! + image.data[i + 1]! + image.data[i + 2]! > 24;
-    };
-    const midX = image.width >> 1;
-    const midY = image.height >> 1;
-    expect(lit(0, midY)).toBe(true);
-    expect(lit(image.width - 1, midY)).toBe(true);
-    expect(lit(midX, 0)).toBe(true);
-    expect(lit(midX, image.height - 1)).toBe(true);
+    const dir = mkdtempSync(path.join(tmpdir(), 'bb-border-'));
+    try {
+      const dump = path.join(dir, 'decode.bin');
+      const summary = dumpDecode(fixture, dump);
+      const data = readFileSync(dump);
+      expect(data.length).toBe(summary.bytes);
+
+      const lit = (x: number, y: number): boolean => {
+        const i = (y * summary.width + x) * 3;
+        return data[i]! + data[i + 1]! + data[i + 2]! > 24;
+      };
+      const midX = summary.width >> 1;
+      const midY = summary.height >> 1;
+      expect(lit(0, midY)).toBe(true);
+      expect(lit(summary.width - 1, midY)).toBe(true);
+      expect(lit(midX, 0)).toBe(true);
+      expect(lit(midX, summary.height - 1)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
