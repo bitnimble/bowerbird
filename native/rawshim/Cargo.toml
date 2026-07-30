@@ -12,6 +12,8 @@ libvips = "2.3.0"
 # The geometry search evaluates tens of candidates that share nothing but their
 # inputs, which is the one genuinely parallel part of a fit.
 rayon = "1.10"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
 
 [build-dependencies]
 bindgen = "0.69"

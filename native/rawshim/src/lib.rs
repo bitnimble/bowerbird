@@ -50,6 +50,7 @@ use std::os::raw::{c_char, c_int};
 pub mod avif;
 pub mod ffi;
 pub mod fit;
+pub mod frame;
 pub mod hdr;
 pub mod hdr_args;
 pub mod hdr_fit;
