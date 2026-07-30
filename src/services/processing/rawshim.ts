@@ -36,31 +36,24 @@ const CANDIDATES = [
 ];
 
 const SYMBOLS = {
-  bb_decode: { args: [FFIType.cstring, FFIType.u32, FFIType.i32, FFIType.u32], returns: FFIType.ptr },
-  bb_decode_embedded: { args: [FFIType.cstring, FFIType.u32], returns: FFIType.ptr },
-  bb_extract_embedded: { args: [FFIType.cstring], returns: FFIType.ptr },
+  // The whole boundary for a rendition job: JSON in, JSON out, no addresses either
+  // way. Returns the byte length of the reply, or how big a buffer it needs.
+  bb_run_job: { args: [FFIType.ptr, FFIType.u64, FFIType.ptr, FFIType.u64], returns: FFIType.i64 },
+  // Questions about pixels, for tests and pins. Same shape as bb_run_job.
+  bb_debug: { args: [FFIType.ptr, FFIType.u64, FFIType.ptr, FFIType.u64], returns: FFIType.i64 },
+  // A response body on its way to a socket, copied into a buffer the caller owns
+  // rather than handed over as an address (§10.4).
+  bb_transcode_jpeg: {
+    args: [FFIType.cstring, FFIType.u32, FFIType.i32, FFIType.ptr, FFIType.u64],
+    returns: FFIType.i64,
+  },
+  // The camera's own preview, the same way.
+  bb_extract_embedded: { args: [FFIType.cstring, FFIType.ptr, FFIType.u64], returns: FFIType.i64 },
+
+  // What the library will answer about a file without decoding it. Each fills a
+  // struct or an array this side allocated.
   bb_read_header: { args: [FFIType.cstring, FFIType.ptr], returns: FFIType.i32 },
-  bb_hdr_argv: {
-    args: [FFIType.ptr, FFIType.u32, FFIType.u32, FFIType.cstring, FFIType.cstring, FFIType.u32],
-    returns: FFIType.ptr,
-  },
-  bb_hdr_options_size: { args: [], returns: FFIType.u64 },
-  bb_fit_hdr_match: {
-    args: [FFIType.ptr, FFIType.cstring, FFIType.ptr, FFIType.ptr],
-    returns: FFIType.ptr,
-  },
-  bb_hdr_match_free: { args: [FFIType.ptr], returns: FFIType.void },
-  bb_hdr_match_colour: { args: [FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
-  bb_hdr_colour_size: { args: [], returns: FFIType.u64 },
-  bb_encode_hdr: {
-    args: [FFIType.ptr, FFIType.ptr, FFIType.cstring, FFIType.ptr, FFIType.cstring],
-    returns: FFIType.i32,
-  },
-  bb_hdr_graded: { args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.ptr },
   bb_header_size: { args: [], returns: FFIType.u64 },
-  bb_decode_file: { args: [FFIType.cstring, FFIType.u32], returns: FFIType.ptr },
-  bb_decode_image: { args: [FFIType.ptr, FFIType.u64, FFIType.u32], returns: FFIType.ptr },
-  bb_image_from_rgb: { args: [FFIType.ptr, FFIType.u32, FFIType.u32], returns: FFIType.ptr },
   bb_read_distortion_spline: { args: [FFIType.cstring, FFIType.ptr, FFIType.u32], returns: FFIType.i32 },
   bb_lensfun_knots: {
     args: [
@@ -76,40 +69,29 @@ const SYMBOLS = {
     ],
     returns: FFIType.i32,
   },
-  bb_fit: { args: [FFIType.ptr, FFIType.cstring, FFIType.ptr], returns: FFIType.i32 },
-  bb_fit_hdr: { args: [FFIType.ptr, FFIType.cstring, FFIType.ptr, FFIType.ptr], returns: FFIType.ptr },
-  bb_fit_against: {
-    args: [FFIType.ptr, FFIType.ptr, FFIType.u64, FFIType.ptr, FFIType.u32, FFIType.ptr],
-    returns: FFIType.i32,
-  },
-  bb_render: { args: [FFIType.ptr, FFIType.ptr, FFIType.u32], returns: FFIType.ptr },
-  // The whole boundary for a rendition job: JSON in, JSON out, no addresses either
-  // way. Returns the byte length of the reply, or how big a buffer it needs.
-  // A response body on its way to a socket, copied into a buffer the caller owns
-  // rather than handed over as an address (§10.4).
-  bb_transcode_jpeg: {
-    args: [FFIType.cstring, FFIType.u32, FFIType.i32, FFIType.ptr, FFIType.u64],
-    returns: FFIType.i64,
-  },
-  // Questions about pixels, for tests and pins. Same shape as bb_run_job.
-  bb_debug: { args: [FFIType.ptr, FFIType.u64, FFIType.ptr, FFIType.u64], returns: FFIType.i64 },
-  bb_run_job: { args: [FFIType.ptr, FFIType.u64, FFIType.ptr, FFIType.u64], returns: FFIType.i64 },
-  bb_save_avif: {
-    args: [FFIType.ptr, FFIType.u32, FFIType.i32, FFIType.i32, FFIType.i32, FFIType.cstring],
-    returns: FFIType.i32,
-  },
-  bb_encode_jpeg: { args: [FFIType.ptr, FFIType.u32, FFIType.i32], returns: FFIType.ptr },
-  bb_free: { args: [FFIType.ptr], returns: FFIType.void },
-  bb_buffer_free: { args: [FFIType.ptr], returns: FFIType.void },
-  bb_profile_size: { args: [], returns: FFIType.u64 },
-  bb_buffer_header_size: { args: [], returns: FFIType.u64 },
-  bb_image_header_size: { args: [], returns: FFIType.u64 },
+
+  // Stacking: descriptors in, group indices out, the whole walk in Rust (§19).
   bb_descriptor_size: { args: [], returns: FFIType.u64 },
-  bb_descriptor: { args: [FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
   bb_stack_groups: {
     args: [FFIType.ptr, FFIType.ptr, FFIType.u64, FFIType.f32, FFIType.i64, FFIType.ptr],
     returns: FFIType.i32,
   },
+
+  // For the argv pin alone. An options struct by value, arguments back as bytes.
+  bb_hdr_argv: {
+    args: [
+      FFIType.ptr,
+      FFIType.u32,
+      FFIType.u32,
+      FFIType.cstring,
+      FFIType.cstring,
+      FFIType.u32,
+      FFIType.ptr,
+      FFIType.u64,
+    ],
+    returns: FFIType.i64,
+  },
+  bb_hdr_options_size: { args: [], returns: FFIType.u64 },
 } as const;
 
 type Shim = ReturnType<typeof dlopen<typeof SYMBOLS>>['symbols'];

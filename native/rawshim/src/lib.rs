@@ -121,150 +121,6 @@ fn demosaic() -> c_int {
 const OUTPUT_SRGB: c_int = 1;
 const OUTPUT_REC2020: c_int = 8;
 
-/// A decoded image, owned by this library for as long as JS holds the pointer.
-///
-/// Handed to JS as an opaque handle, not as pixels. Every operation - fit, grade,
-/// resize, encode - takes the handle back and works on the buffer where it lies,
-/// so a 60MP render never crosses the boundary. It used to: the decode copied
-/// into a JS `Buffer` and each call copied it back into a `Vec`, three ~45MB
-/// moves of pixels no JavaScript ever looked at.
-///
-/// Still `#[repr(C)]` with plain fields, because the two paths that genuinely do
-/// want the samples in JS - the 16-bit scene-linear decode the HDR encoder pipes
-/// to ffmpeg, and the fit that grades it - read them through a DataView.
-#[repr(C)]
-pub struct BbImage {
-    pub width: u32,
-    pub height: u32,
-    pub depth: u32,
-    pub data: *mut u8,
-    pub len: usize,
-    /// Non-zero when the frame was decoded at half size.
-    pub halved: u32,
-    /// Non-zero when the frame was read straight out of `imgdata.image` rather than
-    /// through `dcraw_make_mem_image`.
-    ///
-    /// Reported so the pin that holds the two against each other can check it actually
-    /// forked. `copy_processed` declines on five conditions, one of them a LibRaw
-    /// default it does not set - and a differential test whose two arms quietly become
-    /// the same arm passes while proving nothing (`raw_decode.integration.test.ts`).
-    /// Sits in padding the struct already had, so the layout is unchanged.
-    pub direct: u32,
-    /// Kept so `bb_free` can drop the exact allocation it handed out.
-    capacity: usize,
-}
-
-impl BbImage {
-    /// Leaks a `Frame` into the handle the old boundary hands to JavaScript.
-    ///
-    /// The bridge while both boundaries exist, and it goes when the last caller of
-    /// the handle API does. `capacity` is an *element* count rather than a byte one,
-    /// so `bb_free` can hand each allocation back as the `Vec` it came from - which
-    /// is what lets a 16-bit frame keep its `Vec<u16>` rather than being copied into
-    /// bytes on the way across.
-    pub fn from_frame(image: frame::Frame) -> BbImage {
-        let (width, height) = (image.width as u32, image.height as u32);
-        let (halved, direct) = (u32::from(image.halved), u32::from(image.direct));
-        let depth = image.pixels.depth();
-        let (data, len, capacity) = match image.pixels {
-            frame::Pixels::Eight(bytes) => {
-                let mut bytes = std::mem::ManuallyDrop::new(bytes);
-                (bytes.as_mut_ptr(), bytes.len(), bytes.capacity())
-            }
-            frame::Pixels::Sixteen(samples) => {
-                let mut samples = std::mem::ManuallyDrop::new(samples);
-                let capacity = samples.capacity();
-                (samples.as_mut_ptr() as *mut u8, samples.len() * 2, capacity)
-            }
-        };
-        BbImage { width, height, depth, data, len, halved, direct, capacity }
-    }
-
-    /// Takes ownership of an 8-bit RGB buffer and hands back a handle to it.
-    pub fn own(image: vips::Rgb) -> *mut BbImage {
-        let width = image.width as u32;
-        let height = image.height as u32;
-        let mut data = std::mem::ManuallyDrop::new(image.data);
-        Box::into_raw(Box::new(BbImage {
-            width,
-            height,
-            depth: 8,
-            data: data.as_mut_ptr(),
-            len: data.len(),
-            halved: 0,
-            direct: 0,
-            capacity: data.capacity(),
-        }))
-    }
-
-    /// The pixels, borrowed. None for a 16-bit decode, which the image operations
-    /// have no path for - they are all 8-bit sRGB, and reading a 16-bit buffer as
-    /// though it were 8-bit would silently render half the frame.
-    ///
-    /// The samples of a 16-bit decode, borrowed. None for an 8-bit one.
-    ///
-    /// Separate from `view` because the two are not interchangeable: the image
-    /// operations are all 8-bit sRGB, and the HDR grade is all 16-bit scene-linear.
-    /// Reading either buffer as the other silently renders half a frame.
-    ///
-    /// # Safety
-    /// `data` must still point at the allocation this handle was built with.
-    #[expect(unsafe_code)]
-    pub unsafe fn view_u16(&self) -> Option<&[u16]> {
-        if self.depth != 16 || self.data.is_null() {
-            return None;
-        }
-        Some(unsafe { std::slice::from_raw_parts(self.data as *const u16, self.len / 2) })
-    }
-
-    /// # Safety
-    /// `data` must still point at the allocation this handle was built with.
-    #[expect(unsafe_code)]
-    pub unsafe fn view(&self) -> Option<vips::RgbRef<'_>> {
-        if self.depth != 8 || self.data.is_null() {
-            return None;
-        }
-        Some(vips::RgbRef {
-            width: self.width as usize,
-            height: self.height as usize,
-            data: unsafe { std::slice::from_raw_parts(self.data, self.len) },
-        })
-    }
-
-    /// Frees the pixels a handle owns.
-    ///
-    /// Only `bb_free` calls this now. It used to be an *early* release as well - the
-    /// last reader of a decode handing 366MB back before the encode allocated, which
-    /// is the peak that matters - and that was safe only because it nulled `data`
-    /// and every accessor re-checked it. The job path says the same thing with
-    /// ownership instead (`hdr::Decode`), where dropping the frame is something the
-    /// compiler sees rather than a flag a reader has to notice.
-    ///
-    /// Idempotent, and both views check `data`, so a second call is a no-op.
-    ///
-    /// # Safety
-    /// `data` must still point at the allocation this handle was built with, and no
-    /// borrow of it may outlive the call.
-    #[expect(unsafe_code)]
-    pub unsafe fn free_pixels(&mut self) {
-        if self.data.is_null() {
-            return;
-        }
-        // Handed back as the `Vec` it was allocated as, which for a 16-bit frame is a
-        // `Vec<u16>`: `dealloc` is owed the layout `alloc` was given, and freeing one
-        // as the other is undefined however well it appears to work. `capacity` is an
-        // element count for exactly this reason, and `len` stays in bytes because that
-        // is what the handle reports to its reader.
-        match self.depth {
-            16 => drop(unsafe { Vec::from_raw_parts(self.data as *mut u16, self.len / 2, self.capacity) }),
-            _ => drop(unsafe { Vec::from_raw_parts(self.data, self.len, self.capacity) }),
-        }
-        self.data = std::ptr::null_mut();
-        self.len = 0;
-        self.capacity = 0;
-    }
-}
-
 pub struct Insets {
     pub left: usize,
     pub top: usize,
@@ -608,33 +464,6 @@ unsafe fn copy_cropped(src: *const u8, w: usize, h: usize, bytes_per_px: usize, 
     out
 }
 
-/// Decodes a RAW to an upright RGB bitmap.
-///
-/// `at_least_long_edge` is the longest edge the caller needs; when halving still
-/// clears it the decode runs at half size. 0 means the whole frame.
-///
-/// Returns null on any failure. The result must be released with `bb_free`.
-///
-/// # Safety
-/// `path` must be a NUL-terminated C string.
-#[expect(unsafe_code)]
-#[no_mangle]
-pub unsafe extern "C" fn bb_decode(
-    path: *const c_char,
-    depth: u32,
-    rec2020_linear: c_int,
-    at_least_long_edge: u32,
-) -> *mut BbImage {
-    if path.is_null() {
-        return std::ptr::null_mut();
-    }
-    let Ok(path) = unsafe { CStr::from_ptr(path) }.to_str() else { return std::ptr::null_mut() };
-    match decode_frame(path, depth, rec2020_linear != 0, at_least_long_edge) {
-        Some(frame) => Box::into_raw(Box::new(BbImage::from_frame(frame))),
-        None => std::ptr::null_mut(),
-    }
-}
-
 /// Decodes a RAW to an owned frame.
 ///
 /// The body of what `bb_decode` used to be, with the handle taken off the end. Every
@@ -936,46 +765,6 @@ pub fn decode_embedded_rgb(path: &str, long_edge: usize) -> Option<vips::Rgb> {
     }
 }
 
-/// Decodes the camera's embedded preview to an upright RGB bitmap, fitted to
-/// `long_edge`. 0 leaves it at the size the body embedded.
-///
-/// This is the whole of an import's thumbnail stage: extract, decode, shrink. It
-/// used to be three steps with the JPEG copied into a JavaScript `Buffer` in the
-/// middle, which was both the largest thing crossing the boundary and the reason
-/// libvips' operation cache had to go - a cached graph held a pointer into bytes
-/// that JavaScript was free to collect (`vips.rs`).
-///
-/// Returns null when the file has no JPEG preview, which is not an error.
-///
-/// # Safety
-/// `path` must be a NUL-terminated C string. Release with `bb_free`.
-#[expect(unsafe_code)]
-#[no_mangle]
-pub unsafe extern "C" fn bb_decode_embedded(path: *const c_char, long_edge: u32) -> *mut BbImage {
-    vips::init();
-    if path.is_null() {
-        return std::ptr::null_mut();
-    }
-
-    // The grid tile of every photo in an import comes through here, off a JPEG the
-    // camera wrote and nothing has validated.
-    let decoded = guard("bb_decode_embedded", None, || {
-        unsafe { with_embedded_jpeg(path, |bytes| match long_edge {
-            0 => vips::Pipeline::decode_upright(bytes).and_then(vips::Pipeline::finish),
-            edge => vips::Pipeline::thumbnail(bytes, edge as usize).and_then(vips::Pipeline::finish),
-        }) }
-    });
-
-    match decoded {
-        Some(Ok(image)) => BbImage::own(image),
-        Some(Err(detail)) => {
-            eprintln!("bb_decode_embedded: {detail}");
-            std::ptr::null_mut()
-        }
-        None => std::ptr::null_mut(),
-    }
-}
-
 /// Reads what the catalogue needs from a RAW without decoding a pixel.
 ///
 /// Returns 0 on success, -1 if the file could not be opened. See `header.rs` for
@@ -1007,49 +796,12 @@ pub extern "C" fn bb_header_size() -> usize {
     std::mem::size_of::<header::BbHeader>()
 }
 
-/// Releases an image from `bb_decode`. Safe to call with null.
-///
-/// # Safety
-/// `image` must have come from `bb_decode` and not been freed already.
-#[expect(unsafe_code)]
-#[no_mangle]
-pub unsafe extern "C" fn bb_free(image: *mut BbImage) {
-    if image.is_null() {
-        return;
-    }
-    let mut image = unsafe { Box::from_raw(image) };
-    // Null when the last reader already released the pixels, and `from_raw_parts`
-    // takes no null pointer even at length zero.
-    unsafe { image.free_pixels() };
-}
-
-/// How many bytes `bb_descriptor` writes, so the caller can size its buffer and
-/// the database column without either guessing.
+/// How many bytes a stacking descriptor occupies, so the caller can size its
+/// buffer and the database column without either guessing.
 #[expect(unsafe_code)]
 #[no_mangle]
 pub extern "C" fn bb_descriptor_size() -> usize {
     stacks::DESCRIPTOR_BYTES
-}
-
-/// Writes the stacking descriptor for an 8-bit image into `out`.
-///
-/// Returns 0 on success, -1 when the handle holds no 8-bit samples.
-///
-/// # Safety
-/// `image` must be a live handle and `out` must have room for
-/// `bb_descriptor_size()` bytes.
-#[expect(unsafe_code)]
-#[no_mangle]
-pub unsafe extern "C" fn bb_descriptor(image: *const BbImage, out: *mut u8) -> c_int {
-    if image.is_null() || out.is_null() {
-        return -1;
-    }
-    let Some(view) = (unsafe { (*image).view() }) else {
-        return -1;
-    };
-    let descriptor = stacks::describe(view);
-    unsafe { std::ptr::copy_nonoverlapping(descriptor.as_ptr(), out, descriptor.len()) };
-    0
 }
 
 /// Groups frames into stacks, writing one group index per frame into `out`, or
@@ -1086,24 +838,6 @@ pub unsafe extern "C" fn bb_stack_groups(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn freeing_a_handle_twice_is_a_no_op_rather_than_a_crash() {
-        // `bb_free` runs this unconditionally and the pixels may already be gone, so
-        // a second call has to be harmless. What is left answers "no pixels" rather
-        // than handing out a freed buffer.
-        let image = BbImage::own(vips::Rgb { width: 2, height: 2, data: vec![7u8; 12] });
-        #[expect(unsafe_code)]
-        unsafe {
-            assert!((*image).view().is_some(), "the handle starts with pixels");
-            (*image).free_pixels();
-            assert!((*image).view().is_none(), "a released handle must not hand out pixels");
-            // Idempotent, which is what lets `bb_free` run the same path unconditionally
-            // rather than branching on whether someone got there first.
-            (*image).free_pixels();
-            bb_free(image);
-        }
-    }
 
     // Every orientation LibRaw can hand over, which the fixtures cannot give.
     //
