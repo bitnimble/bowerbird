@@ -7,8 +7,8 @@ import { expect, test } from 'bun:test';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { decodeSummary } from '../../src/services/processing/rawshim_debug';
-import { encodeHdr } from '../../src/services/processing/rawshim_debug';
+import { _for_testing_decodeSummary } from '../../src/services/processing/rawshim_for_testing';
+import { _for_testing_encodeHdr } from '../../src/services/processing/rawshim_for_testing';
 
 const FIXTURE = `${import.meta.dir}/../fixtures/DSC02981.ARW`;
 const MAX_EDGE = 640;
@@ -45,7 +45,7 @@ async function encoded(medium: Medium, run: (file: string) => void): Promise<voi
   try {
     // Only two media now, so the extension is one check rather than a table.
     const outputPath = path.join(dir, medium === 'video' ? 'pq.mp4' : 'pq.avif');
-    encodeHdr(FIXTURE, { medium, outputPath, peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.99, crf: 40, preset: 12, maxEdge: MAX_EDGE, stillFullChroma: false }, { decodeSize: MAX_EDGE });
+    _for_testing_encodeHdr(FIXTURE, { medium, outputPath, peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.99, crf: 40, preset: 12, maxEdge: MAX_EDGE, stillFullChroma: false }, { decodeSize: MAX_EDGE });
     run(outputPath);
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -62,7 +62,7 @@ test('one call writes the still and its video twin, each tagged as its own mediu
   try {
     const still = path.join(dir, 'rendition.avif');
     const video = path.join(dir, 'rendition.mp4');
-    encodeHdr(
+    _for_testing_encodeHdr(
       FIXTURE,
       { medium: 'still', outputPath: still, peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.99, crf: 40, preset: 12, maxEdge: 640, stillFullChroma: true },
       { videoOutputPath: video },
@@ -99,8 +99,8 @@ test('a scene-linear decode keeps the highlight headroom an sRGB one spends', ()
   // Half size: the subject is the levels the two decodes land on, which is a
   // property of the tone curve rather than of the frame's size.
   const half = { atLeastLongEdge: 1000 };
-  const display = decodeSummary(FIXTURE, { depth: 16, space: 'srgb', ...half });
-  const scene = decodeSummary(FIXTURE, { depth: 16, space: 'rec2020-linear', ...half });
+  const display = _for_testing_decodeSummary(FIXTURE, { depth: 16, space: 'srgb', ...half });
+  const scene = _for_testing_decodeSummary(FIXTURE, { depth: 16, space: 'rec2020-linear', ...half });
 
   expect(scene.width).toBe(display.width);
   expect(scene.depth).toBe(16);
@@ -142,7 +142,7 @@ test('the still leaves no intermediate behind', async () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'bb-hdr-'));
   try {
     const outputPath = path.join(dir, 'pq.avif');
-    encodeHdr(FIXTURE, { medium: 'still', outputPath, peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.99, crf: 40, preset: 12, maxEdge: MAX_EDGE, stillFullChroma: false }, { decodeSize: MAX_EDGE });
+    _for_testing_encodeHdr(FIXTURE, { medium: 'still', outputPath, peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.99, crf: 40, preset: 12, maxEdge: MAX_EDGE, stillFullChroma: false }, { decodeSize: MAX_EDGE });
     // The y4m is uncompressed 10-bit, so a leaked one is tens of megabytes per
     // photo sitting next to the output that replaced it.
     expect(await Bun.file(`${outputPath}.y4m`).exists()).toBe(false);

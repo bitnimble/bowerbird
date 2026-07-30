@@ -575,3 +575,223 @@ mod camera_match {
         }
     }
 }
+
+/// The HDR colour fit and grade against a real RAW and its real embedded JPEG.
+///
+/// None of this is visible from a synthetic input: the curves come out of the camera's
+/// own rendering, and the failure modes that mattered were all "the fit ran and the
+/// picture was wrong" (§10.8). §10.7.1 records a magenta sky at deltaA* +5.2 from
+/// per-channel extrapolation, and a matrix that oversaturated by 9.3% before it was
+/// weighted - neither would fail an assertion about shape.
+mod hdr_grade {
+    use super::*;
+    use crate::hdr_args::{Chroma, EncodeOptions, Medium};
+
+    const QUANTILE: f64 = 0.9;
+    const REFERENCE: f64 = 203.0;
+    const PEAK: f64 = 1000.0;
+
+    fn options(peak_nits: f64, max_edge: f64, output_path: &str) -> EncodeOptions {
+        EncodeOptions {
+            medium: Medium::Still,
+            still_chroma: Chroma::Yuv420,
+            output_path: output_path.to_string(),
+            peak_nits,
+            reference_white_nits: REFERENCE,
+            white_quantile: QUANTILE,
+            crf: 40,
+            preset: 8,
+            max_edge,
+        }
+    }
+
+    /// The scene-linear decode every case here grades from.
+    fn linear() -> crate::frame::Frame {
+        decode(&sony(), 16, true, 0)
+    }
+
+    fn source(frame: &crate::frame::Frame) -> crate::hdr::Source<'_> {
+        crate::hdr::Source {
+            samples: frame.samples16().expect("a 16-bit decode"),
+            width: frame.width,
+            height: frame.height,
+        }
+    }
+
+    /// The camera match, fitted the way a job with an SDR rendition fits it: the SDR
+    /// fit supplies the geometry, and the colour is refitted in the grade's own domain
+    /// (§10.8.1).
+    fn matched(frame: &crate::frame::Frame) -> Option<crate::hdr_fit::HdrMatch> {
+        let render = decode(&sony(), 8, false, 0);
+        let profile = crate::fit_profile_for(&render, sony().to_str().unwrap())?;
+        crate::fit_hdr_for(frame, sony().to_str().unwrap(), QUANTILE, Some(&profile))
+    }
+
+    #[test]
+    fn the_fit_reproduces_the_camera_rendering() {
+        let frame = linear();
+        let fitted = matched(&frame).expect("the HDR fit finds a match");
+        // The same bound the SDR path applies to itself. Above it the transform is not
+        // worth applying and the caller renders untransformed.
+        assert!(fitted.colour.delta_e < 6.0, "deltaE {}", fitted.colour.delta_e);
+    }
+
+    #[test]
+    fn the_fitted_transform_is_monotone_so_a_gradient_cannot_posterise() {
+        let frame = linear();
+        let fitted = matched(&frame).expect("the HDR fit finds a match");
+        for curve in &fitted.colour.curves {
+            for pair in curve.windows(2) {
+                assert!(pair[1] >= pair[0], "the curve dips: {} then {}", pair[0], pair[1]);
+            }
+        }
+    }
+
+    /// The regression the shipped extrapolation exists for. Before it, red and green
+    /// left the fit domain at slopes differing by more than 2x and the sky drifted
+    /// magenta; the end values are what that divergence shows up in.
+    #[test]
+    fn the_three_channels_leave_the_fit_domain_at_comparable_levels() {
+        let frame = linear();
+        let fitted = matched(&frame).expect("the HDR fit finds a match");
+        let ends: Vec<f64> = fitted.colour.curves.iter().map(|c| c[c.len() - 1]).collect();
+        let high = ends.iter().cloned().fold(f64::MIN, f64::max);
+        let low = ends.iter().cloned().fold(f64::MAX, f64::min);
+        assert!(high / low < 1.5, "the channels end {}x apart", high / low);
+    }
+
+    #[test]
+    fn grading_with_the_match_keeps_diffuse_white_near_the_reference() {
+        let frame = linear();
+        let fitted = matched(&frame);
+        let (graded, _, _) =
+            crate::hdr::graded(&source(&frame), &options(PEAK, f64::INFINITY, "/dev/null"), fitted.as_ref());
+        let at = crate::debug::luma_quantiles(&graded, PEAK, &[QUANTILE, 1.0]);
+
+        // The anchor is measured on the brightest component and this is luma, so the
+        // quantile lands under the reference rather than on it - but nowhere near the
+        // peak, which is what a lost anchor would look like.
+        assert!(at[0] > REFERENCE * 0.25, "diffuse white at {}", at[0]);
+        assert!(at[0] < REFERENCE * 1.5, "diffuse white at {}", at[0]);
+        // Nothing may exceed the display peak the file will declare.
+        assert!(at[1] <= PEAK + 1.0, "peak luma {}", at[1]);
+    }
+
+    #[test]
+    fn the_neutral_grade_is_reproducible_and_differs_from_the_matched_one() {
+        // At a rendition's size, not the frame's: what is compared is whether two
+        // grades agree, which no amount of resolution makes truer.
+        let frame = linear();
+        let digest = |m: Option<&crate::hdr_fit::HdrMatch>| {
+            let (graded, _, _) = crate::hdr::graded(&source(&frame), &options(PEAK, 800.0, "/dev/null"), m);
+            crate::debug::sha256_hex(&crate::debug::to_bytes(&crate::frame::Pixels::Sixteen(graded)))
+        };
+        let first = digest(None);
+        assert_eq!(digest(None), first, "the neutral grade is not reproducible");
+        // Otherwise the profile is being dropped somewhere between here and the grade,
+        // which is the failure this module was written for.
+        let fitted = matched(&frame);
+        assert_ne!(digest(fitted.as_ref()), first, "the match never reached the grade");
+    }
+
+    /// Renditions of one photo must not disagree about how bright it is. The grade runs
+    /// after the fit-to-size rather than before, so without sharing the levels each size
+    /// would measure its own - and averaging pulls a specular peak in, so the numbers
+    /// would drift apart with the scale factor.
+    #[test]
+    fn every_size_of_one_photo_grades_to_the_same_brightness() {
+        let frame = linear();
+        let fitted = matched(&frame);
+        let median = |max_edge: f64| {
+            let (graded, _, _) =
+                crate::hdr::graded(&source(&frame), &options(PEAK, max_edge, "/dev/null"), fitted.as_ref());
+            crate::debug::luma_quantiles(&graded, PEAK, &[0.5])[0]
+        };
+        let native = median(f64::INFINITY);
+        for other in [median(3012.0), median(753.0)] {
+            let drift = (other - native).abs() / native;
+            assert!(drift < 0.05, "{other} against {native} at native");
+        }
+    }
+
+    /// Through the encode, not the grade, because that is where the match was being
+    /// dropped: the options used to be built by spread, TypeScript does not excess-check
+    /// a spread, and an undeclared field vanished in silence. Every unit test calling
+    /// the grade directly kept passing while the product path rendered unmatched.
+    #[test]
+    fn the_encode_carries_the_match_through_to_the_encoded_file() {
+        let dir = std::env::temp_dir().join("bb-hdr-match-fixture");
+        std::fs::create_dir_all(&dir).expect("a scratch directory");
+        let plain = dir.join("plain.avif");
+        let with_match = dir.join("matched.avif");
+
+        let frame = linear();
+        let fitted = matched(&frame);
+        for (path, m) in [(&plain, None), (&with_match, fitted.as_ref())] {
+            crate::hdr::encode_pair(
+                crate::hdr::Decode::Borrowed(source(&frame)),
+                &options(PEAK, 640.0, path.to_str().unwrap()),
+                None,
+                m,
+            )
+            .expect("the encode");
+        }
+
+        // Same encoder, same size, same everything but the transform, so identical bytes
+        // mean the transform never reached the encoder.
+        let a = std::fs::read(&plain).expect("the plain file");
+        let b = std::fs::read(&with_match).expect("the matched file");
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_ne!(a, b, "the match never reached the encoder");
+    }
+
+    /// The graded samples, held to what the TypeScript produced before this subsystem
+    /// moved into Rust.
+    ///
+    /// `peak_nits` is a case dimension, not a constant, because the roll-off is
+    /// conditional: the EETF returns early when the frame already fits the display, so
+    /// at 1000 nits this fixture never reaches the BT.2390 knee at all. A pin without a
+    /// low-peak case would have covered none of that curve - which is where the subtlest
+    /// arithmetic in the grade lives - and was silently passing a deliberate
+    /// perturbation of it. 203 is also what the SDR reference uses.
+    #[test]
+    fn the_graded_samples_neutral_and_matched_with_and_without_the_roll_off() {
+        let frame = linear();
+        let fitted = matched(&frame);
+        let mut rows: Vec<String> = Vec::new();
+
+        for (label, with_match, max_edge, peak_nits) in [
+            ("neutral-3840", false, 3840.0, 1000.0),
+            ("matched-3840", true, 3840.0, 1000.0),
+            ("matched-800", true, 800.0, 1000.0),
+            ("neutral-rolloff", false, 800.0, 203.0),
+            ("matched-rolloff", true, 800.0, 203.0),
+        ] {
+            let m = match with_match {
+                true => fitted.as_ref(),
+                false => None,
+            };
+            let (graded, width, height) =
+                crate::hdr::graded(&source(&frame), &options(peak_nits, max_edge, "/dev/null"), m);
+
+            let pixels = crate::frame::Pixels::Sixteen(graded);
+            rows.push(format!("{label}\tsize\t{width}x{height}"));
+            rows.push(format!("{label}\tsha256\t{}", crate::debug::sha256_hex(&crate::debug::to_bytes(&pixels))));
+            // Per channel, because a shift in one is what a wrong matrix row looks like
+            // and a whole-frame mean would hide it.
+            let stats: Vec<String> = crate::debug::channels(&pixels)
+                .iter()
+                .map(|c| format!("{}/{}/{:.2}", c.min, c.max, c.mean))
+                .collect();
+            rows.push(format!("{label}\tstats\t{}", stats.join(" ")));
+            // A prime stride, so it walks all three channels and cannot land on a
+            // repeating pattern.
+            let crate::frame::Pixels::Sixteen(samples) = &pixels else { unreachable!("just built") };
+            let picked: Vec<String> =
+                samples.iter().step_by(9973).map(|s| s.to_string()).collect();
+            rows.push(format!("{label}\tsamples\t{}", picked.join(",")));
+        }
+
+        crate::pin::check("hdr_grade.pin.txt", &format!("{}\n", rows.join("\n")));
+    }
+}

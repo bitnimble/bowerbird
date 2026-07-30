@@ -9,7 +9,6 @@
 
 use crate::fit::{self, Profile};
 use crate::job;
-use crate::hdr_args;
 use crate::vips::{self, Pipeline};
 use std::ffi::{c_char, CStr};
 
@@ -140,7 +139,7 @@ pub unsafe extern "C" fn bb_transcode_jpeg(
 /// As `bb_run_job`.
 #[expect(unsafe_code)]
 #[no_mangle]
-pub unsafe extern "C" fn bb_debug(
+pub unsafe extern "C" fn bb_for_testing_debug(
     command: *const u8,
     command_len: usize,
     out: *mut u8,
@@ -155,7 +154,7 @@ pub unsafe extern "C" fn bb_debug(
     let result = match parsed {
         Err(error) => Err(format!("could not read the debug command: {error}")),
         Ok(parsed) => {
-            crate::guard("bb_debug", Err("panicked".to_string()), || crate::debug::run(&parsed))
+            crate::guard("bb_for_testing_debug", Err("panicked".to_string()), || crate::debug::run(&parsed))
         }
     };
 
@@ -179,118 +178,6 @@ struct DebugReply {
     error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     reply: Option<crate::debug::Reply>,
-}
-
-/// The HDR encode's settings, flat so TypeScript can fill it with one DataView.
-#[repr(C)]
-pub struct BbHdrOptions {
-    /// 0 still, 1 video.
-    pub medium: u32,
-    /// 0 for 4:2:0, 1 for 4:4:4. Sits in the padding `medium` already had before
-    /// `peak_nits`'s alignment, so the struct is the same size it was.
-    pub still_chroma: u32,
-    pub peak_nits: f64,
-    pub reference_white_nits: f64,
-    pub white_quantile: f64,
-    pub crf: i32,
-    pub preset: i32,
-    /// Non-finite means no limit, which is how a native-resolution export asks.
-    pub max_edge: f64,
-}
-
-impl BbHdrOptions {
-    fn to_options(&self, output_path: &str) -> Option<hdr_args::EncodeOptions> {
-        Some(hdr_args::EncodeOptions {
-            medium: match self.medium {
-                0 => hdr_args::Medium::Still,
-                1 => hdr_args::Medium::Video,
-                _ => return None,
-            },
-            still_chroma: match self.still_chroma {
-                1 => hdr_args::Chroma::Yuv444,
-                _ => hdr_args::Chroma::Yuv420,
-            },
-            output_path: output_path.to_string(),
-            peak_nits: self.peak_nits,
-            reference_white_nits: self.reference_white_nits,
-            white_quantile: self.white_quantile,
-            crf: self.crf,
-            preset: self.preset,
-            max_edge: if self.max_edge.is_finite() { self.max_edge } else { f64::INFINITY },
-        })
-    }
-}
-
-/// Size of `BbHdrOptions`, checked by the caller against the layout it writes.
-#[expect(unsafe_code)]
-#[no_mangle]
-pub extern "C" fn bb_hdr_options_size() -> usize {
-    std::mem::size_of::<BbHdrOptions>()
-}
-
-/// The argv this would hand to ffmpeg or avifenc, NUL-separated.
-///
-/// Exposed only so the pin that captured the TypeScript's output can be held
-/// against this (`hdr_pin.integration.test.ts`). `which` is 0 for ffmpeg's
-/// arguments, 1 for avifenc's, 2 for the target size as `WxH`. Nothing in the app
-/// calls it; `bb_encode_hdr` builds and runs these itself.
-///
-/// The arguments come back NUL-separated in a buffer the caller owns, sized the same
-/// way as every other reply: the return is what was written, or what is needed where
-/// `out_cap` was too small, or -1 on failure.
-///
-/// # Safety
-/// `options` must be a readable `BbHdrOptions`, the paths NUL-terminated C strings,
-/// and `out` valid for `out_cap`.
-#[expect(unsafe_code)]
-#[no_mangle]
-pub unsafe extern "C" fn bb_hdr_argv(
-    options: *const BbHdrOptions,
-    width: u32,
-    height: u32,
-    output_path: *const c_char,
-    y4m_path: *const c_char,
-    which: u32,
-    out: *mut u8,
-    out_cap: usize,
-) -> isize {
-    if options.is_null() || output_path.is_null() || y4m_path.is_null() {
-        return -1;
-    }
-    let (Ok(path), Ok(y4m)) = (unsafe { CStr::from_ptr(output_path) }.to_str(), unsafe { CStr::from_ptr(y4m_path) }.to_str()) else {
-        return -1;
-    };
-    let Some(built) = (unsafe { (*options).to_options(path) }) else { return -1 };
-
-    let parts = match which {
-        0 => hdr_args::ffmpeg_args(width, height, &built),
-        1 => hdr_args::avifenc_args(&built, y4m),
-        2 => {
-            let size = hdr_args::target_size(width, height, &built);
-            vec![format!("{}x{}", size.width, size.height)]
-        }
-        _ => return -1,
-    };
-    let joined = parts.join("\0").into_bytes();
-    if joined.len() > out_cap || out.is_null() {
-        return joined.len() as isize;
-    }
-    let destination = unsafe { std::slice::from_raw_parts_mut(out, joined.len()) };
-    destination.copy_from_slice(&joined);
-    joined.len() as isize
-}
-
-/// The fitted HDR colour transform, flattened for inspection.
-#[repr(C)]
-pub struct BbHdrColour {
-    /// Held-out mean deltaE76 over the fit pairs.
-    pub delta_e: f64,
-    /// The chroma blend applied after the matrix; 1 leaves it alone.
-    pub saturation: f64,
-    /// Row-major, output channel by input channel.
-    pub matrix: [f64; 9],
-    /// Three 256-entry curves, spanning render values 0 to TRUST_CEILING.
-    pub curves: [f64; 768],
 }
 
 /// The camera's embedded JPEG preview, as bytes.

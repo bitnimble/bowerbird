@@ -6,7 +6,7 @@ import { afterAll, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { deltaEToPreview } from '../../src/services/processing/rawshim_debug';
+import { _for_testing_deltaEToPreview } from '../../src/services/processing/rawshim_for_testing';
 import type { ProcessingResult, RenditionJob, RenditionTarget } from '../../src/services/processing/processing_types';
 
 const FIXTURE = `${import.meta.dir}/../fixtures/DSC02981.ARW`;
@@ -83,7 +83,7 @@ test(
     // are not the same shape: the JPEG is distortion-cropped, so at an 800px long
     // edge it comes out 534 wide against the render's 535, and walking a shared
     // index would slide a pixel per row and compare different parts of the scene.
-    const { meanDeltaE, counted, sizes } = deltaEToPreview([plain, matched], FIXTURE);
+    const { meanDeltaE, counted, sizes } = _for_testing_deltaEToPreview([plain, matched], FIXTURE);
     expect(sizes[0]).toEqual(sizes[1]!);
     expect(counted).toBeGreaterThan(100);
     // A flag that never reaches the worker makes these two equal, which is exactly

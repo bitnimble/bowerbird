@@ -9,7 +9,7 @@
 // This module used to be the handle API: a decode returned a pointer, each operation
 // took one, and freeing them was a convention held up by `finally` blocks and
 // comments. Renditions go through `rawshim_job.ts` now and the tests through
-// `rawshim_debug.ts`, both of which are command in, values out. What is left is the
+// `rawshim_for_testing.ts`, both of which are command in, values out. What is left is the
 // part that was always scalar.
 
 import { ptr } from 'bun:ffi';
@@ -101,98 +101,6 @@ export function readHeaderFields(filePath: string): RawHeaderFields {
     cameraModel: name(raw, HEADER.model, 64),
     lensModel: name(raw, HEADER.lens, 128),
   };
-}
-
-// #[repr(C)] BbHdrOptions: u32 medium, u32 stillChroma, f64 peak/referenceWhite
-// /whiteQuantile, i32 crf, i32 preset, f64 maxEdge. `stillChroma` sits in the padding
-// `medium` already had before the first f64, so the struct is the size it always was
-// and the check below still passes on an unchanged number.
-const HDR_OPTIONS = {
-  medium: 0,
-  stillChroma: 4,
-  peakNits: 8,
-  referenceWhiteNits: 16,
-  whiteQuantile: 24,
-  crf: 32,
-  preset: 36,
-  maxEdge: 40,
-  size: 48,
-} as const;
-
-// One transfer, two media. The SDR reference and the 4:2:0 baseline control went
-// with the check page they were built to be compared on.
-const MEDIA = ['still', 'video'] as const;
-
-export interface HdrOptions {
-  medium: (typeof MEDIA)[number];
-  outputPath: string;
-  peakNits: number;
-  referenceWhiteNits: number;
-  whiteQuantile: number;
-  crf: number;
-  preset: number;
-  /**
-   * 4:4:4 rather than 4:2:0 for a still. Ignored for the video, which has no choice:
-   * 4:4:4 video is AV1 Profile 1, which Chromium refuses outright (§10.7).
-   */
-  stillFullChroma: boolean;
-  /** Infinity for "whatever the frame is", which a native-resolution export asks. */
-  maxEdge: number;
-}
-
-function hdrOptionsBuffer(options: HdrOptions): Uint8Array {
-  const size = Number(shim().bb_hdr_options_size());
-  if (size !== HDR_OPTIONS.size) {
-    throw new Error(
-      `BbHdrOptions is ${size} bytes but this writer assumes ${HDR_OPTIONS.size}; the offsets here need updating`,
-    );
-  }
-  const raw = new Uint8Array(size);
-  const view = new DataView(raw.buffer);
-  view.setUint32(HDR_OPTIONS.medium, MEDIA.indexOf(options.medium), true);
-  view.setUint32(HDR_OPTIONS.stillChroma, options.stillFullChroma ? 1 : 0, true);
-  view.setFloat64(HDR_OPTIONS.peakNits, options.peakNits, true);
-  view.setFloat64(HDR_OPTIONS.referenceWhiteNits, options.referenceWhiteNits, true);
-  view.setFloat64(HDR_OPTIONS.whiteQuantile, options.whiteQuantile, true);
-  view.setInt32(HDR_OPTIONS.crf, options.crf, true);
-  view.setInt32(HDR_OPTIONS.preset, options.preset, true);
-  view.setFloat64(HDR_OPTIONS.maxEdge, options.maxEdge, true);
-  return raw;
-}
-
-/** Comfortably past any of these: the longest is ffmpeg's, at a few hundred bytes. */
-const ARGV_CAPACITY = 8 * 1024;
-
-/**
- * The argv the HDR encode would hand to ffmpeg or avifenc, and the size it targets.
- *
- * For the pin that holds this against the TypeScript it replaced
- * (`hdr_pin.integration.test.ts`). The app never needs it: a job builds and runs
- * these inside one call.
- */
-export function hdrArgv(
-  options: HdrOptions,
-  width: number,
-  height: number,
-  which: 'ffmpeg' | 'avifenc' | 'size',
-  y4mPath = '',
-): string[] {
-  const raw = hdrOptionsBuffer(options);
-  const out = new Uint8Array(ARGV_CAPACITY);
-  const written = Number(
-    shim().bb_hdr_argv(
-      ptr(raw),
-      width,
-      height,
-      Buffer.from(`${options.outputPath}\0`),
-      Buffer.from(`${y4mPath}\0`),
-      ['ffmpeg', 'avifenc', 'size'].indexOf(which),
-      ptr(out),
-      out.byteLength,
-    ),
-  );
-  if (written < 0 || written > out.byteLength) throw new Error('rawshim could not build the HDR arguments');
-  return new TextDecoder().decode(out.subarray(0, written)).split('\0');
 }
 
 /** Bytes one photo's stacking descriptor occupies, as the library reports it. */

@@ -856,6 +856,11 @@ pub unsafe extern "C" fn bb_stack_groups(
     0
 }
 
+/// Holding behaviour to a recorded copy of it, shared by the argv pin (synthetic) and
+/// the grade pin (fixture-backed).
+#[cfg(test)]
+mod pin;
+
 /// The tests that decode a real RAW, behind the `fixtures` feature so the default
 /// suite stays fast enough to run on every edit.
 #[cfg(all(test, feature = "fixtures"))]

@@ -22,9 +22,9 @@ import path from 'node:path';
 const FIXTURE = `${import.meta.dir}/../fixtures/DSC02981.ARW`;
 
 const PROBE = `
-import { encodeHdr } from '${import.meta.dir}/../../src/services/processing/rawshim_debug';
+import { _for_testing_encodeHdr } from '${import.meta.dir}/../../src/services/processing/rawshim_for_testing';
 const [file, out, medium, chroma] = process.argv.slice(-4);
-encodeHdr(file, {
+_for_testing_encodeHdr(file, {
   medium, outputPath: out, peakNits: 1000, referenceWhiteNits: 203,
   whiteQuantile: 0.9, crf: 30, preset: 10, maxEdge: 640,
   stillFullChroma: chroma === '444',

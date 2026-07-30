@@ -29,7 +29,7 @@ pub struct Channel {
     pub mean: f64,
 }
 
-fn channels(pixels: &Pixels) -> Vec<Channel> {
+pub(crate) fn channels(pixels: &Pixels) -> Vec<Channel> {
     (0..3)
         .map(|c| {
             let (mut min, mut max, mut sum, mut n) = (u32::MAX, 0u32, 0f64, 0u64);
@@ -55,7 +55,7 @@ fn channels(pixels: &Pixels) -> Vec<Channel> {
 /// for - so it buys the module out of needing `unsafe` at all, which is the point
 /// of the exercise. Native order, so the digest sees exactly the bytes the old
 /// byte-buffer did and a pin regenerated against it compares the same thing.
-fn to_bytes(pixels: &Pixels) -> Vec<u8> {
+pub(crate) fn to_bytes(pixels: &Pixels) -> Vec<u8> {
     match pixels {
         Pixels::Eight(data) => data.clone(),
         Pixels::Sixteen(data) => data.iter().flat_map(|sample| sample.to_ne_bytes()).collect(),
@@ -155,7 +155,8 @@ fn sha1_hex(data: &[u8]) -> String {
 /// the pin valid unregenerated - which makes it say "the grade is unchanged since
 /// before the port", where a regenerated pin in a new digest would only say "the
 /// grade is unchanged since this commit".
-fn sha256_hex(data: &[u8]) -> String {
+#[cfg(test)]
+pub(crate) fn sha256_hex(data: &[u8]) -> String {
     const K: [u32; 64] = [
         0x428a_2f98, 0x7137_4491, 0xb5c0_fbcf, 0xe9b5_dba5, 0x3956_c25b, 0x59f1_11f1, 0x923f_82a4,
         0xab1c_5ed5, 0xd807_aa98, 0x1283_5b01, 0x2431_85be, 0x550c_7dc3, 0x72be_5d74, 0x80de_b1fe,
@@ -242,22 +243,6 @@ pub enum Command {
         image_path: String,
         raw_path: String,
     },
-    /// A graded HDR frame, described. What `hdr_pin` records and `hdr_match` reads.
-    GradedSummary {
-        path: String,
-        #[serde(default)]
-        with_match: bool,
-        grade: GradeSpec,
-        /// Luma quantiles to report, in nits. Empty where none are wanted: sorting
-        /// 24M luma values is the expensive part of this reply.
-        #[serde(default)]
-        quantiles: Vec<f64>,
-    },
-    /// The fitted HDR colour transform, for the assertions that judge the fit itself.
-    HdrMatchColour {
-        path: String,
-        grade: GradeSpec,
-    },
     /// One HDR rendition, encoded to `grade.output_path`.
     EncodeHdr {
         path: String,
@@ -342,10 +327,6 @@ pub struct Reply {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub comparison: Option<Comparison>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub graded: Option<GradedSummary>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub colour: Option<HdrColour>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub against_preview: Option<AgainstPreview>,
 }
 
@@ -358,36 +339,6 @@ pub struct AgainstPreview {
     pub counted: usize,
     pub sizes: Vec<[usize; 2]>,
     pub preview: [usize; 2],
-}
-
-/// A graded HDR frame, described.
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GradedSummary {
-    pub width: usize,
-    pub height: usize,
-    /// SHA-256 rather than the SHA-1 a decode reports, because `hdr_grade.pin.txt`
-    /// holds SHA-256es generated before this subsystem was ported. Matching the
-    /// function keeps the pin valid unregenerated.
-    pub sha256: String,
-    pub channels: Vec<Channel>,
-    /// Every 9973rd sample. A prime stride, so it walks all three channels and cannot
-    /// land on a repeating pattern.
-    pub samples: Vec<u16>,
-    /// The luma quantiles the command asked for, in nits.
-    pub quantiles: Vec<f64>,
-}
-
-/// The fitted HDR colour transform, for the assertions that judge the fit.
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct HdrColour {
-    pub delta_e: f64,
-    pub saturation: f64,
-    pub curves: Vec<Vec<f64>>,
-    /// Where the SDR fit took its geometry from, which the HDR fit reuses rather than
-    /// searching again: geometry is a property of the lens, not of a colour space.
-    pub distortion_source: &'static str,
 }
 
 /// The decode and the SDR fit both pins share, kept between calls.
@@ -448,7 +399,8 @@ fn hdr_match(path: &str, linear: &Frame, spec: &GradeSpec) -> Result<Option<crat
 /// BT.2020 luma of the PQ-coded samples, which is what the assertion means by "how
 /// bright": the anchor is measured on the brightest component, so a luma quantile
 /// lands under the reference rather than on it, and it is the drift that is read.
-fn luma_quantiles(samples: &[u16], peak_nits: f64, wanted: &[f64]) -> Vec<f64> {
+#[cfg(test)]
+pub(crate) fn luma_quantiles(samples: &[u16], peak_nits: f64, wanted: &[f64]) -> Vec<f64> {
     if wanted.is_empty() {
         return Vec::new();
     }
@@ -487,55 +439,6 @@ pub fn run(command: &Command) -> Result<Reply, String> {
             let expected = expected.rgb8().ok_or("the comparison needs an 8-bit decode")?;
             Ok(Reply {
                 comparison: Some(compare(written.as_ref(), expected)),
-                ..Reply::default()
-            })
-        }
-        Command::GradedSummary { path, with_match, grade, quantiles } => {
-            let linear = linear_decode(path)?;
-            let matched = match with_match {
-                false => None,
-                true => hdr_match(path, &linear, grade)?,
-            };
-            let samples = linear.samples16().ok_or("the grade needs a 16-bit decode")?;
-            let source = crate::hdr::Source {
-                samples,
-                width: linear.width,
-                height: linear.height,
-            };
-            let (graded, width, height) =
-                crate::hdr::graded(&source, &grade.options(), matched.as_ref());
-
-            let pixels = Pixels::Sixteen(graded);
-            let bytes = to_bytes(&pixels);
-            let Pixels::Sixteen(graded) = &pixels else { unreachable!("just built") };
-            Ok(Reply {
-                graded: Some(GradedSummary {
-                    width,
-                    height,
-                    sha256: sha256_hex(&bytes),
-                    channels: channels(&pixels),
-                    samples: graded.iter().step_by(9973).copied().collect(),
-                    quantiles: luma_quantiles(graded, grade.peak_nits, quantiles),
-                }),
-                ..Reply::default()
-            })
-        }
-        Command::HdrMatchColour { path, grade } => {
-            let linear = linear_decode(path)?;
-            let matched = hdr_match(path, &linear, grade)?.ok_or("the HDR fit found no match")?;
-            let source = match sdr_profile(path)?.as_ref().as_ref().map(|p| p.source) {
-                Some(crate::fit::SOURCE_CAMERA) => "camera",
-                Some(crate::fit::SOURCE_FITTED) => "fitted",
-                Some(crate::fit::SOURCE_LENSFUN) => "lensfun",
-                _ => "none",
-            };
-            Ok(Reply {
-                colour: Some(HdrColour {
-                    delta_e: matched.colour.delta_e,
-                    saturation: matched.colour.saturation,
-                    curves: matched.colour.curves.iter().map(|c| c.to_vec()).collect(),
-                    distortion_source: source,
-                }),
                 ..Reply::default()
             })
         }

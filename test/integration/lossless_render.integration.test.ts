@@ -11,7 +11,7 @@ import { DEFAULT_SETTINGS, type Settings } from '../../src/schemas/settings';
 import { ProcessingService } from '../../src/services/processing/processing_service';
 import type { SettingsRepository } from '../../src/services/settings/settings_repository';
 import { readRawHeader } from '../../src/services/processing/raw_decoder';
-import { comparePsnr, decodeSummary } from '../../src/services/processing/rawshim_debug';
+import { _for_testing_comparePsnr, _for_testing_decodeSummary } from '../../src/services/processing/rawshim_for_testing';
 import { getRenditionPath } from '../../src/utils/paths';
 
 // The output path is the library's business now, so the test asks for it the
@@ -57,8 +57,8 @@ test('a 16-bit decode yields twice the bytes of an 8-bit one', () => {
   // halve. So asking both for 1000 returned 668x1000 and 2012x3012 - a real
   // difference, correctly reported, that this test is not about.
   const whole = { atLeastLongEdge: 0 } as const;
-  const eight = decodeSummary(FIXTURE, { depth: 8, space: 'srgb', ...whole });
-  const sixteen = decodeSummary(FIXTURE, { depth: 16, space: 'srgb', ...whole });
+  const eight = _for_testing_decodeSummary(FIXTURE, { depth: 8, space: 'srgb', ...whole });
+  const sixteen = _for_testing_decodeSummary(FIXTURE, { depth: 16, space: 'srgb', ...whole });
 
   expect(eight.depth).toBe(8);
   expect(sixteen.depth).toBe(16);
@@ -85,8 +85,8 @@ test('the SDR render the service produces decodes back to the image that went in
     // exactly the right size full of garbage, which only a comparison catches - so
     // the comparison is made where both images already are, and what comes back is
     // the number this was going to reduce them to.
-    const expected = decodeSummary(FIXTURE, { depth: 8 });
-    const written = comparePsnr(output, FIXTURE);
+    const expected = _for_testing_decodeSummary(FIXTURE, { depth: 8 });
+    const written = _for_testing_comparePsnr(output, FIXTURE);
     // Full resolution: this is the view that gets pixel-peeped, so unlike every
     // other rendition it is never fitted to a maximum edge.
     expect(written.width).toBe(expected.width);

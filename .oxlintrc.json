@@ -58,10 +58,10 @@
         "patterns": [
           {
             "group": [
-              "**/rawshim_debug",
-              "./rawshim_debug"
+              "**/rawshim_for_testing",
+              "./rawshim_for_testing"
             ],
-            "message": "Pixel work belongs in native/rawshim. Only commands and encoded files cross into TypeScript; rawshim_debug asks questions about samples on behalf of tests and pins, and one of its calls writes pixels to disk. Nothing in src/ may reach it."
+            "message": "Pixel work belongs in native/rawshim. Only commands and encoded files cross into TypeScript; rawshim_for_testing asks questions about samples on behalf of the tests that still live here; the rest of them are Rust fixture tests now. Nothing in src/ may reach it."
           }
         ]
       }

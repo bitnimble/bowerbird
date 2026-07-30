@@ -40,7 +40,7 @@ const SYMBOLS = {
   // way. Returns the byte length of the reply, or how big a buffer it needs.
   bb_run_job: { args: [FFIType.ptr, FFIType.u64, FFIType.ptr, FFIType.u64], returns: FFIType.i64 },
   // Questions about pixels, for tests and pins. Same shape as bb_run_job.
-  bb_debug: { args: [FFIType.ptr, FFIType.u64, FFIType.ptr, FFIType.u64], returns: FFIType.i64 },
+  bb_for_testing_debug: { args: [FFIType.ptr, FFIType.u64, FFIType.ptr, FFIType.u64], returns: FFIType.i64 },
   // A response body on its way to a socket, copied into a buffer the caller owns
   // rather than handed over as an address (§10.4).
   bb_transcode_jpeg: {
@@ -61,21 +61,6 @@ const SYMBOLS = {
     returns: FFIType.i32,
   },
 
-  // For the argv pin alone. An options struct by value, arguments back as bytes.
-  bb_hdr_argv: {
-    args: [
-      FFIType.ptr,
-      FFIType.u32,
-      FFIType.u32,
-      FFIType.cstring,
-      FFIType.cstring,
-      FFIType.u32,
-      FFIType.ptr,
-      FFIType.u64,
-    ],
-    returns: FFIType.i64,
-  },
-  bb_hdr_options_size: { args: [], returns: FFIType.u64 },
 } as const;
 
 type Shim = ReturnType<typeof dlopen<typeof SYMBOLS>>['symbols'];
