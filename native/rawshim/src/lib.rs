@@ -395,9 +395,22 @@ fn reference_copy() -> bool {
 /// (`raw_decode.integration.test.ts`), because that reasoning is exactly the kind that
 /// looks right and renders half a frame wrong.
 ///
+/// **Fits to `long_edge` on the way out**, which is where the memory goes rather than
+/// the time. A 3840px rendition off a 24MP frame wants 59MB, and building the whole
+/// 145MB decode to box-average it down afterwards meant that buffer coexisting with
+/// LibRaw's own 194MB working set. Averaging straight out of `imgdata.image` is the
+/// same box filter over the same source pixels in the same order - `box_resize_u16`
+/// then declines, finding the frame already at size - so it costs nothing and the
+/// intermediate never exists. 0 leaves the frame at the size it decoded to.
+///
 /// None when the frame is not what is expected, which leaves the caller on the LibRaw
 /// path rather than guessing.
-unsafe fn copy_processed(r: *mut raw::libraw_data_t, depth: u32, i: &Insets) -> Option<(usize, usize, Vec<u8>)> {
+unsafe fn copy_processed(
+    r: *mut raw::libraw_data_t,
+    depth: u32,
+    i: &Insets,
+    long_edge: u32,
+) -> Option<(usize, usize, Vec<u8>)> {
     let p = &(*r).params;
     let identity_curve =
         p.no_auto_bright == 1 && p.gamm[0] == 1.0 && p.gamm[1] == 1.0 && p.bright == 1.0;
@@ -420,6 +433,8 @@ unsafe fn copy_processed(r: *mut raw::libraw_data_t, depth: u32, i: &Insets) -> 
 
     let flip_index = |row: usize, col: usize| flip_index(flip, iwidth, iheight, row, col);
 
+    let (tw, th) = decode_target(out_width, out_height, long_edge);
+
     let planes = std::slice::from_raw_parts((*r).image, iwidth * iheight);
     // Written as bytes rather than as `u16`s that are then reinterpreted. Rebuilding a
     // `Vec<u8>` over a `Vec<u16>`'s allocation is undefined: `dealloc` has to be handed
@@ -428,18 +443,71 @@ unsafe fn copy_processed(r: *mut raw::libraw_data_t, depth: u32, i: &Insets) -> 
     // survives every test and then does not survive a different allocator.
     //
     // Native byte order, which is what every reader on this side assumes.
-    let stride = out_width * 6;
-    let mut out = vec![0u8; stride * out_height];
-    out.par_chunks_mut(stride).enumerate().for_each(|(y, row)| {
-        for x in 0..out_width {
-            let px = planes[flip_index(y + i.top, x + i.left)];
+    //
+    // `box_resize_u16` declines an enlargement or an identity, and so does this: the
+    // two have to agree about when a fit happens or the grade would resize a frame this
+    // already did.
+    if tw >= out_width || th >= out_height {
+        let stride = out_width * 6;
+        let mut out = vec![0u8; stride * out_height];
+        out.par_chunks_mut(stride).enumerate().for_each(|(y, row)| {
+            for x in 0..out_width {
+                let px = planes[flip_index(y + i.top, x + i.left)];
+                for c in 0..3 {
+                    let at = x * 6 + c * 2;
+                    row[at..at + 2].copy_from_slice(&px[c].to_ne_bytes());
+                }
+            }
+        });
+        return Some((out_width, out_height, out));
+    }
+
+    // `box_resize_u16`, reading through the flip and the crop instead of through a copy
+    // that applied them. Accumulation order is row-then-column with the channel
+    // innermost, matching it exactly, so the result is the same to the bit.
+    let xs = out_width as f64 / tw as f64;
+    let ys = out_height as f64 / th as f64;
+    let stride = tw * 6;
+    let mut out = vec![0u8; stride * th];
+    out.par_chunks_mut(stride).enumerate().for_each(|(dy, row)| {
+        let y0 = (dy as f64 * ys).floor() as usize;
+        let y1 = (((dy + 1) as f64 * ys).floor() as usize).max(y0 + 1);
+        for dx in 0..tw {
+            let x0 = (dx as f64 * xs).floor() as usize;
+            let x1 = (((dx + 1) as f64 * xs).floor() as usize).max(x0 + 1);
+            let mut acc = [0.0f64; 3];
+            for y in y0..y1 {
+                for x in x0..x1 {
+                    let px = planes[flip_index(y + i.top, x + i.left)];
+                    for c in 0..3 {
+                        acc[c] += f64::from(px[c]);
+                    }
+                }
+            }
+            let n = ((y1 - y0) * (x1 - x0)) as f64;
             for c in 0..3 {
-                let at = x * 6 + c * 2;
-                row[at..at + 2].copy_from_slice(&px[c].to_ne_bytes());
+                let value = (acc[c] / n).round() as u16;
+                let at = dx * 6 + c * 2;
+                row[at..at + 2].copy_from_slice(&value.to_ne_bytes());
             }
         }
     });
-    Some((out_width, out_height, out))
+    Some((tw, th, out))
+}
+
+/// The size a decode is fitted to on its way out, which is the same arithmetic the
+/// grade would otherwise have applied afterwards - so that it finds nothing left to do.
+///
+/// One definition, called by both decode paths: the direct read fuses the fit into its
+/// copy out of `imgdata.image`, and the `dcraw_make_mem_image` reference applies it as
+/// a separate pass, and the differential test between them is only meaningful if they
+/// agree on the target. An edge of 0 means native resolution and no fit.
+fn decode_target(width: usize, height: usize, long_edge: u32) -> (usize, usize) {
+    let size = match long_edge {
+        0 => hdr_args::Size { width: width as u32, height: height as u32 },
+        edge => hdr_args::fitted(width as u32, height as u32, f64::from(edge)),
+    };
+    (size.width as usize, size.height as usize)
 }
 
 /// dcraw's `flip_index`, which is what makes the orientation match LibRaw's to the pixel.
@@ -547,7 +615,8 @@ pub unsafe extern "C" fn bb_decode(
         // Straight out of `imgdata.image` where the curve is ours to know, which skips
         // the second whole-frame buffer `dcraw_make_mem_image` would allocate and the
         // copy back out of it.
-        let taken = if reference_copy() { None } else { copy_processed(r, depth, &insets) };
+        let taken =
+            if reference_copy() { None } else { copy_processed(r, depth, &insets, at_least_long_edge) };
         let direct = taken.is_some();
         let (width, height, data) = match taken {
             Some(done) => done,
@@ -567,7 +636,29 @@ pub unsafe extern "C" fn bb_decode(
                 if colors != 3 || bits != depth {
                     return None;
                 }
-                (w - insets.left - insets.right, h - insets.top - insets.bottom, data)
+                let (cw, ch) = (w - insets.left - insets.right, h - insets.top - insets.bottom);
+                // The fit the direct path fuses into its copy, applied here as the
+                // separate pass it used to be. That is what keeps the two comparable:
+                // `raw_decode.integration.test.ts` holds them against each other, and
+                // it is now pinning the fusion as well as the interleave.
+                //
+                // Round-tripping through `Vec<u16>` rather than viewing the bytes as
+                // one, because a `Vec<u8>` is only guaranteed to be byte-aligned. This
+                // is the reference path, taken by that test alone, so the extra copy
+                // costs nothing anybody waits for.
+                let (tw, th) = decode_target(cw, ch, at_least_long_edge);
+                if depth != 16 || (tw, th) == (cw, ch) {
+                    (cw, ch, data)
+                } else {
+                    let samples: Vec<u16> =
+                        data.chunks_exact(2).map(|b| u16::from_ne_bytes([b[0], b[1]])).collect();
+                    let resized = image::box_resize_u16(&samples, cw, ch, tw, th)?;
+                    let mut bytes = Vec::with_capacity(resized.len() * 2);
+                    for sample in resized {
+                        bytes.extend_from_slice(&sample.to_ne_bytes());
+                    }
+                    (tw, th, bytes)
+                }
             }
         };
 

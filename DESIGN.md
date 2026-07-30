@@ -1180,6 +1180,12 @@ On the scene-linear path every one of those arguments is a constant set a few li
 
 That reasoning is exactly the kind that looks right and renders half a frame wrong, so it is pinned rather than argued: `raw_decode.integration.test.ts` decodes both ways and requires the bytes to match, on both fixtures, at full and half size - the two flip orientations and the two inset cases between them.
 
+**The fit to the rendition's size happens here too**, in the same pass. A 3840px HDR rendition off a 24MP frame wants 59MB, and building the whole 145MB decode only for the grade to box-average it down meant that buffer coexisting with LibRaw's 194MB working set. Averaging straight out of `imgdata.image` is the same box filter over the same source pixels in the same order, so `box_resize_u16` then finds the frame already at size and declines - the intermediate simply never exists. Measured on the 24MP fixture at 3840, the decode's transient falls from **420MB to 338MB** and what it leaves resident for the rest of the job from 188MB to 106MB, which is the figure that multiplies by `processing_concurrency`.
+
+It is bit-identical, and pinned that way rather than asserted: the reference arm of the differential test applies the same fit as a separate pass afterwards, so the SHA1s only match if fusing it changed nothing. Verified at 3840, 800, 640 and native, including the half-size cases where the two stages compose.
+
+The fit is only applied to the scene-linear path. The 8-bit one is resized by libvips with a different filter, so shrinking it here would change the picture rather than just move where the work happens.
+
 **PPG rather than LibRaw's default AHD** (`user_qual = 2`), overridable with `BOWERBIRD_DEMOSAIC`. Whole-decode wall time, and the mean difference each algorithm shows against AHD once resized to a 3840px rendition:
 
 | `user_qual` | | 24MP | 61MP | vs AHD at 3840 |
@@ -1514,6 +1520,20 @@ The alternative would be normalising the brightest sample to the display peak, a
 
 The **peak is read off the frame, not off sensor saturation**, and that is what makes the grade exposure-invariant: both the white level and the peak scale with exposure, so their ratio, and therefore how much roll-off the highlights get, is a property of the scene. Anchoring the peak at sensor clip instead would give a frame shot two stops down four times the compression for the same subject.
 
+**Both ends are quantiles, and the top one had to become one.** The peak was the frame's brightest sample, over a strided subsample - which makes it a property of *one pixel* and of how many pixels happened to be read, rather than of the scene. Two consequences, both measured on the 24MP fixture across a full decode, a half-size one and a box-resized one of the same frame:
+
+| top-end statistic | spread across the three |
+|---|---|
+| maximum | **22.7%** |
+| p99.999 | 0.73% |
+| **p99.99** (`PEAK_QUANTILE`) | **0.29%** |
+
+A maximum over a subsample also inherits the subsample's size: a full decode read 1.51M pixels and a halved one 379K, and the smaller read came back 0.76% *higher* because the two errors ran in opposite directions and happened to cancel. So the reading is now a fixed **1M samples at proportional positions**, and the top end is the 0.9999 quantile of them - the top ~105 samples, enough to estimate, where p99.999 is the top ten and measured less stable for being nearly a maximum again.
+
+It clips what sits above it. That is not new - the matched arm already clamped to whatever its subsample found - but it is now explicit and repeatable rather than a function of the decode's size. Measured against the previous grade on the fixture: **SSIM 0.998**, with the per-channel means unchanged to four figures on four of the five pinned cases. The fifth is the low-peak roll-off case, which comes out 3.5% brighter, because a peak that no longer chases one specular sample asks the EETF to compress less of the picture to accommodate it - the same argument the white quantile makes at the other end.
+
+**Renditions of one photo should agree, and now nearly do; they never will exactly.** A half-size decode is its own demosaic rather than a downscale of the full one, so resampling both to the fit grid gives slightly different planes however the statistics are read - about 0.5% on the fitted colour matrix. The goal is that nothing makes the gap *larger* than that for no reason, which is what the maximum was doing.
+
 The curve is baked into a 65536-entry lookup table, because a 60MP frame is 180M samples and `pow()` that many times is not free. It runs **once per job**, not once per output: the still and its video twin are the same grade at the same size, so they share one graded buffer and differ only in what the encoder does with it.
 
 `HDR_PEAK_NITS` (default 1000) is now only the declared mastering peak and the roll-off target - no longer the exposure control - so it sets how much headroom sits above diffuse white. It is not interpreted the same everywhere: Chromium renders HDR stills relative to SDR white and caps headroom at 4 stops, while Firefox 153 does no tone mapping at all, so it is a knob to set against a display rather than a value that transfers.
@@ -1594,7 +1614,7 @@ A third that was pure bookkeeping: the fit **normalised the whole decode to diff
 
 **Resize, then warp, then grade** - in that order, and each position is load-bearing. The resize comes first because the grade used to run on all 61MP before handing ffmpeg a frame it immediately fitted to 3840, so ~15/16 of the most expensive step was discarded; doing it in linear light here instead is the same picture, and took the full-size rendition from ~7s to 1.7s. The warp comes next because the distortion model is in normalised radii, so warping 61MP to make a 3840px rendition is sixteen times the work for the same result. The grade comes last because the colour was fitted from pairs that only correspond *through* that warp.
 
-That reordering costs one thing: the levels can no longer be measured where they are used. Averaging pulls a specular peak in, so a downscaled copy reports a different diffuse white and a different scene peak, and the full-size rendition would grade to a different brightness than the max-resolution one. `measureLevels` runs once on the decode and both share the answer, which a test pins across three scale factors.
+That reordering used to cost one thing: the levels could not be measured where they were used, because averaging pulls a specular peak in and a downscaled copy then reported a different diffuse white and a different scene peak. That is what reading both ends as quantiles over a fixed sample count fixed (10.7.1) - the anchor no longer moves with the frame's resolution, so it can be measured wherever the frame happens to be, and the decode is free to arrive already fitted.
 
 **Geometry and colour travel as one object**, and that is a fix rather than a preference. They shipped separately at first: the geometry was used to build the fit and then never applied to the output, so an HDR rendition carried the camera's colour on LibRaw's uncorrected shape - a transform applied half, and wrong on its own terms rather than merely different from the SDR copy. `HdrMatch` carries both so applying one without the other is not expressible.
 

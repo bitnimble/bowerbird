@@ -664,9 +664,15 @@ pub fn fit_plane(linear: &[u16], width: usize, height: usize, wide: usize) -> Pl
 /// below - so the shadows that error creates are not merely dark, they are discarded,
 /// and a frame can fall under `MIN_PAIRS` and lose its colour match altogether.
 ///
-/// The quantile is also what keeps this stable across decode sizes, which the peak is
-/// not: two jobs fitting the same photo from differently-sized decodes have to arrive at
-/// the same geometry, since nothing is persisted between them (10.8).
+/// The quantile is also what keeps this *close* across decode sizes, which the peak is
+/// not - and close is the goal rather than equal. Two jobs fitting the same photo from
+/// differently-sized decodes should land on the same geometry, since nothing is
+/// persisted between them (10.8), but they cannot land on it exactly: a half-size
+/// decode is its own demosaic rather than a downscale of the full one, so resampling
+/// both to the fit grid gives slightly different planes whatever is done here. Measured
+/// on the 24MP fixture, a full decode against a halved one moves the fitted matrix by
+/// about 0.5%. What is worth fixing is anything that makes the gap *larger* than that
+/// for no reason, which is what the peak was doing before `tone` read it as a quantile.
 pub fn render_srgb8(plane: &Plane, white: f64) -> crate::vips::Rgb {
     let mut data = vec![0u8; plane.width * plane.height * 3];
     data.par_chunks_mut(3).zip(plane.data.par_chunks(3)).for_each(|(out, px)| {

@@ -71,8 +71,36 @@ fn eetf(nits: f64, source_peak_nits: f64, peak_nits: f64) -> f64 {
     pq_inv(e2 * lw)
 }
 
-/// A quantile does not need every pixel of a 60MP frame.
-const QUANTILE_STRIDE: usize = 16;
+/// How many pixels the quantile reads. A quantile does not need every pixel of a 60MP
+/// frame, and it must not read a number of them that depends on how big the frame is.
+///
+/// A fixed *count* rather than a fixed stride, which is the whole point. `peak` is the
+/// maximum over whatever was sampled, so sampling four times as many pixels finds a
+/// brighter one - and the same photo decoded at two sizes then anchors differently.
+/// Measured on the 24MP fixture before this: a full decode read 1.51M pixels and a
+/// halved one 379K, and the halved frame's peak came back 0.76% higher for no reason
+/// but the count. Roughly what the old stride read at 24MP, so the sampling density is
+/// unchanged on a typical frame.
+const QUANTILE_SAMPLES: usize = 1 << 20;
+
+/// Where the frame's top end is read, for the roll-off to compress into the display.
+///
+/// A quantile rather than the maximum, and that is a correctness fix rather than a
+/// tuning choice. A maximum is a property of one sample, so it moves with how many
+/// pixels were read *and* with which demosaic produced them - measured across a full
+/// decode, a half-size one and a box-resized one of the same frame, the maximum spread
+/// **22.7%** while this quantile spread **0.29%**. Two renditions of one photo were
+/// therefore rolling their highlights differently for no reason a viewer would accept.
+///
+/// 0.9999 rather than higher: over `QUANTILE_SAMPLES` it is the top ~105 samples, which
+/// is enough to estimate. 0.99999 is the top ten, near enough a maximum again, and
+/// measured less stable for exactly that reason.
+///
+/// It clips what sits above it, which is the behaviour the matched arm already had -
+/// it clamps to whatever its subsample happened to find, and DESIGN 10.7.1 records
+/// that as "a handful of specular samples the roll-off was compressing into the peak
+/// anyway". This makes that threshold explicit and repeatable instead of accidental.
+const PEAK_QUANTILE: f64 = 0.9999;
 
 #[derive(Clone, Copy)]
 pub struct Levels {
@@ -89,36 +117,51 @@ pub struct Levels {
 /// - and therefore how much roll-off the highlights get - is a property of the scene.
 /// Reading the peak off the sensor instead would give a frame shot two stops down four
 /// times the compression for the same subject.
+///
+/// **Read at a fixed sample count, at proportional positions**, so that the same photo
+/// decoded at two different sizes lands on the same anchor. Not exactly the same - two
+/// decodes of one frame are not two views of one buffer - but close enough that the
+/// renditions agree, which a stride cannot manage at all (10.7.1).
 pub fn levels(samples: &[u16], quantile: f64) -> Levels {
+    let pixels = samples.len() / 3;
+    if pixels == 0 {
+        return Levels { white: 0.0, peak: 0.0 };
+    }
+    let counted = pixels.min(QUANTILE_SAMPLES);
     let mut histogram = vec![0u32; MAX + 1];
-    let mut counted = 0usize;
-    let mut i = 0usize;
-    while i + 2 < samples.len() {
+    for k in 0..counted {
+        // Spread by fraction rather than by step: sample k lands at the same place in
+        // the frame whatever the frame's resolution, which is what makes two decodes of
+        // one photo agree.
+        let i = ((k * pixels) / counted) * 3;
         let brightest = samples[i].max(samples[i + 1]).max(samples[i + 2]);
         histogram[brightest as usize] += 1;
-        counted += 1;
-        i += 3 * QUANTILE_STRIDE;
     }
 
-    let mut peak = 0usize;
+    let mut highest = 0usize;
+    let mut peak: isize = -1;
     let mut white: isize = -1;
     let mut seen = 0u64;
-    let target = counted as f64 * quantile;
+    let white_at = counted as f64 * quantile;
+    let peak_at = counted as f64 * PEAK_QUANTILE;
     for level in 0..=MAX {
         let count = histogram[level];
         if count == 0 {
             continue;
         }
-        peak = level;
+        highest = level;
         seen += u64::from(count);
-        if white < 0 && seen as f64 >= target {
+        if white < 0 && seen as f64 >= white_at {
             white = level as isize;
         }
+        if peak < 0 && seen as f64 >= peak_at {
+            peak = level as isize;
+        }
     }
-    Levels {
-        white: if white < 0 { peak as f64 } else { white as f64 },
-        peak: peak as f64,
-    }
+    // A frame with too few distinct levels to reach either mark falls back to the
+    // brightest one there is, which is what both meant on such a frame anyway.
+    let peak = if peak < 0 { highest as f64 } else { peak as f64 };
+    Levels { white: if white < 0 { peak } else { white as f64 }, peak }
 }
 
 pub struct GradeOptions<'a> {
@@ -132,12 +175,13 @@ pub struct GradeOptions<'a> {
     /// The colour half only. Its geometry is applied by the caller before this runs,
     /// since a warp is a resize concern rather than a tone one.
     pub match_colour: Option<&'a HdrColour>,
-    /// Where diffuse white and the scene peak sit, measured on the decode rather than
-    /// on whatever was handed here.
+    /// Where diffuse white and the scene peak sit.
     ///
-    /// Measured on a downscaled copy the answers drift, because averaging pulls a
-    /// specular peak in, so the full-size rendition and the max-resolution one would
-    /// grade to different brightnesses for the same photo.
+    /// Read at a fixed sample count and as quantiles at both ends, which is what lets
+    /// the decode arrive already fitted to the rendition's size: the answers no longer
+    /// depend on how many pixels the frame has, so the full-size rendition and the
+    /// max-resolution one grade to the same brightness without one of them having to
+    /// carry the other's resolution around to be measured at.
     pub levels: Levels,
 }
 
@@ -181,23 +225,34 @@ pub fn grade(frame: &mut [u16], options: &GradeOptions<'_>) -> bool {
     // build and the scene peak has to be measured after it rather than read off the
     // input's histogram.
     //
-    // The peak comes from the same subsample the anchor does. Keeping every pixel's
-    // nits to find the exact maximum wanted a buffer the size of the frame - 720MB on
-    // a 60MP photo - to save clamping a handful of specular samples that the roll-off
-    // was compressing into the peak anyway.
-    let mut scene_peak = frame
-        .par_chunks_exact(3)
-        .step_by(QUANTILE_STRIDE)
-        .map(|px| {
+    // The peak comes from the same subsample the anchor does, at the same fixed count
+    // and the same proportional positions - it is a maximum, so it inherits exactly the
+    // size-dependence `levels` had to be fixed for. Keeping every pixel's nits to find
+    // the exact maximum wanted a buffer the size of the frame - 720MB on a 60MP photo -
+    // to save clamping a handful of specular samples that the roll-off was compressing
+    // into the peak anyway.
+    let pixels = frame.len() / 3;
+    let counted = pixels.min(QUANTILE_SAMPLES).max(1);
+    let mut sampled: Vec<f32> = (0..counted)
+        .into_par_iter()
+        .map(|k| {
+            let i = ((k * pixels) / counted) * 3;
             let v = hdr_fit::apply_hdr_colour(
                 colour,
-                f64::from(px[0]) / white,
-                f64::from(px[1]) / white,
-                f64::from(px[2]) / white,
+                f64::from(frame[i]) / white,
+                f64::from(frame[i + 1]) / white,
+                f64::from(frame[i + 2]) / white,
             );
-            v[0].max(v[1]).max(v[2])
+            v[0].max(v[1]).max(v[2]) as f32
         })
-        .reduce(|| 0.0f64, f64::max);
+        .collect();
+    // The same quantile as the neutral arm, which needs the sampled values kept rather
+    // than reduced away. Only the subsample is kept - 4MB at this count - where holding
+    // every pixel's nits would be 720MB on a 60MP frame, which is why the maximum was
+    // reduced in place before there was a subsample of a fixed size to select from.
+    let nth = ((counted as f64 * PEAK_QUANTILE) as usize).min(counted - 1);
+    let (_, at, _) = sampled.select_nth_unstable_by(nth, |a, b| a.total_cmp(b));
+    let mut scene_peak = f64::from(*at);
     scene_peak *= reference;
     if !(scene_peak > 0.0) {
         return false;

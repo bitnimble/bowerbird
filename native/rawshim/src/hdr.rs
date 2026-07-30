@@ -157,9 +157,9 @@ pub fn graded(
     options: &EncodeOptions,
     matched: Option<&HdrMatch>,
 ) -> (Vec<u16>, usize, usize) {
-    // The levels come from the decode rather than the fitted copy: averaging pulls a
-    // specular peak in, so measuring after the resize would give the full-size
-    // rendition and the max-resolution one different anchors for the same photo.
+    // Measured wherever the decode happens to be, which is safe now that both ends are
+    // quantiles over a fixed sample count: the anchor no longer moves with the frame's
+    // resolution, so the decode is free to arrive already fitted (`copy_processed`).
     graded_with(source, options, matched, tone::levels(source.samples, options.white_quantile))
 }
 
