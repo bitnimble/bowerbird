@@ -207,8 +207,8 @@ async function renditions(job: RenditionJob): Promise<Uint8Array | undefined> {
 
   try {
     // Fitted once, before anything is written: every rendition of one photo has to
-    // get the same transform or the grid tile and the full view will not match each
-    // other. Null when the setting is off, when nothing in the job renders, or when
+    // get the same transform, and the render has to match the camera's JPEG that the
+    // grid tile is made of, or a photo changes appearance when it is opened. Null when the setting is off, when nothing in the job renders, or when
     // the fit found no match worth applying - in each case the renders below are
     // simply untransformed.
     // Gated on a target that actually demosaics: an embedded-source grid already has
@@ -223,12 +223,19 @@ async function renditions(job: RenditionJob): Promise<Uint8Array | undefined> {
 
     // Built once at the largest SDR size the job asks for, then resized down for the
     // rest by the encoder. Every smaller rendition is a resize of this rather than
-    // its own warp and re-grade of the same picture: a `render` import builds an
-    // 800px tile and a 3840px view, and transforming each separately did the
-    // 9.8M-pixel work twice. Legitimate because the order does not change the
-    // result - the distortion model is in normalised radii and the colour transform
-    // is a per-pixel lookup - and going 3840 to 800 is also a cheaper resize than
-    // 9504 to 800.
+    // its own warp and re-grade of the same picture. Legitimate because the order
+    // does not change the result - the distortion model is in normalised radii and
+    // the colour transform is a per-pixel lookup - and going 3840 to 800 is a
+    // cheaper resize than 9504 to 800.
+    //
+    // **No job actually carries two SDR targets today**, so nothing shares this and
+    // `largestSize` always answers with the one target's own size. It used to: the
+    // grid tile and the full view were built together, which is what the sharing was
+    // for. They are two passes now (§10.3) and the tile takes the embedded JPEG, so
+    // the only thing that reaches this closure is a single `full` or `max`, or a
+    // grid tile whose file embeds no preview. Kept general because `targets` is a
+    // list and the resize-from-the-base reasoning is what makes that safe - but do
+    // not read it as evidence that a tile is rendered from a demosaic. It is not.
     //
     // Lazy for the same reason the decode is: a job whose only SDR target comes
     // from the embedded JPEG never demosaics at all.

@@ -1151,7 +1151,9 @@ Each worker:
 
 **Nothing in the product moves samples across the boundary at all now.** There were two that did - the scene-linear frame TypeScript wrote to ffmpeg's stdin, and the HDR fit that read the same pixels - and both moved into Rust. `pixels()` survives for the tests that compare a decode against what was written (§10.4, "Handles, not pixels").
 
-**One grade, not one per rendition.** A `render` import builds an 800px tile and a 3840px view, and transforming each separately did the ~9.8M-pixel warp and grade twice. The base is built at the largest SDR size the job asks for and every smaller rendition is a resize of it, which is legitimate because the order does not change the result: the distortion model is in radii normalised to the half-diagonal and the colour transform is a per-pixel lookup, so neither depends on resolution. Going 3840→800 is also a cheaper resize than 9504→800. The integration suite checks the reasoning rather than trusting it, comparing a grade-then-resize against a resize-then-grade.
+**One grade, not one per rendition.** The base is built at the largest SDR size the job asks for and every smaller rendition is a resize of it rather than its own warp and re-grade, which is legitimate because the order does not change the result: the distortion model is in radii normalised to the half-diagonal and the colour transform is a per-pixel lookup, so neither depends on resolution. Going 3840→800 is also a cheaper resize than 9504→800. The integration suite checks the reasoning rather than trusting it, comparing a grade-then-resize against a resize-then-grade.
+
+**No job carries two SDR targets any more, so read that as the reason the sharing is safe rather than as something happening.** It described a single job writing an 800px tile and a 3840px view together, which is what the pre-split pipeline did. Tiles and renditions are two passes now, and the tile takes the embedded JPEG, so the only thing that reaches the shared base is one `full` or `max` - or a grid tile whose file embeds no preview. **A tile job does not demosaic**, and the sentence that used to be here is the easiest way to conclude that it does.
 
 **An import runs in two passes, tiles before renditions.** Both cover the same photos, so this is purely an ordering choice, and it is the reason the stages are split at all: measured over 23 real ARWs, a tile is 124ms where a rendition is 1518ms, and at concurrency 8 that is 30 img/s against 3. On a 2000-frame shoot the whole grid is browsable in about a minute rather than after the eleven minutes the renders take.
 
@@ -1267,7 +1269,7 @@ Handles are freed explicitly, in a `finally`. Nothing on the JS side collects th
 
 #### What it bought
 
-An import job - decode, fit, grade, and write a 3840px view plus an 800px tile - against the sharp pipeline it replaced:
+An import job - decode, fit, grade, and write a 3840px view plus an 800px tile - against the sharp pipeline it replaced. That was one job doing both; the tile is its own pass off the embedded JPEG now (§10.3), so read the tile column as history rather than as what a tile costs today:
 
 | Frame | sharp | native | |
 |---|---|---|---|
