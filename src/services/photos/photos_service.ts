@@ -340,6 +340,11 @@ export class PhotosService {
 
     // Both renditions follow the library's HDR setting: they are the same render
     // from the same RAW, and dropping one to SDR would make it the odd one out.
+    //
+    // "Both" being `full` and `max`. The grid tile is never HDR and `target` throws
+    // rather than coercing, so this line would reject one - it is the route that
+    // keeps it from having to, refusing `grid` before this is reached. Widen that
+    // route and this needs `&& rendition !== 'grid'` in the same commit.
     const hdr = library.rendition_hdr;
     const output = getRenditionPath(library, photo.id, rendition, hdr);
     // The file *is* the cache, so forcing a rebuild means removing it: the

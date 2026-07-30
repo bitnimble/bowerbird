@@ -88,13 +88,12 @@ describe('ProcessingService.processUnprocessed', () => {
     expect(posted.map((job) => job.matchEmbeddedJpeg)).toEqual([false, false]);
   });
 
-  it('builds the grid tile SDR and subsampled however the library and settings are set', async () => {
-    // Neither switch reaches the tile, and both would be wrong there: an HDR tile
-    // costs a linear decode and two encoder passes per photo for a wall of images
-    // nobody pixel-peeps, and full chroma would store detail its usual source - the
-    // camera's already-subsampled JPEG - never had. Pinned because both are settings
-    // a caller can turn on, and a tile that quietly followed them would still encode,
-    // still be the right size, and only show up as an import that got slower.
+  it('keeps the grid tile subsampled while the rendition beside it follows the setting', async () => {
+    // `sdr_full_chroma` does not cover the grid: a tile is 800px in a wall of other
+    // tiles and its usual source is the camera's already-subsampled JPEG, so 4:4:4
+    // would store chroma the source never had. Pinned because it is a setting a
+    // caller can turn on, and a tile that quietly followed it would still encode,
+    // still be the right size, and show up only as an import that got slower.
     const repo = {
       listPendingProcessing: jest.fn(() => [{ ...pending('a'), rendition_hdr: 1, rendition_hdr_video: 1 }]),
       markTileBuilt: jest.fn(),
@@ -108,17 +107,35 @@ describe('ProcessingService.processUnprocessed', () => {
     ).processUnprocessed({ libraryId: 'lib' });
 
     const targets = posted.flatMap((job) => job.targets);
-    const grid = targets.filter((target) => target.rendition === 'grid');
-    expect(grid).toHaveLength(1);
-    expect(grid[0]!.hdr).toBe(false);
-    expect(grid[0]!.sdrFullChroma).toBe(false);
-    // No video twin either, that being an HDR rendition's companion.
-    expect(grid[0]!.videoOutputPath).toBeNull();
-    // The library asked for both, so the rendition that does take them still does -
-    // otherwise this would pass with the settings simply not plumbed through.
+    const grid = targets.find((target) => target.rendition === 'grid');
+    expect(grid?.sdrFullChroma).toBe(false);
+    // Never HDR, and so never a video twin - which the library did ask for.
+    expect(grid?.hdr).toBe(false);
+    expect(grid?.videoOutputPath).toBeNull();
+    // The rendition that does take the settings still does, or this would pass with
+    // them simply not plumbed through.
     const full = targets.find((target) => target.rendition === 'full');
     expect(full?.hdr).toBe(true);
     expect(full?.sdrFullChroma).toBe(true);
+  });
+
+  it('refuses an HDR grid tile rather than quietly building an SDR one', async () => {
+    // `hdr` is the caller's, unlike the chroma setting above, so a caller that asks
+    // for something that cannot exist is told. Coercing instead put the mistake
+    // somewhere nobody would ever read it, and the mistake is not harmless:
+    // `renditionDir` gives no HDR grid path, so an honoured request would encode HDR
+    // and file it as SDR - a tile that decodes wrong rather than one that is large.
+    //
+    // Rejecting is only half the claim; the test above is the other half, building a
+    // grid target and asserting on it, so this cannot pass by refusing everything.
+    // It rejects rather than throwing, which is also load-bearing: the tile repair
+    // calls this fire-and-forget and clears its in-flight set in a `.finally()`.
+    const service = new ProcessingService({} as unknown as PhotosRepository, settingsWith({}));
+    const library = { id: 'lib', root_path: '/lib', data_path: null, rendition_hdr_video: 1 } as never;
+
+    await expect(service.renderOne('/lib/a.arw', 'p1', library, 'grid', true, 'embedded')).rejects.toThrow(
+      /grid tile is always SDR/,
+    );
   });
 
   it('marks each photo processed and drains the pool without hanging', async () => {

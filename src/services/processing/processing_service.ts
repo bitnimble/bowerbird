@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
+import { AppError } from '../../errors';
 import { Logger } from '../../logger';
 import type { Library } from '../../schemas/libraries';
 import { deleteGeneratedFile } from '../../utils/deletions';
@@ -106,7 +107,13 @@ export class ProcessingService {
   // does not have yet. The photo view's own renditions are always renders, never
   // the embedded JPEG, which is served as itself rather than built (§10.2); a grid
   // tile rebuilt here passes 'embedded', matching what the import builds.
-  renderOne(
+  //
+  // `async` so that building the target reports through the promise rather than
+  // throwing past it. `target` rejects a request that cannot be built, and the tile
+  // repair calls this fire-and-forget with a `.catch()` and a `.finally()` that
+  // clears its in-flight set - a synchronous throw would miss both, leaving that
+  // photo unrepairable for the life of the process and turning a GET into a 500.
+  async renderOne(
     rawFilePath: string,
     photoId: string,
     library: Library,
@@ -151,35 +158,44 @@ export class ProcessingService {
       max: settings.lossless_sdr_quantizer,
     };
 
-    // The grid tile takes neither of the switches the other two renditions do, and
-    // that is decided here rather than offered.
-    //
-    // Never HDR: a wall of HDR tiles is punishing to look at, and it would put a
-    // linear decode and two encoder passes on every photo in an import (§10.1).
-    // `renditionDir` refuses an HDR grid path as well, so this keeps the target
-    // agreeing with where its bytes would land.
-    //
-    // Never full chroma, whatever `sdr_full_chroma` says: a tile is 800px in a wall
-    // of other tiles, and its usual source is the camera's embedded JPEG, which is
-    // already subsampled - `yuvj422p` on the corpus - so 4:4:4 would be storing
-    // chroma at a resolution the source never had. Measured, the difference is
-    // 0.0003 SSIM (§10.1). The same holds for the render fallback below: nothing
-    // that reaches the grid is worth full chroma, so it is not a knob.
     const gridTile = rendition === 'grid';
-    const hdrTarget = hdr && !gridTile;
+
+    // **A grid tile is never HDR, and asking for one is a caller's bug rather than
+    // something to quietly correct.** A wall of HDR tiles is punishing to look at,
+    // and it would put a linear decode and two encoder passes on every photo in an
+    // import (§10.1). `renditionDir` also refuses to give an HDR grid path, so a
+    // request honoured here would encode HDR and file it as SDR - which is a
+    // rendition that decodes wrong, not a rendition that is merely large.
+    //
+    // Thrown rather than coerced because the coercion has no way to reach whoever
+    // wrote it. There is one caller today whose `hdr` this would catch:
+    // `PhotosService.buildRendition` takes it from the library for any rendition,
+    // and is kept off the grid only by its route refusing that path.
+    if (gridTile && hdr) {
+      throw new AppError('VALIDATION_ERROR', 'the grid tile is always SDR; asked for an HDR one');
+    }
 
     return {
       rendition,
-      hdr: hdrTarget,
+      hdr,
       source,
-      outputPath: renditionPathFor(dataPath, photoId, rendition, hdrTarget),
-      videoOutputPath: hdrTarget && hdrVideo ? renditionPathFor(dataPath, photoId, rendition, hdrTarget, true) : null,
+      outputPath: renditionPathFor(dataPath, photoId, rendition, hdr),
+      videoOutputPath: hdr && hdrVideo ? renditionPathFor(dataPath, photoId, rendition, hdr, true) : null,
       size: sizes[rendition],
       sdrQuantizer: quantizers[rendition],
       hdrQuantizer: rendition === 'max' ? settings.lossless_quantizer : settings.hdr_crf,
       preset: settings.hdr_preset,
       stillFullChroma: settings.hdr_still_full_chroma,
-      sdrFullChroma: settings.sdr_full_chroma && !gridTile,
+      // Not the same shape of decision as the one above, and not a coercion either:
+      // chroma is a setting this reads rather than something a caller asks for, so
+      // there is no bad request to reject - only a policy about which renditions the
+      // setting covers. It does not cover the grid. A tile is 800px in a wall of
+      // other tiles and its usual source is the camera's embedded JPEG, already
+      // subsampled (`yuvj422p` on the corpus), so 4:4:4 would store chroma at a
+      // resolution the source never had - measured at 0.0003 SSIM (§10.1). True of
+      // the render fallback too: what makes it pointless is the size and the wall,
+      // not where the pixels came from.
+      sdrFullChroma: gridTile ? false : settings.sdr_full_chroma,
     };
   }
 
