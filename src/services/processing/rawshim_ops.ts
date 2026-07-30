@@ -303,8 +303,22 @@ export function renderImage(image: ImageHandle, profile: FittedProfile | null, l
 }
 
 /** AVIF, 4:4:4, fitted to `longEdge` and written straight to disk. */
-export function saveAvif(image: ImageHandle, longEdge: number, quality: number, effort: number, outPath: string): void {
-  const status = shim().bb_save_avif(image.pointer, longEdge, quality, effort, Buffer.from(`${outPath}\0`));
+export function saveAvif(
+  image: ImageHandle,
+  longEdge: number,
+  quality: number,
+  effort: number,
+  fullChroma: boolean,
+  outPath: string,
+): void {
+  const status = shim().bb_save_avif(
+    image.pointer,
+    longEdge,
+    quality,
+    effort,
+    fullChroma ? 1 : 0,
+    Buffer.from(`${outPath}\0`),
+  );
   if (status !== 0) throw new Error(`rawshim could not write ${outPath}`);
 }
 

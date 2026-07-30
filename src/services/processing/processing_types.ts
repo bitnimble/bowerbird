@@ -54,6 +54,8 @@ export interface RenditionTarget {
   preset: number;
   /** 4:4:4 rather than 4:2:0 for the HDR still (§10.7). */
   stillFullChroma: boolean;
+  /** The same for the SDR renditions (§10.1). Separate setting, separate scale. */
+  sdrFullChroma: boolean;
 }
 
 export interface RenditionJob {

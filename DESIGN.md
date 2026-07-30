@@ -1044,6 +1044,29 @@ These were three trees under three names - `thumbnails/`, `previews/` and `lossl
 
 **Everything is AVIF**, every rendition, the full-resolution export (§10.5) and the HDR renditions (§10.7) - and every one of them goes through **libavif**. The SDR path moved off libvips' `heifsave` once the HDR one was already linked: measured at matched quality on a 3840px frame it is 307ms against 275ms at the grid and full setting, and 370ms against 302ms at the export's, for files within half a percent of the same size. It also takes libheif out of the chain, and with it the plugin-priority trap `vips.rs` documents. libvips still does the resize; only the encode moved - and only where there is a resize to do. `bb_save_avif` hands libavif the frame where it lies when the image already fits the target, which is not the rare case: the worker builds its base at the largest size the job asks for, so the biggest rendition of every photo, and the whole of the native-resolution export, arrives already the right size. Going through the pipeline regardless had `finish` materialise a second copy of the frame - 183MB on a 61MP export - to hand over pixels libavif could read in place. It decodes natively in every current browser with no polyfill, it is the only format here that carries HDR to Chrome and Safari alike, and at matched quality it is smaller than the WebP it replaced: the full-size rendition is 375 kB at q60 against 1019 kB for WebP q90. Nothing migrates existing files; the orphan sweep keys on the extension a directory is supposed to hold, so stranded WebP is collected on the next pass (§10.6).
 
+**The SDR renditions are 4:2:0 too** (`sdr_full_chroma`), for the same reason and on its own numbers - a separate setting because the amounts are not the same size, and because the grid tile is a different question from the native-resolution export. Measured on the 24MP fixture:
+
+| rendition | | wall | CPU | peak RSS | bytes |
+|---|---|---|---|---|---|
+| grid, 800 | 4:4:4 | 52ms | 0.10s | 177MB | 16.0 kB |
+| | 4:2:0 | 32ms | 0.07s | 177MB | 13.7 kB |
+| viewer, 3840 | 4:4:4 | 483ms | 2.88s | 476MB | 1.72 MB |
+| | 4:2:0 | 224ms | 1.71s | 420MB | 0.53 MB |
+| full resolution | 4:4:4 | 1468ms | 10.34s | 918MB | 8.48 MB |
+| | 4:2:0 | 842ms | 7.25s | 651MB | 5.02 MB |
+
+The viewer rendition encodes in **less than half the time** - a larger margin than the HDR still gets, since 8-bit 4:4:4 is where libaom's chroma planes cost most relative to the rest of its state. The grid tile's peak does not move at all, because at 800px the decode is the peak and the encode is 30ms of it; what it saves there is 15% of a 16kB file for an SSIM difference of **0.0008**, which is as close to free as this gets. That matters more than the size: the grid tile is the rendition every photo in the library has.
+
+Per-plane at 3840, against a near-lossless 4:4:4 reference, the same shape as §10.7:
+
+| | Y | U | V | All | bytes |
+|---|---|---|---|---|---|
+| 4:4:4 q26 | 0.9433 | 0.9561 | 0.9563 | 0.9519 | 1.72MB |
+| 4:2:0 q26 | 0.9436 | 0.8802 | 0.8953 | 0.9064 | 0.53MB |
+| 4:2:0 q16 | 0.9695 | 0.9054 | 0.9169 | 0.9306 | 1.52MB |
+
+Luma is identical at a matched quantizer and *better* at matched bytes. Chroma is worse either way, and it does not fully recover at any quantizer - 4:2:0 needs q0 and 6MB to pass 4:4:4's combined score at q26 and 1.7MB. Which of those matters is a judgement about where a viewer looks, not something the metric settles, and the setting exists so it does not have to be settled here.
+
 Two encoder settings were measured rather than inherited, and both defaults were wrong:
 
 - **`effort` buys essentially nothing, and costs everything.** libvips defaults to 4. Measured on a 3840px frame at Q88, with `Q` fixed the file size does not move - effort searches harder for the same quantiser, so what it can buy is quality, and it barely does:
@@ -1311,7 +1334,9 @@ It saturates at ~2.4 img/s: 4.5x the single-image rate, and flat past 8. An impo
 
 Asked twice, because the first answer was framed too narrowly. The work looks like it should suit a GPU - the grade is a per-pixel gather and lookup - and per-image latency is the wrong lens anyway: a batch import has thousands of independent frames, so a device with thousands of weak cores is the right shape in principle.
 
-**Fixed-function AV1 cannot do 4:4:4.** NVIDIA's support matrix gives AV1 as "YUV 420 8-bit and 10-bit" on Ada and Blackwell only; 4:4:4 exists for H.264 and HEVC but not AV1, and neither AMD's VCN 4.0 nor Intel's Arc QSV documents it. Vulkan's `VK_KHR_video_encode_av1` maps to the same silicon, so it inherits the same limit. This is §10.7's wall from the encoder side: 4:4:4 is not AV1's Main profile, and no hardware *decoder* takes it either. Since 4:4:4 is deliberate here (§10.1 - 4:2:0 smears the saturated edges a photograph is judged on), that rules the fixed-function path out rather than making it a trade.
+**Fixed-function AV1 cannot do 4:4:4**, and that used to end the argument. NVIDIA's support matrix gives AV1 as "YUV 420 8-bit and 10-bit" on Ada and Blackwell only; 4:4:4 exists for H.264 and HEVC but not AV1, and neither AMD's VCN 4.0 nor Intel's Arc QSV documents it. Vulkan's `VK_KHR_video_encode_av1` maps to the same silicon, so it inherits the same limit. No hardware *decoder* takes 4:4:4 either.
+
+**That wall moved when 4:2:0 became the default** (§10.1, §10.7). Everything shipped by default is now a profile the video engines encode, so the profile objection no longer rules the fixed-function path out - it only rules out the two settings that turn 4:4:4 back on. What remains is untested here rather than answered: fixed-function encoders are tuned for video at a bitrate rather than a still at a quality, the quality-per-byte comparison against libaom `allintra` has not been run, and it would be a per-vendor dependency for a stage that is already a fraction of an import. Worth revisiting deliberately if encode time ever dominates again; not a settled "no" any more.
 
 **A compute-shader AV1 encoder would sidestep that, and does not exist.** Running the encoder on shader cores rather than the video engine means implementing whatever profile you like, so it is the right question to ask. The state of the art is FFmpeg's Vulkan compute codecs, and the list is FFV1 and ProRes - chosen precisely because they use table-based coding. The barrier is AV1's multi-symbol arithmetic coder: the next symbol depends on the previous one, so a bitstream is a serial dependency chain, and speculation does not go deep.
 
@@ -1403,7 +1428,7 @@ It runs on an interval rather than at startup: a restart is no evidence anything
 
 Two browsers, two answers. **Chrome** renders HDR stills, on desktop and on Android 14+, from a PQ- or HLG-tagged image. **Firefox** honours no HDR image tagging at all: a flat 50% grey reads 128 whether it carries a PQ cICP chunk or nothing, through a PNG and through a natively decoded JXL alike (§10.5). Its **video** pipeline does composite HDR, on Windows only, by passing the frame through to the compositor and the monitor. The underlying reason is the same for images on every platform and for video on most of them: Gecko's compositor is still 32-bit SDR, and RGBA16F framebuffers (bug 1889288) gate all of it.
 
-So an HDR rendition is **two** files: a 4:4:4 AVIF still and a one-frame AV1 video beside it, both PQ.
+So an HDR rendition is **two** files: an AVIF still and a one-frame AV1 video beside it, both PQ.
 
 There were six for a while, and a page at `/hdr-check` to look at them on: the same photo also as a 4:2:0 AVIF baseline control, and each of the three with an SDR reference to compare against. It answered the question it was built for - HDR output cannot be observed from script, since anything read back through a canvas has already been tone-mapped, so the only way to know whether a file lights up a panel was to put it next to one that should not and look. Once that was settled the page was a diagnostic nothing in the product reached, and it kept a whole second encode path alive behind it: an SDR variant with its own transfer and gamut conversion, a 4:2:0 medium, six renditions per photo, and a directory tree of its own under the data path. It is gone, and this section describes what ships. HLG was dropped: everything that renders HDR renders PQ, and PQ is absolute where HLG is relative to the display's own range. Encoding client-side was ruled out. Firefox 153 exposes no `VideoEncoder`, and `VideoFrame` rejects every 10-bit pixel format (`I420P10 is unsupported`), so there is neither an encoder to call nor a way to hand it HDR pixels.
 
@@ -1417,7 +1442,7 @@ The argv construction moved with it rather than staying behind, which is the rig
 
 Worth recording how nearly that pin was useless. Perturbing the BT.2390 knee changed nothing, because `eetf` returns early when the frame already fits the display: at 1000 nits the fixture never reaches the roll-off, so the pin covered none of the subtlest arithmetic in the grade. Two `peakNits=203` cases fixed it, and a 0.5 → 0.501 shift then fails. A pin nobody tries to break is a pin that proves nothing.
 
-**Encode.** Both media are **libaom in all-intra mode**, diverging in chroma and container: the still is 10-bit **4:4:4**, the video 10-bit **4:2:0**. The transfer is applied on whichever side the encode happens - in this process for the still, by a `zscale` call in ffmpeg for the video, which is the only rendition that still leaves.
+**Encode.** Both media are **libaom in all-intra mode**, 10-bit, diverging in container and in whether their chroma is negotiable: the video is 4:2:0 because nothing else decodes, and the still is 4:2:0 by default with a setting to raise it. The transfer is applied on whichever side the encode happens - in this process for the still, by a `zscale` call in ffmpeg for the video, which is the only rendition that still leaves.
 
 **The still is encoded in this process, by libavif** (`avif.rs`). `avifenc` is a thin wrapper around that library, and what it was adding over ffmpeg is the nclx `colr` box - which is what Chrome reads to decide a still is HDR, and which ffmpeg's avif muxer does not write. libavif writes it just as well when called directly, so the binary bought nothing the library does not, and cost three moves of the whole frame: the graded samples written to ffmpeg's stdin, converted, written again as y4m, and read back by avifenc. That is 56MB at 3840 and ~366MB at native resolution, moved three times, for a picture neither process wanted kept. Linked, it is a pointer.
 
@@ -1453,9 +1478,21 @@ Four buffers went, in every case because nothing else was reading them:
 | 4:4:4, `max` native | 1181ms | 4.03s | 960MB | 3.40MB | |
 | 4:2:0, `max` native | 805ms | 3.07s | **586MB** | 1.76MB | |
 
-**Its rate-distortion is worse, and that is the finding rather than a caveat.** Read the first two rows together and 4:2:0 looks free - a third off the clock and 62% off the file - but they are not the same picture. Held to the same SSIM it needs **51% more bytes than 4:4:4**, which is what 4:4:4 being the right default for a photograph looks like when it is measured. What 4:2:0 buys is not quality per byte, it is time and memory: ~26% off the wall clock and 37% off the peak even at matched quality, and at native resolution it takes the peak from 960MB to 586MB.
+Read the first two rows together and 4:2:0 looks free - a third off the clock and 62% off the file - but they are not the same picture. Held to the same combined SSIM it needs 51% more bytes.
 
-So the setting is offered as what it is - spend memory to get a better picture per byte - rather than as a quality slider. Off is the default because the encoder's working set is the constraint that actually bites, and a library that would rather spend the RAM can say so.
+**That combined figure oversells the damage, though, and the per-plane split is the honest version.** 4:2:0 leaves luma untouched by construction, so at a matched quantizer the Y plane is identical and the whole cost lands in chroma:
+
+| | Y | U | V | All | bytes |
+|---|---|---|---|---|---|
+| 4:4:4 crf 20 | 0.9747 | 0.9779 | 0.9853 | 0.9793 | 1.09MB |
+| 4:2:0 crf 20 | 0.9747 | 0.9516 | 0.9781 | 0.9681 | 0.41MB |
+| 4:2:0 crf 12 | 0.9898 | 0.9655 | 0.9821 | 0.9791 | 1.64MB |
+
+So at equal bytes 4:2:0 does not lose - it *reallocates*, spending on luma what it saves on chroma, which is the trade every photographic delivery format already makes and roughly the one human vision asks for. A combined SSIM weights the three planes near enough equally and vision does not, so "51% more bytes at equal SSIM" measures the metric as much as the picture. The earlier draft of this section read that number as a straight quality loss; it is not.
+
+What is unambiguous is time and memory: ~26% off the wall clock even at matched quality, and at native resolution the peak goes from 960MB to 586MB.
+
+So the setting is offered as what it is - spend memory and time to hold chroma detail on saturated edges - rather than as a quality slider. Off is the default because the encoder's working set is the constraint that actually bites, and a library that would rather spend the RAM can say so.
 
 Three things follow the setting and all three have to agree, which is why the argv pin carries chroma as a dimension: zscale's output pixel format, avifenc's `--yuv`, and whether `target_size` forces even dimensions. That last one is not cosmetic - 4:2:0 has no odd dimensions, and only a native-resolution frame can arrive odd, since the masked-border crop takes asymmetric insets off it. Passing `--yuv 444` while feeding a 4:2:0 y4m silently encodes 4:2:0 anyway, which is how the subsampling went unnoticed once, so `avif_still.integration.test.ts` now runs its differential at both settings.
 
@@ -1485,7 +1522,11 @@ The video still goes out through ffmpeg, because what it needs there is the MP4 
 
 **The CRF scales were never the same, and that was invisible.** `hdr_crf` fed avifenc's `--max`, which is libaom's quantizer, *and* SVT-AV1's `-crf`, which is its own - so one setting meant two different qualities, and measured on a 4:2:0 frame the offset was about 0.62: SVT crf 20 lands where libaom crf 12 does, SVT 8 where libaom 5 does. Nothing depended on the video's value having been tuned, because it never was; it inherited the still's number. With both media on libaom the setting means one thing, the still is unaffected, and the video simply joins the scale the setting always claimed to be on.
 
-**A correction worth keeping, twice over.** This section once said both media were libaom at 4:4:4 and that SVT-AV1 "cannot be used here at all"; that was corrected to describe the SVT-AV1 video actually shipping; and it is now back to both being libaom - for a different reason than it was first written, and with the 4:4:4 half still wrong. The still is 4:4:4 because it is a photograph and 4:2:0 smears exactly the saturated edges one is judged on. The video is not, because 4:4:4 video was tried and reverted: it is AV1 Profile 1, Chromium refuses it outright, Safari cannot hardware-decode it, and on Firefox/Windows it played but rendered washed out, which is what a decode that never reaches the HDR compositor looks like. Profile 0 is all the video ever needed. The lesson the third rewrite earns: this file records what the encoders are doing, and the encoders change, so a claim here is worth checking against `hdr_args.rs` before it is relied on.
+**A correction worth keeping, now four times over.** This section once said both media were libaom at 4:4:4 and that SVT-AV1 "cannot be used here at all"; that was corrected to describe the SVT-AV1 video actually shipping; then back to both being libaom, for a different reason than it was first written, with the chroma half still wrong. It said the still is 4:4:4 "because it is a photograph". It is 4:2:0 by default now, and the sentence it replaced was not so much wrong as unmeasured - the per-plane numbers above say 4:2:0 reallocates detail rather than losing it, which nobody had checked while the claim was being repeated.
+
+Both media are Profile 0 unless a setting says otherwise, and the video has no setting: 4:4:4 video was tried and reverted, being AV1 Profile 1, which Chromium refuses outright, Safari cannot hardware-decode, and Firefox/Windows played while rendering washed out - PQ code values shown with no transfer applied, which is what a decode that never reaches the HDR compositor looks like.
+
+The lesson the fourth rewrite earns is narrower than "check the code": every version of this paragraph was written from a plausible principle about photographs, and each one survived until somebody measured it. A claim here about what an encoder setting is *worth* wants a number beside it or it should not be stated.
 
 **4:4:4 is not a setting, it is an AV1 profile**, and that decides the encoder. Profile 0 is 4:2:0, Profile 1 is 4:4:4, Profile 2 is 4:2:2. SVT-AV1 implements Profile 0 only and *converts silently* - asking it for 4:4:4 or 4:2:2 yields 4:2:0 with no error - which is why it could never have served the still, and why `vips.rs` names its encoder rather than leaving libheif's plugin priority to choose. libaom and rav1e implement all three; libaom is what both media use. Measured decoder support:
 
@@ -1994,13 +2035,14 @@ the bounds; the reasoning behind each number lives beside it there.
 | `full_rendition_size` | `3840` | Longest edge in pixels for the full rendition |
 | `full_rendition_quantizer` | `26` | libaom quantizer for the full rendition, 0-63; lower is better (§10.1) |
 | `lossless_sdr_quantizer` | `16` | libaom quantizer for the SDR full-resolution export (§10.5) |
+| `sdr_full_chroma` | `false` | 4:4:4 rather than 4:2:0 for the SDR renditions. Roughly twice the encode time and three times the size, for chroma detail on saturated edges (§10.1) |
 | `lossless_quantizer` | `8` | libaom quantizer for the HDR full-resolution export; lower is better (§10.5) |
 | `hdr_peak_nits` | `1000` | Display peak the BT.2390 roll-off targets, and the declared mastering peak (§10.7.1) |
 | `hdr_reference_white_nits` | `203` | ITU-R BT.2408 HDR Reference White; what diffuse white is graded to (§10.7.1) |
 | `hdr_white_quantile` | `0.90` | Quantile of the frame taken as diffuse white (§10.7.1) |
 | `hdr_crf` | `20` | Encoder quality for the HDR renditions; lower is better (§10.7) |
 | `hdr_preset` | `8` | Encoder speed; libaom `-cpu-used` 0-8 and avifenc `--speed` 0-10, both clamped (§10.7) |
-| `hdr_still_full_chroma` | `false` | 4:4:4 rather than 4:2:0 for the HDR still. Better per byte, roughly double the encoder's memory (§10.7). The video has no say |
+| `hdr_still_full_chroma` | `false` | 4:4:4 rather than 4:2:0 for the HDR still. Holds chroma detail, roughly double the encoder's memory (§10.7). The video has no say |
 | `watch_enabled` | `true` | Auto-sync a library when its files change on disk (§9.8) |
 | `watch_debounce_ms` | `2000` | Debounce window for coalescing filesystem events (§9.8) |
 | `full_sync_at` | `03:00` | Local `HH:MM` for the daily full reconcile; `""` disables (§9.8) |

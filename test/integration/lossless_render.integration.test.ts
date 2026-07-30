@@ -84,6 +84,16 @@ test('the SDR render the service produces decodes back to the image that went in
     // Comfortably inside the size budget the quality was chosen against.
     expect(statSync(output).size).toBeLessThan(20_000_000);
 
+    // 8-bit 4:2:0, which is what `sdr_full_chroma` defaults to. Pinned because
+    // nothing else on the SDR path looks at the pixel format, and a rendition that
+    // quietly changed chroma would still decode, still be the right size, and still
+    // pass every other assertion in this file.
+    const probe = Bun.spawnSync([
+      'ffprobe', '-hide_banner', '-loglevel', 'error',
+      '-show_entries', 'stream=pix_fmt', '-of', 'default=noprint_wrappers=1', output,
+    ]);
+    expect(probe.stdout.toString()).toContain('pix_fmt=yuv420p');
+
     // The pixels, not just the dimensions. A wrong-depth read produces a file of
     // exactly the right size full of garbage, which only a comparison catches.
     const actual = pixels(written);

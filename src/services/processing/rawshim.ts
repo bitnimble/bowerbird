@@ -83,7 +83,10 @@ const SYMBOLS = {
     returns: FFIType.i32,
   },
   bb_render: { args: [FFIType.ptr, FFIType.ptr, FFIType.u32], returns: FFIType.ptr },
-  bb_save_avif: { args: [FFIType.ptr, FFIType.u32, FFIType.i32, FFIType.i32, FFIType.cstring], returns: FFIType.i32 },
+  bb_save_avif: {
+    args: [FFIType.ptr, FFIType.u32, FFIType.i32, FFIType.i32, FFIType.i32, FFIType.cstring],
+    returns: FFIType.i32,
+  },
   bb_encode_jpeg: { args: [FFIType.ptr, FFIType.u32, FFIType.i32], returns: FFIType.ptr },
   bb_free: { args: [FFIType.ptr], returns: FFIType.void },
   bb_buffer_free: { args: [FFIType.ptr], returns: FFIType.void },

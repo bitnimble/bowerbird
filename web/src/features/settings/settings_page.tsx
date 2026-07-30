@@ -599,12 +599,12 @@ const AdvancedSettings = observer(function AdvancedSettings(): JSX.Element | nul
         <NumberSetting field="full_rendition_size" label="Viewer rendition, longest edge (px)" />
         <NumberSetting
           field="full_rendition_quantizer"
-          label="Viewer rendition quality (1-100)"
-          hint="This is the rendition you spend the most time looking at. Below about 80 the shadows visibly lose detail."
+          label="Viewer rendition quality (0-63, lower is better)"
+          hint="This is the rendition you spend the most time looking at. Above about 30 the shadows visibly lose detail."
         />
         <NumberSetting
           field="lossless_sdr_quantizer"
-          label="Full-resolution quality (1-100)"
+          label="Full-resolution quality (0-63, lower is better)"
           hint="Quality of the native-resolution rendition, which exists to be inspected at 100 percent."
         />
         <NumberSetting
@@ -612,6 +612,11 @@ const AdvancedSettings = observer(function AdvancedSettings(): JSX.Element | nul
           label="Full-resolution HDR quality (0-63)"
           hint="The same rendition in libraries that build HDR. Lower numbers are better quality."
           disabledReason={hdrOff}
+        />
+        <ToggleSetting
+          field="sdr_full_chroma"
+          label="Full colour resolution"
+          hint="Keeps colour at full resolution instead of quarter resolution. It costs roughly twice the encoding time and three times the file size for detail that only shows on saturated edges at 100 percent - on the grid tile it is not visible at all. There is a separate switch for HDR under HDR encoding."
         />
       </div>
 

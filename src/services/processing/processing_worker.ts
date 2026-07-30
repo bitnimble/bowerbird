@@ -28,10 +28,9 @@ declare const self: {
 };
 
 // 8-bit output whatever the input depth, which is why `writeHdr` below cannot go
-// through this at all and has its own encoder (§10.2). Chroma subsampling is the
-// encoder's own business; see `vips.rs` for why it is off.
+// through this at all and has its own encoder (§10.2).
 function toAvif(image: ImageHandle, target: RenditionTarget): void {
-  saveAvif(image, target.size, target.sdrQuantizer, AVIF_EFFORT, target.outputPath);
+  saveAvif(image, target.size, target.sdrQuantizer, AVIF_EFFORT, target.sdrFullChroma, target.outputPath);
 }
 
 /**

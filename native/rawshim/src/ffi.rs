@@ -864,7 +864,9 @@ unsafe fn render(source: vips::RgbRef<'_>, profile: *const BbProfile, long_edge:
     }
 }
 
-/// Writes an AVIF, 4:4:4, fitting to `long_edge` on the way. 0 writes as is.
+/// Writes an AVIF, fitting to `long_edge` on the way. 0 writes as is.
+///
+/// `full_chroma` non-zero asks for 4:4:4 rather than 4:2:0 (`sdr_full_chroma`).
 ///
 /// # Safety
 /// `image` must be a live handle from this library and `path` a NUL-terminated C
@@ -875,6 +877,7 @@ pub unsafe extern "C" fn bb_save_avif(
     long_edge: u32,
     quantizer: i32,
     effort: i32,
+    full_chroma: i32,
     path: *const c_char,
 ) -> i32 {
     vips::init();
@@ -897,7 +900,8 @@ pub unsafe extern "C" fn bb_save_avif(
             // Borrowed: these pixels belong to the caller's handle, so unlike the
             // resized case below there is nothing here to hand back early.
             return match crate::avif::encode_rendition(
-                source.data.into(), source.width, source.height, quantizer, speed, path,
+                source.data.into(), source.width, source.height, quantizer, speed,
+                full_chroma != 0, path,
             ) {
                 Ok(()) => 0,
                 Err(detail) => {
@@ -922,8 +926,9 @@ pub unsafe extern "C" fn bb_save_avif(
         let (width, height) = (resized.width, resized.height);
         // Owned, so libavif drops it once the YUV conversion has read it rather than
         // holding it under libaom's working set.
-        let written =
-            crate::avif::encode_rendition(resized.data.into(), width, height, quantizer, speed, path);
+        let written = crate::avif::encode_rendition(
+            resized.data.into(), width, height, quantizer, speed, full_chroma != 0, path,
+        );
         match written {
             Ok(()) => 0,
             Err(detail) => {

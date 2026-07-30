@@ -61,7 +61,8 @@ export class QualityCheckApi {
           // whatever the quality, so including it would flatten the difference the
           // page exists to show.
           const started = Bun.nanoseconds();
-          saveAvif(image, this.settings.get().full_rendition_size, quality, AVIF_EFFORT, file);
+          const settings = this.settings.get();
+          saveAvif(image, settings.full_rendition_size, quality, AVIF_EFFORT, settings.sdr_full_chroma, file);
           encodeMs = Math.round((Bun.nanoseconds() - started) / 1e6);
         } finally {
           freeImage(image);

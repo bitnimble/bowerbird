@@ -88,6 +88,13 @@ export const SettingsSchema = z.object({
   // "visually lossless", because this is the view that exists to be pixel-peeped,
   // and kept inside a ~20MB budget on a 60MP frame.
   lossless_sdr_quantizer: z.number().int().min(0).max(63),
+  // Chroma for the SDR renditions, the same trade as `hdr_still_full_chroma` and
+  // separate from it because the numbers are not the same size. Measured on a 24MP
+  // frame: the viewer rendition encodes in 224ms against 483ms and lands at 0.53MB
+  // against 1.72MB, and the native-resolution one peaks at 651MB against 918MB. The
+  // grid tile is where it costs least of all - 15% smaller for an SSIM difference of
+  // 0.0008 - and that is the rendition every photo gets (§10.1).
+  sdr_full_chroma: z.boolean(),
   lossless_quantizer: z.number().int().min(0).max(63),
 
   // Display peak the BT.2390 roll-off targets, and what the file declares as its
@@ -155,6 +162,7 @@ export const DEFAULT_SETTINGS: Settings = {
   hdr_crf: 20,
   hdr_preset: 8,
   hdr_still_full_chroma: false,
+  sdr_full_chroma: false,
 };
 
 export const UpdateSettingsRequestSchema = SettingsSchema.partial();

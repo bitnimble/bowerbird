@@ -161,6 +161,7 @@ export class ProcessingService {
       hdrQuantizer: rendition === 'max' ? settings.lossless_quantizer : settings.hdr_crf,
       preset: settings.hdr_preset,
       stillFullChroma: settings.hdr_still_full_chroma,
+      sdrFullChroma: settings.sdr_full_chroma,
     };
   }
 

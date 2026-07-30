@@ -49,6 +49,7 @@ const AVIF_RANGE_LIMITED: u32 = 0;
 const AVIF_RANGE_FULL: u32 = 1;
 const AVIF_DEPTH: u32 = 10;
 const AVIF_PIXEL_FORMAT_YUV444: u32 = 1;
+const AVIF_PIXEL_FORMAT_YUV420: u32 = 3;
 const AVIF_RGB_FORMAT_RGB: u32 = 0;
 const AVIF_RESULT_OK: u32 = 0;
 
@@ -114,12 +115,18 @@ pub fn encode_still(
 /// and no gamut to convert: LibRaw's sRGB decode already produced display-referred sRGB,
 /// so the pixels go to libavif exactly as they arrive and only the YCbCr matrix is left.
 /// Tagged sRGB rather than left bare, since a file that says what it is costs nine bytes.
+///
+/// `full_chroma` is the `sdr_full_chroma` setting, 4:2:0 by default for the reasons
+/// DESIGN 10.1 measures. Unlike the HDR still there is no even-dimension problem to
+/// go with it: libavif is handed the frame directly rather than through a y4m, and it
+/// pads odd chroma itself.
 pub fn encode_rendition(
     rgb8: std::borrow::Cow<'_, [u8]>,
     width: usize,
     height: usize,
     quantizer: i32,
     speed: i32,
+    full_chroma: bool,
     out_path: &str,
 ) -> Result<(), String> {
     if rgb8.len() < width * height * 3 {
@@ -127,7 +134,11 @@ pub fn encode_rendition(
     }
     // sRGB primaries, sRGB transfer, BT.601 matrix - which is what libheif was writing.
     let cicp = Cicp { primaries: 1, transfer: 13, matrix: 6 };
-    write_avif(rgb8, 8, AVIF_RANGE_FULL, width, height, 8, AVIF_PIXEL_FORMAT_YUV444, &cicp, quantizer, speed, out_path)
+    let format = match full_chroma {
+        true => AVIF_PIXEL_FORMAT_YUV444,
+        false => AVIF_PIXEL_FORMAT_YUV420,
+    };
+    write_avif(rgb8, 8, AVIF_RANGE_FULL, width, height, 8, format, &cicp, quantizer, speed, out_path)
 }
 
 /// Hands interleaved RGB to libavif and writes what comes back.

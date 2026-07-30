@@ -31,6 +31,7 @@ function target(outputPath: string): RenditionTarget {
     hdrQuantizer: 8,
     preset: 8,
     stillFullChroma: false,
+    sdrFullChroma: false,
   };
 }
 
