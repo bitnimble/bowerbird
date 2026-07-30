@@ -149,6 +149,31 @@ pub struct BbImage {
 }
 
 impl BbImage {
+    /// Leaks a `Frame` into the handle the old boundary hands to JavaScript.
+    ///
+    /// The bridge while both boundaries exist, and it goes when the last caller of
+    /// the handle API does. `capacity` is an *element* count rather than a byte one,
+    /// so `bb_free` can hand each allocation back as the `Vec` it came from - which
+    /// is what lets a 16-bit frame keep its `Vec<u16>` rather than being copied into
+    /// bytes on the way across.
+    pub fn from_frame(image: frame::Frame) -> BbImage {
+        let (width, height) = (image.width as u32, image.height as u32);
+        let (halved, direct) = (u32::from(image.halved), u32::from(image.direct));
+        let depth = image.pixels.depth();
+        let (data, len, capacity) = match image.pixels {
+            frame::Pixels::Eight(bytes) => {
+                let mut bytes = std::mem::ManuallyDrop::new(bytes);
+                (bytes.as_mut_ptr(), bytes.len(), bytes.capacity())
+            }
+            frame::Pixels::Sixteen(samples) => {
+                let mut samples = std::mem::ManuallyDrop::new(samples);
+                let capacity = samples.capacity();
+                (samples.as_mut_ptr() as *mut u8, samples.len() * 2, capacity)
+            }
+        };
+        BbImage { width, height, depth, data, len, halved, direct, capacity }
+    }
+
     /// Takes ownership of an 8-bit RGB buffer and hands back a handle to it.
     pub fn own(image: vips::Rgb) -> *mut BbImage {
         let width = image.width as u32;
@@ -222,7 +247,15 @@ impl BbImage {
         if self.data.is_null() {
             return;
         }
-        drop(Vec::from_raw_parts(self.data, self.len, self.capacity));
+        // Handed back as the `Vec` it was allocated as, which for a 16-bit frame is a
+        // `Vec<u16>`: `dealloc` is owed the layout `alloc` was given, and freeing one
+        // as the other is undefined however well it appears to work. `capacity` is an
+        // element count for exactly this reason, and `len` stays in bytes because that
+        // is what the handle reports to its reader.
+        match self.depth {
+            16 => drop(Vec::from_raw_parts(self.data as *mut u16, self.len / 2, self.capacity)),
+            _ => drop(Vec::from_raw_parts(self.data, self.len, self.capacity)),
+        }
         self.data = std::ptr::null_mut();
         self.len = 0;
         self.capacity = 0;
@@ -440,7 +473,7 @@ unsafe fn copy_processed(
     depth: u32,
     i: &Insets,
     long_edge: u32,
-) -> Option<(usize, usize, Vec<u8>)> {
+) -> Option<(usize, usize, Vec<u16>)> {
     let p = &(*r).params;
     let identity_curve =
         p.no_auto_bright == 1 && p.gamm[0] == 1.0 && p.gamm[1] == 1.0 && p.bright == 1.0;
@@ -466,27 +499,23 @@ unsafe fn copy_processed(
     let (tw, th) = decode_target(out_width, out_height, long_edge);
 
     let planes = std::slice::from_raw_parts((*r).image, iwidth * iheight);
-    // Written as bytes rather than as `u16`s that are then reinterpreted. Rebuilding a
-    // `Vec<u8>` over a `Vec<u16>`'s allocation is undefined: `dealloc` has to be handed
-    // the same layout `alloc` got, and the alignment differs (2 against 1). The System
-    // allocator does not care, which is exactly what makes it the kind of thing that
-    // survives every test and then does not survive a different allocator.
-    //
-    // Native byte order, which is what every reader on this side assumes.
+    // `u16` samples in a `Vec<u16>`. This used to write bytes and have every reader
+    // reinterpret them, because the buffer was leaked across the FFI boundary as one
+    // `*mut u8` and freed as one `Vec<u8>` - and rebuilding a `Vec<u16>` over that
+    // allocation is undefined, the allocator being owed the layout it gave out. Now
+    // the frame is an owned Rust value that never crosses, so it can hold the type it
+    // actually is (`frame.rs`), and the shuffle through `to_ne_bytes` goes with it.
     //
     // `box_resize_u16` declines an enlargement or an identity, and so does this: the
     // two have to agree about when a fit happens or the grade would resize a frame this
     // already did.
     if tw >= out_width || th >= out_height {
-        let stride = out_width * 6;
-        let mut out = vec![0u8; stride * out_height];
+        let stride = out_width * 3;
+        let mut out = vec![0u16; stride * out_height];
         out.par_chunks_mut(stride).enumerate().for_each(|(y, row)| {
             for x in 0..out_width {
                 let px = planes[flip_index(y + i.top, x + i.left)];
-                for c in 0..3 {
-                    let at = x * 6 + c * 2;
-                    row[at..at + 2].copy_from_slice(&px[c].to_ne_bytes());
-                }
+                row[x * 3..x * 3 + 3].copy_from_slice(&px[..3]);
             }
         });
         return Some((out_width, out_height, out));
@@ -497,8 +526,8 @@ unsafe fn copy_processed(
     // innermost, matching it exactly, so the result is the same to the bit.
     let xs = out_width as f64 / tw as f64;
     let ys = out_height as f64 / th as f64;
-    let stride = tw * 6;
-    let mut out = vec![0u8; stride * th];
+    let stride = tw * 3;
+    let mut out = vec![0u16; stride * th];
     out.par_chunks_mut(stride).enumerate().for_each(|(dy, row)| {
         let y0 = (dy as f64 * ys).floor() as usize;
         let y1 = (((dy + 1) as f64 * ys).floor() as usize).max(y0 + 1);
@@ -516,9 +545,7 @@ unsafe fn copy_processed(
             }
             let n = ((y1 - y0) * (x1 - x0)) as f64;
             for c in 0..3 {
-                let value = (acc[c] / n).round() as u16;
-                let at = dx * 6 + c * 2;
-                row[at..at + 2].copy_from_slice(&value.to_ne_bytes());
+                row[dx * 3 + c] = (acc[c] / n).round() as u16;
             }
         }
     });
@@ -651,7 +678,7 @@ pub unsafe extern "C" fn bb_decode(
             if reference_copy() { None } else { copy_processed(r, depth, &insets, at_least_long_edge) };
         let direct = taken.is_some();
         let (width, height, data) = match taken {
-            Some(done) => done,
+            Some((w, h, samples)) => (w, h, frame::Pixels::Sixteen(samples)),
             None => {
                 let mut err: c_int = 0;
                 let image = raw::libraw_dcraw_make_mem_image(r, &mut err);
@@ -669,44 +696,35 @@ pub unsafe extern "C" fn bb_decode(
                     return None;
                 }
                 let (cw, ch) = (w - insets.left - insets.right, h - insets.top - insets.bottom);
-                // The fit the direct path fuses into its copy, applied here as the
-                // separate pass it used to be. That is what keeps the two comparable:
-                // `raw_decode.integration.test.ts` holds them against each other, and
-                // it is now pinning the fusion as well as the interleave.
-                //
-                // Round-tripping through `Vec<u16>` rather than viewing the bytes as
-                // one, because a `Vec<u8>` is only guaranteed to be byte-aligned. This
-                // is the reference path, taken by that test alone, so the extra copy
-                // costs nothing anybody waits for.
-                let (tw, th) = decode_target(cw, ch, at_least_long_edge);
-                if depth != 16 || (tw, th) == (cw, ch) {
-                    (cw, ch, data)
+                if depth != 16 {
+                    (cw, ch, frame::Pixels::Eight(data))
                 } else {
+                    // Bytes out of LibRaw's buffer, into the `u16`s they are. Both arms
+                    // hand back the same type, which is what lets the differential test
+                    // compare them at all.
                     let samples: Vec<u16> =
                         data.chunks_exact(2).map(|b| u16::from_ne_bytes([b[0], b[1]])).collect();
-                    let resized = image::box_resize_u16(&samples, cw, ch, tw, th)?;
-                    let mut bytes = Vec::with_capacity(resized.len() * 2);
-                    for sample in resized {
-                        bytes.extend_from_slice(&sample.to_ne_bytes());
+                    // The fit the direct path fuses into its copy, applied here as the
+                    // separate pass it used to be. That is what keeps the two
+                    // comparable: `raw_decode.integration.test.ts` holds them against
+                    // each other, so it pins the fusion as well as the interleave.
+                    let (tw, th) = decode_target(cw, ch, at_least_long_edge);
+                    match (tw, th) == (cw, ch) {
+                        true => (cw, ch, frame::Pixels::Sixteen(samples)),
+                        false => (
+                            tw,
+                            th,
+                            frame::Pixels::Sixteen(image::box_resize_u16(&samples, cw, ch, tw, th)?),
+                        ),
                     }
-                    (tw, th, bytes)
                 }
             }
         };
 
-        let width = width as u32;
-        let height = height as u32;
-        let mut data = std::mem::ManuallyDrop::new(data);
-        Some(Box::new(BbImage {
-            width,
-            height,
-            depth,
-            data: data.as_mut_ptr(),
-            len: data.len(),
-            halved: u32::from(halved),
-            direct: u32::from(direct),
-            capacity: data.capacity(),
-        }))
+        let mut built = frame::Frame::new(width, height, data);
+        built.halved = halved;
+        built.direct = direct;
+        Some(Box::new(BbImage::from_frame(built)))
     })());
 
     raw::libraw_recycle(r);
