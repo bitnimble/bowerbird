@@ -54,22 +54,6 @@ const SYMBOLS = {
   // struct or an array this side allocated.
   bb_read_header: { args: [FFIType.cstring, FFIType.ptr], returns: FFIType.i32 },
   bb_header_size: { args: [], returns: FFIType.u64 },
-  bb_read_distortion_spline: { args: [FFIType.cstring, FFIType.ptr, FFIType.u32], returns: FFIType.i32 },
-  bb_lensfun_knots: {
-    args: [
-      FFIType.cstring,
-      FFIType.cstring,
-      FFIType.cstring,
-      FFIType.f32,
-      FFIType.f32,
-      FFIType.u32,
-      FFIType.u32,
-      FFIType.ptr,
-      FFIType.u32,
-    ],
-    returns: FFIType.i32,
-  },
-
   // Stacking: descriptors in, group indices out, the whole walk in Rust (§19).
   bb_descriptor_size: { args: [], returns: FFIType.u64 },
   bb_stack_groups: {

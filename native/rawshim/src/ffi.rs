@@ -353,6 +353,15 @@ const SPLINE_WINDOW: u64 = 512 * 1024;
 /// a worse grade, with nothing to say so.
 /// `Err` is a file that could not be read, which the callers report separately from
 /// a file that simply records no correction.
+/// The spline the body recorded for this shot, or None where it recorded none.
+///
+/// `geometry_for` reads this itself; this exists so the fixture test can hold the
+/// parser against a real ARW, which `lens.rs`'s synthetic TIFFs cannot do.
+#[cfg(all(test, feature = "fixtures"))]
+pub fn _for_testing_distortion_spline(path: &str) -> Option<Vec<f64>> {
+    distortion_of(path).ok()?.spline
+}
+
 fn distortion_of(path: &str) -> std::io::Result<crate::lens::Distortion> {
     use std::io::Read;
 
@@ -367,78 +376,6 @@ fn distortion_of(path: &str) -> std::io::Result<crate::lens::Distortion> {
         return Ok(found);
     }
     Ok(crate::lens::read_distortion(&std::fs::read(path)?))
-}
-
-/// Reads the distortion spline a body recorded for this shot, in SPLINE_UNITs.
-///
-/// Returns the knot count written to `out`, 0 when the file records none, or -1 if
-/// the file could not be read. `bb_fit` does this itself; this is exposed so a test
-/// can check the parser against a real ARW rather than only the synthetic TIFFs in
-/// `lens.rs`, which cannot catch a wrong assumption about how Sony nests it.
-///
-/// # Safety
-/// `path` must be a NUL-terminated C string and `out` valid for `max` f64s.
-#[expect(unsafe_code)]
-#[no_mangle]
-pub unsafe extern "C" fn bb_read_distortion_spline(path: *const c_char, out: *mut f64, max: u32) -> i32 {
-    if path.is_null() || out.is_null() {
-        return -1;
-    }
-    let Ok(path) = unsafe { CStr::from_ptr(path) }.to_str() else { return -1 };
-    let Ok(found) = distortion_of(path) else { return -1 };
-
-    match found.spline {
-        None => 0,
-        Some(knots) => {
-            let n = knots.len().min(max as usize);
-            unsafe { std::ptr::copy_nonoverlapping(knots.as_ptr(), out, n) };
-            n as i32
-        }
-    }
-}
-
-/// The lensfun correction for a lens, in SPLINE_UNITs, resolved from the strings a
-/// RAW carries.
-///
-/// Returns the knot count written to `out`, 0 when no plausible lens matches or the
-/// match carries no distortion data, or -1 on a bad argument. `bb_fit` does this
-/// itself; this is exposed for the test that holds the resolution and the sampled
-/// geometry against the database, which nothing on the fit's own path would notice
-/// going wrong - a silently absent profile just costs a slower fit.
-///
-/// # Safety
-/// The three strings must be NUL-terminated, and `out` valid for `max` f64s.
-#[expect(unsafe_code)]
-#[no_mangle]
-pub unsafe extern "C" fn bb_lensfun_knots(
-    make: *const c_char,
-    model: *const c_char,
-    lens: *const c_char,
-    focal: f32,
-    aperture: f32,
-    width: u32,
-    height: u32,
-    out: *mut f64,
-    max: u32,
-) -> i32 {
-    if make.is_null() || model.is_null() || lens.is_null() || out.is_null() {
-        return -1;
-    }
-    let (Ok(make), Ok(model), Ok(lens)) = (
-        unsafe { CStr::from_ptr(make) }.to_str(),
-        unsafe { CStr::from_ptr(model) }.to_str(),
-        unsafe { CStr::from_ptr(lens) }.to_str(),
-    ) else {
-        return -1;
-    };
-
-    let Some(knots) = crate::lensfun::knots(make, model, lens, focal, aperture, width as usize, height as usize)
-    else {
-        return 0;
-    };
-    let n = knots.len().min(max as usize);
-    unsafe { std::ptr::copy_nonoverlapping(knots.as_ptr(), out, n) };
-    n as i32
 }
 
 /// Which geometry tier this file falls into, from the file alone - no pixels decoded.

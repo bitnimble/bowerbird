@@ -103,52 +103,6 @@ export function readHeaderFields(filePath: string): RawHeaderFields {
   };
 }
 
-/**
- * The distortion spline the body recorded for this shot, in `SPLINE_UNIT`s, or
- * null when it recorded none.
- *
- * The fit reads this itself; this is here so a test can check the parser against a
- * real ARW, which the synthetic TIFFs in `lens.rs` cannot do.
- */
-export function readDistortionSpline(rawFilePath: string): number[] | null {
-  const knots = new Float64Array(64);
-  const count = shim().bb_read_distortion_spline(Buffer.from(`${rawFilePath}\0`), ptr(knots), knots.length);
-  if (count < 0) throw new Error(`rawshim could not read ${rawFilePath}`);
-  return count === 0 ? null : Array.from(knots.subarray(0, count));
-}
-
-/**
- * The lensfun correction for a lens, in `SPLINE_UNIT`s, or null when the database
- * has nothing plausible for it.
- *
- * The fit does this itself; this is here so a test can hold the resolution and the
- * sampled geometry against the database on real files.
- */
-export function readLensfunKnots(
-  make: string,
-  model: string,
-  lens: string,
-  focal: number,
-  aperture: number,
-  width: number,
-  height: number,
-): number[] | null {
-  const knots = new Float64Array(64);
-  const count = shim().bb_lensfun_knots(
-    Buffer.from(`${make}\0`),
-    Buffer.from(`${model}\0`),
-    Buffer.from(`${lens}\0`),
-    focal,
-    aperture,
-    width,
-    height,
-    ptr(knots),
-    knots.length,
-  );
-  if (count < 0) throw new Error('rawshim could not read a lensfun profile');
-  return count === 0 ? null : Array.from(knots.subarray(0, count));
-}
-
 // #[repr(C)] BbHdrOptions: u32 medium, u32 stillChroma, f64 peak/referenceWhite
 // /whiteQuantile, i32 crf, i32 preset, f64 maxEdge. `stillChroma` sits in the padding
 // `medium` already had before the first f64, so the struct is the size it always was
