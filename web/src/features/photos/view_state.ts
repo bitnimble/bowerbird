@@ -1,4 +1,4 @@
-import type { PhotoFilters, PhotoSource, ViewMode } from './photos_store';
+import { sourceKey, type PhotoFilters, type PhotoSource, type ViewMode } from './photos_store';
 
 // How a collection was last being looked at, on this device. Deliberately not
 // the sort: that belongs to the collection and is stored with it, so it follows
@@ -14,18 +14,7 @@ export interface ViewState {
 const PREFIX = 'bowerbird.view.';
 
 function key(source: PhotoSource): string {
-  switch (source.kind) {
-    case 'library':
-      return `${PREFIX}library.${source.libraryId}`;
-    case 'shoot':
-      return `${PREFIX}shoot.${source.shootId}`;
-    case 'album':
-      return `${PREFIX}album.${source.albumId}`;
-    case 'bin':
-      return `${PREFIX}bin.${source.libraryId}`;
-    case 'missing':
-      return `${PREFIX}missing.${source.libraryId}`;
-  }
+  return PREFIX + sourceKey(source);
 }
 
 // A search or a date range is a question you were asking in the moment, not a
