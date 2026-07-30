@@ -8,10 +8,14 @@ import { ActionMenu, Button, CheckMenu, ICON, type Option, Text } from '../../ui
 // reached deliberately, and two of them rarely.
 type Overflow = 'thumbnails' | 'metadata' | 'bin';
 
-const OVERFLOW: Option<Overflow>[] = [
+// The Bin entry says how many photographs it is about, because it is the one here
+// the reader has to be sure of before they pick it and the only one they reach
+// from behind a menu, with the tiles it is about out of sight - and a stack row
+// stands for several, so the selection on screen does not say the number either.
+const overflowOptions = (bin: string): Option<Overflow>[] => [
   { value: 'thumbnails', label: 'Rebuild thumbnails', icon: <Sparkles size={ICON} /> },
   { value: 'metadata', label: 'Refresh metadata', icon: <RotateCw size={ICON} /> },
-  { value: 'bin', label: 'Move to Bin', icon: <Trash2 size={ICON} />, destructive: true },
+  { value: 'bin', label: bin, icon: <Trash2 size={ICON} />, destructive: true },
 ];
 
 interface Props {
@@ -43,6 +47,10 @@ export const BulkBar = observer(function BulkBar({ removeFrom }: Props): JSX.Ele
   const entries = store.selectedEntries;
   const none = count === 0;
   const members = store.selectedMembers.size > 0;
+  // "all" rather than a number for the whole collection, for the reason the bar's
+  // own count carries none there: the stacks in the rows this client never held
+  // stand for a number only the server knows.
+  const binLabel = count < 2 ? 'Move to Bin' : store.allSelected ? 'Move all to Bin' : `Move ${count} to Bin`;
 
   return (
     <div className="bulkbar">
@@ -154,7 +162,7 @@ export const BulkBar = observer(function BulkBar({ removeFrom }: Props): JSX.Ele
             label="More actions"
             disabled={none}
             trigger={<Ellipsis size={ICON} />}
-            options={OVERFLOW}
+            options={overflowOptions(binLabel)}
             onSelect={(action) => {
               if (action === 'thumbnails') void photos.rebuildGridRenditions();
               else if (action === 'metadata') void photos.refreshMetadataForSelection();
