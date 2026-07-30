@@ -1048,14 +1048,18 @@ These were three trees under three names - `thumbnails/`, `previews/` and `lossl
 
 | rendition | | wall | CPU | peak RSS | bytes |
 |---|---|---|---|---|---|
-| grid, 800 | 4:4:4 | 52ms | 0.10s | 177MB | 16.0 kB |
-| | 4:2:0 | 32ms | 0.07s | 177MB | 13.7 kB |
-| viewer, 3840 | 4:4:4 | 483ms | 2.88s | 476MB | 1.72 MB |
+| grid tile, 800, whole job | 4:4:4 | 85ms | 0.12s | 94MB | 13.7 kB |
+| | 4:2:0 | 76ms | 0.12s | 90MB | 12.5 kB |
+| viewer, 3840, encode only | 4:4:4 | 483ms | 2.88s | 476MB | 1.72 MB |
 | | 4:2:0 | 224ms | 1.71s | 420MB | 0.53 MB |
-| full resolution | 4:4:4 | 1468ms | 10.34s | 918MB | 8.48 MB |
+| full resolution, encode only | 4:4:4 | 1468ms | 10.34s | 918MB | 8.48 MB |
 | | 4:2:0 | 842ms | 7.25s | 651MB | 5.02 MB |
 
-The viewer rendition encodes in **less than half the time** - a larger margin than the HDR still gets, since 8-bit 4:4:4 is where libaom's chroma planes cost most relative to the rest of its state. The grid tile's peak does not move at all, because at 800px the decode is the peak and the encode is 30ms of it; what it saves there is 15% of a 16kB file for an SSIM difference of **0.0008**, which is as close to free as this gets. That matters more than the size: the grid tile is the rendition every photo in the library has.
+The viewer rendition encodes in **less than half the time** - a larger margin than the HDR still gets, since 8-bit 4:4:4 is where libaom's chroma planes cost most relative to the rest of its state.
+
+**The grid tile is a different measurement and has to be read as one.** It is the whole job rather than the encode alone, because the tile never decodes a RAW: it comes off the embedded JPEG, DCT-scaled during the decode (§10.4), so the entire thing is 76ms and ~60MB above baseline where the other two rows sit on top of a demosaic. 4:2:0 saves 9% of a 12.5kB file there and about 9ms.
+
+**And the tile has no chroma to lose.** The camera's preview is already subsampled - `yuvj422p` on the fixture, which is typical - so a 4:4:4 tile was storing chroma at a resolution the source never had. Measured against a near-lossless encode of the same tile, the combined SSIM goes 0.992211 to 0.991865, a difference of **0.0003**, and the U plane 0.9952 to 0.9946. That is as close to free as this gets, and it is the rendition every photo in the library has - the grid, masonry and list views all request it, as do the shoot and collection banners.
 
 Per-plane at 3840, against a near-lossless 4:4:4 reference, the same shape as §10.7:
 
