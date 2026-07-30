@@ -9,8 +9,8 @@
   --bower: #0b0d11; /* the bed the grid sits on, deeper than the chrome */
   --slate: #232833; /* panel edges, dividers */
   --slate-soft: #1a1e26; /* raised panel */
-  --satin: #4c7df0; /* satin bowerbird blue: primary action */
-  --glass: #7fd4e8; /* sea-glass: selection */
+  --satin: #4c7df0; /* satin bowerbird blue: primary action, and the selection */
+  --glass: #7fd4e8; /* sea-glass: accents, and the focus outline */
   --bone: #e8e4da; /* primary text */
   --bone-dim: #8b8f99; /* secondary text */
   --ochre: #d98a3a; /* the one warm note: missing / warning */
@@ -29,6 +29,11 @@
   --control-h: 30px;
   --control-text: 13px;
   --radius: 4px;
+  /* One ring, worn by a selected tile, an open stack's tile and that stack's band
+     (§19.6): three parts of one thing, so the weight is one value rather than
+     three that drifted apart. The radius is `--radius`, and the tile carries it
+     too so a ring drawn at its edge follows that edge. */
+  --ring: 2px;
 
   /* Chrome above and below the photo stage: the .pad box plus the nav row. */
   --detail-chrome: 84px;
@@ -1160,6 +1165,7 @@ p.ui-text--mono {
   display: block;
   border: 0;
   padding: 0;
+  border-radius: var(--radius);
 }
 
 /* A position the client is not holding a row for: evicted behind the scroll, or
@@ -1214,7 +1220,15 @@ p.ui-text--mono {
   inset: 0;
   pointer-events: none;
   z-index: 2;
-  box-shadow: inset 0 0 0 3px var(--glass);
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 var(--ring) var(--satin);
+}
+
+/* An open stack's tile already wears a ring of the same weight in its band's
+   colour, and that colour is the only thing pairing the tile with the band below
+   it (§19.6) - a selection ring over the top would break the pair. */
+.tile--selected:has(.tile__stack--open)::after {
+  box-shadow: none;
 }
 
 .tile__name {
@@ -1279,10 +1293,10 @@ p.ui-text--mono {
    frame dims and the layers become a chevron pointing back up at the tile. */
 .tile__stack--open {
   inset: 0;
-  border-radius: 0;
+  border-radius: var(--radius);
   justify-content: center;
   background: rgba(10, 12, 16, 0.62);
-  box-shadow: inset 0 0 0 2px var(--band);
+  box-shadow: inset 0 0 0 var(--ring) var(--band);
 }
 
 /* One colour per open stack, worn by both its tile and its band: several stacks
@@ -1324,9 +1338,9 @@ p.ui-text--mono {
    (`bandRowHeight`), for the same reason. */
 .grid__band {
   background: rgba(120, 140, 180, 0.1);
-  outline: 2px solid var(--band);
-  outline-offset: -2px;
-  border-radius: 4px;
+  outline: var(--ring) solid var(--band);
+  outline-offset: calc(-1 * var(--ring));
+  border-radius: var(--radius);
   padding: 6px;
 }
 
