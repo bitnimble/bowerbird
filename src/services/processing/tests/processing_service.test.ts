@@ -88,6 +88,39 @@ describe('ProcessingService.processUnprocessed', () => {
     expect(posted.map((job) => job.matchEmbeddedJpeg)).toEqual([false, false]);
   });
 
+  it('builds the grid tile SDR and subsampled however the library and settings are set', async () => {
+    // Neither switch reaches the tile, and both would be wrong there: an HDR tile
+    // costs a linear decode and two encoder passes per photo for a wall of images
+    // nobody pixel-peeps, and full chroma would store detail its usual source - the
+    // camera's already-subsampled JPEG - never had. Pinned because both are settings
+    // a caller can turn on, and a tile that quietly followed them would still encode,
+    // still be the right size, and only show up as an import that got slower.
+    const repo = {
+      listPendingProcessing: jest.fn(() => [{ ...pending('a'), rendition_hdr: 1, rendition_hdr_video: 1 }]),
+      markTileBuilt: jest.fn(),
+      markRenditionsBuilt: jest.fn(),
+      markProcessingFailed: jest.fn(),
+    } as unknown as PhotosRepository;
+
+    await new ProcessingService(
+      repo,
+      settingsWith({ sdr_full_chroma: true, hdr_still_full_chroma: true }),
+    ).processUnprocessed({ libraryId: 'lib' });
+
+    const targets = posted.flatMap((job) => job.targets);
+    const grid = targets.filter((target) => target.rendition === 'grid');
+    expect(grid).toHaveLength(1);
+    expect(grid[0]!.hdr).toBe(false);
+    expect(grid[0]!.sdrFullChroma).toBe(false);
+    // No video twin either, that being an HDR rendition's companion.
+    expect(grid[0]!.videoOutputPath).toBeNull();
+    // The library asked for both, so the rendition that does take them still does -
+    // otherwise this would pass with the settings simply not plumbed through.
+    const full = targets.find((target) => target.rendition === 'full');
+    expect(full?.hdr).toBe(true);
+    expect(full?.sdrFullChroma).toBe(true);
+  });
+
   it('marks each photo processed and drains the pool without hanging', async () => {
     const markRenditionsBuilt = jest.fn();
     const repo = {

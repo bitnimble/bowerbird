@@ -150,18 +150,36 @@ export class ProcessingService {
       full: settings.full_rendition_quantizer,
       max: settings.lossless_sdr_quantizer,
     };
+
+    // The grid tile takes neither of the switches the other two renditions do, and
+    // that is decided here rather than offered.
+    //
+    // Never HDR: a wall of HDR tiles is punishing to look at, and it would put a
+    // linear decode and two encoder passes on every photo in an import (§10.1).
+    // `renditionDir` refuses an HDR grid path as well, so this keeps the target
+    // agreeing with where its bytes would land.
+    //
+    // Never full chroma, whatever `sdr_full_chroma` says: a tile is 800px in a wall
+    // of other tiles, and its usual source is the camera's embedded JPEG, which is
+    // already subsampled - `yuvj422p` on the corpus - so 4:4:4 would be storing
+    // chroma at a resolution the source never had. Measured, the difference is
+    // 0.0003 SSIM (§10.1). The same holds for the render fallback below: nothing
+    // that reaches the grid is worth full chroma, so it is not a knob.
+    const gridTile = rendition === 'grid';
+    const hdrTarget = hdr && !gridTile;
+
     return {
       rendition,
-      hdr,
+      hdr: hdrTarget,
       source,
-      outputPath: renditionPathFor(dataPath, photoId, rendition, hdr),
-      videoOutputPath: hdr && hdrVideo ? renditionPathFor(dataPath, photoId, rendition, hdr, true) : null,
+      outputPath: renditionPathFor(dataPath, photoId, rendition, hdrTarget),
+      videoOutputPath: hdrTarget && hdrVideo ? renditionPathFor(dataPath, photoId, rendition, hdrTarget, true) : null,
       size: sizes[rendition],
       sdrQuantizer: quantizers[rendition],
       hdrQuantizer: rendition === 'max' ? settings.lossless_quantizer : settings.hdr_crf,
       preset: settings.hdr_preset,
       stillFullChroma: settings.hdr_still_full_chroma,
-      sdrFullChroma: settings.sdr_full_chroma,
+      sdrFullChroma: settings.sdr_full_chroma && !gridTile,
     };
   }
 

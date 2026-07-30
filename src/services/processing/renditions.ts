@@ -36,6 +36,10 @@ export function isRendition(value: string): value is Rendition {
 // hand, so the exception lives here rather than at each of them: a reader that
 // applied the setting to `grid` would look in a directory nothing ever writes
 // and 404 every tile in the library.
+//
+// `processing_service.target` refuses it a second time, on the writing side. Not
+// redundant: this decides where the bytes land and that decides what gets encoded,
+// so without both a tile could be encoded HDR and filed as SDR.
 function storedAsHdr(rendition: Rendition, hdr: boolean): boolean {
   return hdr && rendition !== 'grid';
 }

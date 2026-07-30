@@ -29,6 +29,10 @@ declare const self: {
 
 // 8-bit output whatever the input depth, which is why `writeHdr` below cannot go
 // through this at all and has its own encoder (§10.2).
+//
+// `sdrFullChroma` is the library's setting for `full` and `max`, and always false
+// for a grid tile - the service forces it rather than passing the setting through,
+// since the tile's usual source is already chroma-subsampled (§10.1).
 function toAvif(image: ImageHandle, target: RenditionTarget): void {
   saveAvif(image, target.size, target.sdrQuantizer, AVIF_EFFORT, target.sdrFullChroma, target.outputPath);
 }
@@ -47,6 +51,14 @@ function largestSize(targets: readonly RenditionTarget[], hdr: boolean): number 
 // render is already baked upright by the decoder (§11.1). A body that embeds a
 // bitmap preview, or none at all, is a property of the file rather than an error,
 // so it falls back to a render.
+//
+// **Every grid tile arrives here with `source: 'embedded'`**, whatever the library
+// is set to - `processing_service.target` decides that, not the library's
+// `rendition_source`, which governs the photo viewer alone (§10.1). So the branch
+// below is the grid's normal path and `base()` is its fallback, reached only by a
+// file with no usable JPEG preview. Reading this the other way round is an easy
+// mistake and an expensive one: it makes the tile look like it costs a demosaic,
+// when the whole job is ~76ms and never unpacks the sensor data at all.
 function writeSdr(
   job: RenditionJob,
   target: RenditionTarget,
@@ -71,7 +83,9 @@ function writeSdr(
       }
     }
   }
-  // The base already carries the match, if there is one.
+  // The base already carries the match, if there is one. For a grid target this is
+  // the no-preview fallback rather than the usual route, and it is the one thing
+  // that makes a tile job demosaic.
   const image = base();
   toAvif(image, target);
   wrote?.(image);
@@ -142,11 +156,16 @@ async function renditions(job: RenditionJob): Promise<Uint8Array | undefined> {
     freeImage(image);
   };
 
-  // One decode for the whole job, shared by the fit and by every SDR rendition.
-  // A 60MP frame takes about two seconds to demosaic, and a `render` import builds
-  // both the grid tile and the full view from the identical pixels, so decoding per
-  // rendition paid for the same work twice - and asking the fit to decode as well
-  // made it three times. Lazy because an embedded-source job may never need one.
+  // One decode for the whole job, shared by the fit and by every SDR rendition that
+  // needs one. A 60MP frame takes about two seconds to demosaic, so decoding per
+  // rendition paid for the same work twice and asking the fit to decode as well made
+  // it three times.
+  //
+  // **Lazy, and a tile job never triggers it.** The grid tile comes off the embedded
+  // JPEG (`writeSdr`), so an import's tile pass runs to completion without unpacking
+  // sensor data at all - which is what makes it ~10x the throughput of the rendition
+  // pass and worth staging separately (§10.3). This is only reached by a `full` or
+  // `max` target, or by a grid tile whose file embeds no usable preview.
   //
   // 8-bit deliberately: AVIF output is 8-bit whatever goes in, so a 16-bit decode
   // would be twice the memory for samples the encoder discards.
