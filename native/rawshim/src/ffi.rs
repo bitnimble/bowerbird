@@ -860,6 +860,28 @@ pub unsafe extern "C" fn bb_save_avif(
     }
     let (Some(source), Ok(path)) = ((*image).view(), CStr::from_ptr(path).to_str()) else { return -1 };
     crate::guard("bb_save_avif", -1, || {
+        // libvips counted effort up from 0 as *fastest*; libavif counts speed down from
+        // 10 as fastest. Same knob, opposite ends.
+        let speed = (10 - effort).clamp(0, 10);
+
+        // Encoded where it lies when there is no resize to do, which is the common case
+        // and not a rare one: the worker builds its base at the largest size the job
+        // asks for and then encodes that target from it, so the biggest rendition of
+        // every photo arrives here already the right size. Going through the pipeline
+        // regardless meant `finish` materialising a whole second copy of the frame to
+        // hand libavif pixels it could have read in place.
+        if long_edge == 0 || source.width.max(source.height) <= long_edge as usize {
+            return match crate::avif::encode_rendition(
+                source.data, source.width, source.height, quantizer, speed, path,
+            ) {
+                Ok(()) => 0,
+                Err(detail) => {
+                    eprintln!("bb_save_avif: {detail}");
+                    -1
+                }
+            };
+        }
+
         // libvips still does the resize - it is the lazy pipeline's whole point - but
         // the encode goes to libavif rather than out through libheif. Same codec at the
         // end of both, and measured at matched quality it is 307ms to 275ms at Q80 and
@@ -877,9 +899,7 @@ pub unsafe extern "C" fn bb_save_avif(
             resized.width,
             resized.height,
             quantizer,
-            // libvips counted effort up from 0 as *fastest*; libavif counts speed down
-            // from 10 as fastest. Same knob, opposite ends.
-            (10 - effort).clamp(0, 10),
+            speed,
             path,
         );
         match written {

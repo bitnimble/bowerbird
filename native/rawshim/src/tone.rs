@@ -146,20 +146,23 @@ pub struct GradeOptions<'a> {
 /// single input level to key on.
 const ROLL_BINS: usize = 4096;
 
-/// Grades scene-linear 16-bit samples to display-referred linear, where full range is
-/// `peak_nits` - which is what zscale's `npl` then ties to absolute brightness.
+/// Grades scene-linear 16-bit samples to display-referred linear in place, where full
+/// range is `peak_nits` - which is what zscale's `npl` then ties to absolute brightness.
 ///
-/// None when the frame has no exposure to read, in which case the caller ships the
-/// input unchanged: leaving it alone beats dividing by zero.
-pub fn grade(source: &[u16], options: &GradeOptions<'_>) -> Option<Vec<u16>> {
+/// In place because the caller owns the frame by the time it gets here - it is the
+/// warp's output, or the resize's - and every stage is sample-for-sample at the same
+/// index, so there is nothing a second buffer would protect. It was allocating one the
+/// size of the frame, 366MB on a 61MP export.
+///
+/// False when the frame has no exposure to read, leaving it untouched: shipping it as it
+/// arrived beats dividing by zero.
+pub fn grade(frame: &mut [u16], options: &GradeOptions<'_>) -> bool {
     let Levels { white, peak: source_level } = options.levels;
     if white == 0.0 {
-        return None;
+        return false;
     }
     let reference = options.reference_white_nits;
     let peak = options.peak_nits;
-
-    let mut out = vec![0u16; source.len()];
 
     let Some(colour) = options.match_colour else {
         let source_peak_nits = (source_level / white) * reference;
@@ -170,8 +173,8 @@ pub fn grade(source: &[u16], options: &GradeOptions<'_>) -> Option<Vec<u16>> {
             let nits = eetf((level as f64 / white) * reference, source_peak_nits, peak);
             lut[level] = ((nits / peak).min(1.0) * MAX as f64).round() as u16;
         }
-        out.par_iter_mut().zip(source.par_iter()).for_each(|(o, s)| *o = lut[*s as usize]);
-        return Some(out);
+        frame.par_iter_mut().for_each(|s| *s = lut[*s as usize]);
+        return true;
     };
 
     // Matched: the transform is cross-channel, so there is no per-input-level table to
@@ -182,7 +185,7 @@ pub fn grade(source: &[u16], options: &GradeOptions<'_>) -> Option<Vec<u16>> {
     // nits to find the exact maximum wanted a buffer the size of the frame - 720MB on
     // a 60MP photo - to save clamping a handful of specular samples that the roll-off
     // was compressing into the peak anyway.
-    let mut scene_peak = source
+    let mut scene_peak = frame
         .par_chunks_exact(3)
         .step_by(QUANTILE_STRIDE)
         .map(|px| {
@@ -197,7 +200,7 @@ pub fn grade(source: &[u16], options: &GradeOptions<'_>) -> Option<Vec<u16>> {
         .reduce(|| 0.0f64, f64::max);
     scene_peak *= reference;
     if !(scene_peak > 0.0) {
-        return None;
+        return false;
     }
 
     let mut table = vec![0.0f64; ROLL_BINS];
@@ -226,7 +229,9 @@ pub fn grade(source: &[u16], options: &GradeOptions<'_>) -> Option<Vec<u16>> {
     let sat = colour.saturation;
     let scale = (ROLL_BINS - 1) as f64 / scene_peak;
 
-    out.par_chunks_exact_mut(3).zip(source.par_chunks_exact(3)).for_each(|(out_px, px)| {
+    // Read out before anything is written back, which is what makes the shared buffer
+    // safe: the write loop below overwrites the very samples the arithmetic reads.
+    frame.par_chunks_exact_mut(3).for_each(|px| {
         let (r, g, b) = (px[0], px[1], px[2]);
 
         let (tr, tg, tb) = if f64::from(r) <= ceiling && f64::from(g) <= ceiling && f64::from(b) <= ceiling {
@@ -255,10 +260,10 @@ pub fn grade(source: &[u16], options: &GradeOptions<'_>) -> Option<Vec<u16>> {
             let t = nits * scale;
             let lo = (t.floor() as usize).min(ROLL_BINS - 2);
             let rolled = table[lo] + (table[lo + 1] - table[lo]) * (t - lo as f64);
-            out_px[c] = ((rolled / peak).min(1.0) * MAX as f64).round() as u16;
+            px[c] = ((rolled / peak).min(1.0) * MAX as f64).round() as u16;
         }
     });
-    Some(out)
+    true
 }
 
 #[cfg(test)]
@@ -308,26 +313,30 @@ mod tests {
 
     #[test]
     fn a_frame_with_no_exposure_is_left_alone_rather_than_divided_by() {
-        let flat = vec![0u16; 300];
+        let mut flat = vec![0u16; 300];
         let options = GradeOptions {
             reference_white_nits: 203.0,
             peak_nits: 1000.0,
             match_colour: None,
             levels: levels(&flat, 0.9),
         };
-        assert!(grade(&flat, &options).is_none());
+        assert!(!grade(&mut flat, &options));
+        // Left as it arrived, which is the half an in-place grade could get wrong: a
+        // declined grade that had already written some of the frame would ship a
+        // half-transformed picture rather than the untouched one.
+        assert!(flat.iter().all(|s| *s == 0));
     }
 
     #[test]
     fn the_neutral_grade_is_monotone_in_its_input() {
-        let samples: Vec<u16> = (0..900u16).flat_map(|i| [i * 70, i * 70, i * 70]).collect();
+        let mut out: Vec<u16> = (0..900u16).flat_map(|i| [i * 70, i * 70, i * 70]).collect();
         let options = GradeOptions {
             reference_white_nits: 203.0,
             peak_nits: 1000.0,
             match_colour: None,
-            levels: levels(&samples, 0.9),
+            levels: levels(&out, 0.9),
         };
-        let out = grade(&samples, &options).expect("a graded frame");
+        assert!(grade(&mut out, &options));
         for i in 3..out.len() {
             if i % 3 == 0 {
                 assert!(out[i] >= out[i - 3], "not monotone at {i}");

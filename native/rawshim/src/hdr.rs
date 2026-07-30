@@ -186,20 +186,35 @@ fn graded_with(
         size.width as usize,
         size.height as usize,
     );
-    let (samples, width, height) = match &fitted {
-        Some(resized) => (resized.as_slice(), size.width as usize, size.height as usize),
-        None => (source.samples, source.width, source.height),
+    let (width, height) = match fitted.is_some() {
+        true => (size.width as usize, size.height as usize),
+        false => (source.width, source.height),
     };
 
     // Geometry before the grade and after the resize. Before the grade because the
     // colour was fitted from pairs that only correspond through this warp; after the
     // resize because the model is in normalised radii, so warping 61MP to make a
     // 3840px rendition is the same picture for sixteen times the work.
-    let shaped = matched.and_then(|m| hdr_fit::apply_geometry(samples, width, height, m));
-    let shaped = shaped.as_deref().unwrap_or(samples);
+    //
+    // Scoped so the borrow of `fitted` ends before it is moved from below.
+    let warped = {
+        let samples = fitted.as_deref().unwrap_or(source.samples);
+        matched.and_then(|m| hdr_fit::apply_geometry(samples, width, height, m))
+    };
 
-    let out = tone::grade(
-        shaped,
+    // One owned buffer for the whole chain, and the grade runs inside it. Whichever
+    // stage last allocated *is* that buffer - the warp's output, or the resize's - so
+    // only a frame that needed neither has to be copied out of the caller's decode,
+    // which this must not write to. The grade used to allocate its own on top of these,
+    // a third full frame at 61MP.
+    let mut frame = match warped {
+        Some(warped) => warped,
+        None => fitted.unwrap_or_else(|| source.samples.to_vec()),
+    };
+
+    // A frame with no exposure to read grades to itself, and is left as it arrived.
+    tone::grade(
+        &mut frame,
         &GradeOptions {
             reference_white_nits: options.reference_white_nits,
             peak_nits: options.peak_nits,
@@ -207,19 +222,32 @@ fn graded_with(
             levels,
         },
     );
-    // A frame with no exposure to read grades to itself.
-    (out.unwrap_or_else(|| shaped.to_vec()), width, height)
+    (frame, width, height)
+}
+
+/// The graded frame as the bytes a child process reads.
+///
+/// Native byte order, which is what `-pixel_format rgb48le` says on the little-endian
+/// targets this ships for.
+fn as_bytes(graded: &[u16]) -> &[u8] {
+    // SAFETY: `u16` has no padding and every bit pattern of it is a valid `u8` pair, so
+    // this is a reinterpret of the same allocation rather than a copy of it.
+    unsafe { std::slice::from_raw_parts(graded.as_ptr() as *const u8, std::mem::size_of_val(graded)) }
 }
 
 /// Encodes samples that have already been graded, at the size they arrived at.
-fn encode_graded(graded: &[u16], width: usize, height: usize, options: &EncodeOptions) -> Result<(), String> {
-    // Native byte order, which is what `-pixel_format rgb48le` says on the little-
-    // endian targets this ships for.
-    let bytes: &[u8] =
-        unsafe { std::slice::from_raw_parts(graded.as_ptr() as *const u8, std::mem::size_of_val(graded)) };
-
+///
+/// `Cow` so the still can PQ-encode in place where it owns the frame. Only the
+/// still-plus-video pair passes `Borrowed`, because there the twin is reading the same
+/// samples on another thread (`avif::encode_still`).
+fn encode_graded(
+    graded: std::borrow::Cow<'_, [u16]>,
+    width: usize,
+    height: usize,
+    options: &EncodeOptions,
+) -> Result<(), String> {
     if options.medium == Medium::Video {
-        return run(&hdr_args::ffmpeg_args(width as u32, height as u32, options), Some(bytes));
+        return run(&hdr_args::ffmpeg_args(width as u32, height as u32, options), Some(as_bytes(&graded)));
     }
 
     // In this process, for a PQ still. `avifenc` is a wrapper around libavif, and what
@@ -255,7 +283,7 @@ fn encode_graded(graded: &[u16], width: usize, height: usize, options: &EncodeOp
     pipe(
         &hdr_args::ffmpeg_args(width as u32, height as u32, &to_pipe),
         &hdr_args::avifenc_args(options, ""),
-        bytes,
+        as_bytes(&graded),
     )
 }
 
@@ -367,7 +395,9 @@ pub fn encode_pair(
     let (frame, width, height) = graded_with(source, options, matched, levels);
 
     let Some(video_path) = video_path else {
-        return encode_graded(&frame, width, height, options);
+        // Handed over rather than lent: with no twin reading it, the still's transfer
+        // runs in this buffer instead of a second one the size of the frame.
+        return encode_graded(std::borrow::Cow::Owned(frame), width, height, options);
     };
     let video =
         EncodeOptions { medium: Medium::Video, output_path: video_path.to_string(), ..options.clone() };
@@ -376,8 +406,8 @@ pub fn encode_pair(
     // both are mostly waiting on a child process, so the pair finishes in about the
     // time the slower one takes on its own.
     let (still, twin) = std::thread::scope(|scope| {
-        let twin = scope.spawn(|| encode_graded(&frame, width, height, &video));
-        (encode_graded(&frame, width, height, options), twin.join())
+        let twin = scope.spawn(|| encode_graded(std::borrow::Cow::Borrowed(&frame), width, height, &video));
+        (encode_graded(std::borrow::Cow::Borrowed(&frame), width, height, options), twin.join())
     });
     still?;
     twin.map_err(|_| "the video encode panicked".to_string())?

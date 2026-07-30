@@ -50,24 +50,26 @@ const AVIF_PIXEL_FORMAT_YUV444: u32 = 1;
 const AVIF_RGB_FORMAT_RGB: u32 = 0;
 const AVIF_RESULT_OK: u32 = 0;
 
-/// The graded frame PQ-encoded, at 16 bits.
+/// PQ-encodes the graded frame in place, at 16 bits.
 ///
-/// `tone::grade` hands back display-referred linear where full range is the display's
-/// peak, which is what `zscale` was being told through `npl` and `tin=linear`. Only the
+/// `tone::grade` leaves display-referred linear where full range is the display's peak,
+/// which is what `zscale` was being told through `npl` and `tin=linear`. Only the
 /// transfer is left: PQ's output gamut is Rec.2020, which is the space the grade already
 /// works in, so nothing has to move between primaries. What comes out is what libavif's
 /// own converter takes to YCbCr, so the matrix and the limited-range quantisation stay
 /// libavif's rather than being written a second time here.
-fn pq_encode(graded: &[u16], peak_nits: f64) -> Vec<u16> {
+///
+/// In place because the caller owns the frame and has no further use for the linear
+/// samples, and because it is sample-for-sample at the same index, so there is nothing a
+/// second buffer would protect.
+fn pq_encode(graded: &mut [u16], peak_nits: f64) {
     // One curve covers all 65536 inputs, so the per-sample work is a lookup rather
     // than a pow(): a 24MP frame is 30M samples and a 60MP one 180M.
     let full = f64::from(u16::MAX);
     let lut: Vec<u16> = (0..=u16::MAX)
         .map(|level| (tone::pq((f64::from(level) / full) * peak_nits) * full).round() as u16)
         .collect();
-    let mut out = vec![0u16; graded.len()];
-    out.par_iter_mut().zip(graded.par_iter()).for_each(|(o, s)| *o = lut[*s as usize]);
-    out
+    graded.par_iter_mut().for_each(|s| *s = lut[*s as usize]);
 }
 
 /// Encodes one graded frame as an AVIF still, straight to `out_path`.
@@ -76,14 +78,20 @@ fn pq_encode(graded: &[u16], peak_nits: f64) -> Vec<u16> {
 /// it, put into its output transfer and gamut here rather than by a `zscale` in another
 /// process.
 ///
-/// **This holds three frames at once**, which is the cost of not spawning anything: the
-/// caller's graded buffer, the transfer-encoded copy below, and the 10-bit planes libavif
-/// allocates to convert into. At 61MP that is roughly 1.1GB against the ~366MB the old
-/// path kept on this side, because the other two used to live in ffmpeg's and avifenc's
-/// address spaces and die with them. With `processing_concurrency` workers each holding
-/// a decode as well, that is the number to watch on a machine that starts OOM-killing.
+/// `Cow` rather than a slice, and that is the memory knob rather than a signature
+/// preference: the transfer is applied in place, so an owned frame is encoded without a
+/// second allocation of it. Only the still-plus-video pair has to pass `Borrowed` - the
+/// twin reads the same linear samples concurrently and would see them PQ-encoded from
+/// under it.
+///
+/// **Two frames are live here**, which is the cost of not spawning anything: the
+/// transfer-encoded buffer and the 10-bit planes libavif converts into. It was three
+/// while the transfer allocated its own output - ~732MB at 61MP against ~1.1GB - and the
+/// scene-linear decode the worker holds throughout sits on top of whichever it is. With
+/// `processing_concurrency` workers each holding one, that is the number to watch on a
+/// machine that starts OOM-killing.
 pub fn encode_still(
-    graded: &[u16],
+    graded: std::borrow::Cow<'_, [u16]>,
     width: usize,
     height: usize,
     options: &StillOptions,
@@ -92,7 +100,10 @@ pub fn encode_still(
     if graded.len() < width * height * 3 {
         return Err(format!("frame is {} samples, expected {}", graded.len(), width * height * 3));
     }
-    let encoded = pq_encode(graded, options.peak_nits);
+    // Moves an owned frame and copies a borrowed one, which is the whole reason for
+    // the `Cow`.
+    let mut encoded = graded.into_owned();
+    pq_encode(&mut encoded, options.peak_nits);
     write_avif(&encoded, 16, AVIF_RANGE_LIMITED, width, height, AVIF_DEPTH,
         AVIF_PIXEL_FORMAT_YUV444, &options.cicp, options.quantizer, options.speed, out_path)
 }
@@ -144,7 +155,7 @@ fn write_avif<T>(
         if image.is_null() {
             return Err("libavif would not allocate an image".to_string());
         }
-        let result = (|| -> Result<Vec<u8>, String> {
+        let result = (|| -> Result<(), String> {
             (*image).yuvRange = range;
             (*image).colorPrimaries = cicp.primaries;
             (*image).transferCharacteristics = cicp.transfer;
@@ -167,7 +178,7 @@ fn write_avif<T>(
             if encoder.is_null() {
                 return Err("libavif would not allocate an encoder".to_string());
             }
-            let written = (|| -> Result<Vec<u8>, String> {
+            let written = (|| -> Result<(), String> {
                 (*encoder).maxThreads = std::thread::available_parallelism()
                     .map(|n| n.get() as i32)
                     .unwrap_or(1);
@@ -180,27 +191,28 @@ fn write_avif<T>(
 
                 let mut output = std::mem::zeroed::<raw::avifRWData>();
                 let status = raw::avifEncoderWrite(encoder, image, &mut output);
-                // Freed before the status is looked at: a write that fails part way
-                // has already allocated, and `avifRWDataFree` is defined on a zeroed
-                // struct, so the ordering costs nothing and the alternative leaks
-                // however much of the file got built.
-                let bytes = match (status, output.data.is_null()) {
+                // Written straight out of libavif's buffer rather than through a `Vec`
+                // of our own. Inside the free, so the bytes are still there to write.
+                // Freed whatever the status: a write that fails part way has already
+                // allocated, and `avifRWDataFree` is defined on a zeroed struct, so the
+                // ordering costs nothing and the alternative leaks however much of the
+                // file got built.
+                let done = match (status, output.data.is_null()) {
                     (AVIF_RESULT_OK, false) => {
-                        Ok(std::slice::from_raw_parts(output.data, output.size).to_vec())
+                        std::fs::write(out_path, std::slice::from_raw_parts(output.data, output.size))
+                            .map_err(|e| format!("could not write {out_path}: {e}"))
                     }
                     (AVIF_RESULT_OK, true) => Err("libavif returned no bytes".to_string()),
                     _ => Err(format!("libavif could not encode: {}", message(status))),
                 };
                 raw::avifRWDataFree(&mut output);
-                bytes
+                done
             })();
             raw::avifEncoderDestroy(encoder);
             written
         })();
         raw::avifImageDestroy(image);
-
-        let bytes = result?;
-        std::fs::write(out_path, bytes).map_err(|e| format!("could not write {out_path}: {e}"))
+        result
     }
 }
 
@@ -226,8 +238,9 @@ mod tests {
         // bottom, so rounding a nits value to a level and back moves the answer by tens
         // of counts at 1 nit, and a test written that way measures the quantisation
         // rather than the curve.
-        let levels: Vec<u16> = [0u16, 1, 66, 13303, 32768, u16::MAX].to_vec();
-        let out = pq_encode(&levels, 1000.0);
+        let levels: [u16; 6] = [0, 1, 66, 13303, 32768, u16::MAX];
+        let mut out = levels;
+        pq_encode(&mut out, 1000.0);
         for (i, level) in levels.iter().enumerate() {
             let nits = (f64::from(*level) / f64::from(u16::MAX)) * 1000.0;
             let want = (tone::pq(nits) * f64::from(u16::MAX)).round() as u16;
@@ -241,8 +254,8 @@ mod tests {
         // at about 0.752 of the code range and *must not* be stretched to fill it.
         // Normalising it to full scale would be the mistake `npl` exists to prevent:
         // the file would then claim its diffuse white is 10000 nits.
-        let ramp: Vec<u16> = (0..=255).map(|i| i * 257).collect();
-        let out = pq_encode(&ramp, 1000.0);
+        let mut out: Vec<u16> = (0..=255).map(|i| i * 257).collect();
+        pq_encode(&mut out, 1000.0);
         assert_eq!(out[0], 0, "black must stay black");
         let peak = *out.last().expect("a last sample");
         assert_eq!(peak, (tone::pq(1000.0) * f64::from(u16::MAX)).round() as u16);
@@ -261,6 +274,6 @@ mod tests {
             peak_nits: 1000.0,
         };
         let short = vec![0u16; 8 * 8 * 3 - 1];
-        assert!(encode_still(&short, 8, 8, &options, "/dev/null").is_err());
+        assert!(encode_still(short.into(), 8, 8, &options, "/dev/null").is_err());
     }
 }
