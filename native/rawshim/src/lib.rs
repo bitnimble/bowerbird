@@ -42,6 +42,33 @@ mod raw {
     include!(concat!(env!("OUT_DIR"), "/libraw.rs"));
 }
 
+/// Runs `body`, turning a panic into `fallback` rather than letting it out of the
+/// library.
+///
+/// Every `bb_*` entry point is `extern "C"`, and a panic that reaches one of those
+/// aborts the process - not this call, the whole of it, which here means the server and
+/// every worker in it, with no Rust error string and nothing on stderr but the abort.
+/// One frame that trips an index takes down an import of fifty thousand.
+///
+/// Applied to the entry points that run code rather than to all of them, and the line
+/// is meant: the accessors that only report a `size_of`, and the frees that only take a
+/// `Box` back, have nothing in them that can panic. Anything that touches a pixel, a
+/// path or a parse is wrapped.
+///
+/// `AssertUnwindSafe` because the alternative is threading `UnwindSafe` through raw
+/// pointers that are already the caller's responsibility. What it gives up - seeing a
+/// half-updated value after a panic - is not available here anyway: every one of these
+/// reports failure and hands back nothing.
+pub(crate) fn guard<T>(what: &str, fallback: T, body: impl FnOnce() -> T) -> T {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(body)) {
+        Ok(value) => value,
+        Err(_) => {
+            eprintln!("rawshim: {what} panicked; reporting failure rather than aborting the process");
+            fallback
+        }
+    }
+}
+
 /// LibRaw's `user_qual`: PPG, the cheapest of LibRaw's algorithms and not the
 /// worst. See DESIGN 10.4 for the measured table across all of them.
 const DEMOSAIC_PPG: c_int = 2;
@@ -220,12 +247,68 @@ pub(crate) unsafe fn read_insets(r: *mut raw::libraw_data_t) -> Insets {
 
 /// dcraw_process emits an upright frame, so sensor-space margins arrive rotated by
 /// the same flip.
+///
+/// Derived from `flip_index` rather than tabulated beside it. It used to be a match on
+/// three flip values with everything else falling through to the identity, which is
+/// right for flip 0 and wrong for 1, 2, 4 and 7: a transposed frame subtracted the
+/// column insets from the axis that came from the sensor's rows, so the masked border
+/// stayed in the picture and the same number of pixels came off two edges that never
+/// had one. Nothing caught it because both decode paths share these insets, so the
+/// byte-for-byte pin sees the same wrong answer twice.
+///
+/// The mapping is read off `flip_index` itself, over a 2x2 frame: step one pixel right
+/// in the output and see which sensor axis moved, and in which direction. That cannot
+/// drift from the walk it has to agree with, because it *is* that walk.
 pub(crate) fn rotate_insets(i: Insets, flip: c_int) -> Insets {
-    match flip {
-        3 => Insets { left: i.right, top: i.bottom, right: i.left, bottom: i.top },
-        5 => Insets { left: i.top, top: i.right, right: i.bottom, bottom: i.left },
-        6 => Insets { left: i.bottom, top: i.left, right: i.top, bottom: i.right },
-        _ => i,
+    // Sensor-space edges, indexed so that `edge ^ 2` is the opposite one.
+    const LEFT: usize = 0;
+    const TOP: usize = 1;
+    let edges = [i.left, i.top, i.right, i.bottom];
+
+    let corner = |row: usize, col: usize| {
+        let at = flip_index(flip, 2, 2, row, col);
+        (at / 2, at % 2)
+    };
+    let (row0, col0) = corner(0, 0);
+    let (_, col_right) = corner(0, 1);
+    let (_, col_down) = corner(1, 0);
+
+    // Which sensor edge the output's first column reads, and which its first row does.
+    // Exactly one of the two sensor axes moves for each step, which is what makes this
+    // a question with an answer.
+    let reads = |sensor_column_moved: bool| -> usize {
+        match (sensor_column_moved, sensor_column_moved && col0 == 0 || !sensor_column_moved && row0 == 0) {
+            (true, true) => LEFT,
+            (true, false) => LEFT ^ 2,
+            (false, true) => TOP,
+            (false, false) => TOP ^ 2,
+        }
+    };
+    let left = reads(col_right != col0);
+    let top = reads(col_down != col0);
+
+    Insets { left: edges[left], top: edges[top], right: edges[left ^ 2], bottom: edges[top ^ 2] }
+}
+
+/// LibRaw's flip code, as it will be by the time the pixels exist.
+///
+/// `sizes.flip` is only a small integer once LibRaw has been through the frame.
+/// `parse_ciff` assigns it straight out of the file, where it is *degrees* - and
+/// `raw2image_start`, which runs inside `unpack`, rewrites 270/180/90 to 5/3/6 on the
+/// way past. So anything read before `unpack` and anything read after it are two
+/// different numbers for the same rotation, and they do not even agree on whether the
+/// quarter-turn bit is set: 270 & 4 is 0 where 5 & 4 is 4.
+///
+/// Only CIFF/CRW and a couple of medium-format formats record degrees, and only a body
+/// that also declares a crop can be bitten by the disagreement, which is why this went
+/// unnoticed. Normalising at every read is cheaper than remembering which side of
+/// `unpack` a given line is on.
+pub(crate) fn normalised_flip(flip: c_int) -> c_int {
+    match (flip + 3600) % 360 {
+        270 => 5,
+        180 => 3,
+        90 => 6,
+        _ => flip,
     }
 }
 
@@ -393,13 +476,17 @@ pub unsafe extern "C" fn bb_decode(
         return std::ptr::null_mut();
     }
 
-    let result = (|| -> Option<Box<BbImage>> {
+    // Guarded around the closure rather than outside `libraw_init`, so a panic still
+    // reaches the `recycle`/`close` below instead of leaking the processor with it.
+    let result = guard("bb_decode", None, || (|| -> Option<Box<BbImage>> {
         if raw::libraw_open_file(r, CStr::from_ptr(path).as_ptr()) != 0 {
             return None;
         }
 
-        // Read before unpack/process, which overwrite the size fields.
-        let flip = (*r).sizes.flip;
+        // Read before unpack/process, which overwrite the size fields - and normalised,
+        // because `unpack` also rewrites a degree-valued flip into a code, and
+        // `copy_processed` reads it on the far side of that.
+        let flip = normalised_flip((*r).sizes.flip);
         let mut insets = rotate_insets(read_insets(r), flip);
         let full_long_edge = (*r).sizes.width.max((*r).sizes.height) as u32;
 
@@ -470,7 +557,7 @@ pub unsafe extern "C" fn bb_decode(
             direct: u32::from(direct),
             capacity: data.capacity(),
         }))
-    })();
+    })());
 
     raw::libraw_recycle(r);
     raw::libraw_close(r);
@@ -570,9 +657,13 @@ pub unsafe extern "C" fn bb_decode_embedded(path: *const c_char, long_edge: u32)
         return std::ptr::null_mut();
     }
 
-    let decoded = with_embedded_jpeg(path, |bytes| match long_edge {
-        0 => vips::Pipeline::decode_upright(bytes).and_then(vips::Pipeline::finish),
-        edge => vips::Pipeline::thumbnail(bytes, edge as usize).and_then(vips::Pipeline::finish),
+    // The grid tile of every photo in an import comes through here, off a JPEG the
+    // camera wrote and nothing has validated.
+    let decoded = guard("bb_decode_embedded", None, || {
+        with_embedded_jpeg(path, |bytes| match long_edge {
+            0 => vips::Pipeline::decode_upright(bytes).and_then(vips::Pipeline::finish),
+            edge => vips::Pipeline::thumbnail(bytes, edge as usize).and_then(vips::Pipeline::finish),
+        })
     });
 
     match decoded {
@@ -598,7 +689,8 @@ pub unsafe extern "C" fn bb_read_header(path: *const c_char, out: *mut header::B
         return -1;
     }
     let Ok(path) = CStr::from_ptr(path).to_str() else { return -1 };
-    match header::read_path(path) {
+    // Runs on every file of a scan, and parses maker notes off untrusted bytes.
+    match guard("bb_read_header", None, || header::read_path(path)) {
         Some(header) => {
             *out = header;
             0
@@ -722,6 +814,82 @@ mod tests {
                 );
             }
         }
+    }
+
+    // The crop has to remove the same sensor pixels whichever space it is expressed in.
+    //
+    // That is the whole contract of `rotate_insets`, and it is checkable directly: walk
+    // the output's surviving rectangle through `flip_index` and the set of sensor
+    // pixels it reaches must be exactly the set the sensor-space rectangle describes.
+    // Flips 1, 2, 4 and 7 failed this - the old table fell through to the identity for
+    // all four - and the byte-exact decode pin could never have caught it, because both
+    // decode paths take their insets from the same place and so agree on the wrong ones.
+    #[test]
+    fn the_crop_removes_the_same_sensor_pixels_whichever_way_the_frame_turns() {
+        // Deliberately asymmetric on all four edges: a symmetric set passes under any
+        // permutation and would prove nothing.
+        let sensor = Insets { left: 1, top: 2, right: 3, bottom: 4 };
+        let (iwidth, iheight) = (11usize, 13usize);
+
+        let wanted: std::collections::BTreeSet<usize> = (sensor.top..iheight - sensor.bottom)
+            .flat_map(|row| {
+                (sensor.left..iwidth - sensor.right).map(move |col| row * iwidth + col)
+            })
+            .collect();
+
+        for flip in 0..8 {
+            let out = rotate_insets(
+                Insets { left: sensor.left, top: sensor.top, right: sensor.right, bottom: sensor.bottom },
+                flip,
+            );
+            let (width, height) =
+                if flip & 4 == 0 { (iwidth, iheight) } else { (iheight, iwidth) };
+
+            let reached: std::collections::BTreeSet<usize> = (out.top..height - out.bottom)
+                .flat_map(|row| {
+                    (out.left..width - out.right)
+                        .map(move |col| flip_index(flip, iwidth, iheight, row, col))
+                })
+                .collect();
+
+            assert_eq!(reached, wanted, "flip {flip} crops the wrong pixels");
+        }
+    }
+
+    #[test]
+    fn a_panic_becomes_a_failed_call_rather_than_a_dead_process() {
+        // The thing being prevented does not fail a test, it ends the test binary - a
+        // panic crossing an `extern "C"` boundary aborts. So this checks the guard
+        // itself: the value comes back, the process is still here to assert on it, and
+        // a normal return still passes through untouched.
+        //
+        // Quietened first, or the panic's own backtrace goes to stderr and reads like
+        // a failure in a suite that is passing.
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        let out = guard("a test", -1, || -> i32 { panic!("as if an index escaped a frame") });
+        std::panic::set_hook(previous);
+
+        assert_eq!(out, -1, "a panic must come back as the fallback");
+        assert_eq!(guard("a test", -1, || 7), 7, "and an ordinary return untouched");
+    }
+
+    #[test]
+    fn a_degree_valued_flip_becomes_the_code_unpack_would_have_made_of_it() {
+        // What `raw2image_start` does inside `unpack`, done at every read instead so
+        // the two sides of that call cannot disagree. A CIFF/CRW records degrees.
+        assert_eq!(normalised_flip(270), 5);
+        assert_eq!(normalised_flip(180), 3);
+        assert_eq!(normalised_flip(90), 6);
+        // Negative degrees are the same rotation; LibRaw's own `+ 3600` handles them.
+        assert_eq!(normalised_flip(-90), 5);
+        // Codes pass through untouched, including 0 and the ones that collide with no
+        // degree value.
+        for code in [0, 1, 2, 3, 4, 5, 6, 7] {
+            assert_eq!(normalised_flip(code), code);
+        }
+        // 360 is no rotation and must not be read as the code 0's neighbour.
+        assert_eq!(normalised_flip(360), 360);
     }
 
     #[test]

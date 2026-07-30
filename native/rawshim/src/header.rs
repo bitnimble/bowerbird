@@ -134,7 +134,13 @@ pub unsafe fn read(r: *mut raw::libraw_data_t) -> BbHeader {
     let mut out = BbHeader::blank();
 
     // sizes.flip is set at open and must be read before adjust_sizes_info_only.
-    let flip = (*r).sizes.flip;
+    //
+    // Normalised, because a CIFF/CRW records it in *degrees* and `unpack` rewrites
+    // those to codes later - so the raw value here is not the one the decode will act
+    // on, and 270 is not even in the range this field is documented to hold. It used to
+    // fall outside the 0..=8 guard below and be stored as 0, which reads as "no
+    // rotation" for a frame that is turned a quarter turn.
+    let flip = crate::normalised_flip((*r).sizes.flip);
     out.orientation = if (0..=8).contains(&flip) { flip } else { 0 };
 
     // The stored dimensions describe the picture that gets thumbnailed, so they

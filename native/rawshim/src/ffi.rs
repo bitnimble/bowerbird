@@ -146,18 +146,22 @@ pub unsafe extern "C" fn bb_decode_image(bytes: *const u8, len: usize, long_edge
 }
 
 fn decode_encoded(encoded: &[u8], long_edge: u32) -> *mut BbImage {
-    // Shrinking during the decode rather than after it, where a size was asked for.
-    let decoded = match long_edge {
-        0 => Pipeline::decode_upright(encoded).and_then(Pipeline::finish),
-        edge => Pipeline::thumbnail(encoded, edge as usize).and_then(Pipeline::finish),
-    };
-    match decoded {
-        Ok(image) => BbImage::own(image),
-        Err(e) => {
-            eprintln!("bb_decode_image: {e}");
-            std::ptr::null_mut()
+    // Both `bb_decode_file` and `bb_decode_image` funnel through here, so one guard
+    // keeps a malformed file from taking the process down rather than the call.
+    crate::guard("bb_decode_image", std::ptr::null_mut(), || {
+        // Shrinking during the decode rather than after it, where a size was asked for.
+        let decoded = match long_edge {
+            0 => Pipeline::decode_upright(encoded).and_then(Pipeline::finish),
+            edge => Pipeline::thumbnail(encoded, edge as usize).and_then(Pipeline::finish),
+        };
+        match decoded {
+            Ok(image) => BbImage::own(image),
+            Err(e) => {
+                eprintln!("bb_decode_image: {e}");
+                std::ptr::null_mut()
+            }
         }
-    }
+    })
 }
 
 /// The HDR encode's settings, flat so TypeScript can fill it with one DataView.
@@ -296,7 +300,10 @@ pub unsafe extern "C" fn bb_fit_hdr_match(
     // white. The geometry is a property of the lens, so that half is reused, and it is
     // the expensive half.
     let sdr = (*profile).to_profile();
-    match crate::hdr::fit_match(raw, &source, built.white_quantile, sdr.knots, sdr.crop) {
+    let fitted = crate::guard("bb_fit_hdr_match", None, || {
+        crate::hdr::fit_match(raw, &source, built.white_quantile, sdr.knots, sdr.crop)
+    });
+    match fitted {
         Some(inner) => Box::into_raw(Box::new(BbHdrMatch { inner })),
         None => std::ptr::null_mut(),
     }
@@ -422,7 +429,10 @@ pub unsafe extern "C" fn bb_encode_hdr(
     let Some((source, built)) = hdr_source(image, options, out) else { return -1 };
     let matched = matched.as_ref().map(|m| &m.inner);
 
-    match crate::hdr::encode_pair(&source, &built, (!video.is_empty()).then_some(video), matched) {
+    let encoded = crate::guard("bb_encode_hdr", Err("panicked".to_string()), || {
+        crate::hdr::encode_pair(&source, &built, (!video.is_empty()).then_some(video), matched)
+    });
+    match encoded {
         Ok(()) => 0,
         Err(detail) => {
             eprintln!("bb_encode_hdr: {detail}");
@@ -706,7 +716,10 @@ pub unsafe extern "C" fn bb_fit_hdr(
         width: (*image).width as usize,
         height: (*image).height as usize,
     };
-    match crate::hdr::fit_all(path, &source, built.white_quantile, geometry) {
+    let fitted = crate::guard("bb_fit_hdr", None, || {
+        crate::hdr::fit_all(path, &source, built.white_quantile, geometry)
+    });
+    match fitted {
         Some((profile, inner)) => {
             *out = BbProfile::from(&profile);
             Box::into_raw(Box::new(BbHdrMatch { inner }))
@@ -745,7 +758,11 @@ unsafe fn fit_against(
     geometry: fit::Geometry,
     out: *mut BbProfile,
 ) -> i32 {
-    match fit::fit(render, jpeg, geometry) {
+    // The search warps, blurs, pairs and solves over tens of candidates; a panic in any
+    // of that would otherwise leave the library by way of `bb_fit` and take the process
+    // with it. Both entry points funnel through here, so one guard covers them.
+    let fitted = crate::guard("bb_fit", Err("panicked".to_string()), || fit::fit(render, jpeg, geometry));
+    match fitted {
         Ok(Some(profile)) => {
             *out = BbProfile::from(&profile);
             0
@@ -807,7 +824,11 @@ pub unsafe extern "C" fn bb_render(image: *const BbImage, profile: *const BbProf
         return std::ptr::null_mut();
     }
     let Some(source) = (*image).view() else { return std::ptr::null_mut() };
+    crate::guard("bb_render", std::ptr::null_mut(), || render(source, profile, long_edge))
+}
 
+/// The warp and the resize, where a panic would otherwise reach the FFI boundary.
+unsafe fn render(source: vips::RgbRef<'_>, profile: *const BbProfile, long_edge: u32) -> *mut BbImage {
     if !shrinks(&source, long_edge) {
         return match profile.is_null() {
             true => BbImage::own(vips::Rgb { width: source.width, height: source.height, data: source.data.to_vec() }),
@@ -846,13 +867,15 @@ pub unsafe extern "C" fn bb_save_avif(
         return -1;
     }
     let (Some(source), Ok(path)) = ((*image).view(), CStr::from_ptr(path).to_str()) else { return -1 };
-    let written = Pipeline::from_rgb(source)
-        .and_then(|pipeline| pipeline.resize_to_fit(long_edge as usize))
-        .and_then(|pipeline| pipeline.save_avif(quality, effort, path));
-    match written {
-        Ok(()) => 0,
-        Err(_) => -1,
-    }
+    crate::guard("bb_save_avif", -1, || {
+        let written = Pipeline::from_rgb(source)
+            .and_then(|pipeline| pipeline.resize_to_fit(long_edge as usize))
+            .and_then(|pipeline| pipeline.save_avif(quality, effort, path));
+        match written {
+            Ok(()) => 0,
+            Err(_) => -1,
+        }
+    })
 }
 
 /// Encodes a JPEG into a buffer, fitting to `long_edge` on the way. 0 encodes as is.
@@ -867,13 +890,15 @@ pub unsafe extern "C" fn bb_encode_jpeg(image: *const BbImage, long_edge: u32, q
         return std::ptr::null_mut();
     }
     let Some(source) = (*image).view() else { return std::ptr::null_mut() };
-    let encoded = Pipeline::from_rgb(source)
-        .and_then(|pipeline| pipeline.resize_to_fit(long_edge as usize))
-        .and_then(|pipeline| pipeline.encode_jpeg(quality));
-    match encoded {
-        Ok(bytes) => BbBuffer::from_vec(bytes),
-        Err(_) => std::ptr::null_mut(),
-    }
+    crate::guard("bb_encode_jpeg", std::ptr::null_mut(), || {
+        let encoded = Pipeline::from_rgb(source)
+            .and_then(|pipeline| pipeline.resize_to_fit(long_edge as usize))
+            .and_then(|pipeline| pipeline.encode_jpeg(quality));
+        match encoded {
+            Ok(bytes) => BbBuffer::from_vec(bytes),
+            Err(_) => std::ptr::null_mut(),
+        }
+    })
 }
 
 /// Releases a buffer from any of the calls above. Safe with null.
