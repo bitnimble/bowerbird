@@ -8,12 +8,13 @@ import { libraryLabel } from '../features/libraries/library_label';
 import { BinPage } from '../features/photos/bin_page';
 import { LibraryPhotosPage } from '../features/photos/library_photos_page';
 import { PhotoDetailPage } from '../features/photos/photo_detail_page';
+import { StackTriagePage } from '../features/photos/stack_triage_page';
 import { SettingsPage } from '../features/settings/settings_page';
 import { ShootPhotosPage } from '../features/shoots/shoot_photos_page';
 import { ShootsPage } from '../features/shoots/shoots_page';
 import { Toasts } from '../features/toasts/toasts';
 import { Button, ICON, Modal, Text } from '../ui/ui';
-import { useLibrariesStore, usePhotosStore, usePresenters, useShootsStore } from './stores_context';
+import { useLibrariesStore, usePhotosStore, usePresenters, useShootsStore, useStackTriageStore } from './stores_context';
 import { useIsMobile } from './use_is_mobile';
 
 // Which library the user is inside. Only /libraries/* names it in the URL; shoot
@@ -23,6 +24,7 @@ function useCurrentLibraryId(): string | null {
   const { pathname } = useLocation();
   const shoots = useShootsStore();
   const photos = usePhotosStore();
+  const triage = useStackTriageStore();
 
   const library = /^\/libraries\/([^/]+)/.exec(pathname);
   if (library?.[1] != null) return library[1];
@@ -32,7 +34,11 @@ function useCurrentLibraryId(): string | null {
 
   // detailLibraryId is a computed, so navigating between photos in one library
   // produces the same value and re-renders nothing here.
-  if (/^\/photos\//.test(pathname)) return photos.detailLibraryId;
+  if (pathname.startsWith('/photos/')) return photos.detailLibraryId;
+
+  // A triage session is inside the library its stack belongs to, so the rail
+  // keeps its context for the length of it rather than blanking out.
+  if (pathname.startsWith('/stacks/')) return triage.members.values().next().value?.library_id ?? null;
 
   return null;
 }
@@ -186,6 +192,11 @@ const SHORTCUTS: [string, string][] = [
   ['I', "Show the camera's JPEG (photo view)"],
   ['O', 'Show the render from RAW (photo view)'],
   ['Esc', 'Clear selection, or leave a photo'],
+  ['← →', 'Prefer the left / right photo (Triage stack)'],
+  ['↓ / Space', 'Keep both (Triage stack)'],
+  ['Shift (hold)', 'Peek at the other photo (Triage stack, Flip)'],
+  ['⌘Z / Backspace', 'Undo the last round (Triage stack)'],
+  ['Tab', 'Switch Flip and Split (Triage stack)'],
   ['↑ ↓', 'Move between folders (Shoots)'],
   ['→ ←', 'Open / close a folder (Shoots)'],
   ['Home / End', 'First / last folder (Shoots)'],
@@ -290,6 +301,7 @@ export function App(): JSX.Element {
             <Route path="/albums" element={<AlbumsPage />} />
             <Route path="/albums/:albumId" element={<AlbumPhotosPage />} />
             <Route path="/photos/:photoId" element={<PhotoDetailPage />} />
+            <Route path="/stacks/:stackId/triage" element={<StackTriagePage />} />
           </Routes>
         </div>
       </div>

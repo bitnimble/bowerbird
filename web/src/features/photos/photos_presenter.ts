@@ -89,6 +89,20 @@ export class PhotosPresenter {
   // The re-read in flight, so the next one queues behind it rather than racing
   // it (`refresh`).
   private refreshing: Promise<void> = Promise.resolve();
+  // A re-read already queued behind the one in flight. Every caller asks the same
+  // question - "read the collection as it is now" - so a second request while one
+  // is pending is answered by the one already coming rather than by another pass
+  // (`refresh`).
+  private queuedRefresh: Promise<void> | null = null;
+  // Writes to a photo, in the order they were asked for. `api.updatePhoto` is a
+  // bare fetch and nothing orders two writes to the same row, so a verdict
+  // followed quickly by an undo could land the restore first and the rejection
+  // second, leaving the server on `rejected` while the session believes the
+  // photo is still in the pool. One chain for the whole presenter rather than one
+  // per photo: a person makes one or two writes per decision, so there is nothing
+  // for per-photo parallelism to buy, and total ordering needs no stale-response
+  // detection - the second request is not sent until the first has resolved.
+  private writing: Promise<unknown> = Promise.resolve();
   // Photos already asked for on-demand build. A stage that fails, is re-mounted
   // and fails again reports missing each time: without this every one of them
   // would queue the same job again.
@@ -532,8 +546,14 @@ export class PhotosPresenter {
     await this.patch(photoId, { rating });
   }
 
-  async setTriage(photoId: string, triage: Triage): Promise<void> {
-    await this.patch(photoId, { triage });
+  /**
+   * @returns whether the write landed. Stack triage needs to know: it advances a
+   * round on the strength of a rejection, and `patch` otherwise swallows a failure
+   * into a toast, so a session would finish believing frames were rejected that
+   * the server never took (§20.2.6).
+   */
+  async setTriage(photoId: string, triage: Triage, options: { quiet?: boolean } = {}): Promise<boolean> {
+    return this.patch(photoId, { triage }, options);
   }
 
   async setNotes(photoId: string, notes: string): Promise<void> {
@@ -1142,7 +1162,29 @@ export class PhotosPresenter {
     };
   }
 
-  private async patch(photoId: string, fields: Parameters<typeof api.updatePhoto>[1]): Promise<void> {
+  /**
+   * @param options.quiet suppress the error toast, for a caller that reports
+   * failures itself and in one place. Without it a failed triage verdict raises
+   * both this toast and stack triage's own "could not be saved" list.
+   * @returns whether the write landed.
+   */
+  private async patch(
+    photoId: string,
+    fields: Parameters<typeof api.updatePhoto>[1],
+    options: { quiet?: boolean } = {},
+  ): Promise<boolean> {
+    // Behind whatever is already writing, so two writes to one photo cannot land
+    // out of the order they were asked for.
+    const done = this.writing.then(() => this.write(photoId, fields, options));
+    this.writing = done.catch(() => undefined);
+    return done;
+  }
+
+  private async write(
+    photoId: string,
+    fields: Parameters<typeof api.updatePhoto>[1],
+    options: { quiet?: boolean },
+  ): Promise<boolean> {
     try {
       const updated = await api.updatePhoto(photoId, fields);
       runInAction(() => {
@@ -1179,8 +1221,10 @@ export class PhotosPresenter {
       const mayLeaveView =
         (fields.triage !== undefined && f.triage != null) || (fields.rating !== undefined && f.rated != null);
       if (mayLeaveView) await this.refresh();
+      return true;
     } catch (err) {
-      this.fail(err);
+      if (options.quiet !== true) this.fail(err);
+      return false;
     }
   }
 
@@ -1195,8 +1239,22 @@ export class PhotosPresenter {
   // while a verdict is being set - and each rebases the selection against a
   // snapshot the other has already moved, so the same shift is applied twice and
   // the selection ends up naming photographs nobody chose.
+  // Coalesced, not merely serialised. Every caller asks the same question - read
+  // the collection as it is now - so a request arriving while one is in flight is
+  // answered by a single trailing pass rather than by one of its own. Holding a
+  // cull key in the grid on the Active filter queues one verdict per keystroke,
+  // and each of those was a full re-read of the same collection; a triage session
+  // does the same thing once per round and again per closing write.
   private refresh(): Promise<void> {
-    const next = this.refreshing.then(() => this.readAgain());
+    const queued = this.queuedRefresh;
+    if (queued != null) return queued;
+    const next = this.refreshing.then(() => {
+      // Cleared as this one starts, so a request arriving *during* it queues the
+      // next pass rather than being answered by the one already reading.
+      this.queuedRefresh = null;
+      return this.readAgain();
+    });
+    this.queuedRefresh = next.catch(() => undefined);
     this.refreshing = next.catch(() => undefined);
     return next;
   }

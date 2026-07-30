@@ -146,7 +146,7 @@ describe('the guarantee', () => {
       const decisive = new Set<string>();
 
       const { session, rounds } = playOut(ids, (round) => {
-        const verdict = ALL[Math.floor(random() * ALL.length)];
+        const verdict = ALL[Math.floor(random() * ALL.length)] ?? 'both';
         if (verdict === 'a' || verdict === 'b') decisive.add(pairKey(round.a, round.b));
         return verdict;
       });

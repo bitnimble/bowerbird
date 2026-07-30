@@ -9,6 +9,7 @@ import {
   Download,
   FileType,
   Image as ImageIcon,
+  Layers,
   Maximize2,
   RefreshCw,
   RotateCw,
@@ -209,6 +210,19 @@ const DetailNav = observer(function DetailNav({ photoId }: { photoId: string }):
         ]}
         onSelect={(rendition) => void photos.chooseRendition(photoId, rendition)}
       />
+      {/* On `stack_id` alone, and not the grid tile's `stack_size > 1`:
+          `stack_size` is a property of a collapsed listing row, hardcoded to 1 on
+          a detail and on a band member, so the tile's condition would hide this
+          on every route that actually reaches the viewer from a stack. A stack
+          has two or more members by construction (§19.4.4). */}
+      {photo?.stack_id != null && (
+        <Button
+          render={<Link to={`/stacks/${photo.stack_id}/triage`} state={{ entryPhotoId: photoId }} />}
+        >
+          <Layers size={ICON} />
+          Triage stack
+        </Button>
+      )}
       <ActionMenu
         trigger={
           <>

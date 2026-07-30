@@ -34,6 +34,12 @@ interface ButtonProps {
   'aria-expanded'?: boolean;
   'aria-current'?: 'page';
   onClick?: (event: React.MouseEvent) => void;
+  // For a button whose meaning is press-and-hold rather than press: stack
+  // triage's peek shows the other photo for as long as it is held.
+  onPointerDown?: (event: React.PointerEvent) => void;
+  onPointerUp?: (event: React.PointerEvent) => void;
+  onPointerCancel?: (event: React.PointerEvent) => void;
+  onPointerLeave?: (event: React.PointerEvent) => void;
   // Renders the button as something else (a router Link, an anchor) while
   // keeping the metrics and keyboard behaviour.
   render?: ReactElement<Record<string, unknown>>;

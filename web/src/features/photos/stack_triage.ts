@@ -72,8 +72,12 @@ export function nextRound(session: Session): Round | null {
   if (session.stopped) return null;
   const { alive, seen } = session;
   for (let i = 0; i < alive.length; i++) {
+    const a = alive[i];
+    if (a == null) continue;
     for (let j = i + 1; j < alive.length; j++) {
-      if (!seen.has(pairKey(alive[i], alive[j]))) return { a: alive[i], b: alive[j] };
+      const b = alive[j];
+      if (b == null) continue;
+      if (!seen.has(pairKey(a, b))) return { a, b };
     }
   }
   return null;
@@ -156,7 +160,7 @@ export function remainingPairs(session: Session): number {
   let judgedInPool = 0;
   for (const key of session.seen) {
     const [x, y] = key.split(SEPARATOR);
-    if (pool.has(x) && pool.has(y)) judgedInPool++;
+    if (x != null && y != null && pool.has(x) && pool.has(y)) judgedInPool++;
   }
   const n = session.alive.length;
   return (n * (n - 1)) / 2 - judgedInPool;

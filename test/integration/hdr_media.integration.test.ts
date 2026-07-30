@@ -4,7 +4,7 @@
 // pixels are scene-referred and that the files say what they must say (§10.7).
 //   docker exec bowerbird-dev bun test test/integration
 import { expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { _for_testing_decodeSummary } from '../../src/services/processing/rawshim_for_testing';

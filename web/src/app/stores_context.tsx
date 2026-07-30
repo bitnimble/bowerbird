@@ -8,6 +8,8 @@ import { PhotosPresenter } from '../features/photos/photos_presenter';
 import { PhotosStore } from '../features/photos/photos_store';
 import { ShootsPresenter } from '../features/shoots/shoots_presenter';
 import { ShootsStore } from '../features/shoots/shoots_store';
+import { StackTriagePresenter } from '../features/photos/stack_triage_presenter';
+import { StackTriageStore } from '../features/photos/stack_triage_store';
 import { SyncPresenter } from '../features/sync/sync_presenter';
 import { SyncStore } from '../features/sync/sync_store';
 import { AppSettingsPresenter } from '../features/settings/app_settings_presenter';
@@ -24,6 +26,7 @@ const AlbumsStoreContext = createContext<AlbumsStore | null>(null);
 const SyncStoreContext = createContext<SyncStore | null>(null);
 const ToastsStoreContext = createContext<ToastsStore | null>(null);
 const AppSettingsStoreContext = createContext<AppSettingsStore | null>(null);
+const StackTriageStoreContext = createContext<StackTriageStore | null>(null);
 
 interface Presenters {
   libraries: LibrariesPresenter;
@@ -34,6 +37,7 @@ interface Presenters {
   toasts: ToastsPresenter;
   appSettings: AppSettingsPresenter;
   events: EventsPresenter;
+  stackTriage: StackTriagePresenter;
 }
 
 const PresentersContext = createContext<Presenters | null>(null);
@@ -51,6 +55,11 @@ function build(): { stores: Stores; presenters: Presenters } {
     sync: new SyncStore(),
     toasts: new ToastsStore(),
     appSettings: appSettingsStore,
+    // The same two peers the photos store takes, and for the same question: which
+    // rendition to show. A triage session never opens a photo, so it cannot use
+    // the photos store's answer, every part of which is a function of the photo
+    // the viewer has open (§20.4).
+    stackTriage: new StackTriageStore(appSettingsStore, librariesStore),
   };
 
   // Wiring order encodes the dependency direction: shoots/albums presenters know
@@ -75,6 +84,9 @@ function build(): { stores: Stores; presenters: Presenters } {
     toasts,
     appSettings,
     events,
+    // Writes every verdict through the photos presenter, so the gallery behind
+    // the session keeps its rows correct.
+    stackTriage: new StackTriagePresenter(stores.stackTriage, photos),
   };
   return { stores, presenters };
 }
@@ -87,6 +99,7 @@ interface Stores {
   sync: SyncStore;
   toasts: ToastsStore;
   appSettings: AppSettingsStore;
+  stackTriage: StackTriageStore;
 }
 
 export function StoresProvider({ children }: { children: ReactNode }): JSX.Element {
@@ -99,7 +112,9 @@ export function StoresProvider({ children }: { children: ReactNode }): JSX.Eleme
             <AlbumsStoreContext.Provider value={stores.albums}>
               <SyncStoreContext.Provider value={stores.sync}>
                 <ToastsStoreContext.Provider value={stores.toasts}>
-                  <AppSettingsStoreContext.Provider value={stores.appSettings}>{children}</AppSettingsStoreContext.Provider>
+                  <AppSettingsStoreContext.Provider value={stores.appSettings}>
+                    <StackTriageStoreContext.Provider value={stores.stackTriage}>{children}</StackTriageStoreContext.Provider>
+                  </AppSettingsStoreContext.Provider>
                 </ToastsStoreContext.Provider>
               </SyncStoreContext.Provider>
             </AlbumsStoreContext.Provider>
@@ -122,4 +137,5 @@ export const useAlbumsStore = (): AlbumsStore => required(useContext(AlbumsStore
 export const useSyncStore = (): SyncStore => required(useContext(SyncStoreContext), 'SyncStore');
 export const useToastsStore = (): ToastsStore => required(useContext(ToastsStoreContext), 'ToastsStore');
 export const useAppSettingsStore = (): AppSettingsStore => required(useContext(AppSettingsStoreContext), 'AppSettingsStore');
+export const useStackTriageStore = (): StackTriageStore => required(useContext(StackTriageStoreContext), 'StackTriageStore');
 export const usePresenters = (): Presenters => required(useContext(PresentersContext), 'Presenters');
