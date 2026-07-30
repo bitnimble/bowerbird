@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { API_URL, STACK_PHOTO_NAMES, TRIAGE_PHOTOS_DIR } from './fixture_library';
-import { addLibrary, openLibrary, openPhoto, syncLibrary, waitForSyncSettled } from './helpers';
+import { addLibrary, openLibrary, syncLibrary, waitForSyncSettled } from './helpers';
 
 // Stack triage, driven through the real screen (DESIGN §20).
 //
@@ -129,7 +129,7 @@ test('split draws both photos at once, at the same area', async ({ page }) => {
   await page.goto('/settings');
   await enterTriage(page);
 
-  await page.getByRole('button', { name: 'Flip' }).click();
+  await page.getByRole('button', { name: 'Split' }).click();
   await expect(page.locator('.triage__half')).toHaveCount(2);
 
   const boxes = await page.locator('.triage__half').evaluateAll((halves) =>
@@ -143,7 +143,7 @@ test('split draws both photos at once, at the same area', async ({ page }) => {
   expect(boxes).toHaveLength(2);
   expect(Math.abs(boxes[0]!.width * boxes[0]!.height - boxes[1]!.width * boxes[1]!.height)).toBeLessThan(4);
 
-  await page.getByRole('button', { name: 'Split' }).click();
+  await page.getByRole('button', { name: 'Flip' }).click();
   await expect(page.locator('.triage__flip')).toBeVisible();
 });
 
@@ -161,10 +161,13 @@ test('a session runs to a summary, and writes the verdicts it made', async ({ pa
   await expect(page.locator('.triage__summary')).toContainText('Kept · 1');
   await expect(page.locator('.triage__summary')).toContainText('Rejected · 2');
 
-  // The verdicts are the photographs' own now, not just the screen's.
+  // The verdicts are the photographs' own now, not just the screen's. Polled on
+  // the `picked` write, which is the *last* one a session makes: the rejections
+  // land first, so waiting on those and then reading the keeper catches the
+  // closing write still in flight.
   const stackId = stackIdOf(page);
-  await expect.poll(() => countOf(page, stackId, 'rejected'), { timeout: 20_000 }).toBe(2);
-  expect(await countOf(page, stackId, 'picked')).toBe(1);
+  await expect.poll(() => countOf(page, stackId, 'picked'), { timeout: 20_000 }).toBe(1);
+  expect(await countOf(page, stackId, 'rejected')).toBe(2);
 
   // And undo from the summary takes the closing writes back and re-opens the
   // round that ended it, rather than landing on the summary it was pressed from.

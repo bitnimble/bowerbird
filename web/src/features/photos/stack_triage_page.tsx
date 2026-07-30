@@ -15,7 +15,7 @@ import {
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { renditionUrl, type PhotoSummary } from '../../api/client';
 import { usePresenters, useStackTriageStore } from '../../app/stores_context';
-import { Button, ICON, PopoverButton, Text } from '../../ui/ui';
+import { Button, ICON, PopoverButton, SegmentedControl, Text } from '../../ui/ui';
 import { PhotoStage } from './photo_stage';
 import { renditionVersion } from './photos_store';
 import { type Round, type Verdict, SPLIT_GAP, pairKey } from './stack_triage';
@@ -145,14 +145,20 @@ const Header = observer(function Header({ onLeave }: { onLeave: () => void }): J
       <div className="spacer" />
 
       <Queue />
-      <Button
-        aria-pressed={store.mode === 'flip'}
-        onClick={() => stackTriage.setMode(store.mode === 'flip' ? 'split' : 'flip')}
-        title="Switch presentation (Tab)"
-      >
-        {store.mode === 'flip' ? <SquareStack size={ICON} /> : <Columns2 size={ICON} />}
-        {store.mode === 'flip' ? 'Flip' : 'Split'}
-      </Button>
+      {/* Both presentations named and one of them pressed, as the gallery names
+          its own views: a single button labelled with the mode it is already in
+          cannot say whether it reports the state or changes it. */}
+      {store.status === 'running' && (
+        <SegmentedControl
+          label="Presentation"
+          value={store.mode}
+          onChange={stackTriage.setMode}
+          options={[
+            { value: 'flip', label: 'Flip', icon: <SquareStack size={ICON} />, hint: '⇥' },
+            { value: 'split', label: 'Split', icon: <Columns2 size={ICON} /> },
+          ]}
+        />
+      )}
     </div>
   );
 });
@@ -317,7 +323,7 @@ const Verdicts = observer(function Verdicts({ ready }: { ready: boolean }): JSX.
       {/* An upper bound that only falls, so it is labelled as one: a draw lowers
           it while the pool stays the same size, which would otherwise read as a
           counter that had stalled. */}
-      <Text variant="mono">{`${store.pool.length} left · up to ${store.remaining} rounds`}</Text>
+      <Text variant="mono">{`${store.pool.length} left · up to ${store.remaining} ${store.remaining === 1 ? 'round' : 'rounds'}`}</Text>
     </div>
   );
 });
