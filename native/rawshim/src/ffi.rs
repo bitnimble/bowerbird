@@ -396,18 +396,27 @@ unsafe fn hdr_source<'a>(
 /// `bb_fit_hdr_match` or null for a neutral grade. Both are passed rather than derived
 /// here so a still and its video twin share one decode and one fit.
 ///
+/// `release_source` frees the decode's pixels as soon as the grade has copied out of
+/// them, rather than leaving 366MB of a 61MP frame resident until JavaScript drops the
+/// handle - which is after the encode, the longest stage of the job. Only the *last*
+/// rendition off a decode may set it; the handle stays valid either way and reads as
+/// one with no pixels, so a caller that sets it too early gets a refused encode rather
+/// than a wrong one.
+///
 /// 0 on success, -1 on failure.
 ///
 /// # Safety
 /// `image` must be a live handle, `output_path` and `video_output_path` NUL-terminated
-/// C strings, `options` readable, `matched` null or a live handle.
+/// C strings, `options` readable, `matched` null or a live handle. With
+/// `release_source` set, nothing may read `image`'s pixels after this returns.
 #[no_mangle]
 pub unsafe extern "C" fn bb_encode_hdr(
-    image: *const BbImage,
+    image: *mut BbImage,
     matched: *const BbHdrMatch,
     output_path: *const c_char,
     options: *const BbHdrOptions,
     video_output_path: *const c_char,
+    release_source: i32,
 ) -> i32 {
     vips::init();
     if output_path.is_null() || video_output_path.is_null() {
@@ -422,7 +431,14 @@ pub unsafe extern "C" fn bb_encode_hdr(
     let matched = matched.as_ref().map(|m| &m.inner);
 
     let encoded = crate::guard("bb_encode_hdr", Err("panicked".to_string()), || {
-        crate::hdr::encode_pair(&source, &built, (!video.is_empty()).then_some(video), matched)
+        // Runs once the grade has its own buffer and `source` has been dropped, so the
+        // borrow this releases is provably over by the time it does.
+        let release = || {
+            if release_source != 0 {
+                (*image).release_pixels();
+            }
+        };
+        crate::hdr::encode_pair(source, &built, (!video.is_empty()).then_some(video), matched, release)
     });
     match encoded {
         Ok(()) => 0,
@@ -871,8 +887,10 @@ pub unsafe extern "C" fn bb_save_avif(
         // regardless meant `finish` materialising a whole second copy of the frame to
         // hand libavif pixels it could have read in place.
         if long_edge == 0 || source.width.max(source.height) <= long_edge as usize {
+            // Borrowed: these pixels belong to the caller's handle, so unlike the
+            // resized case below there is nothing here to hand back early.
             return match crate::avif::encode_rendition(
-                source.data, source.width, source.height, quantizer, speed, path,
+                source.data.into(), source.width, source.height, quantizer, speed, path,
             ) {
                 Ok(()) => 0,
                 Err(detail) => {
@@ -894,14 +912,11 @@ pub unsafe extern "C" fn bb_save_avif(
             Ok(image) => image,
             Err(_) => return -1,
         };
-        let written = crate::avif::encode_rendition(
-            &resized.data,
-            resized.width,
-            resized.height,
-            quantizer,
-            speed,
-            path,
-        );
+        let (width, height) = (resized.width, resized.height);
+        // Owned, so libavif drops it once the YUV conversion has read it rather than
+        // holding it under libaom's working set.
+        let written =
+            crate::avif::encode_rendition(resized.data.into(), width, height, quantizer, speed, path);
         match written {
             Ok(()) => 0,
             Err(detail) => {

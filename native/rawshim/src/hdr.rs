@@ -386,13 +386,21 @@ fn failure(command: &str, output: &std::process::Output) -> String {
 /// always. It used to be regraded for the second encode, paying for the most expensive
 /// stage of the pipeline twice on every HDR import.
 pub fn encode_pair(
-    source: &Source<'_>,
+    source: Source<'_>,
     options: &EncodeOptions,
     video_path: Option<&str>,
     matched: Option<&HdrMatch>,
+    done_with_source: impl FnOnce(),
 ) -> Result<(), String> {
     let levels = tone::levels(source.samples, options.white_quantile);
-    let (frame, width, height) = graded_with(source, options, matched, levels);
+    let (frame, width, height) = graded_with(&source, options, matched, levels);
+
+    // Taken by value and dropped here so that "the decode is finished with" is a fact
+    // the compiler holds rather than a comment: everything below reads `frame`, and the
+    // caller is free to reclaim 366MB of scene-linear samples before the encode - the
+    // most expensive stage - even starts.
+    drop(source);
+    done_with_source();
 
     let Some(video_path) = video_path else {
         // Handed over rather than lent: with no twin reading it, the still's transfer

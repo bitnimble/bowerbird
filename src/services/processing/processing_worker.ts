@@ -92,6 +92,7 @@ function writeHdr(
   target: RenditionTarget,
   linear: () => ImageHandle,
   matched: HdrMatchHandle | null,
+  releaseLinear: boolean,
 ): void {
   encodeHdrRendition(
     linear(),
@@ -108,6 +109,7 @@ function writeHdr(
       maxEdge: target.size === 0 ? Number.POSITIVE_INFINITY : target.size,
     },
     target.videoOutputPath ?? '',
+    releaseLinear,
   );
 }
 
@@ -129,6 +131,17 @@ async function renditions(job: RenditionJob): Promise<Uint8Array | undefined> {
   const open: ImageHandle[] = [];
   let descriptor: Uint8Array | undefined;
 
+  // Frees a decode the moment the last thing that needed it is done, rather than at the
+  // end of the job. The encode is the longest stage by far, so a decode held across it
+  // is the peak: 366MB of a 61MP scene-linear frame, or 183MB of the 8-bit one, times
+  // `processing_concurrency`. Dropped from `open` so the finally below does not double
+  // free.
+  const release = (image: ImageHandle): void => {
+    const at = open.indexOf(image);
+    if (at >= 0) open.splice(at, 1);
+    freeImage(image);
+  };
+
   // One decode for the whole job, shared by the fit and by every SDR rendition.
   // A 60MP frame takes about two seconds to demosaic, and a `render` import builds
   // both the grid tile and the full view from the identical pixels, so decoding per
@@ -142,7 +155,12 @@ async function renditions(job: RenditionJob): Promise<Uint8Array | undefined> {
   // reports 0 and gets the whole frame. Only ever reached when this job writes an
   // SDR rendition, so the size is always there to ask for.
   let decoded: ImageHandle | null = null;
+  // Released once the base is built, and a demand after that would silently demosaic a
+  // 60MP frame a second time rather than fail - so it is made to fail. Nothing does:
+  // the fit runs before the base, and every rendition is a resize of the base.
+  let decodeSpent = false;
   const decode = (): ImageHandle => {
+    if (decodeSpent) throw new Error('the 8-bit decode was released when the base was built');
     if (decoded == null) {
       decoded = decodeRawImage(job.rawFilePath, 8, 'srgb', largestSize(job.targets, false) ?? 0);
       open.push(decoded);
@@ -229,16 +247,31 @@ async function renditions(job: RenditionJob): Promise<Uint8Array | undefined> {
         // a grade, and `renderImage` would answer with a 190MB copy of the frame.
         const shrinks = size > 0 && Math.max(source.width, source.height) > size;
         base = profile == null && !shrinks ? source : renderImage(source, profile, size);
-        if (base !== source) open.push(base);
+        if (base !== source) {
+          open.push(base);
+          // Nothing reads the decode again: the fit above is done, and every SDR
+          // rendition is a resize of this base rather than of the frame it came from.
+          // Freeing it here rather than at the end of the job is what keeps the encode
+          // from running with both resident.
+          release(source);
+          decoded = null;
+          decodeSpent = true;
+        }
       }
       return base;
     };
+
+    // Which rendition is the decode's last reader, so that one can hand its pixels back
+    // before the encode instead of after the job. Identified up front rather than by
+    // counting down inside the loop, since getting it wrong by one leaves the encode
+    // reading a released frame.
+    const lastHdr = job.targets.filter((target) => target.hdr).at(-1);
 
     for (const target of job.targets) {
       if (target.hdr) {
         // The profile supplies the geometry; the HDR colour is refitted inside the
         // encode, in the domain the grade works in (§10.8.1).
-        writeHdr(job, target, linear, hdrMatch);
+        writeHdr(job, target, linear, hdrMatch, target === lastHdr);
         continue;
       }
       // Described off the same pixels the tile was written from, while they are

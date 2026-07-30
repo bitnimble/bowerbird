@@ -53,7 +53,7 @@ const SYMBOLS = {
   bb_hdr_match_colour: { args: [FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
   bb_hdr_colour_size: { args: [], returns: FFIType.u64 },
   bb_encode_hdr: {
-    args: [FFIType.ptr, FFIType.ptr, FFIType.cstring, FFIType.ptr, FFIType.cstring],
+    args: [FFIType.ptr, FFIType.ptr, FFIType.cstring, FFIType.ptr, FFIType.cstring, FFIType.i32],
     returns: FFIType.i32,
   },
   bb_hdr_graded: { args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.ptr },

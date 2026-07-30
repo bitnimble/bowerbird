@@ -172,6 +172,33 @@ impl BbImage {
             data: std::slice::from_raw_parts(self.data, self.len),
         })
     }
+
+    /// Drops the pixels while the handle itself stays alive.
+    ///
+    /// For the last reader of a decode, which knows the frame is finished with long
+    /// before the JavaScript that owns the handle will get round to freeing it. A
+    /// 61MP scene-linear decode is 366MB, and holding it through an encode that has
+    /// already copied everything it needs out of it is the largest avoidable
+    /// allocation left on either path.
+    ///
+    /// Both views check `data`, so what is left behind reads as a handle with no
+    /// pixels rather than as a dangling one. Callers still holding a borrow taken
+    /// before this must not use it afterwards - which is why it takes `&mut self`,
+    /// so the borrow checker refuses the overlap wherever the reference is a Rust
+    /// one rather than a pointer from across the boundary.
+    ///
+    /// # Safety
+    /// `data` must still point at the allocation this handle was built with, and no
+    /// borrow of it may outlive the call.
+    pub unsafe fn release_pixels(&mut self) {
+        if self.data.is_null() {
+            return;
+        }
+        drop(Vec::from_raw_parts(self.data, self.len, self.capacity));
+        self.data = std::ptr::null_mut();
+        self.len = 0;
+        self.capacity = 0;
+    }
 }
 
 pub struct Insets {
@@ -714,8 +741,10 @@ pub unsafe extern "C" fn bb_free(image: *mut BbImage) {
     if image.is_null() {
         return;
     }
-    let image = Box::from_raw(image);
-    drop(Vec::from_raw_parts(image.data, image.len, image.capacity));
+    let mut image = Box::from_raw(image);
+    // Null when the last reader already released the pixels, and `from_raw_parts`
+    // takes no null pointer even at length zero.
+    image.release_pixels();
 }
 
 /// How many bytes `bb_descriptor` writes, so the caller can size its buffer and
@@ -778,6 +807,23 @@ pub unsafe extern "C" fn bb_stack_groups(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_released_handle_reads_as_empty_rather_than_dangling() {
+        // The whole safety argument for releasing early is that what is left behind
+        // answers "no pixels" instead of handing out a freed buffer - so a caller that
+        // releases too soon gets a refused encode rather than a wrong one.
+        let image = BbImage::own(vips::Rgb { width: 2, height: 2, data: vec![7u8; 12] });
+        unsafe {
+            assert!((*image).view().is_some(), "the handle starts with pixels");
+            (*image).release_pixels();
+            assert!((*image).view().is_none(), "a released handle must not hand out pixels");
+            // Idempotent, which is what lets `bb_free` run the same path unconditionally
+            // rather than branching on whether someone got there first.
+            (*image).release_pixels();
+            bb_free(image);
+        }
+    }
 
     // Every orientation LibRaw can hand over, which the fixtures cannot give.
     //

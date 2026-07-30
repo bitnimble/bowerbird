@@ -84,12 +84,10 @@ fn pq_encode(graded: &mut [u16], peak_nits: f64) {
 /// twin reads the same linear samples concurrently and would see them PQ-encoded from
 /// under it.
 ///
-/// **Two frames are live here**, which is the cost of not spawning anything: the
-/// transfer-encoded buffer and the 10-bit planes libavif converts into. It was three
-/// while the transfer allocated its own output - ~732MB at 61MP against ~1.1GB - and the
-/// scene-linear decode the worker holds throughout sits on top of whichever it is. With
-/// `processing_concurrency` workers each holding one, that is the number to watch on a
-/// machine that starts OOM-killing.
+/// Only one frame of this is left live by the time libaom runs, and libaom's own working
+/// set - ~700MB for a 24MP 10-bit 4:4:4 all-intra frame, five times ours - is what
+/// actually sets the peak. Multiply by `processing_concurrency` on a machine that starts
+/// OOM-killing; DESIGN 10.7 has the measurements.
 pub fn encode_still(
     graded: std::borrow::Cow<'_, [u16]>,
     width: usize,
@@ -104,7 +102,7 @@ pub fn encode_still(
     // the `Cow`.
     let mut encoded = graded.into_owned();
     pq_encode(&mut encoded, options.peak_nits);
-    write_avif(&encoded, 16, AVIF_RANGE_LIMITED, width, height, AVIF_DEPTH,
+    write_avif(encoded.into(), 16, AVIF_RANGE_LIMITED, width, height, AVIF_DEPTH,
         AVIF_PIXEL_FORMAT_YUV444, &options.cicp, options.quantizer, options.speed, out_path)
 }
 
@@ -115,7 +113,7 @@ pub fn encode_still(
 /// so the pixels go to libavif exactly as they arrive and only the YCbCr matrix is left.
 /// Tagged sRGB rather than left bare, since a file that says what it is costs nine bytes.
 pub fn encode_rendition(
-    rgb8: &[u8],
+    rgb8: std::borrow::Cow<'_, [u8]>,
     width: usize,
     height: usize,
     quantizer: i32,
@@ -132,11 +130,17 @@ pub fn encode_rendition(
 
 /// Hands interleaved RGB to libavif and writes what comes back.
 ///
-/// `rgb` is borrowed, never copied: `avifRGBImage.pixels` points into it, and the only
-/// allocation libavif adds is the YUV planes it converts into.
+/// Never copies the frame: `avifRGBImage.pixels` points into `rgb`.
+///
+/// `Cow` so an owned frame can be **dropped as soon as the YUV conversion has read
+/// it**, which is the peak that matters rather than a tidiness point. libaom allocates
+/// its own working set - measured at ~560MB for a 24MP 10-bit 4:4:4 all-intra frame,
+/// and near enough flat in the thread count, so it is per-frame state rather than
+/// anything tiling can be traded against. Holding the RGB across `avifEncoderWrite`
+/// stacked a whole frame under that for no reader: 145MB at 24MP, 366MB at 61MP.
 #[allow(clippy::too_many_arguments)]
-fn write_avif<T>(
-    rgb: &[T],
+fn write_avif<T: Clone>(
+    rgb: std::borrow::Cow<'_, [T]>,
     rgb_depth: u32,
     range: u32,
     width: usize,
@@ -173,6 +177,10 @@ fn write_avif<T>(
             if status != AVIF_RESULT_OK {
                 return Err(format!("libavif could not convert to YUV: {}", message(status)));
             }
+            // The planes hold everything now, and `source.pixels` is not read again -
+            // `avifEncoderWrite` works off `image`. So the frame goes back before the
+            // encoder asks for its own, rather than sitting under it.
+            drop(rgb);
 
             let encoder = raw::avifEncoderCreate();
             if encoder.is_null() {

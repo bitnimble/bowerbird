@@ -1419,20 +1419,25 @@ What ffmpeg was doing on that path was `zscale`, and it is two things already he
 
 **It costs memory, and that is the trade rather than a footnote.** What the child processes used to hold in their own address spaces and free on exit, this process now holds itself. Multiply the whole of it by `processing_concurrency`.
 
-Counted at 61MP native, where a frame is 366MB of 16-bit RGB, for a still with no video twin:
+Measured as peak RSS - `VmHWM`, not arithmetic - building a native-resolution HDR still from the 24MP fixture, where one frame of 16-bit RGB is 145MB:
 
-| Live at once | Was | Now |
-|---|---|---|
-| scene-linear decode, held by the worker | 366MB | 366MB |
-| resize / warp output | 366MB | 366MB |
-| grade output | 366MB | *in place* |
-| PQ-encoded copy | 366MB | *in place* |
-| libavif's 10-bit planes | 366MB | 366MB |
-| **peak** | **1.83GB** | **1.10GB** |
+| | peak RSS |
+|---|---|
+| every stage allocating its own output | 1227MB |
+| grade and transfer in place | 1092MB |
+| + decode released once the grade has copied out of it | 1090MB |
+| + all four | **954MB** |
 
-The two that went are the ones nothing else was reading. The grade and the transfer are both sample-for-sample at the same index, so a second buffer protected nothing, and by the time either runs the frame is one this side allocated - the warp's output, or the resize's. `tone::grade` and `avif::pq_encode` write into it instead.
+Four buffers went, in every case because nothing else was reading them:
 
-Whether the transfer *can* run in place is a property of the caller rather than of the encoder, which is why `encode_still` takes a `Cow`: the still-plus-video pair passes `Borrowed`, because the twin is reading the same linear samples on another thread and would find them PQ-encoded from under it. That pair still peaks at 1.47GB. Removing three transfers of a frame across a process boundary and keeping two allocations of it in the server is the shape of the deal; it is worth it at 24MP and worth measuring before raising concurrency on a machine building native-resolution HDR.
+- **The grade** allocated its output. It is sample-for-sample at the same index, and by the time it runs the frame is one this side allocated - the warp's output, or the resize's - so `tone::grade` writes into that.
+- **The transfer** allocated another. Same argument, with a caveat that belongs to the caller rather than the encoder, which is why `encode_still` takes a `Cow`: the still-plus-video pair passes `Borrowed`, because the twin is reading the same linear samples on another thread and would find them PQ-encoded from under it. Only that pair still pays for the copy.
+- **The decode** stayed resident until JavaScript dropped the handle, which is after the encode - the longest stage of the job. `bb_encode_hdr` takes a `release_source` flag and frees the pixels the moment the grade has its own buffer; the worker sets it on the last rendition off that decode. The 8-bit side needs no flag, because there the worker can see for itself when the base is built and frees the decode at that point.
+- **The interleaved RGB** was held across `avifEncoderWrite`, though libavif stops reading it once `avifImageRGBToYUV` has filled the planes. It is dropped there instead, which matters because of what allocates next.
+
+**What is left is libaom, and it is most of it.** Probed inside `write_avif` on the same frame: entering the encode is 239MB, the YUV planes add 138MB, dropping the RGB gives that back, and `avifEncoderWrite` alone then takes the peak to ~950MB. So roughly **700MB is libaom's own working set** for a 24MP 10-bit 4:4:4 all-intra frame, against ~145MB of ours. Two things follow. Copy elimination is close to done - the only frame this side still holds through the encode is the YUV planes libaom is reading. And that working set is *not* a threading trade: measured under `taskset`, two cores against eight moved the peak by under 30MB, so it is per-frame state and there is nothing to buy back by capping `maxThreads` or the tile count. Going lower means a different encoder, or an API that encodes in tiles, and libavif exposes neither.
+
+Removing three transfers of a frame across a process boundary and keeping the rest in the server is the shape of the deal. Budget roughly **1GB per concurrent worker** on native-resolution HDR, most of it the encoder rather than the pixels.
 
 **Held to the binary rather than argued about** (`avif_still.integration.test.ts`). `BOWERBIRD_AVIFENC=1` puts the encode back on the two child processes, and the two are required to agree on everything a browser reads: dimensions, pixel format, range, and the CICP triple. They are not bit-identical and are not expected to be - the linked path quantises to 16-bit PQ before libavif takes it to 10-bit YCbCr where zscale goes straight there - so the pixels are compared rather than hashed: measured at **59.7dB PSNR**, about one code value at 10 bits, against a threshold of 50. The `colr` box itself comes out byte-for-byte identical, which is the part that decides whether the file is HDR at all.
 
