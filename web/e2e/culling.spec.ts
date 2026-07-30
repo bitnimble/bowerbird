@@ -979,3 +979,48 @@ test('the frame being replaced is held opaque under its replacement for a beat',
   expect(counts.filter((n) => n === 2).length).toBeGreaterThan(0);
   expect(counts.at(-1)).toBe(1);
 });
+
+// The direction is read off the photo's place in the collection rather than off
+// the control that moved it, so the arrows, the buttons and the browser's own
+// back all animate the way the reader actually went.
+test('stepping to a neighbour slides in from the side it came from', async ({ page }) => {
+  await page.goto('/settings');
+  await openLibrary(page, CULL_PHOTOS_DIR);
+  await openPhoto(page);
+  await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
+  // Opening a photo is not a step, so the first frame just appears.
+  await expect(page.locator('.stage__viewport img.is-ready.is-stepping-next')).toHaveCount(0);
+  await expect(page.locator('.stage__viewport img.is-ready.is-stepping-prev')).toHaveCount(0);
+
+  await page.keyboard.press('ArrowRight');
+  const forwards = page.locator('.stage__viewport img.is-ready.is-stepping-next');
+  await expect(forwards).toBeVisible({ timeout: 60_000 });
+  // The class outlives the animation, so this is the stylesheet's half of it:
+  // named the other way round, both steps would look identical.
+  expect(await forwards.evaluate((img) => getComputedStyle(img).animationName)).toBe('stage-step-in-next');
+
+  await page.keyboard.press('ArrowLeft');
+  const backwards = page.locator('.stage__viewport img.is-ready.is-stepping-prev');
+  await expect(backwards).toBeVisible({ timeout: 60_000 });
+  expect(await backwards.evaluate((img) => getComputedStyle(img).animationName)).toBe('stage-step-in-prev');
+
+  // A rendition swap holds the photo, so there is no direction to it and the new
+  // file has to replace the old one where it is rather than sliding in.
+  await page.keyboard.press('o');
+  await expect(page.locator('.panel', { hasText: 'RENDITION DETAILS' }).getByText('Rendered RAW')).toBeVisible({ timeout: 120_000 });
+  await expect(page.locator('.stage__viewport img.is-ready:not(.is-stepping-next):not(.is-stepping-prev)')).toBeVisible({
+    timeout: 120_000,
+  });
+
+  // The frame carries an inline transform for zoom and pan, so the slide is a
+  // `translate` of its own to compose with it rather than fight it. Held open,
+  // because at its real length there is no non-flaky moment to measure it in.
+  await page.addStyleTag({ content: '.stage__viewport .stage__content { animation-duration: 4s !important; }' });
+  await page.keyboard.press('ArrowRight');
+  await expect(page.locator('.stage__viewport img.is-ready.is-stepping-next')).toBeVisible({ timeout: 60_000 });
+  const viewport = await page.locator('.stage__viewport').boundingBox();
+  const arriving = await page.locator('.stage__viewport img.is-ready.is-stepping-next').boundingBox();
+  // Right of where it will settle, which is the viewport it is inset to: a next
+  // step comes in from the side the reader is heading towards.
+  expect(arriving?.x ?? 0).toBeGreaterThan(viewport?.x ?? 0);
+});

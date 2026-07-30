@@ -1824,6 +1824,67 @@ p.ui-text--mono {
   opacity: 1;
 }
 
+/* Stepping between photos. Enough movement to say which way the reader went and
+   no more; a longer or further slide turns a cull into a wait.
+
+   `translate` rather than `transform`, which the element already carries for
+   zoom and pan: as a separate property this composes with it instead of
+   fighting it, and it applies outside the zoom, so the slide is the same few
+   pixels whatever the photo is scaled to. Keep in step with STEP_MS. */
+@keyframes stage-step-in-next {
+  from {
+    opacity: 0;
+    translate: 22px;
+  }
+}
+
+@keyframes stage-step-in-prev {
+  from {
+    opacity: 0;
+    translate: -22px;
+  }
+}
+
+@keyframes stage-step-out-next {
+  to {
+    opacity: 0;
+    translate: -22px;
+  }
+}
+
+@keyframes stage-step-out-prev {
+  to {
+    opacity: 0;
+    translate: 22px;
+  }
+}
+
+.stage__viewport .stage__content.is-ready.is-stepping-next {
+  animation: stage-step-in-next 130ms ease-out;
+}
+
+.stage__viewport .stage__content.is-ready.is-stepping-prev {
+  animation: stage-step-in-prev 130ms ease-out;
+}
+
+/* `forwards`, or the frame would snap back to fully opaque for the frames
+   between the animation ending and the element being unmounted. */
+.stage__viewport .stage__content.is-retiring.is-stepping-next {
+  animation: stage-step-out-next 130ms ease-out forwards;
+}
+
+.stage__viewport .stage__content.is-retiring.is-stepping-prev {
+  animation: stage-step-out-prev 130ms ease-out forwards;
+}
+
+/* !important because each of the four rules above is a more specific selector
+   than anything that can be written for "any frame" here. */
+@media (prefers-reduced-motion: reduce) {
+  .stage__viewport .stage__content {
+    animation: none !important;
+  }
+}
+
 /* The warmed neighbours: decoys covering the frame, never pictures to interact
    with. Left hit-testable they take the pointer, and a browser that ignores
    -webkit-user-drag (Firefox) starts an image drag that cancels the pan. */

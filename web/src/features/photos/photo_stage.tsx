@@ -20,6 +20,16 @@ const STALE_FRAME_MS = 100;
 // so this is a count rather than a signal.
 const RETIRED_FRAMES = 3;
 
+// Kept in step with the enter/exit animations in styles.css: the frame being
+// stepped away from has to outlive its own exit, and only this side knows when
+// to unmount it.
+const STEP_MS = 130;
+
+// Which way the last step went, so the two frames slide the way the reader
+// moved. Null for anything that is not a step - a rendition swap, or the first
+// frame after opening a photo - which then just appears.
+type Step = 'next' | 'prev' | null;
+
 interface Props {
   src: string;
   alt: string;
@@ -35,6 +45,8 @@ interface Props {
   onImageMissing?: () => void;
   /** Clears the stage when it changes. The photo, not the src: a rendition swap must hold the frame. */
   photoKey: string;
+  /** Position of this photo in the collection, which is what makes a step a direction. -1 when unknown. */
+  index: number;
   /** Ask again for a frame that failed. Changes when the server has proven it is back. */
   retryEpoch?: number;
   /**
@@ -57,6 +69,13 @@ interface View {
 }
 
 const FITTED: View = { scale: MIN_SCALE, x: 0, y: 0 };
+
+// The direction rides on the frame rather than on the stage, so the one leaving
+// and the one arriving keep animating the way the step that produced them went
+// even if the next step comes in before they are done.
+function contentClass(state: 'is-ready' | 'is-retiring', step: Step): string {
+  return `${state} stage__content${step == null ? '' : ` is-stepping-${step}`}`;
+}
 
 // How much of the photo is off-screen on each axis at this scale, halved: past
 // that the image would separate from the viewport edge and drag out of view.
@@ -102,6 +121,7 @@ export function PhotoStage({
   filename,
   video,
   photoKey,
+  index,
   hold,
   retryEpoch,
   preloadSrcs,
@@ -128,13 +148,17 @@ export function PhotoStage({
   // painted. Decoding off-screen in a detached `new Image()` is not enough: the
   // browser decodes for the size an element is drawn at, so the visible element
   // decoded a 3840px AVIF a second time at paint and flashed anyway.
-  const [painted, setPainted] = useState<{ src: string; photoKey: string } | null>(null);
+  const [painted, setPainted] = useState<{ src: string; photoKey: string; step: Step } | null>(null);
   const currentFrame = painted?.photoKey === photoKey ? painted.src : null;
   const ready = currentFrame != null;
   // The frame `painted` just replaced, kept mounted and opaque underneath it for
   // RETIRED_FRAMES. Its raster is the one the browser already has, so it is what
   // shows through while the replacement's is being built.
-  const [retiring, setRetiring] = useState<string | null>(null);
+  const [retiring, setRetiring] = useState<{ src: string; step: Step } | null>(null);
+  // The photo last promoted, which is what the next promotion is a step away
+  // from. Not `painted`: that is dropped once it goes stale, and a photo whose
+  // rendition had to be built is still a step from the one before it.
+  const stepped = useRef<{ photoKey: string; index: number } | null>(null);
   // Read by the promote below, which runs off a decode promise: `painted` there
   // would be whatever was on screen when that decode started.
   const paintedSrc = useRef<string | null>(null);
@@ -179,6 +203,12 @@ export function PhotoStage({
 
   useEffect(() => {
     if (retiring == null) return;
+    // A stepped-away frame is animating out, so it is timed rather than counted:
+    // unmounted after a few frames it would vanish part-way through its exit.
+    if (retiring.step != null) {
+      const timer = setTimeout(() => setRetiring(null), STEP_MS);
+      return () => clearTimeout(timer);
+    }
     let left = RETIRED_FRAMES;
     let frame = requestAnimationFrame(function tick(): void {
       if (left-- > 0) frame = requestAnimationFrame(tick);
@@ -197,13 +227,17 @@ export function PhotoStage({
   onMissing.current = onImageMissing;
   const onLoaded = useRef(onImageLoad);
   onLoaded.current = onImageLoad;
+  // Through a ref so a photo leaving the collection, which shuffles every index
+  // after it, cannot restart a decode that is in flight.
+  const currentIndex = useRef(index);
+  currentIndex.current = index;
 
   // The src being prepared, mounted but invisible until it can be shown.
   const incoming = src === currentFrame ? null : src;
   // Switching back before the hold expires asks for the frame on its way out,
   // and one src is one element: the hold is dropped rather than duplicated, which
   // costs nothing here - the frame it was covering is still the one on screen.
-  const retired = retiring === incoming ? null : retiring;
+  const retired = retiring?.src === incoming ? null : retiring;
   // A callback ref, not a RefObject: refs are invariant, so one object cannot be
   // handed to both an <img> and a <video>.
   const incomingRef = useRef<HTMLImageElement | HTMLVideoElement | null>(null);
@@ -226,8 +260,12 @@ export function PhotoStage({
       const height = element instanceof HTMLVideoElement ? element.videoHeight : element.naturalHeight;
       setNatural({ width, height });
       onLoaded.current(width, height);
-      if (paintedSrc.current != null && paintedSrc.current !== incoming) setRetiring(paintedSrc.current);
-      setPainted({ src: incoming, photoKey });
+      const from = stepped.current;
+      const to = currentIndex.current;
+      const step: Step = from == null || from.photoKey === photoKey || from.index < 0 || to < 0 ? null : from.index < to ? 'next' : 'prev';
+      stepped.current = { photoKey, index: to };
+      if (paintedSrc.current != null && paintedSrc.current !== incoming) setRetiring({ src: paintedSrc.current, step });
+      setPainted({ src: incoming, photoKey, step });
     };
 
     if (element instanceof HTMLVideoElement) {
@@ -410,10 +448,13 @@ export function PhotoStage({
           // being prepared. Nothing here is a move on promotion - the incoming
           // one keeps the slot it already had and the retiring one takes the slot
           // below it, so no element is reinserted into the DOM mid-swap.
-          [retired, painted?.src, failed ? null : incoming].map((source) => {
-            if (source == null) return false;
-            const className =
-              source === painted?.src ? 'is-ready stage__content' : source === retired ? 'is-retiring stage__content' : 'stage__content';
+          [
+            retired == null ? null : { src: retired.src, className: contentClass('is-retiring', retired.step) },
+            painted == null ? null : { src: painted.src, className: contentClass('is-ready', painted.step) },
+            failed || incoming == null ? null : { src: incoming, className: 'stage__content' },
+          ].map((frame) => {
+            if (frame == null) return false;
+            const { src: source, className } = frame;
             const transform = `translate(${view.x}px, ${view.y}px) scale(${view.scale})`;
             // A one-frame video, the only way an HDR photo reaches a Firefox
             // display (§10.7). Muted and inline so autoplay is allowed at all,
