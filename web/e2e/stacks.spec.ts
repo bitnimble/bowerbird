@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { PHOTO_NAMES, STACK_PHOTOS_DIR } from './fixture_library';
-import { addLibrary, openLibrary, syncLibrary, waitForSyncSettled } from './helpers';
+import { addLibrary, bulkAction, openLibrary, syncLibrary, waitForSyncSettled } from './helpers';
 
 // Stacks, driven through the real grid (DESIGN §19).
 //
@@ -114,14 +114,43 @@ test('a list row opens its stack from anywhere along it, not just the thumbnail'
   await expect(page.locator('.grid__band')).toHaveCount(0);
 });
 
+// One selection, whether a photo was chosen in the grid or inside an open stack:
+// a member has no position to be in a run, so it travels by id beside them
+// (§19.6.1).
+test('a selection spans the grid and the contents of a stack', async ({ page }) => {
+  await page.goto('/settings');
+  await openLibrary(page, STACK_PHOTOS_DIR);
+  await page.locator('.tile:not(.tile--member) .tile__hit').click();
+  await expect(page.locator('.grid__band .tile')).toHaveCount(PHOTO_NAMES.length);
+
+  // The stack's row is selected by that click; cmd-clicking a member of it adds
+  // to the same selection rather than replacing it.
+  await page.locator('.grid__band .tile__hit').first().click({ modifiers: ['ControlOrMeta'] });
+  await expect(page.locator('.bulkbar__count')).toHaveText('2 selected');
+  await expect(page.locator('.tile--selected')).toHaveCount(2);
+
+  // And one action reaches both. The row resolves to the whole stack and the
+  // member is one of those photos, so the server takes each of them once.
+  await bulkAction(page, 'Rebuild thumbnails');
+  await expect(page.getByText('Rebuilt 2 thumbnails')).toBeVisible({ timeout: 30_000 });
+
+  // A selection of nothing but members is a selection like any other: the runs are
+  // empty and the ids carry it. The band is still open - a rebuild re-reads the
+  // collection and keeps the bands it had (§19.6.1) - so a plain click on a member
+  // is all it takes, which replaces the selection rather than adding to it.
+  await expect(page.locator('.grid__band .tile')).toHaveCount(PHOTO_NAMES.length);
+  await page.locator('.grid__band .tile__hit').first().click();
+  await expect(page.locator('.tile--selected')).toHaveCount(1);
+  await bulkAction(page, 'Rebuild thumbnails');
+  await expect(page.getByText('Rebuilt 1 thumbnail')).toBeVisible({ timeout: 30_000 });
+});
+
 test('a member picked out of the band can be removed from the stack', async ({ page }) => {
   await page.goto('/settings');
   await openLibrary(page, STACK_PHOTOS_DIR);
   await page.locator('.tile:not(.tile--member) .tile__hit').click();
   await expect(page.locator('.grid__band .tile')).toHaveCount(PHOTO_NAMES.length);
 
-  // Members select by id and get their own bulk bar: a selection inside a stack
-  // and a selection of the collection are different intentions (§19.6.1).
   await page.locator('.grid__band .tile__hit').first().click();
   const remove = page.getByRole('button', { name: 'Remove from stack' });
   await expect(remove).toBeVisible();

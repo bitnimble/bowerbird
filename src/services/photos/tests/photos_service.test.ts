@@ -98,6 +98,41 @@ describe('PhotosService.get', () => {
   });
 });
 
+describe('PhotosService.resolve', () => {
+  const selection = (over: Partial<{ ranges: { start: number; end: number }[]; members: string[] }> = {}) => ({
+    selection: {
+      scope: { kind: 'library' as const, id: 'lib' },
+      filters: {},
+      ranges: [{ start: 0, end: 1 }],
+      members: [],
+      ...over,
+    },
+  });
+
+  it('resolves the runs against the collection ordering', () => {
+    const idsInLibrary = jest.fn(() => ['a', 'b']);
+    const { service, photos } = build({ photos: { idsInLibrary }, libraries: { getById: jest.fn(() => library) } });
+    expect(service.resolve(selection())).toEqual(['a', 'b']);
+    expect(photos.idsInLibrary).toHaveBeenCalledWith('lib', 'added_asc', [{ start: 0, end: 1 }], expect.anything());
+  });
+
+  // A photo picked out of an open stack has no position in a collapsed listing
+  // (§19.6.1), so it travels by id beside the runs - and a stack row named by a
+  // run resolves to every member, so the two can name the same photo.
+  it('adds the members to the runs, each photo once', () => {
+    const idsInLibrary = jest.fn(() => ['a', 'b']);
+    const { service } = build({ photos: { idsInLibrary }, libraries: { getById: jest.fn(() => library) } });
+    expect(service.resolve(selection({ members: ['b', 'c'] }))).toEqual(['a', 'b', 'c']);
+  });
+
+  it('asks the collection nothing when the selection is members alone', () => {
+    const idsInLibrary = jest.fn(() => ['a']);
+    const { service, photos } = build({ photos: { idsInLibrary }, libraries: { getById: jest.fn(() => library) } });
+    expect(service.resolve(selection({ ranges: [], members: ['c'] }))).toEqual(['c']);
+    expect(photos.idsInLibrary).not.toHaveBeenCalled();
+  });
+});
+
 describe('PhotosService.listByLibrary', () => {
   it('throws NOT_FOUND for an unknown library', () => {
     const { service } = build({});

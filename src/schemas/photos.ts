@@ -208,7 +208,7 @@ export type PhotoFilters = z.infer<typeof PhotoFiltersSchema>;
  * A set of photos named by where they sit in a filtered collection rather than
  * by id (§18.3.3). Both ends of a range are inclusive.
  */
-export const PhotoSelectionSchema = z.object({
+const PhotoSelectionFields = z.object({
   // Which collection the positions are into. The bin and the missing view are
   // the library plus a filter, so they need no kind of their own.
   scope: z.discriminatedUnion('kind', [
@@ -222,7 +222,6 @@ export const PhotoSelectionSchema = z.object({
   // stating it here could name an order the selection was never made in.
   ranges: z
     .array(z.object({ start: z.number().int().min(0), end: z.number().int().min(0) }))
-    .min(1)
     // Bounds the body, not the selection: a run costs one entry however long it
     // is, so this only refuses a pathologically scattered pick.
     .max(10_000)
@@ -233,7 +232,17 @@ export const PhotoSelectionSchema = z.object({
     .refine((ranges) => ranges.every((range, i) => range.end >= range.start && (i === 0 || range.start > ranges[i - 1]!.end)), {
       message: 'ranges must be ascending, non-overlapping, and end at or after they start',
     }),
+  // Photos picked out of an open stack. A collapsed listing gives a member no
+  // position of its own (§19.6.1), so these travel by id beside the runs rather
+  // than as a selection of their own - one selection covers both, and one action
+  // reaches everything the reader has chosen.
+  members: z.array(UuidSchema).max(1000).default([]),
 });
+
+export const PhotoSelectionSchema = PhotoSelectionFields.refine(
+  (selection) => selection.ranges.length > 0 || selection.members.length > 0,
+  { message: 'a selection names at least one range or one member' },
+);
 export type PhotoSelection = z.infer<typeof PhotoSelectionSchema>;
 
 // What a bulk action applies to: a list of ids, a selection the server resolves
@@ -252,7 +261,7 @@ export type PhotoTarget = z.infer<typeof PhotoTargetSchema>;
 // `COALESCE(stack_id, id)`, which is what identifies a row once stacks collapse
 // it. Bounded like a selection is, since an answer is a number per key.
 export const PhotoPositionsRequestSchema = z.object({
-  scope: PhotoSelectionSchema.shape.scope,
+  scope: PhotoSelectionFields.shape.scope,
   filters: PhotoFiltersSchema.default({}),
   keys: z.array(z.string()).min(1).max(1000),
 });

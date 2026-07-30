@@ -570,7 +570,6 @@ export class PhotosPresenter {
 
   @action.bound
   toggle(index: number): void {
-    this.takeSelection();
     if (index < 0) return;
     this.store.selection = this.store.selection.toggle(index);
     this.store.lastToggled = index;
@@ -581,7 +580,7 @@ export class PhotosPresenter {
   // a set is cmd-click and shift-click as it is in any file manager.
   @action.bound
   selectOnly(index: number): void {
-    this.takeSelection();
+    this.clearMemberSelection();
     if (index < 0) return;
     this.store.selection = SelectionRanges.of(index, index);
     this.store.lastToggled = index;
@@ -592,7 +591,6 @@ export class PhotosPresenter {
   // however long, so a burst and a whole library cost the same.
   @action.bound
   extendTo(index: number): void {
-    this.takeSelection();
     // The cursor stands in for the anchor when nothing has been toggled yet:
     // arrowing to one photo and shift-clicking another is the same gesture as in
     // any file manager, and it is what a first shift-click has to reach for.
@@ -619,7 +617,7 @@ export class PhotosPresenter {
    */
   @action.bound
   selectSpan(span: Span): void {
-    this.takeSelection();
+    this.clearMemberSelection();
     this.store.selection = SelectionRanges.of(span.from, span.to - 1);
     this.store.lastToggled = null;
   }
@@ -629,7 +627,7 @@ export class PhotosPresenter {
   // (`selectionTarget`).
   @action.bound
   selectAll(): void {
-    this.takeSelection();
+    this.clearMemberSelection();
     this.store.selection = SelectionRanges.of(0, this.store.total - 1);
     this.store.lastToggled = null;
   }
@@ -661,18 +659,12 @@ export class PhotosPresenter {
   @action
   private reselectCursor(): void {
     this.store.lastToggled = null;
+    // Members go with the positions: the action covered both (§19.6.1), so
+    // leaving the band's picks ringed would offer them to the next one again.
+    this.store.selectedMembers = new Set();
     const at = Math.min(this.store.focusIndex, this.store.total - 1);
     this.store.focusIndex = at;
     this.store.selection = at < 0 ? SelectionRanges.EMPTY : SelectionRanges.of(at, at);
-  }
-
-  // Whichever selection was last touched is the live one, and the other is
-  // dropped. Both non-empty means the bulk bar shows one of them while an action
-  // could reach the other: a member picked out of a band, then Select all, left
-  // three hundred photographs selected behind a bar reading "1 selected".
-  @action.bound
-  private takeSelection(): void {
-    if (this.store.selectedMembers.size > 0) this.store.selectedMembers = new Set();
   }
 
   // --- bulk actions ---
@@ -1008,16 +1000,14 @@ export class PhotosPresenter {
     const selected = new Set(this.store.selectedMembers);
     if (!selected.delete(photoId)) selected.add(photoId);
     this.store.selectedMembers = selected;
-    // The two selections are different intentions: "everything in this library"
-    // and "these three frames of this burst" should not silently become one.
-    if (selected.size > 0) this.store.selection = SelectionRanges.EMPTY;
   }
 
+  // A plain click inside a band means "this one instead" across the whole
+  // selection, exactly as it does on a tile: cmd-click is what adds to it.
   @action.bound
   selectOnlyMember(photoId: string): void {
     this.store.selectedMembers = new Set([photoId]);
-    // The two selections are different intentions (`toggleMember`).
-    this.store.selection = SelectionRanges.EMPTY;
+    this.clearSelectedPositions();
   }
 
   @action.bound
@@ -1104,6 +1094,10 @@ export class PhotosPresenter {
         scope: scopeOf(source),
         filters: this.selectionFilters(),
         ranges: this.store.selection.ranges.map((range) => ({ ...range })),
+        // Photos picked out of an open band, which have no position to be in a
+        // run (§19.6.1). The server takes each photo once, so a member whose
+        // stack's row is also selected is not acted on twice.
+        members: [...this.store.selectedMembers],
       },
     };
   }

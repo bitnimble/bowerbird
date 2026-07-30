@@ -3,30 +3,6 @@ import { Ellipsis, FolderInput, Images, Layers, Layers2, RotateCcw, RotateCw, Sp
 import { useAlbumsStore, usePhotosStore, usePresenters, useShootsStore } from '../../app/stores_context';
 import { ActionMenu, Button, CheckMenu, ICON, type Option, Text } from '../../ui/ui';
 
-// What can be done to photos picked out inside an open stack. Only the two
-// actions that are about the stack: everything else here works on positions,
-// which is what a member does not have.
-const MemberBar = observer(function MemberBar(): JSX.Element {
-  const store = usePhotosStore();
-  const { photos } = usePresenters();
-  return (
-    <div className="bulkbar">
-      <Text variant="mono" className="bulkbar__count">
-        {store.selectedMembers.size} selected in {store.selectedMembers.size === 1 ? 'a stack' : 'stacks'}
-      </Text>
-      <Button variant="ghost" onClick={photos.clearMemberSelection}>
-        <X size={ICON} />
-        Clear
-      </Button>
-      <div className="spacer" />
-      <Button onClick={() => void photos.removeSelectedFromStacks()}>
-        <Layers2 size={ICON} />
-        Remove from stack
-      </Button>
-    </div>
-  );
-});
-
 // Behind the overflow, so the bar's own row holds only what is about *this*
 // selection - where it goes and what it becomes. These three are maintenance:
 // reached deliberately, and two of them rarely.
@@ -55,18 +31,16 @@ export const BulkBar = observer(function BulkBar({ removeFrom }: Props): JSX.Ele
   const albums = useAlbumsStore();
   const { photos } = usePresenters();
 
-  // Members of an open stack are a selection of their own, held by id because a
-  // collapsed listing gives them no position (§19.6). The two are different
-  // intentions - "everything in this library" against "these frames of this
-  // burst" - so the bar acts on whichever one is live.
-  if (store.selectedMembers.size > 0) return <MemberBar />;
-
   // Binned photos are excluded from the shoot/album membership queries, so
   // offering those actions here would only ever produce "photos not found".
   // The Bin's one meaningful action is putting them back.
   const inBin = store.isBin;
+  // Positions and members, as one number: a photo picked out of an open band is
+  // in the same selection as a tile in the grid, and every action reaches both
+  // (§19.6.1).
   const count = store.selectionCount;
   const none = count === 0;
+  const members = store.selectedMembers.size > 0;
 
   return (
     <div className="bulkbar">
@@ -107,6 +81,15 @@ export const BulkBar = observer(function BulkBar({ removeFrom }: Props): JSX.Ele
         <Button onClick={() => void photos.unstack(store.selectedStackId!)}>
           <Layers2 size={ICON} />
           Unstack
+        </Button>
+      )}
+
+      {/* Only about the members: taking a photo out of the stack it is in is not
+          something the positions in a selection can express. */}
+      {!inBin && members && (
+        <Button onClick={() => void photos.removeSelectedFromStacks()}>
+          <Layers2 size={ICON} />
+          Remove from stack
         </Button>
       )}
 

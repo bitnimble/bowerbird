@@ -128,8 +128,28 @@ describe('PhotosApi', () => {
       body: JSON.stringify({ selection }),
     });
     expect(res.status).toBe(200);
-    expect(service.resolve).toHaveBeenCalledWith({ selection: { ...selection, filters: { triage: ['picked'] } } });
+    expect(service.resolve).toHaveBeenCalledWith({ selection: { ...selection, filters: { triage: ['picked'] }, members: [] } });
     expect(del).toHaveBeenCalledWith([PID], undefined);
+  });
+
+  // A selection can be nothing but photos picked out of an open stack, which have
+  // no position to be in a run at all (§19.6.1).
+  it('deletes a selection named by member id alone', async () => {
+    const del = jest.fn(async () => {});
+    const { app, service } = buildApp({ delete: del });
+    const selection = { scope: { kind: 'library', id: PID }, ranges: [], members: [PID] };
+    const res = await app.request('/api/photos/delete', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ selection }),
+    });
+    expect(res.status).toBe(200);
+    expect(service.resolve).toHaveBeenCalledWith({ selection: { ...selection, filters: {} } });
+  });
+
+  it('rejects a selection that names neither a range nor a member', async () => {
+    const { app } = buildApp();
+    expect(await selectionStatus(app, [])).toBe(400);
   });
 
   it('rejects a selection whose range ends before it starts', async () => {

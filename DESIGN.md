@@ -2336,7 +2336,7 @@ Positions rather than ids, because positions are the only thing a client holding
 
 "Visible" is the one question the store cannot answer, so it is the one place the grid measures. What the store knows is what is *mounted*, which is deliberately more: two overscan rows either side of the viewport, and in masonry a whole hundred-photo block, whose tiles are packed from their own shapes and have no arithmetic position to test at all. Read off the DOM on a click, "Select visible" acted on up to a hundred photographs the reader could not see. It is a click, so the forced layout costs nothing, and §18.2's rule stands everywhere it is about: nothing in a render, a reaction or a scroll frame measures anything.
 
-**No ids are ever read back to act on it.** A bulk request carries the selection itself - the collection, the filters, the runs - and the server resolves the ids off the same filtered, collection-ordered listing the grid was built from (`PhotoTargetSchema`, §14). So binning a hundred thousand photos is one small request, and nothing is fetched to *make* a selection at all. The one path still named by id is the undo of a bin: the delete answers with what it took, because the selection it came from resolves to different photographs once those have left the collection.
+**No ids are ever read back to act on it.** A bulk request carries the selection itself - the collection, the filters, the runs - and the server resolves the ids off the same filtered, collection-ordered listing the grid was built from (`PhotoTargetSchema`, §14). Beside the runs it carries `members`: photographs the reader picked out of an open stack, which a collapsed listing gives no position to number them by (§19.6.1). They are the one thing named by id going *in*, bounded like any id list, and the server takes the union of the two - a run naming a stack's row already resolves to every member of it, so nothing is acted on twice. A selection needs at least one of the two, and a members-only selection is as legitimate as a runs-only one. So binning a hundred thousand photos is one small request, and nothing is fetched to *make* a selection at all. The one path still named by id is the undo of a bin: the delete answers with what it took, because the selection it came from resolves to different photographs once those have left the collection.
 
 #### Positions move, so the selection is rebased rather than dropped
 
@@ -2760,6 +2760,19 @@ closes it again, which is the same tile doing the same thing twice. The tile sta
 where it is and takes a dark overlay with an up chevron, which is also how the
 stack closes.
 
+**The tile and its band are drawn as one shape**, joined across the row gap: the
+tile leaves its bottom edge open, the band leaves the tile's own column out of its
+top edge, and two stubs carry the sides over the gap between them. So the band
+reads as belonging to that tile rather than to the row, which is the whole question
+a reader asks of it. Only **one band per row** can be joined - the one immediately
+below it, which is the lowest position of that row's open stacks; the rest are
+separated from their tiles by another band and keep a ring of their own, where the
+colour is what pairs them. Masonry joins nothing: its bands break into the flex
+line rather than sitting below a row, and a tile packed by its own shape has no
+column for the gap to be cut from. The gap in the top edge is a mask over the
+ring rather than a redrawn edge, so the ring keeps its exact corners, and the
+column's width is arithmetic over `--cols` - nothing is measured (§18.2).
+
 The members live alone in that band and never share a row with photos outside
 the stack, so no tile ever changes which neighbours it sits beside: the grid
 below is displaced downwards and otherwise untouched. Band rows are ordinary tile
@@ -2833,9 +2846,21 @@ collapsed, so the server numbers one row per stack and members are not in that
 numbering at all. They are selected **by id**, in a set held beside the position
 ranges. This stays inside the rule the virtual grid enforces rather than bending
 it - what must never happen is an id standing in for an *unloaded* row, and a
-band's members are loaded, on screen, and few. The two selections are separate,
-and the bulk bar acts on whichever is live: "everything in this library" and
-"these three frames of this burst" are different intentions.
+band's members are loaded, on screen, and few.
+
+**The two halves are one selection.** They were separate, with the bulk bar acting
+on whichever was live, on the grounds that "everything in this library" and "these
+three frames of this burst" are different intentions - but a stack opened out is
+part of the collection being worked through, and picking a frame out of it *and* a
+frame beside it is an ordinary thing to want. So a wire selection carries
+`members` alongside `ranges` (§18.3.3), the count is the sum of the two, and every
+action reaches both. Each photo is acted on once: a run naming a stack's row
+resolves to every member of it, so the server takes the union.
+
+A **plain** click still replaces the whole selection, in a band exactly as in the
+grid; cmd-click is what adds a member to what is already chosen, and shift-click
+extends the runs. An action that consumes the selection drops the members with the
+positions (§18.3.1).
 
 The bulk bar counts **entries**, where a stack counts as one, because the client
 cannot know the sizes of stacks in a selection covering rows it has never held.
@@ -2843,7 +2868,7 @@ cannot know the sizes of stacks in a selection covering rows it has never held.
 | action | shown when |
 |---|---|
 | Stack | two or more entries selected |
-| Unstack | the selection is a single row that is a stack |
+| Unstack | the selection is a single row that is a stack, and no members |
 | Remove from stack | band members are selected, of one stack or several |
 
 Stacking a selection that already contains stacked photos moves those photos into

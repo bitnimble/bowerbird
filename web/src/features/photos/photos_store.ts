@@ -309,17 +309,21 @@ export class PhotosStore {
     return renditionVersion(this.photoFor(photoId), rendition);
   }
 
+  // Positions and members together: they are one selection, and an action reaches
+  // both (§19.6.1). A stack row that is selected *and* has one of its members
+  // picked counts twice here and is acted on once - the server takes each photo
+  // once, and the client cannot know a stack's size from a collapsed row anyway.
   @computed get selectionCount(): number {
-    return this.selection.size;
+    return this.selection.size + this.selectedMembers.size;
   }
 
   @computed get hasSelection(): boolean {
-    return this.selection.size > 0;
+    return this.selectionCount > 0;
   }
 
   /** Whether every photo in the collection is selected, which is what "Select all" leaves behind. */
   @computed get allSelected(): boolean {
-    return this.total > 0 && this.selection.size === this.total;
+    return this.total > 0 && this.selection.size === this.total && this.selectedMembers.size === 0;
   }
 
   // Count first, so a populated grid's dependency on `loading` short-circuits
@@ -458,6 +462,28 @@ export class PhotosStore {
   }
 
   /**
+   * The open stacks whose band is drawn joined to their own tile, by stack id.
+   *
+   * One per row at most: bands from a row sit beneath it in a run, so only the
+   * first of them - the lowest position on that row - touches the row it came
+   * from. The rest are separated from their tiles by another band and keep a ring
+   * of their own; the colour is what ties those to their tiles (§19.6).
+   *
+   * Masonry has no row model to be immediately below, and packs its bands into the
+   * flex line instead, so nothing there is joined.
+   */
+  @computed get fusedStacks(): Set<string> {
+    if (this.mode === 'masonry') return new Set();
+    const first = new Map<number, Expansion>();
+    for (const open of this.expansions.values()) {
+      const row = Math.floor(open.position / this.columns);
+      const held = first.get(row);
+      if (held == null || open.position < held.position) first.set(row, open);
+    }
+    return new Set([...first.values()].map((open) => open.stackId));
+  }
+
+  /**
    * What each visible display row shows: rows of the collection, or the members
    * of one open stack.
    *
@@ -517,7 +543,7 @@ export class PhotosStore {
    * screen, because that is where it was clicked.
    */
   @computed get selectedStackId(): string | null {
-    if (this.selectionCount !== 1) return null;
+    if (this.selection.size !== 1 || this.selectedMembers.size > 0) return null;
     const only = this.selection.ranges[0];
     if (only == null) return null;
     return this.rows.get(only.start)?.stack_id ?? null;

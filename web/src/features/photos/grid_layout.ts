@@ -3,7 +3,7 @@
 // numbers the store already holds, so nothing measures the DOM to decide what to
 // render (§18.3.2).
 
-// .grid { gap: 3px }
+// Mirrors `--grid-gap`, which .grid's own gap comes from.
 export const GRID_GAP = 3;
 
 // The height .grid--list fixes every row to. A list row that could grow with its

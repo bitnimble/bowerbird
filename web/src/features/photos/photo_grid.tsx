@@ -165,6 +165,7 @@ const Tile = observer(function Tile({
   const selected = store.selection.has(index);
   const expanded = photo.stack_id != null && store.expansions.has(photo.stack_id);
   const stacked = photo.stack_id != null && photo.stack_size > 1;
+  const fused = expanded && store.fusedStacks.has(photo.stack_id!);
 
   return (
     // The set size and position are stated because only a few dozen tiles are in
@@ -240,7 +241,9 @@ const Tile = observer(function Tile({
           thing (§19.6). */}
       {stacked && (
         <span
-          className={`tile__stack${expanded ? ' tile__stack--open' : ''}`}
+          // Fused: this tile's band is the one immediately below its row, so the
+          // two share the edge between them and neither draws it (§19.6).
+          className={`tile__stack${expanded ? ' tile__stack--open' : ''}${fused ? ' tile__stack--fused' : ''}`}
           // Open, the tile is ringed in the colour of the band it opened, which
           // is what pairs the two when several stacks on one row are open.
           data-band={expanded ? store.bandColours.get(photo.stack_id!) : undefined}
@@ -420,10 +423,13 @@ const BandTiles = observer(function BandTiles({
   const store = usePhotosStore();
   const rows = bandRows(expansion.photos.length, store.columns);
   const placed = top != null;
+  const fused = store.fusedStacks.has(expansion.stackId);
 
   return (
     <div
-      className={`grid grid--${store.mode} grid__band${placed ? ' grid__window' : ' grid__band--inline'}`}
+      className={`grid grid--${store.mode} grid__band${placed ? ' grid__window' : ' grid__band--inline'}${
+        fused ? ' grid__band--fused' : ''
+      }`}
       data-band={store.bandColours.get(expansion.stackId)}
       role="group"
       aria-label={`${expansion.photos.length} photos in this stack`}
@@ -431,6 +437,10 @@ const BandTiles = observer(function BandTiles({
         {
           ...(placed ? { transform: `translateY(${store.railPositionOf(top)}px)` } : {}),
           '--cols': store.columns,
+          // Which column the stack's own tile sits in, so the joined edge leaves a
+          // gap exactly that wide (§19.6). The width itself is arithmetic CSS can
+          // do from the column count, so nothing here is measured.
+          ...(fused ? { '--fuse-col': expansion.position % store.columns } : {}),
           // A band gets exactly the display rows the row arithmetic gave it, so
           // the padding inside its outline comes out of its own cells rather than
           // out of the collection below it.

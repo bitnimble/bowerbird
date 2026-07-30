@@ -234,7 +234,14 @@ export class PhotosService {
   resolve(target: PhotoTarget): string[] {
     if ('photo_ids' in target) return target.photo_ids;
     if ('batch' in target) return this.photos.idsDeletedInBatch(target.batch);
-    const { scope, filters, ranges } = target.selection;
+    // Members are named by id because a collapsed row gives them no position, and
+    // a run may name their stack's row as well - so each photo is taken once.
+    return [...new Set([...this.idsAtRanges(target.selection), ...target.selection.members])];
+  }
+
+  private idsAtRanges(selection: PhotoSelection): string[] {
+    const { scope, filters, ranges } = selection;
+    if (ranges.length === 0) return [];
     const listFilters = fromSelectionFilters(filters);
     switch (scope.kind) {
       case 'library': {

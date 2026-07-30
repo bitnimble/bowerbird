@@ -29,6 +29,8 @@
   --control-h: 30px;
   --control-text: 13px;
   --radius: 4px;
+  /* Mirrors GRID_GAP, which the row arithmetic is built on (`grid_layout.ts`). */
+  --grid-gap: 3px;
   /* One ring, worn by a selected tile, an open stack's tile and that stack's band
      (§19.6): three parts of one thing, so the weight is one value rather than
      three that drifted apart. The radius is `--radius`, and the tile carries it
@@ -1060,7 +1062,7 @@ p.ui-text--mono {
 }
 
 .grid {
-  gap: 3px;
+  gap: var(--grid-gap);
 }
 
 /* Uniform cells, so rows line up and the eye scans without snagging. Both the
@@ -1299,6 +1301,23 @@ p.ui-text--mono {
   box-shadow: inset 0 0 0 var(--ring) var(--band);
 }
 
+/* Joined to the band immediately below its row: the edge between them is one
+   line, so the tile draws three sides and leaves the fourth to the band, which
+   leaves the tile's own column out of its top edge (§19.6). */
+.tile__stack--fused {
+  border-radius: var(--radius) var(--radius) 0 0;
+  box-shadow:
+    inset 0 var(--ring) 0 var(--band),
+    inset var(--ring) 0 0 var(--band),
+    inset calc(-1 * var(--ring)) 0 0 var(--band);
+}
+
+/* The tile clips its overlay, so the two sides have to reach its bottom corners
+   square or they curve away from the band's stubs. */
+.tile:has(.tile__stack--fused) {
+  border-radius: var(--radius) var(--radius) 0 0;
+}
+
 /* One colour per open stack, worn by both its tile and its band: several stacks
    open on one row put several bands under it, and the colour is the only thing
    saying which came from which.
@@ -1331,22 +1350,67 @@ p.ui-text--mono {
 
 /* The band itself: members of one stack, alone on their own rows, marked as a
    run rather than as part of the grid around them. */
-/* Outlined rather than bordered: a band's height is the row model's, and a
-   border would spend rows' worth of it and push the last row into the grid
+/* Ringed by an overlay rather than bordered: a band's height is the row model's,
+   and a border would spend rows' worth of it and push the last row into the grid
    below. The padding is paid for by the shorter cells the band hands its rows
    (`bandRowHeight`), for the same reason. */
 .grid__band {
   background: rgba(120, 140, 180, 0.1);
-  outline: var(--ring) solid var(--band);
-  outline-offset: calc(-1 * var(--ring));
   border-radius: var(--radius);
   padding: 6px;
+}
+
+.grid__band::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border: var(--ring) solid var(--band);
+  border-radius: inherit;
+}
+
+/* Joined to the tile that opened it, which sits one row gap above in its own
+   column. The tile's column is missing from the top edge - that edge belongs to
+   both, so it is drawn once, by neither - and two stubs carry the sides up over
+   the gap. Masked rather than redrawn so the ring keeps its exact corners.
+   The column's own width is arithmetic over `--cols`, so no measurement. */
+.grid__band--fused {
+  --fuse-w: calc((100% - (var(--cols, 1) - 1) * var(--grid-gap)) / var(--cols, 1));
+  --fuse-x: calc((var(--fuse-w) + var(--grid-gap)) * var(--fuse-col, 0));
+  --fuse-r: calc(var(--fuse-x) + var(--fuse-w));
+}
+
+/* The hole is the tile's *interior*, so the top edge still runs under the tile's
+   two sides and turns the corner into them; cut at the tile's outer edge instead,
+   the line stopped a ring's width short and read as a broken corner. */
+.grid__band--fused::after {
+  mask:
+    linear-gradient(#000 0 0) 0 0 / calc(var(--fuse-x) + var(--ring)) var(--ring) no-repeat,
+    linear-gradient(#000 0 0) 100% 0 / calc(100% - var(--fuse-r) + var(--ring)) var(--ring) no-repeat,
+    linear-gradient(#000 0 0) 0 100% / 100% calc(100% - var(--ring)) no-repeat;
+}
+
+.grid__band--fused::before {
+  content: '';
+  position: absolute;
+  left: var(--fuse-x);
+  width: var(--fuse-w);
+  top: calc(-1 * var(--grid-gap));
+  height: var(--grid-gap);
+  border-left: var(--ring) solid var(--band);
+  border-right: var(--ring) solid var(--band);
+  pointer-events: none;
 }
 
 /* Masonry has no rows to place a band between, so it is a full-width item on the
    block's own flex line, breaking it directly after the tile it belongs to. */
 .grid__band--inline {
   flex: 0 0 100%;
+  /* The ring overlay needs a containing block. The placed variant is already one
+     (`.grid__window` is absolute), and giving this rule to `.grid__band` itself
+     took that away from it - a later `position: relative` at the same specificity
+     put the whole band back in flow. */
+  position: relative;
 }
 
 /* Indented, because a list row is read from its left edge: the members of a
