@@ -103,6 +103,7 @@ function writeHdr(
       outputPath: target.outputPath,
       crf: target.hdrQuantizer,
       preset: target.preset,
+      stillFullChroma: target.stillFullChroma,
       // One edge for both media. The video used to have an encoder ceiling on top of
       // it, which was SVT-AV1's own; libaom takes either orientation, so the twin is
       // exactly as large as the still and the two can share a grade (§10.7).
@@ -218,6 +219,8 @@ async function renditions(job: RenditionJob): Promise<Uint8Array | undefined> {
     // encode - which is how this was first ported - paid for it twice on any job with
     // a video twin.
     if (job.matchEmbeddedJpeg && rendersHdr) {
+      // Only the grade's own inputs matter to a fit; the encoder settings are along
+      // for the ride because they share a shape.
       const options = {
         ...job.grade,
         medium: 'still',
@@ -225,6 +228,7 @@ async function renditions(job: RenditionJob): Promise<Uint8Array | undefined> {
         crf: 0,
         preset: 0,
         maxEdge: Number.POSITIVE_INFINITY,
+        stillFullChroma: false,
       } as const;
       hdrMatch = rendersSdr
         ? // The geometry is already paid for, off the 8-bit render the SDR targets

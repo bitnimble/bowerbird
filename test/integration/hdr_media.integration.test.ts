@@ -51,7 +51,7 @@ async function encoded(medium: Medium, run: (file: string) => void): Promise<voi
   try {
     // Only two media now, so the extension is one check rather than a table.
     const outputPath = path.join(dir, medium === 'video' ? 'pq.mp4' : 'pq.avif');
-    encodeHdrRendition(linear, null, { medium, outputPath, peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.99, crf: 40, preset: 12, maxEdge: MAX_EDGE });
+    encodeHdrRendition(linear, null, { medium, outputPath, peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.99, crf: 40, preset: 12, maxEdge: MAX_EDGE, stillFullChroma: false });
     run(outputPath);
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -73,7 +73,7 @@ test('one call writes the still and its video twin, each tagged as its own mediu
       encodeHdrRendition(
         image,
         null,
-        { medium: 'still', outputPath: still, peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.99, crf: 40, preset: 12, maxEdge: 640 },
+        { medium: 'still', outputPath: still, peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.99, crf: 40, preset: 12, maxEdge: 640, stillFullChroma: true },
         video,
       );
     } finally {
@@ -83,9 +83,11 @@ test('one call writes the still and its video twin, each tagged as its own mediu
     expect(Bun.file(still).size).toBeGreaterThan(0);
     expect(Bun.file(video).size).toBeGreaterThan(0);
 
-    // Both must carry the PQ signalling, and each its own chroma: 4:4:4 for the
-    // still because it is a photograph, 4:2:0 for the video because that is the
-    // only AV1 profile the browsers this file exists for will decode.
+    // Both must carry the PQ signalling, and each its own chroma. Asked for at 4:4:4
+    // rather than the shipped default, because the claim under test is that the two
+    // media are tagged and formatted independently - which needs them to differ. The
+    // video cannot follow it there: 4:2:0 is the only AV1 profile the browsers this
+    // file exists for will decode.
     for (const [file, chroma] of [[still, 'yuv444p10le'], [video, 'yuv420p10le']] as const) {
       const found = probe(file);
       expect(found.color_transfer).toBe('smpte2084');
@@ -154,14 +156,15 @@ test('the still declares BT.2020 and PQ, which ffmpeg cannot mux into an AVIF at
     expect(stream.color_primaries).toBe('bt2020');
     expect(stream.color_transfer).toBe('smpte2084');
     expect(stream.color_space).toBe('bt2020nc');
-    expect(stream.pix_fmt).toBe('yuv444p10le');
+    // 4:2:0, which is the default this asked for; `avif_still` covers both.
+    expect(stream.pix_fmt).toBe('yuv420p10le');
   });
 });
 test('the still leaves no intermediate behind', async () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'bb-hdr-'));
   try {
     const outputPath = path.join(dir, 'pq.avif');
-    encodeHdrRendition(linear, null, { medium: 'still', outputPath, peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.99, crf: 40, preset: 12, maxEdge: MAX_EDGE });
+    encodeHdrRendition(linear, null, { medium: 'still', outputPath, peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.99, crf: 40, preset: 12, maxEdge: MAX_EDGE, stillFullChroma: false });
     // The y4m is uncompressed 10-bit, so a leaked one is tens of megabytes per
     // photo sitting next to the output that replaced it.
     expect(await Bun.file(`${outputPath}.y4m`).exists()).toBe(false);
@@ -184,6 +187,7 @@ test('an 8-bit decode is refused rather than encoded as something HDR-shaped', (
         whiteQuantile: 0.99,
         crf: 40,
         preset: 12,
+        stillFullChroma: false,
         maxEdge: MAX_EDGE,
       }),
     ).toThrow(/16-bit/);

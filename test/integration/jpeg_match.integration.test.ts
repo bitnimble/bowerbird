@@ -331,6 +331,7 @@ describe('fitMatchProfile', () => {
             whiteQuantile: 0.9,
             crf: 0,
             preset: 0,
+            stillFullChroma: false,
             maxEdge: Number.POSITIVE_INFINITY,
           });
           expect(viaSdr).not.toBeNull();

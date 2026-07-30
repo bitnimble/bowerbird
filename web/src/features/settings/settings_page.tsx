@@ -489,19 +489,22 @@ const ToggleSetting = observer(function ToggleSetting({
   field,
   label,
   hint,
+  disabledReason,
 }: {
   field: SettingOf<boolean>;
   label: string;
   hint?: ReactNode;
+  disabledReason?: string;
 }): JSX.Element {
   const store = useAppSettingsStore();
   const write = useSettingWriter();
 
   return (
-    <SettingRow label={label} hint={hint}>
+    <SettingRow label={label} hint={hint} disabledReason={disabledReason}>
       <input
         type="checkbox"
         aria-label={label}
+        disabled={disabledReason != null}
         checked={store.settings?.[field] ?? false}
         onChange={(e) => void write({ [field]: e.currentTarget.checked } as UpdateSettingsRequest)}
       />
@@ -646,6 +649,12 @@ const AdvancedSettings = observer(function AdvancedSettings(): JSX.Element | nul
           field="hdr_preset"
           label="HDR encoder speed (0-10)"
           hint="Also applies to both. Higher numbers encode faster for a larger file at the same quality."
+          disabledReason={hdrOff}
+        />
+        <ToggleSetting
+          field="hdr_still_full_chroma"
+          label="Full colour resolution"
+          hint="Keeps colour at full resolution in the HDR image instead of quarter resolution. Sharper on saturated edges, and a better picture for the file size - but it roughly doubles the memory each worker needs while encoding, so leave it off on a machine that is tight on RAM. Does not affect the video copy, which cannot use it."
           disabledReason={hdrOff}
         />
       </div>

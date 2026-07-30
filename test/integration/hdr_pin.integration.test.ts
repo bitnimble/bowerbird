@@ -76,27 +76,35 @@ const SIZES = [
 ];
 const EDGES = [3840, 800, Number.POSITIVE_INFINITY];
 
-test('every argv the encoder builds, across the medium and size matrix', () => {
+// Chroma is a dimension here because it reaches three separate arguments that have to
+// agree - zscale's output format, avifenc's `--yuv`, and whether the target size is
+// forced even - and 4:2:0 with an odd dimension is refused outright rather than
+// rounded. It is fixed on the video, which has no choice about it (§10.7).
+test('every argv the encoder builds, across the medium, chroma and size matrix', () => {
   const rows: string[] = [];
   for (const medium of ['still', 'video'] as const) {
-    for (const size of SIZES) {
-      for (const maxEdge of EDGES) {
-        const options: HdrOptions = {
-          medium,
-          outputPath: '/out/rendition' + (medium === 'video' ? '.mp4' : '.avif'),
-          peakNits: 1000,
-          referenceWhiteNits: 203,
-          whiteQuantile: 0.9,
-          crf: 8,
-          preset: 8,
-          maxEdge,
-        };
-        const key = `${medium}|${size.width}x${size.height}|edge=${maxEdge}`;
-        rows.push(`${key}\tsize\t${hdrArgv(options, size.width, size.height, 'size')[0]}`);
-        rows.push(`${key}\tffmpeg\t${hdrArgv(options, size.width, size.height, 'ffmpeg').join(SEP)}`);
-        if (medium !== 'video') {
-          const argv = hdrArgv(options, size.width, size.height, 'avifenc', '/out/rendition.avif.y4m');
-          rows.push(`${key}\tavifenc\t${argv.join(SEP)}`);
+    for (const stillFullChroma of [false, true]) {
+      for (const size of SIZES) {
+        for (const maxEdge of EDGES) {
+          const options: HdrOptions = {
+            medium,
+            outputPath: '/out/rendition' + (medium === 'video' ? '.mp4' : '.avif'),
+            peakNits: 1000,
+            referenceWhiteNits: 203,
+            whiteQuantile: 0.9,
+            crf: 8,
+            preset: 8,
+            maxEdge,
+            stillFullChroma,
+          };
+          const chroma = stillFullChroma ? '444' : '420';
+          const key = `${medium}|${chroma}|${size.width}x${size.height}|edge=${maxEdge}`;
+          rows.push(`${key}\tsize\t${hdrArgv(options, size.width, size.height, 'size')[0]}`);
+          rows.push(`${key}\tffmpeg\t${hdrArgv(options, size.width, size.height, 'ffmpeg').join(SEP)}`);
+          if (medium !== 'video') {
+            const argv = hdrArgv(options, size.width, size.height, 'avifenc', '/out/rendition.avif.y4m');
+            rows.push(`${key}\tavifenc\t${argv.join(SEP)}`);
+          }
         }
       }
     }
@@ -131,6 +139,7 @@ test(
         crf: 8,
         preset: 8,
         maxEdge,
+        stillFullChroma: false,
       };
 
       // The SDR fit supplies the geometry; the HDR colour is refitted inside the

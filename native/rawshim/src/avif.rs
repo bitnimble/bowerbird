@@ -30,6 +30,8 @@ pub struct Cicp {
 
 pub struct StillOptions {
     pub cicp: Cicp,
+    /// `avifPixelFormat`, from the still's chroma setting (`hdr_args::Chroma`).
+    pub format: u32,
     /// libaom's quantizer, which is what avifenc's `--max` set.
     pub quantizer: i32,
     /// avifenc's `--speed`.
@@ -47,23 +49,8 @@ const AVIF_RANGE_LIMITED: u32 = 0;
 const AVIF_RANGE_FULL: u32 = 1;
 const AVIF_DEPTH: u32 = 10;
 const AVIF_PIXEL_FORMAT_YUV444: u32 = 1;
-const AVIF_PIXEL_FORMAT_YUV420: u32 = 3;
 const AVIF_RGB_FORMAT_RGB: u32 = 0;
 const AVIF_RESULT_OK: u32 = 0;
-
-/// Chroma for the HDR still, overridable with BOWERBIRD_STILL_CHROMA=420.
-///
-/// 4:4:4 by default and for the reason DESIGN 10.1 gives: 4:2:0 keeps luma whole and
-/// throws away three quarters of the chroma samples, which smears exactly the saturated
-/// edges a photograph is judged on. The knob exists because it is also the single
-/// largest lever on the encoder's working set, and what that trade is actually worth is
-/// a measurement rather than an opinion.
-fn still_chroma() -> u32 {
-    match std::env::var("BOWERBIRD_STILL_CHROMA").as_deref() {
-        Ok("420") => AVIF_PIXEL_FORMAT_YUV420,
-        _ => AVIF_PIXEL_FORMAT_YUV444,
-    }
-}
 
 /// PQ-encodes the graded frame in place, at 16 bits.
 ///
@@ -118,7 +105,7 @@ pub fn encode_still(
     let mut encoded = graded.into_owned();
     pq_encode(&mut encoded, options.peak_nits);
     write_avif(encoded.into(), 16, AVIF_RANGE_LIMITED, width, height, AVIF_DEPTH,
-        still_chroma(), &options.cicp, options.quantizer, options.speed, out_path)
+        options.format, &options.cicp, options.quantizer, options.speed, out_path)
 }
 
 /// An 8-bit sRGB rendition, straight to disk.
@@ -292,6 +279,7 @@ mod tests {
     fn a_frame_smaller_than_it_claims_is_refused_rather_than_read_past() {
         let options = StillOptions {
             cicp: Cicp { primaries: 9, transfer: 16, matrix: 9 },
+            format: AVIF_PIXEL_FORMAT_YUV444,
             quantizer: 20,
             speed: 8,
             peak_nits: 1000.0,

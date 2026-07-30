@@ -1443,7 +1443,7 @@ Four buffers went, in every case because nothing else was reading them:
 
 **What is left is libaom, and it is most of it.** Probed inside `write_avif` on the same frame: entering the encode is 239MB, the YUV planes add 138MB, dropping the RGB gives that back, and `avifEncoderWrite` alone then takes the peak to ~950MB. So roughly **700MB is libaom's own working set** for a 24MP 10-bit 4:4:4 all-intra frame, against ~145MB of ours. Two things follow. Copy elimination is close to done - the only frame this side still holds through the encode is the YUV planes libaom is reading. And that working set is *not* a threading trade: measured under `taskset`, two cores against eight moved the peak by under 30MB, so it is per-frame state and there is nothing to buy back by capping `maxThreads` or the tile count. Going lower means a different encoder, or an API that encodes in tiles, and libavif exposes neither.
 
-**4:2:0 is the one lever that moves the encoder, and it is measured rather than assumed** (`BOWERBIRD_STILL_CHROMA=420`). Dropping the still's chroma to a quarter of its samples halves what libaom has to carry. On the 24MP fixture, everything else held - same decode, same fit, same grade, same speed:
+**The still is 4:2:0, and that is a memory decision rather than a quality one** (`hdr_still_full_chroma` turns it back to 4:4:4). Dropping the still's chroma to a quarter of its samples halves what libaom has to carry, and libaom is the peak. On the 24MP fixture, everything else held - same decode, same fit, same grade, same speed:
 
 | | wall | CPU | peak RSS | bytes | SSIM |
 |---|---|---|---|---|---|
@@ -1455,7 +1455,11 @@ Four buffers went, in every case because nothing else was reading them:
 
 **Its rate-distortion is worse, and that is the finding rather than a caveat.** Read the first two rows together and 4:2:0 looks free - a third off the clock and 62% off the file - but they are not the same picture. Held to the same SSIM it needs **51% more bytes than 4:4:4**, which is what 4:4:4 being the right default for a photograph looks like when it is measured. What 4:2:0 buys is not quality per byte, it is time and memory: ~26% off the wall clock and 37% off the peak even at matched quality, and at native resolution it takes the peak from 960MB to 586MB.
 
-So it is a knob for a machine that is short of memory, not a better encode - which is why it is an environment variable here rather than a default, and why a setting for it should be described in those terms.
+So the setting is offered as what it is - spend memory to get a better picture per byte - rather than as a quality slider. Off is the default because the encoder's working set is the constraint that actually bites, and a library that would rather spend the RAM can say so.
+
+Three things follow the setting and all three have to agree, which is why the argv pin carries chroma as a dimension: zscale's output pixel format, avifenc's `--yuv`, and whether `target_size` forces even dimensions. That last one is not cosmetic - 4:2:0 has no odd dimensions, and only a native-resolution frame can arrive odd, since the masked-border crop takes asymmetric insets off it. Passing `--yuv 444` while feeding a 4:2:0 y4m silently encodes 4:2:0 anyway, which is how the subsampling went unnoticed once, so `avif_still.integration.test.ts` now runs its differential at both settings.
+
+The video does not follow it. 4:4:4 video is AV1 Profile 1, which Chromium refuses outright and no hardware decodes, so the twin is 4:2:0 whatever this says.
 
 Note where the peak lands once it is on: at 4:2:0 the encode falls to 420MB, which is exactly the decode's transient, so the binding constraint moves off libaom and onto LibRaw (§10.4) and further encoder tuning stops paying.
 
@@ -1996,6 +2000,7 @@ the bounds; the reasoning behind each number lives beside it there.
 | `hdr_white_quantile` | `0.90` | Quantile of the frame taken as diffuse white (§10.7.1) |
 | `hdr_crf` | `20` | Encoder quality for the HDR renditions; lower is better (§10.7) |
 | `hdr_preset` | `8` | Encoder speed; libaom `-cpu-used` 0-8 and avifenc `--speed` 0-10, both clamped (§10.7) |
+| `hdr_still_full_chroma` | `false` | 4:4:4 rather than 4:2:0 for the HDR still. Better per byte, roughly double the encoder's memory (§10.7). The video has no say |
 | `watch_enabled` | `true` | Auto-sync a library when its files change on disk (§9.8) |
 | `watch_debounce_ms` | `2000` | Debounce window for coalescing filesystem events (§9.8) |
 | `full_sync_at` | `03:00` | Local `HH:MM` for the daily full reconcile; `""` disables (§9.8) |

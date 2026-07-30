@@ -116,7 +116,10 @@ test('the HDR render is 10-bit PQ at full resolution', async () => {
     // The header's dimensions, not a decode's: raw_header pins that the two agree.
     const expected = readRawHeader(FIXTURE);
 
-    expect(info).toContain('pix_fmt=yuv444p10le');
+    // The shipped default rather than an invariant: `hdr_still_full_chroma` turns
+    // this into 4:4:4, and the argv pin covers both. What matters here is the depth
+    // and the transfer, which no setting moves.
+    expect(info).toContain('pix_fmt=yuv420p10le');
     expect(info).toContain('color_transfer=smpte2084');
     expect(info).toContain('color_primaries=bt2020');
     // Not fitted, unlike the HDR check renditions (§10.7).

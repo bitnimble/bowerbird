@@ -266,6 +266,7 @@ fn encode_graded(
             height,
             &crate::avif::StillOptions {
                 cicp: crate::avif::Cicp { primaries, transfer, matrix },
+                format: options.still_chroma.avif_format(),
                 quantizer: options.crf,
                 speed: options.preset.min(10),
                 // What the grade normalised full range to, which is what the transfer

@@ -314,10 +314,13 @@ export function encodeJpeg(image: ImageHandle, longEdge: number, quality: number
   return bytes;
 }
 
-// #[repr(C)] BbHdrOptions: u32 medium, 4 bytes padding, f64 peak/referenceWhite
-// /whiteQuantile, i32 crf, i32 preset, f64 maxEdge.
+// #[repr(C)] BbHdrOptions: u32 medium, u32 stillChroma, f64 peak/referenceWhite
+// /whiteQuantile, i32 crf, i32 preset, f64 maxEdge. `stillChroma` sits in the padding
+// `medium` already had before the first f64, so the struct is the size it always was
+// and the check below still passes on an unchanged number.
 const HDR_OPTIONS = {
   medium: 0,
+  stillChroma: 4,
   peakNits: 8,
   referenceWhiteNits: 16,
   whiteQuantile: 24,
@@ -339,6 +342,11 @@ export interface HdrOptions {
   whiteQuantile: number;
   crf: number;
   preset: number;
+  /**
+   * 4:4:4 rather than 4:2:0 for a still. Ignored for the video, which has no choice:
+   * 4:4:4 video is AV1 Profile 1, which Chromium refuses outright (§10.7).
+   */
+  stillFullChroma: boolean;
   /** Infinity for "whatever the frame is", which a native-resolution export asks. */
   maxEdge: number;
 }
@@ -353,6 +361,7 @@ export function hdrOptionsBuffer(options: HdrOptions): Uint8Array {
   const raw = new Uint8Array(size);
   const view = new DataView(raw.buffer);
   view.setUint32(HDR_OPTIONS.medium, MEDIA.indexOf(options.medium), true);
+  view.setUint32(HDR_OPTIONS.stillChroma, options.stillFullChroma ? 1 : 0, true);
   view.setFloat64(HDR_OPTIONS.peakNits, options.peakNits, true);
   view.setFloat64(HDR_OPTIONS.referenceWhiteNits, options.referenceWhiteNits, true);
   view.setFloat64(HDR_OPTIONS.whiteQuantile, options.whiteQuantile, true);

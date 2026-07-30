@@ -52,6 +52,8 @@ export interface RenditionTarget {
   hdrQuantizer: number;
   /** Encoder speed for the HDR path. */
   preset: number;
+  /** 4:4:4 rather than 4:2:0 for the HDR still (§10.7). */
+  stillFullChroma: boolean;
 }
 
 export interface RenditionJob {

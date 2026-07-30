@@ -116,6 +116,14 @@ export const SettingsSchema = z.object({
   // avifenc's `--speed` takes 0-10, libaom's `-cpu-used` stops at 8.
   hdr_crf: z.number().int().min(0).max(63),
   hdr_preset: z.number().int().min(0).max(10),
+  // Chroma for the HDR still. Off means 4:2:0, which is the default and a memory
+  // decision rather than a quality one: it halves what libaom carries, and the
+  // encoder is the peak. Measured on a 24MP frame, native resolution, 960MB against
+  // 586MB. It is worse per byte on a photograph - held to equal SSIM it wants 51%
+  // more of them - so this is here for a library that would rather spend the memory
+  // than the bitrate (§10.7). The video has no say: 4:4:4 video is AV1 Profile 1,
+  // which Chromium refuses and no hardware decodes.
+  hdr_still_full_chroma: z.boolean(),
 });
 export type Settings = z.infer<typeof SettingsSchema>;
 
@@ -146,6 +154,7 @@ export const DEFAULT_SETTINGS: Settings = {
   hdr_white_quantile: 0.9,
   hdr_crf: 20,
   hdr_preset: 8,
+  hdr_still_full_chroma: false,
 };
 
 export const UpdateSettingsRequestSchema = SettingsSchema.partial();

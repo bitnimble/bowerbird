@@ -15,8 +15,7 @@ use std::fmt::Write as _;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Medium {
-    /// AVIF, 4:4:4. Chrome renders it as HDR on Android 14+ and desktop, Safari on
-    /// macOS.
+    /// AVIF. Chrome renders it as HDR on Android 14+ and desktop, Safari on macOS.
     Still,
     /// One-frame AV1 in MP4, for Firefox, which honours no HDR image tagging but
     /// does composite HDR video.
@@ -40,6 +39,8 @@ impl Medium {
 #[derive(Clone)]
 pub struct EncodeOptions {
     pub medium: Medium,
+    /// Chroma for a still. Ignored for the video, which has no choice (`pixel_format`).
+    pub still_chroma: Chroma,
     pub output_path: String,
     /// Display peak the grade rolls highlights into, and the declared mastering peak.
     pub peak_nits: f64,
@@ -134,18 +135,22 @@ pub fn fitted(width: u32, height: u32, max_edge: f64) -> Size {
 /// even. `fitted` hands back the frame untouched when nothing needs shrinking, and a
 /// decode can arrive odd - the masked-border crop takes asymmetric insets off it - so a
 /// native-resolution 4:2:0 encode could be asked for an odd width and refuse outright.
-/// A still is 4:4:4 and does not care, which is why this is the one place the two media
-/// still differ.
+///
+/// So it follows the chroma rather than the medium: 4:2:0 has no odd dimensions on
+/// either, and 4:4:4 does not care on either. Only `fitted` returning the frame
+/// untouched can produce an odd number here, which makes this a native-resolution
+/// concern alone.
 pub fn target_size(width: u32, height: u32, options: &EncodeOptions) -> Size {
     let size = fitted(width, height, options.max_edge);
-    match options.medium {
-        // Down to even, never up. `even` rounds to nearest, which is right inside
-        // `fitted` where the number is already below the source, and wrong here: a
-        // 533-row frame would be asked for 534 and the encoder would be upscaling to
-        // invent a row. Losing one is the only direction available.
-        Medium::Video => Size { width: size.width & !1, height: size.height & !1 },
-        _ => size,
+    let subsampled = !options.medium.is_still() || options.still_chroma.subsampled();
+    if !subsampled {
+        return size;
     }
+    // Down to even, never up. `even` rounds to nearest, which is right inside `fitted`
+    // where the number is already below the source, and wrong here: a 533-row frame
+    // would be asked for 534 and the encoder would be upscaling to invent a row. Losing
+    // one is the only direction available.
+    Size { width: size.width & !1, height: size.height & !1 }
 }
 
 /// A number as JavaScript's `String()` would render it, since these strings are
@@ -159,22 +164,57 @@ fn num(value: f64) -> String {
     format!("{value}")
 }
 
-/// The still is 4:4:4. It is a photograph, and 4:2:0 keeps luma at full resolution
-/// while dropping chroma to a quarter of the samples, smearing precisely the
-/// saturated edges a photo is judged on. Not identity/RGB: avifenc relabels y4m
-/// planes as GBR without converting them (SSIM 0.55 against the correct decode),
-/// and RGB compresses worse than decorrelated YCbCr anyway.
+/// The still's chroma, which is the `hdr_still_full_chroma` setting.
 ///
-/// The video is 4:2:0, which is AV1 Profile 0. 4:4:4 was tried and reverted: it is
-/// Profile 1, Chromium refuses it outright, Safari cannot hardware-decode it, and on
+/// 4:2:0 by default, and that is a memory decision rather than a quality one. It keeps
+/// luma whole and drops chroma to a quarter of the samples, which is measurably worse
+/// per byte on a photograph - held to equal SSIM it needs 51% more of them - but it
+/// roughly halves what libaom carries, and the encoder is the peak (DESIGN 10.7).
+/// 4:4:4 is there for a library that would rather spend the memory.
+///
+/// Not identity/RGB either way: avifenc relabels y4m planes as GBR without converting
+/// them (SSIM 0.55 against the correct decode), and RGB compresses worse than
+/// decorrelated YCbCr anyway.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Chroma {
+    Yuv420,
+    Yuv444,
+}
+
+impl Chroma {
+    /// libavif's `avifPixelFormat`.
+    pub fn avif_format(self) -> u32 {
+        match self {
+            Chroma::Yuv420 => 3,
+            Chroma::Yuv444 => 1,
+        }
+    }
+
+    fn subsampled(self) -> bool {
+        self == Chroma::Yuv420
+    }
+
+    fn y4m(self) -> &'static str {
+        match self {
+            Chroma::Yuv420 => "420",
+            Chroma::Yuv444 => "444",
+        }
+    }
+}
+
+/// The video is always 4:2:0, which is AV1 Profile 0. 4:4:4 was tried and reverted: it
+/// is Profile 1, Chromium refuses it outright, Safari cannot hardware-decode it, and on
 /// Firefox/Windows it played but rendered washed out - PQ code values shown with no
-/// transfer applied, which is what a decode that never reaches the HDR compositor
-/// looks like.
+/// transfer applied, which is what a decode that never reaches the HDR compositor looks
+/// like. So it is not a setting there, only on the still.
 ///
 /// Both are 10-bit, which is what a PQ curve's shadows need: 8 bits band visibly
 /// where it stretches them.
-fn pixel_format(medium: Medium) -> &'static str {
-    if medium.is_still() { "yuv444p10le" } else { "yuv420p10le" }
+fn pixel_format(options: &EncodeOptions) -> &'static str {
+    match options.medium.is_still() && options.still_chroma == Chroma::Yuv444 {
+        true => "yuv444p10le",
+        false => "yuv420p10le",
+    }
 }
 
 /// The grade hands back display-referred Rec.2020 linear at full range, so the input
@@ -200,7 +240,7 @@ fn filter_chain(options: &EncodeOptions, resize: Option<Size>) -> String {
         target.transfer.name,
         target.matrix.name,
         target.primaries.name,
-        pixel_format(options.medium),
+        pixel_format(options),
     );
     chain
 }
@@ -315,8 +355,9 @@ pub fn avifenc_args(options: &EncodeOptions, y4m_path: &str) -> Vec<String> {
     }
     // avifenc takes the chroma from the y4m and this flag only has to agree with it:
     // passing 444 while feeding a 4:2:0 y4m silently encoded 4:2:0 anyway, which is
-    // how the subsampling went unnoticed once.
-    args.push("444".to_string());
+    // how the subsampling went unnoticed once. `filter_chain` decides what the y4m
+    // actually is, so both read the same setting.
+    args.push(options.still_chroma.y4m().to_string());
     args.push("--speed".to_string());
     args.push(options.preset.min(10).to_string());
     args.push("--min".to_string());
@@ -346,8 +387,13 @@ mod tests {
     use super::*;
 
     fn options(medium: Medium, max_edge: f64) -> EncodeOptions {
+        options_with(medium, max_edge, Chroma::Yuv420)
+    }
+
+    fn options_with(medium: Medium, max_edge: f64, still_chroma: Chroma) -> EncodeOptions {
         EncodeOptions {
             medium,
+            still_chroma,
             output_path: "/out/rendition.avif".to_string(),
             peak_nits: 1000.0,
             reference_white_nits: 203.0,
@@ -373,15 +419,23 @@ mod tests {
     }
 
     #[test]
-    fn an_odd_frame_loses_a_row_to_the_video_rather_than_gaining_one() {
+    fn an_odd_frame_loses_a_row_to_subsampled_chroma_rather_than_gaining_one() {
         // 4:2:0 has no odd dimensions, and at native size nothing else is rounding
         // them - the masked-border crop can leave a frame odd. It has to come down:
         // asking a 533-row source for 534 makes the encoder invent a row.
+        //
+        // It follows the chroma rather than the medium, which is the part worth
+        // pinning: the video has no choice, but the still does, and the setting that
+        // gives it one has to reach here as well as the pixel format.
         let video = options(Medium::Video, f64::INFINITY);
         assert_eq!(target_size(801, 533, &video), Size { width: 800, height: 532 });
-        // The still is 4:4:4 and keeps every pixel it was given.
-        let still = options(Medium::Still, f64::INFINITY);
-        assert_eq!(target_size(801, 533, &still), Size { width: 801, height: 533 });
+
+        let subsampled = options_with(Medium::Still, f64::INFINITY, Chroma::Yuv420);
+        assert_eq!(target_size(801, 533, &subsampled), Size { width: 800, height: 532 });
+
+        // 4:4:4 keeps every pixel it was given.
+        let full = options_with(Medium::Still, f64::INFINITY, Chroma::Yuv444);
+        assert_eq!(target_size(801, 533, &full), Size { width: 801, height: 533 });
     }
 
     #[test]

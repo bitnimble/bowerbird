@@ -41,6 +41,7 @@ function options(overrides: Partial<HdrOptions> = {}): HdrOptions {
     whiteQuantile: QUANTILE,
     crf: 40,
     preset: 8,
+    stillFullChroma: false,
     maxEdge: Number.POSITIVE_INFINITY,
     ...overrides,
   };

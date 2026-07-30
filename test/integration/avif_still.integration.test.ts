@@ -23,20 +23,21 @@ const FIXTURE = `${import.meta.dir}/../fixtures/DSC02981.ARW`;
 
 const PROBE = `
 import { decodeRawImage, encodeHdrRendition, freeImage } from '${import.meta.dir}/../../src/services/processing/rawshim_ops';
-const [file, out, medium] = process.argv.slice(-3);
+const [file, out, medium, chroma] = process.argv.slice(-4);
 const image = decodeRawImage(file, 16, 'rec2020-linear', 640);
 try {
   encodeHdrRendition(image, null, {
     medium, outputPath: out, peakNits: 1000, referenceWhiteNits: 203,
     whiteQuantile: 0.9, crf: 30, preset: 10, maxEdge: 640,
+    stillFullChroma: chroma === '444',
   });
 } finally {
   freeImage(image);
 }
 `;
 
-async function encode(out: string, medium: string, viaAvifenc: boolean): Promise<void> {
-  const child = Bun.spawn(['bun', '-e', PROBE, '--', FIXTURE, out, medium], {
+async function encode(out: string, medium: string, viaAvifenc: boolean, chroma: string): Promise<void> {
+  const child = Bun.spawn(['bun', '-e', PROBE, '--', FIXTURE, out, medium, chroma], {
     env: { ...process.env, ...(viaAvifenc ? { BOWERBIRD_AVIFENC: '1' } : {}), LOG_LEVEL: 'warn' },
     stdout: 'pipe',
     stderr: 'pipe',
@@ -66,36 +67,46 @@ function psnr(a: string, b: string): number {
   return found[1] === 'inf' ? Number.POSITIVE_INFINITY : Number(found[1]);
 }
 
-test(
-  'the linked encoder agrees with avifenc',
-  async () => {
-    const dir = mkdtempSync(path.join(tmpdir(), 'bb-avif-'));
-    try {
-      const linked = path.join(dir, 'linked.avif');
-      const spawned = path.join(dir, 'spawned.avif');
-      await encode(linked, 'still', false);
-      await encode(spawned, 'still', true);
+// Both chroma settings, because they are two different agreements. The linked path
+// reads the format off `avifImage`, the spawned one gets it from the y4m zscale wrote
+// and an `--yuv` flag that has to say the same thing - and passing 444 while feeding a
+// 4:2:0 y4m silently encoded 4:2:0 anyway, which is how the subsampling went unnoticed
+// once (`hdr_args.rs`).
+for (const [chroma, pixFmt] of [
+  ['420', 'pix_fmt=yuv420p10le'],
+  ['444', 'pix_fmt=yuv444p10le'],
+] as const) {
+  test(
+    `the linked encoder agrees with avifenc, ${chroma}`,
+    async () => {
+      const dir = mkdtempSync(path.join(tmpdir(), 'bb-avif-'));
+      try {
+        const linked = path.join(dir, 'linked.avif');
+        const spawned = path.join(dir, 'spawned.avif');
+        await encode(linked, 'still', false, chroma);
+        await encode(spawned, 'still', true, chroma);
 
-      // Everything a browser reads to decide what the file is, including the CICP
-      // that decides whether it is treated as HDR at all.
-      expect(probe(linked)).toBe(probe(spawned));
-      expect(probe(linked)).toContain('pix_fmt=yuv444p10le');
-      expect(probe(linked)).toContain('color_transfer=smpte2084');
-      expect(probe(linked)).toContain('color_primaries=bt2020');
+        // Everything a browser reads to decide what the file is, including the CICP
+        // that decides whether it is treated as HDR at all.
+        expect(probe(linked)).toBe(probe(spawned));
+        expect(probe(linked)).toContain(pixFmt);
+        expect(probe(linked)).toContain('color_transfer=smpte2084');
+        expect(probe(linked)).toContain('color_primaries=bt2020');
 
-      // ~1 code value at 10 bits is the intermediate quantisation; a picture apart
-      // would be tens of dB below this.
-      const score = psnr(linked, spawned);
-      expect(score).toBeGreaterThan(50);
-      // Not infinite, because infinite means both runs took the same path and this
-      // compared a file with itself. That is how a differential test dies quietly:
-      // rename the environment variable, or let the guard in `encode_graded` start
-      // declining, and every assertion above still passes having tested nothing.
-      expect(score).not.toBe(Number.POSITIVE_INFINITY);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  },
-  180_000,
-);
+        // ~1 code value at 10 bits is the intermediate quantisation; a picture apart
+        // would be tens of dB below this.
+        const score = psnr(linked, spawned);
+        expect(score).toBeGreaterThan(50);
+        // Not infinite, because infinite means both runs took the same path and this
+        // compared a file with itself. That is how a differential test dies quietly:
+        // rename the environment variable, or let the guard in `encode_graded` start
+        // declining, and every assertion above still passes having tested nothing.
+        expect(score).not.toBe(Number.POSITIVE_INFINITY);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+    180_000,
+  );
+}
 

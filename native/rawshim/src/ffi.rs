@@ -169,6 +169,9 @@ fn decode_encoded(encoded: &[u8], long_edge: u32) -> *mut BbImage {
 pub struct BbHdrOptions {
     /// 0 still, 1 video.
     pub medium: u32,
+    /// 0 for 4:2:0, 1 for 4:4:4. Sits in the padding `medium` already had before
+    /// `peak_nits`'s alignment, so the struct is the same size it was.
+    pub still_chroma: u32,
     pub peak_nits: f64,
     pub reference_white_nits: f64,
     pub white_quantile: f64,
@@ -185,6 +188,10 @@ impl BbHdrOptions {
                 0 => hdr_args::Medium::Still,
                 1 => hdr_args::Medium::Video,
                 _ => return None,
+            },
+            still_chroma: match self.still_chroma {
+                1 => hdr_args::Chroma::Yuv444,
+                _ => hdr_args::Chroma::Yuv420,
             },
             output_path: output_path.to_string(),
             peak_nits: self.peak_nits,
