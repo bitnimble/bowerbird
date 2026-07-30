@@ -2850,12 +2850,25 @@ pays for that inset is **the band's own height**: it covers the display rows the
 arithmetic gave it *plus* `BAND_EXTRA`. The alternative, taking it off the cells,
 which is all a uniform pitch could afford, drew the same frame at two sizes.
 
-The inset is **top and bottom only**, because the sides have nowhere to put it. A
-band wider than the grid, with its columns inside its padding, was tried: it put a
-6px kink in the one line the eye follows - a band's own edge against the edge of the
-tile it is joined to - and gained nothing else. So the outermost members reach the
-band's edges and its ring lands on them, which is how every ring in the grid is
-drawn: the selection's sits on its own tile the same way.
+The inset is **top and bottom only**, and the sides need none, because **every tile
+holds its photograph inside its cell** (`TILE_PAD`). That is the piece that makes the
+rest of it work:
+
+- A **ring at the cell's edge frames the photograph instead of cropping it.** The
+  selection's ring did sit on the picture, which is what made a band's ring landing
+  on its outermost members look like a mistake rather than an outline.
+- A band's ring can therefore be **at the cell edge**, which is where the ring of the
+  tile it is joined to is: one straight line down the two of them. A band wider than
+  the grid, with its columns inside its own side padding, was tried instead and put a
+  kink in the one line the eye actually follows.
+- The **gap between two photographs is the gap plus two insets** (`GRID_GAP` plus
+  twice `TILE_PAD`), which is where the air between frames comes from. `GRID_GAP`
+  itself stays small, because it is what separates two *rings*, and two rings a
+  photograph's width apart do not read as a pair.
+
+The 3:2 therefore belongs to the photograph rather than the cell, and
+`gridRowHeight` says so: a cell is the 3:2 picture plus its inset, or every frame in
+the collection would carry a hairline bar.
 
 So **the pitch is uniform except for the bands**, which is one special case in one
 place: `topOfRow` and `rowAtTop` in `bands.ts` are the only conversions between

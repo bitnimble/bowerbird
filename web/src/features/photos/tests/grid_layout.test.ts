@@ -3,6 +3,7 @@ import {
   BAND_EXTRA,
   BAND_PAD,
   BLOCK,
+  TILE_PAD,
   GRID_GAP,
   RAIL_HEIGHT,
   anchorLimit,
@@ -19,9 +20,9 @@ import {
 
 describe('gridColumns', () => {
   test('fits as many tiles of the minimum size as the width allows', () => {
-    // Three 240px tiles and two gaps is 726, four would need 969.
-    expect(gridColumns(969, 240)).toBe(4);
-    expect(gridColumns(968, 240)).toBe(3);
+    // Four 240px cells and three gaps is 966; a pixel less and only three fit.
+    expect(gridColumns(966, 240)).toBe(4);
+    expect(gridColumns(965, 240)).toBe(3);
   });
 
   test('never drops below one, however narrow', () => {
@@ -31,9 +32,11 @@ describe('gridColumns', () => {
 });
 
 describe('gridRowHeight', () => {
-  test('is the 3:2 cell plus the gap under it', () => {
-    // Four columns of (1000 - 3*3)/4 = 247.75, at 3:2, plus the gap.
-    expect(gridRowHeight(1000, 4)).toBeCloseTo(247.75 / 1.5 + GRID_GAP);
+  // The 3:2 is the photograph's, not the cell's: the cell is that plus the room the
+  // tile keeps around it, or every frame in the grid would carry a hairline bar.
+  test('is the 3:2 photograph, its own inset, and the gap under it', () => {
+    const cell = (1000 - 3 * GRID_GAP) / 4;
+    expect(gridRowHeight(1000, 4)).toBeCloseTo((cell - 2 * TILE_PAD) / 1.5 + 2 * TILE_PAD + GRID_GAP);
   });
 });
 

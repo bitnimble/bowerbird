@@ -36,8 +36,8 @@ async function expectInsetFromBand(page: import('@playwright/test').Page, where:
   for (const locator of members) {
     const member = await box(locator);
     expect(member.height, `${where}: a member with no height`).toBeGreaterThan(0);
-    expect(member.y - band.y, `${where}: top inset`).toBeGreaterThanOrEqual(5);
-    expect(band.y + band.height - (member.y + member.height), `${where}: bottom inset`).toBeGreaterThanOrEqual(5);
+    expect(member.y - band.y, `${where}: top inset`).toBeGreaterThanOrEqual(1.5);
+    expect(band.y + band.height - (member.y + member.height), `${where}: bottom inset`).toBeGreaterThanOrEqual(1.5);
     expect(member.x, `${where}: left edge`).toBeGreaterThanOrEqual(band.x - 0.5);
     expect(member.x + member.width, `${where}: right edge`).toBeLessThanOrEqual(band.x + band.width + 0.5);
   }

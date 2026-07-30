@@ -3,8 +3,16 @@
 // numbers the store already holds, so nothing measures the DOM to decide what to
 // render (§18.3.2).
 
-// Mirrors `--grid-gap`, which .grid's own gap comes from.
-export const GRID_GAP = 3;
+// Mirrors `--grid-gap`, which .grid's own gap comes from. The gap between two
+// *cells*: a tile stands its ring off its photograph by `TILE_PAD`, so what the
+// reader sees between two photographs is this plus twice that.
+export const GRID_GAP = 2;
+
+// How far inside its cell a tile's photograph sits: the ring, and the room the ring
+// stands off the picture. Mirrors `.tile`'s padding. It is what lets a band's ring
+// land on its outermost members without landing on a photograph (§19.6), and what
+// makes a selected tile's ring read as a frame rather than a crop.
+export const TILE_PAD = 4;
 
 // The height .grid--list fixes every row to. A list row that could grow with its
 // contents would make the scroll's height a measurement rather than a sum.
@@ -20,10 +28,10 @@ export const TILE_ASPECT = 3 / 2;
 // rather than as part of the one being worked through (§19.6).
 export const BAND_LINE_CAP = 1.3;
 
-// The breathing room inside a band's outline, so its members do not sit on it.
-// One value for every view (`.grid__band`'s padding), which is what makes a band
-// look like the same thing in all three.
-export const BAND_PAD = 6;
+// The breathing room inside a band's outline, on top of what its members already
+// keep for themselves (`TILE_PAD`). One value for every view (`.grid__band`'s
+// padding), which is what makes a band look like the same thing in all three.
+export const BAND_PAD = 2;
 
 // What a band adds to the height of the display rows it covers: its own inset, top
 // and bottom. Its rows are the grid's rows and its members the grid's cells, so it
@@ -108,7 +116,10 @@ export function gridColumns(width: number, tileSize: number): number {
 /** Row pitch: the cell's own height plus the gap beneath it. */
 export function gridRowHeight(width: number, columns: number): number {
   if (width <= 0) return LIST_ROW_H + GRID_GAP;
-  return (width - GRID_GAP * (columns - 1)) / columns / TILE_ASPECT + GRID_GAP;
+  const cell = (width - GRID_GAP * (columns - 1)) / columns;
+  // The 3:2 belongs to the *photograph*, not the cell: the cell is that plus the
+  // room the tile keeps around it, or every frame would carry a hairline bar.
+  return (cell - 2 * TILE_PAD) / TILE_ASPECT + 2 * TILE_PAD + GRID_GAP;
 }
 
 /**

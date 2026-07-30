@@ -29,10 +29,13 @@
   --control-h: 30px;
   --control-text: 13px;
   --radius: 4px;
-  /* Mirrors GRID_GAP, which the row arithmetic is built on (`grid_layout.ts`). */
-  --grid-gap: 3px;
-  /* Mirrors BAND_PAD: the inset a band is drawn with, outside its members (§19.6). */
-  --band-pad: 6px;
+  /* Mirrors GRID_GAP, which the row arithmetic is built on (`grid_layout.ts`). The
+     gap between two cells; between two photographs it is this plus two tile pads. */
+  --grid-gap: 2px;
+  /* Mirrors TILE_PAD: the ring, and the room it stands off the photograph. */
+  --tile-pad: 4px;
+  /* Mirrors BAND_PAD: what a band keeps beyond what its members keep (§19.6). */
+  --band-pad: 2px;
   /* One ring, worn by a selected tile, an open stack's tile and that stack's band
      (§19.6): three parts of one thing, so the weight is one value rather than
      three that drifted apart. The radius is `--radius`, and the tile carries it
@@ -1138,6 +1141,11 @@ p.ui-text--mono {
    object, and clicking the half of it that says which photo it is did nothing.
    So the hit stays the tile-wide overlay it is everywhere else and the rendition
    is painted at the left of it, with the foot in the column beside. */
+/* A row is read from its left edge, and its thumbnail keeps its own inset. */
+.grid--list .tile__hit {
+  padding: 0;
+}
+
 .grid--list .tile__hit img {
   width: 120px;
   height: 100%;
@@ -1185,11 +1193,17 @@ p.ui-text--mono {
 }
 
 /* Covers the tile so a click anywhere selects the photo; the badges and marks sit
-   above it. */
+   above it.
+
+   The padding is what holds the photograph inside its cell, so the ring at the
+   cell's edge frames it rather than cropping it - and so a band's ring, which lands
+   on its outermost members' cells, lands on no photograph either (§19.6). It is here
+   rather than on `.tile` because an `inset: 0` child resolves against the padding
+   box, which padding does not shrink; and the whole cell stays one pointer target. */
 .tile__hit {
   position: absolute;
   inset: 0;
-  padding: 0;
+  padding: var(--tile-pad);
   border: 0;
   background: none;
   cursor: pointer;
@@ -1215,8 +1229,8 @@ p.ui-text--mono {
    tile. Declared after the list override, which it ties with on specificity. */
 .tile img:not(.is-loaded) {
   position: absolute;
-  inset: 0;
-  height: 100%;
+  inset: var(--tile-pad);
+  height: auto;
 }
 
 /* The ring is drawn by an overlay rather than an inset shadow: the rendition is a
@@ -1472,21 +1486,6 @@ p.ui-text--mono {
   left: calc(var(--fuse-r) - var(--ring));
   border-left: var(--ring) solid var(--band);
   border-bottom-left-radius: var(--radius);
-}
-
-/* A member is the tile the collection would have drawn: its column is the grid's
-   column and the 3:2 the grid gives every photo gives it the grid's height. Stated
-   rather than inherited, because `.grid--grid .tile` turns the ratio off - a grid
-   cell has the shape already. */
-.grid--grid.grid__band .tile {
-  aspect-ratio: 3 / 2;
-  width: 100%;
-  height: auto;
-  /* What the ratio leaves over inside the row, split top and bottom. Not stretch,
-     which is the default: stretch against an aspect ratio is a corner the engines
-     read differently, and Firefox took neither axis as definite and laid every
-     member out at no height at all. */
-  align-self: center;
 }
 
 /* A line of a masonry band's members is capped: nothing there bounds one - the band

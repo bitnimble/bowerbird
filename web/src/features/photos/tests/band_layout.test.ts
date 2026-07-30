@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { PhotoSummary } from '../../../api/client';
-import { BAND_EXTRA } from '../grid_layout';
+import { BAND_EXTRA, GRID_GAP } from '../grid_layout';
 import { BAND_COLOURS, PhotosStore } from '../photos_store';
 import type { AppSettingsStore } from '../../settings/app_settings_store';
 import type { LibrariesStore } from '../../libraries/libraries_store';
@@ -90,7 +90,7 @@ describe('the keyboard cursor accounts for open bands', () => {
     const drawnAt = 26 * store.rowHeight + BAND_EXTRA;
     const target = store.focusContentTop;
     expect(target).not.toBeNull();
-    expect(target).toBeCloseTo(drawnAt + store.rowHeight - 3 - store.viewportHeight, 0);
+    expect(target).toBeCloseTo(drawnAt + store.rowHeight - GRID_GAP - store.viewportHeight, 0);
   });
 });
 
