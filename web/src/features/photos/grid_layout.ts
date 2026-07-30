@@ -14,7 +14,13 @@ export const LIST_ROW_H = 62;
 export const TILE_ASPECT = 3 / 2;
 
 // The breathing room inside a band's outline, so its members do not sit on it.
-export const BAND_PAD = 6;
+//
+// Half the gap, top and bottom, because that is the whole budget: the row model
+// gives a band `rows * rowHeight`, its cells and the gaps between them take
+// `rows * (rowHeight - GRID_GAP) + (rows - 1) * GRID_GAP`, and what is left over is
+// one gap. Spending more meant taking it off the cells, which drew the same
+// photograph at two shapes (§19.6). Mirrored by `.grid__band`'s padding.
+export const BAND_PAD = GRID_GAP / 2;
 
 // How many photos one list request covers, and the unit rows are cached and
 // evicted by. A hundred is a screenful at any zoom, so a scroll never waits on
@@ -95,16 +101,18 @@ export function gridRowHeight(width: number, columns: number): number {
 }
 
 /**
- * Cell height for the rows inside a band, which are shorter than the grid's.
+ * Cell height for the rows inside a band, which is **the grid's own**.
  *
- * A band occupies exactly the display rows the row arithmetic gave it, so the
- * padding inside its outline has to come out of its own cells rather than out of
- * the collection below it - which is what pushed the last row of members through
- * the bottom of the band.
+ * A member is the same photograph as any other row of the collection and is drawn
+ * at the same size: it was a fraction shorter for a while, to pay for the band's
+ * padding out of its own cells, and that was enough to letterbox a frame that
+ * filled its cell in the grid. A band occupies exactly the display rows the row
+ * arithmetic gave it either way; what pays for the padding is the one gap those
+ * rows have spare (`BAND_PAD`).
  */
 export function bandRowHeight(rows: number, rowHeight: number): number {
   if (rows <= 0) return 0;
-  return Math.max(1, (rows * rowHeight - (rows - 1) * GRID_GAP - 2 * BAND_PAD) / rows);
+  return Math.max(1, rowHeight - GRID_GAP);
 }
 
 /**

@@ -1354,10 +1354,14 @@ p.ui-text--mono {
    and a border would spend rows' worth of it and push the last row into the grid
    below. The padding is paid for by the shorter cells the band hands its rows
    (`bandRowHeight`), for the same reason. */
+/* The padding is half a gap, which is the whole budget: the row model gives a band
+   `rows * rowHeight` and its cells - the grid's own, so a member is drawn at the
+   size any other row is - leave exactly one gap over (`BAND_PAD`). More than that
+   came off the cells, and drew the same photograph at two shapes. */
 .grid__band {
   background: rgba(120, 140, 180, 0.1);
   border-radius: var(--radius);
-  padding: 6px;
+  padding: calc(var(--grid-gap) / 2);
 }
 
 .grid__band::after {
@@ -1418,11 +1422,12 @@ p.ui-text--mono {
   pointer-events: none;
 }
 
-/* A band's cells are as wide as the grid's but shorter, since a band pays for its
-   padding out of its own rows (`bandRowHeight`) - so a photo that filled its cell
-   in the grid was letterboxed inside a band, which is the one place the same
-   photograph is drawn at two shapes. The member keeps the grid's 3:2 cell at
-   whatever height the band has to give it, centred in the width that leaves. */
+/* A member is the grid's own cell: the same height (`bandRowHeight`) and, from the
+   3:2 that height implies, the same width - which is a hair over the cell the
+   band's own padding leaves, so it is centred and the halves of a hair fall in the
+   gaps either side. Without the ratio a member was letterboxed by whatever the
+   padding took off, which is the one place the same photograph was drawn at two
+   shapes. */
 .grid--grid.grid__band .tile {
   aspect-ratio: 3 / 2;
   width: auto;

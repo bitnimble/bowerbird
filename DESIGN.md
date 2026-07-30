@@ -2808,15 +2808,19 @@ below is displaced downwards and otherwise untouched. Band rows are ordinary til
 rows at the same cell geometry, marked by their background rather than their
 size - `visibleRows` takes **one** row height for the whole list, so anything
 that gave a band its own height would put the scroll height back into the DOM,
-which the virtual grid exists to avoid. A band is drawn inset from its outline,
-and pays for that padding out of the height of its own cells (`bandRowHeight`)
-rather than out of the collection below it.
+which the virtual grid exists to avoid.
 
-Which leaves a band's cells as wide as the grid's but **shorter**, and in grid mode
-that letterboxed a photograph inside a band that filled its cell in the grid - the
-one place the same frame was drawn at two shapes. A member therefore keeps the
-grid's 3:2 cell at whatever height the band has to give it, centred in the width
-that leaves.
+**A member is drawn at the grid's own cell size**, since it is the same photograph
+as any other row of the collection. The band is drawn inset from its outline, and
+what pays for that inset is **the one gap its rows have spare**: the row model gives
+a band `rows * rowHeight`, and its cells plus the gaps between them come to
+`rows * rowHeight - GRID_GAP`, so half a gap top and bottom is the entire budget
+(`BAND_PAD`). It used to take 6px off every cell instead, which made a member a
+fraction shorter than the grid's cell - enough to letterbox a frame that filled
+its cell in the grid, the one place the same photograph was drawn at two shapes.
+The 3:2 the cell height implies is stated on the member as well, so the sliver the
+band's own side padding takes off its cell does not come back as a bar; it is
+centred, and the halves of that sliver fall in the gaps either side.
 
 **Masonry** has no row model to hang a band off, so an open stack's members break
 the line themselves: the band is a full-width item on the block's own flex line.

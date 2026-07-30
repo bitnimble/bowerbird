@@ -48,6 +48,12 @@ describe('bandRowHeight', () => {
     }
   });
 
+  // The whole point of the budget: a member is the same size as any other row of
+  // the collection, so the same frame is not drawn at two shapes (§19.6).
+  test('is the grid\'s own cell height, whatever the band holds', () => {
+    for (const rows of [1, 2, 7]) expect(bandRowHeight(rows, 200)).toBe(200 - GRID_GAP);
+  });
+
   test('stays positive when the band is given less height than its padding', () => {
     expect(bandRowHeight(1, 4)).toBeGreaterThan(0);
     expect(bandRowHeight(0, 200)).toBe(0);
