@@ -90,6 +90,14 @@ describe('the rail composes with the anchor', () => {
     runInAction(() => (store.total = 100)); // a filter that emptied most of the library
     expect(store.anchorTop).toBe(0);
   });
+
+  test('and does not spring back when the collection returns', () => {
+    const { store } = build(LONG);
+    runInAction(() => (store.railAnchor = 5_000_000));
+    runInAction(() => (store.total = 100)); // binned
+    runInAction(() => (store.total = LONG)); // and undone
+    expect(store.anchorTop).toBe(0);
+  });
 });
 
 describe('a collection the rail covers whole is a plain native scroll', () => {

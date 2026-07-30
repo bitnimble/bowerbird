@@ -22,6 +22,7 @@ import type { Ordering } from '../../api/client';
 import { usePhotosStore, usePresenters } from '../../app/stores_context';
 import { Button, CheckMenu, ICON, type Option, PopoverButton, SegmentedControl, Select, Slider, Text, TextField } from '../../ui/ui';
 import { activeFilters, type PhotoFilters, type ViewMode } from './photos_store';
+import { onScreenSpan } from './photo_grid';
 
 export const ORDERINGS: Option<Ordering>[] = [
   { value: 'taken_desc', label: 'Newest first' },
@@ -272,7 +273,13 @@ export const GridControls = observer(function GridControls(): JSX.Element {
         Select all
       </Button>
 
-      <Button onClick={photos.selectVisible} disabled={store.total === 0}>
+      <Button
+        onClick={() => {
+          const span = onScreenSpan();
+          if (span != null) photos.selectSpan(span);
+        }}
+        disabled={store.total === 0}
+      >
         <SquareDashed size={ICON} />
         Select visible
       </Button>

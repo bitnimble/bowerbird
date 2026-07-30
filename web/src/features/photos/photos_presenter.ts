@@ -31,6 +31,7 @@ import {
   type ViewMode,
 } from './photos_store';
 import { type IndexSample, SelectionRanges, rebase } from './selection';
+import type { Span } from '../../ui/virtual_rows';
 import { loadViewState, saveViewState } from './view_state';
 
 // Blocks of rows kept in memory at once. A scroll through a hundred thousand
@@ -112,6 +113,17 @@ export class PhotosPresenter {
       equals: comparer.structural,
       fireImmediately: true,
     });
+    // `anchorTop` clamps the anchor to a collection that may have shrunk, but the
+    // raw value it clamps has to come down with it: binning most of a library
+    // shortens the collection and undoing the bin lengthens it again, and an
+    // anchor left where it was springs the reader back to a position they were
+    // clamped out of a moment before.
+    reaction(() => this.store.anchorLimit, this.settleAnchor);
+  }
+
+  @action.bound
+  private settleAnchor(): void {
+    this.store.railAnchor = this.store.anchorTop;
   }
 
   async open(source: PhotoSource): Promise<void> {
@@ -583,12 +595,17 @@ export class PhotosPresenter {
     this.focusAt(index);
   }
 
-  /** Everything the grid currently has on screen. */
+  /**
+   * A run of positions, for "Select visible".
+   *
+   * The span comes from the view because the store cannot answer it: `visible` is
+   * what is *mounted*, which is two overscan rows more than the reader can see in
+   * grid and list, and a whole hundred-photo block in masonry (`onScreenSpan`).
+   */
   @action.bound
-  selectVisible(): void {
+  selectSpan(span: Span): void {
     this.takeSelection();
-    const { from, to } = this.store.visible;
-    this.store.selection = SelectionRanges.of(from, to - 1);
+    this.store.selection = SelectionRanges.of(span.from, span.to - 1);
     this.store.lastToggled = null;
   }
 

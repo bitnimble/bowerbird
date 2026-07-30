@@ -10,6 +10,7 @@ import { Text } from '../../ui/ui';
 import { BLOCK, GRID_GAP, bandRowHeight } from './grid_layout';
 import { bandRows } from './bands';
 import { renditionVersion, type Expansion, type PhotosStore } from './photos_store';
+import type { Span } from '../../ui/virtual_rows';
 
 function filename(filePath: string, id: string): string {
   return filePath.split('/').pop() ?? id.slice(0, 8);
@@ -24,6 +25,31 @@ const SCROLLER_ID = 'grid-scroller';
 // clears 24px on a tall window does not on a short one.
 const THUMB_MIN_PX = 24;
 
+/**
+ * The photos the reader can actually see, as a half-open span of positions, or
+ * null when the grid is not on screen at all.
+ *
+ * Measured, which for once is the only way: the store's `visible` is what is
+ * *mounted*, and that is deliberately more - two overscan rows either side in
+ * grid and list, and whole hundred-photo blocks in masonry, whose tiles are
+ * packed from their own shapes and so have no arithmetic position to test. Read
+ * on a click and nowhere else, so the forced layout costs nothing that matters.
+ */
+export function onScreenSpan(): Span | null {
+  const scroller = document.getElementById(SCROLLER_ID);
+  if (scroller == null) return null;
+  const box = scroller.getBoundingClientRect();
+  let from = Infinity;
+  let to = -Infinity;
+  for (const cell of scroller.querySelectorAll<HTMLElement>('[data-position]')) {
+    const rect = cell.getBoundingClientRect();
+    if (rect.bottom <= box.top || rect.top >= box.bottom) continue;
+    const index = Number(cell.dataset.position);
+    from = Math.min(from, index);
+    to = Math.max(to, index);
+  }
+  return from > to ? null : { from, to: to + 1 };
+}
 
 // Rating and verdict are set straight from the tile: a cull is mostly these two
 // decisions, and making them cost a round trip through the detail view is what
@@ -100,6 +126,20 @@ const Tile = observer(function Tile({
   const { photos } = usePresenters();
   const navigate = useNavigate();
   const [loaded, setLoaded] = useState(false);
+  const frame = useRef<HTMLDivElement>(null);
+  // Masonry packs its lines from each photo's own shape, so the store can only
+  // scroll the cursor's *block* into view (`focusContentTop`) - and a block is a
+  // hundred photos, so the cursor spent most of a cull off screen with the
+  // verdict keys still acting on it. The tile is the only thing that knows where
+  // the packing put it.
+  //
+  // On the two inputs that packing is a function of as well as on the cursor: a
+  // zoom or a resize moves the tile without moving the cursor, and the block it
+  // is in stays visible, so nothing upstream reports anything to correct.
+  useEffect(() => {
+    if (!isFocused || store.mode !== 'masonry') return;
+    frame.current?.scrollIntoView({ block: 'nearest' });
+  }, [isFocused, store.mode, store.tileSize, store.viewportWidth]);
   // A rendition 404s while processing is still writing it, and the announcement
   // is what brings it back: the version is this row's own `date_reprocessed`,
   // which the announcement for this photo writes into it, so a new URL is one
@@ -125,10 +165,14 @@ const Tile = observer(function Tile({
     // the DOM at once: without them a reader is told it is on "photo 4 of 30"
     // somewhere in a hundred thousand (§18.3.2).
     <div
+      ref={frame}
       className={`tile${selected ? ' tile--selected' : ''}${isFocused ? ' tile--focused' : ''}`}
       role="listitem"
       aria-setsize={store.total}
       aria-posinset={index + 1}
+      // Which position this cell holds, for the one question no arithmetic can
+      // answer: which photos are actually on screen (`onScreenSpan`).
+      data-position={index}
       data-triage={photo.triage}
       // Masonry sizes a tile from the photo's own shape. Off the stored
       // dimensions, so no layout is ever read back to lay the rows out.
@@ -324,6 +368,7 @@ function tilesFor(store: PhotosStore, from: number, to: number): JSX.Element[] {
           aria-busy
           aria-setsize={store.total}
           aria-posinset={index + 1}
+          data-position={index}
           style={{ '--ar': '1.5' } as React.CSSProperties}
         />,
       );
@@ -687,10 +732,15 @@ const GridScroller = observer(function GridScroller(): JSX.Element {
 
   // Follow the keyboard cursor. Off the store's own geometry rather than the
   // focused tile, which may never have been mounted (`focusContentTop`).
+  //
+  // Re-run on everything that moves where the cursor is drawn, not just on the
+  // cursor itself: a zoom, a mode change or a resize re-lays the whole grid out
+  // around a cursor that stays where it is, and the cull went on acting on a tile
+  // that had been left off screen.
   useEffect(() => {
     const target = store.focusContentTop;
     if (target != null) photos.scrollTo(target);
-  }, [store.focusIndex, store, photos]);
+  }, [store.focusIndex, store.columns, store.rowHeight, store.mode, store, photos]);
 
   // The one layout read left in the grid's hot path, and nothing else can answer
   // it: no event carries the scroll position.
