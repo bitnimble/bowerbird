@@ -51,6 +51,7 @@ pub mod avif;
 pub mod ffi;
 pub mod fit;
 pub mod frame;
+pub mod job;
 pub mod hdr;
 pub mod hdr_args;
 pub mod hdr_fit;
@@ -622,18 +623,52 @@ pub unsafe extern "C" fn bb_decode(
     rec2020_linear: c_int,
     at_least_long_edge: u32,
 ) -> *mut BbImage {
-    if path.is_null() || (depth != 8 && depth != 16) {
+    if path.is_null() {
         return std::ptr::null_mut();
     }
-    let r = raw::libraw_init(0);
+    let Ok(path) = CStr::from_ptr(path).to_str() else { return std::ptr::null_mut() };
+    match decode_frame(path, depth, rec2020_linear != 0, at_least_long_edge) {
+        Some(frame) => Box::into_raw(Box::new(BbImage::from_frame(frame))),
+        None => std::ptr::null_mut(),
+    }
+}
+
+/// Decodes a RAW to an owned frame.
+///
+/// The body of what `bb_decode` used to be, with the handle taken off the end. Every
+/// caller on this side wants a `Frame`; only the boundary wanted a pointer, and it
+/// is the one place that still builds one.
+pub fn decode_frame(
+    path: &str,
+    depth: u32,
+    rec2020_linear: bool,
+    at_least_long_edge: u32,
+) -> Option<frame::Frame> {
+    if depth != 8 && depth != 16 {
+        return None;
+    }
+    let path = std::ffi::CString::new(path).ok()?;
+    decode_with_libraw(&path, depth, rec2020_linear, at_least_long_edge)
+}
+
+#[expect(unsafe_code)]
+fn decode_with_libraw(
+    path: &std::ffi::CStr,
+    depth: u32,
+    rec2020_linear: bool,
+    at_least_long_edge: u32,
+) -> Option<frame::Frame> {
+    let r = unsafe { raw::libraw_init(0) };
     if r.is_null() {
-        return std::ptr::null_mut();
+        return None;
     }
 
     // Guarded around the closure rather than outside `libraw_init`, so a panic still
     // reaches the `recycle`/`close` below instead of leaking the processor with it.
-    let result = guard("bb_decode", None, || (|| -> Option<Box<BbImage>> {
-        if raw::libraw_open_file(r, CStr::from_ptr(path).as_ptr()) != 0 {
+    let result = guard("bb_decode", None, || (|| -> Option<frame::Frame> {
+        #[expect(unsafe_code)]
+        unsafe {
+        if raw::libraw_open_file(r, path.as_ptr()) != 0 {
             return None;
         }
 
@@ -656,7 +691,7 @@ pub unsafe extern "C" fn bb_decode(
         }
         (*r).params.user_qual = demosaic();
         (*r).params.output_bps = depth as c_int;
-        if rec2020_linear != 0 {
+        if rec2020_linear {
             (*r).params.output_color = OUTPUT_REC2020;
             // Identity curve, so samples stay proportional to the light that made
             // them, and no auto-brightening to normalise away HDR headroom.
@@ -724,15 +759,107 @@ pub unsafe extern "C" fn bb_decode(
         let mut built = frame::Frame::new(width, height, data);
         built.halved = halved;
         built.direct = direct;
-        Some(Box::new(BbImage::from_frame(built)))
+        Some(built)
+        }
     })());
 
-    raw::libraw_recycle(r);
-    raw::libraw_close(r);
-    match result {
-        Some(image) => Box::into_raw(image),
-        None => std::ptr::null_mut(),
+    #[expect(unsafe_code)]
+    unsafe {
+        raw::libraw_recycle(r);
+        raw::libraw_close(r);
     }
+    result
+}
+
+/// The camera's embedded preview as an owned frame, fitted to `long_edge`.
+///
+/// The whole of an import's tile pass in one call. None when the file embeds no
+/// JPEG preview, which is a property of the file rather than an error: the caller
+/// falls back to a render.
+pub fn decode_embedded_frame(path: &str, long_edge: u32) -> Option<frame::Frame> {
+    vips::init();
+    let path = std::ffi::CString::new(path).ok()?;
+    let decoded = guard("decode_embedded_frame", None, || {
+        #[expect(unsafe_code)]
+        unsafe {
+            with_embedded_jpeg(path.as_ptr(), |jpeg| match long_edge {
+                0 => vips::Pipeline::decode_upright(jpeg).and_then(vips::Pipeline::finish),
+                edge => vips::Pipeline::thumbnail(jpeg, edge as usize).and_then(vips::Pipeline::finish),
+            })
+        }
+    })?;
+    let image = decoded.ok()?;
+    Some(frame::Frame::new(image.width, image.height, frame::Pixels::Eight(image.data)))
+}
+
+/// The camera match for an 8-bit render, fitted against the embedded JPEG (10.8).
+///
+/// None when the file embeds no preview, when the fit found nothing worth applying,
+/// or when there were too few usable pairs - in each case the caller renders
+/// untransformed.
+pub fn fit_profile_for(render: &frame::Frame, raw_path: &str) -> Option<fit::Profile> {
+    vips::init();
+    let source = render.rgb8()?;
+    let geometry = ffi::geometry_for(raw_path)?;
+    let path = std::ffi::CString::new(raw_path).ok()?;
+    let fitted = guard("fit_profile_for", None, || {
+        #[expect(unsafe_code)]
+        unsafe {
+            with_embedded_jpeg(path.as_ptr(), |jpeg| fit::fit(source, jpeg, geometry).ok().flatten())
+        }
+    })?;
+    fitted
+}
+
+/// The camera match for the HDR grade, in the domain the grade works in (10.8.1).
+///
+/// Reuses the geometry an SDR fit already resolved where there is one; where nothing
+/// renders SDR both halves run off this decode in a single pass over it.
+pub fn fit_hdr_for(
+    linear: &frame::Frame,
+    raw_path: &str,
+    quantile: f64,
+    profile: Option<&fit::Profile>,
+) -> Option<hdr_fit::HdrMatch> {
+    let samples = linear.samples16()?;
+    let source = hdr::Source { samples, width: linear.width, height: linear.height };
+    guard("fit_hdr_for", None, || match profile {
+        Some(profile) => {
+            hdr::fit_match(raw_path, &source, quantile, profile.knots.clone(), profile.crop)
+        }
+        None => {
+            let geometry = ffi::geometry_for(raw_path)?;
+            hdr::fit_all(raw_path, &source, quantile, geometry).map(|(_, matched)| matched)
+        }
+    })
+}
+
+/// Fits an image to a longest edge and writes it as an AVIF, in that order.
+///
+/// The resize is skipped where the frame already fits, which is not the rare case:
+/// the job builds its base at the largest size it asks for, so the biggest rendition
+/// of every photo arrives here already the right size (10.1).
+pub fn save_avif_frame(
+    source: vips::RgbRef<'_>,
+    long_edge: u32,
+    quantizer: i32,
+    effort: i32,
+    full_chroma: bool,
+    out_path: &str,
+) -> Result<(), String> {
+    vips::init();
+    // libvips counted effort up from 0 as *fastest*; libavif counts speed down from
+    // 10 as fastest. Same knob, opposite ends.
+    let speed = (10 - effort).clamp(0, 10);
+    if long_edge == 0 || source.width.max(source.height) <= long_edge as usize {
+        return avif::encode_rendition(source.data.into(), source.width, source.height, quantizer, speed, full_chroma, out_path);
+    }
+    let resized = vips::Pipeline::from_rgb(source)
+        .and_then(|pipeline| pipeline.resize_to_fit(long_edge as usize))
+        .and_then(vips::Pipeline::finish)
+        .map_err(|e| format!("could not resize for the encode: {e}"))?;
+    let (width, height) = (resized.width, resized.height);
+    avif::encode_rendition(resized.data.into(), width, height, quantizer, speed, full_chroma, out_path)
 }
 
 /// `libraw_image_formats_t`: a preview is either a JPEG or a bare bitmap.

@@ -8,6 +8,7 @@
 // passes a path in and gets a path or a handle out; the samples stay on this side.
 
 use crate::fit::{self, Profile};
+use crate::job;
 use crate::hdr_args;
 use crate::vips::{self, Pipeline};
 use crate::BbImage;
@@ -164,6 +165,76 @@ fn decode_encoded(encoded: &[u8], long_edge: u32) -> *mut BbImage {
             }
         }
     })
+}
+
+/// Runs one rendition job. The whole boundary, and the shape every other entry
+/// point is being moved to.
+///
+/// Command in, values out, and nothing else: `command` is UTF-8 JSON describing the
+/// job (`job::Job`), and the result is UTF-8 JSON written into a buffer the *caller*
+/// owns. No address this library allocated is ever handed over, so there is nothing
+/// for the other side to hold between calls, nothing to free, and no lifetime that
+/// depends on a convention. That is the difference from the handle API beside it:
+/// there, a decode's lifetime was a comment, and a `use-after-free` was expressible
+/// in a language that is supposed to make it impossible.
+///
+/// Returns the number of bytes the result needs. When that is larger than `out_cap`
+/// nothing has been written and the caller should call again with a buffer that
+/// size - which does not repeat the work, because a job that ran and a result that
+/// did not fit are different failures and only the second is retried. Negative is a
+/// failure that produced no result at all.
+///
+/// # Safety
+/// `command` must point at `command_len` readable bytes and `out` at `out_cap`
+/// writable ones. Both are borrowed for the call and neither is retained.
+#[expect(unsafe_code)]
+#[no_mangle]
+pub unsafe extern "C" fn bb_run_job(
+    command: *const u8,
+    command_len: usize,
+    out: *mut u8,
+    out_cap: usize,
+) -> isize {
+    if command.is_null() {
+        return -1;
+    }
+    // The one place a pointer becomes a Rust value, and it is copied out of
+    // immediately: `serde` owns every string in the job, so nothing downstream
+    // borrows the caller's buffer and no lifetime escapes this function.
+    let bytes = unsafe { std::slice::from_raw_parts(command, command_len) };
+    let parsed: Result<job::Job, _> = serde_json::from_slice(bytes);
+
+    let result = match parsed {
+        Err(error) => Err(format!("could not read the job: {error}")),
+        Ok(parsed) => crate::guard("bb_run_job", Err("panicked".to_string()), || job::run(&parsed)),
+    };
+
+    // Both arms are reported the same way, as JSON: a job that failed is a result,
+    // not an absent one, and the caller gets the reason rather than a status code it
+    // has to look up.
+    let payload = match result {
+        Ok(outcome) => serde_json::to_vec(&JobReply { ok: true, error: None, outcome: Some(outcome) }),
+        Err(error) => serde_json::to_vec(&JobReply { ok: false, error: Some(error), outcome: None }),
+    };
+    let Ok(payload) = payload else { return -1 };
+
+    if payload.len() > out_cap || out.is_null() {
+        // Nothing written; the caller sizes a buffer from this and asks again.
+        return payload.len() as isize;
+    }
+    let destination = unsafe { std::slice::from_raw_parts_mut(out, payload.len()) };
+    destination.copy_from_slice(&payload);
+    payload.len() as isize
+}
+
+/// The envelope every job reply comes back in.
+#[derive(serde::Serialize)]
+struct JobReply {
+    ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    outcome: Option<job::Outcome>,
 }
 
 /// The HDR encode's settings, flat so TypeScript can fill it with one DataView.
@@ -456,7 +527,18 @@ pub unsafe extern "C" fn bb_encode_hdr(
                 (*image).release_pixels();
             }
         };
-        crate::hdr::encode_pair(source, &built, (!video.is_empty()).then_some(video), matched, release)
+        let owned = crate::frame::Frame::new(
+            source.width,
+            source.height,
+            crate::frame::Pixels::Sixteen(source.samples.to_vec()),
+        );
+        release();
+        crate::hdr::encode_pair(
+            crate::hdr::Decode::Owned(owned),
+            &built,
+            (!video.is_empty()).then_some(video),
+            matched,
+        )
     });
     match encoded {
         Ok(()) => 0,
@@ -694,7 +776,7 @@ pub unsafe extern "C" fn bb_fit(image: *const BbImage, raw_path: *const c_char, 
 ///
 /// None is a file that could not be read, which the callers report separately from a
 /// file that simply records no correction.
-fn geometry_for(path: &str) -> Option<fit::Geometry> {
+pub(crate) fn geometry_for(path: &str) -> Option<fit::Geometry> {
     let Ok(found) = distortion_of(path) else { return None };
     // The body's own word that it corrected nothing, which saves searching for a
     // correction that is not there (`fit.rs`). Only Sony states it; everything else

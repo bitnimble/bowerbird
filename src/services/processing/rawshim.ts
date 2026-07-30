@@ -83,6 +83,9 @@ const SYMBOLS = {
     returns: FFIType.i32,
   },
   bb_render: { args: [FFIType.ptr, FFIType.ptr, FFIType.u32], returns: FFIType.ptr },
+  // The whole boundary for a rendition job: JSON in, JSON out, no addresses either
+  // way. Returns the byte length of the reply, or how big a buffer it needs.
+  bb_run_job: { args: [FFIType.ptr, FFIType.u64, FFIType.ptr, FFIType.u64], returns: FFIType.i64 },
   bb_save_avif: {
     args: [FFIType.ptr, FFIType.u32, FFIType.i32, FFIType.i32, FFIType.i32, FFIType.cstring],
     returns: FFIType.i32,
