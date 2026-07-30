@@ -241,11 +241,11 @@ fn write_avif<T: Clone>(
 /// libavif's own words for a failure, rather than a number.
 #[expect(unsafe_code)]
 unsafe fn message(status: u32) -> String {
-    let text = raw::avifResultToString(status);
+    let text = unsafe { raw::avifResultToString(status) };
     if text.is_null() {
         return format!("result {status}");
     }
-    std::ffi::CStr::from_ptr(text).to_string_lossy().into_owned()
+    unsafe { std::ffi::CStr::from_ptr(text) }.to_string_lossy().into_owned()
 }
 
 #[cfg(test)]

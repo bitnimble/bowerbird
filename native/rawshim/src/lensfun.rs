@@ -118,7 +118,7 @@ fn covers(min_focal: f32, max_focal: f32, min_aperture: f32, focal: f32, apertur
 
 #[expect(unsafe_code)]
 unsafe fn plausible(lens: *const raw::lfLens, focal: f32, aperture: f32) -> bool {
-    let lens = &*lens;
+    let lens = &unsafe { *lens };
     covers(lens.MinFocal, lens.MaxFocal, lens.MinAperture, focal, aperture)
 }
 
@@ -129,19 +129,19 @@ unsafe fn search(make: &str, model: &str, lens: &str, focal: f32, aperture: f32)
     let (c_make, c_model) = (CString::new(make).ok()?, CString::new(model).ok()?);
     let c_lens = CString::new(lens).ok()?;
 
-    let cameras = raw::lf_db_find_cameras_ext(db.0, c_make.as_ptr(), c_model.as_ptr(), raw::LF_SEARCH_LOOSE as i32);
-    if cameras.is_null() || (*cameras).is_null() {
+    let cameras = unsafe { raw::lf_db_find_cameras_ext(db.0, c_make.as_ptr(), c_model.as_ptr(), raw::LF_SEARCH_LOOSE as i32) };
+    if cameras.is_null() || unsafe { (*cameras).is_null() } {
         return None;
     }
-    let camera = *cameras;
-    let crop = (*camera).CropFactor;
+    let camera = unsafe { *cameras };
+    let crop = unsafe { (*camera).CropFactor };
 
     // A null pattern asks for whatever lens this body has, which is the query a
     // fixed-lens compact needs: it writes no lens name, and the database files its
     // optics under a mount only that body has.
     let pattern = if lens.is_empty() { std::ptr::null() } else { c_lens.as_ptr() };
-    let found = raw::lf_db_find_lenses_hd(db.0, camera, std::ptr::null(), pattern, raw::LF_SEARCH_LOOSE as i32);
-    raw::lf_free(cameras as *mut _);
+    let found = unsafe { raw::lf_db_find_lenses_hd(db.0, camera, std::ptr::null(), pattern, raw::LF_SEARCH_LOOSE as i32) };
+    unsafe { raw::lf_free(cameras as *mut _) };
     if found.is_null() {
         return None;
     }
@@ -150,15 +150,15 @@ unsafe fn search(make: &str, model: &str, lens: &str, focal: f32, aperture: f32)
     // does not contradict rather than re-ranking.
     let mut result = None;
     let mut i = 0;
-    while !(*found.add(i)).is_null() {
-        let entry = *found.add(i);
-        if plausible(entry, focal, aperture) {
+    while !unsafe { (*found.add(i)) }.is_null() {
+        let entry = unsafe { *found.add(i) };
+        if unsafe { plausible(entry, focal, aperture) } {
             result = Some(Resolved { lens: entry as usize, crop });
             break;
         }
         i += 1;
     }
-    raw::lf_free(found as *mut _);
+    unsafe { raw::lf_free(found as *mut _) };
     result
 }
 

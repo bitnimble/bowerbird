@@ -122,7 +122,7 @@ pub unsafe extern "C" fn bb_decode_file(path: *const c_char, long_edge: u32) -> 
     if path.is_null() {
         return std::ptr::null_mut();
     }
-    let Ok(path) = CStr::from_ptr(path).to_str() else { return std::ptr::null_mut() };
+    let Ok(path) = unsafe { CStr::from_ptr(path) }.to_str() else { return std::ptr::null_mut() };
     let bytes = match std::fs::read(path) {
         Ok(bytes) => bytes,
         Err(e) => {
@@ -145,7 +145,7 @@ pub unsafe extern "C" fn bb_decode_image(bytes: *const u8, len: usize, long_edge
     if bytes.is_null() {
         return std::ptr::null_mut();
     }
-    decode_encoded(std::slice::from_raw_parts(bytes, len), long_edge)
+    decode_encoded(unsafe { std::slice::from_raw_parts(bytes, len) }, long_edge)
 }
 
 fn decode_encoded(encoded: &[u8], long_edge: u32) -> *mut BbImage {
@@ -353,10 +353,10 @@ pub unsafe extern "C" fn bb_hdr_argv(
     if options.is_null() || output_path.is_null() || y4m_path.is_null() {
         return std::ptr::null_mut();
     }
-    let (Ok(out), Ok(y4m)) = (CStr::from_ptr(output_path).to_str(), CStr::from_ptr(y4m_path).to_str()) else {
+    let (Ok(out), Ok(y4m)) = (unsafe { CStr::from_ptr(output_path) }.to_str(), unsafe { CStr::from_ptr(y4m_path) }.to_str()) else {
         return std::ptr::null_mut();
     };
-    let Some(built) = (*options).to_options(out) else { return std::ptr::null_mut() };
+    let Some(built) = (unsafe { (*options).to_options(out) }) else { return std::ptr::null_mut() };
 
     let parts = match which {
         0 => hdr_args::ffmpeg_args(width, height, &built),
@@ -404,23 +404,23 @@ pub unsafe extern "C" fn bb_fit_hdr_match(
         return std::ptr::null_mut();
     }
     let (Ok(raw), Some(built), Some(samples)) = (
-        CStr::from_ptr(raw_path).to_str(),
-        (*options).to_options(""),
-        (*image).view_u16(),
+        unsafe { CStr::from_ptr(raw_path) }.to_str(),
+        unsafe { (*options).to_options("") },
+        unsafe { (*image).view_u16() },
     ) else {
         return std::ptr::null_mut();
     };
     let source = crate::hdr::Source {
         samples,
-        width: (*image).width as usize,
-        height: (*image).height as usize,
+        width: unsafe { (*image).width } as usize,
+        height: unsafe { (*image).height } as usize,
     };
 
     // The SDR profile's colour cannot be reused - its curves are 8-bit sRGB and stop
     // at display white, where this grade needs a domain it can carry past diffuse
     // white. The geometry is a property of the lens, so that half is reused, and it is
     // the expensive half.
-    let sdr = (*profile).to_profile();
+    let sdr = unsafe { (*profile).to_profile() };
     let fitted = crate::guard("bb_fit_hdr_match", None, || {
         crate::hdr::fit_match(raw, &source, built.white_quantile, sdr.knots, sdr.crop)
     });
@@ -438,7 +438,7 @@ pub unsafe extern "C" fn bb_fit_hdr_match(
 #[no_mangle]
 pub unsafe extern "C" fn bb_hdr_match_free(matched: *mut BbHdrMatch) {
     if !matched.is_null() {
-        drop(Box::from_raw(matched));
+        drop(unsafe { Box::from_raw(matched) });
     }
 }
 
@@ -477,7 +477,7 @@ pub unsafe extern "C" fn bb_hdr_match_colour(matched: *const BbHdrMatch, out: *m
     if matched.is_null() || out.is_null() {
         return -1;
     }
-    let colour = &(*matched).inner.colour;
+    let colour = unsafe { &(*matched).inner.colour };
     let mut flat = BbHdrColour {
         delta_e: colour.delta_e,
         saturation: colour.saturation,
@@ -491,7 +491,7 @@ pub unsafe extern "C" fn bb_hdr_match_colour(matched: *const BbHdrMatch, out: *m
         let curve = &colour.curves[channel];
         flat.curves[channel * 256..channel * 256 + curve.len()].copy_from_slice(curve);
     }
-    *out = flat;
+    unsafe { *out = flat; }
     0
 }
 
@@ -505,10 +505,10 @@ unsafe fn hdr_source<'a>(
     if image.is_null() || options.is_null() {
         return None;
     }
-    let built = (*options).to_options(output_path)?;
-    let samples = (*image).view_u16()?;
+    let built = unsafe { (*options).to_options(output_path) }?;
+    let samples = unsafe { (*image).view_u16() }?;
     Some((
-        crate::hdr::Source { samples, width: (*image).width as usize, height: (*image).height as usize },
+        crate::hdr::Source { samples, width: unsafe { (*image).width } as usize, height: unsafe { (*image).height } as usize },
         built,
     ))
 }
@@ -557,19 +557,19 @@ pub unsafe extern "C" fn bb_encode_hdr(
         return -1;
     }
     let (Ok(out), Ok(video)) =
-        (CStr::from_ptr(output_path).to_str(), CStr::from_ptr(video_output_path).to_str())
+        (unsafe { CStr::from_ptr(output_path) }.to_str(), unsafe { CStr::from_ptr(video_output_path) }.to_str())
     else {
         return -1;
     };
-    let Some((source, built)) = hdr_source(image, options, out) else { return -1 };
-    let matched = matched.as_ref().map(|m| &m.inner);
+    let Some((source, built)) = (unsafe { hdr_source(image, options, out) }) else { return -1 };
+    let matched = unsafe { matched.as_ref() }.map(|m| &m.inner);
 
     let encoded = crate::guard("bb_encode_hdr", Err("panicked".to_string()), || {
         // Runs once the grade has its own buffer and `source` has been dropped, so the
         // borrow this releases is provably over by the time it does.
         let release = || {
             if release_source != 0 {
-                (*image).release_pixels();
+                unsafe { (*image).release_pixels() };
             }
         };
         let owned = crate::frame::Frame::new(
@@ -618,14 +618,14 @@ pub unsafe extern "C" fn bb_hdr_graded(
     if out_size.is_null() {
         return std::ptr::null_mut();
     }
-    let Some((source, built)) = hdr_source(image, options, "") else { return std::ptr::null_mut() };
-    let matched = matched.as_ref().map(|m| &m.inner);
+    let Some((source, built)) = (unsafe { hdr_source(image, options, "") }) else { return std::ptr::null_mut() };
+    let matched = unsafe { matched.as_ref() }.map(|m| &m.inner);
 
     let (graded, width, height) = crate::hdr::graded(&source, &built, matched);
-    *out_size = width as u32;
-    *out_size.add(1) = height as u32;
+    unsafe { *out_size = width as u32; }
+    unsafe { *out_size.add(1) = height as u32; }
     let bytes =
-        std::slice::from_raw_parts(graded.as_ptr() as *const u8, std::mem::size_of_val(&graded[..])).to_vec();
+        unsafe { std::slice::from_raw_parts(graded.as_ptr() as *const u8, std::mem::size_of_val(&graded[..])) }.to_vec();
     BbBuffer::from_vec(bytes)
 }
 
@@ -646,7 +646,7 @@ pub unsafe extern "C" fn bb_extract_embedded(path: *const c_char) -> *mut BbBuff
     if path.is_null() {
         return std::ptr::null_mut();
     }
-    match crate::with_embedded_jpeg(path, <[u8]>::to_vec) {
+    match unsafe { crate::with_embedded_jpeg(path, <[u8]>::to_vec) } {
         Some(bytes) => BbBuffer::from_vec(bytes),
         None => std::ptr::null_mut(),
     }
@@ -705,14 +705,14 @@ pub unsafe extern "C" fn bb_read_distortion_spline(path: *const c_char, out: *mu
     if path.is_null() || out.is_null() {
         return -1;
     }
-    let Ok(path) = CStr::from_ptr(path).to_str() else { return -1 };
+    let Ok(path) = unsafe { CStr::from_ptr(path) }.to_str() else { return -1 };
     let Ok(found) = distortion_of(path) else { return -1 };
 
     match found.spline {
         None => 0,
         Some(knots) => {
             let n = knots.len().min(max as usize);
-            std::ptr::copy_nonoverlapping(knots.as_ptr(), out, n);
+            unsafe { std::ptr::copy_nonoverlapping(knots.as_ptr(), out, n) };
             n as i32
         }
     }
@@ -746,9 +746,9 @@ pub unsafe extern "C" fn bb_lensfun_knots(
         return -1;
     }
     let (Ok(make), Ok(model), Ok(lens)) = (
-        CStr::from_ptr(make).to_str(),
-        CStr::from_ptr(model).to_str(),
-        CStr::from_ptr(lens).to_str(),
+        unsafe { CStr::from_ptr(make) }.to_str(),
+        unsafe { CStr::from_ptr(model) }.to_str(),
+        unsafe { CStr::from_ptr(lens) }.to_str(),
     ) else {
         return -1;
     };
@@ -758,7 +758,7 @@ pub unsafe extern "C" fn bb_lensfun_knots(
         return 0;
     };
     let n = knots.len().min(max as usize);
-    std::ptr::copy_nonoverlapping(knots.as_ptr(), out, n);
+    unsafe { std::ptr::copy_nonoverlapping(knots.as_ptr(), out, n) };
     n as i32
 }
 
@@ -782,7 +782,7 @@ pub unsafe extern "C" fn bb_image_from_rgb(data: *const u8, width: u32, height: 
     BbImage::own(vips::Rgb {
         width: width as usize,
         height: height as usize,
-        data: std::slice::from_raw_parts(data, len).to_vec(),
+        data: unsafe { std::slice::from_raw_parts(data, len) }.to_vec(),
     })
 }
 
@@ -808,11 +808,11 @@ pub unsafe extern "C" fn bb_fit(image: *const BbImage, raw_path: *const c_char, 
     if image.is_null() || raw_path.is_null() || out.is_null() {
         return -1;
     }
-    let Ok(path) = CStr::from_ptr(raw_path).to_str() else { return -1 };
+    let Ok(path) = unsafe { CStr::from_ptr(raw_path) }.to_str() else { return -1 };
     let Some(geometry) = geometry_for(path) else { return -1 };
-    let Some(render) = (*image).view() else { return -1 };
+    let Some(render) = (unsafe { (*image).view() }) else { return -1 };
 
-    let fitted = crate::with_embedded_jpeg(raw_path, |jpeg| fit_against(render, jpeg, geometry, out));
+    let fitted = unsafe { crate::with_embedded_jpeg(raw_path, |jpeg| fit_against(render, jpeg, geometry, out)) };
     // No JPEG preview: nothing to match, and the caller renders untransformed.
     fitted.unwrap_or(-1)
 }
@@ -863,9 +863,9 @@ pub unsafe extern "C" fn bb_fit_hdr(
         return std::ptr::null_mut();
     }
     let (Ok(path), Some(built), Some(samples)) = (
-        CStr::from_ptr(raw_path).to_str(),
-        (*options).to_options(""),
-        (*image).view_u16(),
+        unsafe { CStr::from_ptr(raw_path) }.to_str(),
+        unsafe { (*options).to_options("") },
+        unsafe { (*image).view_u16() },
     ) else {
         return std::ptr::null_mut();
     };
@@ -873,15 +873,15 @@ pub unsafe extern "C" fn bb_fit_hdr(
 
     let source = crate::hdr::Source {
         samples,
-        width: (*image).width as usize,
-        height: (*image).height as usize,
+        width: unsafe { (*image).width } as usize,
+        height: unsafe { (*image).height } as usize,
     };
     let fitted = crate::guard("bb_fit_hdr", None, || {
         crate::hdr::fit_all(path, &source, built.white_quantile, geometry)
     });
     match fitted {
         Some((profile, inner)) => {
-            *out = BbProfile::from(&profile);
+            unsafe { *out = BbProfile::from(&profile); }
             Box::into_raw(Box::new(BbHdrMatch { inner }))
         }
         None => std::ptr::null_mut(),
@@ -925,7 +925,7 @@ unsafe fn fit_against(
     let fitted = crate::guard("bb_fit", Err("panicked".to_string()), || fit::fit(render, jpeg, geometry));
     match fitted {
         Ok(Some(profile)) => {
-            *out = BbProfile::from(&profile);
+            unsafe { *out = BbProfile::from(&profile); }
             0
         }
         Ok(None) => 1,
@@ -958,10 +958,10 @@ pub unsafe extern "C" fn bb_fit_against(
     }
     let geometry = match camera_knots.is_null() || camera_knot_count == 0 {
         true => fit::Geometry::Unstated,
-        false => fit::Geometry::Recorded(std::slice::from_raw_parts(camera_knots, camera_knot_count as usize).to_vec()),
+        false => fit::Geometry::Recorded(unsafe { std::slice::from_raw_parts(camera_knots, camera_knot_count as usize) }.to_vec()),
     };
-    let Some(render) = (*image).view() else { return -1 };
-    fit_against(render, std::slice::from_raw_parts(jpeg, jpeg_len), geometry, out)
+    let Some(render) = (unsafe { (*image).view() }) else { return -1 };
+    unsafe { fit_against(render, std::slice::from_raw_parts(jpeg, jpeg_len), geometry, out) }
 }
 
 /// Fits an image to a longest edge and applies a profile, in that order.
@@ -986,8 +986,8 @@ pub unsafe extern "C" fn bb_render(image: *const BbImage, profile: *const BbProf
     if image.is_null() {
         return std::ptr::null_mut();
     }
-    let Some(source) = (*image).view() else { return std::ptr::null_mut() };
-    crate::guard("bb_render", std::ptr::null_mut(), || render(source, profile, long_edge))
+    let Some(source) = (unsafe { (*image).view() }) else { return std::ptr::null_mut() };
+    crate::guard("bb_render", std::ptr::null_mut(), || unsafe { render(source, profile, long_edge) })
 }
 
 /// The warp and the resize, where a panic would otherwise reach the FFI boundary.
@@ -996,7 +996,7 @@ unsafe fn render(source: vips::RgbRef<'_>, profile: *const BbProfile, long_edge:
     if !shrinks(&source, long_edge) {
         return match profile.is_null() {
             true => BbImage::own(vips::Rgb { width: source.width, height: source.height, data: source.data.to_vec() }),
-            false => BbImage::own(fit::apply(source, &(*profile).to_profile())),
+            false => BbImage::own(fit::apply(source, &unsafe { (*profile).to_profile() })),
         };
     }
 
@@ -1009,7 +1009,7 @@ unsafe fn render(source: vips::RgbRef<'_>, profile: *const BbProfile, long_edge:
     };
     match profile.is_null() {
         true => BbImage::own(resized),
-        false => BbImage::own(fit::apply(resized.as_ref(), &(*profile).to_profile())),
+        false => BbImage::own(fit::apply(resized.as_ref(), &unsafe { (*profile).to_profile() })),
     }
 }
 
@@ -1034,7 +1034,7 @@ pub unsafe extern "C" fn bb_save_avif(
     if image.is_null() || path.is_null() {
         return -1;
     }
-    let (Some(source), Ok(path)) = ((*image).view(), CStr::from_ptr(path).to_str()) else { return -1 };
+    let (Some(source), Ok(path)) = (unsafe { (*image).view() }, unsafe { CStr::from_ptr(path) }.to_str()) else { return -1 };
     crate::guard("bb_save_avif", -1, || {
         // libvips counted effort up from 0 as *fastest*; libavif counts speed down from
         // 10 as fastest. Same knob, opposite ends.
@@ -1102,7 +1102,7 @@ pub unsafe extern "C" fn bb_encode_jpeg(image: *const BbImage, long_edge: u32, q
     if image.is_null() {
         return std::ptr::null_mut();
     }
-    let Some(source) = (*image).view() else { return std::ptr::null_mut() };
+    let Some(source) = (unsafe { (*image).view() }) else { return std::ptr::null_mut() };
     crate::guard("bb_encode_jpeg", std::ptr::null_mut(), || {
         let encoded = Pipeline::from_rgb(source)
             .and_then(|pipeline| pipeline.resize_to_fit(long_edge as usize))
@@ -1124,8 +1124,8 @@ pub unsafe extern "C" fn bb_buffer_free(buffer: *mut BbBuffer) {
     if buffer.is_null() {
         return;
     }
-    let buffer = Box::from_raw(buffer);
-    drop(Vec::from_raw_parts(buffer.data, buffer.len, buffer.capacity));
+    let buffer = unsafe { Box::from_raw(buffer) };
+    drop(unsafe { Vec::from_raw_parts(buffer.data, buffer.len, buffer.capacity) });
 }
 
 /// Exercises the pixel paths on a tiny image. 0 if the library works here.

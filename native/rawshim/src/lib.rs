@@ -23,25 +23,29 @@
 // does the job alone:
 //
 //   unsafe_code                   nothing may reach for unsafe unmarked.
+//   unsafe_op_in_unsafe_fn        an `unsafe fn` body is not a blanket over its
+//                                 contents, so each operation inside one needs its
+//                                 own visible block and the surface stays
+//                                 countable rather than being one marker per
+//                                 function.
 //   unfulfilled_lint_expectations paired with `#[expect(unsafe_code)]` rather than
 //                                 `#[allow]`, this makes a *stale* exemption an
 //                                 error too - so unsafe that gets refactored away
 //                                 takes its marker with it in the same commit.
 //
-// Together they hold one invariant: a marker cannot outlive what it was for, and
-// new unsafe cannot appear without one. `grep -rn "expect(unsafe_code)"
+// Together they hold one invariant: the only things marked are those directly
+// performing an unsafe operation. A caller cannot be marked to cover a callee, and
+// a marker cannot outlive what it was for. `grep -rn "expect(unsafe_code)"
 // native/rawshim/src` is the audit, and the count only ever goes down.
+//
+// What is left is the irreducible part: reading the one command buffer at an entry
+// point, and calling LibRaw, libvips, libavif and lensfun, which are C. Nothing is
+// marked for our own memory any more - a `Frame` is an owned Rust value with a real
+// lifetime, and the handle API that needed raw pointers for it survives only behind
+// a lint fence, for tests.
 #![deny(unsafe_code)]
 #![deny(unfulfilled_lint_expectations)]
-// The third of the set, and not on yet: `unsafe_op_in_unsafe_fn` stops an
-// `unsafe fn` body being one implicit blanket, so each operation inside needs its
-// own visible block and the surface stays countable. Turning it on today means
-// reshaping 162 operations, ~150 of them inside the sixteen boundary functions this
-// refactor is collapsing into one - throwaway work on code that is going. It goes
-// on in the commit that finishes the boundary, when what is left is small enough
-// that the count means something. Until then a marked `unsafe fn` does cover its
-// whole body, which is the weaker invariant.
-//#![deny(unsafe_op_in_unsafe_fn)]
+#![deny(unsafe_op_in_unsafe_fn)]
 
 use rayon::prelude::*;
 use std::ffi::CStr;
@@ -209,7 +213,7 @@ impl BbImage {
         if self.depth != 16 || self.data.is_null() {
             return None;
         }
-        Some(std::slice::from_raw_parts(self.data as *const u16, self.len / 2))
+        Some(unsafe { std::slice::from_raw_parts(self.data as *const u16, self.len / 2) })
     }
 
     /// # Safety
@@ -222,7 +226,7 @@ impl BbImage {
         Some(vips::RgbRef {
             width: self.width as usize,
             height: self.height as usize,
-            data: std::slice::from_raw_parts(self.data, self.len),
+            data: unsafe { std::slice::from_raw_parts(self.data, self.len) },
         })
     }
 
@@ -254,8 +258,8 @@ impl BbImage {
         // element count for exactly this reason, and `len` stays in bytes because that
         // is what the handle reports to its reader.
         match self.depth {
-            16 => drop(Vec::from_raw_parts(self.data as *mut u16, self.len / 2, self.capacity)),
-            _ => drop(Vec::from_raw_parts(self.data, self.len, self.capacity)),
+            16 => drop(unsafe { Vec::from_raw_parts(self.data as *mut u16, self.len / 2, self.capacity) }),
+            _ => drop(unsafe { Vec::from_raw_parts(self.data, self.len, self.capacity) }),
         }
         self.data = std::ptr::null_mut();
         self.len = 0;
@@ -319,7 +323,7 @@ pub(crate) fn insets_of(w: &Window) -> Insets {
 /// `r` must be a live `libraw_data_t` with `open_file` already run.
 #[expect(unsafe_code)]
 pub(crate) unsafe fn read_insets(r: *mut raw::libraw_data_t) -> Insets {
-    let s = &(*r).sizes;
+    let s = &unsafe { (*r).sizes };
     let crop = s.raw_inset_crops[0];
     insets_of(&Window {
         raw_width: s.raw_width,
@@ -475,14 +479,14 @@ unsafe fn copy_processed(
     i: &Insets,
     long_edge: u32,
 ) -> Option<(usize, usize, Vec<u16>)> {
-    let p = &(*r).params;
+    let p = &unsafe { (*r).params };
     let identity_curve =
         p.no_auto_bright == 1 && p.gamm[0] == 1.0 && p.gamm[1] == 1.0 && p.bright == 1.0;
-    if depth != 16 || !identity_curve || (*r).image.is_null() || (*r).idata.colors != 3 {
+    if depth != 16 || !identity_curve || unsafe { (*r).image }.is_null() || unsafe { (*r).idata }.colors != 3 {
         return None;
     }
 
-    let s = &(*r).sizes;
+    let s = &unsafe { (*r).sizes };
     let flip = s.flip;
     // `copy_mem_image` overwrites `S.iwidth`/`S.iheight` with `S.width`/`S.height`
     // before indexing, so the stride `flip_index` walks is the processed width.
@@ -499,7 +503,7 @@ unsafe fn copy_processed(
 
     let (tw, th) = decode_target(out_width, out_height, long_edge);
 
-    let planes = std::slice::from_raw_parts((*r).image, iwidth * iheight);
+    let planes = unsafe { std::slice::from_raw_parts((*r).image, iwidth * iheight) };
     // `u16` samples in a `Vec<u16>`. This used to write bytes and have every reader
     // reinterpret them, because the buffer was leaked across the FFI boundary as one
     // `*mut u8` and freed as one `Vec<u8>` - and rebuilding a `Vec<u16>` over that
@@ -594,14 +598,14 @@ unsafe fn copy_cropped(src: *const u8, w: usize, h: usize, bytes_per_px: usize, 
     let width = w.saturating_sub(i.left + i.right);
     let height = h.saturating_sub(i.top + i.bottom);
     if width == 0 || height == 0 || (i.left | i.top | i.right | i.bottom) == 0 {
-        return std::slice::from_raw_parts(src, w * h * bytes_per_px).to_vec();
+        return unsafe { std::slice::from_raw_parts(src, w * h * bytes_per_px) }.to_vec();
     }
     let stride = w * bytes_per_px;
     let row_bytes = width * bytes_per_px;
     let mut out = Vec::with_capacity(width * height * bytes_per_px);
     for row in 0..height {
         let from = (row + i.top) * stride + i.left * bytes_per_px;
-        out.extend_from_slice(std::slice::from_raw_parts(src.add(from), row_bytes));
+        out.extend_from_slice(unsafe { std::slice::from_raw_parts(src.add(from), row_bytes) });
     }
     out
 }
@@ -626,7 +630,7 @@ pub unsafe extern "C" fn bb_decode(
     if path.is_null() {
         return std::ptr::null_mut();
     }
-    let Ok(path) = CStr::from_ptr(path).to_str() else { return std::ptr::null_mut() };
+    let Ok(path) = unsafe { CStr::from_ptr(path) }.to_str() else { return std::ptr::null_mut() };
     match decode_frame(path, depth, rec2020_linear != 0, at_least_long_edge) {
         Some(frame) => Box::into_raw(Box::new(BbImage::from_frame(frame))),
         None => std::ptr::null_mut(),
@@ -881,34 +885,34 @@ const LIBRAW_IMAGE_JPEG: raw::LibRaw_image_formats = 1;
 /// `path` must be a NUL-terminated C string.
 #[expect(unsafe_code)]
 unsafe fn with_embedded_jpeg<T>(path: *const c_char, use_bytes: impl FnOnce(&[u8]) -> T) -> Option<T> {
-    let r = raw::libraw_init(0);
+    let r = unsafe { raw::libraw_init(0) };
     if r.is_null() {
         return None;
     }
 
     let result = (|| -> Option<T> {
-        if raw::libraw_open_file(r, path) != 0 || raw::libraw_unpack_thumb(r) != 0 {
+        if unsafe { raw::libraw_open_file(r, path) } != 0 || unsafe { raw::libraw_unpack_thumb(r) } != 0 {
             return None;
         }
         let mut err: c_int = 0;
-        let thumb = raw::libraw_dcraw_make_mem_thumb(r, &mut err);
+        let thumb = unsafe { raw::libraw_dcraw_make_mem_thumb(r, &mut err) };
         if thumb.is_null() || err != 0 {
             return None;
         }
         // Freed on every path below, including the one where the format is wrong.
         let out = (|| {
-            let size = (*thumb).data_size as usize;
-            if (*thumb).type_ != LIBRAW_IMAGE_JPEG || size == 0 {
+            let size = unsafe { (*thumb).data_size } as usize;
+            if unsafe { (*thumb).type_ } != LIBRAW_IMAGE_JPEG || size == 0 {
                 return None;
             }
-            Some(use_bytes(std::slice::from_raw_parts((*thumb).data.as_ptr(), size)))
+            Some(use_bytes(unsafe { std::slice::from_raw_parts((*thumb).data.as_ptr(), size) }))
         })();
-        raw::libraw_dcraw_clear_mem(thumb);
+        unsafe { raw::libraw_dcraw_clear_mem(thumb) };
         out
     })();
 
-    raw::libraw_recycle(r);
-    raw::libraw_close(r);
+    unsafe { raw::libraw_recycle(r) };
+    unsafe { raw::libraw_close(r) };
     result
 }
 
@@ -958,10 +962,10 @@ pub unsafe extern "C" fn bb_decode_embedded(path: *const c_char, long_edge: u32)
     // The grid tile of every photo in an import comes through here, off a JPEG the
     // camera wrote and nothing has validated.
     let decoded = guard("bb_decode_embedded", None, || {
-        with_embedded_jpeg(path, |bytes| match long_edge {
+        unsafe { with_embedded_jpeg(path, |bytes| match long_edge {
             0 => vips::Pipeline::decode_upright(bytes).and_then(vips::Pipeline::finish),
             edge => vips::Pipeline::thumbnail(bytes, edge as usize).and_then(vips::Pipeline::finish),
-        })
+        }) }
     });
 
     match decoded {
@@ -987,11 +991,11 @@ pub unsafe extern "C" fn bb_read_header(path: *const c_char, out: *mut header::B
     if path.is_null() || out.is_null() {
         return -1;
     }
-    let Ok(path) = CStr::from_ptr(path).to_str() else { return -1 };
+    let Ok(path) = unsafe { CStr::from_ptr(path) }.to_str() else { return -1 };
     // Runs on every file of a scan, and parses maker notes off untrusted bytes.
     match guard("bb_read_header", None, || header::read_path(path)) {
         Some(header) => {
-            *out = header;
+            unsafe { *out = header; }
             0
         }
         None => -1,
@@ -1015,10 +1019,10 @@ pub unsafe extern "C" fn bb_free(image: *mut BbImage) {
     if image.is_null() {
         return;
     }
-    let mut image = Box::from_raw(image);
+    let mut image = unsafe { Box::from_raw(image) };
     // Null when the last reader already released the pixels, and `from_raw_parts`
     // takes no null pointer even at length zero.
-    image.release_pixels();
+    unsafe { image.release_pixels() };
 }
 
 /// How many bytes `bb_descriptor` writes, so the caller can size its buffer and
@@ -1042,11 +1046,11 @@ pub unsafe extern "C" fn bb_descriptor(image: *const BbImage, out: *mut u8) -> c
     if image.is_null() || out.is_null() {
         return -1;
     }
-    let Some(view) = (*image).view() else {
+    let Some(view) = (unsafe { (*image).view() }) else {
         return -1;
     };
     let descriptor = stacks::describe(view);
-    std::ptr::copy_nonoverlapping(descriptor.as_ptr(), out, descriptor.len());
+    unsafe { std::ptr::copy_nonoverlapping(descriptor.as_ptr(), out, descriptor.len()) };
     0
 }
 
@@ -1074,10 +1078,10 @@ pub unsafe extern "C" fn bb_stack_groups(
     if descriptors.is_null() || timestamps.is_null() || out.is_null() {
         return -1;
     }
-    let descriptors = std::slice::from_raw_parts(descriptors, count * stacks::DESCRIPTOR_BYTES);
-    let timestamps = std::slice::from_raw_parts(timestamps, count);
+    let descriptors = unsafe { std::slice::from_raw_parts(descriptors, count * stacks::DESCRIPTOR_BYTES) };
+    let timestamps = unsafe { std::slice::from_raw_parts(timestamps, count) };
     let groups = stacks::group(descriptors, timestamps, threshold, window_seconds);
-    std::ptr::copy_nonoverlapping(groups.as_ptr(), out, count);
+    unsafe { std::ptr::copy_nonoverlapping(groups.as_ptr(), out, count) };
     0
 }
 
