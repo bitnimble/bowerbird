@@ -265,7 +265,14 @@ test('the home page lands in a library, and a narrow screen gets the rail as a d
   const rail = page.locator('.rail');
   await expect(rail).toHaveCount(0);
 
-  await page.getByRole('button', { name: 'Show sidebar' }).click();
+  // The toggle takes room in the first control row, not a column of its own: the
+  // photographs below it get the whole width of the phone.
+  const toggle = page.getByRole('button', { name: 'Show sidebar' });
+  const toggleBox = (await toggle.boundingBox())!;
+  const tileBox = (await page.locator('.tile').first().boundingBox())!;
+  expect(tileBox.x).toBeLessThan(toggleBox.x + toggleBox.width);
+
+  await toggle.click();
   await expect(rail).toBeVisible();
 
   // Over the content rather than beside it: the page keeps the full width it had.

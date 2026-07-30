@@ -519,9 +519,14 @@ p.ui-text--mono {
   z-index: 20;
 }
 
-/* Clear of the toggle, which floats over this corner. */
-.shell--collapsed .pad {
-  padding-left: 52px;
+/* Room for the toggle on the page's first row only, as an item in that row
+   rather than padding on the page: padding would keep a toggle-wide gutter
+   beside the grid all the way down, which on a phone is a column the
+   photographs can't afford. */
+.main:has(.rail__toggle) .pad > :first-child::before {
+  content: '';
+  display: inline-block;
+  width: 38px;
 }
 
 .rail__scrim {
