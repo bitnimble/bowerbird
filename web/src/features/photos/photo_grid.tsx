@@ -511,6 +511,12 @@ const BandTiles = observer(function BandTiles({
         } as React.CSSProperties
       }
     >
+      {/* The interior corners of the join, which are concave and so cannot be a
+          radius on either box (§19.6). Out of the grid's flow, being absolute, and
+          only on a side where there is a corner at all: at an end of the band the
+          line runs straight through. */}
+      {join != null && !join.first && <span className="band__join band__join--left" aria-hidden="true" />}
+      {join != null && !join.last && <span className="band__join band__join--right" aria-hidden="true" />}
       {expansion.photos.map((photo) => (
         <BandMember key={photo.id} photo={photo} />
       ))}

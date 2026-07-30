@@ -2780,15 +2780,26 @@ from their tiles by another band and keep a ring of their own, where the colour 
 what pairs them. Masonry is the same rule per **line**, decided where the lines are
 replayed rather than in the store.
 
-Three details, each of which was wrong first:
+Four details, each of which was wrong first:
 
 - The gap is a **mask over the ring** rather than a redrawn edge, so the ring keeps
-  its exact geometry, and it is cut at the tile's *outer* edges - a gap ending at
-  the tile's inner edge left the corner short by a ring's width and read as broken.
-- A gap that reaches an end of the band **squares that corner off**. The tile's own
-  edge runs straight down into it, and against the 4px arc that left a nick on one
-  side and a broken corner on the other. Both ends at once is the single-column
-  case, where the top edge disappears entirely and the two boxes are one.
+  its exact geometry. Where it is cut depends on what the corner there is: a fillet
+  needs a radius of room to curve into, and a corner that runs straight through
+  keeps a ring's width of cap - cut at the tile's inner edge instead, the line
+  stopped short of the corner and read as broken.
+- The two **interior corners are filleted**, since every other corner of the shape
+  is rounded and a hard notch between them read as a mistake. They are concave, so
+  neither box can round them with a `border-radius` of its own: each is a quarter of
+  a ring whose centre sits out in the notch, drawn as a box of radius+ring with two
+  borders and the corner facing the notch fully rounded - the radius equals the box,
+  so nothing straight is left over. A fillet reaches a whole radius above the band,
+  which is more than the row gap, so it crosses the tile's own bottom corner and
+  replaces the stub that would otherwise bridge the gap on that side.
+- A gap that reaches an end of the band **squares that corner off** and has no
+  fillet: the tile's own edge runs straight down into it, and against the 4px arc
+  that left a nick on one side and a broken corner on the other. Both ends at once
+  is the single-column case, where the top edge disappears entirely and the two
+  boxes are one.
 - The stubs set `box-sizing` themselves: the reset's `*` does not match
   pseudo-elements, so their two borders were added outside the width and the right
   one landed a ring's width past the tile's edge.
