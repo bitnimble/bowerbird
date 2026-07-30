@@ -6,7 +6,7 @@ import {
   fitMatchProfile,
   fitProfileFor,
   type MatchProfile,
-} from '../../src/services/processing/jpeg_match';
+} from '../../src/services/processing/jpeg_match_test_only';
 import { SPLINE_UNIT } from '../../src/services/processing/lens_corrections';
 import {
   decodeEmbedded,

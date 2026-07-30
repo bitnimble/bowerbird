@@ -6,7 +6,7 @@ import { afterAll, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { deltaE76 } from '../../src/services/processing/jpeg_match';
+import { deltaE76 } from '../../src/services/processing/jpeg_match_test_only';
 import { readEmbeddedJpeg } from '../../src/services/processing/raw_decoder';
 import { decodeImage, freeImage, type ImageHandle } from '../../src/services/processing/rawshim_ops';
 import { pixels } from '../../src/services/processing/rawshim_pixels';

@@ -20,7 +20,7 @@
 //   docker exec bowerbird-dev bun test test/integration
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { readFileSync, writeFileSync } from 'node:fs';
-import { fitMatchProfile, type MatchProfile } from '../../src/services/processing/jpeg_match';
+import { fitMatchProfile, type MatchProfile } from '../../src/services/processing/jpeg_match_test_only';
 import {
   decodeRawImage,
   fitHdrMatch,

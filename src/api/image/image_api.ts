@@ -5,7 +5,7 @@ import type { Library } from '../../schemas/libraries';
 import { getOriginalPath, getRenditionPath } from '../../utils/paths';
 import { rawMediaType } from '../../utils/scan';
 import { readEmbeddedJpeg } from '../../services/processing/raw_decoder';
-import { decodeFile, encodeJpeg, freeImage } from '../../services/processing/rawshim_ops';
+import { transcodeJpeg } from '../../services/processing/rawshim_job';
 import { isRendition, renditionContentType } from '../../services/processing/renditions';
 import type { BasicPhoto } from '../../services/photos/photos_repository';
 import type { PhotosService } from '../../services/photos/photos_service';
@@ -132,15 +132,10 @@ export class ImageApi {
     const renditionPath = getRenditionPath(library, photo.id, form, library.rendition_hdr);
     if (!(await Bun.file(renditionPath).exists())) throw new AppError('NOT_FOUND', `image not found on disk: ${photoId}`);
 
-    // Decoded from the path: the rendition's bytes have no business on this side,
-    // and only the JPEG does - because that is what goes into the response.
-    const decoded = decodeFile(renditionPath);
-    let jpeg: Buffer;
-    try {
-      jpeg = encodeJpeg(decoded, 0, JPEG_QUALITY);
-    } finally {
-      freeImage(decoded);
-    }
+    // One call, given the path: the rendition's own bytes have no business on this
+    // side and never reach it, and the JPEG that does is a response body. Nothing
+    // is held between calls, so there is no handle to free on the way out.
+    const jpeg = transcodeJpeg(renditionPath, 0, JPEG_QUALITY);
     // Suffixed, because a reader comparing the two renders wants both in the same
     // folder and `name.jpg` twice is one file and a copy.
     return download(new Uint8Array(jpeg), 'image/jpeg', `${stem}-${form === 'max' ? 'rendered-max' : 'rendered'}.jpg`);

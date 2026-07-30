@@ -12,7 +12,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { fitMatchProfile, type MatchProfile } from '../../src/services/processing/jpeg_match';
+import { fitMatchProfile, type MatchProfile } from '../../src/services/processing/jpeg_match_test_only';
 import {
   decodeRawImage,
   encodeHdrRendition,

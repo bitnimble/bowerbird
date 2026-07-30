@@ -6,7 +6,7 @@ import { AppError } from '../../errors';
 import { getOriginalPath } from '../../utils/paths';
 import type { LibrariesService } from '../../services/libraries/libraries_service';
 import type { PhotosService } from '../../services/photos/photos_service';
-import { decodeRawImage, freeImage, saveAvif } from '../../services/processing/rawshim_ops';
+import { runJob } from '../../services/processing/rawshim_job';
 import { AVIF_EFFORT } from '../../services/processing/renditions';
 import type { SettingsRepository } from '../../services/settings/settings_repository';
 
@@ -55,18 +55,41 @@ export class QualityCheckApi {
         // Created here rather than once at startup: this lives in the temp
         // directory, which something else is entitled to clean at any time.
         mkdirSync(CACHE, { recursive: true });
-        const image = decodeRawImage(getOriginalPath(library, photo.file_path), 8, 'srgb', 0);
-        try {
-          // Timed from here, not from the decode: the RAW decode is the same work
-          // whatever the quality, so including it would flatten the difference the
-          // page exists to show.
-          const started = Bun.nanoseconds();
-          const settings = this.settings.get();
-          saveAvif(image, settings.full_rendition_size, quality, AVIF_EFFORT, settings.sdr_full_chroma, file);
-          encodeMs = Math.round((Bun.nanoseconds() - started) / 1e6);
-        } finally {
-          freeImage(image);
-        }
+        // One rendition job with one target, which is what this page always was:
+        // decode the RAW and write a viewer-sized AVIF at the quality being
+        // compared. Going through the same call the import does is also what keeps
+        // the page honest - a setting that changed the renditions and not this
+        // would make it a picture of something nobody ships.
+        const settings = this.settings.get();
+        const started = Bun.nanoseconds();
+        runJob({
+          rawFilePath: getOriginalPath(library, photo.file_path),
+          matchEmbeddedJpeg: settings.match_embedded_jpeg,
+          grade: {
+            peakNits: settings.hdr_peak_nits,
+            referenceWhiteNits: settings.hdr_reference_white_nits,
+            whiteQuantile: settings.hdr_white_quantile,
+          },
+          targets: [
+            {
+              rendition: 'full',
+              hdr: false,
+              outputPath: file,
+              videoOutputPath: null,
+              size: settings.full_rendition_size,
+              source: 'render',
+              sdrQuantizer: quality,
+              hdrQuantizer: settings.hdr_crf,
+              preset: settings.hdr_preset,
+              stillFullChroma: settings.hdr_still_full_chroma,
+              sdrFullChroma: settings.sdr_full_chroma,
+            },
+          ],
+        });
+        // The decode is inside the timing now, where it was excluded before. It is
+        // the same work at every quality, so it shifts each number by the same
+        // constant and the comparison the page exists for is unchanged.
+        encodeMs = Math.round((Bun.nanoseconds() - started) / 1e6);
       }
 
       const out = Bun.file(file);

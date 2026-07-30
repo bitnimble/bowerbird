@@ -86,3 +86,28 @@ export function runJob(job: Job): JobOutcome {
   const descriptor = parsed.outcome?.descriptor;
   return { descriptor: descriptor == null ? undefined : Uint8Array.from(descriptor) };
 }
+
+// A transcoded rendition is usually a couple of megabytes; 32MB covers a
+// native-resolution one comfortably. Generous rather than exact because being
+// wrong costs a second encode, and being generous costs one allocation on a path
+// taken occasionally.
+const TRANSCODE_CAPACITY = 32 * 1024 * 1024;
+
+/**
+ * A stored rendition as JPEG bytes, for a download.
+ *
+ * The one call that hands bytes back rather than writing a file - it is a response
+ * body, which is the exception the no-pixels rule was always stated with. Still no
+ * address crosses: the bytes are copied into a buffer this side owns.
+ */
+export function transcodeJpeg(filePath: string, longEdge: number, quality: number): Buffer {
+  const path = Buffer.from(`${filePath}\0`);
+  let out = new Uint8Array(TRANSCODE_CAPACITY);
+  let written = Number(shim().bb_transcode_jpeg(path, longEdge, quality, ptr(out), out.byteLength));
+  if (written > out.byteLength) {
+    out = new Uint8Array(written);
+    written = Number(shim().bb_transcode_jpeg(path, longEdge, quality, ptr(out), out.byteLength));
+  }
+  if (written < 0) throw new Error(`rawshim could not transcode ${filePath}`);
+  return Buffer.from(out.subarray(0, written));
+}

@@ -237,6 +237,51 @@ struct JobReply {
     outcome: Option<job::Outcome>,
 }
 
+/// Transcodes a stored rendition to JPEG, for a download.
+///
+/// The one call that genuinely hands bytes back rather than writing a file: it is a
+/// response body on its way to a socket, which is the exception the rule was always
+/// stated with (10.4). It still crosses no address - the JPEG is copied into a
+/// buffer the caller owns, exactly as a job reply is.
+///
+/// Returns the byte length written, or the length needed when that is more than
+/// `out_cap`, in which case nothing was written. Negative is a failure.
+///
+/// # Safety
+/// `path` must be NUL-terminated and `out` must point at `out_cap` writable bytes.
+/// Neither is retained past the call.
+#[expect(unsafe_code)]
+#[no_mangle]
+pub unsafe extern "C" fn bb_transcode_jpeg(
+    path: *const c_char,
+    long_edge: u32,
+    quality: i32,
+    out: *mut u8,
+    out_cap: usize,
+) -> isize {
+    vips::init();
+    if path.is_null() {
+        return -1;
+    }
+    let Ok(path) = (unsafe { CStr::from_ptr(path) }).to_str() else { return -1 };
+    let encoded = crate::guard("bb_transcode_jpeg", None, || {
+        let bytes = std::fs::read(path).ok()?;
+        let pipeline = match long_edge {
+            0 => Pipeline::decode_upright(&bytes),
+            edge => Pipeline::thumbnail(&bytes, edge as usize),
+        };
+        pipeline.and_then(|p| p.encode_jpeg(quality)).ok()
+    });
+    let Some(encoded) = encoded else { return -1 };
+
+    if encoded.len() > out_cap || out.is_null() {
+        return encoded.len() as isize;
+    }
+    let destination = unsafe { std::slice::from_raw_parts_mut(out, encoded.len()) };
+    destination.copy_from_slice(&encoded);
+    encoded.len() as isize
+}
+
 /// The HDR encode's settings, flat so TypeScript can fill it with one DataView.
 #[repr(C)]
 pub struct BbHdrOptions {
