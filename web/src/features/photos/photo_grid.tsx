@@ -211,12 +211,13 @@ const Tile = observer(function Tile({
           if (e.shiftKey) return photos.extendTo(index);
           photos.focusAt(index);
           if (e.metaKey || e.ctrlKey) return photos.toggle(index);
+          // A stack's tile is a disclosure, not a selection: it stands for every
+          // photo in the stack rather than the one it shows, and a plain click on
+          // it is how you look inside. The selection is left exactly as it was,
+          // which is the point - opening a stack to see what is in it must not
+          // throw away what the reader had already chosen. Cmd-click selects it.
+          if (stacked) return void photos.toggleBand(photo.stack_id!, index);
           photos.selectOnly(index);
-          // A stack's tile stands for the whole stack, so selecting it opens the
-          // band of members below this row rather than the one photo it happens to
-          // show; a member is reached from the band. On the first click, not the
-          // second: the band is how you see what you have just selected.
-          if (stacked) void photos.toggleBand(photo.stack_id!, index);
         }}
         // Opening a photo is the second click, so the first can select: choosing
         // photographs is what a grid is mostly for, and a tick box per tile to

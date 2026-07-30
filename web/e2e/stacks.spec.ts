@@ -123,11 +123,16 @@ test('a list row opens its stack from anywhere along it, not just the thumbnail'
 test('a selection spans the grid and the contents of a stack', async ({ page }) => {
   await page.goto('/settings');
   await openLibrary(page, STACK_PHOTOS_DIR);
-  await page.locator('.tile:not(.tile--member) .tile__hit').click();
+  const stack = page.locator('.tile:not(.tile--member) .tile__hit');
+  await stack.click();
+  await expect(page.locator('.grid__band .tile')).toHaveCount(PHOTO_NAMES.length);
+  // Opening it selected nothing: a stack's tile is a disclosure (§19.6). Cmd-click
+  // is what selects the row, and it leaves the band open.
+  await expect(page.locator('.tile--selected')).toHaveCount(0);
+  await stack.click({ modifiers: ['ControlOrMeta'] });
   await expect(page.locator('.grid__band .tile')).toHaveCount(PHOTO_NAMES.length);
 
-  // The stack's row is selected by that click; cmd-clicking a member of it adds
-  // to the same selection rather than replacing it.
+  // Cmd-clicking a member of it adds to that same selection rather than replacing it.
   await page.locator('.grid__band .tile__hit').first().click({ modifiers: ['ControlOrMeta'] });
   await expect(page.locator('.bulkbar__count')).toHaveText('2 selected');
   await expect(page.locator('.tile--selected')).toHaveCount(2);
@@ -136,6 +141,14 @@ test('a selection spans the grid and the contents of a stack', async ({ page }) 
   // member is one of those photos, so the server takes each of them once.
   await bulkAction(page, 'Rebuild thumbnails');
   await expect(page.getByText('Rebuilt 2 thumbnails')).toBeVisible({ timeout: 30_000 });
+
+  // Closing the band takes its members out of the selection, since a closed stack
+  // would leave them acted on with nothing on screen saying so - and leaves the
+  // rest of it alone, because opening and closing a stack is not a selection.
+  await stack.click();
+  await expect(page.locator('.grid__band')).toHaveCount(0);
+  await expect(page.locator('.tile--selected')).toHaveCount(1);
+  await stack.click();
 
   // A selection of nothing but members is a selection like any other: the runs are
   // empty and the ids carry it. The band is still open - a rebuild re-reads the
@@ -175,7 +188,9 @@ test('a stack made by hand can be unstacked again', async ({ page }) => {
   await page.getByRole('button', { name: 'Stack', exact: true }).click();
   await expect(page.locator('.tile')).toHaveCount(1);
 
-  await page.locator('.tile__hit').click();
+  // Cmd-click: a plain click on a stack's tile opens its band rather than selecting
+  // it, and Unstack is offered for a selection of one stack (§19.6).
+  await page.locator('.tile__hit').click({ modifiers: ['ControlOrMeta'] });
   await page.getByRole('button', { name: 'Unstack' }).click();
   await expect(page.locator('.tile')).toHaveCount(PHOTO_NAMES.length);
 });

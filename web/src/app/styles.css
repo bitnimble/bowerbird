@@ -1418,6 +1418,17 @@ p.ui-text--mono {
   pointer-events: none;
 }
 
+/* A band's cells are as wide as the grid's but shorter, since a band pays for its
+   padding out of its own rows (`bandRowHeight`) - so a photo that filled its cell
+   in the grid was letterboxed inside a band, which is the one place the same
+   photograph is drawn at two shapes. The member keeps the grid's 3:2 cell at
+   whatever height the band has to give it, centred in the width that leaves. */
+.grid--grid.grid__band .tile {
+  aspect-ratio: 3 / 2;
+  width: auto;
+  justify-self: center;
+}
+
 /* Masonry has no rows to place a band between, so it is a full-width item on the
    block's own flex line, breaking it directly after the tile it belongs to. */
 .grid__band--inline {

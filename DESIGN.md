@@ -2753,14 +2753,22 @@ that album holds. A shoot needs no such argument - each row carries its own
 
 ### 19.6 The grid (`bands.ts`)
 
-Clicking a stack tile selects it and opens a **band of fresh rows directly below
-the row that tile sits in** - the tile stands for the stack, not for the one member
-it shows, so it never opens that member's detail view, and a member is reached from
-the band. Its band is therefore the first click's business, unlike every other tile
-where that is the second's (§18.3.1); a double-click on a stack opens the band and
-closes it again, which is the same tile doing the same thing twice. The tile stays
-where it is and takes a dark overlay with an up chevron, which is also how the
-stack closes.
+Clicking a stack tile opens a **band of fresh rows directly below the row that tile
+sits in** - the tile stands for the stack, not for the one member it shows, so it
+never opens that member's detail view, and a member is reached from the band. Its
+band is therefore the first click's business, unlike every other tile where that is
+the second's (§18.3.1); a double-click on a stack opens the band and closes it
+again, which is the same tile doing the same thing twice. The tile stays where it is
+and takes a dark overlay with an up chevron, which is also how the stack closes.
+
+**A stack's tile is a disclosure, not a selection.** A plain click on it opens or
+closes its band and leaves the selection exactly as it was - it did select the row
+for a while, which meant that looking inside a stack threw away whatever the reader
+had already chosen. Cmd-click is what selects the row, which is also how Unstack is
+reached, and it leaves the band as it found it. What *does* leave the selection is
+closing a band: its members go with it, since a closed stack would leave them acted
+on with nothing on screen saying so, and the collapsed row that replaces them is
+not the same thing as three of its frames (§19.6.1).
 
 **The tile and its band are drawn as one shape**, joined across the gap between
 them: the tile leaves its bottom edge open, the band leaves the tile's own width
@@ -2803,6 +2811,12 @@ that gave a band its own height would put the scroll height back into the DOM,
 which the virtual grid exists to avoid. A band is drawn inset from its outline,
 and pays for that padding out of the height of its own cells (`bandRowHeight`)
 rather than out of the collection below it.
+
+Which leaves a band's cells as wide as the grid's but **shorter**, and in grid mode
+that letterboxed a photograph inside a band that filled its cell in the grid - the
+one place the same frame was drawn at two shapes. A member therefore keeps the
+grid's 3:2 cell at whatever height the band has to give it, centred in the width
+that leaves.
 
 **Masonry** has no row model to hang a band off, so an open stack's members break
 the line themselves: the band is a full-width item on the block's own flex line.

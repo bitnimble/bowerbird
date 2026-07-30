@@ -869,6 +869,13 @@ export class PhotosPresenter {
       next.delete(stackId);
       this.store.expansions = next;
       this.forgetFusedTiles(next);
+      // Its members go out of the selection with it. Held on, they would be acted
+      // on from behind a closed stack, with nothing on screen to say so - and the
+      // collapsed row that replaces them is not the same thing as three of them
+      // (§19.6.1). The rest of the selection stays: closing a band is not a
+      // selection gesture.
+      const closed = new Set(open.photos.map((photo) => photo.id));
+      this.store.selectedMembers = new Set([...this.store.selectedMembers].filter((id) => !closed.has(id)));
       this.bandShift(position, -rows, was);
       return;
     }
