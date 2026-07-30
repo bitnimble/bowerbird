@@ -962,7 +962,7 @@ p.ui-text--mono {
      is what stops the bar's own presence from changing the column count and so the
      content height that decides whether a bar is needed; and a ResizeObserver's
      contentRect excludes it, so `viewportWidth` never sees it move. Without it, a
-     24px pointer target has to reach over the rightmost tile's select box. */
+     24px pointer target has to reach over the rightmost tile. */
   padding-right: 24px;
   /* The rail is not the collection, so the native thumb would describe a
      hundred thousand pixels somewhere in the middle of it. .grid__bar is what
@@ -1151,13 +1151,6 @@ p.ui-text--mono {
   font-size: 12px;
 }
 
-.grid--list .tile__check {
-  top: 50%;
-  right: auto;
-  left: 4px;
-  transform: translateY(-50%);
-}
-
 .tile {
   position: relative;
   aspect-ratio: 3 / 2;
@@ -1176,8 +1169,8 @@ p.ui-text--mono {
   cursor: default;
 }
 
-/* Covers the tile so a click anywhere opens the photo; the checkbox and badges
-   sit above it. */
+/* Covers the tile so a click anywhere selects the photo; the badges and marks sit
+   above it. */
 .tile__hit {
   position: absolute;
   inset: 0;
@@ -1211,31 +1204,17 @@ p.ui-text--mono {
   height: 100%;
 }
 
-/* Rings are drawn by an overlay rather than an inset shadow: the rendition is a
-   child element and paints over any shadow the tile itself casts inward. */
-.tile--selected::after,
-.tile--focused::after {
+/* The ring is drawn by an overlay rather than an inset shadow: the rendition is a
+   child element and paints over any shadow the tile itself casts inward.
+   One ring, for the selection and the keyboard cursor alike - they are the same
+   thing (§18.3.1). */
+.tile--selected::after {
   content: '';
   position: absolute;
   inset: 0;
   pointer-events: none;
   z-index: 2;
-}
-
-.tile--selected::after {
-  box-shadow: inset 0 0 0 2px var(--glass);
-}
-
-/* The keyboard cursor. Distinct from selection (glass) so you can see where the
-   cull is up to even while a different set is selected. */
-.tile--focused::after {
-  box-shadow: inset 0 0 0 3px var(--satin);
-}
-
-.tile--focused.tile--selected::after {
-  box-shadow:
-    inset 0 0 0 3px var(--satin),
-    inset 0 0 0 5px var(--glass);
+  box-shadow: inset 0 0 0 3px var(--glass);
 }
 
 .tile__name {
@@ -1498,37 +1477,12 @@ p.ui-text--mono {
   color: #200807;
 }
 
-.tile__check {
-  position: absolute;
-  right: 6px;
-  top: 6px;
-  width: 18px;
-  height: 18px;
-  padding: 0;
-  border-radius: 3px;
-  border: 1px solid #545a66;
-  background: rgba(10, 12, 16, 0.75);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  /* The button's own line-height would otherwise offset the glyph inside the box. */
-  line-height: 0;
-  color: transparent;
-}
-
-.tile--selected .tile__check {
-  background: var(--glass);
-  border-color: var(--glass);
-  color: #08131a;
-}
-
 /* ---------- selection bar ---------- */
 
-/* Directly under the filters, where the selection was made, rather than at the
-   foot of a grid the user has scrolled away from. */
+/* The header's second row, directly under the filters and where the selection was
+   made, rather than at the foot of a grid the user has scrolled away from. Always
+   drawn, so nothing below it moves when a selection starts (§18.3.1). */
 .bulkbar {
-  position: sticky;
-  top: 0;
   z-index: 5;
   margin-bottom: 10px;
   background: var(--slate-soft);

@@ -87,12 +87,22 @@ export async function openLibrary(page: Page, rootPath: string): Promise<void> {
   await page.locator(`.rail__link[title="${rootPath}"]`).click();
 }
 
+// A tile's frame selects on one click and opens the photo on two (§18.3.1), so
+// every spec that wants the detail view goes through here rather than clicking.
+export function openPhoto(page: Page, nth = 0): Promise<void> {
+  return page.locator('.tile__hit').nth(nth).dblclick();
+}
+
+export function selectPhoto(page: Page, nth = 0): Promise<void> {
+  return page.locator('.tile__hit').nth(nth).click();
+}
+
 // Opens the first photo and swaps the rendition for the full-resolution render,
 // which the server builds on first request.
 export async function viewMaxQuality(page: Page, rootPath: string): Promise<void> {
   await page.goto('/settings');
   await openLibrary(page, rootPath);
-  await page.locator('.tile__hit').first().click();
+  await openPhoto(page);
   // The full-size rendition is built by the background queue after a sync, so a
   // freshly synced library can wait on a real decode here.
   await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });

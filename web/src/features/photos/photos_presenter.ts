@@ -336,7 +336,7 @@ export class PhotosPresenter {
     const target = this.selectionTarget();
     if (target == null) return;
     await this.refreshMetadata(target);
-    this.clearSelection();
+    this.clearSelectedPositions();
   }
 
   // The rendition the user asked for, which is also the one to reopen at: which
@@ -524,10 +524,14 @@ export class PhotosPresenter {
     this.store.focusIndex = Math.max(0, Math.min(index, this.store.total - 1));
   }
 
+  // The cursor and the selection are one thing, so arrowing onto a photo selects
+  // it: one ring, and whatever the bar or a cull key acts on is what is ringed.
+  // Building a set from the keyboard is Space, which toggles without moving.
   @action.bound
   moveFocus(delta: number): void {
     const from = this.store.focusIndex < 0 ? 0 : this.store.focusIndex + delta;
     this.focusAt(from);
+    this.selectOnly(this.store.focusIndex);
   }
 
   async rateFocused(rating: number): Promise<void> {
@@ -569,6 +573,17 @@ export class PhotosPresenter {
     this.takeSelection();
     if (index < 0) return;
     this.store.selection = this.store.selection.toggle(index);
+    this.store.lastToggled = index;
+  }
+
+  // A plain click on a tile means "this one instead", not "this one as well":
+  // the tile is the selection control now that there is no tick box, so building
+  // a set is cmd-click and shift-click as it is in any file manager.
+  @action.bound
+  selectOnly(index: number): void {
+    this.takeSelection();
+    if (index < 0) return;
+    this.store.selection = SelectionRanges.of(index, index);
     this.store.lastToggled = index;
   }
 
@@ -619,8 +634,22 @@ export class PhotosPresenter {
     this.store.lastToggled = null;
   }
 
+  // The reader dropping the selection, from the bar or with Escape. Takes the
+  // cursor with it, since they are the same thing: a ring left behind with nothing
+  // selected is a photo the cull keys still act on and the bar cannot see.
   @action.bound
   clearSelection(): void {
+    this.clearSelectedPositions();
+    this.store.selectedMembers = new Set();
+    this.store.focusIndex = -1;
+  }
+
+  // The positions alone, for an action that has just consumed them or a
+  // collection whose positions now hold something else. The cursor stays: a cull
+  // that bins the photo it is on carries on from where it was, and the row that
+  // took its place is what the next keystroke should reach.
+  @action
+  private clearSelectedPositions(): void {
     this.store.selection = SelectionRanges.EMPTY;
     this.store.lastToggled = null;
   }
@@ -699,7 +728,7 @@ export class PhotosPresenter {
     } catch (err) {
       this.fail(err);
     }
-    this.clearSelection();
+    this.clearSelectedPositions();
   }
 
   // A photo whose processing never ran, or failed, has no rendition to serve and
@@ -751,7 +780,7 @@ export class PhotosPresenter {
       this.fail(err);
       return;
     }
-    this.clearSelection();
+    this.clearSelectedPositions();
     await this.refresh();
     this.toasts.showUndoable(`${plural(deleted, 'photo', 'photos')} moved to the Bin`, 'Undo', async () => {
       await api.restorePhotos({ batch });
@@ -779,7 +808,7 @@ export class PhotosPresenter {
     }
     // The moves/deletes change what this collection contains, so re-read it
     // rather than patching rows locally and drifting from the server.
-    this.clearSelection();
+    this.clearSelectedPositions();
     await this.refresh();
     this.toasts.show(success(count));
   }
@@ -971,6 +1000,13 @@ export class PhotosPresenter {
   }
 
   @action.bound
+  selectOnlyMember(photoId: string): void {
+    this.store.selectedMembers = new Set([photoId]);
+    // The two selections are different intentions (`toggleMember`).
+    this.store.selection = SelectionRanges.EMPTY;
+  }
+
+  @action.bound
   clearMemberSelection(): void {
     this.store.selectedMembers = new Set();
   }
@@ -981,7 +1017,7 @@ export class PhotosPresenter {
     if (target == null) return;
     try {
       await api.createStack(target);
-      this.clearSelection();
+      this.clearSelectedPositions();
       await this.refresh();
     } catch (err) {
       this.fail(err);
@@ -996,7 +1032,7 @@ export class PhotosPresenter {
         this.store.expansions.delete(stackId);
         this.store.expansions = new Map(this.store.expansions);
       });
-      this.clearSelection();
+      this.clearSelectedPositions();
       await this.refresh();
     } catch (err) {
       this.fail(err);
@@ -1327,7 +1363,7 @@ export class PhotosPresenter {
   @action.bound
   private resetRows(): void {
     this.invalidate();
-    this.clearSelection(); // positions into a collection that no longer exists
+    this.clearSelectedPositions(); // positions into a collection that no longer exists
     this.recent = [];
     this.store.rows.clear();
     this.store.blockHeights.clear();

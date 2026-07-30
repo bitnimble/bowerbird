@@ -2,7 +2,7 @@ import { reaction } from 'mobx';
 import { observer } from 'mobx-react-lite';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Check, ChevronUp, EyeOff, Layers, ThumbsDown, ThumbsUp } from 'lucide-react';
+import { ChevronUp, EyeOff, Layers, ThumbsDown, ThumbsUp } from 'lucide-react';
 import { captureDateTime, localDateTime } from '../../api/dates';
 import { renditionUrl, type PhotoSummary } from '../../api/client';
 import { usePhotosStore, usePresenters } from '../../app/stores_context';
@@ -156,7 +156,12 @@ const Tile = observer(function Tile({
   // A tile that failed and has since been told to try again is not failed any
   // more; without this the placeholder outlives the rendition arriving.
   useEffect(() => setFailed(false), [src]);
-  const selected = store.selection.has(index);
+  // One ring for one idea. The cursor and the selection are kept in step by every
+  // gesture that moves either - an arrow key selects, a click focuses - so drawing
+  // them differently only ever raised "why is this one different"; where they do
+  // come apart (Space toggling the cursor's photo off, an action that has just
+  // consumed the selection) the ring means "here, and what a key acts on".
+  const selected = store.selection.has(index) || isFocused;
   const expanded = photo.stack_id != null && store.expansions.has(photo.stack_id);
   const stacked = photo.stack_id != null && photo.stack_size > 1;
 
@@ -166,7 +171,7 @@ const Tile = observer(function Tile({
     // somewhere in a hundred thousand (§18.3.2).
     <div
       ref={frame}
-      className={`tile${selected ? ' tile--selected' : ''}${isFocused ? ' tile--focused' : ''}`}
+      className={`tile${selected ? ' tile--selected' : ''}`}
       role="listitem"
       aria-setsize={store.total}
       aria-posinset={index + 1}
@@ -185,23 +190,28 @@ const Tile = observer(function Tile({
           // extendTo moves the cursor itself, so it is not preceded by focusAt.
           if (e.shiftKey) return photos.extendTo(index);
           photos.focusAt(index);
-          // Once a selection exists the grid is in "choose things" mode, so a
-          // plain click keeps building it instead of navigating away from it.
-          if (e.metaKey || e.ctrlKey || store.hasSelection) photos.toggle(index);
-          // A stack's tile stands for the whole stack, so it opens the band of
-          // members below this row rather than the one photo it happens to show;
-          // a member is reached from the band.
-          else if (stacked) void photos.toggleBand(photo.stack_id!, index);
-          else navigate(`/photos/${photo.id}`);
+          if (e.metaKey || e.ctrlKey) return photos.toggle(index);
+          photos.selectOnly(index);
+          // A stack's tile stands for the whole stack, so selecting it opens the
+          // band of members below this row rather than the one photo it happens to
+          // show; a member is reached from the band. On the first click, not the
+          // second: the band is how you see what you have just selected.
+          if (stacked) void photos.toggleBand(photo.stack_id!, index);
+        }}
+        // Opening a photo is the second click, so the first can select: choosing
+        // photographs is what a grid is mostly for, and a tick box per tile to
+        // spare the frame for navigation is a control on every tile paying for a
+        // gesture used once per photo.
+        onDoubleClick={(e) => {
+          // A stack never opens a member's detail view, and its band is already
+          // this gesture's business - the two clicks open it and close it again.
+          if (stacked || e.shiftKey || e.metaKey || e.ctrlKey) return;
+          navigate(`/photos/${photo.id}`);
         }}
         aria-expanded={stacked ? expanded : undefined}
-        aria-label={
-          stacked
-            ? expanded
-              ? 'Collapse this stack'
-              : `Expand this stack of ${photo.stack_size} photos`
-            : `photo ${filename(photo.file_path, photo.id)}`
-        }
+        // The selected state rides on the name because there is no box carrying
+        // it any more, and a listitem cannot take aria-selected.
+        aria-label={`${selected ? 'selected, ' : ''}${stacked ? `stack of ${photo.stack_size}, ` : ''}photo ${filename(photo.file_path, photo.id)}`}
       >
         {/* The image is always mounted and the placeholder sits behind it until
             something decodes. Swapping the two made each list refresh blink every
@@ -239,22 +249,6 @@ const Tile = observer(function Tile({
           {!expanded && <span className="tile__stack-count">{photo.stack_size}</span>}
         </span>
       )}
-
-      <button
-        type="button"
-        className="tile__check"
-        // Shift works on the box as well as on the frame: it is the visible
-        // handle for selecting, so it is where a range gets built from.
-        onClick={(e) => {
-          if (e.shiftKey) return photos.extendTo(index);
-          photos.focusAt(index);
-          photos.toggle(index);
-        }}
-        aria-label={selected ? 'Deselect photo' : 'Select photo'}
-        aria-pressed={selected}
-      >
-        <Check size={12} strokeWidth={3} />
-      </button>
 
       <TileFoot photo={photo} />
     </div>
@@ -316,10 +310,14 @@ const BandMember = observer(function BandMember({ photo }: { photo: PhotoSummary
         type="button"
         className="tile__hit"
         onClick={(e) => {
-          if (e.metaKey || e.ctrlKey || store.selectedMembers.size > 0) photos.toggleMember(photo.id);
-          else navigate(`/photos/${photo.id}`);
+          if (e.metaKey || e.ctrlKey) photos.toggleMember(photo.id);
+          else photos.selectOnlyMember(photo.id);
         }}
-        aria-label={`photo ${filename(photo.file_path, photo.id)}`}
+        onDoubleClick={(e) => {
+          if (e.shiftKey || e.metaKey || e.ctrlKey) return;
+          navigate(`/photos/${photo.id}`);
+        }}
+        aria-label={`${selected ? 'selected, ' : ''}photo ${filename(photo.file_path, photo.id)}`}
       >
         <img src={src} alt="" loading="lazy" className={loaded ? 'is-loaded' : undefined} onLoad={() => setLoaded(true)} />
       </button>
@@ -330,16 +328,6 @@ const BandMember = observer(function BandMember({ photo }: { photo: PhotoSummary
           <span>not in this shoot</span>
         </div>
       )}
-
-      <button
-        type="button"
-        className="tile__check"
-        onClick={() => photos.toggleMember(photo.id)}
-        aria-label={selected ? 'Deselect photo' : 'Select photo'}
-        aria-pressed={selected}
-      >
-        <Check size={12} strokeWidth={3} />
-      </button>
 
       <TileFoot photo={photo} />
     </div>
@@ -396,16 +384,7 @@ function tilesFor(store: PhotosStore, from: number, to: number): JSX.Element[] {
       );
       continue;
     }
-    // The keyboard cursor is meaningless once a selection is being assembled by
-    // mouse: two rings on the same tile only raises "why is this one different".
-    tiles.push(
-      <Tile
-        key={photo.id}
-        photo={photo}
-        index={index}
-        isFocused={store.focusIndex === index && !store.hasSelection}
-      />,
-    );
+    tiles.push(<Tile key={photo.id} photo={photo} index={index} isFocused={store.focusIndex === index} />);
     const open = masonry ? store.expansionAt(index) : null;
     if (open != null) pending.push(open);
   }
@@ -507,12 +486,23 @@ const MasonryBlock = observer(function MasonryBlock({
 const GridKeys = observer(function GridKeys(): null {
   const store = usePhotosStore();
   const { photos } = usePresenters();
+  const navigate = useNavigate();
 
   useEffect(() => {
     function onKey(e: KeyboardEvent): void {
       const target = e.target as HTMLElement | null;
       if (target != null && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+      // Arrowing the cursor is the reader taking the grid over, so the focus comes
+      // with it: it is what makes Enter unambiguously the grid's rather than the
+      // rail link they came in by, and it leaves the tab order where they are.
+      // preventScroll because the scroller is the thing being focused, and letting
+      // the browser bring it into view fights the rail (§18.3.2).
+      if (e.key.startsWith('Arrow')) {
+        const scroller = document.getElementById(SCROLLER_ID);
+        if (scroller != null && !scroller.contains(document.activeElement)) scroller.focus({ preventScroll: true });
+      }
 
       // The real count, which the grid is laid out from rather than guessed at:
       // a fixed six sent the cursor to the wrong row at every other zoom.
@@ -546,7 +536,24 @@ const GridKeys = observer(function GridKeys(): null {
         case ' ':
           photos.toggle(store.focusIndex);
           break;
+        // What double-click does, for the keyboard.
+        case 'Enter': {
+          // Only from the grid: every other button, menu item and dialog owns its
+          // own Enter, and the preventDefault below - which is what stops a
+          // focused tile's click firing behind this and cutting the selection
+          // down to that one photo - would swallow the activation.
+          const fromGrid = target == null || target === document.body || target.closest(`#${SCROLLER_ID}`) != null;
+          if (!fromGrid || (target?.tagName === 'BUTTON' && !target.classList.contains('tile__hit'))) return;
+          const focused = store.focusedPhoto;
+          if (focused == null) return;
+          if (focused.stack_id != null && focused.stack_size > 1) void photos.toggleBand(focused.stack_id, store.focusIndex);
+          else navigate(`/photos/${focused.id}`);
+          break;
+        }
         case 'Escape':
+          // With nothing selected there is nothing to clear, and Escape belongs to
+          // whatever else is listening for it - a menu, a dialog.
+          if (!store.hasSelection && store.selectedMembers.size === 0 && store.focusIndex < 0) return;
           photos.clearSelection();
           break;
         default:
@@ -557,7 +564,7 @@ const GridKeys = observer(function GridKeys(): null {
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [photos, store]);
+  }, [photos, store, navigate]);
 
   return null;
 });

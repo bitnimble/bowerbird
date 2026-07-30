@@ -250,25 +250,30 @@ export function TextArea({
 }
 
 // A menu of independent checkboxes: several can be on at once, and it stays open
-// while they are being chosen.
+// while they are being chosen unless `closeOnSelect` says otherwise.
 export function CheckMenu<T extends string>({
   trigger,
   active = false,
   options,
   selected,
   onToggle,
+  disabled = false,
+  closeOnSelect = false,
 }: {
   trigger: ReactNode;
   active?: boolean;
   options: Option<T>[];
   selected: readonly T[];
   onToggle: (value: T, checked: boolean) => void;
+  disabled?: boolean;
+  /** For a menu of one-shot actions rather than a set of filters to tick. */
+  closeOnSelect?: boolean;
 }): JSX.Element {
   return (
     <Menu.Root>
       {/* The trigger is the button itself, not a wrapper around one: base-ui
           needs a real <button> for its keyboard and ARIA wiring. */}
-      <Menu.Trigger className="ui-btn ui-btn--default" aria-pressed={active}>
+      <Menu.Trigger className="ui-btn ui-btn--default" aria-pressed={active} disabled={disabled}>
         {trigger}
       </Menu.Trigger>
       <Menu.Portal>
@@ -278,7 +283,7 @@ export function CheckMenu<T extends string>({
               <Menu.CheckboxItem
                 key={option.value}
                 className="ui-item"
-                closeOnClick={false}
+                closeOnClick={closeOnSelect}
                 checked={selected.includes(option.value)}
                 onCheckedChange={(checked) => onToggle(option.value, checked)}
               >

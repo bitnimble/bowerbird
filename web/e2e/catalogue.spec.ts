@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { readdirSync } from 'node:fs';
 import { PHOTOS_DIR, PHOTO_NAMES } from './fixture_library';
-import { addLibrary, addShoot, openLibrary, syncLibrary } from './helpers';
+import { addLibrary, addShoot, openLibrary, selectPhoto, syncLibrary } from './helpers';
 
 // One ordered journey: each step depends on the catalogue state the previous one
 // produced, which is also how the bugs below were originally found.
@@ -183,8 +183,10 @@ test('adding a photo to a shoot moves the file out of the library root on disk',
   await openLibrary(page, PHOTOS_DIR);
   await expect(page.locator('.tile')).toHaveCount(PHOTO_NAMES.length);
 
-  await page.getByRole('button', { name: 'Select photo' }).first().click();
-  await expect(page.locator('.bulkbar__count')).toHaveText('1 selected');
+  await selectPhoto(page);
+  // The count only appears past one photo, since below that the ring says it.
+  await expect(page.locator('.tile--selected')).toHaveCount(1);
+  await expect(page.locator('.bulkbar__count')).toHaveCount(0);
   await page.getByRole('button', { name: 'Add to shoot' }).click();
   await page.getByRole('menuitemcheckbox', { name: /Reef/ }).click();
 
@@ -210,7 +212,7 @@ test('a photo can be taken back out of a shoot', async ({ page }) => {
   // Removal goes over DELETE with a JSON body (§13.3). Hono/Bun do parse that,
   // but nothing exercised it until the remove button existed, so pin it here:
   // a dropped body would silently no-op and leave the photo in the shoot.
-  await page.getByRole('button', { name: 'Select photo' }).first().click();
+  await selectPhoto(page);
   await page.getByRole('button', { name: /^Remove from / }).click();
 
   await expect(page.locator('.tile')).toHaveCount(0);
@@ -222,7 +224,7 @@ test('masonry lays photos out across a row, not down a column', async ({ page })
   await page.goto('/settings');
   await openLibrary(page, PHOTOS_DIR);
   await expect(page.locator('.tile')).toHaveCount(PHOTO_NAMES.length);
-  await page.getByRole('button', { name: 'Masonry' }).click();
+  await page.getByRole('button', { name: 'Masonry', exact: true }).click();
 
   // Regression: laid out with CSS columns, the tiles ran down the first column
   // before starting the second, which a paged or infinite list cannot do - it
@@ -236,7 +238,7 @@ test('masonry lays photos out across a row, not down a column', async ({ page })
   expect(first.height).toBeCloseTo(zoom, 0);
   expect(second.height).toBeCloseTo(first.height, 0);
 
-  await page.getByRole('button', { name: 'Grid' }).click();
+  await page.getByRole('button', { name: 'Grid', exact: true }).click();
 });
 
 test('the bin shows only soft-deleted photos, and the library hides them', async ({ page }) => {
@@ -244,7 +246,7 @@ test('the bin shows only soft-deleted photos, and the library hides them', async
   await openLibrary(page, PHOTOS_DIR);
   await expect(page.locator('.tile')).toHaveCount(PHOTO_NAMES.length);
 
-  await page.getByRole('button', { name: 'Select photo' }).first().click();
+  await selectPhoto(page);
   await page.getByRole('button', { name: 'Move to Bin' }).click();
   await expect(page.locator('.tile')).toHaveCount(PHOTO_NAMES.length - 1);
 

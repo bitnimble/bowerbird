@@ -50,7 +50,8 @@ test('every view opens the band, and none of them draws it over the grid', async
   await expect(page.locator('.tile__stack')).toBeVisible({ timeout: 45_000 });
 
   for (const view of ['Masonry', 'List', 'Grid']) {
-    await page.getByRole('button', { name: view }).click();
+    // Exact, because the persistent bulk bar has a "Rebuild grid renditions" in it.
+    await page.getByRole('button', { name: view, exact: true }).click();
     // Masonry packs from each photo's shape rather than on a row model, and used
     // to offer no way into a stack at all.
     await expect(page.locator('.tile__stack')).toBeVisible();
@@ -77,7 +78,7 @@ test('a masonry band leaves the line it broke at the size it was', async ({ page
   await page.goto('/settings');
   await openLibrary(page, STACK_PHOTOS_DIR);
   await expect(page.locator('.tile__stack')).toBeVisible({ timeout: 45_000 });
-  await page.getByRole('button', { name: 'Masonry' }).click();
+  await page.getByRole('button', { name: 'Masonry', exact: true }).click();
 
   const tile = page.locator('.tile:not(.tile--member)');
   const before = (await tile.boundingBox())!;
@@ -97,7 +98,7 @@ test('a list row opens its stack from anywhere along it, not just the thumbnail'
   await page.goto('/settings');
   await openLibrary(page, STACK_PHOTOS_DIR);
   await expect(page.locator('.tile__stack')).toBeVisible({ timeout: 45_000 });
-  await page.getByRole('button', { name: 'List' }).click();
+  await page.getByRole('button', { name: 'List', exact: true }).click();
 
   // Clicked where the filename is, which is most of a list row and used to be
   // dead space: through the mouse rather than the locator, because the point of
@@ -109,7 +110,7 @@ test('a list row opens its stack from anywhere along it, not just the thumbnail'
   // A member row says as much about itself as any other row does.
   await expect(page.locator('.grid__band .tile').first().getByText(/\d{4}/)).toBeVisible();
 
-  await page.getByRole('button', { name: 'Grid' }).click();
+  await page.getByRole('button', { name: 'Grid', exact: true }).click();
   await page.locator('.tile:not(.tile--member) .tile__hit').click();
   await expect(page.locator('.grid__band')).toHaveCount(0);
 });
@@ -122,7 +123,7 @@ test('a member picked out of the band can be removed from the stack', async ({ p
 
   // Members select by id and get their own bulk bar: a selection inside a stack
   // and a selection of the collection are different intentions (§19.6.1).
-  await page.locator('.grid__band .tile__check').first().click();
+  await page.locator('.grid__band .tile__hit').first().click();
   const remove = page.getByRole('button', { name: 'Remove from stack' });
   await expect(remove).toBeVisible();
   await remove.click();
@@ -138,11 +139,12 @@ test('a stack made by hand can be unstacked again', async ({ page }) => {
   await openLibrary(page, STACK_PHOTOS_DIR);
   await expect(page.locator('.tile')).toHaveCount(PHOTO_NAMES.length, { timeout: 45_000 });
 
-  for (const check of await page.locator('.tile__check').all()) await check.click();
+  // Cmd-click, because a plain click means "this one instead" (§18.3.1).
+  for (const tile of await page.locator('.tile__hit').all()) await tile.click({ modifiers: ['ControlOrMeta'] });
   await page.getByRole('button', { name: 'Stack', exact: true }).click();
   await expect(page.locator('.tile')).toHaveCount(1);
 
-  await page.locator('.tile__check').click();
+  await page.locator('.tile__hit').click();
   await page.getByRole('button', { name: 'Unstack' }).click();
   await expect(page.locator('.tile')).toHaveCount(PHOTO_NAMES.length);
 });

@@ -2,7 +2,16 @@ import { existsSync, rmSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
 import { API_URL, CULL_PHOTOS_DIR, PHOTO_NAMES } from './fixture_library';
-import { addLibrary, openLibrary, setRenditionSource, setViewerRendition, syncLibrary, viewMaxQuality } from './helpers';
+import {
+  addLibrary,
+  openLibrary,
+  openPhoto,
+  selectPhoto,
+  setRenditionSource,
+  setViewerRendition,
+  syncLibrary,
+  viewMaxQuality,
+} from './helpers';
 
 // This spec has its own library root, so binning and rejecting here cannot
 // disturb the counts the other spec asserts.
@@ -24,7 +33,7 @@ test('rating and picking work from the grid without opening a photo', async ({ p
   // Arrow to the first tile, rate it, pick it. The whole point is that culling
   // never requires a round trip through the detail view.
   await page.keyboard.press('ArrowRight');
-  await expect(page.locator('.tile--focused')).toHaveCount(1);
+  await expect(page.locator('.tile--selected')).toHaveCount(1);
   await page.keyboard.press('4');
   await page.keyboard.press('c');
 
@@ -83,6 +92,51 @@ test('rejecting removes a photo from the default working set', async ({ page }) 
   await expect(page.locator('.tile')).toHaveCount(PHOTO_NAMES.length);
 });
 
+// The frame belongs to the selection: choosing photographs is what a grid is
+// mostly for, and opening one is the second click (§18.3.1).
+test('a click selects the photo alone and a double-click opens it', async ({ page }) => {
+  await page.goto('/settings');
+  await openLibrary(page, CULL_PHOTOS_DIR);
+  await expect(page.locator('.tile')).toHaveCount(PHOTO_NAMES.length);
+  const tiles = page.locator('.tile');
+
+  await selectPhoto(page, 0);
+  await expect(page.locator('.tile--selected')).toHaveCount(1);
+  expect(page.url()).not.toContain('/photos/');
+
+  // "That one instead", not "that one as well": a second plain click replaces the
+  // selection rather than adding to it, and cmd-click is what builds a set.
+  await selectPhoto(page, 1);
+  await expect(page.locator('.tile--selected')).toHaveCount(1);
+  await expect(tiles.last()).toHaveClass(/tile--selected/);
+  await tiles.first().locator('.tile__hit').click({ modifiers: ['ControlOrMeta'] });
+  await expect(page.locator('.tile--selected')).toHaveCount(2);
+
+  // One ring for the selection and the cursor alike, so dropping the selection
+  // leaves nothing ringed at all - a ring behind an empty selection is a photo the
+  // cull keys still act on with nothing saying so.
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.tile--selected')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Move to Bin' })).toBeDisabled();
+
+  await openPhoto(page, 0);
+  await expect(page).toHaveURL(/\/photos\//);
+});
+
+test('Enter opens the photo the cursor is on', async ({ page }) => {
+  await page.goto('/settings');
+  await openLibrary(page, CULL_PHOTOS_DIR);
+  await expect(page.locator('.tile')).toHaveCount(PHOTO_NAMES.length);
+
+  // Arrived by clicking the rail link, so the focus is on that link until the
+  // first arrow key hands it to the grid - without which Enter belongs to the
+  // link and the cull's own "open" is dead.
+  await page.keyboard.press('ArrowRight');
+  await expect(page.locator('.tile--selected')).toHaveCount(1);
+  await page.keyboard.press('Enter');
+  await expect(page).toHaveURL(/\/photos\//);
+});
+
 // Picking a burst out of a shoot is a range, not forty clicks.
 test('shift-click extends the selection from the anchor', async ({ page }) => {
   await page.goto('/settings');
@@ -93,9 +147,11 @@ test('shift-click extends the selection from the anchor', async ({ page }) => {
   // Anchored on the last tile and then cleared, so a range that reaches it is
   // the only way the count can come back: the anchor is where the range starts
   // from, not what happens to be selected.
-  await tiles.last().getByRole('button', { name: 'Select photo' }).click();
-  await tiles.last().getByRole('button', { name: 'Deselect photo' }).click();
-  await expect(page.locator('.tile--selected')).toHaveCount(0);
+  await tiles.last().locator('.tile__hit').click();
+  await tiles.last().locator('.tile__hit').click({ modifiers: ['ControlOrMeta'] });
+  // Off the bar rather than off the ring: the tile is still where the cursor is,
+  // and the ring says so.
+  await expect(page.getByRole('button', { name: 'Move to Bin' })).toBeDisabled();
 
   await tiles.first().locator('.tile__hit').click({ modifiers: ['Shift'] });
   await expect(page.locator('.tile--selected')).toHaveCount(PHOTO_NAMES.length);
@@ -103,20 +159,14 @@ test('shift-click extends the selection from the anchor', async ({ page }) => {
   // And it does not open the photo on the way.
   expect(page.url()).not.toContain('/photos/');
 
-  // The tick box is the visible handle for selecting, so a range has to be
-  // buildable from there too rather than only from the frame.
-  await page.getByRole('button', { name: 'Clear', exact: true }).click();
-  await tiles.last().getByRole('button', { name: 'Select photo' }).click();
-  await tiles.first().getByRole('button', { name: 'Select photo' }).click({ modifiers: ['Shift'] });
-  await expect(page.locator('.tile--selected')).toHaveCount(PHOTO_NAMES.length);
-
   // The cursor answers for the anchor when nothing has been toggled: arrow to a
   // photo, shift-click another, get everything between them. ArrowLeft rather
   // than Right because the cursor is wherever the clicks above left it, and
   // moving it is clamped at the first tile.
   await page.getByRole('button', { name: 'Clear', exact: true }).click();
+  await expect(page.locator('.tile--selected')).toHaveCount(0);
   await page.keyboard.press('ArrowLeft');
-  await expect(tiles.first()).toHaveClass(/tile--focused/);
+  await expect(tiles.first()).toHaveClass(/tile--selected/);
   await tiles.last().locator('.tile__hit').click({ modifiers: ['Shift'] });
   await expect(page.locator('.tile--selected')).toHaveCount(PHOTO_NAMES.length);
   await page.getByRole('button', { name: 'Clear', exact: true }).click();
@@ -203,7 +253,7 @@ test('Delete bins the focused photo and the toast undoes it', async ({ page }) =
   await expect(page.locator('.tile')).toHaveCount(PHOTO_NAMES.length);
 
   await page.keyboard.press('ArrowRight');
-  await expect(page.locator('.tile--focused')).toHaveCount(1);
+  await expect(page.locator('.tile--selected')).toHaveCount(1);
   const binned = await page.locator('.tile__name').first().innerText();
   await page.keyboard.press('Delete');
 
@@ -220,7 +270,7 @@ test('restoring from the Bin returns the photo to the library', async ({ page })
   await page.goto('/settings');
   await openLibrary(page, CULL_PHOTOS_DIR);
 
-  await page.getByRole('button', { name: 'Select photo' }).first().click();
+  await selectPhoto(page);
   await page.getByRole('button', { name: 'Move to Bin' }).click();
   await expect(page.locator('.tile')).toHaveCount(PHOTO_NAMES.length - 1);
 
@@ -232,7 +282,7 @@ test('restoring from the Bin returns the photo to the library', async ({ page })
 
   // Regression: the Bin used to offer add-to-shoot, which always failed with
   // "photos not found" because deleted rows are excluded from that lookup.
-  await page.getByRole('button', { name: 'Select photo' }).first().click();
+  await selectPhoto(page);
   await expect(page.getByRole('button', { name: 'Add to shoot' })).toHaveCount(0);
 
   await page.getByRole('button', { name: 'Restore to original location' }).click();
@@ -245,7 +295,7 @@ test('restoring from the Bin returns the photo to the library', async ({ page })
 test('the detail view shows shooting metadata, the triage control and steps between photos', async ({ page }) => {
   await page.goto('/settings');
   await openLibrary(page, CULL_PHOTOS_DIR);
-  await page.locator('.tile__hit').first().click();
+  await openPhoto(page);
 
   // Located by title rather than by any text the panel holds: row values name the
   // camera too, which matches more than one panel.
@@ -303,7 +353,7 @@ test('a neighbour rebuilt while it was warmed is painted at the URL it was warme
   const secondId = /\/image\/([^/]+)\//.exec(second ?? '')?.[1] ?? '';
   expect(secondId).not.toBe('');
 
-  await page.locator('.tile__hit').first().click();
+  await openPhoto(page);
   await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
   const warmed = page.locator(`.stage__viewport img[aria-hidden="true"][src*="${secondId}"]`);
   await expect(warmed).toHaveCount(1);
@@ -348,7 +398,7 @@ test('a detail that lands after the reader has stepped on does not replace the p
   // be live for that: their neighbours come from the photo the route asks for,
   // not from the detail that has not arrived, or the first frame of every photo
   // opened from the grid is a dead end.
-  await page.locator('.tile__hit').first().click();
+  await openPhoto(page);
   await page.getByRole('button', { name: 'Next photo' }).click();
   const navPath = page.locator('.detail__nav .ui-text--mono');
   await expect(navPath).not.toHaveText('', { timeout: 30_000 });
@@ -368,13 +418,13 @@ test("a selection's grid tiles can be rebuilt from the bulk bar", async ({ page 
   await openLibrary(page, CULL_PHOTOS_DIR);
   await expect(page.locator('.tile')).toHaveCount(PHOTO_NAMES.length);
 
-  await page.getByRole('button', { name: 'Select photo' }).first().click();
+  await selectPhoto(page);
   await page.getByRole('button', { name: 'Rebuild grid renditions' }).click();
   await expect(page.getByText(/Rebuilt 1 grid rendition/)).toBeVisible();
 
   // What the viewer is served is recorded per photo and a tile rebuild says
   // nothing about it, so the detail view reads the same afterwards.
-  await page.locator('.tile__hit').first().click();
+  await openPhoto(page);
   const renditionPanel = page.locator('.panel', { hasText: 'RENDITION DETAILS' });
   await expect(renditionPanel.getByText('Embedded JPEG')).toBeVisible({ timeout: 30_000 });
 });
@@ -386,7 +436,7 @@ test('a rebuilt rendition is pushed to the tile that changed, and to no other', 
   const src = (index: number): Promise<string | null> => page.locator('.tile img').nth(index).getAttribute('src');
   const [rebuilt, untouched] = [await src(0), await src(1)];
 
-  await page.getByRole('button', { name: 'Select photo' }).first().click();
+  await selectPhoto(page);
   await page.getByRole('button', { name: 'Rebuild grid renditions' }).click();
 
   // The server names the photo it just wrote and the tile asks again for that one
@@ -419,7 +469,7 @@ test('rebuilding a photo rendition leaves its grid tile where it is', async ({ p
 
   // And the viewer's own URL did move, so the announcement was heard - it is the
   // stage that changed, not the fact of a change, that the tile ignored.
-  await page.locator('.tile__hit').first().click();
+  await openPhoto(page);
   await expect(page.locator(`.stage__viewport img.is-ready[src*="/renditions/full?v="]`)).toBeVisible({ timeout: 60_000 });
 });
 
@@ -437,7 +487,7 @@ test('opening a photo whose rendition is gone builds that rendition back', async
   test.setTimeout(240_000);
   await page.goto('/settings');
   await openLibrary(page, CULL_PHOTOS_DIR);
-  await page.locator('.tile__hit').first().click();
+  await openPhoto(page);
   await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
   const photoId = new URL(page.url()).pathname.split('/').pop() ?? '';
 
@@ -463,7 +513,7 @@ test('opening a photo whose rendition is gone builds that rendition back', async
 test('a chosen rendition is cached on disk, and survives a tile rebuild', async ({ page }) => {
   await page.goto('/settings');
   await openLibrary(page, CULL_PHOTOS_DIR);
-  await page.locator('.tile__hit').first().click();
+  await openPhoto(page);
   await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
   const photoId = new URL(page.url()).pathname.split('/').pop() ?? '';
 
@@ -494,7 +544,7 @@ test('a chosen rendition is cached on disk, and survives a tile rebuild', async 
   // regenerating a rendition deleted the render the viewer was holding, and the
   // next look paid for it again.
   await openLibrary(page, CULL_PHOTOS_DIR);
-  await page.getByRole('button', { name: 'Select photo' }).first().click();
+  await selectPhoto(page);
   await page.getByRole('button', { name: 'Rebuild grid renditions' }).click();
   await expect(page.getByText(/Rebuilt 1 grid rendition/)).toBeVisible({ timeout: 60_000 });
   await page.waitForTimeout(2000); // the sweep that must not happen is fire-and-forget
@@ -508,7 +558,7 @@ test('i and o switch between the camera JPEG and the render, and the cache can b
   test.setTimeout(240_000);
   await page.goto('/settings');
   await openLibrary(page, CULL_PHOTOS_DIR);
-  await page.locator('.tile__hit').first().click();
+  await openPhoto(page);
   await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
   const photoId = new URL(page.url()).pathname.split('/').pop() ?? '';
 
@@ -557,7 +607,7 @@ test('the max-quality rendition is served as a full-resolution AVIF', async ({ p
 test('the previous photo is held for a beat and then dropped, however slow the next one is', async ({ page }) => {
   await page.goto('/settings');
   await openLibrary(page, CULL_PHOTOS_DIR);
-  await page.locator('.tile__hit').first().click();
+  await openPhoto(page);
   await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible();
   const openId = page.url().split('/').pop() ?? '';
 
@@ -606,7 +656,7 @@ test('the previous photo is held for a beat and then dropped, however slow the n
 test('the panels keep their shape while the next photo is loading', async ({ page }) => {
   await page.goto('/settings');
   await openLibrary(page, CULL_PHOTOS_DIR);
-  await page.locator('.tile__hit').first().click();
+  await openPhoto(page);
   await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
 
   // Held open, or the API answers before there is a loading state to observe.
@@ -640,7 +690,7 @@ test('the next photo is fetched while the current one is on screen', async ({ pa
   // than the library's default and so deliberately never warmed.
   await setViewerRendition(page, 'Rendered RAW');
   await openLibrary(page, CULL_PHOTOS_DIR);
-  await page.locator('.tile__hit').first().click();
+  await openPhoto(page);
   await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible();
 
   // The neighbour is warmed only after this frame decodes, so it never competes
@@ -662,7 +712,7 @@ test('a reader set to the camera JPEG never loads the render', async ({ page }) 
   await setRenditionSource(page, CULL_PHOTOS_DIR, 'Rendered RAW');
   await setViewerRendition(page, 'Embedded JPEG');
   await openLibrary(page, CULL_PHOTOS_DIR);
-  await page.locator('.tile__hit').first().click();
+  await openPhoto(page);
   await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
 
   // Warmed at the rendition on screen rather than the library's, or the step
@@ -689,7 +739,7 @@ test('a photo reopens at the rendition it was last read in, without the library 
   await setRenditionSource(page, CULL_PHOTOS_DIR, 'Rendered RAW');
   await setViewerRendition(page, 'Last used per photo');
   await openLibrary(page, CULL_PHOTOS_DIR);
-  await page.locator('.tile__hit').first().click();
+  await openPhoto(page);
   const photoId = page.url().split('/').pop() ?? '';
   await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
 
@@ -701,7 +751,7 @@ test('a photo reopens at the rendition it was last read in, without the library 
   await page.keyboard.press('Escape');
   await expect(page.locator('.tile')).toHaveCount(PHOTO_NAMES.length);
   requested.length = 0;
-  await page.locator('.tile__hit').first().click();
+  await openPhoto(page);
 
   await expect(page.locator(`.stage__viewport img.is-ready[src*="/embedded.jpg"]`)).toBeVisible({ timeout: 60_000 });
   expect(requested.filter((url) => url.includes(`/${photoId}/renditions/`))).toEqual([]);
@@ -726,7 +776,7 @@ test('stepping through photos shows no empty stage and never the wrong rendition
   await setViewerRendition(page, 'Embedded JPEG');
   await openLibrary(page, CULL_PHOTOS_DIR);
   await expect(page.locator('.tile')).toHaveCount(PHOTO_NAMES.length);
-  await page.locator('.tile__hit').first().click();
+  await openPhoto(page);
   await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
   // The neighbour is warmed once this frame is up, and the step below is only
   // honest with the warm in place - it is half of why there is no gap.
@@ -779,7 +829,7 @@ test('stepping through photos shows no empty stage and never the wrong rendition
 test('the photo fits the stage instead of overflowing it', async ({ page }) => {
   await page.goto('/settings');
   await openLibrary(page, CULL_PHOTOS_DIR);
-  await page.locator('.tile__hit').first().click();
+  await openPhoto(page);
   await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible();
 
   // Regression: as a grid item the image grew the row to its own height, so
@@ -795,7 +845,7 @@ test('the photo fits the stage instead of overflowing it', async ({ page }) => {
 test('clicking zooms into the point clicked, not the centre', async ({ page }) => {
   await page.goto('/settings');
   await openLibrary(page, CULL_PHOTOS_DIR);
-  await page.locator('.tile__hit').first().click();
+  await openPhoto(page);
   await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible();
 
   // Regression: the zoom-about-point maths ran inside a setScale updater and
@@ -838,7 +888,7 @@ test('clicking zooms into the point clicked, not the centre', async ({ page }) =
 test('panning a zoomed photo cannot drag it off the stage', async ({ page }) => {
   await page.goto('/settings');
   await openLibrary(page, CULL_PHOTOS_DIR);
-  await page.locator('.tile__hit').first().click();
+  await openPhoto(page);
   await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible();
 
   await page.getByRole('button', { name: 'Zoom in' }).click();
@@ -877,7 +927,7 @@ test('panning a zoomed photo cannot drag it off the stage', async ({ page }) => 
 test('the warmed neighbours never take the pointer from the frame', async ({ page }) => {
   await page.goto('/settings');
   await openLibrary(page, CULL_PHOTOS_DIR);
-  await page.locator('.tile__hit').first().click();
+  await openPhoto(page);
   await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
   // The warm only starts once this frame is up, so there is nothing to stack
   // over it until then.
@@ -900,7 +950,7 @@ test('the warmed neighbours never take the pointer from the frame', async ({ pag
 test('the frame being replaced is held opaque under its replacement for a beat', async ({ page }) => {
   await page.goto('/settings');
   await openLibrary(page, CULL_PHOTOS_DIR);
-  await page.locator('.tile__hit').first().click();
+  await openPhoto(page);
   await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
 
   // Every frame, because the hold is a few frames long and no round trip can be

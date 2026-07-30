@@ -33,9 +33,12 @@ interface Props {
   removeFrom?: { kind: 'shoot' | 'album'; id: string; name: string };
 }
 
-// Bulk actions for the current selection. Rendered only when something is
-// selected, so it never takes space it hasn't earned.
-export const BulkBar = observer(function BulkBar({ removeFrom }: Props): JSX.Element | null {
+// Bulk actions for the current selection. Part of the header and always mounted,
+// with its actions disabled until there is something to act on: rendered only when
+// a selection existed, it appeared and disappeared under the reader, and since a
+// click selects that meant the tiles moving by a bar's height mid-gesture - between
+// the two clicks of a double-click (§18.3.1).
+export const BulkBar = observer(function BulkBar({ removeFrom }: Props): JSX.Element {
   const store = usePhotosStore();
   const shoots = useShootsStore();
   const albums = useAlbumsStore();
@@ -47,46 +50,53 @@ export const BulkBar = observer(function BulkBar({ removeFrom }: Props): JSX.Ele
   // burst" - so the bar acts on whichever one is live.
   if (store.selectedMembers.size > 0) return <MemberBar />;
 
-  if (!store.hasSelection) return null;
-
   // Binned photos are excluded from the shoot/album membership queries, so
   // offering those actions here would only ever produce "photos not found".
   // The Bin's one meaningful action is putting them back.
   const inBin = store.isBin;
+  const count = store.selectionCount;
+  const none = count === 0;
 
   return (
     <div className="bulkbar">
-      {/* "all" rather than the bare count when it is the whole collection: at
+      {/* Only once the selection is more than the one photo the cursor is on:
+          below that the ring says everything the count would, and a bar that
+          reads "1 selected" beside it is noise.
+          "all" rather than the bare count when it is the whole collection: at
           six figures the number alone does not tell you whether you got it.
           Entries rather than photographs, because a stack is one entry standing
           for however many it holds, and the client cannot know the sizes of the
           stacks in a selection covering rows it has never held. */}
-      <Text variant="mono" className="bulkbar__count">
-        {store.allSelected ? `all ${store.selectionCount} selected` : `${store.selectionCount} selected`}
-      </Text>
-      <Button variant="ghost" onClick={photos.clearSelection}>
-        <X size={ICON} />
-        Clear
-      </Button>
+      {count > 1 && (
+        <>
+          <Text variant="mono" className="bulkbar__count">
+            {store.allSelected ? `all ${count} selected` : `${count} selected`}
+          </Text>
+          <Button variant="ghost" onClick={photos.clearSelection}>
+            <X size={ICON} />
+            Clear
+          </Button>
+        </>
+      )}
 
       <div className="spacer" />
 
-      {!inBin && store.selectionCount >= 2 && (
-        <Button onClick={() => void photos.stackSelection()}>
-          <Layers size={ICON} />
-          Stack
-        </Button>
-      )}
+      {!inBin && (
+        <>
+          <Button disabled={count < 2} onClick={() => void photos.stackSelection()}>
+            <Layers size={ICON} />
+            Stack
+          </Button>
 
-      {!inBin && store.selectedStackId != null && (
-        <Button onClick={() => void photos.unstack(store.selectedStackId!)}>
-          <Layers2 size={ICON} />
-          Unstack
-        </Button>
+          <Button disabled={store.selectedStackId == null} onClick={() => void photos.unstack(store.selectedStackId!)}>
+            <Layers2 size={ICON} />
+            Unstack
+          </Button>
+        </>
       )}
 
       {inBin ? (
-        <Button variant="primary" onClick={() => void photos.restoreSelected()}>
+        <Button variant="primary" disabled={none} onClick={() => void photos.restoreSelected()}>
           <RotateCcw size={ICON} />
           Restore to original location
         </Button>
@@ -94,6 +104,11 @@ export const BulkBar = observer(function BulkBar({ removeFrom }: Props): JSX.Ele
         <>
           {shoots.shoots.length > 0 && (
             <CheckMenu
+              disabled={none}
+              // One action, not a set of boxes to tick, so the menu closes behind
+              // it. Load-bearing now the bar is always mounted: nothing else takes
+              // the popup away, and its backdrop swallowed every click after.
+              closeOnSelect
               trigger={
                 <>
                   <FolderInput size={ICON} />
@@ -108,6 +123,8 @@ export const BulkBar = observer(function BulkBar({ removeFrom }: Props): JSX.Ele
 
           {albums.albums.length > 0 && (
             <CheckMenu
+              disabled={none}
+              closeOnSelect
               trigger={
                 <>
                   <Images size={ICON} />
@@ -120,18 +137,19 @@ export const BulkBar = observer(function BulkBar({ removeFrom }: Props): JSX.Ele
             />
           )}
 
-          <Button onClick={() => void photos.rebuildGridRenditions()}>
+          <Button disabled={none} onClick={() => void photos.rebuildGridRenditions()}>
             <Sparkles size={ICON} />
             Rebuild grid renditions
           </Button>
 
-          <Button onClick={() => void photos.refreshMetadataForSelection()}>
+          <Button disabled={none} onClick={() => void photos.refreshMetadataForSelection()}>
             <RotateCw size={ICON} />
             Refresh metadata
           </Button>
 
           {removeFrom != null && (
             <Button
+              disabled={none}
               onClick={() =>
                 void (removeFrom.kind === 'shoot'
                   ? photos.removeSelectedFromShoot(removeFrom.id)
@@ -143,7 +161,7 @@ export const BulkBar = observer(function BulkBar({ removeFrom }: Props): JSX.Ele
             </Button>
           )}
 
-          <Button variant="danger" onClick={() => void photos.deleteSelected()}>
+          <Button variant="danger" disabled={none} onClick={() => void photos.deleteSelected()}>
             <Trash2 size={ICON} />
             Move to Bin
           </Button>

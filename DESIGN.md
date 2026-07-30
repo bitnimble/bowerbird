@@ -2248,9 +2248,19 @@ Rating and verdict sit on every tile, always visible and clickable, because a cu
 
 A verdict or rating can move a photo out of the slice being viewed, so a change re-reads the collection (§18.3.2) when a triage or rating filter is active. Filtering locally instead would mean a second copy of the server's filter logic, free to drift.
 
-**Shift-click extends from the anchor on either half of a tile**, the frame and the tick box: the box is the visible handle for selecting, so a range built by clicking one box and shift-clicking another has to work. The anchor is the last photo toggled on its own, falling back to the keyboard cursor when nothing has been - arrowing to a photo and shift-clicking another is the same gesture as in a file manager, and a first shift-click has nothing else to reach for. Extending moves the cursor itself rather than leaving that to the caller, which would have to know to focus *after* extending: with focus as the fallback anchor, focusing first makes every range start and end on the photo just clicked.
+**A click selects; a double-click opens.** Choosing photographs is what a grid is mostly for and opening one is a gesture used once per photo, so the frame belongs to the selection: a plain click selects that photo *alone*, cmd-click toggles, shift-click extends, and the second click of a double-click opens the photo view. That is what takes the tick box off every tile: a control per tile existed only to leave the frame free to navigate. A **stack** is the exception in the other direction - its tile opens its band on the *first* click, alongside selecting it, because the band is how you see what you just selected and the tile stands for the whole stack rather than for a photo to open (§19.6).
 
-The bulk action bar sits directly under the filters, where the selection was made, rather than at the foot of a grid the user has scrolled away from. Its actions include rebuilding renditions for the selection from either source (§10.3). While a selection exists the keyboard cursor's ring is suppressed: two different rings on one tile only invites "why is this one different".
+**The selection and the keyboard cursor are one thing, with one ring.** They were two - glass for the selection, satin for the cursor - which was defensible while a selection was something you assembled deliberately and rare otherwise. Once a click selects, every gesture makes one, and two rings on the same tile only ever raised "why is this one different". So an arrow key *selects* the photo it lands on, a click moves the cursor to what it selected, and both are drawn identically; dropping the selection (`Escape`, or Clear) takes the cursor with it, since a ring left behind with nothing selected is a photo the cull keys still act on with nothing on screen saying so. Building a set from the keyboard is `Space`, which toggles without moving. An action that has just *consumed* a selection is the one thing that clears the positions and keeps the cursor: a cull that bins the photo it is on carries on from the row that took its place.
+
+`Enter` is the double-click for the keyboard, and it has to `preventDefault`, since the frame under the cursor is a button and its own click would otherwise fire behind the navigation and cut the selection down to that one photo. It is the one cull key that is *not* global: every other button, link, menu item and dialog owns its own `Enter`. So that it is not dead for a reader who arrived by clicking the rail link, **an arrow key hands the focus to the scroller** - arrowing the cursor is the reader taking the grid over, and the tab order should follow them there.
+
+**Shift-click extends from the anchor**, which is the last photo toggled on its own, falling back to the keyboard cursor when nothing has been - arrowing to a photo and shift-clicking another is the same gesture as in a file manager, and a first shift-click has nothing else to reach for. Extending moves the cursor itself rather than leaving that to the caller, which would have to know to focus *after* extending: with focus as the fallback anchor, focusing first makes every range start and end on the photo just clicked.
+
+The bulk action bar is the **header's second row**, directly under the filters and where the selection was made rather than at the foot of a grid the user has scrolled away from. Its actions include rebuilding renditions for the selection from either source (§10.3).
+
+**It is always drawn, with its actions disabled until there is something to act on.** Rendered only when a selection existed, it appeared and disappeared under the reader - and since a click selects, that moved every tile down by a bar's height *between the two clicks of a double-click*, so the second click landed on a different photo and opened nothing; reliably in list mode, whose rows are shorter than the bar. Being permanent also means nothing else takes its menus away, so the shoot and album menus have to close on select themselves - as one-shot actions rather than boxes to tick, they should anyway, and left open the popup's backdrop swallowed every click after. The count and Clear appear only past **one** photo: below that the ring says everything the count would, and "1 selected" beside it is noise.
+
+Selected state is announced on the frame's own accessible name ("selected, photo …") rather than by `aria-selected`, which a `listitem` cannot carry - and the tiles hold buttons of their own (rating, verdict), so the grid cannot be the `listbox` whose `option`s could.
 
 Rebuilt renditions change behind a URL that does not, so the client appends a version to image URLs once a rebuild has happened in the session. The server's `ETag` covers a fresh page load; this covers an image already decoded in the current one.
 
@@ -2381,17 +2391,18 @@ Deleting a shoot asks what happens to the photographs rather than assuming, sinc
 
 ### 18.4 Culling
 
-Rating a shoot is the daily job, so it must not require opening each frame. The grid holds a keyboard cursor (distinct from the selection) and binds:
+Rating a shoot is the daily job, so it must not require opening each frame. The grid holds a keyboard cursor, which is the selection (§18.3.1), and binds:
 
 | Key | Action |
 |---|---|
-| `← → ↑ ↓` | Move the cursor |
+| `← → ↑ ↓` | Move the cursor, selecting what it lands on |
 | `0`–`5` | Set rating |
 | `Z` | Undecided |
 | `C` | Pick (again to clear) |
 | `X` | Reject (again to clear) |
 | `Del` | Move to Bin |
 | `Space` | Add to the selection |
+| `Enter` | Open the photo, or the stack's band |
 | `F` | Fullscreen, in the photo view |
 | `I` / `O` | The camera's JPEG / the render, in the photo view (§10.1) |
 | `Esc` | Clear the selection |
@@ -2734,10 +2745,14 @@ that album holds. A shoot needs no such argument - each row carries its own
 
 ### 19.6 The grid (`bands.ts`)
 
-Clicking a stack tile opens a **band of fresh rows directly below the row that
-tile sits in** - the tile stands for the stack, not for the one member it shows,
-so it never opens that member's detail view. The tile stays where it is and takes
-a dark overlay with an up chevron, which is also how the stack closes.
+Clicking a stack tile selects it and opens a **band of fresh rows directly below
+the row that tile sits in** - the tile stands for the stack, not for the one member
+it shows, so it never opens that member's detail view, and a member is reached from
+the band. Its band is therefore the first click's business, unlike every other tile
+where that is the second's (§18.3.1); a double-click on a stack opens the band and
+closes it again, which is the same tile doing the same thing twice. The tile stays
+where it is and takes a dark overlay with an up chevron, which is also how the
+stack closes.
 
 The members live alone in that band and never share a row with photos outside
 the stack, so no tile ever changes which neighbours it sits beside: the grid
