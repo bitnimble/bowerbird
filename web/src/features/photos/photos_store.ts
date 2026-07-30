@@ -2,7 +2,7 @@ import { computed, observable } from 'mobx';
 import type { Ordering, PhotoDetail, PhotoSummary, Rendition, Triage, ViewerRendition } from '../../api/client';
 import type { LibrariesStore } from '../libraries/libraries_store';
 import type { AppSettingsStore } from '../settings/app_settings_store';
-import { type Span, visibleRows } from '../../ui/virtual_rows';
+import type { Span } from '../../ui/virtual_rows';
 import {
   BLOCK,
   GRID_GAP,
@@ -15,7 +15,7 @@ import {
   visibleBlocks,
 } from './grid_layout';
 import { SelectionRanges } from './selection';
-import { type Band, displayRowOf, rowAt, runStart, totalRows } from './bands';
+import { type Band, displayRowOf, rowAt, runStart, topOfRow, totalRows, visibleBandRows } from './bands';
 
 /** How many colours open stacks are told apart by before they repeat (`[data-band]`). */
 export const BAND_COLOURS = 3;
@@ -456,7 +456,7 @@ export class PhotosStore {
   // what keeps everything downstream - the sections, the tiles, the blocks to
   // fetch - invalidated per row crossed instead of per frame.
   @computed.struct get visibleSpan(): Span {
-    return visibleRows(this.virtualTop, this.viewportHeight, this.rowHeight, this.rowCount);
+    return visibleBandRows(this.virtualTop, this.viewportHeight, this.rowHeight, this.rowCount, this.bands, this.columns);
   }
 
   /**
@@ -519,7 +519,7 @@ export class PhotosStore {
           sections.push({
             kind: 'grid',
             key: `grid-${runStart(at.row, this.bands, this.columns)}`,
-            top: display * this.rowHeight,
+            top: topOfRow(display, this.bands, this.columns, this.rowHeight),
             from,
             to,
           });
@@ -532,7 +532,7 @@ export class PhotosStore {
       // first one visible: every member is drawn from this offset, so anchoring
       // it to the visible row would slide the whole band down by however much of
       // it is above the fold and paint it over the grid below.
-      const top = (display - at.offset) * this.rowHeight;
+      const top = topOfRow(display - at.offset, this.bands, this.columns, this.rowHeight);
       sections.push({
         kind: 'band',
         key: `band-${open.stackId}`,
@@ -602,7 +602,7 @@ export class PhotosStore {
   @computed get contentHeight(): number {
     if (this.total === 0) return 0;
     if (this.mode === 'masonry') return (this.blockTops[this.blockCount] ?? 0) - GRID_GAP;
-    return this.rowCount * this.rowHeight - GRID_GAP;
+    return topOfRow(this.rowCount, this.bands, this.columns, this.rowHeight) - GRID_GAP;
   }
 
   @computed get railHeight(): number {
@@ -688,7 +688,7 @@ export class PhotosStore {
     // row in the collection, and scrolling to the latter lands a whole band's
     // height short of the tile every time.
     const row = displayRowOf(Math.floor(this.focusIndex / this.columns), this.bands, this.columns);
-    const top = row * this.rowHeight;
+    const top = topOfRow(row, this.bands, this.columns, this.rowHeight);
     // The cell, not the row pitch: the gap under it is not part of the tile, and
     // scrolling to clear it would overshoot by one gap every time.
     const bottom = top + this.rowHeight - GRID_GAP;

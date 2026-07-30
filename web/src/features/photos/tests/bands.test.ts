@@ -1,5 +1,17 @@
 import { describe, expect, test } from 'bun:test';
-import { type Band, bandRows, displayRowOf, rowAt, rowsInsertedAbove, totalRows } from '../bands';
+import {
+  type Band,
+  bandRows,
+  displayRowOf,
+  rowAt,
+  rowAtTop,
+  rowsInsertedAbove,
+  topOfRow,
+  totalRows,
+  visibleBandRows,
+} from '../bands';
+import { BAND_EXTRA, BAND_PAD } from '../grid_layout';
+import { OVERSCAN_ROWS } from '../../../ui/virtual_rows';
 
 const COLUMNS = 4;
 
@@ -116,6 +128,63 @@ describe('rowAt and displayRowOf agree over a wide sweep', () => {
       expect(at.kind).toBe('band');
       if (at.kind === 'band') expect(display - at.offset).toBe(1);
     }
+  });
+});
+
+describe('rows to pixels, with the bands taller than the rows they cover', () => {
+  const ROW = 100;
+  const bands: Band[] = [{ position: 0, members: 8 }]; // rows 1-2 of a 4-column grid
+
+  test('a row above the band is where the pitch alone puts it', () => {
+    expect(topOfRow(0, bands, COLUMNS, ROW)).toBe(0);
+    expect(topOfRow(1, bands, COLUMNS, ROW)).toBe(ROW);
+  });
+
+  test('a row below the band clears the band inset as well as its rows', () => {
+    // Two band rows, so display row 3 is the collection's row 1: two rows of pitch
+    // for the band, and the inset the band is drawn with on top.
+    expect(topOfRow(3, bands, COLUMNS, ROW)).toBe(3 * ROW + BAND_EXTRA);
+    expect(topOfRow(9, bands, COLUMNS, ROW)).toBe(9 * ROW + BAND_EXTRA);
+  });
+
+  test('a row inside the band clears only the inset above it', () => {
+    expect(topOfRow(2, bands, COLUMNS, ROW)).toBe(2 * ROW + BAND_PAD);
+  });
+
+  test('every row round-trips through the pixel it starts at', () => {
+    const shapes: Band[][] = [
+      [],
+      [{ position: 0, members: 8 }],
+      [
+        { position: 0, members: 3 },
+        { position: 9, members: 5 },
+        { position: 40, members: 12 },
+      ],
+    ];
+    for (const columns of [1, 3, 4]) {
+      for (const open of shapes) {
+        for (let row = 0; row < 20; row++) {
+          const top = topOfRow(row, open, columns, ROW);
+          // The pixel a row starts at is in that row, and so is the one before its
+          // end. Anything else and a scroll renders a screenful of the wrong rows.
+          expect(rowAtTop(top, open, columns, ROW)).toBe(row);
+          expect(rowAtTop(topOfRow(row + 1, open, columns, ROW) - 1, open, columns, ROW)).toBe(row);
+        }
+      }
+    }
+  });
+
+  test('the overscan rows either side of the viewport are asked for', () => {
+    const span = visibleBandRows(10 * ROW, 3 * ROW, ROW, 100, [], COLUMNS);
+    expect(span.from).toBe(10 - OVERSCAN_ROWS);
+    expect(span.to).toBe(13 + 1 + OVERSCAN_ROWS);
+  });
+
+  test('a viewport inside a band still spans the band rows it covers', () => {
+    const tall: Band[] = [{ position: 0, members: 40 }]; // ten rows
+    const span = visibleBandRows(topOfRow(4, tall, COLUMNS, ROW), 2 * ROW, ROW, 100, tall, COLUMNS);
+    expect(span.from).toBeLessThanOrEqual(4);
+    expect(span.to).toBeGreaterThanOrEqual(6);
   });
 });
 

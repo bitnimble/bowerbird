@@ -43,7 +43,14 @@ export const PHOTO_NAMES = ['alpha.arw', 'beta.arw'];
 // Called from playwright.config.ts at import time, not from globalSetup: the
 // webServers launch before globalSetup runs, and the API cannot open its DB
 // until this directory exists.
+//
+// Once per run, not once per import. The config is imported again by every worker
+// process - one per project - and each of those wiped the root out from under the
+// run already in progress, which a spec that writes its own library only survived
+// by luck. The flag travels to the workers the same way the ports do.
 export function prepareFixture(): void {
+  if (process.env.E2E_FIXTURE_READY === '1') return;
+  process.env.E2E_FIXTURE_READY = '1';
   console.log(`E2E API on ${API_URL}, web on http://127.0.0.1:${WEB_PORT}, fixture in ${E2E_ROOT}`);
   rmSync(E2E_ROOT, { recursive: true, force: true });
   // The stacks library gets the same copies as the others. Every frame being

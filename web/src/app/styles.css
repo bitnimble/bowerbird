@@ -31,6 +31,8 @@
   --radius: 4px;
   /* Mirrors GRID_GAP, which the row arithmetic is built on (`grid_layout.ts`). */
   --grid-gap: 3px;
+  /* Mirrors BAND_PAD: the inset a band is drawn with, outside its members (§19.6). */
+  --band-pad: 6px;
   /* One ring, worn by a selected tile, an open stack's tile and that stack's band
      (§19.6): three parts of one thing, so the weight is one value rather than
      three that drifted apart. The radius is `--radius`, and the tile carries it
@@ -1355,16 +1357,19 @@ p.ui-text--mono {
    and a border would spend rows' worth of it and push the last row into the grid
    below.
 
-   One inset for every view, so a band looks like the same thing in all three
-   (`BAND_PAD`). In the two with a row model it is the cells that pay for it - the
-   row arithmetic gives a band a fixed height and its rows have only one gap
-   spare - so a member there is a slightly smaller cell than the grid's, which is
-   the price of the band reading as a box at all. It keeps the grid's *shape*
-   either way, which is what stopped it being a letterboxed photograph. */
+   The inset is **outside** the members rather than taken off them, and it is the
+   band that is taller for it (`BAND_EXTRA`, which the row arithmetic accounts for):
+   a band's columns are the collection's columns, so a member is the same tile at the
+   same place as the one above it. Which leaves the inset for the top and bottom
+   only - the sides have nowhere to put it. A band that was wider than the grid
+   instead put a 6px kink in the one line the eye follows: its own edge against the
+   edge of the tile it is joined to (§19.6). The ring lands on the outermost members
+   the way a selection ring lands on its own tile, which is how every ring here is
+   drawn. */
 .grid__band {
   background: rgba(120, 140, 180, 0.1);
   border-radius: var(--radius);
-  padding: 6px;
+  padding: var(--band-pad) 0;
 }
 
 .grid__band::after {
@@ -1394,10 +1399,9 @@ p.ui-text--mono {
   --fuse-cut-right: calc(var(--fuse-r) + var(--radius) - var(--ring));
 }
 
-/* A gap that reaches an end of the band squares that corner off: the tile's own
-   edge runs straight down into it, and a 4px arc between the two read as a broken
-   corner. Masonry sets the offsets in pixels instead, so the same rules serve both
-   (`joinTo`). */
+/* A join that reaches an end of the band is one straight line - the tile's own edge
+   and the band's are the same edge - so that corner squares off, the top edge keeps
+   a ring's width of cap, and the stub below bridges the gap instead of a fillet. */
 .grid__band--fuse-first {
   border-top-left-radius: 0;
   --fuse-cut-left: calc(var(--fuse-x) + var(--ring));
@@ -1408,16 +1412,14 @@ p.ui-text--mono {
   --fuse-cut-right: calc(var(--fuse-r) - var(--ring));
 }
 
-.grid__band--fused::after {
-  mask:
-    linear-gradient(#000 0 0) 0 0 / var(--fuse-cut-left) var(--ring) no-repeat,
-    linear-gradient(#000 0 0) 100% 0 / calc(100% - var(--fuse-cut-right)) var(--ring) no-repeat,
-    linear-gradient(#000 0 0) 0 100% / 100% calc(100% - var(--ring)) no-repeat;
+.grid__band--fuse-first::before {
+  border-left: var(--ring) solid var(--band);
 }
 
-/* The gap between the tile and the band, bridged - but only where the line runs
-   straight through it, which is an end of the band. Everywhere else the fillet
-   below carries the line across the gap itself. */
+.grid__band--fuse-last::before {
+  border-right: var(--ring) solid var(--band);
+}
+
 .grid__band--fused::before {
   content: '';
   position: absolute;
@@ -1431,12 +1433,11 @@ p.ui-text--mono {
   pointer-events: none;
 }
 
-.grid__band--fuse-first::before {
-  border-left: var(--ring) solid var(--band);
-}
-
-.grid__band--fuse-last::before {
-  border-right: var(--ring) solid var(--band);
+.grid__band--fused::after {
+  mask:
+    linear-gradient(#000 0 0) 0 0 / var(--fuse-cut-left) var(--ring) no-repeat,
+    linear-gradient(#000 0 0) 100% 0 / calc(100% - var(--fuse-cut-right)) var(--ring) no-repeat,
+    linear-gradient(#000 0 0) 0 100% / 100% calc(100% - var(--ring)) no-repeat;
 }
 
 /* The two interior corners of the joined shape, where the band's top edge turns up
@@ -1468,21 +1469,19 @@ p.ui-text--mono {
   border-bottom-left-radius: var(--radius);
 }
 
-/* A member is the grid's own cell: the same height (`bandRowHeight`) and, from the
-   3:2 that height implies, the same width - which is a hair over the cell the
-   band's own padding leaves, so it is centred and the halves of a hair fall in the
-   gaps either side. Without the ratio a member was letterboxed by whatever the
-   padding took off, which is the one place the same photograph was drawn at two
-   shapes.
-
-   The height is stated rather than left to `align-self: stretch`. Stretch plus an
-   aspect ratio is a corner the engines disagree on: Firefox took neither axis as
-   definite and laid every member out at no height at all. */
+/* A member is the tile the collection would have drawn: its column is the grid's
+   column and the 3:2 the grid gives every photo gives it the grid's height. Stated
+   rather than inherited, because `.grid--grid .tile` turns the ratio off - a grid
+   cell has the shape already. */
 .grid--grid.grid__band .tile {
   aspect-ratio: 3 / 2;
-  height: var(--row-h);
-  width: auto;
-  justify-self: center;
+  width: 100%;
+  height: auto;
+  /* What the ratio leaves over inside the row, split top and bottom. Not stretch,
+     which is the default: stretch against an aspect ratio is a corner the engines
+     read differently, and Firefox took neither axis as definite and laid every
+     member out at no height at all. */
+  align-self: center;
 }
 
 /* A line of a masonry band's members is capped: nothing there bounds one - the band

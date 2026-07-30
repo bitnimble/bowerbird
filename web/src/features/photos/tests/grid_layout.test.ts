@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  BAND_EXTRA,
   BAND_PAD,
   BLOCK,
   GRID_GAP,
@@ -37,24 +38,22 @@ describe('gridRowHeight', () => {
 });
 
 describe('bandRowHeight', () => {
-  test('a band fits its padding and its rows inside the height the row model gave it', () => {
+  // A member is the same photograph as any other row of the collection, so it is
+  // the same cell. What the inset costs is the band's own height (§19.6).
+  test('is the grid\'s own cell, whatever the band holds', () => {
+    for (const rows of [1, 2, 7]) expect(bandRowHeight(rows, 200)).toBe(200 - GRID_GAP);
+  });
+
+  test('a band fits its rows and its inset inside the height it is given', () => {
     const rowHeight = 200;
     for (const rows of [1, 2, 7]) {
       const cell = bandRowHeight(rows, rowHeight);
-      // What the band actually occupies: its cells, the gaps between them, and
-      // the padding inside its outline. Anything over is the last row of members
-      // hanging through the bottom of the band and over the grid below it.
-      expect(rows * cell + (rows - 1) * GRID_GAP + 2 * BAND_PAD).toBeCloseTo(rows * rowHeight, 6);
-    }
-  });
-
-  // The cost of the inset, and the reason a member is a *smaller* cell rather than
-  // a letterboxed one: the shortfall against the grid's own cell is the padding the
-  // band's rows have to find, spread over however many of them there are (§19.6).
-  test('falls short of the grid\'s cell by the padding its rows cannot find', () => {
-    for (const rows of [1, 2, 7]) {
-      const shortfall = 200 - GRID_GAP - bandRowHeight(rows, 200);
-      expect(shortfall).toBeCloseTo((2 * BAND_PAD - GRID_GAP) / rows, 6);
+      // What the band occupies, and the slot the row arithmetic gives it: its rows
+      // plus its own inset, plus the gap that separates it from what follows.
+      // Anything over is the last row of members hanging through the bottom of the
+      // band and over the grid below it.
+      const occupies = rows * cell + (rows - 1) * GRID_GAP + 2 * BAND_PAD + GRID_GAP;
+      expect(occupies).toBeCloseTo(rows * rowHeight + BAND_EXTRA, 6);
     }
   });
 

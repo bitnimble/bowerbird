@@ -25,6 +25,14 @@ export const BAND_LINE_CAP = 1.3;
 // look like the same thing in all three.
 export const BAND_PAD = 6;
 
+// What a band adds to the height of the display rows it covers: its own inset, top
+// and bottom. Its rows are the grid's rows and its members the grid's cells, so it
+// is the *band* that is taller than the rows it occupies - the alternative was
+// taking the inset off its cells, which drew the same photograph at two sizes
+// (§19.6). The one place the scroll's pitch is not uniform, and `bands.ts` is where
+// that is dealt with.
+export const BAND_EXTRA = 2 * BAND_PAD;
+
 // How many photos one list request covers, and the unit rows are cached and
 // evicted by. A hundred is a screenful at any zoom, so a scroll never waits on
 // more than one request, and it is small enough that dropping one costs little.
@@ -104,20 +112,15 @@ export function gridRowHeight(width: number, columns: number): number {
 }
 
 /**
- * Cell height for the rows inside a band, which is a little under the grid's.
+ * Cell height for the rows inside a band, which is **the grid's own**.
  *
- * A band occupies exactly the display rows the row arithmetic gave it, so its
- * padding has to come out of its own cells: what the rows have spare is one gap,
- * and the inset wants two of `BAND_PAD`, so the difference is shared between them.
- * Masonry pays nothing for it, being outside the row model altogether (§19.6).
- *
- * The cell keeps the grid's *shape* whatever its height, since the member states
- * the ratio itself - it is a smaller 3:2 cell rather than a 3:2 photograph
- * letterboxed inside a wider one, which is what this looked like before.
+ * A member is the same photograph as any other row of the collection, drawn at the
+ * same size. What the band's inset costs is the band's own height: it covers the
+ * display rows the row arithmetic gave it *plus* `BAND_EXTRA` (§19.6).
  */
 export function bandRowHeight(rows: number, rowHeight: number): number {
   if (rows <= 0) return 0;
-  return Math.max(1, (rows * rowHeight - (rows - 1) * GRID_GAP - 2 * BAND_PAD) / rows);
+  return Math.max(1, rowHeight - GRID_GAP);
 }
 
 /**

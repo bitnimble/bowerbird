@@ -440,16 +440,16 @@ function ratiosFor(store: PhotosStore, from: number, to: number): number[] {
 }
 
 /**
- * Where a joined band cuts the gap in its top edge, and whether that gap reaches
- * either end of it (§19.6).
+ * Where a joined band cuts the gap in its top edge, and whether that cut reaches
+ * either end of the band (§19.6).
  *
- * A gap that ends where the band's own corner is has to square that corner off:
- * the tile's edge above runs straight into it, and against a 4px arc it read as a
- * broken corner on one side and a nick on the other.
+ * At an end, the tile's own edge and the band's are the same edge: the line runs
+ * straight through, so that corner squares off and there is no fillet to make room
+ * for. In the middle, both junctions are interior corners.
  *
  * Two ways of knowing where the tile is. With a row model it is a column, so the
- * offsets are arithmetic CSS can do from the count alone. In masonry it is
- * whatever the line's packing made it, which the tile measures and reports
+ * offsets are arithmetic CSS can do from the count alone. In masonry it is whatever
+ * the line's packing made it, which the tile measures and reports
  * (`stackTileBoxes`); until that lands there is nothing to cut, so the band is
  * drawn whole for a frame.
  */
@@ -521,8 +521,8 @@ const BandTiles = observer(function BandTiles({
     >
       {/* The interior corners of the join, which are concave and so cannot be a
           radius on either box (§19.6). Out of the grid's flow, being absolute, and
-          only on a side where there is a corner at all: at an end of the band the
-          line runs straight through. */}
+          only on a side that has one: at an end of the band the line runs straight
+          through. */}
       {join != null && !join.first && <span className="band__join band__join--left" aria-hidden="true" />}
       {join != null && !join.last && <span className="band__join band__join--right" aria-hidden="true" />}
       {expansion.photos.map((photo) => (

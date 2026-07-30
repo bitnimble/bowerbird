@@ -20,7 +20,7 @@ import type { AppSettingsPresenter } from '../settings/app_settings_presenter';
 import type { AppSettingsStore } from '../settings/app_settings_store';
 import type { ShootsPresenter } from '../shoots/shoots_presenter';
 import type { ToastsPresenter } from '../toasts/toasts_presenter';
-import { bandRows, displayRowOf, rowAt } from './bands';
+import { displayRowOf, rowAt, rowAtTop, topOfRow } from './bands';
 import { BLOCK, atRailWall, recentred } from './grid_layout';
 import {
   activeFilters,
@@ -865,7 +865,6 @@ export class PhotosPresenter {
   async toggleBand(stackId: string, position: number): Promise<void> {
     const open = this.store.expansions.get(stackId);
     if (open != null) {
-      const rows = bandRows(open.photos.length, this.store.columns);
       const was = this.anchoredPosition();
       const next = new Map(this.store.expansions);
       next.delete(stackId);
@@ -878,7 +877,7 @@ export class PhotosPresenter {
       // selection gesture.
       const closed = new Set(open.photos.map((photo) => photo.id));
       this.store.selectedMembers = new Set([...this.store.selectedMembers].filter((id) => !closed.has(id)));
-      this.bandShift(position, -rows, was);
+      this.holdRowThroughBands(was);
       return;
     }
     // A second click while the members are still in flight would otherwise open
@@ -896,12 +895,11 @@ export class PhotosPresenter {
         // the members were on the wire, and those positions describe a listing
         // that no longer exists.
         if (this.generation !== generation || this.store.source !== source) return;
-        const rows = bandRows(photos.length, this.store.columns);
         const was = this.anchoredPosition();
         const next = new Map(this.store.expansions);
         next.set(stackId, { stackId, position, photos });
         this.store.expansions = next;
-        this.bandShift(position, rows, was);
+        this.holdRowThroughBands(was);
       });
     } catch (err) {
       this.fail(err);
@@ -914,42 +912,32 @@ export class PhotosPresenter {
   // has changed under them. The row at the top of the viewport and where it was
   // drawn are what let a change to *several* bands at once be undone
   // (`replaceBands`), not just a change to one.
-  private anchoredPosition(): { anchorTop: number; virtualTop: number; gridRow: number; displayRow: number } {
+  private anchoredPosition(): { anchorTop: number; gridRow: number; rowTop: number } {
     const columns = this.store.columns;
-    const at = rowAt(Math.floor(this.store.virtualTop / this.store.rowHeight), this.store.bands, columns);
+    const bands = this.store.bands;
+    const height = this.store.rowHeight;
+    const at = rowAt(rowAtTop(this.store.virtualTop, bands, columns, height), bands, columns);
     const gridRow = at.kind === 'grid' ? at.row : Math.floor(at.band.position / columns);
     return {
       anchorTop: this.store.anchorTop,
-      virtualTop: this.store.virtualTop,
       gridRow,
-      displayRow: displayRowOf(gridRow, this.store.bands, columns),
+      // Where that row is drawn *now*, in content pixels. What the correction below
+      // compares against, so it needs no separate account of what moved.
+      rowTop: topOfRow(displayRowOf(gridRow, bands, columns), bands, columns, height),
     };
   }
 
-  // Moves the view by what a band opening or closing above the reader displaced,
-  // so it stays still. A band at or below the first visible row displaces nothing
-  // the reader can see, so it is left alone.
-  //
-  // Both sides of that comparison have to be *display* rows, and both have to be
-  // read from before the band changed: the stack's row in the collection is not
-  // where it is drawn once anything above it is expanded, so comparing one against
-  // the other jerks the view by the height of every band above whenever a stack on
-  // screen is opened.
-  private bandShift(position: number, rows: number, was: ReturnType<PhotosPresenter['anchoredPosition']>): void {
-    if (rows === 0 || this.store.mode === 'masonry') return;
-    const bandRow = displayRowOf(Math.floor(position / this.store.columns), this.store.bands, this.store.columns);
-    const firstVisible = Math.floor(was.virtualTop / this.store.rowHeight);
-    if (bandRow >= firstVisible) return;
-    this.shiftView(rows * this.store.rowHeight, was.anchorTop);
-  }
-
-  // Keeps the reader on the same row of the collection after an arbitrary set of
-  // bands has been re-placed, opened or closed at once - which one band's own row
-  // count cannot describe. Off how far the reader's row itself moved.
+  // Keeps the reader on the same row of the collection through anything that moves
+  // where it is drawn: one band opening or closing, or an arbitrary set of them
+  // re-placed at once. Off how far the row's own top moved, in pixels, which is the
+  // one form that describes all of it - a band adds its rows *and* its inset, and a
+  // band at or below the reader's row moves that row not at all.
   private holdRowThroughBands(was: ReturnType<PhotosPresenter['anchoredPosition']>): void {
     if (this.store.mode === 'masonry') return;
-    const moved = displayRowOf(was.gridRow, this.store.bands, this.store.columns) - was.displayRow;
-    this.shiftView(moved * this.store.rowHeight, was.anchorTop);
+    const bands = this.store.bands;
+    const columns = this.store.columns;
+    const now = topOfRow(displayRowOf(was.gridRow, bands, columns), bands, columns, this.store.rowHeight);
+    this.shiftView(now - was.rowTop, was.anchorTop);
   }
 
   /**

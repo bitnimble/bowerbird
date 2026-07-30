@@ -2840,32 +2840,47 @@ the same exception, for the same reason, as a masonry block reporting its height
 The members live alone in that band and never share a row with photos outside
 the stack, so no tile ever changes which neighbours it sits beside: the grid
 below is displaced downwards and otherwise untouched. Band rows are ordinary tile
-rows at the same cell geometry, marked by their background rather than their
-size - `visibleRows` takes **one** row height for the whole list, so anything
-that gave a band its own height would put the scroll height back into the DOM,
-which the virtual grid exists to avoid.
+rows at the same cell geometry, marked by their background rather than their size.
 
-**A band is inset from its outline by the same amount in every view** (`BAND_PAD`),
-because it is the same object in all three and a band whose members sat on its ring
-did not read as a box at all. In the two views with a row model, **the cells pay for
-it**: the row arithmetic gives a band `rows * rowHeight`, its cells and the gaps
-between them come to `rows * rowHeight - GRID_GAP`, so all those rows have spare is
-one gap and the rest of the inset comes off their height - `(2 * BAND_PAD -
-GRID_GAP) / rows` per cell, which is a twentieth of a cell in a one-row band. The
-alternative is a band with a height of its own, which is what the uniform row pitch
-exists to avoid: it would put a per-band pixel offset into every mapping between
-rows and pixels, and the scroll's arithmetic is the last place to want a special
-case. An inset the reader can see is worth a cell a twentieth short.
+**A member is the tile the collection would have drawn**: the same size, in the same
+column, so its edges line up with the rows above and below. A band is **inset from
+its outline** by the same amount in every view (`BAND_PAD`) - it is the same object
+in all three, and one whose members sat on its ring did not read as a box - and what
+pays for that inset is **the band's own height**: it covers the display rows the row
+arithmetic gave it *plus* `BAND_EXTRA`. The alternative, taking it off the cells,
+which is all a uniform pitch could afford, drew the same frame at two sizes.
 
-What that must *not* cost is the shape. The 3:2 the grid gives every photo is
-stated on the member as well, so a member is a slightly smaller 3:2 cell rather
-than a 3:2 photograph letterboxed inside a wider one - which is what taking the
-inset off the height alone looked like, and the one place the same photograph was
-drawn at two shapes. **The height is stated too**, rather than left to
-`align-self: stretch`: stretch against an aspect ratio is a corner the engines read
-differently, and Firefox took neither axis as definite and laid every member out at
-no height at all. That, and the capped flex line below, is why one E2E file runs in
-both engines (`band_layout.spec.ts`).
+The inset is **top and bottom only**, because the sides have nowhere to put it. A
+band wider than the grid, with its columns inside its padding, was tried: it put a
+6px kink in the one line the eye follows - a band's own edge against the edge of the
+tile it is joined to - and gained nothing else. So the outermost members reach the
+band's edges and its ring lands on them, which is how every ring in the grid is
+drawn: the selection's sits on its own tile the same way.
+
+So **the pitch is uniform except for the bands**, which is one special case in one
+place: `topOfRow` and `rowAtTop` in `bands.ts` are the only conversions between
+display rows and content pixels, and every one of the store's - the scroll height,
+the visible span, where a section is drawn, where the cursor is - goes through them.
+The walk they share is over the open bands, which is a handful of entries; the
+scroll is still arithmetic over numbers the store already holds, and nothing
+measures the DOM. What that buys is worth the case: a band that has to fit inside a
+whole number of rows can only be given padding by taking it off the photographs.
+
+It also collapses the two scroll corrections into one. Opening or closing a band
+above the reader, and re-placing every band at once, are both "keep the reader's row
+where it was", and the row's own **pixel top** describes all of it - a band adds its
+rows *and* its inset, and a band at or below that row moves it not at all. There is
+no longer a separate correction that counts a band's rows.
+
+The member fills its column and states the grid's **3:2** itself, which is what
+gives it the grid's height - the ratio rather than the row, because `.grid--grid
+.tile` turns the ratio off (a grid cell has the shape already) and a member sized
+from the row alone would be a photograph letterboxed inside a cell of another shape.
+`align-self` places it in the row rather than `stretch`, which is the default:
+stretch against an aspect ratio is a corner the engines read differently, and
+Firefox took neither axis as definite and laid every member out at no height at all.
+That, and the capped flex line below, is why one E2E file runs in both engines
+(`band_layout.spec.ts`).
 
 **Masonry's band is not in the row model at all** - the block it sits in reports the
 height it laid out to (§18.3.2) - so its inset costs its members nothing, and its

@@ -6,6 +6,7 @@ import { autorun, runInAction } from 'mobx';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { api, type PhotoSummary } from '../../../api/client';
 import { PhotosPresenter } from '../photos_presenter';
+import { BAND_EXTRA } from '../grid_layout';
 import { PhotosStore } from '../photos_store';
 import { BLOCK, GRID_GAP, LIST_ROW_H, RAIL_HEIGHT } from '../grid_layout';
 
@@ -249,9 +250,10 @@ describe('what displaced the reader goes to the anchor, not the rail', () => {
     await presenter.toggleBand('s1', 0);
 
     // Ten member rows went from above the reader, so the anchor came up by exactly
-    // their height. The rail did not move, which is what stops a fling being
-    // cancelled: the view only follows `railTop`, and it is unchanged.
-    expect(store.anchorTop).toBe(anchor - 10 * ROW_H);
+    // their height, plus the inset the band itself was drawn with (`BAND_EXTRA`).
+    // The rail did not move, which is what stops a fling being cancelled: the view
+    // only follows `railTop`, and it is unchanged.
+    expect(store.anchorTop).toBe(anchor - (10 * ROW_H + BAND_EXTRA));
     expect(store.railTop).toBe(rail);
   });
 
@@ -265,7 +267,7 @@ describe('what displaced the reader goes to the anchor, not the rail', () => {
     // rail and the view follows it there.
     await presenter.toggleBand('s1', 0);
     expect(store.anchorTop).toBe(0);
-    expect(store.railTop).toBe(20 * ROW_H);
+    expect(store.railTop).toBe(30 * ROW_H - (10 * ROW_H + BAND_EXTRA));
   });
 
   test('a band opening below the reader displaces nothing, so nothing is corrected', async () => {
@@ -457,9 +459,9 @@ describe('a correction that also shrinks the collection is not double-counted', 
 
     await presenter.toggleBand('s1', 0);
 
-    // Ten rows left from above the reader, so they are ten rows earlier in the
-    // collection - not twenty.
-    expect(store.virtualTop).toBeCloseTo(before - 10 * ROW_H, 6);
+    // Ten rows and one inset left from above the reader, so they are that much
+    // earlier in the collection - not twice it.
+    expect(store.virtualTop).toBeCloseTo(before - (10 * ROW_H + BAND_EXTRA), 6);
   });
 
   test('a masonry block measuring shorter than its estimate does not throw the reader to the top', async () => {

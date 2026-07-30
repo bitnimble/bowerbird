@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { PhotoSummary } from '../../../api/client';
+import { BAND_EXTRA } from '../grid_layout';
 import { BAND_COLOURS, PhotosStore } from '../photos_store';
 import type { AppSettingsStore } from '../../settings/app_settings_store';
 import type { LibrariesStore } from '../../libraries/libraries_store';
@@ -83,9 +84,10 @@ describe('the keyboard cursor accounts for open bands', () => {
     store.focusIndex = 20;
 
     // Photo 20 sits on collection row 20, but six band rows are inserted above
-    // it, so it is drawn on display row 26. Targeting row 20 left the cursor a
-    // whole band-height off screen.
-    const drawnAt = 26 * store.rowHeight;
+    // it, so it is drawn on display row 26 - and a band is taller than its rows by
+    // its own inset. Targeting row 20 left the cursor a whole band-height off
+    // screen.
+    const drawnAt = 26 * store.rowHeight + BAND_EXTRA;
     const target = store.focusContentTop;
     expect(target).not.toBeNull();
     expect(target).toBeCloseTo(drawnAt + store.rowHeight - 3 - store.viewportHeight, 0);
