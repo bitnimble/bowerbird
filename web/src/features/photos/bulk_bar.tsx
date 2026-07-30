@@ -37,8 +37,10 @@ export const BulkBar = observer(function BulkBar({ removeFrom }: Props): JSX.Ele
   const inBin = store.isBin;
   // Positions and members, as one number: a photo picked out of an open band is
   // in the same selection as a tile in the grid, and every action reaches both
-  // (§19.6.1).
+  // (§19.6.1). Photographs rather than tiles, since a stack's row is acted on
+  // whole - the two differ, so `entries` is what the gestures below are about.
   const count = store.selectionCount;
+  const entries = store.selectedEntries;
   const none = count === 0;
   const members = store.selectedMembers.size > 0;
 
@@ -47,15 +49,14 @@ export const BulkBar = observer(function BulkBar({ removeFrom }: Props): JSX.Ele
       {/* Only once the selection is more than the one photo the cursor is on:
           below that the ring says everything the count would, and a bar that
           reads "1 selected" beside it is noise.
-          "all" rather than the bare count when it is the whole collection: at
-          six figures the number alone does not tell you whether you got it.
-          Entries rather than photographs, because a stack is one entry standing
-          for however many it holds, and the client cannot know the sizes of the
-          stacks in a selection covering rows it has never held. */}
+          "all" and no number when it is the whole collection: it is what the
+          reader is asking about at six figures anyway, and a count is not
+          something the client can answer there - the stacks in the rows it has
+          never held stand for a number only the server knows. */}
       {count > 1 && (
         <>
           <Text variant="mono" className="bulkbar__count">
-            {store.allSelected ? `all ${count} selected` : `${count} selected`}
+            {store.allSelected ? 'all selected' : `${count} selected`}
           </Text>
           <Button variant="ghost" onClick={photos.clearSelection}>
             <X size={ICON} />
@@ -70,7 +71,7 @@ export const BulkBar = observer(function BulkBar({ removeFrom }: Props): JSX.Ele
           are not "this action, once you have a selection" but statements about
           what the selection *is* - two photos to fuse, or one stack to break -
           and greyed out they read as actions the reader has failed to reach. */}
-      {!inBin && count > 1 && (
+      {!inBin && entries > 1 && (
         <Button onClick={() => void photos.stackSelection()}>
           <Layers size={ICON} />
           Stack

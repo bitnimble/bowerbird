@@ -321,15 +321,41 @@ export class PhotosStore {
   }
 
   // Positions and members together: they are one selection, and an action reaches
-  // both (§19.6.1). A stack row that is selected *and* has one of its members
-  // picked counts twice here and is acted on once - the server takes each photo
-  // once, and the client cannot know a stack's size from a collapsed row anyway.
-  @computed get selectionCount(): number {
+  // both (§19.6.1). Entries, so a stack counts once here whatever it holds -
+  // which is the question the gestures ask, and the one "Stack" needs two of.
+  @computed get selectedEntries(): number {
     return this.selection.size + this.selectedMembers.size;
   }
 
+  /**
+   * How many photographs the selection stands for.
+   *
+   * A selected stack row stands for its whole stack, and that is what the server
+   * resolves it to (§19.6.1) - so counting it as one described a smaller action
+   * than the one about to run.
+   *
+   * Exact for anything the reader picked out, since a tile has to be on screen to
+   * be clicked and its row carries `stack_size`. A selection reaching rows this
+   * client has never held - Select all, a shift-click over a block that has since
+   * been evicted - counts those one apiece, so the number is a floor there and
+   * climbs as the rows load; hence "all selected" rather than a count when it is
+   * the whole collection.
+   */
+  @computed get selectionCount(): number {
+    let count = this.selection.size;
+    for (const [index, row] of this.rows) {
+      if (row.stack_size > 1 && this.selection.has(index)) count += row.stack_size - 1;
+    }
+    for (const open of this.expansions.values()) {
+      // Its row being selected already counted every member of it.
+      if (this.selection.has(open.position)) continue;
+      count += open.photos.filter((photo) => this.selectedMembers.has(photo.id)).length;
+    }
+    return count;
+  }
+
   @computed get hasSelection(): boolean {
-    return this.selectionCount > 0;
+    return this.selectedEntries > 0;
   }
 
   /** Whether every photo in the collection is selected, which is what "Select all" leaves behind. */
