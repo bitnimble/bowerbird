@@ -51,11 +51,15 @@ function service(): ProcessingService {
 }
 
 test('a 16-bit decode yields twice the bytes of an 8-bit one', () => {
-  // Half size: the subject is the sample width, and the two decodes have to agree
-  // about the frame, not fill it.
-  const half = { atLeastLongEdge: 1000 };
-  const eight = decodeRaw(FIXTURE, 8, 'srgb', half);
-  const sixteen = decodeRaw(FIXTURE, 16, 'srgb', half);
+  // The whole frame at both depths, which costs two full decodes and is the only
+  // way to get the same one twice. `atLeastLongEdge` is not the same instruction
+  // at both depths any more: the scene-linear path fits the frame to it on the way
+  // out of LibRaw (§10.4), where the 8-bit path uses it only to decide whether to
+  // halve. So asking both for 1000 returned 668x1000 and 2012x3012 - a real
+  // difference, correctly reported, that this test is not about.
+  const whole = { atLeastLongEdge: 0 };
+  const eight = decodeRaw(FIXTURE, 8, 'srgb', whole);
+  const sixteen = decodeRaw(FIXTURE, 16, 'srgb', whole);
 
   expect(eight.depth).toBe(8);
   expect(sixteen.depth).toBe(16);
