@@ -7,6 +7,12 @@ edition = "2021"
 [lib]
 crate-type = ["cdylib"]
 
+[features]
+# The tests that decode a real RAW, which need the LFS fixtures and take seconds
+# rather than milliseconds. Off by default so `cargo test` stays a thing you can run
+# on every edit; `bun run test:native:full` turns it on for the final check.
+fixtures = []
+
 [dependencies]
 libvips = "2.3.0"
 # The geometry search evaluates tens of candidates that share nothing but their

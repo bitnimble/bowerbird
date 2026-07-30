@@ -276,13 +276,6 @@ fn camera_multipliers(cam_mul: &[f32; 4]) -> Option<[f32; 4]> {
     Some([r / g, 1.0, b / g, if g2 > 0.0 { g2 / g } else { 1.0 }])
 }
 
-/// Take the `dcraw_make_mem_image` path even where `copy_processed` would serve.
-///
-/// For the test that holds the two against each other; nothing else sets it.
-fn reference_copy() -> bool {
-    std::env::var("BOWERBIRD_REFERENCE_COPY").is_ok_and(|value| value == "1")
-}
-
 /// `dcraw_make_mem_image` and the copy after it, done in one pass, for the scene-linear
 /// decode only.
 ///
@@ -475,11 +468,38 @@ pub fn decode_frame(
     rec2020_linear: bool,
     at_least_long_edge: u32,
 ) -> Option<frame::Frame> {
+    decode_frame_via(path, depth, rec2020_linear, at_least_long_edge, false)
+}
+
+/// `decode_frame`, on LibRaw's own `dcraw_make_mem_image` path rather than the fused
+/// one (§10.4).
+///
+/// Only the differential pin wants this, and it wants it because the two routes must
+/// agree to the byte. It used to be an environment variable read inside the library,
+/// which meant a subprocess per case to set it; a parameter says the same thing and
+/// lets both arms run in one process.
+#[cfg(all(test, feature = "fixtures"))]
+pub fn _for_testing_decode_frame_reference(
+    path: &str,
+    depth: u32,
+    rec2020_linear: bool,
+    at_least_long_edge: u32,
+) -> Option<frame::Frame> {
+    decode_frame_via(path, depth, rec2020_linear, at_least_long_edge, true)
+}
+
+fn decode_frame_via(
+    path: &str,
+    depth: u32,
+    rec2020_linear: bool,
+    at_least_long_edge: u32,
+    reference: bool,
+) -> Option<frame::Frame> {
     if depth != 8 && depth != 16 {
         return None;
     }
     let path = std::ffi::CString::new(path).ok()?;
-    decode_with_libraw(&path, depth, rec2020_linear, at_least_long_edge)
+    decode_with_libraw(&path, depth, rec2020_linear, at_least_long_edge, reference)
 }
 
 #[expect(unsafe_code)]
@@ -488,6 +508,7 @@ fn decode_with_libraw(
     depth: u32,
     rec2020_linear: bool,
     at_least_long_edge: u32,
+    reference: bool,
 ) -> Option<frame::Frame> {
     let r = unsafe { raw::libraw_init(0) };
     if r.is_null() {
@@ -541,7 +562,7 @@ fn decode_with_libraw(
         // the second whole-frame buffer `dcraw_make_mem_image` would allocate and the
         // copy back out of it.
         let taken =
-            if reference_copy() { None } else { copy_processed(r, depth, &insets, at_least_long_edge) };
+            if reference { None } else { copy_processed(r, depth, &insets, at_least_long_edge) };
         let direct = taken.is_some();
         let (width, height, data) = match taken {
             Some((w, h, samples)) => (w, h, frame::Pixels::Sixteen(samples)),
@@ -834,6 +855,11 @@ pub unsafe extern "C" fn bb_stack_groups(
     unsafe { std::ptr::copy_nonoverlapping(groups.as_ptr(), out, count) };
     0
 }
+
+/// The tests that decode a real RAW, behind the `fixtures` feature so the default
+/// suite stays fast enough to run on every edit.
+#[cfg(all(test, feature = "fixtures"))]
+mod fixture_tests;
 
 #[cfg(test)]
 mod tests {

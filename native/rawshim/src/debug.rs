@@ -278,24 +278,6 @@ pub enum Command {
         #[serde(default)]
         size: u32,
     },
-    /// Named pixels of a decode, and nothing else.
-    ///
-    /// For the assertions that read specific positions rather than a statistic over
-    /// all of them - a black masked border shows up at the edges and nowhere in any
-    /// aggregate, because the frame is mostly picture and a bar on one edge barely
-    /// moves a mean. A handful of triples is still a summary, so it comes back as
-    /// one rather than through the file the whole decode used to take.
-    PixelsAt {
-        path: String,
-        depth: u32,
-        #[serde(default)]
-        rec2020_linear: bool,
-        #[serde(default)]
-        at_least_long_edge: u32,
-        /// `[x, y]` each, in pixels. Out of range reads as absent rather than as
-        /// black, so a wrong coordinate cannot pass as a dark pixel.
-        points: Vec<[i64; 2]>,
-    },
     /// The camera match, fitted and reported.
     ///
     /// Never memoised, unlike the fit the HDR commands share: two of the assertions
@@ -419,9 +401,6 @@ pub struct Reply {
     pub renders: Option<RenderComparison>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub against_preview: Option<AgainstPreview>,
-    /// One entry per requested point, null where it fell outside the frame.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub pixels: Option<Vec<Option<[u32; 3]>>>,
 }
 
 /// A fitted camera match, described. Everything the assertions on the fit read.
@@ -670,26 +649,6 @@ pub fn run(command: &Command) -> Result<Reply, String> {
                 matched.as_ref(),
             )?;
             Ok(Reply::default())
-        }
-        Command::PixelsAt { path, depth, rec2020_linear, at_least_long_edge, points } => {
-            let frame = crate::decode_frame(path, *depth, *rec2020_linear, *at_least_long_edge)
-                .ok_or("could not decode")?;
-            let at = |[x, y]: [i64; 2]| {
-                let (width, height) = (frame.width as i64, frame.height as i64);
-                if x < 0 || y < 0 || x >= width || y >= height {
-                    return None;
-                }
-                let i = (y as usize * frame.width + x as usize) * 3;
-                let sample = |k: usize| match &frame.pixels {
-                    Pixels::Eight(data) => data.get(k).map(|v| u32::from(*v)),
-                    Pixels::Sixteen(data) => data.get(k).map(|v| u32::from(*v)),
-                };
-                Some([sample(i)?, sample(i + 1)?, sample(i + 2)?])
-            };
-            Ok(Reply {
-                pixels: Some(points.iter().map(|p| at(*p)).collect()),
-                ..Reply::default()
-            })
         }
         Command::PreviewSummary { path, size } => {
             let preview = crate::decode_embedded_rgb(path, *size as usize).ok_or("no embedded preview")?;

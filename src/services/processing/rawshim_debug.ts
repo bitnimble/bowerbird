@@ -68,8 +68,6 @@ export interface HdrColour {
   distortionSource: 'none' | 'camera' | 'fitted' | 'lensfun';
 }
 
-export type RgbTriple = [number, number, number];
-
 export interface ProfileSummary {
   /** Held-out mean deltaE76 after the whole transform, so not a training score. */
   deltaE: number;
@@ -107,7 +105,6 @@ interface DebugReply {
     profile?: ProfileSummary;
     renders?: RenderComparison;
     againstPreview?: AgainstPreview;
-    pixels?: (RgbTriple | null)[];
   };
 }
 
@@ -306,30 +303,3 @@ export function deltaEToPreview(imagePaths: string[], rawPath: string): AgainstP
   return reply.againstPreview;
 }
 
-/**
- * Named pixels of a decode, and nothing else.
- *
- * For the assertions that read specific positions rather than a statistic over all of
- * them. A masked border that was not cropped shows up as black at the frame's edges
- * and in no aggregate at all, because the frame is mostly picture and a bar on one
- * edge barely moves a mean.
- *
- * A point outside the frame comes back null rather than black, so a wrong coordinate
- * cannot pass for a dark pixel.
- */
-export function pixelsAt(
-  path: string,
-  points: readonly (readonly [number, number])[],
-  request: DecodeRequest = {},
-): (RgbTriple | null)[] {
-  const reply = ask({
-    kind: 'pixelsAt',
-    path,
-    depth: request.depth ?? 8,
-    rec2020Linear: request.space === 'rec2020-linear',
-    atLeastLongEdge: request.atLeastLongEdge ?? 0,
-    points,
-  });
-  if (reply?.pixels == null) throw new Error(`no pixels for ${path}`);
-  return reply.pixels;
-}
