@@ -79,12 +79,14 @@ function MetaPanel({ title, rows, defaultOpen }: { title: string; rows: Row[]; d
   );
 }
 
-function Panel({ title, children }: { title: string; children: React.ReactNode }): JSX.Element {
+function Panel({ title, children }: { title?: string; children: React.ReactNode }): JSX.Element {
   return (
     <div className="panel">
-      <Text variant="label" as="div" className="panel__title">
-        {title}
-      </Text>
+      {title != null && (
+        <Text variant="label" as="div" className="panel__title">
+          {title}
+        </Text>
+      )}
       {children}
     </div>
   );
@@ -681,7 +683,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
     <div className="detail__sheet">
       {sheetOpen && (
         <div className="detail__panels">
-          <Panel title="Rating">
+          <Panel>
             <PhotoRating photoId={photoId} />
           </Panel>
           {metaPanels}
