@@ -390,9 +390,23 @@ fn extend_from(curve: &mut [f64], last: usize, reference: &[f64]) {
     // where the channel's own data left it: anchoring on the gain instead lands the
     // first extended bin off its neighbour, and `make_monotone` turns that into a flat
     // band of crushed contrast right where the tail starts.
+    //
+    // And that gain fades out across the tail, so by the top of the domain every
+    // channel *is* the reference. A frame's brightest region is the one place the fit
+    // has direct evidence about: on DSC05469 the sky is clipped in the sensor to
+    // exactly neutral and the camera renders it exactly neutral, and three curves
+    // holding three different gains up there turn that neutral green. Converged, a
+    // neutral render value maps to one number whatever channel it arrived in, so
+    // neutral in is neutral out by construction - while a pixel whose channels differ
+    // keeps every bit of that difference, since it is the input that carries the
+    // colour and not the curve. What is given up is the fit's licence to invent a
+    // per-channel gain where it measured none.
     let gain = ours / theirs;
+    let span = (BINS - 1 - last).max(1) as f64;
     for b in last + 1..BINS {
-        curve[b] = curve[last] + (reference[b] - reference[last]) * gain;
+        let held = curve[last] + (reference[b] - reference[last]) * gain;
+        let converged = (b - last) as f64 / span;
+        curve[b] = held * (1.0 - converged) + reference[b] * converged;
     }
     make_monotone(curve);
 }
@@ -921,10 +935,12 @@ mod tests {
     }
 
     #[test]
-    fn a_borrowed_tail_keeps_the_channel_its_own_gain() {
-        // Borrowing reach must not borrow level: a channel the camera renders 20%
-        // hotter stays 20% hotter above the join rather than snapping onto the
-        // reference.
+    fn a_borrowed_tail_holds_the_gain_near_the_join_and_lets_it_go_by_the_top() {
+        // Both halves of the same trade. Just above the join the channel's own
+        // measurement is the best thing there is, so a camera rendering it 20% hotter
+        // keeps that. By the top of the domain the gain is a claim about a level the
+        // frame never measured, and holding it there is what puts a colour in a sky
+        // that has none - so it fades and the channel becomes the shared curve.
         let shape = |x: f64| x.powf(0.45) * 0.9;
         let curves = extend_curves([
             curve_of(0.66, shape),
@@ -932,8 +948,40 @@ mod tests {
             curve_of(0.66, shape),
         ]);
 
-        let (hot, plain) = (sample_curve(&curves[1], 0.7), sample_curve(&curves[0], 0.7));
-        assert!((hot / plain - 1.2).abs() < 0.02, "gain lost: {hot} against {plain}");
+        let at = |x: f64| (sample_curve(&curves[1], x), sample_curve(&curves[0], x));
+        let (hot, plain) = at(0.2);
+        assert!((hot / plain - 1.2).abs() < 0.05, "gain lost at the join: {hot} vs {plain}");
+        let (hot, plain) = at(TRUST_CEILING);
+        assert!((hot / plain - 1.0).abs() < 0.02, "gain held to the top: {hot} vs {plain}");
+    }
+
+    #[test]
+    fn a_neutral_highlight_comes_out_neutral_where_no_channel_has_data() {
+        // The guarantee the sky needs, and the one three independently extrapolated
+        // curves cannot give: DSC05469's sky is clipped in the sensor to exactly
+        // neutral and rendered by the camera as exactly neutral, and it came out green.
+        // Every channel converging on one curve is what makes neutral in mean neutral
+        // out, rather than leaving it to three guesses that happen to agree.
+        let (plane, preview) = warm_chart();
+        let fitted = fit(&plane, 1.0, &preview, None, 1.0).expect("the chart is fittable");
+
+        // Read where the grade reads a blown sky: the shared gain scales the pixel so
+        // its brightest channel sits at the top of the domain.
+        let out = tone(&fitted.colour, 1.0, 1.0, 1.0);
+        let (high, low) = (out[0].max(out[1]).max(out[2]), out[0].min(out[1]).min(out[2]));
+        assert!(high / low - 1.0 < 0.01, "a neutral highlight came out {out:?}");
+    }
+
+    #[test]
+    fn converging_the_tail_does_not_flatten_a_colour_the_scene_had() {
+        // Converging the curves is not desaturation: what carries a highlight's colour
+        // is the pixel, not the curve, so a warm one stays warm.
+        let (plane, preview) = warm_chart();
+        let fitted = fit(&plane, 1.0, &preview, None, 1.0).expect("the chart is fittable");
+
+        let out = tone(&fitted.colour, 1.2, 0.6, 0.3);
+        assert!(out[0] > out[1] * 1.3, "the warm highlight went flat: {out:?}");
+        assert!(out[1] > out[2] * 1.2, "the warm highlight went flat: {out:?}");
     }
 
     #[test]
@@ -1018,14 +1066,18 @@ mod tests {
     fn a_channel_that_ran_out_of_pairs_lands_near_the_rendering_it_never_saw() {
         // The green sky, on a frame small enough to build here. Above render 0.20 the
         // green curve is guesswork whatever this does, so what is asserted is which
-        // guess: borrowing the shape red measured lands within 0.3 / 0.7 / 4.2% of the
-        // rendering the camera would have made at 0.4 / 0.6 / 0.85, where a straight
-        // line from green's own last bin is 8.4 / 19.2 / 32.0% hot. Growing with
-        // brightness and away from red, which is the part the eye reads as a cast.
+        // guess: borrowing the shape red measured lands within 1.4 / 2.7% of the
+        // rendering the camera would have made at 0.4 / 0.6, where a straight line from
+        // green's own last bin is 8.4 / 19.2% hot and climbing. Growing with brightness
+        // and away from red, which is the part the eye reads as a cast.
+        //
+        // Only up to 0.6: above that the gain fades out deliberately, so this chart -
+        // built with a real per-channel gain in it - is the wrong thing to hold the top
+        // of the curve against. What governs it up there is neutrality, below.
         let (plane, preview) = warm_chart();
         let fitted = fit(&plane, 1.0, &preview, None, 1.0).expect("the chart is fittable");
 
-        for (level, tolerance) in [(0.4, 0.04), (0.6, 0.04), (0.85, 0.10)] {
+        for (level, tolerance) in [(0.4, 0.03), (0.5, 0.04), (0.6, 0.05)] {
             for c in 0..3 {
                 let (fitted, truth) = (sample_curve(&fitted.colour.curves[c], level), camera(c, level));
                 assert!(
