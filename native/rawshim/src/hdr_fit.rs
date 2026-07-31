@@ -275,60 +275,25 @@ fn mask(render: &Plane, jpeg: &Plane) -> Vec<u8> {
 
 // ------------------------------------------------------------------- the model
 
-/// Pairs a pooled tail point needs before it is believed.
-///
-/// Higher than the per-bin floor because it is doing more work: it stands for a wide,
-/// sparse stretch of the domain rather than one bin of it, so a handful of pixels would
-/// place a mean of noise where the curve has nothing else to say.
-const MIN_TAIL_SAMPLES: usize = 24;
-
-fn bin_of(x: f64) -> usize {
-    (((x / TRUST_CEILING) * (BINS - 1) as f64).round() as isize).clamp(0, BINS as isize - 1) as usize
-}
-
 /// Binned mean with the gaps between bins interpolated, and the highest bin the data
 /// actually reached. Above that bin the curve is undefined; `extend_curves` fills it.
-///
-/// Above the last bin dense enough to answer on its own, the pairs are pooled into
-/// however many wide points they can support rather than dropped. That is where the
-/// evidence for a highlight lives on a frame like DSC05469: green kept 13 pairs in the
-/// 0.6-0.7 band against red's 113, and at a fixed bin width neither a floor low enough
-/// to keep green's nor high enough to reject noise exists. Spread across 28 bins they
-/// cleared nothing and the curve was extrapolated over four fifths of its domain from
-/// pairs it did have.
 fn fit_curve(xs: &[f64], ys: &[f64], n: usize) -> (Vec<f64>, isize) {
     let mut sum = vec![0.0f64; BINS];
     let mut count = vec![0usize; BINS];
     for i in 0..n {
-        let bin = bin_of(xs[i]);
+        let bin = (((xs[i] / TRUST_CEILING) * (BINS - 1) as f64).round() as isize)
+            .clamp(0, BINS as isize - 1) as usize;
         sum[bin] += ys[i];
         count[bin] += 1;
     }
 
-    let mut support: Vec<(usize, f64)> = (0..BINS)
-        .filter(|b| count[*b] >= MIN_BIN_SAMPLES)
-        .map(|b| (b, sum[b] / count[b] as f64))
-        .collect();
-
-    if let Some(&(dense, _)) = support.last() {
-        let mut tail: Vec<(f64, f64)> =
-            (0..n).filter(|i| bin_of(xs[*i]) > dense).map(|i| (xs[i], ys[i])).collect();
-        tail.sort_by(|a, b| a.0.total_cmp(&b.0));
-        for group in tail.chunks_exact(MIN_TAIL_SAMPLES) {
-            let scale = group.len() as f64;
-            let at = bin_of(group.iter().map(|p| p.0).sum::<f64>() / scale);
-            // A group whose mean lands no higher than the last point says nothing new
-            // about where the curve goes, and would only reweight a level already
-            // answered.
-            if at > support.last().map_or(0, |p| p.0) {
-                support.push((at, group.iter().map(|p| p.1).sum::<f64>() / scale));
-            }
-        }
-    }
-
     let mut curve = vec![0.0f64; BINS];
     let mut last: isize = -1;
-    for (b, value) in support {
+    for b in 0..BINS {
+        if count[b] < MIN_BIN_SAMPLES {
+            continue;
+        }
+        let value = sum[b] / count[b] as f64;
         if last < 0 {
             for k in 0..=b {
                 curve[k] = value * (k as f64 / (b.max(1)) as f64);
@@ -1086,41 +1051,6 @@ mod tests {
                 );
             }
         }
-    }
-
-    #[test]
-    fn a_sparse_tail_is_pooled_into_points_rather_than_dropped() {
-        // What DSC05469's green channel had and could not use: a dense body of pairs,
-        // then a scattering across the rest of the domain, none of it dense enough to
-        // clear the per-bin floor. Pooled, that scattering is the difference between a
-        // curve measured to 0.7 and a curve guessed above 0.18.
-        let shape = |x: f64| x.powf(0.45) * 0.9;
-        let mut xs: Vec<f64> = (0..4000).map(|i| (i as f64 / 4000.0) * 0.18).collect();
-        xs.extend((0..120).map(|i| 0.19 + (i as f64 / 120.0) * 0.55));
-        let ys: Vec<f64> = xs.iter().map(|x| shape(*x)).collect();
-
-        let (curve, last) = fit_curve(&xs, &ys, xs.len());
-        assert!(last > bin_of(0.6) as isize, "the tail was dropped: last bin {last}");
-        // Only where the pooled points reach: above the last of them the curve is
-        // still zeroes here, `extend_curves` being what fills it.
-        for level in [0.3, 0.5, 0.6] {
-            let (fitted, truth) = (sample_curve(&curve, level), shape(level));
-            assert!((fitted / truth - 1.0).abs() < 0.05, "at {level}: {fitted} against {truth}");
-        }
-    }
-
-    #[test]
-    fn a_tail_too_thin_to_pool_is_left_to_the_borrowed_shape() {
-        // The floor has to hold: a dozen stray pairs across the upper domain are a
-        // mean of noise, and placing points off them would state a curve the frame
-        // never measured.
-        let shape = |x: f64| x.powf(0.45) * 0.9;
-        let mut xs: Vec<f64> = (0..4000).map(|i| (i as f64 / 4000.0) * 0.18).collect();
-        xs.extend((0..12).map(|i| 0.19 + (i as f64 / 12.0) * 0.55));
-        let ys: Vec<f64> = xs.iter().map(|x| shape(*x)).collect();
-
-        let (_, last) = fit_curve(&xs, &ys, xs.len());
-        assert!(last <= bin_of(0.19) as isize, "noise was believed: last bin {last}");
     }
 
     #[test]
