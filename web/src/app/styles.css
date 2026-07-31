@@ -2001,6 +2001,13 @@ p.ui-text--mono {
   padding: 0 5px;
 }
 
+/* The stage portals its controls in here, and they are laid out by the bar's own
+   row rather than by this: `contents` is what keeps them siblings of the buttons
+   beside them instead of one flex item holding all three. */
+.detail__tools {
+  display: contents;
+}
+
 /* Fullscreen: the photo and nothing else. The bar fades in on pointer movement
    so the filename and the exit are reachable without being on screen. */
 .stage--fullscreen {

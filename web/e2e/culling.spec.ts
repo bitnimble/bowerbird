@@ -337,7 +337,7 @@ test('the detail view shows shooting metadata, the triage control and steps betw
   // serves the camera's JPEG, so the photo opens at the RAW's own bytes rather
   // than at a stored rendition - which is what makes them the same path here.
   const raw = panel('ORIGINAL RAW');
-  const navPath = page.locator('.detail__nav .ui-text--mono');
+  const navPath = page.locator('.detail__nav .detail__path');
   const relative = await navPath.innerText();
   await expect(raw.getByText(path.join(CULL_PHOTOS_DIR, relative))).toBeVisible();
 
@@ -405,7 +405,7 @@ test('a detail that lands after the reader has stepped on does not replace the p
   // opened from the grid is a dead end.
   await openPhoto(page);
   await page.getByRole('button', { name: 'Next photo' }).click();
-  const navPath = page.locator('.detail__nav .ui-text--mono');
+  const navPath = page.locator('.detail__nav .detail__path');
   await expect(navPath).not.toHaveText('', { timeout: 30_000 });
   const stepped = await navPath.innerText();
 
@@ -584,7 +584,7 @@ test('i and o switch between the camera JPEG and the render, and the cache can b
   // it will do. Close it, then put focus back on the page: an open menu makes
   // everything behind it inert, and its trigger eats letter keys as typeahead.
   await page.getByRole('button', { name: 'Rendition' }).click();
-  await page.locator('.detail__nav .ui-text--mono').click();
+  await page.locator('.detail__nav .detail__path').click();
   await page.keyboard.press('o');
   await expect(renditionPanel.getByText('Rendered RAW')).toBeVisible({ timeout: 120_000 });
   await expect.poll(() => statSync(cached).mtimeMs, { timeout: 120_000 }).toBeGreaterThan(before);
@@ -1116,5 +1116,27 @@ test('zoom resets on a step to the next photo, which is a different photograph',
 
   // Carrying the offset across would open the next frame scrolled into a corner.
   await page.getByRole('button', { name: 'Next photo' }).click();
+  await expect(page.locator('.stage--zoomed')).toHaveCount(0);
+});
+
+test('the zoom control steps fit, double, then the frame at its own pixels', async ({ page }) => {
+  await page.goto('/settings');
+  await openLibrary(page, CULL_PHOTOS_DIR);
+  await openPhoto(page);
+  await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
+
+  // In the bar with the rest of the controls rather than over the corner of the
+  // photograph, and against the frame's own pixels: a 24MP render fitted to a
+  // stage a few hundred pixels tall is nowhere near 1:1.
+  const readout = page.locator('.detail__nav .stage__scale');
+  await expect(readout).not.toHaveText('100%');
+
+  await page.getByRole('button', { name: 'Zoom in' }).click();
+  // Regression: the ceiling was a flat multiple of the fitted size, so on a
+  // render this large 1:1 sat above it and the control topped out around 86%.
+  await page.getByRole('button', { name: 'Zoom to 100%' }).click();
+  await expect(readout).toHaveText('100%');
+
+  await page.getByRole('button', { name: 'Zoom out to fit' }).click();
   await expect(page.locator('.stage--zoomed')).toHaveCount(0);
 });

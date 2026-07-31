@@ -1,10 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Maximize, Minimize, ZoomIn, ZoomOut } from 'lucide-react';
 import { Button, ICON, Text } from '../../ui/ui';
 
 const MIN_SCALE = 1; // 1 = fitted to the stage
-const MAX_SCALE = 8;
+// The zoom control's middle stop; its third is the frame's own pixel scale.
+const DOUBLE_SCALE = 2;
+// The ceiling, unless 1:1 is higher, in which case that is. A flat multiple of
+// the fitted size on its own meant a 3840px render in a 430px stage topped out
+// at 86% and could not be pixel-peeped at all; the multiple is still the floor,
+// so a frame smaller than the stage can be pushed past its own pixels.
+const FLOOR_MAX_SCALE = 8;
 const WHEEL_SENSITIVITY = 0.0015;
+// Scales are floats off a division, so "already at this stop" needs slack.
+const STOP_EPSILON = 0.001;
 
 // How long the previous photo may stay on screen after stepping to the next one,
 // while that one decodes. Long enough to cover a warmed frame's decode, short
@@ -85,6 +94,13 @@ interface Props {
    * stages, which would otherwise both act on one `f`.
    */
   keyboard?: boolean;
+  /**
+   * Draw the zoom and fullscreen controls into this element rather than over the
+   * frame. A portal rather than a callback: the scale readout changes on every
+   * frame of a wheel zoom, and handing it upwards would redraw the page around
+   * the stage at that rate.
+   */
+  toolsInto?: HTMLElement | null;
 }
 
 // Scale and pan are one value, not two pieces of state. Zooming about a point
@@ -124,13 +140,17 @@ function panLimit(viewport: number, content: number): number {
   return Math.max(0, (content - viewport) / 2);
 }
 
-// The photo is drawn with object-fit: contain, so its on-screen size is the
-// viewport scaled down to fit, then scaled up by the zoom. `box` is passed in
-// rather than measured here so the caller does the layout read, keeping this a
-// pure function safe to run inside a state updater.
+// The photo is drawn with object-fit: contain, so one image pixel covers this
+// many CSS pixels before the zoom is applied.
+function fitScale(box: Size, natural: Size): number {
+  return Math.min(box.width / natural.width, box.height / natural.height);
+}
+
+// `box` is passed in rather than measured here so the caller does the layout
+// read, keeping this a pure function safe to run inside a state updater.
 function clampPan(view: View, box: DOMRect | null, natural: Size): View {
   if (box == null || natural.width === 0 || natural.height === 0) return view;
-  const fit = Math.min(box.width / natural.width, box.height / natural.height);
+  const fit = fitScale(box, natural);
   const maxX = panLimit(box.width, natural.width * fit * view.scale);
   const maxY = panLimit(box.height, natural.height * fit * view.scale);
   return {
@@ -143,8 +163,8 @@ function clampPan(view: View, box: DOMRect | null, natural: Size): View {
 // Zooms so the content under (clientX, clientY) stays under it. transform-origin
 // is the centre, so with d = pointer - centre the offset that pins the point is
 // d - (next/current) * (d - offset); without it every zoom drifts to the middle.
-function zoomAbout(view: View, next: number, box: DOMRect | null, point: { x: number; y: number } | null): View {
-  const scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, next));
+function zoomAbout(view: View, next: number, max: number, box: DOMRect | null, point: { x: number; y: number } | null): View {
+  const scale = Math.min(max, Math.max(MIN_SCALE, next));
   if (scale === MIN_SCALE) return FITTED;
   if (box == null || point == null) return { ...view, scale };
   const dx = point.x - (box.left + box.width / 2);
@@ -268,10 +288,15 @@ export function PhotoStage({
   keyboard = true,
   onImageLoad,
   onImageMissing,
+  toolsInto,
 }: Props): JSX.Element {
   const stageRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
   const [view, setView] = useState<View>(FITTED);
+  // Observed rather than measured on demand: the scale readout is rendered every
+  // frame of a wheel zoom, and reading the box there would be a layout read in
+  // the hottest path the stage has.
+  const [box, setBox] = useState<Size>(NO_SIZE);
   const [dragging, setDragging] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const [toolbarVisible, setToolbarVisible] = useState(false);
@@ -332,7 +357,24 @@ export function PhotoStage({
 
   const zoomed = view.scale > MIN_SCALE;
 
+  // Null until the frame has decoded and the stage has been measured, which is
+  // what the readout and the 1:1 stop both wait on.
+  const fit = natural.width === 0 || box.width === 0 ? null : fitScale(box, natural);
+  // The view scale that draws one image pixel per CSS pixel.
+  const nativeScale = fit == null ? MIN_SCALE : 1 / fit;
+
   const reset = useCallback(() => setView(FITTED), []);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (viewport == null) return;
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry == null) return;
+      setBox({ width: entry.contentRect.width, height: entry.contentRect.height });
+    });
+    observer.observe(viewport);
+    return () => observer.disconnect();
+  }, []);
 
   // A new photo starts fitted; carrying a pan offset across frames would show
   // the next one scrolled to a corner. Keyed on the photo rather than the source,
@@ -346,8 +388,8 @@ export function PhotoStage({
   // until the next drag.
   useEffect(() => {
     if (natural.width === 0) return;
-    const box = viewportRef.current?.getBoundingClientRect() ?? null;
-    setView((currentView) => clampPan(currentView, box, natural));
+    const rect = viewportRef.current?.getBoundingClientRect() ?? null;
+    setView((currentView) => clampPan(currentView, rect, natural));
   }, [natural.width, natural.height]);
 
   // The previous photo's frames are left up for a beat rather than cleared on the
@@ -492,11 +534,25 @@ export function PhotoStage({
   // Measures here, outside the updater, so the updater itself stays pure.
   const zoomBy = useCallback(
     (nextScale: (current: number) => number, point: { x: number; y: number } | null) => {
-      const box = viewportRef.current?.getBoundingClientRect() ?? null;
-      setView((currentView) => clampPan(zoomAbout(currentView, nextScale(currentView.scale), box, point), box, natural));
+      const rect = viewportRef.current?.getBoundingClientRect() ?? null;
+      const max = Math.max(FLOOR_MAX_SCALE, nativeScale);
+      setView((currentView) => clampPan(zoomAbout(currentView, nextScale(currentView.scale), max, rect, point), rect, natural));
     },
-    [natural],
+    [natural, nativeScale],
   );
+
+  // Fitted, twice that, then the frame's own pixels, and round to fitted again.
+  // Sorted rather than listed in that order: a render smaller than the stage is
+  // already past 1:1 once it is fitted, so for those two the 100% stop is the
+  // nearer one.
+  function stopAfter(scale: number): number {
+    return (
+      [DOUBLE_SCALE, nativeScale]
+        .filter((stop) => stop > MIN_SCALE)
+        .sort((a, b) => a - b)
+        .find((stop) => stop > scale + STOP_EPSILON) ?? MIN_SCALE
+    );
+  }
 
   // This stage's own fullscreen, not the document's. Two stages are mounted side
   // by side in stack triage's split mode, and reading the global put the other one
@@ -522,6 +578,40 @@ export function PhotoStage({
     }
     await stageRef.current?.requestFullscreen();
   }, []);
+
+  // Against the frame's own pixels rather than the fitted size, so the readout
+  // answers "am I looking at this at 1:1" - which is the question a cull asks of
+  // a render - instead of restating the zoom factor.
+  const scalePercent = fit == null ? null : Math.round(fit * view.scale * 100);
+
+  const nextStop = stopAfter(view.scale);
+  const zoomLabel =
+    nextStop === MIN_SCALE
+      ? 'Zoom out to fit'
+      : Math.abs(nextStop - nativeScale) < STOP_EPSILON
+        ? 'Zoom to 100%'
+        : 'Zoom in';
+  // Ghost over the photograph, where the chip behind it is the frame; a plain
+  // button in a page's own bar, beside the plain buttons already there.
+  const toolVariant = toolsInto == null ? 'ghost' : 'default';
+  const tools = (
+    <>
+      {scalePercent != null && <Text variant="mono" className="stage__scale">{`${scalePercent}%`}</Text>}
+      <Button
+        variant={toolVariant}
+        iconOnly
+        aria-pressed={zoomed}
+        aria-label={zoomLabel}
+        title={zoomLabel}
+        onClick={() => zoomBy(stopAfter, null)}
+      >
+        {nextStop === MIN_SCALE ? <ZoomOut size={ICON} /> : <ZoomIn size={ICON} />}
+      </Button>
+      <Button variant={toolVariant} iconOnly aria-label="Fullscreen" title="Fullscreen (F)" onClick={() => void toggleFullscreen()}>
+        <Maximize size={ICON} />
+      </Button>
+    </>
+  );
 
   useEffect(() => {
     if (!keyboard) return;
@@ -610,13 +700,12 @@ export function PhotoStage({
     }
   }
 
-  // A drag ends in a click event too, so only treat it as a zoom toggle when the
+  // A drag ends in a click event too, so only treat it as a zoom step when the
   // gesture it ends barely moved - a swipe that lands on the next photo must not
   // zoom it, and a pan must not un-zoom.
   function onClick(e: React.MouseEvent): void {
     if (dragging || travelled.current > 4) return;
-    if (zoomed) reset();
-    else zoomBy(() => 2, { x: e.clientX, y: e.clientY });
+    zoomBy(stopAfter, { x: e.clientX, y: e.clientY });
   }
 
   const transform = `translate(${view.x}px, ${view.y}px) scale(${view.scale})`;
@@ -650,24 +739,7 @@ export function PhotoStage({
       onMouseMove={() => fullscreen && setToolbarVisible(true)}
       onMouseLeave={() => setToolbarVisible(false)}
     >
-      {!fullscreen && (
-        <div className="stage__tools">
-          {zoomed && <Text variant="mono" className="stage__scale">{`${Math.round(view.scale * 100)}%`}</Text>}
-          <Button
-            variant="ghost"
-            iconOnly
-            aria-pressed={zoomed}
-            aria-label={zoomed ? 'Zoom out to fit' : 'Zoom in'}
-            title={zoomed ? 'Fit' : 'Zoom'}
-            onClick={() => (zoomed ? reset() : zoomBy(() => 2, null))}
-          >
-            {zoomed ? <ZoomOut size={ICON} /> : <ZoomIn size={ICON} />}
-          </Button>
-          <Button variant="ghost" iconOnly aria-label="Fullscreen" title="Fullscreen (F)" onClick={() => void toggleFullscreen()}>
-            <Maximize size={ICON} />
-          </Button>
-        </div>
-      )}
+      {!fullscreen && (toolsInto == null ? <div className="stage__tools">{tools}</div> : createPortal(tools, toolsInto))}
 
       <div
         ref={viewportRef}

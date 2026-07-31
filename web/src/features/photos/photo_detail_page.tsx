@@ -166,7 +166,14 @@ function useStep(): (step: 'next' | 'prev') => void {
 // Where the reader can go from here, and what can be done to the photo they are
 // on. Its own observer so that a rebuild finishing, which flips `building…` on
 // and off, does not re-render the frame or the panels beside it.
-const DetailNav = observer(function DetailNav({ photoId }: { photoId: string }): JSX.Element {
+const DetailNav = observer(function DetailNav({
+  photoId,
+  toolsRef,
+}: {
+  photoId: string;
+  /** Where the stage draws its own zoom and fullscreen controls. */
+  toolsRef: (slot: HTMLDivElement | null) => void;
+}): JSX.Element {
   const store = usePhotosStore();
   const { photos } = usePresenters();
   const step = useStep();
@@ -249,6 +256,8 @@ const DetailNav = observer(function DetailNav({ photoId }: { photoId: string }):
 
       <div className="spacer" />
 
+      <div className="detail__tools" ref={toolsRef} />
+
       {mobile ? (
         <OverflowMenu
           label="More"
@@ -297,7 +306,7 @@ const DetailNav = observer(function DetailNav({ photoId }: { photoId: string }):
 // The frame on screen, and the two being warmed either side of it. Everything
 // here is about which file to ask for, so it re-renders when that changes and
 // not when a panel's data does.
-const DetailFrame = observer(function DetailFrame({ photoId }: { photoId: string }): JSX.Element {
+const DetailFrame = observer(function DetailFrame({ photoId, toolsInto }: { photoId: string; toolsInto: HTMLElement | null }): JSX.Element {
   const store = usePhotosStore();
   const { photos } = usePresenters();
   const step = useStep();
@@ -348,6 +357,9 @@ const DetailFrame = observer(function DetailFrame({ photoId }: { photoId: string
       alt={filename}
       filename={filename}
       preloadSrcs={preloadSrcs}
+      // Zoom and fullscreen belong in the bar with the rest of the controls, not
+      // over the corner of the photograph being judged.
+      toolsInto={toolsInto}
       // No arrow keys on a phone, so the frame itself is the control: the same
       // step the bar's buttons take, taken by dragging the picture aside.
       onSwipe={step}
@@ -626,6 +638,11 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   // Kept across photos: opened once to read a frame's settings, the reader means
   // to read the next one's too.
   const [sheetOpen, setSheetOpen] = useState(false);
+  // The stage draws its own controls into a slot in the bar, so the readout can
+  // follow a wheel zoom frame by frame without the page moving with it. State
+  // rather than a ref, because the stage has to render again once the slot
+  // exists; the setter is stable, so neither part of the bar re-renders after.
+  const [toolsSlot, setToolsSlot] = useState<HTMLDivElement | null>(null);
   const { pathname } = useLocation();
 
   useEffect(() => {
@@ -715,10 +732,10 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   return (
     <div className="pad detail-page">
       <DetailKeys photoId={photoId} />
-      <DetailNav photoId={photoId} />
+      <DetailNav photoId={photoId} toolsRef={setToolsSlot} />
 
       <div className={`detail detail--${mobile ? 'sheet' : landscape ? 'below' : 'beside'}`}>
-        <DetailFrame photoId={photoId} />
+        <DetailFrame photoId={photoId} toolsInto={toolsSlot} />
         {panels}
       </div>
     </div>
