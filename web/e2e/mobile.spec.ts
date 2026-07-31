@@ -72,6 +72,25 @@ test('swiping the frame steps to the next photo and back', async ({ page }) => {
   await expect(page.locator('.stage--zoomed')).toHaveCount(0);
 });
 
+test('the header keeps to one line, its menus folded into an overflow button', async ({ page }) => {
+  await openFirstPhoto(page);
+
+  const nav = page.locator('.detail__nav');
+  const control = await nav.locator('.ui-btn').first().boundingBox();
+  const bar = await nav.boundingBox();
+  if (control == null || bar == null) throw new Error('the header has no box');
+  expect(bar.height).toBeLessThan(control.height * 2);
+
+  await expect(nav.getByRole('button', { name: 'Download' })).toHaveCount(0);
+  await nav.getByRole('button', { name: 'More' }).click();
+  // Every menu the bar had room for on a desktop, in the one popup.
+  await expect(page.getByRole('menuitem', { name: 'Refresh metadata' })).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: 'Original RAW' })).toBeVisible();
+  // Out of the middle of a long popup: the one item that destroys something sits
+  // at the foot of it, not a row above the next section's ordinary actions.
+  await expect(page.getByRole('menuitem').last()).toHaveText('Move to Bin');
+});
+
 test('the verdict is on a bar at the foot of the window, with the rest under it', async ({ page }) => {
   await openFirstPhoto(page);
 

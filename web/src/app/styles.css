@@ -380,6 +380,13 @@ p.ui-text--mono {
   padding-left: 12px;
 }
 
+/* Titles a section of an overflow menu. Indented to the items' text column, so
+   the labels and what they head read as one list rather than two. */
+.ui-item__group {
+  display: block;
+  padding: 6px 9px 4px;
+}
+
 .ui-item__rule {
   height: 1px;
   margin: 4px 2px;
@@ -1734,6 +1741,21 @@ p.ui-text--mono {
 .detail__nav {
   margin-bottom: 8px;
   flex: 0 0 auto;
+}
+
+/* One line, always: a wrapped bar pushes the photo down the page and moves every
+   control out from under the thumb that was reaching for it. The path gives up
+   its width first, and once even that is spent the menus fold into one button. */
+.detail-page .detail__nav {
+  flex-wrap: nowrap;
+}
+
+.detail__path {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .detail {

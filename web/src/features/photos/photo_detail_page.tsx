@@ -28,7 +28,7 @@ import {
   useShootsStore,
 } from '../../app/stores_context';
 import { useIsMobile } from '../../app/use_is_mobile';
-import { ActionMenu, Button, ICON, MoreLess, type Option, Text, TextArea } from '../../ui/ui';
+import { ActionMenu, Button, ICON, menuSection, MoreLess, type Option, OverflowMenu, Text, TextArea } from '../../ui/ui';
 import { renditionLabel } from './renditions';
 import { PhotoStage } from './photo_stage';
 import { TRIAGE_KEYS, TriageControl } from './triage_control';
@@ -137,6 +137,8 @@ const DOWNLOADS: Option<'original' | ViewerRendition>[] = [
   ...RENDITIONS.map(({ value, label, icon }) => ({ value, label, icon })),
 ];
 
+const STACK_ACTIONS: Option<'triage'>[] = [{ value: 'triage', label: 'Triage stack', icon: <Layers size={ICON} /> }];
+
 const ACTIONS: Option<'metadata' | 'delete'>[] = [
   { value: 'metadata', label: 'Refresh metadata', icon: <RotateCw size={ICON} /> },
   { value: 'delete', label: 'Move to Bin', icon: <Trash2 size={ICON} />, destructive: true },
@@ -165,12 +167,60 @@ const DetailNav = observer(function DetailNav({ photoId }: { photoId: string }):
   const store = usePhotosStore();
   const { photos } = usePresenters();
   const step = useStep();
+  const navigate = useNavigate();
+  const mobile = useIsMobile();
   const photo = store.detailFor(photoId);
   const prevId = store.prevPhotoId;
   const nextId = store.nextPhotoId;
   // The grid this photo was opened from - the shoot, the album, the Bin - rather
   // than always the library.
   const back = store.openedFrom;
+  // On `stack_id` alone, and not the grid tile's `stack_size > 1`: `stack_size`
+  // is a property of a collapsed listing row, hardcoded to 1 on a detail and on a
+  // band member, so the tile's condition would hide this on every route that
+  // actually reaches the viewer from a stack. A stack has two or more members by
+  // construction (§19.6).
+  const stackPath = photo?.stack_id == null ? null : `/stacks/${photo.stack_id}/triage`;
+
+  // Declared once and rendered either as a button each or as one overflow menu,
+  // so a narrow screen cannot end up offering a different set of actions from a
+  // wide one.
+  const menus = [
+    // Which of the three files is on screen: the comparison the detail view
+    // exists for, so it leads rather than sitting under the housekeeping.
+    menuSection({
+      label: 'Rendition',
+      icon: <ImageIcon size={ICON} />,
+      options: RENDITIONS,
+      toggles: [
+        {
+          label: 'Disable cache when changing rendition',
+          icon: <RefreshCw size={ICON} />,
+          checked: store.forceRebuild,
+          onChange: photos.setForceRebuild,
+        },
+      ],
+      onSelect: (rendition) => void photos.chooseRendition(photoId, rendition),
+    }),
+    menuSection({
+      label: 'Actions',
+      icon: <RefreshCw size={ICON} />,
+      options: ACTIONS,
+      onSelect: (action) => {
+        if (action === 'delete') {
+          void photos.deletePhotos({ photo_ids: [photoId] });
+          return;
+        }
+        void photos.refreshMetadata({ photo_ids: [photoId] });
+      },
+    }),
+    menuSection({
+      label: 'Download',
+      icon: <Download size={ICON} />,
+      options: DOWNLOADS,
+      onSelect: (form) => void photos.download(photoId, form),
+    }),
+  ];
 
   return (
     <div className="row detail__nav">
@@ -186,69 +236,54 @@ const DetailNav = observer(function DetailNav({ photoId }: { photoId: string }):
       <Button iconOnly aria-label="Next photo" disabled={nextId == null} onClick={() => step('next')}>
         <ChevronRight size={ICON} />
       </Button>
-      <Text variant="mono">{photo?.file_path ?? ''}</Text>
+      {/* The one thing in the bar that gives up width, so the controls stay on a
+          single line however long a path is. */}
+      <Text variant="mono" className="detail__path">
+        {photo?.file_path ?? ''}
+      </Text>
 
       <div className="spacer" />
 
-      {/* Which of the three files is on screen: the comparison the detail view
-          exists for, so it sits in the bar rather than two levels into a menu. */}
-      <ActionMenu
-        trigger={
-          <>
-            <ImageIcon size={ICON} />
-            Rendition
-          </>
-        }
-        options={RENDITIONS}
-        toggles={[
-          {
-            label: 'Disable cache when changing rendition',
-            icon: <RefreshCw size={ICON} />,
-            checked: store.forceRebuild,
-            onChange: photos.setForceRebuild,
-          },
-        ]}
-        onSelect={(rendition) => void photos.chooseRendition(photoId, rendition)}
-      />
-      {/* On `stack_id` alone, and not the grid tile's `stack_size > 1`:
-          `stack_size` is a property of a collapsed listing row, hardcoded to 1 on
-          a detail and on a band member, so the tile's condition would hide this
-          on every route that actually reaches the viewer from a stack. A stack
-          has two or more members by construction (§19.6). */}
-      {photo?.stack_id != null && (
-        <Button
-          render={<Link to={`/stacks/${photo.stack_id}/triage`} state={{ entryPhotoId: photoId }} />}
-        >
-          <Layers size={ICON} />
-          Triage stack
-        </Button>
-      )}
-      <ActionMenu
-        trigger={
-          <>
-            <RefreshCw size={ICON} />
-            Actions
-          </>
-        }
-        options={ACTIONS}
-        onSelect={(action) => {
-          if (action === 'delete') {
-            void photos.deletePhotos({ photo_ids: [photoId] });
-            return;
+      {mobile ? (
+        <OverflowMenu
+          label="More"
+          sections={
+            stackPath == null
+              ? menus
+              : [
+                  // A menu item rather than the link a wide bar gets: opening a
+                  // triage run in a tab of its own is not what a phone is for.
+                  menuSection({
+                    label: 'Stack',
+                    options: STACK_ACTIONS,
+                    onSelect: () => navigate(stackPath, { state: { entryPhotoId: photoId } }),
+                  }),
+                  ...menus,
+                ]
           }
-          void photos.refreshMetadata({ photo_ids: [photoId] });
-        }}
-      />
-      <ActionMenu
-        trigger={
-          <>
-            <Download size={ICON} />
-            Download
-          </>
-        }
-        options={DOWNLOADS}
-        onSelect={(form) => void photos.download(photoId, form)}
-      />
+        />
+      ) : (
+        <>
+          {stackPath != null && (
+            <Button render={<Link to={stackPath} state={{ entryPhotoId: photoId }} />}>
+              <Layers size={ICON} />
+              Triage stack
+            </Button>
+          )}
+          {menus.map((menu) => (
+            <ActionMenu
+              key={menu.label}
+              {...menu}
+              trigger={
+                <>
+                  {menu.icon}
+                  {menu.label}
+                </>
+              }
+            />
+          ))}
+        </>
+      )}
       {store.buildingRendition && <Text variant="mono">building…</Text>}
     </div>
   );

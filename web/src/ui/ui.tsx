@@ -7,8 +7,8 @@ import { Select as BaseSelect } from '@base-ui-components/react/select';
 import { Slider as BaseSlider } from '@base-ui-components/react/slider';
 import { Toggle } from '@base-ui-components/react/toggle';
 import { ToggleGroup } from '@base-ui-components/react/toggle-group';
-import { Check, ChevronDown, X } from 'lucide-react';
-import { cloneElement, type ReactElement, type ReactNode } from 'react';
+import { Check, ChevronDown, MoreHorizontal, X } from 'lucide-react';
+import { cloneElement, Fragment, type ReactElement, type ReactNode } from 'react';
 
 // The whole component vocabulary. Everything on screen is built from these, so
 // a control cannot pick its own height, font or icon size: `.ui-btn` carries all
@@ -319,6 +319,102 @@ export interface ActionToggle {
   onChange: (checked: boolean) => void;
 }
 
+function MenuAction<T extends string>({ option, onSelect }: { option: Option<T>; onSelect: (value: T) => void }): JSX.Element {
+  return (
+    <Menu.Item
+      className={`ui-item ui-item--action${option.destructive === true ? ' ui-item--destructive' : ''}`}
+      onClick={() => onSelect(option.value)}
+    >
+      {option.icon}
+      {option.label}
+      {/* Out of the accessible name: it would read as part of the label ("Embedded
+          JPEG I"), and the shortcut is already announced by the ? help. */}
+      {option.hint != null && (
+        <span className="ui-btn__hint" aria-hidden>
+          {option.hint}
+        </span>
+      )}
+    </Menu.Item>
+  );
+}
+
+// The body of one menu: its actions, the destructive ones fenced off below a
+// rule, then the toggles that change what those actions do. Its own component so
+// several menus can be laid out in a single popup when there is no room for a
+// button each.
+function MenuItems<T extends string>({
+  options,
+  toggles = [],
+  onSelect,
+}: {
+  options: Option<T>[];
+  toggles?: ActionToggle[];
+  onSelect: (value: T) => void;
+}): JSX.Element {
+  const item = (option: Option<T>): JSX.Element => <MenuAction key={option.value} option={option} onSelect={onSelect} />;
+  const destructive = options.filter((o) => o.destructive === true);
+
+  return (
+    <>
+      {options.filter((o) => o.destructive !== true).map(item)}
+      {destructive.length > 0 && <Menu.Separator className="ui-item__rule" />}
+      {destructive.map(item)}
+      {toggles.length > 0 && <Menu.Separator className="ui-item__rule" />}
+      {toggles.map((toggle) => (
+        <Menu.CheckboxItem
+          key={toggle.label}
+          className="ui-item ui-item--action"
+          // Stays open: this changes what the actions above it do, so it is
+          // set on the way to picking one rather than instead of picking one.
+          closeOnClick={false}
+          checked={toggle.checked}
+          onCheckedChange={toggle.onChange}
+        >
+          {toggle.icon}
+          {toggle.label}
+          {/* The span, not the indicator, holds the column: the indicator is
+              unmounted when unticked and the row would jump on every click. */}
+          <span className="ui-item__check ui-item__check--end">
+            <Menu.CheckboxItemIndicator>
+              <Check size={ICON} />
+            </Menu.CheckboxItemIndicator>
+          </span>
+        </Menu.CheckboxItem>
+      ))}
+    </>
+  );
+}
+
+/** One button's worth of menu: what it is called, and what it offers. */
+export interface MenuSection {
+  label: string;
+  icon?: ReactNode;
+  options: Option<string>[];
+  /** Shown below the actions, since these change what the actions do. */
+  toggles?: ActionToggle[];
+  onSelect: (value: string) => void;
+}
+
+// Forgets which values a menu is over, so menus over different ones can be held
+// in one list and rendered as buttons or as sections of an OverflowMenu from the
+// same declaration. The selected value is looked back up in `options` rather than
+// asserted, which is what keeps the narrowing honest.
+export function menuSection<T extends string>(section: {
+  label: string;
+  icon?: ReactNode;
+  options: Option<T>[];
+  toggles?: ActionToggle[];
+  onSelect: (value: T) => void;
+}): MenuSection {
+  return {
+    ...section,
+    onSelect: (value) => {
+      const picked = section.options.find((o) => o.value === value);
+      if (picked != null) section.onSelect(picked.value);
+    },
+  };
+}
+
 // A menu of one-shot actions, as opposed to CheckMenu's independent toggles.
 export function ActionMenu<T extends string>({
   trigger,
@@ -337,26 +433,6 @@ export function ActionMenu<T extends string>({
   onSelect: (value: T) => void;
   disabled?: boolean;
 }): JSX.Element {
-  const item = (option: Option<T>): JSX.Element => (
-    <Menu.Item
-      key={option.value}
-      className={`ui-item ui-item--action${option.destructive === true ? ' ui-item--destructive' : ''}`}
-      onClick={() => onSelect(option.value)}
-    >
-      {option.icon}
-      {option.label}
-      {/* Out of the accessible name: it would read as part of the label ("Embedded
-          JPEG I"), and the shortcut is already announced by the ? help. */}
-      {option.hint != null && (
-        <span className="ui-btn__hint" aria-hidden>
-          {option.hint}
-        </span>
-      )}
-    </Menu.Item>
-  );
-
-  const destructive = options.filter((o) => o.destructive === true);
-
   return (
     <Menu.Root>
       <Menu.Trigger className="ui-btn ui-btn--default" aria-label={label} disabled={disabled}>
@@ -366,30 +442,52 @@ export function ActionMenu<T extends string>({
       <Menu.Portal>
         <Menu.Positioner className="ui-positioner" sideOffset={4}>
           <Menu.Popup className="ui-popup">
-            {options.filter((o) => o.destructive !== true).map(item)}
+            <MenuItems options={options} toggles={toggles} onSelect={onSelect} />
+          </Menu.Popup>
+        </Menu.Positioner>
+      </Menu.Portal>
+    </Menu.Root>
+  );
+}
+
+// Every menu of a bar that has run out of width, in one popup under one button,
+// each still under its own heading. Flat sections rather than submenus: a
+// submenu needs a hover or a second tap to open, and this exists for the screens
+// that have neither a pointer nor room to spare.
+export function OverflowMenu({ label, sections }: { label: string; sections: MenuSection[] }): JSX.Element {
+  // Lifted out of their sections to the foot of the menu. A rule below its own
+  // heading is enough to fence one off in a menu of its own, but here it would
+  // still sit a row above the next section's ordinary actions, halfway up a long
+  // popup someone is scrolling with a thumb.
+  const destructive = sections.flatMap((section) =>
+    section.options.filter((o) => o.destructive === true).map((option) => ({ option, onSelect: section.onSelect })),
+  );
+  // A section that had nothing but destructive actions would otherwise be a
+  // heading over nothing.
+  const headed = sections
+    .map((section) => ({ ...section, options: section.options.filter((o) => o.destructive !== true) }))
+    .filter((section) => section.options.length > 0 || (section.toggles?.length ?? 0) > 0);
+
+  return (
+    <Menu.Root>
+      <Menu.Trigger className="ui-btn ui-btn--default ui-btn--icon" aria-label={label}>
+        <MoreHorizontal size={ICON} />
+      </Menu.Trigger>
+      <Menu.Portal>
+        <Menu.Positioner className="ui-positioner" sideOffset={4}>
+          <Menu.Popup className="ui-popup">
+            {headed.map((section, i) => (
+              <Fragment key={section.label}>
+                {i > 0 && <Menu.Separator className="ui-item__rule" />}
+                <Menu.Group>
+                  <Menu.GroupLabel className="ui-text ui-text--label ui-item__group">{section.label}</Menu.GroupLabel>
+                  <MenuItems options={section.options} toggles={section.toggles} onSelect={section.onSelect} />
+                </Menu.Group>
+              </Fragment>
+            ))}
             {destructive.length > 0 && <Menu.Separator className="ui-item__rule" />}
-            {destructive.map(item)}
-            {toggles.length > 0 && <Menu.Separator className="ui-item__rule" />}
-            {toggles.map((toggle) => (
-              <Menu.CheckboxItem
-                key={toggle.label}
-                className="ui-item ui-item--action"
-                // Stays open: this changes what the actions above it do, so it is
-                // set on the way to picking one rather than instead of picking one.
-                closeOnClick={false}
-                checked={toggle.checked}
-                onCheckedChange={toggle.onChange}
-              >
-                {toggle.icon}
-                {toggle.label}
-                {/* The span, not the indicator, holds the column: the indicator is
-                    unmounted when unticked and the row would jump on every click. */}
-                <span className="ui-item__check ui-item__check--end">
-                  <Menu.CheckboxItemIndicator>
-                    <Check size={ICON} />
-                  </Menu.CheckboxItemIndicator>
-                </span>
-              </Menu.CheckboxItem>
+            {destructive.map(({ option, onSelect }) => (
+              <MenuAction key={option.value} option={option} onSelect={onSelect} />
             ))}
           </Menu.Popup>
         </Menu.Positioner>
