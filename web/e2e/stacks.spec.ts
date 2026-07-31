@@ -144,7 +144,10 @@ test('a selection spans the grid and the contents of a stack', async ({ page }) 
 
   // Cmd-clicking a member of it adds to that same selection rather than replacing it.
   await page.locator('.grid__band .tile__hit').first().click({ modifiers: ['ControlOrMeta'] });
-  await expect(page.locator('.bulkbar__count')).toHaveText('2 selected');
+  // The bar counts photographs, so the stack's row already stands for all of its
+  // members and the one clicked adds nothing to the total; the rings are two,
+  // being the row and that member.
+  await expect(page.locator('.bulkbar__count')).toHaveText(`${STACK_PHOTO_NAMES.length} selected`);
   await expect(page.locator('.tile--selected')).toHaveCount(2);
 
   // And one action reaches both. Two *entries* is the whole stack plus one of its

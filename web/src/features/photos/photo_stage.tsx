@@ -118,7 +118,6 @@ function noop(): void {
   /* a frame on its way off the stage reports to nobody */
 }
 
-
 // How much of the photo is off-screen on each axis at this scale, halved: past
 // that the image would separate from the viewport edge and drag out of view.
 function panLimit(viewport: number, content: number): number {
@@ -470,19 +469,12 @@ export function PhotoStage({
       // a ref only refreshes on render - so both promotions would read the same
       // stale set and the second would overwrite the first, leaving one slot of
       // the round unreachable for as long as it lasts.
-      const retired = paintedRef.current;
-      const dropped = (retired?.sources ?? []).filter((frame) => !asked.includes(frame));
-      // Frames of the photo already on the stage only leave because a rendition was
-      // swapped underneath them, which is not a move between photographs.
-      if (dropped.length > 0) setRetiring({ sources: dropped, step: retired?.photoKey === photoKey ? null : step });
+      const dropped = (paintedRef.current?.sources ?? []).filter((frame) => !asked.includes(frame));
+      if (dropped.length > 0) setRetiring({ sources: dropped, step });
 
       setPainted((previous) => {
         const kept = (previous?.sources ?? []).filter((frame) => asked.includes(frame));
-        return {
-          sources: kept.includes(source) ? kept : [...kept, source],
-          photoKey,
-          step: previous?.photoKey === photoKey ? (previous.step ?? null) : step,
-        };
+        return { sources: kept.includes(source) ? kept : [...kept, source], photoKey, step };
       });
     },
     [photoKey],

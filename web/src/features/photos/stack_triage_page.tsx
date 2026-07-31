@@ -237,6 +237,9 @@ const Flip = observer(function Flip({
 
       <PhotoStage
         photoKey={pairKey(round.a, round.b)}
+        // A round is not a place in the listing, so its frames appear rather than
+        // slide: there is no direction a tournament moved in.
+        index={-1}
         sources={sources}
         showing={showing}
         alt={onScreen == null ? '' : nameOf(onScreen)}
@@ -282,6 +285,7 @@ const Split = observer(function Split({ round, onDecoded }: { round: Round; onDe
           >
             <PhotoStage
               photoKey={`${pairKey(round.a, round.b)}:${photo.id}`}
+              index={-1}
               sources={[store.srcOf(photo.id)]}
               alt={nameOf(photo)}
               filename={nameOf(photo)}
