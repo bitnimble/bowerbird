@@ -224,6 +224,34 @@ export class StackTriageStore {
     return entry == null ? null : nextRound(entry.session);
   }
 
+  /**
+   * The photograph to come back to when the session is over.
+   *
+   * The surviving member the *gallery* will show for this stack, which is the
+   * newest of them - the same rule `refreshRepresentative` writes the flag by, so
+   * the two agree without asking the server.
+   *
+   * It has to be that one and not merely any survivor: the listing is collapsed,
+   * so the stack is a single row and no other member has a position in the
+   * collection at all. Landing on one of those leaves the viewer unable to say
+   * what comes before or after it, which is where a rejected entry photo used to
+   * strand the photographer. Everything else in the stack sits behind this row, so
+   * stepping on from here is stepping past the whole stack.
+   *
+   * Null when nothing survived, which `Neither` on everything can do.
+   */
+  @computed get keeper(): PhotoSummary | null {
+    // Undated sorts oldest, as it does in the listing's own ordering.
+    const taken = (photo: PhotoSummary): string => photo.ordering_date ?? '';
+    let newest: PhotoSummary | null = null;
+    for (const id of this.session?.alive ?? []) {
+      const photo = this.members.get(id);
+      if (photo == null) continue;
+      if (newest == null || taken(photo) > taken(newest) || (taken(photo) === taken(newest) && photo.id > newest.id)) newest = photo;
+    }
+    return newest;
+  }
+
   /** Survivors that were never compared with anything, so nothing is claimed of them. */
   @computed get unjudged(): Set<string> {
     const session = this.session;

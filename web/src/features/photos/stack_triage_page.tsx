@@ -513,12 +513,22 @@ export const StackTriagePage = observer(function StackTriagePage(): JSX.Element 
   // An explicit route rather than navigate(-1): nothing in the app uses history
   // depth, and it strands anyone who refreshed or opened the URL directly on a
   // history stack with nothing behind it.
+  // Back to the photograph the stack now stands for, so the session ends on what
+  // it decided and stepping on steps past the whole stack.
+  //
+  // Not the photo the session was entered from, which is what this used to do: a
+  // decisive session usually rejects it, and a rejected photo has left the
+  // gallery's filter, so the viewer could say nothing about what came before or
+  // after it and both arrows were dead. The entry photo is still the answer while
+  // the session is running - leaving it half-done should put you back exactly
+  // where you were.
   const leave = useCallback(() => {
-    const photoId = store.entryPhotoId;
-    if (photoId != null) {
-      navigate(`/photos/${photoId}`);
+    const back = store.status === 'ended' ? (store.keeper?.id ?? null) : store.entryPhotoId;
+    if (back != null) {
+      navigate(`/photos/${back}`);
       return;
     }
+    // Nothing survived, so there is no tile to go back to.
     const library = store.members.values().next().value?.library_id;
     navigate(library == null ? '/' : `/libraries/${library}`);
   }, [navigate, store]);

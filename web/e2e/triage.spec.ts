@@ -266,6 +266,49 @@ test('a session runs to a summary, and writes the verdicts it made', async ({ pa
   expect(await countOf(page, stackId, 'rejected')).toBe(pool - 2);
 });
 
+// Done lands on the photograph the stack now stands for, and the culling pass
+// carries on from there. Not on the photo the session was entered from: a
+// decisive session usually rejects it, and a rejected photo has left the
+// gallery's filter, so the viewer could say nothing about what came before or
+// after it and both arrows were dead.
+test('Done returns to a live photo, and stepping on leaves the stack behind', async ({ page }) => {
+  await page.goto('/settings');
+  await enterTriage(page);
+  const entry = page.url();
+
+  // Always prefer B, so the frame the session was entered from is rejected.
+  for (let left = TRIAGE_PHOTO_NAMES.length; left > 1; left--) {
+    await page.getByRole('button', { name: 'B better' }).click();
+  }
+  await expect(page.locator('.triage__summary')).toBeVisible({ timeout: 30_000 });
+  const stackId = stackIdOf(page);
+  await expect.poll(() => countOf(page, stackId, 'picked'), { timeout: 20_000 }).toBe(1);
+
+  await page.getByRole('button', { name: 'Done' }).click();
+  await expect(page).toHaveURL(/\/photos\//);
+  expect(page.url()).not.toBe(entry);
+
+  const landed = page.url().split('/').pop() ?? '';
+  const members = (await (await page.request.get(`${API_URL}/api/stacks/${stackId}/photos`)).json()) as {
+    id: string;
+    triage: string;
+  }[];
+  expect(members.find((member) => member.id === landed)?.triage).toBe('picked');
+
+  // And it is a row the collapsed collection actually holds, which is what lets
+  // the viewer place it and say what comes before and after. Every other member
+  // is collapsed behind this one row, so stepping on from here steps past the
+  // whole stack. Asserted against the listing rather than the Next button,
+  // because this fixture library is nothing but the stack: collapsed, it is one
+  // row, so there is genuinely nothing after it to step to.
+  const libraries = (await (await page.request.get(`${API_URL}/api/libraries`)).json()) as { id: string; root_path: string }[];
+  const library = libraries.find((entry) => entry.root_path === TRIAGE_DIR);
+  const listing = (await (
+    await page.request.get(`${API_URL}/api/libraries/${library?.id}/photos?limit=50`)
+  ).json()) as { photos: { id: string }[] };
+  expect(listing.photos.map((photo) => photo.id)).toContain(landed);
+});
+
 test('Keep the rest ends the session with everything still in the pool', async ({ page }) => {
   await page.goto('/settings');
   await enterTriage(page);
