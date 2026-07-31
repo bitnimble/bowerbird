@@ -231,9 +231,16 @@ export class StacksService {
    */
   private pruneStacks(stackIds: readonly string[], released = false): void {
     for (const stackId of stackIds) {
-      if (this.stacks.get(stackId) != null && this.stacks.countMembers(stackId) < 2) {
+      if (this.stacks.get(stackId) == null) continue;
+      if (this.stacks.countMembers(stackId) < 2) {
         this.stacks.dissolve(stackId, released);
+        continue;
       }
+      // A stack that survives losing members may have lost the one standing for
+      // it. Only the *new* stack is refreshed by `addPhotos`, so without this a
+      // source stack keeps a hole and every listing pays the correlated-subquery
+      // arm for it from then on.
+      this.stacks.refreshRepresentative(stackId);
     }
   }
 }

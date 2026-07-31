@@ -50,6 +50,13 @@ export const PHOTO_NAMES = ['alpha.arw', 'beta.arw'];
 // PHOTO_NAMES, which the catalogue and culling specs count tiles against.
 export const STACK_PHOTO_NAMES = [...PHOTO_NAMES, 'gamma.arw'];
 
+// Triage gets a fourth. Three is enough for a tournament, but not for a round
+// whose *both* frames are new to the stage: a decisive verdict always carries its
+// winner over, and with three the round after a draw still holds one frame the
+// stage already had. Two fresh frames, both warm, both decoding in one batch is
+// the case where a promotion that reads stale state loses one of them.
+export const TRIAGE_PHOTO_NAMES = [...STACK_PHOTO_NAMES, 'delta.arw'];
+
 // Called from playwright.config.ts at import time, not from globalSetup: the
 // webServers launch before globalSetup runs, and the API cannot open its DB
 // until this directory exists.
@@ -67,10 +74,10 @@ export function prepareFixture(): void {
   // byte-identical is what makes it a stack: detection has nothing to tell them
   // apart, which is the correct answer and the reason the other libraries turn
   // it off (`addLibrary`).
-  const stacked = new Set([STACK_PHOTOS_DIR, TRIAGE_PHOTOS_DIR]);
+  const namesFor = (dir: string): string[] =>
+    dir === TRIAGE_PHOTOS_DIR ? TRIAGE_PHOTO_NAMES : dir === STACK_PHOTOS_DIR ? STACK_PHOTO_NAMES : PHOTO_NAMES;
   for (const dir of [PHOTOS_DIR, CULL_PHOTOS_DIR, STACK_PHOTOS_DIR, PHONE_PHOTOS_DIR, TRIAGE_PHOTOS_DIR]) {
     mkdirSync(dir, { recursive: true });
-    const names = stacked.has(dir) ? STACK_PHOTO_NAMES : PHOTO_NAMES;
-    for (const name of names) copyFileSync(FIXTURE, path.join(dir, name));
+    for (const name of namesFor(dir)) copyFileSync(FIXTURE, path.join(dir, name));
   }
 }

@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { API_URL, STACK_PHOTO_NAMES, TRIAGE_PHOTOS_DIR } from './fixture_library';
+import { API_URL, TRIAGE_PHOTO_NAMES, TRIAGE_PHOTOS_DIR } from './fixture_library';
 import { addLibrary, openLibrary, syncLibrary, waitForSyncSettled } from './helpers';
 
 // Stack triage, driven through the real screen (DESIGN §20).
@@ -32,14 +32,37 @@ function stackIdOf(page: Page): string {
   return /\/stacks\/([^/]+)\/triage/.exec(page.url())?.[1] ?? '';
 }
 
+// Puts every member back to untriaged.
+//
+// A session captures each member's verdict as the baseline every undo restores
+// to, so a test inheriting the previous one's rejections inherits them as the
+// *correct* answer and its absolute counts stop meaning anything. Cheaper than
+// giving each test its own library, and it keeps them independent of each other's
+// verdict order.
+async function clearVerdicts(page: Page): Promise<void> {
+  const libraries = await page.request.get(`${API_URL}/api/libraries`);
+  const list = (await libraries.json()) as { id: string; root_path: string }[];
+  const library = list.find((entry) => entry.root_path === TRIAGE_DIR);
+  if (library == null) return;
+  const rows = await page.request.get(`${API_URL}/api/libraries/${library.id}/photos?limit=200&include_deleted=true`);
+  const { photos } = (await rows.json()) as { photos: { id: string; stack_id: string | null }[] };
+  const stackId = photos.find((photo) => photo.stack_id != null)?.stack_id;
+  if (stackId == null) return;
+  const members = (await (await page.request.get(`${API_URL}/api/stacks/${stackId}/photos`)).json()) as { id: string }[];
+  for (const member of members) {
+    await page.request.patch(`${API_URL}/api/photos/${member.id}`, { data: { triage: 'untriaged' } });
+  }
+}
+
 // Opens a member of the stack in the viewer, which is the only way in (§20.5).
 async function enterTriage(page: Page): Promise<void> {
+  await clearVerdicts(page);
   await openLibrary(page, TRIAGE_DIR);
   await expect(page.locator('.tile__stack')).toBeVisible({ timeout: 45_000 });
   // A stack's tile opens its band rather than the photo, so the way to a member's
   // detail view is through the band.
   await page.locator('.tile:not(.tile--member) .tile__hit').click();
-  await expect(page.locator('.grid__band .tile')).toHaveCount(STACK_PHOTO_NAMES.length);
+  await expect(page.locator('.grid__band .tile')).toHaveCount(TRIAGE_PHOTO_NAMES.length);
   await page.locator('.grid__band .tile__hit').first().dblclick();
 
   await page.getByRole('link', { name: 'Triage stack' }).click();
@@ -50,9 +73,9 @@ async function enterTriage(page: Page): Promise<void> {
 test('a stack of identical frames is set up to be triaged', async ({ page }) => {
   await addLibrary(page, TRIAGE_DIR, { autoStack: true });
   await syncLibrary(page, TRIAGE_DIR);
-  await waitForSyncSettled(page, TRIAGE_DIR, STACK_PHOTO_NAMES.length);
+  await waitForSyncSettled(page, TRIAGE_DIR, TRIAGE_PHOTO_NAMES.length);
   await openLibrary(page, TRIAGE_DIR);
-  await expect(page.locator('.tile__stack-count')).toHaveText(String(STACK_PHOTO_NAMES.length), { timeout: 45_000 });
+  await expect(page.locator('.tile__stack-count')).toHaveText(String(TRIAGE_PHOTO_NAMES.length), { timeout: 45_000 });
 });
 
 test('the viewer offers the way in for any member of a stack, not just its representative', async ({ page }) => {
@@ -62,12 +85,12 @@ test('the viewer offers the way in for any member of a stack, not just its repre
   //
   // The band is client state and does not survive the trip back, so it is opened
   // once per member rather than once for the loop.
-  for (let index = 0; index < STACK_PHOTO_NAMES.length; index++) {
+  for (let index = 0; index < TRIAGE_PHOTO_NAMES.length; index++) {
     await page.goto('/settings');
     await openLibrary(page, TRIAGE_DIR);
     await expect(page.locator('.tile__stack')).toBeVisible({ timeout: 45_000 });
     await page.locator('.tile:not(.tile--member) .tile__hit').click();
-    await expect(page.locator('.grid__band .tile')).toHaveCount(STACK_PHOTO_NAMES.length);
+    await expect(page.locator('.grid__band .tile')).toHaveCount(TRIAGE_PHOTO_NAMES.length);
 
     await page.locator('.grid__band .tile__hit').nth(index).dblclick();
     await expect(page.getByRole('link', { name: 'Triage stack' })).toBeVisible();
@@ -78,21 +101,27 @@ test('a decisive verdict rejects the loser and holds the winner over', async ({ 
   await page.goto('/settings');
   await enterTriage(page);
 
-  // Three frames, so the first round leaves two and the session is not over.
-  await expect(page.locator('.triage__verdicts')).toContainText('3 left');
+  const pool = TRIAGE_PHOTO_NAMES.length;
+  await expect(page.locator('.triage__verdicts')).toContainText(`${pool} left`);
   await page.getByRole('button', { name: 'A better' }).click();
 
-  await expect(page.locator('.triage__verdicts')).toContainText('2 left');
+  await expect(page.locator('.triage__verdicts')).toContainText(`${pool - 1} left`);
   // Still a round to judge, rather than a summary.
   await expect(page.getByRole('button', { name: 'A better' })).toBeVisible();
+  // And the loser is rejected in the catalogue, not merely gone from the count.
+  await expect.poll(() => countOf(page, stackIdOf(page), 'rejected'), { timeout: 20_000 }).toBe(1);
 });
 
 test('the queue reaches a completed round, and re-judging it discards what came after', async ({ page }) => {
   await page.goto('/settings');
   await enterTriage(page);
 
+  const pool = TRIAGE_PHOTO_NAMES.length;
   await page.getByRole('button', { name: 'A better' }).click();
-  await expect(page.locator('.triage__verdicts')).toContainText('2 left');
+  await expect(page.locator('.triage__verdicts')).toContainText(`${pool - 1} left`);
+  // The write has to have landed, or the Queue row below is clicked while the
+  // session is still busy and the rewind is silently dropped.
+  await expect.poll(() => countOf(page, stackIdOf(page), 'rejected'), { timeout: 20_000 }).toBe(1);
 
   await page.getByRole('button', { name: 'Queue' }).click();
   // Completed rows are the clickable ones; Upcoming shares the class and is
@@ -104,8 +133,11 @@ test('the queue reaches a completed round, and re-judging it discards what came 
 
   // Back to the opening round, with the photo that verdict rejected returned to
   // the pool and its rejection taken back.
-  await expect(page.locator('.triage__verdicts')).toContainText('3 left');
-  await page.getByRole('button', { name: 'Queue' }).click();
+  await expect(page.locator('.triage__verdicts')).toContainText(`${pool} left`);
+  await expect.poll(() => countOf(page, stackIdOf(page), 'rejected'), { timeout: 20_000 }).toBe(0);
+  // Asserted with the popover still open, or an unmounted list would satisfy this
+  // however the rewind went.
+  await expect(page.getByText('Nothing judged yet')).toBeVisible();
   await expect(completed).toHaveCount(0);
 });
 
@@ -133,7 +165,7 @@ test('flip still shows both frames in a round after the first', async ({ page })
   await enterTriage(page);
 
   await page.getByRole('button', { name: 'A better' }).click();
-  await expect(page.locator('.triage__verdicts')).toContainText('2 left');
+  await expect(page.locator('.triage__verdicts')).toContainText(`${TRIAGE_PHOTO_NAMES.length - 1} left`);
   await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
 
   const shown = (): Promise<string> => page.locator('.stage__viewport img.is-ready').evaluate((img) => (img as HTMLImageElement).src);
@@ -142,6 +174,34 @@ test('flip still shows both frames in a round after the first', async ({ page })
   await page.getByRole('button', { name: 'B', exact: true }).click();
   await expect.poll(shown, { timeout: 10_000 }).not.toBe(onA);
 
+  await page.getByRole('button', { name: 'A', exact: true }).click();
+  await expect.poll(shown, { timeout: 10_000 }).toBe(onA);
+});
+
+// A round whose *both* frames are new to the stage, both already fetched, so both
+// decode in one batch. Only a draw produces one - a decisive verdict always
+// carries its winner over - and only with four members, since with three the round
+// after a draw still holds a frame the stage had. A promotion that reads its
+// previous state from anything but the updater loses one of the two here, and the
+// slot it lost is unreachable for the rest of the round with nothing in any count
+// to say so.
+test('both slots stay reachable when a round arrives with two new frames', async ({ page }) => {
+  await page.goto('/settings');
+  await enterTriage(page);
+
+  const shown = (): Promise<string> => page.locator('.stage__viewport img.is-ready').evaluate((img) => (img as HTMLImageElement).src);
+  const before = await shown();
+
+  await page.getByRole('button', { name: 'Both' }).click();
+  await expect(page.locator('.triage__verdicts')).toContainText(`${TRIAGE_PHOTO_NAMES.length} left`);
+  await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
+  // The drawn pair went to the back, so neither frame of this round has been on
+  // the stage before.
+  await expect.poll(shown, { timeout: 10_000 }).not.toBe(before);
+
+  const onA = await shown();
+  await page.getByRole('button', { name: 'B', exact: true }).click();
+  await expect.poll(shown, { timeout: 10_000 }).not.toBe(onA);
   await page.getByRole('button', { name: 'A', exact: true }).click();
   await expect.poll(shown, { timeout: 10_000 }).toBe(onA);
 });
@@ -172,15 +232,17 @@ test('a session runs to a summary, and writes the verdicts it made', async ({ pa
   await page.goto('/settings');
   await enterTriage(page);
 
-  // Two decisive verdicts settle three frames: the winner is held over and meets
-  // the third, which is N-1 rounds.
-  await page.getByRole('button', { name: 'A better' }).click();
-  await expect(page.locator('.triage__verdicts')).toContainText('2 left');
-  await page.getByRole('button', { name: 'A better' }).click();
+  // The winner is held over and meets each of the others in turn, so a run of
+  // decisive verdicts settles the stack in N-1 rounds.
+  const pool = TRIAGE_PHOTO_NAMES.length;
+  for (let left = pool; left > 1; left--) {
+    await expect(page.locator('.triage__verdicts')).toContainText(`${left} left`);
+    await page.getByRole('button', { name: 'A better' }).click();
+  }
 
   await expect(page.locator('.triage__summary')).toBeVisible({ timeout: 30_000 });
   await expect(page.locator('.triage__summary')).toContainText('Kept · 1');
-  await expect(page.locator('.triage__summary')).toContainText('Rejected · 2');
+  await expect(page.locator('.triage__summary')).toContainText(`Rejected · ${pool - 1}`);
 
   // The verdicts are the photographs' own now, not just the screen's. Polled on
   // the `picked` write, which is the *last* one a session makes: the rejections
@@ -188,7 +250,7 @@ test('a session runs to a summary, and writes the verdicts it made', async ({ pa
   // closing write still in flight.
   const stackId = stackIdOf(page);
   await expect.poll(() => countOf(page, stackId, 'picked'), { timeout: 20_000 }).toBe(1);
-  expect(await countOf(page, stackId, 'rejected')).toBe(2);
+  expect(await countOf(page, stackId, 'rejected')).toBe(pool - 1);
 
   // And undo from the summary takes the closing writes back and re-opens the
   // round that ended it, rather than landing on the summary it was pressed from.
@@ -198,9 +260,10 @@ test('a session runs to a summary, and writes the verdicts it made', async ({ pa
   await expect(page.locator('.triage__verdicts')).toBeVisible();
   await expect(page.locator('.triage__summary')).toHaveCount(0);
   await expect.poll(() => countOf(page, stackId, 'picked'), { timeout: 20_000 }).toBe(0);
-  // The verdict being re-offered is the one that ended the session, so its loser
-  // is still rejected: undo takes back a round, not the whole tournament.
-  expect(await countOf(page, stackId, 'rejected')).toBe(1);
+  // The verdict being re-offered is the one that ended the session, so the losers
+  // of the rounds before it are still rejected: undo takes back a round, not the
+  // whole tournament.
+  expect(await countOf(page, stackId, 'rejected')).toBe(pool - 2);
 });
 
 test('Keep the rest ends the session with everything still in the pool', async ({ page }) => {
@@ -211,7 +274,7 @@ test('Keep the rest ends the session with everything still in the pool', async (
   // them has been compared with anything.
   await page.getByRole('button', { name: 'Keep the rest' }).click();
   await expect(page.locator('.triage__summary')).toBeVisible({ timeout: 30_000 });
-  await expect(page.locator('.triage__summary')).toContainText(`Kept · ${STACK_PHOTO_NAMES.length}`);
+  await expect(page.locator('.triage__summary')).toContainText(`Kept · ${TRIAGE_PHOTO_NAMES.length}`);
 
   // Nothing was compared, so nothing is claimed: the keepers are marked rather
   // than quietly written picked, which is the distinction the closing rule exists

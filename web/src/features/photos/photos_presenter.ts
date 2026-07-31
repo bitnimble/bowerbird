@@ -1220,7 +1220,13 @@ export class PhotosPresenter {
       const f = this.store.filters;
       const mayLeaveView =
         (fields.triage !== undefined && f.triage != null) || (fields.rating !== undefined && f.rated != null);
-      if (mayLeaveView) await this.refresh();
+      // Not awaited, and deliberately outside the write chain. The chain orders
+      // the *writes*; a re-read is a view concern nobody waits on, and awaiting it
+      // here holds the next write behind a whole collection pass - which is
+      // exactly the pile-up the coalescing exists to stop, since two calls can
+      // then never overlap and so can never coalesce. Outside the `try` too: a
+      // re-read that failed would otherwise report a write that landed as failed.
+      if (mayLeaveView) void this.refresh();
       return true;
     } catch (err) {
       if (options.quiet !== true) this.fail(err);

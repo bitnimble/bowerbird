@@ -196,7 +196,7 @@ const SHORTCUTS: [string, string][] = [
   ['↓ / Space', 'Keep both (Triage stack)'],
   ['Shift (hold)', 'Peek at the other photo (Triage stack, Flip)'],
   ['⌘Z / Backspace', 'Undo the last round (Triage stack)'],
-  ['Tab', 'Switch Flip and Split (Triage stack)'],
+  ['V', 'Switch Flip and Split (Triage stack)'],
   ['↑ ↓', 'Move between folders (Shoots)'],
   ['→ ←', 'Open / close a folder (Shoots)'],
   ['Home / End', 'First / last folder (Shoots)'],

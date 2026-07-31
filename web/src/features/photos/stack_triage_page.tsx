@@ -12,7 +12,7 @@ import {
   RotateCcw,
   SquareStack,
 } from 'lucide-react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { renditionUrl, type PhotoSummary } from '../../api/client';
 import { usePresenters, useStackTriageStore } from '../../app/stores_context';
 import { Button, ICON, PopoverButton, SegmentedControl, Text } from '../../ui/ui';
@@ -85,9 +85,18 @@ const Queue = observer(function Queue(): JSX.Element {
           .map(({ entry, index }) => {
             // Keep the rest is an entry with no round of its own: it ended the
             // session rather than judging a pair.
+            // Disabled while a write is in flight, like every other control: a
+            // rewind is dropped in that window, and a row that swallows the click
+            // silently is worse than one that cannot be clicked.
             if (entry.choice === 'stopped') {
               return (
-                <button key={index} type="button" className="triage__queue-row" onClick={() => void stackTriage.rewindTo(index)}>
+                <button
+                  key={index}
+                  type="button"
+                  className="triage__queue-row"
+                  disabled={store.busy}
+                  onClick={() => void stackTriage.rewindTo(index)}
+                >
                   <Text variant="muted">Kept the rest</Text>
                 </button>
               );
@@ -95,7 +104,13 @@ const Queue = observer(function Queue(): JSX.Element {
             const round = store.roundOfEntry(index);
             const [a, b] = round == null ? [undefined, undefined] : roundOf(round);
             return (
-              <button key={index} type="button" className="triage__queue-row" onClick={() => void stackTriage.rewindTo(index)}>
+              <button
+                key={index}
+                type="button"
+                className="triage__queue-row"
+                disabled={store.busy}
+                onClick={() => void stackTriage.rewindTo(index)}
+              >
                 {a != null && <img src={thumbOf(a)} alt="" />}
                 {b != null && <img src={thumbOf(b)} alt="" />}
                 <Text variant="muted">{VERDICTS.find((v) => v.verdict === entry.choice)?.label ?? ''}</Text>
@@ -154,7 +169,7 @@ const Header = observer(function Header({ onLeave }: { onLeave: () => void }): J
           value={store.mode}
           onChange={stackTriage.setMode}
           options={[
-            { value: 'flip', label: 'Flip', icon: <SquareStack size={ICON} />, hint: '⇥' },
+            { value: 'flip', label: 'Flip', icon: <SquareStack size={ICON} />, hint: 'V' },
             { value: 'split', label: 'Split', icon: <Columns2 size={ICON} /> },
           ]}
         />
@@ -287,10 +302,14 @@ const Verdicts = observer(function Verdicts({ ready }: { ready: boolean }): JSX.
   const cast = (verdict: Verdict): void => {
     const round = store.round;
     if (round == null) return;
+    // The round this verdict is about, captured now. `undo` is "the last round",
+    // which by the time a toast is pressed may be two rounds later - so the toast
+    // would take back something it never named.
+    const at = store.history.length;
     void stackTriage.judge(verdict).then(() => {
       // Reported with an undo rather than confirmed first, matching the Bin: a
       // confirmation on a repeated action is worse than a way back from it.
-      if (verdict === 'neither') toasts.showUndoable('2 rejected', 'Undo', () => stackTriage.undo());
+      if (verdict === 'neither') toasts.showUndoable('2 rejected', 'Undo', () => stackTriage.rewindTo(at));
     });
   };
 
@@ -377,7 +396,7 @@ const Summary = observer(function Summary({ onLeave }: { onLeave: () => void }):
       )}
 
       <div className="row">
-        <Button disabled={store.history.length === 0} onClick={() => void stackTriage.undo()}>
+        <Button disabled={store.history.length === 0 || store.busy} onClick={() => void stackTriage.undo()}>
           <RotateCcw size={ICON} />
           Undo the last round
         </Button>
@@ -407,6 +426,10 @@ const TriageKeys = observer(function TriageKeys({
     function onKey(e: KeyboardEvent): void {
       const target = e.target as HTMLElement | null;
       if (target != null && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
+      // A popup is portalled to the body, so its keys reach this window listener:
+      // reading the queue would cast verdicts, and Space on a queue row would cast
+      // Both instead of selecting the round it is sitting on.
+      if (target?.closest('[role="dialog"], .ui-popup') != null) return;
 
       // Undo is the only modified chord. Every other modifier is left alone
       // because Cmd+← and Alt+← are the browser's Back, and casting "A better" on
@@ -427,7 +450,10 @@ const TriageKeys = observer(function TriageKeys({
       if (peeking) return;
 
       if (e.key === 'Escape') onLeave();
-      else if (e.key === 'Tab') stackTriage.setMode(store.mode === 'flip' ? 'split' : 'flip');
+      // `v`, not Tab. Swallowing Tab took focus navigation away from the whole
+      // page: nothing could be reached by keyboard, and once focus landed here
+      // there was no way out of it.
+      else if (e.key === 'v') stackTriage.setMode(store.mode === 'flip' ? 'split' : 'flip');
       else if (e.key === 'Backspace') void stackTriage.undo();
       else if (store.round == null) return;
       else if (e.key === 'ArrowLeft') void stackTriage.judge('a');
@@ -466,7 +492,7 @@ export const StackTriagePage = observer(function StackTriagePage(): JSX.Element 
   const [peeking, setPeeking] = useState(false);
   const [decoded, setDecoded] = useState<ReadonlySet<string>>(new Set());
 
-  const entryPhotoId = (history.state as { usr?: { entryPhotoId?: string } } | null)?.usr?.entryPhotoId ?? null;
+  const entryPhotoId = (useLocation().state as { entryPhotoId?: string } | null)?.entryPhotoId ?? null;
 
   useEffect(() => {
     void stackTriage.open(stackId, entryPhotoId);
@@ -475,6 +501,14 @@ export const StackTriagePage = observer(function StackTriagePage(): JSX.Element 
   const onDecoded = useCallback((source: string) => {
     setDecoded((previous) => (previous.has(source) ? previous : new Set(previous).add(source)));
   }, []);
+
+  // Per round, not for the life of the page. Kept, a round whose frames were ever
+  // decoded reads as ready the instant it renders - before the stage has painted
+  // anything for it - which is every undo, every jump through the queue, and every
+  // switch between the two presentations. That is exactly the "cast a verdict
+  // against a stage that is still building" case the gate exists to stop.
+  const roundKey = store.round == null ? '' : `${store.mode}:${pairKey(store.round.a, store.round.b)}`;
+  useEffect(() => setDecoded(new Set()), [roundKey]);
 
   // An explicit route rather than navigate(-1): nothing in the app uses history
   // depth, and it strands anyone who refreshed or opened the URL directly on a
@@ -519,7 +553,7 @@ export const StackTriagePage = observer(function StackTriagePage(): JSX.Element 
   const ready = pair != null && pair.every((photo) => decoded.has(store.srcOf(photo.id)));
 
   return (
-    <div className="pad triage-page">
+    <div className="pad pad--fill triage-page">
       <TriageKeys peeking={peeking} onPeek={setPeeking} onLeave={leave} />
       <Header onLeave={leave} />
 
@@ -534,18 +568,27 @@ export const StackTriagePage = observer(function StackTriagePage(): JSX.Element 
           )}
           <Verdicts ready={ready} />
           {/* Announced, because the screen replaces its entire content on a
-              keystroke and would otherwise change in silence. */}
+              keystroke and would otherwise change in silence. The round's own
+              photographs, not just the count: a draw keeps the pool the same size,
+              so a count alone says nothing happened. */}
           <div className="visually-hidden" aria-live="polite">
-            {`Round of ${store.pool.length} photos remaining`}
+            {`Round ${store.history.length + 1}: ${nameOf(pair[0])} and ${nameOf(pair[1])}. ${store.pool.length} left.`}
           </div>
-          {/* The pool, warmed. The frames that can open the next round are drawn
-              at stage size so they are instant; the rest are fetched so the bytes
-              are in cache without holding a full-resolution raster each. */}
-          <div className="triage__warm" aria-hidden>
-            {store.warm.map((id) => (
-              <img key={id} src={store.srcOf(id)} alt="" className={store.hot.includes(id) ? 'triage__warm-hot' : undefined} />
-            ))}
-          </div>
+          {/* The pool, fetched ahead so the bytes are in cache when a round asks
+              for them. Only fetched: a clipped element paints nothing, so nothing
+              here is decoded, and drawing them at stage size would either be
+              ignored or cost a full-resolution raster each.
+
+              Only once this round is up, for the reason PhotoStage gates its own
+              warming: started earlier they compete for the connection with the two
+              frames the verdict bar is waiting on. */}
+          {ready && (
+            <div className="triage__warm" aria-hidden>
+              {store.warm.map((id) => (
+                <img key={id} src={store.srcOf(id)} alt="" />
+              ))}
+            </div>
+          )}
         </>
       )}
     </div>

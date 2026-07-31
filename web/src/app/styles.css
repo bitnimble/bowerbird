@@ -2284,12 +2284,9 @@ p.ui-text--mono {
    frames, and a verdict bar. The verdicts sit deliberately far from the view
    controls - a misclick here rejects a photograph. */
 
-.triage-page {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
+/* Layout comes from `pad--fill`, which every full-height page wears; keeping the
+   page's own bottom padding here would leave a strip below the summary's scroller
+   that nothing can scroll into. */
 
 .triage__flip,
 .triage__split {
@@ -2449,10 +2446,10 @@ p.ui-text--mono {
   border-radius: 0 0 var(--radius) var(--radius);
 }
 
-/* The pool, warmed. A decode is for the size an element is drawn at, so the
-   frames that can open the next round are drawn at stage size and are instant;
-   the rest are 1px, which still fills the HTTP cache without holding a
-   full-resolution raster each. Ten of those would be hundreds of megabytes. */
+/* The pool, fetched ahead. Clipped to nothing on purpose: these are never painted
+   and so never decoded, which is the point - ten decoded full-resolution frames is
+   hundreds of megabytes, where ten fetched ones cost only the bytes the next round
+   would have fetched anyway. */
 .triage__warm {
   position: absolute;
   width: 0;
@@ -2464,12 +2461,6 @@ p.ui-text--mono {
 .triage__warm img {
   width: 1px;
   height: 1px;
-}
-
-.triage__warm img.triage__warm-hot {
-  width: 100vw;
-  height: 100vh;
-  object-fit: contain;
 }
 
 .visually-hidden {

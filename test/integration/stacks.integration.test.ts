@@ -269,6 +269,21 @@ describe('stacks', () => {
     expect(flagged).toBe(ids[2]!);
   });
 
+  test('binning the member a stack stands for moves the flag too', () => {
+    const { db, stacks, photos } = context;
+    const ids = [1, 2, 3].map((n) => insertPhoto(db, n, { minute: n }));
+    stacks.create(ids);
+    const flagged = (): string | null =>
+      (db.query('SELECT id FROM photos WHERE stack_id IS NOT NULL AND is_representative = 1').get() as { id: string } | null)?.id ??
+      null;
+
+    photos.markDeleted(ids[2]!, '/bin/IMG_3.ARW');
+    expect(flagged()).toBe(ids[1]!);
+
+    photos.markRestored(ids[2]!, 'IMG_3.ARW');
+    expect(flagged()).toBe(ids[2]!);
+  });
+
   test('a stack whose every member is rejected leaves the gallery entirely', () => {
     const { db, stacks, photos } = context;
     const ids = [1, 2, 3].map((n) => insertPhoto(db, n, { minute: n }));
@@ -319,6 +334,25 @@ describe('stacks', () => {
     expect(listing.photos).toHaveLength(1);
     expect(listing.photos[0]!.id).toBe(ids[0]!);
     expect(listing.photos[0]!.stack_size).toBe(1);
+  });
+
+  // Regression: only the *new* stack was refreshed, so a source stack that
+  // survived losing a member kept a hole where its flag should be, and every
+  // listing paid the correlated-subquery arm for it from then on.
+  test('a stack that survives losing a member still has one', () => {
+    const { db, stacks, repo } = context;
+    const ids = [1, 2, 3, 4].map((n) => insertPhoto(db, n, { minute: n }));
+    const source = stacks.create(ids);
+    const flagged = (stackId: string): string[] =>
+      (db.query('SELECT id FROM photos WHERE stack_id = ? AND is_representative = 1').all(stackId) as { id: string }[]).map((r) => r.id);
+    // The newest, which is the one standing for it.
+    expect(flagged(source.id)).toEqual([ids[3]!]);
+
+    const moved = stacks.create([ids[3]!, insertPhoto(db, 5, { minute: 5 })]);
+
+    expect(repo.memberIds(source.id).sort()).toEqual([ids[0]!, ids[1]!, ids[2]!].sort());
+    expect(flagged(source.id)).toEqual([ids[2]!]);
+    expect(flagged(moved.id)).toHaveLength(1);
   });
 
   test('stacking photos already in a stack moves them and cleans up behind them', () => {

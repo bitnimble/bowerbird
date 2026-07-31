@@ -16,7 +16,6 @@ import {
   upcomingRounds,
 } from './stack_triage';
 import type { HistoryEntry, TriageMode } from './triage_storage';
-import { loadMode } from './triage_storage';
 
 /** How many members are warmed at all. A fetch cap, for a manual stack of a thousand. */
 export const WARM_LIMIT = 10;
@@ -43,19 +42,26 @@ export class StackTriageStore {
   ) {}
 
   @observable accessor stackId: string | null = null;
+  // Shallow: the rows are read whole and replaced whole, so proxying every field
+  // of every member buys nothing.
   /** Every usable member, by id. */
-  @observable accessor members = new Map<string, PhotoSummary>();
+  @observable.shallow accessor members = new Map<string, PhotoSummary>();
   /** Each member's triage when the session opened: what every restore targets. */
-  @observable accessor baseline = new Map<string, Triage>();
+  @observable.shallow accessor baseline = new Map<string, Triage>();
 
   // The tournament, as one immutable value: restoring a snapshot is one
   // assignment, and cannot leave the pool, the judged pairs and the stopped flag
   // disagreeing.
   @observable.ref accessor session: Session | null = null;
-  @observable accessor history: HistoryEntry[] = [];
+  // Shallow, like `session`: an entry holds an immutable snapshot, and deep
+  // observability would turn its pool into an ObservableArray and its judged
+  // pairs into an ObservableSet inside a module whose whole premise is that they
+  // are values.
+  @observable.shallow accessor history: HistoryEntry[] = [];
 
   @observable accessor showing: 'a' | 'b' = 'a';
-  @observable accessor mode: TriageMode = loadMode();
+  // Seeded by the presenter, which is the only thing that reads storage.
+  @observable accessor mode: TriageMode = 'flip';
   /** Where to go back to. Recorded on entry and stored, so a reload still knows. */
   @observable accessor entryPhotoId: string | null = null;
   /** Photos whose triage write did not land. Reported rather than compensated (§20.2.6). */
@@ -193,10 +199,14 @@ export class StackTriageStore {
     return {
       // Kept is every survivor, not only the judged ones: Keep the rest leaves
       // photos in the pool that were never on screen, and they are kept. The
-      // screen marks them rather than hiding them, because §20.2.6 goes to
-      // trouble to keep that distinction in the data.
+      // screen marks them rather than hiding them, because §20.2 goes to trouble
+      // to keep that distinction in the data.
       kept: rows(session.alive),
-      rejected: rows([...this.members.keys()].filter((id) => !alive.has(id))),
+      // Off the members this session started with, which is what `baseline` is,
+      // rather than off the members now: a photo added to the stack mid-session,
+      // or one that was missing at open and is back, was never in the pool and
+      // nothing rejected it.
+      rejected: rows([...this.baseline.keys()].filter((id) => !alive.has(id))),
       unsaved: rows(this.failed),
     };
   }

@@ -9,7 +9,6 @@ import type { Session } from './stack_triage';
 // gallery has moved on.
 
 const SESSION_PREFIX = 'bowerbird.triage.';
-const DONE_PREFIX = 'bowerbird.triage.done.';
 const MODE_KEY = 'bowerbird.triage.mode';
 
 /** How far back a session can be undone. Bounds what a long session stores. */
@@ -28,19 +27,14 @@ export interface HistoryEntry {
   changed: string[];
 }
 
-export interface StoredSession {
+interface StoredSession {
   session: Session;
   history: HistoryEntry[];
   /** Each member's triage when the session opened: what every restore targets. */
   baseline: Record<string, Triage>;
   entryPhotoId: string | null;
-}
-
-/** What a finished session left behind, so a reload on the summary redraws it. */
-export interface StoredOutcome {
-  kept: string[];
-  rejected: string[];
-  unsaved: string[];
+  /** Photos whose write did not land, so the summary can still offer a retry. */
+  failed: string[];
 }
 
 // `Set` has no JSON representation - `JSON.stringify(new Set())` is `{}` - so a
@@ -82,6 +76,7 @@ export function saveSession(stackId: string, stored: StoredSession): void {
         history: stored.history.slice(-HISTORY_LIMIT).map((entry) => ({ ...entry, session: toWire(entry.session) })),
         baseline: stored.baseline,
         entryPhotoId: stored.entryPhotoId,
+        failed: stored.failed,
       }),
     );
   } catch {
@@ -128,6 +123,7 @@ export function loadSession(stackId: string): StoredSession | null {
       history,
       baseline,
       entryPhotoId: typeof parsed.entryPhotoId === 'string' ? parsed.entryPhotoId : null,
+      failed: Array.isArray(parsed.failed) ? parsed.failed.filter((id): id is string => typeof id === 'string') : [],
     };
   } catch {
     return null;
@@ -146,41 +142,7 @@ export function clearSession(stackId: string): void {
   }
 }
 
-// The session key goes when its closing writes land, so a reload on the summary
-// would otherwise find nothing and start a fresh tournament over the photographs
-// it had just judged. This is what it finds instead.
-export function saveOutcome(stackId: string, outcome: StoredOutcome): void {
-  try {
-    sessionStorage.setItem(`${DONE_PREFIX}${stackId}`, JSON.stringify(outcome));
-  } catch {
-    /* the summary simply will not survive a reload */
-  }
-}
-
-export function loadOutcome(stackId: string): StoredOutcome | null {
-  try {
-    const raw = sessionStorage.getItem(`${DONE_PREFIX}${stackId}`);
-    if (raw == null) return null;
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    const ids = (value: unknown): string[] => (Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : []);
-    return { kept: ids(parsed.kept), rejected: ids(parsed.rejected), unsaved: ids(parsed.unsaved) };
-  } catch {
-    return null;
-  }
-}
-
-export function clearOutcome(stackId: string): void {
-  try {
-    sessionStorage.removeItem(`${DONE_PREFIX}${stackId}`);
-  } catch {
-    /* nothing to clear */
-  }
-}
-
-// Which of the two presentations, which is a preference about the machine rather
-// than about the stack - so `localStorage`, and two lines rather than a
-// `view_state.ts`-shaped module: that one earns its validation by keying five
-// source kinds and parsing a compound object, where this is a single enum.
+// A preference about the machine rather than about the stack, so `localStorage`.
 export function saveMode(mode: TriageMode): void {
   try {
     localStorage.setItem(MODE_KEY, mode);

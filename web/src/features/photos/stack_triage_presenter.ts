@@ -4,17 +4,7 @@ import type { PhotoSummary, Triage } from '../../api/client';
 import type { PhotosPresenter } from './photos_presenter';
 import type { StackTriageStore } from './stack_triage_store';
 import { type Verdict, applyVerdict, keepers, losersOf, openSession, stop } from './stack_triage';
-import {
-  type HistoryEntry,
-  type TriageMode,
-  clearOutcome,
-  clearSession,
-  loadOutcome,
-  loadSession,
-  saveMode,
-  saveOutcome,
-  saveSession,
-} from './triage_storage';
+import { type HistoryEntry, type TriageMode, loadMode, loadSession, saveMode, saveSession } from './triage_storage';
 
 // The only writer of StackTriageStore (DESIGN §20).
 //
@@ -42,6 +32,12 @@ export class StackTriagePresenter {
       this.store.failed = new Set();
       this.store.loadError = null;
       this.store.members = new Map();
+      // Or a session left mid-write by the stack before this one would swallow
+      // the first verdict of this one, silently, since the keyboard has no
+      // disabled state to show for it.
+      this.store.busy = false;
+      this.store.showing = 'a';
+      this.store.mode = loadMode();
       if (entryPhotoId != null) this.store.entryPhotoId = entryPhotoId;
     });
 
@@ -132,10 +128,10 @@ export class StackTriagePresenter {
       if (after == null || after.a !== round.a) this.store.showing = 'a';
     });
 
+    const stackId = this.store.stackId;
     await this.writeAll(losersOf(round, verdict), 'rejected');
     await this.settleIfOver();
-    runInAction(() => (this.store.busy = false));
-    this.persist();
+    this.finish(stackId);
   }
 
   async keepTheRest(): Promise<void> {
@@ -149,7 +145,22 @@ export class StackTriagePresenter {
       this.store.history = [...this.store.history, before];
     });
 
+    const stackId = this.store.stackId;
     await this.settleIfOver();
+    this.finish(stackId);
+  }
+
+  /**
+   * Ends an action that may have outlived the session it belongs to.
+   *
+   * Every one of these awaits a write, and the photographer can leave for another
+   * stack in the meantime. Without the check the tail of the old session releases
+   * the new one's `busy` - swallowing its first verdict, silently, because the
+   * keyboard has no disabled state to show - and stores the old session's history
+   * under the new one's key.
+   */
+  private finish(stackId: string | null): void {
+    if (this.store.stackId !== stackId) return;
     runInAction(() => (this.store.busy = false));
     this.persist();
   }
@@ -166,18 +177,6 @@ export class StackTriagePresenter {
     // the pool around it - is left exactly as it was, rather than claimed as a
     // considered keeper.
     await this.writeAll(keepers(session), 'picked');
-
-    const stackId = this.store.stackId;
-    if (stackId == null) return;
-    const outcome = this.store.outcome;
-    saveOutcome(stackId, {
-      kept: outcome.kept.map((photo) => photo.id),
-      rejected: outcome.rejected.map((photo) => photo.id),
-      unsaved: outcome.unsaved.map((photo) => photo.id),
-    });
-    // Only once every closing write has landed, or a reload would find no session
-    // and start a fresh tournament over photographs it had just judged.
-    clearSession(stackId);
     // The gallery behind the session filters on triage, so it is one re-read on
     // the way out rather than one per verdict.
     void this.photos.reload();
@@ -215,15 +214,12 @@ export class StackTriagePresenter {
       this.store.failed = new Set([...this.store.failed].filter((id) => !touched.has(id)));
     });
 
+    const stackId = this.store.stackId;
     for (const photoId of touched) {
       const target = this.store.baseline.get(photoId);
       if (target != null) await this.writeOne(photoId, target);
     }
-
-    const stackId = this.store.stackId;
-    if (stackId != null) clearOutcome(stackId);
-    runInAction(() => (this.store.busy = false));
-    this.persist();
+    this.finish(stackId);
   }
 
   undo(): Promise<void> {
@@ -237,15 +233,20 @@ export class StackTriagePresenter {
     const alive = new Set(session.alive);
     const kept = new Set(keepers(session));
 
+    // Read before the first await, or a session opened in the meantime answers
+    // for photographs this one is still writing.
+    const stackId = this.store.stackId;
+    const baseline = new Map(this.store.baseline);
     runInAction(() => (this.store.busy = true));
+    // The set is read once here; `writeOne` replaces it rather than mutating it,
+    // so the loop walks the failures as they were when the retry started.
     for (const photoId of this.store.failed) {
       // What the session says this photo should be, which is what the write that
       // failed was trying to say.
-      const target: Triage = !alive.has(photoId) ? 'rejected' : kept.has(photoId) ? 'picked' : (this.store.baseline.get(photoId) ?? 'untriaged');
+      const target: Triage = !alive.has(photoId) ? 'rejected' : kept.has(photoId) ? 'picked' : (baseline.get(photoId) ?? 'untriaged');
       await this.writeOne(photoId, target);
     }
-    runInAction(() => (this.store.busy = false));
-    this.persist();
+    this.finish(stackId);
   }
 
   // --- writes ---
@@ -284,22 +285,20 @@ export class StackTriagePresenter {
 
   // --- storage ---
 
+  // A finished session is stored like any other. Cleared instead, a reload on the
+  // summary - or simply opening this stack again - found nothing and started a
+  // fresh tournament over the photographs it had just judged, taking its own
+  // rejections as the baseline every undo would restore to.
   private persist(): void {
     const stackId = this.store.stackId;
     const session = this.store.session;
     if (stackId == null || session == null) return;
-    // A finished session is stored as its outcome instead, by `settleIfOver`.
-    if (this.store.round == null) return;
     saveSession(stackId, {
       session,
       history: this.store.history,
       baseline: Object.fromEntries(this.store.baseline),
       entryPhotoId: this.store.entryPhotoId,
+      failed: [...this.store.failed],
     });
-  }
-
-  /** What a finished session left behind, for a reload that lands on the summary. */
-  storedOutcome(stackId: string): ReturnType<typeof loadOutcome> {
-    return loadOutcome(stackId);
   }
 }

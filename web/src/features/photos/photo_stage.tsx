@@ -455,19 +455,24 @@ export function PhotoStage({
       if (from == null || from.photoKey !== photoKey) stepped.current = { photoKey, index: to };
 
       const asked = sourcesRef.current;
-      const previous = paintedRef.current;
-      const held = previous?.sources ?? [];
-      const kept = held.filter((frame) => asked.includes(frame));
-      const dropped = held.filter((frame) => !asked.includes(frame));
-      // Frames of the photo already on the stage only leave because a rendition
-      // was swapped underneath them, which is not a move between photographs.
-      const samePhoto = previous?.photoKey === photoKey;
+      // Retiring is a visual courtesy and reads the ref; what is painted must not.
+      // Two frames of a round decode in the same batch whenever both are warm, and
+      // a ref only refreshes on render - so both promotions would read the same
+      // stale set and the second would overwrite the first, leaving one slot of
+      // the round unreachable for as long as it lasts.
+      const retired = paintedRef.current;
+      const dropped = (retired?.sources ?? []).filter((frame) => !asked.includes(frame));
+      // Frames of the photo already on the stage only leave because a rendition was
+      // swapped underneath them, which is not a move between photographs.
+      if (dropped.length > 0) setRetiring({ sources: dropped, step: retired?.photoKey === photoKey ? null : step });
 
-      if (dropped.length > 0) setRetiring({ sources: dropped, step: samePhoto ? null : step });
-      setPainted({
-        sources: kept.includes(source) ? kept : [...kept, source],
-        photoKey,
-        step: samePhoto ? (previous?.step ?? null) : step,
+      setPainted((previous) => {
+        const kept = (previous?.sources ?? []).filter((frame) => asked.includes(frame));
+        return {
+          sources: kept.includes(source) ? kept : [...kept, source],
+          photoKey,
+          step: previous?.photoKey === photoKey ? (previous.step ?? null) : step,
+        };
       });
     },
     [photoKey],

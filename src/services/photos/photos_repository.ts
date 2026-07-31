@@ -504,15 +504,22 @@ export class PhotosRepository {
     }
     if (sets.length === 0) return this.db.query('SELECT 1 FROM photos WHERE id = ?').get(id) != null;
     params.push(id);
-    const changed = this.db.query(`UPDATE photos SET ${sets.join(', ')} WHERE id = ?`).run(...params).changes > 0;
-    // A verdict can make the member a stack's tile stands for the wrong one to
-    // stand for it. The listing would cope - its second arm promotes the newest
-    // visible member - but that arm is a correlated subquery per row and the flag
-    // exists to keep the common case an equality test, so the flag is moved
-    // rather than left for every later read to work around. Rejecting the
-    // representative is not an edge case: it is what a triage session does.
-    if (changed && fields.triage != null) this.refreshStackOf(id);
-    return changed;
+    // One transaction, so one commit. A verdict on a stacked photo is four
+    // statements, and in autocommit that is four durable writes where a verdict
+    // used to be one - measured at 3.65ms against 1.19ms, per keypress, which is
+    // more than the correlated subquery it exists to save. Wrapped, it is 1.18ms.
+    // It also closes the window in which a crash between the clear and the set
+    // would leave a stack with no flagged member at all.
+    return this.db.transaction(() => {
+      const changed = this.db.query(`UPDATE photos SET ${sets.join(', ')} WHERE id = ?`).run(...params).changes > 0;
+      // A verdict can make the member a stack's tile stands for the wrong one to
+      // stand for it. The listing would cope - its second arm promotes the newest
+      // visible member - but that arm is a correlated subquery per row and the
+      // flag exists to keep the common case an equality test. Rejecting the
+      // representative is not an edge case: it is what a triage session does.
+      if (changed && fields.triage != null) this.refreshStackOf(id);
+      return changed;
+    })();
   }
 
   // Only for a photo that is in a stack, and only on the stack it is in.
@@ -643,11 +650,19 @@ export class PhotosRepository {
   // is_missing cleared, because the merged statement has no way to say "the file
   // did not actually move".
   markDeleted(id: string, deletedFromPath: string, batch?: string): void {
-    this.db
-      .query(
-        'UPDATE photos SET is_deleted = 1, needs_tile = 0, needs_renditions = 0, deleted_from_path = ?, deleted_batch = ? WHERE id = ?',
-      )
-      .run(deletedFromPath, batch ?? null, id);
+    this.db.transaction(() => {
+      this.db
+        .query(
+          'UPDATE photos SET is_deleted = 1, needs_tile = 0, needs_renditions = 0, deleted_from_path = ?, deleted_batch = ? WHERE id = ?',
+        )
+        .run(deletedFromPath, batch ?? null, id);
+      // Binning is the other way the member a stack's tile stands for stops being
+      // the one to stand for it, and `refreshRepresentative` ranks a binned member
+      // last for exactly that reason. Without this the ranking would be a claim
+      // nothing kept: bin a burst's keeper and that stack is on the slow arm for
+      // good.
+      this.refreshStackOf(id);
+    })();
   }
 
   // Everything one bin took. What an undo restores, so it never has to be handed
@@ -682,9 +697,12 @@ export class PhotosRepository {
   }
 
   markRestored(id: string, filePath: string): void {
-    this.db
-      .query('UPDATE photos SET is_deleted = 0, file_path = ?, deleted_from_path = NULL, is_missing = 0 WHERE id = ?')
-      .run(filePath, id);
+    this.db.transaction(() => {
+      this.db
+        .query('UPDATE photos SET is_deleted = 0, file_path = ?, deleted_from_path = NULL, is_missing = 0 WHERE id = ?')
+        .run(filePath, id);
+      this.refreshStackOf(id);
+    })();
   }
 
   // --- sync (DESIGN §9) ---
