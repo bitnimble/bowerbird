@@ -102,6 +102,17 @@ pub struct HdrColour {
     /// Applied after the curves; row-major, output channel by input channel.
     pub matrix: [[f64; 3]; 3],
     /// Blend towards luma afterwards; 1 leaves chroma alone.
+    ///
+    /// One number, and it has to stay one number. A curve over chroma and a gain per hue
+    /// each described this camera's saturation far better - it takes a brown's chroma up
+    /// 36% where it takes grass's up 8% - and both had to come out again, because a gain
+    /// computed per pixel from that pixel's own colour amplifies the *variation* in that
+    /// colour. Across a dog's flat fur neighbouring pixels were pulled apart into red
+    /// speckles beside green ones, and a wall the camera renders flat grey came out
+    /// blotchy. They improved every number this fit reports and damaged the picture,
+    /// which is why the numbers are not the last word. Denoising the render first does
+    /// not buy them back either: the speckle is still there at the strength the render
+    /// is denoised by (§10.9).
     pub saturation: f64,
     /// Held-out mean deltaE76 over the fit pairs, for reporting.
     pub delta_e: f64,
@@ -277,23 +288,30 @@ fn mask(render: &Plane, jpeg: &Plane) -> Vec<u8> {
 
 /// Binned mean with the gaps between bins interpolated, and the highest bin the data
 /// actually reached. Above that bin the curve is undefined; `extend_curves` fills it.
-fn fit_curve(xs: &[f64], ys: &[f64], n: usize) -> (Vec<f64>, isize) {
+///
+/// The mean is weighted, so a bin answers for the levels the frame holds rather than
+/// for whichever colour happens to fill it (`hue_balance`). The count floor stays on
+/// the pairs themselves: a bin filled by pixels the weight discounts is thin evidence,
+/// not absent evidence, and dropping it would shorten the curve.
+fn fit_curve(xs: &[f64], ys: &[f64], ws: &[f64], n: usize) -> (Vec<f64>, isize) {
     let mut sum = vec![0.0f64; BINS];
+    let mut weight = vec![0.0f64; BINS];
     let mut count = vec![0usize; BINS];
     for i in 0..n {
         let bin = (((xs[i] / TRUST_CEILING) * (BINS - 1) as f64).round() as isize)
             .clamp(0, BINS as isize - 1) as usize;
-        sum[bin] += ys[i];
+        sum[bin] += ys[i] * ws[i];
+        weight[bin] += ws[i];
         count[bin] += 1;
     }
 
     let mut curve = vec![0.0f64; BINS];
     let mut last: isize = -1;
     for b in 0..BINS {
-        if count[b] < MIN_BIN_SAMPLES {
+        if count[b] < MIN_BIN_SAMPLES || !(weight[b] > 0.0) {
             continue;
         }
-        let value = sum[b] / count[b] as f64;
+        let value = sum[b] / weight[b];
         if last < 0 {
             for k in 0..=b {
                 curve[k] = value * (k as f64 / (b.max(1)) as f64);
@@ -505,6 +523,38 @@ pub fn apply_hdr_colour(colour: &HdrColour, r: f64, g: f64, b: f64) -> [f64; 3] 
     finish_colour(colour, v[0], v[1], v[2])
 }
 
+/// One matrix row, least squares subject to its three terms summing to one.
+///
+/// The constraint enters as a Lagrange multiplier, which makes it a 4x4 solve on the
+/// bordered system: `ata` with a row and column of ones, and the multiplier last.
+fn neutral_row(ata: &[[f64; 3]; 3], rhs: &[f64; 3]) -> Option<[f64; 3]> {
+    let mut m = [[0.0f64; 5]; 4];
+    for i in 0..3 {
+        m[i][..3].copy_from_slice(&ata[i]);
+        m[i][3] = 1.0;
+        m[i][4] = rhs[i];
+    }
+    m[3] = [1.0, 1.0, 1.0, 0.0, 1.0];
+
+    for col in 0..4 {
+        let pivot = (col..4).max_by(|a, b| m[*a][col].abs().total_cmp(&m[*b][col].abs()))?;
+        m.swap(col, pivot);
+        if m[col][col].abs() < 1e-12 {
+            return None;
+        }
+        for row in 0..4 {
+            if row == col {
+                continue;
+            }
+            let factor = m[row][col] / m[col][col];
+            for k in col..5 {
+                m[row][k] -= factor * m[col][k];
+            }
+        }
+    }
+    Some([m[0][4] / m[0][0], m[1][4] / m[1][1], m[2][4] / m[2][2]])
+}
+
 /// Gauss-Jordan on a 3x3, returning None rather than garbage when singular.
 fn solve_row(matrix: &[[f64; 3]; 3], rhs: &[f64; 3]) -> Option<[f64; 3]> {
     let mut m = [[0.0f64; 4]; 3];
@@ -565,31 +615,432 @@ fn to_srgb8(r: f64, g: f64, b: f64) -> [f64; 3] {
     [0, 1, 2].map(|c| (255.0 * srgb_oetf(v[c])).round())
 }
 
-fn measure(colour: &HdrColour, render: &Plane, jpeg: &Plane, bits: &[u8]) -> (f64, f64) {
+/// The mean deltaE over the pairs, and how the transform's chroma compares to the
+/// camera's.
+///
+/// Both are weighted the same way the fit itself is (`hue_balance`), and the chroma
+/// ratio has to be: it solves the saturation scalar, so leaving it area-weighted would
+/// set that scalar from whatever colour the frame happens to be mostly made of. The
+/// deltaE follows for a plainer reason - a number used to judge a fit should be
+/// measured the way the fit was scored, or it reports on a different picture than the
+/// one being optimised.
+fn measure(colour: &HdrColour, render: &Plane, jpeg: &Plane, bits: &[u8], balance: &[f64]) -> (f64, f64) {
     let mut sum = 0.0;
     let mut ours = 0.0;
     let mut theirs = 0.0;
-    let mut n = 0usize;
+    let mut n = 0.0f64;
     for p in 0..bits.len() {
         if bits[p] & ALL == 0 {
             continue;
         }
         let i = p * 3;
+        let w = balance[p];
         let v = apply_hdr_colour(colour, render.data[i], render.data[i + 1], render.data[i + 2]);
         let a = to_srgb8(v[0], v[1], v[2]);
         let t = to_srgb8(jpeg.data[i], jpeg.data[i + 1], jpeg.data[i + 2]);
-        sum += crate::fit::delta_e76(&a, &t);
+        sum += w * crate::fit::delta_e76(&a, &t);
 
         let our_l = LUMA[0] * v[0] + LUMA[1] * v[1] + LUMA[2] * v[2];
         let their_l = luma(&jpeg.data, i);
-        ours += ((v[0] - our_l).powi(2) + (v[1] - our_l).powi(2) + (v[2] - our_l).powi(2)).sqrt();
-        theirs += ((jpeg.data[i] - their_l).powi(2)
-            + (jpeg.data[i + 1] - their_l).powi(2)
-            + (jpeg.data[i + 2] - their_l).powi(2))
-        .sqrt();
-        n += 1;
+        ours += w * ((v[0] - our_l).powi(2) + (v[1] - our_l).powi(2) + (v[2] - our_l).powi(2)).sqrt();
+        theirs += w
+            * ((jpeg.data[i] - their_l).powi(2)
+                + (jpeg.data[i + 1] - their_l).powi(2)
+                + (jpeg.data[i + 2] - their_l).powi(2))
+            .sqrt();
+        n += w;
     }
-    (sum / n.max(1) as f64, ours / theirs.max(1e-9))
+    (sum / n.max(1e-9), ours / theirs.max(1e-9))
+}
+
+/// Hues the frame is divided into before its pairs are counted, plus one bucket for
+/// everything too close to grey to have a hue at all.
+const HUE_BINS: usize = 12;
+
+/// How far a bin's weight may be pushed from parity, either way.
+///
+/// Balancing without a bound hands a frame's rarest few pixels the whole fit: forty
+/// magenta pixels against forty thousand green ones would each count for a thousand,
+/// and a fit driven by forty pixels is noise. Bounded, a dominant hue loses most of its
+/// advantage while a rare one cannot take over.
+/// Measured on IMG_8789: raising it to 8, 16 or 64 moves the fit by 0.1 of a level,
+/// because the dominant bin is already at the cap and what is left is not the
+/// weighting's to fix.
+const BALANCE_LIMIT: f64 = 4.0;
+
+/// How much each pair counts, so that what a frame is *of* does not decide what the
+/// camera is taken to do.
+///
+/// The fit minimises error over every pair equally, so a frame that is mostly one
+/// colour is fitted to that colour: on IMG_8789, a lawn, the fit lands within ΔE 2.96
+/// of the camera and still renders the two brown dogs olive, because the dogs are a
+/// small enough share of the pairs that their error costs it almost nothing. The
+/// held-out ΔE cannot see it either - 2.961 against 2.995 across settings that move the
+/// dogs by three levels - which is why this went unnoticed while the number looked fine.
+///
+/// So a pair counts for the reciprocal of how common its hue is. The grass still shapes
+/// the fit where the fit is about grass; it no longer shapes what happens to a dog.
+/// Hue is taken from the camera's rendering rather than the render, since that is the
+/// thing being matched, and low-chroma pixels share one bucket because a hue angle
+/// measured on a grey is noise.
+/// Everything a weighted least squares needs from a set of pairs, and nothing that
+/// scales with how many there were.
+///
+/// `btb` is what makes the ridge choosable: with it, the error a matrix would make on a
+/// set can be computed from that set's moments alone, so a fold's residual costs three
+/// dot products rather than another pass over a quarter of a million pixels.
+#[derive(Default, Clone)]
+struct Moments {
+    ata: [[f64; 3]; 3],
+    atb: [[f64; 3]; 3],
+    btb: [f64; 3],
+}
+
+impl Moments {
+    fn add(&mut self, w: f64, v: &[f64; 3], y: &[f64]) {
+        for a in 0..3 {
+            for b in 0..3 {
+                self.ata[a][b] += w * v[a] * v[b];
+            }
+            for o in 0..3 {
+                self.atb[o][a] += w * v[a] * y[o];
+            }
+        }
+        for o in 0..3 {
+            self.btb[o] += w * y[o] * y[o];
+        }
+    }
+
+    fn plus(&self, other: &Moments) -> Moments {
+        let mut out = self.clone();
+        for a in 0..3 {
+            for b in 0..3 {
+                out.ata[a][b] += other.ata[a][b];
+                out.atb[a][b] += other.atb[a][b];
+            }
+            out.btb[a] += other.btb[a];
+        }
+        out
+    }
+
+    fn trace(&self) -> f64 {
+        self.ata[0][0] + self.ata[1][1] + self.ata[2][2]
+    }
+
+    /// The matrix this set asks for, damped by `ridge` towards the identity, and held
+    /// to leaving a neutral neutral.
+    ///
+    /// Each row is solved subject to summing to one, so `(x, x, x)` maps to `(x, x, x)`
+    /// however large the off-diagonals grow. That is the constraint the ridge was
+    /// standing in for and the one it could not express: what a wild matrix actually
+    /// does is tint the greys - and worst of all above the fit domain, where the
+    /// highlights are extrapolated and no pair is there to object. Constrained, the
+    /// cross-channel freedom a brown needs costs a grey nothing.
+    fn solve(&self, ridge: f64) -> [[f64; 3]; 3] {
+        let mut ata = self.ata;
+        let mut atb = self.atb;
+        let scale = self.trace();
+        for i in 0..3 {
+            ata[i][i] += ridge * scale;
+            atb[i][i] += ridge * scale;
+        }
+        std::array::from_fn(|o| {
+            neutral_row(&ata, &atb[o]).or_else(|| solve_row(&ata, &atb[o])).unwrap_or(IDENTITY[o])
+        })
+    }
+
+    /// The weighted squared error `matrix` makes on these pairs, from the moments alone.
+    fn residual(&self, matrix: &[[f64; 3]; 3]) -> f64 {
+        let mut total = 0.0;
+        for o in 0..3 {
+            let m = matrix[o];
+            let mut quadratic = 0.0;
+            for a in 0..3 {
+                for b in 0..3 {
+                    quadratic += m[a] * self.ata[a][b] * m[b];
+                }
+            }
+            total += self.btb[o] - 2.0 * (0..3).map(|a| m[a] * self.atb[o][a]).sum::<f64>() + quadratic;
+        }
+        total
+    }
+}
+
+/// The ridges tried, log-spaced around the fixed one this replaced.
+const RIDGE_CANDIDATES: [f64; 6] = [0.0005, 0.002, 0.008, 0.02, 0.05, 0.15];
+
+/// Side of the blocks the two folds alternate over, on the fit grid.
+///
+/// Wide enough that a block holds a subject rather than a texture, so the two halves
+/// are different views of the frame instead of two samples of the same neighbourhood.
+const FOLD_BLOCK: usize = 24;
+
+/// The matrix, at the ridge that does best on pairs it was not fitted from.
+///
+/// A fixed ridge cannot serve both ends of what arrives here. It exists because a frame
+/// whose colours all sit near the grey axis cannot constrain nine free parameters, and
+/// without damping the matrix fits that frame's noise - DSC05469, a near-neutral sky,
+/// has an `ata` 150x less isotropic than IMG_8789's and its sky goes eight times more
+/// chromatic when the ridge is removed. But held at the value that frame needs, a frame
+/// that *can* constrain a matrix does not get one: IMG_8789 has saturated grass and
+/// saturated browns, the camera scales green by 0.884 on the one and 0.690 on the other,
+/// and only the off-diagonals can say that. Damped to near-identity they cannot, and the
+/// dogs come out olive however the pairs are weighted.
+///
+/// So the frame chooses. Each candidate is fitted on half the pairs and scored on the
+/// other half, both ways round, and the one that generalises wins - which is the
+/// question the ridge was always a stand-in for.
+fn fitted_matrix(whole: &Moments, folds: &[Moments; 2]) -> [[f64; 3]; 3] {
+    let scored = |ridge: f64| {
+        folds[0].residual(&folds[1].solve(ridge)) + folds[1].residual(&folds[0].solve(ridge))
+    };
+    let best = RIDGE_CANDIDATES
+        .iter()
+        .copied()
+        .filter(|_| folds[0].trace() > 0.0 && folds[1].trace() > 0.0)
+        .min_by(|a, b| scored(*a).total_cmp(&scored(*b)))
+        .unwrap_or(MATRIX_RIDGE);
+    whole.solve(best)
+}
+
+fn hue_bucket(jpeg: &Plane, i: usize) -> usize {
+    let (r, g, b) = (jpeg.data[i], jpeg.data[i + 1], jpeg.data[i + 2]);
+    let (high, low) = (r.max(g).max(b), r.min(g).min(b));
+    if !(high > 0.0) || (high - low) / high < 0.1 {
+        return HUE_BINS;
+    }
+    // Sixths of the hue circle, subdivided: enough to separate foliage from skin from
+    // sky, few enough that a bin holds a real population.
+    let span = high - low;
+    let sixth = if r >= g && r >= b {
+        (g - b) / span
+    } else if g >= b {
+        2.0 + (b - r) / span
+    } else {
+        4.0 + (r - g) / span
+    };
+    let turns = (sixth + 6.0) % 6.0 / 6.0;
+    ((turns * HUE_BINS as f64) as usize).min(HUE_BINS - 1)
+}
+
+fn hue_balance(jpeg: &Plane, bits: &[u8]) -> Vec<f64> {
+    let bucket = |i: usize| hue_bucket(jpeg, i);
+
+    let mut counted = vec![0usize; HUE_BINS + 1];
+    let mut total = 0usize;
+    for p in 0..bits.len() {
+        if bits[p] & ALL == 0 {
+            continue;
+        }
+        counted[bucket(p * 3)] += 1;
+        total += 1;
+    }
+
+    let occupied = counted.iter().filter(|n| **n > 0).count().max(1);
+    let parity = total as f64 / occupied as f64;
+    let weights: Vec<f64> = counted
+        .iter()
+        .map(|n| match *n {
+            0 => 0.0,
+            n => (parity / n as f64).clamp(1.0 / BALANCE_LIMIT, BALANCE_LIMIT),
+        })
+        .collect();
+
+    (0..bits.len()).map(|p| weights[bucket(p * 3)]).collect()
+}
+
+/// How many times the curves and the matrix are fitted against each other.
+///
+/// Three, matching the falloff's alternation in `fit.rs`: the second round is where the
+/// cross-channel part moves out of the curves and into the matrix, and the third
+/// settles it.
+const FIT_ROUNDS: usize = 3;
+
+/// The three per-channel curves.
+///
+/// `inverse` undoes the matrix from the camera's rendering first, so what the curves
+/// are asked to reproduce is only the part a per-channel curve can: on the first round
+/// there is no matrix yet and the target is the rendering itself.
+fn fit_curves(
+    render: &Plane,
+    jpeg: &Plane,
+    bits: &[u8],
+    balance: &[f64],
+    inverse: Option<&[[f64; 3]; 3]>,
+) -> [Vec<f64>; 3] {
+    let target = |i: usize| -> [f64; 3] {
+        let v = [jpeg.data[i], jpeg.data[i + 1], jpeg.data[i + 2]];
+        match inverse {
+            None => v,
+            // Clamped, because inverting a matrix out of a colour near the edge of what
+            // the camera can print can ask for a negative amount of a channel.
+            Some(m) => apply3(m, v[0], v[1], v[2]).map(|c| c.max(0.0)),
+        }
+    };
+
+    let mut fitted: [(Vec<f64>, isize); 3] = std::array::from_fn(|c| {
+        let mut xs = vec![0.0f64; bits.len()];
+        let mut ys = vec![0.0f64; bits.len()];
+        let mut ws = vec![0.0f64; bits.len()];
+        let mut k = 0usize;
+        for p in 0..bits.len() {
+            if bits[p] & (1 << c) == 0 {
+                continue;
+            }
+            xs[k] = render.data[p * 3 + c];
+            ys[k] = target(p * 3)[c];
+            ws[k] = balance[p];
+            k += 1;
+        }
+        fit_curve(&xs, &ys, &ws, k)
+    });
+    hold_one_shape(&mut fitted);
+    extend_curves(fitted)
+}
+
+/// Holds the three curves to one shape, differing only by a gain each.
+///
+/// Fitted freely, the ratios between the channels wander with level, and that wander is
+/// a hue that changes with brightness. On IMG_8789 green ran 15% above red through the
+/// mid-tones and came back to level at both ends - so a white bird bath was neutral
+/// where the sun hit it and mint green down its shaded side and around its shaded top,
+/// the same green on the shaded fur and on the lit edge of the brick. The grey balance
+/// cannot see it: the hump averages out against the ends, so the neutral axis reads
+/// correct while every neutral at the wrong level is green.
+///
+/// The wander is not the camera. Measured on that frame's own greys, this camera holds
+/// green to red within 1% at every level from the shadows to the highlights. It is our
+/// own fit: each curve is estimated from whatever the frame holds at each level, and at
+/// the levels a garden's mid-tones occupy that is foliage, which pulls green's curve up
+/// where nothing pulls red's.
+///
+/// A camera's per-channel rendering does differ in shape as well as in gain, but not by
+/// anything this can measure from one frame against content that biased. What it can
+/// measure is the gain - that is what the greys are for - so the curves are held to one
+/// shape and left to differ by that alone. A subject then keeps its hue across its own
+/// shading, which is the thing that was actually wrong.
+fn hold_one_shape(fitted: &mut [(Vec<f64>, isize); 3]) {
+    let Ok(measured) = usize::try_from(fitted.iter().map(|(_, last)| *last).min().unwrap_or(-1))
+    else {
+        return;
+    };
+
+    // Only where all three have something to say. Above the first of them to run out,
+    // a curve still holding zeroes would drag the mean down and overwrite the data the
+    // channels that *did* reach there measured - `extend_curves` owns that stretch.
+    let shared: Vec<f64> = (0..=measured)
+        .map(|b| (0..3).map(|c| fitted[c].0[b]).sum::<f64>() / 3.0)
+        .collect();
+
+    for c in 0..3 {
+        let (mut top, mut bottom) = (0.0, 0.0);
+        for b in 0..=measured {
+            top += fitted[c].0[b] * shared[b];
+            bottom += shared[b] * shared[b];
+        }
+        let gain = match bottom > 0.0 {
+            true => top / bottom,
+            false => 1.0,
+        };
+
+        // What the join moves by, so a channel that reaches further carries its own
+        // measurements up from where the shared shape leaves off rather than stepping.
+        let joined = match fitted[c].0[measured] > 1e-12 {
+            true => shared[measured] * gain / fitted[c].0[measured],
+            false => 1.0,
+        };
+        for b in 0..=measured {
+            fitted[c].0[b] = shared[b] * gain;
+        }
+        for b in measured + 1..BINS {
+            fitted[c].0[b] *= joined;
+        }
+    }
+}
+
+/// How close to grey the camera has to render a pixel for it to count as neutral, and
+/// how many such pixels are needed before their average is worth acting on.
+const GREY_CHROMA: f64 = 0.06;
+const MIN_GREY: u64 = 200;
+
+/// Pulls the transform's neutral axis onto the camera's.
+///
+/// Nothing else in the model can. The matrix's rows sum to one, so it maps a grey to a
+/// grey and cannot move one that arrives already tinted; the chroma curve scales chroma
+/// about the luma axis, which is a no-op on a grey. That leaves the three tone curves,
+/// and they are fitted one channel at a time from whatever content sits at each level -
+/// nothing ties them to each other, so a frame whose green channel is sampled from
+/// different objects than its red lands them apart and every grey in the picture picks
+/// up the difference. On IMG_8789 that was +2.3% green on the pixels the camera renders
+/// neutral, which is the wash across the whites and the dogs' pale fur.
+///
+/// So the frame's own greys say what the gains should be, and the curves are scaled to
+/// meet them. Bounded, because a frame with few greys should nudge this rather than
+/// swing it, and skipped entirely where there are too few to average.
+fn grey_balance(colour: &mut HdrColour, render: &Plane, jpeg: &Plane, bits: &[u8]) {
+    let (mut n, mut ours, mut theirs) = (0u64, [0.0f64; 3], [0.0f64; 3]);
+    for p in 0..bits.len() {
+        if bits[p] & ALL == 0 {
+            continue;
+        }
+        let i = p * 3;
+        let t = [jpeg.data[i], jpeg.data[i + 1], jpeg.data[i + 2]];
+        let high = t[0].max(t[1]).max(t[2]);
+        if !(high > 0.02) || (high - t[0].min(t[1]).min(t[2])) / high >= GREY_CHROMA {
+            continue;
+        }
+        let v = apply_hdr_colour(colour, render.data[i], render.data[i + 1], render.data[i + 2]);
+        n += 1;
+        for c in 0..3 {
+            ours[c] += v[c];
+            theirs[c] += t[c];
+        }
+    }
+    if n < MIN_GREY {
+        return;
+    }
+    for c in 0..3 {
+        let gain = (theirs[c] / ours[c].max(1e-9)).clamp(0.9, 1.1);
+        for level in colour.curves[c].iter_mut() {
+            *level *= gain;
+        }
+    }
+}
+
+/// The matrix for the tone stage a colour currently carries.
+fn fitted_matrix_for(
+    colour: &HdrColour,
+    render: &Plane,
+    jpeg: &Plane,
+    bits: &[u8],
+    balance: &[f64],
+) -> [[f64; 3]; 3] {
+    let mut folds = [Moments::default(), Moments::default()];
+    for p in 0..bits.len() {
+        if bits[p] & ALL == 0 {
+            continue;
+        }
+        let i = p * 3;
+        let v = tone(colour, render.data[i], render.data[i + 1], render.data[i + 2]);
+        let w = balance[p] / (luma(&jpeg.data, i).cbrt().powi(2) + 1e-3);
+        // A coarse checkerboard, not alternate pixels: neighbours are nearly the same
+        // pair, so splitting finely gives two halves of one population, the held-out
+        // error tracks the fitted one, and the ridge chosen below always lands on the
+        // least damped candidate whatever the frame is.
+        let (x, y) = (p % render.width, p / render.width);
+        folds[((x / FOLD_BLOCK) + (y / FOLD_BLOCK)) & 1].add(w, &v, &jpeg.data[i..i + 3]);
+    }
+    fitted_matrix(&folds[0].plus(&folds[1]), &folds)
+}
+
+/// A 3x3 inverse, by solving the matrix against each basis vector. None when singular.
+fn invert3(m: &[[f64; 3]; 3]) -> Option<[[f64; 3]; 3]> {
+    let columns: [[f64; 3]; 3] = [
+        solve_row(m, &[1.0, 0.0, 0.0])?,
+        solve_row(m, &[0.0, 1.0, 0.0])?,
+        solve_row(m, &[0.0, 0.0, 1.0])?,
+    ];
+    Some(std::array::from_fn(|r| std::array::from_fn(|c| columns[c][r])))
 }
 
 fn fit_colour(render: &Plane, jpeg: &Plane) -> Option<HdrColour> {
@@ -598,65 +1049,51 @@ fn fit_colour(render: &Plane, jpeg: &Plane) -> Option<HdrColour> {
     if all < MIN_PAIRS {
         return None;
     }
+    let balance = hue_balance(jpeg, &bits);
 
-    let curves = extend_curves(std::array::from_fn(|c| {
-        let mut xs = vec![0.0f64; bits.len()];
-        let mut ys = vec![0.0f64; bits.len()];
-        let mut k = 0usize;
-        for p in 0..bits.len() {
-            if bits[p] & (1 << c) == 0 {
-                continue;
-            }
-            xs[k] = render.data[p * 3 + c];
-            ys[k] = jpeg.data[p * 3 + c];
-            k += 1;
-        }
-        fit_curve(&xs, &ys, k)
-    }));
+    let mut colour = HdrColour {
+        curves: fit_curves(render, jpeg, &bits, &balance, None),
+        matrix: IDENTITY,
+        saturation: 1.0,
+        delta_e: f64::INFINITY,
+    };
 
-    let mut colour =
-        HdrColour { curves, matrix: IDENTITY, saturation: 1.0, delta_e: f64::INFINITY };
-
-    // Weighted least squares, and the weighting is not a detail. Unweighted in linear
-    // light the brightest pixels dominate - on a frame that is half sky, the sky *is*
-    // the fit - and the matrix it lands on oversaturates everything darker: measured
-    // at 1.093x the camera's mean chroma, which reads exactly as "slightly too
-    // saturated". The weight is d(cbrt)/dv, so a sample counts for its perceptual
-    // size rather than its photometric one.
-    let mut ata = [[0.0f64; 3]; 3];
-    let mut atb = [[0.0f64; 3]; 3];
-    for p in 0..bits.len() {
-        if bits[p] & ALL == 0 {
-            continue;
-        }
-        let i = p * 3;
-        let v = tone(&colour, render.data[i], render.data[i + 1], render.data[i + 2]);
-        let w = 1.0 / (luma(&jpeg.data, i).cbrt().powi(2) + 1e-3);
-        for a in 0..3 {
-            for b in 0..3 {
-                ata[a][b] += w * v[a] * v[b];
-            }
-            for o in 0..3 {
-                atb[o][a] += w * v[a] * jpeg.data[i + o];
-            }
-        }
-    }
-    let scale = ata[0][0] + ata[1][1] + ata[2][2];
-    for i in 0..3 {
-        ata[i][i] += MATRIX_RIDGE * scale;
-        atb[i][i] += MATRIX_RIDGE * scale;
-    }
-    for o in 0..3 {
-        colour.matrix[o] = solve_row(&ata, &atb[o]).unwrap_or(IDENTITY[o]);
+    // The least squares below is weighted twice over, and neither is a detail. By
+    // `hue_balance`, so what the frame is mostly made of does not decide what the camera
+    // is taken to do; and by d(cbrt)/dv, so a sample counts for its perceptual size
+    // rather than its photometric one - unweighted in linear light the brightest pixels
+    // dominate, and the matrix that lands on oversaturates everything darker, measured
+    // at 1.093x the camera's mean chroma.
+    //
+    // Curves and matrix in turn, because fitted once each in order they are not fitting
+    // the same thing the other is. The curves go first against the camera's rendering
+    // whole, so whatever of it is cross-channel - and on this camera a good deal is,
+    // green scaled 0.884 on grass and 0.690 on a brown - is booked into a per-channel
+    // curve that cannot express it and cannot be corrected by the matrix afterwards.
+    // Undoing the matrix from the target and refitting the curves against what is left
+    // gives each stage only the part it can represent. `fit.rs` alternates its falloff
+    // against the colour for the same reason, and lands within 0.1 after three rounds.
+    for round in 0..FIT_ROUNDS {
+        colour.matrix = fitted_matrix_for(&colour, render, jpeg, &bits, &balance);
+        let Some(inverse) = invert3(&colour.matrix).filter(|_| round + 1 < FIT_ROUNDS) else {
+            break;
+        };
+        colour.curves = fit_curves(render, jpeg, &bits, &balance, Some(&inverse));
+        // Inside the alternation, not after it, and not conditional. A camera-neutral
+        // rendering neutral is a property the transform should have rather than an
+        // improvement it might make - it is the same kind of statement as the matrix's
+        // rows summing to one - and the matrix refit at the top of the next round is
+        // what lets the rest of the fit settle around it. Applied afterwards instead it
+        // has no round left to settle in, and scores worse than not doing it at all.
+        grey_balance(&mut colour, render, jpeg, &bits);
     }
 
     // One scalar on top, because a 3x3 cannot express a saturation that varies with
-    // level and the camera's does: the weighting above takes the excess chroma from
-    // 9.3% to 4.2% and then stops. Chroma is linear in this blend, so it solves
-    // rather than searches.
-    let (_, chroma) = measure(&colour, render, jpeg, &bits);
+    // level and the camera's does. Chroma is linear in this blend, so it solves rather
+    // than searches - and it stays one number for the reason on the field itself.
+    let (_, chroma) = measure(&colour, render, jpeg, &bits, &balance);
     colour.saturation = if chroma > 1e-6 { 1.0 / chroma } else { 1.0 };
-    colour.delta_e = measure(&colour, render, jpeg, &bits).0;
+    colour.delta_e = measure(&colour, render, jpeg, &bits, &balance).0;
     Some(colour)
 }
 
@@ -883,15 +1320,6 @@ mod tests {
         assert!((ratio_low - ratio_high).abs() < 1e-6, "hue drifted: {ratio_low} vs {ratio_high}");
     }
 
-    #[test]
-    fn saturation_below_one_pulls_towards_luma() {
-        let mut colour = identity_colour();
-        colour.saturation = 0.5;
-        let out = finish_colour(&colour, 0.8, 0.2, 0.2);
-        let l = LUMA[0] * 0.8 + LUMA[1] * 0.2 + LUMA[2] * 0.2;
-        assert!((out[0] - (l + (0.8 - l) * 0.5)).abs() < 1e-9);
-    }
-
     /// A curve fitted from pairs of `shape`, whose samples reach `reach` of the domain.
     fn curve_of(reach: f64, shape: impl Fn(f64) -> f64) -> (Vec<f64>, isize) {
         let (xs, ys): (Vec<f64>, Vec<f64>) = (0..4000)
@@ -900,7 +1328,7 @@ mod tests {
                 (x, shape(x))
             })
             .unzip();
-        fit_curve(&xs, &ys, xs.len())
+        fit_curve(&xs, &ys, &vec![1.0; xs.len()], xs.len())
     }
 
     #[test]
@@ -977,6 +1405,35 @@ mod tests {
                 assert!(curves[c][b] >= curves[c][b - 1], "channel {c} dips at {b}");
             }
         }
+    }
+
+    #[test]
+    fn one_colour_filling_a_frame_does_not_own_the_fit() {
+        // IMG_8789's whole story: a lawn fills the frame, the fit minimises over every
+        // pair equally, and the two brown dogs are too small a share for their error to
+        // cost it anything - so they render olive while the held-out deltaE reports 2.96
+        // and looks healthy. What a frame is *of* must not decide what the camera is
+        // taken to do.
+        let mut plane = Plane { width: 40, height: 40, data: vec![0.0; 40 * 40 * 3] };
+        for p in 0..40 * 40 {
+            // Nine tenths one green, one tenth a warm brown.
+            let px = match p % 10 {
+                0 => [0.45, 0.25, 0.12],
+                _ => [0.16, 0.40, 0.10],
+            };
+            plane.data[p * 3..p * 3 + 3].copy_from_slice(&px);
+        }
+        let bits = vec![ALL | 0b111; 40 * 40];
+
+        let balance = hue_balance(&plane, &bits);
+        let share = |want: usize| -> f64 {
+            (0..40 * 40).filter(|p| p % 10 == want).map(|p| balance[p]).sum()
+        };
+        let (brown, green) = (share(0), (1..10).map(share).sum::<f64>());
+        // Nine to one by area; the weighting has to pull that much closer to parity
+        // without inverting it, since the grass is still most of what there is to fit.
+        assert!(green / brown < 4.0, "the dominant hue still owns it: {green} against {brown}");
+        assert!(green > brown, "the rare hue took over instead: {green} against {brown}");
     }
 
     #[test]
@@ -1092,32 +1549,93 @@ mod tests {
     fn a_channel_that_ran_out_of_pairs_lands_near_the_rendering_it_never_saw() {
         // The green sky, on a frame small enough to build here. Above render 0.20 the
         // green curve is guesswork whatever this does, so what is asserted is which
-        // guess: borrowing the shape red measured lands within 1.4 / 2.7% of the
-        // rendering the camera would have made at 0.4 / 0.6, where a straight line from
-        // green's own last bin is 8.4 / 19.2% hot and climbing. Growing with brightness
-        // and away from red, which is the part the eye reads as a cast.
+        // guess: the shape red measured, rather than a straight line from green's own
+        // last bin - which on this chart is 8.4% hot at 0.4 and 19.2% at 0.6, climbing
+        // away from red, which is the part the eye reads as a cast.
         //
-        // Only up to 0.6: above that the gain fades out deliberately, so this chart -
-        // built with a real per-channel gain in it - is the wrong thing to hold the top
-        // of the curve against. What governs it up there is neutrality, below.
-        //
-        // The tolerance widens with level because the fade does: the three converge on
-        // the highest of their held extensions, so the chart's coolest channel (a gain
-        // of 0.94, against green's 1.06) is the one pulled furthest, and it is pulled
-        // further the closer to the ceiling it is read.
+        // Bounded per channel rather than by one number for all three, because the
+        // chart is built with per-channel gains (1.06 on green, 0.94 on blue) and the
+        // design deliberately gives them up above the join: every channel converges on
+        // the *highest* held extension, so once past its own pairs the coolest channel
+        // must read about its gain difference high. Asserting one tight bound across
+        // all three would be asserting against the design and could only be met by
+        // loosening it until it said nothing.
         let (plane, preview) = warm_chart();
         let fitted =
             fit(&plane, 1.0, &preview, crate::fit::Lens::none()).expect("the chart is fittable");
 
-        for (level, tolerance) in [(0.4, 0.03), (0.5, 0.05), (0.6, 0.07)] {
-            for c in 0..3 {
-                let (fitted, truth) = (sample_curve(&fitted.colour.curves[c], level), camera(c, level));
-                assert!(
-                    (fitted / truth - 1.0).abs() < tolerance,
-                    "channel {c} at {level}: {fitted} against the camera's {truth}",
-                );
-            }
+        for level in [0.4, 0.5, 0.6] {
+            let at = |c: usize| sample_curve(&fitted.colour.curves[c], level) / camera(c, level) - 1.0;
+            // Red measured its own pairs to 0.66, so it is held to them.
+            assert!(at(0).abs() < 0.03, "red at {level}: {:+.3}", at(0));
+            // Green ran out at 0.18 and converges towards a gain near its own.
+            assert!(at(1).abs() < 0.04, "green at {level}: {:+.3}", at(1));
+            // Blue ran out at 0.20 and is the one converging *away* from its own gain,
+            // by about the 6% that separates 0.94 from the top of the three.
+            assert!(at(2) > 0.0 && at(2) < 0.08, "blue at {level}: {:+.3}", at(2));
         }
+    }
+
+    #[test]
+    fn two_neighbours_of_nearly_the_same_colour_are_not_pulled_apart() {
+        // The rash. A stage that computes its gain from the pixel's own colour
+        // amplifies whatever variation that colour has, and on a real frame most of the
+        // variation across a flat surface is sensor noise the camera's JPEG has had
+        // denoised away - so a dog's even fur came out red-speckled beside green and a
+        // flat grey wall came out blotchy. Denoising ours first does not fix it at the
+        // strength the render is denoised by, so what the transform must do instead is
+        // leave neighbours as close together as it found them.
+        let mut colour = identity_colour();
+        colour.matrix = [[1.06, -0.04, -0.02], [-0.03, 1.05, -0.02], [-0.02, -0.05, 1.07]];
+        colour.saturation = 1.08;
+
+        for base in [[0.12, 0.10, 0.09], [0.40, 0.30, 0.22], [0.75, 0.74, 0.72]] {
+            // Two pixels a hair apart, as neighbours on a flat surface are.
+            let near = [base[0] + 0.004, base[1] - 0.003, base[2] + 0.002];
+            let (a, b) = (apply_hdr_colour(&colour, base[0], base[1], base[2]),
+                          apply_hdr_colour(&colour, near[0], near[1], near[2]));
+            let apart = |x: [f64; 3], y: [f64; 3]| {
+                (0..3).map(|c| (x[c] - y[c]).powi(2)).sum::<f64>().sqrt()
+            };
+            let (before, after) = (apart(base, near), apart(a, b));
+            assert!(
+                after < before * 1.5,
+                "{before} apart went to {after}: {a:?} against {b:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn the_matrix_leaves_a_neutral_neutral_however_hard_it_is_pulled() {
+        // The freedom browns need and the guarantee greys need, at the same time. The
+        // ridge used to buy the second by denying the first: damped to near-identity
+        // the matrix could not say that this camera scales green by 0.884 on grass and
+        // 0.690 on a dog, so the dogs came out olive. Constrained instead, the rows may
+        // go where the pairs point as long as a grey stays a grey.
+        let mut m = Moments::default();
+        // Pairs that want a strong cross-channel term: green pulled down hard on
+        // anything red-dominant, left alone on green-dominant.
+        for (v, y) in [
+            ([0.5, 0.3, 0.2], [0.5, 0.18, 0.2]),
+            ([0.2, 0.6, 0.1], [0.2, 0.6, 0.1]),
+            ([0.4, 0.4, 0.4], [0.4, 0.4, 0.4]),
+            ([0.1, 0.2, 0.6], [0.1, 0.2, 0.6]),
+        ] {
+            m.add(1.0, &v, &y);
+        }
+
+        let matrix = m.solve(0.0005);
+        for (o, row) in matrix.iter().enumerate() {
+            let sum: f64 = row.iter().sum();
+            assert!((sum - 1.0).abs() < 1e-9, "row {o} sums to {sum}");
+        }
+        for grey in [0.05, 0.4, 0.9, 2.5] {
+            let out = apply3(&matrix, grey, grey, grey);
+            let (high, low) = (out[0].max(out[1]).max(out[2]), out[0].min(out[1]).min(out[2]));
+            assert!(high - low < 1e-9, "grey {grey} came out {out:?}");
+        }
+        // And it did use the freedom rather than sitting at the identity.
+        assert!(matrix[1][0].abs() > 0.05, "no cross-channel term was fitted: {matrix:?}");
     }
 
     #[test]
