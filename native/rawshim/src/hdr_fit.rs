@@ -341,37 +341,57 @@ fn extend_alone(curve: &mut [f64], last: usize) {
 /// replay that truncated it at render 0.18, against 3.2-4.0% from the join bin alone.
 const JOIN_WINDOW: usize = 16;
 
-/// Extends a curve past its data on another channel's shape, at the gain the two ran
-/// at where both had pairs.
-fn extend_from(curve: &mut [f64], last: usize, reference: &[f64]) {
+/// The gain a channel ran at against the reference where both had pairs, and where its
+/// extension would land holding that gain to the top of the domain.
+///
+/// None when the overlap says nothing, which leaves the channel to `extend_alone`.
+fn join(curve: &[f64], last: usize, reference: &[f64]) -> Option<(f64, f64)> {
     let window = last.saturating_sub(JOIN_WINDOW)..=last;
     let ours: f64 = curve[window.clone()].iter().sum();
     let theirs: f64 = reference[window].iter().sum();
     if !(theirs > 0.0) {
-        return extend_alone(curve, last);
+        return None;
     }
-
-    // The reference's steps rather than its levels, so the extension leaves the join
-    // where the channel's own data left it: anchoring on the gain instead lands the
-    // first extended bin off its neighbour, and `make_monotone` turns that into a flat
-    // band of crushed contrast right where the tail starts.
-    //
-    // And that gain fades out across the tail, so by the top of the domain every
-    // channel *is* the reference. A frame's brightest region is the one place the fit
-    // has direct evidence about: on DSC05469 the sky is clipped in the sensor to
-    // exactly neutral and the camera renders it exactly neutral, and three curves
-    // holding three different gains up there turn that neutral green. Converged, a
-    // neutral render value maps to one number whatever channel it arrived in, so
-    // neutral in is neutral out by construction - while a pixel whose channels differ
-    // keeps every bit of that difference, since it is the input that carries the
-    // colour and not the curve. What is given up is the fit's licence to invent a
-    // per-channel gain where it measured none.
     let gain = ours / theirs;
+    Some((gain, curve[last] + (reference[BINS - 1] - reference[last]) * gain))
+}
+
+/// Fills a channel's tail: the reference's shape at the channel's own gain near the
+/// join, converging on `top` - the one level every channel ends at - by the ceiling.
+///
+/// The reference's *steps* rather than its levels, so the extension leaves the join
+/// where the channel's own data left it: anchoring on the gain instead lands the first
+/// extended bin off its neighbour, and `make_monotone` turns that into a flat band of
+/// crushed contrast right where the tail starts.
+///
+/// Converging is what makes a neutral highlight neutral. A frame's brightest region is
+/// where the fit has least to go on - on DSC05469 the sky is clipped in the sensor to
+/// exactly neutral and rendered by the camera as exactly neutral - and three curves
+/// each holding their own gain up there is what turned that neutral green. Converged, a
+/// neutral render value maps to one number whatever channel it arrived in, while a
+/// pixel whose channels differ keeps every bit of that difference: it is the input that
+/// carries the colour, not the curve.
+///
+/// `top` must be at or above every channel's held extension, and that is not a detail.
+/// Let it sit below one and that channel has to *fall* to reach it, `make_monotone`
+/// clamps the fall flat, and the channel ends at its own level with the others at the
+/// reference's - the per-channel gain this exists to remove, reintroduced by the guard
+/// against a curve that dips. Measured on DSC05469 before that: a sky reading neutral
+/// off a full decode came out 13% red off a bounded one, the two decodes disagreeing
+/// about which channel reached furthest.
+fn extend_onto(curve: &mut [f64], last: usize, reference: &[f64], gain: f64, top: f64) {
     let span = (BINS - 1 - last).max(1) as f64;
+    let climb = reference[BINS - 1] - reference[last];
     for b in last + 1..BINS {
         let held = curve[last] + (reference[b] - reference[last]) * gain;
+        // The same shape taken all the way to the shared top, which is where the two
+        // agree by the ceiling however far apart they start.
+        let shared = match climb > 0.0 {
+            true => curve[last] + (top - curve[last]) * ((reference[b] - reference[last]) / climb),
+            false => top,
+        };
         let converged = (b - last) as f64 / span;
-        curve[b] = held * (1.0 - converged) + reference[b] * converged;
+        curve[b] = held * (1.0 - converged) + shared * converged;
     }
     make_monotone(curve);
 }
@@ -401,14 +421,27 @@ fn extend_curves(mut fitted: [(Vec<f64>, isize); 3]) -> [Vec<f64>; 3] {
         return fitted.map(|(curve, _)| curve);
     };
     extend_alone(&mut fitted[furthest].0, last);
-
     let reference = fitted[furthest].0.clone();
+
+    // Where each channel would land holding its own gain to the ceiling, and then the
+    // one level they all end on: the highest of them, so that reaching it is a climb
+    // for every channel and a fall for none.
+    let held: [Option<(f64, f64)>; 3] = std::array::from_fn(|c| {
+        usize::try_from(fitted[c].1).ok().and_then(|last| join(&fitted[c].0, last, &reference))
+    });
+    let top = held
+        .iter()
+        .flatten()
+        .map(|(_, top)| *top)
+        .fold(reference[BINS - 1], f64::max);
+
+    // The reference goes through this too, so all three end on one level rather than
+    // two of them converging on a curve the third never adopted.
     for c in 0..3 {
-        if c == furthest {
-            continue;
-        }
-        if let Ok(last) = usize::try_from(fitted[c].1) {
-            extend_from(&mut fitted[c].0, last, &reference);
+        let Ok(last) = usize::try_from(fitted[c].1) else { continue };
+        match held[c] {
+            Some((gain, _)) => extend_onto(&mut fitted[c].0, last, &reference, gain, top),
+            None => extend_alone(&mut fitted[c].0, last),
         }
     }
     fitted.map(|(curve, _)| curve)
@@ -921,6 +954,32 @@ mod tests {
     }
 
     #[test]
+    fn a_channel_that_ends_above_the_reference_still_converges_onto_it() {
+        // The corner that made a neutral sky come out 13% red off a bounded decode and
+        // neutral off a full one. A channel reaching far with a strong gain ends higher
+        // than the reference's extension, so converging asks it to fall, and the
+        // monotone guard - which the measured part of the curve needs - clamps the whole
+        // tail flat at its own level instead. It has to be the curves that move, not the
+        // guard that gives way.
+        let shape = |x: f64| x.powf(0.45) * 0.9;
+        let curves = extend_curves([
+            curve_of(0.30, shape),
+            curve_of(0.85, |x| shape(x) * 1.4),
+            curve_of(0.30, shape),
+        ]);
+
+        let tops = [0, 1, 2].map(|c| curves[c][BINS - 1]);
+        let (high, low) = (tops.iter().cloned().fold(0.0, f64::max), tops.iter().cloned().fold(f64::MAX, f64::min));
+        assert!(high / low - 1.0 < 0.01, "the channels ended apart: {tops:?}");
+        // And nothing was dragged downwards to get there.
+        for c in 0..3 {
+            for b in 1..BINS {
+                assert!(curves[c][b] >= curves[c][b - 1], "channel {c} dips at {b}");
+            }
+        }
+    }
+
+    #[test]
     fn a_neutral_highlight_comes_out_neutral_where_no_channel_has_data() {
         // The guarantee the sky needs, and the one three independently extrapolated
         // curves cannot give: DSC05469's sky is clipped in the sensor to exactly
@@ -1039,10 +1098,15 @@ mod tests {
         // Only up to 0.6: above that the gain fades out deliberately, so this chart -
         // built with a real per-channel gain in it - is the wrong thing to hold the top
         // of the curve against. What governs it up there is neutrality, below.
+        //
+        // The tolerance widens with level because the fade does: the three converge on
+        // the highest of their held extensions, so the chart's coolest channel (a gain
+        // of 0.94, against green's 1.06) is the one pulled furthest, and it is pulled
+        // further the closer to the ceiling it is read.
         let (plane, preview) = warm_chart();
         let fitted = fit(&plane, 1.0, &preview, None, 1.0).expect("the chart is fittable");
 
-        for (level, tolerance) in [(0.4, 0.03), (0.5, 0.04), (0.6, 0.05)] {
+        for (level, tolerance) in [(0.4, 0.03), (0.5, 0.05), (0.6, 0.07)] {
             for c in 0..3 {
                 let (fitted, truth) = (sample_curve(&fitted.colour.curves[c], level), camera(c, level));
                 assert!(
