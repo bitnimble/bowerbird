@@ -132,8 +132,9 @@ fn encode_options(job: &Job, target: &Target, medium: Medium, output_path: &str)
 /// Built at the largest SDR size the job asks for, with the camera match applied, so
 /// a smaller rendition is a resize of this rather than its own warp and re-grade of
 /// the same picture. Legitimate because the order does not change the result: the
-/// distortion model is in radii normalised to the half-diagonal and the colour
-/// transform is a per-pixel lookup, so neither depends on resolution.
+/// colour transform is a per-pixel lookup, and the distortion and the falloff are
+/// both in radii normalised to the half-diagonal, so none of the three depends on
+/// resolution.
 ///
 /// Takes the decode by value and returns the base, so the decode is dropped here the
 /// moment it is no longer the thing being read. That is what the worker's explicit

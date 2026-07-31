@@ -334,6 +334,7 @@ pub extern "C" fn bb_selftest() -> i32 {
     colour.matrix = [[0.9, 0.05, 0.05], [0.1, 0.8, 0.1], [0.0, 0.02, 0.98]];
     let profile = Profile {
         knots: Some(crate::image::polynomial_knots(-0.02, 0.0, 16)),
+        gain: None,
         crop: 0.99,
         source: 2,
         delta_e: 0.0,
