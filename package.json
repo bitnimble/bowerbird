@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "bun run src/index.ts",
-    "dev": "bun --watch run src/index.ts",
+    "dev": "bun run dev.ts",
     "lint": "oxlint",
     "test": "LOG_LEVEL=warn bun test src",
     "test:integration": "LOG_LEVEL=warn bun test test/integration",

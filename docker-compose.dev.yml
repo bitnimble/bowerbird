@@ -8,7 +8,8 @@
 #
 # rawshim itself is not in that stage: `base` carries the runtime libraries but not
 # the headers, so build it on the host with `bun run build:native` - which is what
-# the loader prefers in a live-mounted tree anyway.
+# the loader prefers in a live-mounted tree anyway. `bun run dev` watches that build
+# output and restarts on a new .so, so a native rebuild needs no container restart.
 services:
   bowerbird-dev:
     build:
@@ -22,7 +23,7 @@ services:
     # photo library, same as production did.
     user: "1000:1000"
     working_dir: /app
-    command: sh -c "bun install --frozen-lockfile && bun --watch run src/index.ts"
+    command: sh -c "bun install --frozen-lockfile && bun run dev"
     # The web service shares this network namespace, so its published port lives
     # here too.
     ports:
