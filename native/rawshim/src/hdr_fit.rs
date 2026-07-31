@@ -117,12 +117,8 @@ pub struct HdrColour {
 /// terms: the curves were fitted on a render that already carried it.
 #[derive(Clone)]
 pub struct HdrMatch {
-    /// Radial knots in `SPLINE_UNIT`s, or None when no correction is needed.
-    pub distortion: Option<Vec<f64>>,
-    /// Overall rescale accompanying the distortion.
-    pub crop: f64,
-    /// The SDR fit's falloff coefficients, lifted as they are (10.8.1).
-    pub falloff: Option<(f64, f64)>,
+    /// The SDR fit's geometry and falloff, lifted as they were fitted (10.8.1).
+    pub lens: crate::fit::Lens,
     pub colour: HdrColour,
 }
 
@@ -557,12 +553,15 @@ fn fit_colour(render: &Plane, jpeg: &Plane) -> Option<HdrColour> {
 ///
 /// The falloff runs after the warp because that is the order it was fitted in: the
 /// pairs it was measured from were taken against the warped render, so its radius
-/// means a position in the corrected frame, not in LibRaw's.
+/// means a position in the corrected frame, not in LibRaw's. It brightens corners, so
+/// it clips a little more of the top of the buffer - measured at 0.089% of samples to
+/// 0.124% on the worst of 32 Canon frames, in corners already the brightest thing in
+/// an already-clipping frame (10.8.1).
 pub fn apply_lens(samples: &[u16], width: usize, height: usize, m: &HdrMatch) -> Option<Vec<u16>> {
-    if m.distortion.is_none() && m.falloff.is_none() {
+    if m.lens.is_identity() {
         return None;
     }
-    let mut out = match &m.distortion {
+    let mut out = match &m.lens.distortion {
         Some(knots) => warp_planar(
             samples,
             width,
@@ -570,13 +569,13 @@ pub fn apply_lens(samples: &[u16], width: usize, height: usize, m: &HdrMatch) ->
             width,
             height,
             knots,
-            m.crop,
+            m.lens.crop,
             |v| f64::from(v),
             |v| v.clamp(0.0, 65535.0) as u16,
         ),
         None => samples.to_vec(),
     };
-    if let Some((a, b)) = m.falloff {
+    if let Some((a, b)) = m.lens.falloff {
         let (cx, cy) = (width as f64 / 2.0, height as f64 / 2.0);
         let half = (cx * cx + cy * cy).sqrt().max(1.0);
         out.par_chunks_mut(width * 3).enumerate().for_each(|(y, row)| {
@@ -584,13 +583,6 @@ pub fn apply_lens(samples: &[u16], width: usize, height: usize, m: &HdrMatch) ->
             for (x, pixel) in row.chunks_mut(3).enumerate() {
                 let g = crate::fit::Gain::at(a, b, crate::fit::Gain::radius(x as f64 - cx, dy, half));
                 for c in pixel {
-                    // Scene-linear samples, so this is a multiplication and nothing
-                    // else - the whole reason the SDR coefficients lift unchanged.
-                    // Brightening the corners does clip a little more of the top of
-                    // the buffer, and it is measured rather than assumed: on the worst
-                    // frame in a 32-frame Canon set, a 2.33x corner takes the clipped
-                    // fraction from 0.089% to 0.124%, in corners that were already the
-                    // brightest thing in an already-clipping frame.
                     *c = (f64::from(*c) * g).min(65535.0) as u16;
                 }
             }
@@ -610,9 +602,7 @@ pub fn fit(
     plane: &Plane,
     anchor: f64,
     preview: &crate::vips::Rgb,
-    distortion: Option<Vec<f64>>,
-    crop: f64,
-    falloff: Option<(f64, f64)>,
+    lens: crate::fit::Lens,
 ) -> Option<HdrMatch> {
     if !(anchor > 0.0) {
         return None;
@@ -646,8 +636,8 @@ pub fn fit(
 
     // Through the same geometry the SDR fit resolved, so a pair is two views of one
     // point in the scene.
-    let warped = match &distortion {
-        Some(knots) => warp_planar(&small, wide, tall, wide, tall, knots, crop, |v| v, |v| v),
+    let warped = match &lens.distortion {
+        Some(knots) => warp_planar(&small, wide, tall, wide, tall, knots, lens.crop, |v| v, |v| v),
         None => small,
     };
 
@@ -659,7 +649,7 @@ pub fn fit(
     // Before the blur and before the fit, because the grade applies it before the
     // colour too: a curve fitted against corners the falloff has not yet lifted would
     // be asked at grade time for levels it never saw.
-    if let Some((a, b)) = falloff {
+    if let Some((a, b)) = lens.falloff {
         let (cx, cy) = (render.width as f64 / 2.0, render.height as f64 / 2.0);
         let half = (cx * cx + cy * cy).sqrt().max(1.0);
         for y in 0..render.height {
@@ -677,7 +667,7 @@ pub fn fit(
 
     // The lens travels with the colour, never beside it: these pairs only correspond
     // through that warp and carry that falloff, so the three are one transform.
-    fit_colour(&render, &jpeg).map(|colour| HdrMatch { distortion, crop, falloff, colour })
+    fit_colour(&render, &jpeg).map(|colour| HdrMatch { lens, colour })
 }
 
 /// The long edge the preview is decoded to for the fit.

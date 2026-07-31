@@ -315,9 +315,9 @@ fn lensfun_geometry(path: &str) -> Option<fit::Geometry> {
 ///
 /// It therefore has to run the *vectorised* code, not just enter the library: a
 /// symbol returning a constant would load and answer perfectly on a CPU that
-/// faults the moment the warp runs. So this grades through a real distortion,
-/// which is `warp` plus the folded colour lookup - the hot loops - and puts the
-/// result through libvips to confirm the linkage too.
+/// faults the moment the warp runs. So this grades through a real distortion and a
+/// real falloff, which is `warp` plus the radial lookup plus the folded colour one -
+/// the hot loops - and puts the result through libvips to confirm the linkage too.
 #[expect(unsafe_code)]
 #[no_mangle]
 pub extern "C" fn bb_selftest() -> i32 {
@@ -334,7 +334,7 @@ pub extern "C" fn bb_selftest() -> i32 {
     colour.matrix = [[0.9, 0.05, 0.05], [0.1, 0.8, 0.1], [0.0, 0.02, 0.98]];
     let profile = Profile {
         knots: Some(crate::image::polynomial_knots(-0.02, 0.0, 16)),
-        gain: None,
+        gain: Some(fit::Gain::from_poly(0.3, -0.05)),
         crop: 0.99,
         source: 2,
         delta_e: 0.0,

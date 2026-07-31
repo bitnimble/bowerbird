@@ -107,11 +107,38 @@ pub const SOURCE_CAMERA: u32 = 1;
 pub const SOURCE_FITTED: u32 = 2;
 pub const SOURCE_LENSFUN: u32 = 3;
 
+/// What the lens did to the frame, as this fit resolved it: the halves that depend on
+/// where a pixel sits rather than what colour it is.
+///
+/// One struct because §10.8.1 lifts all of it into the HDR grade together and nothing
+/// may lift a subset. Passed as three loose arguments first, and `fit_all` promptly
+/// forgot the falloff on one of the two routes with every test still green.
+#[derive(Clone)]
+pub struct Lens {
+    /// Radial knots in `SPLINE_UNIT`s, or None where no correction is needed.
+    pub distortion: Option<Vec<f64>>,
+    /// Overall rescale accompanying the distortion.
+    pub crop: f64,
+    /// The falloff's two coefficients, in the currency `Gain::at` reads.
+    pub falloff: Option<(f64, f64)>,
+}
+
+impl Lens {
+    /// A lens that did nothing, for a caller with no fit to hand.
+    pub fn none() -> Self {
+        Lens { distortion: None, crop: 1.0, falloff: None }
+    }
+
+    /// Whether applying this would change any pixel.
+    pub fn is_identity(&self) -> bool {
+        self.distortion.is_none() && self.falloff.is_none()
+    }
+}
+
 pub struct Profile {
     pub knots: Option<Vec<f64>>,
-    /// The lens falloff the camera corrected and the render did not. None where the
-    /// body corrected none, which is every Sony frame measured and every Canon frame
-    /// shot on glass Canon has no illumination profile for.
+    /// The falloff the camera corrected and the render did not, or None where the
+    /// frame is better off without one.
     pub gain: Option<Gain>,
     pub crop: f64,
     /// 0 none, or one of the `SOURCE_` codes. Reported so a rendition can be
@@ -120,6 +147,17 @@ pub struct Profile {
     pub source: u32,
     pub delta_e: f64,
     pub colour: ColourTransform,
+}
+
+impl Profile {
+    /// Everything §10.8.1 lifts, in one piece so it cannot lift half.
+    pub fn lens(&self) -> Lens {
+        Lens {
+            distortion: self.knots.clone(),
+            crop: self.crop,
+            falloff: self.gain.as_ref().map(Gain::coefficients),
+        }
+    }
 }
 
 /// The render and the camera's JPEG on one common grid.
@@ -284,9 +322,6 @@ fn solve3(matrix: [[f64; 3]; 3], rhs: [f64; 3]) -> Option<[f64; 3]> {
 /// **Achromatic**: one scalar for all three channels, fitted from luma. Falloff does
 /// carry a slight cast on real glass, which this cannot express and does not try to -
 /// what the 3x3 absorbs globally it absorbs, and the rest stays in the residual.
-///
-/// Materialised as a table rather than evaluated, because applying it is per pixel of
-/// a 60MP frame and evaluating it is a `powf` for the transfer function.
 pub struct Gain {
     lut: Vec<u8>,
     coefficients: (f64, f64),
@@ -298,7 +333,9 @@ impl Gain {
     /// blow them away: no lens falls off by four stops, and none gains.
     const LIMIT: (f64, f64) = (0.25, 4.0);
 
-    fn from_poly(a: f64, b: f64) -> Self {
+    /// Tabulated rather than left to be evaluated, because the 8-bit path applies it
+    /// per pixel of a 60MP frame and evaluating it is a `powf` for the transfer.
+    pub(crate) fn from_poly(a: f64, b: f64) -> Self {
         let linear = linear_table();
         let mut lut = vec![0u8; 256 * 256];
         for radius in 0..256 {
@@ -314,7 +351,7 @@ impl Gain {
     /// Kept separate from the table so a caller working in linear light already can
     /// evaluate it rather than round-trip through 8 bits (`hdr_fit`).
     #[inline]
-    pub fn at(a: f64, b: f64, radius: u8) -> f64 {
+    pub(crate) fn at(a: f64, b: f64, radius: u8) -> f64 {
         let r2 = (f64::from(radius) / 255.0).powi(2);
         (1.0 + a * r2 + b * r2 * r2).clamp(Self::LIMIT.0, Self::LIMIT.1)
     }
@@ -324,7 +361,7 @@ impl Gain {
     /// A falloff correction is a multiplication in linear light, so unlike the curves
     /// - whose domain stops at display white - it means the same thing in any linear
     /// domain and lifts to the grade exactly as the geometry does (10.8.1).
-    pub fn coefficients(&self) -> (f64, f64) {
+    pub(crate) fn coefficients(&self) -> (f64, f64) {
         self.coefficients
     }
 
@@ -340,49 +377,51 @@ impl Gain {
         }
     }
 
-    /// What this gain does to a corner pixel of mid grey, as a ratio - the one
-    /// number that says how much falloff was corrected.
-    pub fn corner(&self) -> f64 {
+    /// What this gain does to a corner pixel of mid grey, as a ratio - the one number
+    /// that says how much falloff was corrected, and the one the tests assert on
+    /// because `(a, b)` trade off against each other and it does not.
+    #[cfg(test)]
+    pub(crate) fn corner(&self) -> f64 {
         let linear = linear_table();
         linear[Gain::of(Some(self), 255, 128) as usize] / linear[128]
     }
 
     /// The radius byte `of` and `at` expect, for a pixel of a frame this size.
     #[inline]
-    pub fn radius(dx: f64, dy: f64, half: f64) -> u8 {
+    pub(crate) fn radius(dx: f64, dy: f64, half: f64) -> u8 {
         (((dx * dx + dy * dy).sqrt() / half) * 255.0).min(255.0) as u8
     }
 }
 
 fn to_srgb8(linear: f64) -> u8 {
-    let v = linear.clamp(0.0, 1.0);
-    let s = if v <= 0.0031308 { v * 12.92 } else { 1.055 * v.powf(1.0 / 2.4) - 0.055 };
-    (s * 255.0).round() as u8
+    (crate::hdr_fit::srgb_oetf(linear.clamp(0.0, 1.0)) * 255.0).round() as u8
 }
 
 /// The gain the pairs ask for, given a colour transform fitted under the current one.
 ///
-/// Run backwards rather than searched: invert the transform to say what source level
-/// would have produced this target, and the ratio of that to the source actually
-/// there is the gain. One pass accumulates both sides into radius bins and a least
-/// squares puts the two coefficients through them, where a search over candidate
-/// gains would be one pass each.
-///
-/// A ratio of sums per bin, never a mean of per-pair ratios: the sums are luma, so a
-/// bright pixel weighs what it should, where a ratio taken pair by pair lets a
-/// near-black one carry as much as the sky.
+/// Run backwards rather than searched, which is one pass where a search over candidate
+/// gains would be one pass each (10.8).
 ///
 /// The answer is absolute, not an increment on the gain already in hand - the
 /// inverted target lands in gained-source levels and the pair's own source is
 /// ungained, so their ratio is the whole of what the gain has to supply. An
-/// increment would compose, and two of these do not compose into one.
+/// increment would have to compose, and two of these do not compose into one.
 fn refit_gain(pairs: &Pairs, phase: Phase, colour: &ColourTransform) -> Option<(f64, f64)> {
     let inverse = invert3(colour.matrix)?;
     let back: Vec<[u8; 256]> = (0..3).map(|c| invert_curve(&colour.curves[c])).collect();
     let linear = linear_table();
 
     const BINS: usize = 12;
+    /// A bin backed by a handful of pixels states a ratio, not a measurement, and the
+    /// bins most likely to be that thin are the outer ones - `pairs` drops near-black
+    /// samples, and the corners of a frame that needs this correction are exactly
+    /// where the render is darkest. Left unguarded, one such bin sets the end of the
+    /// curve and the held-out gate cannot object, its own half being thin in the same
+    /// place. The same floor `fit_curve` puts on a tone bin, for the same reason.
+    const MIN_BIN_PAIRS: u32 = 64;
+
     let (mut wanted, mut had) = ([0.0f64; BINS], [0.0f64; BINS]);
+    let mut counted = [0u32; BINS];
     let mut p = phase as usize;
     while p < pairs.count {
         let o = p * PAIR_STRIDE;
@@ -427,8 +466,11 @@ fn refit_gain(pairs: &Pairs, phase: Phase, colour: &ColourTransform) -> Option<(
         if is < 0.002 || want < 0.002 {
             continue;
         }
+        // Summed, then divided once per bin: a ratio taken pair by pair would let a
+        // near-black pixel carry as much as the sky.
         wanted[bin] += want;
         had[bin] += is;
+        counted[bin] += 1;
     }
 
     // Least squares of `g - 1 = a r^2 + b r^4` over the bins that got samples,
@@ -436,7 +478,7 @@ fn refit_gain(pairs: &Pairs, phase: Phase, colour: &ColourTransform) -> Option<(
     let (mut a11, mut a12, mut a22, mut b1, mut b2) = (0.0, 0.0, 0.0, 0.0, 0.0);
     let mut bins = 0usize;
     for bin in 0..BINS {
-        if had[bin] <= 0.0 {
+        if counted[bin] < MIN_BIN_PAIRS || had[bin] <= 0.0 {
             continue;
         }
         let r2 = ((bin as f64 + 0.5) / BINS as f64).powi(2);
