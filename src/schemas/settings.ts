@@ -90,6 +90,11 @@ export const SettingsSchema = z.object({
   // quietest, because grain reads as a photograph and smearing reads as a fault. Raise it
   // above about 1.5 and the second starts happening.
   //
+  // The default is half of what that tuning landed on, which is a judgement about fur
+  // and foliage rather than about the metric: at 1 the frames this was checked against
+  // lose the fine structure that makes them read as photographs, and what the colour fit
+  // needs from a denoise it already has at 0.5.
+  //
   // Two earlier versions are worth not repeating. LibRaw's wavelet denoise on the CFA had
   // the better position in the pipeline and could not be made to work at any setting; and
   // a chroma-only Gaussian blur, which fixed the colour mottle and left the luma grain
@@ -191,7 +196,7 @@ export const DEFAULT_SETTINGS: Settings = {
 
   processing_concurrency: 4,
   match_embedded_jpeg: true,
-  raw_denoise: 1,
+  raw_denoise: 0.5,
   raw_sharpen: 0.6,
   grid_rendition_size: 800,
   full_rendition_size: 3840,
