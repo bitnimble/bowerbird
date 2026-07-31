@@ -269,12 +269,19 @@ const Tile = observer(function Tile({
           data-band={expanded ? store.bandColours.get(photo.stack_id!) : undefined}
           aria-hidden="true"
         >
-          {expanded ? <ChevronUp size={22} /> : <Layers size={12} />}
-          {!expanded && <span className="tile__stack-count">{photo.stack_size}</span>}
+          {/* Its own chip inside the overlay: the dim alone leaves the mark
+              unreadable over a bright frame. */}
+          <span className="tile__stack-chip">
+            {expanded ? <ChevronUp size={22} /> : <Layers size={22} />}
+            {!expanded && <span className="tile__stack-count">{photo.stack_size}</span>}
+          </span>
         </span>
       )}
 
-      <TileFoot photo={photo} />
+      {/* A stack's tile stands for every photo under it, not for the one it
+          shows: a name, a triage and a rating there would each read as that
+          photo's own, and acting on them is what opening the stack is for. */}
+      {!stacked && <TileFoot photo={photo} />}
     </div>
   );
 });

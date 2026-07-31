@@ -112,12 +112,12 @@ test('a list row opens its stack from anywhere along it, not just the thumbnail'
   await expect(page.locator('.tile__stack')).toBeVisible({ timeout: 45_000 });
   await page.getByRole('button', { name: 'List', exact: true }).click();
 
-  // Clicked where the filename is, which is most of a list row and used to be
-  // dead space: through the mouse rather than the locator, because the point of
-  // this is which element the click lands on and Playwright would refuse to
-  // click one that hands its clicks to the row.
-  const name = (await page.locator('.tile:not(.tile--member) .tile__name').boundingBox())!;
-  await page.mouse.click(name.x + name.width / 2, name.y + name.height / 2);
+  // Clicked past the thumbnail, which is most of a list row and used to be dead
+  // space: through the mouse rather than the locator, because the point of this
+  // is which element the click lands on and Playwright would refuse to click one
+  // that hands its clicks to the row.
+  const row = (await page.locator('.tile:not(.tile--member)').first().boundingBox())!;
+  await page.mouse.click(row.x + row.width - 40, row.y + row.height / 2);
   await expect(page.locator('.grid__band')).toHaveCount(1);
   // A member row says as much about itself as any other row does.
   await expect(page.locator('.grid__band .tile').first().getByText(/\d{4}/)).toBeVisible();

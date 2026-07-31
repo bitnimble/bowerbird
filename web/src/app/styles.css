@@ -1348,54 +1348,55 @@ p.ui-text--mono {
   gap: 4px;
 }
 
-/* Pushed clear of the stack badge, which owns this corner when there is one. */
-.tile:has(.tile__stack) .tile__badges {
-  top: calc(var(--tile-pad) + 30px);
+/* The badges paint over the stack overlay, which covers the whole tile. */
+.tile__badges {
+  z-index: 2;
 }
 
 /* Photo stacks (§19). A mark, not a control: the tile is what opens and closes
    the band, and the click has to reach the frame under this.
 
-   Top left rather than top right, where the select box already lives. The
-   missing/binned badges share this corner but are rare and flow beside it
-   (`.tile__badges`). */
+   The whole tile, not a corner chip: a stack's tile stands for the stack rather
+   than for the photograph it happens to show, and marking that at the size of
+   the cell is what stops it being read as one more frame in the grid. */
 .tile__stack {
   pointer-events: none;
   position: absolute;
-  left: calc(var(--tile-pad) + 6px);
-  top: calc(var(--tile-pad) + 6px);
+  inset: 0;
   z-index: 1;
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 3px 6px;
+  justify-content: center;
+  gap: 8px;
   border: 0;
-  border-radius: 3px;
-  background: rgba(10, 12, 16, 0.82);
+  border-radius: var(--cell-radius);
   color: var(--bone);
   font-family: var(--mono);
-  font-size: 10px;
-}
-
-/* Expanded, the tile itself is what closes the band, so it says so: the whole
-   frame dims and the layers become a chevron pointing back up at the tile. */
-.tile__stack--open {
-  inset: 0;
-  border-radius: var(--cell-radius);
-  justify-content: center;
-  /* The chip's own background, off: what dims is the ::before below. */
-  background: none;
-  box-shadow: inset 0 0 0 var(--ring) var(--band);
+  font-size: 20px;
 }
 
 /* The dim covers the photograph, not the cell: the ring is at the cell's edge, so
    an overlay that dimmed as far drew the tile a whole inset larger than its
    neighbours. */
-.tile__stack--open::before {
+.tile__stack::before {
   content: '';
   position: absolute;
   inset: var(--tile-pad);
   border-radius: var(--radius);
+  background: rgba(10, 12, 16, 0.35);
+  /* Behind the icon and the count, which are in flow and would otherwise be
+     painted under this positioned box and dimmed with the photograph. Stays
+     inside this overlay's own stacking context, so it still covers the tile. */
+  z-index: -1;
+}
+
+/* Expanded, the tile itself is what closes the band, so it says so: the frame
+   dims further and the layers become a chevron pointing back up at the tile. */
+.tile__stack--open {
+  box-shadow: inset 0 0 0 var(--ring) var(--band);
+}
+
+.tile__stack--open::before {
   background: rgba(10, 12, 16, 0.62);
 }
 
@@ -1435,15 +1436,34 @@ p.ui-text--mono {
   --band: #d9b23a;
 }
 
-/* The ring still goes round the whole row, but the chevron belongs over the
+/* The ring still goes round the whole row, but the mark belongs over the
    thumbnail: centred, it floats in the middle of a row that is mostly text. */
-.grid--list .tile__stack--open {
+.grid--list .tile__stack {
   justify-content: flex-start;
-  padding-left: 49px; /* half the 120px thumbnail, less half the chevron */
+  padding-left: 49px; /* half the 120px thumbnail, less half the mark */
+}
+
+/* One size for both states: the chip is in the same place open and closed, and a
+   chevron narrower than the layers-and-count it replaces made every click on a
+   stack resize the mark under the pointer. Wide enough for two digits, which is
+   what all but the largest stacks are; past that it grows. */
+.tile__stack-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 72px;
+  height: 34px;
+  padding: 0 10px;
+  line-height: 1;
+  border-radius: 4px;
+  background: rgba(10, 12, 16, 0.66);
 }
 
 .tile__stack-count {
   font-variant-numeric: tabular-nums;
+  min-width: 2ch;
+  text-align: center;
 }
 
 /* The band itself: members of one stack, alone on their own rows, marked as a
