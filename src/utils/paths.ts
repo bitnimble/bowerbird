@@ -54,9 +54,17 @@ export function getRenditionPath(
 // The Bin holds originals, which is why it lives beside the photographs and not
 // in the data directory: everything under `data_path` is generated and must stay
 // disposable, so that removing a library (or the user clearing `.bowerbird` by
-// hand) can never cost a RAW. Shoot photos bin inside their own shoot folder.
-export function getBinPath(library: Library): string {
-  return path.join(library.root_path, 'Bin');
+// hand) can never cost a RAW.
+//
+// One bin per library, at its root, mirroring inside itself the folder a photo
+// was binned from: `A/B/c.arw` bins to `<bin>/A/B/c.arw` (§12.3). `relFolder` is
+// that folder, and empty for a photo binned from the root.
+//
+// The only place the bin's folder name is spelled: it is per library (§12.3) and
+// the scan skips it by name, so a second spelling anywhere is a bin the scan
+// walks straight back into.
+export function getBinPath(library: Library, relFolder = ''): string {
+  return path.join(library.root_path, library.bin_name, relFolder);
 }
 
 // Absolute path to a photo's original RAW, given its root-relative file_path.

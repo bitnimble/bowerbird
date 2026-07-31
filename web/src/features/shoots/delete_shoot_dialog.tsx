@@ -80,7 +80,8 @@ export function DeleteShootDialog({
           </label>
           <Text variant="mono" as="p" id="delete-shoot-remove">
             The folder stops being part of the library. Ratings, verdicts and notes on {photographs} are lost, and putting the
-            folder back re-imports them as new ones. Anything of theirs in the Bin goes with them.
+            folder back re-imports them as new ones. Anything of theirs already in the Bin is forgotten too, though no file is
+            deleted either way.
           </Text>
         </div>
 

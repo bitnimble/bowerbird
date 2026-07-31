@@ -21,6 +21,7 @@ function library(dataPath: string, hdr: boolean): Library {
     id: 'lib',
     root_path: dataPath,
     data_path: dataPath,
+    bin_name: 'Bin',
     name: null,
     ordering: 'added_desc',
     rendition_source: 'render',

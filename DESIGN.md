@@ -186,7 +186,8 @@ CREATE TABLE libraries (
   -- How much of the folder tree this library is, and whether its folders are
   -- shoots (§4.7).
   include_subfolders INTEGER NOT NULL DEFAULT 1,
-  mirror_shoots      INTEGER NOT NULL DEFAULT 1
+  mirror_shoots      INTEGER NOT NULL DEFAULT 1,
+  bin_name    TEXT NOT NULL DEFAULT 'Bin'  -- folder soft-deleted RAWs move into, and the name the scan skips (§12.3)
 );
 ```
 
@@ -196,6 +197,7 @@ CREATE TABLE libraries (
 - `ordering`, default ordering for photo listings in this library.
 - `include_subfolders`, whether the scan descends past the root at all (§9.1). A standing rule rather than a decision taken once at import: a folder created next month is out of scope for the same reason today's are, so turning it off writes no `folder_rules` rows and never needs revisiting. Off makes shoots meaningless for the library - a shoot *is* a subfolder, and its photos would never be scanned - so the UI disables the Shoots section and forces `mirror_shoots` off with that as the reason.
 - `mirror_shoots`, whether sync keeps shoots in step with the folders on disk (§9.4.1). On, every folder holding photos is a shoot and the catalogue cannot disagree with the tree; off, a shoot exists only where the user made one, and untracked folders are offered on the Shoots page instead (§18.3.4).
+- `bin_name`, what this library's bin folder is called at its root (§12.3). Per library rather than a constant because the name is also what the scan skips: a root that already keeps a folder called `Bin` would otherwise have it adopted as the bin, and everything inside it dropped from the import with nothing said. `POST /api/libraries` refuses a root already holding a folder of this name and the Add-library dialog marks the field, so the collision is settled while the name is still being chosen. Create-only, and deliberately absent from `PATCH`: renaming it later would strand every already-binned RAW in a folder the scan would then walk straight back in.
 
 ### 4.2 `photos` table
 
@@ -411,12 +413,14 @@ export const CreateLibraryRequestSchema = z.object({
   ordering: OrderingSchema.default('taken_asc'),
   include_subfolders: z.boolean().default(true),  // §4.1
   mirror_shoots: z.boolean().default(true),
+  bin_name: BinNameSchema.default('Bin'),      // one folder name, not a path (§12.3)
 });
 
 export const LibrarySchema = z.object({
   id: UuidSchema,
   root_path: z.string(),
   data_path: z.string().nullable(),
+  bin_name: z.string(),
   name: z.string().nullable(),
   ordering: OrderingSchema,
   rendition_source: RenditionSourceSchema,
@@ -619,9 +623,12 @@ function getDataPath(library: Library): string {
   return library.data_path ?? path.join(library.root_path, '.bowerbird');
 }
 
-// Originals, so outside the data directory (§12.3).
-function getBinPath(library: Library): string {
-  return path.join(library.root_path, 'Bin');
+// Originals, so outside the data directory (§12.3). One bin at the library root,
+// laid out inside itself like the library around it: `relFolder` is the folder a
+// photo was binned from, empty for one binned from the root. The only place the
+// bin's name is spelled, so a second spelling cannot disagree with the scan.
+function getBinPath(library: Library, relFolder = ''): string {
+  return path.join(library.root_path, library.bin_name, relFolder);
 }
 ```
 
@@ -629,7 +636,7 @@ function getBinPath(library: Library): string {
 
 The scanner must skip the data directory (`.bowerbird/` or whatever `data_path` points to if it is a subdirectory of the library root) when recursively listing files. It should also skip any directory named `.bowerbird` to avoid picking up nested data directories.
 
-This is one of five rules that together answer "is this path part of this library", alongside hidden directories, `Bin/` (§12.2), the library's `include_subfolders` setting (§4.1) and its `excluded` folders (§4.7). They live together in `isInScope` (§9.1) rather than being restated by each caller, because the scan and the watcher answering it differently is not a visible failure - it is a folder that quietly still wakes syncs, or a sync queued for paths the scan will discard.
+This is one of five rules that together answer "is this path part of this library", alongside hidden directories, the library's bin (§12.3), its `include_subfolders` setting (§4.1) and its `excluded` folders (§4.7). They live together in `isInScope` (§9.1) rather than being restated by each caller, because the scan and the watcher answering it differently is not a visible failure - it is a folder that quietly still wakes syncs, or a sync queued for paths the scan will discard.
 
 ---
 
@@ -684,7 +691,7 @@ function isSupportedFile(filename: string): boolean {
 
 ### 8.2 Photos Service (`photos_service.ts`)
 
-**Constructor dependencies:** `PhotosRepository`, `AlbumsRepository`, `ShootsRepository`, `LibrariesRepository` (the latter two are needed by `delete()` to resolve the Bin path: library `data_path`, and the shoot folder when the photo is in a shoot, §12).
+**Constructor dependencies:** `PhotosRepository`, `AlbumsRepository`, `ShootsRepository`, `LibrariesRepository`. `delete()` needs the library for its root and `bin_name`; the bin path then follows from the photo's own `file_path` and asks no shoot anything (§12.3).
 
 **Methods:**
 
@@ -771,7 +778,7 @@ For each library:
 2. List all files under `root_path`, descending into subfolders only when the library's `include_subfolders` is set (§4.1), and skipping:
    - The data directory (`.bowerbird/` or custom `data_path` if it's under `root_path`).
    - Any hidden directories (starting with `.`).
-   - Any directory named `Bin` (the deletion bins that live inside shoot folders, §12.2), so soft-deleted files are never re-imported.
+   - The library's bin, `<root>/<bin_name>` and everything under it (§12.3), so soft-deleted files are never re-imported. Anchored at the root, unlike the rules above it: that is the only place a bin is ever made, and matching the name at every depth would take a folder of the user's own called `Bin` out of the library in silence.
    - Any directory carrying an `excluded` rule (§4.7), and therefore everything beneath it.
 
    These five questions live together in `src/utils/scope.ts`, and the **watcher asks them too** (§9.8). It had its own copy of the first three rules, which is two lists to keep in agreement about what the library contains; with the last two added the cost of them drifting is a folder the user excluded still waking a sync on every change, and scoped syncs queued for paths the scan will then ignore.
@@ -988,7 +995,7 @@ The in-memory `SyncStatus` (§9.6) is process-local and lost on restart; the per
 
 *It has to cost one watch per directory.* This is where `chokidar` fails, and the reason it was tried and dropped. It calls `fs.watch` on every **file** as well as every directory: measured on a 200-directory, 10,000-file tree, 10,201 inotify watches and 120 MB against `fs.watch`'s 201 and 34 MB. A 300k-frame library therefore wants ~300k watches, against a kernel default of 8,192 and a common distribution default of 65,536. Past the limit it emits an error *per failing path*, so the retry below would re-walk the whole tree every five minutes for ever. The per-file watches buy nothing either: the handler keeps only the path, and the directory's own watch already reports its children.
 
-`@parcel/watcher` takes 204 watches and 35 MB on that same tree, settles in 55 ms, and names both halves of every move - same level, into a subfolder, out to the root - including the rename of a folder holding no photographs, which §9.4.1's photo evidence structurally cannot see. Its `ignore` list takes the excluded folders, so an excluded subtree is never walked rather than filtered afterwards, and the per-event check applies the scan's own rules (§9.1) so the two cannot disagree about what the library contains.
+`@parcel/watcher` takes 204 watches and 35 MB on that same tree, settles in 55 ms, and names both halves of every move - same level, into a subfolder, out to the root - including the rename of a folder holding no photographs, which §9.4.1's photo evidence structurally cannot see. Its `ignore` list takes the data directory, the bin (§12.3) and the excluded folders, so none of those subtrees is walked at all rather than filtered afterwards, and the per-event check applies the scan's own rules (§9.1) so the two cannot disagree about what the library contains. The bin earns its place there twice over: it is one known path, and it only grows, mirroring the whole folder tree as photographs are binned.
 
 It is a native module, which is why its prebuilt bindings matter: they cover linux x64 and arm64 in both glibc and musl, plus macOS and Windows, so nothing is compiled at install time on any platform this runs on.
 
@@ -1790,9 +1797,7 @@ For each photo:
 1. **Keep the renditions.** They are *not* removed. The Bin is a view the user browses to find something to restore, and it is useless if every frame in it is a grey placeholder. The two AVIFs are roughly 1% of the size of the RAW the Bin is already retaining, so deleting them saves almost nothing and costs the feature. They are removed only when a photo is permanently purged.
 
 2. **Move RAW file to Bin:**
-   - Determine the bin path:
-     - If the photo is in a shoot: `<shoot_folder>/Bin/<original_filename>`
-     - Otherwise: `<library_root>/Bin/<original_filename>`
+   - Determine the bin path, where `<bin>` is the library's `bin_name` (§12.3): `<library_root>/<bin>/<folder the photo was in>/<original_filename>`. A photo at `A/B/c.arw` bins to `<bin>/A/B/c.arw`; one in the root bins to `<bin>/c.arw`.
    - If a file with the same name already exists in the Bin, append a numeric suffix (e.g. `IMG_0001_1.ARW`, `IMG_0001_2.ARW`).
    - Move (rename) the file. Do **not** copy-and-delete.
 
@@ -1818,11 +1823,19 @@ The chunk is what bounds the exposure the per-photo commit used to bound: the fi
 
 ### 12.3 Bin Folder
 
-The Bin folder for shoots lives at `<shoot_folder>/Bin/` (inside the shoot folder itself). The Bin folder for non-shoot photos lives at `<library_root>/Bin/`.
+**One bin per library, at `<library_root>/<bin_name>/`, laid out inside itself like the library around it.** A photo binned from `A/B/c.arw` goes to `<bin_name>/A/B/c.arw`; one binned from the root goes to `<bin_name>/c.arw`. `bin_name` is `Bin` unless the library was created with another (§4.1), and every bin path comes from `getBinPath` (§6) rather than being spelled anywhere else.
 
-**Never under `data_path`.** A Bin holds originals, and the data directory is the one tree the system deletes wholesale (§6, §10.6); a bin inside it would mean removing a library, or clearing `.bowerbird/` by hand, silently destroying every photograph the user had binned. Both bins therefore sit beside the photographs they came from, where the only thing that can remove them is the user.
+The mirror is what makes one bin possible. Flat, a bin is a heap in which `IMG_0001.ARW` from three shoots are three files distinguished only by the numeric suffix the collision handling adds - fine for the catalogue, which knows, and useless to anyone reading the folder. Mirrored, the bin is browsable on its own terms: where a file came from is written in the path, so it can be recovered by hand if the catalogue is ever lost. Bins inside each shoot folder bought the same legibility, but scattered: one library's deleted photographs in as many places as it has folders, each needing its own skip rule, and none of it visible in one place.
 
-The sync scanner must skip `Bin/` directories inside shoot folders to avoid re-importing deleted files.
+**Never under `data_path`.** A Bin holds originals, and the data directory is the one tree the system deletes wholesale (§6, §10.6); a bin inside it would mean removing a library, or clearing `.bowerbird/` by hand, silently destroying every photograph the user had binned. The bin therefore sits beside the photographs it came from, where the only thing that can remove it is the user.
+
+The scanner skips `<root>/<bin_name>` and everything under it, so soft-deleted files are never re-imported. That is a rule about the root, not about the name: see §9.1.
+
+**A binned photo's folder is `deleted_from_path`, not `file_path`.** Its file is in the bin, so `file_path` points there and no longer shares a prefix with the folder it was taken from - which every folder-scoped operation is keyed on. `listUnderFolder` therefore matches live rows on `file_path` and deleted ones on `deleted_from_path`, and a folder rename (§9.4.1) rewrites `file_path` for the live rows and `deleted_from_path` for the deleted ones. The binned file itself does not move on a rename: it is in the bin, not in the folder that moved, and only where it restores *to* has changed.
+
+Removing a folder from the library (§4.7) takes the deleted rows with the live ones, since what leaves is the catalogue's record of that folder. No file is touched either way - the live ones stay in the folder and the binned ones stay in the bin, both now out of scope, so the next sync re-imports neither.
+
+**Which is why the name is asked for at creation and refused if taken.** The bin is created lazily on the first delete, and the scan skips whatever is at `<root>/<bin_name>` sight unseen - so a root that already keeps its own `Bin` would have had it adopted as one, and every photograph inside it dropped from the import with nothing on screen saying so. `POST /api/libraries` refuses that root outright and the Add-library dialog marks the field against the folder listing it already has, which turns a silent gap into a choice made before the library exists. It is not offered by `PATCH`: the name is what the scan skips, so changing it afterwards leaves the old bin's RAWs in a folder the next sync walks back in and re-imports as new photographs.
 
 ---
 
@@ -1843,7 +1856,7 @@ All endpoints return JSON. Error responses use a standard envelope:
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/api/libraries` | Create a library |
+| `POST` | `/api/libraries` | Create a library. 400 if the root already holds a folder named by `bin_name` (§12.3) |
 | `GET` | `/api/libraries` | List all libraries |
 | `GET` | `/api/libraries/:id` | Get a library |
 | `PATCH` | `/api/libraries/:id` | Update a library (name, default ordering, rendition settings, `include_subfolders`, `mirror_shoots`) |
@@ -2127,7 +2140,7 @@ The sync-service, photo-deletion, and image-streaming cases below run in the int
 - Album membership bias: prefer removing photos not in albums
 - Modified + added with original hash (special case from §9.3)
 - Files in `.bowerbird/` directory are excluded
-- Files in shoot `Bin/` directories are excluded
+- Files in the library's bin are excluded, and a folder of the user's own further down sharing its name is not (§12.3)
 - Non-ARW files are ignored
 - Reappearance: a previously-missing file back at its original path clears `is_missing` (§9.4 step 4)
 - Move into a known shoot folder sets `shoot_id`; move out to root clears it (§9.4 step 1)
@@ -2138,9 +2151,9 @@ The sync-service, photo-deletion, and image-streaming cases below run in the int
 
 **Photo deletion:**
 - Renditions are kept, so the Bin can be browsed
-- RAW file is moved to correct Bin location (shoot vs library)
+- RAW file is moved into the library's one bin, under the folder it came from (`A/B/c.arw` → `<bin>/A/B/c.arw`, root → `<bin>/c.arw`)
 - DB record is marked `is_deleted = 1`, not removed
-- Filename collision in Bin (numeric suffix)
+- Filename collision in Bin (numeric suffix), which the mirror leaves for two files of one name in one folder rather than one name anywhere in the library
 
 **Shoot operations:**
 - Creating a shoot whose folder already exists adopts the photos already in it (sets `shoot_id`, no file moves)

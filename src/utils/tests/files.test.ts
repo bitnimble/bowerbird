@@ -46,7 +46,7 @@ function scope(
   over: { dataPath?: string; includeSubfolders?: boolean; excluded?: Set<string> } = {},
 ): LibraryScope {
   return libraryScope(
-    { root_path: root, include_subfolders: over.includeSubfolders ?? true },
+    { root_path: root, include_subfolders: over.includeSubfolders ?? true, bin_name: 'Bin' },
     over.dataPath ?? path.join(root, '.bowerbird'),
     over.excluded ?? new Set<string>(),
   );

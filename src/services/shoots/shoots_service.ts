@@ -43,7 +43,7 @@ export class ShootsService {
     if (containsPath(getDataPath(library), absFolder)) {
       throw new AppError('VALIDATION_ERROR', `shoot folder is inside the library's data directory: ${folderPath}`);
     }
-    // A folder the scan will never look at cannot hold a shoot: a Bin, a
+    // A folder the scan will never look at cannot hold a shoot: the bin, a
     // dotfolder or one the user has excluded. Its photos would be moved in and
     // then never seen again.
     if (!isDirInScope(this.scopeFor(library), folderPath)) {
@@ -211,9 +211,11 @@ export class ShootsService {
         return;
       }
 
-      // Soft-deleted rows go too: their files sit in <folder>/Bin, inside the
-      // folder that is leaving the library, so a Bin they could be restored from
-      // no longer exists as far as the catalogue is concerned.
+      // Soft-deleted rows go too: what leaves is the catalogue's record of the
+      // folder, and a binned photo is one of that folder's records. Their files
+      // stay in the bin exactly as the live ones stay where they are - this
+      // removes rows, never files (§4.7) - and the bin is out of scope, so the
+      // next sync no more re-imports them than it does the excluded folder.
       const doomed = this.photos.listUnderFolder(library.id, shoot.folder_path, true);
       this.shoots.transaction(() => {
         this.folderRules.set(library.id, shoot.folder_path, 'excluded');

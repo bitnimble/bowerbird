@@ -68,11 +68,22 @@ export class LibrariesService {
       throw new AppError('CONFLICT', `library root already registered: ${request.root_path}`);
     }
     this.assertNoDataDirectoryOverlap(request.root_path, request.data_path ?? null);
+    // The scan skips whatever is at this path sight unseen (§12.3), so adopting a
+    // folder the user already keeps there would drop everything inside from the
+    // import without saying so. Asked for a different name instead, which is why
+    // the name is a field on the create form at all.
+    if (existsSync(path.join(request.root_path, request.bin_name))) {
+      throw new AppError(
+        'VALIDATION_ERROR',
+        `a folder named "${request.bin_name}" already exists at ${request.root_path}: choose another bin folder name, or the photographs inside it would never be imported`,
+      );
+    }
 
     const library: Library = {
       id: randomUUID(),
       root_path: request.root_path,
       data_path: request.data_path ?? null,
+      bin_name: request.bin_name,
       name: request.name == null || request.name === '' ? null : request.name,
       ordering: request.ordering,
       // Matching the column defaults: the embedded JPEG needs no demosaic, and

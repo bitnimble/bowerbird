@@ -1,5 +1,5 @@
 import { describe, it, expect, jest } from 'bun:test';
-import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { AppError } from '../../../errors';
@@ -46,7 +46,7 @@ function build(over: {
   return { service: new PhotosService(photos, albums, shoots, libraries, processing), photos, libraries, shoots, albums, processing };
 }
 
-const library: Library = { id: 'lib', root_path: '/r', data_path: null, name: null, ordering: 'added_asc',
+const library: Library = { id: 'lib', root_path: '/r', data_path: null, bin_name: 'Bin', name: null, ordering: 'added_asc',
   rendition_source: 'embedded' as const,
   rendition_hdr: false,
   rendition_hdr_video: false, include_subfolders: true, mirror_shoots: true, auto_stack: true, auto_stack_similarity: 0.78, auto_stack_window_seconds: 60, last_synced_at: null, photo_count: 0 };
@@ -210,7 +210,7 @@ describe('PhotosService.delete', () => {
       writeFileSync(path.join(dataDir, 'renditions', 'small', 'p1.webp'), '');
       writeFileSync(path.join(dataDir, 'renditions', 'full', 'p1.webp'), '');
 
-      const lib: Library = { id: 'lib', root_path: root, data_path: null, name: null, ordering: 'added_asc',
+      const lib: Library = { id: 'lib', root_path: root, data_path: null, bin_name: 'Bin', name: null, ordering: 'added_asc',
   rendition_source: 'embedded' as const,
   rendition_hdr: false,
   rendition_hdr_video: false, include_subfolders: true, mirror_shoots: true, auto_stack: true, auto_stack_similarity: 0.78, auto_stack_window_seconds: 60, last_synced_at: null, photo_count: 0 };
@@ -239,11 +239,54 @@ describe('PhotosService.delete', () => {
     }
   });
 
+  // One bin at the library root, laid out inside itself like the folders it took
+  // the photographs from (§12.3), so what is in it can be read without the
+  // catalogue and two files of the same name from different folders cannot meet.
+  it('mirrors the folder a photo was binned from inside the one root Bin', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'bb-mirror-'));
+    try {
+      mkdirSync(path.join(root, 'A', 'B', 'C'), { recursive: true });
+      mkdirSync(path.join(root, 'D'), { recursive: true });
+      writeFileSync(path.join(root, 'A', 'B', 'C', 'foo.arw'), 'deep');
+      writeFileSync(path.join(root, 'D', 'foo.arw'), 'shallow');
+      writeFileSync(path.join(root, 'foo.arw'), 'root');
+
+      const lib: Library = { id: 'lib', root_path: root, data_path: null, bin_name: 'Bin', name: null, ordering: 'added_asc',
+  rendition_source: 'embedded' as const,
+  rendition_hdr: false,
+  rendition_hdr_video: false, include_subfolders: true, mirror_shoots: true, auto_stack: true, auto_stack_similarity: 0.78, auto_stack_window_seconds: 60, last_synced_at: null, photo_count: 0 };
+      const markDeleted = jest.fn();
+      const setFilePath = jest.fn();
+      const rows = [
+        { id: 'p1', library_id: 'lib', shoot_id: 'sh', file_path: 'A/B/C/foo.arw' },
+        { id: 'p2', library_id: 'lib', shoot_id: null, file_path: 'D/foo.arw' },
+        { id: 'p3', library_id: 'lib', shoot_id: null, file_path: 'foo.arw' },
+      ];
+      const { service } = build({
+        photos: { getBasicByIds: jest.fn(() => rows), markDeleted, setFilePath },
+        libraries: { getById: jest.fn(() => lib) },
+      });
+
+      await service.delete(['p1', 'p2', 'p3']);
+
+      // No bin inside the shoot folder, and the three same-named files sit apart.
+      expect(existsSync(path.join(root, 'A', 'B', 'C', 'Bin'))).toBe(false);
+      expect(readFileSync(path.join(root, 'Bin', 'A', 'B', 'C', 'foo.arw'), 'utf8')).toBe('deep');
+      expect(readFileSync(path.join(root, 'Bin', 'D', 'foo.arw'), 'utf8')).toBe('shallow');
+      expect(readFileSync(path.join(root, 'Bin', 'foo.arw'), 'utf8')).toBe('root');
+      expect(setFilePath).toHaveBeenCalledWith('p1', 'Bin/A/B/C/foo.arw');
+      // Where restore puts it back, which is the folder it came from and not the bin.
+      expect(markDeleted).toHaveBeenCalledWith('p1', 'A/B/C/foo.arw', undefined);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('rolls the Bin move back to the original path when the DB write fails', async () => {
     const root = mkdtempSync(path.join(tmpdir(), 'bb-del-'));
     try {
       writeFileSync(path.join(root, 'a.arw'), 'raw');
-      const lib: Library = { id: 'lib', root_path: root, data_path: null, name: null, ordering: 'added_asc',
+      const lib: Library = { id: 'lib', root_path: root, data_path: null, bin_name: 'Bin', name: null, ordering: 'added_asc',
   rendition_source: 'embedded' as const,
   rendition_hdr: false,
   rendition_hdr_video: false, include_subfolders: true, mirror_shoots: true, auto_stack: true, auto_stack_similarity: 0.78, auto_stack_window_seconds: 60, last_synced_at: null, photo_count: 0 };
@@ -289,6 +332,7 @@ describe('PhotosService.delete', () => {
         id: 'lib',
         root_path: root,
         data_path: null,
+        bin_name: 'Bin',
         name: null,
         ordering: 'added_asc',
         rendition_source: 'embedded' as const,
