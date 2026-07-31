@@ -661,8 +661,15 @@ const NOISE_MAX: f32 = 0.08;
 const NOISE_CEILING: f32 = 0.02;
 
 #[cfg(all(test, feature = "fixtures"))]
+pub fn _for_testing_noise_ceiling() -> f32 {
+    NOISE_CEILING
+}
+
+#[cfg(all(test, feature = "fixtures"))]
 pub fn _for_testing_measure_noise<T: Sample>(frame: &[T], width: usize, height: usize) -> f32 {
-    measure_noise(frame, width, height, strip_interior(width, 0))
+    // The strip height production would use, so this measures what production measures.
+    let halo = Radii::for_strength(1.0).halo(true, true);
+    measure_noise(frame, width, height, strip_interior(width, halo))
 }
 
 /// The estimate, off a histogram of high-pass magnitudes.
@@ -678,7 +685,9 @@ fn sigma_from(bins: &[u32]) -> f32 {
     if varying == 0 {
         return 0.0;
     }
-    let half = varying / 2;
+    // Floored at one, or a frame with a single varying pixel takes the first bin
+    // whatever its count - returning the minimum rather than the median.
+    let half = (varying / 2).max(1);
     let mut seen = 0u32;
     let median = bins[1..]
         .iter()
@@ -776,8 +785,18 @@ fn strip_interior(width: usize, halo: usize) -> usize {
     const SCRATCH_BUDGET: usize = 64 * 1024 * 1024;
     const PLANES: usize = 12;
     let rows = SCRATCH_BUDGET / (width.max(1) * PLANES * std::mem::size_of::<f32>());
-    // Never so thin that a strip is mostly halo, whatever the width.
-    rows.max(halo).max(32)
+    // **Solved for the whole strip, not its interior.** A strip allocates
+    // `interior + 2 * halo` rows, and the halo term is fixed in rows, so budgeting only
+    // the interior lets the peak grow linearly in the frame's *width* - measured at 2.7x
+    // the budget on a 9504-wide frame, which is exactly the native-resolution case this
+    // exists for.
+    let interior = rows.saturating_sub(2 * halo);
+    // Never thinner than the halo: below that a strip's context reaches back into rows an
+    // earlier strip has already overwritten, which `finish_in_strips` cannot detect.
+    // It also floors the planes at `3 * halo` rows, which is the one case the budget
+    // cannot honour - a very wide frame at a very high strength - and the alternative
+    // would be to fail rather than to spend the memory.
+    interior.max(halo).max(32)
 }
 
 pub fn finish<T: Sample>(frame: &mut [T], width: usize, height: usize, denoise: f64, sharpen: f64) {
@@ -807,7 +826,13 @@ fn finish_in_strips<T: Sample>(
     let frame = &mut frame[..width * height * 3];
     let radii = Radii::for_strength(denoise);
     let halo = radii.halo(denoise > 0.0, sharpen > 0.0);
-    let interior = interior.max(1);
+    // **Enforced here, not just where the caller picks it.** A strip thinner than the
+    // halo needs context from rows an earlier strip has already written over, and `carry`
+    // only holds the last `halo` of them - so it would hand the next strip its
+    // neighbour's *output* as if it were input, silently, with no panic and no seam loud
+    // enough for the tolerance below to catch. Measured at an interior of 10: rows wrong
+    // by 257 counts against a whole-frame run.
+    let interior = interior.max(halo).max(1);
 
     // Measured over the whole frame before anything is filtered, because a per-strip
     // estimate would have each strip denoise by a different amount and seam.
@@ -957,24 +982,35 @@ fn finish_strip(
 ) {
     if denoise > 0.0 {
         let eps = (LUMA_DENOISE_SIGMAS * sigma).powi(2);
-        let stats = guide_stats(luma, width, height, radii.luma);
-        *luma = self_guided(&stats, luma, width, height, radii.luma, eps);
+        // Each set of guide statistics in its own scope, because **shadowing does not
+        // drop**: three `let stats` in a row keeps three of them - six planes - live to
+        // the end of the block, which is the same leak the filter functions above are
+        // scoped to avoid. Measured at 15 planes live against 11 scoped.
+        {
+            let stats = guide_stats(luma, width, height, radii.luma);
+            *luma = self_guided(&stats, luma, width, height, radii.luma, eps);
+        }
 
         // Guided by the luma just cleaned, fine scale then coarse, and both channels off
         // one set of the guide's statistics per scale: same guide, same radius, so the
         // expensive half is shared between them.
-        let stats = guide_stats(luma, width, height, radii.fine);
-        *red = guided(&stats, luma, red, width, height, radii.fine, DENOISE_EPS);
-        *blue = guided(&stats, luma, blue, width, height, radii.fine, DENOISE_EPS);
+        {
+            let stats = guide_stats(luma, width, height, radii.fine);
+            *red = guided(&stats, luma, red, width, height, radii.fine, DENOISE_EPS);
+            *blue = guided(&stats, luma, blue, width, height, radii.fine, DENOISE_EPS);
+        }
 
-        let stats = guide_stats(luma, width, height, radii.coarse);
-        let limit = DENOISE_CHROMA_COARSE_LIMIT * denoise as f32;
-        for channel in [red, blue] {
-            let smoothed = guided(&stats, luma, channel, width, height, radii.coarse, DENOISE_EPS);
-            channel
-                .par_iter_mut()
-                .zip(smoothed.par_iter())
-                .for_each(|(fine, coarse)| *fine += (coarse - *fine).clamp(-limit, limit));
+        {
+            let stats = guide_stats(luma, width, height, radii.coarse);
+            let limit = DENOISE_CHROMA_COARSE_LIMIT * denoise as f32;
+            for channel in [red, blue] {
+                let smoothed =
+                    guided(&stats, luma, channel, width, height, radii.coarse, DENOISE_EPS);
+                channel
+                    .par_iter_mut()
+                    .zip(smoothed.par_iter())
+                    .for_each(|(fine, coarse)| *fine += (coarse - *fine).clamp(-limit, limit));
+            }
         }
     }
 
@@ -1158,14 +1194,43 @@ mod tests {
     }
 
     #[test]
-    fn the_sharpen_leaves_a_flat_field_flat() {
-        // Nothing to invert means nothing to do, whatever the amount: a converged
-        // estimate of a constant is that constant, so flat areas do not gather texture.
-        let (w, h) = (32usize, 32usize);
-        let mut frame = vec![100u8; w * h * 3];
+    fn the_chroma_denoise_is_actually_guided_by_the_luma() {
+        // **The claim nothing else here tests.** The two chroma tests above are built so
+        // the guide cannot matter - one is constant-luma by construction, the other
+        // iso-luminant on purpose to isolate the coarse cap - so both pass with the guide
+        // replaced by a constant plane, which degrades the filter to a plain box blur.
+        // What the guide is *for* is a colour edge that luma can see, which is the
+        // ordinary case: a red wall against a bright roof.
+        let (w, h) = (192usize, 32usize);
+        let mut frame = vec![0u8; w * h * 3];
+        for y in 0..h {
+            for x in 0..w {
+                let i = (y * w + x) * 3;
+                let (r, g, b) = if x < w / 2 { (170u8, 45, 45) } else { (205, 205, 210) };
+                // A little grain, so there is something for the denoise to be doing.
+                let n = ((x * 29 + y * 13) % 7) as i32 - 3;
+                frame[i] = (i32::from(r) + n).clamp(0, 255) as u8;
+                frame[i + 1] = (i32::from(g) + n).clamp(0, 255) as u8;
+                frame[i + 2] = (i32::from(b) + n).clamp(0, 255) as u8;
+            }
+        }
         let before = frame.clone();
-        finish(&mut frame, w, h, 0.0, 1.0);
-        assert_eq!(frame, before);
+        finish(&mut frame, w, h, 1.0, 0.0);
+
+        // Red against blue, which is what the wall has and the roof does not. Sampled a
+        // few pixels either side of the edge: unguided, the coarse pass pours one into
+        // the other and this collapses.
+        let spread = |data: &[u8], x: usize| {
+            let i = (16 * w + x) * 3;
+            i32::from(data[i]) - i32::from(data[i + 2])
+        };
+        for x in [w / 2 - 6, w / 2 - 2, w / 2 + 2, w / 2 + 6] {
+            let (was, now) = (spread(&before, x), spread(&frame, x));
+            assert!(
+                (now - was).abs() <= 8,
+                "column {x}: red-minus-blue went {was} to {now}, so the colour crossed the edge",
+            );
+        }
     }
 
     #[test]
@@ -1375,7 +1440,14 @@ mod tests {
     }
 
     /// A frame with something at every scale the chain looks at: fine grain, mid-scale
-    /// texture and a hard edge, so a seam has plenty to show up against.
+    /// texture, a hard edge, and - the part that matters most - **large, low-frequency
+    /// colour blotches**.
+    ///
+    /// The blotches are what make this frame able to detect a short halo at all. The
+    /// halo is dominated by the coarse chroma pass, radius 32, and a frame whose colour
+    /// varies by a few counts gives that pass nothing to move: the seam test passed with
+    /// the halo cut by 89% until this fixture carried chroma at the scale and amplitude
+    /// the pass is built for.
     fn busy(width: usize, height: usize) -> Vec<u8> {
         let mut frame = vec![0u8; width * height * 3];
         for y in 0..height {
@@ -1385,12 +1457,93 @@ mod tests {
                 let edge = if x > width / 2 { 60 } else { 0 };
                 let grain = ((x * 31 + y * 17) % 11) as i32 - 5;
                 let base = 90 + block + edge + grain;
-                frame[i] = base.clamp(0, 255) as u8;
+                // Colour that varies slowly and widely, which is what the coarse pass is
+                // for and what a short halo therefore gets wrong.
+                let blotch = |period: usize, phase: usize| {
+                    (((x + phase) / period + (y + phase) / period) % 3) as i32 * 30 - 30
+                };
+                frame[i] = (base + blotch(70, 0)).clamp(0, 255) as u8;
                 frame[i + 1] = (base + ((x * 13 + y * 7) % 7) as i32 - 3).clamp(0, 255) as u8;
-                frame[i + 2] = (base + ((x * 19 + y * 23) % 9) as i32 - 4).clamp(0, 255) as u8;
+                frame[i + 2] = (base + blotch(90, 35)).clamp(0, 255) as u8;
             }
         }
         frame
+    }
+
+    /// Whether moving one pixel `distance` rows down changes the frame's top row.
+    ///
+    /// A direct measurement of the dependency `Radii::halo` is a prediction of, which is
+    /// the only way to check that prediction without restating the formula.
+    fn reaches_top(denoise: f64, sharpen: f64, distance: usize) -> bool {
+        let (width, height) = (120usize, 400usize);
+        let source = busy(width, height);
+        let mut baseline = source.clone();
+        finish(&mut baseline, width, height, denoise, sharpen);
+
+        let mut probed = source;
+        // Large and coloured, so what is measured is whether the dependency exists at
+        // all rather than whether it survives a clamp.
+        let i = (distance * width + width / 2) * 3;
+        probed[i] = 255;
+        probed[i + 1] = 0;
+        probed[i + 2] = 255;
+        finish(&mut probed, width, height, denoise, sharpen);
+        baseline[..width * 3] != probed[..width * 3]
+    }
+
+    #[test]
+    fn the_halo_covers_how_far_the_filters_actually_reach() {
+        // The strip driver is correct exactly when `Radii::halo` is at least the chain's
+        // true reach, and *nothing else here checks that number*. The seam test below
+        // compares outputs, and the coarse chroma pass's 2% cap keeps those differences
+        // small enough that it tolerated the halo being cut by three quarters. This
+        // measures the dependency instead, so a halo short by any amount fails.
+        for (denoise, sharpen) in [(1.0, 0.6), (1.0, 0.0), (0.0, 0.6), (3.0, 1.0)] {
+            let halo = Radii::for_strength(denoise).halo(denoise > 0.0, sharpen > 0.0);
+            assert!(
+                !reaches_top(denoise, sharpen, halo + 1),
+                "denoise {denoise} sharpen {sharpen}: a change {} rows down reached the top, past a halo of {halo}",
+                halo + 1,
+            );
+            // And the probe can see anything at all, so the assertion above is not
+            // passing because a moved pixel never changes the output. Close in, because
+            // influence *attenuates* long before it stops: a pixel 10 rows away is
+            // already inside the deconvolution's formal reach and still cannot shift the
+            // top row by a whole count. The halo has to cover where the dependency ends,
+            // not where it stops being visible.
+            assert!(
+                reaches_top(denoise, sharpen, 2),
+                "denoise {denoise} sharpen {sharpen}: the probe detects nothing two rows down",
+            );
+        }
+    }
+
+    #[test]
+    fn a_strip_thinner_than_its_halo_is_widened_rather_than_believed() {
+        // `carry` only holds the last `halo` rows, so a strip thinner than that needs
+        // context from rows an *earlier* strip already wrote over - and would silently be
+        // handed its neighbour's output as input. Measured before the clamp went in:
+        // rows wrong by 257 counts against a whole-frame run, with no panic and no seam
+        // large enough for the tolerance below to notice.
+        //
+        // The clamp lives in `finish_in_strips` rather than only in `strip_interior`
+        // because the two are separated by a call, and an invariant that holds only
+        // because of what some other function chose is one edit from not holding.
+        let (width, height) = (120usize, 400usize);
+        let source = busy(width, height);
+        let run = |interior: usize| {
+            let mut frame = source.clone();
+            finish_in_strips(&mut frame, width, height, 1.0, 0.6, interior);
+            frame
+        };
+        // Compared against the halo they are widened *to*, which makes this exact: every
+        // one of them lays the strips out identically, so any difference at all is the
+        // clamp having failed rather than the band-order rounding the seam test allows.
+        let halo = Radii::for_strength(1.0).halo(true, true);
+        let widened = run(halo);
+        for interior in [1usize, 7, 40, halo - 1] {
+            assert_eq!(run(interior), widened, "an interior of {interior} was believed");
+        }
     }
 
     #[test]
@@ -1418,13 +1571,16 @@ mod tests {
         let halo = Radii::for_strength(1.0).halo(true, true);
         assert!(halo > 0 && halo < interior, "the strips must be taller than the halo: {halo}");
 
-        // **Within a count, not bit-for-bit**, and the distinction is the point. The box
-        // mean is a running sum, so a plane of a different height splits into different
-        // bands and accumulates in a different order; in f32 that moves the last bit, and
-        // a sample sitting on a rounding boundary lands one count either way. What a halo
-        // that is too short produces is nothing like that - it is a *band* of rows at
-        // every strip boundary, wrong by as much as the filter can move a pixel - so the
-        // per-row summary below is what actually catches it.
+        // **Within a count, not bit-for-bit.** The box mean is a running sum, so a plane
+        // of a different height splits into different bands and accumulates in a
+        // different order; in f32 that moves the last bit, and a sample on a rounding
+        // boundary lands one count either way.
+        //
+        // This is a seam check and **not** the halo's guard - measured, it still passes
+        // with the halo cut to a sixth, because the coarse chroma pass is capped at 2% of
+        // full scale and so cannot produce a large error however wrong its context is.
+        // `the_halo_covers_how_far_the_filters_actually_reach` is what pins the halo, by
+        // measuring the dependency rather than the difference it makes.
         let mut worst = 0u8;
         let mut worst_row = 0usize;
         for row in 0..height {
@@ -1451,37 +1607,19 @@ mod tests {
     #[test]
     fn a_frame_with_no_noise_at_all_survives_being_denoised() {
         // The luma denoise takes its regularisation from the frame's own measured noise,
-        // and a synthetic frame measures zero - which meets a flat window's zero variance
-        // as 0/0 and turns the whole picture into NaN. A photograph never measures zero,
-        // so this is exactly the failure that ships.
+        // and **a uniform frame measures exactly zero** - which meets a flat window's zero
+        // variance as 0/0 and, without the guard in `guided_with`, turns the whole picture
+        // into NaN, landing as an all-black frame once clamped back to eight bits.
+        //
+        // Uniform on purpose. This was a step edge first, on the reasoning that it was
+        // synthetic enough - and it is not: the step's own columns dominate the histogram,
+        // so it measures sigma at the *ceiling* rather than at zero and never reaches the
+        // branch it was written for. The guard could be deleted and it passed.
         let (w, h) = (24usize, 24usize);
-        let mut frame = vec![0u8; w * h * 3];
-        for y in 0..h {
-            for x in 0..w {
-                let i = (y * w + x) * 3;
-                let value = if x < w / 2 { 40u8 } else { 200 };
-                frame[i] = value;
-                frame[i + 1] = value;
-                frame[i + 2] = value;
-            }
-        }
+        let mut frame = vec![130u8; w * h * 3];
         let before = frame.clone();
         finish(&mut frame, w, h, 1.0, 1.0);
-        // A NaN lands as 0 or 255 once clamped back to eight bits, so the tell is that
-        // every sample is still inside the two levels the picture is made of.
-        for (i, sample) in frame.iter().enumerate() {
-            assert!((40..=200).contains(sample), "sample {i} became {sample}");
-        }
-        // Away from the step there is nothing to remove and nothing to invert, so those
-        // pixels come back as themselves. The transition is left out: a *perfect* step is
-        // sharper than the point spread being inverted assumes, and what the sharpen does
-        // with that is not this test's business.
-        for y in 0..h {
-            for x in (0..w).filter(|x| !(8..16).contains(x)) {
-                let i = (y * w + x) * 3;
-                assert!(frame[i].abs_diff(before[i]) <= 1, "pixel {x},{y}: {} became {}", before[i], frame[i]);
-            }
-        }
+        assert_eq!(frame, before, "a uniform frame came back changed");
     }
 
     #[test]

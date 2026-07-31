@@ -24,7 +24,7 @@ function target(outputPath: string): RenditionTarget {
     videoOutputPath: null,
     size: 800,
     source: 'render',
-    sdrQuantizer: 26,
+    sdrQuantizer: 13,
     hdrQuantizer: 8,
     preset: 8,
     stillFullChroma: false,

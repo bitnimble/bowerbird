@@ -193,15 +193,25 @@ describe('migrations: splitting the import into two stages', () => {
     // down; this pins that the migration cannot promote it either.
     const db = new Database(':memory:');
     db.exec('CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
-    db.exec("INSERT INTO settings (key, value) VALUES ('grid_rendition_quantizer', 'lots'), ('hdr_crf', ''), ('lossless_quantizer', '0')");
+    // Every shape SQLite would quietly turn into a number: an empty string and a word
+    // both CAST to 0, and `CAST` is a *prefix* parse so '26abc' is 26 and '26.9' is 26.
+    // Halving any of them promotes a value the settings reader was correctly discarding
+    // into one it will use. '80' is a third case - parseable, but outside the schema's
+    // 0-63, so the reader rejects it and the migration must not rescue it into range.
+    db.exec(`INSERT INTO settings (key, value) VALUES
+      ('grid_rendition_quantizer', 'lots'), ('hdr_crf', ''),
+      ('full_rendition_quantizer', '26abc'), ('lossless_sdr_quantizer', '80'),
+      ('lossless_quantizer', '0')`);
 
     runMigrations(db);
 
     expect(db.query('SELECT key, value FROM settings ORDER BY key').all()).toEqual([
+      { key: 'full_rendition_quantizer', value: '26abc' },
       { key: 'grid_rendition_quantizer', value: 'lots' },
       { key: 'hdr_crf', value: '' },
       // Already the tightest the scale goes, and halving it would say nothing new.
       { key: 'lossless_quantizer', value: '0' },
+      { key: 'lossless_sdr_quantizer', value: '80' },
     ]);
   });
 });

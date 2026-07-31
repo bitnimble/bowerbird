@@ -305,9 +305,18 @@ mod the_noise_estimate_lands_where_a_real_frame_puts_it {
             let rgb = frame.rgb8().expect("an 8-bit decode");
             let sigma = crate::image::_for_testing_measure_noise(rgb.data, rgb.width, rgb.height);
             // Loose on purpose: the claim is an order of magnitude, not a value. Under
-            // 0.1% of full scale would leave the denoise doing nothing on every frame;
-            // over 5% would have it treating detail as noise.
-            assert!((0.001..0.05).contains(&sigma), "{}: sigma {sigma}", path.display());
+            // 0.1% of full scale would leave the denoise doing nothing on every frame.
+            //
+            // The upper bound is the estimator's own ceiling rather than a number above
+            // it - `sigma_from` ends in `.min(NOISE_CEILING)`, so any bound looser than
+            // that can never fail. A real frame *reaching* the ceiling would mean the
+            // estimator had stopped measuring and started saturating.
+            assert!(sigma > 0.001, "{}: sigma {sigma} is too low to denoise anything", path.display());
+            assert!(
+                sigma < crate::image::_for_testing_noise_ceiling(),
+                "{}: sigma {sigma} is pinned at the ceiling, so it is not a measurement",
+                path.display(),
+            );
         }
     }
 }

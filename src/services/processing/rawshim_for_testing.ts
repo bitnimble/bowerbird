@@ -126,6 +126,12 @@ export interface GradeSpec {
   outputPath?: string;
   /** A still gets avifenc after ffmpeg; a video does not. Defaults to a still. */
   medium?: 'still' | 'video';
+  /**
+   * The render's denoise and sharpen (§10.9). Absent means neither, which is what the
+   * pins want; a test that needs the HDR half of that stage exercised passes them.
+   */
+  denoise?: number;
+  sharpen?: number;
 }
 
 function gradeArgs(grade: GradeSpec): Record<string, unknown> {

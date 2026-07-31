@@ -10,12 +10,20 @@ import { runJob } from '../../services/processing/rawshim_job';
 import { AVIF_EFFORT } from '../../services/processing/renditions';
 import type { SettingsRepository } from '../../services/settings/settings_repository';
 
-// Which AVIF quality to ship renditions at. A diagnostic, like the HDR check
+// Which quantizer to ship renditions at. A diagnostic, like the HDR check
 // (§10.7): the trade is speed against artefacts, and only an eye at 1:1 settles
 // where it stops mattering. Effort is pinned at 0 because that is where the
 // speed is - 0.59s against 13.6s at the encoder's default on a 3840px frame - so
 // quality is the only variable left.
-const QUALITIES = [60, 70, 80, 85] as const;
+//
+// **libaom's quantizer, 0-63 and lower is better**, spanning the shipping default
+// of 13. These were 60/70/80/85 on libvips' old 1-100 scale, which this page kept
+// after the encoder moved (§10.1): libavif clamps at 63, so three of the four
+// encoded byte-identically and none of them could reach the value the page exists
+// to help tune. That is precisely the failure its own comment warns about - a
+// setting that changed the renditions and not this makes it a picture of something
+// nobody ships.
+const QUALITIES = [8, 13, 20, 30] as const;
 
 // Rebuilt per server run rather than cached in the library: this answers a
 // question once and should not leave files behind for the orphan sweep.

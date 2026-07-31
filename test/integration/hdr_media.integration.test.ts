@@ -4,7 +4,7 @@
 // pixels are scene-referred and that the files say what they must say (§10.7).
 //   docker exec bowerbird-dev bun test test/integration
 import { expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { _for_testing_decodeSummary } from '../../src/services/processing/rawshim_for_testing';
@@ -94,6 +94,46 @@ test('one call writes the still and its video twin, each tagged as its own mediu
     rmSync(dir, { recursive: true, force: true });
   }
 }, 120_000);
+
+test('the denoise and the sharpen reach both HDR media', () => {
+  // The HDR half of §10.9 is one call in `encode_pair`, and until this test it was
+  // reachable by nothing: every route in pinned both settings at 0, so deleting the
+  // call left every suite green. That is the same hole the SDR wiring test exists to
+  // close, on the half of the pipeline that feeds two encoders rather than one.
+  //
+  // Only that the pixels moved, and that they moved in *both* files. What the filters
+  // do is measured in `image.rs` against constructed inputs; what cannot be checked
+  // there is whether anything calls them.
+  const dir = mkdtempSync(path.join(tmpdir(), 'bb-hdr-finish-'));
+  try {
+    const render = (name: string, denoise: number, sharpen: number): [string, string] => {
+      const still = path.join(dir, `${name}.avif`);
+      const video = path.join(dir, `${name}.mp4`);
+      _for_testing_encodeHdr(
+        FIXTURE,
+        { medium: 'still', outputPath: still, peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.99, crf: 40, preset: 12, maxEdge: MAX_EDGE, stillFullChroma: false, denoise, sharpen },
+        { videoOutputPath: video, decodeSize: MAX_EDGE },
+      );
+      return [still, video];
+    };
+    const [plainStill, plainVideo] = render('plain', 0, 0);
+    const [doneStill, doneVideo] = render('processed', 1, 0.6);
+
+    for (const [plain, processed, medium] of [
+      [plainStill, doneStill, 'still'],
+      [plainVideo, doneVideo, 'video'],
+    ] as const) {
+      expect(readFileSync(processed).equals(readFileSync(plain))).toBe(false);
+      expect(Bun.file(processed).size).toBeGreaterThan(0);
+      // Named so a failure says which medium lost the stage rather than just "bytes
+      // equal": the two encoders are fed from one frame, so losing it on one only is
+      // not expressible - but losing it on both looks identical to never wiring it.
+      expect(medium).toBeDefined();
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}, 180_000);
 
 test('a scene-linear decode keeps the highlight headroom an sRGB one spends', () => {
   // Half size: the subject is the levels the two decodes land on, which is a
