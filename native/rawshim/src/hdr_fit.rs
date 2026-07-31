@@ -987,7 +987,8 @@ mod tests {
         // Every channel converging on one curve is what makes neutral in mean neutral
         // out, rather than leaving it to three guesses that happen to agree.
         let (plane, preview) = warm_chart();
-        let fitted = fit(&plane, 1.0, &preview, None, 1.0).expect("the chart is fittable");
+        let fitted =
+            fit(&plane, 1.0, &preview, crate::fit::Lens::none()).expect("the chart is fittable");
 
         // Read where the grade reads a blown sky: the shared gain scales the pixel so
         // its brightest channel sits at the top of the domain.
@@ -1001,7 +1002,8 @@ mod tests {
         // Converging the curves is not desaturation: what carries a highlight's colour
         // is the pixel, not the curve, so a warm one stays warm.
         let (plane, preview) = warm_chart();
-        let fitted = fit(&plane, 1.0, &preview, None, 1.0).expect("the chart is fittable");
+        let fitted =
+            fit(&plane, 1.0, &preview, crate::fit::Lens::none()).expect("the chart is fittable");
 
         let out = tone(&fitted.colour, 1.2, 0.6, 0.3);
         assert!(out[0] > out[1] * 1.3, "the warm highlight went flat: {out:?}");
@@ -1104,7 +1106,8 @@ mod tests {
         // of 0.94, against green's 1.06) is the one pulled furthest, and it is pulled
         // further the closer to the ceiling it is read.
         let (plane, preview) = warm_chart();
-        let fitted = fit(&plane, 1.0, &preview, None, 1.0).expect("the chart is fittable");
+        let fitted =
+            fit(&plane, 1.0, &preview, crate::fit::Lens::none()).expect("the chart is fittable");
 
         for (level, tolerance) in [(0.4, 0.03), (0.5, 0.05), (0.6, 0.07)] {
             for c in 0..3 {
