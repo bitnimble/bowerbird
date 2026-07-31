@@ -12,11 +12,11 @@ const SESSION_PREFIX = 'bowerbird.triage.';
 const MODE_KEY = 'bowerbird.triage.mode';
 
 /** How far back a session can be undone. Bounds what a long session stores. */
-export const HISTORY_LIMIT = 50;
+const HISTORY_LIMIT = 50;
 
 export type TriageMode = 'flip' | 'split';
 
-/** One action, and everything needed to take it back (§20.2.7). */
+/** One action, and everything needed to take it back (§20.3). */
 export interface HistoryEntry {
   /** The session as it stood *before* this action. */
   session: Session;
@@ -39,7 +39,7 @@ interface StoredSession {
 
 // `Set` has no JSON representation - `JSON.stringify(new Set())` is `{}` - so a
 // session stored without this comes back with an empty `seen`, re-offers every
-// pair already judged, and breaks the §20.2.4 guarantee in the one place nothing
+// pair already judged, and breaks the §20.1 guarantee in the one place nothing
 // would notice.
 interface Wire {
   alive: string[];

@@ -2758,8 +2758,28 @@ returns the right row and only costs a little more. What it must never be is set
 on two members of one stack, which would show that stack twice, so a partial
 unique index (`photos(stack_id) WHERE stack_id IS NOT NULL AND is_representative
 = 1`) makes that an error at the write rather than a duplicate tile nobody
-notices. It is maintained by `refreshRepresentative`, which every membership
-change calls.
+notices.
+
+It is maintained by `refreshRepresentative` (`stacks/representative.ts`), called
+on every membership change **and on every verdict or binning of a member**. The
+last two matter because the flag being a hint is not the same as it being free:
+the promotion arm is a correlated subquery per row, and rejecting the member a
+stack stands for is what every triage session does (§20.2), so a stack whose flag
+was left behind paid for the slow arm on every read from then on.
+
+It picks the newest member that is neither rejected nor binned, which is the
+member the promotion arm would pick in an unfiltered listing, so the two agree.
+Deprioritised rather than excluded: a stack whose members are all rejected still
+has exactly one flagged member, and the index keeps meaning what it means. The
+comparison has to be null-safe (`COALESCE(triage, '')`), because `untriaged` is
+stored as NULL and `NULL = 'rejected'` is NULL, which SQLite sorts *before* 0 -
+so the oldest untriaged frame would outrank the newest keeper on nothing but its
+NULL.
+
+One consequence to know rather than discover: the collapsed row sorts on its
+representative's date, so rejecting the newest member moves the stack's tile back
+to the second-newest's place in the grid. For a burst that is a few positions;
+for a stack spanning days it is a jump, on the keypress that caused it.
 
 The promotion arm carries the **same scope and filters as the outer query**,
 which is what keeps the properties the window gave for free. An album is strict,
@@ -2780,8 +2800,10 @@ to do it with.
 
 #### 19.5.2 Scope rules
 
-- The representative is the newest **in-scope** member, so a shoot never shows a
-  tile for a photograph that is not in it.
+- The row a scope shows is the newest **in-scope** member, so a shoot never shows
+  a tile for a photograph that is not in it. That is the promotion arm's doing;
+  the stored flag is library-wide and knows nothing of scope, which is why the
+  arm carries the outer query's own filters.
 - `stack_size` is the full membership in library and shoot views, and the
   in-album count in an album view.
 - A stack with one visible member renders as an ordinary tile.
@@ -3185,17 +3207,32 @@ photograph. The bottom bar carries the four verdicts, Undo, Keep the rest, and
 *n left · up to k rounds*, an upper bound labelled as one.
 
 Keys: `←` A better, `→` B better, `↓`/`Space` Both, hold `Shift` to peek, `⌘Z` or
-`Backspace` undo, `Tab` to switch presentation, `Esc` to leave. `⌘Z` is the only
+`Backspace` undo, `V` to switch presentation, `Esc` to leave. `⌘Z` is the only
 modified chord accepted; every other modifier is ignored, because `Cmd+←` is the
 browser's Back and casting a verdict on the way out is not a verdict anybody made.
 `Neither` stays click-only: the one key left is `↑`, directly above a verdict that
 destroys nothing, which is the wrong neighbour for the one that destroys two. It
 reports through the bin's report-with-an-undo pattern rather than confirming.
 
-The verdict bar is disabled until both frames have decoded. **Prefetch** is the
-first ten survivors, and only the four that can open the *next* round are drawn at
-stage size, a decode is for the size an element is drawn at, and ten
-full-resolution rasters is hundreds of megabytes.
+`V` rather than `Tab`, which an earlier draft used: swallowing `Tab` took keyboard
+navigation away from the whole page, and once focus was inside it there was no way
+out. A key handler that hijacks a browsing key has to be worth more than the
+browsing, and a presentation toggle is not. For the same reason the handler
+ignores keys from inside a popup, where `Space` on a queue row would otherwise
+cast a verdict rather than select the round under it.
+
+The verdict bar is disabled until both frames of *this* round have decoded, and
+what counts as decoded is cleared per round - kept, a round returned to by undo or
+through the queue would read as ready before the stage had painted anything for
+it.
+
+**Prefetch** is the first ten survivors, and it only fetches. The frames are
+mounted clipped to nothing, and a clipped element is never painted and so never
+decoded; drawing them at stage size instead would cost a full-resolution raster
+each, and ten of those is hundreds of megabytes. The bytes are in cache when the
+round asks for them, which is what the cap was asked for. It waits for the round's
+own two frames to be up before starting, or it competes with them for the
+connection.
 
 The session is judged at **one rendition throughout**, resolved by the triage store
 from a member's own `library_id` against `LibrariesStore` and `AppSettingsStore`.
@@ -3224,12 +3261,17 @@ Leaving is an explicit route to the entry photo, falling back to its library; no
 refreshed.
 
 The session is stored under `bowerbird.triage.<stackId>` in `sessionStorage` with
-its history, baseline and entry photo, and cleared only once the closing writes
-land, replaced by a `done` marker, so a reload on the summary redraws it instead
-of starting a fresh tournament over photographs it just judged. `seen` is stored as
-an **array**: `JSON.stringify` renders a `Set` as `{}`, which would return every
-session to a blank draw history and break §20.1's guarantee where nothing would
-notice. History is capped at 50 entries, since each snapshots a whole session.
+its history, baseline, entry photo and failed writes. **A finished session is
+stored like any other**, and that is the whole of how the summary survives: an
+earlier draft cleared the key and wrote the outcome to a second one, so reloading
+the summary - or simply opening the stack again - found nothing and began a fresh
+tournament over its own rejects, taking them as the baseline every undo would then
+restore to.
+
+`seen` is stored as an **array**: `JSON.stringify` renders a `Set` as `{}`, which
+would return every session to a blank draw history and break §20.1's guarantee
+where nothing would notice. History is capped at 50 entries, since each snapshots
+a whole session.
 
 On open the stored session is **pruned, never re-derived**: an id that is no longer
 a live member is dropped from the pool, and `seen` is deliberately left alone,

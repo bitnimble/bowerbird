@@ -46,7 +46,7 @@ interface Props {
   /**
    * The frames this photo can show, in slot order. Usually one.
    *
-   * Two is stack triage's flip mode (DESIGN §20.3.1): both are mounted and decoded
+   * Two is stack triage's flip mode (DESIGN §20.4): both are mounted and decoded
    * under a single `photoKey`, so alternating between them keeps the zoom and pan
    * the photographer set up, and costs no decode.
    */

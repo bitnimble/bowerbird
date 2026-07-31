@@ -22,7 +22,7 @@ export interface Session {
   stopped: boolean;
 }
 
-export interface Shape {
+interface Shape {
   width: number;
   height: number;
 }
@@ -33,25 +33,19 @@ export interface Placed {
   b: Shape;
 }
 
-/** How many upcoming rounds the queue projects before it stops counting them out. */
-export const UPCOMING_SHOWN = 20;
+const UPCOMING_SHOWN = 20;
 
 /** The gutter between the two photos in split mode, in px. */
 export const SPLIT_GAP = 16;
 
-// A separator no UUID contains, so a key can be taken apart again - which
-// `pairHas` and the closing-write rule both need. Splitting rather than a
-// substring test also keeps one id matching another's prefix from ever reading as
-// a hit.
+// A separator no UUID contains, so `keepers` can take a key apart again. Splitting
+// rather than testing for a substring is what keeps one id sitting inside another
+// from reading as a hit.
 const SEPARATOR = '|';
 
-/** Order-independent: the same two photos always produce the same key. */
+/** Order-independent. */
 export function pairKey(x: string, y: string): string {
   return x < y ? `${x}${SEPARATOR}${y}` : `${y}${SEPARATOR}${x}`;
-}
-
-export function pairHas(key: string, id: string): boolean {
-  return key.split(SEPARATOR).includes(id);
 }
 
 export function openSession(ids: readonly string[]): Session {

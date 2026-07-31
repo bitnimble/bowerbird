@@ -550,7 +550,7 @@ export class PhotosPresenter {
    * @returns whether the write landed. Stack triage needs to know: it advances a
    * round on the strength of a rejection, and `patch` otherwise swallows a failure
    * into a toast, so a session would finish believing frames were rejected that
-   * the server never took (§20.2.6).
+   * the server never took (§20.2).
    */
   async setTriage(photoId: string, triage: Triage, options: { quiet?: boolean } = {}): Promise<boolean> {
     return this.patch(photoId, { triage }, options);

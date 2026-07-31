@@ -11,7 +11,6 @@ import {
   losersOf,
   nextRound,
   openSession,
-  pairHas,
   pairKey,
   remainingPairs,
   stop,
@@ -61,15 +60,14 @@ describe('pairKey', () => {
     expect(pairKey('q', 'p')).toBe(pairKey('p', 'q'));
   });
 
-  test('names both of its photos, and no photo whose id is merely inside one of them', () => {
-    const key = pairKey('photo-12', 'photo-13');
-    expect(pairHas(key, 'photo-12')).toBe(true);
-    expect(pairHas(key, 'photo-13')).toBe(true);
-    // The failure the separator exists to stop is a *shorter* id inside a longer
-    // one, which a substring test would report as a hit. A longer id is caught by
-    // a substring test too, so asserting only that proves nothing.
-    expect(pairHas(key, 'photo-1')).toBe(false);
-    expect(pairHas(key, 'photo-123')).toBe(false);
+  test('an id sitting inside another id is not a member of its pair', () => {
+    // `keepers` takes a key apart to ask which photos have been judged, and the
+    // failure a substring test would produce is a *shorter* id inside a longer
+    // one. `p1` never appears in a round here, so a session that thinks it has
+    // been judged would keep a photograph nothing was ever compared against.
+    const { session } = play(['p12', 'p13', 'p1'], ['neither']);
+    expect(session.alive).toEqual(['p1']);
+    expect(keepers(session)).toEqual([]);
   });
 });
 
@@ -164,7 +162,7 @@ describe('the guarantee', () => {
   });
 
   test('two drawn photos and a winner over the rest still meet each other', () => {
-    // §2.4's worked case: p and q draw, r then beats everything else, and the
+    // §20.1's worked case: p and q draw, r then beats everything else, and the
     // session is not over - it owes r against p and r against q.
     let session = openSession(['p', 'q', 'r', 't']);
     const asked: string[] = [];

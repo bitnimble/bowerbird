@@ -20,10 +20,10 @@ import type { HistoryEntry, TriageMode } from './triage_storage';
 /** How many members are warmed at all. A fetch cap, for a manual stack of a thousand. */
 export const WARM_LIMIT = 10;
 
-export type TriageStatus = 'loading' | 'error' | 'too-few' | 'running' | 'ended';
+type TriageStatus = 'loading' | 'error' | 'too-few' | 'running' | 'ended';
 
 /** What a finished session decided, as the summary draws it. */
-export interface Outcome {
+interface Outcome {
   kept: PhotoSummary[];
   rejected: PhotoSummary[];
   unsaved: PhotoSummary[];
@@ -64,7 +64,7 @@ export class StackTriageStore {
   @observable accessor mode: TriageMode = 'flip';
   /** Where to go back to. Recorded on entry and stored, so a reload still knows. */
   @observable accessor entryPhotoId: string | null = null;
-  /** Photos whose triage write did not land. Reported rather than compensated (§20.2.6). */
+  /** Photos whose triage write did not land. Reported rather than compensated (§20.2). */
   @observable accessor failed = new Set<string>();
   @observable accessor loadError: string | null = null;
   /** True while a verdict's writes are in flight, so a second cannot be cast over them. */
