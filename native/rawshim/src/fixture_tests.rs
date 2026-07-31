@@ -766,6 +766,51 @@ mod hdr_grade {
         crate::fit_hdr_for(frame, sony().to_str().unwrap(), QUANTILE, Some(&profile))
     }
 
+    /// The falloff is the one half of the SDR match that lifts to the grade unchanged
+    /// (§10.8.1), and "lifts" has to mean it reaches the pixels, not just the struct.
+    /// A `falloff` the match carries and `apply_lens` ignores would pass a fit test.
+    #[test]
+    fn the_falloff_reaches_the_graded_frame_and_not_only_the_match() {
+        let frame = linear();
+        let mut fitted = matched(&frame).expect("the HDR fit finds a match");
+        // This body corrects no illumination, so the lift has to be given something to
+        // carry - which is also the only way to reach a corner gain worth measuring.
+        // A quarter more light at the corner, none at the centre.
+        fitted.falloff = Some((0.25, 0.0));
+        fitted.distortion = None;
+
+        let (width, height) = (frame.width, frame.height);
+        let samples = frame.samples16().expect("a 16-bit decode");
+        let lit = crate::hdr_fit::apply_lens(samples, width, height, &fitted).expect("the lens stage runs");
+
+        let at = |data: &[u16], x: usize, y: usize| f64::from(data[(y * width + x) * 3 + 1]);
+        let (corner_x, corner_y) = (width - 1, height - 1);
+        // The corner sits at r = 1, so it takes the whole of the coefficient.
+        let ratio = at(&lit, corner_x, corner_y) / at(samples, corner_x, corner_y).max(1.0);
+        assert!((ratio - 1.25).abs() < 0.02, "corner scaled by {ratio}, wanted 1.25");
+        assert_eq!(
+            at(&lit, width / 2, height / 2),
+            at(samples, width / 2, height / 2),
+            "the centre must not move",
+        );
+    }
+
+    /// Where the SDR fit found a falloff, the HDR match has to be carrying the same
+    /// one: it is reused as fitted rather than measured again, exactly as the geometry
+    /// is, because a linear-light gain means the same thing in either domain.
+    #[test]
+    fn the_hdr_match_carries_the_falloff_the_sdr_fit_resolved() {
+        let render = decode(&canon(), 8, false, 0);
+        let path = canon();
+        let profile = crate::fit_profile_for(&render, path.to_str().unwrap()).expect("an SDR fit");
+        let gain = profile.gain.as_ref().expect("this frame fits a falloff").coefficients();
+
+        let frame = decode(&path, 16, true, 3840);
+        let fitted = crate::fit_hdr_for(&frame, path.to_str().unwrap(), QUANTILE, Some(&profile))
+            .expect("the HDR fit finds a match");
+        assert_eq!(fitted.falloff, Some(gain));
+    }
+
     #[test]
     fn the_fit_reproduces_the_camera_rendering() {
         let frame = linear();

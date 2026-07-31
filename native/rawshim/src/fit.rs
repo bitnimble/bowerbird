@@ -289,6 +289,7 @@ fn solve3(matrix: [[f64; 3]; 3], rhs: [f64; 3]) -> Option<[f64; 3]> {
 /// a 60MP frame and evaluating it is a `powf` for the transfer function.
 pub struct Gain {
     lut: Vec<u8>,
+    coefficients: (f64, f64),
 }
 
 impl Gain {
@@ -301,13 +302,30 @@ impl Gain {
         let linear = linear_table();
         let mut lut = vec![0u8; 256 * 256];
         for radius in 0..256 {
-            let r2 = (radius as f64 / 255.0).powi(2);
-            let g = (1.0 + a * r2 + b * r2 * r2).clamp(Self::LIMIT.0, Self::LIMIT.1);
             for level in 0..256 {
-                lut[radius * 256 + level] = to_srgb8(linear[level] * g);
+                lut[radius * 256 + level] = to_srgb8(linear[level] * Gain::at(a, b, radius as u8));
             }
         }
-        Gain { lut }
+        Gain { lut, coefficients: (a, b) }
+    }
+
+    /// The multiplier itself, in linear light, at a quantised radius.
+    ///
+    /// Kept separate from the table so a caller working in linear light already can
+    /// evaluate it rather than round-trip through 8 bits (`hdr_fit`).
+    #[inline]
+    pub fn at(a: f64, b: f64, radius: u8) -> f64 {
+        let r2 = (f64::from(radius) / 255.0).powi(2);
+        (1.0 + a * r2 + b * r2 * r2).clamp(Self::LIMIT.0, Self::LIMIT.1)
+    }
+
+    /// The two coefficients, for the HDR fit to reuse.
+    ///
+    /// A falloff correction is a multiplication in linear light, so unlike the curves
+    /// - whose domain stops at display white - it means the same thing in any linear
+    /// domain and lifts to the grade exactly as the geometry does (10.8.1).
+    pub fn coefficients(&self) -> (f64, f64) {
+        self.coefficients
     }
 
     /// The level `level` becomes at this radius. Free where there is no gain, which
@@ -329,9 +347,9 @@ impl Gain {
         linear[Gain::of(Some(self), 255, 128) as usize] / linear[128]
     }
 
-    /// The radius byte `of` expects, for a pixel of a frame this size.
+    /// The radius byte `of` and `at` expect, for a pixel of a frame this size.
     #[inline]
-    fn radius(dx: f64, dy: f64, half: f64) -> u8 {
+    pub fn radius(dx: f64, dy: f64, half: f64) -> u8 {
         (((dx * dx + dy * dy).sqrt() / half) * 255.0).min(255.0) as u8
     }
 }
