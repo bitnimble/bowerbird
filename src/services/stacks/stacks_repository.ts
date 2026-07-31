@@ -1,5 +1,6 @@
 import type { Database } from 'bun:sqlite';
 import type { Stack, StackOrigin } from '../../schemas/stacks';
+import { refreshRepresentative } from './representative';
 
 // A photo detection may look at.
 //
@@ -140,25 +141,14 @@ export class StacksRepository {
   }
 
   /**
-   * Points the stack's representative flag at its newest member (§19.5.1).
-   *
-   * Cleared before it is set, and both inside whatever transaction the caller is
-   * running: the unique index allows only one flagged member per stack, so
-   * setting the new one first would collide with the old.
+   * Points the stack's representative flag at the member it should stand for.
    *
    * Only ever touches rows still in the stack. A photograph on its way out is
    * flagged by whoever releases it, because out of a stack it stands for itself
    * and the listing shows it on that flag alone (`representativeFilter`).
    */
   refreshRepresentative(stackId: string): void {
-    this.db.query('UPDATE photos SET is_representative = 0 WHERE stack_id = ?').run(stackId);
-    this.db
-      .query(
-        'UPDATE photos SET is_representative = 1 WHERE id = (' +
-          'SELECT id FROM photos WHERE stack_id = ? ' +
-          'ORDER BY COALESCE(date_taken, date_added) DESC, id DESC LIMIT 1)',
-      )
-      .run(stackId);
+    refreshRepresentative(this.db, stackId);
   }
 
   /**

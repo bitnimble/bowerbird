@@ -3,6 +3,7 @@ import { OrderingSchema, type Ordering } from '../../schemas/common';
 import type { PhotoDetail, PhotoSummary, Triage } from '../../schemas/photos';
 import type { ViewerRendition } from '../../schemas/settings';
 import type { RenditionSource } from '../processing/processing_types';
+import { refreshRepresentative } from '../stacks/representative';
 
 /** Runs of positions in a filtered listing, both ends inclusive (§18.3.3). */
 export type SelectionRanges = readonly { start: number; end: number }[];
@@ -503,7 +504,21 @@ export class PhotosRepository {
     }
     if (sets.length === 0) return this.db.query('SELECT 1 FROM photos WHERE id = ?').get(id) != null;
     params.push(id);
-    return this.db.query(`UPDATE photos SET ${sets.join(', ')} WHERE id = ?`).run(...params).changes > 0;
+    const changed = this.db.query(`UPDATE photos SET ${sets.join(', ')} WHERE id = ?`).run(...params).changes > 0;
+    // A verdict can make the member a stack's tile stands for the wrong one to
+    // stand for it. The listing would cope - its second arm promotes the newest
+    // visible member - but that arm is a correlated subquery per row and the flag
+    // exists to keep the common case an equality test, so the flag is moved
+    // rather than left for every later read to work around. Rejecting the
+    // representative is not an edge case: it is what a triage session does.
+    if (changed && fields.triage != null) this.refreshStackOf(id);
+    return changed;
+  }
+
+  // Only for a photo that is in a stack, and only on the stack it is in.
+  private refreshStackOf(photoId: string): void {
+    const row = this.db.query('SELECT stack_id FROM photos WHERE id = ?').get(photoId) as { stack_id: string | null } | null;
+    if (row?.stack_id != null) refreshRepresentative(this.db, row.stack_id);
   }
 
   // One row, three columns, no joins: what the byte-serving paths need, as

@@ -220,6 +220,55 @@ describe('stacks', () => {
     expect(listing.total).toBe(1);
   });
 
+  // The stored flag, not just what the listing manages to show: the second arm
+  // would cope either way, so this is what says the stack stopped paying for it.
+  test('rejecting the member a stack stands for moves the flag itself', () => {
+    const { db, stacks, photos } = context;
+    const ids = [1, 2, 3].map((n) => insertPhoto(db, n, { minute: n }));
+    stacks.create(ids);
+    const flagged = (): string | null =>
+      (db.query('SELECT id FROM photos WHERE stack_id IS NOT NULL AND is_representative = 1').get() as { id: string } | null)?.id ??
+      null;
+    expect(flagged()).toBe(ids[2]!);
+
+    photos.update(ids[2]!, { triage: 'rejected' });
+    expect(flagged()).toBe(ids[1]!);
+
+    // And back again when the verdict is taken back, which is what undo does.
+    photos.update(ids[2]!, { triage: 'untriaged' });
+    expect(flagged()).toBe(ids[2]!);
+  });
+
+  test('a stack whose members are all rejected still has exactly one flagged member', () => {
+    const { db, stacks, photos } = context;
+    const ids = [1, 2, 3].map((n) => insertPhoto(db, n, { minute: n }));
+    stacks.create(ids);
+
+    for (const id of ids) photos.update(id, { triage: 'rejected' });
+
+    // Deprioritised, never excluded: leaving a stack with no flagged member at
+    // all would put every listing on the slow arm for good.
+    const flagged = db.query('SELECT id FROM photos WHERE stack_id IS NOT NULL AND is_representative = 1').all() as { id: string }[];
+    expect(flagged).toHaveLength(1);
+    expect(flagged[0]!.id).toBe(ids[2]!);
+  });
+
+  test('an untriaged member does not outrank a newer picked one', () => {
+    const { db, stacks, photos } = context;
+    const ids = [1, 2, 3].map((n) => insertPhoto(db, n, { minute: n }));
+    stacks.create(ids);
+
+    // The newest is picked and the rest are untriaged, which is stored as NULL.
+    // `triage = 'rejected'` is then NULL rather than 0 for those rows, and SQLite
+    // sorts NULL first - so without the null-safe comparison the *oldest*
+    // untriaged frame outranks the keeper on nothing but its NULL.
+    photos.update(ids[2]!, { triage: 'picked' });
+
+    const flagged = (db.query('SELECT id FROM photos WHERE stack_id IS NOT NULL AND is_representative = 1').get() as { id: string })
+      .id;
+    expect(flagged).toBe(ids[2]!);
+  });
+
   test('a stack rejected down to one survivor is an ordinary tile', () => {
     const { db, stacks, photos } = context;
     const ids = [1, 2, 3].map((n) => insertPhoto(db, n, { minute: n }));
