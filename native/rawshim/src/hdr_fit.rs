@@ -332,15 +332,33 @@ fn extend_alone(curve: &mut [f64], last: usize) {
     make_monotone(curve);
 }
 
-/// Extends a curve past its data on another channel's shape, scaled to meet it where
-/// its own data stopped.
+/// Bins of overlap the gain between two channels is read over.
+///
+/// Not the join bin alone, which is the least trustworthy sample the channel has: the
+/// mask admits pairs up to sRGB 248, so a channel whose JPEG clipped early has the
+/// camera's 8-bit shoulder compressing its top bins, and a ratio read there is carried
+/// over the whole tail. Averaged over the last 16 bins the extension landed within
+/// 1.9-2.1% of the channel's own curve on a replay that truncated it at render 0.18,
+/// against 3.2-4.0% from the join bin alone.
+const JOIN_WINDOW: usize = 16;
+
+/// Extends a curve past its data on another channel's shape, at the gain the two ran
+/// at where both had pairs.
 fn extend_from(curve: &mut [f64], last: usize, reference: &[f64]) {
-    if !(reference[last] > 0.0) {
+    let window = last.saturating_sub(JOIN_WINDOW)..=last;
+    let ours: f64 = curve[window.clone()].iter().sum();
+    let theirs: f64 = reference[window].iter().sum();
+    if !(theirs > 0.0) {
         return extend_alone(curve, last);
     }
-    let scale = curve[last] / reference[last];
+
+    // The reference's steps rather than its levels, so the extension leaves the join
+    // where the channel's own data left it: anchoring on the gain instead lands the
+    // first extended bin off its neighbour, and `make_monotone` turns that into a flat
+    // band of crushed contrast right where the tail starts.
+    let gain = ours / theirs;
     for b in last + 1..BINS {
-        curve[b] = reference[b] * scale;
+        curve[b] = curve[last] + (reference[b] - reference[last]) * gain;
     }
     make_monotone(curve);
 }
@@ -355,10 +373,10 @@ fn extend_from(curve: &mut [f64], last: usize, reference: &[f64]) {
 /// diffuse white green was reading 2.19 against red's 1.15 - a cast that grows with
 /// brightness, on pixels well inside the trusted domain.
 ///
-/// The channels agree on shape wherever they overlap (within 1% at render 0.1 on that
-/// frame), which is what makes borrowing it sound: what a short channel is missing is
-/// reach, not a rendering of its own. Scaled rather than offset, so the join keeps the
-/// ratio the data ended on and the extension stays a gain rather than a tint.
+/// The channels agree on shape wherever they overlap - within about 5% across the
+/// domain on the fixture - which is what makes borrowing it sound: what a short channel
+/// is missing is reach, not a rendering of its own. Only above its own last bin, so a
+/// channel keeps every pair it measured.
 fn extend_curves(mut fitted: [(Vec<f64>, isize); 3]) -> [Vec<f64>; 3] {
     let furthest = (0..3).max_by_key(|c| fitted[*c].1).unwrap_or(0);
     let Ok(last) = usize::try_from(fitted[furthest].1) else {
@@ -878,6 +896,23 @@ mod tests {
 
         let (hot, plain) = (sample_curve(&curves[1], 0.7), sample_curve(&curves[0], 0.7));
         assert!((hot / plain - 1.2).abs() < 0.02, "gain lost: {hot} against {plain}");
+    }
+
+    #[test]
+    fn borrowing_replaces_only_the_bins_a_channel_never_measured() {
+        // The channels are near enough the same shape that a tail borrowed from the
+        // wrong place still looks right, so the assertions above pass just as well on
+        // an extension that overwrites the measured curve too. What it must not touch
+        // is the data - a channel's own pairs are the only thing here that is not an
+        // assumption.
+        let short = |x: f64| x.powf(0.45) * 0.9 * 1.3;
+        let (measured, last) = curve_of(0.18, short);
+        let curves =
+            extend_curves([curve_of(0.66, |x| x.powf(0.45) * 0.9), (measured.clone(), last), curve_of(0.66, short)]);
+
+        for b in 0..=last as usize {
+            assert_eq!(curves[1][b], measured[b], "bin {b} was measured, not guessed");
+        }
     }
 
     #[test]
