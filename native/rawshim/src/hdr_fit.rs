@@ -334,12 +334,11 @@ fn extend_alone(curve: &mut [f64], last: usize) {
 
 /// Bins of overlap the gain between two channels is read over.
 ///
-/// Not the join bin alone, which is the least trustworthy sample the channel has: the
-/// mask admits pairs up to sRGB 248, so a channel whose JPEG clipped early has the
-/// camera's 8-bit shoulder compressing its top bins, and a ratio read there is carried
-/// over the whole tail. Averaged over the last 16 bins the extension landed within
-/// 1.9-2.1% of the channel's own curve on a replay that truncated it at render 0.18,
-/// against 3.2-4.0% from the join bin alone.
+/// Not the join bin alone, which is the least trustworthy sample the channel has: it is
+/// the bin that only just cleared `MIN_BIN_SAMPLES`, so it is the thinnest average in
+/// the curve, and a ratio read there is carried over the whole tail. Averaged over the
+/// last 16 bins the extension landed within 1.9-2.1% of the channel's own curve on a
+/// replay that truncated it at render 0.18, against 3.2-4.0% from the join bin alone.
 const JOIN_WINDOW: usize = 16;
 
 /// Extends a curve past its data on another channel's shape, at the gain the two ran
@@ -367,11 +366,15 @@ fn extend_from(curve: &mut [f64], last: usize, reference: &[f64]) {
 /// furthest.
 ///
 /// Every channel extending on its own last slope is what turned this frame's sky green
-/// (DSC05469): the fit domain does not end where the camera's rendering does, it ends
-/// where the JPEG clips *that* channel, and on a warm sky that is render 0.18 for green
-/// and 0.66 for red. Three straight lines from three different places diverge, and by
-/// diffuse white green was reading 2.19 against red's 1.15 - a cast that grows with
-/// brightness, on pixels well inside the trusted domain.
+/// (DSC05469), and where each one stops is close to arbitrary. That frame is bimodal:
+/// 114K of its pairs sit below render 0.2, its sky sits above 0.9 and is blown in the
+/// JPEG so the mask drops it for all three channels alike, and the stretch between
+/// holds a few hundred pairs per tenth, most of them rejected for lying on a gradient.
+/// Whether a channel's last filled bin lands at 0.18 or 0.66 is then decided by which
+/// side of `MIN_BIN_SAMPLES` a hundred-odd surviving pixels fall - red kept 113 in the
+/// 0.6-0.7 band where green kept 13. Three straight lines from three arbitrary places
+/// diverge, and by diffuse white green was reading 2.19 against red's 1.15: a cast that
+/// grows with brightness, on pixels well inside the trusted domain.
 ///
 /// The channels agree on shape wherever they overlap - within about 5% across the
 /// domain on the fixture - which is what makes borrowing it sound: what a short channel
@@ -912,6 +915,89 @@ mod tests {
 
         for b in 0..=last as usize {
             assert_eq!(curves[1][b], measured[b], "bin {b} was measured, not guessed");
+        }
+    }
+
+    /// The camera's rendering of one scene-linear level, per channel. A power curve
+    /// with a per-channel gain: the shape the three share, and the difference between
+    /// them that a borrowed tail has to keep.
+    const CAMERA_GAIN: [f64; 3] = [1.0, 1.06, 0.94];
+    fn camera(channel: usize, level: f64) -> f64 {
+        CAMERA_GAIN[channel] * 1.172 * level.max(0.0).powf(0.533)
+    }
+
+    /// A patch chart and the camera's rendering of it, shaped like the frame that
+    /// turned green: the body of it sits in the domain all three channels share, and
+    /// what reaches past that is warm, so red carries pairs to render 0.45 where green
+    /// and blue stop around 0.20 and everything above is a guess.
+    ///
+    /// Flat patches rather than a gradient, because `mask` drops any pixel with a
+    /// gradient across it - a ramp is all edge and would leave nothing to fit from.
+    ///
+    /// The warm patches stop where they do because an 8-bit sRGB preview cannot hold a
+    /// brighter one: rendered, render 0.62 against green's 0.20 leaves the sRGB gamut,
+    /// clamps, and the fit then reads a red curve the camera never wrote.
+    fn warm_chart() -> (Plane, crate::vips::Rgb) {
+        const COLS: usize = 10;
+        const PATCHES: usize = 80;
+        const PATCH: usize = 32;
+        let (width, height) = (COLS * PATCH, (PATCHES / COLS) * PATCH);
+
+        let patch = |i: usize| -> [f64; 3] {
+            // Warm highlights: only red reaches past the domain the three share.
+            if i >= 60 {
+                let t = (i - 60) as f64 / 19.0;
+                return [0.24 + t * 0.21, 0.10 + t * 0.095, 0.06 + t * 0.075];
+            }
+            // Everything the three channels have in common, tinted four ways so the
+            // matrix has more than a grey axis to fit against.
+            let level = 0.004 + (i as f64 / 59.0) * 0.196;
+            let tint = [[1.0, 1.0, 1.0], [1.0, 0.85, 0.7], [0.8, 1.0, 0.9], [0.9, 0.85, 1.0]][i % 4];
+            [0, 1, 2].map(|c| level * tint[c])
+        };
+
+        let mut scene = vec![0.0f64; width * height * 3 * 4];
+        let mut rendered = vec![0u8; width * height * 3];
+        for y in 0..height {
+            for x in 0..width {
+                let colour = patch((y / PATCH) * COLS + (x / PATCH));
+                let camera = [0, 1, 2].map(|c| camera(c, colour[c]));
+                let srgb = to_srgb8(camera[0], camera[1], camera[2]);
+                for c in 0..3 {
+                    rendered[(y * width + x) * 3 + c] = srgb[c] as u8;
+                    // The plane the decode arrives on is twice the preview's width.
+                    for (dy, dx) in [(0, 0), (0, 1), (1, 0), (1, 1)] {
+                        scene[(((y * 2 + dy) * width * 2) + x * 2 + dx) * 3 + c] = colour[c];
+                    }
+                }
+            }
+        }
+
+        (
+            Plane { width: width * 2, height: height * 2, data: scene },
+            crate::vips::Rgb { width, height, data: rendered },
+        )
+    }
+
+    #[test]
+    fn a_channel_that_ran_out_of_pairs_lands_near_the_rendering_it_never_saw() {
+        // The green sky, on a frame small enough to build here. Above render 0.20 the
+        // green curve is guesswork whatever this does, so what is asserted is which
+        // guess: borrowing the shape red measured lands within 0.3 / 0.7 / 4.2% of the
+        // rendering the camera would have made at 0.4 / 0.6 / 0.85, where a straight
+        // line from green's own last bin is 8.4 / 19.2 / 32.0% hot. Growing with
+        // brightness and away from red, which is the part the eye reads as a cast.
+        let (plane, preview) = warm_chart();
+        let fitted = fit(&plane, 1.0, &preview, None, 1.0).expect("the chart is fittable");
+
+        for (level, tolerance) in [(0.4, 0.04), (0.6, 0.04), (0.85, 0.10)] {
+            for c in 0..3 {
+                let (fitted, truth) = (sample_curve(&fitted.colour.curves[c], level), camera(c, level));
+                assert!(
+                    (fitted / truth - 1.0).abs() < tolerance,
+                    "channel {c} at {level}: {fitted} against the camera's {truth}",
+                );
+            }
         }
     }
 
