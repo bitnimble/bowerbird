@@ -114,6 +114,11 @@ function contentClass(state: 'is-ready' | 'is-retiring' | 'is-layer' | null, ste
   return step == null ? base : `${base} is-stepping-${step}`;
 }
 
+function noop(): void {
+  /* a frame on its way off the stage reports to nobody */
+}
+
+
 // How much of the photo is off-screen on each axis at this scale, halved: past
 // that the image would separate from the viewport edge and drag out of view.
 function panLimit(viewport: number, content: number): number {
@@ -157,6 +162,8 @@ function zoomAbout(view: View, next: number, box: DOMRect | null, point: { x: nu
 // promotion keeps the element and what it decoded is what gets painted.
 function StageFrame({
   source,
+  photoKey,
+  hold,
   video,
   alt,
   className,
@@ -165,6 +172,9 @@ function StageFrame({
   onMissing,
 }: {
   source: string;
+  /** Reported against, so a frame carried into a new round reports again. */
+  photoKey: string;
+  hold: boolean;
   video: boolean;
   alt: string;
   className: string;
@@ -182,7 +192,7 @@ function StageFrame({
 
   useEffect(() => {
     const element = elementRef.current;
-    if (element == null) return;
+    if (element == null || hold) return;
     let live = true;
 
     const report = (): void => {
@@ -206,13 +216,18 @@ function StageFrame({
 
     void element.decode().then(report, () => {
       if (!live) return;
-      // Never for a blob: a decoded image in hand cannot be missing server-side.
-      if (!source.startsWith('blob:')) missing.current(source);
+      missing.current(source);
     });
     return () => {
       live = false;
     };
-  }, [source]);
+    // `photoKey` and `hold`, not just `source`: an element is kept while its URL
+    // holds, so a frame carried into the next round - which every decisive verdict
+    // does, the winner keeping its slot - would otherwise never report again, and
+    // the round would show one photo whichever slot was asked for. `decode()` on an
+    // image already decoded resolves on the next microtask, so re-running costs a
+    // promise and no network.
+  }, [source, photoKey, hold]);
 
   const capture = useCallback((element: HTMLImageElement | HTMLVideoElement | null): void => {
     elementRef.current = element;
@@ -298,9 +313,16 @@ export function PhotoStage({
   // keeps a step from blinking the stage background.
   const paintedSources = painted?.sources ?? [];
   const isThisPhoto = painted?.photoKey === photoKey;
-  // What is up: this photo's frames in slot order, or - for the beat after a step -
-  // the previous photo's, still standing in.
-  const up = isThisPhoto ? sources.filter((source) => paintedSources.includes(source)) : paintedSources;
+  // What is up: this photo's frames in slot order, then any it has painted that
+  // are no longer asked for, then - for the beat after a step - the previous
+  // photo's. The middle group is a rendition being swapped: the frame on screen
+  // stays on screen until its replacement decodes, which is the whole point of
+  // holding a decoded frame. Dropping it there blanked the stage for the length of
+  // the decode, and for the length of the *build* when the new rendition had to be
+  // made first.
+  const up = isThisPhoto
+    ? [...sources.filter((source) => paintedSources.includes(source)), ...paintedSources.filter((source) => !sources.includes(source))]
+    : paintedSources;
   // The chosen slot once it has decoded, else whatever else is up: a pair whose
   // second frame is still decoding shows the first rather than nothing.
   const chosen = isThisPhoto ? sources[showing] : undefined;
@@ -372,7 +394,12 @@ export function PhotoStage({
   const key = sources.join(' ');
   // Clearing this remounts the frames' elements, which is what makes them ask
   // again: a source that never moves is otherwise requested exactly once.
-  useEffect(() => setFailed(new Set()), [key, retryEpoch]);
+  useEffect(() => setFailed((previous) => (previous.size === 0 ? previous : new Set())), [key, retryEpoch]);
+
+  // Sizes belong to the photo that decoded them, and nothing reads them once it
+  // is gone. Left to accumulate, a viewer session that steps through a few hundred
+  // photographs keeps every one of their sizes for the life of the page.
+  useEffect(() => setNaturals((previous) => (previous.size === 0 ? previous : new Map())), [photoKey]);
 
   const onLoaded = useRef(onImageLoad);
   onLoaded.current = onImageLoad;
@@ -385,7 +412,7 @@ export function PhotoStage({
   // way out, and this photo still has to decode its own.
   const incoming = wanted.filter((source) => !(isThisPhoto && paintedSources.includes(source)));
 
-  // Read inside the promote below, which runs off a decode: the prop captured in
+  // Read inside the promote below, which runs off a decode: the values captured in
   // that closure would be whatever was asked for when the decode started.
   const sourcesRef = useRef(sources);
   sourcesRef.current = sources;
@@ -393,10 +420,25 @@ export function PhotoStage({
   // after it, cannot restart a decode that is in flight.
   const currentIndex = useRef(index);
   currentIndex.current = index;
+  const paintedRef = useRef(painted);
+  paintedRef.current = painted;
 
+  // One rule for every promotion: a frame keeps its place if it is still being
+  // asked for, and retires if it is not - whichever photo painted it. A photo step
+  // and a rendition swap retire everything, because none of those URLs is asked
+  // for any more; a decisive verdict holding its winner over keeps that frame,
+  // because it is the same URL and it already has a raster.
+  //
+  // Read through refs and applied outside the updater: `setPainted`'s updater must
+  // stay pure, and StrictMode double-invokes it.
   const promote = useCallback(
     (source: string, width: number, height: number) => {
-      if (hold === true) return;
+      // A frame on its way off the stage reports too - every mounted frame
+      // re-decodes when the photo changes, which is what carries a held-over
+      // winner into the next round. Promoting one nobody is asking for would
+      // re-paint the *previous* photo's frame under this photo's key, where the
+      // stale cap can no longer see it, and it would sit on the stage for good.
+      if (!sourcesRef.current.includes(source)) return;
       setNaturals((previous) => {
         const next = new Map(previous);
         next.set(source, { width, height });
@@ -411,43 +453,25 @@ export function PhotoStage({
       const step: Step =
         from == null || from.photoKey === photoKey || from.index < 0 || to < 0 ? null : from.index < to ? 'next' : 'prev';
       if (from == null || from.photoKey !== photoKey) stepped.current = { photoKey, index: to };
-      setPainted((previous) => {
-        // A decode that landed after the stage moved on: those frames belong to
-        // the photo before this one, so they retire rather than joining this one.
-        if (previous != null && previous.photoKey !== photoKey) {
-          setRetiring({ sources: previous.sources, step });
-          return { sources: [source], photoKey, step };
-        }
-        const asked = sourcesRef.current;
-        // A frame nobody is asking for any more - the rendition was swapped
-        // underneath it - retires rather than lingering as a hidden layer. Only a
-        // source still in `sources` is the other half of a pair.
-        const kept = (previous?.sources ?? []).filter((held) => asked.includes(held));
-        const dropped = (previous?.sources ?? []).filter((held) => !asked.includes(held));
-        // A rendition swap is not a step, so what it retires does not slide.
-        if (dropped.length > 0) setRetiring({ sources: dropped, step: null });
-        if (kept.includes(source)) return previous;
-        return { sources: [...kept, source], photoKey, step: previous?.step ?? step };
+
+      const asked = sourcesRef.current;
+      const previous = paintedRef.current;
+      const held = previous?.sources ?? [];
+      const kept = held.filter((frame) => asked.includes(frame));
+      const dropped = held.filter((frame) => !asked.includes(frame));
+      // Frames of the photo already on the stage only leave because a rendition
+      // was swapped underneath them, which is not a move between photographs.
+      const samePhoto = previous?.photoKey === photoKey;
+
+      if (dropped.length > 0) setRetiring({ sources: dropped, step: samePhoto ? null : step });
+      setPainted({
+        sources: kept.includes(source) ? kept : [...kept, source],
+        photoKey,
+        step: samePhoto ? (previous?.step ?? null) : step,
       });
     },
-    [hold, photoKey],
+    [photoKey],
   );
-
-  // `hold` releasing puts up whatever has already decoded. The elements are
-  // mounted and their decodes are done, so nothing has to be asked for again.
-  const wasHeld = useRef(false);
-  useEffect(() => {
-    if (hold === true) {
-      wasHeld.current = true;
-      return;
-    }
-    if (!wasHeld.current) return;
-    wasHeld.current = false;
-    const decodedNow = sources.filter((source) => naturals.has(source));
-    // No step: a frame released from a hold is the photo being opened, not a
-    // move between two of them.
-    if (decodedNow.length > 0) setPainted({ sources: decodedNow, photoKey, step: null });
-  }, [hold, photoKey, key, naturals]);
 
   const reportMissing = useCallback((source: string) => {
     setFailed((previous) => {
@@ -455,6 +479,10 @@ export function PhotoStage({
       next.add(source);
       return next;
     });
+    // A blob is a decoded image already in hand, so a failure is not the server
+    // missing a file and there is nothing to build. The frame is still marked
+    // failed, or the stage would keep waiting on it and never say so.
+    if (source.startsWith('blob:')) return;
     onMissing.current?.(source);
   }, []);
 
@@ -658,12 +686,17 @@ export function PhotoStage({
             <StageFrame
               key={source}
               source={source}
+              photoKey={photoKey}
+              hold={hold === true}
               video={video}
               alt={alt}
               className={classOf(source)}
               transform={transform}
               onDecoded={promote}
-              onMissing={reportMissing}
+              // Only a frame still being asked for. A retiring one is on its way
+              // off the stage, and building a rendition nobody is looking at
+              // because its element happened to error is work for no screen.
+              onMissing={sources.includes(source) ? reportMissing : noop}
             />
           ))
         )}

@@ -125,6 +125,27 @@ test('flip shows one frame at a time and keeps both decoded', async ({ page }) =
   await expect(page.locator('.stage__viewport img')).toHaveCount(2);
 });
 
+// A decisive verdict holds the winner over, so the next round mounts one source
+// the stage already had and one it did not. The frame that carried over must
+// still be reachable: it is half of every round after the first.
+test('flip still shows both frames in a round after the first', async ({ page }) => {
+  await page.goto('/settings');
+  await enterTriage(page);
+
+  await page.getByRole('button', { name: 'A better' }).click();
+  await expect(page.locator('.triage__verdicts')).toContainText('2 left');
+  await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
+
+  const shown = (): Promise<string> => page.locator('.stage__viewport img.is-ready').evaluate((img) => (img as HTMLImageElement).src);
+  const onA = await shown();
+
+  await page.getByRole('button', { name: 'B', exact: true }).click();
+  await expect.poll(shown, { timeout: 10_000 }).not.toBe(onA);
+
+  await page.getByRole('button', { name: 'A', exact: true }).click();
+  await expect.poll(shown, { timeout: 10_000 }).toBe(onA);
+});
+
 test('split draws both photos at once, at the same area', async ({ page }) => {
   await page.goto('/settings');
   await enterTriage(page);
