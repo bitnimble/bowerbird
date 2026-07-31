@@ -197,6 +197,45 @@ describe('stacks', () => {
     expect(listing.total).toBe(2);
   });
 
+  // What a triage session does to the gallery behind it (§20.2): it rejects
+  // members, and the newest of them is the one the stack's tile stands for. The
+  // flag is not moved - a rejected photo is still a member - so this is the
+  // listing's second arm doing the promoting, and it is the interaction the flag
+  // is a hint rather than a truth for.
+  test('rejecting the member a stack stands for promotes the next one', () => {
+    const { db, stacks, photos } = context;
+    const ids = [1, 2, 3].map((n) => insertPhoto(db, n, { minute: n }));
+    stacks.create(ids);
+    // The newest is the representative, and it is the one triage rejected.
+    const active = { includeDeleted: false, triage: ['untriaged' as const, 'picked' as const] };
+    db.query("UPDATE photos SET triage = 'rejected' WHERE id = ?").run(ids[2]!);
+
+    const listing = photos.listByLibrary(LIBRARY, 'taken_desc', 0, 100, active);
+
+    // Still one tile for the stack, standing for its newest surviving member,
+    // and saying it holds two rather than three.
+    expect(listing.photos).toHaveLength(1);
+    expect(listing.photos[0]!.id).toBe(ids[1]!);
+    expect(listing.photos[0]!.stack_size).toBe(2);
+    expect(listing.total).toBe(1);
+  });
+
+  test('a stack rejected down to one survivor is an ordinary tile', () => {
+    const { db, stacks, photos } = context;
+    const ids = [1, 2, 3].map((n) => insertPhoto(db, n, { minute: n }));
+    stacks.create(ids);
+    const active = { includeDeleted: false, triage: ['untriaged' as const, 'picked' as const] };
+    db.query("UPDATE photos SET triage = 'rejected' WHERE id IN (?, ?)").run(ids[1]!, ids[2]!);
+
+    const listing = photos.listByLibrary(LIBRARY, 'taken_desc', 0, 100, active);
+
+    // Which is the usual outcome of a decisive session: one keeper, and a badge
+    // saying "1" would be claiming a stack that is now a photograph.
+    expect(listing.photos).toHaveLength(1);
+    expect(listing.photos[0]!.id).toBe(ids[0]!);
+    expect(listing.photos[0]!.stack_size).toBe(1);
+  });
+
   test('stacking photos already in a stack moves them and cleans up behind them', () => {
     const { db, stacks, repo } = context;
     const first = [1, 2].map((n) => insertPhoto(db, n, { minute: n }));
