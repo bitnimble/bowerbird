@@ -121,6 +121,9 @@ export function renditionVersion(photo: PhotoStamps | null | undefined, renditio
   return stamp == null ? 0 : Date.parse(stamp);
 }
 
+/** How close to an end of the run the reader may get before it is re-centred. */
+const NEIGHBOUR_MARGIN = 10;
+
 // A gallery opens on the working set: everything not yet rejected. Rejecting is
 // a decision to stop seeing a frame, so it should leave the view at once. Lives
 // here so the presenter's opening state and the "Active" chip cannot disagree.
@@ -263,6 +266,15 @@ export class PhotosStore {
   // decode a fresh frame.
   @observable.ref accessor shownImage: ShownImage | null = null;
 
+  // The run of photographs around the open one, in the collection's order and
+  // **uncollapsed** (§19.5.3). Rows rather than ids: a warmed neighbour is asked
+  // for at the URL its own stamps version, so an id alone would paint one file
+  // and fetch another the moment the row arrived.
+  //
+  // Nothing in here is a position. The grid's numbering is over the collapsed
+  // listing and is untouched by any of it.
+  @observable.ref accessor neighbourhood: PhotoSummary[] = [];
+
   // Bumped whenever the event stream connects, which is the one signal a client
   // gets that the server is up. A frame that failed is never asked for again on
   // its own - the URL only moves when the file behind it is rebuilt - so a
@@ -310,7 +322,15 @@ export class PhotosStore {
   // against, all of which the row already carries - so none of them wait on the
   // fetch.
   photoFor(photoId: string): PhotoSummary | null {
-    return this.rowById(photoId) ?? this.memberById(photoId) ?? this.detailFor(photoId);
+    // The run last, after the detail: a patched detail is re-read on every write,
+    // where a run row is only replaced when the run is re-fetched, so putting it
+    // first would show a verdict reverting on the photograph it was just set on.
+    return this.rowById(photoId) ?? this.memberById(photoId) ?? this.detailFor(photoId) ?? this.neighbourById(photoId);
+  }
+
+  /** A photo held only as part of the viewer's run - a stack member, or one off-screen. */
+  neighbourById(photoId: string): PhotoSummary | null {
+    return this.neighbourhood.find((photo) => photo.id === photoId) ?? null;
   }
 
   /**
@@ -791,13 +811,38 @@ export class PhotosStore {
     return id == null ? -1 : this.indexOf(id);
   }
 
+  /** The open photo's place in the run, which is **not** a position in the collection. */
+  @computed private get neighbourIndex(): number {
+    const id = this.open?.id;
+    return id == null ? -1 : this.neighbourhood.findIndex((photo) => photo.id === id);
+  }
+
+  // Off the run rather than off `rows`, and with no fallback to it. `rows` is the
+  // collapsed listing, so a stack is one row there: stepping through it skipped
+  // every frame a stack did not stand for, and a member opened from a band had no
+  // row at all, which left both arrows dead (§19.5.3).
   @computed get prevPhotoId(): string | null {
-    const i = this.detailIndex;
-    return i > 0 ? (this.rows.get(i - 1)?.id ?? null) : null;
+    const i = this.neighbourIndex;
+    return i > 0 ? (this.neighbourhood[i - 1]?.id ?? null) : null;
   }
 
   @computed get nextPhotoId(): string | null {
-    const i = this.detailIndex;
-    return i >= 0 && i < this.total - 1 ? (this.rows.get(i + 1)?.id ?? null) : null;
+    const i = this.neighbourIndex;
+    return i < 0 ? null : (this.neighbourhood[i + 1]?.id ?? null);
+  }
+
+  /**
+   * Which photo the run has to be re-centred on, or null while the one in hand
+   * still answers.
+   *
+   * A margin short of either end rather than at it, so a held arrow key never
+   * catches up with the wire.
+   */
+  @computed get neighbourAnchor(): string | null {
+    const id = this.open?.id;
+    if (id == null || this.source == null) return null;
+    const i = this.neighbourIndex;
+    if (i < 0) return id;
+    return i < NEIGHBOUR_MARGIN || i >= this.neighbourhood.length - NEIGHBOUR_MARGIN ? id : null;
   }
 }

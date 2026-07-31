@@ -41,6 +41,11 @@ import { loadViewState, saveViewState } from './view_state';
 // that the whole cache is a few megabytes whatever the library's size.
 const MAX_BLOCKS = 24;
 
+// How many photographs the viewer holds either side of the open one. The query
+// costs the same for two as for fifty, so this is chosen to outrun a held arrow
+// key rather than to save a row.
+const NEIGHBOUR_WINDOW = 50;
+
 // The collection a selection's positions are into. The bin and the missing view
 // are the library plus a filter, so the server needs no scope of its own for
 // them (§18.3.3).
@@ -103,6 +108,8 @@ export class PhotosPresenter {
   // for per-photo parallelism to buy, and total ordering needs no stale-response
   // detection - the second request is not sent until the first has resolved.
   private writing: Promise<unknown> = Promise.resolve();
+  // One run fetch in flight at a time (`loadNeighbours`).
+  private loadingNeighbours = false;
   // Photos already asked for on-demand build. A stage that fails, is re-mounted
   // and fails again reports missing each time: without this every one of them
   // would queue the same job again.
@@ -134,6 +141,11 @@ export class PhotosPresenter {
     // anchor left where it was springs the reader back to a position they were
     // clamped out of a moment before.
     reaction(() => this.store.anchorLimit, this.settleAnchor);
+    // The run the viewer's arrows step through, re-centred when the reader gets
+    // near an end of it (§19.5.3). Its own reaction rather than part of opening a
+    // photo, because it is also what answers for a photo opened with no
+    // collection loaded at all.
+    reaction(() => this.store.neighbourAnchor, (photoId) => void this.loadNeighbours(photoId), { fireImmediately: true });
   }
 
   @action.bound
@@ -154,6 +166,37 @@ export class PhotosPresenter {
     }
     this.beginLoad(source);
     await this.ensureBlocks(this.store.neededBlocks);
+  }
+
+  /**
+   * Re-centres the viewer's run on a photograph.
+   *
+   * One at a time and never aborted: this is a background warm, so a request the
+   * reader has outrun costs a skipped fetch rather than a cancelled one, and the
+   * anchor is a different id by then, which re-arms the reaction. At a genuine
+   * end of the collection the anchor stops changing and it settles.
+   */
+  private async loadNeighbours(photoId: string | null): Promise<void> {
+    const source = this.store.source;
+    if (photoId == null || source == null || this.loadingNeighbours) return;
+    this.loadingNeighbours = true;
+    const generation = this.generation;
+    try {
+      const run = await api.photoNeighbours({
+        scope: scopeOf(source),
+        filters: this.selectionFilters(),
+        photo_id: photoId,
+        limit: NEIGHBOUR_WINDOW,
+      });
+      // The collection may have been replaced while this was out.
+      if (this.generation !== generation || this.store.source !== source) return;
+      runInAction(() => (this.store.neighbourhood = run));
+    } catch {
+      // Nothing to say: the arrows keep the run they have, and the next step
+      // asks again. A background warm must not raise a toast.
+    } finally {
+      this.loadingNeighbours = false;
+    }
   }
 
   async reload(): Promise<void> {
@@ -1202,7 +1245,11 @@ export class PhotosPresenter {
         // The band member as well as the row: a stack's members have no row of
         // their own in a collapsed listing, so a verdict set on one would answer
         // from the server and never show.
-        for (const held of [this.store.rowById(photoId), this.store.memberById(photoId)]) {
+        // The viewer's run as well: a photo the reader stepped to may be held
+        // only there - a stack member has no row of its own in a collapsed
+        // listing - and a verdict set on one would answer from the server and
+        // then silently revert.
+        for (const held of [this.store.rowById(photoId), this.store.memberById(photoId), this.store.neighbourById(photoId)]) {
           if (held == null) continue;
           held.rating = updated.rating;
           held.triage = updated.triage;
@@ -1479,6 +1526,10 @@ export class PhotosPresenter {
     this.invalidate();
     this.clearSelectedPositions(); // positions into a collection that no longer exists
     this.recent = [];
+    // The viewer's run described the collection that has just been replaced. An
+    // empty one makes `neighbourAnchor` ask again, which is the whole of the
+    // invalidation this needs.
+    this.store.neighbourhood = [];
     this.store.rows.clear();
     this.store.blockHeights.clear();
     this.store.total = 0;

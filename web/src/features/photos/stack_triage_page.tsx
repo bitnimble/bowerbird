@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { renditionUrl, type PhotoSummary } from '../../api/client';
-import { usePresenters, useStackTriageStore } from '../../app/stores_context';
+import { usePhotosStore, usePresenters, useStackTriageStore } from '../../app/stores_context';
 import { Button, ICON, PopoverButton, SegmentedControl, Text } from '../../ui/ui';
 import { PhotoStage } from './photo_stage';
 import { renditionVersion } from './photos_store';
@@ -487,6 +487,8 @@ const TriageKeys = observer(function TriageKeys({
 export const StackTriagePage = observer(function StackTriagePage(): JSX.Element {
   const { stackId = '' } = useParams();
   const store = useStackTriageStore();
+  // Only for its ordering, which decides which end of the stack is "after" it.
+  const photos = usePhotosStore();
   const { stackTriage } = usePresenters();
   const navigate = useNavigate();
   const [peeking, setPeeking] = useState(false);
@@ -523,7 +525,7 @@ export const StackTriagePage = observer(function StackTriagePage(): JSX.Element 
   // the session is running - leaving it half-done should put you back exactly
   // where you were.
   const leave = useCallback(() => {
-    const back = store.status === 'ended' ? (store.keeper?.id ?? null) : store.entryPhotoId;
+    const back = store.status === 'ended' ? (store.keeperFor(photos.ordering)?.id ?? null) : store.entryPhotoId;
     if (back != null) {
       navigate(`/photos/${back}`);
       return;

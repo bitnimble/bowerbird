@@ -8,6 +8,8 @@ import type {
   PhotoDetail,
   PhotoListQuery,
   PhotoListResponse,
+  PhotoSummary,
+  PhotoNeighboursRequest,
   PhotoPositionsRequest,
   PhotoSelection,
   PhotoTarget,
@@ -293,6 +295,29 @@ export class PhotosService {
       }
     })();
     return Object.fromEntries(found);
+  }
+
+  /** The run of photographs around one, uncollapsed, for stepping the viewer (§19.5.3). */
+  neighboursOf(request: PhotoNeighboursRequest): PhotoSummary[] {
+    const { scope, filters, photo_id: photoId, limit } = request;
+    const listFilters = fromSelectionFilters(filters);
+    switch (scope.kind) {
+      case 'library': {
+        const library = this.libraries.getById(scope.id);
+        if (!library) throw new AppError('NOT_FOUND', `library not found: ${scope.id}`);
+        return this.photos.neighboursInLibrary(scope.id, library.ordering, photoId, limit, listFilters);
+      }
+      case 'shoot': {
+        const shoot = this.shoots.getById(scope.id);
+        if (!shoot) throw new AppError('NOT_FOUND', `shoot not found: ${scope.id}`);
+        return this.photos.neighboursInShoot(scope.id, shoot.ordering, photoId, limit, listFilters);
+      }
+      case 'album': {
+        const album = this.albums.getById(scope.id);
+        if (!album) throw new AppError('NOT_FOUND', `album not found: ${scope.id}`);
+        return this.photos.neighboursInAlbum(scope.id, album.ordering, photoId, limit, listFilters);
+      }
+    }
   }
 
   // Re-reads the RAW header and updates the stored metadata. Sync only re-opens

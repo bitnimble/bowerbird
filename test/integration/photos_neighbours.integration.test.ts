@@ -1,0 +1,198 @@
+import { expect, test, describe, beforeEach } from 'bun:test';
+import { Database } from 'bun:sqlite';
+import { runMigrations } from '../../src/db/migrations';
+import { PhotosRepository } from '../../src/services/photos/photos_repository';
+import { StacksRepository } from '../../src/services/stacks/stacks_repository';
+import { StacksService } from '../../src/services/stacks/stacks_service';
+import { LibrariesRepository } from '../../src/services/libraries/libraries_repository';
+import type { Ordering } from '../../src/schemas/common';
+
+// Stepping through the viewer walks the collection *uncollapsed* (§19.5.3): the
+// grid shows a stack as one tile, and the arrows visit every frame of it. These
+// pin both halves of that - the walk sees every photograph, and the listing it is
+// taken from still sees one row per stack.
+
+const LIBRARY = '00000000-0000-4000-8000-000000000001';
+const OTHER = '00000000-0000-4000-8000-000000000002';
+const SHOOT = '00000000-0000-4000-8000-000000000010';
+const NO_FILTERS = { includeDeleted: false } as const;
+const ORDERINGS: Ordering[] = ['taken_asc', 'taken_desc', 'added_asc', 'added_desc'];
+
+function photoId(n: number): string {
+  return `00000000-0000-4000-8000-1000000000${String(n).padStart(2, '0')}`;
+}
+
+function setUp(): { db: Database; photos: PhotosRepository; stacks: StacksService } {
+  const db = new Database(':memory:');
+  db.exec('PRAGMA foreign_keys = ON');
+  runMigrations(db);
+  for (const id of [LIBRARY, OTHER]) {
+    db.query('INSERT INTO libraries (id, root_path, ordering) VALUES (?, ?, ?)').run(id, `/tmp/${id}`, 'taken_asc');
+  }
+  db.query('INSERT INTO shoots (id, library_id, folder_path, name) VALUES (?, ?, ?, ?)').run(SHOOT, LIBRARY, 'Day1', 'Day1');
+  const photos = new PhotosRepository(db);
+  const stacks = new StacksService(new StacksRepository(db), photos, new LibrariesRepository(db));
+  return { db, photos, stacks };
+}
+
+function insert(
+  db: Database,
+  n: number,
+  options: { minute?: number | null; libraryId?: string; shootId?: string | null; triage?: string } = {},
+): string {
+  const id = photoId(n);
+  const added = new Date(Date.UTC(2026, 0, 1, 0, n)).toISOString();
+  const taken = options.minute === null ? null : new Date(Date.UTC(2026, 0, 1, 0, options.minute ?? n)).toISOString();
+  db.query(
+    `INSERT INTO photos (id, library_id, shoot_id, file_path, width, height, date_taken, date_added, triage)
+     VALUES (?, ?, ?, ?, 3000, 2000, ?, ?, ?)`,
+  ).run(id, options.libraryId ?? LIBRARY, options.shootId ?? null, `IMG_${n}.ARW`, taken, added, options.triage ?? null);
+  return id;
+}
+
+/** The whole collection as the viewer would step it, by walking one photo at a time. */
+function walk(photos: PhotosRepository, ordering: Ordering, from: string): string[] {
+  const seen = [from];
+  for (let guard = 0; guard < 500; guard++) {
+    const current = seen[seen.length - 1]!;
+    const run = photos.neighboursInLibrary(LIBRARY, ordering, current, 50, NO_FILTERS);
+    const at = run.findIndex((photo) => photo.id === current);
+    const next = at < 0 ? undefined : run[at + 1];
+    if (next == null) return seen;
+    seen.push(next.id);
+  }
+  throw new Error('walk did not terminate');
+}
+
+describe('stepping through a collection', () => {
+  let context: ReturnType<typeof setUp>;
+  beforeEach(() => {
+    context = setUp();
+  });
+
+  // The one that would have caught the original bug: the arrows skipped every
+  // member a stack did not stand for.
+  test('visits every member of a stack, where the listing shows one row for it', () => {
+    const { db, photos, stacks } = context;
+    const loose = [1, 5].map((n) => insert(db, n));
+    stacks.create([2, 3, 4].map((n) => insert(db, n)));
+    stacks.create([6, 7, 8].map((n) => insert(db, n)));
+
+    const stepped = walk(photos, 'taken_asc', loose[0]!);
+
+    // Eight photographs stepped through, in capture order.
+    expect(stepped).toEqual([1, 2, 3, 4, 5, 6, 7, 8].map(photoId));
+    // And the grid still shows three tiles: a loose photo, a stack, a loose
+    // photo, a stack. Collapsed one way, whole the other, from one fixture.
+    const listing = photos.listByLibrary(LIBRARY, 'taken_asc', 0, 100, NO_FILTERS);
+    expect(listing.photos).toHaveLength(4);
+    expect(listing.total).toBe(4);
+  });
+
+  test('a member the stack does not stand for has neighbours either side of it', () => {
+    const { db, photos, stacks } = context;
+    insert(db, 1);
+    const members = [2, 3, 4].map((n) => insert(db, n));
+    stacks.create(members);
+    insert(db, 5);
+
+    // The middle member, which no listing has a row for.
+    const run = photos.neighboursInLibrary(LIBRARY, 'taken_asc', members[1]!, 50, NO_FILTERS);
+    const at = run.findIndex((photo) => photo.id === members[1]!);
+
+    expect(at).toBeGreaterThan(0);
+    expect(run[at - 1]?.id).toBe(members[0]!);
+    expect(run[at + 1]?.id).toBe(members[2]!);
+  });
+
+  test('the walk is the listing, in every ordering', () => {
+    const { db, photos, stacks } = context;
+    for (const n of [1, 2, 3, 4, 5, 6, 7, 8, 9]) insert(db, n);
+    stacks.create([photoId(3), photoId(4)]);
+
+    for (const ordering of ORDERINGS) {
+      // The uncollapsed listing, which is what the viewer's sequence has to be.
+      const expected = (
+        db
+          .query(
+            `SELECT id FROM photos WHERE library_id = ? AND is_deleted = 0
+             ORDER BY ${ordering.startsWith('taken') ? 'date_taken IS NULL, date_taken' : 'date_added'} ${
+               ordering.endsWith('asc') ? 'ASC' : 'DESC'
+             }, id ${ordering.endsWith('asc') ? 'ASC' : 'DESC'}`,
+          )
+          .all(LIBRARY) as { id: string }[]
+      ).map((row) => row.id);
+
+      expect(walk(photos, ordering, expected[0]!), ordering).toEqual(expected);
+      // And backwards from the far end, which exercises the other seek direction.
+      const run = photos.neighboursInLibrary(LIBRARY, ordering, expected[expected.length - 1]!, 50, NO_FILTERS);
+      expect(run.map((photo) => photo.id), ordering).toEqual(expected);
+    }
+  });
+
+  // Undated photographs sort last under `taken_*`, so the listing is two groups
+  // and the run has to cross between them.
+  test('crosses between dated and undated photographs', () => {
+    const { db, photos } = context;
+    const dated = [1, 2].map((n) => insert(db, n));
+    const undated = [3, 4].map((n) => insert(db, n, { minute: null }));
+
+    expect(walk(photos, 'taken_asc', dated[0]!)).toEqual([...dated, ...undated]);
+
+    // Each end of the boundary sees the other side.
+    const lastDated = photos.neighboursInLibrary(LIBRARY, 'taken_asc', dated[1]!, 50, NO_FILTERS);
+    expect(lastDated[lastDated.findIndex((p) => p.id === dated[1]!) + 1]?.id).toBe(undated[0]!);
+    const firstUndated = photos.neighboursInLibrary(LIBRARY, 'taken_asc', undated[0]!, 50, NO_FILTERS);
+    expect(firstUndated[firstUndated.findIndex((p) => p.id === undated[0]!) - 1]?.id).toBe(dated[1]!);
+  });
+
+  // The commonest case in a cull: the verdict just set on this photo took it out
+  // of the view, and the arrows still have to work.
+  test('a photo the filter excludes still has neighbours, and they are adjacent to each other', () => {
+    const { db, photos } = context;
+    const ids = [1, 2, 3].map((n) => insert(db, n));
+    db.query("UPDATE photos SET triage = 'rejected' WHERE id = ?").run(ids[1]!);
+    const active = { includeDeleted: false, triage: ['untriaged' as const, 'picked' as const] };
+
+    const run = photos.neighboursInLibrary(LIBRARY, 'taken_asc', ids[1]!, 50, active);
+    const at = run.findIndex((photo) => photo.id === ids[1]!);
+    expect(run[at - 1]?.id).toBe(ids[0]!);
+    expect(run[at + 1]?.id).toBe(ids[2]!);
+    // The rejected photo is not in the listing itself, so stepping on from it
+    // lands where the two survivors meet.
+    expect(photos.listByLibrary(LIBRARY, 'taken_asc', 0, 100, active).photos.map((p) => p.id)).toEqual([ids[0]!, ids[2]!]);
+  });
+
+  test('a photo outside the collection is a dead end rather than a walk through it', () => {
+    const { db, photos } = context;
+    insert(db, 1);
+    const elsewhere = insert(db, 2, { libraryId: OTHER });
+    const outsideShoot = insert(db, 3);
+    insert(db, 4, { shootId: SHOOT });
+
+    expect(photos.neighboursInLibrary(LIBRARY, 'taken_asc', elsewhere, 50, NO_FILTERS)).toEqual([]);
+    expect(photos.neighboursInShoot(SHOOT, 'taken_asc', outsideShoot, 50, NO_FILTERS)).toEqual([]);
+  });
+
+  test('a shoot walks its own photographs and no others', () => {
+    const { db, photos } = context;
+    insert(db, 1);
+    const inShoot = [2, 3].map((n) => insert(db, n, { shootId: SHOOT }));
+    insert(db, 4);
+
+    const run = photos.neighboursInShoot(SHOOT, 'taken_asc', inShoot[0]!, 50, NO_FILTERS);
+    expect(run.map((photo) => photo.id)).toEqual(inShoot);
+  });
+
+  test('the window is bounded, and centred on the photo asked about', () => {
+    const { db, photos } = context;
+    const ids = Array.from({ length: 40 }, (_, i) => insert(db, i + 1));
+
+    const run = photos.neighboursInLibrary(LIBRARY, 'taken_asc', ids[20]!, 5, NO_FILTERS);
+    // Five either side, plus the anchor.
+    expect(run).toHaveLength(11);
+    expect(run[5]?.id).toBe(ids[20]!);
+    expect(run[0]?.id).toBe(ids[15]!);
+    expect(run[10]?.id).toBe(ids[25]!);
+  });
+});

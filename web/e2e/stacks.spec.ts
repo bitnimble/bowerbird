@@ -1,6 +1,16 @@
-import { expect, test } from '@playwright/test';
-import { STACK_PHOTO_NAMES, STACK_PHOTOS_DIR } from './fixture_library';
+import { expect, test, type Page } from '@playwright/test';
+import { API_URL, STACK_PHOTO_NAMES, STACK_PHOTOS_DIR } from './fixture_library';
 import { addLibrary, bulkAction, openLibrary, syncLibrary, waitForSyncSettled } from './helpers';
+
+/** The one stack in this spec's library, found through the collapsed listing. */
+async function stackIdOfLibrary(page: Page): Promise<string> {
+  const libraries = (await (await page.request.get(`${API_URL}/api/libraries`)).json()) as { id: string; root_path: string }[];
+  const library = libraries.find((entry) => entry.root_path === STACK_PHOTOS_DIR);
+  const rows = (await (await page.request.get(`${API_URL}/api/libraries/${library?.id}/photos?limit=50`)).json()) as {
+    photos: { stack_id: string | null }[];
+  };
+  return rows.photos.find((photo) => photo.stack_id != null)?.stack_id ?? '';
+}
 
 // Stacks, driven through the real grid (DESIGN §19).
 //
@@ -161,6 +171,47 @@ test('a selection spans the grid and the contents of a stack', async ({ page }) 
   await expect(page.locator('.tile--selected')).toHaveCount(1);
   await bulkAction(page, 'Rebuild thumbnails');
   await expect(page.getByText('Rebuilt 1 thumbnail')).toBeVisible({ timeout: 30_000 });
+});
+
+// The grid shows a stack as one tile; the viewer steps through every frame of it
+// (§19.5.3). Previous/Next used to walk the *collapsed* listing, so the arrows
+// skipped every member the stack did not stand for - and a member opened from a
+// band had no row at all, which left both arrows dead with no way on.
+test('the viewer steps through every member of a stack, not just its tile', async ({ page }) => {
+  await page.goto('/settings');
+  await openLibrary(page, STACK_PHOTOS_DIR);
+  await expect(page.locator('.tile__stack')).toBeVisible({ timeout: 45_000 });
+  await page.locator('.tile:not(.tile--member) .tile__hit').click();
+  await expect(page.locator('.grid__band .tile')).toHaveCount(STACK_PHOTO_NAMES.length);
+
+  // In through the middle member, which no listing has a row for: the case that
+  // used to strand the reader with both arrows disabled.
+  await page.locator('.grid__band .tile__hit').nth(1).dblclick();
+  await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
+  const middle = page.url().split('/').pop() ?? '';
+
+  const next = page.getByRole('button', { name: 'Next photo' });
+  const previous = page.getByRole('button', { name: 'Previous photo' });
+  await expect(previous).toBeEnabled({ timeout: 30_000 });
+  await expect(next).toBeEnabled();
+
+  // Step to either side and back: both are the stack's own members, so the walk
+  // is through the stack rather than over it.
+  await next.click();
+  await expect(page).not.toHaveURL(new RegExp(middle));
+  const after = page.url().split('/').pop() ?? '';
+  await previous.click();
+  await expect(page).toHaveURL(new RegExp(middle));
+  await previous.click();
+  const before = page.url().split('/').pop() ?? '';
+
+  const members = (await (await page.request.get(`${API_URL}/api/stacks/${await stackIdOfLibrary(page)}/photos`)).json()) as {
+    id: string;
+  }[];
+  const ids = members.map((member) => member.id);
+  expect(ids).toContain(after);
+  expect(ids).toContain(before);
+  expect(new Set([before, middle, after]).size).toBe(3);
 });
 
 test('a member picked out of the band can be removed from the stack', async ({ page }) => {

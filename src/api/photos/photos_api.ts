@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import {
   DeletePhotosRequestSchema,
   PhotoListQuerySchema,
+  PhotoNeighboursRequestSchema,
   PhotoPositionsRequestSchema,
   PhotoTargetSchema,
   UpdatePhotoRequestSchema,
@@ -43,6 +44,14 @@ export class PhotosApi {
     // and up to a thousand keys do not belong in a query string.
     app.post('/photos/positions', async (c) =>
       c.json(this.service.positionsOf(PhotoPositionsRequestSchema.parse(await c.req.json()))),
+    );
+
+    // What the arrows step to, which is the collection uncollapsed: the grid
+    // shows a stack as one tile, and the viewer walks every frame of it
+    // (§19.5.3). A POST for the same reason as above, and a literal path so it
+    // cannot be taken for `/photos/:id`.
+    app.post('/photos/neighbours', async (c) =>
+      c.json(this.service.neighboursOf(PhotoNeighboursRequestSchema.parse(await c.req.json()))),
     );
 
     // Answers with a count, not with the ids. The undo restores by the batch id

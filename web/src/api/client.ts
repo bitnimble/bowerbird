@@ -11,6 +11,7 @@ import type {
 import type {
   PhotoDetail,
   PhotoListResponse,
+  PhotoNeighboursRequest,
   PhotoPositionsRequest,
   PhotoSelection,
   PhotoTarget,
@@ -235,6 +236,13 @@ export const api = {
   // (§19.6.1). Keyed by stack id for a stack and photo id for a photo.
   photoPositions: (body: PhotoPositionsRequest, signal?: AbortSignal): Promise<Record<string, number>> =>
     request('POST', '/api/photos/positions', body, signal),
+  // What the viewer's arrows step through: the collection uncollapsed, so a stack
+  // is one tile in the grid and every frame of it in the viewer (§19.5.3). Rows
+  // rather than ids, because a warmed neighbour is fetched at the URL its own
+  // stamps version - given only an id the stage paints one file and downloads
+  // another when the row lands.
+  photoNeighbours: (body: PhotoNeighboursRequest, signal?: AbortSignal): Promise<PhotoSummary[]> =>
+    request('POST', '/api/photos/neighbours', body, signal),
 };
 
 // `version` is appended only once renditions have been rebuilt in this session:

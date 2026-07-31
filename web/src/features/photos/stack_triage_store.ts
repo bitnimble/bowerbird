@@ -1,5 +1,5 @@
 import { computed, observable } from 'mobx';
-import type { PhotoSummary, Triage, ViewerRendition } from '../../api/client';
+import type { Ordering, PhotoSummary, Triage, ViewerRendition } from '../../api/client';
 import { viewerUrl } from '../../api/client';
 import type { AppSettingsStore } from '../settings/app_settings_store';
 import type { LibrariesStore } from '../libraries/libraries_store';
@@ -225,31 +225,35 @@ export class StackTriageStore {
   }
 
   /**
-   * The photograph to come back to when the session is over.
+   * The photograph to come back to when the session is over: the survivor that
+   * sorts **last** in the collection's own order.
    *
-   * The surviving member the *gallery* will show for this stack, which is the
-   * newest of them - the same rule `refreshRepresentative` writes the flag by, so
-   * the two agree without asking the server.
-   *
-   * It has to be that one and not merely any survivor: the listing is collapsed,
-   * so the stack is a single row and no other member has a position in the
-   * collection at all. Landing on one of those leaves the viewer unable to say
-   * what comes before or after it, which is where a rejected entry photo used to
-   * strand the photographer. Everything else in the stack sits behind this row, so
-   * stepping on from here is stepping past the whole stack.
+   * Last, so that stepping on from it steps past the whole stack rather than back
+   * through the members that also survived - which is what the viewer walking
+   * every member (§19.5.3) makes possible and makes necessary. Which end that is
+   * depends on the ordering, so it is passed in rather than assumed.
    *
    * Null when nothing survived, which `Neither` on everything can do.
    */
-  @computed get keeper(): PhotoSummary | null {
-    // Undated sorts oldest, as it does in the listing's own ordering.
-    const taken = (photo: PhotoSummary): string => photo.ordering_date ?? '';
-    let newest: PhotoSummary | null = null;
+  keeperFor(ordering: Ordering | null): PhotoSummary | null {
+    // Undated sorts last in the listing's own ordering, so it sorts last here.
+    const key = (photo: PhotoSummary): string => photo.ordering_date ?? '￿';
+    // Which end of the collection's order is "after the stack". The viewer walks
+    // members now (§19.5.3), so landing on the wrong end would step back through
+    // the other keepers before leaving the stack.
+    const descending = ordering === 'taken_desc' || ordering === 'added_desc';
+    let last: PhotoSummary | null = null;
     for (const id of this.session?.alive ?? []) {
       const photo = this.members.get(id);
       if (photo == null) continue;
-      if (newest == null || taken(photo) > taken(newest) || (taken(photo) === taken(newest) && photo.id > newest.id)) newest = photo;
+      if (last == null) {
+        last = photo;
+        continue;
+      }
+      const after = key(photo) === key(last) ? photo.id > last.id : key(photo) > key(last);
+      if (after !== descending) last = photo;
     }
-    return newest;
+    return last;
   }
 
   /** Survivors that were never compared with anything, so nothing is claimed of them. */

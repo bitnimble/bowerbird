@@ -1133,6 +1133,156 @@ export class PhotosRepository {
     );
   }
 
+  // --- stepping through the viewer (§19.5.3) ---
+
+  neighboursInLibrary(
+    libraryId: string,
+    ordering: Ordering,
+    photoId: string,
+    limit: number,
+    filters: PhotoListFilters,
+  ): PhotoSummary[] {
+    return this.neighboursAt('FROM photos WHERE library_id = ?', [libraryId], ordering, photoId, limit, filters);
+  }
+
+  neighboursInShoot(shootId: string, ordering: Ordering, photoId: string, limit: number, filters: PhotoListFilters): PhotoSummary[] {
+    return this.neighboursAt('FROM photos WHERE shoot_id = ?', [shootId], ordering, photoId, limit, filters);
+  }
+
+  neighboursInAlbum(albumId: string, ordering: Ordering, photoId: string, limit: number, filters: PhotoListFilters): PhotoSummary[] {
+    return this.neighboursAt(
+      'FROM photos JOIN album_photos ap ON ap.photo_id = photos.id WHERE ap.album_id = ?',
+      [albumId],
+      ordering,
+      photoId,
+      limit,
+      filters,
+    );
+  }
+
+  /**
+   * The run of photographs around one, in this collection's order and
+   * **uncollapsed**.
+   *
+   * The listing collapses a stack to one row so it is one tile (§19.5.1).
+   * Stepping through the viewer is the one place that has to see every frame, so
+   * this is the same scope, the same filters and the same sort with
+   * `representativeFilter` left off - which is the whole of the difference, and
+   * why it costs less than the listing it is taken from.
+   *
+   * Note the absence of a `MemberScope`: that absence *is* the feature.
+   *
+   * A seek off the anchor's own sort key, never an offset. A position in an
+   * uncollapsed listing is not something the client holds, and computing one is
+   * the `ROW_NUMBER` pass §19.5.1 measures in the hundreds of milliseconds -
+   * per arrow press. Nothing here is a position, so the grid's numbering is
+   * untouched.
+   */
+  private neighboursAt(
+    fromWhere: string,
+    baseParams: string[],
+    ordering: Ordering,
+    photoId: string,
+    limit: number,
+    filters: PhotoListFilters,
+  ): PhotoSummary[] {
+    // Read through the scope but *not* the filters, deliberately. A photograph
+    // the view excludes - the reject a verdict was just set on - still has
+    // neighbours, because the seek compares its sort key rather than asking
+    // whether it is in the listing. Outside the collection entirely it answers
+    // with nothing, so a photo deep-linked from another library is a dead end
+    // rather than a walk through this one.
+    const anchor = this.db.query(`SELECT ${SUMMARY_COLS} ${fromWhere} AND photos.id = ?`).get(...baseParams, photoId) as
+      | SummaryRow
+      | null;
+    if (anchor == null) return [];
+
+    const { where, params } = this.scoped(fromWhere, baseParams, filters);
+    return [
+      ...this.seek(where, params, ordering, anchor, 'back', limit).reverse(),
+      anchor,
+      ...this.seek(where, params, ordering, anchor, 'forward', limit),
+    ].map((row) => toSummary(row, ordering));
+  }
+
+  // `taken_*` sorts undated photographs last, so the listing is two groups and a
+  // seek has to know which one it is in. `added_*` has one group, because
+  // `date_added` is never null.
+  private seek(
+    where: string,
+    params: (string | number)[],
+    ordering: Ordering,
+    anchor: SummaryRow,
+    direction: 'forward' | 'back',
+    limit: number,
+  ): SummaryRow[] {
+    const byTaken = ordering === 'taken_asc' || ordering === 'taken_desc';
+    if (!byTaken) return this.seekArm(where, params, ordering, anchor, direction, limit, 'dated');
+
+    const undated = anchor.date_taken == null;
+    const rows = this.seekArm(where, params, ordering, anchor, direction, limit, undated ? 'undated' : 'dated');
+    if (rows.length >= limit) return rows;
+
+    // The run reached the end of its own group with room to spare, so it carries
+    // on into the other one - forward out of the dated group into the undated
+    // tail, back out of the undated tail into the dated rows. Unseeded, because
+    // it enters that group at its first row rather than beside anything.
+    const crossesForward = direction === 'forward' && !undated;
+    const crossesBack = direction === 'back' && undated;
+    if (!crossesForward && !crossesBack) return rows;
+    return [...rows, ...this.seekArm(where, params, ordering, anchor, direction, limit - rows.length, undated ? 'dated' : 'undated', true)];
+  }
+
+  private seekArm(
+    where: string,
+    params: (string | number)[],
+    ordering: Ordering,
+    anchor: SummaryRow,
+    direction: 'forward' | 'back',
+    limit: number,
+    group: 'dated' | 'undated',
+    unseeded = false,
+  ): SummaryRow[] {
+    const forward = direction === 'forward';
+    const ascending = (ordering === 'taken_asc' || ordering === 'added_asc') === forward;
+    const dir = ascending ? 'ASC' : 'DESC';
+    const cmp = ascending ? '>' : '<';
+    const byTaken = ordering === 'taken_asc' || ordering === 'taken_desc';
+    const column = byTaken ? 'photos.date_taken' : 'photos.date_added';
+
+    const clauses: string[] = [];
+    const args: (string | number)[] = [...params];
+    if (byTaken) {
+      // Repeated as an `IS NULL` on the column rather than only as the sort flag:
+      // SQLite reads that as an equality on an indexed column, which is what keeps
+      // the comparison below a range seek instead of a scan of the whole group.
+      clauses.push(group === 'undated' ? `${column} IS NULL` : `${column} IS NOT NULL`);
+    }
+    if (!unseeded) {
+      if (group === 'undated') {
+        clauses.push(`photos.id ${cmp} ?`);
+        args.push(anchor.id);
+      } else {
+        // A row value, which SQLite turns into a single index range constraint.
+        // Spelled as two comparisons it becomes a scan.
+        clauses.push(`(${column}, photos.id) ${cmp} (?, ?)`);
+        args.push(byTaken ? (anchor.date_taken as string) : anchor.date_added, anchor.id);
+      }
+    }
+    args.push(limit);
+
+    // `date_taken IS NULL` is deliberately *not* in this ORDER BY, though
+    // `orderByClause` leads with it: inside one arm it is a constant, and leaving
+    // it in stops the ORDER BY matching the index - measured at 11ms against
+    // 0.2ms, per arrow press.
+    return this.db
+      .query(
+        `SELECT ${SUMMARY_COLS} ${where}${clauses.length > 0 ? ` AND ${clauses.join(' AND ')}` : ''}
+         ORDER BY ${column} ${dir}, photos.id ${dir} LIMIT ?`,
+      )
+      .all(...args) as SummaryRow[];
+  }
+
   private scoped(
     fromWhere: string,
     baseParams: string[],
