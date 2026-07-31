@@ -113,10 +113,11 @@ export function gridRowHeight(width: number, columns: number): number {
  * Which tiles begin a line of masonry, from the shapes alone.
  *
  * The wrap replayed rather than measured: a tile's hypothetical width is its flex
- * basis, `--ar * --tile`, and a line takes tiles until the next one no longer
- * fits. Bands are not in it because a band is a full-width item and so never
- * shares a line - it sits between one line and the next, and the tiles either
- * side pack exactly as they would without it.
+ * basis plus the pad it holds around the photograph, `--ar * --tile + 2 * TILE_PAD`
+ * - the basis sizes the picture, not the cell - and a line takes tiles until the
+ * next one no longer fits. Bands are not in it because a band is a full-width item
+ * and so never shares a line - it sits between one line and the next, and the tiles
+ * either side pack exactly as they would without it.
  *
  * What it buys is where a band goes: at the end of the line its stack's tile sits
  * on rather than directly after that tile, which cut the line short and handed
@@ -127,7 +128,7 @@ export function masonryLineStarts(ratios: readonly number[], width: number, tile
   const starts = new Set<number>();
   let line = 0;
   for (let i = 0; i < ratios.length; i++) {
-    const basis = Math.max(1, ratios[i]! * tileSize);
+    const basis = Math.max(1, ratios[i]! * tileSize) + 2 * TILE_PAD;
     if (line > 0 && line + GRID_GAP + basis > width) line = 0;
     if (line === 0) starts.add(i);
     line += (line > 0 ? GRID_GAP : 0) + basis;

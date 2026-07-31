@@ -264,12 +264,54 @@ test('masonry lays photos out across a row, not down a column', async ({ page })
   // has no bottom to fill to. They now sit on a row of one height, which is the
   // zoom size: under columns the height was whatever the column's width made it.
   const box = async (i: number) => (await page.locator('.tile').nth(i).boundingBox())!;
-  const zoom = await page.locator('.grid').evaluate((el) => parseFloat(getComputedStyle(el).getPropertyValue('--tile')));
+  const { zoom, pad } = await page.locator('.grid').evaluate((el) => {
+    const style = getComputedStyle(el);
+    return {
+      zoom: parseFloat(style.getPropertyValue('--tile')),
+      pad: parseFloat(style.getPropertyValue('--tile-pad')),
+    };
+  });
   const first = await box(0);
   const second = await box(1);
   expect(second.y).toBeCloseTo(first.y, 0);
-  expect(first.height).toBeCloseTo(zoom, 0);
+  // The zoom sizes the photograph; the cell is that plus the pad it stands the ring
+  // off it by.
+  expect(first.height - 2 * pad).toBeCloseTo(zoom, 0);
   expect(second.height).toBeCloseTo(first.height, 0);
+
+  // A ring at the cell edge runs a pad outside the photograph, so its corner curves
+  // a pad wider than the picture's - at one radius for both it read tighter than the
+  // picture it was drawn around.
+  const radii = await page.locator('.tile').first().evaluate((el) => ({
+    cell: parseFloat(getComputedStyle(el).borderTopLeftRadius),
+    picture: parseFloat(getComputedStyle(el.querySelector('.tile__hit')!).borderTopLeftRadius),
+  }));
+  expect(radii.cell).toBeCloseTo(radii.picture + pad, 1);
+
+  await page.getByRole('button', { name: 'Grid', exact: true }).click();
+});
+
+test('a list row draws its name and date over the frame, not under it', async ({ page }) => {
+  await page.goto('/settings');
+  await openLibrary(page, PHOTOS_DIR);
+  await expect(page.locator('.tile')).toHaveCount(PHOTO_NAMES.length);
+  await page.getByRole('button', { name: 'List', exact: true }).click();
+
+  // Regression: a row's foot is in the row's own grid rather than over the picture,
+  // and in flow it painted *under* the hit overlay - which spans the whole row and
+  // carries the backdrop, so every row read as an empty black bar. Hit testing
+  // follows paint order, so asking what is on top at the name says which one won -
+  // with the foot's clicks handed back to the frame only for the length of the ask.
+  const onTop = await page.locator('.tile__name').first().evaluate((el) => {
+    const foot = el.closest('.tile__foot') as HTMLElement;
+    const handedBack = foot.style.pointerEvents;
+    foot.style.pointerEvents = 'auto';
+    const rect = el.getBoundingClientRect();
+    const top = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+    foot.style.pointerEvents = handedBack;
+    return top === el;
+  });
+  expect(onTop).toBe(true);
 
   await page.getByRole('button', { name: 'Grid', exact: true }).click();
 });

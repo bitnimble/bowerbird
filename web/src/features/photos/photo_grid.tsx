@@ -7,7 +7,7 @@ import { captureDateTime, localDateTime } from '../../api/dates';
 import { renditionUrl, type PhotoSummary } from '../../api/client';
 import { usePhotosStore, usePresenters } from '../../app/stores_context';
 import { Text } from '../../ui/ui';
-import { BAND_LINE_CAP, BLOCK, GRID_GAP, TILE_ASPECT, masonryLineStarts } from './grid_layout';
+import { BAND_LINE_CAP, BLOCK, GRID_GAP, TILE_ASPECT, TILE_PAD, masonryLineStarts } from './grid_layout';
 import { photoPath, renditionVersion, type Expansion, type PhotosStore } from './photos_store';
 import type { Span } from '../../ui/virtual_rows';
 
@@ -509,7 +509,9 @@ const BandTiles = observer(function BandTiles({
           ...(placed ? { transform: `translateY(${store.railPositionOf(top)}px)` } : {}),
           '--cols': store.columns,
           ...join?.vars,
-          ...(cap == null ? {} : { '--band-cap': `${cap * BAND_LINE_CAP}px` }),
+          // Photograph against photograph: masonry's cap bounds the picture inside the
+          // cell, so the tile's own pad comes off before the comparison.
+          ...(cap == null ? {} : { '--band-cap': `${(cap - 2 * TILE_PAD) * BAND_LINE_CAP}px` }),
           // A band gets exactly the display rows the row arithmetic gave it, and its
           // cells are the collection's own.
           '--row-h': `${store.rowHeight - GRID_GAP}px`,

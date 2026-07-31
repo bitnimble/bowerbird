@@ -140,14 +140,15 @@ describe('the rail', () => {
 });
 
 describe('masonryLineStarts', () => {
-  // 240px tiles at 3:2 are 360 wide, and a portrait 2:3 is 158.4; four of the
-  // landscape and their gaps want 1449, three of them and the portrait 1247.4.
+  // 240px tiles at 3:2 are 360 wide plus their pad, 368, and a portrait 2:3 is
+  // 166.4; four of the landscape and their gaps want 1478, three of them and the
+  // portrait 1276.4.
   const RATIOS = [1.5, 1.5, 2 / 3, 1.5, 1.5, 1.5];
 
   test('a line takes tiles until the next one no longer fits', () => {
     expect([...masonryLineStarts(RATIOS, 1200, 240)]).toEqual([0, 3]);
-    // Room for the portrait as well, so the break moves along by one.
-    expect([...masonryLineStarts(RATIOS, 1250, 240)]).toEqual([0, 4]);
+    // Room for the fourth landscape as well, so the break moves along by one.
+    expect([...masonryLineStarts(RATIOS, 1300, 240)]).toEqual([0, 4]);
   });
 
   test('a tile too wide for the line still gets a line, rather than none', () => {

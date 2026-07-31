@@ -34,9 +34,13 @@
   --grid-gap: 2px;
   /* Mirrors TILE_PAD: the ring, and the room it stands off the photograph. */
   --tile-pad: 4px;
+  /* A cell edge - a selection ring, a band's outline - runs a tile pad outside the
+     photograph, so its corner curves a pad wider to stay parallel with the picture's.
+     At one radius for both, the ring read tighter than the picture inside it. */
+  --cell-radius: calc(var(--radius) + var(--tile-pad));
   /* One ring, worn by a selected tile, an open stack's tile and that stack's band
      (§19.6): three parts of one thing, so the weight is one value rather than
-     three that drifted apart. The radius is `--radius`, and the tile carries it
+     three that drifted apart. The radius is `--cell-radius`, and the tile carries it
      too so a ring drawn at its edge follows that edge. */
   --ring: 2px;
 
@@ -1141,7 +1145,11 @@ p.ui-text--mono {
   flex-wrap: wrap;
 }
 
+/* content-box, so the shape is the photograph's and not the cell's: on the cell's
+   own box the tile pad comes off both sides of it, the picture area is a shade
+   wider than the frame and the backdrop showed as a hairline bar down two edges. */
 .grid--masonry .tile {
+  box-sizing: content-box;
   aspect-ratio: var(--ar);
   flex: var(--ar) 1 calc(var(--ar) * var(--tile, 240px));
 }
@@ -1183,9 +1191,12 @@ p.ui-text--mono {
    object, and clicking the half of it that says which photo it is did nothing.
    So the hit stays the tile-wide overlay it is everywhere else and the rendition
    is painted at the left of it, with the foot in the column beside. */
-/* A row is read from its left edge, and its thumbnail keeps its own inset. */
+/* A row is read from its left edge, and its thumbnail keeps its own inset. Filling
+   the cell, it wears the cell's corner: the picture's is for a photograph the ring
+   stands off, and here there is nothing between the two. */
 .grid--list .tile__hit {
   inset: 0;
+  border-radius: inherit;
 }
 
 .grid--list .tile__hit img {
@@ -1197,7 +1208,9 @@ p.ui-text--mono {
 /* The name and the date sit over that overlay, so they hand their clicks back to
    it; the marks are controls and keep theirs. */
 .grid--list .tile__foot {
-  position: static;
+  /* In the row's second column, but positioned: the hit overlay is absolute, so an
+     in-flow foot paints under it and the row read as an empty black bar. */
+  position: relative;
   grid-column: 2;
   pointer-events: none;
   background: none;
@@ -1228,7 +1241,7 @@ p.ui-text--mono {
      sits on - a background on the tile itself showed as a border round every
      cell. */
   padding: var(--tile-pad);
-  border-radius: var(--radius);
+  border-radius: var(--cell-radius);
 }
 
 /* A position the client is not holding a row for: evicted behind the scroll, or
@@ -1236,9 +1249,12 @@ p.ui-text--mono {
    the gap, so nothing shifts under the reader when the block lands. */
 .tile--waiting {
   cursor: default;
-  /* No hit overlay to carry the backdrop, so the cell is the backdrop. */
-  padding: 0;
+  /* No hit overlay to carry the backdrop, so the cell carries it, clipped to where
+     that overlay would be: the placeholder keeps the pad, and so packs at the width
+     of the photo it stands in for rather than reflowing the line as the block
+     lands. */
   background: #090b0e;
+  background-clip: content-box;
 }
 
 /* The photograph's own area inside the cell: its backdrop, and the target for a
@@ -1365,7 +1381,7 @@ p.ui-text--mono {
    frame dims and the layers become a chevron pointing back up at the tile. */
 .tile__stack--open {
   inset: 0;
-  border-radius: var(--radius);
+  border-radius: var(--cell-radius);
   justify-content: center;
   /* The chip's own background, off: what dims is the ::before below. */
   background: none;
@@ -1387,7 +1403,7 @@ p.ui-text--mono {
    line, so the tile draws three sides and leaves the fourth to the band, which
    leaves the tile's own column out of its top edge (§19.6). */
 .tile__stack--fused {
-  border-radius: var(--radius) var(--radius) 0 0;
+  border-radius: var(--cell-radius) var(--cell-radius) 0 0;
   box-shadow:
     inset 0 var(--ring) 0 var(--band),
     inset var(--ring) 0 0 var(--band),
@@ -1397,7 +1413,7 @@ p.ui-text--mono {
 /* The tile clips its overlay, so the two sides have to reach its bottom corners
    square or they curve away from the band's stubs. */
 .tile:has(.tile__stack--fused) {
-  border-radius: var(--radius) var(--radius) 0 0;
+  border-radius: var(--cell-radius) var(--cell-radius) 0 0;
 }
 
 /* One colour per open stack, worn by both its tile and its band: several stacks
@@ -1443,7 +1459,7 @@ p.ui-text--mono {
    (`TILE_PAD`), so the outline lands on no photograph (§19.6). */
 .grid__band {
   background: rgba(120, 140, 180, 0.1);
-  border-radius: var(--radius);
+  border-radius: var(--cell-radius);
 }
 
 .grid__band::after {

@@ -70,6 +70,17 @@ test('a band insets its members, at the shape of the view around them', async ({
   expect(masonryMember.width * NAMES.length).toBeLessThan(band.width - 100);
   await expectInsetFromBand(page, 'masonry');
 
+  // A masonry cell is the shape of the photograph in it, so the picture fills the
+  // frame: taking the aspect on the cell instead left it a shade wider than the
+  // picture, and the backdrop showed down two edges of every tile.
+  for (const locator of [tile, member]) {
+    const picture = await locator.locator('img').evaluate((el: HTMLImageElement) => ({
+      frame: el.clientWidth / el.clientHeight,
+      own: el.naturalWidth / el.naturalHeight,
+    }));
+    expect(picture.frame).toBeCloseTo(picture.own, 2);
+  }
+
   // List: the collection's own row height. Indented rather than flush, which is the
   // one place a band's members are not where the collection's rows are: a list row
   // is read from its left edge (§19.6).
