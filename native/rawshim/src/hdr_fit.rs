@@ -275,8 +275,9 @@ fn mask(render: &Plane, jpeg: &Plane) -> Vec<u8> {
 
 // ------------------------------------------------------------------- the model
 
-/// Binned mean, gaps interpolated, ends extended at the last slope, then monotone.
-fn fit_curve(xs: &[f64], ys: &[f64], n: usize) -> Vec<f64> {
+/// Binned mean with the gaps between bins interpolated, and the highest bin the data
+/// actually reached. Above that bin the curve is undefined; `extend_curves` fills it.
+fn fit_curve(xs: &[f64], ys: &[f64], n: usize) -> (Vec<f64>, isize) {
     let mut sum = vec![0.0f64; BINS];
     let mut count = vec![0usize; BINS];
     for i in 0..n {
@@ -306,26 +307,76 @@ fn fit_curve(xs: &[f64], ys: &[f64], n: usize) -> Vec<f64> {
         curve[b] = value;
         last = b as isize;
     }
-    if last < 0 {
-        return curve;
-    }
+    (curve, last)
+}
 
-    let lastu = last as usize;
-    let back = lastu.saturating_sub(16);
-    let slope = if lastu > back {
-        (curve[lastu] - curve[back]) / ((lastu - back) as f64 / (BINS - 1) as f64)
-    } else {
-        1.0
-    };
-    for b in lastu + 1..BINS {
-        curve[b] = curve[lastu] + slope * (b - lastu) as f64 / (BINS - 1) as f64;
-    }
+fn make_monotone(curve: &mut [f64]) {
     for b in 1..BINS {
         if curve[b] < curve[b - 1] {
             curve[b] = curve[b - 1];
         }
     }
-    curve
+}
+
+/// Extends a curve past its data at the slope it ended on.
+fn extend_alone(curve: &mut [f64], last: usize) {
+    let back = last.saturating_sub(16);
+    let slope = if last > back {
+        (curve[last] - curve[back]) / ((last - back) as f64 / (BINS - 1) as f64)
+    } else {
+        1.0
+    };
+    for b in last + 1..BINS {
+        curve[b] = curve[last] + slope * (b - last) as f64 / (BINS - 1) as f64;
+    }
+    make_monotone(curve);
+}
+
+/// Extends a curve past its data on another channel's shape, scaled to meet it where
+/// its own data stopped.
+fn extend_from(curve: &mut [f64], last: usize, reference: &[f64]) {
+    if !(reference[last] > 0.0) {
+        return extend_alone(curve, last);
+    }
+    let scale = curve[last] / reference[last];
+    for b in last + 1..BINS {
+        curve[b] = reference[b] * scale;
+    }
+    make_monotone(curve);
+}
+
+/// Fills in each channel above the point its pairs ran out, off the channel that got
+/// furthest.
+///
+/// Every channel extending on its own last slope is what turned this frame's sky green
+/// (DSC05469): the fit domain does not end where the camera's rendering does, it ends
+/// where the JPEG clips *that* channel, and on a warm sky that is render 0.18 for green
+/// and 0.66 for red. Three straight lines from three different places diverge, and by
+/// diffuse white green was reading 2.19 against red's 1.15 - a cast that grows with
+/// brightness, on pixels well inside the trusted domain.
+///
+/// The channels agree on shape wherever they overlap (within 1% at render 0.1 on that
+/// frame), which is what makes borrowing it sound: what a short channel is missing is
+/// reach, not a rendering of its own. Scaled rather than offset, so the join keeps the
+/// ratio the data ended on and the extension stays a gain rather than a tint.
+fn extend_curves(mut fitted: [(Vec<f64>, isize); 3]) -> [Vec<f64>; 3] {
+    let furthest = (0..3).max_by_key(|c| fitted[*c].1).unwrap_or(0);
+    let Ok(last) = usize::try_from(fitted[furthest].1) else {
+        // No channel had a single filled bin; every curve is still zeroes.
+        return fitted.map(|(curve, _)| curve);
+    };
+    extend_alone(&mut fitted[furthest].0, last);
+
+    let reference = fitted[furthest].0.clone();
+    for c in 0..3 {
+        if c == furthest {
+            continue;
+        }
+        if let Ok(last) = usize::try_from(fitted[c].1) {
+            extend_from(&mut fitted[c].0, last, &reference);
+        }
+    }
+    fitted.map(|(curve, _)| curve)
 }
 
 fn sample_curve(curve: &[f64], x: f64) -> f64 {
@@ -480,7 +531,7 @@ fn fit_colour(render: &Plane, jpeg: &Plane) -> Option<HdrColour> {
         return None;
     }
 
-    let curves: [Vec<f64>; 3] = std::array::from_fn(|c| {
+    let curves = extend_curves(std::array::from_fn(|c| {
         let mut xs = vec![0.0f64; bits.len()];
         let mut ys = vec![0.0f64; bits.len()];
         let mut k = 0usize;
@@ -493,7 +544,7 @@ fn fit_colour(render: &Plane, jpeg: &Plane) -> Option<HdrColour> {
             k += 1;
         }
         fit_curve(&xs, &ys, k)
-    });
+    }));
 
     let mut colour =
         HdrColour { curves, matrix: IDENTITY, saturation: 1.0, delta_e: f64::INFINITY };
@@ -773,22 +824,60 @@ mod tests {
         assert!((out[0] - (l + (0.8 - l) * 0.5)).abs() < 1e-9);
     }
 
+    /// A curve fitted from pairs of `shape`, whose samples reach `reach` of the domain.
+    fn curve_of(reach: f64, shape: impl Fn(f64) -> f64) -> (Vec<f64>, isize) {
+        let (xs, ys): (Vec<f64>, Vec<f64>) = (0..4000)
+            .map(|i| {
+                let x = (i as f64 / 4000.0) * TRUST_CEILING * reach;
+                (x, shape(x))
+            })
+            .unzip();
+        fit_curve(&xs, &ys, xs.len())
+    }
+
     #[test]
     fn a_curve_is_monotone_and_extends_past_its_data() {
         // Samples only up to half the domain: the tail must extend at the last slope
         // rather than flatten, or every highlight the frame did not sample is crushed.
-        let mut xs = Vec::new();
-        let mut ys = Vec::new();
-        for i in 0..2000 {
-            let x = (i as f64 / 2000.0) * TRUST_CEILING * 0.5;
-            xs.push(x);
-            ys.push(x * 0.8);
-        }
-        let curve = fit_curve(&xs, &ys, xs.len());
+        let (mut curve, last) = curve_of(0.5, |x| x * 0.8);
+        extend_alone(&mut curve, last as usize);
         for b in 1..BINS {
             assert!(curve[b] >= curve[b - 1], "curve dipped at {b}");
         }
         assert!(curve[BINS - 1] > curve[BINS / 2], "the tail must keep climbing");
+    }
+
+    #[test]
+    fn a_channel_whose_pairs_run_out_early_does_not_drift_from_the_others() {
+        // The green-sky failure. All three channels see the same rendering, but the
+        // JPEG clips green a quarter of the way up the domain and red not until
+        // two-thirds - so green's own last slope, taken from the steep part of the
+        // curve, ran it to twice red's by diffuse white.
+        let shape = |x: f64| x.powf(0.45) * 0.9;
+        let curves =
+            extend_curves([curve_of(0.66, shape), curve_of(0.18, shape), curve_of(0.20, shape)]);
+
+        for x in [0.3, 0.5, 0.7, TRUST_CEILING] {
+            let [r, g, b] = [0, 1, 2].map(|c| sample_curve(&curves[c], x * TRUST_CEILING));
+            assert!((g / r - 1.0).abs() < 0.02, "green drifted at {x}: {g} against {r}");
+            assert!((b / r - 1.0).abs() < 0.02, "blue drifted at {x}: {b} against {r}");
+        }
+    }
+
+    #[test]
+    fn a_borrowed_tail_keeps_the_channel_its_own_gain() {
+        // Borrowing reach must not borrow level: a channel the camera renders 20%
+        // hotter stays 20% hotter above the join rather than snapping onto the
+        // reference.
+        let shape = |x: f64| x.powf(0.45) * 0.9;
+        let curves = extend_curves([
+            curve_of(0.66, shape),
+            curve_of(0.18, |x| shape(x) * 1.2),
+            curve_of(0.66, shape),
+        ]);
+
+        let (hot, plain) = (sample_curve(&curves[1], 0.7), sample_curve(&curves[0], 0.7));
+        assert!((hot / plain - 1.2).abs() < 0.02, "gain lost: {hot} against {plain}");
     }
 
     #[test]
