@@ -202,9 +202,14 @@ test('the viewer steps through every member of a stack, not just its tile', asyn
   // is through the stack rather than over it.
   await next.click();
   await expect(page).not.toHaveURL(new RegExp(middle));
+  // And it is a step in the animation's eyes too, not just the arrows': the
+  // direction is read off the run, so a member with no row in the listing still
+  // slides in from the side the reader is heading towards.
+  await expect(page.locator('.stage__viewport img.is-ready.is-stepping-next')).toBeVisible({ timeout: 60_000 });
   const after = page.url().split('/').pop() ?? '';
   await previous.click();
   await expect(page).toHaveURL(new RegExp(middle));
+  await expect(page.locator('.stage__viewport img.is-ready.is-stepping-prev')).toBeVisible({ timeout: 60_000 });
   await previous.click();
   const before = page.url().split('/').pop() ?? '';
 

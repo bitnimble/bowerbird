@@ -298,9 +298,7 @@ const DetailFrame = observer(function DetailFrame({ photoId }: { photoId: string
        always the one the URL asks for. */
     <PhotoStage
       photoKey={photoId}
-      // Which way a step went, which is the only thing that tells stepping to the
-      // next photo apart from stepping back to the previous one.
-      index={store.indexOf(photoId)}
+      step={store.stepTo(photoId)}
       // The panels decide which edge they take from this photo's shape, so until
       // that is known from somewhere the stage is not the size it will be.
       hold={store.photoFor(photoId) == null}

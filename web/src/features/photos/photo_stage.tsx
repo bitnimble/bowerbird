@@ -67,8 +67,8 @@ interface Props {
   onImageMissing?: (source: string) => void;
   /** Clears the stage when it changes. The photo, not the source: a rendition swap must hold the frame. */
   photoKey: string;
-  /** Position of this photo in the collection, which is what makes a step a direction. -1 when unknown. */
-  index: number;
+  /** Which way the reader arrived at this photo. Null for anything that is not a step. */
+  step?: Step;
   /** A touch dragged across the frame, which is how a phone steps between photos. Ignored while zoomed, where the same gesture pans. */
   onSwipe?: (step: 'next' | 'prev') => void;
   /** Ask again for a frame that failed. Changes when the server has proven it is back. */
@@ -260,7 +260,7 @@ export function PhotoStage({
   filename,
   video = false,
   photoKey,
-  index,
+  step: arrivedBy = null,
   onSwipe,
   hold,
   retryEpoch,
@@ -298,10 +298,11 @@ export function PhotoStage({
   // RETIRED_FRAMES. Their rasters are the ones the browser already has, so they
   // are what shows through while the replacements' are being built.
   const [retiring, setRetiring] = useState<{ sources: readonly string[]; step: Step }>({ sources: [], step: null });
-  // The photo last promoted, which is what the next promotion is a step away
-  // from. Not `painted`: that is dropped once it goes stale, and a photo whose
-  // rendition had to be built is still a step from the one before it.
-  const stepped = useRef<{ photoKey: string; index: number } | null>(null);
+  // The photo last promoted, which is what tells a step from a rendition swap or
+  // a flip between a round's two frames. Not `painted`: that is dropped once it
+  // goes stale, and a photo whose rendition had to be built is still a step from
+  // the one before it.
+  const stepped = useRef<string | null>(null);
   const dragStart = useRef({ x: 0, y: 0, offsetX: 0, offsetY: 0 });
   // How far the pointer travelled in the gesture that just ended, which is what
   // separates the click that closes a tap from the one that closes a drag.
@@ -425,10 +426,8 @@ export function PhotoStage({
   // that closure would be whatever was asked for when the decode started.
   const sourcesRef = useRef(sources);
   sourcesRef.current = sources;
-  // Through a ref so a photo leaving the collection, which shuffles every index
-  // after it, cannot restart a decode that is in flight.
-  const currentIndex = useRef(index);
-  currentIndex.current = index;
+  const arrival = useRef(arrivedBy);
+  arrival.current = arrivedBy;
   const paintedRef = useRef(painted);
   paintedRef.current = painted;
 
@@ -454,14 +453,11 @@ export function PhotoStage({
         return next;
       });
       onLoaded.current(source, width, height);
-      // Which way this photo is from the one before it, so the frames slide the
-      // way the reader moved. Computed once per photo: the frames of one round
-      // are the same photograph, so flipping between them is not a step.
-      const from = stepped.current;
-      const to = currentIndex.current;
-      const step: Step =
-        from == null || from.photoKey === photoKey || from.index < 0 || to < 0 ? null : from.index < to ? 'next' : 'prev';
-      if (from == null || from.photoKey !== photoKey) stepped.current = { photoKey, index: to };
+      // Only a photo that replaced another one slides: the frames of one round are
+      // the same photograph, so flipping between them - or swapping a rendition -
+      // holds its place.
+      const step: Step = stepped.current == null || stepped.current === photoKey ? null : arrival.current;
+      stepped.current = photoKey;
 
       const asked = sourcesRef.current;
       // Retiring is a visual courtesy and reads the ref; what is painted must not.

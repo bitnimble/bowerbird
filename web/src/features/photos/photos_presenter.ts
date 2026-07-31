@@ -1644,11 +1644,31 @@ export class PhotosPresenter {
   // collapsed the rail and title on every next/prev and read as a flash.
   @action.bound
   private beginDetail(photoId: string): void {
+    // Left alone when the photo already open is re-opened: the view remounting is
+    // not an arrival, and clearing it there would drop the direction of the step
+    // that got here before the frame it belongs to has painted.
+    const previous = this.store.open?.id;
+    if (previous !== photoId) this.store.lastStep = this.stepTaken(previous, photoId);
     this.store.open = { id: photoId, status: 'loading' };
     this.store.notesSavedAt = null;
     // Per photo, not sticky: the next photo may have nothing cached for the
     // rendition this one was showing, which would be a 404 rather than a picture.
     // Reopening it there is the setting's job, and it builds first.
     this.store.rendition = null;
+  }
+
+  // Off the run, which is the ordering prev/next themselves are read from and the
+  // only one a stack's members appear in: the collapsed listing has no row for
+  // them (§19.5.3), so a position taken from there is -1 on every step inside a
+  // stack and the frames never learn which way to slide. Read now, while both
+  // photographs are still in the same window of the run - it is re-fetched around
+  // whichever photo is open, so an index kept from an earlier one means nothing.
+  private stepTaken(previous: string | undefined, photoId: string): { to: string; direction: 'next' | 'prev' } | null {
+    if (previous == null) return null;
+    const run = this.store.neighbourhood;
+    const from = run.findIndex((photo) => photo.id === previous);
+    const to = run.findIndex((photo) => photo.id === photoId);
+    if (from < 0 || to < 0) return null;
+    return { to: photoId, direction: from < to ? 'next' : 'prev' };
   }
 }

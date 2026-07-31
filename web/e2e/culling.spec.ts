@@ -1028,9 +1028,9 @@ test('the frame being replaced is held opaque under its replacement for a beat',
   expect(counts.at(-1)).toBe(1);
 });
 
-// The direction is read off the photo's place in the collection rather than off
-// the control that moved it, so the arrows, the buttons and the browser's own
-// back all animate the way the reader actually went.
+// The direction is read off the run - the ordering the arrows themselves step
+// through - rather than off the control that moved it, so the arrows, the
+// buttons and the browser's own back all animate the way the reader went.
 test('stepping to a neighbour slides in from the side it came from', async ({ page }) => {
   await page.goto('/settings');
   await openLibrary(page, CULL_PHOTOS_DIR);

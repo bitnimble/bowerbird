@@ -246,6 +246,12 @@ export class PhotosStore {
   // (null) is distinct from both: the fetch starts in an effect, and the render
   // before it once read as a photo the catalogue does not have.
   @observable.ref accessor open: OpenPhoto | null = null;
+  // Which way the reader arrived at the photo named here, so the stage can slide
+  // its frames the way they moved. Recorded when the step is taken rather than
+  // worked out afterwards from where the two photographs sit: the run is
+  // re-centred as the reader nears its edge, and positions read from two
+  // different windows of it do not compare.
+  @observable.ref accessor lastStep: { to: string; direction: 'next' | 'prev' } | null = null;
   // The last detail that arrived, which is the *previous* photo's until this
   // one's read lands - deliberately, so the rail and the panels do not collapse
   // on every step. Nothing should read it without saying which photo it wants,
@@ -294,6 +300,12 @@ export class PhotosStore {
   // disagree for the length of a fetch.
   detailFor(photoId: string): PhotoDetail | null {
     return this.loadedDetail?.id === photoId ? this.loadedDetail : null;
+  }
+
+  /** Which way the reader arrived at this photo, or null if they did not step to it. */
+  stepTo(photoId: string): 'next' | 'prev' | null {
+    const step = this.lastStep;
+    return step?.to === photoId ? step.direction : null;
   }
 
   // Where each loaded row sits in the collection. The views work in absolute
