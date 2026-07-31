@@ -30,6 +30,12 @@ const STEP_MS = 130;
 // frame after opening a photo - which then just appears.
 type Step = 'next' | 'prev' | null;
 
+// How far a finger has to travel across the frame to count as a step rather
+// than a tap, and how much straighter than it is tall: a swipe that is mostly
+// vertical is the reader scrolling the page, not asking for the next photo.
+const SWIPE_MIN_PX = 48;
+const SWIPE_STRAIGHTNESS = 1.5;
+
 interface Props {
   src: string;
   alt: string;
@@ -56,6 +62,8 @@ interface Props {
    * and then jump as the layout resolved under it.
    */
   hold?: boolean;
+  /** A touch dragged across the frame, which is how a phone steps between photos. Ignored while zoomed, where the same gesture pans. */
+  onSwipe?: (step: 'next' | 'prev') => void;
 }
 
 // Scale and pan are one value, not two pieces of state. Zooming about a point
@@ -127,6 +135,7 @@ export function PhotoStage({
   preloadSrcs,
   onImageLoad,
   onImageMissing,
+  onSwipe,
 }: Props): JSX.Element {
   const stageRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -167,6 +176,9 @@ export function PhotoStage({
   // than a letterboxed container with black margins inside it.
   const [natural, setNatural] = useState({ width: 0, height: 0 });
   const dragStart = useRef({ x: 0, y: 0, offsetX: 0, offsetY: 0 });
+  // How far the pointer travelled in the gesture that just ended, which is what
+  // separates the click that closes a tap from the one that closes a drag.
+  const travelled = useRef(0);
 
   const zoomed = view.scale > MIN_SCALE;
 
@@ -348,17 +360,22 @@ export function PhotoStage({
   }, [zoomBy]);
 
   function onPointerDown(e: React.PointerEvent): void {
-    if (!zoomed) return;
-    setDragging(true);
+    // One gesture at a time: a second finger landing would otherwise restart the
+    // one in flight from wherever it touched down, and lift into a step of its own.
+    if (!e.isPrimary) return;
+    // Before the zoom check: unzoomed, where nothing pans, this is still where a
+    // swipe starts and what tells the tap that ends a swipe from a real tap.
     dragStart.current = { x: e.clientX, y: e.clientY, offsetX: view.x, offsetY: view.y };
-    // Capture keeps the drag alive if the pointer leaves the stage, but it throws
-    // for a pointer id the browser doesn't consider active. Panning must not
-    // depend on it, so a failure here is ignored rather than aborting the drag.
+    travelled.current = 0;
+    // Capture keeps the gesture alive if the pointer leaves the stage, but it
+    // throws for a pointer id the browser doesn't consider active. Neither pan
+    // nor swipe may depend on it, so a failure here is ignored.
     try {
       e.currentTarget.setPointerCapture(e.pointerId);
     } catch {
-      /* pan still works from the move handler */
+      /* pan still works from the move handler, and the swipe from pointerup */
     }
+    if (zoomed) setDragging(true);
   }
 
   function onPointerMove(e: React.PointerEvent): void {
@@ -377,21 +394,36 @@ export function PhotoStage({
     );
   }
 
-  function onPointerUp(e: React.PointerEvent): void {
-    if (!dragging) return;
-    setDragging(false);
+  // Not a gesture the reader completed: the browser took the pointer, so end the
+  // drag without reading a step out of where it stopped.
+  function onPointerCancel(e: React.PointerEvent): void {
     try {
       e.currentTarget.releasePointerCapture(e.pointerId);
     } catch {
       /* nothing was captured */
     }
+    setDragging(false);
+  }
+
+  function onPointerUp(e: React.PointerEvent): void {
+    onPointerCancel(e);
+    if (!e.isPrimary) return;
+    const dx = e.clientX - dragStart.current.x;
+    const dy = e.clientY - dragStart.current.y;
+    travelled.current = Math.abs(dx) + Math.abs(dy);
+    // Unzoomed there is nothing to pan, so a drag across the frame is a step.
+    // Any pointer: a mouse dragged that far across a photo means the same thing
+    // a finger does, and nothing else on an unzoomed stage answers to a drag.
+    if (!zoomed && Math.abs(dx) >= SWIPE_MIN_PX && Math.abs(dx) > Math.abs(dy) * SWIPE_STRAIGHTNESS) {
+      onSwipe?.(dx < 0 ? 'next' : 'prev');
+    }
   }
 
   // A drag ends in a click event too, so only treat it as a zoom toggle when the
-  // pointer barely moved.
+  // gesture it ends barely moved - a swipe that lands on the next photo must not
+  // zoom it, and a pan must not un-zoom.
   function onClick(e: React.MouseEvent): void {
-    const moved = Math.abs(e.clientX - dragStart.current.x) + Math.abs(e.clientY - dragStart.current.y);
-    if (dragging || (zoomed && moved > 4)) return;
+    if (dragging || travelled.current > 4) return;
     if (zoomed) reset();
     else zoomBy(() => 2, { x: e.clientX, y: e.clientY });
   }
@@ -428,7 +460,7 @@ export function PhotoStage({
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
-        onPointerCancel={onPointerUp}
+        onPointerCancel={onPointerCancel}
         onClick={onClick}
       >
         {/* A frame that failed replaces the incoming one, not the picture already

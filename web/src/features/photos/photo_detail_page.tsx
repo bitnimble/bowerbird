@@ -1,9 +1,11 @@
 import { observer } from 'mobx-react-lite';
-import { Fragment, useEffect, useState } from 'react';
+import { Fragment, useCallback, useEffect, useState } from 'react';
 import {
   ArrowLeft,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
   Download,
   FileType,
   Image as ImageIcon,
@@ -24,6 +26,7 @@ import {
   usePresenters,
   useShootsStore,
 } from '../../app/stores_context';
+import { useIsMobile } from '../../app/use_is_mobile';
 import { ActionMenu, Button, ICON, MoreLess, type Option, Text, TextArea } from '../../ui/ui';
 import { renditionLabel } from './renditions';
 import { PhotoStage } from './photo_stage';
@@ -138,13 +141,29 @@ const ACTIONS: Option<'metadata' | 'delete'>[] = [
   { value: 'delete', label: 'Move to Bin', icon: <Trash2 size={ICON} />, destructive: true },
 ];
 
+// Stepping to a neighbour, which the bar's buttons, the arrow keys and a swipe
+// all ask for. Stable, and the neighbour is read when the step is taken rather
+// than when the handler was made, so nothing here re-renders or re-subscribes as
+// the collection shifts around the open photo.
+function useStep(): (step: 'next' | 'prev') => void {
+  const store = usePhotosStore();
+  const navigate = useNavigate();
+  return useCallback(
+    (step: 'next' | 'prev') => {
+      const id = step === 'next' ? store.nextPhotoId : store.prevPhotoId;
+      if (id != null) navigate(`/photos/${id}`);
+    },
+    [store, navigate],
+  );
+}
+
 // Where the reader can go from here, and what can be done to the photo they are
 // on. Its own observer so that a rebuild finishing, which flips `building…` on
 // and off, does not re-render the frame or the panels beside it.
 const DetailNav = observer(function DetailNav({ photoId }: { photoId: string }): JSX.Element {
   const store = usePhotosStore();
   const { photos } = usePresenters();
-  const navigate = useNavigate();
+  const step = useStep();
   const photo = store.detailFor(photoId);
   const prevId = store.prevPhotoId;
   const nextId = store.nextPhotoId;
@@ -160,10 +179,10 @@ const DetailNav = observer(function DetailNav({ photoId }: { photoId: string }):
         <ArrowLeft size={ICON} />
         {back.label}
       </Button>
-      <Button iconOnly aria-label="Previous photo" disabled={prevId == null} onClick={() => prevId != null && navigate(`/photos/${prevId}`)}>
+      <Button iconOnly aria-label="Previous photo" disabled={prevId == null} onClick={() => step('prev')}>
         <ChevronLeft size={ICON} />
       </Button>
-      <Button iconOnly aria-label="Next photo" disabled={nextId == null} onClick={() => nextId != null && navigate(`/photos/${nextId}`)}>
+      <Button iconOnly aria-label="Next photo" disabled={nextId == null} onClick={() => step('next')}>
         <ChevronRight size={ICON} />
       </Button>
       <Text variant="mono">{photo?.file_path ?? ''}</Text>
@@ -227,6 +246,7 @@ const DetailNav = observer(function DetailNav({ photoId }: { photoId: string }):
 const DetailFrame = observer(function DetailFrame({ photoId }: { photoId: string }): JSX.Element {
   const store = usePhotosStore();
   const { photos } = usePresenters();
+  const step = useStep();
   const photo = store.detailFor(photoId);
   const rendition = store.rendition;
   const showing = store.showing;
@@ -276,6 +296,9 @@ const DetailFrame = observer(function DetailFrame({ photoId }: { photoId: string
       alt={filename}
       filename={filename}
       preloadSrcs={preloadSrcs}
+      // No arrow keys on a phone, so the frame itself is the control: the same
+      // step the bar's buttons take, taken by dragging the picture aside.
+      onSwipe={step}
       onImageLoad={(width, height) => photos.imageShown(photoId, showing, width, height)}
       // Only the library's default is built on sight, and only when it is a
       // stored rendition: the camera's JPEG comes out of the RAW, so a 404 there
@@ -289,35 +312,44 @@ const DetailFrame = observer(function DetailFrame({ photoId }: { photoId: string
   );
 });
 
-// The verdict and the rating, both off the row: they are right from the first
-// frame and stay hittable while the detail is in flight, and judging a photo
-// re-renders nothing but this.
-const TriagePanel = observer(function TriagePanel({ photoId }: { photoId: string }): JSX.Element {
+// The verdict and the rating, both off the grid row: they are right from the
+// first frame and stay hittable while the detail is in flight, and judging a
+// photo re-renders nothing but the one of these that changed. Separate, because
+// on a phone the verdict is on the bar and the rating is under the fold.
+const PhotoTriage = observer(function PhotoTriage({ photoId }: { photoId: string }): JSX.Element {
+  const store = usePhotosStore();
+  const { photos } = usePresenters();
+
+  return (
+    <TriageControl
+      value={store.photoFor(photoId)?.triage ?? 'untriaged'}
+      onChange={(next) => void photos.setTriage(photoId, next)}
+    />
+  );
+});
+
+const PhotoRating = observer(function PhotoRating({ photoId }: { photoId: string }): JSX.Element {
   const store = usePhotosStore();
   const { photos } = usePresenters();
   const photo = store.photoFor(photoId);
 
   return (
-    <Panel title="Triage">
-      <TriageControl value={photo?.triage ?? 'untriaged'} onChange={(next) => void photos.setTriage(photoId, next)} />
-
-      <div className="row detail__rating">
-        <Text variant="label">Rating</Text>
-        <div className="stars">
-          {[1, 2, 3, 4, 5].map((n) => (
-            <button
-              key={n}
-              type="button"
-              className={`star${n <= (photo?.rating ?? 0) ? ' on' : ''}`}
-              aria-label={`Set rating to ${n}`}
-              onClick={() => void photos.setRating(photoId, n === photo?.rating ? 0 : n)}
-            >
-              ★
-            </button>
-          ))}
-        </div>
+    <div className="row detail__rating">
+      <Text variant="label">Rating</Text>
+      <div className="stars">
+        {[1, 2, 3, 4, 5].map((n) => (
+          <button
+            key={n}
+            type="button"
+            className={`star${n <= (photo?.rating ?? 0) ? ' on' : ''}`}
+            aria-label={`Set rating to ${n}`}
+            onClick={() => void photos.setRating(photoId, n === photo?.rating ? 0 : n)}
+          >
+            ★
+          </button>
+        ))}
       </div>
-    </Panel>
+    </div>
   );
 });
 
@@ -502,8 +534,7 @@ const DetailKeys = observer(function DetailKeys({ photoId }: { photoId: string }
   const store = usePhotosStore();
   const { photos } = usePresenters();
   const navigate = useNavigate();
-  const prevId = store.prevPhotoId;
-  const nextId = store.nextPhotoId;
+  const step = useStep();
   const back = store.openedFrom.path;
 
   useEffect(() => {
@@ -517,8 +548,8 @@ const DetailKeys = observer(function DetailKeys({ photoId }: { photoId: string }
       else if (/^[0-5]$/.test(e.key)) void photos.setRating(photoId, Number(e.key));
       else if (e.key === 'i') void photos.chooseRendition(photoId, 'embedded');
       else if (e.key === 'o') void photos.chooseRendition(photoId, 'full');
-      else if (e.key === 'ArrowLeft' && prevId != null) navigate(`/photos/${prevId}`);
-      else if (e.key === 'ArrowRight' && nextId != null) navigate(`/photos/${nextId}`);
+      else if (e.key === 'ArrowLeft') step('prev');
+      else if (e.key === 'ArrowRight') step('next');
       // Fullscreen owns Escape: there it leaves the fullscreen frame, not the photo.
       else if (e.key === 'Escape' && document.fullscreenElement == null) {
         photos.focusOpenPhoto();
@@ -528,7 +559,7 @@ const DetailKeys = observer(function DetailKeys({ photoId }: { photoId: string }
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [prevId, nextId, navigate, back, photoId, photos]);
+  }, [step, navigate, back, photoId, photos]);
 
   return null;
 });
@@ -539,6 +570,10 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   const { photoId = '' } = useParams();
   const store = usePhotosStore();
   const { photos, appSettings } = usePresenters();
+  const mobile = useIsMobile();
+  // Kept across photos: opened once to read a frame's settings, the reader means
+  // to read the next one's too.
+  const [sheetOpen, setSheetOpen] = useState(false);
 
   useEffect(() => {
     void photos.openDetail(photoId);
@@ -573,24 +608,65 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   const shape = store.photoFor(photoId);
   const landscape = shape == null || shape.width >= shape.height;
   // Beside a portrait the column runs the full height of the page, so every row
-  // fits without scrolling; under a landscape it is a 34vh strip and does not.
-  const expanded = !landscape;
+  // fits without scrolling; under a landscape it is a 34vh strip and does not,
+  // and neither does a phone's sheet.
+  const expanded = !mobile && !landscape;
+
+  const metaPanels = (
+    <>
+      <NotesPanel photoId={photoId} />
+      <CameraPanel photoId={photoId} defaultOpen={expanded} />
+      <RenditionPanel photoId={photoId} defaultOpen={expanded} />
+      <RawPanel photoId={photoId} defaultOpen={expanded} />
+    </>
+  );
+
+  // On a phone the photograph is the page. Everything the cull needs on every
+  // frame is one bar pinned to the window - the verdict, and the way to the
+  // rest - so a thumb finds it in the same place whatever shape the photo is,
+  // and the metadata is a fold above it rather than a column stealing the
+  // screen.
+  const panels = mobile ? (
+    <div className="detail__sheet">
+      {sheetOpen && (
+        <div className="detail__panels">
+          <Panel title="Rating">
+            <PhotoRating photoId={photoId} />
+          </Panel>
+          {metaPanels}
+        </div>
+      )}
+
+      <div className="row detail__verdict">
+        <PhotoTriage photoId={photoId} />
+        <Button
+          iconOnly
+          aria-label={sheetOpen ? 'Hide details' : 'Show details'}
+          aria-expanded={sheetOpen}
+          onClick={() => setSheetOpen(!sheetOpen)}
+        >
+          {sheetOpen ? <ChevronDown size={ICON} /> : <ChevronUp size={ICON} />}
+        </Button>
+      </div>
+    </div>
+  ) : (
+    <div className="detail__panels">
+      <Panel title="Triage">
+        <PhotoTriage photoId={photoId} />
+        <PhotoRating photoId={photoId} />
+      </Panel>
+      {metaPanels}
+    </div>
+  );
 
   return (
     <div className="pad detail-page">
       <DetailKeys photoId={photoId} />
       <DetailNav photoId={photoId} />
 
-      <div className={landscape ? 'detail detail--below' : 'detail detail--beside'}>
+      <div className={`detail detail--${mobile ? 'sheet' : landscape ? 'below' : 'beside'}`}>
         <DetailFrame photoId={photoId} />
-
-        <div className="detail__panels">
-          <TriagePanel photoId={photoId} />
-          <NotesPanel photoId={photoId} />
-          <CameraPanel photoId={photoId} defaultOpen={expanded} />
-          <RenditionPanel photoId={photoId} defaultOpen={expanded} />
-          <RawPanel photoId={photoId} defaultOpen={expanded} />
-        </div>
+        {panels}
       </div>
     </div>
   );

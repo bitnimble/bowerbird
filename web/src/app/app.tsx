@@ -14,6 +14,7 @@ import { ShootsPage } from '../features/shoots/shoots_page';
 import { Toasts } from '../features/toasts/toasts';
 import { Button, ICON, Modal, Text } from '../ui/ui';
 import { useLibrariesStore, usePhotosStore, usePresenters, useShootsStore } from './stores_context';
+import { useIsMobile } from './use_is_mobile';
 
 // Which library the user is inside. Only /libraries/* names it in the URL; shoot
 // and photo routes resolve it from the loaded entity, so the rail keeps its
@@ -225,22 +226,6 @@ function ShortcutHelp(): JSX.Element {
 }
 
 const RAIL_KEY = 'bowerbird.rail.collapsed';
-const MOBILE = '(max-width: 860px)';
-
-// A narrow screen has no column to spare, so the rail overlays the content
-// there. That makes its open state a different thing: transient, closed by
-// default, rather than the remembered chrome preference it is on a desktop.
-function useIsMobile(): boolean {
-  const [mobile, setMobile] = useState(() => window.matchMedia(MOBILE).matches);
-  useEffect(() => {
-    const query = window.matchMedia(MOBILE);
-    setMobile(query.matches);
-    const onChange = (e: MediaQueryListEvent): void => setMobile(e.matches);
-    query.addEventListener('change', onChange);
-    return () => query.removeEventListener('change', onChange);
-  }, []);
-  return mobile;
-}
 
 // Nothing to land on until the libraries are known: with one registered the
 // photographs are the home screen, and only a fresh install starts in Settings.
@@ -252,6 +237,9 @@ const Home = observer(function Home(): JSX.Element | null {
 });
 
 export function App(): JSX.Element {
+  // Where the rail overlays the content, its open state is a different thing:
+  // transient, closed by default, rather than the remembered chrome preference
+  // it is on a desktop.
   const mobile = useIsMobile();
   // Remembered, because the rail is chrome: having to re-hide it on every visit
   // is the same annoyance as it never collapsing at all.

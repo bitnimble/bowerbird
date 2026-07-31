@@ -40,8 +40,12 @@
      too so a ring drawn at its edge follows that edge. */
   --ring: 2px;
 
-  /* Chrome above and below the photo stage: the .pad box plus the nav row. */
-  --detail-chrome: 84px;
+  /* The bar the verdict sits on at the foot of a phone's photo view, which the
+     stage above it has to keep clear of. Summed from what the bar is made of -
+     one control, the padding either side of it, its top border - rather than
+     measured, so the two cannot drift apart. */
+  --sheet-pad: 8px;
+  --sheet-h: calc(var(--control-h) + var(--sheet-pad) + max(var(--sheet-pad), env(safe-area-inset-bottom)) + 1px);
 
   /* A page's side inset. The grid's scrollbar bleeds through it to the window
      edge, so it has to be readable from there. */
@@ -2217,5 +2221,39 @@ p.ui-text--mono {
 
   .detail--beside {
     grid-template-columns: 1fr;
+  }
+
+  /* The photograph gets the window, minus the strip the bar below stands on.
+     Fixed rather than in the flow: the bar is the same height on every photo,
+     so the verdict is always under the same thumb, and the stage never resizes
+     as the fold opens over it. */
+  .detail--sheet {
+    grid-template-rows: minmax(0, 1fr);
+    padding-bottom: var(--sheet-h);
+  }
+
+  .detail__sheet {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 20;
+    display: flex;
+    flex-direction: column;
+    padding: var(--sheet-pad) var(--pad-x) max(var(--sheet-pad), env(safe-area-inset-bottom));
+    background: var(--ink);
+    border-top: 1px solid var(--slate);
+  }
+
+  .detail__verdict > .ui-seg {
+    flex: 1;
+    min-width: 0;
+  }
+
+  /* Above the bar, not over the photo entirely: what is being judged stays in
+     sight while its settings are being read. */
+  .detail__sheet .detail__panels {
+    max-height: 60vh;
+    margin-bottom: var(--sheet-pad);
   }
 }

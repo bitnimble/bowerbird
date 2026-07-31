@@ -17,6 +17,7 @@ export const E2E_ROOT = path.join(tmpdir(), `bowerbird-e2e-${CHECKOUT_KEY}`);
 export const PHOTOS_DIR = path.join(E2E_ROOT, 'photos');
 export const CULL_PHOTOS_DIR = path.join(E2E_ROOT, 'cull-photos');
 export const STACK_PHOTOS_DIR = path.join(E2E_ROOT, 'stack-photos');
+export const PHONE_PHOTOS_DIR = path.join(E2E_ROOT, 'phone-photos');
 export const DB_PATH = path.join(E2E_ROOT, 'e2e.db');
 // Playwright has to know both URLs before it launches anything, so these can't
 // be port 0 - pick one and publish it. The config process picks first and the
@@ -57,7 +58,7 @@ export function prepareFixture(): void {
   // byte-identical is what makes it a stack: detection has nothing to tell them
   // apart, which is the correct answer and the reason the other libraries turn
   // it off (`addLibrary`).
-  for (const dir of [PHOTOS_DIR, CULL_PHOTOS_DIR, STACK_PHOTOS_DIR]) {
+  for (const dir of [PHOTOS_DIR, CULL_PHOTOS_DIR, STACK_PHOTOS_DIR, PHONE_PHOTOS_DIR]) {
     mkdirSync(dir, { recursive: true });
     for (const name of PHOTO_NAMES) copyFileSync(FIXTURE, path.join(dir, name));
   }
