@@ -676,9 +676,7 @@ pub fn fit_hdr_for(
     let samples = linear.samples16()?;
     let source = hdr::Source { samples, width: linear.width, height: linear.height };
     guard("fit_hdr_for", None, || match profile {
-        Some(profile) => {
-            hdr::fit_match(raw_path, &source, quantile, profile.knots.clone(), profile.crop)
-        }
+        Some(profile) => hdr::fit_match(raw_path, &source, quantile, profile.lens()),
         None => {
             let geometry = ffi::geometry_for(raw_path)?;
             hdr::fit_all(raw_path, &source, quantile, geometry).map(|(_, matched)| matched)

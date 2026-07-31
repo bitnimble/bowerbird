@@ -53,6 +53,61 @@ fn big() -> Option<PathBuf> {
     }
 }
 
+/// The corner factor `injected_falloff` darkens by, and the one every test that uses
+/// it asserts against.
+const INJECTED_CORNER: f64 = 0.65;
+
+/// A profile carrying a real falloff, for the tests that need the radial branch to do
+/// something.
+///
+/// Neither fixture supplies one: the Sony body corrects no illumination at all and the
+/// Canon frame is third-party glass the body has no profile for, so it lands within a
+/// few percent of the identity. Both facts are asserted by
+/// `invents_no_falloff_where_the_camera_corrected_none`, which is exactly why a test
+/// that wants a gain has to inject one rather than fit the fixture and hope.
+fn injected_falloff() -> crate::fit::Profile {
+    let preview = crate::decode_embedded_rgb(sony().to_str().unwrap(), 0).expect("a preview");
+    let target = crate::vips::Pipeline::from_rgb(falloff(&preview, INJECTED_CORNER).as_ref())
+        .and_then(|p| p.encode_jpeg(95))
+        .expect("the injected target encodes");
+    let render = decode(&sony(), 8, false, 0);
+    // Uncorrected skips the geometry search, so nothing but the falloff is in play.
+    let fitted = crate::fit::fit(
+        render.rgb8().expect("an 8-bit render"),
+        &target,
+        crate::fit::Geometry::Uncorrected,
+    )
+    .expect("the fit runs")
+    .expect("the fit finds something worth applying");
+    assert!(fitted.gain.is_some(), "the injected frame must carry a gain");
+    fitted
+}
+
+/// Multiplies linear light by `1 + (corner - 1) r^2`, the shape a lens's falloff has
+/// and the one the fit models.
+fn falloff(source: &crate::vips::Rgb, corner: f64) -> crate::vips::Rgb {
+    let (width, height) = (source.width, source.height);
+    let (cx, cy) = (width as f64 / 2.0, height as f64 / 2.0);
+    let half = (cx * cx + cy * cy).sqrt();
+    let to_linear = |v: u8| {
+        let s = f64::from(v) / 255.0;
+        if s <= 0.04045 { s / 12.92 } else { ((s + 0.055) / 1.055).powf(2.4) }
+    };
+    let mut data = vec![0u8; source.data.len()];
+    for y in 0..height {
+        for x in 0..width {
+            let r2 = ((x as f64 - cx).powi(2) + (y as f64 - cy).powi(2)) / (half * half);
+            let g = 1.0 + (corner - 1.0) * r2;
+            let i = (y * width + x) * 3;
+            for c in 0..3 {
+                let lit = to_linear(source.data[i + c]) * g;
+                data[i + c] = (crate::hdr_fit::srgb_oetf(lit.clamp(0.0, 1.0)) * 255.0).round() as u8;
+            }
+        }
+    }
+    crate::vips::Rgb { width, height, data }
+}
+
 fn decode(path: &PathBuf, depth: u32, rec2020_linear: bool, long_edge: u32) -> crate::frame::Frame {
     crate::decode_frame(path.to_str().unwrap(), depth, rec2020_linear, long_edge)
         .unwrap_or_else(|| panic!("could not decode {}", path.display()))
@@ -389,6 +444,79 @@ mod camera_match {
         [out(0), out(1), out(2)]
     }
 
+    /// The falloff term, kept honest the same way the distortion is: darken the
+    /// camera's own JPEG towards the corners by a known factor, hand it back as the
+    /// target, and require the fit to find that factor. A radial model will always
+    /// find *a* radial error, so a plausible number proves nothing without a known
+    /// one to compare it to.
+    ///
+    /// Darkened rather than brightened because brightening clips, and a clipped
+    /// corner reads as less falloff than was injected.
+    #[test]
+    fn recovers_a_falloff_that_was_injected_on_purpose() {
+        let fitted = injected_falloff();
+        let gain = fitted.gain.as_ref().expect("a falloff");
+        assert!(
+            (gain.corner() - INJECTED_CORNER).abs() < 0.1,
+            "recovered {} from {INJECTED_CORNER}",
+            gain.corner(),
+        );
+        // Recovering the coefficient is not the same as matching the frame, and the
+        // fit is free to report either. This is the one that decides the picture.
+        assert!(fitted.delta_e < 2.5, "held-out deltaE {}", fitted.delta_e);
+    }
+
+    /// A gain the profile carries and `apply` ignores would pass every assertion
+    /// above, and did not exist for as long as no test put a fitted falloff through
+    /// the output path.
+    #[test]
+    fn applies_the_falloff_to_the_render_and_not_only_to_the_fit() {
+        let fitted = injected_falloff();
+        let render = decode(&sony(), 8, false, 400);
+        let source = resize(render.rgb8().expect("an 8-bit render"), 400);
+        let with = crate::fit::apply(source.as_ref(), &fitted);
+
+        let without = crate::fit::Profile { gain: None, ..fitted };
+        let plain = crate::fit::apply(source.as_ref(), &without);
+
+        // A darkening falloff, so the corners must come out darker with it than
+        // without, and the centre must be left where it was.
+        let luma = |image: &crate::vips::Rgb, x: usize, y: usize| {
+            let i = (y * image.width + x) * 3;
+            f64::from(image.data[i]) + f64::from(image.data[i + 1]) + f64::from(image.data[i + 2])
+        };
+        let (corner_x, corner_y) = (with.width - 2, with.height - 2);
+        assert!(
+            luma(&with, corner_x, corner_y) < luma(&plain, corner_x, corner_y) * 0.95,
+            "the corner is no darker: {} against {}",
+            luma(&with, corner_x, corner_y),
+            luma(&plain, corner_x, corner_y),
+        );
+        let (mid_x, mid_y) = (with.width / 2, with.height / 2);
+        assert!(
+            (luma(&with, mid_x, mid_y) - luma(&plain, mid_x, mid_y)).abs() < 6.0,
+            "the centre moved: {} against {}",
+            luma(&with, mid_x, mid_y),
+            luma(&plain, mid_x, mid_y),
+        );
+    }
+
+    /// The other half of the same question. Every frame's corners differ from its
+    /// centre for reasons that are not falloff - shading, subject placement, the sky
+    /// being at the top - and two free parameters will happily absorb some of that.
+    /// This body applied no illumination correction to its preview, so the honest
+    /// answer is no gain at all.
+    #[test]
+    fn invents_no_falloff_where_the_camera_corrected_none() {
+        assert!(fit(&sony()).gain.is_none());
+        // The Canon body has no profile for a third-party lens either, so it corrects
+        // nothing here - but it is a different decode and a different preview, so it
+        // is worth its own case. Not asserted as None: something near the identity is
+        // allowed to win on a frame this large.
+        let canon_gain = fit(&canon()).gain.map(|g| g.corner()).unwrap_or(1.0);
+        assert!((canon_gain - 1.0).abs() < 0.1, "invented {canon_gain}");
+    }
+
     /// The check this module exists to keep honest. Three earlier detectors reported
     /// "no distortion" on a frame that had 4.4% of it, because a radial model and a
     /// radial error will always find each other and a null result looks the same as no
@@ -468,21 +596,40 @@ mod camera_match {
         assert_eq!(first.knots, second.knots);
         assert_eq!(first.colour.matrix, second.colour.matrix);
         assert_eq!(first.colour.curves, second.colour.curves);
+        // The coefficients, not `corner()`: two different fits can agree on what they
+        // do to a corner while disagreeing about the curve that got them there, and
+        // it is the curve that ships.
+        assert_eq!(
+            first.gain.map(|g| g.coefficients()),
+            second.gain.map(|g| g.coefficients()),
+        );
     }
 
     /// The worker applies the profile to the *sized* image, because warping a 60MP
     /// decode to produce an 800px tile costs seconds per rendition. That is only
-    /// legitimate if the order does not matter: the distortion model is in normalised
-    /// radii and the colour transform is a per-pixel lookup, so it should not.
+    /// legitimate if the order does not matter: the colour transform is a per-pixel
+    /// lookup, and the distortion and the falloff are both in normalised radii.
+    ///
+    /// Run on a frame that carries a falloff as well as one that does not, because
+    /// the falloff is the half that reads a *position* - a profile with no gain skips
+    /// that branch entirely and would leave the claim untested.
     #[test]
     fn gives_the_same_picture_whether_applied_before_or_after_the_resize() {
         const SIZE: usize = 800;
-        let profile = fit(&sony());
-        let render = decode(&sony(), 8, false, 0);
-        let source = render.rgb8().expect("an 8-bit render");
+        for profile in [fit(&sony()), injected_falloff()] {
+            let render = decode(&sony(), 8, false, 0);
+            let source = render.rgb8().expect("an 8-bit render");
+            same_picture_either_way(source, &profile, SIZE);
+        }
+    }
 
-        let before = resize(crate::fit::apply(source, &profile).as_ref(), SIZE);
-        let after = crate::fit::apply(resize(source, SIZE).as_ref(), &profile);
+    fn same_picture_either_way(
+        source: crate::vips::RgbRef<'_>,
+        profile: &crate::fit::Profile,
+        size: usize,
+    ) {
+        let before = resize(crate::fit::apply(source, profile).as_ref(), size);
+        let after = crate::fit::apply(resize(source, size).as_ref(), profile);
         assert_eq!((after.width, after.height), (before.width, before.height));
 
         let n = before.data.len().min(after.data.len()) / 3;
@@ -625,6 +772,101 @@ mod hdr_grade {
         let render = decode(&sony(), 8, false, 0);
         let profile = crate::fit_profile_for(&render, sony().to_str().unwrap())?;
         crate::fit_hdr_for(frame, sony().to_str().unwrap(), QUANTILE, Some(&profile))
+    }
+
+    /// The falloff is the one half of the SDR match that lifts to the grade unchanged
+    /// (§10.8.1), and "lifts" has to mean it reaches the pixels, not just the struct.
+    /// A `falloff` the match carries and `apply_lens` ignores would pass a fit test.
+    #[test]
+    fn the_falloff_reaches_the_graded_frame_and_not_only_the_match() {
+        let frame = linear();
+        let mut fitted = matched(&frame).expect("the HDR fit finds a match");
+        // This body corrects no illumination, so the lift has to be given something to
+        // carry - which is also the only way to reach a corner gain worth measuring.
+        // A quarter more light at the corner, none at the centre.
+        fitted.lens = crate::fit::Lens { distortion: None, crop: 1.0, falloff: Some((0.25, 0.0)) };
+
+        let (width, height) = (frame.width, frame.height);
+        let samples = frame.samples16().expect("a 16-bit decode");
+        let lit = crate::hdr_fit::apply_lens(samples, width, height, &fitted).expect("the lens stage runs");
+
+        let at = |data: &[u16], x: usize, y: usize| f64::from(data[(y * width + x) * 3 + 1]);
+        let (corner_x, corner_y) = (width - 1, height - 1);
+        // The corner sits at r = 1, so it takes the whole of the coefficient.
+        let ratio = at(&lit, corner_x, corner_y) / at(samples, corner_x, corner_y).max(1.0);
+        assert!((ratio - 1.25).abs() < 0.02, "corner scaled by {ratio}, wanted 1.25");
+        assert_eq!(
+            at(&lit, width / 2, height / 2),
+            at(samples, width / 2, height / 2),
+            "the centre must not move",
+        );
+    }
+
+    /// Where the SDR fit found a falloff, the HDR match has to be carrying the same
+    /// one: it is reused as fitted rather than measured again, exactly as the geometry
+    /// is, because a linear-light gain means the same thing in either domain.
+    ///
+    /// Off an injected falloff rather than a fixture's own, which is worth the extra
+    /// decode: neither fixture fits more than a few percent, so a fixture-fitted gain
+    /// would pin this on a number the rest of the suite calls the identity.
+    #[test]
+    fn the_hdr_match_carries_the_falloff_the_sdr_fit_resolved() {
+        let profile = injected_falloff();
+        let wanted = profile.gain.as_ref().expect("a falloff").coefficients();
+        let frame = decode(&sony(), 16, true, 3840);
+        let fitted = crate::fit_hdr_for(&frame, sony().to_str().unwrap(), QUANTILE, Some(&profile))
+            .expect("the HDR fit finds a match");
+        assert_eq!(fitted.lens.falloff, Some(wanted));
+    }
+
+    /// The other route to a match: where no target renders SDR, `fit_all` fits both
+    /// halves off the linear decode, and it has to hand the whole lens across rather
+    /// than assembling one. It assembled one for a while, forgot the falloff, and the
+    /// suite stayed green.
+    ///
+    /// What this pins is that shape, not a value - on this fixture the linear route
+    /// fits no falloff at all, so the equality below is None to None. The value is
+    /// covered by `the_hdr_match_carries_the_falloff_the_sdr_fit_resolved`, which can
+    /// inject one; this cannot, because `fit_all` derives its own render internally.
+    #[test]
+    fn the_falloff_survives_the_route_that_fits_both_halves_at_once() {
+        let path = canon();
+        let frame = decode(&path, 16, true, 3840);
+        let source = crate::hdr::Source {
+            samples: frame.samples16().expect("a 16-bit decode"),
+            width: frame.width,
+            height: frame.height,
+        };
+        let geometry = crate::ffi::geometry_for(path.to_str().unwrap()).expect("a geometry");
+        let (profile, matched) =
+            crate::hdr::fit_all(path.to_str().unwrap(), &source, QUANTILE, geometry)
+                .expect("the linear fit");
+        let lens = profile.lens();
+        assert_eq!(matched.lens.falloff, lens.falloff);
+        assert_eq!(matched.lens.distortion, lens.distortion);
+        assert_eq!(matched.lens.crop, lens.crop);
+    }
+
+    /// The falloff has to be on the render *before* the colour is fitted, or the curves
+    /// are fitted against corners `apply_lens` will later lift and then asked at grade
+    /// time for levels they never saw. Fitting with one and without it must therefore
+    /// produce different curves - if it does not, the pre-fit application is not
+    /// happening.
+    #[test]
+    fn the_falloff_is_on_the_render_the_hdr_colour_is_fitted_from() {
+        let frame = decode(&sony(), 16, true, 3840);
+        let source = crate::hdr::Source {
+            samples: frame.samples16().expect("a 16-bit decode"),
+            width: frame.width,
+            height: frame.height,
+        };
+        let path = sony();
+        let p = path.to_str().unwrap();
+        let curves = |falloff| {
+            let lens = crate::fit::Lens { distortion: None, crop: 1.0, falloff };
+            crate::hdr::fit_match(p, &source, QUANTILE, lens).expect("a match").colour.curves
+        };
+        assert_ne!(curves(Some((0.6, 0.0))), curves(None));
     }
 
     #[test]

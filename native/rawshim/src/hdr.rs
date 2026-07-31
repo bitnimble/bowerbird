@@ -121,13 +121,12 @@ pub fn fit_match(
     raw_path: &str,
     source: &Source<'_>,
     quantile: f64,
-    distortion: Option<Vec<f64>>,
-    crop: f64,
+    lens: crate::fit::Lens,
 ) -> Option<HdrMatch> {
     let anchor = tone::levels(source.samples, quantile).white;
     let preview = crate::decode_embedded_rgb(raw_path, hdr_fit::fit_long_edge())?;
     let plane = hdr_fit::fit_plane(source.samples, source.width, source.height, preview.width * 2);
-    hdr_fit::fit(&plane, anchor, &preview, distortion, crop)
+    hdr_fit::fit(&plane, anchor, &preview, lens)
 }
 
 /// The whole camera match for an HDR rendition - the geometry and the colour - off one
@@ -176,8 +175,7 @@ pub fn fit_all(
             // the grade's own domain, and diffuse white is what puts them there.
             let render = hdr_fit::render_srgb8(&plane, levels.white);
             let profile = crate::fit::fit(render.as_ref(), jpeg, geometry).ok().flatten()?;
-            let matched =
-                hdr_fit::fit(&plane, levels.white, &preview, profile.knots.clone(), profile.crop)?;
+            let matched = hdr_fit::fit(&plane, levels.white, &preview, profile.lens())?;
             Some((profile, matched))
         })
     };
@@ -235,7 +233,7 @@ fn graded_with(
     // Scoped so the borrow of `fitted` ends before it is moved from below.
     let warped = {
         let samples = fitted.as_deref().unwrap_or(source.samples);
-        matched.and_then(|m| hdr_fit::apply_geometry(samples, width, height, m))
+        matched.and_then(|m| hdr_fit::apply_lens(samples, width, height, m))
     };
 
     // One owned buffer for the whole chain, and the grade runs inside it. Whichever

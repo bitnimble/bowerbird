@@ -33,7 +33,9 @@ const MAX_PAIR_GRADIENT: i32 = 24;
 
 const MIN_PAIRS: usize = 2000;
 const MIN_BIN_SAMPLES: f64 = 8.0;
-const PAIR_STRIDE: usize = 6;
+const PAIR_STRIDE: usize = 7;
+/// Where the radius sits inside a pair, after the two RGB triples.
+const RADIUS: usize = 6;
 
 /// Beyond this the match is not trustworthy, so the render ships untransformed.
 pub const MAX_ACCEPTABLE_DELTA_E: f64 = 6.0;
@@ -52,9 +54,18 @@ pub enum Phase {
     Test = 1,
 }
 
-/// Corresponding samples, six bytes each: source RGB then target RGB. Flat rather
-/// than a vector of structs because a candidate produces ~180k of them and every
-/// candidate rebuilds the set.
+impl Phase {
+    fn held_out(self) -> Phase {
+        match self {
+            Phase::Train => Phase::Test,
+            Phase::Test => Phase::Train,
+        }
+    }
+}
+
+/// Corresponding samples: source RGB, target RGB, then the radius the falloff is
+/// indexed by. Flat rather than a vector of structs because a candidate produces
+/// ~180k of them and every candidate rebuilds the set.
 struct Pairs {
     data: Vec<u8>,
     count: usize,
@@ -96,8 +107,39 @@ pub const SOURCE_CAMERA: u32 = 1;
 pub const SOURCE_FITTED: u32 = 2;
 pub const SOURCE_LENSFUN: u32 = 3;
 
+/// What the lens did to the frame, as this fit resolved it: the halves that depend on
+/// where a pixel sits rather than what colour it is.
+///
+/// One struct because §10.8.1 lifts all of it into the HDR grade together and nothing
+/// may lift a subset. Passed as three loose arguments first, and `fit_all` promptly
+/// forgot the falloff on one of the two routes with every test still green.
+#[derive(Clone)]
+pub struct Lens {
+    /// Radial knots in `SPLINE_UNIT`s, or None where no correction is needed.
+    pub distortion: Option<Vec<f64>>,
+    /// Overall rescale accompanying the distortion.
+    pub crop: f64,
+    /// The falloff's two coefficients, in the currency `Gain::at` reads.
+    pub falloff: Option<(f64, f64)>,
+}
+
+impl Lens {
+    /// A lens that did nothing, for a caller with no fit to hand.
+    pub fn none() -> Self {
+        Lens { distortion: None, crop: 1.0, falloff: None }
+    }
+
+    /// Whether applying this would change any pixel.
+    pub fn is_identity(&self) -> bool {
+        self.distortion.is_none() && self.falloff.is_none()
+    }
+}
+
 pub struct Profile {
     pub knots: Option<Vec<f64>>,
+    /// The falloff the camera corrected and the render did not, or None where the
+    /// frame is better off without one.
+    pub gain: Option<Gain>,
     pub crop: f64,
     /// 0 none, or one of the `SOURCE_` codes. Reported so a rendition can be
     /// re-cut when the cascade changes under it, and so the fit can be judged by
@@ -105,6 +147,17 @@ pub struct Profile {
     pub source: u32,
     pub delta_e: f64,
     pub colour: ColourTransform,
+}
+
+impl Profile {
+    /// Everything §10.8.1 lifts, in one piece so it cannot lift half.
+    pub fn lens(&self) -> Lens {
+        Lens {
+            distortion: self.knots.clone(),
+            crop: self.crop,
+            falloff: self.gain.as_ref().map(Gain::coefficients),
+        }
+    }
 }
 
 /// The render and the camera's JPEG on one common grid.
@@ -125,6 +178,8 @@ fn pairs(render: &Rgb, jpeg: &Rgb) -> Pairs {
     let (width, height) = (jpeg.width, jpeg.height);
     let mut data = vec![0u8; width * height * PAIR_STRIDE];
     let mut count = 0usize;
+    let (cx, cy) = (width as f64 / 2.0, height as f64 / 2.0);
+    let half = (cx * cx + cy * cy).sqrt().max(1.0);
     for y in 1..height.saturating_sub(1) {
         for x in 1..width.saturating_sub(1) {
             let i = (y * width + x) * 3;
@@ -154,6 +209,7 @@ fn pairs(render: &Rgb, jpeg: &Rgb) -> Pairs {
             data[o + 3] = d0;
             data[o + 4] = d1;
             data[o + 5] = d2;
+            data[o + RADIUS] = Gain::radius(x as f64 - cx, y as f64 - cy, half);
             count += 1;
         }
     }
@@ -164,13 +220,13 @@ fn pairs(render: &Rgb, jpeg: &Rgb) -> Pairs {
 /// interpolated, the ends extend at the last known slope rather than flattening
 /// (which would crush every highlight the frame happened not to sample), and the
 /// result is made monotone so a thinly-populated bin cannot invert it.
-fn fit_curve(pairs: &Pairs, phase: Phase, channel: usize) -> [u8; 256] {
+fn fit_curve(pairs: &Pairs, phase: Phase, gain: Option<&Gain>, channel: usize) -> [u8; 256] {
     let mut sum = [0.0f64; 256];
     let mut count = [0.0f64; 256];
     let mut p = phase as usize;
     while p < pairs.count {
         let o = p * PAIR_STRIDE;
-        let level = pairs.data[o + channel] as usize;
+        let level = Gain::of(gain, pairs.data[o + RADIUS], pairs.data[o + channel]) as usize;
         sum[level] += pairs.data[o + 3 + channel] as f64;
         count[level] += 1.0;
         p += 2;
@@ -255,12 +311,272 @@ fn solve3(matrix: [[f64; 3]; 3], rhs: [f64; 3]) -> Option<[f64; 3]> {
     Some([m[0][3] / m[0][0], m[1][3] / m[1][1], m[2][3] / m[2][2]])
 }
 
+/// A radial brightness gain, as a level-in/level-out table per quantised radius.
+///
+/// The camera corrects its lens's falloff and the render does not, and that is a
+/// gain that varies over the frame - which per-channel curves and a 3x3 cannot
+/// express at all, since both are position-independent. Modelled as `1 + a r^2 +
+/// b r^4` in linear light, the shape falloff actually has, so two coefficients
+/// carry it and a thin radius bin cannot bend it on its own.
+///
+/// **Achromatic**: one scalar for all three channels, fitted from luma. Falloff does
+/// carry a slight cast on real glass, which this cannot express and does not try to -
+/// what the 3x3 absorbs globally it absorbs, and the rest stays in the residual.
+pub struct Gain {
+    lut: Vec<u8>,
+    coefficients: (f64, f64),
+}
+
+impl Gain {
+    /// Bounded because these are two free parameters fitted to one frame, and a
+    /// degenerate solve should distort the corners rather than black them out or
+    /// blow them away: no lens falls off by four stops, and none gains.
+    const LIMIT: (f64, f64) = (0.25, 4.0);
+
+    /// Tabulated rather than left to be evaluated, because the 8-bit path applies it
+    /// per pixel of a 60MP frame and evaluating it is a `powf` for the transfer.
+    pub(crate) fn from_poly(a: f64, b: f64) -> Self {
+        let linear = linear_table();
+        let mut lut = vec![0u8; 256 * 256];
+        for radius in 0..256 {
+            for level in 0..256 {
+                lut[radius * 256 + level] = to_srgb8(linear[level] * Gain::at(a, b, radius as u8));
+            }
+        }
+        Gain { lut, coefficients: (a, b) }
+    }
+
+    /// The multiplier itself, in linear light, at a quantised radius.
+    ///
+    /// Kept separate from the table so a caller working in linear light already can
+    /// evaluate it rather than round-trip through 8 bits (`hdr_fit`).
+    #[inline]
+    pub(crate) fn at(a: f64, b: f64, radius: u8) -> f64 {
+        let r2 = (f64::from(radius) / 255.0).powi(2);
+        (1.0 + a * r2 + b * r2 * r2).clamp(Self::LIMIT.0, Self::LIMIT.1)
+    }
+
+    /// The two coefficients, for the HDR fit to reuse.
+    ///
+    /// A falloff correction is a multiplication in linear light, so unlike the curves
+    /// - whose domain stops at display white - it means the same thing in any linear
+    /// domain and lifts to the grade exactly as the geometry does (10.8.1).
+    pub(crate) fn coefficients(&self) -> (f64, f64) {
+        self.coefficients
+    }
+
+    /// The level `level` becomes at this radius. Free where there is no gain, which
+    /// is the geometry search's whole life: it scores tens of candidates and none of
+    /// them has one, so an identity table would put a cache-hostile 64KB lookup on
+    /// the hottest loop in the module to return its own argument.
+    #[inline]
+    fn of(gain: Option<&Gain>, radius: u8, level: u8) -> u8 {
+        match gain {
+            None => level,
+            Some(g) => g.lut[radius as usize * 256 + level as usize],
+        }
+    }
+
+    /// What this gain does to a corner pixel of mid grey, as a ratio - the one number
+    /// that says how much falloff was corrected, and the one the tests assert on
+    /// because `(a, b)` trade off against each other and it does not.
+    #[cfg(test)]
+    pub(crate) fn corner(&self) -> f64 {
+        let linear = linear_table();
+        linear[Gain::of(Some(self), 255, 128) as usize] / linear[128]
+    }
+
+    /// The radius byte `of` and `at` expect, for a pixel of a frame this size.
+    #[inline]
+    pub(crate) fn radius(dx: f64, dy: f64, half: f64) -> u8 {
+        (((dx * dx + dy * dy).sqrt() / half) * 255.0).min(255.0) as u8
+    }
+}
+
+fn to_srgb8(linear: f64) -> u8 {
+    (crate::hdr_fit::srgb_oetf(linear.clamp(0.0, 1.0)) * 255.0).round() as u8
+}
+
+/// The gain the pairs ask for, given a colour transform fitted under the current one.
+///
+/// Run backwards rather than searched, which is one pass where a search over candidate
+/// gains would be one pass each (10.8).
+///
+/// The answer is absolute, not an increment on the gain already in hand - the
+/// inverted target lands in gained-source levels and the pair's own source is
+/// ungained, so their ratio is the whole of what the gain has to supply. An
+/// increment would have to compose, and two of these do not compose into one.
+fn refit_gain(pairs: &Pairs, phase: Phase, colour: &ColourTransform) -> Option<(f64, f64)> {
+    let inverse = invert3(colour.matrix)?;
+    let back: Vec<[u8; 256]> = (0..3).map(|c| invert_curve(&colour.curves[c])).collect();
+    let linear = linear_table();
+
+    const BINS: usize = 12;
+    /// A bin backed by a handful of pixels states a ratio, not a measurement, and the
+    /// bins most likely to be that thin are the outer ones - `pairs` drops near-black
+    /// samples, and the corners of a frame that needs this correction are exactly
+    /// where the render is darkest. Left unguarded, one such bin sets the end of the
+    /// curve and the held-out gate cannot object, its own half being thin in the same
+    /// place. The same floor `fit_curve` puts on a tone bin, for the same reason.
+    const MIN_BIN_PAIRS: u32 = 64;
+
+    let (mut wanted, mut had) = ([0.0f64; BINS], [0.0f64; BINS]);
+    let mut counted = [0u32; BINS];
+    let mut p = phase as usize;
+    while p < pairs.count {
+        let o = p * PAIR_STRIDE;
+        p += 2;
+        let radius = pairs.data[o + RADIUS];
+        let bin = (radius as usize * BINS / 256).min(BINS - 1);
+        let t = [
+            pairs.data[o + 3] as f64,
+            pairs.data[o + 4] as f64,
+            pairs.data[o + 5] as f64,
+        ];
+        // A level the curve never reached inverts to a clamp rather than a mapping,
+        // so those are dropped rather than believed.
+        let mut source = [0u8; 3];
+        let mut usable = true;
+        for c in 0..3 {
+            let mixed = inverse[c][0] * t[0] + inverse[c][1] * t[1] + inverse[c][2] * t[2];
+            if !(2.0..=253.0).contains(&mixed) {
+                usable = false;
+                break;
+            }
+            source[c] = back[c][mixed.round() as usize];
+            if source[c] <= 1 || source[c] >= 254 {
+                usable = false;
+                break;
+            }
+        }
+        if !usable {
+            continue;
+        }
+        let luma = |v: [f64; 3]| 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2];
+        let want = luma([
+            linear[source[0] as usize],
+            linear[source[1] as usize],
+            linear[source[2] as usize],
+        ]);
+        let is = luma([
+            linear[pairs.data[o] as usize],
+            linear[pairs.data[o + 1] as usize],
+            linear[pairs.data[o + 2] as usize],
+        ]);
+        if is < 0.002 || want < 0.002 {
+            continue;
+        }
+        // Summed, then divided once per bin: a ratio taken pair by pair would let a
+        // near-black pixel carry as much as the sky.
+        wanted[bin] += want;
+        had[bin] += is;
+        counted[bin] += 1;
+    }
+
+    // Least squares of `g - 1 = a r^2 + b r^4` over the bins that got samples,
+    // weighted by how many linear units each carries so a dark bin cannot swing it.
+    let (mut a11, mut a12, mut a22, mut b1, mut b2) = (0.0, 0.0, 0.0, 0.0, 0.0);
+    let mut bins = 0usize;
+    for bin in 0..BINS {
+        if counted[bin] < MIN_BIN_PAIRS || had[bin] <= 0.0 {
+            continue;
+        }
+        let r2 = ((bin as f64 + 0.5) / BINS as f64).powi(2);
+        let (x1, x2) = (r2, r2 * r2);
+        let y = wanted[bin] / had[bin] - 1.0;
+        let w = had[bin];
+        a11 += w * x1 * x1;
+        a12 += w * x1 * x2;
+        a22 += w * x2 * x2;
+        b1 += w * x1 * y;
+        b2 += w * x2 * y;
+        bins += 1;
+    }
+    if bins < 4 {
+        return None;
+    }
+    let det = a11 * a22 - a12 * a12;
+    if det.abs() < 1e-12 {
+        return None;
+    }
+    Some(((b1 * a22 - b2 * a12) / det, (b2 * a11 - b1 * a12) / det))
+}
+
+/// `curve` maps a source level to a target level; this maps back. Monotone by
+/// construction, so one forward walk fills it.
+fn invert_curve(curve: &[u8; 256]) -> [u8; 256] {
+    let mut back = [0u8; 256];
+    let mut source = 0usize;
+    for target in 0..256 {
+        while source < 255 && (curve[source] as usize) < target {
+            source += 1;
+        }
+        back[target] = source as u8;
+    }
+    back
+}
+
+fn invert3(m: [[f64; 3]; 3]) -> Option<[[f64; 3]; 3]> {
+    let det = m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
+        - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+        + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+    if det.abs() < 1e-9 {
+        return None;
+    }
+    let mut out = [[0.0f64; 3]; 3];
+    for row in 0..3 {
+        for col in 0..3 {
+            let (r0, r1) = ((col + 1) % 3, (col + 2) % 3);
+            let (c0, c1) = ((row + 1) % 3, (row + 2) % 3);
+            out[row][col] = (m[r0][c0] * m[r1][c1] - m[r0][c1] * m[r1][c0]) / det;
+        }
+    }
+    Some(out)
+}
+
+/// The gain and the colour transform together, alternating: neither can be fitted
+/// without the other, since a falloff looks like a tone difference to a curve and a
+/// tone difference looks like falloff to a gain.
+///
+/// The gain is None where the frame is better off without one, which is the point of
+/// the gate: a body that corrected no falloff would otherwise have two free
+/// parameters fitted to its noise. Judged on the pairs the round was not fitted on,
+/// for exactly that reason - extra free parameters can only ever look better on their
+/// own. The returned deltaE is that same held-out score, so the caller does not pay a
+/// second pass to learn what this already measured.
+fn fit_gain_and_colour(pairs: &Pairs, phase: Phase) -> (Option<Gain>, ColourTransform, f64) {
+    let held = phase.held_out();
+    let mut colour = fit_colour(pairs, phase, None);
+    let mut best = score(pairs, held, None, &colour);
+    let mut gain: Option<Gain> = None;
+    // Three, because the first round's curves were fitted with the falloff still in
+    // them and so partly absorb it - measured on an injected 0.65 corner, one round
+    // recovers 0.78 and the next two land it.
+    for _ in 0..3 {
+        let Some((a, b)) = refit_gain(pairs, phase, &colour) else { break };
+        let candidate = Gain::from_poly(a, b);
+        let fitted = fit_colour(pairs, phase, Some(&candidate));
+        let delta = score(pairs, held, Some(&candidate), &fitted);
+        if delta >= best {
+            break;
+        }
+        best = delta;
+        gain = Some(candidate);
+        colour = fitted;
+    }
+    (gain, colour, best)
+}
+
 /// Per-channel curves then a 3x3 mix. Deliberately not a 3D LUT: measured against
 /// one, 777 coefficients beat a 17^3 LUT and tie a 33^3 one, because the vendor
 /// transform is close enough to separable that the extra dimensions only fit noise
 /// in the cells a single frame never populates.
-fn fit_colour(pairs: &Pairs, phase: Phase) -> ColourTransform {
-    let curves = [fit_curve(pairs, phase, 0), fit_curve(pairs, phase, 1), fit_curve(pairs, phase, 2)];
+fn fit_colour(pairs: &Pairs, phase: Phase, gain: Option<&Gain>) -> ColourTransform {
+    let curves = [
+        fit_curve(pairs, phase, gain, 0),
+        fit_curve(pairs, phase, gain, 1),
+        fit_curve(pairs, phase, gain, 2),
+    ];
 
     // A'A is symmetric, so only the upper triangle is accumulated.
     let (mut a00, mut a01, mut a02, mut a11, mut a12, mut a22) = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
@@ -268,9 +584,10 @@ fn fit_colour(pairs: &Pairs, phase: Phase) -> ColourTransform {
     let mut p = phase as usize;
     while p < pairs.count {
         let o = p * PAIR_STRIDE;
-        let s0 = curves[0][pairs.data[o] as usize] as f64;
-        let s1 = curves[1][pairs.data[o + 1] as usize] as f64;
-        let s2 = curves[2][pairs.data[o + 2] as usize] as f64;
+        let radius = pairs.data[o + RADIUS];
+        let s0 = curves[0][Gain::of(gain, radius, pairs.data[o]) as usize] as f64;
+        let s1 = curves[1][Gain::of(gain, radius, pairs.data[o + 1]) as usize] as f64;
+        let s2 = curves[2][Gain::of(gain, radius, pairs.data[o + 2]) as usize] as f64;
         a00 += s0 * s0;
         a01 += s0 * s1;
         a02 += s0 * s2;
@@ -348,7 +665,7 @@ pub fn delta_e76(a: &[f64; 3], b: &[f64; 3]) -> f64 {
 /// Mean deltaE over pairs the transform was not fitted on. Every number this
 /// module reports is held out: a curve with 256 free parameters will always look
 /// better on its own training pairs.
-fn score(pairs: &Pairs, phase: Phase, transform: &ColourTransform) -> f64 {
+fn score(pairs: &Pairs, phase: Phase, gain: Option<&Gain>, transform: &ColourTransform) -> f64 {
     let table = linear_table();
     let m = &transform.matrix;
     let curves = &transform.curves;
@@ -357,9 +674,10 @@ fn score(pairs: &Pairs, phase: Phase, transform: &ColourTransform) -> f64 {
     let mut p = phase as usize;
     while p < pairs.count {
         let o = p * PAIR_STRIDE;
-        let r = curves[0][pairs.data[o] as usize] as f64;
-        let g = curves[1][pairs.data[o + 1] as usize] as f64;
-        let b = curves[2][pairs.data[o + 2] as usize] as f64;
+        let radius = pairs.data[o + RADIUS];
+        let r = curves[0][Gain::of(gain, radius, pairs.data[o]) as usize] as f64;
+        let g = curves[1][Gain::of(gain, radius, pairs.data[o + 1]) as usize] as f64;
+        let b = curves[2][Gain::of(gain, radius, pairs.data[o + 2]) as usize] as f64;
         // Rounded to the level that would actually be written to the rendition,
         // which is also what makes the lookup exact rather than an approximation.
         let out0 = clamp8((m[0][0] * r + m[0][1] * g + m[0][2] * b).round()) as u8;
@@ -385,7 +703,13 @@ fn score(pairs: &Pairs, phase: Phase, transform: &ColourTransform) -> f64 {
 /// correspondence. Feature matching was tried first, in four variants, and every
 /// one produced a confident wrong answer on repetitive texture; this cannot, and
 /// it needs no band selection, subpixel interpolation or outlier rejection.
-fn residual_for(grid: &Grid, knots: &[f64], crop: f64) -> Option<(f64, ColourTransform)> {
+fn residual_for(grid: &Grid, knots: &[f64], crop: f64) -> Option<f64> {
+    let all = corresponding(grid, knots, crop)?;
+    let colour = fit_colour(&all, Phase::Train, None);
+    Some(score(&all, Phase::Test, None, &colour))
+}
+
+fn corresponding(grid: &Grid, knots: &[f64], crop: f64) -> Option<Pairs> {
     // No libvips in here, deliberately. Both planes were blurred once when the grid
     // was built, so a candidate is a warp and a pair pass over one buffer - where
     // blurring per candidate meant converting to a VipsImage and materialising back
@@ -397,11 +721,18 @@ fn residual_for(grid: &Grid, knots: &[f64], crop: f64) -> Option<(f64, ColourTra
     // fitted deltaE does not move.
     let warped = warp(grid.source.as_ref(), grid.jpeg.width, grid.jpeg.height, knots, crop);
     let all = pairs(&warped, &grid.jpeg);
-    if all.count < MIN_PAIRS {
-        return None;
-    }
-    let colour = fit_colour(&all, Phase::Train);
-    Some((score(&all, Phase::Test, &colour), colour))
+    (all.count >= MIN_PAIRS).then_some(all)
+}
+
+/// `residual_for` plus the falloff, for the geometry that won.
+///
+/// Kept out of the search itself: the gain costs a second colour fit per candidate
+/// and the search only needs candidates ranked against each other, which a falloff
+/// common to all of them does not change.
+fn residual_with_gain(grid: &Grid, knots: &[f64], crop: f64) -> Option<(f64, ColourTransform, Option<Gain>)> {
+    let all = corresponding(grid, knots, crop)?;
+    let (gain, colour, delta) = fit_gain_and_colour(&all, Phase::Train);
+    Some((delta, colour, gain))
 }
 
 /// Where to start looking for the crop that accompanies a known spline.
@@ -427,7 +758,7 @@ fn scan<T: Send + Sync + Copy>(grid: &Grid, candidates: &[T], knots_of: impl Fn(
     candidates
         .par_iter()
         .filter_map(|candidate| {
-            residual_for(grid, &knots_of(*candidate), crop_of(*candidate)).map(|(delta, _)| (*candidate, delta))
+            residual_for(grid, &knots_of(*candidate), crop_of(*candidate)).map(|delta| (*candidate, delta))
         })
         .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
 }
@@ -441,14 +772,14 @@ fn scan<T: Send + Sync + Copy>(grid: &Grid, candidates: &[T], knots_of: impl Fn(
 /// distortion came back as 1.3% when the refine also ran coarse.
 fn fit_crop(grids: &Grids, knots: &[f64], coarse: &[f64]) -> Option<(f64, f64)> {
     let (mut crop, _) = scan(&grids.search, coarse, |_| knots.to_vec(), |c| c)?;
-    let mut delta = residual_for(&grids.full, knots, crop)?.0;
+    let mut delta = residual_for(&grids.full, knots, crop)?;
 
     let mut step = coarse.get(1).copied().unwrap_or(1.0) - coarse.first().copied().unwrap_or(0.0);
     while step > REFINE_FLOOR {
         let mut improved = false;
         for sign in [1.0, -1.0] {
             let trial = crop + sign * step;
-            if let Some((candidate, _)) = residual_for(&grids.full, knots, trial) {
+            if let Some(candidate) = residual_for(&grids.full, knots, trial) {
                 if candidate < delta - REFINE_MARGIN {
                     crop = trial;
                     delta = candidate;
@@ -491,7 +822,7 @@ fn fit_polynomial(grids: &Grids) -> Option<(f64, f64, f64)> {
         .collect();
     let ((mut k1, mut crop), _) =
         scan(&grids.search, &candidates, |(k1, _)| polynomial_knots(k1, 0.0, 16), |(_, crop)| crop)?;
-    let mut delta = residual_for(&grids.full, &polynomial_knots(k1, 0.0, 16), crop)?.0;
+    let mut delta = residual_for(&grids.full, &polynomial_knots(k1, 0.0, 16), crop)?;
 
     let (mut step_k1, mut step_crop) = (0.01, 0.01);
     while step_crop > REFINE_FLOOR {
@@ -500,7 +831,7 @@ fn fit_polynomial(grids: &Grids) -> Option<(f64, f64, f64)> {
             for sign in [1.0, -1.0] {
                 let trial_k1 = if axis == 0 { k1 + sign * step_k1 } else { k1 };
                 let trial_crop = if axis == 1 { crop + sign * step_crop } else { crop };
-                if let Some((candidate, _)) =
+                if let Some(candidate) =
                     residual_for(&grids.full, &polynomial_knots(trial_k1, 0.0, 16), trial_crop)
                 {
                     if candidate < delta - REFINE_MARGIN {
@@ -557,8 +888,7 @@ pub fn fit(render: RgbRef<'_>, jpeg_bytes: &[u8], geometry: Geometry) -> Result<
     };
     let grids = Grids { full, search };
 
-    let baseline = residual_for(&grids.full, &[], 1.0);
-    let baseline_delta = baseline.as_ref().map(|(d, _)| *d).unwrap_or(f64::INFINITY);
+    let baseline_delta = residual_for(&grids.full, &[], 1.0).unwrap_or(f64::INFINITY);
 
     // Decided entirely on the search grid; the winner is re-fitted at full size
     // below, so nothing reported was measured coarse.
@@ -579,13 +909,13 @@ pub fn fit(render: RgbRef<'_>, jpeg_bytes: &[u8], geometry: Geometry) -> Result<
     };
 
     let knots = chosen.0.clone().unwrap_or_default();
-    let Some((delta_e, colour)) = residual_for(&grids.full, &knots, chosen.1) else {
+    let Some((delta_e, colour, gain)) = residual_with_gain(&grids.full, &knots, chosen.1) else {
         return Ok(None);
     };
     if !delta_e.is_finite() || delta_e > MAX_ACCEPTABLE_DELTA_E {
         return Ok(None);
     }
-    Ok(Some(Profile { knots: chosen.0, crop: chosen.1, source: chosen.2, delta_e, colour }))
+    Ok(Some(Profile { knots: chosen.0, gain, crop: chosen.1, source: chosen.2, delta_e, colour }))
 }
 
 /// The curves and the matrix collapsed into nine 256-entry tables, one per
@@ -615,11 +945,24 @@ pub fn apply(image: RgbRef<'_>, profile: &Profile) -> Rgb {
         None => Rgb { width: image.width, height: image.height, data: image.data.to_vec() },
     };
     let folded = fold(&profile.colour);
-    for i in (0..out.data.len()).step_by(3) {
-        let (r, g, b) = (out.data[i] as usize, out.data[i + 1] as usize, out.data[i + 2] as usize);
-        out.data[i] = clamp8(folded[0][r] + folded[1][g] + folded[2][b]) as u8;
-        out.data[i + 1] = clamp8(folded[3][r] + folded[4][g] + folded[5][b]) as u8;
-        out.data[i + 2] = clamp8(folded[6][r] + folded[7][g] + folded[8][b]) as u8;
+    let (cx, cy) = (out.width as f64 / 2.0, out.height as f64 / 2.0);
+    let half = (cx * cx + cy * cy).sqrt().max(1.0);
+    // Row-major rather than one flat index, so the falloff's radius comes off the
+    // loop counters rather than a divide per pixel.
+    for (y, row) in out.data.chunks_mut(out.width * 3).enumerate() {
+        let dy = y as f64 - cy;
+        for (x, pixel) in row.chunks_mut(3).enumerate() {
+            let (mut r, mut g, mut b) = (pixel[0] as usize, pixel[1] as usize, pixel[2] as usize);
+            if let Some(gain) = &profile.gain {
+                let radius = Gain::radius(x as f64 - cx, dy, half);
+                r = Gain::of(Some(gain), radius, pixel[0]) as usize;
+                g = Gain::of(Some(gain), radius, pixel[1]) as usize;
+                b = Gain::of(Some(gain), radius, pixel[2]) as usize;
+            }
+            pixel[0] = clamp8(folded[0][r] + folded[1][g] + folded[2][b]) as u8;
+            pixel[1] = clamp8(folded[3][r] + folded[4][g] + folded[5][b]) as u8;
+            pixel[2] = clamp8(folded[6][r] + folded[7][g] + folded[8][b]) as u8;
+        }
     }
     out
 }
@@ -648,6 +991,7 @@ mod tests {
         let source = scene(32, 24);
         let profile = Profile {
             knots: None,
+            gain: None,
             crop: 1.0,
             source: 0,
             delta_e: 0.0,
@@ -688,12 +1032,12 @@ mod tests {
             // correctly falls back to identity, which passes a monotonicity
             // check without testing anything.
             for _ in 0..20 {
-                data.extend_from_slice(&[level, level, level, target, target, target]);
+                data.extend_from_slice(&[level, level, level, target, target, target, 0]);
                 count += 1;
             }
         }
         let pairs = Pairs { data, count };
-        let curve = fit_curve(&pairs, Phase::Train, 0);
+        let curve = fit_curve(&pairs, Phase::Train, None, 0);
         for level in [10usize, 80, 200] {
             let expected = (level as f64 * 0.75 + 20.0).min(255.0);
             assert!((curve[level] as f64 - expected).abs() <= 1.5, "level {level}: {} vs {expected}", curve[level]);
@@ -708,11 +1052,11 @@ mod tests {
             // A target that jumps around: the fit must still not invert.
             let target = if level % 2 == 0 { level.saturating_sub(30) } else { level.saturating_add(30) };
             for _ in 0..20 {
-                data.extend_from_slice(&[level, level, level, target, target, target]);
+                data.extend_from_slice(&[level, level, level, target, target, target, 0]);
                 count += 1;
             }
         }
-        let curve = fit_curve(&Pairs { data, count }, Phase::Train, 0);
+        let curve = fit_curve(&Pairs { data, count }, Phase::Train, None, 0);
         for level in 1..256 {
             assert!(curve[level] >= curve[level - 1], "curve dipped at {level}");
         }

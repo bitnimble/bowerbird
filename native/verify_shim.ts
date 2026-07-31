@@ -17,9 +17,9 @@ if (path == null) {
 }
 
 try {
-  // bb_selftest runs the warp and the colour lookup on a small image, so the
-  // vectorised code actually executes. Loading the library proves nothing on its
-  // own: a symbol that returns a constant answers fine on a CPU that faults the
+  // bb_selftest runs the warp, the falloff and the colour lookup on a small image,
+  // so the vectorised code actually executes. Loading the library proves nothing on
+  // its own: a symbol that returns a constant answers fine on a CPU that faults the
   // moment real pixel work starts.
   const { symbols } = dlopen(path, { bb_selftest: { args: [], returns: FFIType.i32 } });
   const status = symbols.bb_selftest();
