@@ -3,7 +3,8 @@
 # dev server.
 #   docker compose -f docker-compose.dev.yml up
 #
-# Ports: HOST_PORT (API, default 3000) and WEB_PORT (web, default 5173).
+# Ports: WEB_PORT (default 5173) is the only one published. The API is reached
+# through the web server's proxy, so it stays inside on a fixed 3000.
 #
 # rawshim itself is not in that stage: `base` carries the runtime libraries but not
 # the headers, so build it on the host with `bun run build:native` - which is what
@@ -25,16 +26,15 @@ services:
     # The web service shares this network namespace, so its published port lives
     # here too.
     ports:
-      - "${HOST_PORT:-3000}:${HOST_PORT:-3000}"
       - "${WEB_PORT:-5173}:${WEB_PORT:-5173}"
     # Only what has to be known before the catalogue can be opened. Everything
     # else is a setting on the app's Settings page, stored in the DB (§15).
     environment:
-      HOST: 0.0.0.0
-      # Host and container port are the same number so a URL means the same thing
-      # on both sides: the browser's API base and the dev server's proxy target
-      # are one port, whatever it is set to.
-      PORT: ${HOST_PORT:-3000}
+      # Loopback, not 0.0.0.0: the only thing that talks to the API is the web
+      # server, which shares this network namespace. Nothing reaches it from
+      # outside, including the host.
+      HOST: 127.0.0.1
+      PORT: 3000
       DB_PATH: /data/bowerbird.db
     volumes:
       # This repo, live-mounted for hot reload. REPO_DIR must be set in .env to the
@@ -57,15 +57,15 @@ services:
     user: "1000:1000"
     working_dir: /app/web
     command: sh -c "bun install --frozen-lockfile && bun run dev.ts --port ${WEB_PORT:-5173}"
-    # Shares the API container's network stack rather than linking to it, so
-    # 127.0.0.1:$PORT reaches the API from here exactly as it does from the host.
-    # That keeps the dev server's proxy (the /hdr-check and /quality-check pages)
-    # working off one port number with no container-only hostname anywhere.
+    # Shares the API container's network stack rather than linking to it, so the
+    # proxy target is plain 127.0.0.1:3000 with no container-only hostname
+    # anywhere - and the API can stay on loopback, unreachable from outside.
     network_mode: "service:bowerbird-dev"
     environment:
-      # Where the browser should reach the API. The page is served from the web
-      # port, so the port cannot be inferred from the URL it was loaded from.
-      VITE_API_PORT: ${HOST_PORT:-3000}
+      # Where this server proxies /api and /image to; the browser only ever talks
+      # to this one. Reached over the shared network namespace below.
+      VITE_API_PORT: 3000
+      VITE_ALLOWED_HOSTS: bowerbird.kumo.dev
     volumes:
       - "${REPO_DIR:?set REPO_DIR in .env to this repo's absolute path on the docker host}:/app"
       - /app/node_modules

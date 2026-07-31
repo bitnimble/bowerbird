@@ -1,8 +1,9 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-// The API is a separate service on its own origin (CORS_ORIGINS must list this
-// dev server). VITE_API_URL points the client at it; see src/api/client.ts.
+// The client is same-origin (src/api/client.ts): this server proxies /api and
+// /image to the API, which VITE_API_URL / VITE_API_PORT locate. Nothing in the
+// browser knows the API's address, so it need not be reachable from one.
 export default defineConfig({
   plugins: [react()],
   // Standard decorators are stage 3, so they must be lowered before Rollup sees
@@ -17,13 +18,12 @@ export default defineConfig({
     // which is the collision this avoids.
     port: 20000 + Math.floor(Math.random() * 20000),
     host: true,
-    // The client talks to the API directly on its own origin, so these are not
-    // for the app. They exist so the API's own pages are reachable from a device
-    // that can only see this port: the HDR check (§10.7) has to be opened on a
-    // phone or an HDR desktop, and it pulls its renditions from /image and
-    // builds them through /api.
+    allowedHosts: process.env.VITE_ALLOWED_HOSTS?.split(',').map((h) => h.trim()),
+    // Everything the browser asks the API for goes through here: this server is
+    // the only one exposed, and the API is internal. /quality-check is the API's
+    // own diagnostic page, reachable the same way.
     proxy: Object.fromEntries(
-      ['/hdr-check', '/quality-check', '/api', '/image'].map((path) => [
+      ['/quality-check', '/api', '/image'].map((path) => [
         path,
         {
           target:

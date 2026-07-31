@@ -28,14 +28,14 @@ export default defineConfig({
       url: `${API_URL}/api/libraries`,
       reuseExistingServer: false,
       // The three that are still environment (§15); the run's DB starts empty, so
-      // every setting is its default. The Vite server is on loopback, which the
-      // default CORS rule allows without being told the port.
+      // every setting is its default.
       env: { DB_PATH, PORT: String(API_PORT), HOST: '127.0.0.1' },
     },
     {
       command: `./node_modules/.bin/vite --port ${WEB_PORT} --strictPort`,
       url: `http://127.0.0.1:${WEB_PORT}`,
       reuseExistingServer: false,
+      // The proxy target: the browser only ever talks to the Vite server.
       env: { VITE_API_URL: API_URL },
     },
   ],

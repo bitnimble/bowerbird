@@ -2212,7 +2212,9 @@ The following order respects dependency chains — each step depends on the step
 
 ## 18. Web Client (`web/`)
 
-A separate Vite + React app with its own `package.json`, dev server and build. It is a pure API consumer: it holds no photo logic of its own and talks to the server over HTTP from a different origin, which is why the API carries CORS (§15).
+A separate Vite + React app with its own `package.json`, dev server and build. It is a pure API consumer: it holds no photo logic of its own and talks to the server over HTTP.
+
+Every request it makes is same-origin. The web server proxies `/api` and `/image` (and the API's own `/quality-check` page) through to the API, so the browser never needs a route to the API host, only the web server is exposed, and the API stays internal. `VITE_API_URL`, or `VITE_API_PORT` for the common case of another port on the same host, tells the proxy where to send them; nothing in the bundle carries an API address. The API still carries CORS (§15) for other consumers, but the web client no longer relies on it. `VITE_ALLOWED_HOSTS` (comma-separated) lists the domains the dev server will answer to when it is served over one.
 
 ### 18.1 Stack
 
@@ -2555,9 +2557,9 @@ bun run dev                       # Vite on a random port, which it prints; --po
 bun run test:e2e                  # Playwright; starts its own API + Vite on random ports
 ```
 
-Every service picks a free port at random rather than a fixed one, so several checkouts (parallel worktrees, an agent per branch) can each run a dev server and an E2E suite without fighting over `:3000`. Each prints the port it got, and takes an override when one has to be pinned: `-p <port>` for the API, `--port <port>` for Vite. The client still has to be told where the API is, so a dev session either pins the API with `-p 3000` or passes the port it was given as `VITE_API_URL`.
+Every service picks a free port at random rather than a fixed one, so several checkouts (parallel worktrees, an agent per branch) can each run a dev server and an E2E suite without fighting over `:3000`. Each prints the port it got, and takes an override when one has to be pinned: `-p <port>` for the API, `--port <port>` for Vite. The dev server's proxy still has to be told where the API is, so a dev session either pins the API with `-p 3000` or passes the port it was given as `VITE_API_URL`.
 
-`bun run test:e2e` builds a throwaway library under `$TMPDIR/bowerbird-e2e-<checkout hash>` from the ARW fixture and drives the real stack, so it needs LibRaw present. The path is keyed by checkout so two worktrees testing at once do not wipe each other's fixture, and stable across runs of one checkout so the copies are overwritten rather than piling up. `VITE_API_URL` points the client at a non-default API origin.
+`bun run test:e2e` builds a throwaway library under `$TMPDIR/bowerbird-e2e-<checkout hash>` from the ARW fixture and drives the real stack, so it needs LibRaw present. The path is keyed by checkout so two worktrees testing at once do not wipe each other's fixture, and stable across runs of one checkout so the copies are overwritten rather than piling up. `VITE_API_URL` points the dev server's proxy at a non-default API origin.
 
 ---
 

@@ -53,18 +53,10 @@ export type Ordering = Library['ordering'];
 // and each photo records the one it was actually built with.
 export type RenditionSource = Library['rendition_source'];
 
-// Default to the API on the same host the page was served from. Hardcoding
-// localhost only works when the browser runs on the server; reached over the
-// network, "localhost" is the viewer's own machine and every call fails.
-// VITE_API_PORT covers the common case of the API on the same host at another
-// port; VITE_API_URL overrides the whole base when it lives elsewhere.
-function defaultApiBase(): string {
-  const port = import.meta.env.VITE_API_PORT ?? '3000';
-  if (typeof window === 'undefined') return `http://localhost:${port}`;
-  return `${window.location.protocol}//${window.location.hostname}:${port}`;
-}
-
-const BASE: string = import.meta.env.VITE_API_URL ?? defaultApiBase();
+// Every URL below is same-origin: the web server proxies /api and /image through
+// to the API, which the browser cannot reach itself once the web server is the
+// only thing exposed. Where the API actually lives is the proxy's business
+// (VITE_API_URL / VITE_API_PORT in vite.config.ts), not the client's.
 
 export class ApiError extends Error {
   constructor(
@@ -84,7 +76,7 @@ interface ErrorEnvelope {
 async function request<T>(method: string, path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
   let res: Response;
   try {
-    res = await fetch(`${BASE}${path}`, {
+    res = await fetch(path, {
       method,
       headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
       body: body === undefined ? undefined : JSON.stringify(body),
@@ -93,7 +85,7 @@ async function request<T>(method: string, path: string, body?: unknown, signal?:
   } catch (err) {
     // fetch only rejects on transport failure, so this is "API unreachable",
     // which is a different thing for the UI to say than any HTTP status.
-    throw new ApiError('NETWORK_ERROR', `cannot reach the API at ${BASE}: ${(err as Error).message}`, 0);
+    throw new ApiError('NETWORK_ERROR', `cannot reach the API at ${path}: ${(err as Error).message}`, 0);
   }
 
   if (res.status === 204) return undefined as T;
@@ -258,7 +250,7 @@ export const api = {
 // twin an HDR one carries. Dynamic range is not in the URL: the library decides
 // it, so a client guessing would ask for a file that was never built (§10.2).
 export function renditionUrl(photoId: string, rendition: Rendition, version = 0): string {
-  const url = `${BASE}/image/${photoId}/renditions/${rendition}`;
+  const url = `/image/${photoId}/renditions/${rendition}`;
   return version === 0 ? url : `${url}?v=${version}`;
 }
 
@@ -267,7 +259,7 @@ export function renditionUrl(photoId: string, rendition: Rendition, version = 0)
 // better in every way that matters - no video element, no autoplay rules, and it
 // decodes as an image.
 export function renditionVideoUrl(photoId: string, rendition: Rendition, version = 0): string {
-  const url = `${BASE}/image/${photoId}/renditions/${rendition}/video`;
+  const url = `/image/${photoId}/renditions/${rendition}/video`;
   return version === 0 ? url : `${url}?v=${version}`;
 }
 
@@ -285,13 +277,13 @@ export function needsHdrVideo(): boolean {
 // RAW on each request, so a RAW replaced on disk changes these bytes too, and a
 // page holding the previous ones would otherwise never ask again.
 export function embeddedUrl(photoId: string, version = 0): string {
-  const url = `${BASE}/image/${photoId}/embedded.jpg`;
+  const url = `/image/${photoId}/embedded.jpg`;
   return version === 0 ? url : `${url}?v=${version}`;
 }
 
 // Server-sent events: which photos have a rendition worth re-requesting.
 export function eventsUrl(): string {
-  return `${BASE}/api/events`;
+  return '/api/events';
 }
 
 // One of the four things a photo can be taken away as: the RAW itself, or any of
@@ -299,7 +291,7 @@ export function eventsUrl(): string {
 // catalogue holds several RAW formats, and the server names the download off the
 // file it served.
 export function downloadUrl(photoId: string, form: 'original' | ViewerRendition): string {
-  return `${BASE}/image/${photoId}/download/${form}`;
+  return `/image/${photoId}/download/${form}`;
 }
 
 // What the viewer shows for one of its three choices: the camera's JPEG served
