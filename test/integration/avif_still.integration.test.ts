@@ -9,10 +9,16 @@
 // browser reads: the dimensions, the pixel format, the range, and the CICP - the last
 // of which is the whole reason libavif is here rather than ffmpeg's avif muxer.
 //
-// The pixels are compared rather than hashed. They are not bit-identical and should not
-// be expected to be: the linked path quantises to 16-bit PQ before libavif converts to
-// 10-bit YCbCr, where zscale goes straight there, and that intermediate step costs
-// about a code value. What matters is that it is about a code value and not a picture.
+// The pixels are compared rather than hashed, and at 4:4:4 they now come out identical.
+// They did not always: the linked path used to apply the PQ transfer itself where
+// zscale applied the spawned one's, and that intermediate quantisation cost about a code
+// value. Both media take the transfer on this side now (`tone::encode_pq`), so the two
+// arms are handed the same PQ samples and differ only in who converts them to YCbCr -
+// which at 4:4:4 is the same matrix on the same numbers. 4:2:0 still parts company,
+// zscale and libavif subsampling chroma their own ways.
+//
+// Which means nothing about the *output* can tell a real comparison from one arm
+// compared with itself, so the route is asserted directly.
 //   docker exec bowerbird-dev bun test test/integration
 import { expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -24,21 +30,28 @@ const FIXTURE = `${import.meta.dir}/../fixtures/DSC02981.ARW`;
 const PROBE = `
 import { _for_testing_encodeHdr } from '${import.meta.dir}/../../src/services/processing/rawshim_for_testing';
 const [file, out, medium, chroma] = process.argv.slice(-4);
-_for_testing_encodeHdr(file, {
+const outcome = _for_testing_encodeHdr(file, {
   medium, outputPath: out, peakNits: 1000, referenceWhiteNits: 203,
   whiteQuantile: 0.9, crf: 30, preset: 10, maxEdge: 640,
   stillFullChroma: chroma === '444',
 }, { decodeSize: 640 });
+console.log(outcome.usedAvifenc ? 'avifenc' : 'linked');
 `;
 
-async function encode(out: string, medium: string, viaAvifenc: boolean, chroma: string): Promise<void> {
+/** Encodes one still, and reports which route the library says it took. */
+async function encode(out: string, medium: string, viaAvifenc: boolean, chroma: string): Promise<string> {
   const child = Bun.spawn(['bun', '-e', PROBE, '--', FIXTURE, out, medium, chroma], {
     env: { ...process.env, ...(viaAvifenc ? { BOWERBIRD_AVIFENC: '1' } : {}), LOG_LEVEL: 'warn' },
     stdout: 'pipe',
     stderr: 'pipe',
   });
-  const [err, code] = await Promise.all([new Response(child.stderr).text(), child.exited]);
+  const [route, err, code] = await Promise.all([
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+    child.exited,
+  ]);
   if (code !== 0) throw new Error(`encode failed: ${err}`);
+  return route.trim();
 }
 
 function probe(file: string): string {
@@ -78,8 +91,11 @@ for (const [chroma, pixFmt] of [
       try {
         const linked = path.join(dir, 'linked.avif');
         const spawned = path.join(dir, 'spawned.avif');
-        await encode(linked, 'still', false, chroma);
-        await encode(spawned, 'still', true, chroma);
+        // First, that there are two routes at all. Rename the environment variable or
+        // let the guard in `encode_frame` start declining, and every assertion below
+        // still passes having compared a file with itself.
+        expect(await encode(linked, 'still', false, chroma)).toBe('linked');
+        expect(await encode(spawned, 'still', true, chroma)).toBe('avifenc');
 
         // Everything a browser reads to decide what the file is, including the CICP
         // that decides whether it is treated as HDR at all.
@@ -88,15 +104,15 @@ for (const [chroma, pixFmt] of [
         expect(probe(linked)).toContain('color_transfer=smpte2084');
         expect(probe(linked)).toContain('color_primaries=bt2020');
 
-        // ~1 code value at 10 bits is the intermediate quantisation; a picture apart
-        // would be tens of dB below this.
+        // Identical at 4:4:4, both converting the same PQ samples with the same matrix.
+        // At 4:2:0 the chroma subsampling is each library's own, and what has to hold
+        // is that the difference stays around a code value rather than a picture.
         const score = psnr(linked, spawned);
-        expect(score).toBeGreaterThan(50);
-        // Not infinite, because infinite means both runs took the same path and this
-        // compared a file with itself. That is how a differential test dies quietly:
-        // rename the environment variable, or let the guard in `encode_graded` start
-        // declining, and every assertion above still passes having tested nothing.
-        expect(score).not.toBe(Number.POSITIVE_INFINITY);
+        if (chroma === '444') {
+          expect(score).toBe(Number.POSITIVE_INFINITY);
+        } else {
+          expect(score).toBeGreaterThan(50);
+        }
       } finally {
         rmSync(dir, { recursive: true, force: true });
       }

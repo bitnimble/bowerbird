@@ -121,6 +121,14 @@ fn demosaic() -> c_int {
 const OUTPUT_SRGB: c_int = 1;
 const OUTPUT_REC2020: c_int = 8;
 
+// The denoise used to be scaled here by the frame's ISO, on the reasoning that shot
+// noise goes as its square root. It is measured off the frame instead now
+// (`image::noise_level`), which answers the same question better: by the time the
+// denoise runs, the frame has been through a demosaic, a resample that averaged some of
+// the noise away and a grade that may have lifted it several stops, and none of that is
+// in the ISO. Asking the pixels costs one box mean and needs no reference ISO, no cap
+// and no special case for a body that records nothing.
+
 pub struct Insets {
     pub left: usize,
     pub top: usize,

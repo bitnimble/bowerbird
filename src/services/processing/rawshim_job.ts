@@ -37,6 +37,15 @@ export interface JobTarget {
 export interface Job {
   rawFilePath: string;
   matchEmbeddedJpeg: boolean;
+  /**
+   * The base render, before any rendition of it (§10.9): denoise strength, 1 being the
+   * tuned default, and how much of a deconvolution to blend in for the sharpen, 0 to 1.
+   * Both belong to the render rather than to a rendition, so every target shares them,
+   * and both are unitless - how much noise the frame has is measured off its own pixels
+   * on the far side, not passed in.
+   */
+  denoise: number;
+  sharpen: number;
   grade: JobGrade;
   targets: JobTarget[];
 }

@@ -58,6 +58,7 @@ interface DebugReply {
     summary?: DecodeSummary;
     comparison?: Comparison;
     againstPreview?: AgainstPreview;
+    usedAvifenc?: boolean;
   };
 }
 
@@ -137,13 +138,17 @@ function gradeArgs(grade: GradeSpec): Record<string, unknown> {
  *
  * `decodeSize` bounds the decode before the grade. 0 takes the whole frame, which the
  * pins want and the encode tests cannot afford.
+ *
+ * Reports which route the still took, which the differential against `avifenc` asserts
+ * on: the two now produce byte-identical 4:4:4 files, so nothing about the output can
+ * tell a real comparison from one arm compared with itself.
  */
 export function _for_testing_encodeHdr(
   path: string,
   grade: GradeSpec,
   options: { withMatch?: boolean; videoOutputPath?: string; decodeSize?: number } = {},
-): void {
-  ask({
+): { usedAvifenc: boolean } {
+  const reply = ask({
     kind: 'encodeHdr',
     path,
     withMatch: options.withMatch ?? false,
@@ -151,6 +156,7 @@ export function _for_testing_encodeHdr(
     videoOutputPath: options.videoOutputPath ?? '',
     decodeSize: options.decodeSize ?? 0,
   });
+  return { usedAvifenc: reply?.usedAvifenc ?? false };
 }
 
 /** The camera's embedded preview, described. */

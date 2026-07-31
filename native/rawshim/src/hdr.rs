@@ -270,19 +270,26 @@ fn as_bytes(graded: &[u16]) -> &[u8] {
     unsafe { std::slice::from_raw_parts(graded.as_ptr() as *const u8, std::mem::size_of_val(graded)) }
 }
 
-/// Encodes samples that have already been graded, at the size they arrived at.
+/// Encodes samples that have already been graded and PQ-encoded, at the size they
+/// arrived at.
 ///
-/// `Cow` so the still can PQ-encode in place where it owns the frame. Only the
-/// still-plus-video pair passes `Borrowed`, because there the twin is reading the same
-/// samples on another thread (`avif::encode_still`).
-fn encode_graded(
-    graded: std::borrow::Cow<'_, [u16]>,
+/// `Cow` so an owned frame reaches libavif without a copy and is dropped as soon as the
+/// YUV conversion has read it. Only the still-plus-video pair passes `Borrowed`, because
+/// there the twin is reading the same samples on another thread.
+/// Reports whether the still went out through `avifenc`, which is what the differential
+/// that compares the two routes asserts on. **The branch reports itself**: reading the
+/// environment variable a second time would only re-derive the input to the decision, so
+/// any further condition added below would leave the test comparing one route with
+/// itself and passing.
+fn encode_frame(
+    frame: std::borrow::Cow<'_, [u16]>,
     width: usize,
     height: usize,
     options: &EncodeOptions,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     if options.medium == Medium::Video {
-        return run(&hdr_args::ffmpeg_args(width as u32, height as u32, options), Some(as_bytes(&graded)));
+        run(&hdr_args::ffmpeg_args(width as u32, height as u32, options), Some(as_bytes(&frame)))?;
+        return Ok(false);
     }
 
     // In this process, for a PQ still. `avifenc` is a wrapper around libavif, and what
@@ -290,13 +297,13 @@ fn encode_graded(
     // well when called directly - so the frame stops being written to ffmpeg's stdin,
     // converted, written again as y4m and read back, and becomes a pointer (`avif.rs`).
     //
-    // The grade hands over Rec.2020 linear and PQ's output gamut is Rec.2020, so all
-    // that is left between here and a file is the transfer - which this crate owns -
-    // and the YCbCr matrix, which libavif does.
+    // The transfer is already applied and PQ's output gamut is Rec.2020, which the grade
+    // already works in, so all that is left between here and a file is the YCbCr matrix,
+    // which libavif does.
     if !use_avifenc() {
         let (primaries, transfer, matrix) = hdr_args::cicp();
-        return crate::avif::encode_still(
-            graded,
+        crate::avif::encode_still(
+            frame,
             width,
             height,
             &crate::avif::StillOptions {
@@ -304,12 +311,10 @@ fn encode_graded(
                 format: options.still_chroma.avif_format(),
                 quantizer: options.crf,
                 speed: options.preset.min(10),
-                // What the grade normalised full range to, which is what the transfer
-                // has to be told to undo.
-                peak_nits: options.peak_nits,
             },
             &options.output_path,
-        );
+        )?;
+        return Ok(false);
     }
 
     // The child-process route, kept as the reference the in-process one is measured and
@@ -319,15 +324,16 @@ fn encode_graded(
     pipe(
         &hdr_args::ffmpeg_args(width as u32, height as u32, &to_pipe),
         &hdr_args::avifenc_args(options, ""),
-        as_bytes(&graded),
-    )
+        as_bytes(&frame),
+    )?;
+    Ok(true)
 }
 
 /// Encode stills by spawning ffmpeg and avifenc instead of calling libavif here.
 ///
 /// For the test that holds the two against each other, and as a way out if a build
 /// turns up where the linked library and the binary disagree.
-fn use_avifenc() -> bool {
+pub(crate) fn use_avifenc() -> bool {
     std::env::var("BOWERBIRD_AVIFENC").is_ok_and(|value| value == "1")
 }
 
@@ -421,13 +427,16 @@ fn failure(command: &str, output: &std::process::Output) -> String {
 /// ceiling to make them different sizes either - so one graded frame serves both,
 /// always. It used to be regraded for the second encode, paying for the most expensive
 /// stage of the pipeline twice on every HDR import.
+/// Reports whether the still went out through `avifenc` rather than through libavif
+/// here, which is the only thing the differential between the two routes can assert on
+/// now that they produce the same bytes at 4:4:4.
 pub fn encode_pair(
     decode: Decode<'_>,
     options: &EncodeOptions,
     video_path: Option<&str>,
     matched: Option<&HdrMatch>,
-) -> Result<(), String> {
-    let (frame, width, height) = {
+) -> Result<bool, String> {
+    let (mut frame, width, height) = {
         let source = decode.source()?;
         let levels = tone::levels(source.samples, options.white_quantile);
         graded_with(&source, options, matched, levels)
@@ -439,23 +448,33 @@ pub fn encode_pair(
     // comment - `decode` cannot be named again after this line.
     drop(decode);
 
+    // Once, for both media. The transfer used to be the still's alone - libavif's, in
+    // this process - with the video's applied by a `zscale` in ffmpeg, which put the two
+    // encoders in different domains and meant the pair could not share anything that
+    // belongs between the grade and the encode. The denoise and the sharpen are exactly
+    // that: both read a difference against a blur, and a difference taken in linear
+    // light follows absolute luminance rather than what the eye reads.
+    tone::encode_pq(&mut frame, options.peak_nits);
+    crate::image::finish(&mut frame, width, height, options.denoise, options.sharpen);
+
     let Some(video_path) = video_path else {
-        // Handed over rather than lent: with no twin reading it, the still's transfer
-        // runs in this buffer instead of a second one the size of the frame.
-        return encode_graded(std::borrow::Cow::Owned(frame), width, height, options);
+        // Handed over rather than lent: with no twin reading it, libavif takes the
+        // frame rather than a copy of it.
+        return encode_frame(std::borrow::Cow::Owned(frame), width, height, options);
     };
     let video =
         EncodeOptions { medium: Medium::Video, output_path: video_path.to_string(), ..options.clone() };
 
-    // Together rather than one after the other. Both only read the graded frame, and
-    // both are mostly waiting on a child process, so the pair finishes in about the
-    // time the slower one takes on its own.
+    // Together rather than one after the other. Both only read the frame, and both are
+    // mostly waiting on a child process, so the pair finishes in about the time the
+    // slower one takes on its own.
     let (still, twin) = std::thread::scope(|scope| {
-        let twin = scope.spawn(|| encode_graded(std::borrow::Cow::Borrowed(&frame), width, height, &video));
-        (encode_graded(std::borrow::Cow::Borrowed(&frame), width, height, options), twin.join())
+        let twin = scope.spawn(|| encode_frame(std::borrow::Cow::Borrowed(&frame), width, height, &video));
+        (encode_frame(std::borrow::Cow::Borrowed(&frame), width, height, options), twin.join())
     });
-    still?;
-    twin.map_err(|_| "the video encode panicked".to_string())?
+    let via_avifenc = still?;
+    twin.map_err(|_| "the video encode panicked".to_string())??;
+    Ok(via_avifenc)
 }
 
 #[cfg(test)]

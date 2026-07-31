@@ -43,6 +43,8 @@ function toCommand(job: RenditionJob): Parameters<typeof runJob>[0] {
   return {
     rawFilePath: job.rawFilePath,
     matchEmbeddedJpeg: job.matchEmbeddedJpeg,
+    denoise: job.denoise,
+    sharpen: job.sharpen,
     grade: {
       peakNits: job.grade.peakNits,
       referenceWhiteNits: job.grade.referenceWhiteNits,

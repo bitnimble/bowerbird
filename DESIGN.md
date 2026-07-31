@@ -1098,7 +1098,7 @@ Two encoder settings were measured rather than inherited, and both defaults were
   Effort 4 is 10x the time for +0.46dB at the same size; effort 9 is 260x the time for a file 0.8% *larger*. On the 800px grid tile it is worse still, 15ms to 1626ms for +0.33dB and a bigger file. So effort is pinned at 0 in `renditions.ts` rather than offered as a setting: there is no value of it worth choosing, and a knob whose every other position is a loss is a knob that only costs the reader time.
 
   This previously claimed effort 4 was 13.6s against 0.6s "for a file only ~15% smaller". The time ratio was roughly right; the 15% was not - the file is not smaller at all. Worth correcting because it framed effort as a size/speed trade with a real size on one side, when at fixed `Q` there is nothing on that side.
-- **The quality settings are libaom quantizers**, 0-63 and lower is better, because that is the scale the encoder underneath takes. They were libvips' 1-100 until the encode moved, and the defaults are the measured equivalents rather than fresh guesses: matched on SSIM, Q80 lands on 26 and Q88 on 16, and the fit holds away from the two points it was taken at - Q60, Q70 and Q95 predict within 0.0007 SSIM. **The direction inverted**, so a value carried across from the old scale means close to its opposite.
+- **The quality settings are libaom quantizers**, 0-63 and lower is better, because that is the scale the encoder underneath takes. They were libvips' 1-100 until the encode moved, and the defaults are the measured equivalents rather than fresh guesses: matched on SSIM, Q80 lands on 13 and Q88 on 8, and the fit holds away from the two points it was taken at - Q60, Q70 and Q95 predict within 0.0007 SSIM. **The direction inverted**, so a value carried across from the old scale means close to its opposite. Those equivalents were written down as 26 and 16 while libavif was halving every quantizer it was given (§10.7); the files were always the ones described here, only the numbering was doubled.
 - **AVIF quality is not WebP's scale.** Carrying the old 90 across would have produced 2551 kB renditions, 2.5x larger than what they replace. q80 is where shadow detail stops visibly degrading on real frames; q60 and q70 lose it. Quality is nearly free once effort is 0 (596ms at q60 against 898ms at q85), so this is chosen on appearance, not cost.
 
 **The grid tile is always the camera's embedded JPEG**, whatever the library is set to. It is a small SDR rendition, so the only thing worth optimising is how fast it appears, and the embedded preview is the fastest source there is: ~125ms against ~1.5s to demosaic (§10.3). A body that embeds no JPEG falls back to a render inside the worker, so this is "the fastest source available" rather than "always the JPEG".
@@ -1490,7 +1490,11 @@ The argv construction moved with it rather than staying behind, which is the rig
 
 Worth recording how nearly that pin was useless. Perturbing the BT.2390 knee changed nothing, because `eetf` returns early when the frame already fits the display: at 1000 nits the fixture never reaches the roll-off, so the pin covered none of the subtlest arithmetic in the grade. Two `peakNits=203` cases fixed it, and a 0.5 → 0.501 shift then fails. A pin nobody tries to break is a pin that proves nothing.
 
-**Encode.** Both media are **libaom in all-intra mode**, 10-bit, diverging in container and in whether their chroma is negotiable: the video is 4:2:0 because nothing else decodes, and the still is 4:2:0 by default with a setting to raise it. The transfer is applied on whichever side the encode happens - in this process for the still, by a `zscale` call in ffmpeg for the video, which is the only rendition that still leaves.
+**Encode.** Both media are **libaom in all-intra mode**, 10-bit, diverging in container and in whether their chroma is negotiable: the video is 4:2:0 because nothing else decodes, and the still is 4:2:0 by default with a setting to raise it.
+
+**The PQ transfer is applied once, on this side, for both** (`tone::encode_pq`). It used to be applied wherever the encode happened - by libavif's caller for the still, by a `zscale` call in ffmpeg for the video - which is the same curve computed twice and, worse, left the two encoders holding frames in *different domains* between the grade and the encode. Nothing that belongs in between could then be written once, which is what the output sharpen (§10.9) needs. With the frame already PQ, `zscale` is told `tin=smpte2084` and does no transfer work at all; what is left there is the YCbCr matrix, the range and the depth.
+
+It cost nothing to move and settled a question the differential had been living with. Measured on a 45MP CR3 at 3840, the video is SSIM 0.980264 against a near-lossless reference where it was 0.980266, and the still is byte-identical. And `avif_still.integration.test.ts` now finds the two still routes **byte-identical at 4:4:4** - both handed the same PQ samples, both applying the same matrix - where they used to sit ~60dB apart on the intermediate quantisation. 4:2:0 still parts company, zscale and libavif subsampling chroma their own ways. That took the differential's own guard with it: "not infinite" was how it proved its two arms had really taken different routes, so the route is now reported out of the library and asserted directly.
 
 **The still is encoded in this process, by libavif** (`avif.rs`). `avifenc` is a thin wrapper around that library, and what it was adding over ffmpeg is the nclx `colr` box - which is what Chrome reads to decide a still is HDR, and which ffmpeg's avif muxer does not write. libavif writes it just as well when called directly, so the binary bought nothing the library does not, and cost three moves of the whole frame: the graded samples written to ffmpeg's stdin, converted, written again as y4m, and read back by avifenc. That is 56MB at 3840 and ~366MB at native resolution, moved three times, for a picture neither process wanted kept. Linked, it is a pointer.
 
@@ -1510,7 +1514,7 @@ Measured as peak RSS - `VmHWM`, not arithmetic - building a native-resolution HD
 Four buffers went, in every case because nothing else was reading them:
 
 - **The grade** allocated its output. It is sample-for-sample at the same index, and by the time it runs the frame is one this side allocated - the warp's output, or the resize's - so `tone::grade` writes into that.
-- **The transfer** allocated another. Same argument, with a caveat that belongs to the caller rather than the encoder, which is why `encode_still` takes a `Cow`: the still-plus-video pair passes `Borrowed`, because the twin is reading the same linear samples on another thread and would find them PQ-encoded from under it. Only that pair still pays for the copy.
+- **The transfer** allocated another. Same argument, and there is no longer a caveat: it runs once in the graded buffer before either encoder is handed anything, so the pair reads one PQ frame rather than the still copying it to avoid transferring the samples out from under its twin. `encode_still` keeps its `Cow` for the other half of the argument - an owned frame goes into libavif and is dropped as soon as the YUV conversion has read it.
 - **The decode** stayed resident until JavaScript dropped the handle, which is after the encode - the longest stage of the job. It is owned in Rust now, and the last reader is handed it outright rather than lending it (`hdr::Decode::Owned`), so it is dropped the moment the grade has copied out and before the encode allocates anything. The 8-bit side needs nothing special: the base is built in a scope, and the decode goes when that scope ends.
 - **The interleaved RGB** was held across `avifEncoderWrite`, though libavif stops reading it once `avifImageRGBToYUV` has filled the planes. It is dropped there instead, which matters because of what allocates next.
 
@@ -1558,17 +1562,35 @@ Removing three transfers of a frame across a process boundary and keeping the re
 | `full` at 3840, still + video twin | 510MB |
 | `max` at native resolution | 954MB |
 
-The twin costs one graded frame, being the one case that cannot PQ-encode in place, and ffmpeg's own process sits on top of all of these.
+**The twin's 55MB was one graded frame, and it is gone.** It was the one case that could not PQ-encode in place; with the transfer applied once for both (above) there is nothing to copy, and the two rows now peak identically - re-measured on a 24MP frame at 3840, both 338MB, on a machine where the rows above were recorded elsewhere. The absolute figures are left as they were taken; what the re-measurement establishes is the difference between them, which is now none. **`raw_denoise` and `raw_sharpen` do move this, and by a lot** - see §10.9, which carries the measurement. ffmpeg's own process still sits on top of all of these.
 
 **A larger sensor does not cost more here**, which is worth writing down because it reads backwards. Both terms that scale are driven by the *output*: the graded frame is the rendition's size, and libaom's working set runs about 25MB per megapixel of it. The decode is the only term the sensor drives, and the bigger sensor is the one that gets halved - a 61MP frame at 3840 halves to 15MP, where a 24MP frame at 3840 does not halve at all and so decodes *larger*. Measured on the 24MP fixture, asking for an edge low enough to trigger the halving takes the decode's transient from 420MB to 178MB. A 61MP `full` therefore lands within noise of the same ~455MB, and only `max` - where the output *is* the sensor - grows with it.
 
-**Held to the binary rather than argued about** (`avif_still.integration.test.ts`). `BOWERBIRD_AVIFENC=1` puts the encode back on the two child processes, and the two are required to agree on everything a browser reads: dimensions, pixel format, range, and the CICP triple. They are not bit-identical and are not expected to be - the linked path quantises to 16-bit PQ before libavif takes it to 10-bit YCbCr where zscale goes straight there - so the pixels are compared rather than hashed: measured at **59.7dB PSNR**, about one code value at 10 bits, against a threshold of 50. The `colr` box itself comes out byte-for-byte identical, which is the part that decides whether the file is HDR at all.
+**Held to the binary rather than argued about** (`avif_still.integration.test.ts`). `BOWERBIRD_AVIFENC=1` puts the encode back on the two child processes, and the two are required to agree on everything a browser reads: dimensions, pixel format, range, and the CICP triple. They used to sit **59.7dB PSNR** apart, about one code value at 10 bits, because the linked path quantised to 16-bit PQ before libavif took it to 10-bit YCbCr where zscale went straight there. Both are handed the same PQ samples now, so at 4:4:4 they are **byte-identical** and only 4:2:0 differs, on the chroma subsampling. The `colr` box comes out byte-for-byte identical either way, which is the part that decides whether the file is HDR at all.
 
 The video still goes out through ffmpeg, because what it needs there is the MP4 muxing rather than the encode, and libavformat is a much larger swallow than libavif was.
 
 **`allintra` is the whole of it.** The video was SVT-AV1, on the measured claim that it is 2.4x faster than libaom. That is true of libaom driven the way ffmpeg drives it by default, and beside the point: SVT-AV1 is built for sequences and cannot use the inter-frame parallelism its threading is designed around when it is handed a single frame. `-usage allintra` is what avifenc had been doing to libaom for the still all along. Measured at 3840 on a 24MP frame, at matched quality (SSIM 0.97998 against 0.97986) and the same file size, **233ms against 1175ms**. Two flags travel with it and are not incidental: `-b:v 0`, without which `-crf` is a cap on a bitrate target rather than the quality knob it reads as, and `-tiles 2x2`, because libaom parallelises across tiles and idles its threads without them. The still gets the same treatment through `--autotiling`.
 
-**The CRF scales were never the same, and that was invisible.** `hdr_crf` fed avifenc's `--max`, which is libaom's quantizer, *and* SVT-AV1's `-crf`, which is its own - so one setting meant two different qualities, and measured on a 4:2:0 frame the offset was about 0.62: SVT crf 20 lands where libaom crf 12 does, SVT 8 where libaom 5 does. Nothing depended on the video's value having been tuned, because it never was; it inherited the still's number. With both media on libaom the setting means one thing, the still is unaffected, and the video simply joins the scale the setting always claimed to be on.
+**The CRF scales were never the same, and that was invisible.** `hdr_crf` fed avifenc's `--max`, which is libaom's quantizer, *and* SVT-AV1's `-crf`, which is its own - so one setting meant two different qualities, and measured on a 4:2:0 frame the offset was about 0.62: SVT crf 20 lands where libaom crf 12 does, SVT 8 where libaom 5 does. Nothing depended on the video's value having been tuned, because it never was; it inherited the still's number.
+
+**And moving both media to libaom did not fix it, which took a year and an HDR display to notice.** The still was handed to libavif as the quantizer *pair* `--min 0 --max N` - the shape avifenc uses - and **libavif quantises on the midpoint of that pair**, so every AVIF this app has ever written encoded at half the number the setting named, while the video's `-crf` was read by libaom literally. One setting, still two qualities, and the second version of this section claimed otherwise as confidently as the first.
+
+It is visible where a still and its twin sit side by side. Measured on a 45MP CR3 at 3840, `hdr_crf` 20 on the old scale, both against a near-lossless reference encode of the same graded frame:
+
+| | SSIM | bytes |
+|---|---|---|
+| AVIF still | 0.9802 | 1.53MB |
+| AV1 video twin | 0.9529 | 0.46MB |
+| AV1 video twin at half the setting | 0.9803 | 1.45MB |
+
+Which is what a user reported as blocking, noise and chroma loss in Firefox against a clean AVIF in Chrome, on one library with one set of settings.
+
+So the encoder is given **both ends of the pair**, and every quantizer default is halved to match - `hdr_crf` 20 to 10, the two rendition quantizers 26 to 13, the two lossless ones 16 and 8 to 8 and 4. That is a rescale rather than a quality change: verified on the same frame, the still comes out **byte-identical** either way, and the video joins it. A tuned value already in the settings table is halved by a migration, stamped in `PRAGMA user_version` because a value the user chose is indistinguishable from one already rescaled and halving twice would double every rendition.
+
+The quantizers in the tables above are on the old scale, being measurements taken under it; halve them to read them as the setting now means.
+
+The lesson is the same one §10.7 keeps earning: the claim "both media are libaom now, so the setting means one thing" was **inferred from the encoder, not measured through it**. Two encoders sharing a codec do not share an API, and the API is where this was lost.
 
 **A correction worth keeping, now four times over.** This section once said both media were libaom at 4:4:4 and that SVT-AV1 "cannot be used here at all"; that was corrected to describe the SVT-AV1 video actually shipping; then back to both being libaom, for a different reason than it was first written, with the chroma half still wrong. It said the still is 4:4:4 "because it is a photograph". It is 4:2:0 by default now, and the sentence it replaced was not so much wrong as unmeasured - the per-plane numbers above say 4:2:0 reallocates detail rather than losing it, which nobody had checked while the claim was being repeated.
 
@@ -1748,6 +1770,90 @@ The falloff repeated the lesson at one remove, which is why the `Lens` exists ra
 **`match` is required, not optional, everywhere it is passed.** These option objects are built by spread, TypeScript does not excess-check a spread, and an *optional* field a caller forgets is dropped in silence - which is exactly what happened: `HdrEncodeOptions` never declared it, the worker spread it in, and the product rendered unmatched while a unit test calling `grade` directly went on passing. Written `match: HdrMatch | null`, every call site has to say which it means, and an integration test drives `encodeHdr` rather than `grade` so the wiring itself is covered.
 
 **Verification stops at the signalling.** `ffprobe` confirms BT.2020/PQ/BT.2020-ncl and 10-bit on both media, which `hdr_media.integration.test.ts` does on every run. Whether any of it lights up a panel is not observable from script: the frame goes to the compositor, and anything read back through a canvas has already been tone-mapped. The page that used to put six renditions side by side for looking at on real hardware is gone - it answered that question once, and kept a second encode path alive for years afterwards to keep asking it.
+
+### 10.9 Denoise and sharpen
+
+Two settings, `raw_denoise` and `raw_sharpen`, both off at 0 and both applied only where the RAW is actually **rendered**. A grid tile made from the camera's embedded JPEG gets neither: the body has already denoised and sharpened it, and doing either again is doing it twice.
+
+Three stages over one deinterleave, in `image::finish`, and the order is not interchangeable:
+
+1. **Luma denoise**, a self-guided filter regularised by the frame's own measured noise.
+2. **Chroma denoise**, a guided filter on the colour differences with that cleaned luma as the guide.
+3. **Sharpen**, a Richardson-Lucy deconvolution of the cleaned luma.
+
+Everything runs at the rendition's output size, on display-referred samples - sRGB for a rendition, PQ for the HDR pair (10.7). A difference taken in linear light is proportional to absolute luminance, so it treats a highlight and a shadow completely differently; these all read differences, so they all belong after the transfer.
+
+**Two caveats on the constants, both worth knowing before trusting them.** They were tuned on an sRGB rendition, and two of them - the coarse chroma cap and the chroma `eps` - are absolute fractions of full scale, which sRGB and PQ do not share: the HDR pair gets the same numbers and nobody has measured whether they are the right ones there. And the sharpen's point spread is justified by the resample, which the **`max` rendition never had** - it is native resolution, so a deconvolution modelled on a downscale is being applied to a frame that was not downscaled. Neither is a defect anyone has seen; both are claims this section has not earned.
+
+#### The guided filter, which is two of the three
+
+He, Sun and Tang's guided filter fits `q = a·guide + b` over every window, with `a = cov/(var + eps)`. Where the guide varies a lot - an edge - `a` goes to 1 and the output follows the guide; where it barely varies, `a` goes to 0 and the output is the local mean. The smoothing is **steered by structure rather than by distance**, which is what a Gaussian cannot do and a bilateral filter pays dearly for. It runs on box means, so it is **O(1) in the radius**: a radius-6 window costs what a radius-1 one does.
+
+- **Chroma, guided by luma, at two radii.** The filter's canonical application, and it is what lets the radius grow. Luma is preserved *exactly*: red and blue are carried as differences against it and green is solved back out of the luma equation, which is YCbCr's own construction and makes "luma does not move" a property of the arithmetic rather than a hope.
+- **Luma, guided by itself.** Windows varying by less than the noise collapse to their mean; windows holding an edge keep it.
+
+**Chroma noise has two scales and needs two passes.** The fine one is per-pixel speckle. The coarse one is low-frequency mottle - patches of green and magenta the size of a window - and a radius that clears the speckle cannot touch it: a 9-pixel window cannot average away a 40-pixel blotch. Radius 4 then 32, which is affordable *only* because the filter is O(1) in the radius. A Gaussian at 32 would be 97 taps a pixel and out of the question; this is most of why the filter underneath is the one it is.
+
+**The luma guide is not enough on its own at that radius, and finding out why is worth recording.** It can only protect an edge it can *see*. A red wall meeting a grey roof is a large step in colour and a small one in luma, so a 65-pixel window spanning both fits one linear model across the pair and pours red onto the roof - which is exactly what it did. Amplitude separates the two cases where the guide cannot: low-frequency chroma noise is a couple of percent, a wall against a roof is tens of percent. So the coarse pass may move a colour by no more than 2% of full scale. It removes a blotch and cannot restructure a picture - the same shape of guard as the deconvolution's anti-ringing clamp below, arrived at the same way. Measured on the roof, blotch-scale chroma energy falls 79% under the fine pass alone, 95% with the coarse pass unbounded and bleeding, and **91% bounded**.
+
+**The luma radius is set by statistics, not by composition** (`LUMA_DENOISE_RADIUS`). The filter blends on `var / (var + eps)`, so it decides "flat or detail" from a variance measured over its window - and a variance from n samples is itself uncertain by about `sqrt(2/n)`. Radius 2 is 25 samples and 29% uncertain, which lands as **patchy smoothing**: neighbouring parts of one roof come out blurred or grainy depending on which way the estimate fell, and that reads worse than the grain being removed. Radius 6 is 169 samples and 11%, and is uniform. A wider window does not blur more; what it cannot do is resolve detail narrower than itself, which is why it is not wider still.
+
+**It was tried for the sharpener too, and that is the instructive failure.** An edge-aware base layer for an unsharp mask is halo-free, which sounds like the answer - and it is halo-free *because* it keeps the edge in the base. What is left in `I − guided(I)` is texture and noise and no edge at all, so sharpening it sharpens everything except the thing that needed sharpening. The unit tests caught it before a picture did.
+
+#### Deconvolution, not an unsharp mask
+
+An unsharp mask has no model of what softened the picture. It adds back a scaled copy of the high frequencies, and the overshoot that leaves either side of an edge **is** the halo. Richardson-Lucy has a model - the point spread the resample applied - and iterates towards the image that, blurred by it, would have produced the one in hand. The edge comes back *steeper* rather than merely higher-contrast. It is what RawTherapee calls capture sharpening.
+
+Three things it needs to be usable here:
+
+- **Early stopping.** RL converges towards inverting the blur exactly, which on a real frame means converging on the noise too. Ten iterations is the regularisation; past about twenty, grain sharpens into speckle.
+- **Denoising first.** Not a preference - RL will invert grain as readily as blur, so anything left in luma at this point is what gets sharpened.
+- **Anti-ringing.** RL's maximum-likelihood solution rings against a hard edge: measured on a step from 60 to 180, ten iterations undershot to **54**. Each output is clamped to the range its own neighbourhood already spanned, which removes the overshoot and leaves every recovery *within* that range untouched. That is all of the sharpening and none of the halo, and `the_sharpen_does_not_overshoot_the_edge_it_recovers` holds it.
+
+`raw_sharpen` blends the result rather than scaling a correction, so 1.0 is the deconvolution as computed. The iteration count already decides how far the estimate goes; multiplying its output would just re-introduce the overshoot.
+
+#### The noise is measured, not predicted
+
+`image::noise_level` takes a high-pass residual and reads its **median** absolute value. The median is what makes it work on a photograph: edges and texture are a minority of pixels and arbitrarily large, so they drag a mean anywhere, while the median sits in the flat majority where the only signal is noise. It is the estimator wavelet shrinkage has used for thirty years, and it costs one box mean and a histogram.
+
+**This replaced an ISO scaling, and is strictly better.** The ISO was there to solve a real problem - one number for a five-stop library is far too heavy at one end or does nothing at the other - but by the time the denoise runs, the frame has been demosaiced, resampled (which averages some of the noise away) and graded, possibly by several stops. None of that is in the ISO. Asking the pixels needs no reference ISO, no cap, and no special case for a body that records nothing. `the_noise_estimate_lands_where_a_real_frame_puts_it` holds the estimate to the range the filter's constants assume, on both fixtures, because an estimate an order of magnitude out would either do nothing or flatten the picture with nothing in between.
+
+#### What it is worth, per plane
+
+The metric is high-frequency energy - mean squared difference against a σ2 blur of the same crop - taken **separately on luma and chroma**, over two flat regions and one detailed one, on a 24MP EOS R10 frame shot at dusk at ISO 2000. Per-plane matters: an RGB measurement is dominated by luma, which is how an earlier version of this section certified a chroma denoise that had changed nothing visible.
+
+| | flat sky | flat water | detailed roofline |
+|---|---|---|---|
+| **chroma** | −100% | −100% | −97% |
+| **luma** | −99.5% | −25% | +19% |
+
+That is the shape the whole section is trying to reach: noise gone from the flat regions in both planes, and the detailed one *up* despite the denoise having run over it. Decomposed on the roofline, luma HF goes 144 → 121 under the denoise alone and up to 171 once the sharpen runs - past where it started, and made of detail rather than grain.
+
+**The flat-water column is the tuning, and it is deliberately not the best number available.** At `LUMA_DENOISE_SIGMAS` 2 it reads −53% instead of −25%, and a dark roof at 100% has visibly lost its shingle texture. Grain reads as a photograph; smearing reads as a fault. The metric cannot see that difference, which is the whole reason the constant is set by looking and the number is recorded as the cost of doing so.
+
+**This is the ceiling of the approach, and it is worth saying so.** Every artefact chased out of this chain was a local filter deciding "signal or noise" from a local statistic, and being wrong in a spatially varying way: patchy smoothing from an unstable variance, colour bleed from a guide that could not see an iso-luminant edge, ringing from a deconvolution with no noise model. Each has a guard now, and each guard is a constant that was tuned by looking. What remains on a dark roof at 100% is fine grain this class of filter cannot separate from the roof's own texture, because at that scale and amplitude there is nothing local to separate them by - and the settings are deliberately short of the point where it tries to, since the failure on that side is smearing and the failure on this side is grain.
+
+#### What it costs
+
+| | wall |
+|---|---|
+| neither | 600ms |
+| both | 1229ms |
+
+**It also costs memory, and this is the part to plan a machine around.** Every stage works on whole-frame `f32` planes - 39MB at a 3840px rendition, 96MB at 24MP native - and the guided filter needs several of them live at once. Measured as peak RSS on the 24MP fixture, the same way as §10.7:
+
+| | neither | both |
+|---|---|---|
+| `full` at 3840 | 338MB | 671MB |
+| `max` at native resolution | 539MB | **1576MB** |
+
+Scoping the temporaries so a dead plane is freed where it dies rather than at the end of its function took the second row from 1854MB, which is most of what is recoverable without restructuring: Rust holds a temporary to the end of its scope, and on this path that was the difference between eight planes live and sixteen.
+
+**What is left is a real constraint and is not solved.** §10.7 budgets `max` at 954MB and this blows through it; a 61MP body would be worse again, roughly 2.5x the 24MP figure. The `max` path is one photo at a time, so nothing multiplies it by `processing_concurrency` - but a 61MP `max` render with both settings on is not a thing to run on a small machine. The fix is to process in horizontal strips with `2 * radius` rows of overlap, which every stage here allows because all of them are local with bounded support; the noise estimate would have to stay global so strips cannot disagree and seam. Until then, `raw_denoise` 0 is the way to render a very large frame.
+
+**~630ms for the pair, roughly doubling the job**, and the honest reading is that this is expensive. Two earlier versions were cheaper and worse: LibRaw's wavelet denoise cost ~400ms on its own and was invisible or waxy with nothing in between, and a chroma-only Gaussian with an unsharp mask cost ~200ms and left the luma grain that is most of what the eye objects to. The settings exist so a library that would rather have the throughput can say so.
+
+**Where the next win is, if it is ever wanted.** [GALOSH](https://arxiv.org/abs/2607.03768) (2026) is training-free and fits a Poisson-Gaussian noise model per image. It is the class of method that does not have the ceiling above, because it decides signal from noise against a fitted noise model rather than against a local variance. Its own reported figures put it ~8dB PSNR above CBM3D on SIDD sRGB and within about half a dB of trained networks on raw, at **2.5s CPU for a 15.8MP frame** - so roughly 1.6s for a 10MP rendition, two to three times this whole stage, for a stage that is already most of the job. Those are the paper's numbers rather than ones measured here, which is the standard the rest of this section is held to and this paragraph is not; it would need reproducing before anything was built on it. It would fit the on-demand `max` path far better than an import.
 
 ---
 
@@ -2118,17 +2224,19 @@ the bounds; the reasoning behind each number lives beside it there.
 | `cors_origins` | `""` | Comma-separated origins allowed to call the API, or `*`. Empty means "any port on whatever host the request arrived at", so the client works on loopback and over the LAN without hardcoding an address, while an unrelated site on the internet is still refused. |
 | `processing_concurrency` | `4` | Number of worker threads for rendition generation |
 | `match_embedded_jpeg` | `true` | Give SDR renders the camera's own colour and lens correction, fitted per photo against the embedded JPEG; ~+2.4s on a 61MP frame (§10.8) |
+| `raw_denoise` | `1` | Strength of the guided-filter denoise on a rendered RAW, regularised by the frame's own measured noise; 0 is off (§10.9) |
+| `raw_sharpen` | `0.6` | How much of a Richardson-Lucy deconvolution to blend in, once the render is at size; 0 is off, 1 is all of it (§10.9) |
 | `grid_rendition_size` | `800` | Longest edge in pixels for the grid rendition |
-| `grid_rendition_quantizer` | `26` | libaom quantizer for the grid rendition, 0-63; lower is better (§10.1) |
+| `grid_rendition_quantizer` | `13` | libaom quantizer for the grid rendition, 0-63; lower is better (§10.1) |
 | `full_rendition_size` | `3840` | Longest edge in pixels for the full rendition |
-| `full_rendition_quantizer` | `26` | libaom quantizer for the full rendition, 0-63; lower is better (§10.1) |
-| `lossless_sdr_quantizer` | `16` | libaom quantizer for the SDR full-resolution export (§10.5) |
+| `full_rendition_quantizer` | `13` | libaom quantizer for the full rendition, 0-63; lower is better (§10.1) |
+| `lossless_sdr_quantizer` | `8` | libaom quantizer for the SDR full-resolution export (§10.5) |
 | `sdr_full_chroma` | `false` | 4:4:4 rather than 4:2:0 for the SDR renditions. Roughly twice the encode time and three times the size, for chroma detail on saturated edges (§10.1) |
-| `lossless_quantizer` | `8` | libaom quantizer for the HDR full-resolution export; lower is better (§10.5) |
+| `lossless_quantizer` | `4` | libaom quantizer for the HDR full-resolution export; lower is better (§10.5) |
 | `hdr_peak_nits` | `1000` | Display peak the BT.2390 roll-off targets, and the declared mastering peak (§10.7.1) |
 | `hdr_reference_white_nits` | `203` | ITU-R BT.2408 HDR Reference White; what diffuse white is graded to (§10.7.1) |
 | `hdr_white_quantile` | `0.90` | Quantile of the frame taken as diffuse white (§10.7.1) |
-| `hdr_crf` | `20` | Encoder quality for the HDR renditions; lower is better (§10.7) |
+| `hdr_crf` | `10` | libaom quantizer for both HDR media, 0-63; lower is better (§10.7) |
 | `hdr_preset` | `8` | Encoder speed; libaom `-cpu-used` 0-8 and avifenc `--speed` 0-10, both clamped (§10.7) |
 | `hdr_still_full_chroma` | `false` | 4:4:4 rather than 4:2:0 for the HDR still. Holds chroma detail, roughly double the encoder's memory (§10.7). The video has no say |
 | `watch_enabled` | `true` | Auto-sync a library when its files change on disk (§9.8) |

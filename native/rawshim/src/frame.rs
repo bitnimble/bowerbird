@@ -77,6 +77,14 @@ impl Frame {
         }
     }
 
+    /// The 8-bit samples, borrowed mutably. None for a 16-bit frame.
+    pub fn rgb8_mut(&mut self) -> Option<&mut [u8]> {
+        match &mut self.pixels {
+            Pixels::Eight(data) => Some(data),
+            Pixels::Sixteen(_) => None,
+        }
+    }
+
     /// The 16-bit samples, borrowed. None for an 8-bit frame.
     pub fn samples16(&self) -> Option<&[u16]> {
         match &self.pixels {

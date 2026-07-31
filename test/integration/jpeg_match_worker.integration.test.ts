@@ -3,7 +3,7 @@
 // the worker leaves the feature permanently off however the server is configured.
 //   docker exec bowerbird-dev bun test test/integration
 import { afterAll, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { _for_testing_deltaEToPreview } from '../../src/services/processing/rawshim_for_testing';
@@ -54,7 +54,11 @@ function runJob(job: RenditionJob): Promise<ProcessingResult> {
   });
 }
 
-async function render(matchEmbeddedJpeg: boolean, name: string): Promise<string> {
+async function render(
+  matchEmbeddedJpeg: boolean,
+  name: string,
+  render: { denoise: number; sharpen: number } = { denoise: 0, sharpen: 0 },
+): Promise<string> {
   const outputPath = path.join(root, `${name}.avif`);
   const result = await runJob({
     kind: 'rendition',
@@ -64,6 +68,7 @@ async function render(matchEmbeddedJpeg: boolean, name: string): Promise<string>
     targets: [target(outputPath)],
     grade: { peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.9 },
     matchEmbeddedJpeg,
+    ...render,
   });
   expect(result.success).toBe(true);
   return outputPath;
@@ -89,6 +94,28 @@ test(
     // A flag that never reaches the worker makes these two equal, which is exactly
     // the failure this test exists to catch: every module test would still pass.
     expect(meanDeltaE[1]!).toBeLessThan(meanDeltaE[0]!);
+  },
+  TIMEOUT,
+);
+
+test(
+  'the worker applies the denoise and the sharpen the job asks for',
+  async () => {
+    // Same shape of test as the match above, and for the same reason. Both settings
+    // reach the worker through a `...this.render()` spread in `processing_service`,
+    // which is the pattern that dropped `matchEmbeddedJpeg` in silence once before -
+    // TypeScript does not excess-check a spread, so a renamed or unread settings key
+    // leaves the whole stage permanently off with every module test still green.
+    //
+    // The assertion is only that the pixels moved. What the filters do to them is
+    // measured in `image.rs` against constructed inputs, where it can be measured
+    // properly; what cannot be checked there is whether anything calls them.
+    const [plain, processed] = await Promise.all([
+      render(false, 'unprocessed'),
+      render(false, 'processed', { denoise: 1, sharpen: 0.6 }),
+    ]);
+
+    expect(readFileSync(processed).equals(readFileSync(plain))).toBe(false);
   },
   TIMEOUT,
 );

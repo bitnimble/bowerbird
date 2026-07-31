@@ -592,6 +592,20 @@ const AdvancedSettings = observer(function AdvancedSettings(): JSX.Element | nul
         />
       </div>
 
+      <GroupTitle>Rendering a RAW</GroupTitle>
+      <div className="panel">
+        <NumberSetting
+          field="raw_denoise"
+          label="Noise reduction (1 is normal, 0 is off)"
+          hint="Removes the blotchy colour speckle and the fine grain in a dark area, and measures how much of each a photo actually has rather than guessing from its ISO, so a clean daylight frame is barely touched and a dusk one gets what it needs. Set on the cautious side: past about 1.5 it starts smoothing real texture, and a little grain looks better than that does."
+        />
+        <NumberSetting
+          field="raw_sharpen"
+          label="Sharpening (0 is off, 1 is full)"
+          hint="Undoes the softening the resize introduces, by reversing it rather than by adding contrast at edges; so it does not leave the bright outline that sharpening usually does. 1 is as far as it goes."
+        />
+      </div>
+
       <GroupTitle>Rendition size and quality</GroupTitle>
       <div className="panel">
         <NumberSetting field="grid_rendition_size" label="Grid tile, longest edge (px)" />

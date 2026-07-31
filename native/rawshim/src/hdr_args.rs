@@ -52,6 +52,12 @@ pub struct EncodeOptions {
     pub crf: i32,
     /// Encoder speed, 0 slowest. Clamped per encoder: libaom 0-8, avifenc 0-10.
     pub preset: i32,
+    /// Denoise strength and the fraction of the deconvolution to blend in, both applied
+    /// to the graded frame after the transfer and before either encoder sees it (§10.9).
+    /// Neither is scaled here: how much noise the frame has is measured off its own
+    /// pixels where the filters run.
+    pub denoise: f64,
+    pub sharpen: f64,
     /// Longest edge of the output. Infinite means "whatever the frame is".
     pub max_edge: f64,
 }
@@ -153,17 +159,6 @@ pub fn target_size(width: u32, height: u32, options: &EncodeOptions) -> Size {
     Size { width: size.width & !1, height: size.height & !1 }
 }
 
-/// A number as JavaScript's `String()` would render it, since these strings are
-/// compared against a pin captured from the TypeScript this replaces. An integral
-/// f64 prints without a decimal point there; Rust's `{}` would print `1000` too,
-/// but `2.5` must stay `2.5` rather than becoming `2`.
-fn num(value: f64) -> String {
-    if value.fract() == 0.0 && value.is_finite() {
-        return format!("{}", value as i64);
-    }
-    format!("{value}")
-}
-
 /// The still's chroma, which is the `hdr_still_full_chroma` setting.
 ///
 /// 4:2:0 by default, and that is a memory decision rather than a quality one. It keeps
@@ -217,26 +212,29 @@ fn pixel_format(options: &EncodeOptions) -> &'static str {
     }
 }
 
-/// The grade hands back display-referred Rec.2020 linear at full range, so the input
-/// side of the conversion has to say so: zscale reads the frame's tags, and rawvideo
-/// carries none. npl ties linear 1.0 to absolute brightness, and the grade has
-/// already put the display's peak there.
+/// The frame arrives already in its output transfer, so the input side of the
+/// conversion has to say so: zscale reads the frame's tags, and rawvideo carries none.
+///
+/// It used to arrive linear and `zscale` applied the transfer, which is what `npl` was
+/// there for. That put the still and the video in different domains between the grade
+/// and the encode - the still's transfer being libavif's, in this process - so anything
+/// belonging in between had to be written twice or not at all. `tone::encode_pq` does
+/// it once for both now, and with `tin` matching `t` zimg does no transfer work at all:
+/// what is left here is the matrix, the range and the depth.
 fn filter_chain(options: &EncodeOptions, resize: Option<Size>) -> String {
     let target = target_for();
-    // npl ties linear 1.0 to absolute brightness, which only a PQ signal has a use
-    // for - and PQ is all there is.
-    let npl = format!(":npl={}", num(options.peak_nits));
-    // Resizing inside zscale keeps it in the linear light the decode handed over,
-    // which is where downscaling is correct; a resize after the transfer would
-    // average PQ code values and darken the result.
+    // Resizing here would average PQ code values, so nothing does: `graded_with` fits
+    // the frame in linear light before the transfer, and this only ever fires on the
+    // reference path, where the argv is built for a frame that is already at size.
     let resize = match resize {
         None => String::new(),
         Some(size) => format!(":w={}:h={}", size.width, size.height),
     };
-    let mut chain = format!("zscale=tin=linear:min={RGB_MATRIX}:pin=bt2020:rin=full");
+    let mut chain =
+        format!("zscale=tin={}:min={RGB_MATRIX}:pin=bt2020:rin=full", target.transfer.name);
     let _ = write!(
         chain,
-        ":t={}:m={}:p={}:r=tv{npl}{resize},format={}",
+        ":t={}:m={}:p={}:r=tv{resize},format={}",
         target.transfer.name,
         target.matrix.name,
         target.primaries.name,
@@ -360,8 +358,10 @@ pub fn avifenc_args(options: &EncodeOptions, y4m_path: &str) -> Vec<String> {
     args.push(options.still_chroma.y4m().to_string());
     args.push("--speed".to_string());
     args.push(options.preset.min(10).to_string());
+    // Both ends, since libavif quantises on the midpoint of the pair: `--min 0` would
+    // ask for half the number the setting names, which is what it used to do.
     args.push("--min".to_string());
-    args.push("0".to_string());
+    args.push(options.crf.to_string());
     args.push("--max".to_string());
     args.push(options.crf.to_string());
     // Single-threaded by default, and it is most of the encode time: 9.6s against
@@ -425,6 +425,10 @@ mod tests {
                             white_quantile: 0.9,
                             crf: 8,
                             preset: 8,
+                            // Not in the argv: both media are denoised and sharpened on
+                            // this side, before either encoder is handed anything.
+                            denoise: 0.0,
+                            sharpen: 0.0,
                             max_edge,
                         };
                         let chroma = match still_full_chroma {
@@ -472,6 +476,8 @@ mod tests {
             white_quantile: 0.9,
             crf: 8,
             preset: 8,
+            denoise: 0.0,
+            sharpen: 0.0,
             max_edge,
         }
     }
@@ -574,20 +580,13 @@ mod tests {
     }
 
     #[test]
-    fn the_resize_happens_in_linear_light_before_the_transfer() {
-        let args = ffmpeg_args(4024, 6024, &options(Medium::Still, 3840.0));
+    fn the_frame_reaches_zscale_already_in_its_output_transfer() {
+        // Both media are PQ-encoded on this side now (`tone::encode_pq`), so the one
+        // thing zscale must not be told is that its input is linear: it would apply the
+        // curve a second time and hand the encoder a frame several stops dark.
+        let args = ffmpeg_args(4024, 6024, &options(Medium::Video, 3840.0));
         let chain = args.iter().find(|a| a.starts_with("zscale")).expect("the filter chain");
-        let resize = chain.find("w=2566").expect("the resize");
-        let format = chain.find(",format=").expect("the pixel format");
-        assert!(resize < format, "zscale resizes before it converts");
-        assert!(chain.contains("tin=linear"), "and is told the input is linear");
-    }
-
-    #[test]
-    fn numbers_render_the_way_javascript_printed_them() {
-        // These strings are compared against a pin captured from the TypeScript.
-        assert_eq!(num(1000.0), "1000");
-        assert_eq!(num(203.0), "203");
-        assert_eq!(num(2.5), "2.5");
+        assert!(chain.contains("tin=smpte2084"), "{chain}");
+        assert!(!chain.contains("npl="), "there is no transfer left for npl to scale");
     }
 }

@@ -74,6 +74,15 @@ pub struct Target {
 pub struct Job {
     pub raw_file_path: String,
     pub match_embedded_jpeg: bool,
+    /// Denoise strength and the fraction of the deconvolution to blend in
+    /// (`raw_denoise`, `raw_sharpen`, §10.9). Both belong to the render rather than to
+    /// one rendition of it, so every target gets the same pair.
+    ///
+    /// Neither is scaled here. How much noise a frame actually has is measured off its
+    /// own pixels where the filters run (`image::noise_level`), which is why nothing on
+    /// this side needs its ISO.
+    pub denoise: f64,
+    pub sharpen: f64,
     pub grade: Grade,
     pub targets: Vec<Target>,
 }
@@ -120,6 +129,8 @@ fn encode_options(job: &Job, target: &Target, medium: Medium, output_path: &str)
         white_quantile: job.grade.white_quantile,
         crf: target.hdr_quantizer,
         preset: target.preset,
+        denoise: job.denoise,
+        sharpen: job.sharpen,
         max_edge: match target.size {
             0 => f64::INFINITY,
             size => f64::from(size),
@@ -139,28 +150,51 @@ fn encode_options(job: &Job, target: &Target, medium: Medium, output_path: &str)
 /// Takes the decode by value and returns the base, so the decode is dropped here the
 /// moment it is no longer the thing being read. That is what the worker's explicit
 /// `release` call did, and it is now what ownership does on its own.
-fn render_base(decoded: Frame, profile: Option<&fit::Profile>, size: u32) -> Result<Frame, String> {
-    let source = decoded.rgb8().ok_or("the SDR base needs an 8-bit decode")?;
-    let shrinks = size > 0 && source.width.max(source.height) > size as usize;
+///
+/// The sharpen is last, on the frame at the size it will be encoded at. Output
+/// sharpening puts back acutance the resample took off, so it belongs after the
+/// resample rather than before it, and after the warp for the same reason.
+///
+/// "The size it will be encoded at" holds because the base is built at the *largest*
+/// SDR size the job asks for and every job the service builds names one target. A job
+/// naming two would have the smaller one resized out of this by `save_avif_frame`,
+/// after the sharpen rather than before it - so a second SDR target wants the sharpen
+/// moved to the encode, where the final size is known, and a copy of the base per
+/// target to go with it.
+fn render_base(
+    mut decoded: Frame,
+    profile: Option<&fit::Profile>,
+    size: u32,
+    denoise: f64,
+    sharpen: f64,
+) -> Result<Frame, String> {
+    let shrinks = size > 0 && decoded.width.max(decoded.height) > size as usize;
 
-    // A native-resolution target with no match asks for neither a resize nor a grade,
-    // and copying the frame to answer that would be a 190MB no-op.
+    // A native-resolution target with no match asks for no new frame at all, and
+    // allocating one to answer that would be a 190MB no-op - so both stages run in the
+    // decode where it lies.
     if !shrinks && profile.is_none() {
+        let (width, height) = (decoded.width, decoded.height);
+        let data = decoded.rgb8_mut().ok_or("the SDR base needs an 8-bit decode")?;
+        crate::image::finish(data, width, height, denoise, sharpen);
         return Ok(decoded);
     }
-    if !shrinks {
-        let applied = fit::apply(source, profile.expect("checked above"));
-        return Ok(Frame::new(applied.width, applied.height, crate::frame::Pixels::Eight(applied.data)));
-    }
 
-    let resized = vips::Pipeline::from_rgb(source)
-        .and_then(|pipeline| pipeline.resize_to_fit(size as usize))
-        .and_then(vips::Pipeline::finish)
-        .map_err(|e| format!("could not resize the base: {e}"))?;
-    let built = match profile {
-        None => resized,
-        Some(profile) => fit::apply(resized.as_ref(), profile),
+    let source = decoded.rgb8().ok_or("the SDR base needs an 8-bit decode")?;
+    let mut built = match shrinks {
+        false => fit::apply(source, profile.expect("checked above")),
+        true => {
+            let resized = vips::Pipeline::from_rgb(source)
+                .and_then(|pipeline| pipeline.resize_to_fit(size as usize))
+                .and_then(vips::Pipeline::finish)
+                .map_err(|e| format!("could not resize the base: {e}"))?;
+            match profile {
+                None => resized,
+                Some(profile) => fit::apply(resized.as_ref(), profile),
+            }
+        }
     };
+    crate::image::finish(&mut built.data, built.width, built.height, denoise, sharpen);
     Ok(Frame::new(built.width, built.height, crate::frame::Pixels::Eight(built.data)))
 }
 
@@ -295,7 +329,7 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
 
         let mut make_base = || {
             let frame = decoded.take().ok_or("an SDR render target with no decode")?;
-            render_base(frame, profile.as_ref(), sdr_size)
+            render_base(frame, profile.as_ref(), sdr_size, job.denoise, job.sharpen)
         };
         write_sdr(job, target, &mut base, &mut make_base, &mut outcome)?;
     }

@@ -129,9 +129,10 @@ export class ProcessingService {
       targets: [this.target(getDataPath(library), library.rendition_hdr_video, photoId, rendition, hdr, source)],
       grade: this.grade(),
       // The on-demand rendition has to agree with the ones built at import, so it
-      // obeys the same setting. The fit is deterministic, so refitting here lands
+      // obeys the same settings. The fit is deterministic, so refitting here lands
       // on the same transform rather than a second opinion.
       matchEmbeddedJpeg: this.settings.get().match_embedded_jpeg,
+      ...this.render(),
     });
   }
 
@@ -197,6 +198,12 @@ export class ProcessingService {
       // not where the pixels came from.
       sdrFullChroma: gridTile ? false : settings.sdr_full_chroma,
     };
+  }
+
+  // What the render itself gets, before any rendition is cut from it (§10.9).
+  private render(): { denoise: number; sharpen: number } {
+    const settings = this.settings.get();
+    return { denoise: settings.raw_denoise, sharpen: settings.raw_sharpen };
   }
 
   private grade(): HdrGrade {
@@ -487,6 +494,7 @@ export class ProcessingService {
       dataPath,
       grade: this.grade(),
       matchEmbeddedJpeg: this.settings.get().match_embedded_jpeg,
+      ...this.render(),
     } as const;
 
     // Only the passes this photo still owes. A run interrupted between them - a

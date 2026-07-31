@@ -141,4 +141,67 @@ describe('migrations: splitting the import into two stages', () => {
     expect(cols.has('renditions_built_at')).toBe(true);
     expect(cols.has('needs_processing')).toBe(false);
   });
+
+  it('halves a tuned quantizer once, whatever it is run over', () => {
+    const db = new Database(':memory:');
+    runMigrations(db);
+    db.exec("INSERT INTO settings (key, value) VALUES ('full_rendition_quantizer', '26'), ('hdr_crf', '20'), ('full_rendition_size', '3840')");
+    // Stamped by the first run, so a settings row written afterwards is on the new
+    // scale already and must be left alone. Halving twice would double every
+    // rendition's size, which is the failure this cannot self-detect.
+    runMigrations(db);
+    runMigrations(db);
+
+    const values = db.query('SELECT key, value FROM settings ORDER BY key').all();
+    expect(values).toEqual([
+      { key: 'full_rendition_quantizer', value: '26' },
+      { key: 'full_rendition_size', value: '3840' },
+      { key: 'hdr_crf', value: '20' },
+    ]);
+  });
+
+  it('halves the quantizers a database predating the rescale had tuned', () => {
+    const db = new Database(':memory:');
+    db.exec('CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
+    // Every key the rescale names, not a sample of them: they are listed in one SQL
+    // `IN`, and a key mistyped there leaves those users on the old scale silently.
+    db.exec(`INSERT INTO settings (key, value) VALUES
+      ('grid_rendition_quantizer', '26'), ('full_rendition_quantizer', '26'),
+      ('lossless_sdr_quantizer', '16'), ('lossless_quantizer', '8'),
+      ('hdr_crf', '20'), ('full_rendition_size', '3840')`);
+
+    runMigrations(db);
+
+    // Only the quantizers, and only once: a size on the same table is not on this
+    // scale and a second run finds the stamp.
+    runMigrations(db);
+    expect(db.query('SELECT key, value FROM settings ORDER BY key').all()).toEqual([
+      { key: 'full_rendition_quantizer', value: '13' },
+      { key: 'full_rendition_size', value: '3840' },
+      { key: 'grid_rendition_quantizer', value: '13' },
+      { key: 'hdr_crf', value: '10' },
+      { key: 'lossless_quantizer', value: '4' },
+      { key: 'lossless_sdr_quantizer', value: '8' },
+    ]);
+  });
+
+  it('leaves a quantizer it cannot parse for the settings reader to discard', () => {
+    // SQLite reads `CAST('lots' AS INTEGER)` as 0, so halving without a guard turns a
+    // row nothing can parse into a *valid* 0 - near-lossless, in range, and preferred
+    // over the default from then on. A downgrade and re-upgrade is what writes such a
+    // row, and `settings.integration.test.ts` pins that it must not take the viewer
+    // down; this pins that the migration cannot promote it either.
+    const db = new Database(':memory:');
+    db.exec('CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
+    db.exec("INSERT INTO settings (key, value) VALUES ('grid_rendition_quantizer', 'lots'), ('hdr_crf', ''), ('lossless_quantizer', '0')");
+
+    runMigrations(db);
+
+    expect(db.query('SELECT key, value FROM settings ORDER BY key').all()).toEqual([
+      { key: 'grid_rendition_quantizer', value: 'lots' },
+      { key: 'hdr_crf', value: '' },
+      // Already the tightest the scale goes, and halving it would say nothing new.
+      { key: 'lossless_quantizer', value: '0' },
+    ]);
+  });
 });

@@ -75,6 +75,13 @@ export interface RenditionJob {
    * disagree about colour, and the expensive part happens once.
    */
   matchEmbeddedJpeg: boolean;
+  /**
+   * Noise reduction and output sharpening for the render (§10.9), the same for every
+   * target and for the same reason as `matchEmbeddedJpeg`: they describe the picture
+   * this photo renders to, so the grid tile and the full view cannot disagree.
+   */
+  denoise: number;
+  sharpen: number;
 }
 
 export type WorkerJob = RenditionJob;

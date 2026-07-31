@@ -348,9 +348,47 @@ function migrateShootsToFolderUniqueness(db: Database): void {
   db.exec('PRAGMA foreign_keys = ON');
 }
 
+// Every quantizer setting meant half itself, because libavif quantises on the
+// midpoint of the `min`/`max` pair it was handed and `min` was 0 (§10.7). The
+// encoder gets both ends now, so a value tuned against the old behaviour is halved
+// to land on the same picture.
+//
+// The still keeps the file it had, byte for byte. **The video deliberately does not**
+// - libaom read its `-crf` literally where libavif halved it, so `hdr_crf` 20 was
+// encoding the AV1 twin at twice the still's quantizer, and halving the setting is
+// what makes the pair match (§10.7). An existing library's twins get larger and
+// better on their next build, which is the point of the change rather than a cost of
+// it.
+//
+// The one migration here that cannot tell from the schema whether it has already
+// run: a value the user chose looks exactly like one this has already halved, and
+// halving twice would quietly double every rendition's size. So it is stamped, in
+// the counter SQLite keeps for the purpose - `user_version` starts at 0 on every
+// database that predates this and leaves no row for anything else to trip over.
+const QUANTIZER_RESCALE = 1;
+
+function halveQuantizersLibavifWasAlreadyHalving(db: Database): void {
+  const { user_version: stamped } = db.query('PRAGMA user_version').get() as { user_version: number };
+  if (stamped >= QUANTIZER_RESCALE) return;
+  const keys = ['grid_rendition_quantizer', 'full_rendition_quantizer', 'lossless_sdr_quantizer', 'lossless_quantizer', 'hdr_crf'];
+  // Only rows that are already a usable quantizer. SQLite reads `CAST('' AS INTEGER)`
+  // and `CAST('lots' AS INTEGER)` as 0, so without the guard this turns a row it cannot
+  // parse into a *valid* 0 - which is near-lossless, is in range, and therefore wins
+  // over the default from then on, where `SettingsRepository.read` would have discarded
+  // the garbage and used the default. An unparseable row is exactly what a downgrade
+  // and re-upgrade leaves behind, and `settings.integration.test.ts` pins that it must
+  // not take the viewer down with it.
+  db.exec(
+    `UPDATE settings SET value = CAST(CAST(value AS INTEGER) / 2 AS TEXT)
+      WHERE key IN (${keys.map((k) => `'${k}'`).join(', ')}) AND CAST(value AS INTEGER) > 0`,
+  );
+  db.exec(`PRAGMA user_version = ${QUANTIZER_RESCALE}`);
+}
+
 export function runMigrations(db: Database): void {
   db.exec(SCHEMA);
   dropSupersededOrderingIndexes(db);
+  halveQuantizersLibavifWasAlreadyHalving(db);
   // Before the indexes and columns below, which are added to whichever table
   // ends up standing.
   migrateShootsToFolderUniqueness(db);

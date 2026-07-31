@@ -288,6 +288,37 @@ mod fused_decode_matches_libraw {
     }
 }
 
+/// The denoise reads the frame's noise off the frame (§10.9), so what it measures on a
+/// real photograph has to be in the range the filter's constants assume.
+///
+/// Synthetic input cannot check this. A test pattern's noise is whatever the pattern
+/// says, where the number that matters is what an actual sensor, demosaic and resample
+/// leave behind - and if the estimator came back an order of magnitude out, the luma
+/// denoise would either do nothing or flatten the picture, with nothing in between.
+mod the_noise_estimate_lands_where_a_real_frame_puts_it {
+    use super::*;
+
+    #[test]
+    fn on_both_bodies() {
+        for path in [sony(), canon()] {
+            let frame = decode(&path, 8, false, 1280);
+            let rgb = frame.rgb8().expect("an 8-bit decode");
+            let luma: Vec<f32> = (0..rgb.width * rgb.height)
+                .map(|i| {
+                    let p = &rgb.data[i * 3..];
+                    (0.2126 * f32::from(p[0]) + 0.7152 * f32::from(p[1]) + 0.0722 * f32::from(p[2]))
+                        / 255.0
+                })
+                .collect();
+            let sigma = crate::image::_for_testing_noise_level(&luma, rgb.width, rgb.height);
+            // Loose on purpose: the claim is an order of magnitude, not a value. Under
+            // 0.1% of full scale would leave the denoise doing nothing on every frame;
+            // over 5% would have it treating detail as noise.
+            assert!((0.001..0.05).contains(&sigma), "{}: sigma {sigma}", path.display());
+        }
+    }
+}
+
 /// Deriving, per photo, the transform that makes a RAW render look like the camera's
 /// own JPEG - the maker's colour treatment and whichever picture profile the
 /// photographer had set. None of it is visible from a synthetic input: the curves come
@@ -748,6 +779,9 @@ mod hdr_grade {
             white_quantile: QUANTILE,
             crf: 40,
             preset: 8,
+            // The grade is what is pinned here, and both of these run after it.
+            denoise: 0.0,
+            sharpen: 0.0,
             max_edge,
         }
     }
@@ -985,6 +1019,57 @@ mod hdr_grade {
         let b = std::fs::read(&with_match).expect("the matched file");
         let _ = std::fs::remove_dir_all(&dir);
         assert_ne!(a, b, "the match never reached the encoder");
+    }
+
+    /// The encoded still is actually in the PQ transfer.
+    ///
+    /// **Nothing else checks this, and the failure is silent and total.** The transfer
+    /// used to live in the argv - `tin=linear:t=smpte2084:npl=1000` across 48 pinned rows
+    /// - so deleting it broke the pin. It is one call in `encode_pair` now
+    /// (`tone::encode_pq`), and with it removed the argv pin is unchanged, the grade pin
+    /// is unchanged because it pins `graded()` from *before* the transfer, the match test
+    /// above still differs because both its arms are equally wrong, and `ffprobe` still
+    /// reports `smpte2084` because that is the CICP tag rather than the pixels. Every HDR
+    /// still and every video twin would come out several stops dark, with a green suite.
+    ///
+    /// So it is measured against the two things the file could be. PQ is a steep curve
+    /// near black: a mid-grey that is 0.2 of full scale linear sits near 0.58 in PQ, so
+    /// the two predictions are far apart and no tolerance has to be argued about.
+    #[test]
+    fn the_still_is_written_in_the_transfer_it_claims() {
+        let dir = std::env::temp_dir().join("bb-hdr-transfer-fixture");
+        std::fs::create_dir_all(&dir).expect("a scratch directory");
+        let path = dir.join("still.avif");
+
+        let frame = linear();
+        let options = options(PEAK, 640.0, path.to_str().unwrap());
+        let (graded, _, _) = crate::hdr::graded(&source(&frame), &options, None);
+        crate::hdr::encode_pair(crate::hdr::Decode::Borrowed(source(&frame)), &options, None, None)
+            .expect("the encode");
+
+        // What the file would average at if the samples went out linear, and what it
+        // averages at with the transfer applied. Both off the very frame that was
+        // encoded, so this cannot drift with the grade or the fixture.
+        let full = f64::from(u16::MAX);
+        let linear_mean = graded.iter().map(|s| f64::from(*s) / full).sum::<f64>() / graded.len() as f64;
+        let pq_mean = graded
+            .iter()
+            .map(|s| crate::tone::pq((f64::from(*s) / full) * PEAK))
+            .sum::<f64>()
+            / graded.len() as f64;
+
+        let encoded = std::fs::read(&path).expect("the still");
+        let decoded = crate::vips::Pipeline::decode_upright(&encoded)
+            .and_then(crate::vips::Pipeline::finish)
+            .expect("the still decodes");
+        let _ = std::fs::remove_dir_all(&dir);
+        let mean = decoded.data.iter().map(|v| f64::from(*v) / 255.0).sum::<f64>()
+            / decoded.data.len() as f64;
+
+        assert!(
+            (mean - pq_mean).abs() < (mean - linear_mean).abs(),
+            "the still averages {mean:.3}; PQ predicts {pq_mean:.3} and untransformed {linear_mean:.3}",
+        );
     }
 
     /// The graded samples, held to what the TypeScript produced before this subsystem

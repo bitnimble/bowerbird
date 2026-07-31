@@ -32,12 +32,33 @@ const C2: f64 = (2413.0 / 4096.0) * 32.0;
 const C3: f64 = (2392.0 / 4096.0) * 32.0;
 const PQ_MAX_NITS: f64 = 10000.0;
 
-/// SMPTE ST 2084, forward. Public because the still's encoder applies the same
-/// transfer the roll-off is computed in, rather than handing the frame to `zscale`
-/// to do it in another process (`avif.rs`).
+/// SMPTE ST 2084, forward. Public because the encoders apply the same transfer the
+/// roll-off is computed in, rather than handing the frame to `zscale` to do it in
+/// another process (`encode_pq`).
 pub fn pq(nits: f64) -> f64 {
     let y = (nits / PQ_MAX_NITS).clamp(0.0, 1.0).powf(M1);
     ((C1 + C2 * y) / (1.0 + C3 * y)).powf(M2)
+}
+
+/// PQ-encodes a graded frame in place, at 16 bits.
+///
+/// `grade` leaves display-referred linear where full range is the display's peak,
+/// which is what `zscale` was being told through `npl` and `tin=linear`. Only the
+/// transfer is left: PQ's output gamut is Rec.2020, which is the space the grade
+/// already works in, so nothing has to move between primaries.
+///
+/// Both media take it here rather than one each. It used to be the still's alone -
+/// libavif's, in `avif.rs`, with the video's done by a `zscale` in ffmpeg - which
+/// meant the two encoders were handed frames in different domains and nothing that
+/// had to sit between the grade and the transfer could be written once.
+pub fn encode_pq(frame: &mut [u16], peak_nits: f64) {
+    // One curve covers all 65536 inputs, so the per-sample work is a lookup rather
+    // than a pow(): a 24MP frame is 30M samples and a 60MP one 180M.
+    let full = f64::from(u16::MAX);
+    let lut: Vec<u16> = (0..=u16::MAX)
+        .map(|level| (pq((f64::from(level) / full) * peak_nits) * full).round() as u16)
+        .collect();
+    frame.par_iter_mut().for_each(|s| *s = lut[*s as usize]);
 }
 
 fn pq_inv(signal: f64) -> f64 {
@@ -324,6 +345,42 @@ pub fn grade(frame: &mut [u16], options: &GradeOptions<'_>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_transfer_matches_the_curve_the_grade_rolls_highlights_with() {
+        // The PQ pass replaces zscale's, so it has to be the same curve - and it is the
+        // one the roll-off already uses, which is what makes that checkable at all.
+        //
+        // Against input *levels* rather than a list of nits: PQ is near-vertical at the
+        // bottom, so rounding a nits value to a level and back moves the answer by tens
+        // of counts at 1 nit, and a test written that way measures the quantisation
+        // rather than the curve.
+        let levels: [u16; 6] = [0, 1, 66, 13303, 32768, u16::MAX];
+        let mut out = levels;
+        encode_pq(&mut out, 1000.0);
+        for (i, level) in levels.iter().enumerate() {
+            let nits = (f64::from(*level) / f64::from(u16::MAX)) * 1000.0;
+            let want = (pq(nits) * f64::from(u16::MAX)).round() as u16;
+            assert_eq!(out[i], want, "level {level}");
+        }
+    }
+
+    #[test]
+    fn the_display_peak_lands_where_pq_puts_it_rather_than_at_full_scale() {
+        // PQ is absolute and its range runs to 10000 nits, so a 1000-nit peak encodes
+        // at about 0.752 of the code range and *must not* be stretched to fill it.
+        // Normalising it to full scale would be the mistake `npl` exists to prevent:
+        // the file would then claim its diffuse white is 10000 nits.
+        let mut out: Vec<u16> = (0..=255).map(|i| i * 257).collect();
+        encode_pq(&mut out, 1000.0);
+        assert_eq!(out[0], 0, "black must stay black");
+        let peak = *out.last().expect("a last sample");
+        assert_eq!(peak, (pq(1000.0) * f64::from(u16::MAX)).round() as u16);
+        assert!((0.74..0.76).contains(&(f64::from(peak) / f64::from(u16::MAX))), "{peak}");
+        for i in 1..out.len() {
+            assert!(out[i] >= out[i - 1], "not monotone at {i}");
+        }
+    }
 
     #[test]
     fn pq_round_trips_through_its_inverse() {

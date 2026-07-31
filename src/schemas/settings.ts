@@ -62,6 +62,41 @@ export const SettingsSchema = z.object({
   // wrong picture, and the cost is a fraction of the decode it rides along with.
   // Turn it off for an import where throughput matters more.
   match_embedded_jpeg: z.boolean(),
+  // What every rendered RAW gets before any rendition is cut from it (§10.9). Both
+  // are off when 0, and neither touches a rendition made from the camera's own JPEG:
+  // that one arrives denoised and sharpened by the body already.
+  //
+  // `raw_denoise` is a strength, 1 being the tuned default and 0 off. It drives two
+  // guided filters: one on luma, regularised by the frame's **own measured noise**, and
+  // one on chroma guided by that cleaned luma. Colour noise is blotchy and takes a wide
+  // radius; luma noise is per-pixel grain and takes a narrow one, and guiding the colour
+  // by the luma is what lets its radius grow without washing a red wall onto the white
+  // window frames beside it.
+  //
+  // **No ISO scaling, because the noise is measured rather than predicted.** It was
+  // scaled by ISO first, and measurement answers the same question better: by the time
+  // this runs the frame has been demosaiced, resampled - which averages some of the
+  // noise away - and graded, possibly by several stops, and none of that is in the ISO.
+  //
+  // `raw_sharpen` blends in a **Richardson-Lucy deconvolution** of luma, applied last,
+  // once the frame is at the size it will be encoded at. An unsharp mask has no model of
+  // what softened the picture and gets its halo from the overshoot it leaves; this one
+  // inverts the point spread the resample applied, so 1.0 is the deconvolution as
+  // computed rather than an arbitrary gain. Denoising first is not optional - RL will
+  // invert grain as readily as blur.
+  //
+  // **The denoise is tuned short of what the metric would pick**, on purpose: the luma
+  // side is set where a dark roof keeps its texture rather than where flat water is
+  // quietest, because grain reads as a photograph and smearing reads as a fault. Raise it
+  // above about 1.5 and the second starts happening.
+  //
+  // Two earlier versions are worth not repeating. LibRaw's wavelet denoise on the CFA had
+  // the better position in the pipeline and could not be made to work at any setting; and
+  // a chroma-only Gaussian blur, which fixed the colour mottle and left the luma grain
+  // that is most of what the eye objects to (§10.9).
+  raw_denoise: z.number().min(0).max(3),
+  raw_sharpen: z.number().min(0).max(1),
+
   grid_rendition_size: z.number().int().min(1),
   full_rendition_size: z.number().int().min(1),
   // libaom's quantizer, 0-63, **lower is better** - the same scale as the HDR ones
@@ -70,14 +105,19 @@ export const SettingsSchema = z.object({
   // These were libvips' 1-100 quality, where higher was better, until the SDR
   // encoder moved off libheif. The numbers here are the measured equivalents of what
   // was tuned on that scale rather than a fresh guess: matched on SSIM against the
-  // frames the old values were chosen on, Q80 lands on 26 and Q88 on 16, both within
+  // frames the old values were chosen on, Q80 lands on 13 and Q88 on 8, both within
   // 0.0002 SSIM and half a percent of file size. **The direction inverted**, so a
   // value carried over from the old scale reads as its opposite - 80 here is not
   // "good", it is nearly the worst this will produce.
   //
+  // Those two were written down as 26 and 16, which is twice what they encode at:
+  // libavif was handed `min 0 / max N` and quantises on the midpoint, so every
+  // number here meant half itself. The encoder gets both ends now and the values are
+  // halved to match, which leaves every file byte-identical (§10.7).
+  //
   // The reasoning behind the original choice still applies: the full rendition is
   // the one actually looked at, so it gets the headroom, and the settings that lose
-  // visible shadow detail on real frames - the old q60 and q70, which are 51 and 39
+  // visible shadow detail on real frames - the old q60 and q70, which are 26 and 19
   // here - are where a RAW has the most to give and are worth avoiding.
   grid_rendition_quantizer: z.number().int().min(0).max(63),
   full_rendition_quantizer: z.number().int().min(0).max(63),
@@ -115,10 +155,13 @@ export const SettingsSchema = z.object({
   // libaom's quantizer and speed, for both HDR media. A still is looked at rather
   // than streamed, so this is tighter than a video default.
   //
-  // One scale, and it used to only look like one: the still went to avifenc, whose
+  // One scale, twice claimed and only now true. The still went to avifenc, whose
   // `--max` is libaom's quantizer, while the video went to SVT-AV1, whose `-crf` is
-  // its own - so the same number meant two different qualities, and the comment here
-  // named only the second. Both media are libaom now (§10.7), so it means one thing.
+  // its own; moving both to libaom was supposed to settle it, and did not, because
+  // libavif was still being handed `min 0 / max N` and quantises on the *midpoint* -
+  // so the still encoded at half this number and the video at all of it. The video
+  // was the visible half: blocking, chroma loss and noise on an HDR display in
+  // Firefox, where the still beside it was clean (§10.7).
   // `preset` is clamped per encoder rather than narrowed to the tighter of the two:
   // avifenc's `--speed` takes 0-10, libaom's `-cpu-used` stops at 8.
   hdr_crf: z.number().int().min(0).max(63),
@@ -148,18 +191,20 @@ export const DEFAULT_SETTINGS: Settings = {
 
   processing_concurrency: 4,
   match_embedded_jpeg: true,
+  raw_denoise: 1,
+  raw_sharpen: 0.6,
   grid_rendition_size: 800,
   full_rendition_size: 3840,
-  grid_rendition_quantizer: 26,
-  full_rendition_quantizer: 26,
+  grid_rendition_quantizer: 13,
+  full_rendition_quantizer: 13,
 
-  lossless_sdr_quantizer: 16,
-  lossless_quantizer: 8,
+  lossless_sdr_quantizer: 8,
+  lossless_quantizer: 4,
 
   hdr_peak_nits: 1000,
   hdr_reference_white_nits: 203,
   hdr_white_quantile: 0.9,
-  hdr_crf: 20,
+  hdr_crf: 10,
   hdr_preset: 8,
   hdr_still_full_chroma: false,
   sdr_full_chroma: false,

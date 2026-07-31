@@ -18,8 +18,6 @@
 // here instead of from another process.
 
 use crate::raw;
-use crate::tone;
-use rayon::prelude::*;
 
 /// CICP, the only signalling that matters: what `--cicp 9/16/9` was passing.
 pub struct Cicp {
@@ -32,13 +30,10 @@ pub struct StillOptions {
     pub cicp: Cicp,
     /// `avifPixelFormat`, from the still's chroma setting (`hdr_args::Chroma`).
     pub format: u32,
-    /// libaom's quantizer, which is what avifenc's `--max` set.
+    /// libaom's quantizer, the same number `-crf` gives the video.
     pub quantizer: i32,
     /// avifenc's `--speed`.
     pub speed: i32,
-    /// The display peak the grade normalised full range to, which is what the PQ
-    /// transfer below has to be told in order to undo it.
-    pub peak_nits: f64,
 }
 
 // avifenc's `--range limited`, and the depth every HDR still is written at.
@@ -53,60 +48,34 @@ const AVIF_PIXEL_FORMAT_YUV420: u32 = 3;
 const AVIF_RGB_FORMAT_RGB: u32 = 0;
 const AVIF_RESULT_OK: u32 = 0;
 
-/// PQ-encodes the graded frame in place, at 16 bits.
+/// Encodes one frame as an AVIF still, straight to `out_path`.
 ///
-/// `tone::grade` leaves display-referred linear where full range is the display's peak,
-/// which is what `zscale` was being told through `npl` and `tin=linear`. Only the
-/// transfer is left: PQ's output gamut is Rec.2020, which is the space the grade already
-/// works in, so nothing has to move between primaries. What comes out is what libavif's
-/// own converter takes to YCbCr, so the matrix and the limited-range quantisation stay
-/// libavif's rather than being written a second time here.
-///
-/// In place because the caller owns the frame and has no further use for the linear
-/// samples, and because it is sample-for-sample at the same index, so there is nothing a
-/// second buffer would protect.
-fn pq_encode(graded: &mut [u16], peak_nits: f64) {
-    // One curve covers all 65536 inputs, so the per-sample work is a lookup rather
-    // than a pow(): a 24MP frame is 30M samples and a 60MP one 180M.
-    let full = f64::from(u16::MAX);
-    let lut: Vec<u16> = (0..=u16::MAX)
-        .map(|level| (tone::pq((f64::from(level) / full) * peak_nits) * full).round() as u16)
-        .collect();
-    graded.par_iter_mut().for_each(|s| *s = lut[*s as usize]);
-}
-
-/// Encodes one graded frame as an AVIF still, straight to `out_path`.
-///
-/// `graded` is interleaved 16-bit RGB, display-referred linear, as `tone::grade` leaves
-/// it, put into its output transfer and gamut here rather than by a `zscale` in another
-/// process.
+/// `pq` is interleaved 16-bit Rec.2020 RGB in the PQ transfer, as `tone::encode_pq`
+/// leaves it. What comes out of that is what libavif's own converter takes to YCbCr, so
+/// the matrix and the limited-range quantisation stay libavif's rather than being
+/// written a second time here.
 ///
 /// `Cow` rather than a slice, and that is the memory knob rather than a signature
-/// preference: the transfer is applied in place, so an owned frame is encoded without a
-/// second allocation of it. Only the still-plus-video pair has to pass `Borrowed` - the
-/// twin reads the same linear samples concurrently and would see them PQ-encoded from
-/// under it.
+/// preference: an owned frame is handed straight to libavif and dropped as soon as the
+/// YUV conversion has read it. Only the still-plus-video pair has to pass `Borrowed`,
+/// the twin being on another thread with the same samples.
 ///
 /// Only one frame of this is left live by the time libaom runs, and libaom's own working
 /// set - ~700MB for a 24MP 10-bit 4:4:4 all-intra frame, five times ours - is what
 /// actually sets the peak. Multiply by `processing_concurrency` on a machine that starts
 /// OOM-killing; DESIGN 10.7 has the measurements.
 pub fn encode_still(
-    graded: std::borrow::Cow<'_, [u16]>,
+    pq: std::borrow::Cow<'_, [u16]>,
     width: usize,
     height: usize,
     options: &StillOptions,
     out_path: &str,
 ) -> Result<(), String> {
-    if graded.len() < width * height * 3 {
-        return Err(format!("frame is {} samples, expected {}", graded.len(), width * height * 3));
+    if pq.len() < width * height * 3 {
+        return Err(format!("frame is {} samples, expected {}", pq.len(), width * height * 3));
     }
-    // Moves an owned frame and copies a borrowed one, which is the whole reason for
-    // the `Cow`.
-    let mut encoded = graded.into_owned();
-    pq_encode(&mut encoded, options.peak_nits);
-    write_avif(encoded.into(), 16, AVIF_RANGE_LIMITED, width, height, AVIF_DEPTH,
-        options.format, &options.cicp, options.quantizer, options.speed, out_path)
+    write_avif(pq, 16, AVIF_RANGE_LIMITED, width, height, AVIF_DEPTH, options.format,
+        &options.cicp, (options.quantizer, options.quantizer), options.speed, out_path)
 }
 
 /// An 8-bit sRGB rendition, straight to disk.
@@ -138,7 +107,7 @@ pub fn encode_rendition(
         true => AVIF_PIXEL_FORMAT_YUV444,
         false => AVIF_PIXEL_FORMAT_YUV420,
     };
-    write_avif(rgb8, 8, AVIF_RANGE_FULL, width, height, 8, format, &cicp, quantizer, speed, out_path)
+    write_avif(rgb8, 8, AVIF_RANGE_FULL, width, height, 8, format, &cicp, (quantizer, quantizer), speed, out_path)
 }
 
 /// Hands interleaved RGB to libavif and writes what comes back.
@@ -161,7 +130,12 @@ fn write_avif<T: Clone>(
     depth: u32,
     format: u32,
     cicp: &Cicp,
-    quantizer: i32,
+    // Both ends of libavif's quantizer pair, and a pair rather than one number because
+    // it is what the encoder is actually given: libavif quantises on the *midpoint* of
+    // the two, so a caller that names only one end has already decided something it
+    // probably did not mean to. Production passes the same value twice; the test that
+    // pins the midpoint rule is the one caller that does not.
+    quantizers: (i32, i32),
     speed: i32,
     out_path: &str,
 ) -> Result<(), String> {
@@ -205,9 +179,15 @@ fn write_avif<T: Clone>(
                     .map(|n| n.get() as i32)
                     .unwrap_or(1);
                 (*encoder).speed = speed;
-                // The quantizer pair avifenc's `--min 0 --max N` set.
-                (*encoder).minQuantizer = 0;
-                (*encoder).maxQuantizer = quantizer;
+                // Both ends, not `--min 0 --max N`. libavif takes the **midpoint** of
+                // the pair, so a floor of 0 quietly halved every quantizer this app
+                // asked for - and the video, whose `-crf` libaom reads literally, was
+                // encoded at twice the still's. Measured on a 24MP frame at 3840: the
+                // still scored SSIM 0.9802 against a near-lossless reference where its
+                // twin scored 0.9529, which is the blocking and chroma loss that made
+                // this findable at all.
+                (*encoder).minQuantizer = quantizers.0;
+                (*encoder).maxQuantizer = quantizers.1;
                 // libaom parallelises across tiles, so without them the threads idle.
                 (*encoder).autoTiling = 1;
 
@@ -253,51 +233,77 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_transfer_matches_the_curve_the_grade_rolls_highlights_with() {
-        // The PQ pass here replaces zscale's, so it has to be the same curve - and it
-        // is the one `tone` already uses, which is what makes that checkable at all.
-        //
-        // Against input *levels* rather than a list of nits: PQ is near-vertical at the
-        // bottom, so rounding a nits value to a level and back moves the answer by tens
-        // of counts at 1 nit, and a test written that way measures the quantisation
-        // rather than the curve.
-        let levels: [u16; 6] = [0, 1, 66, 13303, 32768, u16::MAX];
-        let mut out = levels;
-        pq_encode(&mut out, 1000.0);
-        for (i, level) in levels.iter().enumerate() {
-            let nits = (f64::from(*level) / f64::from(u16::MAX)) * 1000.0;
-            let want = (tone::pq(nits) * f64::from(u16::MAX)).round() as u16;
-            assert_eq!(out[i], want, "level {level}");
-        }
-    }
-
-    #[test]
-    fn the_display_peak_lands_where_pq_puts_it_rather_than_at_full_scale() {
-        // PQ is absolute and its range runs to 10000 nits, so a 1000-nit peak encodes
-        // at about 0.752 of the code range and *must not* be stretched to fill it.
-        // Normalising it to full scale would be the mistake `npl` exists to prevent:
-        // the file would then claim its diffuse white is 10000 nits.
-        let mut out: Vec<u16> = (0..=255).map(|i| i * 257).collect();
-        pq_encode(&mut out, 1000.0);
-        assert_eq!(out[0], 0, "black must stay black");
-        let peak = *out.last().expect("a last sample");
-        assert_eq!(peak, (tone::pq(1000.0) * f64::from(u16::MAX)).round() as u16);
-        assert!((0.74..0.76).contains(&(f64::from(peak) / f64::from(u16::MAX))), "{peak}");
-        for i in 1..out.len() {
-            assert!(out[i] >= out[i - 1], "not monotone at {i}");
-        }
-    }
-
-    #[test]
     fn a_frame_smaller_than_it_claims_is_refused_rather_than_read_past() {
         let options = StillOptions {
             cicp: Cicp { primaries: 9, transfer: 16, matrix: 9 },
             format: AVIF_PIXEL_FORMAT_YUV444,
             quantizer: 20,
             speed: 8,
-            peak_nits: 1000.0,
         };
         let short = vec![0u16; 8 * 8 * 3 - 1];
         assert!(encode_still(short.into(), 8, 8, &options, "/dev/null").is_err());
+    }
+
+    /// libavif quantises on the **midpoint** of the quantizer pair, which is the claim
+    /// the whole rescale rests on (§10.7): `min 0 / max 2N` and `min N / max N` have to
+    /// be the same encode, or halving every default and migrating every tuned value
+    /// silently moved the quality of every rendition this app writes.
+    ///
+    /// It was established by running `avifenc` at both settings and comparing file sizes.
+    /// That is a fact about the linked library's version, not about this code - libavif
+    /// only derives `quality` from the pair when `quality` is left at its default, and a
+    /// build against 0.x would send min and max to the encoder directly and break the
+    /// equivalence with nothing to say so. So it is asserted where it can fail loudly.
+    #[test]
+    fn the_quantizer_pair_is_read_as_its_midpoint() {
+        let dir = std::env::temp_dir().join("bb-avif-midpoint");
+        std::fs::create_dir_all(&dir).expect("a scratch directory");
+        // Something with detail to spend bits on: a flat frame encodes to the same few
+        // bytes at any quantizer and would pass this without meaning anything.
+        let (width, height) = (64usize, 64usize);
+        let mut frame = vec![0u16; width * height * 3];
+        for y in 0..height {
+            for x in 0..width {
+                let i = (y * width + x) * 3;
+                frame[i] = ((x * 977 + y * 631) % 65536) as u16;
+                frame[i + 1] = ((x * 331 + y * 1181) % 65536) as u16;
+                frame[i + 2] = ((x * 1499 + y * 173) % 65536) as u16;
+            }
+        }
+
+        let encode = |min: i32, max: i32, name: &str| {
+            let path = dir.join(name);
+            let options = StillOptions {
+                cicp: Cicp { primaries: 9, transfer: 16, matrix: 9 },
+                format: AVIF_PIXEL_FORMAT_YUV444,
+                quantizer: 0,
+                speed: 10,
+            };
+            write_avif(
+                std::borrow::Cow::Borrowed(&frame),
+                16,
+                AVIF_RANGE_LIMITED,
+                width,
+                height,
+                AVIF_DEPTH,
+                options.format,
+                &options.cicp,
+                (min, max),
+                options.speed,
+                path.to_str().expect("a path"),
+            )
+            .expect("the encode");
+            std::fs::read(&path).expect("the file")
+        };
+
+        let pair = encode(0, 26, "pair.avif");
+        let midpoint = encode(13, 13, "midpoint.avif");
+        let tighter = encode(6, 6, "tighter.avif");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(pair, midpoint, "min 0 / max 26 is not the same encode as min 13 / max 13");
+        // And that the knob does something at all, so the equality above cannot be two
+        // encodes that ignored their quantizers.
+        assert_ne!(midpoint, tighter, "the quantizer changed nothing");
     }
 }

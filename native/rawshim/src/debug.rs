@@ -295,6 +295,14 @@ pub struct GradeSpec {
     /// has no say in its chroma.
     #[serde(default)]
     pub medium: Option<String>,
+    /// Chroma blur radius and output sharpening. Absent means neither, which is what a
+    /// pin comparing two encode routes wants: whatever these do, they must do it to
+    /// both. The radius is used as given rather than scaled - a debug command names the
+    /// number it wants applied.
+    #[serde(default)]
+    pub denoise: f64,
+    #[serde(default)]
+    pub sharpen: f64,
 }
 
 impl GradeSpec {
@@ -314,6 +322,8 @@ impl GradeSpec {
             white_quantile: self.white_quantile,
             crf: self.crf,
             preset: self.preset,
+            denoise: self.denoise,
+            sharpen: self.sharpen,
             max_edge: self.max_edge.unwrap_or(f64::INFINITY),
         }
     }
@@ -328,6 +338,11 @@ pub struct Reply {
     pub comparison: Option<Comparison>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub against_preview: Option<AgainstPreview>,
+    /// Which route an HDR still took, so the differential that compares the two can
+    /// assert its arms really differed. Without it, a renamed environment variable
+    /// leaves the test comparing one path with itself and passing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub used_avifenc: Option<bool>,
 }
 
 /// How close one or more images sit to the camera's own preview.
@@ -462,7 +477,10 @@ pub fn run(command: &Command) -> Result<Reply, String> {
                 width: linear.width,
                 height: linear.height,
             };
-            crate::hdr::encode_pair(
+            // The route the encode reports having taken, not a second reading of the
+            // environment variable that selected it: the differential asserts on this to
+            // prove its two arms really ran different code.
+            let used_avifenc = crate::hdr::encode_pair(
                 crate::hdr::Decode::Borrowed(source),
                 &grade.options(),
                 match video_output_path.is_empty() {
@@ -471,7 +489,7 @@ pub fn run(command: &Command) -> Result<Reply, String> {
                 },
                 matched.as_ref(),
             )?;
-            Ok(Reply::default())
+            Ok(Reply { used_avifenc: Some(used_avifenc), ..Reply::default() })
         }
         Command::DeltaEToPreview { image_paths, raw_path } => {
             let images: Vec<crate::vips::Rgb> = image_paths
