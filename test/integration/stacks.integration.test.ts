@@ -269,6 +269,42 @@ describe('stacks', () => {
     expect(flagged).toBe(ids[2]!);
   });
 
+  test('a stack whose every member is rejected leaves the gallery entirely', () => {
+    const { db, stacks, photos } = context;
+    const ids = [1, 2, 3].map((n) => insertPhoto(db, n, { minute: n }));
+    stacks.create(ids);
+    const active = { includeDeleted: false, triage: ['untriaged' as const, 'picked' as const] };
+
+    for (const id of ids) photos.update(id, { triage: 'rejected' });
+
+    // No tile and nothing to count: the flag is still set on one of them, and it
+    // is still not enough, because the verdict filter excludes that row before
+    // the representative question is ever asked.
+    const gallery = photos.listByLibrary(LIBRARY, 'taken_desc', 0, 100, active);
+    expect(gallery.photos).toHaveLength(0);
+    expect(gallery.total).toBe(0);
+
+    // And it is all there again when the filter is the one that asks for it,
+    // still as one tile standing for three.
+    const rejected = photos.listByLibrary(LIBRARY, 'taken_desc', 0, 100, { includeDeleted: false, triage: ['rejected'] });
+    expect(rejected.photos).toHaveLength(1);
+    expect(rejected.photos[0]!.stack_size).toBe(3);
+  });
+
+  test('a stack whose every member is binned leaves the gallery entirely', () => {
+    const { db, stacks, photos } = context;
+    const ids = [1, 2, 3].map((n) => insertPhoto(db, n, { minute: n }));
+    stacks.create(ids);
+
+    db.query('UPDATE photos SET is_deleted = 1 WHERE stack_id IS NOT NULL').run();
+
+    expect(photos.listByLibrary(LIBRARY, 'taken_desc', 0, 100, NO_FILTERS).photos).toHaveLength(0);
+    // The Bin is a listing like any other, so it collapses them the same way.
+    const bin = photos.listByLibrary(LIBRARY, 'taken_desc', 0, 100, { includeDeleted: true, isDeleted: true });
+    expect(bin.photos).toHaveLength(1);
+    expect(bin.photos[0]!.stack_size).toBe(3);
+  });
+
   test('a stack rejected down to one survivor is an ordinary tile', () => {
     const { db, stacks, photos } = context;
     const ids = [1, 2, 3].map((n) => insertPhoto(db, n, { minute: n }));
