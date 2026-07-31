@@ -303,14 +303,7 @@ mod the_noise_estimate_lands_where_a_real_frame_puts_it {
         for path in [sony(), canon()] {
             let frame = decode(&path, 8, false, 1280);
             let rgb = frame.rgb8().expect("an 8-bit decode");
-            let luma: Vec<f32> = (0..rgb.width * rgb.height)
-                .map(|i| {
-                    let p = &rgb.data[i * 3..];
-                    (0.2126 * f32::from(p[0]) + 0.7152 * f32::from(p[1]) + 0.0722 * f32::from(p[2]))
-                        / 255.0
-                })
-                .collect();
-            let sigma = crate::image::_for_testing_noise_level(&luma, rgb.width, rgb.height);
+            let sigma = crate::image::_for_testing_measure_noise(rgb.data, rgb.width, rgb.height);
             // Loose on purpose: the claim is an order of magnitude, not a value. Under
             // 0.1% of full scale would leave the denoise doing nothing on every frame;
             // over 5% would have it treating detail as noise.

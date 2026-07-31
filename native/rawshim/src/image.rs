@@ -661,17 +661,16 @@ const NOISE_MAX: f32 = 0.08;
 const NOISE_CEILING: f32 = 0.02;
 
 #[cfg(all(test, feature = "fixtures"))]
-pub fn _for_testing_noise_level(plane: &[f32], width: usize, height: usize) -> f32 {
-    noise_level(plane, width, height)
+pub fn _for_testing_measure_noise<T: Sample>(frame: &[T], width: usize, height: usize) -> f32 {
+    measure_noise(frame, width, height, strip_interior(width, 0))
 }
 
-fn noise_level(plane: &[f32], width: usize, height: usize) -> f32 {
-    let smooth = box_mean(plane, width, height, 1);
-    let mut bins = vec![0u32; NOISE_BINS];
-    for (value, mean) in plane.iter().zip(smooth.iter()) {
-        let slot = ((value - mean).abs() / NOISE_MAX * NOISE_BINS as f32) as usize;
-        bins[slot.min(NOISE_BINS - 1)] += 1;
-    }
+/// The estimate, off a histogram of high-pass magnitudes.
+///
+/// Split from the pass that fills it so the whole frame's histogram can be accumulated
+/// strip by strip: the estimate has to be global or each strip would denoise by a
+/// different amount and seam, but nothing about it needs the frame resident at once.
+fn sigma_from(bins: &[u32]) -> f32 {
     // Bin 0 is a residual under 0.008% of full scale, which is below a quantisation step
     // at any depth this runs at - so it is the "did not vary at all" bin, and the median
     // is taken over everything above it.
@@ -727,54 +726,251 @@ fn luma_of<T: Sample>(p: &[T]) -> f32 {
 /// luminance, so they treat a highlight and a shadow completely differently. Both callers
 /// hand over display-referred samples - sRGB for a rendition, PQ for the HDR pair - which
 /// is where a difference means what the eye reads.
+/// The radii every stage works over, which between them decide how far a strip has to
+/// reach past its own rows (§10.9).
+struct Radii {
+    luma: usize,
+    fine: usize,
+    coarse: usize,
+}
+
+impl Radii {
+    fn for_strength(denoise: f64) -> Radii {
+        let [fine, coarse] = DENOISE_CHROMA_RADII;
+        let scaled = |base: usize| (base as f64 * denoise).round().max(1.0) as usize;
+        Radii { luma: LUMA_DENOISE_RADIUS, fine: scaled(fine), coarse: scaled(coarse) }
+    }
+
+    /// Rows a strip must carry beyond its own, above and below, for its output to be
+    /// what a whole-frame run would have produced.
+    ///
+    /// **A guided filter of radius r reaches 2r, not r**: it box-means the input and then
+    /// box-means the fit, so the support is the two composed. The chroma path composes
+    /// three of them - it is guided by a luma that was itself filtered, then filtered
+    /// again at the coarse radius - so the reaches add. Richardson-Lucy adds the point
+    /// spread once per convolution, twice per iteration, and the anti-ringing clamp adds
+    /// its own window on top.
+    fn halo(&self, denoise: bool, sharpen: bool) -> usize {
+        let chroma = match denoise {
+            true => 2 * (self.luma + self.fine + self.coarse),
+            false => 0,
+        };
+        let deconvolve = match sharpen {
+            true => 2 * DECONVOLVE_RADIUS * DECONVOLVE_ITERATIONS + DECONVOLVE_RADIUS
+                + if denoise { 2 * self.luma } else { 0 },
+            false => 0,
+        };
+        chroma.max(deconvolve)
+    }
+}
+
+/// Rows of a strip that are kept, chosen to bound the scratch the stages allocate.
+///
+/// The stages hold on the order of a dozen `f32` planes of whatever they are handed, so
+/// the only thing that bounds them is how many rows they are handed. This trades a little
+/// duplicated work at the seams - each strip also computes its halo, and throws it away -
+/// for a peak that does not grow with the frame.
+fn strip_interior(width: usize, halo: usize) -> usize {
+    // ~64MB of scratch at a dozen planes, which is small beside the encoders that follow
+    // and large enough that the halo is a minority of most strips.
+    const SCRATCH_BUDGET: usize = 64 * 1024 * 1024;
+    const PLANES: usize = 12;
+    let rows = SCRATCH_BUDGET / (width.max(1) * PLANES * std::mem::size_of::<f32>());
+    // Never so thin that a strip is mostly halo, whatever the width.
+    rows.max(halo).max(32)
+}
+
 pub fn finish<T: Sample>(frame: &mut [T], width: usize, height: usize, denoise: f64, sharpen: f64) {
+    let halo = Radii::for_strength(denoise).halo(denoise > 0.0, sharpen > 0.0);
+    finish_in_strips(frame, width, height, denoise, sharpen, strip_interior(width, halo));
+}
+
+/// `finish`, over strips of a given height.
+///
+/// The height is a parameter only so a test can drive the same frame through one strip
+/// and through several and require the same answer - which is the property the halo
+/// exists for, and cannot be checked by shrinking the frame instead, because the noise
+/// estimate is global and a shorter frame is a different measurement.
+fn finish_in_strips<T: Sample>(
+    frame: &mut [T],
+    width: usize,
+    height: usize,
+    denoise: f64,
+    sharpen: f64,
+    interior: usize,
+) {
     if (denoise <= 0.0 && sharpen <= 0.0) || width < 3 || height < 3 || frame.len() < width * height * 3 {
         return;
     }
     // Bounded to what the dimensions claim, so a caller passing a longer buffer gets the
     // frame processed rather than a chunk indexed past the end of the planes.
     let frame = &mut frame[..width * height * 3];
+    let radii = Radii::for_strength(denoise);
+    let halo = radii.halo(denoise > 0.0, sharpen > 0.0);
+    let interior = interior.max(1);
 
-    // Red and blue against luma, which is YCbCr's own construction: green is what luma is
-    // mostly made of, so it follows from the other two rather than needing a third plane
-    // and a third pass over it.
-    let mut luma: Vec<f32> = vec![0.0; width * height];
-    let mut red: Vec<f32> = vec![0.0; width * height];
-    let mut blue: Vec<f32> = vec![0.0; width * height];
+    // Measured over the whole frame before anything is filtered, because a per-strip
+    // estimate would have each strip denoise by a different amount and seam.
+    let sigma = match denoise > 0.0 {
+        true => measure_noise(frame, width, height, interior) * denoise as f32,
+        false => 0.0,
+    };
+
+    // The rows a strip overwrites are the next strip's context, so the originals of the
+    // last `halo` of them are kept back before the write. Small - `halo` rows of the
+    // frame, against the planes this exists to bound.
+    let mut carry: Vec<T> = Vec::new();
+    let mut start = 0;
+    while start < height {
+        let end = (start + interior).min(height);
+        let top = start.saturating_sub(halo);
+        let bottom = (end + halo).min(height);
+        let rows = bottom - top;
+
+        let (mut luma, mut red, mut blue) = deinterleave(frame, &carry, width, top, start, bottom);
+        finish_strip(&mut luma, &mut red, &mut blue, width, rows, &radii, sigma, denoise, sharpen);
+
+        // Before the write, since the write is what destroys them.
+        carry = keep_back(frame, width, end.saturating_sub(halo), end);
+        recombine(frame, &luma, &red, &blue, width, top, start, end);
+        start = end;
+    }
+}
+
+/// The three planes for one strip, in 0..1, with rows above `start` taken from `carry`
+/// where a previous strip has already overwritten them.
+fn deinterleave<T: Sample>(
+    frame: &[T],
+    carry: &[T],
+    width: usize,
+    top: usize,
+    start: usize,
+    bottom: usize,
+) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
+    let rows = bottom - top;
+    let mut luma: Vec<f32> = vec![0.0; width * rows];
+    let mut red: Vec<f32> = vec![0.0; width * rows];
+    let mut blue: Vec<f32> = vec![0.0; width * rows];
+    // `carry` holds the rows [start - carried, start) as they were before the previous
+    // strip wrote over them.
+    let carried = carry.len() / (width * 3);
     luma.par_chunks_mut(width)
         .zip(red.par_chunks_mut(width))
         .zip(blue.par_chunks_mut(width))
         .enumerate()
-        .for_each(|(y, ((luma_row, red_row), blue_row))| {
+        .for_each(|(row, ((luma_row, red_row), blue_row))| {
+            let y = top + row;
             for x in 0..width {
-                let p = &frame[(y * width + x) * 3..];
+                let p = match y < start && carried > 0 {
+                    true => &carry[((y - (start - carried)) * width + x) * 3..],
+                    false => &frame[(y * width + x) * 3..],
+                };
                 let l = luma_of(p);
                 luma_row[x] = l;
                 red_row[x] = p[0].to_f32() / T::FULL - l;
                 blue_row[x] = p[2].to_f32() / T::FULL - l;
             }
         });
+    (luma, red, blue)
+}
 
+/// A copy of rows `[from, to)` exactly as they stand, to serve as the next strip's
+/// context once this strip has written over them.
+fn keep_back<T: Sample>(frame: &[T], width: usize, from: usize, to: usize) -> Vec<T> {
+    frame[from * width * 3..to * width * 3].to_vec()
+}
+
+/// Writes rows `[start, end)` of a processed strip back into the frame.
+fn recombine<T: Sample>(
+    frame: &mut [T],
+    luma: &[f32],
+    red: &[f32],
+    blue: &[f32],
+    width: usize,
+    top: usize,
+    start: usize,
+    end: usize,
+) {
+    frame[start * width * 3..end * width * 3]
+        .par_chunks_mut(width * 3)
+        .enumerate()
+        .for_each(|(row, out)| {
+            let i = (start - top + row) * width;
+            for x in 0..width {
+                let (l, dr, db) = (luma[i + x], red[i + x], blue[i + x]);
+                // Solving the luma equation for green with the other two differences
+                // known is what makes the recombination exactly luma-preserving.
+                let dg = -(LUMA[0] * dr + LUMA[2] * db) / LUMA[1];
+                out[x * 3] = T::from_f32((l + dr) * T::FULL);
+                out[x * 3 + 1] = T::from_f32((l + dg) * T::FULL);
+                out[x * 3 + 2] = T::from_f32((l + db) * T::FULL);
+            }
+        });
+}
+
+/// The frame's noise, measured strip by strip so the estimate costs one plane rather
+/// than one per frame.
+///
+/// The histogram is the whole state carried between strips, and it is 4kB.
+fn measure_noise<T: Sample>(frame: &[T], width: usize, height: usize, interior: usize) -> f32 {
+    let mut bins = vec![0u32; NOISE_BINS];
+    let mut start = 0;
+    while start < height {
+        // One row of context either side, which is all a radius-1 box mean reaches.
+        let end = (start + interior).min(height);
+        let top = start.saturating_sub(1);
+        let bottom = (end + 1).min(height);
+        let rows = bottom - top;
+        let mut luma: Vec<f32> = vec![0.0; width * rows];
+        luma.par_chunks_mut(width).enumerate().for_each(|(row, out)| {
+            for x in 0..width {
+                out[x] = luma_of(&frame[((top + row) * width + x) * 3..]);
+            }
+        });
+        let smooth = box_mean(&luma, width, rows, 1);
+        for y in start..end {
+            let row = (y - top) * width;
+            for x in 0..width {
+                let residual = (luma[row + x] - smooth[row + x]).abs();
+                let slot = (residual / NOISE_MAX * NOISE_BINS as f32) as usize;
+                bins[slot.min(NOISE_BINS - 1)] += 1;
+            }
+        }
+        start = end;
+    }
+    sigma_from(&bins)
+}
+
+/// The chain itself, over one strip's planes. `sigma` is the whole frame's, so every
+/// strip denoises by the same amount.
+#[allow(clippy::too_many_arguments)]
+fn finish_strip(
+    luma: &mut Vec<f32>,
+    red: &mut Vec<f32>,
+    blue: &mut Vec<f32>,
+    width: usize,
+    height: usize,
+    radii: &Radii,
+    sigma: f32,
+    denoise: f64,
+    sharpen: f64,
+) {
     if denoise > 0.0 {
-        let sigma = noise_level(&luma, width, height) * denoise as f32;
         let eps = (LUMA_DENOISE_SIGMAS * sigma).powi(2);
-        let stats = guide_stats(&luma, width, height, LUMA_DENOISE_RADIUS);
-        luma = self_guided(&stats, &luma, width, height, LUMA_DENOISE_RADIUS, eps);
+        let stats = guide_stats(luma, width, height, radii.luma);
+        *luma = self_guided(&stats, luma, width, height, radii.luma, eps);
 
         // Guided by the luma just cleaned, fine scale then coarse, and both channels off
         // one set of the guide's statistics per scale: same guide, same radius, so the
         // expensive half is shared between them.
-        let [fine, coarse] = DENOISE_CHROMA_RADII;
-        let radius = (fine as f64 * denoise).round().max(1.0) as usize;
-        let stats = guide_stats(&luma, width, height, radius);
-        red = guided(&stats, &luma, &red, width, height, radius, DENOISE_EPS);
-        blue = guided(&stats, &luma, &blue, width, height, radius, DENOISE_EPS);
+        let stats = guide_stats(luma, width, height, radii.fine);
+        *red = guided(&stats, luma, red, width, height, radii.fine, DENOISE_EPS);
+        *blue = guided(&stats, luma, blue, width, height, radii.fine, DENOISE_EPS);
 
-        let radius = (coarse as f64 * denoise).round().max(1.0) as usize;
-        let stats = guide_stats(&luma, width, height, radius);
+        let stats = guide_stats(luma, width, height, radii.coarse);
         let limit = DENOISE_CHROMA_COARSE_LIMIT * denoise as f32;
-        for channel in [&mut red, &mut blue] {
-            let smoothed = guided(&stats, &luma, channel, width, height, radius, DENOISE_EPS);
+        for channel in [red, blue] {
+            let smoothed = guided(&stats, luma, channel, width, height, radii.coarse, DENOISE_EPS);
             channel
                 .par_iter_mut()
                 .zip(smoothed.par_iter())
@@ -784,25 +980,12 @@ pub fn finish<T: Sample>(frame: &mut [T], width: usize, height: usize, denoise: 
 
     if sharpen > 0.0 {
         let taps = gaussian(DECONVOLVE_SIGMA, DECONVOLVE_RADIUS);
-        let sharpened = deconvolve(&luma, width, height, &taps, DECONVOLVE_ITERATIONS);
+        let sharpened = deconvolve(luma, width, height, &taps, DECONVOLVE_ITERATIONS);
         let amount = (sharpen as f32).min(1.0);
         luma.par_iter_mut()
             .zip(sharpened.par_iter())
             .for_each(|(l, s)| *l += amount * (s - *l));
     }
-
-    frame.par_chunks_mut(width * 3).enumerate().for_each(|(y, row)| {
-        for x in 0..width {
-            let i = y * width + x;
-            let (l, dr, db) = (luma[i], red[i], blue[i]);
-            // Solving the luma equation for green with the other two differences known is
-            // what makes the recombination exactly luma-preserving.
-            let dg = -(LUMA[0] * dr + LUMA[2] * db) / LUMA[1];
-            row[x * 3] = T::from_f32((l + dr) * T::FULL);
-            row[x * 3 + 1] = T::from_f32((l + dg) * T::FULL);
-            row[x * 3 + 2] = T::from_f32((l + db) * T::FULL);
-        }
-    });
 }
 
 /// A radial polynomial as knots, so a fitted model and a camera's own spline are
@@ -1189,6 +1372,80 @@ mod tests {
         };
         let (was, now) = (span(&before), span(&frame));
         assert!(now * 2 > was, "stripe contrast fell from {was} to {now}");
+    }
+
+    /// A frame with something at every scale the chain looks at: fine grain, mid-scale
+    /// texture and a hard edge, so a seam has plenty to show up against.
+    fn busy(width: usize, height: usize) -> Vec<u8> {
+        let mut frame = vec![0u8; width * height * 3];
+        for y in 0..height {
+            for x in 0..width {
+                let i = (y * width + x) * 3;
+                let block = if (x / 24 + y / 24) % 2 == 0 { 40i32 } else { 0 };
+                let edge = if x > width / 2 { 60 } else { 0 };
+                let grain = ((x * 31 + y * 17) % 11) as i32 - 5;
+                let base = 90 + block + edge + grain;
+                frame[i] = base.clamp(0, 255) as u8;
+                frame[i + 1] = (base + ((x * 13 + y * 7) % 7) as i32 - 3).clamp(0, 255) as u8;
+                frame[i + 2] = (base + ((x * 19 + y * 23) % 9) as i32 - 4).clamp(0, 255) as u8;
+            }
+        }
+        frame
+    }
+
+    #[test]
+    fn strips_produce_what_a_whole_frame_would_have() {
+        // The whole point of the halo. Every stage is local with a bounded reach, so a
+        // strip that carries enough context has to land on exactly what a single pass
+        // over the frame would have written - and if the reach is underestimated by even
+        // a row, the error shows up as a horizontal seam at every strip boundary, which
+        // is both obvious on a photograph and invisible to every other test here.
+        //
+        // The *same* frame both ways, which is why the strip height is a parameter: a
+        // shorter frame would measure its own noise differently and the two runs would
+        // diverge for a reason that has nothing to do with the halo.
+        let (width, height, interior) = (200usize, 500usize, 100usize);
+        let source = busy(width, height);
+
+        let run = |rows: usize| {
+            let mut frame = source.clone();
+            finish_in_strips(&mut frame, width, height, 1.0, 0.6, rows);
+            frame
+        };
+        let whole = run(height);
+        let striped = run(interior);
+
+        let halo = Radii::for_strength(1.0).halo(true, true);
+        assert!(halo > 0 && halo < interior, "the strips must be taller than the halo: {halo}");
+
+        // **Within a count, not bit-for-bit**, and the distinction is the point. The box
+        // mean is a running sum, so a plane of a different height splits into different
+        // bands and accumulates in a different order; in f32 that moves the last bit, and
+        // a sample sitting on a rounding boundary lands one count either way. What a halo
+        // that is too short produces is nothing like that - it is a *band* of rows at
+        // every strip boundary, wrong by as much as the filter can move a pixel - so the
+        // per-row summary below is what actually catches it.
+        let mut worst = 0u8;
+        let mut worst_row = 0usize;
+        for row in 0..height {
+            let mut row_error = 0u32;
+            for i in (row * width * 3)..((row + 1) * width * 3) {
+                let difference = whole[i].abs_diff(striped[i]);
+                worst = worst.max(difference);
+                row_error += u32::from(difference);
+            }
+            // No row may be systematically wrong, which is what a seam is: a boundary row
+            // under a short halo differs on most of its samples, not on a stray few.
+            assert!(
+                row_error < (width * 3) as u32 / 4,
+                "row {row} differs by {row_error} across {} samples - a seam, not rounding",
+                width * 3,
+            );
+            if row_error > 0 {
+                worst_row = worst_row.max(row);
+            }
+        }
+        assert!(worst <= 1, "a sample differs by {worst} counts, at row {worst_row}");
     }
 
     #[test]

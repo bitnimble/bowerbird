@@ -1562,7 +1562,7 @@ Removing three transfers of a frame across a process boundary and keeping the re
 | `full` at 3840, still + video twin | 510MB |
 | `max` at native resolution | 954MB |
 
-**The twin's 55MB was one graded frame, and it is gone.** It was the one case that could not PQ-encode in place; with the transfer applied once for both (above) there is nothing to copy, and the two rows now peak identically - re-measured on a 24MP frame at 3840, both 338MB, on a machine where the rows above were recorded elsewhere. The absolute figures are left as they were taken; what the re-measurement establishes is the difference between them, which is now none. **`raw_denoise` and `raw_sharpen` do move this, and by a lot** - see §10.9, which carries the measurement. ffmpeg's own process still sits on top of all of these.
+**The twin's 55MB was one graded frame, and it is gone.** It was the one case that could not PQ-encode in place; with the transfer applied once for both (above) there is nothing to copy, and the two rows now peak identically - re-measured on a 24MP frame at 3840, both 338MB, on a machine where the rows above were recorded elsewhere. The absolute figures are left as they were taken; what the re-measurement establishes is the difference between them, which is now none. **`raw_denoise` and `raw_sharpen` do not move this**, which took work rather than luck: they run in horizontal strips precisely so their scratch does not scale with the frame (§10.9). ffmpeg's own process still sits on top of all of these.
 
 **A larger sensor does not cost more here**, which is worth writing down because it reads backwards. Both terms that scale are driven by the *output*: the graded frame is the rendition's size, and libaom's working set runs about 25MB per megapixel of it. The decode is the only term the sensor drives, and the bigger sensor is the one that gets halved - a 61MP frame at 3840 halves to 15MP, where a 24MP frame at 3840 does not halve at all and so decodes *larger*. Measured on the 24MP fixture, asking for an edge low enough to trigger the halving takes the decode's transient from 420MB to 178MB. A 61MP `full` therefore lands within noise of the same ~455MB, and only `max` - where the output *is* the sensor - grows with it.
 
@@ -1837,21 +1837,27 @@ That is the shape the whole section is trying to reach: noise gone from the flat
 
 | | wall |
 |---|---|
-| neither | 600ms |
-| both | 1229ms |
+| neither | 605ms |
+| both | 1294ms |
 
-**It also costs memory, and this is the part to plan a machine around.** Every stage works on whole-frame `f32` planes - 39MB at a 3840px rendition, 96MB at 24MP native - and the guided filter needs several of them live at once. Measured as peak RSS on the 24MP fixture, the same way as §10.7:
+**It runs in horizontal strips, and that is what makes it affordable at all.** Every stage works on `f32` planes and the guided filter needs several live at once, so on whole frames the scratch is a dozen planes of whatever it is handed: 39MB each at a 3840px rendition, 96MB each at 24MP native. Measured, that was 671MB and **1576MB** peak RSS, against a §10.7 budget of 954MB for `max` - and a 61MP body would have been 2.5x worse again.
+
+Every stage here is *local with bounded reach*, so a strip that carries enough context produces exactly what a whole-frame pass would. `strip_interior` picks a row count from a 64MB scratch budget, so the peak stops scaling with the frame:
 
 | | neither | both |
 |---|---|---|
-| `full` at 3840 | 338MB | 671MB |
-| `max` at native resolution | 539MB | **1576MB** |
+| `full` at 3840 | 339MB | **339MB** |
+| `max` at native resolution | 540MB | **573MB** |
 
-Scoping the temporaries so a dead plane is freed where it dies rather than at the end of its function took the second row from 1854MB, which is most of what is recoverable without restructuring: Rust holds a temporary to the end of its scope, and on this path that was the difference between eight planes live and sixteen.
+At the rendition size it no longer costs anything measurable, and at native resolution it costs 33MB rather than a gigabyte. The duplicated work at the seams - each strip also computes its halo and throws it away - is **~3%** of wall clock.
 
-**What is left is a real constraint and is not solved.** §10.7 budgets `max` at 954MB and this blows through it; a 61MP body would be worse again, roughly 2.5x the 24MP figure. The `max` path is one photo at a time, so nothing multiplies it by `processing_concurrency` - but a 61MP `max` render with both settings on is not a thing to run on a small machine. The fix is to process in horizontal strips with `2 * radius` rows of overlap, which every stage here allows because all of them are local with bounded support; the noise estimate would have to stay global so strips cannot disagree and seam. Until then, `raw_denoise` 0 is the way to render a very large frame.
+**The halo is the whole correctness argument, and it is bigger than it looks.** A guided filter of radius r reaches *2r*, not r: it box-means the input and then box-means the fit. The chroma path composes three of them - guided by a luma that was itself filtered, then filtered again at the coarse radius - so the reaches add, giving `2 * (6 + 4 + 32) = 84` rows at the default. Richardson-Lucy adds its point spread twice per iteration, 40 rows over ten, plus the anti-ringing window.
 
-**~630ms for the pair, roughly doubling the job**, and the honest reading is that this is expensive. Two earlier versions were cheaper and worse: LibRaw's wavelet denoise cost ~400ms on its own and was invisible or waxy with nothing in between, and a chroma-only Gaussian with an unsharp mask cost ~200ms and left the luma grain that is most of what the eye objects to. The settings exist so a library that would rather have the throughput can say so.
+Two things follow that are not obvious. The **noise estimate has to stay global** - it is accumulated into one histogram strip by strip, because a per-strip estimate would have each strip denoise by a different amount and seam. And the rows a strip writes are the *next* strip's context, so the originals of the last `halo` of them are kept back before the write; without that, every strip after the first reads its neighbour's output as if it were the input.
+
+`strips_produce_what_a_whole_frame_would_have` drives one frame both ways and requires agreement within a single count - not bit-for-bit, because a plane of a different height splits into different bands and a running sum accumulates in a different order, which moves the last bit of an f32. What that tolerance would *not* hide is a short halo, which shows up as a whole boundary row differing rather than as stray samples, and the test checks per row for exactly that: forced to a halo of 4, it fails on 571 of 600 samples at the first boundary.
+
+**~690ms for the pair, roughly doubling the job**, and the honest reading is that this is expensive - though it is time rather than memory, which the strips took care of. Two earlier versions were cheaper and worse: LibRaw's wavelet denoise cost ~400ms on its own and was invisible or waxy with nothing in between, and a chroma-only Gaussian with an unsharp mask cost ~200ms and left the luma grain that is most of what the eye objects to. The settings exist so a library that would rather have the throughput can say so.
 
 **Where the next win is, if it is ever wanted.** [GALOSH](https://arxiv.org/abs/2607.03768) (2026) is training-free and fits a Poisson-Gaussian noise model per image. It is the class of method that does not have the ceiling above, because it decides signal from noise against a fitted noise model rather than against a local variance. Its own reported figures put it ~8dB PSNR above CBM3D on SIDD sRGB and within about half a dB of trained networks on raw, at **2.5s CPU for a 15.8MP frame** - so roughly 1.6s for a 10MP rendition, two to three times this whole stage, for a stage that is already most of the job. Those are the paper's numbers rather than ones measured here, which is the standard the rest of this section is held to and this paragraph is not; it would need reproducing before anything was built on it. It would fit the on-demand `max` path far better than an import.
 
