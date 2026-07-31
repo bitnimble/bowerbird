@@ -225,6 +225,14 @@ test('leaving a photo returns to the collection it was opened from', async ({ pa
   await expect(page).toHaveURL(/\/photos\//);
   await back.click();
   await expect(page).toHaveURL(shoot);
+
+  // The collection is in the URL, so a reload does not quietly turn the way out
+  // into the whole library.
+  await openPhoto(page);
+  await page.reload();
+  await expect(back).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page).toHaveURL(shoot);
 });
 
 test('a photo can be taken back out of a shoot', async ({ page }) => {

@@ -34,11 +34,11 @@ function useCurrentLibraryId(): string | null {
 
   // detailLibraryId is a computed, so navigating between photos in one library
   // produces the same value and re-renders nothing here.
-  if (pathname.startsWith('/photos/')) return photos.detailLibraryId;
+  if (pathname.includes('/photos/')) return photos.detailLibraryId;
 
   // A triage session is inside the library its stack belongs to, so the rail
   // keeps its context for the length of it rather than blanking out.
-  if (pathname.startsWith('/stacks/')) return triage.members.values().next().value?.library_id ?? null;
+  if (pathname.includes('/stacks/')) return triage.members.values().next().value?.library_id ?? null;
 
   return null;
 }
@@ -236,6 +236,10 @@ function ShortcutHelp(): JSX.Element {
   );
 }
 
+// Every grid a photo can be opened from. `collectionPath` builds the concrete
+// path for one, and `sourceOfPath` reads it back, so the three stay in step.
+const COLLECTIONS = ['/libraries/:libraryId', '/libraries/:libraryId/bin', '/shoots/:shootId', '/albums/:albumId'];
+
 const RAIL_KEY = 'bowerbird.rail.collapsed';
 
 // Nothing to land on until the libraries are known: with one registered the
@@ -300,6 +304,15 @@ export function App(): JSX.Element {
             <Route path="/shoots/:shootId" element={<ShootPhotosPage />} />
             <Route path="/albums" element={<AlbumsPage />} />
             <Route path="/albums/:albumId" element={<AlbumPhotosPage />} />
+            {/* Both hang off the collection they were opened from, so which grid
+                the reader is in survives a reload. The bare pair below is still a
+                valid deep link, and falls back to the photo's own library. */}
+            {COLLECTIONS.map((prefix) => (
+              <Fragment key={prefix}>
+                <Route path={`${prefix}/photos/:photoId`} element={<PhotoDetailPage />} />
+                <Route path={`${prefix}/stacks/:stackId/triage`} element={<StackTriagePage />} />
+              </Fragment>
+            ))}
             <Route path="/photos/:photoId" element={<PhotoDetailPage />} />
             <Route path="/stacks/:stackId/triage" element={<StackTriagePage />} />
           </Routes>

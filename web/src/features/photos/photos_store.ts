@@ -64,6 +64,44 @@ export function sourceKey(source: PhotoSource): string {
   }
 }
 
+/** Where a collection's own grid lives. */
+export function collectionPath(source: PhotoSource): string {
+  switch (source.kind) {
+    case 'shoot':
+      return `/shoots/${source.shootId}`;
+    case 'album':
+      return `/albums/${source.albumId}`;
+    case 'bin':
+      return `/libraries/${source.libraryId}/bin`;
+    // The missing view has no grid route of its own, so it leaves by the library's.
+    case 'library':
+    case 'missing':
+      return `/libraries/${source.libraryId}`;
+  }
+}
+
+// The viewer and a triage session are nested under the collection they were
+// opened from: a photo is in a shoot or an album as much as it is in a library,
+// and one flat route cannot say which of them the reader is in. Without that a
+// reload leaves by the wrong grid and steps through the wrong run.
+export function photoPath(photoId: string, source: PhotoSource | null): string {
+  return source == null ? `/photos/${photoId}` : `${collectionPath(source)}/photos/${photoId}`;
+}
+
+export function triagePath(stackId: string, source: PhotoSource | null): string {
+  const stack = `/stacks/${stackId}/triage`;
+  return source == null ? stack : `${collectionPath(source)}${stack}`;
+}
+
+/** The collection a nested viewer or triage URL sits under. */
+export function sourceOfPath(pathname: string): PhotoSource | null {
+  const [, collection, id, bin] = /^\/(libraries|shoots|albums)\/([^/]+)(\/bin)?\//.exec(pathname) ?? [];
+  if (id == null) return null;
+  if (collection === 'shoots') return { kind: 'shoot', shootId: id };
+  if (collection === 'albums') return { kind: 'album', albumId: id };
+  return bin == null ? { kind: 'library', libraryId: id } : { kind: 'bin', libraryId: id };
+}
+
 // grid crops every tile to one aspect so rows line up and the eye can scan;
 // masonry keeps each photo's own shape; list trades density for metadata.
 export type ViewMode = 'grid' | 'masonry' | 'list';
@@ -461,21 +499,13 @@ export class PhotosStore {
   // re-render the bar the button sits in.
   @computed.struct get openedFrom(): { path: string; label: string } {
     const source = this.source;
-    switch (source?.kind) {
-      case 'shoot':
-        return { path: `/shoots/${source.shootId}`, label: 'Shoot' };
-      case 'album':
-        return { path: `/albums/${source.albumId}`, label: 'Album' };
-      case 'bin':
-        return { path: `/libraries/${source.libraryId}/bin`, label: 'Bin' };
-      case 'library':
-      case 'missing':
-        return { path: `/libraries/${source.libraryId}`, label: 'Library' };
-      default:
-        // A deep link, for the moment before the library it loads behind itself
-        // becomes the collection.
-        return { path: this.detailLibraryId == null ? '/' : `/libraries/${this.detailLibraryId}`, label: 'Library' };
+    if (source == null) {
+      // A deep link, for the moment before the library it loads behind itself
+      // becomes the collection.
+      return { path: this.detailLibraryId == null ? '/' : `/libraries/${this.detailLibraryId}`, label: 'Library' };
     }
+    const label = source.kind === 'shoot' ? 'Shoot' : source.kind === 'album' ? 'Album' : source.kind === 'bin' ? 'Bin' : 'Library';
+    return { path: collectionPath(source), label };
   }
 
   // The open photo as the client already knows it: the row the grid loaded, or

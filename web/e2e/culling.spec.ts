@@ -7,6 +7,7 @@ import {
   bulkAction,
   openLibrary,
   openPhoto,
+  openPhotoId,
   selectPhoto,
   setRenditionSource,
   setViewerRendition,
@@ -493,7 +494,7 @@ test('opening a photo whose rendition is gone builds that rendition back', async
   await openLibrary(page, CULL_PHOTOS_DIR);
   await openPhoto(page);
   await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
-  const photoId = new URL(page.url()).pathname.split('/').pop() ?? '';
+  const photoId = openPhotoId(page);
 
   // A library that serves the camera's JPEG cannot lose its rendition - those bytes
   // come out of a RAW that is still on disk - so the gap only exists for one that
@@ -519,7 +520,7 @@ test('a chosen rendition is cached on disk, and survives a tile rebuild', async 
   await openLibrary(page, CULL_PHOTOS_DIR);
   await openPhoto(page);
   await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
-  const photoId = new URL(page.url()).pathname.split('/').pop() ?? '';
+  const photoId = openPhotoId(page);
 
   const showRendition = async (label: string): Promise<void> => {
     await page.getByRole('button', { name: 'Rendition' }).click();
@@ -564,7 +565,7 @@ test('i and o switch between the camera JPEG and the render, and the cache can b
   await openLibrary(page, CULL_PHOTOS_DIR);
   await openPhoto(page);
   await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
-  const photoId = new URL(page.url()).pathname.split('/').pop() ?? '';
+  const photoId = openPhotoId(page);
 
   const renditionPanel = page.locator('.panel', { hasText: 'RENDITION DETAILS' });
   await page.keyboard.press('o');
@@ -661,7 +662,7 @@ test('the previous photo is held for a beat and then dropped, however slow the n
   await openLibrary(page, CULL_PHOTOS_DIR);
   await openPhoto(page);
   await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible();
-  const openId = page.url().split('/').pop() ?? '';
+  const openId = openPhotoId(page);
 
   // Held open, so the hold is observable at all: warmed, the next frame decodes
   // faster than this can sample.
@@ -747,7 +748,7 @@ test('the next photo is fetched while the current one is on screen', async ({ pa
 
   // The neighbour is warmed only after this frame decodes, so it never competes
   // for the connection with the one being waited on.
-  const openId = page.url().split('/').pop() ?? '';
+  const openId = openPhotoId(page);
   await expect.poll(() => fetched.some((id) => id !== openId)).toBe(true);
 });
 
@@ -769,12 +770,12 @@ test('a reader set to the camera JPEG never loads the render', async ({ page }) 
 
   // Warmed at the rendition on screen rather than the library's, or the step
   // below arrives cold and shows the stage background while it fetches.
-  const openId = page.url().split('/').pop() ?? '';
+  const openId = openPhotoId(page);
   await expect.poll(() => requested.some((url) => url.includes('/embedded.jpg') && !url.includes(openId))).toBe(true);
 
   requested.length = 0;
   await page.getByRole('button', { name: 'Next photo' }).click();
-  const nextId = page.url().split('/').pop() ?? '';
+  const nextId = openPhotoId(page);
   await expect(page.locator(`.stage__viewport img.is-ready[src*="${nextId}"]`)).toBeVisible({ timeout: 60_000 });
   expect(requested.filter((url) => url.includes(`/${nextId}/renditions/`))).toEqual([]);
 });
@@ -792,7 +793,7 @@ test('a photo reopens at the rendition it was last read in, without the library 
   await setViewerRendition(page, 'Last used per photo');
   await openLibrary(page, CULL_PHOTOS_DIR);
   await openPhoto(page);
-  const photoId = page.url().split('/').pop() ?? '';
+  const photoId = openPhotoId(page);
   await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
 
   // Read it in the camera's JPEG, which this library does not default to.
@@ -855,7 +856,7 @@ test('stepping through photos shows no empty stage and never the wrong rendition
   };
 
   const step = async (button: string): Promise<Sample[]> => {
-    const from = page.url().split('/').pop() ?? '';
+    const from = openPhotoId(page);
     await sample();
     await page.getByRole('button', { name: button }).click();
     await page.waitForTimeout(2000);

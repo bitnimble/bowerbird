@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { API_URL, STACK_PHOTO_NAMES, STACK_PHOTOS_DIR } from './fixture_library';
-import { addLibrary, bulkAction, openLibrary, syncLibrary, waitForSyncSettled } from './helpers';
+import { addLibrary, bulkAction, openLibrary, openPhotoId, syncLibrary, waitForSyncSettled } from './helpers';
 
 /** The one stack in this spec's library, found through the collapsed listing. */
 async function stackIdOfLibrary(page: Page): Promise<string> {
@@ -191,7 +191,7 @@ test('the viewer steps through every member of a stack, not just its tile', asyn
   // used to strand the reader with both arrows disabled.
   await page.locator('.grid__band .tile__hit').nth(1).dblclick();
   await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
-  const middle = page.url().split('/').pop() ?? '';
+  const middle = openPhotoId(page);
 
   const next = page.getByRole('button', { name: 'Next photo' });
   const previous = page.getByRole('button', { name: 'Previous photo' });
@@ -206,12 +206,12 @@ test('the viewer steps through every member of a stack, not just its tile', asyn
   // direction is read off the run, so a member with no row in the listing still
   // slides in from the side the reader is heading towards.
   await expect(page.locator('.stage__viewport img.is-ready.is-stepping-next')).toBeVisible({ timeout: 60_000 });
-  const after = page.url().split('/').pop() ?? '';
+  const after = openPhotoId(page);
   await previous.click();
   await expect(page).toHaveURL(new RegExp(middle));
   await expect(page.locator('.stage__viewport img.is-ready.is-stepping-prev')).toBeVisible({ timeout: 60_000 });
   await previous.click();
-  const before = page.url().split('/').pop() ?? '';
+  const before = openPhotoId(page);
 
   const members = (await (await page.request.get(`${API_URL}/api/stacks/${await stackIdOfLibrary(page)}/photos`)).json()) as {
     id: string;

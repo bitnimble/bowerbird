@@ -582,8 +582,15 @@ export class PhotosPresenter {
 
   // --- detail ---
 
-  async openDetail(photoId: string): Promise<void> {
+  async openDetail(photoId: string, from: PhotoSource | null = null): Promise<void> {
     this.beginDetail(photoId);
+    // The collection the URL nests this photo under, loaded alongside the detail
+    // rather than after it, so the way back out is right from the first frame
+    // instead of pointing at the whole library until the fetch lands. Only when
+    // it is not already what is loaded: stepping through a collection would
+    // otherwise re-read it on every frame.
+    const held = this.store.source;
+    if (from != null && (held == null || sourceKey(held) !== sourceKey(from))) void this.open(from);
     // Before the fetch, not before the call: the settings decide which rendition
     // this photo opens at, but waiting on them to say the detail is in flight
     // leaves the page unable to tell "loading" from "no such photo".

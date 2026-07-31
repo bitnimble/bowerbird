@@ -8,7 +8,7 @@ import { renditionUrl, type PhotoSummary } from '../../api/client';
 import { usePhotosStore, usePresenters } from '../../app/stores_context';
 import { Text } from '../../ui/ui';
 import { BAND_LINE_CAP, BLOCK, GRID_GAP, TILE_ASPECT, masonryLineStarts } from './grid_layout';
-import { renditionVersion, type Expansion, type PhotosStore } from './photos_store';
+import { photoPath, renditionVersion, type Expansion, type PhotosStore } from './photos_store';
 import type { Span } from '../../ui/virtual_rows';
 
 function filename(filePath: string, id: string): string {
@@ -228,7 +228,7 @@ const Tile = observer(function Tile({
           // A stack never opens a member's detail view, and its band is already
           // this gesture's business - the two clicks open it and close it again.
           if (stacked || e.shiftKey || e.metaKey || e.ctrlKey) return;
-          navigate(`/photos/${photo.id}`);
+          navigate(photoPath(photo.id, store.source));
         }}
         aria-expanded={stacked ? expanded : undefined}
         // The selected state rides on the name because there is no box carrying
@@ -339,7 +339,7 @@ const BandMember = observer(function BandMember({ photo }: { photo: PhotoSummary
         }}
         onDoubleClick={(e) => {
           if (e.shiftKey || e.metaKey || e.ctrlKey) return;
-          navigate(`/photos/${photo.id}`);
+          navigate(photoPath(photo.id, store.source));
         }}
         aria-label={`${selected ? 'selected, ' : ''}photo ${filename(photo.file_path, photo.id)}`}
       >
@@ -632,7 +632,7 @@ const GridKeys = observer(function GridKeys(): null {
           const focused = store.focusedPhoto;
           if (focused == null) return;
           if (focused.stack_id != null && focused.stack_size > 1) void photos.toggleBand(focused.stack_id, store.focusIndex);
-          else navigate(`/photos/${focused.id}`);
+          else navigate(photoPath(focused.id, store.source));
           break;
         }
         case 'Escape':

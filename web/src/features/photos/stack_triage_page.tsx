@@ -17,7 +17,7 @@ import { renditionUrl, type PhotoSummary } from '../../api/client';
 import { usePhotosStore, usePresenters, useStackTriageStore } from '../../app/stores_context';
 import { Button, ICON, PopoverButton, SegmentedControl, Text } from '../../ui/ui';
 import { PhotoStage } from './photo_stage';
-import { renditionVersion } from './photos_store';
+import { photoPath, renditionVersion, sourceOfPath } from './photos_store';
 import { type Round, type Verdict, SPLIT_GAP, pairKey } from './stack_triage';
 
 // Stack triage (DESIGN §20): one stack, judged two photos at a time.
@@ -42,8 +42,9 @@ function thumbOf(photo: PhotoSummary): string {
 }
 
 function Thumb({ photo, note }: { photo: PhotoSummary; note?: string }): JSX.Element {
+  const to = photoPath(photo.id, sourceOfPath(useLocation().pathname));
   return (
-    <Link to={`/photos/${photo.id}`} className="triage__thumb" title={nameOf(photo)}>
+    <Link to={to} className="triage__thumb" title={nameOf(photo)}>
       <img src={thumbOf(photo)} alt={nameOf(photo)} />
       {note != null && <span className="triage__thumb-note">{note}</span>}
     </Link>
@@ -516,7 +517,8 @@ export const StackTriagePage = observer(function StackTriagePage(): JSX.Element 
   const [peeking, setPeeking] = useState(false);
   const [decoded, setDecoded] = useState<ReadonlySet<string>>(new Set());
 
-  const entryPhotoId = (useLocation().state as { entryPhotoId?: string } | null)?.entryPhotoId ?? null;
+  const location = useLocation();
+  const entryPhotoId = (location.state as { entryPhotoId?: string } | null)?.entryPhotoId ?? null;
 
   useEffect(() => {
     // The photographs this stack lies between, read off the viewer's run before it
@@ -552,14 +554,16 @@ export const StackTriagePage = observer(function StackTriagePage(): JSX.Element 
   const leave = useCallback(() => {
     void stackTriage.returnTarget().then((back) => {
       if (back != null) {
-        navigate(`/photos/${back}`);
+        // Under the collection this session was entered from, so the viewer it
+        // returns to still knows which grid the reader is in.
+        navigate(photoPath(back, sourceOfPath(location.pathname)));
         return;
       }
       // Nothing survived, so there is no photograph to go back to.
       const library = store.members.values().next().value?.library_id;
       navigate(library == null ? '/' : `/libraries/${library}`);
     });
-  }, [navigate, store, stackTriage]);
+  }, [navigate, location.pathname, store, stackTriage]);
 
   const round = store.round;
   const pair = store.pair;

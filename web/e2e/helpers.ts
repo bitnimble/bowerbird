@@ -104,6 +104,12 @@ export function selectPhoto(page: Page, nth = 0): Promise<void> {
   return page.locator('.tile__hit').nth(nth).click();
 }
 
+// The viewer's URL also names the collection the photo was opened from, so the
+// id is the last path segment rather than the tail of the whole URL.
+export function openPhotoId(page: Page): string {
+  return new URL(page.url()).pathname.split('/').pop() ?? '';
+}
+
 // Opens the first photo and swaps the rendition for the full-resolution render,
 // which the server builds on first request.
 export async function viewMaxQuality(page: Page, rootPath: string): Promise<void> {

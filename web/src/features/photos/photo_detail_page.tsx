@@ -17,7 +17,7 @@ import {
   Trash2,
   Wand2,
 } from 'lucide-react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { needsHdrVideo, renditionVideoUrl, viewerUrl, type PhotoDetail, type ViewerRendition } from '../../api/client';
 import { captureDateTime, localDateTime } from '../../api/dates';
 import {
@@ -29,6 +29,7 @@ import {
 } from '../../app/stores_context';
 import { useIsMobile } from '../../app/use_is_mobile';
 import { ActionMenu, Button, ICON, menuSection, MoreLess, type Option, OverflowMenu, Text, TextArea } from '../../ui/ui';
+import { photoPath, sourceOfPath, triagePath } from './photos_store';
 import { renditionLabel } from './renditions';
 import { PhotoStage } from './photo_stage';
 import { TRIAGE_KEYS, TriageControl } from './triage_control';
@@ -154,7 +155,7 @@ function useStep(): (step: 'next' | 'prev') => void {
   return useCallback(
     (step: 'next' | 'prev') => {
       const id = step === 'next' ? store.nextPhotoId : store.prevPhotoId;
-      if (id != null) navigate(`/photos/${id}`);
+      if (id != null) navigate(photoPath(id, store.source));
     },
     [store, navigate],
   );
@@ -180,7 +181,9 @@ const DetailNav = observer(function DetailNav({ photoId }: { photoId: string }):
   // band member, so the tile's condition would hide this on every route that
   // actually reaches the viewer from a stack. A stack has two or more members by
   // construction (§19.6).
-  const stackPath = photo?.stack_id == null ? null : `/stacks/${photo.stack_id}/triage`;
+  // Under the same collection the viewer is, so the way back out of a triage
+  // session lands in the grid the reader entered it from.
+  const stackPath = photo?.stack_id == null ? null : triagePath(photo.stack_id, store.source);
 
   // Declared once and rendered either as a button each or as one overflow menu,
   // so a narrow screen cannot end up offering a different set of actions from a
@@ -621,11 +624,12 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   // Kept across photos: opened once to read a frame's settings, the reader means
   // to read the next one's too.
   const [sheetOpen, setSheetOpen] = useState(false);
+  const { pathname } = useLocation();
 
   useEffect(() => {
-    void photos.openDetail(photoId);
+    void photos.openDetail(photoId, sourceOfPath(pathname));
     void appSettings.load();
-  }, [photoId, photos, appSettings]);
+  }, [photoId, pathname, photos, appSettings]);
 
   // Only once the read for *this* photo has come back empty. The fetch starts in
   // an effect, so the render that first sees a new id has nothing loaded and

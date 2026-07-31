@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { API_URL, TRIAGE_PHOTO_NAMES, TRIAGE_PHOTOS_DIR } from './fixture_library';
-import { addLibrary, openLibrary, syncLibrary, waitForSyncSettled } from './helpers';
+import { addLibrary, openLibrary, openPhotoId, syncLibrary, waitForSyncSettled } from './helpers';
 
 // Stack triage, driven through the real screen (DESIGN §20).
 //
@@ -288,7 +288,7 @@ test('Done returns to a live photo, and stepping on leaves the stack behind', as
   await expect(page).toHaveURL(/\/photos\//);
   expect(page.url()).not.toBe(entry);
 
-  const landed = page.url().split('/').pop() ?? '';
+  const landed = openPhotoId(page);
   const members = (await (await page.request.get(`${API_URL}/api/stacks/${stackId}/photos`)).json()) as {
     id: string;
     triage: string;
