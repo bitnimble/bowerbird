@@ -145,14 +145,6 @@ function asChoice(value: unknown): HistoryEntry['choice'] {
   return value === 'a' || value === 'b' || value === 'neither' || value === 'stopped' ? value : 'both';
 }
 
-export function clearSession(stackId: string): void {
-  try {
-    sessionStorage.removeItem(sessionKey(stackId));
-  } catch {
-    /* nothing to clear */
-  }
-}
-
 // A preference about the machine rather than about the stack, so `localStorage`.
 export function saveMode(mode: TriageMode): void {
   try {

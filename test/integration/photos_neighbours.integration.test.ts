@@ -38,11 +38,11 @@ function setUp(): { db: Database; photos: PhotosRepository; stacks: StacksServic
 function insert(
   db: Database,
   n: number,
-  options: { minute?: number | null; libraryId?: string; shootId?: string | null; triage?: string } = {},
+  options: { undated?: boolean; libraryId?: string; shootId?: string | null; triage?: string } = {},
 ): string {
   const id = photoId(n);
   const added = new Date(Date.UTC(2026, 0, 1, 0, n)).toISOString();
-  const taken = options.minute === null ? null : new Date(Date.UTC(2026, 0, 1, 0, options.minute ?? n)).toISOString();
+  const taken = options.undated === true ? null : added;
   db.query(
     `INSERT INTO photos (id, library_id, shoot_id, file_path, width, height, date_taken, date_added, triage)
      VALUES (?, ?, ?, ?, 3000, 2000, ?, ?, ?)`,
@@ -135,7 +135,7 @@ describe('stepping through a collection', () => {
   test('crosses between dated and undated photographs', () => {
     const { db, photos } = context;
     const dated = [1, 2].map((n) => insert(db, n));
-    const undated = [3, 4].map((n) => insert(db, n, { minute: null }));
+    const undated = [3, 4].map((n) => insert(db, n, { undated: true }));
 
     expect(walk(photos, 'taken_asc', dated[0]!)).toEqual([...dated, ...undated]);
 
@@ -247,7 +247,7 @@ describe('stepping through a collection', () => {
     test('crosses the undated boundary from either side', () => {
       const { db, photos } = context;
       const dated = [1, 2].map((n) => insert(db, n));
-      const undated = [3, 4].map((n) => insert(db, n, { minute: null }));
+      const undated = [3, 4].map((n) => insert(db, n, { undated: true }));
 
       expect(photos.rangeInLibrary(LIBRARY, 'taken_asc', { from: dated[0]!, to: undated[1]! }, NO_FILTERS).map((p) => p.id)).toEqual([
         ...dated,
@@ -272,6 +272,26 @@ describe('stepping through a collection', () => {
         undated[1]!,
         undated[0]!,
       ]);
+    });
+
+    // An open bound means "that end of the collection", so the cap has to be read
+    // from the bound that exists. Capped from the start instead, a `{from: null}`
+    // range answers with the beginning of the collection - rows containing none of
+    // what was asked about.
+    test('caps from the bound it was given, not from the start of the collection', () => {
+      const { db, photos, stacks } = context;
+      for (let n = 1; n <= 40; n++) insert(db, n);
+      const members = [41, 42].map((n) => insert(db, n));
+      stacks.create(members);
+
+      const run = photos.rangeInLibrary(LIBRARY, 'taken_asc', { from: null, to: null }, NO_FILTERS);
+      expect(run).toHaveLength(42);
+
+      // Bounded only at the far end: the answer has to reach the stack, which sits
+      // at the end, rather than returning the first rows of the library.
+      const trailing = photos.rangeInLibrary(LIBRARY, 'taken_asc', { from: null, to: members[1]! }, NO_FILTERS);
+      expect(trailing[trailing.length - 1]?.id).toBe(members[1]!);
+      expect(trailing.filter((photo) => photo.stack_id != null)).toHaveLength(2);
     });
 
     test('treats a bound outside the collection as absent rather than failing', () => {

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
 import { applyVerdict, nextRound, openSession, pairKey } from '../stack_triage';
-import { type HistoryEntry, clearSession, loadMode, loadSession, saveMode, saveSession } from '../triage_storage';
+import { type HistoryEntry, loadMode, loadSession, saveMode, saveSession } from '../triage_storage';
 
 // A session is stored as JSON, and the one thing JSON cannot carry is the Set the
 // whole tournament rests on: `JSON.stringify(new Set())` is `{}`. Lost, a
@@ -97,11 +97,7 @@ describe('the stored session', () => {
     expect(loadSession(STACK)).toBeNull();
   });
 
-  test('is gone once cleared, and absent for a stack that never had one', () => {
-    const { session, history } = storedSession();
-    saveSession(STACK, { session, history, baseline: {}, entryPhotoId: null, bounds: { from: null, to: null }, failed: [] });
-    clearSession(STACK);
-    expect(loadSession(STACK)).toBeNull();
+  test('is absent for a stack that never had one', () => {
     expect(loadSession('never-triaged')).toBeNull();
   });
 });

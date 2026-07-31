@@ -608,6 +608,54 @@ test('the max-quality rendition is served as a full-resolution AVIF', async ({ p
   expect(await shown.evaluate((i: HTMLImageElement) => i.naturalWidth)).toBeGreaterThan(3840);
 });
 
+// Regression: the run of photographs the arrows walk is emptied whenever the
+// collection is re-read, but the anchor it is asked for is the open photo's id -
+// so re-opening the *same* photo left the anchor unchanged, the reaction never
+// fired, and both arrows stayed dead for as long as that photo was open. Every
+// photo of a small collection is within the margin, so it was not an edge case.
+test('the arrows come back after leaving a photo and opening it again', async ({ page }) => {
+  await page.goto('/settings');
+  await openLibrary(page, CULL_PHOTOS_DIR);
+  await openPhoto(page);
+  await expect(page.getByRole('button', { name: 'Next photo' })).toBeEnabled({ timeout: 60_000 });
+
+  for (let round = 0; round < 2; round++) {
+    await page.keyboard.press('Escape');
+    await expect(page.locator('.grid')).toBeVisible();
+    await openPhoto(page);
+    await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByRole('button', { name: 'Next photo' }), `after ${round + 1} trips`).toBeEnabled({ timeout: 30_000 });
+  }
+});
+
+// A frame that arrives around the moment the held one is dropped still goes up.
+//
+// Every other check here has the image arrive instantly, so nothing covered a
+// decode landing near the cap at all. It does NOT reproduce the commit-order race
+// the guard in `setPainted` is for - that needs the promotion to commit between
+// the timer firing and the effect that would have cancelled it, which an idle
+// machine almost never does. Treat this as coverage of slow decodes, not of that.
+test('a frame that lands as the held one is dropped is still shown', async ({ page }) => {
+  await page.goto('/settings');
+  await openLibrary(page, CULL_PHOTOS_DIR);
+  await openPhoto(page);
+  await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
+
+  // Delays either side of the 100ms cap.
+  for (const delay of [80, 105, 130]) {
+    await page.unrouteAll({ behavior: 'ignoreErrors' });
+    await page.route(/\/image\//, async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      await route.continue();
+    });
+    await page.getByRole('button', { name: 'Next photo' }).click();
+    await expect(page.locator('.stage__viewport img.is-ready'), `delay ${delay}ms`).toBeVisible({ timeout: 20_000 });
+    await page.getByRole('button', { name: 'Previous photo' }).click();
+    await expect(page.locator('.stage__viewport img.is-ready'), `delay ${delay}ms, back`).toBeVisible({ timeout: 20_000 });
+  }
+  await page.unrouteAll({ behavior: 'ignoreErrors' });
+});
+
 test('the previous photo is held for a beat and then dropped, however slow the next one is', async ({ page }) => {
   await page.goto('/settings');
   await openLibrary(page, CULL_PHOTOS_DIR);

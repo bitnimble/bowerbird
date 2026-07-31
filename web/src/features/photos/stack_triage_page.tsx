@@ -196,7 +196,12 @@ const Flip = observer(function Flip({
   const { stackTriage } = usePresenters();
   const slot = store.showing === 'a' ? 0 : 1;
   const sources = [store.srcOf(round.a), store.srcOf(round.b)];
-  const a = store.members.get(round.a);
+  // Whichever frame is actually on screen, peek included. Labelled from slot A
+  // regardless, both frames of a round claimed the same filename - on the one
+  // screen whose job is telling near-identical photographs apart, and in
+  // fullscreen the bar is the only thing left that names them at all.
+  const showing = peeking ? 1 - slot : slot;
+  const onScreen = store.members.get(showing === 0 ? round.a : round.b);
 
   return (
     <div className="triage__flip">
@@ -233,9 +238,9 @@ const Flip = observer(function Flip({
       <PhotoStage
         photoKey={pairKey(round.a, round.b)}
         sources={sources}
-        showing={peeking ? 1 - slot : slot}
-        alt={a == null ? '' : nameOf(a)}
-        filename={a == null ? '' : nameOf(a)}
+        showing={showing}
+        alt={onScreen == null ? '' : nameOf(onScreen)}
+        filename={onScreen == null ? '' : nameOf(onScreen)}
         onImageLoad={(source) => onDecoded(source)}
       />
     </div>
@@ -302,14 +307,16 @@ const Verdicts = observer(function Verdicts({ ready }: { ready: boolean }): JSX.
   const cast = (verdict: Verdict): void => {
     const round = store.round;
     if (round == null) return;
-    // The round this verdict is about, captured now. `undo` is "the last round",
-    // which by the time a toast is pressed may be two rounds later - so the toast
-    // would take back something it never named.
-    const at = store.history.length;
     void stackTriage.judge(verdict).then(() => {
+      if (verdict !== 'neither') return;
+      // The entry this verdict made, not the position it made it at. A toast lives
+      // twelve seconds and outlives the route: by the time it is pressed the
+      // position may hold a different round, of a different stack.
+      const entry = store.history[store.history.length - 1];
+      if (entry == null) return;
       // Reported with an undo rather than confirmed first, matching the Bin: a
       // confirmation on a repeated action is worse than a way back from it.
-      if (verdict === 'neither') toasts.showUndoable('2 rejected', 'Undo', () => stackTriage.rewindTo(at));
+      toasts.showUndoable('2 rejected', 'Undo', () => stackTriage.rewindToEntry(entry));
     });
   };
 
@@ -391,7 +398,9 @@ const Summary = observer(function Summary({ onLeave }: { onLeave: () => void }):
               <Thumb key={photo.id} photo={photo} />
             ))}
           </div>
-          <Button onClick={() => void stackTriage.retryFailed()}>Retry</Button>
+          <Button disabled={store.busy} onClick={() => void stackTriage.retryFailed()}>
+            Retry
+          </Button>
         </>
       )}
 
@@ -412,10 +421,13 @@ const Summary = observer(function Summary({ onLeave }: { onLeave: () => void }):
 // what it changed, and nothing else.
 const TriageKeys = observer(function TriageKeys({
   peeking,
+  ready,
   onPeek,
   onLeave,
 }: {
   peeking: boolean;
+  /** Both frames of this round are up. The keys wait for it as the buttons do. */
+  ready: boolean;
   onPeek: (peeking: boolean) => void;
   onLeave: () => void;
 }): null {
@@ -426,6 +438,10 @@ const TriageKeys = observer(function TriageKeys({
     function onKey(e: KeyboardEvent): void {
       const target = e.target as HTMLElement | null;
       if (target != null && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
+      // A held key, not a decision. `Both` costs no write, so nothing rate-limits
+      // it: auto-repeat runs the rest of the tournament off frames nobody looked
+      // at, in about a second.
+      if (e.repeat) return;
       // A popup is portalled to the body, so its keys reach this window listener:
       // reading the queue would cast verdicts, and Space on a queue row would cast
       // Both instead of selecting the round it is sitting on.
@@ -455,7 +471,11 @@ const TriageKeys = observer(function TriageKeys({
       // there was no way out of it.
       else if (e.key === 'v') stackTriage.setMode(store.mode === 'flip' ? 'split' : 'flip');
       else if (e.key === 'Backspace') void stackTriage.undo();
-      else if (store.round == null) return;
+      // The same gate the buttons carry. Without it the keyboard was live while
+      // they were dead, so one deliberate press could reject a photograph nobody
+      // had seen. Leaving, switching presentation and undo stay available while
+      // the stage builds.
+      else if (store.round == null || !ready) return;
       else if (e.key === 'ArrowLeft') void stackTriage.judge('a');
       else if (e.key === 'ArrowRight') void stackTriage.judge('b');
       else if (e.key === 'ArrowDown' || e.key === ' ') void stackTriage.judge('both');
@@ -479,7 +499,9 @@ const TriageKeys = observer(function TriageKeys({
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('blur', clear);
     };
-  }, [store, stackTriage, peeking, onPeek, onLeave]);
+    // `ready` is a dependency, or the handler closes over the first render's
+    // `false` and the verdict keys never come back.
+  }, [store, stackTriage, peeking, ready, onPeek, onLeave]);
 
   return null;
 });
@@ -570,7 +592,7 @@ export const StackTriagePage = observer(function StackTriagePage(): JSX.Element 
 
   return (
     <div className="pad pad--fill triage-page">
-      <TriageKeys peeking={peeking} onPeek={setPeeking} onLeave={leave} />
+      <TriageKeys peeking={peeking} ready={ready} onPeek={setPeeking} onLeave={leave} />
       <Header onLeave={leave} />
 
       {round == null || pair == null ? (

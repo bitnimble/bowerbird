@@ -361,18 +361,28 @@ export function PhotoStage({
   // is what the lone `stale` dependency buys: stepping faster than the cap
   // leaves it running instead of restarting it, so holding the arrow key cannot
   // pin a frame from ten photos ago to the stage.
-  const stale = painted != null && painted.photoKey !== photoKey;
+  // The frames being held, or null when what is painted belongs to this photo.
+  // The value rather than a boolean, because the timer has to be able to say
+  // *which* frames it was scheduled against.
+  const held = painted != null && painted.photoKey !== photoKey ? painted : null;
   useEffect(() => {
-    if (!stale) return;
+    if (held == null) return;
     const timer = setTimeout(() => {
-      setPainted(null);
+      // Only if the held frames are still the ones on screen. A promotion that
+      // commits after this timer was scheduled but before it fires would
+      // otherwise have its frame wiped - and nothing asks again, because the
+      // element is still mounted under the same key and its decode has already
+      // resolved, so the stage stays blank for good. It needs a decode landing
+      // within a few milliseconds of the cap, which is a warmed frame on a busy
+      // machine: rare on an idle one, common while raws are being processed.
+      setPainted((previous) => (previous === held ? null : previous));
       // Or the frames it was covering, which are older still, would be left as
       // the only thing on the stage - the wrong picture, which is what the cap
       // above exists to prevent.
-      setRetiring({ sources: [], step: null });
+      setRetiring((previous) => (previous.sources.length === 0 ? previous : { sources: [], step: null }));
     }, STALE_FRAME_MS);
     return () => clearTimeout(timer);
-  }, [stale]);
+  }, [held]);
 
   useEffect(() => {
     if (retiring.sources.length === 0) return;

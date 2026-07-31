@@ -343,8 +343,12 @@ export class PhotosStore {
   boundsOfStack(stackId: string): { from: string | null; to: string | null } {
     const first = this.neighbourhood.findIndex((photo) => photo.stack_id === stackId);
     if (first < 0) return { from: null, to: null };
-    let last = first;
-    while (this.neighbourhood[last + 1]?.stack_id === stackId) last++;
+    // The last member anywhere in the run, not the end of the first unbroken block
+    // of them: nothing requires a stack's photographs to be adjacent in the
+    // collection, and a stack made by hand out of frames taken hours apart is not.
+    // `lastIndexOf` rather than `findLastIndex`, which is ES2023 and outside this
+    // project's lib.
+    const last = this.neighbourhood.map((photo) => photo.stack_id).lastIndexOf(stackId);
     return {
       from: this.neighbourhood[first - 1]?.id ?? null,
       to: this.neighbourhood[last + 1]?.id ?? null,

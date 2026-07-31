@@ -2814,6 +2814,36 @@ to do it with.
 that album holds. A shoot needs no such argument - each row carries its own
 `shoot_id`, which is all the client needs to dim the members that are elsewhere.
 
+**Stepping through the viewer sees the collection uncollapsed.** The grid shows a
+stack as one tile; Previous and Next visit every frame of it. Two endpoints answer
+the same listing with `representativeFilter` left off, and nothing else in the
+system uses them, so the collapse is untouched everywhere it matters:
+
+| method | path | purpose |
+|---|---|---|
+| `POST` | `/api/photos/neighbours` | the run around one photograph, ±50 by default |
+| `POST` | `/api/photos/range` | the run between two, either end optional, capped |
+
+Both take the same scope and filters a position lookup does, and both are a
+**keyset seek** off a row's own sort key rather than an offset: a position in an
+uncollapsed listing is not something the client holds, and computing one is the
+`ROW_NUMBER` pass §19.5.1 measures in the hundreds of milliseconds - per arrow
+press. The seek is ~0.2ms for a 50-row window on 200k photographs.
+
+Two spellings in it are load-bearing and look wrong, so they are commented where
+they sit. The group predicate must be the indexed *expression* `(date_taken IS
+NULL) = 0|1`, never `IS NULL` / `IS NOT NULL` on the column: only the exact
+expression matches `idx_photos_*_order_taken`, and without it the leading column
+is unconstrained, the row-value comparison cannot become a range constraint, and
+the whole collection is scanned into a temp b-tree - 4.8ms against 0.01ms at 40k
+rows. And `date_taken IS NULL` must be *absent* from each seek arm's `ORDER BY`,
+where it is a constant, or the ordering stops matching the index for the same
+reason.
+
+An absent range bound means that end of the collection, so the cap is read from
+the bound that exists - capped from the start instead, a range asking about the
+end of a library answers with the beginning of it.
+
 ### 19.6 The grid (`bands.ts`)
 
 Clicking a stack tile opens a **band of fresh rows directly below the row that tile
@@ -3256,12 +3286,18 @@ collapsed listing row: `toDetail` and the band-member listing both hardcode it t
 1, so the tile's condition would hide the button on every route that actually
 reaches the viewer from a stack. A stack has two or more members by construction.
 
-Leaving is an explicit route to the entry photo, falling back to its library; not
-`navigate(-1)`, which nothing in the app uses and which strands anyone who
-refreshed.
+Leaving mid-session is an explicit route to the entry photo, falling back to its
+library; not `navigate(-1)`, which nothing in the app uses and which strands
+anyone who refreshed. Leaving a *finished* session goes to the survivor that
+sorts last in the collection's order instead, so stepping on from it steps past
+the whole stack rather than back through the members that also survived. That one
+is asked for rather than worked out here: `POST /api/photos/range` is handed the
+photographs the stack lies between, and the last row still carrying its stack id
+is the answer, in the collection's own ordering. The bounds come off the viewer's
+run when the session opens, since a reload has no other way to know them.
 
 The session is stored under `bowerbird.triage.<stackId>` in `sessionStorage` with
-its history, baseline, entry photo and failed writes. **A finished session is
+its history, baseline, entry photo, those bounds, and failed writes. **A finished session is
 stored like any other**, and that is the whole of how the summary survives: an
 earlier draft cleared the key and wrote the outcome to a second one, so reloading
 the summary - or simply opening the stack again - found nothing and began a fresh
@@ -3293,5 +3329,5 @@ survives a rendition change and resets on a photo change. The screen takes an e2
 of its own over a three-frame fixture stack, in its own library because a session
 writes over every member it judges.
 
-No new API: `listStackPhotos` (§19.5.3) supplies the members and
+`listStackPhotos` (§19.5.3) supplies the members and
 `PATCH /api/photos/:id` records the verdicts.

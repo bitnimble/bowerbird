@@ -71,6 +71,9 @@ export class StackTriagePresenter {
       this.store.busy = false;
       this.store.showing = 'a';
       this.store.mode = loadMode();
+      // Or the previous stack's ends are used for this one's jump out - and
+      // `persist()` stamps them onto this session, so a reload keeps them.
+      this.store.bounds = { from: null, to: null };
       if (entryPhotoId != null) this.store.entryPhotoId = entryPhotoId;
       if (bounds != null && (bounds.from != null || bounds.to != null)) this.store.bounds = bounds;
     });
@@ -122,6 +125,15 @@ export class StackTriagePresenter {
       const live = new Set(usable.map((photo) => photo.id));
       this.store.session = { ...stored.session, alive: stored.session.alive.filter((id) => live.has(id)) };
       this.store.history = stored.history;
+      // Restored, not merely parsed: this is the only record that a verdict never
+      // reached the server, and `persist()` at the end of this method would
+      // otherwise write the empty set back over it. Pruned like the pool, because
+      // a failure naming a photograph that has since left has nothing to retry.
+      this.store.failed = new Set(stored.failed.filter((id) => live.has(id)));
+      // A member that is gone is not a rejection. `rejected` is the baseline less
+      // the pool, so leaving it in `baseline` would list a photo that went missing
+      // mid-session under Rejected, with the server saying otherwise.
+      for (const id of stored.session.alive) if (!live.has(id)) this.store.baseline.delete(id);
     });
     this.persist();
   }
@@ -261,6 +273,20 @@ export class StackTriagePresenter {
 
   undo(): Promise<void> {
     return this.rewindTo(this.store.history.length - 1);
+  }
+
+  /**
+   * Rewinds to a particular entry rather than to whatever now sits at a position.
+   *
+   * For a caller that captured its entry earlier and may fire much later - the
+   * Neither toast lives twelve seconds, outlives the route, and the presenter and
+   * the toasts are app-lifetime, so by then the index it took may name a different
+   * round of a different stack. `history` holds the entries by reference, so an
+   * entry from a session that has been reloaded is correctly not found.
+   */
+  rewindToEntry(entry: HistoryEntry): Promise<void> {
+    const index = this.store.history.indexOf(entry);
+    return index < 0 ? Promise.resolve() : this.rewindTo(index);
   }
 
   /** Try the writes that did not land, without touching the tournament. */

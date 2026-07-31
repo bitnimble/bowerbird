@@ -1,4 +1,4 @@
-import { action, comparer, reaction, runInAction } from 'mobx';
+import { action, comparer, observable, reaction, runInAction } from 'mobx';
 import {
   ApiError,
   api,
@@ -110,6 +110,9 @@ export class PhotosPresenter {
   private writing: Promise<unknown> = Promise.resolve();
   // One run fetch in flight at a time (`loadNeighbours`).
   private loadingNeighbours = false;
+  // The photo the run in hand was asked for. Observable, because the reaction
+  // above compares against it.
+  @observable private accessor neighboursFor: string | null = null;
   // Photos already asked for on-demand build. A stage that fails, is re-mounted
   // and fails again reports missing each time: without this every one of them
   // would queue the same job again.
@@ -145,7 +148,18 @@ export class PhotosPresenter {
     // near an end of it (§19.5.3). Its own reaction rather than part of opening a
     // photo, because it is also what answers for a photo opened with no
     // collection loaded at all.
-    reaction(() => this.store.neighbourAnchor, (photoId) => void this.loadNeighbours(photoId), { fireImmediately: true });
+    // Against what the run in hand already answers for, not against the anchor
+    // alone. The anchor is the open photo's id whenever the run does not cover it
+    // *or* the reader is near an edge of it, so emptying the run - which every
+    // filter change and re-open does - leaves the anchor at the same string and a
+    // value-equality reaction never fires. The arrows then stay dead for as long
+    // as that photo is open, which for a collection of twenty or fewer is every
+    // photo in it.
+    reaction(
+      () => (this.store.neighbourAnchor === this.neighboursFor ? null : this.store.neighbourAnchor),
+      (photoId) => void this.loadNeighbours(photoId),
+      { fireImmediately: true },
+    );
   }
 
   @action.bound
@@ -190,12 +204,22 @@ export class PhotosPresenter {
       });
       // The collection may have been replaced while this was out.
       if (this.generation !== generation || this.store.source !== source) return;
-      runInAction(() => (this.store.neighbourhood = run));
+      runInAction(() => {
+        this.store.neighbourhood = run;
+        this.neighboursFor = photoId;
+      });
     } catch {
-      // Nothing to say: the arrows keep the run they have, and the next step
-      // asks again. A background warm must not raise a toast.
+      // Answered for, even though it failed: without this the reaction re-fires on
+      // the same id forever. The retry is the `finally` below, once.
+      runInAction(() => (this.neighboursFor = photoId));
     } finally {
       this.loadingNeighbours = false;
+      // A request that arrived while this one was out was dropped rather than
+      // queued, and the reaction will not fire again for an anchor it has already
+      // seen - so ask here, inside the `finally`, because the stale-response
+      // branch above returns straight past anything after the try.
+      const again = this.store.neighbourAnchor;
+      if (again != null && again !== this.neighboursFor) void this.loadNeighbours(again);
     }
   }
 
@@ -1539,10 +1563,11 @@ export class PhotosPresenter {
     this.invalidate();
     this.clearSelectedPositions(); // positions into a collection that no longer exists
     this.recent = [];
-    // The viewer's run described the collection that has just been replaced. An
-    // empty one makes `neighbourAnchor` ask again, which is the whole of the
-    // invalidation this needs.
+    // The viewer's run described the collection that has just been replaced.
+    // Clearing what it answered for is what makes the reaction ask again: the
+    // anchor alone does not change when the open photo has not.
     this.store.neighbourhood = [];
+    this.neighboursFor = null;
     this.store.rows.clear();
     this.store.blockHeights.clear();
     this.store.total = 0;

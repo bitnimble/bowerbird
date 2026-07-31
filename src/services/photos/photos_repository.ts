@@ -5,6 +5,10 @@ import type { ViewerRendition } from '../../schemas/settings';
 import type { RenditionSource } from '../processing/processing_types';
 import { refreshRepresentative } from '../stacks/representative';
 
+// How much of a range one request may answer with. The caller this exists for
+// wants a stack's run, and a manual stack has no bound of its own.
+const RANGE_LIMIT = 1000;
+
 /** Either end of a range of the listing, inclusive. Null is that end of the collection. */
 export interface RangeBounds {
   from: string | null;
@@ -325,16 +329,21 @@ interface DetailRow extends SummaryRow {
 // the whole library. Any total order will do - what matters is only that two
 // separate LIMIT/OFFSET queries agree about which photo sits at which position
 // (§18.3.3), which a tiebreak in either direction gives.
-function orderByClause(ordering: Ordering, prefix = 'photos.'): string {
+// `reversed` walks the same listing backwards, for a caller that wants the rows
+// *nearest* the far end of a range. Not the same as the opposite ordering: the
+// `date_taken IS NULL` key is ascending in both taken orderings, so a true
+// reversal has to flip that one too.
+function orderByClause(ordering: Ordering, prefix = 'photos.', reversed = false): string {
+  const dir = (ascending: boolean): string => (ascending === !reversed ? 'ASC' : 'DESC');
   switch (ordering) {
     case 'added_asc':
-      return `${prefix}date_added ASC, ${prefix}id ASC`;
+      return `${prefix}date_added ${dir(true)}, ${prefix}id ${dir(true)}`;
     case 'added_desc':
-      return `${prefix}date_added DESC, ${prefix}id DESC`;
+      return `${prefix}date_added ${dir(false)}, ${prefix}id ${dir(false)}`;
     case 'taken_asc':
-      return `${prefix}date_taken IS NULL, ${prefix}date_taken ASC, ${prefix}id ASC`;
+      return `${prefix}date_taken IS NULL ${dir(true)}, ${prefix}date_taken ${dir(true)}, ${prefix}id ${dir(true)}`;
     case 'taken_desc':
-      return `${prefix}date_taken IS NULL, ${prefix}date_taken DESC, ${prefix}id DESC`;
+      return `${prefix}date_taken IS NULL ${dir(true)}, ${prefix}date_taken ${dir(false)}, ${prefix}id ${dir(false)}`;
   }
 }
 
@@ -1273,12 +1282,20 @@ export class PhotosRepository {
       args.push(...bound.params);
     }
 
-    return (
-      this.db
-        .query(`SELECT ${SUMMARY_COLS} ${where}${clauses.length > 0 ? ` AND ${clauses.join(' AND ')}` : ''}
-         ORDER BY ${orderByClause(ordering)}`)
-        .all(...args) as SummaryRow[]
-    ).map((row) => toSummary(row, ordering));
+    // Capped, and read from the bound that exists. An absent bound means "that end
+    // of the collection", which in a large one is most of it - and a caller cannot
+    // always tell "the collection ended" from "my window ended", so an open end is
+    // routinely a question about a few rows that would answer with a hundred
+    // thousand. Reading from the wrong end would return a page of the collection
+    // containing none of what was asked about, which is worse than truncating.
+    const leading = from != null || to == null;
+    args.push(RANGE_LIMIT);
+    const rows = this.db
+      .query(`SELECT ${SUMMARY_COLS} ${where}${clauses.length > 0 ? ` AND ${clauses.join(' AND ')}` : ''}
+         ORDER BY ${orderByClause(ordering, 'photos.', !leading)} LIMIT ?`)
+      .all(...args) as SummaryRow[];
+    if (!leading) rows.reverse();
+    return rows.map((row) => toSummary(row, ordering));
   }
 
   /**
@@ -1303,14 +1320,17 @@ export class PhotosRepository {
     if (ordering === 'added_asc' || ordering === 'added_desc') {
       return { sql: `(photos.date_added, photos.id) ${cmp} (?, ?)`, params: [row.date_added, row.id] };
     }
+    // `(date_taken IS NULL) = 0|1` rather than `IS NOT NULL` / `IS NULL`, for the
+    // reason `seekArm` gives: that expression is what the ordering index leads
+    // with, and only the exact spelling matches it.
     if (row.date_taken == null) {
       return keepsAfter
-        ? { sql: `(photos.date_taken IS NULL AND photos.id ${cmp} ?)`, params: [row.id] }
-        : { sql: `(photos.date_taken IS NOT NULL OR photos.id ${cmp} ?)`, params: [row.id] };
+        ? { sql: `((photos.date_taken IS NULL) = 1 AND photos.id ${cmp} ?)`, params: [row.id] }
+        : { sql: `((photos.date_taken IS NULL) = 0 OR photos.id ${cmp} ?)`, params: [row.id] };
     }
     return keepsAfter
-      ? { sql: `(photos.date_taken IS NULL OR (photos.date_taken, photos.id) ${cmp} (?, ?))`, params: [row.date_taken, row.id] }
-      : { sql: `(photos.date_taken IS NOT NULL AND (photos.date_taken, photos.id) ${cmp} (?, ?))`, params: [row.date_taken, row.id] };
+      ? { sql: `((photos.date_taken IS NULL) = 1 OR (photos.date_taken, photos.id) ${cmp} (?, ?))`, params: [row.date_taken, row.id] }
+      : { sql: `((photos.date_taken IS NULL) = 0 AND (photos.date_taken, photos.id) ${cmp} (?, ?))`, params: [row.date_taken, row.id] };
   }
 
   // `taken_*` sorts undated photographs last, so the listing is two groups and a
@@ -1361,10 +1381,14 @@ export class PhotosRepository {
     const clauses: string[] = [];
     const args: (string | number)[] = [...params];
     if (byTaken) {
-      // Repeated as an `IS NULL` on the column rather than only as the sort flag:
-      // SQLite reads that as an equality on an indexed column, which is what keeps
-      // the comparison below a range seek instead of a scan of the whole group.
-      clauses.push(group === 'undated' ? `${column} IS NULL` : `${column} IS NOT NULL`);
+      // Spelled as the indexed *expression* `(date_taken IS NULL)`, never as
+      // `IS NULL` / `IS NOT NULL` on the column. `idx_photos_*_order_taken` leads
+      // with that expression, and only the exact expression matches it - written
+      // the other way the leading column is unconstrained, so the row-value
+      // comparison below cannot become a range constraint either and the whole
+      // collection is scanned into a temp b-tree. 0.01ms against 4.8ms at 40k
+      // rows, and it is on the path of every viewer open.
+      clauses.push(`(${column} IS NULL) = ${group === 'undated' ? 1 : 0}`);
     }
     if (!unseeded) {
       if (group === 'undated') {
