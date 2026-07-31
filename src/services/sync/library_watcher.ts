@@ -1,8 +1,11 @@
 import watcher, { type AsyncSubscription } from '@parcel/watcher';
+import { statSync } from 'node:fs';
 import path from 'node:path';
 import { AppError } from '../../errors';
 import { Logger } from '../../logger';
 import type { Library } from '../../schemas/libraries';
+import { SYNC_LOCK_NAME } from '../../utils/deletions';
+import { isSupportedFile } from '../../utils/scan';
 import { isPathAllowed, type LibraryScope } from '../../utils/scope';
 import { getBinPath, getDataPath } from '../../utils/paths';
 import type { LibrariesRepository } from '../libraries/libraries_repository';
@@ -21,6 +24,9 @@ const MAX_SCOPE = 256;
 // Ceiling for the watch-retry backoff (§9.8): long enough that a permanently
 // absent root costs nothing, short enough to pick a returning drive up promptly.
 const MAX_RETRY_MS = 5 * 60 * 1000;
+
+// How many paths a log line names before it just says how many there were.
+const SAMPLE = 5;
 
 // Watches each library root and triggers a debounced sync when its files change
 // on disk. Reactive counterpart to the on-demand POST /sync (DESIGN §9). Change
@@ -138,12 +144,28 @@ export class LibraryWatcher implements LibraryLifecycleListener {
             this.scheduleRetry(library);
             return;
           }
+          let recorded = 0;
           for (const event of events) {
             const relPath = path.relative(library.root_path, event.path).split(path.sep).join('/');
             if (relPath === '' || relPath.startsWith('..')) continue;
             if (!this.inScope(scope, relPath)) continue;
+            if (this.isIgnorableFile(event.path, relPath)) continue;
             this.record(library.id, relPath);
+            recorded++;
           }
+          // Nothing the library contains moved, so nothing is owed a sync. Scheduling
+          // regardless is what made a sync's own lock file at the root wake the very
+          // watcher that wrote it, every debounce window, forever.
+          if (recorded === 0) {
+            log.debug('fs events, none in scope', { library: library.id, events: describe(events, library.root_path) });
+            return;
+          }
+          log.info('fs events', {
+            library: library.id,
+            recorded,
+            ignored: events.length - recorded,
+            events: describe(events, library.root_path),
+          });
           this.schedule(library.id);
         },
         {
@@ -186,7 +208,14 @@ export class LibraryWatcher implements LibraryLifecycleListener {
     // so: it is one known path (§12.3) that only ever grows, mirroring the whole
     // folder tree as photographs are binned, and nothing inside it is ever the
     // library's to look at.
-    const ignored = [getDataPath(library), path.join(library.root_path, '.bowerbird'), getBinPath(library)];
+    // The lock is written by sync itself at the root, so watching it is a loop:
+    // every sync wakes the watcher that starts the next one.
+    const ignored = [
+      getDataPath(library),
+      path.join(library.root_path, '.bowerbird'),
+      path.join(library.root_path, SYNC_LOCK_NAME),
+      getBinPath(library),
+    ];
     for (const folder of scope.excluded) ignored.push(path.join(library.root_path, folder));
     return ignored;
   }
@@ -199,6 +228,20 @@ export class LibraryWatcher implements LibraryLifecycleListener {
   private inScope(scope: LibraryScope, relPath: string): boolean {
     if (!isPathAllowed(scope, relPath)) return false;
     return scope.includeSubfolders || !relPath.includes('/');
+  }
+
+  // A file the library will never hold: a text file, a sidecar, a JPEG export
+  // saved beside the raws. Reconciling it costs a whole directory read (the scoped
+  // sync has to find the far half of a possible move) to conclude it was never a
+  // photograph, so the question is settled here instead, where one stat answers it.
+  //
+  // Only asked of paths whose extension is not one of ours, so a bulk import stats
+  // nothing extra. A folder always passes: an empty one's rename reports no other
+  // event at all, and dropping it would lose the shoot relocation (§9.4.1). So does
+  // a path that is already gone, which is a deletion and could have been either.
+  private isIgnorableFile(absPath: string, relPath: string): boolean {
+    if (isSupportedFile(relPath)) return false;
+    return statSync(absPath, { throwIfNoEntry: false })?.isFile() === true;
   }
 
   // Backs off exponentially up to MAX_RETRY_MS. A root that is gone for good (an
@@ -266,10 +309,14 @@ export class LibraryWatcher implements LibraryLifecycleListener {
     const scope = paths.size > 0 && paths.size <= MAX_SCOPE ? [...paths] : undefined;
 
     this.syncing.add(libraryId);
-    // Debug: the sync it is about to start says the same thing with its own counts.
-    log.debug('files changed on disk', { library: libraryId, changed: paths.size });
+    log.info('files changed on disk; starting sync', {
+      library: libraryId,
+      changed: paths.size,
+      mode: scope == null ? 'full' : 'scoped',
+      paths: [...paths].slice(0, SAMPLE),
+    });
     try {
-      await this.sync.syncLibrary(libraryId, scope);
+      await this.sync.syncLibrary(libraryId, scope, 'watcher');
     } catch (err) {
       const code = err instanceof AppError ? err.code : null;
       // Lost the lock race to an external/manual sync whose scan may predate our
@@ -287,6 +334,13 @@ export class LibraryWatcher implements LibraryLifecycleListener {
       if (this.dirty.delete(libraryId)) this.schedule(libraryId);
     }
   }
+}
+
+// A bulk import delivers thousands of events at once, and a log line per path
+// would bury the counts beside it. The sample is what makes an unexplained sync
+// explainable; the count is what says how big it was.
+function describe(events: readonly { type: string; path: string }[], rootPath: string): string[] {
+  return events.slice(0, SAMPLE).map((e) => `${e.type} ${path.relative(rootPath, e.path)}`);
 }
 
 // What the watch was established with, so a settings change can be compared

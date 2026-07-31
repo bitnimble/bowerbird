@@ -3,13 +3,14 @@
 // and a root-only library must not be roused by its subfolders.
 //   docker exec bowerbird-dev bun test test/integration
 import { afterEach, beforeEach, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { Library } from '../../src/schemas/libraries';
 import type { LibrariesRepository } from '../../src/services/libraries/libraries_repository';
 import { LibraryWatcher } from '../../src/services/sync/library_watcher';
 import type { SyncService } from '../../src/services/sync/sync_service';
+import { SYNC_LOCK_NAME } from '../../src/utils/deletions';
 import { libraryScope, type LibraryScope } from '../../src/utils/scope';
 
 const LIB = 'lib-ignores';
@@ -64,7 +65,7 @@ test('an excluded folder never wakes a sync, and its siblings still do', async (
 
   writeFileSync(path.join(root, 'Rejects', '2019', 'old.arw'), '');
   await quiet();
-  expect(calls).toEqual([]);
+  expect(calls).toHaveLength(0);
 
   writeFileSync(path.join(root, 'Trip', 'new.arw'), '');
   await quiet();
@@ -77,7 +78,7 @@ test('a root-only library is woken by its root and not by its subfolders', async
 
   writeFileSync(path.join(root, 'Trip', 'deep.arw'), '');
   await quiet();
-  expect(calls).toEqual([]);
+  expect(calls).toHaveLength(0);
 
   writeFileSync(path.join(root, 'top.arw'), '');
   await quiet();
@@ -92,7 +93,50 @@ test('the Bin and the data directory never wake a sync', async () => {
   writeFileSync(path.join(root, 'Bin', 'Trip', 'binned.arw'), '');
   writeFileSync(path.join(root, '.bowerbird', 'stray.arw'), '');
   await quiet();
-  expect(calls).toEqual([]);
+  expect(calls).toHaveLength(0);
+});
+
+// A sync writes its lock at the root, so a watcher that wakes for it starts the
+// next sync, which writes it again: a library nobody is touching syncs forever,
+// once per debounce window. Out of scope on its own (it is hidden), which is
+// exactly the case that used to schedule a *full* sync with nothing to reconcile.
+test('a sync lock file at the root never wakes a sync', async () => {
+  await start({});
+
+  // Taken and released a window apart, as a real sync holds it: created and
+  // removed inside one window the watcher coalesces them away and proves nothing.
+  writeFileSync(path.join(root, SYNC_LOCK_NAME), '{}');
+  await quiet();
+  rmSync(path.join(root, SYNC_LOCK_NAME));
+  await quiet();
+  expect(calls).toHaveLength(0);
+});
+
+// Files the library will never hold, sitting right beside the ones it does.
+test('a file of a format the library does not hold never wakes a sync', async () => {
+  mkdirSync(path.join(root, 'Trip'));
+  await start({});
+
+  writeFileSync(path.join(root, 'Trip', 'notes.txt'), 'hello');
+  writeFileSync(path.join(root, 'Trip', 'export.jpg'), '');
+  await quiet();
+  expect(calls).toHaveLength(0);
+
+  writeFileSync(path.join(root, 'Trip', 'shot.arw'), '');
+  await quiet();
+  expect(calls.flatMap((c) => c ?? [])).toEqual(['Trip/shot.arw']);
+});
+
+// A folder is what an empty shoot's rename reports and the only thing it reports
+// (§9.4.1), so the "not one of our formats" test must never be applied to one -
+// and a folder is free to be named like a file.
+test('a folder whose name looks like a file still wakes a sync', async () => {
+  mkdirSync(path.join(root, 'Trip.v2'));
+  await start({});
+
+  renameSync(path.join(root, 'Trip.v2'), path.join(root, 'Trip.v3'));
+  await quiet();
+  expect(calls.flatMap((c) => c ?? [])).toContain('Trip.v3');
 });
 
 // The bin is one folder at the root, so the name means nothing anywhere else: a

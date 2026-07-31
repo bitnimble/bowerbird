@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { readdir, stat } from 'node:fs/promises';
+import { stat } from 'node:fs/promises';
 import path from 'node:path';
 import { AppError } from '../../errors';
 import { Logger } from '../../logger';
@@ -59,6 +59,9 @@ interface ProcessingBatch {
 }
 
 export type MetadataExtractor = (absPath: string) => Promise<FileMetadata>;
+
+/** Who asked for a run, so an unexplained sync in the log names its own cause. */
+export type SyncTrigger = 'api' | 'watcher' | 'daily';
 
 // Which shoots have to restate what they hold after mirroring made new ones, and
 // in which order. A shoot's claim covers its whole subtree, so an ancestor's is a
@@ -168,7 +171,7 @@ export class SyncService implements LibraryLifecycleListener {
   async syncAll(): Promise<void> {
     for (const library of this.libraries.list()) {
       try {
-        await this.syncLibrary(library.id);
+        await this.syncLibrary(library.id, undefined, 'daily');
       } catch (err) {
         // Never let one library abort the batch (§9.7): skip locked ones silently,
         // log anything else, and move on to the remaining libraries.
@@ -185,13 +188,18 @@ export class SyncService implements LibraryLifecycleListener {
   // relocation because both the removed old path and the added new path land in one
   // debounce batch, or pair across syncs via the missing pool (§9.3). The periodic
   // full sync (syncAll) is the backstop for events the watcher dropped.
-  async syncLibrary(libraryId: string, scopePaths?: readonly string[]): Promise<LibrarySyncStatus> {
+  async syncLibrary(
+    libraryId: string,
+    scopePaths?: readonly string[],
+    trigger: SyncTrigger = 'api',
+  ): Promise<LibrarySyncStatus> {
     const library = this.libraries.getById(libraryId);
     if (!library) throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
 
     log.info('sync start', {
       library: libraryId,
       root: library.root_path,
+      trigger,
       mode: scopePaths == null ? 'full' : 'scoped',
       paths: scopePaths?.length,
     });
@@ -282,14 +290,12 @@ export class SyncService implements LibraryLifecycleListener {
       // leaves a trace of).
       let dirs: readonly ScannedDir[];
       if (scopePaths != null) {
-        // Reconcile only the changed paths' directories against the rows at the
-        // changed + discovered paths, plus the missing move-source pool. Reading
-        // whole directories rather than single files is what catches the other
-        // half of a move whose two events did not land in the same window.
-        files = await this.scopedFiles(scope, this.scopeDirs(scopePaths));
-        const known = new Set<string>(scopePaths);
-        for (const f of files) known.add(f.relPath);
-        dbPhotos = this.scopedDbPhotos(libraryId, [...known]);
+        // Reconcile the changed paths themselves against their rows, plus the
+        // missing move-source pool. The watcher names both halves of a move
+        // (§9.8), so a rename arrives as its own removal and addition; the pool is
+        // what pairs them when they land in different windows.
+        files = this.scopedFiles(scope, scopePaths);
+        dbPhotos = this.scopedDbPhotos(libraryId, scopePaths);
         dirs = await this.scopedDirs(scope, scopePaths);
       } else {
         dbPhotos = this.photos.listForSync(libraryId);
@@ -785,29 +791,15 @@ export class SyncService implements LibraryLifecycleListener {
     return dirs;
   }
 
-  // readdir each scoped directory (non-recursive) for its current RAW files,
-  // dropping non-RAW entries and anything out of the library's scope (§9.1). A
-  // directory that's gone just yields nothing, so its DB rows fall through to
-  // `removed`.
-  private async scopedFiles(scope: LibraryScope, dirs: readonly string[]): Promise<ScannedFile[]> {
-    const files: ScannedFile[] = [];
-    for (const dir of dirs) {
-      if (!isDirInScope(scope, dir)) continue;
-      const absDir = path.join(scope.rootPath, dir);
-      let entries;
-      try {
-        entries = await readdir(absDir, { withFileTypes: true });
-      } catch {
-        continue;
-      }
-      for (const entry of entries) {
-        if (entry.isDirectory() || !isSupportedFile(entry.name)) continue;
-        const relPath = dir ? `${dir}/${entry.name}` : entry.name;
-        if (!isFileInScope(scope, relPath)) continue;
-        files.push({ relPath, absPath: path.join(absDir, entry.name) });
-      }
-    }
-    return files;
+  // The changed paths, as the files this library holds: anything of a format that
+  // is not ours or that sits outside the scope (§9.1) is not one. Whether each is
+  // still there is `scanFiles`' stat to make - a path that has gone yields nothing
+  // there, so its row falls through to `removed`, and a path naming a directory is
+  // dropped the same way.
+  private scopedFiles(scope: LibraryScope, scopePaths: readonly string[]): ScannedFile[] {
+    return scopePaths
+      .filter((relPath) => isSupportedFile(relPath) && isFileInScope(scope, relPath))
+      .map((relPath) => ({ relPath, absPath: path.join(scope.rootPath, relPath) }));
   }
 
   // Stats each file and opens/hashes ONLY the ones that are new or whose mtime+size
@@ -845,8 +837,11 @@ export class SyncService implements LibraryLifecycleListener {
       try {
         stats = await stat(file.absPath);
       } catch {
-        continue; // vanished between readdir and stat: treat as not present (a race)
+        continue; // gone before it was looked at: treat as not present (a race, or a deletion the watcher reported)
       }
+      // A scoped run is handed paths and not entries, and a folder is free to be
+      // named like a photograph; the walk's own files are always files.
+      if (!stats.isFile()) continue;
       const key = `${stats.dev}:${stats.ino}`;
       const existing = byInode.get(key);
       if (existing == null || (!dbByPath.has(existing.relPath) && dbByPath.has(file.relPath))) {

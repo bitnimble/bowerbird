@@ -1,8 +1,8 @@
-// Scoped sync (the watcher's cheap path): reconciles only the changed paths'
-// directories, not the whole tree. Verifies add, an intra-dir rename seen via a
-// SINGLE event (Bun's fs.watch only delivers the old name, the target is found
-// by readdir'ing the directory), delete, and a cross-directory move reunited with
-// the original row via the missing move-source pool across two scoped syncs.
+// Scoped sync (the watcher's cheap path): reconciles the changed paths and
+// nothing else, not their directories and not the whole tree. Verifies add, an
+// intra-dir rename delivered as both of its halves, delete, a cross-directory
+// move reunited with the original row via the missing move-source pool across two
+// scoped syncs, and that a file nobody named is left alone.
 //   docker exec bowerbird-dev bun test test/integration
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { copyFileSync, mkdirSync, mkdtempSync, renameSync, rmSync } from 'node:fs';
@@ -57,10 +57,10 @@ test('scoped add indexes the new file', async () => {
   expect(row('c.arw')).not.toBeNull();
 });
 
-test('intra-dir rename from a single (old-name) event is a move, same record', async () => {
+test('intra-dir rename, both halves in one window, is a move and not a re-add', async () => {
   const id = row('c.arw')!.id;
   renameSync(abs('c.arw'), abs('d.arw')); // preserves mtime -> same hash
-  await sync.syncLibrary(LIB, ['c.arw']); // only the old name, as Bun delivers it
+  await sync.syncLibrary(LIB, ['c.arw', 'd.arw']); // both halves, as the watcher names them
   expect(row('c.arw')).toBeNull();
   expect(row('d.arw')?.id).toBe(id); // moved, not re-added as a new photo
 });
@@ -82,4 +82,15 @@ test('cross-dir move reunites with the missing record via the move-source pool',
   const moved = row('Trip/e.arw');
   expect(moved?.id).toBe(id); // same photo, reunited by hash across two scoped syncs
   expect(moved?.is_missing).toBe(0);
+});
+
+// A scoped run answers for what it was handed. A file in the same directory that
+// no event named is the full reconcile's business (§9.8), not this run's.
+test('a sibling the run was not told about is left alone', async () => {
+  copyFileSync(FIXTURE, abs('Trip/unnamed.arw'));
+  await sync.syncLibrary(LIB, ['Trip/e.arw']);
+  expect(row('Trip/unnamed.arw')).toBeNull();
+
+  await sync.syncLibrary(LIB); // the backstop picks it up
+  expect(row('Trip/unnamed.arw')).not.toBeNull();
 });
