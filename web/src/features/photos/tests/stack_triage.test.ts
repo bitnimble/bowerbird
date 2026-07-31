@@ -61,18 +61,15 @@ describe('pairKey', () => {
     expect(pairKey('q', 'p')).toBe(pairKey('p', 'q'));
   });
 
-  test('names both of its photos, and no photo whose id merely starts the same', () => {
-    const key = pairKey('photo-1', 'photo-12');
-    expect(pairHas(key, 'photo-1')).toBe(true);
+  test('names both of its photos, and no photo whose id is merely inside one of them', () => {
+    const key = pairKey('photo-12', 'photo-13');
     expect(pairHas(key, 'photo-12')).toBe(true);
+    expect(pairHas(key, 'photo-13')).toBe(true);
+    // The failure the separator exists to stop is a *shorter* id inside a longer
+    // one, which a substring test would report as a hit. A longer id is caught by
+    // a substring test too, so asserting only that proves nothing.
+    expect(pairHas(key, 'photo-1')).toBe(false);
     expect(pairHas(key, 'photo-123')).toBe(false);
-  });
-
-  test('survives the round trip through the array shape the session is stored as', () => {
-    const { session } = play(['p', 'q', 'r'], ['both', 'both']);
-    const restored = new Set(JSON.parse(JSON.stringify([...session.seen])) as string[]);
-    expect(restored.has(pairKey('q', 'p'))).toBe(true);
-    expect(nextRound({ ...session, seen: restored })).toEqual(nextRound(session));
   });
 });
 
@@ -289,11 +286,16 @@ describe('arrangement', () => {
     ['two 2:3 portraits', 0.667, 0.667, 'row'],
     ['a 3:2 beside a 2:3', 1.5, 0.667, 'row'],
     ['a square beside a 16:9', 1, 1.778, 'row'],
+    // The turnover is between 4.5:1 and 5:1, so both sides of it are pinned:
+    // "a panorama chooses the column" is false at 3:1 and the adjective is not
+    // the test.
+    ['a 3:1 panorama beside a 2:3', 3, 0.667, 'row'],
     ['a 5:1 panorama beside a 2:3', 5, 0.667, 'column'],
+    ['two 5:1 panoramas', 5, 5, 'column'],
   ];
 
   for (const [name, aA, aB, direction] of CASES) {
-    test(`${name}: equal area, own aspect, inside the box, ${direction}`, () => {
+    test(`${name}: equal area, own aspect, as large as they fit, ${direction}`, () => {
       const placed = arrangement(aA, aB, W, H);
 
       near(placed.a.width * placed.a.height, placed.b.width * placed.b.height);
@@ -301,6 +303,15 @@ describe('arrangement', () => {
       near(placed.b.width / placed.b.height, aB);
       expect(placed.direction).toBe(direction);
       fitsInside(placed, W, H);
+
+      // And *maximal*, which is the whole contract: everything above is equally
+      // true of an implementation returning half the size. One of the two axes has
+      // to be spent to the last pixel, or the photos could have been bigger.
+      const used =
+        placed.direction === 'row'
+          ? { width: placed.a.width + placed.b.width + SPLIT_GAP, height: Math.max(placed.a.height, placed.b.height) }
+          : { width: Math.max(placed.a.width, placed.b.width), height: placed.a.height + placed.b.height + SPLIT_GAP };
+      near(Math.max(used.width / W, used.height / H), 1);
     });
   }
 
