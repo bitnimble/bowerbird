@@ -334,6 +334,24 @@ export class PhotosStore {
   }
 
   /**
+   * The photographs a stack lies between, as the run currently has them.
+   *
+   * Null on a side where the run does not reach past the stack - the collection
+   * ends there, or the window does. A caller can hand both to a range and get the
+   * stack back without knowing the collection's ordering.
+   */
+  boundsOfStack(stackId: string): { from: string | null; to: string | null } {
+    const first = this.neighbourhood.findIndex((photo) => photo.stack_id === stackId);
+    if (first < 0) return { from: null, to: null };
+    let last = first;
+    while (this.neighbourhood[last + 1]?.stack_id === stackId) last++;
+    return {
+      from: this.neighbourhood[first - 1]?.id ?? null,
+      to: this.neighbourhood[last + 1]?.id ?? null,
+    };
+  }
+
+  /**
    * A photo held only as a member of an open band.
    *
    * A collapsed listing has no row for a stack's members (§19.5.1), so without

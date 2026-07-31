@@ -4,6 +4,7 @@ import {
   PhotoListQuerySchema,
   PhotoNeighboursRequestSchema,
   PhotoPositionsRequestSchema,
+  PhotoRangeRequestSchema,
   PhotoTargetSchema,
   UpdatePhotoRequestSchema,
 } from '../../schemas/photos';
@@ -53,6 +54,11 @@ export class PhotosApi {
     app.post('/photos/neighbours', async (c) =>
       c.json(this.service.neighboursOf(PhotoNeighboursRequestSchema.parse(await c.req.json()))),
     );
+
+    // The same listing asked for by its ends, for a caller that already knows what
+    // sits either side of a run and would otherwise have to know the collection's
+    // ordering to say which end of it is "after".
+    app.post('/photos/range', async (c) => c.json(this.service.rangeOf(PhotoRangeRequestSchema.parse(await c.req.json()))));
 
     // Answers with a count, not with the ids. The undo restores by the batch id
     // the client stamped the request with (§12.3): the selection those photos

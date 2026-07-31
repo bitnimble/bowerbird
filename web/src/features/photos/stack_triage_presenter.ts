@@ -19,7 +19,40 @@ export class StackTriagePresenter {
 
   // --- opening ---
 
-  async open(stackId: string, entryPhotoId: string | null): Promise<void> {
+  /**
+   * Where to go when the session is over: the last of the stack's survivors in the
+   * collection's own order, so stepping on from it steps past the whole stack.
+   *
+   * Asked for as the range between the photographs the stack lies between, rather
+   * than worked out here. The server already knows which end of its ordering is
+   * "after"; a second answer to that on this side is one that can disagree.
+   */
+  async returnTarget(): Promise<string | null> {
+    const session = this.store.session;
+    const stackId = this.store.stackId;
+    if (session == null || stackId == null) return this.store.entryPhotoId;
+    // Mid-session: nothing has been concluded, so go back where you were.
+    if (this.store.round != null) return this.store.entryPhotoId;
+
+    const { from, to } = this.store.bounds;
+    if (from != null || to != null) {
+      try {
+        const run = await this.photos.rangeBetween(from, to);
+        // The last row still belonging to this stack. By stack id rather than by
+        // counting back from the trailing bound, so an open end - a stack at the
+        // very end of the collection - needs no separate case.
+        const members = run.filter((photo) => photo.stack_id === stackId);
+        const last = members[members.length - 1];
+        if (last != null) return last.id;
+      } catch {
+        // Fall through to what is already in hand.
+      }
+    }
+    // No bounds to ask with - a reload, or a stack at both ends of the collection.
+    return this.store.session?.alive[0] ?? null;
+  }
+
+  async open(stackId: string, entryPhotoId: string | null, bounds?: { from: string | null; to: string | null }): Promise<void> {
     // Already running this one: navigating back to the viewer and forward again
     // must reuse the live session rather than reloading a copy of it and
     // discarding the history in memory.
@@ -39,6 +72,7 @@ export class StackTriagePresenter {
       this.store.showing = 'a';
       this.store.mode = loadMode();
       if (entryPhotoId != null) this.store.entryPhotoId = entryPhotoId;
+      if (bounds != null && (bounds.from != null || bounds.to != null)) this.store.bounds = bounds;
     });
 
     let members: PhotoSummary[];
@@ -70,6 +104,9 @@ export class StackTriagePresenter {
             // would put a photo back in the pool and mark it rejected at once.
             new Map(Object.entries(stored.baseline) as [string, Triage][]);
       this.store.entryPhotoId = entryPhotoId ?? stored?.entryPhotoId ?? null;
+      if (stored?.bounds != null && this.store.bounds.from == null && this.store.bounds.to == null) {
+        this.store.bounds = stored.bounds;
+      }
 
       if (stored == null) {
         this.store.session = openSession(usable.map((photo) => photo.id));
@@ -298,6 +335,7 @@ export class StackTriagePresenter {
       history: this.store.history,
       baseline: Object.fromEntries(this.store.baseline),
       entryPhotoId: this.store.entryPhotoId,
+      bounds: this.store.bounds,
       failed: [...this.store.failed],
     });
   }

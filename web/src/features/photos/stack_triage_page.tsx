@@ -487,7 +487,7 @@ const TriageKeys = observer(function TriageKeys({
 export const StackTriagePage = observer(function StackTriagePage(): JSX.Element {
   const { stackId = '' } = useParams();
   const store = useStackTriageStore();
-  // Only for its ordering, which decides which end of the stack is "after" it.
+  // Only to read what this stack lies between, before the run moves on.
   const photos = usePhotosStore();
   const { stackTriage } = usePresenters();
   const navigate = useNavigate();
@@ -497,8 +497,11 @@ export const StackTriagePage = observer(function StackTriagePage(): JSX.Element 
   const entryPhotoId = (useLocation().state as { entryPhotoId?: string } | null)?.entryPhotoId ?? null;
 
   useEffect(() => {
-    void stackTriage.open(stackId, entryPhotoId);
-  }, [stackId, entryPhotoId, stackTriage]);
+    // The photographs this stack lies between, read off the viewer's run before it
+    // is replaced. Handed to a range on the way out, they give the stack back in
+    // the collection's own order (§20.6).
+    void stackTriage.open(stackId, entryPhotoId, photos.boundsOfStack(stackId));
+  }, [stackId, entryPhotoId, stackTriage, photos]);
 
   const onDecoded = useCallback((source: string) => {
     setDecoded((previous) => (previous.has(source) ? previous : new Set(previous).add(source)));
@@ -525,15 +528,16 @@ export const StackTriagePage = observer(function StackTriagePage(): JSX.Element 
   // the session is running - leaving it half-done should put you back exactly
   // where you were.
   const leave = useCallback(() => {
-    const back = store.status === 'ended' ? (store.keeperFor(photos.ordering)?.id ?? null) : store.entryPhotoId;
-    if (back != null) {
-      navigate(`/photos/${back}`);
-      return;
-    }
-    // Nothing survived, so there is no tile to go back to.
-    const library = store.members.values().next().value?.library_id;
-    navigate(library == null ? '/' : `/libraries/${library}`);
-  }, [navigate, store]);
+    void stackTriage.returnTarget().then((back) => {
+      if (back != null) {
+        navigate(`/photos/${back}`);
+        return;
+      }
+      // Nothing survived, so there is no photograph to go back to.
+      const library = store.members.values().next().value?.library_id;
+      navigate(library == null ? '/' : `/libraries/${library}`);
+    });
+  }, [navigate, store, stackTriage]);
 
   const round = store.round;
   const pair = store.pair;

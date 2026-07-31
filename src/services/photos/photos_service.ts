@@ -11,6 +11,7 @@ import type {
   PhotoSummary,
   PhotoNeighboursRequest,
   PhotoPositionsRequest,
+  PhotoRangeRequest,
   PhotoSelection,
   PhotoTarget,
   UpdatePhotoRequest,
@@ -316,6 +317,30 @@ export class PhotosService {
         const album = this.albums.getById(scope.id);
         if (!album) throw new AppError('NOT_FOUND', `album not found: ${scope.id}`);
         return this.photos.neighboursInAlbum(scope.id, album.ordering, photoId, limit, listFilters);
+      }
+    }
+  }
+
+  /** Everything between two photographs, uncollapsed (§19.5.3). */
+  rangeOf(request: PhotoRangeRequest): PhotoSummary[] {
+    const { scope, filters, from, to } = request;
+    const listFilters = fromSelectionFilters(filters);
+    const bounds = { from, to };
+    switch (scope.kind) {
+      case 'library': {
+        const library = this.libraries.getById(scope.id);
+        if (!library) throw new AppError('NOT_FOUND', `library not found: ${scope.id}`);
+        return this.photos.rangeInLibrary(scope.id, library.ordering, bounds, listFilters);
+      }
+      case 'shoot': {
+        const shoot = this.shoots.getById(scope.id);
+        if (!shoot) throw new AppError('NOT_FOUND', `shoot not found: ${scope.id}`);
+        return this.photos.rangeInShoot(scope.id, shoot.ordering, bounds, listFilters);
+      }
+      case 'album': {
+        const album = this.albums.getById(scope.id);
+        if (!album) throw new AppError('NOT_FOUND', `album not found: ${scope.id}`);
+        return this.photos.rangeInAlbum(scope.id, album.ordering, bounds, listFilters);
       }
     }
   }

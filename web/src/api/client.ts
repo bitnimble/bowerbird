@@ -13,6 +13,7 @@ import type {
   PhotoListResponse,
   PhotoNeighboursRequest,
   PhotoPositionsRequest,
+  PhotoRangeRequest,
   PhotoSelection,
   PhotoTarget,
   Triage,
@@ -243,6 +244,11 @@ export const api = {
   // another when the row lands.
   photoNeighbours: (body: PhotoNeighboursRequest, signal?: AbortSignal): Promise<PhotoSummary[]> =>
     request('POST', '/api/photos/neighbours', body, signal),
+  // The same listing asked for by its ends: hand it the photographs a stack lies
+  // between and it answers with the stack, so nothing on this side has to know
+  // which end of the collection's ordering is "after".
+  photoRange: (body: PhotoRangeRequest, signal?: AbortSignal): Promise<PhotoSummary[]> =>
+    request('POST', '/api/photos/range', body, signal),
 };
 
 // `version` is appended only once renditions have been rebuilt in this session:

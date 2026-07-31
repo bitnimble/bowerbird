@@ -1,5 +1,5 @@
 import { computed, observable } from 'mobx';
-import type { Ordering, PhotoSummary, Triage, ViewerRendition } from '../../api/client';
+import type { PhotoSummary, Triage, ViewerRendition } from '../../api/client';
 import { viewerUrl } from '../../api/client';
 import type { AppSettingsStore } from '../settings/app_settings_store';
 import type { LibrariesStore } from '../libraries/libraries_store';
@@ -64,6 +64,11 @@ export class StackTriageStore {
   @observable accessor mode: TriageMode = 'flip';
   /** Where to go back to. Recorded on entry and stored, so a reload still knows. */
   @observable accessor entryPhotoId: string | null = null;
+  // The photographs the stack lies between in the collection the session was
+  // entered from, read off the viewer's run at entry and stored with the session.
+  // Handing these to a range gives the stack back in the collection's own order,
+  // so nothing here has to know which end of that order is "after".
+  @observable.ref accessor bounds: { from: string | null; to: string | null } = { from: null, to: null };
   /** Photos whose triage write did not land. Reported rather than compensated (§20.2). */
   @observable accessor failed = new Set<string>();
   @observable accessor loadError: string | null = null;
@@ -222,38 +227,6 @@ export class StackTriageStore {
   roundOfEntry(index: number): Round | null {
     const entry = this.history[index];
     return entry == null ? null : nextRound(entry.session);
-  }
-
-  /**
-   * The photograph to come back to when the session is over: the survivor that
-   * sorts **last** in the collection's own order.
-   *
-   * Last, so that stepping on from it steps past the whole stack rather than back
-   * through the members that also survived - which is what the viewer walking
-   * every member (§19.5.3) makes possible and makes necessary. Which end that is
-   * depends on the ordering, so it is passed in rather than assumed.
-   *
-   * Null when nothing survived, which `Neither` on everything can do.
-   */
-  keeperFor(ordering: Ordering | null): PhotoSummary | null {
-    // Undated sorts last in the listing's own ordering, so it sorts last here.
-    const key = (photo: PhotoSummary): string => photo.ordering_date ?? '￿';
-    // Which end of the collection's order is "after the stack". The viewer walks
-    // members now (§19.5.3), so landing on the wrong end would step back through
-    // the other keepers before leaving the stack.
-    const descending = ordering === 'taken_desc' || ordering === 'added_desc';
-    let last: PhotoSummary | null = null;
-    for (const id of this.session?.alive ?? []) {
-      const photo = this.members.get(id);
-      if (photo == null) continue;
-      if (last == null) {
-        last = photo;
-        continue;
-      }
-      const after = key(photo) === key(last) ? photo.id > last.id : key(photo) > key(last);
-      if (after !== descending) last = photo;
-    }
-    return last;
   }
 
   /** Survivors that were never compared with anything, so nothing is claimed of them. */

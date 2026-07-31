@@ -199,6 +199,19 @@ export class PhotosPresenter {
     }
   }
 
+  /**
+   * Everything between two photographs of this collection, uncollapsed.
+   *
+   * The scope and the filters are this presenter's to know, so a caller hands over
+   * the two ends and nothing else - and gets the run back in the collection's own
+   * order, which is the answer it would otherwise have to work out for itself.
+   */
+  async rangeBetween(from: string | null, to: string | null): Promise<PhotoSummary[]> {
+    const source = this.store.source;
+    if (source == null) return [];
+    return api.photoRange({ scope: scopeOf(source), filters: this.selectionFilters(), from, to });
+  }
+
   async reload(): Promise<void> {
     if (this.store.source == null) return;
     await this.refresh();

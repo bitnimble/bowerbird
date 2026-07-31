@@ -5,6 +5,12 @@ import type { ViewerRendition } from '../../schemas/settings';
 import type { RenditionSource } from '../processing/processing_types';
 import { refreshRepresentative } from '../stacks/representative';
 
+/** Either end of a range of the listing, inclusive. Null is that end of the collection. */
+export interface RangeBounds {
+  from: string | null;
+  to: string | null;
+}
+
 /** Runs of positions in a filtered listing, both ends inclusive (§18.3.3). */
 export type SelectionRanges = readonly { start: number; end: number }[];
 
@@ -1203,6 +1209,108 @@ export class PhotosRepository {
       anchor,
       ...this.seek(where, params, ordering, anchor, 'forward', limit),
     ].map((row) => toSummary(row, ordering));
+  }
+
+  rangeInLibrary(libraryId: string, ordering: Ordering, bounds: RangeBounds, filters: PhotoListFilters): PhotoSummary[] {
+    return this.rangeAt('FROM photos WHERE library_id = ?', [libraryId], ordering, bounds, filters);
+  }
+
+  rangeInShoot(shootId: string, ordering: Ordering, bounds: RangeBounds, filters: PhotoListFilters): PhotoSummary[] {
+    return this.rangeAt('FROM photos WHERE shoot_id = ?', [shootId], ordering, bounds, filters);
+  }
+
+  rangeInAlbum(albumId: string, ordering: Ordering, bounds: RangeBounds, filters: PhotoListFilters): PhotoSummary[] {
+    return this.rangeAt(
+      'FROM photos JOIN album_photos ap ON ap.photo_id = photos.id WHERE ap.album_id = ?',
+      [albumId],
+      ordering,
+      bounds,
+      filters,
+    );
+  }
+
+  /**
+   * Everything between two photographs, inclusive, uncollapsed.
+   *
+   * The same listing `neighboursAt` walks, asked for by its ends rather than by a
+   * middle: a caller that already knows what sits either side of a run - the
+   * photographs a stack lies between, say - gets the run itself without having to
+   * know the collection's ordering, or which end of it is "after".
+   *
+   * Either bound may be null for the start or end of the collection. A bound that
+   * is not in the scope is treated as absent rather than as an error, because a
+   * caller holding an id from before a re-order should get a usable answer rather
+   * than a failure.
+   */
+  private rangeAt(
+    fromWhere: string,
+    baseParams: string[],
+    ordering: Ordering,
+    bounds: RangeBounds,
+    filters: PhotoListFilters,
+  ): PhotoSummary[] {
+    const anchorOf = (photoId: string | null): SummaryRow | null =>
+      photoId == null
+        ? null
+        : ((this.db.query(`SELECT ${SUMMARY_COLS} ${fromWhere} AND photos.id = ?`).get(...baseParams, photoId) ?? null) as
+            | SummaryRow
+            | null);
+    const from = anchorOf(bounds.from);
+    const to = anchorOf(bounds.to);
+
+    const { where, params } = this.scoped(fromWhere, baseParams, filters);
+    const clauses: string[] = [];
+    const args: (string | number)[] = [...params];
+    // Each bound is the same key comparison the seek uses, in the direction the
+    // ordering runs, so the two agree about what "between" means.
+    for (const [row, side] of [
+      [from, 'from'],
+      [to, 'to'],
+    ] as const) {
+      if (row == null) continue;
+      const bound = this.boundClause(ordering, row, side);
+      clauses.push(bound.sql);
+      args.push(...bound.params);
+    }
+
+    return (
+      this.db
+        .query(`SELECT ${SUMMARY_COLS} ${where}${clauses.length > 0 ? ` AND ${clauses.join(' AND ')}` : ''}
+         ORDER BY ${orderByClause(ordering)}`)
+        .all(...args) as SummaryRow[]
+    ).map((row) => toSummary(row, ordering));
+  }
+
+  /**
+   * One end of a range, as a comparison on the key the listing orders by.
+   *
+   * `from` keeps everything at or after its row, `to` everything at or before it,
+   * where "after" means later in this ordering rather than larger.
+   *
+   * `taken_*` sorts undated photographs last **in both directions** - the flag
+   * leads the ORDER BY and is always ascending - so the two groups have to be
+   * spelled out. A dated bound admits the whole undated tail on its after side and
+   * none of it on its before side; an undated bound admits every dated row on its
+   * before side and none on its after side. Within the tail the rows are ordered
+   * by id in the ordering's own direction, which is why the same comparison
+   * serves there too.
+   */
+  private boundClause(ordering: Ordering, row: SummaryRow, side: 'from' | 'to'): { sql: string; params: (string | number)[] } {
+    const ascending = ordering === 'taken_asc' || ordering === 'added_asc';
+    const keepsAfter = side === 'from';
+    const cmp = keepsAfter === ascending ? '>=' : '<=';
+
+    if (ordering === 'added_asc' || ordering === 'added_desc') {
+      return { sql: `(photos.date_added, photos.id) ${cmp} (?, ?)`, params: [row.date_added, row.id] };
+    }
+    if (row.date_taken == null) {
+      return keepsAfter
+        ? { sql: `(photos.date_taken IS NULL AND photos.id ${cmp} ?)`, params: [row.id] }
+        : { sql: `(photos.date_taken IS NOT NULL OR photos.id ${cmp} ?)`, params: [row.id] };
+    }
+    return keepsAfter
+      ? { sql: `(photos.date_taken IS NULL OR (photos.date_taken, photos.id) ${cmp} (?, ?))`, params: [row.date_taken, row.id] }
+      : { sql: `(photos.date_taken IS NOT NULL AND (photos.date_taken, photos.id) ${cmp} (?, ?))`, params: [row.date_taken, row.id] };
   }
 
   // `taken_*` sorts undated photographs last, so the listing is two groups and a

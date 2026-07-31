@@ -52,7 +52,7 @@ describe('the stored session', () => {
 
   test('carries the judged pairs back, so nothing already judged is re-offered', () => {
     const { session, history } = storedSession();
-    saveSession(STACK, { session, history, baseline: { p: 'untriaged', q: 'picked', r: 'untriaged' }, entryPhotoId: 'p', failed: [] });
+    saveSession(STACK, { session, history, baseline: { p: 'untriaged', q: 'picked', r: 'untriaged' }, entryPhotoId: 'p', bounds: { from: 'before', to: 'after' }, failed:[] });
 
     const loaded = loadSession(STACK);
     expect(loaded).not.toBeNull();
@@ -65,12 +65,15 @@ describe('the stored session', () => {
 
   test('carries the pool, the history, the baseline and the way back', () => {
     const { session, history } = storedSession();
-    saveSession(STACK, { session, history, baseline: { p: 'untriaged', q: 'picked', r: 'rejected' }, entryPhotoId: 'p', failed: ['q'] });
+    saveSession(STACK, { session, history, baseline: { p: 'untriaged', q: 'picked', r: 'rejected' }, entryPhotoId: 'p', bounds: { from: 'before', to: 'after' }, failed:['q'] });
 
     const loaded = loadSession(STACK);
     expect(loaded?.session.alive).toEqual([...session.alive]);
     expect(loaded?.session.stopped).toBe(session.stopped);
     expect(loaded?.entryPhotoId).toBe('p');
+    // The ends of the range the jump out is asked for as, which a reload has no
+    // other way of knowing.
+    expect(loaded?.bounds).toEqual({ from: 'before', to: 'after' });
     expect(loaded?.failed).toEqual(['q']);
     expect(loaded?.baseline).toEqual({ p: 'untriaged', q: 'picked', r: 'rejected' });
     expect(loaded?.history).toHaveLength(history.length);
@@ -96,7 +99,7 @@ describe('the stored session', () => {
 
   test('is gone once cleared, and absent for a stack that never had one', () => {
     const { session, history } = storedSession();
-    saveSession(STACK, { session, history, baseline: {}, entryPhotoId: null, failed: [] });
+    saveSession(STACK, { session, history, baseline: {}, entryPhotoId: null, bounds: { from: null, to: null }, failed: [] });
     clearSession(STACK);
     expect(loadSession(STACK)).toBeNull();
     expect(loadSession('never-triaged')).toBeNull();

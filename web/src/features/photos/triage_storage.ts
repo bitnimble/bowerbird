@@ -33,6 +33,8 @@ interface StoredSession {
   /** Each member's triage when the session opened: what every restore targets. */
   baseline: Record<string, Triage>;
   entryPhotoId: string | null;
+  /** The photographs the stack lies between, for the jump out (§20.6). */
+  bounds: { from: string | null; to: string | null };
   /** Photos whose write did not land, so the summary can still offer a retry. */
   failed: string[];
 }
@@ -76,6 +78,7 @@ export function saveSession(stackId: string, stored: StoredSession): void {
         history: stored.history.slice(-HISTORY_LIMIT).map((entry) => ({ ...entry, session: toWire(entry.session) })),
         baseline: stored.baseline,
         entryPhotoId: stored.entryPhotoId,
+        bounds: stored.bounds,
         failed: stored.failed,
       }),
     );
@@ -123,11 +126,19 @@ export function loadSession(stackId: string): StoredSession | null {
       history,
       baseline,
       entryPhotoId: typeof parsed.entryPhotoId === 'string' ? parsed.entryPhotoId : null,
+      bounds: asBounds(parsed.bounds),
       failed: Array.isArray(parsed.failed) ? parsed.failed.filter((id): id is string => typeof id === 'string') : [],
     };
   } catch {
     return null;
   }
+}
+
+function asBounds(value: unknown): StoredSession['bounds'] {
+  const id = (held: unknown): string | null => (typeof held === 'string' ? held : null);
+  if (value == null || typeof value !== 'object') return { from: null, to: null };
+  const { from, to } = value as Record<string, unknown>;
+  return { from: id(from), to: id(to) };
 }
 
 function asChoice(value: unknown): HistoryEntry['choice'] {

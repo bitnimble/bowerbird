@@ -184,6 +184,105 @@ describe('stepping through a collection', () => {
     expect(run.map((photo) => photo.id)).toEqual(inShoot);
   });
 
+  // Asked for by its ends rather than by a middle, for a caller that already knows
+  // what sits either side of a run - the photographs a stack lies between - and
+  // would otherwise have to know the collection's ordering to say which end of it
+  // is "after".
+  describe('a range', () => {
+    test('is everything between its bounds, in every ordering', () => {
+      const { db, photos } = context;
+      const ids = [1, 2, 3, 4, 5].map((n) => insert(db, n));
+
+      for (const ordering of ORDERINGS) {
+        const whole = photos.rangeInLibrary(LIBRARY, ordering, { from: null, to: null }, NO_FILTERS).map((p) => p.id);
+        expect(whole, ordering).toHaveLength(5);
+
+        // Bounded by the two photographs either side of the middle three, given in
+        // the collection's own order - which is what a caller reads off a listing.
+        const inner = photos
+          .rangeInLibrary(LIBRARY, ordering, { from: whole[0]!, to: whole[4]! }, NO_FILTERS)
+          .map((p) => p.id);
+        expect(inner, ordering).toEqual(whole);
+
+        const middle = photos.rangeInLibrary(LIBRARY, ordering, { from: whole[1]!, to: whole[3]! }, NO_FILTERS).map((p) => p.id);
+        expect(middle, ordering).toEqual(whole.slice(1, 4));
+      }
+      void ids;
+    });
+
+    // What the return jump is: the photographs a stack lies between, and the last
+    // survivor is the one before the trailing bound.
+    test('spans a stack, so the photo before its trailing bound is its last member', () => {
+      const { db, photos, stacks } = context;
+      const before = insert(db, 1);
+      const members = [2, 3, 4].map((n) => insert(db, n));
+      stacks.create(members);
+      const after = insert(db, 5);
+
+      const run = photos.rangeInLibrary(LIBRARY, 'taken_asc', { from: before, to: after }, NO_FILTERS);
+      expect(run.map((p) => p.id)).toEqual([before, ...members, after]);
+      expect(run[run.length - 2]?.id).toBe(members[2]!);
+
+      // And under the opposite ordering the bounds swap round, so the caller does
+      // not have to know which is which: the last member is still N-1.
+      const reversed = photos.rangeInLibrary(LIBRARY, 'taken_desc', { from: after, to: before }, NO_FILTERS);
+      expect(reversed.map((p) => p.id)).toEqual([after, ...[...members].reverse(), before]);
+      expect(reversed[reversed.length - 2]?.id).toBe(members[0]!);
+    });
+
+    test('honours the filters, so a rejected member is not the one jumped to', () => {
+      const { db, photos, stacks } = context;
+      const before = insert(db, 1);
+      const members = [2, 3, 4].map((n) => insert(db, n));
+      stacks.create(members);
+      const after = insert(db, 5);
+      db.query("UPDATE photos SET triage = 'rejected' WHERE id = ?").run(members[2]!);
+      const active = { includeDeleted: false, triage: ['untriaged' as const, 'picked' as const] };
+
+      const run = photos.rangeInLibrary(LIBRARY, 'taken_asc', { from: before, to: after }, active);
+      expect(run.map((p) => p.id)).toEqual([before, members[0]!, members[1]!, after]);
+      expect(run[run.length - 2]?.id).toBe(members[1]!);
+    });
+
+    test('crosses the undated boundary from either side', () => {
+      const { db, photos } = context;
+      const dated = [1, 2].map((n) => insert(db, n));
+      const undated = [3, 4].map((n) => insert(db, n, { minute: null }));
+
+      expect(photos.rangeInLibrary(LIBRARY, 'taken_asc', { from: dated[0]!, to: undated[1]! }, NO_FILTERS).map((p) => p.id)).toEqual([
+        ...dated,
+        ...undated,
+      ]);
+      expect(photos.rangeInLibrary(LIBRARY, 'taken_asc', { from: dated[1]!, to: undated[0]! }, NO_FILTERS).map((p) => p.id)).toEqual([
+        dated[1]!,
+        undated[0]!,
+      ]);
+      // An open end runs to the end of the collection, undated tail included.
+      expect(photos.rangeInLibrary(LIBRARY, 'taken_asc', { from: undated[0]!, to: null }, NO_FILTERS).map((p) => p.id)).toEqual(undated);
+      // The tail sorts last under `taken_desc` too - the flag leads the ORDER BY
+      // and is always ascending - so bounding at the earliest dated photograph
+      // stops before it rather than sweeping it in.
+      expect(photos.rangeInLibrary(LIBRARY, 'taken_desc', { from: null, to: dated[0]! }, NO_FILTERS).map((p) => p.id)).toEqual([
+        dated[1]!,
+        dated[0]!,
+      ]);
+      expect(photos.rangeInLibrary(LIBRARY, 'taken_desc', { from: null, to: undated[0]! }, NO_FILTERS).map((p) => p.id)).toEqual([
+        dated[1]!,
+        dated[0]!,
+        undated[1]!,
+        undated[0]!,
+      ]);
+    });
+
+    test('treats a bound outside the collection as absent rather than failing', () => {
+      const { db, photos } = context;
+      const ids = [1, 2].map((n) => insert(db, n));
+      const elsewhere = insert(db, 3, { libraryId: OTHER });
+
+      expect(photos.rangeInLibrary(LIBRARY, 'taken_asc', { from: elsewhere, to: null }, NO_FILTERS).map((p) => p.id)).toEqual(ids);
+    });
+  });
+
   test('the window is bounded, and centred on the photo asked about', () => {
     const { db, photos } = context;
     const ids = Array.from({ length: 40 }, (_, i) => insert(db, i + 1));
