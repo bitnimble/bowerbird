@@ -401,7 +401,7 @@ fn to_srgb8(linear: f64) -> u8 {
     (crate::hdr_fit::srgb_oetf(linear.clamp(0.0, 1.0)) * 255.0).round() as u8
 }
 
-/// The gain the pairs ask for, given a colour transform fitted under the current one.
+/// The gain the pairs ask for, given a luma curve fitted under the current one.
 ///
 /// Run backwards rather than searched, which is one pass where a search over candidate
 /// gains would be one pass each (10.8).
@@ -410,9 +410,15 @@ fn to_srgb8(linear: f64) -> u8 {
 /// inverted target lands in gained-source levels and the pair's own source is
 /// ungained, so their ratio is the whole of what the gain has to supply. An
 /// increment would have to compose, and two of these do not compose into one.
-fn refit_gain(pairs: &Pairs, phase: Phase, colour: &ColourTransform) -> Option<(f64, f64)> {
-    let inverse = invert3(colour.matrix)?;
-    let back: Vec<[u8; 256]> = (0..3).map(|c| invert_curve(&colour.curves[c])).collect();
+///
+/// Against luma rather than a colour transform, for the reason the geometry search
+/// scores luma: `Gain` is one achromatic scalar per radius and cannot express a cast, so
+/// all the transform was ever doing here was undoing the tone difference between the two
+/// images, which one curve does. Measured against the camera's own falloff on the two
+/// frames the arms disagreed most about, the two land within a few percent of each other
+/// and both far inside no correction at all.
+fn refit_gain(pairs: &Pairs, phase: Phase, curve: &[u8; 256]) -> Option<(f64, f64)> {
+    let back = invert_curve(curve);
     let linear = linear_table();
 
     const BINS: usize = 12;
@@ -432,41 +438,17 @@ fn refit_gain(pairs: &Pairs, phase: Phase, colour: &ColourTransform) -> Option<(
         p += 2;
         let radius = pairs.data[o + RADIUS];
         let bin = (radius as usize * BINS / 256).min(BINS - 1);
-        let t = [
-            pairs.data[o + 3] as f64,
-            pairs.data[o + 4] as f64,
-            pairs.data[o + 5] as f64,
-        ];
         // A level the curve never reached inverts to a clamp rather than a mapping,
         // so those are dropped rather than believed.
-        let mut source = [0u8; 3];
-        let mut usable = true;
-        for c in 0..3 {
-            let mixed = inverse[c][0] * t[0] + inverse[c][1] * t[1] + inverse[c][2] * t[2];
-            if !(2.0..=253.0).contains(&mixed) {
-                usable = false;
-                break;
-            }
-            source[c] = back[c][mixed.round() as usize];
-            if source[c] <= 1 || source[c] >= 254 {
-                usable = false;
-                break;
-            }
-        }
-        if !usable {
+        let target = luma8(pairs.data[o + 3], pairs.data[o + 4], pairs.data[o + 5]);
+        let source = back[target as usize];
+        if source <= 1 || source >= 254 {
             continue;
         }
-        let luma = |v: [f64; 3]| 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2];
-        let want = luma([
-            linear[source[0] as usize],
-            linear[source[1] as usize],
-            linear[source[2] as usize],
-        ]);
-        let is = luma([
-            linear[pairs.data[o] as usize],
-            linear[pairs.data[o + 1] as usize],
-            linear[pairs.data[o + 2] as usize],
-        ]);
+        // Both sides linearised the same way, since what the bin wants is a ratio of
+        // light: `Gain` multiplies in linear light and these levels are sRGB-encoded.
+        let want = linear[source as usize];
+        let is = linear[source_luma(pairs, o) as usize];
         if is < 0.002 || want < 0.002 {
             continue;
         }
@@ -520,55 +502,55 @@ fn invert_curve(curve: &[u8; 256]) -> [u8; 256] {
     back
 }
 
-fn invert3(m: [[f64; 3]; 3]) -> Option<[[f64; 3]; 3]> {
-    let det = m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
-        - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
-        + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
-    if det.abs() < 1e-9 {
-        return None;
-    }
-    let mut out = [[0.0f64; 3]; 3];
-    for row in 0..3 {
-        for col in 0..3 {
-            let (r0, r1) = ((col + 1) % 3, (col + 2) % 3);
-            let (c0, c1) = ((row + 1) % 3, (row + 2) % 3);
-            out[row][col] = (m[r0][c0] * m[r1][c1] - m[r0][c1] * m[r1][c0]) / det;
-        }
-    }
-    Some(out)
-}
 
-/// The gain and the colour transform together, alternating: neither can be fitted
-/// without the other, since a falloff looks like a tone difference to a curve and a
-/// tone difference looks like falloff to a gain.
+/// How much the first falloff has to buy before it is believed at all.
+///
+/// Two free parameters fitted to one frame will always find something, and a plain
+/// improvement gate is not enough to stop them: over the 35-frame set the falloffs that
+/// are really there buy at least 6.3% of the held-out luma score on their first round,
+/// where the three frames that invented one bought 0.2%, 0.4% and 2.5%. Nothing lands
+/// between, so this sits in the gap.
+const GAIN_MARGIN: f64 = 0.04;
+
+/// The gain and a luma curve together, alternating: neither can be fitted without the
+/// other, since a falloff looks like a tone difference to a curve and a tone difference
+/// looks like falloff to a gain.
 ///
 /// The gain is None where the frame is better off without one, which is the point of
 /// the gate: a body that corrected no falloff would otherwise have two free
 /// parameters fitted to its noise. Judged on the pairs the round was not fitted on,
 /// for exactly that reason - extra free parameters can only ever look better on their
-/// own. The returned deltaE is that same held-out score, so the caller does not pay a
-/// second pass to learn what this already measured.
-fn fit_gain_and_colour(pairs: &Pairs, phase: Phase) -> (Option<Gain>, ColourTransform, f64) {
+/// own.
+///
+/// The margin applies only to the first round, which is the one deciding whether this
+/// frame has a falloff at all. The rounds after it are refining a falloff already
+/// believed in, and asking each of them for another 4% would stop the refinement that
+/// exists because the first round's curve still had some of the falloff in it.
+fn fit_gain(pairs: &Pairs, phase: Phase) -> Option<Gain> {
     let held = phase.held_out();
-    let mut colour = fit_colour(pairs, phase, None);
-    let mut best = score(pairs, held, None, &colour);
+    let mut curve = fit_luma_curve(pairs, phase, None);
+    let mut best = score_luma(pairs, held, None, &curve);
     let mut gain: Option<Gain> = None;
-    // Three, because the first round's curves were fitted with the falloff still in
-    // them and so partly absorb it - measured on an injected 0.65 corner, one round
+    // Three, because the first round's curve was fitted with the falloff still in it
+    // and so partly absorbs it - measured on an injected 0.65 corner, one round
     // recovers 0.78 and the next two land it.
     for _ in 0..3 {
-        let Some((a, b)) = refit_gain(pairs, phase, &colour) else { break };
+        let Some((a, b)) = refit_gain(pairs, phase, &curve) else { break };
         let candidate = Gain::from_poly(a, b);
-        let fitted = fit_colour(pairs, phase, Some(&candidate));
-        let delta = score(pairs, held, Some(&candidate), &fitted);
-        if delta >= best {
+        let fitted = fit_luma_curve(pairs, phase, Some(&candidate));
+        let delta = score_luma(pairs, held, Some(&candidate), &fitted);
+        let bar = match gain {
+            None => best * (1.0 - GAIN_MARGIN),
+            Some(_) => best,
+        };
+        if !(delta < bar) {
             break;
         }
         best = delta;
         gain = Some(candidate);
-        colour = fitted;
+        curve = fitted;
     }
-    (gain, colour, best)
+    gain
 }
 
 /// Per-channel curves then a 3x3 mix. Deliberately not a 3D LUT: measured against
@@ -718,8 +700,8 @@ fn score(pairs: &Pairs, phase: Phase, gain: Option<&Gain>, transform: &ColourTra
 /// by a mean 0.0119 and deltaE by 0.0134, on an identical median. Luma is ~45% faster.
 fn residual_for(grid: &Grid, knots: &[f64], crop: f64) -> Option<f64> {
     let all = corresponding(grid, knots, crop)?;
-    let curve = fit_luma_curve(&all, Phase::Train);
-    Some(score_luma(&all, Phase::Test, &curve))
+    let curve = fit_luma_curve(&all, Phase::Train, None);
+    Some(score_luma(&all, Phase::Test, None, &curve))
 }
 
 /// BT.709 luma of a display-referred triple, in the same 8-bit levels the pair holds.
@@ -732,13 +714,19 @@ fn luma8(r: u8, g: u8, b: u8) -> u8 {
     (0.2126 * r as f64 + 0.7152 * g as f64 + 0.0722 * b as f64).round() as u8
 }
 
-fn fit_luma_curve(pairs: &Pairs, phase: Phase) -> [u8; 256] {
+/// The render's luma, before any falloff is put back into it.
+#[inline]
+fn source_luma(pairs: &Pairs, o: usize) -> u8 {
+    luma8(pairs.data[o], pairs.data[o + 1], pairs.data[o + 2])
+}
+
+fn fit_luma_curve(pairs: &Pairs, phase: Phase, gain: Option<&Gain>) -> [u8; 256] {
     let mut sum = [0.0f64; 256];
     let mut count = [0.0f64; 256];
     let mut p = phase as usize;
     while p < pairs.count {
         let o = p * PAIR_STRIDE;
-        let level = luma8(pairs.data[o], pairs.data[o + 1], pairs.data[o + 2]) as usize;
+        let level = Gain::of(gain, pairs.data[o + RADIUS], source_luma(pairs, o)) as usize;
         sum[level] += luma8(pairs.data[o + 3], pairs.data[o + 4], pairs.data[o + 5]) as f64;
         count[level] += 1.0;
         p += 2;
@@ -748,15 +736,15 @@ fn fit_luma_curve(pairs: &Pairs, phase: Phase) -> [u8; 256] {
 
 /// Mean luma error over held-out pairs, scaled into L*-sized units so `REFINE_MARGIN`
 /// and `REFINE_FLOOR` mean what they meant when this was scored in deltaE.
-fn score_luma(pairs: &Pairs, phase: Phase, curve: &[u8; 256]) -> f64 {
+fn score_luma(pairs: &Pairs, phase: Phase, gain: Option<&Gain>, curve: &[u8; 256]) -> f64 {
     let mut total = 0.0;
     let mut counted = 0usize;
     let mut p = phase as usize;
     while p < pairs.count {
         let o = p * PAIR_STRIDE;
-        let source = curve[luma8(pairs.data[o], pairs.data[o + 1], pairs.data[o + 2]) as usize];
+        let level = Gain::of(gain, pairs.data[o + RADIUS], source_luma(pairs, o)) as usize;
         let target = luma8(pairs.data[o + 3], pairs.data[o + 4], pairs.data[o + 5]);
-        total += (source as f64 - target as f64).abs();
+        total += (curve[level] as f64 - target as f64).abs();
         counted += 1;
         p += 2;
     }
@@ -785,7 +773,9 @@ fn corresponding(grid: &Grid, knots: &[f64], crop: f64) -> Option<Pairs> {
 /// common to all of them does not change.
 fn residual_with_gain(grid: &Grid, knots: &[f64], crop: f64) -> Option<(f64, ColourTransform, Option<Gain>)> {
     let all = corresponding(grid, knots, crop)?;
-    let (gain, colour, delta) = fit_gain_and_colour(&all, Phase::Train);
+    let gain = fit_gain(&all, Phase::Train);
+    let colour = fit_colour(&all, Phase::Train, gain.as_ref());
+    let delta = score(&all, Phase::Test, gain.as_ref(), &colour);
     Some((delta, colour, gain))
 }
 
@@ -1167,7 +1157,7 @@ mod tests {
                 count += 1;
             }
         }
-        let curve = fit_luma_curve(&Pairs { data, count }, Phase::Train);
+        let curve = fit_luma_curve(&Pairs { data, count }, Phase::Train, None);
         for level in [10usize, 80, 200] {
             let expected = (level as f64 * 0.75 + 20.0).min(255.0);
             assert!(
@@ -1192,12 +1182,12 @@ mod tests {
             }
         }
         let pairs = Pairs { data, count };
-        let curve = fit_luma_curve(&pairs, Phase::Train);
+        let curve = fit_luma_curve(&pairs, Phase::Train, None);
         // One level of rounding is 100/255 of a unit, so anything under that is exact.
-        assert!(score_luma(&pairs, Phase::Test, &curve) < 100.0 / 255.0);
+        assert!(score_luma(&pairs, Phase::Test, None, &curve) < 100.0 / 255.0);
 
         let identity = ColourTransform::identity().curves[0];
-        assert!(score_luma(&pairs, Phase::Test, &identity) > 5.0, "an unfitted curve must score badly");
+        assert!(score_luma(&pairs, Phase::Test, None, &identity) > 5.0, "an unfitted curve must score badly");
     }
 
     /// BT.709, not an average: a frame's green carries most of its luma, and getting
