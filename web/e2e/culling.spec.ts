@@ -529,7 +529,11 @@ test('a chosen rendition is cached on disk, and survives a tile rebuild', async 
 
   const renditionPanel = page.locator('.panel', { hasText: 'RENDITION DETAILS' });
   await showRendition('Rendered RAW');
+  // A build made on request is covered over the photograph while it runs, so the
+  // frame underneath is not mistaken for the one that was asked for.
+  await expect(page.locator('.stage__busy')).toContainText('Rendering');
   await expect(renditionPanel.getByText('Rendered RAW')).toBeVisible({ timeout: 60_000 });
+  await expect(page.locator('.stage__busy')).toBeHidden();
   await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
 
   // The photo's own renditions are the embedded rendition, so only the render had
