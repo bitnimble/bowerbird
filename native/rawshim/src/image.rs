@@ -155,6 +155,10 @@ pub fn warp(source: RgbRef<'_>, width: usize, height: usize, knots: &[f64], crop
 /// A row at a time across cores. `warp` deliberately is not: it runs inside the fit's
 /// own candidate scan, which is already parallel.
 #[allow(clippy::too_many_arguments)]
+/// `falloff` is applied in the same sweep rather than by the caller afterwards. It is
+/// pointwise on what the warp gathered and indexed by the output pixel's own radius,
+/// which this loop has already, so a second pass over a 16-bit frame bought nothing -
+/// measured, a quarter of what warping one costs.
 pub fn warp_planar<T: Copy + Default + Send + Sync>(
     src: &[T],
     source_width: usize,
@@ -163,6 +167,7 @@ pub fn warp_planar<T: Copy + Default + Send + Sync>(
     height: usize,
     knots: &[f64],
     crop: f64,
+    falloff: Option<(f64, f64)>,
     to_f64: impl Fn(T) -> f64 + Sync,
     from_f64: impl Fn(f64) -> T + Sync,
 ) -> Vec<T> {
@@ -189,16 +194,26 @@ pub fn warp_planar<T: Copy + Default + Send + Sync>(
             if px < 0.0 || py < 0.0 || px >= edge_x || py >= edge_y {
                 continue;
             }
+            // `dx` and `dy` are already in halves of the diagonal, which is the currency
+            // the falloff is indexed in, so its radius costs a square root and no more.
+            let lift = match falloff {
+                None => 1.0,
+                Some((a, b)) => {
+                    let at = (((dx * dx + dy2).sqrt()) * 255.0).min(255.0) as u8;
+                    crate::fit::Gain::at(a, b, at)
+                }
+            };
             let (x0, y0) = (px as usize, py as usize);
             let (fx, fy) = (px - x0 as f64, py - y0 as f64);
             let i00 = (y0 * sw + x0) * 3;
             let i01 = i00 + sw * 3;
             for c in 0..3 {
                 row[x * 3 + c] = from_f64(
-                    to_f64(src[i00 + c]) * (1.0 - fx) * (1.0 - fy)
+                    (to_f64(src[i00 + c]) * (1.0 - fx) * (1.0 - fy)
                         + to_f64(src[i00 + 3 + c]) * fx * (1.0 - fy)
                         + to_f64(src[i01 + c]) * (1.0 - fx) * fy
-                        + to_f64(src[i01 + 3 + c]) * fx * fy,
+                        + to_f64(src[i01 + 3 + c]) * fx * fy)
+                        * lift,
                 );
             }
         }
@@ -1179,6 +1194,7 @@ mod tests {
             24,
             &knots,
             0.98,
+            None,
             |v| f64::from(v),
             |v| v as u8,
         );

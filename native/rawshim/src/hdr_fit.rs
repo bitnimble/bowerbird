@@ -2066,19 +2066,25 @@ pub fn apply_lens(samples: &[u16], width: usize, height: usize, m: &HdrMatch) ->
         return None;
     }
     let mut out = match &m.lens.distortion {
-        Some(knots) => warp_planar(
-            samples,
-            width,
-            height,
-            width,
-            height,
-            knots,
-            m.lens.crop,
-            |v| f64::from(v),
-            |v| v.clamp(0.0, 65535.0) as u16,
-        ),
+        // The falloff rides along, since the warp is already visiting every pixel with
+        // its radius to hand.
+        Some(knots) => {
+            return Some(warp_planar(
+                samples,
+                width,
+                height,
+                width,
+                height,
+                knots,
+                m.lens.crop,
+                m.lens.falloff,
+                |v| f64::from(v),
+                |v| v.clamp(0.0, 65535.0) as u16,
+            ));
+        }
         None => samples.to_vec(),
     };
+    // Only a frame the lens left straight still needs a pass of its own.
     if let Some((a, b)) = m.lens.falloff {
         let (cx, cy) = (width as f64 / 2.0, height as f64 / 2.0);
         let half = (cx * cx + cy * cy).sqrt().max(1.0);
@@ -2184,7 +2190,7 @@ fn fit_model_planes(
     // aliases going in and blurs the geometry going out - and measured, it took the fit
     // from under a second to 17.
     let warped = match &lens.distortion {
-        Some(knots) => warp_planar(&small, wide, tall, wide, tall, knots, lens.crop, |v| v, |v| v),
+        Some(knots) => warp_planar(&small, wide, tall, wide, tall, knots, lens.crop, None, |v| v, |v| v),
         None => small,
     };
 
