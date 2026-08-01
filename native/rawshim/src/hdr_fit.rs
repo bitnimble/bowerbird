@@ -658,15 +658,21 @@ fn srgb_edges() -> [f64; 255] {
     })
 }
 
-/// Entries of the guess table `to_levels` starts from, indexed by the square root of the
-/// linear value so the shadows - where the transfer is steepest in level per unit of
-/// light - get the resolution, and one step of the table is under one level everywhere.
-const LEVEL_GUESSES: usize = 8192;
+/// The guess table `to_levels` starts from, indexed by the top bits of the value itself.
+///
+/// A float's bit pattern is monotone in the float for positives, so the top bits are an
+/// index that needs a shift where a square root of it needed `sqrtsd` - and the shadows
+/// still get the resolution, since those bits are exponent first. A bucket spans about
+/// 0.4% of a value either way, which is under one level everywhere, and the walk in
+/// `to_levels` covers the rest. Any monotone index would do here: the walk is what makes
+/// the answer right, the table only decides how far it has to go.
+const LEVEL_SHIFT: u32 = 44;
+const LEVEL_GUESSES: usize = (1.0f64.to_bits() >> LEVEL_SHIFT) as usize + 1;
 
 fn level_guesses(edges: &[f64; 255]) -> Vec<u8> {
     (0..LEVEL_GUESSES)
         .map(|i| {
-            let v = (i as f64 / (LEVEL_GUESSES - 1) as f64).powi(2);
+            let v = f64::from_bits((i as u64) << LEVEL_SHIFT);
             edges.partition_point(|e| *e <= v) as u8
         })
         .collect()
@@ -682,14 +688,17 @@ fn to_levels(
 ) -> [u8; 3] {
     let v = apply3(to_srgb, r, g, b);
     [0, 1, 2].map(|c| {
-        // Clamped for the reason `srgb_oetf` clamps: out of gamut is refused rather than
-        // encoded, and there is nothing to say about a level outside the range.
-        let value = v[c].clamp(0.0, 1.0);
+        // Bounded for the reason `srgb_oetf` clamps: out of gamut is refused rather than
+        // encoded, and there is nothing to say about a level outside the range. Written
+        // as a test on the value rather than `clamp` so that negative zero - which the
+        // matrix does produce, and which `clamp` passes through unchanged - lands on
+        // positive zero. Indexing on its bits otherwise reads far past the table.
+        let value = if v[c] > 0.0 { v[c].min(1.0) } else { 0.0 };
         // A guess, then walked to the answer. Bisecting the 255 edges instead is eight
         // unpredictable branches per channel and the guess is almost always already
         // right, so this is a square root and a lookup where that was two dozen
         // mispredictions per pair.
-        let mut level = guesses[(value.sqrt() * (LEVEL_GUESSES - 1) as f64) as usize];
+        let mut level = guesses[(value.to_bits() >> LEVEL_SHIFT) as usize];
         while level > 0 && edges[level as usize - 1] > value {
             level -= 1;
         }
@@ -1381,7 +1390,6 @@ fn fitted_matrix_for(
             }
         }
     }
-
     fitted_matrix(&moments, |candidates| {
         let trials: Vec<HdrColour> = candidates
             .iter()
@@ -1519,8 +1527,9 @@ fn fitted_saturation(colour: &HdrColour, render: &Plane, pairs: &Pairs) -> f64 {
         }
     }
 
+    // `swept[0]` is neutral, probed at the top and not probed again here.
     let found = (lo + hi) / 2.0;
-    match scored(found) + NEUTRAL_MARGIN < scored(1.0) {
+    match scored(found) + NEUTRAL_MARGIN < swept[0].1 {
         true => found,
         false => 1.0,
     }
@@ -1565,10 +1574,29 @@ fn fit_colour(render: &Plane, jpeg: &Plane) -> Option<HdrColour> {
     // region against the camera - the bird bath, the brick, the fur, the pot - the free
     // fit is closer on three and level on the fourth. The whole-frame number the margin
     // was justified by is dominated by lawn.
-    Some(match drift(&free, render, jpeg) < drift(&held, render, jpeg) {
+    let mut colour = match drift(&free, render, jpeg) < drift(&held, render, jpeg) {
         true => free,
         false => held,
-    })
+    };
+
+    // One scalar on top, because a 3x3 cannot express a saturation that varies with
+    // level and the camera's does. It stays one number for the reason on the field
+    // itself.
+    //
+    // After the arm is chosen rather than inside each, because only the winner's is kept
+    // and the search is the most expensive stage in the fit - a third of the fit's work
+    // was going into a model about to be thrown away.
+    //
+    // It does move the comparison above, which no longer sees the blend: four frames of
+    // the 35-frame set change arm, and all four come out closer to the camera for it -
+    // IMG_5461 2.43 to 1.90, IMG_0275 3.02 to 2.79, IMG_8274 1.68 to 1.49, the set's
+    // mean 1.628 to 1.601. That reads like the cleaner question rather than luck: drift
+    // is about what the tone stage does across levels, and a scalar on chroma is not
+    // that - it is the same number everywhere, so all it adds to the comparison is a
+    // per-hue offset that has nothing to do with the constraint being judged.
+    colour.saturation = fitted_saturation(&colour, render, &pairs);
+    colour.delta_e = measure(&colour, render, &pairs).0;
+    Some(colour)
 }
 
 fn fit_model(
@@ -1616,10 +1644,6 @@ fn fit_model(
         grey_balance(&mut colour, render, pairs);
     }
 
-    // One scalar on top, because a 3x3 cannot express a saturation that varies with
-    // level and the camera's does. It stays one number for the reason on the field itself.
-    colour.saturation = fitted_saturation(&colour, render, pairs);
-    colour.delta_e = measure(&colour, render, pairs).0;
     colour
 }
 
@@ -2046,6 +2070,17 @@ mod tests {
             let got = to_levels(&identity, &edges, &guesses, v, v, v);
             assert_eq!(got[0], want, "at {v}");
         }
+        // Negative zero reaches here from the matrix, and it indexes on its bits: it
+        // carries the sign bit, so read as an index it lands far outside the table. The
+        // panic that follows is caught by `guard`, which reports no match at all, so the
+        // frame quietly renders unmatched rather than crashing - four of the 35-frame
+        // set did exactly that.
+        for value in [-0.0f64, 0.0, -1e-30, f64::NAN, -5.0, 5.0] {
+            let got = to_levels(&identity, &edges, &guesses, value, value, value);
+            let want = (255.0 * srgb_oetf(if value.is_nan() { 0.0 } else { value })).round() as u8;
+            assert_eq!(got[0], want, "at {value}");
+        }
+
         // And on the boundaries themselves, which is where the two could disagree.
         for (k, edge) in edges.iter().enumerate() {
             let want = (255.0 * srgb_oetf(*edge)).round() as u8;
