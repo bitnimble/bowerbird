@@ -330,15 +330,15 @@ pub extern "C" fn bb_selftest() -> i32 {
         data: (0..width * height * 3).map(|i| (i % 251) as u8).collect(),
     };
 
-    let mut colour = fit::ColourTransform::identity();
+    let mut colour = crate::hdr_fit::HdrColour::identity();
     colour.matrix = [[0.9, 0.05, 0.05], [0.1, 0.8, 0.1], [0.0, 0.02, 0.98]];
+    colour.chroma = Some(crate::hdr_fit::ChromaMap::from_saturation(1.1));
     let profile = Profile {
         knots: Some(crate::image::polynomial_knots(-0.02, 0.0, 16)),
         gain: Some(fit::Gain::from_poly(0.3, -0.05)),
         crop: 0.99,
         source: 2,
-        delta_e: 0.0,
-        colour,
+        colour: Some(colour),
     };
 
     let graded = fit::apply(source.as_ref(), &profile);

@@ -71,26 +71,6 @@ struct Pairs {
     count: usize,
 }
 
-#[derive(Clone)]
-pub struct ColourTransform {
-    pub curves: [[u8; 256]; 3],
-    pub matrix: [[f64; 3]; 3],
-}
-
-impl ColourTransform {
-    /// A fit always produces a real transform; this is for the self-test and the
-    /// tests, both of which need a known-good profile rather than a fitted one.
-    pub fn identity() -> Self {
-        let mut curves = [[0u8; 256]; 3];
-        for curve in &mut curves {
-            for (level, slot) in curve.iter_mut().enumerate() {
-                *slot = level as u8;
-            }
-        }
-        ColourTransform { curves, matrix: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]] }
-    }
-}
-
 /// What is known about the geometry before any searching.
 pub enum Geometry {
     /// The body states it applied no correction, so its preview needs none undone.
@@ -145,8 +125,10 @@ pub struct Profile {
     /// re-cut when the cascade changes under it, and so the fit can be judged by
     /// where its geometry came from.
     pub source: u32,
-    pub delta_e: f64,
-    pub colour: ColourTransform,
+    /// The camera's colour treatment, or None where the lens was resolved but the colour
+    /// was refused - too few pairs to fit from, or a fit too far from the camera to
+    /// trust. The render then ships with its geometry corrected and its colour its own.
+    pub colour: Option<crate::hdr_fit::HdrColour>,
 }
 
 impl Profile {
@@ -216,24 +198,6 @@ fn pairs(render: &Rgb, jpeg: &Rgb) -> Pairs {
     Pairs { data, count }
 }
 
-/// One channel's tone curve, as the mean target for each input level. Gaps are
-/// interpolated, the ends extend at the last known slope rather than flattening
-/// (which would crush every highlight the frame happened not to sample), and the
-/// result is made monotone so a thinly-populated bin cannot invert it.
-fn fit_curve(pairs: &Pairs, phase: Phase, gain: Option<&Gain>, channel: usize) -> [u8; 256] {
-    let mut sum = [0.0f64; 256];
-    let mut count = [0.0f64; 256];
-    let mut p = phase as usize;
-    while p < pairs.count {
-        let o = p * PAIR_STRIDE;
-        let level = Gain::of(gain, pairs.data[o + RADIUS], pairs.data[o + channel]) as usize;
-        sum[level] += pairs.data[o + 3 + channel] as f64;
-        count[level] += 1.0;
-        p += 2;
-    }
-    curve_from_bins(sum, count)
-}
-
 /// The shared tail of every curve fit: gaps interpolated, ends extended, monotone.
 fn curve_from_bins(sum: [f64; 256], count: [f64; 256]) -> [u8; 256] {
     let mut curve = [f64::NAN; 256];
@@ -282,37 +246,6 @@ fn curve_from_bins(sum: [f64; 256], count: [f64; 256]) -> [u8; 256] {
         out[level] = ceiling.min(255.0).round() as u8;
     }
     out
-}
-
-/// Gauss-Jordan on a 3x3. None rather than garbage when singular.
-fn solve3(matrix: [[f64; 3]; 3], rhs: [f64; 3]) -> Option<[f64; 3]> {
-    let mut m = [[0.0f64; 4]; 3];
-    for i in 0..3 {
-        m[i][..3].copy_from_slice(&matrix[i]);
-        m[i][3] = rhs[i];
-    }
-    for col in 0..3 {
-        let mut pivot = col;
-        for row in col + 1..3 {
-            if m[row][col].abs() > m[pivot][col].abs() {
-                pivot = row;
-            }
-        }
-        m.swap(col, pivot);
-        if m[col][col].abs() < 1e-9 {
-            return None;
-        }
-        for row in 0..3 {
-            if row == col {
-                continue;
-            }
-            let factor = m[row][col] / m[col][col];
-            for k in col..4 {
-                m[row][k] -= factor * m[col][k];
-            }
-        }
-    }
-    Some([m[0][3] / m[0][0], m[1][3] / m[1][1], m[2][3] / m[2][2]])
 }
 
 /// A radial brightness gain, as a level-in/level-out table per quantised radius.
@@ -553,51 +486,6 @@ fn fit_gain(pairs: &Pairs, phase: Phase) -> Option<Gain> {
     gain
 }
 
-/// Per-channel curves then a 3x3 mix. Deliberately not a 3D LUT: measured against
-/// one, 777 coefficients beat a 17^3 LUT and tie a 33^3 one, because the vendor
-/// transform is close enough to separable that the extra dimensions only fit noise
-/// in the cells a single frame never populates.
-fn fit_colour(pairs: &Pairs, phase: Phase, gain: Option<&Gain>) -> ColourTransform {
-    let curves = [
-        fit_curve(pairs, phase, gain, 0),
-        fit_curve(pairs, phase, gain, 1),
-        fit_curve(pairs, phase, gain, 2),
-    ];
-
-    // A'A is symmetric, so only the upper triangle is accumulated.
-    let (mut a00, mut a01, mut a02, mut a11, mut a12, mut a22) = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
-    let mut b = [[0.0f64; 3]; 3];
-    let mut p = phase as usize;
-    while p < pairs.count {
-        let o = p * PAIR_STRIDE;
-        let radius = pairs.data[o + RADIUS];
-        let s0 = curves[0][Gain::of(gain, radius, pairs.data[o]) as usize] as f64;
-        let s1 = curves[1][Gain::of(gain, radius, pairs.data[o + 1]) as usize] as f64;
-        let s2 = curves[2][Gain::of(gain, radius, pairs.data[o + 2]) as usize] as f64;
-        a00 += s0 * s0;
-        a01 += s0 * s1;
-        a02 += s0 * s2;
-        a11 += s1 * s1;
-        a12 += s1 * s2;
-        a22 += s2 * s2;
-        for out in 0..3 {
-            let target = pairs.data[o + 3 + out] as f64;
-            b[out][0] += s0 * target;
-            b[out][1] += s1 * target;
-            b[out][2] += s2 * target;
-        }
-        p += 2;
-    }
-
-    let ata = [[a00, a01, a02], [a01, a11, a12], [a02, a12, a22]];
-    let identity = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
-    let mut matrix = [[0.0f64; 3]; 3];
-    for out in 0..3 {
-        matrix[out] = solve3(ata, b[out]).unwrap_or(identity[out]);
-    }
-    ColourTransform { curves, matrix }
-}
-
 // ------------------------------------------------------------------------ deltaE
 
 fn to_linear(value: f64) -> f64 {
@@ -648,37 +536,6 @@ pub fn delta_e76(a: &[f64; 3], b: &[f64; 3]) -> f64 {
     };
     let (p, q) = (lab(a), lab(b));
     ((p[0] - q[0]).powi(2) + (p[1] - q[1]).powi(2) + (p[2] - q[2]).powi(2)).sqrt()
-}
-
-/// Mean deltaE over pairs the transform was not fitted on. Every number this
-/// module reports is held out: a curve with 256 free parameters will always look
-/// better on its own training pairs.
-fn score(pairs: &Pairs, phase: Phase, gain: Option<&Gain>, transform: &ColourTransform) -> f64 {
-    let table = linear_table();
-    let m = &transform.matrix;
-    let curves = &transform.curves;
-    let mut total = 0.0;
-    let mut counted = 0usize;
-    let mut p = phase as usize;
-    while p < pairs.count {
-        let o = p * PAIR_STRIDE;
-        let radius = pairs.data[o + RADIUS];
-        let r = curves[0][Gain::of(gain, radius, pairs.data[o]) as usize] as f64;
-        let g = curves[1][Gain::of(gain, radius, pairs.data[o + 1]) as usize] as f64;
-        let b = curves[2][Gain::of(gain, radius, pairs.data[o + 2]) as usize] as f64;
-        // Rounded to the level that would actually be written to the rendition,
-        // which is also what makes the lookup exact rather than an approximation.
-        let out0 = clamp8((m[0][0] * r + m[0][1] * g + m[0][2] * b).round()) as u8;
-        let out1 = clamp8((m[1][0] * r + m[1][1] * g + m[1][2] * b).round()) as u8;
-        let out2 = clamp8((m[2][0] * r + m[2][1] * g + m[2][2] * b).round()) as u8;
-        let a = lab_from_levels(&table, out0, out1, out2);
-        let t = lab_from_levels(&table, pairs.data[o + 3], pairs.data[o + 4], pairs.data[o + 5]);
-        let (dl, da, db) = (a[0] - t[0], a[1] - t[1], a[2] - t[2]);
-        total += (dl * dl + da * da + db * db).sqrt();
-        counted += 1;
-        p += 2;
-    }
-    if counted == 0 { f64::INFINITY } else { total / counted as f64 }
 }
 
 // ------------------------------------------------------------------------ fitting
@@ -764,19 +621,6 @@ fn corresponding(grid: &Grid, knots: &[f64], crop: f64) -> Option<Pairs> {
     let warped = warp(grid.source.as_ref(), grid.jpeg.width, grid.jpeg.height, knots, crop);
     let all = pairs(&warped, &grid.jpeg);
     (all.count >= MIN_PAIRS).then_some(all)
-}
-
-/// `residual_for` plus the falloff, for the geometry that won.
-///
-/// Kept out of the search itself: the gain costs a second colour fit per candidate
-/// and the search only needs candidates ranked against each other, which a falloff
-/// common to all of them does not change.
-fn residual_with_gain(grid: &Grid, knots: &[f64], crop: f64) -> Option<(f64, ColourTransform, Option<Gain>)> {
-    let all = corresponding(grid, knots, crop)?;
-    let gain = fit_gain(&all, Phase::Train);
-    let colour = fit_colour(&all, Phase::Train, gain.as_ref());
-    let delta = score(&all, Phase::Test, gain.as_ref(), &colour);
-    Some((delta, colour, gain))
 }
 
 /// Where to start looking for the crop that accompanies a known spline.
@@ -903,20 +747,27 @@ fn fit_polynomial(grids: &Grids) -> Option<(f64, f64, f64)> {
     Some((k1, crop, delta))
 }
 
-/// Fits the transform taking `render` to `jpeg_bytes`.
+/// Fits the transform taking `render` to `jpeg_bytes`: the lens, and then the colour.
 pub fn fit(render: RgbRef<'_>, jpeg_bytes: &[u8], geometry: Geometry) -> Result<Option<Profile>, String> {
-    // One libvips graph each, evaluated once. Decode, orient, resize and blur fuse
-    // into a single streamed pass rather than four buffers handed between four
-    // calls.
-    let jpeg_full = vips::Pipeline::decode_upright(jpeg_bytes)?
-        .resize_to_fit(FIT_LONG_EDGE)?
-        .blur(FIT_BLUR_SIGMA)?
+    let preview = vips::Pipeline::thumbnail(jpeg_bytes, crate::hdr_fit::sample_long_edge())?
         .finish()?;
-    // The gate is on the colour, so it belongs on the route that applies the colour.
-    // A fit this far from the camera is more likely wrong than the camera is unusual,
-    // and an SDR render is better off untransformed than transformed by it.
-    Ok(fit_against(render, jpeg_full, geometry)?
-        .filter(|p| p.delta_e.is_finite() && p.delta_e <= MAX_ACCEPTABLE_DELTA_E))
+    let Some(mut profile) = fit_from_preview(render, preview.as_ref(), geometry)? else {
+        return Ok(None);
+    };
+
+    // The render on the colour fit's own grid. Resized rather than warped here - the
+    // fit warps it itself, through the lens this same profile just resolved, because a
+    // pair means nothing unless both pixels show the same point in the scene.
+    let sampled = vips::Pipeline::from_rgb(render)?.resize_to_fit(preview.width)?.finish()?;
+    profile.colour = crate::hdr_fit::fit_display(&sampled, &preview, &profile.lens());
+
+    // The gate is on the colour, so it belongs on the route that applies the colour. A
+    // fit this far from the camera is more likely wrong than the camera is unusual, and
+    // a render is better off untransformed than transformed by it.
+    if profile.colour.as_ref().is_none_or(|c| !(c.delta_e <= MAX_ACCEPTABLE_DELTA_E)) {
+        profile.colour = None;
+    }
+    Ok(Some(profile))
 }
 
 /// `fit`, without the colour gate, against a preview the caller has already decoded.
@@ -1009,27 +860,11 @@ fn fit_against(
     };
 
     let knots = chosen.0.clone().unwrap_or_default();
-    let Some((delta_e, colour, gain)) = residual_with_gain(&grids.full, &knots, chosen.1) else {
+    let Some(all) = corresponding(&grids.full, &knots, chosen.1) else {
         return Ok(None);
     };
-    Ok(Some(Profile { knots: chosen.0, gain, crop: chosen.1, source: chosen.2, delta_e, colour }))
-}
-
-/// The curves and the matrix collapsed into nine 256-entry tables, one per
-/// (output, input) channel pair, so applying the transform to a pixel is nine
-/// lookups and six adds rather than three lookups, nine multiplies and six adds.
-/// Exact, not an approximation: the matrix is linear in each curve's output.
-fn fold(transform: &ColourTransform) -> [[f64; 256]; 9] {
-    let mut folded = [[0.0f64; 256]; 9];
-    for out in 0..3 {
-        for channel in 0..3 {
-            let coefficient = transform.matrix[out][channel];
-            for level in 0..256 {
-                folded[out * 3 + channel][level] = coefficient * transform.curves[channel][level] as f64;
-            }
-        }
-    }
-    folded
+    let gain = fit_gain(&all, Phase::Train);
+    Ok(Some(Profile { knots: chosen.0, gain, crop: chosen.1, source: chosen.2, colour: None }))
 }
 
 /// Applies a fitted profile to a render.
@@ -1041,26 +876,37 @@ pub fn apply(image: RgbRef<'_>, profile: &Profile) -> Rgb {
         Some(knots) => warp(image, image.width, image.height, knots, profile.crop),
         None => Rgb { width: image.width, height: image.height, data: image.data.to_vec() },
     };
-    let folded = fold(&profile.colour);
     let (cx, cy) = (out.width as f64 / 2.0, out.height as f64 / 2.0);
     let half = (cx * cx + cy * cy).sqrt().max(1.0);
     // Row-major rather than one flat index, so the falloff's radius comes off the
-    // loop counters rather than a divide per pixel.
-    for (y, row) in out.data.chunks_mut(out.width * 3).enumerate() {
+    // loop counters rather than a divide per pixel, and across rows because this is the
+    // one pass here that touches every pixel of a 60MP frame.
+    out.data.par_chunks_mut(out.width * 3).enumerate().for_each(|(y, row)| {
         let dy = y as f64 - cy;
         for (x, pixel) in row.chunks_mut(3).enumerate() {
-            let (mut r, mut g, mut b) = (pixel[0] as usize, pixel[1] as usize, pixel[2] as usize);
+            let (mut r, mut g, mut b) = (pixel[0], pixel[1], pixel[2]);
             if let Some(gain) = &profile.gain {
                 let radius = Gain::radius(x as f64 - cx, dy, half);
-                r = Gain::of(Some(gain), radius, pixel[0]) as usize;
-                g = Gain::of(Some(gain), radius, pixel[1]) as usize;
-                b = Gain::of(Some(gain), radius, pixel[2]) as usize;
+                r = Gain::of(Some(gain), radius, r);
+                g = Gain::of(Some(gain), radius, g);
+                b = Gain::of(Some(gain), radius, b);
             }
-            pixel[0] = clamp8(folded[0][r] + folded[1][g] + folded[2][b]) as u8;
-            pixel[1] = clamp8(folded[3][r] + folded[4][g] + folded[5][b]) as u8;
-            pixel[2] = clamp8(folded[6][r] + folded[7][g] + folded[8][b]) as u8;
+            let Some(colour) = &profile.colour else {
+                (pixel[0], pixel[1], pixel[2]) = (r, g, b);
+                continue;
+            };
+            let scale = 1.0 / 255.0;
+            let v = crate::hdr_fit::apply_hdr_colour(
+                colour,
+                f64::from(r) * scale,
+                f64::from(g) * scale,
+                f64::from(b) * scale,
+            );
+            for c in 0..3 {
+                pixel[c] = clamp8(v[c] * 255.0) as u8;
+            }
         }
-    }
+    });
     out
 }
 
@@ -1091,53 +937,14 @@ mod tests {
             gain: None,
             crop: 1.0,
             source: 0,
-            delta_e: 0.0,
-            colour: ColourTransform::identity(),
+            colour: Some(crate::hdr_fit::HdrColour::identity()),
         };
         let out = apply(source.as_ref(), &profile);
-        assert_eq!(out.data, source.data);
-    }
-
-    #[test]
-    fn folding_matches_applying_curves_then_matrix() {
-        let mut colour = ColourTransform::identity();
-        colour.matrix = [[0.9, 0.05, 0.05], [0.1, 0.8, 0.1], [0.0, 0.02, 0.98]];
-        for level in 0..256 {
-            colour.curves[0][level] = (level as f64 * 0.9) as u8;
-        }
-        let folded = fold(&colour);
-        for level in [0usize, 37, 128, 255] {
-            let r = colour.curves[0][level] as f64;
-            let g = colour.curves[1][level] as f64;
-            let b = colour.curves[2][level] as f64;
-            let direct = colour.matrix[0][0] * r + colour.matrix[0][1] * g + colour.matrix[0][2] * b;
-            let via_table = folded[0][level] + folded[1][level] + folded[2][level];
-            assert!((direct - via_table).abs() < 1e-9, "level {level}");
-        }
-    }
-
-    #[test]
-    fn a_curve_recovers_a_known_tone_mapping() {
-        // Build pairs where the target is a fixed function of the source, and check
-        // the fitted curve reproduces it.
-        let mut data = Vec::new();
-        let mut count = 0;
-        for level in 0..=255u8 {
-            let target = (level as f64 * 0.75 + 20.0).min(255.0) as u8;
-            // 20 copies, because the train phase reads every other pair: fewer
-            // than 16 leaves each bin under MIN_BIN_SAMPLES and the curve
-            // correctly falls back to identity, which passes a monotonicity
-            // check without testing anything.
-            for _ in 0..20 {
-                data.extend_from_slice(&[level, level, level, target, target, target, 0]);
-                count += 1;
-            }
-        }
-        let pairs = Pairs { data, count };
-        let curve = fit_curve(&pairs, Phase::Train, None, 0);
-        for level in [10usize, 80, 200] {
-            let expected = (level as f64 * 0.75 + 20.0).min(255.0);
-            assert!((curve[level] as f64 - expected).abs() <= 1.5, "level {level}: {} vs {expected}", curve[level]);
+        // Within a level rather than exactly: the curves are sampled and interpolated
+        // rather than tabulated per 8-bit level, so an identity round-trips through
+        // 8 bits to itself only up to that sampling.
+        for (got, want) in out.data.iter().zip(&source.data) {
+            assert!(got.abs_diff(*want) <= 1, "{got} against {want}");
         }
     }
 
@@ -1186,7 +993,10 @@ mod tests {
         // One level of rounding is 100/255 of a unit, so anything under that is exact.
         assert!(score_luma(&pairs, Phase::Test, None, &curve) < 100.0 / 255.0);
 
-        let identity = ColourTransform::identity().curves[0];
+        let mut identity = [0u8; 256];
+        for (level, slot) in identity.iter_mut().enumerate() {
+            *slot = level as u8;
+        }
         assert!(score_luma(&pairs, Phase::Test, None, &identity) > 5.0, "an unfitted curve must score badly");
     }
 
@@ -1212,30 +1022,10 @@ mod tests {
                 count += 1;
             }
         }
-        let curve = fit_curve(&Pairs { data, count }, Phase::Train, None, 0);
+        let curve = fit_luma_curve(&Pairs { data, count }, Phase::Train, None);
         for level in 1..256 {
             assert!(curve[level] >= curve[level - 1], "curve dipped at {level}");
         }
     }
 
-    #[test]
-    fn solve3_reports_a_singular_system() {
-        let singular = [[1.0, 2.0, 3.0], [2.0, 4.0, 6.0], [3.0, 6.0, 9.0]];
-        assert!(solve3(singular, [1.0, 2.0, 3.0]).is_none());
-    }
-
-    #[test]
-    fn solve3_recovers_a_known_solution() {
-        let a = [[2.0, 1.0, 0.0], [1.0, 3.0, 1.0], [0.0, 1.0, 2.0]];
-        let x = [1.0, 2.0, 3.0];
-        let rhs = [
-            a[0][0] * x[0] + a[0][1] * x[1] + a[0][2] * x[2],
-            a[1][0] * x[0] + a[1][1] * x[1] + a[1][2] * x[2],
-            a[2][0] * x[0] + a[2][1] * x[1] + a[2][2] * x[2],
-        ];
-        let got = solve3(a, rhs).expect("system is not singular");
-        for i in 0..3 {
-            assert!((got[i] - x[i]).abs() < 1e-9);
-        }
-    }
 }

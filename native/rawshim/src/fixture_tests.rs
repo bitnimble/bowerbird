@@ -424,7 +424,8 @@ mod camera_match {
     fn matches_the_camera_jpeg_far_more_closely_than_the_raw_render_does() {
         let profile = fit(&sony());
         // Held out inside the fit, so this is not a training score.
-        assert!(profile.delta_e < 2.5, "held-out deltaE {}", profile.delta_e);
+        let fitted_colour = profile.colour.as_ref().expect("a fitted colour");
+        assert!(fitted_colour.delta_e < 2.5, "held-out deltaE {}", fitted_colour.delta_e);
 
         // What the render looks like before any transform, on the same pixels, to show
         // the fit is doing the work rather than the metric being generous.
@@ -456,7 +457,7 @@ mod camera_match {
                 f64::from(render.data[i + 2]),
             ];
             before += crate::fit::delta_e76(&source, &target);
-            after += crate::fit::delta_e76(&colour_at(&profile.colour, source), &target);
+            after += crate::fit::delta_e76(&colour_at(fitted_colour, source), &target);
             counted += 1;
         }
         assert!(counted > 100);
@@ -464,17 +465,11 @@ mod camera_match {
     }
 
     /// The colour half of a profile, for one pixel.
-    fn colour_at(transform: &crate::fit::ColourTransform, rgb: [f64; 3]) -> [f64; 3] {
-        let channel =
-            |c: usize| f64::from(transform.curves[c][rgb[c].round().clamp(0.0, 255.0) as usize]);
-        let (r, g, b) = (channel(0), channel(1), channel(2));
-        let out = |row: usize| {
-            (transform.matrix[row][0] * r
-                + transform.matrix[row][1] * g
-                + transform.matrix[row][2] * b)
-                .clamp(0.0, 255.0)
-        };
-        [out(0), out(1), out(2)]
+    fn colour_at(colour: &crate::hdr_fit::HdrColour, rgb: [f64; 3]) -> [f64; 3] {
+        let scale = 1.0 / 255.0;
+        let v = crate::hdr_fit::apply_hdr_colour(
+            colour, rgb[0] * scale, rgb[1] * scale, rgb[2] * scale);
+        [v[0] * 255.0, v[1] * 255.0, v[2] * 255.0]
     }
 
     /// The falloff term, kept honest the same way the distortion is: darken the
@@ -496,7 +491,8 @@ mod camera_match {
         );
         // Recovering the coefficient is not the same as matching the frame, and the
         // fit is free to report either. This is the one that decides the picture.
-        assert!(fitted.delta_e < 2.5, "held-out deltaE {}", fitted.delta_e);
+        let fitted_colour = fitted.colour.as_ref().expect("a fitted colour");
+        assert!(fitted_colour.delta_e < 2.5, "held-out deltaE {}", fitted_colour.delta_e);
     }
 
     /// A gain the profile carries and `apply` ignores would pass every assertion
@@ -623,12 +619,14 @@ mod camera_match {
     #[test]
     fn fits_the_same_profile_twice_so_renditions_built_at_different_times_agree() {
         let (first, second) = (fit(&sony()), fit(&sony()));
-        assert_eq!(first.delta_e, second.delta_e);
+
         assert_eq!(first.crop, second.crop);
         assert_eq!(first.source, second.source);
         assert_eq!(first.knots, second.knots);
-        assert_eq!(first.colour.matrix, second.colour.matrix);
-        assert_eq!(first.colour.curves, second.colour.curves);
+        let (a, b) = (first.colour.as_ref().expect("a colour"), second.colour.as_ref().expect("a colour"));
+        assert_eq!(a.delta_e, b.delta_e);
+        assert_eq!(a.matrix, b.matrix);
+        assert_eq!(a.curves, b.curves);
         // The coefficients, not `corner()`: two different fits can agree on what they
         // do to a corner while disagreeing about the curve that got them there, and
         // it is the curve that ships.
@@ -721,18 +719,24 @@ mod camera_match {
             let samples = linear.samples16().expect("a 16-bit decode");
             let source = crate::hdr::Source { samples, width: linear.width, height: linear.height };
             let geometry = crate::ffi::geometry_for(path.to_str().unwrap()).expect("a geometry");
-            let (via_linear, _) =
+            let (via_linear, matched_linear) =
                 crate::hdr::fit_all(path.to_str().unwrap(), &source, 0.9, geometry).expect("the linear fit");
 
             // The point of the fit: how close to the camera it lands. A render whose
             // tone was too far off to search against would show up here as a match that
             // is plainly worse, not as one that took a different road to the same place.
+            //
+            // Compared on the HDR colour both routes end up feeding, since that is the
+            // one number they state in the same domain - the SDR fit's own colour is in
+            // display levels against a display reference.
+            let matched_sdr = crate::hdr::fit_match(
+                path.to_str().unwrap(), &source, 0.9, via_sdr.lens()).expect("a match off the SDR geometry");
             assert!(
-                via_linear.delta_e < via_sdr.delta_e + 0.1,
+                matched_linear.colour.delta_e < matched_sdr.colour.delta_e + 0.1,
                 "{}: linear {} against sdr {}",
                 path.display(),
-                via_linear.delta_e,
-                via_sdr.delta_e,
+                matched_linear.colour.delta_e,
+                matched_sdr.colour.delta_e,
             );
 
             // And how far apart the two geometries actually put the picture, which is

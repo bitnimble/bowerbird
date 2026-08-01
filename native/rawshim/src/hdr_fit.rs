@@ -752,6 +752,24 @@ pub fn finish_colour(colour: &HdrColour, r: f64, g: f64, b: f64) -> [f64; 3] {
     finish_chroma(colour, apply3(&colour.matrix, r, g, b))
 }
 
+impl HdrColour {
+    /// A transform that returns its input.
+    ///
+    /// A fit always produces a real one; this is for the self-test and the tests, both of
+    /// which need a known-good transform rather than a fitted one.
+    pub fn identity() -> Self {
+        let ramp: Vec<f64> =
+            (0..BINS).map(|i| (i as f64 / (BINS - 1) as f64) * TRUST_CEILING).collect();
+        HdrColour {
+            curves: [ramp.clone(), ramp.clone(), ramp],
+            matrix: IDENTITY,
+            saturation: 1.0,
+            chroma: None,
+            delta_e: 0.0,
+        }
+    }
+}
+
 pub fn apply_hdr_colour(colour: &HdrColour, r: f64, g: f64, b: f64) -> [f64; 3] {
     let v = tone(colour, r, g, b);
     finish_colour(colour, v[0], v[1], v[2])
@@ -2068,7 +2086,47 @@ pub fn fit(
         full[i..i + 3].copy_from_slice(&v);
     }
     let wide_jpeg = Plane { width: preview.width, height: preview.height, data: full };
+    // Only the normalisation is per-fit, so this is a pass over ~1.1M pixels rather
+    // than over the frame the plane was averaged from.
+    let small: Vec<f64> = plane.data.par_iter().map(|v| v / anchor).collect();
+    let colour = fit_model_planes(small, plane.width, plane.height, wide_jpeg, &lens)?;
+    Some(HdrMatch { lens, colour })
+}
 
+/// The same fit, for a caller whose render and reference are already in one display
+/// domain rather than in the grade's.
+///
+/// The model has nothing HDR about it: per-channel curves, a 3x3, and a correction over
+/// chroma and level are all statements about colour, and the domain they are fitted in is
+/// whatever the two planes arrive in. An SDR rendition hands over 8-bit sRGB on both
+/// sides, so the preparation here is a divide rather than a transfer and a primary
+/// conversion - and that is the whole difference between the two entry points.
+pub fn fit_display(
+    render: &crate::vips::Rgb,
+    preview: &crate::vips::Rgb,
+    lens: &crate::fit::Lens,
+) -> Option<HdrColour> {
+    let level = |v: u8| f64::from(v) / 255.0;
+    let wide_jpeg = Plane {
+        width: preview.width,
+        height: preview.height,
+        data: preview.data.iter().map(|v| level(*v)).collect(),
+    };
+    let small: Vec<f64> = render.data.par_iter().map(|v| level(*v)).collect();
+    fit_model_planes(small, render.width, render.height, wide_jpeg, lens)
+}
+
+/// The fit itself, once both sides are normalised into one domain.
+///
+/// `small` is the render at `wide` x `tall`, unwarped; the lens is applied here because
+/// the pairs only correspond through it.
+fn fit_model_planes(
+    small: Vec<f64>,
+    wide: usize,
+    tall: usize,
+    wide_jpeg: Plane,
+    lens: &crate::fit::Lens,
+) -> Option<HdrColour> {
     // The fit itself runs at half this, as it always has.
     let (fit_wide, fit_tall) = (wide_jpeg.width / 2, wide_jpeg.height / 2);
     let mut jpeg = Plane {
@@ -2079,17 +2137,11 @@ pub fn fit(
     let sharp_jpeg = Plane { width: jpeg.width, height: jpeg.height, data: jpeg.data.clone() };
     blur_plane(&mut jpeg, FIT_BLUR_RADIUS);
 
-    // Already down to twice the fit grid, and down there *before* the warp - the same
-    // order the SDR fit uses. Warping 60MP with bilinear taps and resampling afterwards
-    // is both slower and worse: it aliases going in, and it blurs the geometry going
-    // out. Measured, warping at full resolution took the fit from under a second to 17.
-    let (wide, tall) = (plane.width, plane.height);
-    // Only the normalisation is per-fit, so this is a pass over ~1.1M pixels rather
-    // than over the frame the plane was averaged from.
-    let small: Vec<f64> = plane.data.par_iter().map(|v| v / anchor).collect();
-
-    // Through the same geometry the SDR fit resolved, so a pair is two views of one
-    // point in the scene.
+    // Through the geometry the search resolved, so a pair is two views of one point in
+    // the scene. Warped at twice the fit grid rather than at full resolution: warping
+    // 60MP with bilinear taps and resampling afterwards is both slower and worse - it
+    // aliases going in and blurs the geometry going out - and measured, it took the fit
+    // from under a second to 17.
     let warped = match &lens.distortion {
         Some(knots) => warp_planar(&small, wide, tall, wide, tall, knots, lens.crop, |v| v, |v| v),
         None => small,
@@ -2135,7 +2187,7 @@ pub fn fit(
         wide_jpeg,
         falloff: lens.falloff,
     };
-    fit_colour(&render, &jpeg, &sharp).map(|colour| HdrMatch { lens, colour })
+    fit_colour(&render, &jpeg, &sharp)
 }
 
 /// The long edge the preview is decoded to for the fit.
@@ -2222,15 +2274,7 @@ mod tests {
     use super::*;
 
     fn identity_colour() -> HdrColour {
-        // A curve that returns its input, over the trusted domain.
-        let ramp: Vec<f64> = (0..BINS).map(|i| (i as f64 / (BINS - 1) as f64) * TRUST_CEILING).collect();
-        HdrColour {
-            curves: [ramp.clone(), ramp.clone(), ramp],
-            matrix: IDENTITY,
-            saturation: 1.0,
-            chroma: None,
-            delta_e: 0.0,
-        }
+        HdrColour::identity()
     }
 
     #[test]
