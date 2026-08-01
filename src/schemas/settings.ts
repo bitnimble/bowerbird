@@ -66,7 +66,7 @@ export const SettingsSchema = z.object({
   // are off when 0, and neither touches a rendition made from the camera's own JPEG:
   // that one arrives denoised and sharpened by the body already.
   //
-  // `raw_denoise` is a strength, 1 being the tuned default and 0 off. It drives two
+  // `raw_denoise` is a strength, 0.5 being the default and 0 off. It drives two
   // guided filters: one on luma, regularised by the frame's **own measured noise**, and
   // one on chroma guided by that cleaned luma. Colour noise is blotchy and takes a wide
   // radius; luma noise is per-pixel grain and takes a narrow one, and guiding the colour
