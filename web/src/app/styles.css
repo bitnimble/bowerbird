@@ -1816,6 +1816,10 @@ p.ui-text--mono {
   grid-template-rows: minmax(0, 1fr) auto;
 }
 
+.detail--only {
+  grid-template-rows: minmax(0, 1fr);
+}
+
 /* minmax(0, 1fr) rather than the implicit `auto` column: an auto track is at
    least min-content wide, so one unshrinkable child (the triage control) grew
    every panel past the rail and pushed it off the page. */

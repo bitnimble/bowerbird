@@ -9,6 +9,7 @@ import {
   Download,
   FileType,
   Image as ImageIcon,
+  Info,
   Layers,
   Maximize2,
   RefreshCw,
@@ -169,10 +170,15 @@ function useStep(): (step: 'next' | 'prev') => void {
 const DetailNav = observer(function DetailNav({
   photoId,
   toolsRef,
+  panelsOpen,
+  onTogglePanels,
 }: {
   photoId: string;
   /** Where the stage draws its own zoom and fullscreen controls. */
   toolsRef: (slot: HTMLDivElement | null) => void;
+  /** Null on a phone, where the sheet's own handle owns the panels. */
+  panelsOpen: boolean | null;
+  onTogglePanels: () => void;
 }): JSX.Element {
   const store = usePhotosStore();
   const { photos } = usePresenters();
@@ -257,6 +263,17 @@ const DetailNav = observer(function DetailNav({
       <div className="spacer" />
 
       <div className="detail__tools" ref={toolsRef} />
+
+      {panelsOpen != null && (
+        <Button
+          iconOnly
+          aria-label={panelsOpen ? 'Hide metadata' : 'Show metadata'}
+          aria-pressed={panelsOpen}
+          onClick={onTogglePanels}
+        >
+          <Info size={ICON} />
+        </Button>
+      )}
 
       {mobile ? (
         <OverflowMenu
@@ -638,6 +655,9 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   // Kept across photos: opened once to read a frame's settings, the reader means
   // to read the next one's too.
   const [sheetOpen, setSheetOpen] = useState(false);
+  // Same on the wide layout, where the bar's info button hides the whole column
+  // and gives its width back to the photograph.
+  const [panelsOpen, setPanelsOpen] = useState(true);
   // The stage draws its own controls into a slot in the bar, so the readout can
   // follow a wheel zoom frame by frame without the page moving with it. State
   // rather than a ref, because the stage has to render again once the slot
@@ -732,11 +752,16 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   return (
     <div className="pad detail-page">
       <DetailKeys photoId={photoId} />
-      <DetailNav photoId={photoId} toolsRef={setToolsSlot} />
+      <DetailNav
+        photoId={photoId}
+        toolsRef={setToolsSlot}
+        panelsOpen={mobile ? null : panelsOpen}
+        onTogglePanels={() => setPanelsOpen(!panelsOpen)}
+      />
 
-      <div className={`detail detail--${mobile ? 'sheet' : landscape ? 'below' : 'beside'}`}>
+      <div className={`detail detail--${mobile ? 'sheet' : !panelsOpen ? 'only' : landscape ? 'below' : 'beside'}`}>
         <DetailFrame photoId={photoId} toolsInto={toolsSlot} />
-        {panels}
+        {(mobile || panelsOpen) && panels}
       </div>
     </div>
   );
