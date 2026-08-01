@@ -808,13 +808,21 @@ fn scan_around(centre: f64, step: f64, count: i32) -> Vec<f64> {
 /// Evaluates candidates across cores. They share only their inputs, which makes
 /// the scan the one genuinely parallel part of a fit; the refine that follows is
 /// sequential by nature, each step depending on the last.
+///
+/// Ties break on position, not on whichever branch of the reduction happened to hold
+/// them. A frame with no distortion to find scores several candidates identically -
+/// `min_by` alone then returns whichever the work-stealing tree paired last, so the same
+/// build fits IMG_5360 two different ways depending on how many cores were free.
 fn scan<T: Send + Sync + Copy>(grid: &Grid, candidates: &[T], knots_of: impl Fn(T) -> Vec<f64> + Sync, crop_of: impl Fn(T) -> f64 + Sync) -> Option<(T, f64)> {
     candidates
         .par_iter()
-        .filter_map(|candidate| {
-            residual_for(grid, &knots_of(*candidate), crop_of(*candidate)).map(|delta| (*candidate, delta))
+        .enumerate()
+        .filter_map(|(i, candidate)| {
+            residual_for(grid, &knots_of(*candidate), crop_of(*candidate))
+                .map(|delta| (delta, i, *candidate))
         })
-        .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
+        .min_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal).then(a.1.cmp(&b.1)))
+        .map(|(delta, _, candidate)| (candidate, delta))
 }
 
 /// Coarse scan on the search grid, then refine at full size.
@@ -923,36 +931,18 @@ pub fn fit(render: RgbRef<'_>, jpeg_bytes: &[u8], geometry: Geometry) -> Result<
 
 /// `fit`, without the colour gate, for a caller that wants the geometry.
 ///
-/// `MAX_ACCEPTABLE_DELTA_E` decides whether an SDR render should wear a colour transform
-/// at all. `fit_all` asks the same call for geometry and gives up where there is no
-/// profile, so on the one route an HDR rendition takes, a refused *SDR colour* also
-/// refuses the HDR match - a different fit, in a different domain, against a different
-/// reference, which was never asked whether it would have worked.
+/// `MAX_ACCEPTABLE_DELTA_E` decides whether an *SDR render* should wear a colour
+/// transform. `fit_all` asks the same call for geometry and gives up where there is no
+/// profile, so a refused SDR colour refused the HDR match too - a different fit, in a
+/// different domain, against a different reference, never asked whether it would have
+/// worked. Reachable rather than observed: the worst SDR fit over the 35-frame set is
+/// 4.1 against a limit of 6, and it was only reached by feeding the geometry fit a
+/// cheaper preview, which took one frame to 10.4 and silently cost it its colour.
 ///
-/// No frame of the 35-frame set trips it: the worst SDR fit there is 4.1 against a limit
-/// of 6. It is reachable rather than observed, and it was reached by accident - feeding
-/// the geometry fit a cheaper preview took IMG_9887's SDR fit to 10.4 and silently cost
-/// that frame its camera colour entirely. Geometry is judged on its own terms anyway: a
-/// candidate has to beat the undistorted baseline before it is chosen.
-/// `fit_ungated`, against a preview the caller has already decoded to the fit grid.
-///
-/// `fit_all` needs one for the colour fit and this needed one for the geometry, and each
-/// decoded the same 5-14MB preview to the same 640px grid to get it - the last
-/// duplication between the two halves, on the route an HDR rendition always takes.
-///
-/// The caller decodes it in full rather than through `thumbnail`, and that is the whole
-/// subtlety: the cheap one shrinks in the DCT before it builds a pixel, and the geometry
-/// fit is measurably worse off for it - sharing that one instead costs the 35-frame set
-/// 1.654 to 1.774 mean deltaE, where sharing this one is level with decoding twice.
-pub fn fit_from_preview(
-    render: RgbRef<'_>,
-    preview: RgbRef<'_>,
-    geometry: Geometry,
-) -> Result<Option<Profile>, String> {
-    let jpeg_full = vips::Pipeline::from_rgb(preview)?.blur(FIT_BLUR_SIGMA)?.finish()?;
-    fit_against(render, jpeg_full, geometry)
-}
-
+/// Nothing downstream then bounds the HDR fit's own error, which is the standing gap
+/// here - geometry is judged on its own terms (a candidate has to beat the undistorted
+/// baseline) and `hdr_fit` refuses a frame with too few pairs, but neither is a deltaE
+/// bound on the colour that actually ships.
 pub fn fit_ungated(
     render: RgbRef<'_>,
     jpeg_bytes: &[u8],

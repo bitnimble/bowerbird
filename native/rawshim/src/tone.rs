@@ -324,11 +324,20 @@ pub fn grade(frame: &mut [u16], options: &GradeOptions<'_>) -> bool {
         let mut or = m[0][0] * tr + m[0][1] * tg + m[0][2] * tb;
         let mut og = m[1][0] * tr + m[1][1] * tg + m[1][2] * tb;
         let mut ob = m[2][0] * tr + m[2][1] * tg + m[2][2] * tb;
-        if sat != 1.0 {
-            let l = LUMA[0] * or + LUMA[1] * og + LUMA[2] * ob;
-            or = l + (or - l) * sat;
-            og = l + (og - l) * sat;
-            ob = l + (ob - l) * sat;
+        match &colour.chroma {
+            // Handed the matrix's output rather than its input: `finish_colour` would
+            // multiply by the same 3x3 a second time, once per pixel of a 60MP frame.
+            Some(_) => {
+                let out = hdr_fit::finish_chroma(colour, [or, og, ob]);
+                (or, og, ob) = (out[0], out[1], out[2]);
+            }
+            None if sat != 1.0 => {
+                let l = LUMA[0] * or + LUMA[1] * og + LUMA[2] * ob;
+                or = l + (or - l) * sat;
+                og = l + (og - l) * sat;
+                ob = l + (ob - l) * sat;
+            }
+            None => {}
         }
 
         for (c, raw) in [or, og, ob].into_iter().enumerate() {

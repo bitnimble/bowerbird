@@ -81,12 +81,12 @@ fn db() -> Option<&'static Db> {
     .as_ref()
 }
 
-/// Lens strings already resolved, negatives included.
+/// Lens searches already run, negatives included.
 ///
-/// A body writes one string per lens and a library holds a handful of lenses, so
-/// this converges after the first photo of each. It saves 0.7ms of a ~450ms fit,
-/// which is not why it is here - the negative entries are. Without them every photo
-/// from an unlisted lens pays the full scored search to be told no again.
+/// A library holds a handful of lenses and shoots each at a handful of settings, so this
+/// converges after the first photo of each. It saves 0.7ms of a ~450ms fit, which is not
+/// why it is here - the negative entries are. Without them every photo from an unlisted
+/// lens pays the full scored search to be told no again.
 fn cache() -> &'static Mutex<HashMap<String, Option<Resolved>>> {
     static CACHE: OnceLock<Mutex<HashMap<String, Option<Resolved>>>> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
@@ -162,21 +162,19 @@ unsafe fn search(make: &str, model: &str, lens: &str, focal: f32, aperture: f32)
     result
 }
 
-/// `search`, memoised on the strings the RAW carries.
+/// `search`, memoised on everything it looks at.
 ///
-/// The cached entry is re-checked against this shot rather than trusted: one string
-/// resolves to one zoom, and a zoom is only plausible over part of its range.
+/// Focal length and aperture belong in the key, not only in the search: `plausible`
+/// filters candidates by them, so one string resolves to different entries at different
+/// ends of a zoom. Keyed on the string alone, whichever frame of a lens was processed
+/// first decided the answer for every other - a 24-70 shot at 24 caches an entry the 70mm
+/// frames then read as a contradiction and correct nothing for. Which frame got there
+/// first is arrival order, so a library rendered in parallel corrected different photos on
+/// different runs.
 fn resolve(make: &str, model: &str, lens: &str, focal: f32, aperture: f32) -> Option<Resolved> {
-    let key = format!("{make}|{model}|{lens}");
+    let key = format!("{make}|{model}|{lens}|{focal}|{aperture}");
     if let Some(hit) = cache().lock().ok()?.get(&key).copied() {
-        return match hit {
-            #[expect(unsafe_code)]
-            Some(entry) if unsafe { plausible(entry.lens as *const raw::lfLens, focal, aperture) } => Some(entry),
-            // A hit that this frame contradicts is not a miss to re-search: the same
-            // string resolved to the same entry last time, and re-running the search
-            // would only return it again.
-            _ => None,
-        };
+        return hit;
     }
 
     #[expect(unsafe_code)]

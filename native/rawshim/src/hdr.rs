@@ -124,8 +124,8 @@ pub fn fit_match(
     lens: crate::fit::Lens,
 ) -> Option<HdrMatch> {
     let anchor = tone::levels(source.samples, quantile).white;
-    let preview = crate::decode_embedded_rgb(raw_path, hdr_fit::fit_long_edge())?;
-    let plane = hdr_fit::fit_plane(source.samples, source.width, source.height, preview.width * 2);
+    let preview = crate::decode_embedded_rgb(raw_path, hdr_fit::sample_long_edge())?;
+    let plane = hdr_fit::fit_plane(source.samples, source.width, source.height, preview.width);
     hdr_fit::fit(&plane, anchor, &preview, lens)
 }
 
@@ -168,16 +168,16 @@ pub fn fit_all(
     #[expect(unsafe_code)]
     let fitted = unsafe {
         crate::with_embedded_jpeg(path.as_ptr(), |jpeg| {
-            // One decode for both halves. In full rather than through `thumbnail`,
-            // because the geometry fit reads it too and the DCT shrink costs it more
-            // than the decode saves: shared as a thumbnail the 35-frame set goes 1.654
-            // to 1.774 mean deltaE, shared like this it does not move.
-            let preview = crate::vips::Pipeline::decode_upright(jpeg)
-                .and_then(|p| p.resize_to_fit(hdr_fit::fit_long_edge()))
+            // Its own decode, and a cheap one. Sharing the geometry fit's full decode
+            // saves ~30ms of the fit's ~1.7s and moves this plane enough to refit the
+            // colour off it: IMG_8789 goes 2.54 to 3.17 deltaE for that 30ms, while the
+            // set's mean holds at 1.654 to 1.655. The mean was the wrong thing to have
+            // checked, and it is the reason this is not shared.
+            let preview = crate::vips::Pipeline::thumbnail(jpeg, hdr_fit::sample_long_edge())
                 .and_then(crate::vips::Pipeline::finish)
                 .ok()?;
             let plane =
-                hdr_fit::fit_plane(source.samples, source.width, source.height, preview.width * 2);
+                hdr_fit::fit_plane(source.samples, source.width, source.height, preview.width);
 
             // Both halves off the same plane and the same anchor: the geometry search
             // wants a render that looks like an ordinary picture, the colour fit wants
@@ -188,9 +188,7 @@ pub fn fit_all(
             // refused still gets its HDR colour fitted, that being a different fit in a
             // different domain against a different reference.
             let profile =
-                crate::fit::fit_from_preview(render.as_ref(), preview.as_ref(), geometry)
-                    .ok()
-                    .flatten()?;
+                crate::fit::fit_ungated(render.as_ref(), jpeg, geometry).ok().flatten()?;
             let matched = hdr_fit::fit(&plane, levels.white, &preview, profile.lens())?;
             Some((profile, matched))
         })
