@@ -138,6 +138,9 @@ pub struct HdrColour {
 const MAP_CHROMA: usize = 5;
 const MAP_LEVEL: usize = 4;
 
+/// Every node of the grid, as a compile-time count.
+const MAP_NODES: usize = MAP_CHROMA * MAP_CHROMA * MAP_LEVEL;
+
 /// How far out the chroma axes reach before the grid clamps, and how far up the level
 /// axis does. Beyond either, a colour keeps the last node's correction rather than an
 /// extrapolated one - which is what makes the map safe above the reference's clip point.
@@ -149,6 +152,26 @@ const MAP_LEVEL: usize = 4;
 /// about 0.85.
 const CHROMA_REACH: f64 = 0.45;
 const LEVEL_REACH: f64 = 0.9;
+
+/// `a` toward `b`, fused where the target has an instruction to fuse with.
+///
+/// `mul_add` is one instruction and one rounding where the pair is two, and on the v3 and
+/// v4 builds it takes ~10% off reading the chroma map. On the baseline build it is a
+/// catastrophe: with no FMA instruction it lowers to a libm call for a correctly-rounded
+/// result, and the same loop goes from 22ns per pixel to 54. The image ships a build per
+/// instruction set (DESIGN 11.x), so this resolves per build rather than being chosen once
+/// for all three - and the baseline is the one that runs on hardware with no AVX at all.
+#[inline]
+fn lerp(a: f64, b: f64, t: f64) -> f64 {
+    #[cfg(target_feature = "fma")]
+    {
+        (b - a).mul_add(t, a)
+    }
+    #[cfg(not(target_feature = "fma"))]
+    {
+        a + (b - a) * t
+    }
+}
 
 /// A correction on chroma alone, indexed by chroma and level.
 ///
@@ -166,7 +189,12 @@ const LEVEL_REACH: f64 = 0.9;
 #[derive(Clone)]
 pub struct ChromaMap {
     /// A 2x2 on `(d0, d2)` per node, indexed level-major then y then x.
-    nodes: Vec<[f64; 4]>,
+    ///
+    /// Fixed length rather than a `Vec`, which is worth 12% of what reading this map
+    /// costs. `axis` clamps every index into range before it is used, but a runtime
+    /// length makes the compiler prove that again at each corner - eight bounds checks
+    /// per pixel, each one a branch the blend behind it has to wait on.
+    nodes: Box<[[f64; 4]; MAP_NODES]>,
 }
 
 impl ChromaMap {
@@ -183,7 +211,7 @@ impl ChromaMap {
     /// A frame that wants nothing hue-dependent can still be described exactly.
     pub fn from_saturation(saturation: f64) -> ChromaMap {
         let node = [saturation, 0.0, 0.0, saturation];
-        ChromaMap { nodes: vec![node; MAP_CHROMA * MAP_CHROMA * MAP_LEVEL] }
+        ChromaMap { nodes: Box::new([node; MAP_NODES]) }
     }
 
     /// Where a coordinate sits on an axis running `low` to `high`: the node below it,
@@ -265,16 +293,16 @@ impl ChromaMap {
         let mut cell = [0.0f64; 4];
         for (c, slot) in cell.iter_mut().enumerate() {
             let near = {
-                let lo = n00[c] + (n01[c] - n00[c]) * fx;
-                let hi = n10[c] + (n11[c] - n10[c]) * fx;
-                lo + (hi - lo) * fy
+                let lo = lerp(n00[c], n01[c], fx);
+                let hi = lerp(n10[c], n11[c], fx);
+                lerp(lo, hi, fy)
             };
             let far = {
-                let lo = f00[c] + (f01[c] - f00[c]) * fx;
-                let hi = f10[c] + (f11[c] - f10[c]) * fx;
-                lo + (hi - lo) * fy
+                let lo = lerp(f00[c], f01[c], fx);
+                let hi = lerp(f10[c], f11[c], fx);
+                lerp(lo, hi, fy)
             };
-            *slot = near + (far - near) * fz;
+            *slot = lerp(near, far, fz);
         }
         (cell[0] * d0 + cell[1] * d2, cell[2] * d0 + cell[3] * d2)
     }
@@ -1889,7 +1917,7 @@ fn fitted_chroma(
     // Each node solved on its own, then pulled back toward the scalar by how little it
     // saw. A node with nothing keeps nothing of its own.
     let flat = [saturation, 0.0, 0.0, saturation];
-    let mut map = ChromaMap { nodes: vec![flat; NODES] };
+    let mut map = ChromaMap { nodes: Box::new([flat; MAP_NODES]) };
     let mut fitted = 0usize;
     for node in 0..NODES {
         let a = ata[node];
