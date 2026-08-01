@@ -1,7 +1,10 @@
 import { observer } from 'mobx-react-lite';
 import { useEffect, useState } from 'react';
 import { CornerLeftUp, Folder } from 'lucide-react';
-import { Button, ICON, Text, TextField } from '../../ui/ui';
+import { Button } from '../../ui/button';
+import { ICON } from '../../ui/icon';
+import { Text } from '../../ui/text';
+import { TextField } from '../../ui/text_field';
 import type { FolderBrowserPresenter } from './folder_browser_presenter';
 import type { FolderBrowserStore } from './folder_browser_store';
 

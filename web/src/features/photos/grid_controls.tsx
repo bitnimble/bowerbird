@@ -20,19 +20,17 @@ import {
 } from 'lucide-react';
 import type { Ordering } from '../../api/client';
 import { usePhotosStore, usePresenters } from '../../app/stores_context';
-import {
-  Button,
-  CheckMenu,
-  ICON,
-  type Option,
-  PopoverButton,
-  SegmentedControl,
-  Select,
-  Slider,
-  Text,
-  TextField,
-  ToggleButton,
-} from '../../ui/ui';
+import { Button } from '../../ui/button';
+import { CheckMenu } from '../../ui/check_menu';
+import { ICON } from '../../ui/icon';
+import type { Option } from '../../ui/option';
+import { PopoverButton } from '../../ui/popover_button';
+import { SegmentedControl } from '../../ui/segmented_control';
+import { Select } from '../../ui/select';
+import { Slider } from '../../ui/slider';
+import { Text } from '../../ui/text';
+import { TextField } from '../../ui/text_field';
+import { ToggleButton } from '../../ui/toggle_button';
 import { activeFilters, type PhotoFilters, type ViewMode } from './photos_store';
 
 export const ORDERINGS: Option<Ordering>[] = [

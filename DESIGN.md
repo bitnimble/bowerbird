@@ -2384,12 +2384,12 @@ Every request it makes is same-origin. The web server proxies `/api` and `/image
 | UI | React 18 |
 | State | MobX 6 with standard (TC39) decorators |
 | Routing | React Router 6 |
-| Components | Base UI (unstyled primitives), wrapped once in `src/ui/ui.tsx` |
+| Components | Base UI (unstyled primitives), wrapped once in `src/ui/`, a module per control |
 | Icons | lucide-react |
 | Calendar | react-day-picker, restyled through its CSS variables |
 | E2E | Playwright, driving the real API and a temp library |
 
-Every control on screen comes from `src/ui/ui.tsx`, and each variant list is short on purpose: four button variants, four text roles, two heading levels. Uniformity is enforced in code rather than by discipline; `Button`, the segmented filter chips, `Select`, `TextField` and the menu triggers all carry the same `.ui-btn` class, so height, type size and icon size cannot drift between a filter and a toolbar button. A new fifth colour should mean rethinking the screen, not adding a variant.
+Every control on screen comes from `src/ui/` - one module per control, no barrel - and each variant list is short on purpose: four button variants, four text roles, two heading levels. Uniformity is enforced in code rather than by discipline; `Button`, the segmented filter chips, `Select`, `TextField` and the menu triggers all carry the same `.ui-btn` class, so height, type size and icon size cannot drift between a filter and a toolbar button. A new fifth colour should mean rethinking the screen, not adding a variant.
 
 The one deliberate exception: a link styled as a button is not routed through Base UI's `Button`, which would relabel the anchor `role="button"` and cost it the link role and open-in-new-tab. `Button` clones the passed element instead.
 

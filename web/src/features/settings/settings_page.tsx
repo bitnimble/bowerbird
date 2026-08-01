@@ -6,7 +6,13 @@ import { useAppSettingsStore, useLibrariesStore, usePresenters, useSyncStore } f
 import { AddLibraryDialog } from '../libraries/add_library_dialog';
 import { libraryLabel } from '../libraries/library_label';
 import { renditionLabel } from '../photos/renditions';
-import { Button, Heading, ICON, type Option, Select, Text, TextField } from '../../ui/ui';
+import { Button } from '../../ui/button';
+import { Heading } from '../../ui/heading';
+import { ICON } from '../../ui/icon';
+import type { Option } from '../../ui/option';
+import { Select } from '../../ui/select';
+import { Text } from '../../ui/text';
+import { TextField } from '../../ui/text_field';
 import { SyncStrip } from '../sync/sync_strip';
 
 // "3 minutes ago" answers "is my catalogue stale?" at a glance; a timestamp does not.

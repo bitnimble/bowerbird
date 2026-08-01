@@ -1,6 +1,8 @@
 import { CircleDashed, ThumbsDown, ThumbsUp } from 'lucide-react';
 import type { Triage } from '../../api/client';
-import { ICON, type Option, SegmentedControl } from '../../ui/ui';
+import { ICON } from '../../ui/icon';
+import type { Option } from '../../ui/option';
+import { SegmentedControl } from '../../ui/segmented_control';
 
 // Undecided first: it is where every photo starts, and reject/pick then read
 // left-to-right as the two directions you can move it. The keys sit together on

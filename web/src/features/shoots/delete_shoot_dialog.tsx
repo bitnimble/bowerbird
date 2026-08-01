@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { api, type Shoot } from '../../api/client';
-import { Button, Modal, Text } from '../../ui/ui';
+import { Button } from '../../ui/button';
+import { Modal } from '../../ui/modal';
+import { Text } from '../../ui/text';
 
 type Disposition = 'keep' | 'remove';
 

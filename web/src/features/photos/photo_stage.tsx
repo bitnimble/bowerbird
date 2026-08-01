@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Maximize, Minimize, ZoomIn, ZoomOut } from 'lucide-react';
-import { Button, ICON, Text } from '../../ui/ui';
+import { Button } from '../../ui/button';
+import { ICON } from '../../ui/icon';
+import { Text } from '../../ui/text';
 
 const MIN_SCALE = 1; // 1 = fitted to the stage
 // The zoom control's middle stop; its third is the frame's own pixel scale.

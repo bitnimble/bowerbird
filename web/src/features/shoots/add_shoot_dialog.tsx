@@ -2,7 +2,11 @@ import { observer } from 'mobx-react-lite';
 import { useEffect, useState } from 'react';
 import type { Ordering } from '../../api/client';
 import { usePresenters, useShootsStore } from '../../app/stores_context';
-import { Button, Modal, Select, Text, TextField } from '../../ui/ui';
+import { Button } from '../../ui/button';
+import { Modal } from '../../ui/modal';
+import { Select } from '../../ui/select';
+import { Text } from '../../ui/text';
+import { TextField } from '../../ui/text_field';
 import { ORDERINGS } from '../photos/grid_controls';
 
 // Only what a folder cannot answer. Where the shoot goes is decided by the row

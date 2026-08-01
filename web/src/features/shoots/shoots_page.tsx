@@ -4,7 +4,14 @@ import { ChevronDown, ChevronRight, Folder, FolderPlus, Images, Pencil, Plus, Tr
 import { Link, useParams } from 'react-router-dom';
 import { renditionUrl } from '../../api/client';
 import { useLibrariesStore, usePresenters, useShootsStore } from '../../app/stores_context';
-import { ActionMenu, Button, Heading, ICON, Option, SegmentedControl, Text, TextField } from '../../ui/ui';
+import { ActionMenu } from '../../ui/action_menu';
+import { Button } from '../../ui/button';
+import { Heading } from '../../ui/heading';
+import { ICON } from '../../ui/icon';
+import type { Option } from '../../ui/option';
+import { SegmentedControl } from '../../ui/segmented_control';
+import { Text } from '../../ui/text';
+import { TextField } from '../../ui/text_field';
 import { libraryLabel } from '../libraries/library_label';
 import { AddShootDialog } from './add_shoot_dialog';
 import { DeleteShootDialog } from './delete_shoot_dialog';

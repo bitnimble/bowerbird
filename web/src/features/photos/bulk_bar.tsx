@@ -14,7 +14,12 @@ import {
   X,
 } from 'lucide-react';
 import { useAlbumsStore, usePhotosStore, usePresenters, useShootsStore } from '../../app/stores_context';
-import { ActionMenu, Button, CheckMenu, ICON, type Option, Text } from '../../ui/ui';
+import { ActionMenu } from '../../ui/action_menu';
+import { Button } from '../../ui/button';
+import { CheckMenu } from '../../ui/check_menu';
+import { ICON } from '../../ui/icon';
+import type { Option } from '../../ui/option';
+import { Text } from '../../ui/text';
 import { onScreenSpan } from './photo_grid';
 
 // Behind the overflow, so the bar's own row holds only what is about *this*

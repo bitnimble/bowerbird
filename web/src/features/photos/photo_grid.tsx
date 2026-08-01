@@ -6,7 +6,7 @@ import { ChevronUp, EyeOff, Layers, ThumbsDown, ThumbsUp } from 'lucide-react';
 import { captureDateTime, localDateTime } from '../../api/dates';
 import { renditionUrl, type PhotoSummary } from '../../api/client';
 import { usePhotosStore, usePresenters } from '../../app/stores_context';
-import { Text } from '../../ui/ui';
+import { Text } from '../../ui/text';
 import { BAND_LINE_CAP, BLOCK, GRID_GAP, TILE_ASPECT, TILE_PAD, masonryLineStarts } from './grid_layout';
 import { photoPath, renditionVersion, type Expansion, type PhotosStore } from './photos_store';
 import type { Span } from '../../ui/virtual_rows';

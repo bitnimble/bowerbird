@@ -30,7 +30,15 @@ import {
   useShootsStore,
 } from '../../app/stores_context';
 import { useIsMobile } from '../../app/use_is_mobile';
-import { ActionMenu, Button, ICON, menuSection, MoreLess, type Option, OverflowMenu, Text, TextArea } from '../../ui/ui';
+import { ActionMenu } from '../../ui/action_menu';
+import { Button } from '../../ui/button';
+import { ICON } from '../../ui/icon';
+import { menuSection } from '../../ui/menu_section';
+import { MoreLess } from '../../ui/more_less';
+import type { Option } from '../../ui/option';
+import { OverflowMenu } from '../../ui/overflow_menu';
+import { Text } from '../../ui/text';
+import { TextArea } from '../../ui/text_area';
 import { photoPath, sourceOfPath, triagePath } from './photos_store';
 import { renditionLabel } from './renditions';
 import { PhotoStage } from './photo_stage';

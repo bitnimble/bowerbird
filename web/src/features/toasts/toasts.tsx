@@ -1,7 +1,9 @@
 import { observer } from 'mobx-react-lite';
 import { X } from 'lucide-react';
 import { usePresenters, useToastsStore } from '../../app/stores_context';
-import { Button, ICON, Text } from '../../ui/ui';
+import { Button } from '../../ui/button';
+import { ICON } from '../../ui/icon';
+import { Text } from '../../ui/text';
 
 export const Toasts = observer(function Toasts(): JSX.Element | null {
   const store = useToastsStore();

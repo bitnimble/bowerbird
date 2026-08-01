@@ -2,7 +2,7 @@ import { observer } from 'mobx-react-lite';
 import { useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { useAlbumsStore, usePresenters } from '../../app/stores_context';
-import { Heading } from '../../ui/ui';
+import { Heading } from '../../ui/heading';
 import { BulkBar } from '../photos/bulk_bar';
 import { GridControls } from '../photos/grid_controls';
 import { PhotoGrid } from '../photos/photo_grid';

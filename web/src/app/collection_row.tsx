@@ -2,7 +2,10 @@ import { useState } from 'react';
 import { Images, Pencil, Trash2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { renditionUrl } from '../api/client';
-import { Button, ICON, Text, TextField } from '../ui/ui';
+import { Button } from '../ui/button';
+import { ICON } from '../ui/icon';
+import { Text } from '../ui/text';
+import { TextField } from '../ui/text_field';
 
 interface Props {
   name: string;

@@ -3,7 +3,11 @@ import { useEffect, useState } from 'react';
 import { Plus } from 'lucide-react';
 import { CollectionRow } from '../../app/collection_row';
 import { useAlbumsStore, usePresenters } from '../../app/stores_context';
-import { Button, Heading, ICON, Text, TextField } from '../../ui/ui';
+import { Button } from '../../ui/button';
+import { Heading } from '../../ui/heading';
+import { ICON } from '../../ui/icon';
+import { Text } from '../../ui/text';
+import { TextField } from '../../ui/text_field';
 
 export const AlbumsPage = observer(function AlbumsPage(): JSX.Element {
   const store = useAlbumsStore();

@@ -15,7 +15,11 @@ import {
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { renditionUrl, type PhotoSummary } from '../../api/client';
 import { usePhotosStore, usePresenters, useStackTriageStore } from '../../app/stores_context';
-import { Button, ICON, PopoverButton, SegmentedControl, Text } from '../../ui/ui';
+import { Button } from '../../ui/button';
+import { ICON } from '../../ui/icon';
+import { PopoverButton } from '../../ui/popover_button';
+import { SegmentedControl } from '../../ui/segmented_control';
+import { Text } from '../../ui/text';
 import { PhotoStage } from './photo_stage';
 import { photoPath, renditionVersion, sourceOfPath } from './photos_store';
 import { type Round, type Verdict, SPLIT_GAP, pairKey } from './stack_triage';
