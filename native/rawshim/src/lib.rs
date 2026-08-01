@@ -65,6 +65,7 @@ pub mod image;
 pub mod lens;
 pub mod lensfun;
 pub mod stacks;
+pub mod tca;
 pub mod tone;
 pub mod vips;
 
@@ -668,18 +669,26 @@ pub fn fit_profile_for(render: &frame::Frame, raw_path: &str) -> Option<fit::Pro
             with_embedded_jpeg(path.as_ptr(), |jpeg| fit::fit(source, jpeg, geometry).ok().flatten())
         }
     })?;
-    fitted
+    // After the fit, not inside it: the lateral aberration is measured off the render
+    // alone, so it wants neither the preview nor the search (`fit::with_lateral`).
+    let mut fitted = fitted?;
+    fit::with_lateral(&mut fitted, source, ffi::recorded_lateral(raw_path));
+    Some(fitted)
 }
 
 /// The camera match for the HDR grade, in the domain the grade works in (10.8.1).
 ///
 /// Reuses the geometry an SDR fit already resolved where there is one; where nothing
 /// renders SDR both halves run off this decode in a single pass over it.
+///
+/// `finished` is what the frame will have had done to it by the time the match is applied,
+/// so the geometry search can be run against that rather than against the raw render.
 pub fn fit_hdr_for(
     linear: &frame::Frame,
     raw_path: &str,
     quantile: f64,
     profile: Option<&fit::Profile>,
+    finished: image::Strengths,
 ) -> Option<hdr_fit::HdrMatch> {
     let samples = linear.samples16()?;
     let source = hdr::Source { samples, width: linear.width, height: linear.height };
@@ -687,7 +696,7 @@ pub fn fit_hdr_for(
         Some(profile) => hdr::fit_match(raw_path, &source, quantile, profile.lens()),
         None => {
             let geometry = ffi::geometry_for(raw_path)?;
-            hdr::fit_all(raw_path, &source, quantile, geometry).map(|(_, matched)| matched)
+            hdr::fit_all(raw_path, &source, quantile, geometry, finished).map(|(_, matched)| matched)
         }
     })
 }
@@ -871,6 +880,7 @@ mod pin;
 /// suite stays fast enough to run on every edit.
 #[cfg(all(test, feature = "fixtures"))]
 mod fixture_tests;
+
 
 #[cfg(test)]
 mod tests {

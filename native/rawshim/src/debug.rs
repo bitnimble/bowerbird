@@ -273,6 +273,33 @@ pub enum Command {
         #[serde(default)]
         size: u32,
     },
+    /// The same crop of several renditions, tiled into one JPEG for looking at.
+    ///
+    /// The window is chosen rather than given: whichever square the *first* and *last*
+    /// image disagree on most in colour, which is where the stage under comparison did
+    /// the most. Picking coordinates by hand finds the fringe you already expected.
+    TileCrops {
+        image_paths: Vec<String>,
+        output_path: String,
+        /// Side of the square crop, in pixels of the source.
+        window: u32,
+        /// Nearest-neighbour magnification, so a two-pixel rim is visible.
+        scale: u32,
+    },
+    /// One RAW rendered at several defringe strengths, each scored against the body's
+    /// own JPEG at the pixels the stage acts on.
+    ///
+    /// Here rather than in a script because it has to be the *real* render path - decode,
+    /// finish, fit, apply - and because the alternative is shipping five full frames per
+    /// photo across the boundary to be subtracted.
+    DefringeSweep {
+        path: String,
+        amounts: Vec<f64>,
+        denoise_luma: f64,
+        denoise_chroma: f64,
+        /// Long edge both the render and the preview are read at.
+        size: u32,
+    },
 }
 
 /// The parts of an HDR encode a pin varies.
@@ -295,17 +322,30 @@ pub struct GradeSpec {
     /// has no say in its chroma.
     #[serde(default)]
     pub medium: Option<String>,
-    /// Chroma blur radius and output sharpening. Absent means neither, which is what a
-    /// pin comparing two encode routes wants: whatever these do, they must do it to
-    /// both. The radius is used as given rather than scaled - a debug command names the
-    /// number it wants applied.
+    /// Luma and chroma denoise strengths, and output sharpening. Absent means none of
+    /// them, which is what a pin comparing two encode routes wants: whatever these do,
+    /// they must do it to both. Used as given rather than scaled - a debug command names
+    /// the numbers it wants applied.
     #[serde(default)]
-    pub denoise: f64,
+    pub denoise_luma: f64,
+    #[serde(default)]
+    pub denoise_chroma: f64,
     #[serde(default)]
     pub sharpen: f64,
+    #[serde(default)]
+    pub defringe: f64,
 }
 
 impl GradeSpec {
+    fn strengths(&self) -> crate::image::Strengths {
+        crate::image::Strengths {
+            luma: self.denoise_luma,
+            chroma: self.denoise_chroma,
+            sharpen: self.sharpen,
+            defringe: self.defringe,
+        }
+    }
+
     fn options(&self) -> crate::hdr_args::EncodeOptions {
         crate::hdr_args::EncodeOptions {
             medium: match self.medium.as_deref() {
@@ -322,8 +362,7 @@ impl GradeSpec {
             white_quantile: self.white_quantile,
             crf: self.crf,
             preset: self.preset,
-            denoise: self.denoise,
-            sharpen: self.sharpen,
+            strengths: self.strengths(),
             max_edge: self.max_edge.unwrap_or(f64::INFINITY),
         }
     }
@@ -343,6 +382,36 @@ pub struct Reply {
     /// leaves the test comparing one path with itself and passing.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub used_avifenc: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub defringe_sweep: Option<DefringeSweep>,
+}
+
+/// One RAW's defringe strengths, scored.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DefringeSweep {
+    /// Mean deltaE76 against the body's JPEG over the pixels the defringe can reach,
+    /// one per amount asked for.
+    pub edge_delta_e: Vec<f64>,
+    /// The same over every sampled pixel, which is mostly *not* fringe - kept so a
+    /// strength that wins at edges by wrecking the rest of the frame is visible.
+    pub whole_delta_e: Vec<f64>,
+    pub edge_pixels: usize,
+    pub sampled_pixels: usize,
+    /// Whether the fit resolved a lateral correction at all.
+    ///
+    /// Scalar, unlike the two above: the profile is fitted once for the whole sweep, so
+    /// this is a property of the photo rather than of a strength. The tier and the
+    /// defringe remove the same error, so a frame where both fire is a different case
+    /// from one where only the defringe does.
+    pub has_lateral: bool,
+    /// The focus difference the frame was measured to carry, red and blue against green,
+    /// or nothing where the estimate declined.
+    ///
+    /// The amounts above scale this rather than setting it, so a sweep that does not
+    /// report it cannot tell a frame the stage left alone from one it had nothing to do
+    /// on - which are different answers.
+    pub defocus: Option<[f32; 2]>,
 }
 
 /// How close one or more images sit to the camera's own preview.
@@ -414,11 +483,11 @@ fn sdr_profile(path: &str) -> Result<std::sync::Arc<Option<crate::fit::Profile>>
 /// compare the two rather than reproduce the product.
 fn hdr_match(path: &str, linear: &Frame, spec: &GradeSpec) -> Result<Option<crate::hdr_fit::HdrMatch>, String> {
     if std::env::var("BOWERBIRD_FIT_WITH_SDR_PROFILE").is_err() {
-        return Ok(crate::fit_hdr_for(linear, path, spec.white_quantile, None));
+        return Ok(crate::fit_hdr_for(linear, path, spec.white_quantile, None, spec.strengths()));
     }
     let profile = sdr_profile(path)?;
     let Some(profile) = profile.as_ref() else { return Ok(None) };
-    Ok(crate::fit_hdr_for(linear, path, spec.white_quantile, Some(profile)))
+    Ok(crate::fit_hdr_for(linear, path, spec.white_quantile, Some(profile), spec.strengths()))
 }
 
 /// Luma quantiles of a graded frame, in nits.
@@ -426,7 +495,7 @@ fn hdr_match(path: &str, linear: &Frame, spec: &GradeSpec) -> Result<Option<crat
 /// BT.2020 luma of the PQ-coded samples, which is what the assertion means by "how
 /// bright": the anchor is measured on the brightest component, so a luma quantile
 /// lands under the reference rather than on it, and it is the drift that is read.
-#[cfg(test)]
+#[cfg(all(test, feature = "fixtures"))]
 pub(crate) fn luma_quantiles(samples: &[u16], peak_nits: f64, wanted: &[f64]) -> Vec<f64> {
     if wanted.is_empty() {
         return Vec::new();
@@ -559,7 +628,258 @@ pub fn run(command: &Command) -> Result<Reply, String> {
                 ..Reply::default()
             })
         }
+        Command::DefringeSweep { path, amounts, denoise_luma, denoise_chroma, size } => {
+            defringe_sweep(path, amounts, *denoise_luma, *denoise_chroma, *size as usize)
+        }
+        Command::TileCrops { image_paths, output_path, window, scale } => {
+            tile_crops(image_paths, output_path, *window as usize, *scale as usize)
+        }
     }
+}
+
+/// The same square of several images, magnified and laid side by side.
+fn tile_crops(
+    image_paths: &[String],
+    output_path: &str,
+    window: usize,
+    scale: usize,
+) -> Result<Reply, String> {
+    crate::vips::init();
+    let images: Vec<crate::vips::Rgb> = image_paths
+        .iter()
+        .map(|path| {
+            let encoded =
+                std::fs::read(path).map_err(|e| format!("could not read {path}: {e}"))?;
+            crate::vips::Pipeline::decode_upright(&encoded)
+                .and_then(crate::vips::Pipeline::finish)
+                .map_err(|e| format!("could not decode {path}: {e}"))
+        })
+        .collect::<Result<_, String>>()?;
+    let first = images.first().ok_or("no images to tile")?;
+    let last = images.last().ok_or("no images to tile")?;
+    let (w, h) = (first.width, first.height);
+    if images.iter().any(|i| i.width != w || i.height != h) {
+        return Err("the images are different sizes".to_string());
+    }
+    let window = window.min(w).min(h).max(1);
+
+    // Where the first and last disagree most, summed over a window. Against green, so a
+    // difference in brightness cannot stand in for a difference in colour.
+    let (mut best, mut at) = (-1.0f64, (0usize, 0usize));
+    let step = (window / 2).max(1);
+    let mut y = 0;
+    while y + window <= h {
+        let mut x = 0;
+        while x + window <= w {
+            let mut total = 0.0f64;
+            for row in (y..y + window).step_by(2) {
+                for col in (x..x + window).step_by(2) {
+                    let i = (row * w + col) * 3;
+                    let of = |d: &[u8], c: usize| f64::from(d[i + c]) - f64::from(d[i + 1]);
+                    total += (of(&first.data, 0) - of(&last.data, 0)).abs()
+                        + (of(&first.data, 2) - of(&last.data, 2)).abs();
+                }
+            }
+            if total > best {
+                best = total;
+                at = (x, y);
+            }
+            x += step;
+        }
+        y += step;
+    }
+
+    const GAP: usize = 8;
+    let side = window * scale;
+    let width = images.len() * side + (images.len() - 1) * GAP;
+    let mut out = vec![32u8; width * side * 3];
+    for (panel, image) in images.iter().enumerate() {
+        let left = panel * (side + GAP);
+        for row in 0..side {
+            for col in 0..side {
+                let src = ((at.1 + row / scale) * w + at.0 + col / scale) * 3;
+                let dst = (row * width + left + col) * 3;
+                out[dst..dst + 3].copy_from_slice(&image.data[src..src + 3]);
+            }
+        }
+    }
+    let tiled = crate::vips::Rgb { width, height: side, data: out };
+    let encoded = crate::vips::Pipeline::from_rgb(tiled.as_ref())
+        .and_then(|pipeline| pipeline.encode_jpeg(92))
+        .map_err(|e| format!("could not encode the tile: {e}"))?;
+    std::fs::write(output_path, encoded)
+        .map_err(|e| format!("could not write {output_path}: {e}"))?;
+    Ok(Reply::default())
+}
+
+/// Where the strongest strength actually changed a pixel's colour, as a mask.
+///
+/// **Measured rather than modelled.** Reconstructing the stage's own criterion - luma
+/// gradient, dilated - was tried first and covered 53% of a busy frame, which buries the
+/// rim in the picture. This is the stage's footprint by definition, and it is per-frame:
+/// a photo with no hard edges gets a small mask, and a photo of backlit branches gets a
+/// large one, which is exactly the weighting the question wants.
+fn changed_mask(quiet: crate::vips::RgbRef<'_>, loud: crate::vips::RgbRef<'_>) -> Vec<bool> {
+    // A single code of movement is rounding; two is the stage.
+    const MOVED: i32 = 2;
+    (0..quiet.width * quiet.height)
+        .map(|pixel| {
+            let i = pixel * 3;
+            let at = |data: &[u8], c: usize| i32::from(data[i + c]);
+            // Against green, so a brightness difference between the two renders - which
+            // the defringe does not cause - cannot register as one.
+            let red = (at(loud.data, 0) - at(loud.data, 1)) - (at(quiet.data, 0) - at(quiet.data, 1));
+            let blue = (at(loud.data, 2) - at(loud.data, 1)) - (at(quiet.data, 2) - at(quiet.data, 1));
+            red.abs().max(blue.abs()) >= MOVED
+        })
+        .collect()
+}
+
+/// One RAW rendered at each strength and scored against the body's own JPEG.
+///
+/// **The JPEG is the reference on purpose, and that is the whole design.** The fringe
+/// metric this project used before only rewards *removing* colour at an edge, so it has no
+/// way to see a correction going too far - which is how a defringe that greys out street
+/// lamps scored as an improvement and shipped before anyone looked at a render. Scored
+/// against the camera, both failures cost: leave the rim magenta and it differs from a
+/// JPEG that has no rim, grey out the lamp and it differs from a JPEG that kept it orange.
+fn defringe_sweep(
+    path: &str,
+    amounts: &[f64],
+    denoise_luma: f64,
+    denoise_chroma: f64,
+    size: usize,
+) -> Result<Reply, String> {
+    crate::vips::init();
+    let decoded = crate::decode_frame(path, 8, false, size as u32).ok_or("could not decode")?;
+    let source = decoded.rgb8().ok_or("the sweep needs an 8-bit decode")?;
+    // Resized here for the same reason `job.rs` does it before the finish: every constant
+    // the stages use is in pixels of the frame they read.
+    let render = match source.width.max(source.height) > size {
+        false => crate::vips::Rgb { width: source.width, height: source.height, data: source.data.to_vec() },
+        true => crate::vips::Pipeline::from_rgb(source)
+            .and_then(|pipeline| pipeline.resize_to_fit(size))
+            .and_then(crate::vips::Pipeline::finish)
+            .map_err(|e| format!("could not resize: {e}"))?,
+    };
+    let preview = crate::decode_embedded_rgb(path, size).ok_or("no embedded preview")?;
+    let lateral = crate::ffi::recorded_lateral(path);
+    let c_path = std::ffi::CString::new(path).map_err(|_| "a path with a nul in it")?;
+
+    let finished = |amount: f64| {
+        let mut frame = crate::vips::Rgb {
+            width: render.width,
+            height: render.height,
+            data: render.data.clone(),
+        };
+        crate::image::finish(
+            &mut frame.data,
+            frame.width,
+            frame.height,
+            crate::image::Strengths {
+                luma: denoise_luma,
+                chroma: denoise_chroma,
+                sharpen: 0.0,
+                defringe: amount,
+            },
+        );
+        frame
+    };
+
+    // **Fitted once, at no defringe, and reused for every strength.** Refitting per
+    // strength was tried first and is what a production job does - but the fit is a search
+    // over discrete candidates, so a rim-only change flips which geometry wins and the
+    // score moves with it. Measured on IMG_5360 the *whole-frame* deltaE swung 0.36
+    // between strengths, which a stage that only touches edges cannot cause. That is the
+    // fit talking, and it is far louder than the thing being measured. Holding the profile
+    // fixed leaves the defringe as the only variable.
+    //
+    // What it costs: on a frame where the lateral tier fires, production would hand it a
+    // defringed frame and it would decline. Here it stays applied at every strength. So
+    // `has_lateral` is reported, and those frames are read separately.
+    let base = finished(0.0);
+    let geometry = crate::ffi::geometry_for(path).ok_or("no geometry")?;
+    // SAFETY: the CString outlives the call.
+    #[expect(unsafe_code)]
+    let mut profile = unsafe {
+        crate::with_embedded_jpeg(c_path.as_ptr(), |jpeg| {
+            crate::fit::fit(base.as_ref(), jpeg, geometry).ok().flatten()
+        })
+    }
+    .flatten();
+    // The same order the render path uses: the lateral tier reads the finished frame
+    // after the fit, off the render alone.
+    if let Some(profile) = profile.as_mut() {
+        crate::fit::with_lateral(profile, base.as_ref(), lateral);
+    }
+    let has_lateral = profile.as_ref().is_some_and(|p| p.lens().tca.is_some());
+
+    let matched = |frame: crate::vips::Rgb| match &profile {
+        Some(profile) => crate::fit::apply(frame.as_ref(), profile),
+        None => frame,
+    };
+    let rendered: Vec<crate::vips::Rgb> =
+        amounts.iter().map(|amount| matched(finished(*amount))).collect();
+
+    let strongest = amounts
+        .iter()
+        .enumerate()
+        .max_by(|(_, a), (_, b)| a.total_cmp(b))
+        .map(|(i, _)| i)
+        .ok_or("no amounts to sweep")?;
+    let quiet = matched(finished(0.0));
+    let mask = changed_mask(quiet.as_ref(), rendered[strongest].as_ref());
+    let edge_pixels = mask.iter().filter(|on| **on).count();
+
+    let (mut edge_delta_e, mut whole_delta_e) = (Vec::new(), Vec::new());
+    let mut sampled = 0usize;
+    for image in &rendered {
+        let (mut edge_total, mut whole_total, mut edge_count) = (0.0f64, 0.0f64, 0usize);
+        let mut whole_count = 0usize;
+        for y in 0..image.height {
+            for x in 0..image.width {
+                let (u, v) =
+                    ((x as f64 + 0.5) / image.width as f64, (y as f64 + 0.5) / image.height as f64);
+                let i = (y * image.width + x) * 3;
+                let here = [
+                    f64::from(image.data[i]),
+                    f64::from(image.data[i + 1]),
+                    f64::from(image.data[i + 2]),
+                ];
+                // Sampled on a normalised grid rather than by index: the preview is
+                // distortion-cropped, so it comes out a pixel or two off the render's
+                // shape and a shared index would slide a pixel per row.
+                let delta = crate::fit::delta_e76(&here, &sample(preview.as_ref(), u, v));
+                whole_total += delta;
+                whole_count += 1;
+                if mask[y * image.width + x] {
+                    edge_total += delta;
+                    edge_count += 1;
+                }
+            }
+        }
+        sampled = whole_count;
+        edge_delta_e.push(match edge_count {
+            0 => f64::NAN,
+            n => edge_total / n as f64,
+        });
+        whole_delta_e.push(whole_total / whole_count.max(1) as f64);
+    }
+
+    Ok(Reply {
+        defringe_sweep: Some(DefringeSweep {
+            edge_delta_e,
+            whole_delta_e,
+            edge_pixels,
+            sampled_pixels: sampled,
+            has_lateral,
+            // Off the same resized render the finish reads, so this is the coefficient the
+            // amounts below are scaling rather than a second opinion about the frame.
+            defocus: crate::image::measure_defocus(render.data.as_slice(), render.width, render.height)
+                .map(|(r, b)| [r, b]),
+        }),
+        ..Reply::default()
+    })
 }
 
 /// The pixel at a fractional position, so images of different shapes compare.

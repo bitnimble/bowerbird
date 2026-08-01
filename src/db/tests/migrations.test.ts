@@ -132,6 +132,27 @@ describe('migrations: splitting the import into two stages', () => {
     ]);
   });
 
+  it('splits a tuned denoise into the luma and chroma pair, and keeps a later edit', () => {
+    const db = new Database(':memory:');
+    db.exec('CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
+    db.exec("INSERT INTO settings (key, value) VALUES ('raw_denoise', '1.4'), ('raw_sharpen', '0.6')");
+
+    runMigrations(db);
+    // What the user tuned for the pair as one, carried onto both so the upgrade renders
+    // what it rendered before.
+    expect(db.query('SELECT key, value FROM settings ORDER BY key').all()).toEqual([
+      { key: 'raw_denoise_chroma', value: '1.4' },
+      { key: 'raw_denoise_luma', value: '1.4' },
+      { key: 'raw_sharpen', value: '0.6' },
+    ]);
+
+    // And a value chosen afterwards survives a re-run, which is what a downgrade and
+    // re-upgrade leaves behind.
+    db.exec("UPDATE settings SET value = '2.5' WHERE key = 'raw_denoise_chroma'");
+    runMigrations(db);
+    expect(db.query("SELECT value FROM settings WHERE key = 'raw_denoise_chroma'").get()).toEqual({ value: '2.5' });
+  });
+
   it('creates a fresh database with the stages already split', () => {
     const db = new Database(':memory:');
     runMigrations(db);

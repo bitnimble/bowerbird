@@ -264,6 +264,20 @@ function renamePreviewColumnsToRenditions(db: Database): void {
   db.exec("UPDATE settings SET key = 'last_viewer_rendition' WHERE key = 'last_preview_rendition'");
 }
 
+// One strength drove both guided filters, and the two want different amounts:
+// luma grain reads as a photograph and is worth keeping some of, colour mottle has
+// no such defence (§10.9). Both inherit whatever the single setting held, so an
+// upgraded library renders exactly what it rendered before.
+//
+// Idempotent by the delete: the second run finds no `raw_denoise` to copy, and
+// `OR IGNORE` keeps a value the user has since changed from being overwritten.
+function splitRawDenoiseIntoLumaAndChroma(db: Database): void {
+  for (const key of ['raw_denoise_luma', 'raw_denoise_chroma']) {
+    db.exec(`INSERT OR IGNORE INTO settings (key, value) SELECT '${key}', value FROM settings WHERE key = 'raw_denoise'`);
+  }
+  db.exec("DELETE FROM settings WHERE key = 'raw_denoise'");
+}
+
 // One pending flag and one timestamp became two of each, because the import runs
 // in two passes and nothing could tell them apart: the queue redid a tile it had
 // already written when a run was interrupted, and a client re-fetched every grid
@@ -398,6 +412,7 @@ export function runMigrations(db: Database): void {
   // ends up standing.
   migrateShootsToFolderUniqueness(db);
   renamePreviewColumnsToRenditions(db);
+  splitRawDenoiseIntoLumaAndChroma(db);
   // Additive columns, for DBs created before each feature landed. CREATE TABLE
   // above already has them, so these are no-ops on a fresh database.
   ensureColumn(db, 'photos', 'file_size', 'INTEGER'); // stat quick-check (§9.1)

@@ -201,9 +201,14 @@ export class ProcessingService {
   }
 
   // What the render itself gets, before any rendition is cut from it (§10.9).
-  private render(): { denoise: number; sharpen: number } {
+  private render(): { denoiseLuma: number; denoiseChroma: number; sharpen: number; defringe: number } {
     const settings = this.settings.get();
-    return { denoise: settings.raw_denoise, sharpen: settings.raw_sharpen };
+    return {
+      denoiseLuma: settings.raw_denoise_luma,
+      denoiseChroma: settings.raw_denoise_chroma,
+      sharpen: settings.raw_sharpen,
+      defringe: settings.raw_defringe,
+    };
   }
 
   private grade(): HdrGrade {

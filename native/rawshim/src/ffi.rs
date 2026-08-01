@@ -284,6 +284,43 @@ pub(crate) fn geometry_for(path: &str) -> Option<fit::Geometry> {
     })
 }
 
+/// The lateral aberration the body recorded for this shot, where it recorded one.
+///
+/// Preferred over measuring it, on the same grounds the distortion cascade prefers a
+/// recorded spline: it is written per shot rather than per lens, so it tracks focal
+/// length and focus distance that a database entry averages over. Only Sony writes it;
+/// everything else reads as None and is measured off the frame.
+///
+/// Applied at face value (`tca::supplied_curve`), shape and magnitude both. The strength
+/// used to be refitted here, which measured worse than trusting it - and what makes that
+/// safe is not the fit but `tca::improves`, which drops the curve if the frame disagrees.
+pub(crate) fn recorded_lateral(path: &str) -> Option<[Vec<f64>; 2]> {
+    distortion_of(path).ok()?.lateral
+}
+
+/// The database's lateral aberration for whatever lens this file names, where it has
+/// one.
+///
+/// Separate from `geometry_for` because the tiers are independent: lensfun's TCA
+/// coverage is far thinner than its distortion coverage, so a lens routinely supplies
+/// one and not the other.
+///
+/// Not on the fit's path - see `tca::supplied_curve` for the measurements that decided
+/// that - so this is reached only by the test that keeps the reader honest.
+#[cfg(all(test, feature = "fixtures"))]
+pub(crate) fn database_lateral(path: &str) -> Option<[Vec<f64>; 2]> {
+    let header = crate::header::read_path(path)?;
+    crate::lensfun::tca_knots(
+        crate::header::name(&header.camera_make),
+        crate::header::name(&header.camera_model),
+        crate::header::name(&header.lens_model),
+        header.focal,
+        header.aperture,
+        header.width as usize,
+        header.height as usize,
+    )
+}
+
 /// The database's profile for whatever lens this file names.
 ///
 /// None when the file names no lens, when nothing plausible matches, or when the
@@ -336,6 +373,9 @@ pub extern "C" fn bb_selftest() -> i32 {
     let profile = Profile {
         knots: Some(crate::image::polynomial_knots(-0.02, 0.0, 16)),
         gain: Some(fit::Gain::from_poly(0.3, -0.05)),
+        // Non-zero so the warp takes its per-channel branch: a build tuned for
+        // instructions the host lacks has to fault here rather than in a worker.
+        tca: Some(crate::tca::flat(1.0008, 0.9992)),
         crop: 0.99,
         source: 2,
         colour: Some(colour),

@@ -11,6 +11,7 @@
 //! perceptual hash survives none of it well enough to be worth a threshold; see
 //! the design document for the measurements that settled this shape.
 
+use crate::image::LUMA;
 use crate::vips::RgbRef;
 
 /// Cells along one edge of the luma and chroma grids.
@@ -127,7 +128,10 @@ fn luma_grid(image: RgbRef<'_>, view: View, cells: usize) -> Vec<f32> {
             let gx = (x - x0) * cells / w;
             let i = (y * image.width + x) * 3;
             let (r, g, b) = (image.data[i] as f32, image.data[i + 1] as f32, image.data[i + 2] as f32);
-            sums[gy * cells + gx] += 0.2126 * r + 0.7152 * g + 0.0722 * b;
+            // The shared constant in its own width rather than through `luma_of`: this
+            // accumulates in f32 and the descriptor is persisted, so going via f64 and
+            // back would shift stored values for no gain.
+            sums[gy * cells + gx] += LUMA[0] * r + LUMA[1] * g + LUMA[2] * b;
             counts[gy * cells + gx] += 1.0;
         }
     }

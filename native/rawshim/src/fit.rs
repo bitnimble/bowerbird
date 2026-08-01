@@ -43,10 +43,28 @@ pub const MAX_ACCEPTABLE_DELTA_E: f64 = 6.0;
 const REFINE_FLOOR: f64 = 0.0005;
 const REFINE_MARGIN: f64 = 0.002;
 
-/// Crop and k1 lie along a diagonal valley, so the grid only has to land in the
-/// valley and the joint refine walks down it.
-const FALLBACK_K1_SCAN: [f64; 7] = [-0.06, -0.04, -0.02, 0.0, 0.02, 0.04, 0.06];
-const FALLBACK_CROP_SCAN: [f64; 3] = [0.97, 1.0, 1.03];
+/// The crop axis of every search, as slack below the tightest crop that fills the
+/// frame rather than an absolute scale. Crop and curve otherwise lie along a diagonal
+/// valley; expressed this way a step along the curve carries its crop with it, and
+/// the grid only has to land in the valley for the joint refine to walk down it.
+const SLACK_SCAN: [f64; 3] = [-0.06, -0.03, 0.0];
+const SLACK_STEP: f64 = 0.01;
+
+/// The radial coefficient, where the curve has to be fitted from nothing.
+const K1_SCAN: [f64; 7] = [-0.06, -0.04, -0.02, 0.0, 0.02, 0.04, 0.06];
+const K1_STEP: f64 = 0.01;
+
+/// How strongly a known curve is applied, as a multiplier on its knots.
+///
+/// Fitted rather than trusted at 1.0, because a profile is one average of every copy
+/// of a lens and measurably not what this body did: over 32 EOS R8 frames the ones
+/// lensfun calls barrel wanted more than it states while the pincushion ones wanted
+/// about 0.4 of it, worth a mean 0.08 deltaE76 and up to 0.46. 0 is in the grid on
+/// purpose - it is the rescale-with-no-curve candidate, which several frames turn out
+/// to want outright, and having it here is why a curve losing no longer means the
+/// scale is lost with it.
+const GAIN_SCAN: [f64; 4] = [0.0, 0.5, 1.0, 1.5];
+const GAIN_STEP: f64 = 0.25;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Phase {
@@ -101,17 +119,43 @@ pub struct Lens {
     pub crop: f64,
     /// The falloff's two coefficients, in the currency `Gain::at` reads.
     pub falloff: Option<(f64, f64)>,
+    /// Red and blue's radial correction against green, where the lens imaged them at
+    /// different magnifications (`tca.rs`). Knots rather than a scalar because a
+    /// database curve is radius-dependent and a measured scale is the flat case of one.
+    pub tca: Option<[Vec<f64>; 2]>,
 }
 
 impl Lens {
     /// A lens that did nothing, for a caller with no fit to hand.
     pub fn none() -> Self {
-        Lens { distortion: None, crop: 1.0, falloff: None }
+        Lens { distortion: None, crop: 1.0, falloff: None, tca: None }
+    }
+
+    /// The radius each channel is read at, relative to green's.
+    ///
+    /// The warp folds these into its own ratio, so the lateral aberration is undone by
+    /// the resample that undoes the distortion rather than by a pass of its own.
+    pub fn channels(&self) -> crate::image::Channels {
+        match &self.tca {
+            Some([red, blue]) => [red.clone(), Vec::new(), blue.clone()],
+            None => crate::image::registered(),
+        }
     }
 
     /// Whether applying this would change any pixel.
+    ///
+    /// The crop counts. It is a geometry on its own - a rescale - so a lens with no
+    /// curve beside it is not an identity, and reading only `distortion` drops the
+    /// scale a fit measured for a frame whose curve it declined.
     pub fn is_identity(&self) -> bool {
-        self.distortion.is_none() && self.falloff.is_none()
+        !crate::image::moves_pixels(self.distortion.as_deref(), self.crop)
+            && self.falloff.is_none()
+            && !self.corrects_channels()
+    }
+
+    /// Whether any channel is read at its own radius.
+    pub fn corrects_channels(&self) -> bool {
+        !crate::image::is_registered(&self.channels())
     }
 }
 
@@ -120,6 +164,9 @@ pub struct Profile {
     /// The falloff the camera corrected and the render did not, or None where the
     /// frame is better off without one.
     pub gain: Option<Gain>,
+    /// Red and blue's radial correction against green, or None where the lens
+    /// registered them well enough that correcting would only resample for nothing.
+    pub tca: Option<[Vec<f64>; 2]>,
     pub crop: f64,
     /// 0 none, or one of the `SOURCE_` codes. Reported so a rendition can be
     /// re-cut when the cascade changes under it, and so the fit can be judged by
@@ -138,6 +185,7 @@ impl Profile {
             distortion: self.knots.clone(),
             crop: self.crop,
             falloff: self.gain.as_ref().map(Gain::coefficients),
+            tca: self.tca.clone(),
         }
     }
 }
@@ -317,7 +365,7 @@ impl Gain {
     /// What this gain does to a corner pixel of mid grey, as a ratio - the one number
     /// that says how much falloff was corrected, and the one the tests assert on
     /// because `(a, b)` trade off against each other and it does not.
-    #[cfg(test)]
+    #[cfg(all(test, feature = "fixtures"))]
     pub(crate) fn corner(&self) -> f64 {
         let linear = linear_table();
         linear[Gain::of(Some(self), 255, 128) as usize] / linear[128]
@@ -503,14 +551,21 @@ pub(crate) fn linear_table() -> [f64; 256] {
     table
 }
 
-pub(crate) fn lab_from_levels(table: &[f64; 256], r: u8, g: u8, b: u8) -> [f64; 3] {
-    let (rr, gg, bb) = (table[r as usize], table[g as usize], table[b as usize]);
+/// CIE L\*a\*b\* of a linear-light sRGB triple, D65.
+///
+/// The one place the matrix and the cube root live. Both callers below used to carry
+/// their own copy of it, differing only in where the linear values came from.
+fn lab_from_linear(rr: f64, gg: f64, bb: f64) -> [f64; 3] {
     let x = (0.4124 * rr + 0.3576 * gg + 0.1805 * bb) / 0.95047;
     let y = 0.2126 * rr + 0.7152 * gg + 0.0722 * bb;
     let z = (0.0193 * rr + 0.1192 * gg + 0.9505 * bb) / 1.08883;
     let f = |t: f64| if t > 0.008856 { t.cbrt() } else { 7.787 * t + 16.0 / 116.0 };
     let fy = f(y);
     [116.0 * fy - 16.0, 500.0 * (f(x) - fy), 200.0 * (fy - f(z))]
+}
+
+pub(crate) fn lab_from_levels(table: &[f64; 256], r: u8, g: u8, b: u8) -> [f64; 3] {
+    lab_from_linear(table[r as usize], table[g as usize], table[b as usize])
 }
 
 fn clamp8(value: f64) -> f64 {
@@ -524,15 +579,11 @@ fn clamp8(value: f64) -> f64 {
 /// rather than through here: its inner loop runs a hundred times per photo and this
 /// derives both ends from scratch, where one of that pair never moves.
 pub fn delta_e76(a: &[f64; 3], b: &[f64; 3]) -> f64 {
+    // Linearised here rather than through `linear_table`, which builds 256 entries per
+    // call and this is an inner loop.
     let lab = |v: &[f64; 3]| {
         let f = |value: f64| to_linear(value.clamp(0.0, 255.0));
-        let (r, g, bl) = (f(v[0]), f(v[1]), f(v[2]));
-        let x = (0.4124 * r + 0.3576 * g + 0.1805 * bl) / 0.95047;
-        let y = 0.2126 * r + 0.7152 * g + 0.0722 * bl;
-        let z = (0.0193 * r + 0.1192 * g + 0.9505 * bl) / 1.08883;
-        let t = |v: f64| if v > 0.008856 { v.cbrt() } else { 7.787 * v + 16.0 / 116.0 };
-        let fy = t(y);
-        [116.0 * fy - 16.0, 500.0 * (t(x) - fy), 200.0 * (fy - t(z))]
+        lab_from_linear(f(v[0]), f(v[1]), f(v[2]))
     };
     let (p, q) = (lab(a), lab(b));
     ((p[0] - q[0]).powi(2) + (p[1] - q[1]).powi(2) + (p[2] - q[2]).powi(2)).sqrt()
@@ -568,7 +619,7 @@ fn residual_for(grid: &Grid, knots: &[f64], crop: f64) -> Option<f64> {
 /// between the two images anyway.
 #[inline]
 fn luma8(r: u8, g: u8, b: u8) -> u8 {
-    (0.2126 * r as f64 + 0.7152 * g as f64 + 0.0722 * b as f64).round() as u8
+    crate::image::luma709(f64::from(r), f64::from(g), f64::from(b)).round() as u8
 }
 
 /// The render's luma, before any falloff is put back into it.
@@ -623,22 +674,6 @@ fn corresponding(grid: &Grid, knots: &[f64], crop: f64) -> Option<Pairs> {
     (all.count >= MIN_PAIRS).then_some(all)
 }
 
-/// Where to start looking for the crop that accompanies a known spline.
-///
-/// A pincushion correction pulls the corner inward, so the camera scales by
-/// roughly the reciprocal of the corner displacement to keep the frame full - and
-/// measured against a fitted crop that prediction was exact. For barrel the camera
-/// is more conservative than tightest-fill, so this is a starting point, never the
-/// answer: a scan around it still runs.
-fn estimate_crop(knots: &[f64]) -> f64 {
-    let corner = knots.last().copied().unwrap_or(0.0);
-    if corner > 0.0 { 1.0 / (1.0 + corner / crate::image::SPLINE_UNIT) } else { 1.0 }
-}
-
-fn scan_around(centre: f64, step: f64, count: i32) -> Vec<f64> {
-    (-count..=count).map(|i| centre + i as f64 * step).collect()
-}
-
 /// Evaluates candidates across cores. They share only their inputs, which makes
 /// the scan the one genuinely parallel part of a fit; the refine that follows is
 /// sequential by nature, each step depending on the last.
@@ -659,80 +694,58 @@ fn scan<T: Send + Sync + Copy>(grid: &Grid, candidates: &[T], knots_of: impl Fn(
         .map(|(delta, _, candidate)| (candidate, delta))
 }
 
-/// Coarse scan on the search grid, then refine at full size.
+/// A one-parameter family of curves and the crop that goes with it, searched jointly:
+/// a coarse grid on the search grid, then a refine at full size.
 ///
 /// The scan only has to land in the right valley, which a quarter of the pixels
 /// answers just as well. The refine compares neighbours a fraction of a percent
 /// apart, and at half resolution those differences fall below the improvement
 /// threshold, so it halts early and leaves the geometry short - an injected 3%
 /// distortion came back as 1.3% when the refine also ran coarse.
-fn fit_crop(grids: &Grids, knots: &[f64], coarse: &[f64]) -> Option<(f64, f64)> {
-    let (mut crop, _) = scan(&grids.search, coarse, |_| knots.to_vec(), |c| c)?;
-    let mut delta = residual_for(&grids.full, knots, crop)?;
-
-    let mut step = coarse.get(1).copied().unwrap_or(1.0) - coarse.first().copied().unwrap_or(0.0);
-    while step > REFINE_FLOOR {
-        let mut improved = false;
-        for sign in [1.0, -1.0] {
-            let trial = crop + sign * step;
-            if let Some(candidate) = residual_for(&grids.full, knots, trial) {
-                if candidate < delta - REFINE_MARGIN {
-                    crop = trial;
-                    delta = candidate;
-                    improved = true;
-                }
-            }
-        }
-        if !improved {
-            step /= 2.0;
-        }
-    }
-    Some((crop, delta))
-}
-
-/// A curve someone else already knows, kept only if it corresponds better than
-/// leaving the frame alone.
 ///
-/// Losing means correcting nothing rather than falling through to the search, which
-/// reads like a missing cascade and is not: a curve that cannot beat the identity is
-/// saying this JPEG was not corrected, and a fitted polynomial agrees. Over the 58
-/// sampled frames where this fired before the uncorrected flag caught most of them,
-/// forcing the search through improved 3 by a median of 0.07 deltaE and declined on
-/// half.
-fn with_curve(grids: &Grids, knots: Vec<f64>, baseline: f64, source: u32) -> (Option<Vec<f64>>, f64, u32) {
-    match fit_crop(grids, &knots, &scan_around(estimate_crop(&knots), 0.01, 3)) {
-        Some((crop, delta)) if delta < baseline => (Some(knots), crop, source),
-        _ => (None, 1.0, 0),
-    }
-}
-
-/// Radial polynomial plus crop, for bodies that record no correction of their own -
-/// every Canon, and anything old enough not to have written one. Two parameters
-/// reach the same residual as a camera's spline, but it is the expensive way there:
-/// fitting the same frames both ways is 1643ms against 360ms on an RX100M3 and
-/// 1216ms against 589ms on an ILCE-7CR.
-fn fit_polynomial(grids: &Grids) -> Option<(f64, f64, f64)> {
-    let candidates: Vec<(f64, f64)> = FALLBACK_K1_SCAN
+/// Returns the winning knots, its crop and the residual it left.
+fn fit_family(
+    grids: &Grids,
+    family: impl Fn(f64) -> Vec<f64> + Sync,
+    coarse: &[f64],
+    mut step: f64,
+) -> Option<(Vec<f64>, f64, f64)> {
+    let (width, height) = (grids.full.jpeg.width, grids.full.jpeg.height);
+    let fill = |parameter: f64| crate::image::fill_crop(&family(parameter), width, height);
+    let candidates: Vec<(f64, f64)> = coarse
         .iter()
-        .flat_map(|k1| FALLBACK_CROP_SCAN.iter().map(move |crop| (*k1, *crop)))
+        .flat_map(|parameter| SLACK_SCAN.iter().map(move |slack| (*parameter, *slack)))
         .collect();
-    let ((mut k1, mut crop), _) =
-        scan(&grids.search, &candidates, |(k1, _)| polynomial_knots(k1, 0.0, 16), |(_, crop)| crop)?;
-    let mut delta = residual_for(&grids.full, &polynomial_knots(k1, 0.0, 16), crop)?;
+    let ((mut parameter, mut slack), _) = scan(
+        &grids.search,
+        &candidates,
+        |(parameter, _)| family(parameter),
+        |(parameter, slack)| fill(parameter) + slack,
+    )?;
+    let mut delta = residual_for(&grids.full, &family(parameter), fill(parameter) + slack)?;
 
-    let (mut step_k1, mut step_crop) = (0.01, 0.01);
-    while step_crop > REFINE_FLOOR {
+    let mut step_slack = SLACK_STEP;
+    while step_slack > REFINE_FLOOR {
         let mut improved = false;
         for axis in 0..2 {
+            // A zero step is a family of one - a bare scale - whose curve axis would
+            // otherwise be re-scored at the same point on every round of the refine.
+            if axis == 0 && step <= 0.0 {
+                continue;
+            }
             for sign in [1.0, -1.0] {
-                let trial_k1 = if axis == 0 { k1 + sign * step_k1 } else { k1 };
-                let trial_crop = if axis == 1 { crop + sign * step_crop } else { crop };
-                if let Some(candidate) =
-                    residual_for(&grids.full, &polynomial_knots(trial_k1, 0.0, 16), trial_crop)
-                {
+                let trial_parameter = if axis == 0 { parameter + sign * step } else { parameter };
+                // Slack above zero is a crop that does not fill, which no camera ships.
+                let trial_slack = if axis == 1 { slack + sign * step_slack } else { slack };
+                if trial_slack > 0.0 {
+                    continue;
+                }
+                let trial_knots = family(trial_parameter);
+                let trial_crop = fill(trial_parameter) + trial_slack;
+                if let Some(candidate) = residual_for(&grids.full, &trial_knots, trial_crop) {
                     if candidate < delta - REFINE_MARGIN {
-                        k1 = trial_k1;
-                        crop = trial_crop;
+                        parameter = trial_parameter;
+                        slack = trial_slack;
                         delta = candidate;
                         improved = true;
                     }
@@ -740,11 +753,49 @@ fn fit_polynomial(grids: &Grids) -> Option<(f64, f64, f64)> {
             }
         }
         if !improved {
-            step_k1 /= 2.0;
-            step_crop /= 2.0;
+            step /= 2.0;
+            step_slack /= 2.0;
         }
     }
-    Some((k1, crop, delta))
+    Some((family(parameter), fill(parameter) + slack, delta))
+}
+
+/// The scale alone, where the body states there is no curve to undo.
+///
+/// It is not nothing: the ~0.4-0.5% rescale between a render and the camera's own JPEG
+/// shows up on bodies with unrelated optics - ILCE-6300 frames land on crop 0.996 and
+/// EOS R8 frames on 0.995 - which is what makes it look like framing rather than a lens.
+fn fit_scale(grids: &Grids) -> Option<(Vec<f64>, f64, f64)> {
+    fit_family(grids, |_| Vec::new(), &[0.0], 0.0)
+}
+
+/// A curve someone else already knows, applied at a fitted strength.
+///
+/// The gain is what keeps a wrong profile from being all-or-nothing. Before it, a curve
+/// that could not beat leaving the frame alone was dropped along with the crop that
+/// came with it - so a frame whose lens lensfun overstates shipped with no geometry at
+/// all, when the scale on its own was worth 0.22 deltaE76. Gain 0 is exactly that
+/// candidate, so the search now contains the fallback rather than falling back to it.
+fn with_curve(grids: &Grids, knots: Vec<f64>, baseline: f64, source: u32) -> (Option<Vec<f64>>, f64, u32) {
+    let scaled = |gain: f64| knots.iter().map(|knot| knot * gain).collect::<Vec<f64>>();
+    chosen(fit_family(grids, scaled, &GAIN_SCAN, GAIN_STEP), baseline, source)
+}
+
+/// What a search settled on, as the cascade reports it.
+///
+/// Every family contains the curve that does nothing - gain 0, k1 0, and the bare scale
+/// is only that - so a winner can carry a crop and no curve at all. That is a geometry
+/// and its crop has to survive, but the tier did not supply a curve for it and must not
+/// be credited with one: reporting it as a fitted or database geometry is how a tier's
+/// own numbers come to disagree with what it actually did.
+fn chosen(found: Option<(Vec<f64>, f64, f64)>, baseline: f64, source: u32) -> (Option<Vec<f64>>, f64, u32) {
+    match found {
+        Some((knots, crop, delta)) if delta < baseline => match knots.iter().any(|knot| *knot != 0.0) {
+            true => (Some(knots), crop, source),
+            false => (None, crop, 0),
+        },
+        _ => (None, 1.0, 0),
+    }
 }
 
 /// Fits the transform taking `render` to `jpeg_bytes`: the lens, and then the colour.
@@ -852,28 +903,71 @@ fn fit_against(
 
     // Decided entirely on the search grid; the winner is re-fitted at full size
     // below, so nothing reported was measured coarse.
-    let chosen: (Option<Vec<f64>>, f64, u32) = match geometry {
-        // Taken at its word, and it is worth taking: the search is 55-70% of a fit,
-        // and on a frame the body says it left alone it lands on the identity
-        // anyway. Skipping it took an ILCE-7CM2 fit from ~500ms to ~200ms with the
-        // deltaE unchanged to two decimals on all 16 frames measured.
-        Geometry::Uncorrected => (None, 1.0, 0),
+    let settled: (Option<Vec<f64>>, f64, u32) = match geometry {
+        // Taken at its word for the curve, which is most of what a search costs. The
+        // scale still has to be fitted: the body is saying it undistorted nothing, not
+        // that it framed the JPEG exactly as LibRaw frames the render.
+        Geometry::Uncorrected => chosen(fit_scale(&grids), baseline_delta, 0),
         Geometry::Recorded(knots) => with_curve(&grids, knots, baseline_delta, SOURCE_CAMERA),
         Geometry::Profiled(knots) => with_curve(&grids, knots, baseline_delta, SOURCE_LENSFUN),
-        Geometry::Unstated => match fit_polynomial(&grids) {
-            Some((k1, crop, delta)) if delta < baseline_delta => {
-                (Some(polynomial_knots(k1, 0.0, 16)), crop, SOURCE_FITTED)
-            }
-            _ => (None, 1.0, 0),
-        },
+        // Two parameters reach the same residual as a camera's spline, but it is the
+        // expensive way there: fitting the same frames both ways is 1643ms against
+        // 360ms on an RX100M3 and 1216ms against 589ms on an ILCE-7CR.
+        Geometry::Unstated => chosen(
+            fit_family(&grids, |k1| polynomial_knots(k1, 0.0, 16), &K1_SCAN, K1_STEP),
+            baseline_delta,
+            SOURCE_FITTED,
+        ),
     };
 
-    let knots = chosen.0.clone().unwrap_or_default();
-    let Some(all) = corresponding(&grids.full, &knots, chosen.1) else {
+    let knots = settled.0.clone().unwrap_or_default();
+    let Some(all) = corresponding(&grids.full, &knots, settled.1) else {
         return Ok(None);
     };
     let gain = fit_gain(&all, Phase::Train);
-    Ok(Some(Profile { knots: chosen.0, gain, crop: chosen.1, source: chosen.2, colour: None }))
+
+    // Measured off the render itself rather than against the JPEG, and at full size
+    // rather than on the fit grid. It is its own effect - the JPEG has none of it left
+    // to compare against - and a 5px corner shift is a tenth of a pixel by the time the
+    // grid has been reduced to 640px and blurred at sigma 3, which is where three
+    // earlier attempts to fit it through the search went wrong (`tca.rs`).
+    //
+    Ok(Some(Profile {
+        knots: settled.0,
+        gain,
+        tca: None,
+        crop: settled.1,
+        source: settled.2,
+        colour: None,
+    }))
+}
+
+/// Resolves the lateral aberration and folds it into the profile.
+///
+/// **Separate from the fit, because it does not use the JPEG.** Everything in `fit` is
+/// render-against-preview; this is measured off the render alone - the camera's JPEG has
+/// no lateral fringe left in it to compare against - so it needs neither the reference nor
+/// the search, and threading the body's recorded curve through both of them only to reach
+/// the last three lines was plumbing a value past the function that was supposed to use it.
+///
+/// The cascade: the curve the body recorded for this shot, then the fringe measured off
+/// the frame's own point sources, then a regression. The order is the point - the
+/// regression reads a slope off the whole frame at a quarter resolution, which is where
+/// point sources go, so it ends up fitting scene edges that carry no radial signal. Every
+/// tier is verified against the frame afterwards regardless (`tca::improves`).
+///
+/// A 5px corner shift is a tenth of a pixel by the time the fit grid has been reduced to
+/// 640px and blurred at sigma 3, which is where three earlier attempts to fit this through
+/// the search went wrong (`tca.rs`). So it is read at full size, here.
+pub fn with_lateral(profile: &mut Profile, render: RgbRef<'_>, recorded: Option<[Vec<f64>; 2]>) {
+    profile.tca = match recorded {
+        Some(curve) => crate::tca::supplied_curve(render, curve),
+        None => crate::tca::measure(render).or_else(|| crate::tca::estimate(render)),
+    };
+    // A channel read further out than green needs the room to be there, so the crop
+    // tightens by however much the widest one reaches past it. At the scales a real lens
+    // shows this is under a fifth of a percent.
+    profile.crop /= crate::tca::widest(profile.tca.as_ref());
 }
 
 /// Applies a fitted profile to a render: the geometry, the falloff and the colour, in one
@@ -886,10 +980,26 @@ fn fit_against(
 /// also leaves the warp running across cores, where alone it was a plain row loop.
 pub fn apply(image: RgbRef<'_>, profile: &Profile) -> Rgb {
     let (width, height) = (image.width, image.height);
-    let warp = profile
-        .knots
-        .as_ref()
-        .map(|knots| crate::image::Warp::new(image, width, height, knots, profile.crop));
+    // Gated on what would actually move a pixel, not on the knots being present: a crop is
+    // a geometry of its own, and so is a lateral correction that reads red and blue at
+    // their own radius. Keying on `knots` alone ships both of those unapplied.
+    let knots = profile.knots.as_deref();
+    let channels = profile.lens().channels();
+    let moves = crate::image::moves_pixels(knots, profile.crop)
+        || !crate::image::is_registered(&channels);
+    let warp = moves.then(|| {
+        crate::image::Warp::new(
+            image,
+            width,
+            height,
+            knots.unwrap_or_default(),
+            profile.crop,
+            &channels,
+            // The output goes through the cubic: bilinear's softening is radial here, and
+            // it costs a mean 25% of the edge gradient (DESIGN 10.8).
+            crate::image::Sampling::Bicubic,
+        )
+    });
     let mut out = Rgb { width, height, data: vec![0u8; width * height * 3] };
 
     let (cx, cy) = (width as f64 / 2.0, height as f64 / 2.0);
@@ -1012,6 +1122,7 @@ mod tests {
         let profile = Profile {
             knots: None,
             gain: None,
+            tca: None,
             crop: 1.0,
             source: 0,
             colour: Some(crate::hdr_fit::HdrColour::identity()),
@@ -1023,6 +1134,62 @@ mod tests {
         for (got, want) in out.data.iter().zip(&source.data) {
             assert!(got.abs_diff(*want) <= 1, "{got} against {want}");
         }
+    }
+
+    #[test]
+    fn a_profile_with_no_curve_still_applies_its_rescale() {
+        // A crop is a geometry even with no knots beside it, and deciding on
+        // `knots.is_none()` alone threw away the scale the fit had just measured -
+        // which on frames where the curve loses is the whole of the geometry.
+        let source = scene(64, 48);
+        let profile =
+            Profile { knots: None, gain: None, tca: None, crop: 0.99, source: 0, colour: None };
+        assert_ne!(apply(source.as_ref(), &profile).data, source.data);
+    }
+
+    #[test]
+    fn a_profile_with_only_a_lateral_scale_still_warps() {
+        // No curve, no crop, no falloff - and still a geometry, because red and blue
+        // are being read at a different radius from green. Gating the warp on the
+        // distortion alone would drop it and leave the fringe in.
+        let source = scene(64, 48);
+        let profile = Profile {
+            knots: None,
+            gain: None,
+            tca: Some(crate::tca::flat(1.002, 0.998)),
+            crop: 1.0,
+            source: 0,
+            colour: None,
+        };
+        assert!(!profile.lens().is_identity());
+        assert_ne!(apply(source.as_ref(), &profile).data, source.data);
+    }
+
+    #[test]
+    fn a_recorded_curve_reaches_the_profile_and_takes_its_crop_room_with_it() {
+        // **The cascade had no coverage through this function at all.** Stubbing the body
+        // of `with_lateral` to `profile.tca = None` left the whole suite green, and so did
+        // deleting the crop division - so neither the curve reaching the profile nor the
+        // room the widest channel needs was pinned anywhere.
+        let render = scene(96, 72);
+        let mut profile =
+            Profile { knots: None, gain: None, tca: None, crop: 1.0, source: 0, colour: None };
+        // 0.6% outward on red: over `MIN_SHIFT`'s quarter-pixel floor at this frame size
+        // and well under `MAX_SCALE`, so `plausible` accepts it, and `improves` cannot
+        // refuse it on a frame with no point sources to check against.
+        let recorded = crate::tca::flat(1.006, 1.0);
+        with_lateral(&mut profile, render.as_ref(), Some(recorded));
+
+        let tca = profile.tca.as_ref().expect("a recorded curve reaches the profile");
+        let widest = crate::tca::widest(Some(tca));
+        assert!(widest > 1.0, "red reads past green, so the widest reach is over 1: {widest}");
+        // The crop has to tighten by exactly that reach, or the channel read furthest out
+        // samples past the edge of the frame it was cropped to.
+        assert!(
+            (profile.crop - 1.0 / widest).abs() < 1e-12,
+            "crop {} against the {widest} of room the curve needs",
+            profile.crop,
+        );
     }
 
     /// The geometry search minimises this and nothing else, so a luma curve that does
@@ -1105,4 +1272,12 @@ mod tests {
         }
     }
 
+    #[test]
+    fn every_crop_candidate_fills_the_frame() {
+        // Slack is measured down from the tightest fill, so a positive entry here would
+        // put a black margin back in the search - which the residual cannot see, the
+        // pair gate skipping black, and so would score as well as the crop that fills.
+        assert!(SLACK_SCAN.iter().all(|slack| *slack <= 0.0), "{SLACK_SCAN:?}");
+        assert!(SLACK_SCAN.contains(&0.0), "the tightest fill has to be a candidate");
+    }
 }

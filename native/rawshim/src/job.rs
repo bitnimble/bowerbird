@@ -20,6 +20,7 @@ use crate::fit;
 use crate::frame::Frame;
 use crate::hdr;
 use crate::hdr_args::{Chroma, EncodeOptions, Medium};
+use crate::image::Strengths;
 use crate::stacks;
 use crate::vips;
 use serde::{Deserialize, Serialize};
@@ -74,17 +75,37 @@ pub struct Target {
 pub struct Job {
     pub raw_file_path: String,
     pub match_embedded_jpeg: bool,
-    /// Denoise strength and the fraction of the deconvolution to blend in
-    /// (`raw_denoise`, `raw_sharpen`, §10.9). Both belong to the render rather than to
-    /// one rendition of it, so every target gets the same pair.
+    /// The two denoise strengths and the fraction of the deconvolution to blend in
+    /// (`raw_denoise_luma`, `raw_denoise_chroma`, `raw_sharpen`, §10.9). All three belong
+    /// to the render rather than to one rendition of it, so every target gets the same set.
     ///
-    /// Neither is scaled here. How much noise a frame actually has is measured off its
+    /// None is scaled here. How much noise a frame actually has is measured off its
     /// own pixels where the filters run (`image::noise_level`), which is why nothing on
     /// this side needs its ISO.
-    pub denoise: f64,
+    pub denoise_luma: f64,
+    pub denoise_chroma: f64,
     pub sharpen: f64,
+    /// How hard to take the colour off a fringing edge (`raw_defringe`, §10.9). Longitudinal
+    /// aberration is a focus difference rather than a magnification one, so the warp cannot
+    /// reach it and this is the only stage that does.
+    pub defringe: f64,
     pub grade: Grade,
     pub targets: Vec<Target>,
+}
+
+impl Job {
+    /// What runs on the frame before the camera match is fitted against it.
+    ///
+    /// The sharpen is deliberately not in here; `render_base` records why it runs after
+    /// the warp instead.
+    fn before_the_fit(&self) -> Strengths {
+        Strengths {
+            luma: self.denoise_luma,
+            chroma: self.denoise_chroma,
+            sharpen: 0.0,
+            defringe: self.defringe,
+        }
+    }
 }
 
 /// What the caller gets back. Never pixels: a stacking descriptor is a 2.6kB
@@ -129,8 +150,12 @@ fn encode_options(job: &Job, target: &Target, medium: Medium, output_path: &str)
         white_quantile: job.grade.white_quantile,
         crf: target.hdr_quantizer,
         preset: target.preset,
-        denoise: job.denoise,
-        sharpen: job.sharpen,
+        strengths: Strengths {
+            luma: job.denoise_luma,
+            chroma: job.denoise_chroma,
+            sharpen: job.sharpen,
+            defringe: job.defringe,
+        },
         max_edge: match target.size {
             0 => f64::INFINITY,
             size => f64::from(size),
@@ -161,40 +186,45 @@ fn encode_options(job: &Job, target: &Target, medium: Medium, output_path: &str)
 /// after the sharpen rather than before it - so a second SDR target wants the sharpen
 /// moved to the encode, where the final size is known, and a copy of the base per
 /// target to go with it.
+///
+/// **Only the sharpen runs here.** The denoise and the defringe already ran, on the decode
+/// and before the fit, for the reasons recorded at that call site: the fit has to be
+/// calibrated against the frame it will be applied to, or it restores none of the colour
+/// the denoise removed and the lateral tier corrects a fringe the defringe removes as well.
+///
+/// The sharpen stays on this side of the warp because it is a Richardson-Lucy
+/// deconvolution *of the resample's own blur*. Ahead of the warp it inverts a point spread
+/// that has not been applied yet and is then softened by the warp applying it - measured
+/// at 17.68 acutance here against 16.38 there, on a frame whose untouched acutance is
+/// 17.98.
+///
+/// **The defringe and the lateral warp remove the same error**, which is why the order of
+/// those two is not free either. Measured on IMG_8408, in fringe around point sources: the
+/// raw render carries 98.48, the defringe alone takes it to 4.22, the warp alone to 20.55.
+/// Whichever runs second has to be cleaning up a residual - and it is the *fit* that makes
+/// that true, by measuring the finished frame and declining a correction that is no longer
+/// needed. Apply a curve fitted against the raw render to a defringed frame and it
+/// overshoots to 84.44. That the warp is the whole of that was checked rather than
+/// assumed: with the lateral half of the match switched off the same arrangement lands at
+/// 6.66, so the colour transform accounts for 4.22 to 6.66 and the warp for the rest.
 fn render_base(
     mut decoded: Frame,
     profile: Option<&fit::Profile>,
-    size: u32,
-    denoise: f64,
     sharpen: f64,
 ) -> Result<Frame, String> {
-    let shrinks = size > 0 && decoded.width.max(decoded.height) > size as usize;
-
-    // A native-resolution target with no match asks for no new frame at all, and
-    // allocating one to answer that would be a 190MB no-op - so both stages run in the
-    // decode where it lies.
-    if !shrinks && profile.is_none() {
+    // A frame with no match asks for no new frame at all, and allocating one to answer
+    // that would be a 190MB no-op - so the sharpen runs where the frame already lies.
+    let Some(profile) = profile else {
         let (width, height) = (decoded.width, decoded.height);
         let data = decoded.rgb8_mut().ok_or("the SDR base needs an 8-bit decode")?;
-        crate::image::finish(data, width, height, denoise, sharpen);
+        crate::image::finish(data, width, height, Strengths { sharpen, ..Default::default() });
         return Ok(decoded);
-    }
+    };
 
     let source = decoded.rgb8().ok_or("the SDR base needs an 8-bit decode")?;
-    let mut built = match shrinks {
-        false => fit::apply(source, profile.expect("checked above")),
-        true => {
-            let resized = vips::Pipeline::from_rgb(source)
-                .and_then(|pipeline| pipeline.resize_to_fit(size as usize))
-                .and_then(vips::Pipeline::finish)
-                .map_err(|e| format!("could not resize the base: {e}"))?;
-            match profile {
-                None => resized,
-                Some(profile) => fit::apply(resized.as_ref(), profile),
-            }
-        }
-    };
-    crate::image::finish(&mut built.data, built.width, built.height, denoise, sharpen);
+    let mut built = fit::apply(source, profile);
+    let strengths = Strengths { sharpen, ..Default::default() };
+    crate::image::finish(&mut built.data, built.width, built.height, strengths);
     Ok(Frame::new(built.width, built.height, crate::frame::Pixels::Eight(built.data)))
 }
 
@@ -279,8 +309,48 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
     let mut profile: Option<fit::Profile> = None;
     let mut decoded: Option<Frame> = None;
     if renders_sdr {
-        let frame = crate::decode_frame(&job.raw_file_path, 8, false, sdr_size)
+        let decoded_frame = crate::decode_frame(&job.raw_file_path, 8, false, sdr_size)
             .ok_or("could not decode the RAW")?;
+        // **Resized here, not in `render_base`, and that is load-bearing.**
+        // `at_least_long_edge` only gates a single halving, so an 8-bit decode comes back
+        // at whatever LibRaw produced - 6000px for a 24MP body asked for 3840. Every knob
+        // below is in pixels of the frame it reads: the chroma denoise's radii of 4 and
+        // 32, `DEFRINGE_RADIUS`, `DEFRINGE_SPREAD`, and `DEFRINGE_EDGE`, which is a
+        // per-pixel gradient. Run them on the decode and a 24MP frame puts 2.4x the pixels
+        // through both guided filters *and* rescales what every one of those constants
+        // means - the coarse chroma radius exists to reach a 40-pixel blotch, and at 2.4x
+        // the linear scale that blotch is 98 pixels and out of its reach again.
+        let mut frame = match sdr_size > 0
+            && decoded_frame.width.max(decoded_frame.height) > sdr_size as usize
+        {
+            false => decoded_frame,
+            true => {
+                let source = decoded_frame.rgb8().ok_or("the SDR base needs an 8-bit decode")?;
+                let resized = vips::Pipeline::from_rgb(source)
+                    .and_then(|pipeline| pipeline.resize_to_fit(sdr_size as usize))
+                    .and_then(vips::Pipeline::finish)
+                    .map_err(|e| format!("could not resize the base: {e}"))?;
+                Frame::new(resized.width, resized.height, crate::frame::Pixels::Eight(resized.data))
+            }
+        };
+        // **The denoise and the defringe run before the fit, so the fit sees the frame it
+        // will actually be applied to.** Fitted against the raw render instead, the colour
+        // transform is calibrated on colour the denoise then removes and nothing puts back
+        // - measured at 22% of mean chroma - and the lateral tier measures a fringe the
+        // defringe then removes as well, so the two correct it twice and overshoot. Fitted
+        // here, the transform is asked to restore what the denoise took, and the lateral
+        // tier finds nothing left and declines on its own (§10.9).
+        //
+        // The sharpen is not in this pass. It is a deconvolution of the resample's own
+        // blur, so it belongs after the warp that does the resampling, and it runs at the
+        // end of `render_base` instead. Splitting the two is also *cheaper* than one pass:
+        // run together, the sharpen has to carry the chroma denoise's radius-32 halo
+        // through `strip_interior`, which cuts the strips far shorter than the
+        // deconvolution alone needs. Measured on a 24MP frame, 4.99s wall and 32.4s CPU
+        // together against 4.43s and 26.9s split, at the same peak memory.
+        let (width, height) = (frame.width, frame.height);
+        let data = frame.rgb8_mut().ok_or("the SDR base needs an 8-bit decode")?;
+        crate::image::finish(data, width, height, job.before_the_fit());
         if job.match_embedded_jpeg {
             profile = crate::fit_profile_for(&frame, &job.raw_file_path);
         }
@@ -295,7 +365,13 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
         let frame = crate::decode_frame(&job.raw_file_path, 16, true, hdr_size)
             .ok_or("could not decode the RAW scene-linear")?;
         if job.match_embedded_jpeg {
-            matched = crate::fit_hdr_for(&frame, &job.raw_file_path, job.grade.white_quantile, profile.as_ref());
+            matched = crate::fit_hdr_for(
+                &frame,
+                &job.raw_file_path,
+                job.grade.white_quantile,
+                profile.as_ref(),
+                job.before_the_fit(),
+            );
         }
         linear = Some(frame);
     }
@@ -329,7 +405,8 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
 
         let mut make_base = || {
             let frame = decoded.take().ok_or("an SDR render target with no decode")?;
-            render_base(frame, profile.as_ref(), sdr_size, job.denoise, job.sharpen)
+            // The denoise and the defringe already ran, on the decode and before the fit.
+            render_base(frame, profile.as_ref(), job.sharpen)
         };
         write_sdr(job, target, &mut base, &mut make_base, &mut outcome)?;
     }

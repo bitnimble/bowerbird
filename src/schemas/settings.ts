@@ -62,16 +62,27 @@ export const SettingsSchema = z.object({
   // wrong picture, and the cost is a fraction of the decode it rides along with.
   // Turn it off for an import where throughput matters more.
   match_embedded_jpeg: z.boolean(),
-  // What every rendered RAW gets before any rendition is cut from it (§10.9). Both
-  // are off when 0, and neither touches a rendition made from the camera's own JPEG:
+  // What every rendered RAW gets before any rendition is cut from it (§10.9). All
+  // are off when 0, and none touches a rendition made from the camera's own JPEG:
   // that one arrives denoised and sharpened by the body already.
   //
-  // `raw_denoise` is a strength, 0.5 being the default and 0 off. It drives two
-  // guided filters: one on luma, regularised by the frame's **own measured noise**, and
-  // one on chroma guided by that cleaned luma. Colour noise is blotchy and takes a wide
-  // radius; luma noise is per-pixel grain and takes a narrow one, and guiding the colour
-  // by the luma is what lets its radius grow without washing a red wall onto the white
-  // window frames beside it.
+  // The two denoises are strengths, 0 being off. They drive two guided filters:
+  // `raw_denoise_luma` regularises one on luma by the frame's **own measured noise**, and
+  // `raw_denoise_chroma` sets the radii of one on chroma guided by that cleaned luma.
+  // Colour noise is blotchy and takes a wide radius; luma noise is per-pixel grain and
+  // takes a narrow one, and guiding the colour by the luma is what lets its radius grow
+  // without washing a red wall onto the white window frames beside it.
+  //
+  // **Separate because the two answer to different complaints.** Grain in luma reads as
+  // a photograph and is worth keeping some of, where colour mottle has no such defence
+  // and wants all the smoothing it can be given - so the setting that has to stay timid
+  // is not the one that should be holding the other back.
+  //
+  // Which is why they default differently. The single knob they replaced was tuned to 1
+  // and then halved, on the judgement that fur and foliage lose the fine structure that
+  // makes them read as photographs - a complaint about *luma*, since the chroma filter
+  // moves no brightness at all. So the luma side inherits that halving and the chroma
+  // side keeps the tuned 1, which is what having two knobs was for.
   //
   // **No ISO scaling, because the noise is measured rather than predicted.** It was
   // scaled by ISO first, and measurement answers the same question better: by the time
@@ -85,10 +96,10 @@ export const SettingsSchema = z.object({
   // computed rather than an arbitrary gain. Denoising first is not optional - RL will
   // invert grain as readily as blur.
   //
-  // **The denoise is tuned short of what the metric would pick**, on purpose: the luma
-  // side is set where a dark roof keeps its texture rather than where flat water is
-  // quietest, because grain reads as a photograph and smearing reads as a fault. Raise it
-  // above about 1.5 and the second starts happening.
+  // **The luma denoise is tuned short of what the metric would pick**, on purpose: set
+  // where a dark roof keeps its texture rather than where flat water is quietest, because
+  // grain reads as a photograph and smearing reads as a fault. Raise it above about 1.5
+  // and the second starts happening.
   //
   // The default is half of what that tuning landed on, which is a judgement about fur
   // and foliage rather than about the metric: at 1 the frames this was checked against
@@ -99,8 +110,55 @@ export const SettingsSchema = z.object({
   // the better position in the pipeline and could not be made to work at any setting; and
   // a chroma-only Gaussian blur, which fixed the colour mottle and left the luma grain
   // that is most of what the eye objects to (§10.9).
-  raw_denoise: z.number().min(0).max(3),
+  raw_denoise_luma: z.number().min(0).max(3),
+  raw_denoise_chroma: z.number().min(0).max(3),
   raw_sharpen: z.number().min(0).max(1),
+  // A **ceiling** on the colour fringe correction, not the amount of it (§10.8).
+  //
+  // **The aberration the warp cannot reach.** Lateral CA is a magnification difference and
+  // comes out in the resample; this is the other one, where the lens focuses red, green and
+  // blue at different distances, so at a hard edge one channel is sharp and another is not.
+  // The channels are registered - nothing has moved - and one is simply blurrier.
+  //
+  // Which makes the fringe the *Laplacian of luma* times one coefficient, and that
+  // coefficient is fitted per frame. So this behaves like `raw_sharpen` rather than like
+  // the denoises: 1 applies the correction the frame was measured to need.
+  //
+  // It replaced a plain strength over a stage that pulled colour towards a box mean
+  // wherever the luma gradient was steep. That had no model of the defect - a thin
+  // saturated object looks exactly like a fringe to a gradient - so it greyed out street
+  // lamps, and the setting was the only thing bounding it.
+  //
+  // Both confounds review found are fixed and pinned by tests, so this defaults to 1.
+  //
+  // *Per-channel noise.* The regressor and the response are built from the same pixels, and
+  // green's noise enters one with +0.7152 and the other with -0.7152, so they were
+  // correlated by construction. The residue was positive for both channels, which cleared
+  // the sign veto, and being a ratio of variances it did not shrink as the noise did: a
+  // flat frame with independent grain fitted (0.124, 0.175) - that blue figure larger than
+  // the 0.148 measured on the library's worst real frame. Both sums' noise term has a
+  // closed form, so `measure_defocus` subtracts it. After: the noise-only frame returns
+  // nothing, and a real 0.12 defocus reads 0.0926 clean against 0.0928 with grain on top.
+  //
+  // *Lateral aberration.* A channel displaced by `d` expands as `G + d.grad G +
+  // (d^2/2).lap G`, and that second term is the basis this fit regresses on. It carries
+  // `d^2`, so it is positive for red and blue whichever way each is displaced - precisely
+  // what the sign veto cannot catch, since that veto rejects things that flip sign. A pure
+  // lateral aberration with nothing out of focus anywhere fitted (0.054, 0.053), and the
+  // correction was then applied at every radius including the centre, where a magnification
+  // difference displaces nothing. `d` grows with `r`, so the confound's apparent
+  // coefficient grows with `r^2` where a real focus difference is flat across the field:
+  // the fit is taken per radial bin and split into a constant plus an `r^2` term, keeping
+  // only the constant. The confound now measures nothing, and a real focus difference
+  // survives a lateral one laid on top of it.
+  //
+  // Measured over 215 frames from 104 shoots, scored as deltaE76 against each camera's own
+  // JPEG over the pixels the stage moves. Nothing is harmed by more than a JND at any
+  // strength - worst frame +0.26 at full - and four frames are helped by more than one,
+  // best -2.83. Mean improvement is 40% larger at 1 than at 0.5, and the large wins appear
+  // only there. It fires on 37 of 215 frames: the confounds are what made the version
+  // before this one fire on 143.
+  raw_defringe: z.number().min(0).max(1),
 
   grid_rendition_size: z.number().int().min(1),
   full_rendition_size: z.number().int().min(1),
@@ -196,8 +254,16 @@ export const DEFAULT_SETTINGS: Settings = {
 
   processing_concurrency: 4,
   match_embedded_jpeg: true,
-  raw_denoise: 0.5,
+  // The halving that landed on the single knob was a complaint about luma smearing fur
+  // and foliage, so it goes to the luma side alone; the chroma filter moves no brightness
+  // and keeps the tuned 1.
+  raw_denoise_luma: 0.5,
+  raw_denoise_chroma: 1,
   raw_sharpen: 0.6,
+  // **0 until the estimator can tell two effects apart.** See the schema comment: the
+  // coefficient it fits is confounded by lateral aberration and by per-channel noise, and
+  // on a noisy frame the noise term alone is larger than the largest real reading measured.
+  raw_defringe: 1,
   grid_rendition_size: 800,
   full_rendition_size: 3840,
   grid_rendition_quantizer: 13,

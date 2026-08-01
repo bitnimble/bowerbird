@@ -339,6 +339,75 @@ mod camera_match {
         crate::fit_profile_for(&render, path.to_str().unwrap()).expect("a fitted profile")
     }
 
+    /// The pair the body recorded beside its distortion spline, which is what the fit
+    /// prefers where there is one.
+    ///
+    /// The layout is not documented anywhere reachable and was worked out from the
+    /// files: a count prefix of 32, then 16 red knots and 16 blue. What validates it is
+    /// that the tag's corner value correlates +0.85 on red and +0.78 on blue with the
+    /// aberration measured off the same 51 frames - a wrong split would correlate with
+    /// nothing. This holds the parser to that shape.
+    #[test]
+    fn reads_the_lateral_pair_the_body_recorded() {
+        let Some(curve) = crate::ffi::recorded_lateral(sony().to_str().unwrap()) else {
+            eprintln!("SKIPPED: this ARW records no lateral pair");
+            return;
+        };
+        assert_eq!(curve[0].len(), 16, "red is sixteen knots, as the distortion spline is");
+        assert_eq!(curve[1].len(), 16, "and blue is the sixteen after it");
+        for channel in &curve {
+            for knot in channel {
+                assert!(
+                    (knot / SPLINE_UNIT).abs() < 0.01,
+                    "{} is not a lateral aberration - the layout or the unit is wrong",
+                    knot / SPLINE_UNIT,
+                );
+            }
+        }
+    }
+
+    /// A body that records nothing must not be read as recording zeroes, which would
+    /// take the frame off the measured path and correct nothing instead.
+    #[test]
+    fn reads_no_lateral_pair_from_a_body_that_writes_none() {
+        assert!(
+            crate::ffi::recorded_lateral(canon().to_str().unwrap()).is_none(),
+            "a CR3 is not a TIFF and carries no Sony SubIFD",
+        );
+    }
+
+    /// The lensfun TCA reader, which the fit does not use and which therefore has only
+    /// this to keep it honest.
+    ///
+    /// It is off the path because it lost: over five sampled frames it covered three and
+    /// never beat measuring the frame, reaching a halo split of +21.74 on IMG_0116 where
+    /// the regression reaches +18.67 (`tca::supplied_curve` carries the full numbers). The
+    /// reader itself is correct, so this asserts the shape of what it returns rather
+    /// than deleting a source that may be worth revisiting when coverage improves.
+    #[test]
+    fn reads_a_lateral_curve_out_of_the_database() {
+        let header = crate::header::read_path(canon().to_str().unwrap()).expect("header");
+        let Some(curve) = crate::ffi::database_lateral(canon().to_str().unwrap()) else {
+            // Not a failure: this lens is third-party glass and lensfun's TCA coverage
+            // is far thinner than its distortion coverage.
+            eprintln!("SKIPPED: lensfun has no TCA for {}", crate::header::name(&header.lens_model));
+            return;
+        };
+        assert_eq!(curve[0].len(), curve[1].len(), "both channels sample the same grid");
+        assert!(curve[0].len() >= 2, "a curve needs at least two knots to interpolate");
+        // A lateral correction is a fraction of a percent. Anything larger is a misread
+        // of the model's coordinates rather than a lens.
+        for channel in &curve {
+            for knot in channel {
+                assert!(
+                    (knot / SPLINE_UNIT).abs() < 0.01,
+                    "{} is not a lateral aberration",
+                    knot / SPLINE_UNIT,
+                );
+            }
+        }
+    }
+
     /// Centre-to-corner displacement, which is what a geometry actually does to the
     /// picture. A tier, a knot count and a crop are three ways of saying something the
     /// eye only sees as displacement.
@@ -555,7 +624,10 @@ mod camera_match {
     fn recovers_a_distortion_that_was_injected_on_purpose() {
         const K1: f64 = 0.03;
         let preview = crate::decode_embedded_rgb(sony().to_str().unwrap(), 0).expect("a preview");
-        let target = crate::vips::Pipeline::from_rgb(pincushion(&preview, K1).as_ref())
+        // Scaled to fill, which is the half of the injection that makes it a picture a
+        // camera could have produced: one that left the corners black would ask the fit
+        // for a geometry it correctly refuses to consider.
+        let target = crate::vips::Pipeline::from_rgb(pincushion(&preview, K1, 1.0 / (1.0 + K1)).as_ref())
             .and_then(|p| p.encode_jpeg(95))
             .expect("the injected target encodes");
 
@@ -579,8 +651,11 @@ mod camera_match {
         assert!(recovered > K1 / 2.0 && recovered < K1 * 2.0, "recovered {recovered} from {K1}");
     }
 
-    /// A centre-to-corner pincushion of `k1`, applied by resampling.
-    fn pincushion(source: &crate::vips::Rgb, k1: f64) -> crate::vips::Rgb {
+    /// A centre-to-corner pincushion of `k1`, scaled by `crop`, applied by resampling.
+    ///
+    /// Hand-rolled rather than calling `image::warp`: injecting with the same code the
+    /// fit inverts would let a bug in it cancel itself out.
+    fn pincushion(source: &crate::vips::Rgb, k1: f64, crop: f64) -> crate::vips::Rgb {
         let (width, height) = (source.width, source.height);
         let mut out = vec![0u8; width * height * 3];
         let half = ((width as f64 / 2.0).powi(2) + (height as f64 / 2.0).powi(2)).sqrt();
@@ -588,7 +663,7 @@ mod camera_match {
             let dy = (y as f64 - height as f64 / 2.0) / half;
             for x in 0..width {
                 let dx = (x as f64 - width as f64 / 2.0) / half;
-                let factor = 1.0 + k1 * (dx * dx + dy * dy);
+                let factor = crop * (1.0 + k1 * (dx * dx + dy * dy));
                 let px = width as f64 / 2.0 + dx * factor * half;
                 let py = height as f64 / 2.0 + dy * factor * half;
                 let o = (y * width + x) * 3;
@@ -719,8 +794,14 @@ mod camera_match {
             let samples = linear.samples16().expect("a 16-bit decode");
             let source = crate::hdr::Source { samples, width: linear.width, height: linear.height };
             let geometry = crate::ffi::geometry_for(path.to_str().unwrap()).expect("a geometry");
-            let (via_linear, matched_linear) =
-                crate::hdr::fit_all(path.to_str().unwrap(), &source, 0.9, geometry).expect("the linear fit");
+            let (via_linear, matched_linear) = crate::hdr::fit_all(
+                path.to_str().unwrap(),
+                &source,
+                0.9,
+                geometry,
+                crate::image::Strengths::default(),
+            )
+            .expect("the linear fit");
 
             // The point of the fit: how close to the camera it lands. A render whose
             // tone was too far off to search against would show up here as a match that
@@ -785,9 +866,8 @@ mod hdr_grade {
             white_quantile: QUANTILE,
             crf: 40,
             preset: 8,
-            // The grade is what is pinned here, and both of these run after it.
-            denoise: 0.0,
-            sharpen: 0.0,
+            // The grade is what is pinned here, and all of these run after it.
+            strengths: crate::image::Strengths::default(),
             max_edge,
         }
     }
@@ -811,7 +891,13 @@ mod hdr_grade {
     fn matched(frame: &crate::frame::Frame) -> Option<crate::hdr_fit::HdrMatch> {
         let render = decode(&sony(), 8, false, 0);
         let profile = crate::fit_profile_for(&render, sony().to_str().unwrap())?;
-        crate::fit_hdr_for(frame, sony().to_str().unwrap(), QUANTILE, Some(&profile))
+        crate::fit_hdr_for(
+            frame,
+            sony().to_str().unwrap(),
+            QUANTILE,
+            Some(&profile),
+            crate::image::Strengths::default(),
+        )
     }
 
     /// The falloff is the one half of the SDR match that lifts to the grade unchanged
@@ -824,7 +910,8 @@ mod hdr_grade {
         // This body corrects no illumination, so the lift has to be given something to
         // carry - which is also the only way to reach a corner gain worth measuring.
         // A quarter more light at the corner, none at the centre.
-        fitted.lens = crate::fit::Lens { distortion: None, crop: 1.0, falloff: Some((0.25, 0.0)) };
+        fitted.lens =
+            crate::fit::Lens { distortion: None, crop: 1.0, falloff: Some((0.25, 0.0)), tca: None };
 
         let (width, height) = (frame.width, frame.height);
         let samples = frame.samples16().expect("a 16-bit decode");
@@ -854,8 +941,14 @@ mod hdr_grade {
         let profile = injected_falloff();
         let wanted = profile.gain.as_ref().expect("a falloff").coefficients();
         let frame = decode(&sony(), 16, true, 3840);
-        let fitted = crate::fit_hdr_for(&frame, sony().to_str().unwrap(), QUANTILE, Some(&profile))
-            .expect("the HDR fit finds a match");
+        let fitted = crate::fit_hdr_for(
+            &frame,
+            sony().to_str().unwrap(),
+            QUANTILE,
+            Some(&profile),
+            crate::image::Strengths::default(),
+        )
+        .expect("the HDR fit finds a match");
         assert_eq!(fitted.lens.falloff, Some(wanted));
     }
 
@@ -879,12 +972,62 @@ mod hdr_grade {
         };
         let geometry = crate::ffi::geometry_for(path.to_str().unwrap()).expect("a geometry");
         let (profile, matched) =
-            crate::hdr::fit_all(path.to_str().unwrap(), &source, QUANTILE, geometry)
-                .expect("the linear fit");
+            crate::hdr::fit_all(
+                path.to_str().unwrap(),
+                &source,
+                QUANTILE,
+                geometry,
+                crate::image::Strengths::default(),
+            )
+            .expect("the linear fit");
         let lens = profile.lens();
         assert_eq!(matched.lens.falloff, lens.falloff);
         assert_eq!(matched.lens.distortion, lens.distortion);
         assert_eq!(matched.lens.crop, lens.crop);
+    }
+
+    /// **The HDR geometry search reads a *finished* render, the way the SDR one does.**
+    ///
+    /// The defringe and the lateral tier remove the same error, so a tier that measures the
+    /// raw render corrects a fringe the defringe at the end of `encode_pair` removes as
+    /// well, and the two overshoot. The SDR path fixed that by fitting on the finished
+    /// frame; this path kept warp-then-defringe for a while afterwards.
+    ///
+    /// What is asserted is that the finish reaches the search at all - the same fit run
+    /// with strengths and without has to land somewhere different, or they are being
+    /// carried and dropped. Neither fixture fits a lateral curve on this route, so the
+    /// double-correction itself is pinned in `tca`'s own tests rather than here; this
+    /// covers the plumbing that would silently undo them.
+    ///
+    /// **Driven by the sharpen**, which the defringe used to do. Now that the defringe
+    /// measures its own coefficient it correctly finds no focus difference on this frame
+    /// and does nothing - a fine stage and a useless probe. The denoises move the crop but
+    /// not the knots; the sharpen moves both, so it is the one that cannot pass by
+    /// coincidence.
+    #[test]
+    fn the_linear_route_fits_its_geometry_against_the_finished_render() {
+        let path = canon();
+        let frame = decode(&path, 16, true, 3840);
+        let source = crate::hdr::Source {
+            samples: frame.samples16().expect("a 16-bit decode"),
+            width: frame.width,
+            height: frame.height,
+        };
+        let fit_with = |strengths| {
+            let geometry = crate::ffi::geometry_for(path.to_str().unwrap()).expect("a geometry");
+            crate::hdr::fit_all(path.to_str().unwrap(), &source, QUANTILE, geometry, strengths)
+                .expect("the linear fit")
+                .0
+        };
+
+        let raw = fit_with(crate::image::Strengths::default());
+        let finished =
+            fit_with(crate::image::Strengths { sharpen: 1.0, ..Default::default() });
+        assert!(
+            (raw.crop - finished.crop).abs() > 1e-9 || raw.knots != finished.knots,
+            "the finish never reached the search, both fits settled on crop {}",
+            raw.crop,
+        );
     }
 
     /// The falloff has to be on the render *before* the colour is fitted, or the curves
@@ -903,7 +1046,7 @@ mod hdr_grade {
         let path = sony();
         let p = path.to_str().unwrap();
         let curves = |falloff| {
-            let lens = crate::fit::Lens { distortion: None, crop: 1.0, falloff };
+            let lens = crate::fit::Lens { distortion: None, crop: 1.0, falloff, tca: None };
             crate::hdr::fit_match(p, &source, QUANTILE, lens).expect("a match").colour.curves
         };
         assert_ne!(curves(Some((0.6, 0.0))), curves(None));

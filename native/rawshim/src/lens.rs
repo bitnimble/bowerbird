@@ -24,6 +24,36 @@
 /// vignetting, 0x7034/0x7035 for chromatic aberration, these two for distortion.
 const CORRECTION_TAG: u16 = 0x7036;
 const DISTORTION_TAG: u16 = 0x7037;
+const LATERAL_TAG: u16 = 0x7035;
+
+/// The lateral tag holds both channels back to back, so its declared count is twice a
+/// distortion spline's.
+const LATERAL_KNOTS: usize = 16;
+
+/// What the lateral values are stored in, as a divisor of `SPLINE_UNIT`.
+///
+/// The full factor is `1 + c * 2^-21`, and `spline_at` already divides by `SPLINE_UNIT`
+/// (2^14), so what is left here is 2^7. The sign is positive and means what our warp
+/// means by it: a positive coefficient reads the channel farther out, which shrinks it,
+/// because a positive coefficient records a channel that was magnified in the raw.
+///
+/// Sony documents none of this. The constant comes from a decompile of Imaging Edge
+/// Desktop, cross-checked against darktable's shipping implementation, which computes
+/// `cor_rgb[0][i] *= ca_r[i] * 2^-21 + 1` on knots read as `posc[i + 1]` and
+/// `posc[nc + i + 1]` - two blocks of sixteen, red first. The knots are evenly spaced in
+/// radius from the centre to the corner, which is what `spline_at` assumes.
+///
+/// **Two earlier readings were wrong and are worth not repeating.** A correlation of the
+/// tag's raw corner value against the aberration measured off the same frames once stood
+/// at +0.85 and +0.78 and justified nothing: consecutive frames of one shoot carry
+/// byte-identical tags while the measured aberration on them varies, so a near-constant
+/// regressor was being credited with tracking a varying target. Then the blocks were
+/// rebased against their own first knot, on the reasoning that a lateral aberration
+/// vanishes on axis. It does, but these are not displacements - they are the knots of a
+/// magnification, and a channel imaged larger is larger everywhere. Rebasing threw away
+/// the uniform term and left the curve a factor of the radius out, which measured as a
+/// displacement that was flat with radius where the model wanted one growing with it.
+const LATERAL_UNIT: f64 = 128.0;
 const SUBIFD_TAG: u16 = 0x014a;
 const TYPE_SHORT: u16 = 3;
 const TYPE_LONG: u16 = 4;
@@ -135,6 +165,55 @@ fn find_spline(reader: &Reader<'_>, entries: &[Entry]) -> Option<Vec<f64>> {
     None
 }
 
+/// Red and blue's lateral curves, in `SPLINE_UNIT`s, from the pair the body recorded.
+///
+/// Same shape as the distortion tag beside it: a count prefix then that many SSHORTs,
+/// except the count is 32 because both channels are stored back to back - red first,
+/// then blue. The two blocks routinely carry opposite signs, which is what a lateral
+/// aberration does.
+fn find_lateral(reader: &Reader<'_>, entries: &[Entry]) -> Option<[Vec<f64>; 2]> {
+    for entry in entries {
+        if entry.tag != LATERAL_TAG || (entry.kind != TYPE_SSHORT && entry.kind != TYPE_SHORT) {
+            continue;
+        }
+        let wanted = LATERAL_KNOTS * 2;
+        if entry.count as usize <= wanted || entry.start + entry.count as usize * 2 > reader.bytes.len() {
+            continue;
+        }
+        let declared = reader.i16(entry.start)?;
+        if declared as usize != wanted {
+            continue;
+        }
+        // **Absolute, not rebased.** These are the knots of a multiplicative radial factor
+        // and the first one is not meant to be zero: a channel imaged larger is larger
+        // everywhere, so a non-zero value on axis is a genuine uniform magnification
+        // difference rather than an offset to remove. Subtracting it, which an earlier
+        // version did on the reasoning that a lateral aberration vanishes on axis, throws
+        // away that term and leaves the curve a factor of the radius out.
+        let read = |from: usize| -> Option<Vec<f64>> {
+            (0..LATERAL_KNOTS)
+                .map(|i| {
+                    reader.i16(entry.start + (from + i) * 2).map(|v| f64::from(v) / LATERAL_UNIT)
+                })
+                .collect()
+        };
+        let (red, blue) = (read(1)?, read(1 + LATERAL_KNOTS)?);
+        // A lateral aberration is a fraction of a percent, and at this unit an `i16` can
+        // express 1.6% - so a misread of the layout can produce a number that is not a
+        // lens, and returning it would leave the caller to discover that. `tca::accept`
+        // would also reject it, but a reader that hands back garbage is worse than one
+        // that admits it found none.
+        let sane = |knots: &Vec<f64>| {
+            knots.iter().all(|knot| (knot / crate::image::SPLINE_UNIT).abs() < 0.01)
+        };
+        if !sane(&red) || !sane(&blue) {
+            continue;
+        }
+        return Some([red, blue]);
+    }
+    None
+}
+
 /// 0 is the body saying it corrected nothing, so its preview needs nothing undone.
 /// The "on" value is not a single constant - 1 and 17 both appear across bodies -
 /// so anything non-zero counts as on rather than matching a list that would go
@@ -156,11 +235,13 @@ pub struct Distortion {
     /// Radial knots, centre to corner, in `SPLINE_UNIT`s. None when the file
     /// records none, which is most bodies older than about 2012.
     pub spline: Option<Vec<f64>>,
+    /// Red and blue's lateral curves against green, from the pair beside the spline.
+    pub lateral: Option<[Vec<f64>; 2]>,
 }
 
 impl Distortion {
     fn nothing() -> Distortion {
-        Distortion { applied: None, spline: None }
+        Distortion { applied: None, spline: None, lateral: None }
     }
 }
 
@@ -188,12 +269,55 @@ pub fn read_distortion(bytes: &[u8]) -> Distortion {
             if out.spline.is_none() {
                 out.spline = find_spline(&reader, &entries);
             }
-            if out.applied.is_some() && out.spline.is_some() {
+            if out.lateral.is_none() {
+                out.lateral = find_lateral(&reader, &entries);
+            }
+            if out.applied.is_some() && out.spline.is_some() && out.lateral.is_some() {
                 return out;
             }
         }
     }
     out
+}
+
+/// Every entry in the SubIFDs, as tag/type/count/first-values. For working out what an
+/// undocumented tag actually holds.
+#[cfg(all(test, feature = "fixtures"))]
+pub fn _for_testing_subifd(bytes: &[u8], wanted: u16) -> Option<(u16, u32, Vec<i32>)> {
+    let little = match bytes.get(..2) {
+        Some(b"II") => true,
+        Some(b"MM") => false,
+        _ => return None,
+    };
+    let reader = Reader { bytes, little };
+    let ifd0 = reader.u32(4)?;
+    for entry in read_ifd(&reader, ifd0 as usize) {
+        if entry.tag != SUBIFD_TAG || entry.kind != TYPE_LONG {
+            continue;
+        }
+        for k in 0..entry.count as usize {
+            let Some(offset) = reader.u32(entry.start + k * 4) else { break };
+            for found in read_ifd(&reader, offset as usize) {
+                if found.tag != wanted {
+                    continue;
+                }
+                let unit = type_size(found.kind)?;
+                if found.start + (found.count * unit) as usize > bytes.len() {
+                    continue;
+                }
+                let values = (0..found.count as usize)
+                    .filter_map(|i| match found.kind {
+                        TYPE_SSHORT => reader.i16(found.start + i * 2).map(i32::from),
+                        TYPE_SHORT => reader.u16(found.start + i * 2).map(i32::from),
+                        TYPE_LONG => reader.u32(found.start + i * 4).map(|v| v as i32),
+                        _ => reader.bytes.get(found.start + i).map(|v| i32::from(*v)),
+                    })
+                    .collect();
+                return Some((found.kind, found.count, values));
+            }
+        }
+    }
+    None
 }
 
 /// The spline alone, whatever the correction flag says. For the tests, which check
@@ -247,6 +371,92 @@ mod tests {
             bytes[at..at + 2].copy_from_slice(&knot.to_le_bytes());
         }
         bytes
+    }
+
+    /// A SubIFD carrying only the lateral pair: a count prefix of 32, then 16 red knots
+    /// and 16 blue, which is the layout the Japan shoot's files revealed.
+    fn with_lateral(red: &[i16; 16], blue: &[i16; 16]) -> Vec<u8> {
+        let mut bytes = vec![0u8; 512];
+        bytes[..2].copy_from_slice(b"II");
+        bytes[2..4].copy_from_slice(&42u16.to_le_bytes());
+        bytes[4..8].copy_from_slice(&8u32.to_le_bytes());
+
+        bytes[8..10].copy_from_slice(&1u16.to_le_bytes());
+        bytes[10..12].copy_from_slice(&SUBIFD_TAG.to_le_bytes());
+        bytes[12..14].copy_from_slice(&TYPE_LONG.to_le_bytes());
+        bytes[14..18].copy_from_slice(&1u32.to_le_bytes());
+        bytes[18..22].copy_from_slice(&64u32.to_le_bytes());
+
+        bytes[64..66].copy_from_slice(&1u16.to_le_bytes());
+        bytes[66..68].copy_from_slice(&LATERAL_TAG.to_le_bytes());
+        bytes[68..70].copy_from_slice(&TYPE_SSHORT.to_le_bytes());
+        bytes[70..74].copy_from_slice(&33u32.to_le_bytes());
+        bytes[74..78].copy_from_slice(&128u32.to_le_bytes());
+
+        bytes[128..130].copy_from_slice(&32i16.to_le_bytes());
+        for (i, value) in red.iter().chain(blue.iter()).enumerate() {
+            let at = 130 + i * 2;
+            bytes[at..at + 2].copy_from_slice(&value.to_le_bytes());
+        }
+        bytes
+    }
+
+    /// A block that grows from a non-zero baseline, which is what the files carry: the
+    /// values are relative to the centre knot, so only the growth is the aberration.
+    fn ramp(base: i16, step: i16) -> [i16; 16] {
+        let mut block = [0i16; 16];
+        for (i, knot) in block.iter_mut().enumerate() {
+            *knot = base + step * i as i16;
+        }
+        block
+    }
+
+    #[test]
+    fn reads_the_lateral_pair_as_two_channels() {
+        // Distinct blocks growing opposite ways, which is both what the files carry and
+        // what would go unnoticed if the split were off by one.
+        let (red, blue) = (ramp(1152, -64), ramp(-256, 32));
+        let [found_red, found_blue] =
+            read_distortion(&with_lateral(&red, &blue)).lateral.expect("a lateral pair");
+
+        assert_eq!(found_red.len(), 16);
+        assert_eq!(found_blue.len(), 16);
+        // Absolute, so the centre knot survives: 1152 and -256 over a unit of 128.
+        assert!((found_red[0] - 9.0).abs() < 1e-9, "red centre {}", found_red[0]);
+        assert!((found_blue[0] + 2.0).abs() < 1e-9, "blue centre {}", found_blue[0]);
+        // And 15 steps of -64 and +32 from there.
+        assert!((found_red[15] - 1.5).abs() < 1e-9, "red corner {}", found_red[15]);
+        assert!((found_blue[15] - 1.75).abs() < 1e-9, "blue corner {}", found_blue[15]);
+    }
+
+    #[test]
+    fn a_constant_pair_is_a_uniform_magnification_difference() {
+        // Not "no correction". These are the knots of a multiplicative factor, so a block
+        // that does not vary with radius says the channel is imaged larger by the same
+        // amount everywhere - which is a real aberration and a correctable one. An
+        // earlier version rebased each block against its own first knot and turned
+        // exactly this case into nothing at all.
+        let [red, blue] = read_distortion(&with_lateral(&[1152; 16], &[-256; 16])).lateral.expect("a pair");
+        assert!(red.iter().all(|knot| (knot - 9.0).abs() < 1e-9), "constant red became {red:?}");
+        assert!(blue.iter().all(|knot| (knot + 2.0).abs() < 1e-9), "constant blue became {blue:?}");
+    }
+
+    #[test]
+    fn refuses_a_lateral_pair_too_large_to_be_an_aberration() {
+        // At this unit an `i16` reaches 1.6% of a radial scale, well past any lens, so
+        // the guard is reachable and worth having: a misread layout is the case it exists
+        // for. Checked with a value the tag really can hold rather than a synthetic one.
+        let absurd = [i16::MAX; 16];
+        assert!(read_distortion(&with_lateral(&absurd, &[0; 16])).lateral.is_none());
+        // And an ordinary block still reads, so the bound is not simply refusing
+        // everything.
+        assert!(read_distortion(&with_lateral(&[1152; 16], &[-256; 16])).lateral.is_some());
+    }
+
+    #[test]
+    fn reads_no_lateral_pair_where_the_file_records_none() {
+        // The distortion-only synthetic: its SubIFD carries a spline and no pair.
+        assert!(read_distortion(&synthetic(&[0, -120, -400])).lateral.is_none());
     }
 
     #[test]
