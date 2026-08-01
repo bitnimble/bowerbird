@@ -56,6 +56,7 @@ function toFilters(query: PhotoListQuery): PhotoListFilters {
     takenTo: query.taken_to,
     match: query.match,
     count: query.count,
+    expandStacks: query.expand_stacks,
   };
 }
 
@@ -74,6 +75,7 @@ function fromSelectionFilters(filters: PhotoSelection['filters']): PhotoListFilt
     takenFrom: filters.taken_from,
     takenTo: filters.taken_to,
     match: filters.match,
+    expandStacks: filters.expand_stacks,
   };
 }
 
@@ -268,15 +270,17 @@ export class PhotosService {
   /**
    * Where the given rows sit in a scoped listing now (§19.6.1).
    *
-   * Keys are `COALESCE(stack_id, id)`: a stack by its stack, a photo by itself,
-   * which is what identifies a row of a collapsed listing. A key that is no
-   * longer in the collection is simply absent from the answer, which is how a
-   * client learns that the band it had open has been filtered away.
+   * A key is a photo id or a stack id, and the answer is every position that key
+   * names: one for a row of a collapsed listing, one per member for a stack in an
+   * uncollapsed one (§19.5.4). Naming a member alongside its stack answers under
+   * both, so neither takes anything away from the other. A key that is no longer
+   * in the collection is simply absent, which is how a client learns that the band
+   * it had open has been filtered away.
    */
-  positionsOf(request: PhotoPositionsRequest): Record<string, number> {
+  positionsOf(request: PhotoPositionsRequest): Record<string, number[]> {
     const { scope, filters, keys } = request;
     const listFilters = fromSelectionFilters(filters);
-    const found = ((): Map<string, number> => {
+    const found = ((): Map<string, number[]> => {
       switch (scope.kind) {
         case 'library': {
           const library = this.libraries.getById(scope.id);

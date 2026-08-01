@@ -6,13 +6,13 @@ import {
   CircleDashed,
   ImageOff,
   Layers,
+  Layers2,
   LayoutDashboard,
   LayoutGrid,
   List,
   Search,
   SlidersHorizontal,
   SquareCheck,
-  SquareDashed,
   Star,
   ThumbsDown,
   ThumbsUp,
@@ -20,9 +20,20 @@ import {
 } from 'lucide-react';
 import type { Ordering } from '../../api/client';
 import { usePhotosStore, usePresenters } from '../../app/stores_context';
-import { Button, CheckMenu, ICON, type Option, PopoverButton, SegmentedControl, Select, Slider, Text, TextField } from '../../ui/ui';
+import {
+  Button,
+  CheckMenu,
+  ICON,
+  type Option,
+  PopoverButton,
+  SegmentedControl,
+  Select,
+  Slider,
+  Text,
+  TextField,
+  ToggleButton,
+} from '../../ui/ui';
 import { activeFilters, type PhotoFilters, type ViewMode } from './photos_store';
-import { onScreenSpan } from './photo_grid';
 
 export const ORDERINGS: Option<Ordering>[] = [
   { value: 'taken_desc', label: 'Newest first' },
@@ -265,24 +276,16 @@ export const GridControls = observer(function GridControls(): JSX.Element {
         <Select label="Sort photos" options={ORDERINGS} value={store.ordering} onChange={(o) => void photos.setOrdering(o)} />
       )}
 
-      {/* The whole collection costs the same as one photo to hold (§18.3.3), so
-          it is offered whatever the library's size; "visible" is the narrower
-          gesture, for acting on the run currently on screen. */}
-      <Button onClick={photos.selectAll} disabled={store.total === 0}>
-        <SquareCheck size={ICON} />
-        Select all
-      </Button>
-
-      <Button
-        onClick={() => {
-          const span = onScreenSpan();
-          if (span != null) photos.selectSpan(span);
-        }}
-        disabled={store.total === 0}
-      >
-        <SquareDashed size={ICON} />
-        Select visible
-      </Button>
+      {/* A statement about what the collection *is* here, beside the filters and
+          the sort rather than with the selection gestures: it lists every frame
+          of every stack in the one stream, so the grid has no stacks in it at
+          all (§19.5.4). */}
+      <ToggleButton
+        label="Expand all stacks"
+        icon={<Layers2 size={ICON} />}
+        pressed={store.expandStacks}
+        onChange={(on) => void photos.setExpandStacks(on)}
+      />
 
       <TileZoom />
     </div>

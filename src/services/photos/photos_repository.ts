@@ -39,6 +39,10 @@ export interface PhotoListFilters {
   // 'any' unions the rated/triage/isMissing/needsTile filters instead of
   // intersecting them. Scope (deleted, search, dates) always intersects.
   match?: 'all' | 'any';
+  // Every photograph of a stack as a row of its own, instead of the stack as one
+  // row (§19.5.4). Collapsing is a filter, so this is nothing but its absence -
+  // which is also why it costs less than the collapsed listing rather than more.
+  expandStacks?: boolean;
   // Whether to answer with how many match. Defaults on; a client walking a
   // collection block by block turns it off after the first (§18.3.2).
   count?: boolean;
@@ -200,6 +204,9 @@ interface MemberScope {
 }
 
 function representativeFilter(filters: PhotoListFilters, member: MemberScope): { sql: string; params: (string | number)[] } {
+  // An uncollapsed listing keeps every member, so it is this filter's absence
+  // rather than a filter of its own (§19.5.4).
+  if (filters.expandStacks === true) return { sql: '1', params: [] };
   const { clauses, params } = conditions(filters, 'm.');
   const visible = [...(member.sql === '' ? [] : [member.sql]), ...clauses].join(' AND ');
   const inListing = visible === '' ? '' : ` AND ${visible}`;
@@ -230,6 +237,9 @@ function representativeFilter(filters: PhotoListFilters, member: MemberScope): {
  * the number on the tile and the set an action touches are the same.
  */
 function sizeExpression(filters: PhotoListFilters, counting: MemberScope): { sql: string; params: (string | number)[] } {
+  // Uncollapsed, a row stands for the one photograph it is, so nothing in the
+  // grid may read it as a stack (§19.5.4).
+  if (filters.expandStacks === true) return { sql: '1', params: [] };
   const { clauses, params } = conditions(filters, 'm.');
   const visible = [...(counting.sql === '' ? [] : [counting.sql]), ...clauses].join(' AND ');
   return {
@@ -248,8 +258,10 @@ const PENDING_PROCESSING = (prefix: string): string =>
 // Splits a value list into runs that fit under SQLITE_MAX_VARIABLE_NUMBER (999 on
 // old builds), so a caller can pass an unbounded set to an IN (...) query.
 const IN_CHUNK = 900;
-function* inChunks(values: readonly string[]): Generator<readonly string[]> {
-  for (let i = 0; i < values.length; i += IN_CHUNK) yield values.slice(i, i + IN_CHUNK);
+// `size` is for a query that binds each value more than once - a chunk is a
+// budget in *variables*, not in values.
+function* inChunks(values: readonly string[], size = IN_CHUNK): Generator<readonly string[]> {
+  for (let i = 0; i < values.length; i += size) yield values.slice(i, i + size);
 }
 
 const SYNC_COLUMNS = 'id, file_path, file_hash, is_missing, date_updated, file_size';
@@ -1007,11 +1019,13 @@ export class PhotosRepository {
     // scroll walks through, for a number that cannot move underneath it.
     //
     // Distinct over the collapsing key, so a stack is one entry of the collection
-    // just as it is one tile of it (§19.5.1).
+    // just as it is one tile of it (§19.5.1) - and a plain count when the listing
+    // is uncollapsed, where every member is an entry of its own (§19.5.4).
+    const counted = filters.expandStacks === true ? 'COUNT(*)' : 'COUNT(DISTINCT COALESCE(photos.stack_id, photos.id))';
     const total =
       filters.count === false
         ? undefined
-        : (this.db.query(`SELECT COUNT(DISTINCT COALESCE(photos.stack_id, photos.id)) AS n ${where}`).get(...params) as { n: number }).n;
+        : (this.db.query(`SELECT ${counted} AS n ${where}`).get(...params) as { n: number }).n;
     const rows = this.db
       .query(
         `SELECT ${SUMMARY_COLS}, ${size.sql} AS stack_size ${where} AND ${one.sql}
@@ -1066,8 +1080,13 @@ export class PhotosRepository {
     // shoot acts on the stack whole, and both honour the listing's own view of
     // the bin - the Bin is nothing but deleted rows, and a member set that
     // excluded those would resolve every selection there to nothing.
+    //
+    // Uncollapsed, the row *is* the photograph, so that join arm comes off with
+    // the collapse: picking one frame of a burst out of an expanded grid must act
+    // on that frame alone (§19.5.4).
     const members = conditions(filters, 'm.');
     const memberVisible = [...(promotion.sql === '' ? [] : [promotion.sql]), ...members.clauses];
+    const standsForStack = filters.expandStacks !== true;
     const rows = this.db
       .query(
         `SELECT m.id FROM (
@@ -1075,8 +1094,8 @@ export class PhotosRepository {
            ${where} AND ${one.sql} LIMIT ?
          ) chosen
          JOIN photos m
-           ON m.id = chosen.id
-           OR (chosen.stack_id IS NOT NULL AND m.stack_id = chosen.stack_id)
+           ON m.id = chosen.id${standsForStack ? `
+           OR (chosen.stack_id IS NOT NULL AND m.stack_id = chosen.stack_id)` : ''}
          WHERE (${spans})${memberVisible.map((clause) => ` AND ${clause}`).join('')}`,
       )
       // Bound in the order the placeholders appear in the text: the scoped rows,
@@ -1086,16 +1105,20 @@ export class PhotosRepository {
     return [...new Set(rows.map((row) => row.id))];
   }
 
-  // Where given rows sit in a scoped, ordered, filtered listing (§19.6.1).
-  //
-  // Keyed by `COALESCE(stack_id, id)`, which is what identifies a row of a
-  // collapsed listing: a stack by its stack, an ordinary photo by itself. That is
-  // what an open expansion band and the scroll anchor both hold, so that neither
-  // stores a position that a re-order or an import would silently invalidate.
-  //
-  // One query for every key, never one per key. Numbering rows costs an ordered
-  // pass over the collection, which is the same trap `idsAt` records: ten open
-  // bands must not mean ten passes.
+  /**
+   * Where given rows sit in a scoped, ordered, filtered listing (§19.6.1).
+   *
+   * A key is a photo id or a stack id, and a row answers to whichever of the two
+   * the caller asked about: a stack id names the one collapsed row that stack has,
+   * and in an uncollapsed listing (§19.5.4) it names every member of it - which is
+   * why the answer is positions rather than a position. So one lookup re-places an
+   * open band, and the same one carries a selection across a change of listing
+   * whether it was made on stacks, on members, or on both.
+   *
+   * One query for every key, never one per key. Numbering rows costs an ordered
+   * pass over the collection, which is the same trap `idsAt` records: ten open
+   * bands must not mean ten passes.
+   */
   private positionsAt(
     fromWhere: string,
     baseParams: string[],
@@ -1103,24 +1126,41 @@ export class PhotosRepository {
     keys: readonly string[],
     filters: PhotoListFilters,
     promotion: MemberScope,
-  ): Map<string, number> {
-    const found = new Map<string, number>();
+  ): Map<string, number[]> {
+    const found = new Map<string, number[]>();
     if (keys.length === 0) return found;
     const { where, params } = this.scoped(fromWhere, baseParams, filters);
     const one = representativeFilter(filters, promotion);
-    for (const batch of inChunks(keys)) {
+    // Half the usual chunk, because each key is bound twice: the budget is in
+    // SQLite variables rather than in keys.
+    for (const batch of inChunks(keys, IN_CHUNK / 2)) {
+      const wanted = new Set(batch);
       const placeholders = batch.map(() => '?').join(', ');
       const rows = this.db
         .query(
-          `SELECT key, position FROM (
-             SELECT COALESCE(photos.stack_id, photos.id) AS key,
+          `SELECT id, stack_id, position FROM (
+             SELECT photos.id AS id, photos.stack_id AS stack_id,
                     ROW_NUMBER() OVER (ORDER BY ${orderByClause(ordering)}) - 1 AS position
              ${where} AND ${one.sql}
-           ) WHERE key IN (${placeholders})`,
+           ) WHERE id IN (${placeholders}) OR stack_id IN (${placeholders})`,
         )
-        .all(...params, ...one.params, ...batch) as { key: string; position: number }[];
-      for (const row of rows) found.set(row.key, row.position);
+        .all(...params, ...one.params, ...batch, ...batch) as { id: string; stack_id: string | null; position: number }[];
+      // Under *both* keys where both were asked for, never under one of them: a
+      // key names every position it stands for, so a member named by its own id
+      // must not be subtracted from what its stack names. Filed under one, the
+      // answer for a stack also depended on whether a sibling landed in the same
+      // chunk.
+      const file = (key: string, position: number): void => {
+        const at = found.get(key);
+        if (at == null) found.set(key, [position]);
+        else at.push(position);
+      };
+      for (const row of rows) {
+        if (wanted.has(row.id)) file(row.id, row.position);
+        if (row.stack_id != null && wanted.has(row.stack_id)) file(row.stack_id, row.position);
+      }
     }
+    for (const at of found.values()) at.sort((a, b) => a - b);
     return found;
   }
 
@@ -1129,15 +1169,15 @@ export class PhotosRepository {
     ordering: Ordering,
     keys: readonly string[],
     filters: PhotoListFilters,
-  ): Map<string, number> {
+  ): Map<string, number[]> {
     return this.positionsAt('FROM photos WHERE library_id = ?', [libraryId], ordering, keys, filters, WHOLE_STACK);
   }
 
-  positionsInShoot(shootId: string, ordering: Ordering, keys: readonly string[], filters: PhotoListFilters): Map<string, number> {
+  positionsInShoot(shootId: string, ordering: Ordering, keys: readonly string[], filters: PhotoListFilters): Map<string, number[]> {
     return this.positionsAt('FROM photos WHERE shoot_id = ?', [shootId], ordering, keys, filters, inShoot(shootId));
   }
 
-  positionsInAlbum(albumId: string, ordering: Ordering, keys: readonly string[], filters: PhotoListFilters): Map<string, number> {
+  positionsInAlbum(albumId: string, ordering: Ordering, keys: readonly string[], filters: PhotoListFilters): Map<string, number[]> {
     return this.positionsAt(
       'FROM photos JOIN album_photos ap ON ap.photo_id = photos.id WHERE ap.album_id = ?',
       [albumId],

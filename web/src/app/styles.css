@@ -249,10 +249,15 @@ p.ui-text--mono {
   border-right: 0;
 }
 
-.ui-btn--seg[data-pressed] {
+.ui-btn--seg[data-pressed],
+.ui-btn--toggle[data-pressed] {
   background: var(--satin);
   color: #08111f;
   font-weight: 600;
+}
+
+.ui-btn--toggle[data-pressed] {
+  border-color: var(--satin);
 }
 
 .ui-btn--pick[data-pressed] {

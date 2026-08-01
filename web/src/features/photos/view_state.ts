@@ -9,6 +9,7 @@ export interface ViewState {
   filters: PhotoFilters;
   tileSize: number;
   mode: ViewMode;
+  expandStacks: boolean;
 }
 
 const PREFIX = 'bowerbird.view.';
@@ -43,6 +44,7 @@ export function loadViewState(source: PhotoSource): Partial<ViewState> | null {
       ...(parsed.filters != null && typeof parsed.filters === 'object' ? { filters: durable(parsed.filters) } : {}),
       ...(typeof parsed.tileSize === 'number' && parsed.tileSize > 0 ? { tileSize: parsed.tileSize } : {}),
       ...(parsed.mode === 'grid' || parsed.mode === 'masonry' || parsed.mode === 'list' ? { mode: parsed.mode } : {}),
+      ...(typeof parsed.expandStacks === 'boolean' ? { expandStacks: parsed.expandStacks } : {}),
     };
   } catch {
     return null;

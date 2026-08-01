@@ -256,6 +256,12 @@ export class PhotosStore {
   @observable accessor tileSize = 240;
   @observable accessor mode: ViewMode = 'grid';
 
+  // Whether the collection is listed uncollapsed: every frame of every stack in
+  // the one stream, with no tile standing for a stack and so no bands (§19.5.4).
+  // Nothing in the grid renders from it - a row in hand already says what it is,
+  // so a tile and this cannot disagree part-way through a switch.
+  @observable accessor expandStacks = false;
+
   // Which positions are selected, as runs (§18.3.3). Held by reference: it is an
   // immutable value, so one selection change is one notification. Every mounted
   // tile re-renders on it, which is affordable now that what is mounted is
@@ -703,6 +709,9 @@ export class PhotosStore {
    * screen, because that is where it was clicked.
    */
   @computed get selectedStackId(): string | null {
+    // Uncollapsed, a row is the photograph and not the stack it belongs to
+    // (§19.5.4), so a selection of one says nothing about a stack to unmake.
+    if (this.expandStacks) return null;
     if (this.selection.size !== 1 || this.selectedMembers.size > 0) return null;
     const only = this.selection.ranges[0];
     if (only == null) return null;

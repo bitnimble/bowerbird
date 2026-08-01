@@ -578,11 +578,81 @@ describe('stacks', () => {
     const stack = stacks.create(stacked);
 
     const positions = photos.positionsInLibrary(LIBRARY, 'taken_desc', [newest, stack.id, older], NO_FILTERS);
-    expect(positions.get(newest)).toBe(0);
+    expect(positions.get(newest)).toEqual([0]);
     // The stack occupies one position, keyed by the stack rather than by any
     // photograph in it.
-    expect(positions.get(stack.id)).toBe(1);
-    expect(positions.get(older)).toBe(2);
+    expect(positions.get(stack.id)).toEqual([1]);
+    expect(positions.get(older)).toEqual([2]);
+  });
+
+  test('a stack key names every member of it in an uncollapsed listing', () => {
+    const { db, stacks, photos } = context;
+    const older = insertPhoto(db, 1, { minute: 1 });
+    const stacked = [2, 3].map((n) => insertPhoto(db, n, { minute: n + 10 }));
+    const newest = insertPhoto(db, 4, { minute: 40 });
+    const stack = stacks.create(stacked);
+
+    const positions = photos.positionsInLibrary(LIBRARY, 'taken_desc', [newest, stack.id, older], {
+      ...NO_FILTERS,
+      expandStacks: true,
+    });
+    expect(positions.get(newest)).toEqual([0]);
+    expect(positions.get(stack.id)).toEqual([1, 2]);
+    expect(positions.get(older)).toEqual([3]);
+  });
+
+  // A member has no row of its own in a collapsed listing, so this is the only
+  // way to ask where one frame of a stack went (§19.5.4).
+  test('a member named by its own id answers with its own position, and its stack still names them all', () => {
+    const { db, stacks, photos } = context;
+    // Newest first, so the later minute sorts first: member[1] is position 0.
+    const members = [2, 3].map((n) => insertPhoto(db, n, { minute: n + 10 }));
+    const stack = stacks.create(members);
+    const younger = members[1]!;
+
+    expect(photos.positionsInLibrary(LIBRARY, 'taken_desc', [younger], { ...NO_FILTERS, expandStacks: true })).toEqual(
+      new Map([[younger, [0]]]),
+    );
+    // Both at once: naming the member must not take it out of what its stack names.
+    const both = photos.positionsInLibrary(LIBRARY, 'taken_desc', [younger, stack.id], {
+      ...NO_FILTERS,
+      expandStacks: true,
+    });
+    expect(both.get(younger)).toEqual([0]);
+    expect(both.get(stack.id)).toEqual([0, 1]);
+    // Collapsed, the member is not a row at all, and the stack is exactly one.
+    const collapsed = photos.positionsInLibrary(LIBRARY, 'taken_desc', [younger, stack.id], NO_FILTERS);
+    expect(collapsed.get(stack.id)).toEqual([0]);
+  });
+
+  test('an uncollapsed listing is every photograph, and no row stands for a stack', () => {
+    const { db, stacks, photos } = context;
+    [1, 2, 3].forEach((n) => insertPhoto(db, n, { minute: n }));
+    stacks.create([insertPhoto(db, 4, { minute: 20 }), insertPhoto(db, 5, { minute: 21 })]);
+
+    const collapsed = photos.listByLibrary(LIBRARY, 'taken_desc', 0, 50, NO_FILTERS);
+    expect(collapsed.total).toBe(4);
+    expect(collapsed.photos.some((photo) => photo.stack_size === 2)).toBe(true);
+
+    const expanded = photos.listByLibrary(LIBRARY, 'taken_desc', 0, 50, { ...NO_FILTERS, expandStacks: true });
+    expect(expanded.total).toBe(5);
+    expect(expanded.photos).toHaveLength(5);
+    expect(expanded.photos.every((photo) => photo.stack_size === 1)).toBe(true);
+  });
+
+  test('a selected row of an uncollapsed listing stands for itself alone', () => {
+    const { db, stacks, photos } = context;
+    const stacked = [1, 2].map((n) => insertPhoto(db, n, { minute: n }));
+    stacks.create(stacked);
+
+    // Position 0 is the newer of the two members, and nothing else.
+    const expanded = photos.idsInLibrary(LIBRARY, 'taken_desc', [{ start: 0, end: 0 }], {
+      ...NO_FILTERS,
+      expandStacks: true,
+    });
+    expect(expanded).toHaveLength(1);
+    // Collapsed, that same position is the stack, which is both of them.
+    expect(photos.idsInLibrary(LIBRARY, 'taken_desc', [{ start: 0, end: 0 }], NO_FILTERS)).toHaveLength(2);
   });
 
   test('a key that has left the collection is simply absent', () => {

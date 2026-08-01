@@ -185,6 +185,11 @@ export const PhotoListQuerySchema = PaginationSchema
     // the count is a scan no ordering index covers and the answer cannot move
     // underneath it.
     count: z.stringbool().optional(),
+    // Every photograph of a stack as a row of its own, rather than the stack as
+    // one row (§19.5.4). Must be carried by every question about the same
+    // listing - a selection, a position lookup - or a position means one
+    // photograph to the client and another here.
+    expand_stacks: z.stringbool().optional(),
   });
 export type PhotoListQuery = z.infer<typeof PhotoListQuerySchema>;
 
@@ -201,6 +206,7 @@ export const PhotoFiltersSchema = z.object({
   taken_from: z.iso.date().optional(),
   taken_to: z.iso.date().optional(),
   match: z.enum(['all', 'any']).optional(),
+  expand_stacks: z.boolean().optional(),
 });
 export type PhotoFilters = z.infer<typeof PhotoFiltersSchema>;
 
@@ -257,13 +263,15 @@ export const PhotoTargetSchema = z.union([
 export type PhotoTarget = z.infer<typeof PhotoTargetSchema>;
 
 // Where given rows sit in a collection now (§19.6.1). Same scope and filters as
-// a selection, because it is the same listing being asked about; the keys are
-// `COALESCE(stack_id, id)`, which is what identifies a row once stacks collapse
-// it. Bounded like a selection is, since an answer is a number per key.
+// a selection, because it is the same listing being asked about; a key is a photo
+// id or a stack id, and the answer is every position that key names - one for a
+// row of a collapsed listing, one per member for a stack in an uncollapsed one
+// (§19.5.4). Bounded above what a client can hold rows for, which is what it can
+// name keys from.
 export const PhotoPositionsRequestSchema = z.object({
   scope: PhotoSelectionFields.shape.scope,
   filters: PhotoFiltersSchema.default({}),
-  keys: z.array(z.string()).min(1).max(1000),
+  keys: z.array(z.string()).min(1).max(4000),
 });
 export type PhotoPositionsRequest = z.infer<typeof PhotoPositionsRequestSchema>;
 

@@ -2057,6 +2057,7 @@ Query parameters for listing (`PhotoListQuerySchema`, §5.3):
 - `q` (optional, case-insensitive substring of `file_path`)
 - `taken_from` / `taken_to` (optional `YYYY-MM-DD`, inclusive bounds)
 - `match` (optional, `all` (default) or `any`)
+- `expand_stacks` (boolean, default false: list every photograph of a stack as a row of its own rather than the stack as one, §19.5.4)
 
 The same schema serves the library, shoot and album listings, so a filter behaves identically wherever the user is.
 
@@ -2536,6 +2537,8 @@ Positions rather than ids, because positions are the only thing a client holding
 
 **Select all** is therefore offered whatever the library's size, beside **Select visible** for the narrower gesture of acting on the run currently on screen. The bulk bar says "all 1200 selected" rather than the bare count when the selection is the whole collection: at five figures the number alone does not tell you whether you got everything.
 
+Both sit at the **left end of the bulk bar**, ahead of the count and the Clear beside it, which appear only once more than one photograph is selected. They are how a selection is *made*, so they must not move when one starts: a control that shifts under the pointer between one click and the next is the fault the always-mounted bar exists to avoid (§18.3.1), reintroduced by the bar's own contents.
+
 "Visible" is the one question the store cannot answer, so it is the one place the grid measures. What the store knows is what is *mounted*, which is deliberately more: two overscan rows either side of the viewport, and in masonry a whole hundred-photo block, whose tiles are packed from their own shapes and have no arithmetic position to test at all. Read off the DOM on a click, "Select visible" acted on up to a hundred photographs the reader could not see. It is a click, so the forced layout costs nothing, and §18.2's rule stands everywhere it is about: nothing in a render, a reaction or a scroll frame measures anything.
 
 **No ids are ever read back to act on it.** A bulk request carries the selection itself - the collection, the filters, the runs - and the server resolves the ids off the same filtered, collection-ordered listing the grid was built from (`PhotoTargetSchema`, §14). Beside the runs it carries `members`: photographs the reader picked out of an open stack, which a collapsed listing gives no position to number them by (§19.6.1). They are the one thing named by id going *in*, bounded like any id list, and the server takes the union of the two - a run naming a stack's row already resolves to every member of it, so nothing is acted on twice. A selection needs at least one of the two, and a members-only selection is as legitimate as a runs-only one. So binning a hundred thousand photos is one small request, and nothing is fetched to *make* a selection at all. The one path still named by id is the undo of a bin: the delete answers with what it took, because the selection it came from resolves to different photographs once those have left the collection.
@@ -2550,7 +2553,7 @@ That falls out exactly right in both directions. An insertion steps the shift **
 
 **It only speaks for what it re-read.** The domain is the blocks the client both held rows for and read back; outside it, positions are dropped from the selection rather than carried by the nearest observed shift. There is no honest alternative: a selected photo sitting *below* every sample may not have moved at all, and a gap between two re-read blocks hides an unknown number of arrivals, so either guess quietly renames photographs the reader chose. Losing part of a selection is visible on screen; acting on the wrong photographs is not. A block whose request failed is not part of the domain either - its old rows are still sitting where they were, and reading them would report a move of zero that never happened.
 
-Two things escape that rule, both because they need no samples. A selection that was the *whole* collection stays the whole collection: "everything" is the one selection whose meaning is not a position. And when nothing observed moved at all - every sample at shift zero, which is what a poll finding no new photos looks like - the selection is returned untouched rather than narrowed to the domain.
+Three things escape that rule, all because they need no samples. A selection that was the *whole* collection stays the whole collection: "everything" is the one selection whose meaning is not a position. When nothing observed moved at all - every sample at shift zero, which is what a poll finding no new photos looks like - the selection is returned untouched rather than narrowed to the domain. And a re-read with **nothing to compare** leaves it alone as well: no row this client could name going in, or no block it both held and read back, means it observed no photograph at all, which is not the same thing as finding that nothing recognisable came back. That distinction was free while a non-empty selection implied held rows; it stopped being free when the collapse became something the reader can switch off under themselves (§19.5.4), which leaves the rows cleared and the selection carried across for a round trip - and a sync poll landing in that gap wiped it.
 
 **Re-reads are serialised.** Two of them overlap routinely, a sync poll ticking while a verdict is being set, and each would rebase against a snapshot the other had already moved - applying the same shift twice and walking the selection off its photographs by exactly the number of rows inserted.
 
@@ -2901,7 +2904,8 @@ Collapsing happens in SQL, so a stack costs one row of a page and one unit of
 `total`, which becomes `COUNT(DISTINCT COALESCE(stack_id, id))`. One helper
 builds the predicate, used by the listing, by `idsAt` and by `positionsAt` -
 written twice, a position would mean one photograph to the client and another
-here.
+here. That one helper is also what makes an uncollapsed listing a flag rather
+than a second query path (§19.5.4).
 
 **It is a filter, not a window function, and that is the whole of why listings
 are still fast.** A window has to see every scoped row before `LIMIT` can take a
@@ -3010,6 +3014,85 @@ reason.
 An absent range bound means that end of the collection, so the cap is read from
 the bound that exists - capped from the start instead, a range asking about the
 end of a library answers with the beginning of it.
+
+#### 19.5.4 Expand all stacks
+
+**Expand all stacks** is a setting on the grid's control row, beside the filters
+and the sort. It is not "open every band": there is no stack in the grid to open.
+The *listing itself* is uncollapsed, so every frame of every stack is a row of the
+collection, in one stream, and the view looks like a library that never had a
+stack in it.
+
+It is `representativeFilter` left off - the same absence the viewer's two
+endpoints are (§19.5.3) - which is why an expanded listing costs less than a
+collapsed one rather than more. Three other things move with it, and all three are
+the same statement about what a row now is:
+
+- `total` is `COUNT(*)` rather than `COUNT(DISTINCT COALESCE(stack_id, id))`;
+- `stack_size` is 1 on every row, so no tile draws a badge, takes a disclosure
+  click, or opens a band;
+- `idsAt` loses the arm that expands a chosen row to its stack. Picking one frame
+  of a burst out of an expanded grid and binning it must bin that frame.
+
+The flag therefore travels with the filters, in the query string and in the
+`filters` of a selection or a position lookup alike. It is part of what identifies
+the listing, and a question asked without it is a question about a different one:
+position 400 would mean one photograph to the client and another here (§19.5.1).
+
+For the same reason nothing in the grid *renders* from it. The rows in hand
+already say what they are, so a click on a tile reads `stack_size`, not the
+setting, and the two can never disagree mid-switch. Unstack is the exception, and
+it reads the setting deliberately: a single selected row is no longer a stack to
+unmake, so the action is not offered.
+
+**The switch keeps the reader's place and their selection**, which is most of the
+work. Every position in the collection changes, so both are named by **key** -
+`COALESCE(stack_id, id)`, exactly as an open band is (§19.6.1) - and re-resolved
+through one `POST /api/photos/positions` against the listing being switched *to*.
+That endpoint answers with the positions a key names rather than a position, which
+is the whole of what makes one lookup enough: a stack id is one row collapsed and
+every member of it expanded, so a selected stack becomes its frames going one way
+and its frames become the stack coming back. A member picked out of an open band
+is named by its own id instead, since uncollapsed it is a row like any other and
+its siblings are not what the reader chose. A row answers under **both** keys when
+both were asked for - naming a member must not subtract it from what its stack
+names, and filed under one of the two the answer for a stack depended on whether a
+sibling happened to land in the same `IN (…)` chunk.
+
+Four deliberate limits:
+
+- **Only rows this client holds** can be named, so a selection reaching further is
+  dropped rather than guessed at - the same choice `rebase` makes, for the same
+  reason (§18.3.3). "Everything" is exempt, being the one selection that is not
+  about positions: it survives as everything.
+- **The count is read before the switch**, alongside the positions, so the
+  collection is already the right height when the reader's row is put back at the
+  pixel it was on. Read after, the view springs there when the first block lands.
+- **Masonry is block-granular, with no offset.** How far into a block the reader
+  was is measured against that block's real height, and the re-list has measured
+  none of them - carried over, a reader 2,500px into a block that laid out at
+  3,200 lands 2,500px into one estimated at 900, two blocks past their own photos.
+- **A row the other listing cannot place leaves the reader where they were**, at
+  the pixel rather than at the top: the anchored stack may have been unstacked
+  from under them, and `resetRows` puts the scroll to zero unless something puts
+  it back.
+
+**The flag is not set until both answers are in hand.** It is what every other
+request reads too, so flipping it first meant a sync poll fetching blocks of one
+listing into a grid numbered by the other; the two reads state the listing they
+are about instead. Setting it, resetting the rows and putting the selection and
+the scroll back are then one action, and `resetRows` inside it abandons whatever
+the old listing had in flight - so there is no window in which the grid is
+half-way between the two.
+
+Staleness is checked against the **listing** - the collection, its filters, its
+sort and the flag - and deliberately not against the generation counter, which a
+plain re-read bumps too. A sync poll ticks once a second through an import and
+renumbers nothing the answers depend on; measured against the generation, the
+press was swallowed for as long as the library was indexing, with the toggle
+springing back and nothing said. A read that fails, or a filter or a sort that
+lands while one is out, does cost the press - and nothing else, since nothing has
+been written by then.
 
 ### 19.6 The grid (`bands.ts`)
 
@@ -3172,7 +3255,10 @@ the collection.
 On any refresh, each open band's position is re-resolved through
 `POST /api/photos/positions`, which numbers rows **once** and reads every wanted
 key out of that one numbering. Ten open bands must not mean ten ordered passes
-over the collection, which is the lesson `idsAt` already records.
+over the collection, which is the lesson `idsAt` already records. A key answers
+with the positions it names rather than one position: in a collapsed listing a
+stack has exactly one row, and in an uncollapsed one it is every member of it
+(§19.5.4), which is what lets the same lookup carry a selection between the two.
 
 Opening a band above the viewport displaces everything below it, so the action
 moves the view the band's height further down the collection and nothing appears

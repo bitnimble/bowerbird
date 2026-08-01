@@ -75,6 +75,13 @@ function plural(n: number, one: string, many: string): string {
   return `${n} ${n === 1 ? one : many}`;
 }
 
+// What names a row to the server: the stack it stands for, or the photograph
+// itself (§19.6.1). The same key answers in either listing - collapsed it is the
+// stack's one row, uncollapsed it is every member of it (§19.5.4).
+function rowKey(photo: PhotoSummary): string {
+  return photo.stack_id ?? photo.id;
+}
+
 export class PhotosPresenter {
   // Which blocks of the collection this client holds, and the request still out
   // for each one that is loading.
@@ -440,6 +447,162 @@ export class PhotosPresenter {
     this.store.mode = mode;
     this.store.blockHeights.clear();
     this.remember();
+  }
+
+  /**
+   * Lists the collection uncollapsed, or collapses it again (§19.5.4).
+   *
+   * Every position in the collection changes, so the reader's place in it and
+   * their selection are **re-expressed** against the new listing rather than
+   * thrown away: each is named by the key of a row this client holds, and one
+   * lookup answers for all of them at once.
+   */
+  async setExpandStacks(expand: boolean): Promise<void> {
+    const source = this.store.source;
+    if (source == null || this.store.expandStacks === expand) return;
+    const anchor = this.anchorKey();
+    // "Everything" is the one selection that is not a set of positions, so it
+    // survives as everything rather than as whatever this client could name.
+    const whole = this.store.allSelected;
+    const chosen = whole ? [] : this.selectionKeys();
+    const cursor = this.store.rows.get(this.store.focusIndex) ?? null;
+    const keys = [
+      ...new Set([...(anchor == null ? [] : [anchor.key]), ...chosen, ...(cursor == null ? [] : [rowKey(cursor)])]),
+    ];
+
+    // Both reads describe the listing being switched *to*, which is stated rather
+    // than taken from the store: the flag is what every other request reads too,
+    // so flipping it before these had answered would have a sync poll fetching
+    // blocks of one listing into a grid numbered by the other.
+    const listing = this.listingKey(source, expand);
+    let found: Record<string, number[]>;
+    let total: number;
+    try {
+      const [positions, page] = await Promise.all([
+        keys.length === 0
+          ? Promise.resolve<Record<string, number[]>>({})
+          : api.photoPositions({ scope: scopeOf(source), filters: this.selectionFilters(expand), keys }),
+        // The count alone. Read before the switch rather than after it so the
+        // collection is the right height the moment the reader's row is put back
+        // at the pixel it was on, instead of springing there once a block lands.
+        this.fetchFor(source, this.params(0, 1, true, expand)),
+      ]);
+      found = positions;
+      total = page.total ?? 0;
+    } catch (err) {
+      this.fail(err);
+      return;
+    }
+    // A filter, a sort or a different collection landing while this was out has
+    // renumbered the listing these answers are about, so they describe neither
+    // side of the switch any more. Nothing has changed here yet, so dropping them
+    // costs the press and no more.
+    //
+    // The listing rather than the generation, which a plain re-read bumps too: a
+    // sync poll ticks once a second through an import, and against the generation
+    // the press was simply swallowed - button springing back, no toast - for as
+    // long as the library was indexing.
+    if (this.listingKey(source, expand) !== listing) return;
+
+    const anchoredAt = anchor == null ? undefined : found[anchor.key]?.[0];
+    this.applyExpandStacks({
+      expand,
+      total,
+      selection: whole
+        ? SelectionRanges.of(0, total - 1)
+        : SelectionRanges.fromPositions(chosen.flatMap((key) => found[key] ?? [])),
+      focusIndex: (cursor == null ? undefined : found[rowKey(cursor)]?.[0]) ?? -1,
+      scrollTo: anchor == null || anchoredAt == null ? null : { position: anchoredAt, offset: anchor.offset },
+    });
+    await this.ensureBlocks(this.store.neededBlocks);
+  }
+
+  // What identifies the listing an answer is about: the collection, how it is
+  // filtered and sorted, and whether it collapses. Deliberately *not* the
+  // generation, which a re-read of the same listing bumps as well.
+  private listingKey(source: PhotoSource, expandStacks: boolean): string {
+    return JSON.stringify([sourceKey(source), this.store.ordering, this.selectionFilters(expandStacks)]);
+  }
+
+  // The switch itself, in one action so the grid never renders a listing halfway
+  // between the two - and `resetRows` inside it, which abandons every request the
+  // old listing had out.
+  @action
+  private applyExpandStacks(put: {
+    expand: boolean;
+    total: number;
+    selection: SelectionRanges;
+    focusIndex: number;
+    /** Where the reader's own row sits now: its position, and how far into it they were. */
+    scrollTo: { position: number; offset: number } | null;
+  }): void {
+    // Where the reader is, for the case where the other listing cannot say where
+    // their row went - the stack they were anchored on has been unstacked, or the
+    // top row is one this client never held. `resetRows` puts the scroll back to
+    // zero, and being thrown to the top of the collection is far worse than being
+    // left at the pixel they were already at.
+    const wasAt = this.store.virtualTop;
+    this.store.expandStacks = put.expand;
+    this.resetRows();
+    // No row of an uncollapsed listing stands for a stack, so there is nothing
+    // open and nothing chosen inside a band - and collapsing again, the bands
+    // that were open describe positions this listing does not have.
+    this.store.expansions = new Map();
+    this.store.stackTileBoxes = new Map();
+    this.store.selectedMembers = new Set();
+    this.setTotal(put.total);
+    // Counted already, by this generation's own read of the same collection.
+    this.needsCount = false;
+    this.store.selection = put.selection;
+    this.store.focusIndex = put.focusIndex;
+    this.remember();
+    this.scrollTo(put.scrollTo == null ? wasAt : this.contentTopOf(put.scrollTo.position) + put.scrollTo.offset);
+  }
+
+  // The row at the top of the viewport and how far into it the reader is, named
+  // by a key the other listing can answer for. Null for a row this client is not
+  // holding, which leaves the view where it is.
+  private anchorKey(): { key: string; offset: number } | null {
+    const store = this.store;
+    if (store.mode === 'masonry') {
+      // Block-granular, and no offset: how far into a block the reader is was
+      // measured against that block's real height, and after the re-list every
+      // block is back to an estimate. Carried over, a reader 2,500px into a block
+      // that laid out at 3,200 would land 2,500px into one estimated at 900 -
+      // two blocks past their own photographs.
+      const block = store.visibleBlocks.from;
+      const row = store.rows.get(block * BLOCK);
+      return row == null ? null : { key: rowKey(row), offset: 0 };
+    }
+    const at = rowAt(Math.floor(store.virtualTop / store.rowHeight), store.bands, store.columns);
+    const gridRow = at.kind === 'grid' ? at.row : Math.floor(at.band.position / store.columns);
+    const row = store.rows.get(gridRow * store.columns);
+    if (row == null) return null;
+    const drawnAt = displayRowOf(gridRow, store.bands, store.columns) * store.rowHeight;
+    return { key: rowKey(row), offset: store.virtualTop - drawnAt };
+  }
+
+  // Where a position is drawn, in content pixels, with no band open.
+  private contentTopOf(position: number): number {
+    if (this.store.mode === 'masonry') return this.store.blockTops[Math.floor(position / BLOCK)] ?? 0;
+    return Math.floor(position / this.store.columns) * this.store.rowHeight;
+  }
+
+  // What is selected, named by keys the other listing can answer for. Only the
+  // rows this client is holding: a selection reaching further is positions into a
+  // collection about to be renumbered, and the nearest guess at where those
+  // photographs went is how a reader ends up acting on frames they never chose
+  // (`rebase`).
+  private selectionKeys(): string[] {
+    const keys = new Set<string>();
+    for (const [index, row] of this.store.rows) {
+      if (this.store.selection.has(index)) keys.add(rowKey(row));
+    }
+    // A member picked out of an open band is named by its own id rather than by
+    // its stack's: uncollapsed it is a row of the collection like any other, and
+    // its siblings are not what the reader chose.
+    for (const id of this.store.selectedMembers) keys.add(id);
+    return [...keys];
   }
 
   // Sets a verdict straight from a grid tile, and pressing the verdict a photo
@@ -1108,7 +1271,8 @@ export class PhotosPresenter {
             kept.set(stackId, open);
             continue;
           }
-          const position = positions[stackId];
+          // One position, since a collapsed listing gives a stack exactly one row.
+          const position = positions[stackId]?.[0];
           const photos = fresh.get(stackId);
           // Absent means the stack is no longer in this collection at all - a
           // filter that excludes every member, or an unstack - which is the one
@@ -1213,7 +1377,7 @@ export class PhotosPresenter {
   // that a selection and a position lookup are asking about the same listing. A
   // second copy of this is a position meaning one photograph here and another
   // there (§19.5.1).
-  private selectionFilters(): PhotoSelection['filters'] {
+  private selectionFilters(expandStacks = this.store.expandStacks): PhotoSelection['filters'] {
     const source = this.store.source;
     const f = this.store.filters;
     return {
@@ -1224,6 +1388,9 @@ export class PhotosPresenter {
       taken_from: f.takenFrom,
       taken_to: f.takenTo,
       match: f.match,
+      // Which listing the positions are into, so a selection made on an expanded
+      // grid resolves against the same rows it was made from (§19.5.4).
+      ...(expandStacks ? { expand_stacks: true } : {}),
       ...(f.search != null && f.search !== '' ? { q: f.search } : {}),
       // Last, because these are what makes the view that view rather than a
       // chip the reader could clear: the Bin is only the soft-deleted rows,
@@ -1404,6 +1571,16 @@ export class PhotosPresenter {
       this.store.selection = SelectionRanges.of(0, this.store.total - 1);
       return;
     }
+    // A re-read with nothing to compare - no row this client could name going in,
+    // or no block it both held and read back - speaks for *nothing*. That is not
+    // the same as finding that nothing recognisable came back, which is a real
+    // observation and does drop the selection: here there was no observation at
+    // all, so there is nothing to re-express and no ground to claim the reader's
+    // photographs have gone. It happens whenever a refresh starts with the rows
+    // cleared, which since the collapse can be switched off under the reader
+    // (§19.5.4) includes the gap right after that switch - where a sync poll used
+    // to wipe the selection it had just carried across.
+    if (before.size === 0 || landed.length === 0) return;
     // The old positions this re-read can actually speak for: the blocks it both
     // held rows for and read back. Everywhere else, a gap in the samples is
     // indistinguishable from a removal, so nothing is claimed (`rebase`).
@@ -1486,7 +1663,9 @@ export class PhotosPresenter {
     }
   }
 
-  private params(offset: number, limit: number, count = true): PhotoListParams {
+  // `expandStacks` is stated rather than read so the switch itself can ask about
+  // the listing it is moving to before anything commits to it (§19.5.4).
+  private params(offset: number, limit: number, count = true, expandStacks = this.store.expandStacks): PhotoListParams {
     const f = this.store.filters;
     return {
       offset,
@@ -1499,6 +1678,7 @@ export class PhotosPresenter {
       taken_from: f.takenFrom,
       taken_to: f.takenTo,
       match: f.match,
+      ...(expandStacks ? { expand_stacks: true } : {}),
       // No ordering: the collection's own is the answer, and asking for it back
       // rather than stating it is what keeps there being one copy of it.
       ...(f.search != null && f.search !== '' ? { q: f.search } : {}),
@@ -1625,6 +1805,7 @@ export class PhotosPresenter {
     if (saved?.filters != null) this.store.filters = saved.filters;
     if (saved?.tileSize != null) this.store.tileSize = saved.tileSize;
     if (saved?.mode != null) this.store.mode = saved.mode;
+    this.store.expandStacks = saved?.expandStacks ?? false;
   }
 
   private remember(): void {
@@ -1634,6 +1815,7 @@ export class PhotosPresenter {
       filters: this.store.filters,
       tileSize: this.store.tileSize,
       mode: this.store.mode,
+      expandStacks: this.store.expandStacks,
     });
   }
 

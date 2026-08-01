@@ -1,7 +1,21 @@
 import { observer } from 'mobx-react-lite';
-import { Ellipsis, FolderInput, Images, Layers, Layers2, RotateCcw, RotateCw, Sparkles, Trash2, X } from 'lucide-react';
+import {
+  Ellipsis,
+  FolderInput,
+  Images,
+  Layers,
+  Layers2,
+  RotateCcw,
+  RotateCw,
+  Sparkles,
+  SquareCheck,
+  SquareDashed,
+  Trash2,
+  X,
+} from 'lucide-react';
 import { useAlbumsStore, usePhotosStore, usePresenters, useShootsStore } from '../../app/stores_context';
 import { ActionMenu, Button, CheckMenu, ICON, type Option, Text } from '../../ui/ui';
+import { onScreenSpan } from './photo_grid';
 
 // Behind the overflow, so the bar's own row holds only what is about *this*
 // selection - where it goes and what it becomes. These three are maintenance:
@@ -54,6 +68,29 @@ export const BulkBar = observer(function BulkBar({ removeFrom }: Props): JSX.Ele
 
   return (
     <div className="bulkbar">
+      {/* First, and before the count, so they do not move when a selection
+          starts: these two are how a selection is *made*, and a control that
+          shifts under the pointer between one click and the next is the same
+          fault the always-mounted bar exists to avoid (§18.3.1).
+          The whole collection costs the same as one photo to hold (§18.3.3), so
+          it is offered whatever the library's size; "visible" is the narrower
+          gesture, for acting on the run currently on screen. */}
+      <Button onClick={photos.selectAll} disabled={store.total === 0}>
+        <SquareCheck size={ICON} />
+        Select all
+      </Button>
+
+      <Button
+        onClick={() => {
+          const span = onScreenSpan();
+          if (span != null) photos.selectSpan(span);
+        }}
+        disabled={store.total === 0}
+      >
+        <SquareDashed size={ICON} />
+        Select visible
+      </Button>
+
       {/* Only once the selection is more than the one photo the cursor is on:
           below that the ring says everything the count would, and a bar that
           reads "1 selected" beside it is noise.

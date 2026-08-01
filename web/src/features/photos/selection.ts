@@ -32,6 +32,20 @@ export class SelectionRanges {
     return end < start ? SelectionRanges.EMPTY : new SelectionRanges([{ start, end }]);
   }
 
+  // The same selection named one position at a time, in any order and with
+  // repeats. `add` per position is quadratic in the number of runs, which a few
+  // thousand scattered positions - a selection re-expressed against another
+  // listing (§19.5.4) - actually reaches.
+  static fromPositions(positions: Iterable<number>): SelectionRanges {
+    const runs: SelectionRange[] = [];
+    for (const at of [...new Set(positions)].sort((a, b) => a - b)) {
+      const last = runs.at(-1);
+      if (last != null && at === last.end + 1) last.end = at;
+      else runs.push({ start: at, end: at });
+    }
+    return new SelectionRanges(runs);
+  }
+
   has(index: number): boolean {
     let low = 0;
     let high = this.ranges.length - 1;

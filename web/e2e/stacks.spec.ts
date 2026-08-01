@@ -176,6 +176,35 @@ test('a selection spans the grid and the contents of a stack', async ({ page }) 
   await expect(page.getByText('Rebuilt 1 thumbnail')).toBeVisible({ timeout: 30_000 });
 });
 
+// The collapse taken off the listing itself (§19.5.4), which is a different thing
+// from opening every band: there is no stack in the grid to open.
+test('expanding all stacks puts every frame in the grid, and keeps what was selected', async ({ page }) => {
+  await page.goto('/settings');
+  await openLibrary(page, STACK_PHOTOS_DIR);
+  await expect(page.locator('.tile__stack')).toBeVisible({ timeout: 45_000 });
+  const expand = page.getByRole('button', { name: 'Expand all stacks' });
+
+  // Cmd-click, because a plain click on a stack's tile opens its band (§19.6).
+  // The row it selects stands for every photograph in the stack.
+  await page.locator('.tile:not(.tile--member) .tile__hit').click({ modifiers: ['ControlOrMeta'] });
+  await expect(page.locator('.tile--selected')).toHaveCount(1);
+
+  await expand.click();
+  // One tile per photograph, none of them marked as a stack and no band anywhere:
+  // it looks like a library that never had one.
+  await expect(page.locator('.tile')).toHaveCount(STACK_PHOTO_NAMES.length);
+  await expect(page.locator('.tile__stack')).toHaveCount(0);
+  await expect(page.locator('.grid__band')).toHaveCount(0);
+  // Every position in the collection moved, and the selection came with it: the
+  // one row that stood for the stack is now its members, all of them ringed.
+  await expect(page.locator('.tile--selected')).toHaveCount(STACK_PHOTO_NAMES.length);
+
+  await expand.click();
+  await expect(page.locator('.tile')).toHaveCount(1);
+  await expect(page.locator('.tile__stack')).toBeVisible();
+  await expect(page.locator('.tile--selected')).toHaveCount(1);
+});
+
 // The grid shows a stack as one tile; the viewer steps through every frame of it
 // (§19.5.3). Previous/Next used to walk the *collapsed* listing, so the arrows
 // skipped every member the stack did not stand for - and a member opened from a

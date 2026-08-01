@@ -41,8 +41,10 @@ export class PhotosApi {
 
     // Where rows sit in a collection now, so a client holding open expansion
     // bands and a scroll anchor can re-place them after an import or a re-order
-    // rather than closing them (§19.6.1). A POST because the scope, the filters
-    // and up to a thousand keys do not belong in a query string.
+    // rather than closing them (§19.6.1) - and can carry a selection across the
+    // renumbering when the listing itself collapses or expands (§19.5.4). A POST
+    // because the scope, the filters and a few thousand keys do not belong in a
+    // query string.
     app.post('/photos/positions', async (c) =>
       c.json(this.service.positionsOf(PhotoPositionsRequestSchema.parse(await c.req.json()))),
     );

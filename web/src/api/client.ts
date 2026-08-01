@@ -114,6 +114,8 @@ export interface PhotoListParams {
   taken_from?: string;
   taken_to?: string;
   match?: 'all' | 'any';
+  /** Every photograph of a stack as a row of its own, rather than the stack as one (§19.5.4). */
+  expand_stacks?: boolean;
 }
 
 function query(params: PhotoListParams): string {
@@ -226,8 +228,9 @@ export const api = {
     request('POST', `/api/stacks/${id}/remove`, { photo_ids: photoIds }),
   // Where rows sit in a collection now, so open bands and the scroll anchor can
   // be re-placed after an import or a re-order instead of being thrown away
-  // (§19.6.1). Keyed by stack id for a stack and photo id for a photo.
-  photoPositions: (body: PhotoPositionsRequest, signal?: AbortSignal): Promise<Record<string, number>> =>
+  // (§19.6.1). A key is a stack id or a photo id, and it names every position it
+  // stands for: one collapsed row, or one per member uncollapsed (§19.5.4).
+  photoPositions: (body: PhotoPositionsRequest, signal?: AbortSignal): Promise<Record<string, number[]>> =>
     request('POST', '/api/photos/positions', body, signal),
   // What the viewer's arrows step through: the collection uncollapsed, so a stack
   // is one tile in the grid and every frame of it in the viewer (§19.5.3). Rows
