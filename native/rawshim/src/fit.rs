@@ -914,6 +914,43 @@ pub fn fit(render: RgbRef<'_>, jpeg_bytes: &[u8], geometry: Geometry) -> Result<
         .resize_to_fit(FIT_LONG_EDGE)?
         .blur(FIT_BLUR_SIGMA)?
         .finish()?;
+    // The gate is on the colour, so it belongs on the route that applies the colour.
+    // A fit this far from the camera is more likely wrong than the camera is unusual,
+    // and an SDR render is better off untransformed than transformed by it.
+    Ok(fit_against(render, jpeg_full, geometry)?
+        .filter(|p| p.delta_e.is_finite() && p.delta_e <= MAX_ACCEPTABLE_DELTA_E))
+}
+
+/// `fit`, without the colour gate, for a caller that wants the geometry.
+///
+/// `MAX_ACCEPTABLE_DELTA_E` decides whether an SDR render should wear a colour transform
+/// at all. `fit_all` asks the same call for geometry and gives up where there is no
+/// profile, so on the one route an HDR rendition takes, a refused *SDR colour* also
+/// refuses the HDR match - a different fit, in a different domain, against a different
+/// reference, which was never asked whether it would have worked.
+///
+/// No frame of the 35-frame set trips it: the worst SDR fit there is 4.1 against a limit
+/// of 6. It is reachable rather than observed, and it was reached by accident - feeding
+/// the geometry fit a cheaper preview took IMG_9887's SDR fit to 10.4 and silently cost
+/// that frame its camera colour entirely. Geometry is judged on its own terms anyway: a
+/// candidate has to beat the undistorted baseline before it is chosen.
+pub fn fit_ungated(
+    render: RgbRef<'_>,
+    jpeg_bytes: &[u8],
+    geometry: Geometry,
+) -> Result<Option<Profile>, String> {
+    let jpeg_full = vips::Pipeline::decode_upright(jpeg_bytes)?
+        .resize_to_fit(FIT_LONG_EDGE)?
+        .blur(FIT_BLUR_SIGMA)?
+        .finish()?;
+    fit_against(render, jpeg_full, geometry)
+}
+
+fn fit_against(
+    render: RgbRef<'_>,
+    jpeg_full: Rgb,
+    geometry: Geometry,
+) -> Result<Option<Profile>, String> {
     // Twice the fit grid, so the warp resamples from prefiltered pixels: warping
     // straight from 60MP with bilinear taps would alias, and resizing after the
     // warp would blur the geometry being measured.
@@ -966,9 +1003,6 @@ pub fn fit(render: RgbRef<'_>, jpeg_bytes: &[u8], geometry: Geometry) -> Result<
     let Some((delta_e, colour, gain)) = residual_with_gain(&grids.full, &knots, chosen.1) else {
         return Ok(None);
     };
-    if !delta_e.is_finite() || delta_e > MAX_ACCEPTABLE_DELTA_E {
-        return Ok(None);
-    }
     Ok(Some(Profile { knots: chosen.0, gain, crop: chosen.1, source: chosen.2, delta_e, colour }))
 }
 

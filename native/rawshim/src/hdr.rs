@@ -174,7 +174,12 @@ pub fn fit_all(
             // wants a render that looks like an ordinary picture, the colour fit wants
             // the grade's own domain, and diffuse white is what puts them there.
             let render = hdr_fit::render_srgb8(&plane, levels.white);
-            let profile = crate::fit::fit(render.as_ref(), jpeg, geometry).ok().flatten()?;
+            // Ungated: this wants the geometry, and the gate is about whether an SDR
+            // render should wear a colour transform. A frame whose SDR *colour* is
+            // refused still gets its HDR colour fitted, that being a different fit in a
+            // different domain against a different reference.
+            let profile =
+                crate::fit::fit_ungated(render.as_ref(), jpeg, geometry).ok().flatten()?;
             let matched = hdr_fit::fit(&plane, levels.white, &preview, profile.lens())?;
             Some((profile, matched))
         })

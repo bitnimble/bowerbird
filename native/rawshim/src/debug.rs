@@ -402,8 +402,20 @@ fn sdr_profile(path: &str) -> Result<std::sync::Arc<Option<crate::fit::Profile>>
     Ok(profile)
 }
 
-/// The HDR colour match, fitted the way a job with an SDR rendition fits it.
+/// The HDR colour match, fitted the way the product fits it.
+///
+/// With no SDR profile to hand, which is what an HDR rendition actually gets: a library
+/// with HDR on asks for one target - full, HDR, from the render - so `renders_sdr` is
+/// false and `fit_hdr_for` takes the route that resolves the geometry itself. Handing it
+/// a profile instead measured the other route, and the two do not cost the same: the one
+/// the product takes carries the whole geometry fit inside it.
+///
+/// `BOWERBIRD_FIT_WITH_SDR_PROFILE` takes the other route, for a test that wants to
+/// compare the two rather than reproduce the product.
 fn hdr_match(path: &str, linear: &Frame, spec: &GradeSpec) -> Result<Option<crate::hdr_fit::HdrMatch>, String> {
+    if std::env::var("BOWERBIRD_FIT_WITH_SDR_PROFILE").is_err() {
+        return Ok(crate::fit_hdr_for(linear, path, spec.white_quantile, None));
+    }
     let profile = sdr_profile(path)?;
     let Some(profile) = profile.as_ref() else { return Ok(None) };
     Ok(crate::fit_hdr_for(linear, path, spec.white_quantile, Some(profile)))
