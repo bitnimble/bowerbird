@@ -934,6 +934,25 @@ pub fn fit(render: RgbRef<'_>, jpeg_bytes: &[u8], geometry: Geometry) -> Result<
 /// the geometry fit a cheaper preview took IMG_9887's SDR fit to 10.4 and silently cost
 /// that frame its camera colour entirely. Geometry is judged on its own terms anyway: a
 /// candidate has to beat the undistorted baseline before it is chosen.
+/// `fit_ungated`, against a preview the caller has already decoded to the fit grid.
+///
+/// `fit_all` needs one for the colour fit and this needed one for the geometry, and each
+/// decoded the same 5-14MB preview to the same 640px grid to get it - the last
+/// duplication between the two halves, on the route an HDR rendition always takes.
+///
+/// The caller decodes it in full rather than through `thumbnail`, and that is the whole
+/// subtlety: the cheap one shrinks in the DCT before it builds a pixel, and the geometry
+/// fit is measurably worse off for it - sharing that one instead costs the 35-frame set
+/// 1.654 to 1.774 mean deltaE, where sharing this one is level with decoding twice.
+pub fn fit_from_preview(
+    render: RgbRef<'_>,
+    preview: RgbRef<'_>,
+    geometry: Geometry,
+) -> Result<Option<Profile>, String> {
+    let jpeg_full = vips::Pipeline::from_rgb(preview)?.blur(FIT_BLUR_SIGMA)?.finish()?;
+    fit_against(render, jpeg_full, geometry)
+}
+
 pub fn fit_ungated(
     render: RgbRef<'_>,
     jpeg_bytes: &[u8],

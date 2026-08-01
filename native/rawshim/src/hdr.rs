@@ -164,7 +164,12 @@ pub fn fit_all(
     #[expect(unsafe_code)]
     let fitted = unsafe {
         crate::with_embedded_jpeg(path.as_ptr(), |jpeg| {
-            let preview = crate::vips::Pipeline::thumbnail(jpeg, hdr_fit::fit_long_edge())
+            // One decode for both halves. In full rather than through `thumbnail`,
+            // because the geometry fit reads it too and the DCT shrink costs it more
+            // than the decode saves: shared as a thumbnail the 35-frame set goes 1.654
+            // to 1.774 mean deltaE, shared like this it does not move.
+            let preview = crate::vips::Pipeline::decode_upright(jpeg)
+                .and_then(|p| p.resize_to_fit(hdr_fit::fit_long_edge()))
                 .and_then(crate::vips::Pipeline::finish)
                 .ok()?;
             let plane =
@@ -179,7 +184,9 @@ pub fn fit_all(
             // refused still gets its HDR colour fitted, that being a different fit in a
             // different domain against a different reference.
             let profile =
-                crate::fit::fit_ungated(render.as_ref(), jpeg, geometry).ok().flatten()?;
+                crate::fit::fit_from_preview(render.as_ref(), preview.as_ref(), geometry)
+                    .ok()
+                    .flatten()?;
             let matched = hdr_fit::fit(&plane, levels.white, &preview, profile.lens())?;
             Some((profile, matched))
         })
