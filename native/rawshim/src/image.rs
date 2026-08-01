@@ -157,8 +157,8 @@ pub fn warp(source: RgbRef<'_>, width: usize, height: usize, knots: &[f64], crop
 #[allow(clippy::too_many_arguments)]
 /// `falloff` is applied in the same sweep rather than by the caller afterwards. It is
 /// pointwise on what the warp gathered and indexed by the output pixel's own radius,
-/// which this loop has already, so a second pass over a 16-bit frame bought nothing -
-/// measured, a quarter of what warping one costs.
+/// which this loop has already, so a second pass over a 16-bit frame bought nothing.
+/// Measured on a 3840x2560 frame, that pass cost 39ms against the warp's 99ms.
 pub fn warp_planar<T: Copy + Default + Send + Sync>(
     src: &[T],
     source_width: usize,

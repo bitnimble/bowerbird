@@ -168,11 +168,12 @@ pub fn fit_all(
     #[expect(unsafe_code)]
     let fitted = unsafe {
         crate::with_embedded_jpeg(path.as_ptr(), |jpeg| {
-            // Its own decode, and a cheap one. Sharing the geometry fit's full decode
-            // saves ~30ms of the fit's ~1.7s and moves this plane enough to refit the
-            // colour off it: IMG_8789 goes 2.54 to 3.17 deltaE for that 30ms, while the
-            // set's mean holds at 1.654 to 1.655. The mean was the wrong thing to have
-            // checked, and it is the reason this is not shared.
+            // One decode, read by both halves: the geometry fit takes it below and the
+            // colour fit takes it again for the plane. Sharing was rejected once, when
+            // this was DCT-shrunk almost to the fit grid and arrived barely filtered; at
+            // twice the grid it is shrunk to 1500 and brought down by a real reduce, and
+            // sharing costs the set 4.605 to 4.622 mean chroma deltaE against ~90ms saved
+            // (`fit::fit_from_preview`).
             let preview = crate::vips::Pipeline::thumbnail(jpeg, hdr_fit::sample_long_edge())
                 .and_then(crate::vips::Pipeline::finish)
                 .ok()?;

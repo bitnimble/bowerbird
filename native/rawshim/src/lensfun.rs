@@ -83,8 +83,9 @@ fn db() -> Option<&'static Db> {
 
 /// Lens searches already run, negatives included.
 ///
-/// A library holds a handful of lenses and shoots each at a handful of settings, so this
-/// converges after the first photo of each. It saves 0.7ms of a ~450ms fit, which is not
+/// One entry per lens per focal length and aperture, so a zoom shot across its range
+/// fills hundreds rather than one - still nothing beside a library's frame count, and
+/// the alternative was answering the wrong lens (see `resolve`). It saves 0.7ms of a ~450ms fit, which is not
 /// why it is here - the negative entries are. Without them every photo from an unlisted
 /// lens pays the full scored search to be told no again.
 fn cache() -> &'static Mutex<HashMap<String, Option<Resolved>>> {

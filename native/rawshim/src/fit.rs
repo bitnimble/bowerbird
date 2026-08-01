@@ -655,7 +655,7 @@ fn scan<T: Send + Sync + Copy>(grid: &Grid, candidates: &[T], knots_of: impl Fn(
             residual_for(grid, &knots_of(*candidate), crop_of(*candidate))
                 .map(|delta| (delta, i, *candidate))
         })
-        .min_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal).then(a.1.cmp(&b.1)))
+        .min_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)))
         .map(|(delta, _, candidate)| (candidate, delta))
 }
 
@@ -758,7 +758,16 @@ pub fn fit(render: RgbRef<'_>, jpeg_bytes: &[u8], geometry: Geometry) -> Result<
     // The render on the colour fit's own grid. Resized rather than warped here - the
     // fit warps it itself, through the lens this same profile just resolved, because a
     // pair means nothing unless both pixels show the same point in the scene.
-    let sampled = vips::Pipeline::from_rgb(render)?.resize_to_fit(preview.width)?.finish()?;
+    //
+    // Exact dimensions, not a long edge: the two planes have to land on one grid or the
+    // fit's wide pass compares them by size, finds them different and skips itself. Asked
+    // for `resize_to_fit(preview.width)` a portrait frame is handed its *short* edge, so
+    // the render arrived at 571x855 against an 855x1280 preview and the pass that exists
+    // to see small saturated objects silently never ran - on every portrait frame, and on
+    // both fixtures, which is why no test noticed.
+    let sampled = vips::Pipeline::from_rgb(render)?
+        .resize_exact(preview.width, preview.height)?
+        .finish()?;
     profile.colour = crate::hdr_fit::fit_display(&sampled, &preview, &profile.lens());
 
     // The gate is on the colour, so it belongs on the route that applies the colour. A

@@ -108,16 +108,22 @@ pub struct HdrColour {
     pub matrix: [[f64; 3]; 3],
     /// Blend towards luma afterwards; 1 leaves chroma alone.
     ///
-    /// One number, and it has to stay one number. A curve over chroma and a gain per hue
-    /// each described this camera's saturation far better - it takes a brown's chroma up
-    /// 36% where it takes grass's up 8% - and both had to come out again, because a gain
-    /// computed per pixel from that pixel's own colour amplifies the *variation* in that
-    /// colour. Across a dog's flat fur neighbouring pixels were pulled apart into red
-    /// speckles beside green ones, and a wall the camera renders flat grey came out
-    /// blotchy. They improved every number this fit reports and damaged the picture,
-    /// which is why the numbers are not the last word. Denoising the render first does
-    /// not buy them back either: the speckle is still there at the strength the render
-    /// is denoised by (§10.9).
+    /// One number, and the baseline the `chroma` map below generalises rather than the
+    /// whole of what this model says about saturation.
+    ///
+    /// A curve over chroma and a gain per hue each described this camera's saturation far
+    /// better - it takes a brown's chroma up 36% where it takes grass's up 8% - and both
+    /// had to come out again, because a gain computed per pixel from that pixel's own
+    /// colour amplifies the *variation* in that colour. Across a dog's flat fur
+    /// neighbouring pixels were pulled apart into red speckles beside green ones, and a
+    /// wall the camera renders flat grey came out blotchy. They improved every number this
+    /// fit reports and damaged the picture, which is why the numbers are not the last
+    /// word. Denoising the render first does not buy them back either: the speckle is
+    /// still there at the strength the render is denoised by (§10.9).
+    ///
+    /// What made a hue-dependent correction safe afterwards was bounding how fast it may
+    /// vary - a coarse lattice read by trilinear interpolation has a gradient bounded by
+    /// the difference between neighbouring nodes, where those per-pixel gains had none.
     pub saturation: f64,
     /// The hue-dependent part, where the frame supported fitting one.
     ///
@@ -208,7 +214,12 @@ impl ChromaMap {
     /// Which is the point of the shape: one gain applied to every colour alike is this
     /// model with the same 2x2 at every node, so the chroma map is a strict
     /// generalisation of the scalar it replaces rather than a second thing beside it.
-    /// A frame that wants nothing hue-dependent can still be described exactly.
+    /// A frame that wants nothing hue-dependent is described by the same 2x2 at every
+    /// node, exactly.
+    ///
+    /// Exactly in the 2x2, not bit-identically in what leaves `finish_chroma`: that
+    /// rebuilds the middle channel as `-(L0.d0 + L2.d2) / L1` where the scalar path
+    /// blends it directly, so the two agree to a few ulps rather than to the bit.
     pub fn from_saturation(saturation: f64) -> ChromaMap {
         let node = [saturation, 0.0, 0.0, saturation];
         ChromaMap { nodes: Box::new([node; MAP_NODES]) }
@@ -236,9 +247,11 @@ impl ChromaMap {
 
     /// The eight nodes a colour sits between, and how much of each it takes.
     ///
-    /// One function, used by the fit and by the apply, so the two cannot disagree about
-    /// which nodes a colour belongs to - the failure mode where a map is fitted against
-    /// one neighbourhood and read from another.
+    /// Used by the fit. `correct` walks the same axes and the same eight corners inline,
+    /// because building the index and weight arrays is most of what reading the map
+    /// costs and it runs per pixel. The two must agree about which nodes a colour
+    /// belongs to - a map fitted against one neighbourhood and read from another is
+    /// wrong everywhere - and nothing but this note enforces that now.
     fn nodes_for(level: f64, d0: f64, d2: f64) -> ([usize; 8], [f64; 8]) {
         let (x, fx) = Self::axis(d0, MAP_CHROMA, -CHROMA_REACH, Self::CHROMA_SCALE);
         let (y, fy) = Self::axis(d2, MAP_CHROMA, -CHROMA_REACH, Self::CHROMA_SCALE);
@@ -956,7 +969,7 @@ fn to_srgb8(to_srgb: &[[f64; 3]; 3], r: f64, g: f64, b: f64) -> [f64; 3] {
 /// `[k - 0.5, k + 0.5)`, so the step between `k - 1` and `k` is near the linear value the
 /// transfer sends to `k - 0.5`. Those 255 values are constants, and finding a place among
 /// them costs a lookup and a step or two where the transfer costs a `powf` - which, three
-/// per pair per probe over some seventy probes, was the fit's largest remaining
+/// per pair per probe over the dozens of probes a fit makes, was its largest remaining
 /// arithmetic.
 ///
 /// Near, not at: `oetf` and its inverse do not round-trip exactly, so the analytic edge
@@ -1816,6 +1829,15 @@ fn fitted_chroma(
     // nine pairs into the loop above, out of 189,330.
     let wide = &sharp.wide_render;
     let target = &sharp.wide_jpeg;
+    // Debug-asserted rather than merely skipped. Two planes of different sizes cannot be
+    // paired, but a caller that lands them that way has a bug and silence let one live:
+    // an SDR render asked for a long edge where a width was meant arrived at 571x855
+    // against an 855x1280 preview, and this pass did nothing on every portrait frame.
+    debug_assert_eq!(
+        (wide.width, wide.height),
+        (target.width, target.height),
+        "the wide planes must share a grid to be paired",
+    );
     if wide.width == target.width && wide.height == target.height {
         // A row at a time across cores, then summed back in row order. Reduced in
         // whatever order the threads finished, a node's moments would differ run to run
@@ -1876,8 +1898,17 @@ fn fitted_chroma(
                     let (d0, d2) = (m[0] - ours, m[2] - ours);
                     let (e0, e2) = (t[0] - theirs, t[2] - theirs);
 
-                    // A quarter each, since there are four of these pixels for every one
-                    // of the pairs above and they describe the same surface.
+                    // A quarter each, there being four of these pixels for every one of
+                    // the pairs above, describing the same surface.
+                    //
+                    // Flat, where the pairs above carry `balance` - the hue weighting,
+                    // which runs to 4 on a rare hue and 0.25 on a dominant one. So a wide
+                    // pixel of a rare saturated hue counts a sixteenth of the pair it
+                    // supplements, not a quarter, and the nodes this pass exists to feed
+                    // are the ones it under-feeds. Left as it measures rather than as it
+                    // reads: the map's shrinkage and its margin were tuned against this
+                    // pass at this weight, so correcting the scale is a re-tuning of
+                    // `MAP_CONFIDENCE` and `MAP_MARGIN` with it, not a one-line fix.
                     let (at, weight) = ChromaMap::nodes_for(ours, d0, d2);
                     for (node, share) in at.into_iter().zip(weight) {
                         let sw = 0.25 * share;
@@ -2265,11 +2296,6 @@ fn fit_model_planes(
     fit_colour(&render, &jpeg, &sharp)
 }
 
-/// The long edge the preview is decoded to for the fit.
-pub fn fit_long_edge() -> usize {
-    FIT_LONG_EDGE
-}
-
 /// The long edge a caller should decode the preview to.
 ///
 /// Twice the fit grid, and the extra is not for the fit - that still runs at
@@ -2288,7 +2314,7 @@ pub fn sample_long_edge() -> usize {
 /// 61MP frame once each was a whole extra pass over 15.8M pixels for the same answer.
 /// Left unnormalised for that reason: each consumer divides by its own level.
 ///
-/// `wide` should be twice the preview's width, which is what `fit::fit` resizes to -
+/// `wide` is the preview's own width, which both callers resize their render to -
 /// so arriving at that size makes its own resize a no-op rather than a second resample.
 pub fn fit_plane(linear: &[u16], width: usize, height: usize, wide: usize) -> Plane {
     let wide = width.min(wide).max(1);
