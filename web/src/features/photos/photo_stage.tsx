@@ -101,6 +101,8 @@ interface Props {
    * the stage at that rate.
    */
   toolsInto?: HTMLElement | null;
+  /** A rendition for this photo is being built: covered until it is on screen. */
+  busy?: boolean;
 }
 
 // Scale and pan are one value, not two pieces of state. Zooming about a point
@@ -289,6 +291,7 @@ export function PhotoStage({
   onImageLoad,
   onImageMissing,
   toolsInto,
+  busy = false,
 }: Props): JSX.Element {
   const stageRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -783,6 +786,13 @@ export function PhotoStage({
             and these elements are the size those photos will be. */}
         {ready && preloadSrcs?.map((source) => <img key={source} src={source} alt="" aria-hidden className="stage__content" />)}
       </div>
+
+      {busy && (
+        <div className="stage__busy">
+          <div className="stage__spinner" />
+          <Text variant="mono">Rendering…</Text>
+        </div>
+      )}
 
       {/* Fullscreen shows nothing but the photo; the bar surfaces on hover so the
           filename and the way out are always reachable without cluttering it. */}

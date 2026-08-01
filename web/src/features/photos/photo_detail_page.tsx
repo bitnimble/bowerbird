@@ -168,8 +168,7 @@ function useStep(): (step: 'next' | 'prev') => void {
 }
 
 // Where the reader can go from here, and what can be done to the photo they are
-// on. Its own observer so that a rebuild finishing, which flips `building…` on
-// and off, does not re-render the frame or the panels beside it.
+// on.
 const DetailNav = observer(function DetailNav({
   photoId,
   toolsRef,
@@ -318,7 +317,6 @@ const DetailNav = observer(function DetailNav({
           ))}
         </>
       )}
-      {store.buildingRendition && <Text variant="mono">building…</Text>}
     </div>
   );
 });
@@ -371,6 +369,7 @@ const DetailFrame = observer(function DetailFrame({ photoId, toolsInto }: { phot
       // The panels decide which edge they take from this photo's shape, so until
       // that is known from somewhere the stage is not the size it will be.
       hold={store.photoFor(photoId) == null}
+      busy={store.buildingRendition}
       retryEpoch={store.serverEpoch}
       sources={[hdrVideo && showing !== 'embedded' ? renditionVideoUrl(photoId, showing, version) : stillSrc]}
       video={hdrVideo}

@@ -2010,6 +2010,41 @@ p.ui-text--mono {
   padding: 0 5px;
 }
 
+/* Over the photograph rather than a word in the bar: a rendition built on
+   request takes seconds, and what is under it is the frame being replaced. Under
+   the tools, which stay usable while it builds. */
+.stage__busy {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: rgba(10, 12, 16, 0.6);
+  pointer-events: none;
+}
+
+.stage__busy .ui-text--mono {
+  color: var(--bone);
+}
+
+.stage__spinner {
+  width: 26px;
+  height: 26px;
+  border: 2px solid var(--slate);
+  border-top-color: var(--glass);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    rotate: 360deg;
+  }
+}
+
 /* The stage portals its controls in here, and they are laid out by the bar's own
    row rather than by this: `contents` is what keeps them siblings of the buttons
    beside them instead of one flex item holding all three. */
