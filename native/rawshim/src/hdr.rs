@@ -135,10 +135,14 @@ pub fn fit_match(
 /// Both halves want the same three things: the frame's levels, the camera's preview,
 /// and the decode box-averaged to twice that preview's width. Asked for as two calls
 /// they each measured the levels, each pulled the 5-14MB preview back out of the file,
-/// and each walked the whole frame to build the same average. They differ only in what
-/// they normalise that average by - the scene peak for the geometry search, since it
-/// stands in for LibRaw's auto-brightening, and diffuse white for the colour fit, since
-/// that is the domain the grade works in.
+/// and each walked the whole frame to build the same average.
+///
+/// Both normalise it by diffuse white, the geometry search included. The peak stood in
+/// for LibRaw's auto-brightening once, and it is a maximum over a strided subsample: one
+/// specular sample drags the whole render toward black by the peak/white ratio, `pairs`
+/// drops anything whose darkest channel lands on 1 or below, and a frame can fall under
+/// `MIN_PAIRS` and lose its colour match entirely. Diffuse white is a percentile, so it
+/// is also what keeps the fit stable across decode sizes.
 ///
 /// Geometry first and colour second, which is not negotiable: the colour is fitted from
 /// pixel pairs that only correspond through the warp (10.8).
