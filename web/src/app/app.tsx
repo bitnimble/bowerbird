@@ -14,6 +14,7 @@ import { ShootPhotosPage } from '../features/shoots/shoot_photos_page';
 import { ShootsPage } from '../features/shoots/shoots_page';
 import { Toasts } from '../features/toasts/toasts';
 import { Button, ICON, Modal, Text } from '../ui/ui';
+import { readSetting, writeSetting } from './local_setting';
 import { useLibrariesStore, usePhotosStore, usePresenters, useShootsStore, useStackTriageStore } from './stores_context';
 import { useIsMobile } from './use_is_mobile';
 
@@ -258,7 +259,7 @@ export function App(): JSX.Element {
   const mobile = useIsMobile();
   // Remembered, because the rail is chrome: having to re-hide it on every visit
   // is the same annoyance as it never collapsing at all.
-  const [collapsed, setCollapsed] = useState(() => localStorage.getItem(RAIL_KEY) === '1');
+  const [collapsed, setCollapsed] = useState(() => readSetting(RAIL_KEY) === '1');
   const [drawerOpen, setDrawerOpen] = useState(false);
   const { pathname } = useLocation();
 
@@ -272,7 +273,7 @@ export function App(): JSX.Element {
     }
     setCollapsed((was) => {
       const next = !was;
-      localStorage.setItem(RAIL_KEY, next ? '1' : '0');
+      writeSetting(RAIL_KEY, next ? '1' : '0');
       return next;
     });
   }

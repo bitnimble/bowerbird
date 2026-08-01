@@ -1,5 +1,6 @@
 import { action, runInAction } from 'mobx';
 import { ApiError, api, type Ordering, type PhotoTarget } from '../../api/client';
+import { readSetting, writeSetting } from '../../app/local_setting';
 import type { ShootsStore, ShootView } from './shoots_store';
 
 const VIEW_KEY = 'bowerbird.shoots.view';
@@ -73,7 +74,7 @@ export class ShootsPresenter {
     // Row four thousand of the folder tree says nothing about row four thousand
     // of the shoots alone, so the scroll starts over with the reading.
     this.store.scrollTop = 0;
-    localStorage.setItem(VIEW_KEY, view);
+    writeSetting(VIEW_KEY, view);
   }
 
   // The scroller's own numbers, written straight to the store so nothing else
@@ -207,7 +208,7 @@ export class ShootsPresenter {
 
   @action.bound
   restoreView(): void {
-    const saved = localStorage.getItem(VIEW_KEY);
+    const saved = readSetting(VIEW_KEY);
     if (saved === 'flat' || saved === 'tree' || saved === 'tree_full') this.store.view = saved;
   }
 

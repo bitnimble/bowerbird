@@ -21,6 +21,7 @@ import {
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { needsHdrVideo, renditionVideoUrl, viewerUrl, type PhotoDetail, type ViewerRendition } from '../../api/client';
 import { captureDateTime, localDateTime } from '../../api/dates';
+import { readSetting, writeSetting } from '../../app/local_setting';
 import {
   useAlbumsStore,
   useAppSettingsStore,
@@ -44,6 +45,8 @@ const PENDING = 'loading';
 // Two rows visible, the rest one click away. Every panel then costs the same
 // three lines, so the column stays scannable however much a camera recorded.
 const VISIBLE_ROWS = 2;
+
+const PANELS_KEY = 'bowerbird.detail.panels';
 
 // The panel strip is a grid track the stage is sized against, so it has to hold
 // its height across the detail fetch. Every field that fetch answers renders as
@@ -656,8 +659,10 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   // to read the next one's too.
   const [sheetOpen, setSheetOpen] = useState(false);
   // Same on the wide layout, where the bar's info button hides the whole column
-  // and gives its width back to the photograph.
-  const [panelsOpen, setPanelsOpen] = useState(true);
+  // and gives its width back to the photograph. Remembered across visits, like
+  // the rail: someone culling with the panels away means it for the session
+  // after this one too.
+  const [panelsOpen, setPanelsOpen] = useState(() => readSetting(PANELS_KEY) !== '0');
   // The stage draws its own controls into a slot in the bar, so the readout can
   // follow a wheel zoom frame by frame without the page moving with it. State
   // rather than a ref, because the stage has to render again once the slot
@@ -669,6 +674,14 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
     void photos.openDetail(photoId, sourceOfPath(pathname));
     void appSettings.load();
   }, [photoId, pathname, photos, appSettings]);
+
+  function togglePanels(): void {
+    setPanelsOpen((was) => {
+      const next = !was;
+      writeSetting(PANELS_KEY, next ? '1' : '0');
+      return next;
+    });
+  }
 
   // Only once the read for *this* photo has come back empty. The fetch starts in
   // an effect, so the render that first sees a new id has nothing loaded and
@@ -756,7 +769,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
         photoId={photoId}
         toolsRef={setToolsSlot}
         panelsOpen={mobile ? null : panelsOpen}
-        onTogglePanels={() => setPanelsOpen(!panelsOpen)}
+        onTogglePanels={togglePanels}
       />
 
       <div className={`detail detail--${mobile ? 'sheet' : !panelsOpen ? 'only' : landscape ? 'below' : 'beside'}`}>

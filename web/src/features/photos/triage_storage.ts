@@ -1,4 +1,5 @@
 import type { Triage } from '../../api/client';
+import { readSetting, writeSetting } from '../../app/local_setting';
 import type { Session } from './stack_triage';
 
 // A triage session, kept across a reload (DESIGN §20.5).
@@ -147,17 +148,9 @@ function asChoice(value: unknown): HistoryEntry['choice'] {
 
 // A preference about the machine rather than about the stack, so `localStorage`.
 export function saveMode(mode: TriageMode): void {
-  try {
-    localStorage.setItem(MODE_KEY, mode);
-  } catch {
-    /* losing the preference is not worth an error */
-  }
+  writeSetting(MODE_KEY, mode);
 }
 
 export function loadMode(): TriageMode {
-  try {
-    return localStorage.getItem(MODE_KEY) === 'split' ? 'split' : 'flip';
-  } catch {
-    return 'flip';
-  }
+  return readSetting(MODE_KEY) === 'split' ? 'split' : 'flip';
 }

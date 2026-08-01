@@ -1,3 +1,4 @@
+import { readSetting, writeSetting } from '../../app/local_setting';
 import { sourceKey, type PhotoFilters, type PhotoSource, type ViewMode } from './photos_store';
 
 // How a collection was last being looked at, on this device. Deliberately not
@@ -26,17 +27,13 @@ function durable(filters: PhotoFilters): PhotoFilters {
 }
 
 export function saveViewState(source: PhotoSource, state: ViewState): void {
-  try {
-    localStorage.setItem(key(source), JSON.stringify({ ...state, filters: durable(state.filters) }));
-  } catch {
-    // Private browsing or a full quota. Losing the preference is not worth an error.
-  }
+  writeSetting(key(source), JSON.stringify({ ...state, filters: durable(state.filters) }));
 }
 
 export function loadViewState(source: PhotoSource): Partial<ViewState> | null {
+  const raw = readSetting(key(source));
+  if (raw == null) return null;
   try {
-    const raw = localStorage.getItem(key(source));
-    if (raw == null) return null;
     const parsed = JSON.parse(raw) as Partial<ViewState>;
     // Hand-edited or written by an older version: take only what is usable
     // rather than letting a bad shape break opening the collection.
