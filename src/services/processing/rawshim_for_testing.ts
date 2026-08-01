@@ -59,7 +59,22 @@ interface DebugReply {
     comparison?: Comparison;
     againstPreview?: AgainstPreview;
     usedAvifenc?: boolean;
+    defringeSweep?: DefringeSweep;
   };
+}
+
+/** One RAW rendered at several defringe strengths, each scored against the body's JPEG. */
+export interface DefringeSweep {
+  /** One per amount asked for. */
+  edgeDeltaE: number[];
+  /** One per amount asked for. */
+  wholeDeltaE: number[];
+  edgePixels: number;
+  sampledPixels: number;
+  /** Not per amount: the profile is fitted once for the whole sweep. */
+  hasLateral: boolean;
+  /** Red and blue against green, or null where the estimate declined. */
+  defocus: [number, number] | null;
 }
 
 // Comfortably past any reply: a summary is a few hundred bytes.
@@ -127,11 +142,13 @@ export interface GradeSpec {
   /** A still gets avifenc after ffmpeg; a video does not. Defaults to a still. */
   medium?: 'still' | 'video';
   /**
-   * The render's denoise and sharpen (§10.9). Absent means neither, which is what the
-   * pins want; a test that needs the HDR half of that stage exercised passes them.
+   * The render's denoises and sharpen (§10.9). Absent means none of them, which is what
+   * the pins want; a test that needs the HDR half of that stage exercised passes them.
    */
-  denoise?: number;
+  denoiseLuma?: number;
+  denoiseChroma?: number;
   sharpen?: number;
+  defringe?: number;
 }
 
 function gradeArgs(grade: GradeSpec): Record<string, unknown> {
@@ -177,5 +194,28 @@ export function _for_testing_deltaEToPreview(imagePaths: string[], rawPath: stri
   const reply = ask({ kind: 'deltaEToPreview', imagePaths, rawPath });
   if (reply?.againstPreview == null) throw new Error(`no comparison for ${rawPath}`);
   return reply.againstPreview;
+}
+
+/** The same crop of several renditions, tiled into one JPEG for looking at. */
+export function _for_testing_tileCrops(
+  imagePaths: string[],
+  outputPath: string,
+  window: number,
+  scale: number,
+): void {
+  ask({ kind: 'tileCrops', imagePaths, outputPath, window, scale });
+}
+
+/** One RAW rendered at each defringe strength, scored against the body's own JPEG. */
+export function _for_testing_defringeSweep(
+  path: string,
+  amounts: number[],
+  denoiseLuma: number,
+  denoiseChroma: number,
+  size: number,
+): DefringeSweep {
+  const reply = ask({ kind: 'defringeSweep', path, amounts, denoiseLuma, denoiseChroma, size });
+  if (reply?.defringeSweep == null) throw new Error(`no sweep for ${path}`);
+  return reply.defringeSweep;
 }
 

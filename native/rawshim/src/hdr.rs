@@ -147,6 +147,19 @@ pub fn fit_match(
 /// Geometry first and colour second, which is not negotiable: the colour is fitted from
 /// pixel pairs that only correspond through the warp (10.8).
 ///
+/// **The geometry search reads a *finished* render, for the reason the SDR path records at
+/// its own call site: the defringe and the lateral tier remove the same error.** Measured
+/// on the raw render, the tier corrects a fringe the defringe at the end of `encode_pair`
+/// then removes as well, and the two together overshoot. Handed the frame as it will
+/// actually look, the tier finds nothing left and declines on its own - no rule needed.
+///
+/// The colour half still reads `plane`, which is scene-linear and cannot be finished in the
+/// same way: the denoise takes a difference against a blur, and a difference taken in
+/// linear light follows absolute luminance rather than what the eye reads. What makes that
+/// tolerable here and not on the SDR path is `fit_plane` itself - it box-averages the
+/// decode down to twice the preview's width, which already removes most of the chroma noise
+/// a denoise would have.
+///
 /// None when the file embeds no preview, when the fit found nothing worth applying, or
 /// when there were too few usable pairs - in each case the caller grades neutrally.
 pub fn fit_all(
@@ -154,6 +167,7 @@ pub fn fit_all(
     source: &Source<'_>,
     quantile: f64,
     geometry: crate::fit::Geometry,
+    finished: image::Strengths,
 ) -> Option<(crate::fit::Profile, HdrMatch)> {
     crate::vips::init();
     let levels = tone::levels(source.samples, quantile);
@@ -183,15 +197,20 @@ pub fn fit_all(
             // Both halves off the same plane and the same anchor: the geometry search
             // wants a render that looks like an ordinary picture, the colour fit wants
             // the grade's own domain, and diffuse white is what puts them there.
-            let render = hdr_fit::render_srgb8(&plane, levels.white);
+            let mut render = hdr_fit::render_srgb8(&plane, levels.white);
+            image::finish(&mut render.data, render.width, render.height, finished);
             // Ungated: this wants the geometry, and the gate is about whether an SDR
             // render should wear a colour transform. A frame whose SDR *colour* is
             // refused still gets its HDR colour fitted, that being a different fit in a
             // different domain against a different reference.
-            let profile =
+            let mut profile =
                 crate::fit::fit_from_preview(render.as_ref(), preview.as_ref(), geometry)
                     .ok()
                     .flatten()?;
+            // After the fit, off the render alone - the preview has no lateral fringe left
+            // in it to compare against (`fit::with_lateral`).
+            let lateral = crate::ffi::recorded_lateral(raw_path);
+            crate::fit::with_lateral(&mut profile, render.as_ref(), lateral);
             let matched = hdr_fit::fit(&plane, levels.white, &preview, profile.lens())?;
             Some((profile, matched))
         })
@@ -472,7 +491,7 @@ pub fn encode_pair(
     // that: both read a difference against a blur, and a difference taken in linear
     // light follows absolute luminance rather than what the eye reads.
     tone::encode_pq(&mut frame, options.peak_nits);
-    crate::image::finish(&mut frame, width, height, options.denoise, options.sharpen);
+    crate::image::finish(&mut frame, width, height, options.strengths);
 
     let Some(video_path) = video_path else {
         // Handed over rather than lent: with no twin reading it, libavif takes the

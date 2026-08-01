@@ -80,8 +80,10 @@ export interface RenditionJob {
    * target and for the same reason as `matchEmbeddedJpeg`: they describe the picture
    * this photo renders to, so the grid tile and the full view cannot disagree.
    */
-  denoise: number;
+  denoiseLuma: number;
+  denoiseChroma: number;
   sharpen: number;
+  defringe: number;
 }
 
 export type WorkerJob = RenditionJob;

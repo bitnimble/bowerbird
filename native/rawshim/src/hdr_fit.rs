@@ -2139,24 +2139,32 @@ pub fn apply_lens(samples: &[u16], width: usize, height: usize, m: &HdrMatch) ->
     if m.lens.is_identity() {
         return None;
     }
-    let mut out = match &m.lens.distortion {
+    // Gated on `moves_pixels` rather than on the curve being present: a crop is a
+    // geometry of its own, so a lens with a scale and no spline still has to warp.
+    let knots = m.lens.distortion.as_deref();
+    // The lateral scales count as a geometry too: a lens that only reads red and blue at
+    // their own radius moves pixels, and gating on the distortion alone skipped the
+    // correction entirely while `is_identity` correctly reported the lens was not one.
+    let mut out = match m.lens.tca.is_some() || crate::image::moves_pixels(knots, m.lens.crop) {
         // The falloff rides along, since the warp is already visiting every pixel with
         // its radius to hand.
-        Some(knots) => {
+        true => {
             return Some(warp_planar(
                 samples,
                 width,
                 height,
                 width,
                 height,
-                knots,
+                knots.unwrap_or_default(),
                 m.lens.crop,
                 m.lens.falloff,
+                &m.lens.channels(),
+                crate::image::Sampling::Bicubic,
                 |v| f64::from(v),
                 |v| v.clamp(0.0, 65535.0) as u16,
             ));
         }
-        None => samples.to_vec(),
+        false => samples.to_vec(),
     };
     // Only a frame the lens left straight still needs a pass of its own.
     if let Some((a, b)) = m.lens.falloff {
@@ -2263,9 +2271,32 @@ fn fit_model_planes(
     // 60MP with bilinear taps and resampling afterwards is both slower and worse - it
     // aliases going in and blurs the geometry going out - and measured, it took the fit
     // from under a second to 17.
-    let warped = match &lens.distortion {
-        Some(knots) => warp_planar(&small, wide, tall, wide, tall, knots, lens.crop, None, |v| v, |v| v),
-        None => small,
+    //
+    // Gated on `moves_pixels`, so a lens carrying a scale and no spline still warps.
+    // The lateral scales travel with the warp, or the pairs this fit is built from
+    // correspond through a different geometry than the grade applies - which is the failure
+    // the `Lens` struct exists to make unexpressible.
+    let warped = match lens.tca.is_some()
+        || crate::image::moves_pixels(lens.distortion.as_deref(), lens.crop)
+    {
+        true => {
+            let knots = lens.distortion.as_deref().unwrap_or_default();
+            warp_planar(
+                &small,
+                wide,
+                tall,
+                wide,
+                tall,
+                knots,
+                lens.crop,
+                None,
+                &lens.channels(),
+                crate::image::Sampling::Bilinear,
+                |v| v,
+                |v| v,
+            )
+        }
+        false => small,
     };
 
     let mut render = Plane {

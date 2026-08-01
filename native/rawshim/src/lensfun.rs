@@ -263,6 +263,109 @@ pub fn knots(
     }
 }
 
+/// The lateral aberration the database has for this shot, as red and blue's radial
+/// corrections against green in `SPLINE_UNIT`s.
+///
+/// Sampled out of a modifier for the same reason the distortion is: lensfun's `LINEAR`
+/// and `POLY3` TCA models are expressed in its own normalised coordinates, and reading
+/// the mapping the library actually produces cannot drift from it. Sixteen 1x1 calls
+/// per channel, on the same grid the distortion uses, so the two compose knot for knot.
+///
+/// None when nothing plausible matches or the entry carries no TCA calibration - which
+/// is most of them, since lensfun's TCA coverage is far thinner than its distortion
+/// coverage. The caller falls back to measuring it off the frame.
+pub fn tca_knots(
+    make: &str,
+    model: &str,
+    lens: &str,
+    focal: f32,
+    aperture: f32,
+    width: usize,
+    height: usize,
+) -> Option<[Vec<f64>; 2]> {
+    let resolved = resolve(make, model, lens, focal, aperture)?;
+    let entry = resolved.lens as *const raw::lfLens;
+    let (long, short) = (width.max(height) as i32, width.min(height) as i32);
+
+    #[expect(unsafe_code)]
+    unsafe {
+        // Asked before the modifier is built: an entry with no TCA calibration would
+        // otherwise initialise happily and hand back an identity, which the fit would
+        // then take over measuring the real one.
+        if (*entry).CalibTCA.is_null() || (*(*entry).CalibTCA).is_null() {
+            return None;
+        }
+        let modifier = raw::lf_modifier_new(entry, resolved.crop, long, short);
+        if modifier.is_null() {
+            return None;
+        }
+        let applied = raw::lf_modifier_initialize(
+            modifier,
+            entry,
+            raw::lfPixelFormat_LF_PF_U8,
+            focal,
+            aperture,
+            DISTANCE,
+            SCALE,
+            raw::lfLensType_LF_RECTILINEAR,
+            raw::LF_MODIFY_TCA as i32,
+            0,
+        );
+        if applied & raw::LF_MODIFY_TCA as i32 == 0 {
+            raw::lf_modifier_destroy(modifier);
+            return None;
+        }
+
+        let (cx, cy) = (long as f32 / 2.0, short as f32 / 2.0);
+        let half = (cx * cx + cy * cy).sqrt();
+        let (ux, uy) = (cx / half, cy / half);
+
+        let mut red = Vec::with_capacity(KNOTS);
+        let mut blue = Vec::with_capacity(KNOTS);
+        for i in 0..KNOTS {
+            let r = i as f32 / (KNOTS - 1) as f32;
+            // Six floats: x and y for red, green and blue in turn.
+            let mut mapped = [0.0f32; 6];
+            if raw::lf_modifier_apply_subpixel_distortion(
+                modifier,
+                cx + ux * r * half,
+                cy + uy * r * half,
+                1,
+                1,
+                mapped.as_mut_ptr(),
+            ) == 0
+            {
+                raw::lf_modifier_destroy(modifier);
+                return None;
+            }
+            let reach = |pair: usize| {
+                let (x, y) = (mapped[pair * 2], mapped[pair * 2 + 1]);
+                (((x - cx).powi(2) + (y - cy).powi(2)).sqrt() / half) as f64
+            };
+            // Against green rather than against the undistorted radius, so what comes
+            // out is the aberration alone and composes with whatever the distortion
+            // tier separately decided.
+            let (green, at) = (reach(1), r as f64);
+            for (channel, out) in [(0usize, &mut red), (2usize, &mut blue)] {
+                let value = match at > 0.0 && green > 0.0 {
+                    true => (reach(channel) / green - 1.0) * SPLINE_UNIT,
+                    // At the centre there is no radius to take a ratio against, so the
+                    // nearest knot that has one stands in - a lateral scale is flat
+                    // there rather than zero.
+                    false => 0.0,
+                };
+                out.push(value);
+            }
+        }
+        raw::lf_modifier_destroy(modifier);
+        // The centre knot is the one radius that could not be measured; the next one
+        // out is the closest thing to it.
+        red[0] = red[1];
+        blue[0] = blue[1];
+        Some([red, blue])
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

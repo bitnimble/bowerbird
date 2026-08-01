@@ -52,12 +52,11 @@ pub struct EncodeOptions {
     pub crf: i32,
     /// Encoder speed, 0 slowest. Clamped per encoder: libaom 0-8, avifenc 0-10.
     pub preset: i32,
-    /// Denoise strength and the fraction of the deconvolution to blend in, both applied
-    /// to the graded frame after the transfer and before either encoder sees it (§10.9).
-    /// Neither is scaled here: how much noise the frame has is measured off its own
+    /// The defringe, the two denoises and the fraction of the deconvolution to blend in,
+    /// all applied to the graded frame after the transfer and before either encoder sees it
+    /// (§10.9). None is scaled here: how much noise the frame has is measured off its own
     /// pixels where the filters run.
-    pub denoise: f64,
-    pub sharpen: f64,
+    pub strengths: crate::image::Strengths,
     /// Longest edge of the output. Infinite means "whatever the frame is".
     pub max_edge: f64,
 }
@@ -427,8 +426,7 @@ mod tests {
                             preset: 8,
                             // Not in the argv: both media are denoised and sharpened on
                             // this side, before either encoder is handed anything.
-                            denoise: 0.0,
-                            sharpen: 0.0,
+                            strengths: crate::image::Strengths::default(),
                             max_edge,
                         };
                         let chroma = match still_full_chroma {
@@ -476,8 +474,7 @@ mod tests {
             white_quantile: 0.9,
             crf: 8,
             preset: 8,
-            denoise: 0.0,
-            sharpen: 0.0,
+            strengths: crate::image::Strengths::default(),
             max_edge,
         }
     }

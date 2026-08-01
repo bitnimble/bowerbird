@@ -111,7 +111,7 @@ test('the denoise and the sharpen reach both HDR media', () => {
       const video = path.join(dir, `${name}.mp4`);
       _for_testing_encodeHdr(
         FIXTURE,
-        { medium: 'still', outputPath: still, peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.99, crf: 40, preset: 12, maxEdge: MAX_EDGE, stillFullChroma: false, denoise, sharpen },
+        { medium: 'still', outputPath: still, peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.99, crf: 40, preset: 12, maxEdge: MAX_EDGE, stillFullChroma: false, denoiseLuma: denoise, denoiseChroma: denoise, sharpen },
         { videoOutputPath: video, decodeSize: MAX_EDGE },
       );
       return [still, video];

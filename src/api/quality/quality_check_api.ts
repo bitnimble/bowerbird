@@ -73,8 +73,10 @@ export class QualityCheckApi {
         runJob({
           rawFilePath: getOriginalPath(library, photo.file_path),
           matchEmbeddedJpeg: settings.match_embedded_jpeg,
-          denoise: settings.raw_denoise,
+          denoiseLuma: settings.raw_denoise_luma,
+          denoiseChroma: settings.raw_denoise_chroma,
           sharpen: settings.raw_sharpen,
+          defringe: settings.raw_defringe,
           grade: {
             peakNits: settings.hdr_peak_nits,
             referenceWhiteNits: settings.hdr_reference_white_nits,
