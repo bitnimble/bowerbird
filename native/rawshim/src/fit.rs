@@ -929,26 +929,36 @@ pub fn fit(render: RgbRef<'_>, jpeg_bytes: &[u8], geometry: Geometry) -> Result<
         .filter(|p| p.delta_e.is_finite() && p.delta_e <= MAX_ACCEPTABLE_DELTA_E))
 }
 
-/// `fit`, without the colour gate, for a caller that wants the geometry.
+/// `fit`, without the colour gate, against a preview the caller has already decoded.
 ///
-/// `MAX_ACCEPTABLE_DELTA_E` decides whether an *SDR render* should wear a colour
-/// transform. `fit_all` asks the same call for geometry and gives up where there is no
-/// profile, so a refused SDR colour refused the HDR match too - a different fit, in a
-/// different domain, against a different reference, never asked whether it would have
-/// worked. Reachable rather than observed: the worst SDR fit over the 35-frame set is
-/// 4.1 against a limit of 6, and it was only reached by feeding the geometry fit a
+/// **Ungated**, because `MAX_ACCEPTABLE_DELTA_E` decides whether an *SDR render* should
+/// wear a colour transform. `fit_all` asks this same call for geometry and gives up where
+/// there is no profile, so a refused SDR colour refused the HDR match too - a different
+/// fit, in a different domain, against a different reference, never asked whether it
+/// would have worked. Reachable rather than observed: the worst SDR fit over the 35-frame
+/// set is 4.1 against a limit of 6, and it was only reached by feeding the geometry fit a
 /// cheaper preview, which took one frame to 10.4 and silently cost it its colour.
-///
 /// Nothing downstream then bounds the HDR fit's own error, which is the standing gap
-/// here - geometry is judged on its own terms (a candidate has to beat the undistorted
+/// here. Geometry is judged on its own terms (a candidate has to beat the undistorted
 /// baseline) and `hdr_fit` refuses a frame with too few pairs, but neither is a deltaE
 /// bound on the colour that actually ships.
-pub fn fit_ungated(
+///
+/// **Off the caller's preview**, because both halves of an HDR fit want the same picture
+/// from the same embedded JPEG. Decoding it here as well meant a 6000x4000 preview
+/// decoded in full, resized to 640 and dropped, beside the copy the colour fit was
+/// already holding.
+///
+/// Sharing was tried once before and rejected, on a preview DCT-shrunk almost to the fit
+/// grid: that arrives barely filtered and cost the 35-frame set 1.654 to 1.774 mean
+/// deltaE. What is shared now is not that. The colour fit needs twice the grid, so the
+/// preview is DCT-shrunk only to 1500 and brought to 1280 by a real reduce, leaving this
+/// a properly filtered resize down to its own 640 rather than a DCT approximation of one.
+pub fn fit_from_preview(
     render: RgbRef<'_>,
-    jpeg_bytes: &[u8],
+    preview: RgbRef<'_>,
     geometry: Geometry,
 ) -> Result<Option<Profile>, String> {
-    let jpeg_full = vips::Pipeline::decode_upright(jpeg_bytes)?
+    let jpeg_full = vips::Pipeline::from_rgb(preview)?
         .resize_to_fit(FIT_LONG_EDGE)?
         .blur(FIT_BLUR_SIGMA)?
         .finish()?;

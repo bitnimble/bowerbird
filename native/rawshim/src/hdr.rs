@@ -188,7 +188,9 @@ pub fn fit_all(
             // refused still gets its HDR colour fitted, that being a different fit in a
             // different domain against a different reference.
             let profile =
-                crate::fit::fit_ungated(render.as_ref(), jpeg, geometry).ok().flatten()?;
+                crate::fit::fit_from_preview(render.as_ref(), preview.as_ref(), geometry)
+                    .ok()
+                    .flatten()?;
             let matched = hdr_fit::fit(&plane, levels.white, &preview, profile.lens())?;
             Some((profile, matched))
         })
