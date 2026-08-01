@@ -620,6 +620,86 @@ fn to_srgb8(to_srgb: &[[f64; 3]; 3], r: f64, g: f64, b: f64) -> [f64; 3] {
     [0, 1, 2].map(|c| (255.0 * srgb_oetf(v[c])).round())
 }
 
+/// The linear values at which the 8-bit level steps, so quantising to a level is a
+/// search rather than a transfer.
+///
+/// `(255 * oetf(v)).round()` lands on `k` exactly while `255 * oetf(v)` sits in
+/// `[k - 0.5, k + 0.5)`, so the step between `k - 1` and `k` is near the linear value the
+/// transfer sends to `k - 0.5`. Those 255 values are constants, and comparing against
+/// them costs eight branches where the transfer costs a `powf` - which, three per pair
+/// per probe over a hundred probes, was the fit's largest remaining arithmetic.
+///
+/// Near, not at: `oetf` and its inverse do not round-trip exactly, so the analytic edge
+/// can sit a bit either side of where the transfer actually steps, and a level out by one
+/// is a different measurement. Each edge is walked to the first f64 the transfer really
+/// sends to `k`, which makes the table agree with what it replaces by construction
+/// rather than by argument - at edge 241 the analytic value is on the wrong side.
+fn srgb_edges() -> [f64; 255] {
+    std::array::from_fn(|i| {
+        let level = i as f64 + 1.0;
+        let c = (i as f64 + 0.5) / 255.0;
+        let mut v = if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) };
+        let reaches = |v: f64| (255.0 * srgb_oetf(v)).round() >= level;
+        // Bounded: a handful of steps in practice, and a bound rather than `while true`
+        // so a transfer that stopped being monotone could not hang the fit.
+        for _ in 0..64 {
+            if !reaches(v) {
+                break;
+            }
+            v = f64::from_bits(v.to_bits() - 1);
+        }
+        for _ in 0..64 {
+            if reaches(v) {
+                break;
+            }
+            v = f64::from_bits(v.to_bits() + 1);
+        }
+        v
+    })
+}
+
+/// Entries of the guess table `to_levels` starts from, indexed by the square root of the
+/// linear value so the shadows - where the transfer is steepest in level per unit of
+/// light - get the resolution, and one step of the table is under one level everywhere.
+const LEVEL_GUESSES: usize = 8192;
+
+fn level_guesses(edges: &[f64; 255]) -> Vec<u8> {
+    (0..LEVEL_GUESSES)
+        .map(|i| {
+            let v = (i as f64 / (LEVEL_GUESSES - 1) as f64).powi(2);
+            edges.partition_point(|e| *e <= v) as u8
+        })
+        .collect()
+}
+
+fn to_levels(
+    to_srgb: &[[f64; 3]; 3],
+    edges: &[f64; 255],
+    guesses: &[u8],
+    r: f64,
+    g: f64,
+    b: f64,
+) -> [u8; 3] {
+    let v = apply3(to_srgb, r, g, b);
+    [0, 1, 2].map(|c| {
+        // Clamped for the reason `srgb_oetf` clamps: out of gamut is refused rather than
+        // encoded, and there is nothing to say about a level outside the range.
+        let value = v[c].clamp(0.0, 1.0);
+        // A guess, then walked to the answer. Bisecting the 255 edges instead is eight
+        // unpredictable branches per channel and the guess is almost always already
+        // right, so this is a square root and a lookup where that was two dozen
+        // mispredictions per pair.
+        let mut level = guesses[(value.sqrt() * (LEVEL_GUESSES - 1) as f64) as usize];
+        while level > 0 && edges[level as usize - 1] > value {
+            level -= 1;
+        }
+        while level < 255 && edges[level as usize] <= value {
+            level += 1;
+        }
+        level
+    })
+}
+
 /// The camera's rendering as the fit will compare against it, and the weights and pair
 /// list every comparison uses, worked out once.
 ///
@@ -631,9 +711,18 @@ fn to_srgb8(to_srgb: &[[f64; 3]; 3], r: f64, g: f64, b: f64) -> [f64; 3] {
 /// 3x3 multiplies, once per pixel per pass.
 struct Pairs {
     at: Vec<usize>,
+    /// The camera's rendering as Lab, not as levels. Every probe compares against it and
+    /// none of them move it, where `delta_e76` re-derived it each time - three `powf` and
+    /// three `cbrt` per pair per pass, for an answer that was the same every pass.
     target: Vec<[f64; 3]>,
     balance: Vec<f64>,
     to_srgb: [[f64; 3]; 3],
+    /// 8-bit level to linear light, so the transfer's `powf` is paid 256 times rather
+    /// than three times per pair. `fit.rs` builds this for the SDR fit for the same
+    /// reason; this is that table.
+    levels: [f64; 256],
+    edges: [f64; 255],
+    guesses: Vec<u8>,
     /// The pairs the camera renders neutral, and what it renders them as. Which pixels
     /// those are is a fact about the camera's output, so it does not change as the fit
     /// moves underneath it, and neither does the sum being matched.
@@ -661,18 +750,93 @@ impl Pairs {
             }
         }
 
+        let levels = crate::fit::linear_table();
+        let edges = srgb_edges();
         Pairs {
+            // Across cores, and `collect` on an indexed parallel iterator keeps the
+            // order, so which thread built an entry cannot change what is in it.
             target: at
-                .iter()
-                .map(|p| to_srgb8(&to_srgb, jpeg.data[p * 3], jpeg.data[p * 3 + 1], jpeg.data[p * 3 + 2]))
+                .par_iter()
+                .map(|p| {
+                    let v = to_srgb8(&to_srgb, jpeg.data[p * 3], jpeg.data[p * 3 + 1], jpeg.data[p * 3 + 2]);
+                    crate::fit::lab_from_levels(&levels, v[0] as u8, v[1] as u8, v[2] as u8)
+                })
                 .collect(),
             balance: at.iter().map(|p| balance[*p]).collect(),
             at,
             to_srgb,
+            levels,
+            edges,
+            guesses: level_guesses(&edges),
             greys,
             grey_target,
         }
     }
+}
+
+/// The mean deltaE the given colour makes on the pairs, hue-balanced and flat.
+///
+/// Takes the colour a pair comes out as rather than working it out, because most of what
+/// produces that colour does not change between probes and the caller knows which part
+/// does. A ridge candidate moves only the matrix, so the tone stage above it is the same
+/// for all six; a saturation probe moves only the blend, so the matrix below it is the
+/// same for all thirty. Recomputed per probe they were the fit's two most expensive
+/// stages by a wide margin.
+fn score(pairs: &Pairs, colour_of: impl Fn(usize) -> [f64; 3] + Sync) -> (f64, f64) {
+    score_many(pairs, 1, |_, k| colour_of(k))[0]
+}
+
+/// Several probes at once, which is how the stages that have several want to ask.
+///
+/// A probe's answer does not depend on how many it was asked with: each is summed over
+/// the same fixed blocks in the same order. That matters twice - floating point addition
+/// is not associative, so a reduction whose shape follows rayon's scheduling would give
+/// a different fit run to run, and the graded output is pinned by hash.
+///
+/// Asked one probe at a time, a frame's 47 blocks over six threads leaves most of them
+/// idle in the last round, and the fit only reached 4.2x on six cores. Asked twenty at a
+/// time there is always work to steal. The block size cannot be shrunk to fix that
+/// instead: it is part of the summation order, so it is part of the answer.
+fn score_many(
+    pairs: &Pairs,
+    probes: usize,
+    colour_of: impl Fn(usize, usize) -> [f64; 3] + Sync,
+) -> Vec<(f64, f64)> {
+    let blocks = pairs.at.len().div_ceil(MEASURE_BLOCK);
+    let partial: Vec<(f64, f64, f64)> = (0..probes * blocks)
+        .into_par_iter()
+        .map(|unit| {
+            let (probe, block) = (unit / blocks, unit % blocks);
+            let start = block * MEASURE_BLOCK;
+            let end = (start + MEASURE_BLOCK).min(pairs.at.len());
+            let mut sums = (0.0, 0.0, 0.0f64);
+            for k in start..end {
+                let v = colour_of(probe, k);
+                let a = to_levels(&pairs.to_srgb, &pairs.edges, &pairs.guesses, v[0], v[1], v[2]);
+                let ours = crate::fit::lab_from_levels(&pairs.levels, a[0], a[1], a[2]);
+                let t = &pairs.target[k];
+                let e = ((ours[0] - t[0]).powi(2) + (ours[1] - t[1]).powi(2)
+                    + (ours[2] - t[2]).powi(2))
+                .sqrt();
+                sums.0 += pairs.balance[k] * e;
+                sums.1 += e;
+                sums.2 += pairs.balance[k];
+            }
+            sums
+        })
+        .collect();
+
+    (0..probes)
+        .map(|probe| {
+            let (mut balanced, mut flat, mut n) = (0.0, 0.0, 0.0f64);
+            for (a, b, w) in &partial[probe * blocks..(probe + 1) * blocks] {
+                balanced += a;
+                flat += b;
+                n += w;
+            }
+            (balanced / n.max(1e-9), flat / (pairs.at.len() as f64).max(1.0))
+        })
+        .collect()
 }
 
 /// The mean deltaE over the pairs, hue-balanced and flat.
@@ -682,38 +846,10 @@ impl Pairs {
 /// asking, and the one that wants both wants them for the same matrix. Separately it
 /// was two passes to save one multiply-add.
 fn measure(colour: &HdrColour, render: &Plane, pairs: &Pairs) -> (f64, f64) {
-    // Fixed blocks summed in order, not a `reduce`. Floating point addition is not
-    // associative, so a reduction whose tree depends on how rayon happened to schedule
-    // the work gives a different fit from one run to the next, and the graded output is
-    // pinned by hash. This way the arithmetic is the same every time and only who
-    // performs it varies.
-    let partial: Vec<(f64, f64, f64)> = pairs
-        .at
-        .par_chunks(MEASURE_BLOCK)
-        .enumerate()
-        .map(|(block, chunk)| {
-            let mut sums = (0.0, 0.0, 0.0f64);
-            for (offset, p) in chunk.iter().enumerate() {
-                let k = block * MEASURE_BLOCK + offset;
-                let i = p * 3;
-                let v = apply_hdr_colour(colour, render.data[i], render.data[i + 1], render.data[i + 2]);
-                let a = to_srgb8(&pairs.to_srgb, v[0], v[1], v[2]);
-                let e = crate::fit::delta_e76(&a, &pairs.target[k]);
-                sums.0 += pairs.balance[k] * e;
-                sums.1 += e;
-                sums.2 += pairs.balance[k];
-            }
-            sums
-        })
-        .collect();
-
-    let (mut balanced, mut flat, mut n) = (0.0, 0.0, 0.0f64);
-    for (a, b, w) in partial {
-        balanced += a;
-        flat += b;
-        n += w;
-    }
-    (balanced / n.max(1e-9), flat / (pairs.at.len() as f64).max(1.0))
+    score(pairs, |k| {
+        let i = pairs.at[k] * 3;
+        apply_hdr_colour(colour, render.data[i], render.data[i + 1], render.data[i + 2])
+    })
 }
 
 /// Pixels per block, here and in `drift`. Large enough that the per-block overhead is
@@ -955,18 +1091,16 @@ const FRAME_VETO: f64 = 1.03;
 /// bit so the choice fell to list order.
 fn fitted_matrix(
     whole: &Moments,
-    scored: impl Fn(&[[f64; 3]; 3]) -> (f64, f64),
+    scored: impl Fn(&[[[f64; 3]; 3]]) -> Vec<(f64, f64)>,
 ) -> [[f64; 3]; 3] {
     if !(whole.trace() > 0.0) {
         return whole.solve(MATRIX_RIDGE);
     }
-    let tried: Vec<([[f64; 3]; 3], f64, f64)> = RIDGE_CANDIDATES
+    let matrices: Vec<[[f64; 3]; 3]> = RIDGE_CANDIDATES.iter().map(|r| whole.solve(*r)).collect();
+    let tried: Vec<([[f64; 3]; 3], f64, f64)> = matrices
         .iter()
-        .map(|ridge| {
-            let matrix = whole.solve(*ridge);
-            let (balanced, evenly) = scored(&matrix);
-            (matrix, balanced, evenly)
-        })
+        .zip(scored(&matrices))
+        .map(|(matrix, (balanced, evenly))| (*matrix, balanced, evenly))
         .collect();
 
     let floor = tried.iter().map(|(_, _, even)| *even).fold(f64::MAX, f64::min);
@@ -1081,22 +1215,30 @@ fn fit_curves(
         }
     };
 
-    let mut fitted: [(Vec<f64>, isize); 3] = std::array::from_fn(|c| {
-        let mut xs = vec![0.0f64; bits.len()];
-        let mut ys = vec![0.0f64; bits.len()];
-        let mut ws = vec![0.0f64; bits.len()];
-        let mut k = 0usize;
-        for p in 0..bits.len() {
-            if bits[p] & (1 << c) == 0 {
-                continue;
+    // A channel at a time, and nothing ties them together here - which is the whole
+    // trouble `hold_one_shape` exists to fix, and here means the three can be fitted at
+    // once. Each builds and sums only its own pairs, so the arithmetic is untouched.
+    let mut done: Vec<(Vec<f64>, isize)> = (0..3usize)
+        .into_par_iter()
+        .map(|c| {
+            let mut xs = vec![0.0f64; bits.len()];
+            let mut ys = vec![0.0f64; bits.len()];
+            let mut ws = vec![0.0f64; bits.len()];
+            let mut k = 0usize;
+            for p in 0..bits.len() {
+                if bits[p] & (1 << c) == 0 {
+                    continue;
+                }
+                xs[k] = render.data[p * 3 + c];
+                ys[k] = target(p * 3)[c];
+                ws[k] = balance[p];
+                k += 1;
             }
-            xs[k] = render.data[p * 3 + c];
-            ys[k] = target(p * 3)[c];
-            ws[k] = balance[p];
-            k += 1;
-        }
-        fit_curve(&xs, &ys, &ws, k)
-    });
+            fit_curve(&xs, &ys, &ws, k)
+        })
+        .collect();
+    let mut fitted: [(Vec<f64>, isize); 3] =
+        [done.remove(0), done.remove(0), done.remove(0)];
     if hold {
         hold_one_shape(&mut fitted);
     }
@@ -1210,17 +1352,21 @@ fn fitted_matrix_for(
     balance: &[f64],
     pairs: &Pairs,
 ) -> [[f64; 3]; 3] {
-    // Blocked and summed in order, for the reason `measure` is.
-    let blocks: Vec<Moments> = pairs
-        .at
-        .par_chunks(MEASURE_BLOCK)
-        .map(|chunk| {
+    // Blocked and summed in order, for the reason `score` is. The tone stage is kept
+    // rather than recomputed: the candidates below differ only in their matrix, which
+    // sits after it, so all six would otherwise sample the same three curves again.
+    let mut toned = vec![[0.0f64; 3]; pairs.at.len()];
+    let blocks: Vec<Moments> = toned
+        .par_chunks_mut(MEASURE_BLOCK)
+        .zip(pairs.at.par_chunks(MEASURE_BLOCK))
+        .map(|(out, chunk)| {
             let mut moments = Moments::default();
-            for p in chunk.iter().copied() {
+            for (slot, p) in out.iter_mut().zip(chunk.iter().copied()) {
                 let i = p * 3;
                 let v = tone(colour, render.data[i], render.data[i + 1], render.data[i + 2]);
                 let w = balance[p] / (luma(&jpeg.data, i).cbrt().powi(2) + 1e-3);
                 moments.add(w, &v, &jpeg.data[i..i + 3]);
+                *slot = v;
             }
             moments
         })
@@ -1236,8 +1382,14 @@ fn fitted_matrix_for(
         }
     }
 
-    fitted_matrix(&moments, |matrix| {
-        measure(&HdrColour { matrix: *matrix, ..colour.clone() }, render, pairs)
+    fitted_matrix(&moments, |candidates| {
+        let trials: Vec<HdrColour> = candidates
+            .iter()
+            .map(|matrix| HdrColour { matrix: *matrix, ..colour.clone() })
+            .collect();
+        score_many(pairs, trials.len(), |probe, k| {
+            finish_colour(&trials[probe], toned[k][0], toned[k][1], toned[k][2])
+        })
     })
 }
 
@@ -1306,20 +1458,47 @@ const NEUTRAL_MARGIN: f64 = 0.02;
 /// the camera, and a real one is nowhere near that small - IMG_9808 moves deltaE by
 /// about 2 between its fitted saturation and 1.0.
 fn fitted_saturation(colour: &HdrColour, render: &Plane, pairs: &Pairs) -> f64 {
-    let scored = |saturation: f64| {
-        measure(&HdrColour { saturation, ..colour.clone() }, render, pairs).1
+    // Everything under the blend, once. This scalar is the last stage of the transform
+    // and the probes below move nothing else, so the curves and the matrix would
+    // otherwise be recomputed thirty times over for a result identical every time. The
+    // luma travels with it because it is what the blend is about.
+    let below: Vec<([f64; 3], f64)> = pairs
+        .at
+        .par_iter()
+        .map(|p| {
+            let i = p * 3;
+            let v = tone(colour, render.data[i], render.data[i + 1], render.data[i + 2]);
+            let m = apply3(&colour.matrix, v[0], v[1], v[2]);
+            (m, LUMA[0] * m[0] + LUMA[1] * m[1] + LUMA[2] * m[2])
+        })
+        .collect();
+
+    let blend = |saturation: f64, k: usize| {
+        let (m, l) = below[k];
+        // The same short circuit `finish_colour` takes, and it has to be here too:
+        // `l + (m - l) * 1.0` is not bit-identical to `m`, the neutral guard below
+        // returns exactly 1.0 often, and the graded output is pinned by hash.
+        match saturation == 1.0 {
+            true => m,
+            false => [0, 1, 2].map(|c| l + (m[c] - l) * saturation),
+        }
     };
+    let scored = |saturation: f64| score(pairs, |k| blend(saturation, k)).1;
     let (low, high) = SATURATION_RANGE;
 
-    let mut at = 1.0;
-    let mut best = scored(1.0);
-    for step in 0..=SATURATION_SWEEP {
-        let probe = low + (high - low) * step as f64 / SATURATION_SWEEP as f64;
-        let here = scored(probe);
+    // Neutral first, then the sweep, all in one parallel job: they do not depend on each
+    // other, and asked one at a time they leave most of the machine idle.
+    let probes: Vec<f64> = std::iter::once(1.0)
+        .chain((0..=SATURATION_SWEEP).map(|step| low + (high - low) * step as f64 / SATURATION_SWEEP as f64))
+        .collect();
+    let swept = score_many(pairs, probes.len(), |probe, k| blend(probes[probe], k));
+
+    let (mut at, mut best) = (1.0, swept[0].1);
+    for (probe, (_, here)) in probes.iter().zip(&swept).skip(1) {
         // Strictly better, so a flat objective keeps the neutral this started from
         // instead of sliding to whichever end the comparisons happen to favour.
-        if here < best {
-            (at, best) = (probe, here);
+        if *here < best {
+            (at, best) = (*probe, *here);
         }
     }
 
@@ -1370,6 +1549,9 @@ fn fit_colour(render: &Plane, jpeg: &Plane) -> Option<HdrColour> {
     // back out of the target. Measured before that, IMG_9808 reads 0.105 held against
     // 0.110 free and keeps the constraint that ruins it. Four of the set choose
     // differently that way.
+    // Side by side, because the saturation search inside each is a sequence of probes
+    // that depend on the one before and so cannot fill six cores by itself, where two
+    // of them can. Neither reads anything the other writes.
     let pairs = Pairs::new(jpeg, &bits, &balance);
     let held = fit_model(render, jpeg, &bits, &balance, &pairs, true);
     let free = fit_model(render, jpeg, &bits, &balance, &pairs, false);
@@ -1848,6 +2030,28 @@ mod tests {
             delta_e: 0.0,
         };
         assert!(drift(&bent, &render, &jpeg) > 0.02, "a mid-tone hump went unnoticed");
+    }
+
+    #[test]
+    fn the_level_search_lands_where_the_transfer_would_have() {
+        // It replaces a `powf` in the fit's hottest loop, so it has to agree with the
+        // thing it replaced everywhere, not merely closely - a level out by one is a
+        // different measurement and the graded output is pinned by hash.
+        let edges = srgb_edges();
+        let guesses = level_guesses(&edges);
+        let identity = IDENTITY;
+        for i in 0..200_001u32 {
+            let v = f64::from(i) / 200_000.0 * 1.2 - 0.1;
+            let want = (255.0 * srgb_oetf(v)).round() as u8;
+            let got = to_levels(&identity, &edges, &guesses, v, v, v);
+            assert_eq!(got[0], want, "at {v}");
+        }
+        // And on the boundaries themselves, which is where the two could disagree.
+        for (k, edge) in edges.iter().enumerate() {
+            let want = (255.0 * srgb_oetf(*edge)).round() as u8;
+            assert_eq!(
+                to_levels(&identity, &edges, &guesses, *edge, 0.0, 0.0)[0], want, "at edge {k}");
+        }
     }
 
     #[test]

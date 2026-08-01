@@ -625,7 +625,7 @@ fn to_linear(value: f64) -> f64 {
 
 /// The scoring loop only ever linearises 8-bit levels, and the transfer's pow() is
 /// the most expensive arithmetic in the fit.
-fn linear_table() -> [f64; 256] {
+pub(crate) fn linear_table() -> [f64; 256] {
     let mut table = [0.0f64; 256];
     for (level, slot) in table.iter_mut().enumerate() {
         *slot = to_linear(level as f64);
@@ -633,7 +633,7 @@ fn linear_table() -> [f64; 256] {
     table
 }
 
-fn lab_from_levels(table: &[f64; 256], r: u8, g: u8, b: u8) -> [f64; 3] {
+pub(crate) fn lab_from_levels(table: &[f64; 256], r: u8, g: u8, b: u8) -> [f64; 3] {
     let (rr, gg, bb) = (table[r as usize], table[g as usize], table[b as usize]);
     let x = (0.4124 * rr + 0.3576 * gg + 0.1805 * bb) / 0.95047;
     let y = 0.2126 * rr + 0.7152 * gg + 0.0722 * bb;
@@ -649,8 +649,10 @@ fn clamp8(value: f64) -> f64 {
 
 /// Lab distance between two 8-bit sRGB triples.
 ///
-/// Shared with the HDR fit, which reports in the same measure so the two are
-/// comparable - it is the only space they both land in (`hdr_fit::to_srgb8`).
+/// The HDR fit reports in this same measure, so the two are comparable - 8-bit sRGB is
+/// the only space they both land in - but it reaches it through `lab_from_levels`
+/// rather than through here: its inner loop runs a hundred times per photo and this
+/// derives both ends from scratch, where one of that pair never moves.
 pub fn delta_e76(a: &[f64; 3], b: &[f64; 3]) -> f64 {
     let lab = |v: &[f64; 3]| {
         let f = |value: f64| to_linear(value.clamp(0.0, 255.0));
