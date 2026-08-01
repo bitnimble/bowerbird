@@ -867,25 +867,43 @@ fn fit_against(
     Ok(Some(Profile { knots: chosen.0, gain, crop: chosen.1, source: chosen.2, colour: None }))
 }
 
-/// Applies a fitted profile to a render.
+/// Applies a fitted profile to a render: the geometry, the falloff and the colour, in one
+/// sweep.
 ///
-/// Warps in place of a copy where there is a geometry to apply, and grades into
-/// the warp's own buffer, so a 60MP frame is moved once rather than three times.
+/// One sweep rather than a warp that materialises a whole frame for a second pass to read
+/// back. Nothing between them needs a neighbourhood - the warp gathers, and everything
+/// after it is pointwise on what the gather returned - so the intermediate existed only to
+/// be handed along, and on a 60MP frame that is 180MB written and read for nothing. It
+/// also leaves the warp running across cores, where alone it was a plain row loop.
 pub fn apply(image: RgbRef<'_>, profile: &Profile) -> Rgb {
-    let mut out = match &profile.knots {
-        Some(knots) => warp(image, image.width, image.height, knots, profile.crop),
-        None => Rgb { width: image.width, height: image.height, data: image.data.to_vec() },
-    };
-    let (cx, cy) = (out.width as f64 / 2.0, out.height as f64 / 2.0);
+    let (width, height) = (image.width, image.height);
+    let warp = profile
+        .knots
+        .as_ref()
+        .map(|knots| crate::image::Warp::new(image, width, height, knots, profile.crop));
+    let mut out = Rgb { width, height, data: vec![0u8; width * height * 3] };
+
+    let (cx, cy) = (width as f64 / 2.0, height as f64 / 2.0);
     let half = (cx * cx + cy * cy).sqrt().max(1.0);
     // Row-major rather than one flat index, so the falloff's radius comes off the
-    // loop counters rather than a divide per pixel, and across rows because this is the
-    // one pass here that touches every pixel of a 60MP frame.
+    // loop counters rather than a divide per pixel.
     let folded = profile.colour.as_ref().map(fold);
-    out.data.par_chunks_mut(out.width * 3).enumerate().for_each(|(y, row)| {
+    out.data.par_chunks_mut(width * 3).enumerate().for_each(|(y, row)| {
         let dy = y as f64 - cy;
         for (x, pixel) in row.chunks_mut(3).enumerate() {
-            let (mut r, mut g, mut b) = (pixel[0], pixel[1], pixel[2]);
+            let source = match &warp {
+                // Outside the source frame the warp contributes nothing, and a black
+                // margin is what the separate pass left there too.
+                Some(warp) => match warp.at(image, x, y) {
+                    Some(got) => got,
+                    None => continue,
+                },
+                None => {
+                    let i = (y * width + x) * 3;
+                    [image.data[i], image.data[i + 1], image.data[i + 2]]
+                }
+            };
+            let (mut r, mut g, mut b) = (source[0], source[1], source[2]);
             if let Some(gain) = &profile.gain {
                 let radius = Gain::radius(x as f64 - cx, dy, half);
                 r = Gain::of(Some(gain), radius, r);

@@ -42,6 +42,66 @@ fn ratio_table(knots: &[f64], crop: f64) -> Vec<f64> {
         .collect()
 }
 
+/// A warp resolved down to what every pixel of it needs: the spline is already a radial
+/// table by this point, so what is left is arithmetic and one bilinear gather.
+///
+/// Handed out so a caller can drive the warp a row at a time and do its own work in the
+/// same sweep. Materialising the warped frame and reading it back is two passes over a
+/// 60MP buffer for one pixel's worth of dependency between them.
+pub struct Warp {
+    ratios: Vec<f64>,
+    half: f64,
+    scale: (f64, f64),
+    centre: (f64, f64),
+    edge: (f64, f64),
+    size: (usize, usize),
+    source_width: usize,
+}
+
+impl Warp {
+    pub fn new(source: RgbRef<'_>, width: usize, height: usize, knots: &[f64], crop: f64) -> Warp {
+        let half = ((width as f64 / 2.0).powi(2) + (height as f64 / 2.0).powi(2)).sqrt();
+        let (sw, sh) = (source.width, source.height);
+        let (scale_x, scale_y) = (sw as f64 / width as f64, sh as f64 / height as f64);
+        Warp {
+            ratios: ratio_table(knots, crop),
+            half,
+            scale: (half * scale_x, half * scale_y),
+            centre: (sw as f64 / 2.0, sh as f64 / 2.0),
+            edge: ((sw - 1) as f64, (sh - 1) as f64),
+            size: (width, height),
+            source_width: sw,
+        }
+    }
+
+    /// The pixel of `source` that lands at `(x, y)`, or None where it falls outside.
+    #[inline]
+    pub fn at(&self, source: RgbRef<'_>, x: usize, y: usize) -> Option<[u8; 3]> {
+        let (width, height) = self.size;
+        let dy = (y as f64 - height as f64 / 2.0) / self.half;
+        let dx = (x as f64 - width as f64 / 2.0) / self.half;
+        let t = (dx * dx + dy * dy) * RATIO_TABLE_LAST as f64;
+        let slot = if t < RATIO_TABLE_LAST as f64 { t as usize } else { RATIO_TABLE_LAST - 1 };
+        let low = self.ratios[slot];
+        let ratio = low + (self.ratios[slot + 1] - low) * (t - slot as f64);
+        let px = self.centre.0 + dx * ratio * self.scale.0;
+        let py = self.centre.1 + dy * ratio * self.scale.1;
+        if px < 0.0 || py < 0.0 || px >= self.edge.0 || py >= self.edge.1 {
+            return None;
+        }
+        let (x0, y0) = (px as usize, py as usize);
+        let (fx, fy) = (px - x0 as f64, py - y0 as f64);
+        let i00 = (y0 * self.source_width + x0) * 3;
+        let i01 = i00 + self.source_width * 3;
+        Some(std::array::from_fn(|c| {
+            (source.data[i00 + c] as f64 * (1.0 - fx) * (1.0 - fy)
+                + source.data[i00 + 3 + c] as f64 * fx * (1.0 - fy)
+                + source.data[i01 + c] as f64 * (1.0 - fx) * fy
+                + source.data[i01 + 3 + c] as f64 * fx * fy) as u8
+        }))
+    }
+}
+
 /// Bilinear resample of `source` onto a width x height grid through a radial
 /// model. Direction is unchanged by a radial model, so scaling dx and dy by the
 /// ratio is the whole transform.
