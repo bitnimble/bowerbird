@@ -379,6 +379,21 @@ impl ChromaMap {
     /// tight) allowance also shrinks the saturated corrections that node has nothing to
     /// do with - which is the whole reason those corrections exist. Relaxed rather than
     /// solved: a node's strain reads its neighbours, so pulling one back moves theirs.
+    ///
+    /// **Known defect: this cannot converge when `saturation` exceeds `MAP_AMP_NEUTRAL`.**
+    /// Each node is shrunk toward the flat map, and the flat map's own strain is
+    /// `saturation / allowed` - so above 1.05 the target is itself over the allowance and
+    /// no number of sweeps reaches it. All twelve fire and the node keeps `0.75^12` of
+    /// what was fitted, which is 3%: the near-neutral nodes lose their correction for a
+    /// reason that is nothing to do with their own variation, while the saturated nodes
+    /// they were competing with survive. Above ~1.45 every node goes, the map collapses to
+    /// the scalar and `MAP_MARGIN` then drops it entirely.
+    ///
+    /// Left as it measures. The shrinkage, the margin and the amplitude bounds were all
+    /// calibrated over the 35-frame set against this behaviour, so the fix - strain
+    /// measured against the scalar baseline rather than in absolute amplification - moves
+    /// every one of them and wants the corpus, the pot and the speckle regions re-run
+    /// behind it.
     fn relax(&mut self, saturation: f64) {
         let flat = [saturation, 0.0, 0.0, saturation];
         for _ in 0..12 {
