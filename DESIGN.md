@@ -1802,7 +1802,7 @@ Two things the re-sweep does not settle. The per-frame argmin is still split, 68
 The mask went with it: no `DEFRINGE_EDGE`, no dilation, no box mean. The stage now reads a five-point Laplacian and nothing else, so its strip halo went from **10 pixels to 1**.
 
 `raw_defringe` survives as a ceiling on a measurement rather than the amount itself, the way `raw_sharpen` blends a computed deconvolution rather than scaling a guess, and defaults to 1.
-**Two defects in the estimator, found by review and reproduced. One is fixed; the other is why `raw_defringe` defaults to 0.**
+**Two defects in the estimator, found by review and reproduced. Both are now fixed, and both are pinned by tests that fail if the fix is removed.**
 
 *Per-channel noise had a positive bias with a closed form, and it is now subtracted.* The regressor and the response are built from the same pixels: the stencil's `-4c` term and the response's `-luma(c)` share one, so their noise is correlated by construction, and green's enters the two with opposite signs. The residue was positive for **both** channels, which cleared the sign veto (that veto exists to catch things which flip sign), and being a ratio of variances it did not shrink as the noise did. A flat frame with independent per-channel grain fitted (0.124, 0.175), the blue figure *larger* than the 0.148 measured on IMG_8408, the worst real frame in the library.
 
@@ -1810,9 +1810,24 @@ For a five-point stencil the noise's contribution to both sums is computable fro
 
 Every fixture meant to catch this added the *same* grain to all three channels, which cancels in `R - luma` identically. `tca.rs` gets this right and `image.rs` did not; that is the whole reason it shipped unseen.
 
-*Lateral aberration still reads as longitudinal, and this one is not fixed.* A channel displaced by `d` expands as `G + d.grad G + (d^2/2).lap G`, and that second-order term is the very basis this fit regresses on. It carries `d^2`, so it is positive for red and blue whichever way each channel is displaced - again exactly what the sign veto cannot see. A pure lateral aberration, achromatic source, nothing out of focus anywhere, still fits (0.054, 0.053); the coefficient is then applied at every radius including the centre, where a magnification difference displaces nothing at all. The pipeline ordering compounds it, since the defringe runs first, removes the even `d^2` term, and leaves the lateral tier measuring a half-eaten fringe.
+*Lateral aberration read as longitudinal, and the fit is now split by radius.* A channel displaced by `d` expands as `G + d.grad G + (d^2/2).lap G`, and that second-order term is the very basis this fit regresses on. It carries `d^2`, so it is positive for red and blue whichever way each channel is displaced - again exactly what the sign veto cannot see. A pure lateral aberration, achromatic source, nothing out of focus anywhere, fitted (0.054, 0.053); the coefficient was then applied at every radius including the centre, where a magnification difference displaces nothing at all. The pipeline ordering compounded it, since the defringe runs first, removes the even `d^2` term, and leaves the lateral tier measuring a half-eaten fringe.
 
-The discriminator exists and is not implemented: a lateral confound's apparent coefficient grows with `r^2` where a real focus difference is flat in radius, so fitting per radial bin and testing for a slope would separate them. Until that is done `raw_defringe` is 0, and `a_pure_lateral_aberration_is_still_read_as_a_focus_difference` pins the confound so a fix shows up as a failing test.
+The discriminator is that `d` grows with `r`, so a lateral confound's apparent coefficient grows with **`r^2`** where a real focus difference is flat across the field. The fit is now taken per radial bin - six, uniform in `r^2`, each needing `DEFOCUS_MIN_PER_BIN` samples - and the per-bin coefficients are regressed against `r^2` into a constant plus a slope, of which only the constant is kept. The same move `tca::measure` makes in reverse: give the part you cannot explain somewhere to go, then discard it. Residue lands at 0.008, under `DEFOCUS_NOISE`, so the floor declines it outright.
+
+Measured: the lateral-only frame now returns nothing, a real 0.12 defocus is unchanged at (0.093, 0.091), and a defocus with a lateral aberration laid on top still reads (0.102, 0.105) - so the split is not simply rejecting everything radial. `a_pure_lateral_aberration_is_not_read_as_a_focus_difference` and `a_focus_difference_survives_a_lateral_one_on_top_of_it` pin both directions, and both fail if the `r^2` term is dropped.
+
+One thing given up deliberately: field curvature means real longitudinal CA is not perfectly flat in radius either, so discarding the slope discards a little genuine correction. That is the conservative direction.
+
+**What it costs and buys, over 215 frames from 104 shoots**, scored as deltaE76 against each camera's own JPEG over the pixels the stage moves:
+
+| strength | mean d | visibly better | visibly worse | worst frame | best frame |
+|---|---|---|---|---|---|
+| 0.5 | -0.051 | 2 | 0 | +0.26 | -1.93 |
+| 1.0 | -0.071 | 4 | 0 | +0.26 | -2.83 |
+
+Nothing is harmed by more than a JND at any strength, the mean improvement is 40% larger at 1 than at 0.5, and the large wins appear only at 1 - so `raw_defringe` defaults to **1**.
+
+The number worth carrying, though, is that **it fires on 37 of 215 frames**. The version before the split fired on 143. Those extra 106 were the confounds: noisy frames and frames with lateral CA, corrected for a defect they did not have. Blue is the softer channel on 30 of the 37, which is what a lens does and what no mask-based stage could have reported.
 
 **Together they reach the body's own JPEG.** Measured over 38 frames across five lenses, as the fringe left around the frame's own point sources:
 
@@ -1825,7 +1840,7 @@ The discriminator exists and is not implemented: a lateral confound's apparent c
 
 Geometry alone closes 30% of the gap to the JPEG; with the defringe it is **91%**.
 
-**The defringe is off by default.** This paragraph was written for the box-mean stage, which is gone; what keeps it off now is recorded at the end of this section. The failure it describes is still worth reading, because the *metric* fault is unchanged: On a frame of orange street lights it turns them white: a small bright object is entirely beside a steep edge, so every pixel of it is pulled towards a surround that is mostly background. The fringe metric scored that as a triumph, because it only ever rewards removing colour near an edge and has no way to tell a fringe from a lamp. The stage wants a discriminator between a rim and an object - a fringe is confined to the slope of an edge where a coloured object has a core that persists past it - and until it has one, the number above is a measure of the metric as much as of the picture. The split is worth reading: on the Sony prime the geometry moves 15.65 to 15.12 and the defringe takes it to 3.45, because that lens has almost no lateral aberration and the tag says so. On the Tamron zoom the geometry does most of the work, 96.97 to 53.87, and the defringe finishes it at 8.29. Neither stage is redundant and neither is sufficient.
+**The metric fault below is unchanged, and it is why this section leans on the corpus sweep rather than on this number.** The failure itself belonged to the box-mean stage, which is gone - the measured stage leaves saturated objects alone, because it has a model of the defect rather than a gradient threshold. On a frame of orange street lights the old one turned them white: a small bright object is entirely beside a steep edge, so every pixel of it is pulled towards a surround that is mostly background. The fringe metric scored that as a triumph, because it only ever rewards removing colour near an edge and has no way to tell a fringe from a lamp. The stage wants a discriminator between a rim and an object - a fringe is confined to the slope of an edge where a coloured object has a core that persists past it - and until it has one, the number above is a measure of the metric as much as of the picture. The split is worth reading: on the Sony prime the geometry moves 15.65 to 15.12 and the defringe takes it to 3.45, because that lens has almost no lateral aberration and the tag says so. On the Tamron zoom the geometry does most of the work, 96.97 to 53.87, and the defringe finishes it at 8.29. Neither stage is redundant and neither is sufficient.
 
 **The correction costs 5-7%.** Repeated A/B on a 24MP frame at native resolution: the warp is 242-253ms with a shared ratio and 258-265ms per-channel, both medians of five. The finder is 5.2-6.7ms on top, and a frame that estimates nothing keeps the shared-ratio path and pays neither.
 

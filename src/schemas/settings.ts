@@ -129,30 +129,35 @@ export const SettingsSchema = z.object({
   // saturated object looks exactly like a fringe to a gradient - so it greyed out street
   // lamps, and the setting was the only thing bounding it.
   //
-  // **Defaults to 0, because one confound remains.** Review found two; one is fixed and
-  // measured, the other is not.
+  // Both confounds review found are fixed and pinned by tests, so this defaults to 1.
   //
-  // *Per-channel noise - FIXED.* The regressor and the response are built from the same
-  // pixels, and green's noise enters one with +0.7152 and the other with -0.7152, so they
-  // were correlated by construction. The residue was positive for both channels, which
-  // cleared the sign veto, and being a ratio of variances it did not shrink as the noise
-  // did: a flat frame with independent grain fitted (0.124, 0.175) - that blue figure
-  // larger than the 0.148 measured on the library's worst real frame. The noise term of
-  // both sums has a closed form, so `measure_defocus` now subtracts it. Measured after:
-  // the noise-only frame returns nothing, and a real 0.12 defocus reads 0.0926 clean
-  // against 0.0928 with the same grain on top - noise-invariant rather than noise-driven.
+  // *Per-channel noise.* The regressor and the response are built from the same pixels, and
+  // green's noise enters one with +0.7152 and the other with -0.7152, so they were
+  // correlated by construction. The residue was positive for both channels, which cleared
+  // the sign veto, and being a ratio of variances it did not shrink as the noise did: a
+  // flat frame with independent grain fitted (0.124, 0.175) - that blue figure larger than
+  // the 0.148 measured on the library's worst real frame. Both sums' noise term has a
+  // closed form, so `measure_defocus` subtracts it. After: the noise-only frame returns
+  // nothing, and a real 0.12 defocus reads 0.0926 clean against 0.0928 with grain on top.
   //
-  // *Lateral aberration - NOT fixed, and why this is 0.* A channel displaced by `d`
-  // expands as `G + d.grad G + (d^2/2).lap G`, and that second term is the basis this fit
-  // regresses on. It carries `d^2`, so it is positive for red and blue whichever way each
-  // is displaced - precisely the case the sign veto cannot catch, since that veto rejects
-  // things that flip sign. A pure lateral aberration with nothing out of focus anywhere
-  // still fits (0.054, 0.053), and the correction is then applied at every radius
-  // including the centre, where a magnification difference displaces nothing. The
-  // discriminator would be that a lateral confound's coefficient grows with `r^2` where a
-  // real focus difference is flat in radius, so fitting per radial bin would separate
-  // them. Not attempted;
-  // `a_pure_lateral_aberration_is_still_read_as_a_focus_difference` pins it.
+  // *Lateral aberration.* A channel displaced by `d` expands as `G + d.grad G +
+  // (d^2/2).lap G`, and that second term is the basis this fit regresses on. It carries
+  // `d^2`, so it is positive for red and blue whichever way each is displaced - precisely
+  // what the sign veto cannot catch, since that veto rejects things that flip sign. A pure
+  // lateral aberration with nothing out of focus anywhere fitted (0.054, 0.053), and the
+  // correction was then applied at every radius including the centre, where a magnification
+  // difference displaces nothing. `d` grows with `r`, so the confound's apparent
+  // coefficient grows with `r^2` where a real focus difference is flat across the field:
+  // the fit is taken per radial bin and split into a constant plus an `r^2` term, keeping
+  // only the constant. The confound now measures nothing, and a real focus difference
+  // survives a lateral one laid on top of it.
+  //
+  // Measured over 215 frames from 104 shoots, scored as deltaE76 against each camera's own
+  // JPEG over the pixels the stage moves. Nothing is harmed by more than a JND at any
+  // strength - worst frame +0.26 at full - and four frames are helped by more than one,
+  // best -2.83. Mean improvement is 40% larger at 1 than at 0.5, and the large wins appear
+  // only there. It fires on 37 of 215 frames: the confounds are what made the version
+  // before this one fire on 143.
   raw_defringe: z.number().min(0).max(1),
 
   grid_rendition_size: z.number().int().min(1),
@@ -258,7 +263,7 @@ export const DEFAULT_SETTINGS: Settings = {
   // **0 until the estimator can tell two effects apart.** See the schema comment: the
   // coefficient it fits is confounded by lateral aberration and by per-channel noise, and
   // on a noisy frame the noise term alone is larger than the largest real reading measured.
-  raw_defringe: 0,
+  raw_defringe: 1,
   grid_rendition_size: 800,
   full_rendition_size: 3840,
   grid_rendition_quantizer: 13,

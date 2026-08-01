@@ -999,9 +999,11 @@ mod hdr_grade {
     /// double-correction itself is pinned in `tca`'s own tests rather than here; this
     /// covers the plumbing that would silently undo them.
     ///
-    /// **Driven by the denoise rather than the defringe**, which it used to be. Now that
-    /// the defringe measures its own coefficient, it correctly finds no focus difference on
-    /// this frame and does nothing - so it makes a fine stage and a useless probe.
+    /// **Driven by the sharpen**, which the defringe used to do. Now that the defringe
+    /// measures its own coefficient it correctly finds no focus difference on this frame
+    /// and does nothing - a fine stage and a useless probe. The denoises move the crop but
+    /// not the knots; the sharpen moves both, so it is the one that cannot pass by
+    /// coincidence.
     #[test]
     fn the_linear_route_fits_its_geometry_against_the_finished_render() {
         let path = canon();
@@ -1019,20 +1021,13 @@ mod hdr_grade {
         };
 
         let raw = fit_with(crate::image::Strengths::default());
-        let defringed = fit_with(crate::image::Strengths {
-            luma: 1.0,
-            chroma: 1.0,
-            defringe: 1.0,
-            ..Default::default()
-        });
+        let finished =
+            fit_with(crate::image::Strengths { sharpen: 1.0, ..Default::default() });
         assert!(
-            (raw.crop - defringed.crop).abs() > 1e-9 || raw.knots != defringed.knots,
+            (raw.crop - finished.crop).abs() > 1e-9 || raw.knots != finished.knots,
             "the finish never reached the search, both fits settled on crop {}",
             raw.crop,
         );
-        // And it must not be asking for *more* lateral correction once the fringe is gone.
-        let reach = |profile: &crate::fit::Profile| crate::tca::widest(profile.lens().tca.as_ref());
-        assert!(reach(&defringed) <= reach(&raw) + 1e-9);
     }
 
     /// The falloff has to be on the render *before* the colour is fitted, or the curves

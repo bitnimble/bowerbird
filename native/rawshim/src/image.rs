@@ -1003,36 +1003,6 @@ fn luma_of<T: Sample>(p: &[T]) -> f32 {
     (LUMA[0] * p[0].to_f32() + LUMA[1] * p[1].to_f32() + LUMA[2] * p[2].to_f32()) / T::FULL
 }
 
-/// Denoise and sharpen a rendered frame in place, at the size it will be encoded at.
-///
-/// Four stages over one deinterleave, in an order that is not interchangeable (§10.9):
-///
-/// 1. **Defringe**, before either denoise, because its regressor is the curvature of luma
-///    and its coefficient was fitted against the *raw* luma over the whole frame.
-/// 2. **Luma denoise**, a self-guided filter whose `eps` is the frame's own measured
-///    noise. Here the guided filter is used the way round it was designed for: a window
-///    that varies by less than the noise is smoothed to its mean, one holding an edge
-///    keeps it. Luma was left untouched at first on the theory that grain reads as
-///    texture. On a working-ISO frame it reads as dirt, and it is what remains
-///    objectionable once the colour mottle is gone.
-/// 3. **Chroma denoise**, guided by the luma just cleaned. Colour noise is blotchy where
-///    luma noise is per-pixel, so it takes a far wider radius - and guiding it by luma is
-///    what lets the radius grow without washing the red of a wall onto the white window
-///    frames beside it. It is the guided filter's canonical application.
-/// 4. **Sharpen**, by deconvolution, on the cleaned luma. Denoising first is not a
-///    preference: Richardson-Lucy has no noise model and will happily invert grain as if
-///    it were blur, so anything left in luma at this point is sharpened into speckle.
-///
-/// `defringe` caps the first, `luma` scales the second, `chroma` the third and `sharpen`
-/// blends the fourth. Each is 0 for off, and the whole thing is skipped when none is asked
-/// for.
-///
-/// Whatever transfer the samples are already in, and that is a constraint on the caller
-/// rather than a detail: differences taken in linear light are proportional to absolute
-/// luminance, so they treat a highlight and a shadow completely differently. Both callers
-/// hand over display-referred samples - sRGB for a rendition, PQ for the HDR pair - which
-/// is where a difference means what the eye reads.
-
 /// The radii every stage works over, which between them decide how far a strip has to
 /// reach past its own rows (§10.9).
 struct Radii {
@@ -1146,6 +1116,35 @@ fn strip_interior(width: usize, halo: usize) -> usize {
     interior.max(halo).max(32)
 }
 
+/// Denoise and sharpen a rendered frame in place, at the size it will be encoded at.
+///
+/// Four stages over one deinterleave, in an order that is not interchangeable (§10.9):
+///
+/// 1. **Defringe**, before either denoise, because its regressor is the curvature of luma
+///    and its coefficient was fitted against the *raw* luma over the whole frame.
+/// 2. **Luma denoise**, a self-guided filter whose `eps` is the frame's own measured
+///    noise. Here the guided filter is used the way round it was designed for: a window
+///    that varies by less than the noise is smoothed to its mean, one holding an edge
+///    keeps it. Luma was left untouched at first on the theory that grain reads as
+///    texture. On a working-ISO frame it reads as dirt, and it is what remains
+///    objectionable once the colour mottle is gone.
+/// 3. **Chroma denoise**, guided by the luma just cleaned. Colour noise is blotchy where
+///    luma noise is per-pixel, so it takes a far wider radius - and guiding it by luma is
+///    what lets the radius grow without washing the red of a wall onto the white window
+///    frames beside it. It is the guided filter's canonical application.
+/// 4. **Sharpen**, by deconvolution, on the cleaned luma. Denoising first is not a
+///    preference: Richardson-Lucy has no noise model and will happily invert grain as if
+///    it were blur, so anything left in luma at this point is sharpened into speckle.
+///
+/// `defringe` caps the first, `luma` scales the second, `chroma` the third and `sharpen`
+/// blends the fourth. Each is 0 for off, and the whole thing is skipped when none is asked
+/// for.
+///
+/// Whatever transfer the samples are already in, and that is a constraint on the caller
+/// rather than a detail: differences taken in linear light are proportional to absolute
+/// luminance, so they treat a highlight and a shadow completely differently. Both callers
+/// hand over display-referred samples - sRGB for a rendition, PQ for the HDR pair - which
+/// is where a difference means what the eye reads.
 pub fn finish<T: Sample>(frame: &mut [T], width: usize, height: usize, strengths: Strengths) {
     let interior = strip_interior(width, strengths.halo());
     finish_in_strips(frame, width, height, strengths, interior);
@@ -1371,30 +1370,39 @@ fn laplacian(plane: &[f32], width: usize, height: usize) -> Vec<f32> {
     out
 }
 
-/// How much of each channel's colour is the curvature of luma, over the whole frame.
+/// Radial bins the defocus fit accumulates into, uniform in r^2.
 ///
-/// **This is the measurement the stage used to lack, and the reason it needed a setting to
-/// tell it when to stop.** A focus difference between channels is not an arbitrary colour
-/// at an edge: with `sigma_R = sigma_G + d` and the heat equation `dg/dsigma = sigma.lap g`,
-/// an achromatic edge imaged through the two comes out as
-///
-/// ```text
-///     R - G  =  L * (g_sigmaR - g_sigmaG)  ~  d.sigma . lap(G)
-/// ```
-///
-/// so the fringe is the Laplacian of luma times one coefficient per frame. That predicts
-/// what is actually seen - the Laplacian of a sigmoid is odd, which is why a fringe reads
-/// magenta on one side of an edge and green on the other, and vanishes on the flats.
-///
-/// Fitted as a least-squares slope, so a frame with no focus difference returns a
-/// coefficient of zero rather than needing a threshold to be told to do nothing. A genuine
-/// coloured object contributes a *step*, not a curvature, and objects appear at every edge
-/// polarity across a frame, so they add variance to this rather than slope - the same
-/// argument `tca::estimate` rests on, and the same failure mode: a frame *dominated* by one
-/// coloured object can still bias it, which is what the sign agreement below guards.
-///
-/// None where the frame offers too little curvature to read, or where what it reads is not
-/// a focus difference.
+/// Enough to fit a line through and few enough that each holds a real sample count.
+const DEFOCUS_BINS: usize = 6;
+
+/// Samples a bin needs before its own coefficient is believed.
+const DEFOCUS_MIN_PER_BIN: usize = 200;
+
+/// Bins that must resolve before the constant and the `r^2` term can be told apart. Two
+/// points fit a line exactly and prove nothing about whether the profile is one.
+const DEFOCUS_MIN_BINS: usize = 3;
+
+/// One radial bin's running sums, for `measure_defocus`.
+#[derive(Default)]
+struct Bins {
+    cross_red: [f64; DEFOCUS_BINS],
+    cross_blue: [f64; DEFOCUS_BINS],
+    square: [f64; DEFOCUS_BINS],
+    counted: [usize; DEFOCUS_BINS],
+}
+
+impl Bins {
+    fn merge(mut self, other: Bins) -> Bins {
+        for bin in 0..DEFOCUS_BINS {
+            self.cross_red[bin] += other.cross_red[bin];
+            self.cross_blue[bin] += other.cross_blue[bin];
+            self.square[bin] += other.square[bin];
+            self.counted[bin] += other.counted[bin];
+        }
+        self
+    }
+}
+
 /// Each channel's noise sigma, in 0..1, by the same median-residual route `measure_noise`
 /// takes for luma.
 ///
@@ -1419,6 +1427,30 @@ fn channel_sigmas<T: Sample>(frame: &[T], width: usize, height: usize) -> [f64; 
     out
 }
 
+/// How much of each channel's colour is the curvature of luma, over the whole frame.
+///
+/// **This is the measurement the stage used to lack, and the reason it needed a setting to
+/// tell it when to stop.** A focus difference between channels is not an arbitrary colour
+/// at an edge: with `sigma_R = sigma_G + d` and the heat equation `dg/dsigma = sigma.lap g`,
+/// an achromatic edge imaged through the two comes out as
+///
+/// ```text
+///     R - G  =  L * (g_sigmaR - g_sigmaG)  ~  d.sigma . lap(G)
+/// ```
+///
+/// so the fringe is the Laplacian of luma times one coefficient per frame. That predicts
+/// what is actually seen - the Laplacian of a sigmoid is odd, which is why a fringe reads
+/// magenta on one side of an edge and green on the other, and vanishes on the flats.
+///
+/// Fitted as a least-squares slope, so a frame with no focus difference returns a
+/// coefficient of zero rather than needing a threshold to be told to do nothing. A genuine
+/// coloured object contributes a *step*, not a curvature, and objects appear at every edge
+/// polarity across a frame, so they add variance to this rather than slope - the same
+/// argument `tca::estimate` rests on, and the same failure mode: a frame *dominated* by one
+/// coloured object can still bias it, which is what the sign agreement below guards.
+///
+/// None where the frame offers too little curvature to read, or where what it reads is not
+/// a focus difference.
 pub(crate) fn measure_defocus<T: Sample>(
     frame: &[T],
     width: usize,
@@ -1428,13 +1460,18 @@ pub(crate) fn measure_defocus<T: Sample>(
         return None;
     }
     let luma_at = |x: usize, y: usize| -> f32 { luma_of(&frame[(y * width + x) * 3..]) };
+    let (cx, cy) = (width as f64 / 2.0, height as f64 / 2.0);
+    let half_squared = cx * cx + cy * cy;
 
     // Per row, then summed, so the accumulation order does not depend on the core count.
-    let totals: (f64, f64, f64, usize) = (1..height - 1)
+    // Binned by radius, because that is the only thing that separates this defect from a
+    // lateral one (see the split below).
+    let totals: Bins = (1..height - 1)
         .into_par_iter()
         .step_by(DEFOCUS_STRIDE)
         .map(|y| {
-            let (mut cross_red, mut cross_blue, mut square, mut counted) = (0.0, 0.0, 0.0, 0usize);
+            let mut bins = Bins::default();
+            let dy = y as f64 - cy;
             for x in (1..width - 1).step_by(DEFOCUS_STRIDE) {
                 let here = luma_at(x, y);
                 let curvature =
@@ -1446,20 +1483,22 @@ pub(crate) fn measure_defocus<T: Sample>(
                 // the model holds either way.
                 let red = p[0].to_f32() / T::FULL - here;
                 let blue = p[2].to_f32() / T::FULL - here;
-                cross_red += f64::from(curvature * red);
-                cross_blue += f64::from(curvature * blue);
-                square += f64::from(curvature * curvature);
-                counted += 1;
+                let dx = x as f64 - cx;
+                // Uniform in r^2, which is both the natural axis for the split below and one
+                // multiply cheaper than a radius.
+                let radius_squared = (dx * dx + dy * dy) / half_squared;
+                let bin = ((radius_squared * DEFOCUS_BINS as f64) as usize).min(DEFOCUS_BINS - 1);
+                bins.cross_red[bin] += f64::from(curvature * red);
+                bins.cross_blue[bin] += f64::from(curvature * blue);
+                bins.square[bin] += f64::from(curvature * curvature);
+                bins.counted[bin] += 1;
             }
-            (cross_red, cross_blue, square, counted)
+            bins
         })
-        .reduce(
-            || (0.0, 0.0, 0.0, 0usize),
-            |a, b| (a.0 + b.0, a.1 + b.1, a.2 + b.2, a.3 + b.3),
-        );
+        .reduce(Bins::default, Bins::merge);
 
-    let (cross_red, cross_blue, square, counted) = totals;
-    if counted < DEFOCUS_MIN_SAMPLES || square <= 0.0 {
+    let counted: usize = totals.counted.iter().sum();
+    if counted < DEFOCUS_MIN_SAMPLES {
         return None;
     }
 
@@ -1482,17 +1521,57 @@ pub(crate) fn measure_defocus<T: Sample>(
     let variance: [f64; 3] = [sigmas[0] * sigmas[0], sigmas[1] * sigmas[1], sigmas[2] * sigmas[2]];
     let weight = [f64::from(LUMA[0]), f64::from(LUMA[1]), f64::from(LUMA[2])];
     let luma_variance: f64 = (0..3).map(|c| weight[c] * weight[c] * variance[c]).sum();
-    let samples = counted as f64;
-    let cross_red = cross_red - samples * (4.0 * luma_variance - 4.0 * weight[0] * variance[0]);
-    let cross_blue = cross_blue - samples * (4.0 * luma_variance - 4.0 * weight[2] * variance[2]);
-    let square = square - samples * 20.0 * luma_variance;
-    // A frame whose curvature is *all* noise leaves nothing behind to divide by.
-    if square <= 0.0 {
+    let bias = |channel: usize| 4.0 * luma_variance - 4.0 * weight[channel] * variance[channel];
+
+    // **The split that tells this defect from a lateral one.** A channel displaced by `d`
+    // expands as `G + d.grad G + (d^2/2).lap G`, and that second term is the very basis
+    // this fit regresses on - so a lateral aberration answers it too, positively for both
+    // channels whichever way each is displaced, which is exactly what the sign veto cannot
+    // catch. What separates them is the radius: `d` grows with `r` for a magnification
+    // difference, so its apparent coefficient grows with `r^2`, where a focus difference is
+    // flat across the field.
+    //
+    // So the coefficient is fitted per radial bin and then split into a constant and an
+    // `r^2` term, and only the constant is kept. That is the same move `tca::measure` makes
+    // in reverse: fit the part you cannot explain so it has somewhere to go, then discard
+    // it. Field curvature means a real focus difference is not perfectly flat either, so
+    // this gives up a little of it - the conservative direction.
+    let mut samples: Vec<(f64, f64, f64, f64)> = Vec::new();
+    for bin in 0..DEFOCUS_BINS {
+        let count = totals.counted[bin] as f64;
+        if totals.counted[bin] < DEFOCUS_MIN_PER_BIN {
+            continue;
+        }
+        let square = totals.square[bin] - count * 20.0 * luma_variance;
+        // A bin whose curvature is all noise leaves nothing behind to divide by.
+        if square <= 0.0 {
+            continue;
+        }
+        let red = (totals.cross_red[bin] - count * bias(0)) / square;
+        let blue = (totals.cross_blue[bin] - count * bias(2)) / square;
+        // The bin's own mean r^2, near enough at this width.
+        let at = (bin as f64 + 0.5) / DEFOCUS_BINS as f64;
+        samples.push((at, red, blue, square));
+    }
+    if samples.len() < DEFOCUS_MIN_BINS {
         return None;
     }
-
-    let red = (cross_red / square) as f32;
-    let blue = (cross_blue / square) as f32;
+    // Weighted by each bin's own curvature energy, which is how much it actually knows.
+    let constant_term = |pick: &dyn Fn(&(f64, f64, f64, f64)) -> f64| -> f64 {
+        let total: f64 = samples.iter().map(|s| s.3).sum();
+        let mean_at = samples.iter().map(|s| s.3 * s.0).sum::<f64>() / total;
+        let mean_k = samples.iter().map(|s| s.3 * pick(s)).sum::<f64>() / total;
+        let covariance: f64 =
+            samples.iter().map(|s| s.3 * (s.0 - mean_at) * (pick(s) - mean_k)).sum();
+        let spread: f64 = samples.iter().map(|s| s.3 * (s.0 - mean_at).powi(2)).sum();
+        let slope = match spread > 0.0 {
+            true => covariance / spread,
+            false => 0.0,
+        };
+        mean_k - slope * mean_at
+    };
+    let red = constant_term(&|s| s.1) as f32;
+    let blue = constant_term(&|s| s.2) as f32;
     if red.abs() > DEFOCUS_MAX || blue.abs() > DEFOCUS_MAX {
         return None;
     }
@@ -1514,7 +1593,11 @@ pub(crate) fn measure_defocus<T: Sample>(
     // negative coefficient would sharpen its chroma, inventing an edge rather than removing
     // one. Taken as nothing to do, per channel.
     let (red, blue) = (red.max(0.0), blue.max(0.0));
-    match red > 0.0 || blue > 0.0 {
+    // Below the noise band there is nothing worth resampling for, and it is also where the
+    // residue of a lateral aberration lands once the r^2 term has been taken out: 0.008 on
+    // the fixture that fitted 0.054 before the split, against 0.09 for a real focus
+    // difference. A floor here turns "almost nothing" into nothing.
+    match red > DEFOCUS_NOISE || blue > DEFOCUS_NOISE {
         true => Some((red, blue)),
         false => None,
     }
@@ -2345,6 +2428,31 @@ mod tests {
         data
     }
 
+    /// Rescales one channel about the centre, which is what a *lateral* aberration is: a
+    /// magnification difference, with every channel still perfectly in focus.
+    fn scale_channel(src: &[u8], channel: usize, scale: f64) -> Vec<u8> {
+        let (w, h) = (400usize, 300usize);
+        let (cx, cy) = (w as f64 / 2.0, h as f64 / 2.0);
+        let mut out = src.to_vec();
+        for y in 0..h {
+            for x in 0..w {
+                let (sx, sy) = (cx + (x as f64 - cx) * scale, cy + (y as f64 - cy) * scale);
+                if sx < 0.0 || sy < 0.0 || sx >= (w - 1) as f64 || sy >= (h - 1) as f64 {
+                    continue;
+                }
+                let (x0, y0) = (sx as usize, sy as usize);
+                let (fx, fy) = (sx - x0 as f64, sy - y0 as f64);
+                let at = |xx: usize, yy: usize| f64::from(src[(yy * w + xx) * 3 + channel]);
+                let value = at(x0, y0) * (1.0 - fx) * (1.0 - fy)
+                    + at(x0 + 1, y0) * fx * (1.0 - fy)
+                    + at(x0, y0 + 1) * (1.0 - fx) * fy
+                    + at(x0 + 1, y0 + 1) * fx * fy;
+                out[(y * w + x) * 3 + channel] = value.round().clamp(0.0, 255.0) as u8;
+            }
+        }
+        out
+    }
+
     /// Defocuses `channels` against the rest, which is what a longitudinal aberration
     /// physically is.
     ///
@@ -2454,56 +2562,46 @@ mod tests {
     }
 
 
-    /// **The confound this stage has not solved, pinned so it cannot be forgotten.**
+    /// **A lateral aberration is not a focus difference, and the radius is what says so.**
     ///
-    /// A channel displaced by `d` expands as `G + d.grad G + (d^2/2).lap G`, and that second
-    /// term is the very basis this fit regresses on. It carries `d^2`, so it is positive for
-    /// red and blue *whichever way each is displaced* - which is exactly the case the
-    /// sign-disagreement veto cannot catch, since that veto exists to reject things that
-    /// flip sign.
+    /// A channel displaced by `d` expands as `G + d.grad G + (d^2/2).lap G`, and that
+    /// second-order term is the very basis this fit regresses on. It carries `d^2`, so it
+    /// is positive for red and blue whichever way each channel is displaced - exactly the
+    /// case the sign-disagreement veto cannot catch, since that veto rejects things which
+    /// flip sign. Before the radial split this fixture fitted (0.054, 0.053) with nothing
+    /// out of focus anywhere, and the correction was then applied at every radius including
+    /// the centre, where a magnification difference displaces nothing at all.
     ///
-    /// So a pure lateral aberration, with no focus difference anywhere in the frame, still
-    /// fits a coefficient. It is then applied uniformly at every radius, including the
-    /// centre, where a magnification difference displaces nothing at all.
-    ///
-    /// This asserts the wrong answer deliberately. The discriminator that would fix it is
-    /// that a lateral confound's apparent coefficient grows with `r^2` while a real focus
-    /// difference is constant in radius - so fitting per radial bin and checking for a
-    /// slope would separate them. Not attempted; `raw_defringe` defaults to 0 because of
-    /// this. When it is fixed, this test fails.
+    /// What separates them: `d` grows with `r`, so a lateral confound's apparent
+    /// coefficient grows with `r^2`, where a focus difference is flat across the field. The
+    /// fit is taken per radial bin and split into a constant and an `r^2` term; only the
+    /// constant survives. That leaves 0.008 here, under the noise band, so the frame
+    /// declines outright.
     #[test]
-    fn a_pure_lateral_aberration_is_still_read_as_a_focus_difference() {
+    fn a_pure_lateral_aberration_is_not_read_as_a_focus_difference() {
         let (w, h) = (400usize, 300usize);
-        let (cx, cy) = (w as f64 / 2.0, h as f64 / 2.0);
-        let scale_channel = |src: &[u8], c: usize, scale: f64| {
-            let mut out = src.to_vec();
-            for y in 0..h {
-                for x in 0..w {
-                    let (sx, sy) = (cx + (x as f64 - cx) * scale, cy + (y as f64 - cy) * scale);
-                    if sx < 0.0 || sy < 0.0 || sx >= (w - 1) as f64 || sy >= (h - 1) as f64 {
-                        continue;
-                    }
-                    let (x0, y0) = (sx as usize, sy as usize);
-                    let (fx, fy) = (sx - x0 as f64, sy - y0 as f64);
-                    let at = |xx: usize, yy: usize| f64::from(src[(yy * w + xx) * 3 + c]);
-                    let value = at(x0, y0) * (1.0 - fx) * (1.0 - fy)
-                        + at(x0 + 1, y0) * fx * (1.0 - fy)
-                        + at(x0, y0 + 1) * (1.0 - fx) * fy
-                        + at(x0 + 1, y0 + 1) * fx * fy;
-                    out[(y * w + x) * 3 + c] = value.round().clamp(0.0, 255.0) as u8;
-                }
-            }
-            out
-        };
-        // Red imaged larger, blue smaller: a textbook lateral aberration, achromatic
-        // source, and not one pixel of it out of focus.
         let lateral = scale_channel(&scale_channel(&bars(w, h), 0, 1.0015), 2, 0.9985);
-        let (red, blue) = measure_defocus(&lateral, w, h)
-            .expect("the confound is real - if this now declines, the model learned to tell them apart");
-        assert!(
-            red > DEFOCUS_NOISE && blue > DEFOCUS_NOISE,
-            "lateral-only measured ({red}, {blue}), which would mean the confound is gone",
+        assert_eq!(
+            measure_defocus(&lateral, w, h),
+            None,
+            "a magnification difference is not a focus difference",
         );
+    }
+
+    #[test]
+    fn a_focus_difference_survives_a_lateral_one_on_top_of_it() {
+        // The split must not simply reject everything radial: a real focus difference sits
+        // in the constant term and has to come through a frame carrying both.
+        let (w, h) = (400usize, 300usize);
+        let defocus = defocus_channels(&bars(w, h), w, h, &[0, 2], 0.12);
+        let (clean_red, _) = measure_defocus(&defocus, w, h).expect("a coefficient");
+        let both = scale_channel(&scale_channel(&defocus, 0, 1.0015), 2, 0.9985);
+        let (mixed_red, mixed_blue) = measure_defocus(&both, w, h).expect("a coefficient");
+        assert!(
+            mixed_red > clean_red * 0.7 && mixed_red < clean_red * 1.3,
+            "the focus difference should survive the lateral one: {mixed_red} against {clean_red}",
+        );
+        assert!(mixed_blue > DEFOCUS_NOISE, "blue too: {mixed_blue}");
     }
 
     #[test]
@@ -2901,4 +2999,5 @@ mod tests {
         assert!((sample_radius(&knots, 1.0, 1.0) - (1.0 + k1)).abs() < 1e-3);
         assert!((sample_radius(&knots, 0.5, 1.0) - 0.5 * (1.0 + k1 * 0.25)).abs() < 1e-3);
     }
+
 }
