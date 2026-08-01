@@ -188,11 +188,23 @@ impl ChromaMap {
 
     /// Where a coordinate sits on an axis running `low` to `high`: the node below it,
     /// and how far past.
-    fn axis(value: f64, nodes: usize, low: f64, high: f64) -> (usize, f64) {
-        let t = ((value - low) / (high - low) * (nodes - 1) as f64).clamp(0.0, (nodes - 1) as f64);
+    ///
+    /// `scale` is the span's reciprocal times the gaps, passed in rather than divided out
+    /// here: both axes have a span fixed at compile time, and three divisions per pixel of
+    /// a full-size rendition was the single largest cost in reading this map.
+    #[inline]
+    fn axis(value: f64, nodes: usize, low: f64, scale: f64) -> (usize, f64) {
+        // `max` then `min` rather than `clamp`: these return whichever operand is not
+        // NaN, so a NaN arriving here lands on a node instead of propagating into an
+        // index.
+        let t = ((value - low) * scale).max(0.0).min((nodes - 1) as f64);
         let below = (t as usize).min(nodes - 2);
         (below, t - below as f64)
     }
+
+    /// Gaps per unit on each axis, so `axis` multiplies where it used to divide.
+    const CHROMA_SCALE: f64 = (MAP_CHROMA - 1) as f64 / (2.0 * CHROMA_REACH);
+    const LEVEL_SCALE: f64 = (MAP_LEVEL - 1) as f64 / LEVEL_REACH;
 
     /// The eight nodes a colour sits between, and how much of each it takes.
     ///
@@ -200,12 +212,12 @@ impl ChromaMap {
     /// which nodes a colour belongs to - the failure mode where a map is fitted against
     /// one neighbourhood and read from another.
     fn nodes_for(level: f64, d0: f64, d2: f64) -> ([usize; 8], [f64; 8]) {
-        let (x, fx) = Self::axis(d0, MAP_CHROMA, -CHROMA_REACH, CHROMA_REACH);
-        let (y, fy) = Self::axis(d2, MAP_CHROMA, -CHROMA_REACH, CHROMA_REACH);
+        let (x, fx) = Self::axis(d0, MAP_CHROMA, -CHROMA_REACH, Self::CHROMA_SCALE);
+        let (y, fy) = Self::axis(d2, MAP_CHROMA, -CHROMA_REACH, Self::CHROMA_SCALE);
         // Square root rather than the level itself, so the shadows get nodes in
         // proportion to how much of a picture lives in them, and cheaper than a cube root
         // in a loop this size.
-        let (z, fz) = Self::axis(level.max(0.0).sqrt(), MAP_LEVEL, 0.0, LEVEL_REACH);
+        let (z, fz) = Self::axis(level.max(0.0).sqrt(), MAP_LEVEL, 0.0, Self::LEVEL_SCALE);
 
         let mut at = [0usize; 8];
         let mut weight = [0.0f64; 8];
@@ -227,13 +239,42 @@ impl ChromaMap {
     /// Trilinear, so the correction is continuous everywhere and its gradient is bounded
     /// by the difference between neighbouring nodes over a cell's width - which is the
     /// property that keeps it from turning noise in a pixel's colour into speckle.
+    /// Blended as nested interpolations rather than as eight weighted nodes, which is the
+    /// same surface for seven multiply-adds per coefficient instead of eight products and
+    /// eight more to build the weights. It runs on every pixel of a full-size rendition,
+    /// where the eight-weight form is what `nodes_for` is for - the fit wants the weights
+    /// themselves, to say how much each node was told.
     fn correct(&self, level: f64, d0: f64, d2: f64) -> (f64, f64) {
-        let (at, weight) = Self::nodes_for(level, d0, d2);
+        let (x, fx) = Self::axis(d0, MAP_CHROMA, -CHROMA_REACH, Self::CHROMA_SCALE);
+        let (y, fy) = Self::axis(d2, MAP_CHROMA, -CHROMA_REACH, Self::CHROMA_SCALE);
+        let (z, fz) = Self::axis(level.max(0.0).sqrt(), MAP_LEVEL, 0.0, Self::LEVEL_SCALE);
+
+        // The eight corners copied into locals before any of the blending, so the four
+        // coefficients are computed from registers rather than reloading two row pointers
+        // per coefficient. It runs on every pixel of a full-size rendition, and left to
+        // index the table per coefficient it cost about five times what the arithmetic in
+        // it does.
+        let area = MAP_CHROMA * MAP_CHROMA;
+        let base = z * area + y * MAP_CHROMA + x;
+        let corner = |at: usize| -> ([f64; 4], [f64; 4], [f64; 4], [f64; 4]) {
+            (self.nodes[at], self.nodes[at + 1], self.nodes[at + MAP_CHROMA], self.nodes[at + MAP_CHROMA + 1])
+        };
+        let (n00, n01, n10, n11) = corner(base);
+        let (f00, f01, f10, f11) = corner(base + area);
+
         let mut cell = [0.0f64; 4];
-        for (node, w) in at.into_iter().zip(weight) {
-            for (slot, term) in cell.iter_mut().zip(self.nodes[node]) {
-                *slot += w * term;
-            }
+        for (c, slot) in cell.iter_mut().enumerate() {
+            let near = {
+                let lo = n00[c] + (n01[c] - n00[c]) * fx;
+                let hi = n10[c] + (n11[c] - n10[c]) * fx;
+                lo + (hi - lo) * fy
+            };
+            let far = {
+                let lo = f00[c] + (f01[c] - f00[c]) * fx;
+                let hi = f10[c] + (f11[c] - f10[c]) * fx;
+                lo + (hi - lo) * fy
+            };
+            *slot = near + (far - near) * fz;
         }
         (cell[0] * d0 + cell[1] * d2, cell[2] * d0 + cell[3] * d2)
     }
