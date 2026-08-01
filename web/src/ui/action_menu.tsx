@@ -1,8 +1,9 @@
 import { Menu } from '@base-ui-components/react/menu';
 import { ChevronDown } from 'lucide-react';
 import type { ReactNode } from 'react';
+import type { ActionToggle } from './action_toggle';
 import { ICON } from './icon';
-import { type ActionToggle, MenuItems } from './menu_items';
+import { MenuItems } from './menu_items';
 import type { Option } from './option';
 
 // A menu of one-shot actions, as opposed to CheckMenu's independent toggles.

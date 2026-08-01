@@ -1,16 +1,8 @@
 import { Menu } from '@base-ui-components/react/menu';
 import { Check } from 'lucide-react';
-import type { ReactNode } from 'react';
+import type { ActionToggle } from './action_toggle';
 import { ICON } from './icon';
 import type { Option } from './option';
-
-/** A setting that modifies the actions around it, rather than an action itself. */
-export interface ActionToggle {
-  label: string;
-  icon?: ReactNode;
-  checked: boolean;
-  onChange: (checked: boolean) => void;
-}
 
 export function MenuAction<T extends string>({
   option,

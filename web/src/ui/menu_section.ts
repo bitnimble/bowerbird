@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import type { ActionToggle } from './menu_items';
+import type { ActionToggle } from './action_toggle';
 import type { Option } from './option';
 
 /** One button's worth of menu: what it is called, and what it offers. */
