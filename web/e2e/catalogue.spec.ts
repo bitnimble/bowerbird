@@ -105,12 +105,16 @@ test('the folder list is walkable by keyboard, and Tab lands on the cursor', asy
   await page.keyboard.press('ArrowDown');
   await expect(page.locator('.list__row--cursored')).toHaveCount(1);
   await expect(page.locator('.list__row--cursored')).toContainText('Kelp');
+  // Cursor move takes DOM focus with it, so Enter opens this row.
+  await expect(page.locator('.list__row--cursored')).toBeFocused();
 
   await page.keyboard.press('ArrowDown');
   await expect(page.locator('.list__row--cursored')).toContainText('Reef');
+  await expect(page.locator('.list__row--cursored')).toBeFocused();
 
   await page.keyboard.press('ArrowUp');
   await expect(page.locator('.list__row--cursored')).toContainText('Kelp');
+  await expect(page.locator('.list__row--cursored')).toBeFocused();
 
   // One tab stop for the whole list, and it is the cursor.
   await expect(page.locator('.list__row[tabindex="0"]')).toHaveCount(1);

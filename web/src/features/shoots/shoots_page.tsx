@@ -220,31 +220,39 @@ const ShootKeys = observer(function ShootKeys(): null {
       if (target != null && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
 
+      // Menus portal outside the list; the rail and the view control keep their
+      // own arrows. Only once the list has focus do these keys mean the cursor.
+      const fromList =
+        target == null || target === document.body || target.closest('.list__scroller') != null;
+
       switch (e.key) {
         case 'ArrowDown':
+          if (!fromList) return;
           shoots.moveCursor(1);
           break;
         case 'ArrowUp':
+          if (!fromList) return;
           shoots.moveCursor(-1);
           break;
         case 'ArrowRight':
+          if (!fromList) return;
           void shoots.openCursor();
           break;
         case 'ArrowLeft':
+          if (!fromList) return;
           void shoots.closeCursor();
           break;
         case 'Home':
+          if (!fromList) return;
           shoots.moveCursor(-store.rows.length);
           break;
         case 'End':
+          if (!fromList) return;
           shoots.moveCursor(store.rows.length);
           break;
         // What double-click does, for the keyboard.
         case 'Enter': {
-          // Same containment the photo grid uses: menus portal outside the list,
-          // and a focused chevron or ⋮ owns its own Enter.
-          const fromList =
-            target == null || target === document.body || target.closest('.list__scroller') != null;
+          // A focused chevron or ⋮ owns its own Enter.
           if (!fromList || target?.tagName === 'BUTTON') return;
           const shoot = store.cursorRow?.shoot;
           if (shoot == null) return;
@@ -307,6 +315,21 @@ const ShootRow = observer(function ShootRow({
   const expanded = store.expanded.has(row.folderPath);
   const editing = store.renamingPath === row.folderPath;
   const cursored = store.cursorPath === row.folderPath;
+
+  // Keyboard (and click-within-list) moved the cursor here: take focus so Enter
+  // and the next arrow stay with the row. Once per cursorSeq, so a remount of a
+  // still-cursored row (scrolled off, tabbed elsewhere, scrolled back) does not
+  // steal focus. Skip when focus is outside the list or already inside this row.
+  useLayoutEffect(() => {
+    if (!cursored) return;
+    if (!shoots.claimCursorFocus()) return;
+    const self = element.current;
+    if (self == null) return;
+    const active = document.activeElement;
+    if (self.contains(active)) return;
+    if (active != null && active !== document.body && scroller.current?.contains(active) !== true) return;
+    self.focus({ preventScroll: true });
+  }, [cursored, store.cursorSeq, scroller, shoots]);
 
   const options: Option<RowAction>[] = [
     ...(row.shoot == null ? [{ value: 'adopt' as const, label: 'Add as shoot', icon: <Folder size={ICON} /> }] : []),

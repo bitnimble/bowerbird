@@ -16,6 +16,10 @@ function message(err: unknown): string {
 
 export class ShootsPresenter {
   private libraryId: string | null = null;
+  // Which cursorSeq we last put DOM focus on. Survives row remounts so scrolling
+  // a still-cursored row back into the window does not yank focus off a control
+  // the reader tabbed to while it was off-screen.
+  private cursorFocusSeq = -1;
 
   constructor(private readonly store: ShootsStore) {}
 
@@ -63,6 +67,15 @@ export class ShootsPresenter {
     this.store.scrollTop = 0;
     this.store.cursorPath = null;
     this.store.rootPhotoCount = 0;
+    this.cursorFocusSeq = -1;
+  }
+
+  // True once per cursorSeq: the cursored row should take focus. Remounts of the
+  // same cursor do not ask again.
+  claimCursorFocus(): boolean {
+    if (this.cursorFocusSeq === this.store.cursorSeq) return false;
+    this.cursorFocusSeq = this.store.cursorSeq;
+    return true;
   }
 
   // Which reading of the folders this is: about the machine you are sitting at
