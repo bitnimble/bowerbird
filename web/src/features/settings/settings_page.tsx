@@ -319,37 +319,64 @@ const StackSettings = observer(function StackSettings({ library }: { library: Li
 
       {library.auto_stack && (
         <>
-          <SettingRow
+          <LibraryNumberField
+            libraryId={library.id}
+            field="auto_stack_similarity"
             label="How alike, from 0 to 1"
             hint="Raise it and stacks split; lower it and they merge. Photos of one scene from a different angle or distance sit around 0.8, and two genuinely different shots from the same spot below 0.75."
-          >
-            <input
-              type="number"
-              min={0}
-              max={1}
-              step={0.01}
-              aria-label="How alike, from 0 to 1"
-              value={library.auto_stack_similarity}
-              onChange={(e) => void libraries.setAutoStackSimilarity(library.id, Number(e.currentTarget.value))}
-            />
-          </SettingRow>
+            onCommit={(next) => libraries.setAutoStackSimilarity(library.id, next)}
+          />
 
-          <SettingRow
+          <LibraryNumberField
+            libraryId={library.id}
+            field="auto_stack_window_seconds"
             label="Seconds between frames"
             hint="How long a gap can be and still count as the same run. It only gates neighbours, so a stack chains as far as it likes: what ends one is a frame no longer matching every other frame already in it."
-          >
-            <input
-              type="number"
-              min={1}
-              step={1}
-              aria-label="Seconds between frames"
-              value={library.auto_stack_window_seconds}
-              onChange={(e) => void libraries.setAutoStackWindow(library.id, Number(e.currentTarget.value))}
-            />
-          </SettingRow>
+            onCommit={(next) => libraries.setAutoStackWindow(library.id, next)}
+          />
         </>
       )}
     </div>
+  );
+});
+
+// Same draft/commit shape as NumberSetting: typing "0." must not fire a write of 0
+// mid-keystroke, and a refused value snaps back to whatever the library still holds.
+const LibraryNumberField = observer(function LibraryNumberField({
+  libraryId,
+  field,
+  label,
+  hint,
+  onCommit,
+}: {
+  libraryId: string;
+  field: 'auto_stack_similarity' | 'auto_stack_window_seconds';
+  label: string;
+  hint: ReactNode;
+  onCommit: (next: number) => void | Promise<void>;
+}): JSX.Element {
+  const store = useLibrariesStore();
+  const value = store.byId.get(libraryId)?.[field] ?? 0;
+  const [draft, setDraft] = useState(String(value));
+
+  useEffect(() => setDraft(String(value)), [value]);
+
+  async function commit(): Promise<void> {
+    const next = Number(draft);
+    if (draft.trim() !== '' && Number.isFinite(next) && next !== value) await onCommit(next);
+    setDraft(String(store.byId.get(libraryId)?.[field] ?? value));
+  }
+
+  return (
+    <SettingRow label={label} hint={hint}>
+      <TextField
+        label={label}
+        value={draft}
+        onChange={setDraft}
+        onBlur={() => void commit()}
+        onKeyDown={(e) => e.key === 'Enter' && void commit()}
+      />
+    </SettingRow>
   );
 });
 
