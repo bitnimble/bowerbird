@@ -46,9 +46,9 @@ export class LibrariesPresenter {
     await this.update(libraryId, { ordering });
   }
 
-  // Blank hands the library back to its root folder's name.
   async setName(libraryId: string, name: string): Promise<void> {
-    await this.update(libraryId, { name });
+    if (name.trim() === '') return;
+    await this.update(libraryId, { name: name.trim() });
   }
 
   // Which pixels new photos get their renditions from, and whether the full-size

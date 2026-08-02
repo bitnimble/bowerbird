@@ -32,7 +32,7 @@ beforeAll(() => {
     root_path: root,
     data_path: null,
     bin_name: 'Bin',
-    name: null,
+    name: 'lib',
     ordering: 'taken_desc',
     rendition_source: 'render',
     rendition_hdr: false,

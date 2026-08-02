@@ -1,4 +1,5 @@
 import type { Database } from 'bun:sqlite';
+import { inferredLibraryName } from '../utils/library_name';
 
 // Schema creation. Tables are ordered so every REFERENCES target already exists.
 // Idempotent (IF NOT EXISTS) so it is safe to run on every startup. See DESIGN §4.
@@ -7,9 +8,9 @@ CREATE TABLE IF NOT EXISTS libraries (
   id          TEXT PRIMARY KEY,
   root_path   TEXT NOT NULL UNIQUE,
   data_path   TEXT,
-  -- What the library is called in the UI. NULL falls back to the last segment of
-  -- root_path, which is what every library created before this shows.
-  name        TEXT,
+  -- What the library is called in the UI. Always set: create stores the folder
+  -- name (or parent + year) when none is given, rather than leaving a placeholder.
+  name        TEXT NOT NULL,
   last_synced_at TEXT,          -- ISO datetime of the last completed sync; NULL if never synced
   ordering    TEXT NOT NULL DEFAULT 'taken_asc'
     CHECK (ordering IN ('taken_asc', 'taken_desc', 'added_asc', 'added_desc')),
@@ -212,6 +213,27 @@ function columnNames(db: Database, table: string): Set<string> {
 function ensureColumn(db: Database, table: string, column: string, definition: string): void {
   if (!columnNames(db, table).has(column)) {
     db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
+}
+
+function columnNotNull(db: Database, table: string, column: string): boolean {
+  const info = db.query(`PRAGMA table_info(${table})`).all() as { name: string; notnull: number }[];
+  return info.some((col) => col.name === column && col.notnull === 1);
+}
+
+// Names used to be optional placeholders for the root folder. They are stored
+// for real now: fill any blank row from its path, then refuse NULL going forward.
+function requireLibraryNames(db: Database): void {
+  if (!columnNames(db, 'libraries').has('name')) return;
+  const rows = db.query(`SELECT id, root_path, name FROM libraries WHERE name IS NULL OR name = ''`).all() as {
+    id: string;
+    root_path: string;
+    name: string | null;
+  }[];
+  const update = db.query('UPDATE libraries SET name = ? WHERE id = ?');
+  for (const row of rows) update.run(inferredLibraryName(row.root_path), row.id);
+  if (!columnNotNull(db, 'libraries', 'name')) {
+    db.exec('ALTER TABLE libraries ALTER COLUMN name SET NOT NULL');
   }
 }
 
@@ -427,7 +449,9 @@ export function runMigrations(db: Database): void {
   ensureColumn(db, 'libraries', 'rendition_source', "TEXT NOT NULL DEFAULT 'embedded'");
   ensureColumn(db, 'libraries', 'rendition_hdr', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'libraries', 'rendition_hdr_video', 'INTEGER NOT NULL DEFAULT 0');
-  ensureColumn(db, 'libraries', 'name', 'TEXT'); // display name, NULL falls back to the root folder
+  // Nullable on add so existing rows can be filled before NOT NULL is applied.
+  ensureColumn(db, 'libraries', 'name', 'TEXT');
+  requireLibraryNames(db);
   // What the library contains, and whether its folders are shoots (§4.1).
   ensureColumn(db, 'libraries', 'include_subfolders', 'INTEGER NOT NULL DEFAULT 1');
   ensureColumn(db, 'libraries', 'mirror_shoots', 'INTEGER NOT NULL DEFAULT 1');

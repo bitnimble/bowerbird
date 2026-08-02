@@ -100,9 +100,12 @@ const LibraryList = observer(function LibraryList(): JSX.Element {
               {library.last_synced_at == null ? 'never synced' : `synced ${relativeTime(library.last_synced_at)}`}
             </Text>
             {sync.libraryId === library.id && <SyncStrip />}
-            <FolderSettings library={library} />
-            <RenditionSettings library={library} />
-            <StackSettings library={library} />
+            <details className="advanced">
+              <summary className="advanced__summary">Library settings</summary>
+              <FolderSettings library={library} />
+              <RenditionSettings library={library} />
+              <StackSettings library={library} />
+            </details>
           </div>
         </div>
       ))}
@@ -110,28 +113,24 @@ const LibraryList = observer(function LibraryList(): JSX.Element {
   );
 });
 
-// Empty hands the library back to its root folder's name, which is what the
-// placeholder shows.
 const LibraryName = observer(function LibraryName({ library }: { library: Library }): JSX.Element {
   const { libraries } = usePresenters();
-  const [draft, setDraft] = useState(library.name ?? '');
+  const [draft, setDraft] = useState(library.name);
 
-  useEffect(() => setDraft(library.name ?? ''), [library.name]);
+  useEffect(() => setDraft(library.name), [library.name]);
 
   function commit(): void {
-    if (draft.trim() !== (library.name ?? '')) void libraries.setName(library.id, draft.trim());
+    const next = draft.trim();
+    if (next === '') {
+      setDraft(library.name);
+      return;
+    }
+    if (next !== library.name) void libraries.setName(library.id, next);
   }
 
   return (
     <span className="list__name">
-      <TextField
-        label="Library name"
-        placeholder={libraryLabel(library)}
-        value={draft}
-        onChange={setDraft}
-        onBlur={commit}
-        onKeyDown={(e) => e.key === 'Enter' && commit()}
-      />
+      <TextField label="Library name" value={draft} onChange={setDraft} onBlur={commit} onKeyDown={(e) => e.key === 'Enter' && commit()} />
     </span>
   );
 });

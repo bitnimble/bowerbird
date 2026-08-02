@@ -7,15 +7,11 @@ import { FolderBrowser } from '../browse/folder_browser';
 import { FolderBrowserPresenter } from '../browse/folder_browser_presenter';
 import { FolderBrowserStore } from '../browse/folder_browser_store';
 import { ORDERINGS } from '../photos/grid_controls';
+import { inferredLibraryName } from './inferred_library_name';
 
 function newBrowser(): { store: FolderBrowserStore; presenter: FolderBrowserPresenter } {
   const store = new FolderBrowserStore();
   return { store, presenter: new FolderBrowserPresenter(store) };
-}
-
-function basename(path: string): string {
-  const segments = path.split('/').filter((segment) => segment !== '');
-  return segments[segments.length - 1] ?? path;
 }
 
 // Everything a library needs before it exists, in one place: where its photos
@@ -36,6 +32,7 @@ export const AddLibraryDialog = observer(function AddLibraryDialog({
   const [browser, setBrowser] = useState(newBrowser);
   const [path, setPath] = useState('');
   const [name, setName] = useState('');
+  const [nameTouched, setNameTouched] = useState(false);
   const [binName, setBinName] = useState('Bin');
   const [ordering, setOrdering] = useState<Ordering>('taken_asc');
   const [includeSubfolders, setIncludeSubfolders] = useState(true);
@@ -49,6 +46,7 @@ export const AddLibraryDialog = observer(function AddLibraryDialog({
   useEffect(() => {
     if (!open) return;
     setName('');
+    setNameTouched(false);
     setBinName('Bin');
     setOrdering('taken_asc');
     setIncludeSubfolders(true);
@@ -60,6 +58,11 @@ export const AddLibraryDialog = observer(function AddLibraryDialog({
     setBrowser(next);
     void next.presenter.open();
   }, [open, libraries]);
+
+  // The folder name is the library's name until the user types one of their own.
+  useEffect(() => {
+    if (!nameTouched) setName(path === '' ? '' : inferredLibraryName(path));
+  }, [path, nameTouched]);
 
   // The scan skips whatever sits at this name in the root, so a folder the user
   // already keeps there would be adopted as the bin and everything inside it
@@ -114,9 +117,11 @@ export const AddLibraryDialog = observer(function AddLibraryDialog({
           <TextField
             grow
             label="Library name"
-            placeholder={path === '' ? 'The folder name' : basename(path)}
             value={name}
-            onChange={setName}
+            onChange={(value) => {
+              setNameTouched(true);
+              setName(value);
+            }}
           />
         </div>
 
@@ -168,7 +173,11 @@ export const AddLibraryDialog = observer(function AddLibraryDialog({
 
         <div className="dialog__actions">
           <Button onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button variant="primary" disabled={root === '' || bin === '' || binTaken || saving} onClick={() => void submit()}>
+          <Button
+            variant="primary"
+            disabled={root === '' || name.trim() === '' || bin === '' || binTaken || saving}
+            onClick={() => void submit()}
+          >
             Add library
           </Button>
         </div>

@@ -22,7 +22,7 @@ function library(dataPath: string, hdr: boolean): Library {
     root_path: dataPath,
     data_path: dataPath,
     bin_name: 'Bin',
-    name: null,
+    name: 'lib',
     ordering: 'added_desc',
     rendition_source: 'render',
     rendition_hdr: hdr,

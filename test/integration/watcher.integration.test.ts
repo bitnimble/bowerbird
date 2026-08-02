@@ -35,7 +35,7 @@ async function settle(check: () => boolean): Promise<void> {
 beforeAll(async () => {
   root = mkdtempSync(path.join(tmpdir(), 'bb-watch-'));
   db = createDatabase(':memory:');
-  db.query('INSERT INTO libraries (id, root_path, ordering) VALUES (?, ?, ?)').run(LIB, root, 'taken_desc');
+  db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(LIB, root, 'lib', 'taken_desc');
   const sync = new SyncService(
     new PhotosRepository(db),
     new LibrariesRepository(db),

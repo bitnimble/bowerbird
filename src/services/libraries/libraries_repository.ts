@@ -7,7 +7,7 @@ interface LibraryRow {
   root_path: string;
   data_path: string | null;
   bin_name: string;
-  name: string | null;
+  name: string;
   ordering: string;
   rendition_source: string;
   rendition_hdr: number;
@@ -69,7 +69,7 @@ export class LibrariesRepository {
     return rows.map(mapRow);
   }
 
-  setName(id: string, name: string | null): boolean {
+  setName(id: string, name: string): boolean {
     return this.db.query('UPDATE libraries SET name = ? WHERE id = ?').run(name, id).changes > 0;
   }
 

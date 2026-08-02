@@ -7,6 +7,7 @@ import { Logger } from '../../logger';
 import type { CreateLibraryRequest, Library, UpdateLibraryRequest } from '../../schemas/libraries';
 import { deleteDataDirectory } from '../../utils/deletions';
 import { ensureDir, moveIntoDir } from '../../utils/files';
+import { inferredLibraryName } from '../../utils/library_name';
 import { containsPath, dataPathFor, getBinPath, getDataPath } from '../../utils/paths';
 import { findOriginalsAnywhere } from '../../utils/scan';
 import type { LibrariesRepository } from './libraries_repository';
@@ -84,7 +85,7 @@ export class LibrariesService {
       root_path: request.root_path,
       data_path: request.data_path ?? null,
       bin_name: request.bin_name,
-      name: request.name == null || request.name === '' ? null : request.name,
+      name: request.name == null || request.name === '' ? inferredLibraryName(request.root_path) : request.name,
       ordering: request.ordering,
       // Matching the column defaults: the embedded JPEG needs no demosaic, and
       // HDR is opt-in because it only applies to a render.
@@ -153,7 +154,7 @@ export class LibrariesService {
   update(libraryId: string, updates: UpdateLibraryRequest): Library {
     const current = this.repo.getById(libraryId);
     if (current == null) throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
-    if (updates.name != null) this.repo.setName(libraryId, updates.name === '' ? null : updates.name);
+    if (updates.name != null) this.repo.setName(libraryId, updates.name);
     if (updates.ordering != null) this.repo.setOrdering(libraryId, updates.ordering);
     if (updates.rendition_source != null) this.repo.setRenditionSource(libraryId, updates.rendition_source);
     if (updates.rendition_hdr != null) this.repo.setRenditionHdr(libraryId, updates.rendition_hdr);

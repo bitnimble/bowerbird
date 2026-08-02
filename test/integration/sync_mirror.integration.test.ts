@@ -42,8 +42,8 @@ function shootsService(folderRules: FolderRulesRepository): ShootsService {
 
 function makeLibrary(over: { include_subfolders?: number; mirror_shoots?: number } = {}): void {
   db.query(
-    'INSERT INTO libraries (id, root_path, ordering, include_subfolders, mirror_shoots) VALUES (?, ?, ?, ?, ?)',
-  ).run(LIB, root, 'taken_desc', over.include_subfolders ?? 1, over.mirror_shoots ?? 1);
+    'INSERT INTO libraries (id, root_path, name, ordering, include_subfolders, mirror_shoots) VALUES (?, ?, ?, ?, ?, ?)',
+  ).run(LIB, root, 'lib', 'taken_desc', over.include_subfolders ?? 1, over.mirror_shoots ?? 1);
 }
 
 beforeEach(() => {

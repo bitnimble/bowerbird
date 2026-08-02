@@ -28,7 +28,7 @@ const id = (n: number) => `${String(n).repeat(8)}-${String(n).repeat(4)}-4${Stri
 
 beforeAll(() => {
   db = createDatabase(':memory:');
-  db.query('INSERT INTO libraries (id, root_path, ordering) VALUES (?, ?, ?)').run(LIB, '/tmp/bb-custom', 'taken_desc');
+  db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(LIB, '/tmp/bb-custom', 'lib', 'taken_desc');
   photos = new PhotosRepository(db);
   insert({ id: id(1), taken: '2024-05-01T09:00:00.000Z', rating: 4, triage: 'picked' });
   insert({ id: id(2), taken: '2024-05-03T23:30:00.000Z', rating: 0 });
