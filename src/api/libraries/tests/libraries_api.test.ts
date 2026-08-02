@@ -83,6 +83,41 @@ describe('LibrariesApi', () => {
     expect(syncLibrary).toHaveBeenCalledWith('l1');
   });
 
+  it('queues a library-wide tile rebuild', async () => {
+    const rebuildTiles = jest.fn(() => status);
+    const { app } = buildApp({}, { rebuildTiles });
+    const res = await app.request('/api/libraries/l1/jobs/tiles', { method: 'POST' });
+    expect(res.status).toBe(200);
+    expect(rebuildTiles).toHaveBeenCalledWith('l1');
+  });
+
+  it('queues a library-wide rendition rebuild', async () => {
+    const rebuildRenditions = jest.fn(() => status);
+    const { app } = buildApp({}, { rebuildRenditions });
+    const res = await app.request('/api/libraries/l1/jobs/renditions', { method: 'POST' });
+    expect(res.status).toBe(200);
+    expect(rebuildRenditions).toHaveBeenCalledWith('l1');
+  });
+
+  it('maps VALIDATION_ERROR when a library has no renders to rebuild', async () => {
+    const { app } = buildApp(
+      {},
+      { rebuildRenditions: jest.fn(() => { throw new AppError('VALIDATION_ERROR', 'no renders'); }) },
+    );
+    const res = await app.request('/api/libraries/l1/jobs/renditions', { method: 'POST' });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: { code: 'VALIDATION_ERROR' } });
+  });
+
+  it('returns 409 when a rebuild is asked for while a sync is running', async () => {
+    const { app } = buildApp(
+      {},
+      { rebuildTiles: jest.fn(() => { throw new AppError('SYNC_IN_PROGRESS', 'busy'); }) },
+    );
+    const res = await app.request('/api/libraries/l1/jobs/tiles', { method: 'POST' });
+    expect(res.status).toBe(409);
+  });
+
   it('returns 409 when a sync is already running', async () => {
     const { app } = buildApp({}, { syncLibrary: jest.fn(() => { throw new AppError('SYNC_IN_PROGRESS', 'busy'); }) });
     const res = await app.request('/api/libraries/l1/sync', { method: 'POST' });

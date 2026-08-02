@@ -207,6 +207,12 @@ export class SyncService implements LibraryLifecycleListener {
     const lockPath = acquireSyncLock(library.root_path);
     const token = new AbortController();
     this.generation.set(libraryId, token);
+    // Before the first await: rebuild jobs only gate on in-memory status, and the
+    // lock alone is not enough for them - they do not take it for the whole run.
+    // Leaving 'idle' until inside `libraryMutex.run` let a rebuild replace this
+    // generation in the gap, after which this run's settle no-ops and the strip
+    // can stick on 'processing'.
+    this.statuses.set(libraryId, idle(libraryId, 'scanning'));
     let syncedStatus: LibrarySyncStatus | null = null;
     // The photos this run created or rewrote, for a scoped run to hand its
     // rendition batch. Null once the run is a full one, whose batch is the
@@ -508,68 +514,7 @@ export class SyncService implements LibraryLifecycleListener {
       // returns promptly and re-syncs aren't blocked for the whole processing run.
       releaseSyncLock(lockPath);
       if (syncedStatus != null) {
-        const finalStatus = syncedStatus;
-        // Runs on both success and failure: processing throwing must not leave the
-        // status stuck at 'processing'. Skipped if a newer sync generation started
-        // meanwhile, so a stale tail can't stomp the newer run's status.
-        const scope: ProcessingScope = { libraryId, photoIds: processingIds ?? undefined };
-        // Idempotent, because both arms of the promise below reach it: a failure
-        // inside `settle` itself would otherwise run the whole of it twice,
-        // including every listener - and detection is not a cheap thing to do
-        // by accident.
-        let settled = false;
-        const settle = (): void => {
-          if (settled || this.generation.get(libraryId) !== token) return;
-          settled = true;
-          const stillPending = this.photos.countPendingProcessing(libraryId, scope.photoIds);
-          const processed = Math.max(0, finalStatus.photos_processing - stillPending);
-          // Before the status goes idle, not after. A client watching for idle
-          // re-reads the collection the moment it sees it, and a listener that
-          // changes the collection's *shape* - stack detection groups rows into
-          // one another (§19.4.1) - would land after that read and leave the
-          // grid showing a library that no longer exists. "Settled" has to mean
-          // settled, so this holds 'processing' for however long it takes.
-          //
-          // Announced here rather than when the scan finished for the same kind
-          // of reason: what listens wants the *derived* files, and a sync that
-          // has only scanned has imported photographs nothing can compare yet.
-          const changed = finalStatus.photos_added + finalStatus.photos_modified > 0;
-          for (const listener of this.settledListeners) {
-            // One listener's failure is its own. Left to throw, it would take
-            // the status write below with it and leave the library reading
-            // 'processing' forever, which no later sync clears - a listener is
-            // something this service tells, not something it depends on.
-            try {
-              listener(libraryId, changed);
-            } catch (err) {
-              log.error('a settled listener failed', { library: libraryId, err });
-            }
-          }
-
-          this.statuses.set(libraryId, {
-            ...finalStatus,
-            status: 'idle',
-            photos_processing: stillPending,
-            photos_processed: processed,
-          });
-          // Only when there was something to build: a sync that queued nothing
-          // still settles, and saying so every time the watcher fires buries the
-          // runs that are doing work.
-          if (finalStatus.photos_processing > 0) {
-            log.info('processing settled', { library: libraryId, processed, stillPending, ms: Date.now() - startedAt });
-          }
-        };
-        // Asks about whichever generation is current rather than about this one:
-        // a batch is per library and outlives the sync that started it, so a later
-        // sync coalescing into it must not leave the stop button pointing at a run
-        // nothing is doing any more.
-        const stopped = (): boolean => this.generation.get(libraryId)?.signal.aborted === true;
-        void Promise.resolve(this.processing.processUnprocessed(scope, stopped))
-          .then(settle)
-          .catch((err) => {
-            log.error('processing failed', { library: libraryId, err });
-            settle();
-          });
+        this.detachProcessing(libraryId, token, syncedStatus, processingIds);
       }
     }
   }
@@ -582,6 +527,140 @@ export class SyncService implements LibraryLifecycleListener {
     if (!this.libraries.getById(libraryId)) throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
     log.info('stop requested', { library: libraryId });
     this.generation.get(libraryId)?.abort();
+  }
+
+  // Rebuild every grid tile in the library, without scanning. Same status strip
+  // as a sync's processing tail, so Stop and the progress bar keep working.
+  rebuildTiles(libraryId: string): LibrarySyncStatus {
+    return this.rebuildStage(libraryId, 'tiles');
+  }
+
+  // Rebuild every viewer rendition in the library. Refused when the library
+  // serves the camera's JPEG: there is nothing to demosaic (§10.1).
+  rebuildRenditions(libraryId: string): LibrarySyncStatus {
+    const library = this.libraries.getById(libraryId);
+    if (!library) throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
+    if (library.rendition_source !== 'render') {
+      throw new AppError(
+        'VALIDATION_ERROR',
+        'this library serves the camera\'s JPEG in the viewer; there are no renders to rebuild',
+      );
+    }
+    return this.rebuildStage(libraryId, 'renditions');
+  }
+
+  // Queue one processing stage for the whole library and hand it to the same
+  // detached batch a sync uses. The sync lock is held only for the claim
+  // (queue + generation + status): nothing walks the tree, but without it a
+  // Sync now that has the lock and not yet marked itself busy would lose its
+  // generation to this and never settle.
+  private rebuildStage(libraryId: string, stage: 'tiles' | 'renditions'): LibrarySyncStatus {
+    const library = this.libraries.getById(libraryId);
+    if (!library) throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
+    const current = this.statuses.get(libraryId);
+    if (current != null && current.status !== 'idle') {
+      throw new AppError('SYNC_IN_PROGRESS', 'a sync is already running for this library');
+    }
+
+    const lockPath = acquireSyncLock(library.root_path);
+    try {
+      // Sync may have claimed between the idle check and the lock.
+      const claimed = this.statuses.get(libraryId);
+      if (claimed != null && claimed.status !== 'idle') {
+        throw new AppError('SYNC_IN_PROGRESS', 'a sync is already running for this library');
+      }
+
+      const queued =
+        stage === 'tiles'
+          ? this.photos.queueTileRebuildForLibrary(libraryId)
+          : this.photos.queueRenditionRebuildForLibrary(libraryId);
+      log.info('library rebuild queued', { library: libraryId, stage, queued });
+      if (queued === 0) return idle(libraryId);
+
+      const token = new AbortController();
+      this.generation.set(libraryId, token);
+      const status: LibrarySyncStatus = {
+        ...idle(libraryId, 'processing'),
+        photos_processing: queued,
+      };
+      this.processingBatch.set(libraryId, { queued, photoIds: null });
+      this.statuses.set(libraryId, status);
+      this.detachProcessing(libraryId, token, status, null);
+      return status;
+    } finally {
+      releaseSyncLock(lockPath);
+    }
+  }
+
+  // Detached rendition batch: returns to the caller immediately, reports through
+  // getSyncStatus, and settles the generation's status when the pool drains.
+  private detachProcessing(
+    libraryId: string,
+    token: AbortController,
+    finalStatus: LibrarySyncStatus,
+    photoIds: readonly string[] | null,
+  ): void {
+    // Runs on both success and failure: processing throwing must not leave the
+    // status stuck at 'processing'. Skipped if a newer sync generation started
+    // meanwhile, so a stale tail can't stomp the newer run's status.
+    const scope: ProcessingScope = { libraryId, photoIds: photoIds ?? undefined };
+    // Idempotent, because both arms of the promise below reach it: a failure
+    // inside `settle` itself would otherwise run the whole of it twice,
+    // including every listener - and detection is not a cheap thing to do
+    // by accident.
+    let settled = false;
+    const settle = (): void => {
+      if (settled || this.generation.get(libraryId) !== token) return;
+      settled = true;
+      const stillPending = this.photos.countPendingProcessing(libraryId, scope.photoIds);
+      const processed = Math.max(0, finalStatus.photos_processing - stillPending);
+      // Before the status goes idle, not after. A client watching for idle
+      // re-reads the collection the moment it sees it, and a listener that
+      // changes the collection's *shape* - stack detection groups rows into
+      // one another (§19.4.1) - would land after that read and leave the
+      // grid showing a library that no longer exists. "Settled" has to mean
+      // settled, so this holds 'processing' for however long it takes.
+      //
+      // Announced here rather than when the scan finished for the same kind
+      // of reason: what listens wants the *derived* files, and a sync that
+      // has only scanned has imported photographs nothing can compare yet.
+      const changed = finalStatus.photos_added + finalStatus.photos_modified > 0;
+      for (const listener of this.settledListeners) {
+        // One listener's failure is its own. Left to throw, it would take
+        // the status write below with it and leave the library reading
+        // 'processing' forever, which no later sync clears - a listener is
+        // something this service tells, not something it depends on.
+        try {
+          listener(libraryId, changed);
+        } catch (err) {
+          log.error('a settled listener failed', { library: libraryId, err });
+        }
+      }
+
+      this.statuses.set(libraryId, {
+        ...finalStatus,
+        status: 'idle',
+        photos_processing: stillPending,
+        photos_processed: processed,
+      });
+      // Only when there was something to build: a sync that queued nothing
+      // still settles, and saying so every time the watcher fires buries the
+      // runs that are doing work.
+      if (finalStatus.photos_processing > 0) {
+        log.info('processing settled', { library: libraryId, processed, stillPending });
+      }
+    };
+    // Asks about whichever generation is current rather than about this one:
+    // a batch is per library and outlives the sync that started it, so a later
+    // sync coalescing into it must not leave the stop button pointing at a run
+    // nothing is doing any more.
+    const stopped = (): boolean => this.generation.get(libraryId)?.signal.aborted === true;
+    void Promise.resolve(this.processing.processUnprocessed(scope, stopped))
+      .then(settle)
+      .catch((err) => {
+        log.error('processing failed', { library: libraryId, err });
+        settle();
+      });
   }
 
   // While rendition building runs (detached, §9.5), the counts are computed live from the

@@ -74,6 +74,11 @@ export class LibrariesApi {
 
     app.get('/:id/sync/status', (c) => c.json(this.sync.getSyncStatus(c.req.param('id'))));
 
+    // One stage of what a sync does, on its own: rebuild every grid tile, or
+    // every viewer render. Same status endpoint and Stop button as a sync.
+    app.post('/:id/jobs/tiles', (c) => c.json(this.sync.rebuildTiles(c.req.param('id'))));
+    app.post('/:id/jobs/renditions', (c) => c.json(this.sync.rebuildRenditions(c.req.param('id'))));
+
     app.get('/:id', (c) => c.json(this.service.get(c.req.param('id'))));
 
     app.patch('/:id', async (c) => {

@@ -1,6 +1,6 @@
 import { observer } from 'mobx-react-lite';
 import { useEffect, useState, type ReactNode } from 'react';
-import { CircleStop, FolderPlus, RefreshCw, Trash2 } from 'lucide-react';
+import { CircleStop, FolderPlus, Image, RefreshCw, Sparkles, Trash2 } from 'lucide-react';
 import type { Library, Settings, UpdateSettingsRequest, ViewerRenditionMode, RenditionSource } from '../../api/client';
 import { useAppSettingsStore, useLibrariesStore, usePresenters, useSyncStore } from '../../app/stores_context';
 import { AddLibraryDialog } from '../libraries/add_library_dialog';
@@ -112,6 +112,7 @@ const LibraryList = observer(function LibraryList(): JSX.Element {
               <RenditionSettings library={library} />
               <StackSettings library={library} />
             </details>
+            <LibraryJobs library={library} />
           </div>
         </div>
       ))}
@@ -385,6 +386,62 @@ const LibraryNumberField = observer(function LibraryNumberField({
   );
 });
 
+// Stages of a sync offered on their own: scan without forcing rebuilds, or
+// regenerate every tile / every viewer render. Collapsed: maintenance, not
+// something you reach for every visit.
+const LibraryJobs = observer(function LibraryJobs({ library }: { library: Library }): JSX.Element {
+  const sync = useSyncStore();
+  const { sync: syncPresenter } = usePresenters();
+  const busy = sync.isBusy && sync.libraryId === library.id;
+  const renders = library.rendition_source === 'render';
+
+  return (
+    <details className="advanced">
+      <summary className="advanced__summary">Library jobs</summary>
+
+      <div className="panel">
+        <SettingRow
+          label="Scan & reconcile"
+          hint="Walks the folder tree and updates the catalogue for anything that appeared, moved, changed or vanished. Builds only what new or changed photos still owe."
+          disabledReason={busy ? 'A job is already running for this library.' : undefined}
+        >
+          <Button disabled={busy} onClick={() => void syncPresenter.trigger(library.id)}>
+            <RefreshCw size={ICON} />
+            Run
+          </Button>
+        </SettingRow>
+
+        <SettingRow
+          label="Rebuild grid thumbnails"
+          hint="Regenerates every grid tile from the camera's JPEG. Viewer renders are left alone."
+          disabledReason={busy ? 'A job is already running for this library.' : undefined}
+        >
+          <Button disabled={busy} onClick={() => void syncPresenter.rebuildTiles(library.id)}>
+            <Sparkles size={ICON} />
+            Run
+          </Button>
+        </SettingRow>
+
+        <SettingRow
+          label="Rebuild renders"
+          hint="Regenerates every full-size viewer rendition from the RAW, using the library's current rendition settings. Use after changing those settings, or after a pipeline change."
+          disabledReason={
+            busy
+              ? 'A job is already running for this library.'
+              : renders
+                ? undefined
+                : "This library serves the camera's JPEG in the viewer, so there are no renders to rebuild."
+          }
+        >
+          <Button disabled={busy || !renders} onClick={() => void syncPresenter.rebuildRenditions(library.id)}>
+            <Image size={ICON} />
+            Run
+          </Button>
+        </SettingRow>
+      </div>
+    </details>
+  );
+});
 // The three renditions under the names the viewer gives them, then the two modes
 // that follow whatever was chosen there.
 const RENDITION_MODES: Option<ViewerRenditionMode>[] = [

@@ -152,6 +152,9 @@ export const api = {
   syncLibrary: (id: string): Promise<LibrarySyncStatus> => request('POST', `/api/libraries/${id}/sync`),
   cancelSync: (id: string): Promise<void> => request('DELETE', `/api/libraries/${id}/sync`),
   getSyncStatus: (id: string): Promise<LibrarySyncStatus> => request('GET', `/api/libraries/${id}/sync/status`),
+  rebuildLibraryTiles: (id: string): Promise<LibrarySyncStatus> => request('POST', `/api/libraries/${id}/jobs/tiles`),
+  rebuildLibraryRenditions: (id: string): Promise<LibrarySyncStatus> =>
+    request('POST', `/api/libraries/${id}/jobs/renditions`),
 
   // The list calls take a signal because a scroll abandons blocks faster than
   // they answer: without it every request a flick started stays on the wire,

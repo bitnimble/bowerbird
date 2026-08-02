@@ -1,5 +1,5 @@
 import { action, runInAction } from 'mobx';
-import { ApiError, api } from '../../api/client';
+import { ApiError, api, type LibrarySyncStatus } from '../../api/client';
 import type { LibrariesPresenter } from '../libraries/libraries_presenter';
 import type { PhotosPresenter } from '../photos/photos_presenter';
 import type { SyncStore } from './sync_store';
@@ -38,10 +38,24 @@ export class SyncPresenter {
   // and hashing every file - the whole time the run is already under way and the
   // status endpoint has been reporting it.
   async trigger(libraryId: string): Promise<void> {
+    await this.start(libraryId, () => api.syncLibrary(libraryId));
+  }
+
+  // One stage of a sync, without walking the tree: every grid tile, or every
+  // viewer render. Same strip and Stop as Sync now.
+  async rebuildTiles(libraryId: string): Promise<void> {
+    await this.start(libraryId, () => api.rebuildLibraryTiles(libraryId));
+  }
+
+  async rebuildRenditions(libraryId: string): Promise<void> {
+    await this.start(libraryId, () => api.rebuildLibraryRenditions(libraryId));
+  }
+
+  private async start(libraryId: string, run: () => Promise<LibrarySyncStatus>): Promise<void> {
     this.stop(); // one poll loop, whether or not a view is already watching
     this.setLibrary(libraryId);
     this.starting = libraryId;
-    const run = api.syncLibrary(libraryId).then(
+    const pending = run().then(
       (status) => runInAction(() => (this.store.status = status)),
       (err) => {
         // A 409 means someone else is already syncing, which is not a failure
@@ -51,11 +65,11 @@ export class SyncPresenter {
         }
       },
     );
-    void run.finally(() => {
+    void pending.finally(() => {
       if (this.starting === libraryId) this.starting = null;
     });
     await this.poll();
-    await run;
+    await pending;
   }
 
   // Stops whatever the library is doing. The run settles back to idle on its own,

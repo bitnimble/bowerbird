@@ -973,6 +973,31 @@ export class PhotosRepository {
       .run(...photoIds).changes;
   }
 
+  // Whole library, same tile-only rule as `queueTileRebuild`. One statement rather
+  // than resolving every id first: a catalogue rebuild is the whole library, and
+  // a selection-shaped request would spend the round trip on an id list nobody
+  // needs.
+  queueTileRebuildForLibrary(libraryId: string): number {
+    return this.db
+      .query(
+        `UPDATE photos SET needs_tile = 1, processing_error = NULL
+         WHERE library_id = ? AND is_missing = 0 AND is_deleted = 0`,
+      )
+      .run(libraryId).changes;
+  }
+
+  // Whole library's viewer renditions. Clears `rendition_source` so the library's
+  // current setting applies: a catalogue rebuilt after switching to render would
+  // otherwise keep the stamped `embedded` and build nothing (§10.1).
+  queueRenditionRebuildForLibrary(libraryId: string): number {
+    return this.db
+      .query(
+        `UPDATE photos SET needs_renditions = 1, rendition_source = NULL, processing_error = NULL
+         WHERE library_id = ? AND is_missing = 0 AND is_deleted = 0`,
+      )
+      .run(libraryId).changes;
+  }
+
   // Both stages: the failure is the file rather than the stage, so a photo whose
   // tile could not be built has nothing to gain from being asked for renditions.
   markProcessingFailed(id: string, error: string): void {
