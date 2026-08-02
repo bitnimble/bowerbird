@@ -335,6 +335,64 @@ pub fn ffmpeg_args(width: u32, height: u32, options: &EncodeOptions) -> Vec<Stri
     args
 }
 
+/// First half of the twin's remux: the still's AV1 bitstream, on stdout.
+///
+/// The twin used to be a second libaom encode of the same graded frame at the same
+/// settings, which is a file the still already contains. Copying costs nothing next to
+/// the ~230ms that encode took, and the two media come out of the same bitstream rather
+/// than two runs of an encoder that only happen to agree.
+///
+/// Only sound at 4:2:0, which is the caller's condition to check.
+pub fn still_to_obu_args(still_path: &str) -> Vec<String> {
+    let mut args: Vec<String> = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-nostdin", "-i"]
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect();
+    args.push(still_path.to_string());
+    for arg in ["-c:v", "copy", "-f", "obu", "-"] {
+        args.push(arg.to_string());
+    }
+    args
+}
+
+/// Second half, and it is not a detour that could be collapsed into the first.
+///
+/// ffmpeg's AVIF demuxer hands over no `av1C` config OBUs, so copying straight from the
+/// AVIF into MP4 writes a configuration record with no sequence header in it: measured,
+/// 4 bytes of extradata against the 21 an encoded twin carries, and a codec string
+/// truncated to `av01.0.12M.10` with every colour field missing. Firefox decodes the
+/// frame and composites it SDR. Reading the bitstream back as a raw OBU stream makes
+/// ffmpeg parse the sequence header itself and rebuild the record around it.
+///
+/// `-r 1` because an OBU stream carries no timing, and the twin has always been one
+/// frame of one second (`ffmpeg_args` gives its rawvideo input the same).
+pub fn obu_to_mp4_args(video_path: &str) -> Vec<String> {
+    let mut args: Vec<String> = [
+        "ffmpeg",
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-r",
+        "1",
+        "-f",
+        "obu",
+        "-i",
+        "-",
+        "-c:v",
+        "copy",
+        // Seekable and decodable from the first byte, since it is displayed rather
+        // than streamed.
+        "-movflags",
+        "+faststart",
+    ]
+    .iter()
+    .map(|s| (*s).to_string())
+    .collect();
+    args.push(video_path.to_string());
+    args
+}
+
 /// The still's encode. `y4m_path` empty reads the frame from stdin instead of a file.
 ///
 /// avifenc is here for its **container**, not its encoder: both media go through libaom
@@ -454,6 +512,15 @@ mod tests {
                     }
                 }
             }
+        }
+        // Size-independent, so once rather than per row, but pinned with the rest
+        // because it carries the same kind of flag: the twin is HDR or not depending
+        // on whether the sequence header survives into the MP4's config record.
+        for (name, argv) in [
+            ("obu", still_to_obu_args("/out/rendition.avif")),
+            ("mp4", obu_to_mp4_args("/out/rendition.mp4")),
+        ] {
+            rows.push(format!("remux\t{name}\t{}", argv.join(SEP)));
         }
         crate::pin::check("hdr_argv.pin.txt", &format!("{}\n", rows.join("\n")));
     }

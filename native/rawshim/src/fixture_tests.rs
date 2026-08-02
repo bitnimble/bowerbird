@@ -1214,6 +1214,40 @@ mod hdr_grade {
         );
     }
 
+    /// The twin carries the sequence header inside its `av1C` box.
+    ///
+    /// **This is the whole reason the remux goes out through a raw OBU stream**, and the
+    /// failure it guards is silent: ffmpeg copies the frame either way and the file
+    /// plays, so nothing short of loading it in Firefox shows that the configuration
+    /// record is empty and the video composites SDR. An `av1C` with no config OBUs is 12
+    /// bytes - 4 of box header, 4 of type, 4 of record - so anything larger means the
+    /// sequence header survived.
+    #[test]
+    fn the_video_twin_carries_its_sequence_header() {
+        let dir = std::env::temp_dir().join("bb-hdr-twin-fixture");
+        std::fs::create_dir_all(&dir).expect("a scratch directory");
+        let still = dir.join("still.avif");
+        let video = dir.join("still.mp4");
+
+        let frame = linear();
+        crate::hdr::encode_pair(
+            crate::hdr::Decode::Borrowed(source(&frame)),
+            &options(PEAK, 640.0, still.to_str().unwrap()),
+            Some(video.to_str().unwrap()),
+            None,
+        )
+        .expect("the encode");
+
+        let bytes = std::fs::read(&video).expect("the twin");
+        let _ = std::fs::remove_dir_all(&dir);
+        let at = bytes
+            .windows(4)
+            .position(|w| w == b"av1C")
+            .expect("the twin has no av1C box at all");
+        let size = u32::from_be_bytes(bytes[at - 4..at].try_into().expect("four bytes"));
+        assert!(size > 12, "av1C is {size} bytes, so it carries no sequence header");
+    }
+
     /// The graded samples, held to what the TypeScript produced before this subsystem
     /// moved into Rust.
     ///

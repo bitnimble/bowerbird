@@ -14,7 +14,7 @@
 // to the compositor.
 
 #[cfg(not(target_arch = "wasm32"))]
-use crate::hdr_args::Medium;
+use crate::hdr_args::{Chroma, Medium};
 use crate::hdr_args::{self, EncodeOptions};
 use crate::hdr_fit::{self, HdrMatch};
 use crate::image;
@@ -472,6 +472,17 @@ pub(crate) fn use_avifenc() -> bool {
     std::env::var("BOWERBIRD_AVIFENC").is_ok_and(|value| value == "1")
 }
 
+/// Copies the still's AV1 bitstream into the MP4 the twin is, in two stages for the
+/// reason `hdr_args::obu_to_mp4_args` gives.
+#[cfg(not(target_arch = "wasm32"))]
+fn remux(still_path: &str, video_path: &str) -> Result<(), String> {
+    pipe(
+        &hdr_args::still_to_obu_args(still_path),
+        &hdr_args::obu_to_mp4_args(video_path),
+        &[],
+    )
+}
+
 /// Runs `first`, feeding it `stdin_data`, with its stdout piped into `second`.
 ///
 /// Both are waited on, and both errors are reported: the interesting failure is
@@ -559,11 +570,11 @@ fn failure(command: &str, output: &std::process::Output) -> String {
 /// Grades and encodes one HDR rendition, and its one-frame video twin where one is
 /// asked for.
 ///
-/// The twin shares the grade outright. Both media run the same resize, warp and tone
-/// map, and now that the video is libaom rather than SVT-AV1 there is no encoder
-/// ceiling to make them different sizes either - so one graded frame serves both,
-/// always. It used to be regraded for the second encode, paying for the most expensive
-/// stage of the pipeline twice on every HDR import.
+/// The twin shares the grade outright, and at 4:2:0 it shares the encode as well: it is
+/// the still's own AV1 bitstream in an MP4. Both media run the same resize, warp and
+/// tone map, and both are libaom at the same settings, so the second encode was
+/// producing a file the first one already held. The frame used to be regraded for it
+/// too, paying for the most expensive stage of the pipeline twice on every HDR import.
 /// Reports whether the still went out through `avifenc` rather than through libavif
 /// here, which is the only thing the differential between the two routes can assert on
 /// now that they produce the same bytes at 4:4:4.
@@ -600,6 +611,19 @@ pub fn encode_pair(
         // frame rather than a copy of it.
         return encode_frame(std::borrow::Cow::Owned(frame), width, height, options);
     };
+
+    // Where the still is 4:2:0 the twin is the still's own bitstream in another
+    // container, so nothing is encoded twice and the frame can be handed over here too.
+    //
+    // 4:2:0 is the condition because Firefox composites no 4:4:4 video: measured on the
+    // same PQ frame, the 4:2:0 remux lights the panel and the 4:4:4 one decodes and
+    // stays SDR. `hdr_still_full_chroma` is off by default, so the encode below is the
+    // exception rather than the path.
+    if options.still_chroma == Chroma::Yuv420 {
+        let via_avifenc = encode_frame(std::borrow::Cow::Owned(frame), width, height, options)?;
+        remux(&options.output_path, video_path)?;
+        return Ok(via_avifenc);
+    }
     let video = EncodeOptions {
         medium: Medium::Video,
         output_path: video_path.to_string(),
