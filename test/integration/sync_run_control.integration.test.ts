@@ -61,7 +61,7 @@ function build(processing: ProcessingTrigger, extract: (absPath: string) => Prom
 beforeEach(() => {
   root = mkdtempSync(path.join(tmpdir(), 'bb-cancel-'));
   db = createDatabase(':memory:');
-  db.query('INSERT INTO libraries (id, root_path, ordering) VALUES (?, ?, ?)').run(LIB, root, 'taken_desc');
+  db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(LIB, root, 'lib', 'taken_desc');
   for (const name of ['a.arw', 'b.arw', 'c.arw']) writeFileSync(path.join(root, name), name);
 });
 

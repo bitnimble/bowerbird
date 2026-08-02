@@ -20,7 +20,7 @@ function setUp(): { db: Database; stacks: StacksService; photos: PhotosRepositor
   db.exec('PRAGMA foreign_keys = ON');
   runMigrations(db);
   for (const id of [LIBRARY, OTHER_LIBRARY]) {
-    db.query('INSERT INTO libraries (id, root_path, ordering) VALUES (?, ?, ?)').run(id, `/tmp/${id}`, 'taken_desc');
+    db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(id, `/tmp/${id}`, 'lib', 'taken_desc');
   }
   db.query('INSERT INTO shoots (id, library_id, folder_path, name) VALUES (?, ?, ?, ?)').run(SHOOT, LIBRARY, 'Day1', 'Day1');
   db.query('INSERT INTO albums (id, name) VALUES (?, ?)').run(ALBUM, 'Picks');

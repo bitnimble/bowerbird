@@ -19,8 +19,8 @@ export const CreateLibraryRequestSchema = z.object({
   // would then walk back in (§12.3). A root that already holds this folder is
   // refused rather than adopted, since its contents would silently never import.
   bin_name: BinNameSchema.default('Bin'),
-  // Omitted or blank means "call it after its root folder", which is what a
-  // library shows until someone gives it a name of its own.
+  // Omitted or blank: named after the root folder (a year leaf includes its
+  // parent) and that name is stored, not held as a placeholder.
   name: z.string().trim().optional(),
   ordering: OrderingSchema.default('taken_asc'),
   // Asked here rather than left to Settings because both change what the first
@@ -36,7 +36,7 @@ export const LibrarySchema = z.object({
   root_path: z.string(),
   data_path: z.string().nullable(),
   bin_name: z.string(),
-  name: z.string().nullable(),
+  name: z.string().min(1),
   ordering: OrderingSchema,
   rendition_source: RenditionSourceSchema,
   rendition_hdr: z.boolean(),
@@ -92,8 +92,7 @@ export type SetFolderRuleRequest = z.infer<typeof SetFolderRuleRequestSchema>;
 // Every field optional: the settings UI changes one control at a time, and a
 // partial update must not reset the others to their defaults.
 export const UpdateLibraryRequestSchema = z.object({
-  // Blank clears it, so a library can be handed back to its folder name.
-  name: z.string().trim().optional(),
+  name: z.string().trim().min(1).optional(),
   ordering: OrderingSchema.optional(),
   rendition_source: RenditionSourceSchema.optional(),
   rendition_hdr: z.boolean().optional(),

@@ -95,7 +95,7 @@ test('a fresh database starts with triage and never had selected', () => {
 test('the triage column rejects a value outside the three states', () => {
   const db = new Database(':memory:');
   runMigrations(db);
-  db.query("INSERT INTO libraries (id, root_path, ordering) VALUES ('lib', '/tmp/x', 'taken_desc')").run();
+  db.query("INSERT INTO libraries (id, root_path, name, ordering) VALUES ('lib', '/tmp/x', 'lib', 'taken_desc')").run();
 
   expect(() =>
     db

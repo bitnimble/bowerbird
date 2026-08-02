@@ -46,7 +46,7 @@ function build(over: {
   return { service: new PhotosService(photos, albums, shoots, libraries, processing), photos, libraries, shoots, albums, processing };
 }
 
-const library: Library = { id: 'lib', root_path: '/r', data_path: null, bin_name: 'Bin', name: null, ordering: 'added_asc',
+const library: Library = { id: 'lib', root_path: '/r', data_path: null, bin_name: 'Bin', name: 'lib', ordering: 'added_asc',
   rendition_source: 'embedded' as const,
   rendition_hdr: false,
   rendition_hdr_video: false, include_subfolders: true, mirror_shoots: true, auto_stack: true, auto_stack_similarity: 0.78, auto_stack_window_seconds: 60, last_synced_at: null, photo_count: 0 };
@@ -210,7 +210,7 @@ describe('PhotosService.delete', () => {
       writeFileSync(path.join(dataDir, 'renditions', 'small', 'p1.webp'), '');
       writeFileSync(path.join(dataDir, 'renditions', 'full', 'p1.webp'), '');
 
-      const lib: Library = { id: 'lib', root_path: root, data_path: null, bin_name: 'Bin', name: null, ordering: 'added_asc',
+      const lib: Library = { id: 'lib', root_path: root, data_path: null, bin_name: 'Bin', name: 'lib', ordering: 'added_asc',
   rendition_source: 'embedded' as const,
   rendition_hdr: false,
   rendition_hdr_video: false, include_subfolders: true, mirror_shoots: true, auto_stack: true, auto_stack_similarity: 0.78, auto_stack_window_seconds: 60, last_synced_at: null, photo_count: 0 };
@@ -251,7 +251,7 @@ describe('PhotosService.delete', () => {
       writeFileSync(path.join(root, 'D', 'foo.arw'), 'shallow');
       writeFileSync(path.join(root, 'foo.arw'), 'root');
 
-      const lib: Library = { id: 'lib', root_path: root, data_path: null, bin_name: 'Bin', name: null, ordering: 'added_asc',
+      const lib: Library = { id: 'lib', root_path: root, data_path: null, bin_name: 'Bin', name: 'lib', ordering: 'added_asc',
   rendition_source: 'embedded' as const,
   rendition_hdr: false,
   rendition_hdr_video: false, include_subfolders: true, mirror_shoots: true, auto_stack: true, auto_stack_similarity: 0.78, auto_stack_window_seconds: 60, last_synced_at: null, photo_count: 0 };
@@ -286,7 +286,7 @@ describe('PhotosService.delete', () => {
     const root = mkdtempSync(path.join(tmpdir(), 'bb-del-'));
     try {
       writeFileSync(path.join(root, 'a.arw'), 'raw');
-      const lib: Library = { id: 'lib', root_path: root, data_path: null, bin_name: 'Bin', name: null, ordering: 'added_asc',
+      const lib: Library = { id: 'lib', root_path: root, data_path: null, bin_name: 'Bin', name: 'lib', ordering: 'added_asc',
   rendition_source: 'embedded' as const,
   rendition_hdr: false,
   rendition_hdr_video: false, include_subfolders: true, mirror_shoots: true, auto_stack: true, auto_stack_similarity: 0.78, auto_stack_window_seconds: 60, last_synced_at: null, photo_count: 0 };
@@ -333,7 +333,7 @@ describe('PhotosService.delete', () => {
         root_path: root,
         data_path: null,
         bin_name: 'Bin',
-        name: null,
+        name: 'lib',
         ordering: 'added_asc',
         rendition_source: 'embedded' as const,
         rendition_hdr: false,

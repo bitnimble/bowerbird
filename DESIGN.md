@@ -180,7 +180,7 @@ CREATE TABLE libraries (
   id          TEXT PRIMARY KEY,
   root_path   TEXT NOT NULL UNIQUE,
   data_path   TEXT,  -- path to .bowerbird/ data folder; NULL means default (<root_path>/.bowerbird/)
-  name        TEXT,  -- display name; NULL falls back to the last segment of root_path
+  name        TEXT NOT NULL,  -- display name; create stores the folder name (or parent + year) when none is given
   ordering    TEXT NOT NULL DEFAULT 'taken_asc'
     CHECK (ordering IN ('taken_asc', 'taken_desc', 'added_asc', 'added_desc')),
   -- How much of the folder tree this library is, and whether its folders are
@@ -193,7 +193,7 @@ CREATE TABLE libraries (
 
 - `root_path`, absolute path to the library root folder on disk.
 - `data_path`, absolute path to the data directory for generated files. If NULL, defaults to `<root_path>/.bowerbird/`.
-- `name`, what the library is called in the rail and in Settings. NULL, which is what every library created before this column had, shows the root folder's name instead. Nullable rather than defaulted at insert so a folder that is later renamed on disk carries the new name through, as long as nobody has overridden it.
+- `name`, what the library is called in the rail and in Settings. Required. On create, an omitted or blank name is filled from the root folder and stored: the last path segment, or when that segment is a four-digit year, `"<parent> <year>"` so date-sorted trees do not all show as `"2025"`. Renaming the folder on disk afterwards does not change the stored name.
 - `ordering`, default ordering for photo listings in this library.
 - `include_subfolders`, whether the scan descends past the root at all (§9.1). A standing rule rather than a decision taken once at import: a folder created next month is out of scope for the same reason today's are, so turning it off writes no `folder_rules` rows and never needs revisiting. Off makes shoots meaningless for the library - a shoot *is* a subfolder, and its photos would never be scanned - so the UI disables the Shoots section and forces `mirror_shoots` off with that as the reason.
 - `mirror_shoots`, whether sync keeps shoots in step with the folders on disk (§9.4.1). On, every folder holding photos is a shoot and the catalogue cannot disagree with the tree; off, a shoot exists only where the user made one, and untracked folders are offered on the Shoots page instead (§18.3.4).
@@ -409,7 +409,7 @@ export const PhotoIdListSchema = z.object({
 export const CreateLibraryRequestSchema = z.object({
   root_path: z.string().min(1),
   data_path: z.string().optional(),
-  name: z.string().trim().optional(),          // blank means "call it after its root folder"
+  name: z.string().trim().optional(),          // blank: store the inferred folder name (§4.1)
   ordering: OrderingSchema.default('taken_asc'),
   include_subfolders: z.boolean().default(true),  // §4.1
   mirror_shoots: z.boolean().default(true),
@@ -421,7 +421,7 @@ export const LibrarySchema = z.object({
   root_path: z.string(),
   data_path: z.string().nullable(),
   bin_name: z.string(),
-  name: z.string().nullable(),
+  name: z.string().min(1),
   ordering: OrderingSchema,
   rendition_source: RenditionSourceSchema,
   rendition_hdr: z.boolean(),
@@ -437,7 +437,7 @@ export const LibrarySchema = z.object({
 export const UpdateLibraryRequestSchema = LibrarySchema
   .pick({ ordering: true, rendition_source: true, rendition_hdr: true, rendition_hdr_video: true,
           include_subfolders: true, mirror_shoots: true })
-  .extend({ name: z.string().trim() })  // blank clears it, handing the library back to its folder name
+  .extend({ name: z.string().trim().min(1) })
   .partial();
 
 export const FolderRuleSchema = z.object({           // §4.7

@@ -37,7 +37,7 @@ test('the rendition settings live on the library and round-trip', () => {
   const libraries = new LibrariesRepository(db);
   const id = '00000000-0000-4000-8000-0000000000c1';
   try {
-    db.query('INSERT INTO libraries (id, root_path, ordering) VALUES (?, ?, ?)').run(id, '/tmp/x', 'added_desc');
+    db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(id, '/tmp/x', 'lib', 'added_desc');
 
     // The default is the embedded JPEG, which needs no demosaic, and HDR is off
     // because it only means anything for a render.

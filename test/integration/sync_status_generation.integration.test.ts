@@ -25,7 +25,7 @@ let db: ReturnType<typeof createDatabase>;
 beforeAll(() => {
   root = mkdtempSync(path.join(tmpdir(), 'bb-gen-'));
   db = createDatabase(':memory:');
-  db.query('INSERT INTO libraries (id, root_path, ordering) VALUES (?, ?, ?)').run(LIB, root, 'taken_desc');
+  db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(LIB, root, 'lib', 'taken_desc');
   copyFileSync(FIXTURE, path.join(root, 'photo.arw'));
 });
 

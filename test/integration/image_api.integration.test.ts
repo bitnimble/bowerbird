@@ -21,7 +21,7 @@ function buildApp(root: string, photo: BasicPhoto | null, renditionHdr = false) 
     root_path: root,
     data_path: null,
     bin_name: 'Bin',
-    name: null,
+    name: 'lib',
     ordering: 'taken_desc',
     rendition_source: 'render',
     rendition_hdr: renditionHdr,

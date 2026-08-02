@@ -33,7 +33,7 @@ const row = (filePath: string) =>
 beforeAll(() => {
   root = mkdtempSync(path.join(tmpdir(), 'bb-scoped-'));
   db = createDatabase(':memory:');
-  db.query('INSERT INTO libraries (id, root_path, ordering) VALUES (?, ?, ?)').run(LIB, root, 'taken_desc');
+  db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(LIB, root, 'lib', 'taken_desc');
   mkdirSync(abs('Trip'));
   sync = new SyncService(
     new PhotosRepository(db),

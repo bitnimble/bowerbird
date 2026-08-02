@@ -39,7 +39,7 @@ beforeAll(() => {
   // Mirroring off: this suite is about the diff, moves and relocation, and a
   // shoot appearing for every folder it makes would answer its questions for it.
   // Mirroring has its own suite (sync_mirror).
-  db.query('INSERT INTO libraries (id, root_path, ordering, mirror_shoots) VALUES (?, ?, ?, 0)').run(LIB, root, 'taken_desc');
+  db.query('INSERT INTO libraries (id, root_path, name, ordering, mirror_shoots) VALUES (?, ?, ?, ?, 0)').run(LIB, root, 'lib', 'taken_desc');
   photos = new PhotosRepository(db);
   // No-op processing trigger: this suite exercises scan/diff detection with real
   // metadata, not rendition generation (validated separately).

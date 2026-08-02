@@ -25,7 +25,7 @@ let sync: SyncService;
 beforeAll(() => {
   root = mkdtempSync(path.join(tmpdir(), 'bb-life-'));
   db = createDatabase(':memory:');
-  db.query('INSERT INTO libraries (id, root_path, ordering) VALUES (?, ?, ?)').run(LIB, root, 'taken_desc');
+  db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(LIB, root, 'lib', 'taken_desc');
   sync = new SyncService(
     new PhotosRepository(db),
     new LibrariesRepository(db),

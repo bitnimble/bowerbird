@@ -26,7 +26,7 @@ let photos: PhotosRepository;
 beforeAll(() => {
   root = mkdtempSync(path.join(tmpdir(), 'bb-counts-'));
   db = createDatabase(':memory:');
-  db.query('INSERT INTO libraries (id, root_path, ordering) VALUES (?, ?, ?)').run(LIB, root, 'taken_desc');
+  db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(LIB, root, 'lib', 'taken_desc');
   photos = new PhotosRepository(db);
   for (const name of ['a.arw', 'b.arw', 'c.arw']) copyFileSync(FIXTURE, path.join(root, name));
 });

@@ -45,7 +45,7 @@ beforeEach(() => {
   db = createDatabase(':memory:');
   libraries = new LibrariesRepository(db);
   photos = new PhotosRepository(db);
-  db.query('INSERT INTO libraries (id, root_path, ordering) VALUES (?, ?, ?)').run(LIB, root, 'added_desc');
+  db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(LIB, root, 'lib', 'added_desc');
 });
 
 afterEach(() => {

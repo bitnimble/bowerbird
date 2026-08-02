@@ -163,6 +163,33 @@ describe('migrations: splitting the import into two stages', () => {
     expect(cols.has('needs_processing')).toBe(false);
   });
 
+  // Names used to be optional placeholders for the root folder. Existing blank
+  // rows become real names, and the column refuses NULL afterwards.
+  it('fills blank library names from the root path and makes the column required', () => {
+    const db = new Database(':memory:');
+    db.exec(`CREATE TABLE libraries (
+      id TEXT PRIMARY KEY, root_path TEXT NOT NULL UNIQUE, data_path TEXT, name TEXT
+    )`);
+    db.exec(`INSERT INTO libraries (id, root_path, name) VALUES
+      ('a', '/photos/Trip', NULL),
+      ('b', '/photos/Trip/2025', ''),
+      ('c', '/photos/Weddings', 'Already named')`);
+    db.exec(OLD_PHOTOS);
+
+    runMigrations(db);
+
+    const rows = db.query('SELECT id, name FROM libraries ORDER BY id').all() as { id: string; name: string }[];
+    expect(rows).toEqual([
+      { id: 'a', name: 'Trip' },
+      { id: 'b', name: 'Trip 2025' },
+      { id: 'c', name: 'Already named' },
+    ]);
+    const nameCol = (db.query('PRAGMA table_info(libraries)').all() as { name: string; notnull: number }[]).find(
+      (col) => col.name === 'name',
+    );
+    expect(nameCol?.notnull).toBe(1);
+  });
+
   it('halves a tuned quantizer once, whatever it is run over', () => {
     const db = new Database(':memory:');
     runMigrations(db);

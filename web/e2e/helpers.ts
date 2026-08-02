@@ -31,8 +31,19 @@ export async function addLibrary(page: Page, rootPath: string, options: { autoSt
   if (options.autoStack !== true) await setAutoStack(page, rootPath, false);
 }
 
+// Folders / renditions / stacks sit behind this disclosure so Settings stays
+// short; open it before touching any of those controls.
+async function openLibrarySettings(page: Page, rootPath: string): Promise<void> {
+  const details = libraryRow(page, rootPath).locator('details.advanced').filter({ hasText: 'Library settings' });
+  if (!(await details.evaluate((el) => (el as HTMLDetailsElement).open))) {
+    await details.locator('summary').click();
+  }
+  await expect(details).toHaveAttribute('open', '');
+}
+
 // The per-library "Group similar photos automatically" toggle (§19.4).
 export async function setAutoStack(page: Page, rootPath: string, on: boolean): Promise<void> {
+  await openLibrarySettings(page, rootPath);
   const toggle = libraryRow(page, rootPath).getByLabel('Group similar photos automatically');
   if ((await toggle.isChecked()) !== on) await toggle.click();
   await expect(toggle).toBeChecked({ checked: on });
@@ -42,6 +53,7 @@ export async function setAutoStack(page: Page, rootPath: string, on: boolean): P
 // Select, whose trigger is a combobox named after the setting rather than a
 // button named after the value, so the value is picked from the menu it opens.
 export async function setRenditionSource(page: Page, rootPath: string, source: string): Promise<void> {
+  await openLibrarySettings(page, rootPath);
   await libraryRow(page, rootPath).getByLabel('Build renditions from').click();
   await page.getByRole('option', { name: source }).click();
 }

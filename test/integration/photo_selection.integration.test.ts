@@ -16,7 +16,7 @@ const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')
 
 beforeAll(() => {
   db = createDatabase(':memory:');
-  db.query('INSERT INTO libraries (id, root_path, ordering) VALUES (?, ?, ?)').run(LIB, '/tmp/bb-selection', 'taken_asc');
+  db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(LIB, '/tmp/bb-selection', 'lib', 'taken_asc');
   photos = new PhotosRepository(db);
   const insert = db.query(
     `INSERT INTO photos (id, library_id, file_path, width, height, date_taken, date_added, rating, triage, is_missing, is_deleted, needs_tile, needs_renditions)

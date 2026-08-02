@@ -25,7 +25,7 @@ function insertMissing(id: string): void {
 
 beforeAll(() => {
   db = createDatabase(':memory:');
-  db.query('INSERT INTO libraries (id, root_path, ordering) VALUES (?, ?, ?)').run(LIB, '/tmp/bb-repo-test', 'taken_desc');
+  db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(LIB, '/tmp/bb-repo-test', 'lib', 'taken_desc');
   photos = new PhotosRepository(db);
   insertPhoto('active', 0);
   insertPhoto('deleted', 1);
@@ -69,7 +69,7 @@ test('setMissing marks missing only when file_path still matches the scanned pat
 // they were written is exactly the failure, and it is invisible on a small library.
 test('listPendingProcessing queues photos in the library grid order', () => {
   const ORD = '00000000-0000-4000-8000-000000000ord';
-  db.query('INSERT INTO libraries (id, root_path, ordering) VALUES (?, ?, ?)').run(ORD, '/tmp/bb-ordering', 'taken_asc');
+  db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(ORD, '/tmp/bb-ordering', 'lib', 'taken_asc');
   const taken: [string, string | null][] = [
     ['newest', '2024-03-01T00:00:00.000Z'],
     ['undated', null],
