@@ -2785,18 +2785,21 @@ mod tests {
             [0, 1, 2].map(|c| level * tint[c])
         };
 
+        // Both planes at twice the chart, because `fit` pairs them pixel for pixel: the
+        // caller decodes its preview to `preview_long_edge`, which is the grid the
+        // render arrives on too.
         let mut scene = vec![0.0f64; width * height * 3 * 4];
-        let mut rendered = vec![0u8; width * height * 3];
+        let mut rendered = vec![0u8; width * height * 3 * 4];
         for y in 0..height {
             for x in 0..width {
                 let colour = patch((y / PATCH) * COLS + (x / PATCH));
                 let camera = [0, 1, 2].map(|c| camera(c, colour[c]));
                 let srgb = to_srgb8(&rec2020_to_srgb(), camera[0], camera[1], camera[2]);
                 for c in 0..3 {
-                    rendered[(y * width + x) * 3 + c] = srgb[c] as u8;
-                    // The plane the decode arrives on is twice the preview's width.
                     for (dy, dx) in [(0, 0), (0, 1), (1, 0), (1, 1)] {
-                        scene[(((y * 2 + dy) * width * 2) + x * 2 + dx) * 3 + c] = colour[c];
+                        let p = ((y * 2 + dy) * width * 2) + x * 2 + dx;
+                        rendered[p * 3 + c] = srgb[c] as u8;
+                        scene[p * 3 + c] = colour[c];
                     }
                 }
             }
@@ -2804,7 +2807,7 @@ mod tests {
 
         (
             Plane { width: width * 2, height: height * 2, data: scene },
-            crate::rgb::Rgb { width, height, data: rendered },
+            crate::rgb::Rgb { width: width * 2, height: height * 2, data: rendered },
         )
     }
 
