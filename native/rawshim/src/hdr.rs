@@ -13,11 +13,15 @@
 // as a one-frame video, since its video pipeline does composite HDR by passing through
 // to the compositor.
 
-use crate::hdr_args::{self, EncodeOptions, Medium};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::hdr_args::Medium;
+use crate::hdr_args::{self, EncodeOptions};
 use crate::hdr_fit::{self, HdrMatch};
 use crate::image;
 use crate::tone::{self, GradeOptions};
+#[cfg(not(target_arch = "wasm32"))]
 use std::io::Write;
+#[cfg(not(target_arch = "wasm32"))]
 use std::process::{Command, Stdio};
 
 /// Runs a command, writing `stdin_data` to it where there is any.
@@ -29,11 +33,16 @@ use std::process::{Command, Stdio};
 /// Scoped rather than spawned, so the thread borrows the graded frame instead of
 /// taking a copy of it: that copy was a second ~366MB allocation on every encode, for
 /// bytes this frame already owns and outlives the write.
+#[cfg(not(target_arch = "wasm32"))]
 fn run(args: &[String], stdin_data: Option<&[u8]>) -> Result<(), String> {
     let (command, rest) = args.split_first().ok_or("no command to run")?;
     let mut child = Command::new(command)
         .args(rest)
-        .stdin(if stdin_data.is_some() { Stdio::piped() } else { Stdio::null() })
+        .stdin(if stdin_data.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
@@ -87,6 +96,7 @@ pub struct Source<'a> {
 /// grade has copied out, and anything that tried to read it afterwards would not
 /// build. `Borrowed` is for a caller with another rendition still to write off the
 /// same frame; it keeps its decode and pays for it.
+#[cfg(not(target_arch = "wasm32"))]
 pub enum Decode<'a> {
     /// For a caller with another rendition still to write off the same frame. It
     /// keeps its decode and pays for it.
@@ -96,15 +106,24 @@ pub enum Decode<'a> {
     Owned(crate::frame::Frame),
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Decode<'_> {
     fn source(&self) -> Result<Source<'_>, String> {
         match self {
-            Decode::Borrowed(source) => {
-                Ok(Source { samples: source.samples, width: source.width, height: source.height })
-            }
+            Decode::Borrowed(source) => Ok(Source {
+                samples: source.samples,
+                width: source.width,
+                height: source.height,
+            }),
             Decode::Owned(frame) => {
-                let samples = frame.samples16().ok_or("the HDR encode needs a 16-bit decode")?;
-                Ok(Source { samples, width: frame.width, height: frame.height })
+                let samples = frame
+                    .samples16()
+                    .ok_or("the HDR encode needs a 16-bit decode")?;
+                Ok(Source {
+                    samples,
+                    width: frame.width,
+                    height: frame.height,
+                })
             }
         }
     }
@@ -117,14 +136,24 @@ impl Decode<'_> {
 ///
 /// The preview is decoded here rather than passed in, so the JPEG never leaves this
 /// side. None when the file embeds no preview, or when there are too few usable pairs.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn fit_match(
     raw_path: &str,
     source: &Source<'_>,
     quantile: f64,
     lens: crate::fit::Lens,
 ) -> Option<HdrMatch> {
-    let anchor = tone::levels(source.samples, quantile).white;
     let preview = crate::decode_embedded_rgb(raw_path, hdr_fit::sample_long_edge())?;
+    fit_match_from(source, quantile, &preview, lens)
+}
+
+pub fn fit_match_from(
+    source: &Source<'_>,
+    quantile: f64,
+    preview: &crate::rgb::Rgb,
+    lens: crate::fit::Lens,
+) -> Option<HdrMatch> {
+    let anchor = tone::levels(source.samples, quantile).white;
     let plane = hdr_fit::fit_plane(source.samples, source.width, source.height, preview.width);
     hdr_fit::fit(&plane, anchor, &preview, lens)
 }
@@ -162,6 +191,7 @@ pub fn fit_match(
 ///
 /// None when the file embeds no preview, when the fit found nothing worth applying, or
 /// when there were too few usable pairs - in each case the caller grades neutrally.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn fit_all(
     raw_path: &str,
     source: &Source<'_>,
@@ -170,12 +200,6 @@ pub fn fit_all(
     finished: image::Strengths,
 ) -> Option<(crate::fit::Profile, HdrMatch)> {
     crate::vips::init();
-    let levels = tone::levels(source.samples, quantile);
-    // Diffuse white, not the peak: it is what both halves normalise by, and a frame
-    // with none has no exposure to fit against either.
-    if !(levels.white > 0.0) {
-        return None;
-    }
     let path = std::ffi::CString::new(raw_path).ok()?;
 
     // SAFETY: the CString outlives the call.
@@ -191,31 +215,78 @@ pub fn fit_all(
             let preview = crate::vips::Pipeline::thumbnail(jpeg, hdr_fit::sample_long_edge())
                 .and_then(crate::vips::Pipeline::finish)
                 .ok()?;
-            let plane =
-                hdr_fit::fit_plane(source.samples, source.width, source.height, preview.width);
-
-            // Both halves off the same plane and the same anchor: the geometry search
-            // wants a render that looks like an ordinary picture, the colour fit wants
-            // the grade's own domain, and diffuse white is what puts them there.
-            let mut render = hdr_fit::render_srgb8(&plane, levels.white);
-            image::finish(&mut render.data, render.width, render.height, finished);
-            // Ungated: this wants the geometry, and the gate is about whether an SDR
-            // render should wear a colour transform. A frame whose SDR *colour* is
-            // refused still gets its HDR colour fitted, that being a different fit in a
-            // different domain against a different reference.
-            let mut profile =
-                crate::fit::fit_from_preview(render.as_ref(), preview.as_ref(), geometry)
-                    .ok()
-                    .flatten()?;
-            // After the fit, off the render alone - the preview has no lateral fringe left
-            // in it to compare against (`fit::with_lateral`).
             let lateral = crate::ffi::recorded_lateral(raw_path);
-            crate::fit::with_lateral(&mut profile, render.as_ref(), lateral);
-            let matched = hdr_fit::fit(&plane, levels.white, &preview, profile.lens())?;
-            Some((profile, matched))
+            fit_all_from_preview(source, quantile, geometry, finished, &preview, lateral)
         })
     };
     fitted.flatten()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn fit_all_from_preview(
+    source: &Source<'_>,
+    quantile: f64,
+    geometry: crate::fit::Geometry,
+    finished: image::Strengths,
+    preview: &crate::rgb::Rgb,
+    lateral: Option<[Vec<f64>; 2]>,
+) -> Option<(crate::fit::Profile, HdrMatch)> {
+    fit_all_with(
+        source,
+        quantile,
+        geometry,
+        finished,
+        preview,
+        lateral,
+        crate::fit::fit_from_preview,
+    )
+}
+
+pub fn fit_all_from_pixels(
+    source: &Source<'_>,
+    quantile: f64,
+    geometry: crate::fit::Geometry,
+    finished: image::Strengths,
+    preview: &crate::rgb::Rgb,
+    lateral: Option<[Vec<f64>; 2]>,
+) -> Option<(crate::fit::Profile, HdrMatch)> {
+    fit_all_with(
+        source,
+        quantile,
+        geometry,
+        finished,
+        preview,
+        lateral,
+        crate::fit::fit_from_pixels,
+    )
+}
+
+fn fit_all_with(
+    source: &Source<'_>,
+    quantile: f64,
+    geometry: crate::fit::Geometry,
+    finished: image::Strengths,
+    preview: &crate::rgb::Rgb,
+    lateral: Option<[Vec<f64>; 2]>,
+    fit_profile: for<'render, 'preview> fn(
+        crate::rgb::RgbRef<'render>,
+        crate::rgb::RgbRef<'preview>,
+        crate::fit::Geometry,
+    ) -> Result<Option<crate::fit::Profile>, String>,
+) -> Option<(crate::fit::Profile, HdrMatch)> {
+    let levels = tone::levels(source.samples, quantile);
+    if !(levels.white > 0.0) {
+        return None;
+    }
+    let plane = hdr_fit::fit_plane(source.samples, source.width, source.height, preview.width);
+    let mut render = hdr_fit::render_srgb8(&plane, levels.white);
+    image::finish(&mut render.data, render.width, render.height, finished);
+    let mut profile = fit_profile(render.as_ref(), preview.as_ref(), geometry)
+        .ok()
+        .flatten()?;
+    crate::fit::with_lateral(&mut profile, render.as_ref(), lateral);
+    let matched = hdr_fit::fit(&plane, levels.white, preview, profile.lens())?;
+    Some((profile, matched))
 }
 
 /// Everything `encode` does up to the point of handing bytes to ffmpeg.
@@ -230,7 +301,12 @@ pub fn graded(
     // Measured wherever the decode happens to be, which is safe now that both ends are
     // quantiles over a fixed sample count: the anchor no longer moves with the frame's
     // resolution, so the decode is free to arrive already fitted (`copy_processed`).
-    graded_with(source, options, matched, tone::levels(source.samples, options.white_quantile))
+    graded_with(
+        source,
+        options,
+        matched,
+        tone::levels(source.samples, options.white_quantile),
+    )
 }
 
 /// `graded`, against levels the caller already measured.
@@ -295,15 +371,68 @@ fn graded_with(
     (frame, width, height)
 }
 
+pub fn prepared_at(source: &Source<'_>, matched: Option<&HdrMatch>) -> (Vec<u16>, usize, usize) {
+    let warped =
+        matched.and_then(|m| hdr_fit::apply_lens(source.samples, source.width, source.height, m));
+    (
+        warped.unwrap_or_else(|| source.samples.to_vec()),
+        source.width,
+        source.height,
+    )
+}
+
+pub fn preview_prepared_at(
+    prepared: &[u16],
+    width: usize,
+    height: usize,
+    long_edge: usize,
+) -> (Vec<u16>, usize, usize) {
+    let longest = width.max(height);
+    if longest <= long_edge {
+        return (prepared.to_vec(), width, height);
+    }
+    let scaled = |dimension: usize| {
+        let value = dimension as u64 * long_edge as u64 / longest as u64;
+        usize::try_from(value)
+            .expect("a preview dimension must fit the address space")
+            .max(1)
+    };
+    let (target_width, target_height) = (scaled(width), scaled(height));
+    let resized = image::box_resize_u16(prepared, width, height, target_width, target_height)
+        .expect("an interactive frame only shrinks");
+    (resized, target_width, target_height)
+}
+
+pub fn grade_prepared(
+    frame: &mut [u16],
+    reference_white_nits: f64,
+    peak_nits: f64,
+    matched: Option<&HdrMatch>,
+    levels: tone::Levels,
+) {
+    tone::grade(
+        frame,
+        &GradeOptions {
+            reference_white_nits,
+            peak_nits,
+            match_colour: matched.map(|m| &m.colour),
+            levels,
+        },
+    );
+}
+
 /// The graded frame as the bytes a child process reads.
 ///
 /// Native byte order, which is what `-pixel_format rgb48le` says on the little-endian
 /// targets this ships for.
+#[cfg(not(target_arch = "wasm32"))]
 fn as_bytes(graded: &[u16]) -> &[u8] {
     // SAFETY: `u16` has no padding and every bit pattern of it is a valid `u8` pair, so
     // this is a reinterpret of the same allocation rather than a copy of it.
     #[expect(unsafe_code)]
-    unsafe { std::slice::from_raw_parts(graded.as_ptr() as *const u8, std::mem::size_of_val(graded)) }
+    unsafe {
+        std::slice::from_raw_parts(graded.as_ptr() as *const u8, std::mem::size_of_val(graded))
+    }
 }
 
 /// Encodes samples that have already been graded and PQ-encoded, at the size they
@@ -317,6 +446,7 @@ fn as_bytes(graded: &[u16]) -> &[u8] {
 /// environment variable a second time would only re-derive the input to the decision, so
 /// any further condition added below would leave the test comparing one route with
 /// itself and passing.
+#[cfg(not(target_arch = "wasm32"))]
 fn encode_frame(
     frame: std::borrow::Cow<'_, [u16]>,
     width: usize,
@@ -324,7 +454,10 @@ fn encode_frame(
     options: &EncodeOptions,
 ) -> Result<bool, String> {
     if options.medium == Medium::Video {
-        run(&hdr_args::ffmpeg_args(width as u32, height as u32, options), Some(as_bytes(&frame)))?;
+        run(
+            &hdr_args::ffmpeg_args(width as u32, height as u32, options),
+            Some(as_bytes(&frame)),
+        )?;
         return Ok(false);
     }
 
@@ -343,7 +476,11 @@ fn encode_frame(
             width,
             height,
             &crate::avif::StillOptions {
-                cicp: crate::avif::Cicp { primaries, transfer, matrix },
+                cicp: crate::avif::Cicp {
+                    primaries,
+                    transfer,
+                    matrix,
+                },
                 format: options.still_chroma.avif_format(),
                 quantizer: options.crf,
                 speed: options.preset.min(10),
@@ -356,7 +493,10 @@ fn encode_frame(
     // The child-process route, kept as the reference the in-process one is measured and
     // pinned against. ffmpeg converts, avifenc tags; the y4m between them goes down a
     // pipe rather than a file, since it is the whole frame uncompressed.
-    let to_pipe = EncodeOptions { output_path: "-".to_string(), ..options.clone() };
+    let to_pipe = EncodeOptions {
+        output_path: "-".to_string(),
+        ..options.clone()
+    };
     pipe(
         &hdr_args::ffmpeg_args(width as u32, height as u32, &to_pipe),
         &hdr_args::avifenc_args(options, ""),
@@ -369,6 +509,7 @@ fn encode_frame(
 ///
 /// For the test that holds the two against each other, and as a way out if a build
 /// turns up where the linked library and the binary disagree.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn use_avifenc() -> bool {
     std::env::var("BOWERBIRD_AVIFENC").is_ok_and(|value| value == "1")
 }
@@ -378,6 +519,7 @@ pub(crate) fn use_avifenc() -> bool {
 /// Both are waited on, and both errors are reported: the interesting failure is
 /// usually the downstream one, but a first stage that died explains a second stage
 /// that saw no frames.
+#[cfg(not(target_arch = "wasm32"))]
 fn pipe(first: &[String], second: &[String], stdin_data: &[u8]) -> Result<(), String> {
     let (upstream, up_rest) = first.split_first().ok_or("no command to run")?;
     let (downstream, down_rest) = second.split_first().ok_or("no command to pipe into")?;
@@ -444,6 +586,7 @@ fn pipe(first: &[String], second: &[String], stdin_data: &[u8]) -> Result<(), St
 }
 
 /// A child's exit code and the tail of whatever it had to say about it.
+#[cfg(not(target_arch = "wasm32"))]
 fn failure(command: &str, output: &std::process::Output) -> String {
     let text = String::from_utf8_lossy(&output.stderr);
     let tail: Vec<&str> = text.trim().lines().rev().take(3).collect();
@@ -466,6 +609,7 @@ fn failure(command: &str, output: &std::process::Output) -> String {
 /// Reports whether the still went out through `avifenc` rather than through libavif
 /// here, which is the only thing the differential between the two routes can assert on
 /// now that they produce the same bytes at 4:4:4.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn encode_pair(
     decode: Decode<'_>,
     options: &EncodeOptions,
@@ -498,22 +642,29 @@ pub fn encode_pair(
         // frame rather than a copy of it.
         return encode_frame(std::borrow::Cow::Owned(frame), width, height, options);
     };
-    let video =
-        EncodeOptions { medium: Medium::Video, output_path: video_path.to_string(), ..options.clone() };
+    let video = EncodeOptions {
+        medium: Medium::Video,
+        output_path: video_path.to_string(),
+        ..options.clone()
+    };
 
     // Together rather than one after the other. Both only read the frame, and both are
     // mostly waiting on a child process, so the pair finishes in about the time the
     // slower one takes on its own.
     let (still, twin) = std::thread::scope(|scope| {
-        let twin = scope.spawn(|| encode_frame(std::borrow::Cow::Borrowed(&frame), width, height, &video));
-        (encode_frame(std::borrow::Cow::Borrowed(&frame), width, height, options), twin.join())
+        let twin =
+            scope.spawn(|| encode_frame(std::borrow::Cow::Borrowed(&frame), width, height, &video));
+        (
+            encode_frame(std::borrow::Cow::Borrowed(&frame), width, height, options),
+            twin.join(),
+        )
     });
     let via_avifenc = still?;
     twin.map_err(|_| "the video encode panicked".to_string())??;
     Ok(via_avifenc)
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
 

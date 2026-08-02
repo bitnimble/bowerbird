@@ -5,8 +5,8 @@
 // (§10.9): a guided filter, a Richardson-Lucy deconvolution and the box means and noise
 // estimate they are built on, none of which libvips offers.
 
-use crate::vips::{Rgb, RgbRef};
-use rayon::prelude::*;
+use crate::parallel::*;
+use crate::rgb::{Rgb, RgbRef};
 
 pub const SPLINE_UNIT: f64 = 16384.0;
 
@@ -695,7 +695,7 @@ fn box_mean(plane: &[f32], width: usize, height: usize, radius: usize) -> Vec<f3
     // order, carrying one accumulator row, and each band is independent so they still
     // run across cores. The cost is re-seeding the accumulator per band, which is
     // `radius` extra row additions.
-    let band = height.div_ceil(rayon::current_num_threads().max(1)).max(1);
+    let band = height.div_ceil(crate::parallel::thread_count().max(1)).max(1);
     let mut out: Vec<f32> = vec![0.0; width * height];
     out.par_chunks_mut(band * width).enumerate().for_each(|(index, rows)| {
         let first = index * band;
@@ -1495,7 +1495,7 @@ pub(crate) fn measure_defocus<T: Sample>(
             }
             bins
         })
-        .reduce(Bins::default, Bins::merge);
+        .reduce_parallel(Bins::default, Bins::merge);
 
     let counted: usize = totals.counted.iter().sum();
     if counted < DEFOCUS_MIN_SAMPLES {

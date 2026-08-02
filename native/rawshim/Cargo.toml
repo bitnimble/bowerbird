@@ -1,11 +1,20 @@
 [package]
 name = "rawshim"
 version = "0.1.0"
-edition = "2021"
+# 2024 so bindgen's generated `unsafe extern "C"` blocks parse as written. It also makes
+# `unsafe_op_in_unsafe_fn` the default, which this crate already denies.
+edition = "2024"
 
 # cdylib so Bun can dlopen it exactly like libraw.so itself.
 [lib]
 crate-type = ["cdylib"]
+
+# wasm-pack's bundled binaryen predates the wasm exception-handling proposal and aborts
+# on LibRaw's throw sites ("unimplemented DCE control flow structure"). The module is
+# already `-O3` from rustc and `--gc-sections` from the linker; what wasm-opt would add
+# is not worth a second toolchain pinned to a compatible version.
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false
 
 [features]
 # The tests that decode a real RAW, which need the LFS fixtures and take seconds
@@ -14,12 +23,31 @@ crate-type = ["cdylib"]
 fixtures = []
 
 [dependencies]
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+
+# Everything below is the server build's. wasm32 links LibRaw and nothing else: libvips is
+# resizing, lensfun is geometry, and rayon wants threads this target has none of.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 libvips = "2.3.0"
 # The geometry search evaluates tens of candidates that share nothing but their
 # inputs, which is the one genuinely parallel part of a fit.
 rayon = "1.10"
-serde = { version = "1.0.229", features = ["derive"] }
-serde_json = "1.0.151"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+
+# `usize` is 32 bits on wasm32 and 64 on the server, so an index product can be right in
+# every rendition and wrap silently in the browser. Keep that failure loud in release.
+[profile.release]
+overflow-checks = true
+
+[lints.clippy]
+cast_possible_truncation = "deny"
 
 [build-dependencies]
-bindgen = "0.69"
+# 0.69 emits no functions at all for a wasm32 target - measured on a one-line header:
+# `int probe(int);` generates `pub fn probe` under x86_64 and an empty file under
+# wasm32-wasip1. Types come through either way, so the failure surfaces only as
+# "cannot find function libraw_init" at every call site.
+bindgen = "0.72"

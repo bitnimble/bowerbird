@@ -33,7 +33,7 @@ use std::ffi::{c_char, CStr};
 /// `command` must point at `command_len` readable bytes and `out` at `out_cap`
 /// writable ones. Both are borrowed for the call and neither is retained.
 #[expect(unsafe_code)]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bb_run_job(
     command: *const u8,
     command_len: usize,
@@ -96,7 +96,7 @@ struct JobReply {
 /// `path` must be NUL-terminated and `out` must point at `out_cap` writable bytes.
 /// Neither is retained past the call.
 #[expect(unsafe_code)]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bb_transcode_jpeg(
     path: *const c_char,
     long_edge: u32,
@@ -138,7 +138,7 @@ pub unsafe extern "C" fn bb_transcode_jpeg(
 /// # Safety
 /// As `bb_run_job`.
 #[expect(unsafe_code)]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bb_for_testing_debug(
     command: *const u8,
     command_len: usize,
@@ -198,7 +198,7 @@ struct DebugReply {
 /// # Safety
 /// `path` must be a NUL-terminated C string, and `out` valid for `out_cap`.
 #[expect(unsafe_code)]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bb_extract_embedded(
     path: *const c_char,
     out: *mut u8,
@@ -356,12 +356,12 @@ fn lensfun_geometry(path: &str) -> Option<fit::Geometry> {
 /// real falloff, which is `warp` plus the radial lookup plus the folded colour one -
 /// the hot loops - and puts the result through libvips to confirm the linkage too.
 #[expect(unsafe_code)]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn bb_selftest() -> i32 {
     vips::init();
     let width = 64;
     let height = 48;
-    let source = vips::Rgb {
+    let source = crate::rgb::Rgb {
         width,
         height,
         data: (0..width * height * 3).map(|i| (i % 251) as u8).collect(),
@@ -406,4 +406,3 @@ mod tests {
         assert_eq!(bb_selftest(), 0);
     }
 }
-

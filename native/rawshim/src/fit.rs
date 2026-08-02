@@ -11,9 +11,13 @@
 // capacity the colour model is given - a 33^3 LUT included - because no tone curve
 // can map a pixel onto a different pixel's colour.
 
+#![cfg_attr(target_arch = "wasm32", allow(dead_code))]
+
 use crate::image::{polynomial_knots, warp};
-use crate::vips::{self, Rgb, RgbRef};
-use rayon::prelude::*;
+use crate::parallel::*;
+use crate::rgb::{Rgb, RgbRef};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::vips;
 
 /// Long edge the fit runs at. Fitting small and applying at full resolution costs
 /// nothing measurable, and every candidate warp is O(pixels), so this is the
@@ -799,6 +803,7 @@ fn chosen(found: Option<(Vec<f64>, f64, f64)>, baseline: f64, source: u32) -> (O
 }
 
 /// Fits the transform taking `render` to `jpeg_bytes`: the lens, and then the colour.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn fit(render: RgbRef<'_>, jpeg_bytes: &[u8], geometry: Geometry) -> Result<Option<Profile>, String> {
     let preview = vips::Pipeline::thumbnail(jpeg_bytes, crate::hdr_fit::sample_long_edge())?
         .finish()?;
@@ -854,6 +859,7 @@ pub fn fit(render: RgbRef<'_>, jpeg_bytes: &[u8], geometry: Geometry) -> Result<
 /// deltaE. What is shared now is not that. The colour fit needs twice the grid, so the
 /// preview is DCT-shrunk only to 1500 and brought to 1280 by a real reduce, leaving this
 /// a properly filtered resize down to its own 640 rather than a DCT approximation of one.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn fit_from_preview(
     render: RgbRef<'_>,
     preview: RgbRef<'_>,
@@ -863,10 +869,11 @@ pub fn fit_from_preview(
         .resize_to_fit(FIT_LONG_EDGE)?
         .blur(FIT_BLUR_SIGMA)?
         .finish()?;
-    fit_against(render, jpeg_full, geometry)
+    fit_against_vips(render, jpeg_full, geometry)
 }
 
-fn fit_against(
+#[cfg(not(target_arch = "wasm32"))]
+fn fit_against_vips(
     render: RgbRef<'_>,
     jpeg_full: Rgb,
     geometry: Geometry,
@@ -897,7 +904,29 @@ fn fit_against(
             .resize_exact(full.jpeg.width / 2, full.jpeg.height / 2)?
             .finish()?,
     };
-    let grids = Grids { full, search };
+    fit_grids(Grids { full, search }, geometry)
+}
+
+pub fn fit_from_pixels(
+    render: RgbRef<'_>,
+    preview: RgbRef<'_>,
+    geometry: Geometry,
+) -> Result<Option<Profile>, String> {
+    let (width, height) = fit_dimensions(preview.width, preview.height, FIT_LONG_EDGE);
+    let jpeg_full = blur(&warp(preview, width, height, &[], 1.0), FIT_BLUR_SIGMA);
+    let source_width = jpeg_full.width * 2;
+    let source_height = ((render.height as f64 / render.width as f64) * source_width as f64).round() as usize;
+    let source_sigma = FIT_BLUR_SIGMA * (source_width as f64 / jpeg_full.width as f64);
+    let resized = warp(render, source_width, source_height.max(1), &[], 1.0);
+    let full = Grid { source: blur(&resized, source_sigma), jpeg: jpeg_full };
+    let search = Grid {
+        source: warp(full.source.as_ref(), full.source.width / 2, full.source.height / 2, &[], 1.0),
+        jpeg: warp(full.jpeg.as_ref(), full.jpeg.width / 2, full.jpeg.height / 2, &[], 1.0),
+    };
+    fit_grids(Grids { full, search }, geometry)
+}
+
+fn fit_grids(grids: Grids, geometry: Geometry) -> Result<Option<Profile>, String> {
 
     let baseline_delta = residual_for(&grids.full, &[], 1.0).unwrap_or(f64::INFINITY);
 
@@ -940,6 +969,60 @@ fn fit_against(
         source: settled.2,
         colour: None,
     }))
+}
+
+fn fit_dimensions(width: usize, height: usize, long_edge: usize) -> (usize, usize) {
+    let longest = width.max(height).max(1);
+    if longest <= long_edge {
+        return (width, height);
+    }
+    let scaled = |dimension: usize| {
+        usize::try_from(dimension as u64 * long_edge as u64 / longest as u64)
+            .expect("a fit dimension must fit the address space")
+            .max(1)
+    };
+    (scaled(width), scaled(height))
+}
+
+fn blur(source: &Rgb, sigma: f64) -> Rgb {
+    let radius = (sigma * 3.0).ceil() as usize;
+    let mut taps: Vec<f64> = (0..=radius)
+        .map(|distance| (-((distance * distance) as f64) / (2.0 * sigma * sigma)).exp())
+        .collect();
+    let total = taps[0] + 2.0 * taps[1..].iter().sum::<f64>();
+    taps.iter_mut().for_each(|tap| *tap /= total);
+
+    let (width, height) = (source.width, source.height);
+    let mut horizontal = vec![0.0f64; source.data.len()];
+    horizontal.par_chunks_mut(width * 3).enumerate().for_each(|(y, row)| {
+        for x in 0..width {
+            for channel in 0..3 {
+                let mut value = taps[0] * f64::from(source.data[(y * width + x) * 3 + channel]);
+                for (distance, tap) in taps.iter().enumerate().skip(1) {
+                    let left = (y * width + x.saturating_sub(distance)) * 3 + channel;
+                    let right = (y * width + (x + distance).min(width - 1)) * 3 + channel;
+                    value += tap * (f64::from(source.data[left]) + f64::from(source.data[right]));
+                }
+                row[x * 3 + channel] = value;
+            }
+        }
+    });
+
+    let mut data = vec![0u8; source.data.len()];
+    data.par_chunks_mut(width * 3).enumerate().for_each(|(y, row)| {
+        for x in 0..width {
+            for channel in 0..3 {
+                let mut value = taps[0] * horizontal[(y * width + x) * 3 + channel];
+                for (distance, tap) in taps.iter().enumerate().skip(1) {
+                    let above = (y.saturating_sub(distance) * width + x) * 3 + channel;
+                    let below = ((y + distance).min(height - 1) * width + x) * 3 + channel;
+                    value += tap * (horizontal[above] + horizontal[below]);
+                }
+                row[x * 3 + channel] = value.clamp(0.0, 255.0).round() as u8;
+            }
+        }
+    });
+    Rgb { width, height, data }
 }
 
 /// Resolves the lateral aberration and folds it into the profile.

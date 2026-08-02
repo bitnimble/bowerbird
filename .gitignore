@@ -160,3 +160,9 @@ native/rawshim/target/
 # Throwaway analysis scripts. `.oxlintrc.json` already ignores the .ts ones;
 # this keeps them out of commits, which a squash otherwise sweeps them into.
 .scratch-*
+
+# Reproducible wasm cross-compiler and LibRaw build outputs. The build script is source.
+native/toolchain/wasi-sdk-*/
+native/toolchain/LibRaw-*/
+native/toolchain/include/
+native/toolchain/wasm/

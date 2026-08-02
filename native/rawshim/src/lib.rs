@@ -47,32 +47,84 @@
 #![deny(unfulfilled_lint_expectations)]
 #![deny(unsafe_op_in_unsafe_fn)]
 
-use rayon::prelude::*;
+use crate::parallel::*;
+#[cfg(not(target_arch = "wasm32"))]
 use std::ffi::CStr;
-use std::os::raw::{c_char, c_int};
+#[cfg(not(target_arch = "wasm32"))]
+use std::os::raw::c_char;
+use std::os::raw::c_int;
 
+#[cfg(not(target_arch = "wasm32"))]
 pub mod avif;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod debug;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod ffi;
 pub mod fit;
 pub mod frame;
-pub mod job;
 pub mod hdr;
 pub mod hdr_args;
 pub mod hdr_fit;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod header;
 pub mod image;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod job;
 pub mod lens;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod lensfun;
+pub mod pack;
+pub mod parallel;
+pub mod rgb;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod stacks;
 pub mod tca;
 pub mod tone;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod vips;
+#[cfg(target_arch = "wasm32")]
+pub mod wasm;
 
 mod raw {
-    #![allow(non_upper_case_globals, non_camel_case_types, non_snake_case, dead_code)]
+    #![allow(
+        non_upper_case_globals,
+        non_camel_case_types,
+        non_snake_case,
+        dead_code
+    )]
+    #![expect(unsafe_code)]
     include!(concat!(env!("OUT_DIR"), "/libraw.rs"));
 }
+
+#[cfg(target_arch = "wasm32")]
+mod alloc_via_libc {
+    use std::alloc::{GlobalAlloc, Layout};
+
+    #[expect(unsafe_code)]
+    unsafe extern "C" {
+        fn aligned_alloc(alignment: usize, size: usize) -> *mut std::ffi::c_void;
+        fn free(ptr: *mut std::ffi::c_void);
+    }
+
+    pub struct LibcAlloc;
+
+    #[expect(unsafe_code)]
+    unsafe impl GlobalAlloc for LibcAlloc {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            let alignment = layout.align().max(1);
+            let size = layout.size().next_multiple_of(alignment);
+            unsafe { aligned_alloc(alignment, size).cast() }
+        }
+
+        unsafe fn dealloc(&self, ptr: *mut u8, _layout: Layout) {
+            unsafe { free(ptr.cast()) }
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+#[global_allocator]
+static ALLOCATOR: alloc_via_libc::LibcAlloc = alloc_via_libc::LibcAlloc;
 
 /// Runs `body`, turning a panic into `fallback` rather than letting it out of the
 /// library.
@@ -95,7 +147,9 @@ pub(crate) fn guard<T>(what: &str, fallback: T, body: impl FnOnce() -> T) -> T {
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(body)) {
         Ok(value) => value,
         Err(_) => {
-            eprintln!("rawshim: {what} panicked; reporting failure rather than aborting the process");
+            eprintln!(
+                "rawshim: {what} panicked; reporting failure rather than aborting the process"
+            );
             fallback
         }
     }
@@ -166,7 +220,12 @@ pub struct Window {
 /// image that no longer had them, which is not a smaller picture but a differently
 /// framed one, since the excess comes off two sides rather than four.
 pub(crate) fn insets_of(w: &Window) -> Insets {
-    let none = Insets { left: 0, top: 0, right: 0, bottom: 0 };
+    let none = Insets {
+        left: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+    };
     if w.cleft == UNSET || w.ctop == UNSET || w.cwidth == 0 || w.cheight == 0 {
         return none;
     }
@@ -177,8 +236,16 @@ pub(crate) fn insets_of(w: &Window) -> Insets {
     Insets {
         left: beyond(i32::from(w.cleft) - i32::from(w.left_margin)),
         top: beyond(i32::from(w.ctop) - i32::from(w.top_margin)),
-        right: beyond(i32::from(w.left_margin) + i32::from(w.width) - i32::from(w.cleft) - i32::from(w.cwidth)),
-        bottom: beyond(i32::from(w.top_margin) + i32::from(w.height) - i32::from(w.ctop) - i32::from(w.cheight)),
+        right: beyond(
+            i32::from(w.left_margin) + i32::from(w.width)
+                - i32::from(w.cleft)
+                - i32::from(w.cwidth),
+        ),
+        bottom: beyond(
+            i32::from(w.top_margin) + i32::from(w.height)
+                - i32::from(w.ctop)
+                - i32::from(w.cheight),
+        ),
     }
 }
 
@@ -234,7 +301,10 @@ pub(crate) fn rotate_insets(i: Insets, flip: c_int) -> Insets {
     // Exactly one of the two sensor axes moves for each step, which is what makes this
     // a question with an answer.
     let reads = |sensor_column_moved: bool| -> usize {
-        match (sensor_column_moved, sensor_column_moved && col0 == 0 || !sensor_column_moved && row0 == 0) {
+        match (
+            sensor_column_moved,
+            sensor_column_moved && col0 == 0 || !sensor_column_moved && row0 == 0,
+        ) {
             (true, true) => LEFT,
             (true, false) => LEFT ^ 2,
             (false, true) => TOP,
@@ -244,7 +314,12 @@ pub(crate) fn rotate_insets(i: Insets, flip: c_int) -> Insets {
     let left = reads(col_right != col0);
     let top = reads(col_down != col0);
 
-    Insets { left: edges[left], top: edges[top], right: edges[left ^ 2], bottom: edges[top ^ 2] }
+    Insets {
+        left: edges[left],
+        top: edges[top],
+        right: edges[left ^ 2],
+        bottom: edges[top ^ 2],
+    }
 }
 
 /// LibRaw's flip code, as it will be by the time the pixels exist.
@@ -270,7 +345,12 @@ pub(crate) fn normalised_flip(flip: c_int) -> c_int {
 }
 
 fn halve_insets(i: Insets) -> Insets {
-    Insets { left: i.left / 2, top: i.top / 2, right: i.right / 2, bottom: i.bottom / 2 }
+    Insets {
+        left: i.left / 2,
+        top: i.top / 2,
+        right: i.right / 2,
+        bottom: i.bottom / 2,
+    }
 }
 
 /// as-shot multipliers normalised to green. None when the file recorded no usable
@@ -338,7 +418,11 @@ unsafe fn copy_processed(
     let p = &unsafe { (*r).params };
     let identity_curve =
         p.no_auto_bright == 1 && p.gamm[0] == 1.0 && p.gamm[1] == 1.0 && p.bright == 1.0;
-    if depth != 16 || !identity_curve || unsafe { (*r).image }.is_null() || unsafe { (*r).idata }.colors != 3 {
+    if depth != 16
+        || !identity_curve
+        || unsafe { (*r).image }.is_null()
+        || unsafe { (*r).idata }.colors != 3
+    {
         return None;
     }
 
@@ -348,7 +432,11 @@ unsafe fn copy_processed(
     // before indexing, so the stride `flip_index` walks is the processed width.
     let (iwidth, iheight) = (s.width as usize, s.height as usize);
     // The quarter-turn swap applies to the output loop bounds only, after that.
-    let (width, height) = if flip & 4 == 0 { (iwidth, iheight) } else { (iheight, iwidth) };
+    let (width, height) = if flip & 4 == 0 {
+        (iwidth, iheight)
+    } else {
+        (iheight, iwidth)
+    };
     let out_width = width.saturating_sub(i.left + i.right);
     let out_height = height.saturating_sub(i.top + i.bottom);
     if out_width == 0 || out_height == 0 {
@@ -389,27 +477,29 @@ unsafe fn copy_processed(
     let ys = out_height as f64 / th as f64;
     let stride = tw * 3;
     let mut out = vec![0u16; stride * th];
-    out.par_chunks_mut(stride).enumerate().for_each(|(dy, row)| {
-        let y0 = (dy as f64 * ys).floor() as usize;
-        let y1 = (((dy + 1) as f64 * ys).floor() as usize).max(y0 + 1);
-        for dx in 0..tw {
-            let x0 = (dx as f64 * xs).floor() as usize;
-            let x1 = (((dx + 1) as f64 * xs).floor() as usize).max(x0 + 1);
-            let mut acc = [0.0f64; 3];
-            for y in y0..y1 {
-                for x in x0..x1 {
-                    let px = planes[flip_index(y + i.top, x + i.left)];
-                    for c in 0..3 {
-                        acc[c] += f64::from(px[c]);
+    out.par_chunks_mut(stride)
+        .enumerate()
+        .for_each(|(dy, row)| {
+            let y0 = (dy as f64 * ys).floor() as usize;
+            let y1 = (((dy + 1) as f64 * ys).floor() as usize).max(y0 + 1);
+            for dx in 0..tw {
+                let x0 = (dx as f64 * xs).floor() as usize;
+                let x1 = (((dx + 1) as f64 * xs).floor() as usize).max(x0 + 1);
+                let mut acc = [0.0f64; 3];
+                for y in y0..y1 {
+                    for x in x0..x1 {
+                        let px = planes[flip_index(y + i.top, x + i.left)];
+                        for c in 0..3 {
+                            acc[c] += f64::from(px[c]);
+                        }
                     }
                 }
+                let n = ((y1 - y0) * (x1 - x0)) as f64;
+                for c in 0..3 {
+                    row[dx * 3 + c] = (acc[c] / n).round() as u16;
+                }
             }
-            let n = ((y1 - y0) * (x1 - x0)) as f64;
-            for c in 0..3 {
-                row[dx * 3 + c] = (acc[c] / n).round() as u16;
-            }
-        }
-    });
+        });
     Some((tw, th, out))
 }
 
@@ -422,7 +512,10 @@ unsafe fn copy_processed(
 /// agree on the target. An edge of 0 means native resolution and no fit.
 fn decode_target(width: usize, height: usize, long_edge: u32) -> (usize, usize) {
     let size = match long_edge {
-        0 => hdr_args::Size { width: width as u32, height: height as u32 },
+        0 => hdr_args::Size {
+            width: width as u32,
+            height: height as u32,
+        },
         edge => hdr_args::fitted(width as u32, height as u32, f64::from(edge)),
     };
     (size.width as usize, size.height as usize)
@@ -435,7 +528,11 @@ fn decode_target(width: usize, height: usize, long_edge: u32) -> (usize, usize) 
 /// struct's own `iwidth`/`iheight` are not those: `raw2image_start` leaves them shrunk
 /// by `IO.shrink`, so under `half_size` reading them would walk the wrong stride.
 fn flip_index(flip: c_int, iwidth: usize, iheight: usize, row: usize, col: usize) -> usize {
-    let (mut row, mut col) = if flip & 4 != 0 { (col, row) } else { (row, col) };
+    let (mut row, mut col) = if flip & 4 != 0 {
+        (col, row)
+    } else {
+        (row, col)
+    };
     if flip & 2 != 0 {
         row = iheight - 1 - row;
     }
@@ -450,7 +547,13 @@ fn flip_index(flip: c_int, iwidth: usize, iheight: usize, row: usize, col: usize
 /// The `dcraw_make_mem_image` path: what the sRGB decode uses, and the reference
 /// `copy_processed` is pinned against.
 #[expect(unsafe_code)]
-unsafe fn copy_cropped(src: *const u8, w: usize, h: usize, bytes_per_px: usize, i: &Insets) -> Vec<u8> {
+unsafe fn copy_cropped(
+    src: *const u8,
+    w: usize,
+    h: usize,
+    bytes_per_px: usize,
+    i: &Insets,
+) -> Vec<u8> {
     let width = w.saturating_sub(i.left + i.right);
     let height = h.saturating_sub(i.top + i.bottom);
     if width == 0 || height == 0 || (i.left | i.top | i.right | i.bottom) == 0 {
@@ -477,7 +580,33 @@ pub fn decode_frame(
     rec2020_linear: bool,
     at_least_long_edge: u32,
 ) -> Option<frame::Frame> {
-    decode_frame_via(path, depth, rec2020_linear, at_least_long_edge, false)
+    decode_frame_via(
+        DecodeSource::Path(path),
+        depth,
+        rec2020_linear,
+        at_least_long_edge,
+        false,
+    )
+}
+
+pub fn decode_frame_bytes(
+    bytes: &[u8],
+    depth: u32,
+    rec2020_linear: bool,
+    at_least_long_edge: u32,
+) -> Option<frame::Frame> {
+    decode_frame_via(
+        DecodeSource::Bytes(bytes),
+        depth,
+        rec2020_linear,
+        at_least_long_edge,
+        false,
+    )
+}
+
+enum DecodeSource<'a> {
+    Path(&'a str),
+    Bytes(&'a [u8]),
 }
 
 /// `decode_frame`, on LibRaw's own `dcraw_make_mem_image` path rather than the fused
@@ -494,11 +623,17 @@ pub fn _for_testing_decode_frame_reference(
     rec2020_linear: bool,
     at_least_long_edge: u32,
 ) -> Option<frame::Frame> {
-    decode_frame_via(path, depth, rec2020_linear, at_least_long_edge, true)
+    decode_frame_via(
+        DecodeSource::Path(path),
+        depth,
+        rec2020_linear,
+        at_least_long_edge,
+        true,
+    )
 }
 
 fn decode_frame_via(
-    path: &str,
+    source: DecodeSource<'_>,
     depth: u32,
     rec2020_linear: bool,
     at_least_long_edge: u32,
@@ -507,13 +642,47 @@ fn decode_frame_via(
     if depth != 8 && depth != 16 {
         return None;
     }
-    let path = std::ffi::CString::new(path).ok()?;
-    decode_with_libraw(&path, depth, rec2020_linear, at_least_long_edge, reference)
+    match source {
+        DecodeSource::Path(path) => {
+            let path = std::ffi::CString::new(path).ok()?;
+            decode_with_libraw(
+                Opened::Path(&path),
+                depth,
+                rec2020_linear,
+                at_least_long_edge,
+                reference,
+            )
+        }
+        DecodeSource::Bytes(bytes) => decode_with_libraw(
+            Opened::Bytes(bytes),
+            depth,
+            rec2020_linear,
+            at_least_long_edge,
+            reference,
+        ),
+    }
+}
+
+enum Opened<'a> {
+    Path(&'a std::ffi::CStr),
+    Bytes(&'a [u8]),
+}
+
+impl Opened<'_> {
+    #[expect(unsafe_code)]
+    unsafe fn open(&self, raw: *mut raw::libraw_data_t) -> c_int {
+        match self {
+            Opened::Path(path) => unsafe { raw::libraw_open_file(raw, path.as_ptr()) },
+            Opened::Bytes(bytes) => unsafe {
+                raw::libraw_open_buffer(raw, bytes.as_ptr().cast(), bytes.len())
+            },
+        }
+    }
 }
 
 #[expect(unsafe_code)]
 fn decode_with_libraw(
-    path: &std::ffi::CStr,
+    source: Opened<'_>,
     depth: u32,
     rec2020_linear: bool,
     at_least_long_edge: u32,
@@ -526,103 +695,123 @@ fn decode_with_libraw(
 
     // Guarded around the closure rather than outside `libraw_init`, so a panic still
     // reaches the `recycle`/`close` below instead of leaking the processor with it.
-    let result = guard("bb_decode", None, || (|| -> Option<frame::Frame> {
-        #[expect(unsafe_code)]
-        unsafe {
-        if raw::libraw_open_file(r, path.as_ptr()) != 0 {
-            return None;
-        }
-
-        // Read before unpack/process, which overwrite the size fields - and normalised,
-        // because `unpack` also rewrites a degree-valued flip into a code, and
-        // `copy_processed` reads it on the far side of that.
-        let flip = normalised_flip((*r).sizes.flip);
-        let mut insets = rotate_insets(read_insets(r), flip);
-        let full_long_edge = (*r).sizes.width.max((*r).sizes.height) as u32;
-
-        // The typed field the whole wrapper exists for.
-        let halved = at_least_long_edge > 0 && full_long_edge / 2 >= at_least_long_edge;
-        if halved {
-            (*r).params.half_size = 1;
-            insets = halve_insets(insets);
-        }
-
-        if let Some(mul) = camera_multipliers(&(*r).color.cam_mul) {
-            (*r).params.user_mul = mul;
-        }
-        (*r).params.user_qual = demosaic();
-        (*r).params.output_bps = depth as c_int;
-        if rec2020_linear {
-            (*r).params.output_color = OUTPUT_REC2020;
-            // Identity curve, so samples stay proportional to the light that made
-            // them, and no auto-brightening to normalise away HDR headroom.
-            (*r).params.gamm[0] = 1.0;
-            (*r).params.gamm[1] = 1.0;
-            (*r).params.no_auto_bright = 1;
-        } else {
-            (*r).params.output_color = OUTPUT_SRGB;
-        }
-
-        if raw::libraw_unpack(r) != 0 || raw::libraw_dcraw_process(r) != 0 {
-            return None;
-        }
-
-        // Straight out of `imgdata.image` where the curve is ours to know, which skips
-        // the second whole-frame buffer `dcraw_make_mem_image` would allocate and the
-        // copy back out of it.
-        let taken =
-            if reference { None } else { copy_processed(r, depth, &insets, at_least_long_edge) };
-        let direct = taken.is_some();
-        let (width, height, data) = match taken {
-            Some((w, h, samples)) => (w, h, frame::Pixels::Sixteen(samples)),
-            None => {
-                let mut err: c_int = 0;
-                let image = raw::libraw_dcraw_make_mem_image(r, &mut err);
-                if image.is_null() || err != 0 {
+    let result = guard("bb_decode", None, || {
+        (|| -> Option<frame::Frame> {
+            #[expect(unsafe_code)]
+            unsafe {
+                if source.open(r) != 0 {
                     return None;
                 }
-                let w = (*image).width as usize;
-                let h = (*image).height as usize;
-                let colors = (*image).colors;
-                let bits = (*image).bits as u32;
-                let data =
-                    copy_cropped((*image).data.as_ptr(), w, h, 3 * (depth as usize / 8), &insets);
-                raw::libraw_dcraw_clear_mem(image);
-                if colors != 3 || bits != depth {
-                    return None;
+
+                // Read before unpack/process, which overwrite the size fields - and normalised,
+                // because `unpack` also rewrites a degree-valued flip into a code, and
+                // `copy_processed` reads it on the far side of that.
+                let flip = normalised_flip((*r).sizes.flip);
+                let mut insets = rotate_insets(read_insets(r), flip);
+                let full_long_edge = (*r).sizes.width.max((*r).sizes.height) as u32;
+
+                // The typed field the whole wrapper exists for.
+                let halved = at_least_long_edge > 0 && full_long_edge / 2 >= at_least_long_edge;
+                if halved {
+                    (*r).params.half_size = 1;
+                    insets = halve_insets(insets);
                 }
-                let (cw, ch) = (w - insets.left - insets.right, h - insets.top - insets.bottom);
-                if depth != 16 {
-                    (cw, ch, frame::Pixels::Eight(data))
+
+                if let Some(mul) = camera_multipliers(&(*r).color.cam_mul) {
+                    (*r).params.user_mul = mul;
+                }
+                (*r).params.user_qual = demosaic();
+                (*r).params.output_bps = depth as c_int;
+                if rec2020_linear {
+                    (*r).params.output_color = OUTPUT_REC2020;
+                    // Identity curve, so samples stay proportional to the light that made
+                    // them, and no auto-brightening to normalise away HDR headroom.
+                    (*r).params.gamm[0] = 1.0;
+                    (*r).params.gamm[1] = 1.0;
+                    (*r).params.no_auto_bright = 1;
                 } else {
-                    // Bytes out of LibRaw's buffer, into the `u16`s they are. Both arms
-                    // hand back the same type, which is what lets the differential test
-                    // compare them at all.
-                    let samples: Vec<u16> =
-                        data.chunks_exact(2).map(|b| u16::from_ne_bytes([b[0], b[1]])).collect();
-                    // The fit the direct path fuses into its copy, applied here as the
-                    // separate pass it used to be. That is what keeps the two
-                    // comparable: `raw_decode.integration.test.ts` holds them against
-                    // each other, so it pins the fusion as well as the interleave.
-                    let (tw, th) = decode_target(cw, ch, at_least_long_edge);
-                    match (tw, th) == (cw, ch) {
-                        true => (cw, ch, frame::Pixels::Sixteen(samples)),
-                        false => (
-                            tw,
-                            th,
-                            frame::Pixels::Sixteen(image::box_resize_u16(&samples, cw, ch, tw, th)?),
-                        ),
-                    }
+                    (*r).params.output_color = OUTPUT_SRGB;
                 }
-            }
-        };
 
-        let mut built = frame::Frame::new(width, height, data);
-        built.halved = halved;
-        built.direct = direct;
-        Some(built)
-        }
-    })());
+                if raw::libraw_unpack(r) != 0 || raw::libraw_dcraw_process(r) != 0 {
+                    return None;
+                }
+
+                // Straight out of `imgdata.image` where the curve is ours to know, which skips
+                // the second whole-frame buffer `dcraw_make_mem_image` would allocate and the
+                // copy back out of it.
+                let taken = if reference {
+                    None
+                } else {
+                    copy_processed(r, depth, &insets, at_least_long_edge)
+                };
+                let direct = taken.is_some();
+                let (width, height, data) = match taken {
+                    Some((w, h, samples)) => (w, h, frame::Pixels::Sixteen(samples)),
+                    None => {
+                        let mut err: c_int = 0;
+                        let image = raw::libraw_dcraw_make_mem_image(r, &mut err);
+                        if image.is_null() || err != 0 {
+                            return None;
+                        }
+                        let w = (*image).width as usize;
+                        let h = (*image).height as usize;
+                        let colors = (*image).colors;
+                        let bits = (*image).bits as u32;
+                        let data = copy_cropped(
+                            (*image).data.as_ptr(),
+                            w,
+                            h,
+                            3 * (depth as usize / 8),
+                            &insets,
+                        );
+                        raw::libraw_dcraw_clear_mem(image);
+                        if colors != 3 || bits != depth {
+                            return None;
+                        }
+                        let (cw, ch) = (
+                            w - insets.left - insets.right,
+                            h - insets.top - insets.bottom,
+                        );
+                        if depth != 16 {
+                            (cw, ch, frame::Pixels::Eight(data))
+                        } else {
+                            // Bytes out of LibRaw's buffer, into the `u16`s they are. Both arms
+                            // hand back the same type, which is what lets the differential test
+                            // compare them at all.
+                            let samples: Vec<u16> = data
+                                .chunks_exact(2)
+                                .map(|b| u16::from_ne_bytes([b[0], b[1]]))
+                                .collect();
+                            // The fit the direct path fuses into its copy, applied here as the
+                            // separate pass it used to be. That is what keeps the two
+                            // comparable: `raw_decode.integration.test.ts` holds them against
+                            // each other, so it pins the fusion as well as the interleave.
+                            let (tw, th) = decode_target(cw, ch, at_least_long_edge);
+                            match (tw, th) == (cw, ch) {
+                                true => (cw, ch, frame::Pixels::Sixteen(samples)),
+                                #[cfg(not(target_arch = "wasm32"))]
+                                false => (
+                                    tw,
+                                    th,
+                                    frame::Pixels::Sixteen(image::box_resize_u16(
+                                        &samples, cw, ch, tw, th,
+                                    )?),
+                                ),
+                                #[cfg(target_arch = "wasm32")]
+                                false => return None,
+                            }
+                        }
+                    }
+                };
+
+                let mut built = frame::Frame::new(width, height, data);
+                built.halved = halved;
+                built.direct = direct;
+                Some(built)
+            }
+        })()
+    });
 
     #[expect(unsafe_code)]
     unsafe {
@@ -637,6 +826,7 @@ fn decode_with_libraw(
 /// The whole of an import's tile pass in one call. None when the file embeds no
 /// JPEG preview, which is a property of the file rather than an error: the caller
 /// falls back to a render.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn decode_embedded_frame(path: &str, long_edge: u32) -> Option<frame::Frame> {
     vips::init();
     let path = std::ffi::CString::new(path).ok()?;
@@ -645,12 +835,18 @@ pub fn decode_embedded_frame(path: &str, long_edge: u32) -> Option<frame::Frame>
         unsafe {
             with_embedded_jpeg(path.as_ptr(), |jpeg| match long_edge {
                 0 => vips::Pipeline::decode_upright(jpeg).and_then(vips::Pipeline::finish),
-                edge => vips::Pipeline::thumbnail(jpeg, edge as usize).and_then(vips::Pipeline::finish),
+                edge => {
+                    vips::Pipeline::thumbnail(jpeg, edge as usize).and_then(vips::Pipeline::finish)
+                }
             })
         }
     })?;
     let image = decoded.ok()?;
-    Some(frame::Frame::new(image.width, image.height, frame::Pixels::Eight(image.data)))
+    Some(frame::Frame::new(
+        image.width,
+        image.height,
+        frame::Pixels::Eight(image.data),
+    ))
 }
 
 /// The camera match for an 8-bit render, fitted against the embedded JPEG (10.8).
@@ -658,6 +854,7 @@ pub fn decode_embedded_frame(path: &str, long_edge: u32) -> Option<frame::Frame>
 /// None when the file embeds no preview, when the fit found nothing worth applying,
 /// or when there were too few usable pairs - in each case the caller renders
 /// untransformed.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn fit_profile_for(render: &frame::Frame, raw_path: &str) -> Option<fit::Profile> {
     vips::init();
     let source = render.rgb8()?;
@@ -666,7 +863,9 @@ pub fn fit_profile_for(render: &frame::Frame, raw_path: &str) -> Option<fit::Pro
     let fitted = guard("fit_profile_for", None, || {
         #[expect(unsafe_code)]
         unsafe {
-            with_embedded_jpeg(path.as_ptr(), |jpeg| fit::fit(source, jpeg, geometry).ok().flatten())
+            with_embedded_jpeg(path.as_ptr(), |jpeg| {
+                fit::fit(source, jpeg, geometry).ok().flatten()
+            })
         }
     })?;
     // After the fit, not inside it: the lateral aberration is measured off the render
@@ -683,6 +882,7 @@ pub fn fit_profile_for(render: &frame::Frame, raw_path: &str) -> Option<fit::Pro
 ///
 /// `finished` is what the frame will have had done to it by the time the match is applied,
 /// so the geometry search can be run against that rather than against the raw render.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn fit_hdr_for(
     linear: &frame::Frame,
     raw_path: &str,
@@ -691,12 +891,17 @@ pub fn fit_hdr_for(
     finished: image::Strengths,
 ) -> Option<hdr_fit::HdrMatch> {
     let samples = linear.samples16()?;
-    let source = hdr::Source { samples, width: linear.width, height: linear.height };
+    let source = hdr::Source {
+        samples,
+        width: linear.width,
+        height: linear.height,
+    };
     guard("fit_hdr_for", None, || match profile {
         Some(profile) => hdr::fit_match(raw_path, &source, quantile, profile.lens()),
         None => {
             let geometry = ffi::geometry_for(raw_path)?;
-            hdr::fit_all(raw_path, &source, quantile, geometry, finished).map(|(_, matched)| matched)
+            hdr::fit_all(raw_path, &source, quantile, geometry, finished)
+                .map(|(_, matched)| matched)
         }
     })
 }
@@ -706,8 +911,9 @@ pub fn fit_hdr_for(
 /// The resize is skipped where the frame already fits, which is not the rare case:
 /// the job builds its base at the largest size it asks for, so the biggest rendition
 /// of every photo arrives here already the right size (10.1).
+#[cfg(not(target_arch = "wasm32"))]
 pub fn save_avif_frame(
-    source: vips::RgbRef<'_>,
+    source: rgb::RgbRef<'_>,
     long_edge: u32,
     quantizer: i32,
     effort: i32,
@@ -719,14 +925,30 @@ pub fn save_avif_frame(
     // 10 as fastest. Same knob, opposite ends.
     let speed = (10 - effort).clamp(0, 10);
     if long_edge == 0 || source.width.max(source.height) <= long_edge as usize {
-        return avif::encode_rendition(source.data.into(), source.width, source.height, quantizer, speed, full_chroma, out_path);
+        return avif::encode_rendition(
+            source.data.into(),
+            source.width,
+            source.height,
+            quantizer,
+            speed,
+            full_chroma,
+            out_path,
+        );
     }
     let resized = vips::Pipeline::from_rgb(source)
         .and_then(|pipeline| pipeline.resize_to_fit(long_edge as usize))
         .and_then(vips::Pipeline::finish)
         .map_err(|e| format!("could not resize for the encode: {e}"))?;
     let (width, height) = (resized.width, resized.height);
-    avif::encode_rendition(resized.data.into(), width, height, quantizer, speed, full_chroma, out_path)
+    avif::encode_rendition(
+        resized.data.into(),
+        width,
+        height,
+        quantizer,
+        speed,
+        full_chroma,
+        out_path,
+    )
 }
 
 /// `libraw_image_formats_t`: a preview is either a JPEG or a bare bitmap.
@@ -747,14 +969,24 @@ const LIBRAW_IMAGE_JPEG: raw::LibRaw_image_formats = 1;
 /// # Safety
 /// `path` must be a NUL-terminated C string.
 #[expect(unsafe_code)]
-unsafe fn with_embedded_jpeg<T>(path: *const c_char, use_bytes: impl FnOnce(&[u8]) -> T) -> Option<T> {
+#[cfg(not(target_arch = "wasm32"))]
+unsafe fn with_embedded_jpeg<T>(
+    path: *const c_char,
+    use_bytes: impl FnOnce(&[u8]) -> T,
+) -> Option<T> {
+    let path = unsafe { CStr::from_ptr(path) };
+    with_embedded_jpeg_from(Opened::Path(path), use_bytes)
+}
+
+#[expect(unsafe_code)]
+fn with_embedded_jpeg_from<T>(source: Opened<'_>, use_bytes: impl FnOnce(&[u8]) -> T) -> Option<T> {
     let r = unsafe { raw::libraw_init(0) };
     if r.is_null() {
         return None;
     }
 
     let result = (|| -> Option<T> {
-        if unsafe { raw::libraw_open_file(r, path) } != 0 || unsafe { raw::libraw_unpack_thumb(r) } != 0 {
+        if unsafe { source.open(r) } != 0 || unsafe { raw::libraw_unpack_thumb(r) } != 0 {
             return None;
         }
         let mut err: c_int = 0;
@@ -768,7 +1000,9 @@ unsafe fn with_embedded_jpeg<T>(path: *const c_char, use_bytes: impl FnOnce(&[u8
             if unsafe { (*thumb).type_ } != LIBRAW_IMAGE_JPEG || size == 0 {
                 return None;
             }
-            Some(use_bytes(unsafe { std::slice::from_raw_parts((*thumb).data.as_ptr(), size) }))
+            Some(use_bytes(unsafe {
+                std::slice::from_raw_parts((*thumb).data.as_ptr(), size)
+            }))
         })();
         unsafe { raw::libraw_dcraw_clear_mem(thumb) };
         out
@@ -779,9 +1013,14 @@ unsafe fn with_embedded_jpeg<T>(path: *const c_char, use_bytes: impl FnOnce(&[u8
     result
 }
 
+pub fn embedded_jpeg_bytes(raw_bytes: &[u8]) -> Option<Vec<u8>> {
+    with_embedded_jpeg_from(Opened::Bytes(raw_bytes), |jpeg| jpeg.to_vec())
+}
+
 /// The camera's embedded preview as RGB, bounded by `long_edge`, for callers on this
 /// side of the boundary. None when the file embeds no JPEG preview.
-pub fn decode_embedded_rgb(path: &str, long_edge: usize) -> Option<vips::Rgb> {
+#[cfg(not(target_arch = "wasm32"))]
+pub fn decode_embedded_rgb(path: &str, long_edge: usize) -> Option<rgb::Rgb> {
     vips::init();
     let c_path = std::ffi::CString::new(path).ok()?;
     // SAFETY: the CString outlives the call.
@@ -809,16 +1048,21 @@ pub fn decode_embedded_rgb(path: &str, long_edge: usize) -> Option<vips::Rgb> {
 /// # Safety
 /// `path` must be a NUL-terminated C string and `out` a writable `BbHeader`.
 #[expect(unsafe_code)]
-#[no_mangle]
+#[unsafe(no_mangle)]
+#[cfg(not(target_arch = "wasm32"))]
 pub unsafe extern "C" fn bb_read_header(path: *const c_char, out: *mut header::BbHeader) -> c_int {
     if path.is_null() || out.is_null() {
         return -1;
     }
-    let Ok(path) = unsafe { CStr::from_ptr(path) }.to_str() else { return -1 };
+    let Ok(path) = unsafe { CStr::from_ptr(path) }.to_str() else {
+        return -1;
+    };
     // Runs on every file of a scan, and parses maker notes off untrusted bytes.
     match guard("bb_read_header", None, || header::read_path(path)) {
         Some(header) => {
-            unsafe { *out = header; }
+            unsafe {
+                *out = header;
+            }
             0
         }
         None => -1,
@@ -827,7 +1071,8 @@ pub unsafe extern "C" fn bb_read_header(path: *const c_char, out: *mut header::B
 
 /// Size of `BbHeader`, which the caller checks against the layout it reads.
 #[expect(unsafe_code)]
-#[no_mangle]
+#[unsafe(no_mangle)]
+#[cfg(not(target_arch = "wasm32"))]
 pub extern "C" fn bb_header_size() -> usize {
     std::mem::size_of::<header::BbHeader>()
 }
@@ -835,7 +1080,8 @@ pub extern "C" fn bb_header_size() -> usize {
 /// How many bytes a stacking descriptor occupies, so the caller can size its
 /// buffer and the database column without either guessing.
 #[expect(unsafe_code)]
-#[no_mangle]
+#[unsafe(no_mangle)]
+#[cfg(not(target_arch = "wasm32"))]
 pub extern "C" fn bb_descriptor_size() -> usize {
     stacks::DESCRIPTOR_BYTES
 }
@@ -852,7 +1098,8 @@ pub extern "C" fn bb_descriptor_size() -> usize {
 /// `descriptors` must hold `count * bb_descriptor_size()` bytes, and
 /// `timestamps` and `out` must each hold `count` elements.
 #[expect(unsafe_code)]
-#[no_mangle]
+#[unsafe(no_mangle)]
+#[cfg(not(target_arch = "wasm32"))]
 pub unsafe extern "C" fn bb_stack_groups(
     descriptors: *const u8,
     timestamps: *const i64,
@@ -864,7 +1111,8 @@ pub unsafe extern "C" fn bb_stack_groups(
     if descriptors.is_null() || timestamps.is_null() || out.is_null() {
         return -1;
     }
-    let descriptors = unsafe { std::slice::from_raw_parts(descriptors, count * stacks::DESCRIPTOR_BYTES) };
+    let descriptors =
+        unsafe { std::slice::from_raw_parts(descriptors, count * stacks::DESCRIPTOR_BYTES) };
     let timestamps = unsafe { std::slice::from_raw_parts(timestamps, count) };
     let groups = stacks::group(descriptors, timestamps, threshold, window_seconds);
     unsafe { std::ptr::copy_nonoverlapping(groups.as_ptr(), out, count) };
@@ -880,7 +1128,6 @@ mod pin;
 /// suite stays fast enough to run on every edit.
 #[cfg(all(test, feature = "fixtures"))]
 mod fixture_tests;
-
 
 #[cfg(test)]
 mod tests {
@@ -904,14 +1151,20 @@ mod tests {
             for (iwidth, iheight) in [(7usize, 5usize), (5, 7), (4, 4), (1, 6)] {
                 // What `copy_processed` derives: the quarter-turn swaps the output
                 // bounds, and only the output bounds.
-                let (width, height) =
-                    if flip & 4 == 0 { (iwidth, iheight) } else { (iheight, iwidth) };
+                let (width, height) = if flip & 4 == 0 {
+                    (iwidth, iheight)
+                } else {
+                    (iheight, iwidth)
+                };
 
                 let mut seen = vec![0u32; iwidth * iheight];
                 for row in 0..height {
                     for col in 0..width {
                         let at = flip_index(flip, iwidth, iheight, row, col);
-                        assert!(at < seen.len(), "flip {flip} {iwidth}x{iheight} escaped at {row},{col}");
+                        assert!(
+                            at < seen.len(),
+                            "flip {flip} {iwidth}x{iheight} escaped at {row},{col}"
+                        );
                         seen[at] += 1;
                     }
                 }
@@ -935,22 +1188,33 @@ mod tests {
     fn the_crop_removes_the_same_sensor_pixels_whichever_way_the_frame_turns() {
         // Deliberately asymmetric on all four edges: a symmetric set passes under any
         // permutation and would prove nothing.
-        let sensor = Insets { left: 1, top: 2, right: 3, bottom: 4 };
+        let sensor = Insets {
+            left: 1,
+            top: 2,
+            right: 3,
+            bottom: 4,
+        };
         let (iwidth, iheight) = (11usize, 13usize);
 
         let wanted: std::collections::BTreeSet<usize> = (sensor.top..iheight - sensor.bottom)
-            .flat_map(|row| {
-                (sensor.left..iwidth - sensor.right).map(move |col| row * iwidth + col)
-            })
+            .flat_map(|row| (sensor.left..iwidth - sensor.right).map(move |col| row * iwidth + col))
             .collect();
 
         for flip in 0..8 {
             let out = rotate_insets(
-                Insets { left: sensor.left, top: sensor.top, right: sensor.right, bottom: sensor.bottom },
+                Insets {
+                    left: sensor.left,
+                    top: sensor.top,
+                    right: sensor.right,
+                    bottom: sensor.bottom,
+                },
                 flip,
             );
-            let (width, height) =
-                if flip & 4 == 0 { (iwidth, iheight) } else { (iheight, iwidth) };
+            let (width, height) = if flip & 4 == 0 {
+                (iwidth, iheight)
+            } else {
+                (iheight, iwidth)
+            };
 
             let reached: std::collections::BTreeSet<usize> = (out.top..height - out.bottom)
                 .flat_map(|row| {
@@ -974,11 +1238,17 @@ mod tests {
         // a failure in a suite that is passing.
         let previous = std::panic::take_hook();
         std::panic::set_hook(Box::new(|_| {}));
-        let out = guard("a test", -1, || -> i32 { panic!("as if an index escaped a frame") });
+        let out = guard("a test", -1, || -> i32 {
+            panic!("as if an index escaped a frame")
+        });
         std::panic::set_hook(previous);
 
         assert_eq!(out, -1, "a panic must come back as the fallback");
-        assert_eq!(guard("a test", -1, || 7), 7, "and an ordinary return untouched");
+        assert_eq!(
+            guard("a test", -1, || 7),
+            7,
+            "and an ordinary return untouched"
+        );
     }
 
     #[test]
@@ -1039,7 +1309,11 @@ mod tests {
 
     #[test]
     fn never_returns_a_non_positive_multiplier() {
-        for set in [[2770.0, 1024.0, 1669.0, 1024.0], [2060.0, 1024.0, 2904.0, 0.0], [1.0, 1.0, 1.0, -5.0]] {
+        for set in [
+            [2770.0, 1024.0, 1669.0, 1024.0],
+            [2060.0, 1024.0, 2904.0, 0.0],
+            [1.0, 1.0, 1.0, -5.0],
+        ] {
             if let Some(out) = camera_multipliers(&set) {
                 assert!(out.iter().all(|v| *v > 0.0), "{set:?} produced {out:?}");
             }
@@ -1128,7 +1402,15 @@ mod tests {
 
     #[test]
     fn halves_insets_without_going_negative() {
-        let halved = halve_insets(Insets { left: 7, top: 3, right: 9, bottom: 1 });
-        assert_eq!((halved.left, halved.top, halved.right, halved.bottom), (3, 1, 4, 0));
+        let halved = halve_insets(Insets {
+            left: 7,
+            top: 3,
+            right: 9,
+            bottom: 1,
+        });
+        assert_eq!(
+            (halved.left, halved.top, halved.right, halved.bottom),
+            (3, 1, 4, 0)
+        );
     }
 }

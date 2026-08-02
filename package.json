@@ -12,7 +12,8 @@
     "test:native": "cargo test --release --manifest-path native/rawshim/Cargo.toml",
     "test:native:full": "cargo test --release --manifest-path native/rawshim/Cargo.toml --features fixtures",
     "typecheck": "tsc --noEmit",
-    "build:native": "cargo build --release --manifest-path native/rawshim/Cargo.toml"
+    "build:native": "cargo build --release --manifest-path native/rawshim/Cargo.toml",
+    "build:wasm": "wasm-pack build --release --target web --out-dir ../../web/src/wasm native/rawshim"
   },
   "dependencies": {
     "@parcel/watcher": "^2.6.0",

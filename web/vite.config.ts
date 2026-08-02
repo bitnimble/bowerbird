@@ -11,6 +11,14 @@ export default defineConfig({
   // to parse.
   esbuild: { target: 'es2022' },
   build: { target: 'es2022' },
+  resolve: {
+    alias: {
+      // rawshim's wasm build links wasi-libc for the C runtime LibRaw needs, which makes
+      // the module import WASI syscalls it never calls - the RAW is opened from a buffer,
+      // so nothing touches a file. The stubs satisfy the import list.
+      wasi_snapshot_preview1: '/src/features/raw_edit/wasi_stub.ts',
+    },
+  },
   server: {
     // Random rather than fixed, so several checkouts can run a dev server at
     // once; Vite prints the one it settled on. `-p N` / `--port N` pins it.

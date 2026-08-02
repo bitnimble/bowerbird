@@ -17,7 +17,7 @@
 // tuning if a library renders consistently dark or hot.
 
 use crate::hdr_fit::{self, HdrColour};
-use rayon::prelude::*;
+use crate::parallel::*;
 
 const MAX: usize = 65535;
 
@@ -104,6 +104,11 @@ fn eetf(nits: f64, source_peak_nits: f64, peak_nits: f64) -> f64 {
 /// unchanged on a typical frame.
 const QUANTILE_SAMPLES: usize = 1 << 20;
 
+fn sample_at(k: usize, pixels: usize, counted: usize) -> usize {
+    let at = (k as u64 * pixels as u64 / counted as u64) * 3;
+    usize::try_from(at).expect("a sample offset must fit the frame's address space")
+}
+
 /// Where the frame's top end is read, for the roll-off to compress into the display.
 ///
 /// A quantile rather than the maximum, and that is a correctness fix rather than a
@@ -154,7 +159,7 @@ pub fn levels(samples: &[u16], quantile: f64) -> Levels {
         // Spread by fraction rather than by step: sample k lands at the same place in
         // the frame whatever the frame's resolution, which is what makes two decodes of
         // one photo agree.
-        let i = ((k * pixels) / counted) * 3;
+        let i = sample_at(k, pixels, counted);
         let brightest = samples[i].max(samples[i + 1]).max(samples[i + 2]);
         histogram[brightest as usize] += 1;
     }
@@ -257,7 +262,7 @@ pub fn grade(frame: &mut [u16], options: &GradeOptions<'_>) -> bool {
     let mut sampled: Vec<f32> = (0..counted)
         .into_par_iter()
         .map(|k| {
-            let i = ((k * pixels) / counted) * 3;
+            let i = sample_at(k, pixels, counted);
             let v = hdr_fit::apply_hdr_colour(
                 colour,
                 f64::from(frame[i]) / white,
@@ -430,6 +435,19 @@ mod tests {
         let out = levels(&samples, 0.9);
         assert!(out.peak > out.white, "the peak must sit above diffuse white");
         assert!(out.white > 0.0);
+    }
+
+    #[test]
+    fn sample_positions_survive_a_thirty_two_bit_index() {
+        let (pixels, counted) = (9_830_400usize, QUANTILE_SAMPLES);
+        assert_eq!(sample_at(0, pixels, counted), 0);
+        assert_eq!(sample_at(counted - 1, pixels, counted), (pixels - 10) * 3);
+        let mut previous = 0;
+        for k in 0..counted {
+            let at = sample_at(k, pixels, counted);
+            assert!(at >= previous && at < pixels * 3, "sample {k} landed at {at}");
+            previous = at;
+        }
     }
 
     #[test]

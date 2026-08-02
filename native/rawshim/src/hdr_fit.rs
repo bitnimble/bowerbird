@@ -14,7 +14,7 @@
 // BT.2390 take over above it (10.7.1).
 
 use crate::image::warp_planar;
-use rayon::prelude::*;
+use crate::parallel::*;
 
 /// Long edge of the grid the fit runs on. Matching the SDR fit: fitting small and
 /// applying at full resolution is free, and a 60MP fit is minutes of work for the
@@ -2193,7 +2193,7 @@ pub fn apply_lens(samples: &[u16], width: usize, height: usize, m: &HdrMatch) ->
 pub fn fit(
     plane: &Plane,
     anchor: f64,
-    preview: &crate::vips::Rgb,
+    preview: &crate::rgb::Rgb,
     lens: crate::fit::Lens,
 ) -> Option<HdrMatch> {
     if !(anchor > 0.0) {
@@ -2231,8 +2231,8 @@ pub fn fit(
 /// sides, so the preparation here is a divide rather than a transfer and a primary
 /// conversion - and that is the whole difference between the two entry points.
 pub fn fit_display(
-    render: &crate::vips::Rgb,
-    preview: &crate::vips::Rgb,
+    render: &crate::rgb::Rgb,
+    preview: &crate::rgb::Rgb,
     lens: &crate::fit::Lens,
 ) -> Option<HdrColour> {
     let level = |v: u8| f64::from(v) / 255.0;
@@ -2402,7 +2402,7 @@ pub fn fit_plane(linear: &[u16], width: usize, height: usize, wide: usize) -> Pl
 /// on the 24MP fixture, a full decode against a halved one moves the fitted matrix by
 /// about 0.5%. What is worth fixing is anything that makes the gap *larger* than that
 /// for no reason, which is what the peak was doing before `tone` read it as a quantile.
-pub fn render_srgb8(plane: &Plane, white: f64) -> crate::vips::Rgb {
+pub fn render_srgb8(plane: &Plane, white: f64) -> crate::rgb::Rgb {
     let mut data = vec![0u8; plane.width * plane.height * 3];
     let to_srgb = rec2020_to_srgb();
     data.par_chunks_mut(3).zip(plane.data.par_chunks(3)).for_each(|(out, px)| {
@@ -2413,7 +2413,7 @@ pub fn render_srgb8(plane: &Plane, white: f64) -> crate::vips::Rgb {
             out[c] = (255.0 * bt709_oetf(v[c])).round() as u8;
         }
     });
-    crate::vips::Rgb { width: plane.width, height: plane.height, data }
+    crate::rgb::Rgb { width: plane.width, height: plane.height, data }
 }
 
 #[cfg(test)]

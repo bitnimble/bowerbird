@@ -40,8 +40,8 @@
 // measurably reduce the fringe it claims to correct. That is what makes trusting a source
 // safe rather than a leap.
 
-use crate::vips::RgbRef;
-use rayon::prelude::*;
+use crate::parallel::*;
+use crate::rgb::RgbRef;
 
 /// A gradient worth regressing against. Below this the projection is mostly noise and
 /// the sample earns nothing but variance.

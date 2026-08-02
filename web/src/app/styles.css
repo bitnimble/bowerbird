@@ -2612,3 +2612,46 @@ p.ui-text--mono {
   white-space: nowrap;
   border: 0;
 }
+
+/* The client-side RAW editing spike (/test-raw-editing). */
+.raw-edit {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  padding: var(--gap);
+}
+
+.raw-edit__controls {
+  display: flex;
+  gap: var(--gap);
+  align-items: center;
+}
+
+.raw-edit__path {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--mono);
+}
+
+/* Black rather than the page's own background: an HDR frame is judged against what
+   surrounds it, and a light surround is what makes a correctly graded one look dim. */
+.raw-edit__stage {
+  width: 100%;
+  max-height: 70vh;
+  object-fit: contain;
+  background: #000;
+}
+
+.raw-edit__slider {
+  display: flex;
+  gap: var(--gap);
+  align-items: center;
+}
+
+.raw-edit__slider input[type='range'] {
+  flex: 1;
+}
+
+.raw-edit__readout {
+  font-family: var(--mono);
+}

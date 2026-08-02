@@ -86,32 +86,7 @@ fn wrap<T>(result: std::result::Result<T, libvips::error::Error>) -> Result<T> {
     })
 }
 
-/// Interleaved 8-bit RGB, owned. What an operation produces.
-pub struct Rgb {
-    pub width: usize,
-    pub height: usize,
-    pub data: Vec<u8>,
-}
-
-impl Rgb {
-    pub fn as_ref(&self) -> RgbRef<'_> {
-        RgbRef { width: self.width, height: self.height, data: &self.data }
-    }
-}
-
-/// Interleaved 8-bit RGB, borrowed. What an operation reads.
-///
-/// Every entry point here takes one of these rather than `&Rgb`, so pixels held
-/// by something else - a decode handle TypeScript is keeping alive, most of the
-/// time - can be operated on where they lie. The owned form was the whole surface
-/// once, and it meant a ~45MB copy at each end of every call for images no caller
-/// ever wanted materialised.
-#[derive(Clone, Copy)]
-pub struct RgbRef<'a> {
-    pub width: usize,
-    pub height: usize,
-    pub data: &'a [u8],
-}
+pub use crate::rgb::{Rgb, RgbRef};
 
 /// Reads an image out as interleaved 8-bit RGB.
 ///
@@ -461,4 +436,3 @@ mod tests {
         assert!(Pipeline::from_rgb(short).is_err());
     }
 }
-
