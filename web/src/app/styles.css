@@ -5,6 +5,10 @@
 @import 'react-day-picker/style.css';
 
 :root {
+  /* Without this, the browser paints light fields while `color: inherit` still
+     pulls bone off the page - white text on a white box. */
+  color-scheme: dark;
+
   --ink: #14161a; /* app surround */
   --bower: #0b0d11; /* the bed the grid sits on, deeper than the chrome */
   --slate: #232833; /* panel edges, dividers */
@@ -90,6 +94,30 @@ select,
 textarea {
   font: inherit;
   color: inherit;
+}
+
+/* Text-entry controls. A naked field still inherits bone; give it the same dark
+   bed `.ui-input` uses so it cannot fall back to the browser's light surface.
+   :where keeps this below `.ui-input input`, which clears the border again. */
+:where(
+  input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']):not(
+      [type='hidden']
+    ):not([type='button']):not([type='submit']):not([type='reset']):not([type='image']),
+  textarea
+) {
+  background-color: #0f1319;
+  border: 1px solid var(--slate);
+  border-radius: var(--radius);
+  color: var(--bone);
+}
+
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+textarea:-webkit-autofill {
+  -webkit-text-fill-color: var(--bone);
+  caret-color: var(--bone);
+  box-shadow: 0 0 0 1000px #0f1319 inset;
 }
 
 :focus-visible {
@@ -316,6 +344,7 @@ p.ui-text--mono {
   border-radius: var(--radius);
   padding: 7px 9px;
   font-size: var(--control-text);
+  color: var(--bone);
 }
 
 /* The z-index belongs on the positioner, not the popup: base-ui positions with a
