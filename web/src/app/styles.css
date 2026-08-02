@@ -2642,6 +2642,25 @@ p.ui-text--mono {
   background: #000;
 }
 
+/* No filter, opacity, transform or blend mode anywhere on this subtree or its ancestors.
+   Any of them forces the compositor to rasterise into an SDR intermediate, which defeats
+   the PQ tagging silently - the picture merely looks washed out, which is exactly the
+   symptom this strip exists to distinguish from. */
+.raw-edit__reference {
+  display: flex;
+  align-items: stretch;
+  background: #000;
+}
+
+.raw-edit__reference img {
+  height: 96px;
+}
+
+.raw-edit__reference-sdr {
+  width: 128px;
+  background: #fff;
+}
+
 .raw-edit__slider {
   display: flex;
   gap: var(--gap);

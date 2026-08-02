@@ -1,15 +1,21 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '../../ui/button';
 import { Text } from '../../ui/text';
-import { RawEditPipeline, supportsTenBit, type PipelineState } from './raw_edit_pipeline';
+import { prefersStill, RawEditPipeline, supportsTenBit, type PipelineState } from './raw_edit_pipeline';
 
-// Does a Lightroom exposure slider work in a browser, in HDR, with the picture arriving
-// as a live video track rather than as a file? Everything below the fetch runs client
-// side: rawshim decodes the CR3 in wasm through LibRaw, fits the camera match from the
-// embedded preview, grades a smaller prepared frame during a drag, settles at full
-// resolution, and pushes the result into a `<video>` - no encoder anywhere in the loop.
+// Does a Lightroom exposure slider work in a browser, in HDR? Everything below the fetch
+// runs client side: rawshim decodes the CR3 in wasm through LibRaw, fits the camera match
+// from the embedded preview, grades a smaller prepared frame during a drag, and settles
+// at full resolution - no encoder anywhere in the loop.
 //
-// Chromium only, and only meaningful on an HDR display - the readout says which.
+// **Two ways out, because one browser each can take one.** Chromium accepts a 10-bit
+// `VideoFrame` and composites a PQ track, so it gets a live `<video>`. WebKit validates
+// only 8-bit formats, and an 8-bit sample buffer does not reach EDR, so the same tagging
+// produces a tone-mapped, washed-out picture there; Safari 26 does read CICP off a still,
+// so it gets a 16-bit PQ PNG in an `<img>` instead. The route is picked from the same
+// measurement, and can be forced either way to compare them on one machine.
+//
+// Only meaningful on an HDR display, and the patch strip is what makes it judgeable.
 
 const DEFAULT_PATH = '/photos/Nick/IMG_7988.CR3';
 
@@ -24,12 +30,18 @@ const SIZES = [
 
 const EV_RANGE = 5;
 
+const SINKS = [
+  { still: false, label: 'video track' },
+  { still: true, label: 'still PNG' },
+];
+
 export function RawEditPage(): JSX.Element {
   const video = useRef<HTMLVideoElement>(null);
   const pipeline = useRef<RawEditPipeline | null>(null);
   const [state, setState] = useState<PipelineState | null>(null);
   const [path, setPath] = useState(DEFAULT_PATH);
   const [block, setBlock] = useState(3840);
+  const [still, setStill] = useState(prefersStill);
   const [ev, setEv] = useState(0);
 
   // Read by the effect below without being one of its dependencies: typing in the path
@@ -38,15 +50,19 @@ export function RawEditPage(): JSX.Element {
   const pending = useRef(path);
   pending.current = path;
 
-  // Rebuilt per size, since the working resolution is fixed at decode: a new size is a
-  // new decode, and therefore a new track for the element to take. Opens straight away,
-  // so the page arrives showing a photograph rather than an empty stage.
+  // Rebuilt per size and per route, since both are fixed at decode: a new size is a new
+  // decode, and therefore a new track for the element to take. Opens straight away, so
+  // the page arrives showing a photograph rather than an empty stage.
   useEffect(() => {
     // Attached on arrival rather than at construction: Chromium's generator exists
     // immediately, Safari's is built worker-side and its track comes back by transfer.
-    const built = new RawEditPipeline(setState, (track) => {
-      if (video.current != null) video.current.srcObject = new MediaStream([track]);
-    });
+    const built = new RawEditPipeline(
+      setState,
+      (track) => {
+        if (video.current != null) video.current.srcObject = new MediaStream([track]);
+      },
+      still,
+    );
     pipeline.current = built;
     setEv(0);
     void built.open(pending.current, block);
@@ -54,7 +70,7 @@ export function RawEditPage(): JSX.Element {
       built.close();
       pipeline.current = null;
     };
-  }, [block]);
+  }, [block, still]);
 
   function open(): void {
     setEv(0);
@@ -91,18 +107,40 @@ export function RawEditPage(): JSX.Element {
             </option>
           ))}
         </select>
+        <select
+          value={String(still)}
+          onChange={(e) => setStill(e.target.value === 'true')}
+          aria-label="Output route"
+        >
+          {SINKS.map((sink) => (
+            <option key={sink.label} value={String(sink.still)}>
+              {sink.label}
+            </option>
+          ))}
+        </select>
         <Button onClick={open}>Open</Button>
       </div>
 
-      {/* Muted and autoplay, because a track with no audio still needs the gesture
-          policy satisfied before it will render. */}
-      <video
-        ref={video}
-        className="raw-edit__stage"
-        autoPlay
-        muted
-        playsInline
-      />
+      {still ? (
+        <img className="raw-edit__stage" src={state?.stillUrl} alt="" />
+      ) : (
+        /* Muted and autoplay, because a track with no audio still needs the gesture
+           policy satisfied before it will render. */
+        <video ref={video} className="raw-edit__stage" autoPlay muted playsInline />
+      )}
+
+      {/* The instrument. Script cannot read back whether a frame reached the HDR
+          compositor, so the only way to answer that is to put a PQ patch next to
+          something that is definitionally not HDR and look. Left is BT.2408 diffuse
+          white, middle is the 1000-nit display peak, right is ordinary SDR white. On a
+          working path the middle patch is obviously the brightest of the three; where
+          the tag has been defeated all three sit within a few percent. */}
+      <div className="raw-edit__reference">
+        {state != null && state.referenceUrl !== '' && (
+          <img src={state.referenceUrl} alt="203 and 1000 nit PQ reference patches" />
+        )}
+        <div className="raw-edit__reference-sdr" />
+      </div>
 
       <div className="raw-edit__slider">
         <label htmlFor="exposure">
@@ -138,6 +176,8 @@ export function RawEditPage(): JSX.Element {
         <dd>{live ? `${state.gradeMs}ms` : '-'}</dd>
         <dt>Delivered</dt>
         <dd>{live && state.fps > 0 ? `${state.fps}fps` : '-'}</dd>
+        <dt>Threads</dt>
+        <dd data-testid="raw-edit-threads">{state?.threads ?? 0}</dd>
         {/* Both depths are PQ. Safari and Firefox reject every 10-bit format, and the
             8-bit path is a coarser HDR picture rather than an SDR one - measured on an
             XDR panel, a 1000-nit patch reads clearly brighter than a 203-nit one. The
@@ -147,8 +187,15 @@ export function RawEditPage(): JSX.Element {
             the camera's own shoulder does. */}
         <dt>Colour</dt>
         <dd>{live ? (state.matched ? 'camera match' : 'neutral (no match fitted)') : '-'}</dd>
-        <dt>Depth</dt>
-        <dd>{tenBit ? '10-bit PQ' : '8-bit PQ, dithered (no 10-bit VideoFrame here)'}</dd>
+        {/* The still is the better frame - 16 bits where a track tops out at 10, and no
+            dither - and the worse drag: measured here at 9fps against 12, and 1.4GB
+            resident against 841MB, for a PNG encode and decode on every tick. */}
+        <dt>Output</dt>
+        <dd>
+          {still
+            ? '16-bit PQ PNG in an <img>, 4:4:4'
+            : `${tenBit ? '10-bit' : '8-bit, dithered'} PQ video track, 4:4:4`}
+        </dd>
         {/* The one thing the page cannot answer for itself: HDR output is not readable
             from script, so all a machine without an HDR panel can confirm is that the
             frames carry the right signalling. */}

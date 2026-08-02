@@ -1,4 +1,4 @@
-// PQ-coded RGB to I420 planes.
+// PQ-coded RGB to I444 planes.
 //
 // The one stage of the browser pipeline with no counterpart in a rendition: there the
 // graded frame goes to libavif, which does its own RGB-to-YUV against the CICP it writes.
@@ -26,11 +26,10 @@ const BAYER: [[f32; 4]; 4] = [
 
 /// How many bits a sample gets, which is a browser capability rather than a preference.
 ///
-/// Chromium takes `I420P10`. Safari 26.4 and Firefox reject every 10-bit format - WebKit
-/// validates I420 and NV12 alone - while both accept PQ *tagging* on an 8-bit frame, and
-/// Safari composites that to a real HDR panel (measured on an XDR display: a 1000-nit
-/// patch reads clearly brighter than a 203-nit one). So 8-bit is not a fallback to SDR,
-/// only a coarser ladder, which is what the dither is for.
+/// Chromium takes `I444P10`. Safari 26.4 and Firefox reject every 10-bit format - WebKit
+/// validates I420 and NV12 alone - while both accept PQ *tagging* on an 8-bit frame. So
+/// 8-bit is not a fallback to SDR, only a coarser ladder, which is what the dither is
+/// for; the browsers that need it take the still route instead (§`wasm::Sink`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Depth {
     Eight,
@@ -62,7 +61,7 @@ impl Depth {
     }
 
     pub fn plane_bytes(self, width: usize, height: usize) -> usize {
-        width * height * 3 / 2 * self.bytes_per_sample()
+        width * height * 3 * self.bytes_per_sample()
     }
 }
 
@@ -83,23 +82,18 @@ fn write(plane: &mut [u8], depth: Depth, index: usize, value: u16) {
     }
 }
 
-/// Packs a PQ-coded 16-bit RGB frame into I420 planes at `depth`.
+/// Packs a PQ-coded 16-bit RGB frame into I444 planes at `depth`.
 ///
 /// `pq` is what `tone::encode_pq` leaves behind: full range is the display peak.
-/// `source_width` is the stride of the frame, which can exceed `width` when it was
-/// rounded down to even for 4:2:0.
-pub fn pack_i420(
-    pq: &[u16],
-    source_width: usize,
-    width: usize,
-    height: usize,
-    depth: Depth,
-    planes: &mut [u8],
-) {
-    pack_i420_with(pq, source_width, width, height, depth, planes);
-}
-
-fn pack_i420_with(
+/// `source_width` is the stride of the frame, which `width` can fall short of.
+///
+/// **4:4:4 rather than 4:2:0, which the interactive frame is why.** A drag grades at 960px
+/// and a subsample would halve that again, so colour would reach the element at 480 where
+/// luma reaches it at 960 - and colour then visibly degrades faster than detail does,
+/// which is what a drag used to look like. Only Chromium is behind this now, and it takes
+/// `I444P10` and `I444` PQ-tagged (measured); the browsers that validate I420 and NV12
+/// alone take the still route instead.
+pub fn pack(
     pq: &[u16],
     source_width: usize,
     width: usize,
@@ -108,43 +102,34 @@ fn pack_i420_with(
     planes: &mut [u8],
 ) {
     let stride = depth.bytes_per_sample();
-    let (luma, chroma) = planes.split_at_mut(width * height * stride);
-    let (cb_plane, cr_plane) = chroma.split_at_mut((width / 2) * (height / 2) * stride);
+    let (luma, rest) = planes.split_at_mut(width * height * stride);
+    let (cb_plane, cr_plane) = rest.split_at_mut(width * height * stride);
 
-    for by in 0..height / 2 {
-        for bx in 0..width / 2 {
-            let (mut cb_sum, mut cr_sum) = (0.0f32, 0.0f32);
-            for dy in 0..2 {
-                for dx in 0..2 {
-                    let (x, y) = (bx * 2 + dx, by * 2 + dy);
-                    let at = (y * source_width + x) * 3;
-                    let signal_of = |sample: u16| f32::from(sample) / 65535.0;
-                    let signal = [
-                        signal_of(pq[at]),
-                        signal_of(pq[at + 1]),
-                        signal_of(pq[at + 2]),
-                    ];
-                    let y_signal = LUMA[0] * signal[0] + LUMA[1] * signal[1] + LUMA[2] * signal[2];
-                    let (floor, span) = depth.luma();
-                    // `+ 0.5` and truncate rather than `round()`: both are non-negative,
-                    // where the two agree, and `round()` is a libm call on a target with
-                    // no rounding instruction - nine million a frame.
-                    let code = (floor + span * y_signal.clamp(0.0, 1.0) + dither(depth, x, y) + 0.5)
-                        as u16;
-                    write(luma, depth, y * width + x, code);
-                    cb_sum += (signal[2] - y_signal) / 1.8814;
-                    cr_sum += (signal[0] - y_signal) / 1.4746;
-                }
-            }
-            // Half-resolution planes carry their own dither phase rather than borrowing a
-            // luma pixel's.
-            let noise = dither(depth, bx, by);
+    for y in 0..height {
+        for x in 0..width {
+            let at = (y * source_width + x) * 3;
+            let signal_of = |sample: u16| f32::from(sample) / 65535.0;
+            let signal = [
+                signal_of(pq[at]),
+                signal_of(pq[at + 1]),
+                signal_of(pq[at + 2]),
+            ];
+            let y_signal = LUMA[0] * signal[0] + LUMA[1] * signal[1] + LUMA[2] * signal[2];
+            let (floor, span) = depth.luma();
+            // `+ 0.5` and truncate rather than `round()`: both are non-negative, where the
+            // two agree, and `round()` is a libm call on a target with no rounding
+            // instruction - nine million a frame.
+            let code =
+                (floor + span * y_signal.clamp(0.0, 1.0) + dither(depth, x, y) + 0.5) as u16;
+            let at = y * width + x;
+            write(luma, depth, at, code);
+
+            let noise = dither(depth, x, y);
             let (mid, span) = depth.chroma();
             let quantise =
-                |sum: f32| (mid + span * (sum / 4.0).clamp(-0.5, 0.5) + noise + 0.5) as u16;
-            let at = by * (width / 2) + bx;
-            write(cb_plane, depth, at, quantise(cb_sum));
-            write(cr_plane, depth, at, quantise(cr_sum));
+                |difference: f32| (mid + span * difference.clamp(-0.5, 0.5) + noise + 0.5) as u16;
+            write(cb_plane, depth, at, quantise((signal[2] - y_signal) / 1.8814));
+            write(cr_plane, depth, at, quantise((signal[0] - y_signal) / 1.4746));
         }
     }
 }
@@ -155,7 +140,7 @@ mod tests {
 
     fn planes_of(pq: &[u16], w: usize, h: usize, depth: Depth) -> (Vec<u16>, Vec<u16>) {
         let mut planes = vec![0u8; depth.plane_bytes(w, h)];
-        pack_i420(pq, w, w, h, depth, &mut planes);
+        pack(pq, w, w, h, depth, &mut planes);
         let read = |bytes: &[u8]| -> Vec<u16> {
             match depth {
                 Depth::Ten => bytes
@@ -212,6 +197,31 @@ mod tests {
                 luma.iter().all(|y| *y == white),
                 "{depth:?} white is {luma:?}, want {white}"
             );
+        }
+    }
+
+    /// The point of 4:4:4: colour that changes every pixel reaches the element, where a
+    /// subsample would average each neighbouring pair into one and could not.
+    #[test]
+    fn colour_survives_at_the_resolution_luma_does() {
+        // Alternating red and blue columns, which is the worst case for a 2x1 average.
+        let (width, height) = (4usize, 4usize);
+        let mut pq = vec![0u16; width * height * 3];
+        for y in 0..height {
+            for x in 0..width {
+                let at = (y * width + x) * 3;
+                pq[at + if x % 2 == 0 { 0 } else { 2 }] = u16::MAX;
+            }
+        }
+
+        let (_, chroma) = planes_of(&pq, width, height, Depth::Ten);
+        assert_eq!(chroma.len(), width * height * 2, "both planes are full resolution");
+        // Per plane, since Cb and Cr differ from each other in any sampling. What a
+        // subsample would destroy is the variation *within* one of them.
+        for plane in chroma.chunks_exact(width * height) {
+            for row in plane.chunks_exact(width) {
+                assert_ne!(row[0], row[1], "neighbouring columns were averaged together: {row:?}");
+            }
         }
     }
 }

@@ -1,5 +1,6 @@
 /// <reference lib="webworker" />
-import init, { Editor } from '../../wasm/rawshim';
+import init, { Editor, initThreadPool, reference_png, thread_count } from '../../wasm/rawshim';
+import { useMemory } from './wasi_stub';
 
 // The decode and the grade both run here. On the main thread a 20ms grade would land
 // between the slider's pointer events, which is the one place the jank would be blamed on
@@ -11,28 +12,54 @@ import init, { Editor } from '../../wasm/rawshim';
 // `MediaStreamTrackGenerator`, which is itself a track and - measured - is neither
 // transferable nor cloneable, so it has to be built on the main thread and fed frames from
 // here. Two paths, no way to unify them.
+//
+// The still sink sidesteps both: a PNG needs no track at either end, only a blob.
 
 export type ToWorker =
-  | { type: 'open'; bytes: ArrayBuffer; longEdge: number; tenBit: boolean }
+  | { type: 'open'; bytes: ArrayBuffer; longEdge: number; tenBit: boolean; still: boolean }
   | { type: 'grade'; ev: number; exact: boolean; timestamp: number };
 
 export type FromWorker =
+  | { type: 'ready'; threads: number; reference: Blob }
   | { type: 'track'; track: MediaStreamTrack }
   | { type: 'opened'; width: number; height: number; ms: number; matched: boolean }
-  // The frame comes back only when the main thread owns the generator; otherwise it has
-  // already been written here and this just reports the cost.
-  | { type: 'frame'; frame: VideoFrame | null; ev: number; ms: number }
+  // Exactly one of `frame` and `still` is set. A frame comes back only when the main
+  // thread owns the generator; where this worker owns it, both are null and the message
+  // just reports the cost.
+  | { type: 'frame'; frame: VideoFrame | null; still: Blob | null; ev: number; ms: number }
   | { type: 'failed'; message: string };
 
 let editor: Editor | null = null;
 let memory: WebAssembly.Memory | null = null;
 let tenBit = true;
-/** Set only when this worker owns the generator, which is the Safari path. */
+let still = false;
+/** Set only when this worker owns the generator, which is the Safari video path. */
 let writer: WritableStreamDefaultWriter<VideoFrame> | null = null;
 
 const scope = self as unknown as DedicatedWorkerGlobalScope;
 const post = (message: FromWorker, transfer: Transferable[] = []): void =>
   scope.postMessage(message, transfer);
+
+type Initialized = { memory: WebAssembly.Memory };
+
+const initialized = initialize();
+
+async function initialize(): Promise<Initialized> {
+  const instance = await init();
+  useMemory(instance.memory);
+  const requested = Math.max(1, navigator.hardwareConcurrency);
+  await initThreadPool(requested);
+  const threads = thread_count();
+  // Built whichever sink is coming, because `ready` precedes `open`. It is a 512x192
+  // patch pair and the LUT behind it is the one every grade builds anyway.
+  const reference = new Blob([reference_png() as BlobPart], { type: 'image/png' });
+  post({ type: 'ready', threads, reference });
+  return { memory: instance.memory };
+}
+
+void initialized.catch((error: unknown) => {
+  post({ type: 'failed', message: error instanceof Error ? error.message : String(error) });
+});
 
 /** Builds a worker-side track where the browser has one, and reports whether it did. */
 function openTrack(): boolean {
@@ -95,16 +122,20 @@ async function fitCameraMatch(open: Editor): Promise<boolean> {
 scope.onmessage = async ({ data }: MessageEvent<ToWorker>): Promise<void> => {
   try {
     if (data.type === 'open') {
-      memory = (await init()).memory;
+      memory = (await initialized).memory;
       tenBit = data.tenBit;
-      openTrack();
+      still = data.still;
+      if (!still) openTrack();
       const started = performance.now();
-      editor = new Editor(new Uint8Array(data.bytes), data.longEdge, data.tenBit);
+      editor = new Editor(new Uint8Array(data.bytes), data.longEdge, data.tenBit, data.still);
       const decoded = performance.now() - started;
       // The camera's own colour, fitted from its embedded JPEG. `hdr_fit` does the
       // resampling and the solve; the browser only decodes, because that is the one step
       // with no pure-Rust path in the module.
       const matched = await fitCameraMatch(editor);
+      // Unconditional, and only correct here: the fit is the last thing that reads the
+      // decode, and every tick after this grades from the prepared frame instead.
+      editor.release_source();
       post({ type: 'opened', width: editor.width, height: editor.height, ms: decoded, matched });
       return;
     }
@@ -117,24 +148,33 @@ scope.onmessage = async ({ data }: MessageEvent<ToWorker>): Promise<void> => {
 
     // Rebuilt every tick rather than cached: growing wasm memory detaches every view over
     // it, and a detached one reads as an empty frame rather than throwing.
-    const planes = new Uint8Array(memory.buffer, editor.planes_ptr, editor.planes_len);
+    const bytes = new Uint8Array(memory.buffer, editor.output_ptr, editor.output_len);
+
+    if (still) {
+      // Copied out, which the shared memory the thread pool runs on makes necessary as
+      // well as prudent: `Blob` will not take a view backed by a `SharedArrayBuffer`.
+      const png = new Blob([bytes.slice() as BlobPart], { type: 'image/png' });
+      post({ type: 'frame', frame: null, still: png, ev: data.ev, ms: performance.now() - started });
+      return;
+    }
+
     // 10-bit where the browser takes it, 8-bit where it does not - both tagged PQ, which
     // is what makes the 8-bit path a coarser HDR picture rather than an SDR one.
     const frameInit: HdrVideoFrameBufferInit = {
-      format: tenBit ? 'I420P10' : 'I420',
+      format: tenBit ? 'I444P10' : 'I444',
       codedWidth: editor.output_width,
       codedHeight: editor.output_height,
       timestamp: data.timestamp,
       colorSpace: { primaries: 'bt2020', transfer: 'pq', matrix: 'bt2020-ncl', fullRange: false },
     };
-    const frame = new VideoFrame(planes, frameInit as unknown as VideoFrameBufferInit);
+    const frame = new VideoFrame(bytes, frameInit as unknown as VideoFrameBufferInit);
 
     if (writer != null) {
       await writer.write(frame);
-      post({ type: 'frame', frame: null, ev: data.ev, ms: performance.now() - started });
+      post({ type: 'frame', frame: null, still: null, ev: data.ev, ms: performance.now() - started });
       return;
     }
-    post({ type: 'frame', frame, ev: data.ev, ms: performance.now() - started }, [frame]);
+    post({ type: 'frame', frame, still: null, ev: data.ev, ms: performance.now() - started }, [frame]);
   } catch (e) {
     post({ type: 'failed', message: e instanceof Error ? e.message : String(e) });
   }

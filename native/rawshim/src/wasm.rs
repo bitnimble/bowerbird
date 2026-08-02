@@ -42,6 +42,11 @@ fn report_panics() {
     });
 }
 
+#[wasm_bindgen]
+pub fn thread_count() -> usize {
+    crate::parallel::thread_count()
+}
+
 /// BT.2408 HDR Reference White and the display peak the roll-off targets - the same pair
 /// the renditions use.
 const REFERENCE_WHITE_NITS: f64 = 203.0;
@@ -60,9 +65,32 @@ const FINISH_STRENGTHS: crate::image::Strengths = crate::image::Strengths {
 
 use crate::pack::Depth;
 
+/// How a graded frame leaves the module.
+///
+/// A browser capability rather than a preference, the same way `Depth` is. WebKit's
+/// `VideoFrame` validates I420 and NV12 alone, so a track there is 8-bit, and Apple's
+/// guidance for the layer behind a `MediaStream` is that sample buffers need 10 bits or
+/// more to reach EDR - a PQ tag on an 8-bit track is accepted and then tone-mapped, which
+/// on an XDR panel looks like a washed-out picture. A still goes through Core Graphics
+/// instead, which has no such floor and reads CICP.
+///
+/// The still is the better *frame* - 16-bit rather than 10, and no dither - but it is the
+/// worse *drag*, which is why the track stays the route wherever it is accepted. Measured
+/// in Chromium on a 45MP CR3, same decode and same grade either way: 12fps against 9, and
+/// a peak RSS of 841MB against 1435MB at 1920 (1.24GB against 2.17GB at 3840). The grade
+/// costs the same on both, so the gap is the emit - a PNG per tick is an encode, a blob
+/// and a browser-side decode, and that churn is what the resident set is showing.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Sink {
+    Video,
+    Still,
+}
+
 #[wasm_bindgen]
 pub struct Editor {
-    frame: Frame,
+    /// LibRaw's decode, and `None` once `release_source` has run. Needed only to build
+    /// `prepared`, which is every stage a slider tick does not repeat.
+    frame: Option<Frame>,
     width: usize,
     height: usize,
     levels: Levels,
@@ -71,7 +99,8 @@ pub struct Editor {
     /// colour, because `hdr::graded` applies the warp before the grade and the curve was
     /// fitted from pairs that only correspond through it.
     matched: Option<crate::hdr_fit::HdrMatch>,
-    /// The RAW's bytes, kept so the embedded preview can be pulled out after the decode.
+    /// The RAW's bytes, kept so the embedded preview and the lens record can be pulled
+    /// out after the decode, and dropped by `release_source` once they have been.
     raw: Vec<u8>,
     /// The decode fitted to size and warped by the match's lens - everything a rendition
     /// does before the grade, and none of it exposure-dependent. Rebuilt only when the
@@ -89,7 +118,10 @@ pub struct Editor {
     preview_size: (usize, usize),
     output_size: (usize, usize),
     depth: Depth,
-    planes: Vec<u8>,
+    sink: Sink,
+    /// The finished frame in whichever container `sink` names - YUV planes, or a whole
+    /// PNG file. Reused rather than returned, so a tick does not hold two 59MB copies.
+    output: Vec<u8>,
 }
 
 #[wasm_bindgen]
@@ -99,9 +131,10 @@ impl Editor {
     ///
     /// `long_edge` fits the decode on the way out, which is where the memory goes: the
     /// grade's cost is linear in pixels and it is what a slider tick pays for.
-    /// `ten_bit` is a browser capability, not a preference.
+    /// `ten_bit` and `still` are both browser capabilities, not preferences; `ten_bit` is
+    /// read only on the video path, since a still is always 16-bit.
     #[wasm_bindgen(constructor)]
-    pub fn new(bytes: &[u8], long_edge: u32, ten_bit: bool) -> Result<Editor, JsError> {
+    pub fn new(bytes: &[u8], long_edge: u32, ten_bit: bool, still: bool) -> Result<Editor, JsError> {
         report_panics();
         let frame = crate::decode_frame_bytes(bytes, 16, true, long_edge)
             .ok_or_else(|| JsError::new("LibRaw could not decode this file"))?;
@@ -126,8 +159,12 @@ impl Editor {
                 true => Depth::Ten,
                 false => Depth::Eight,
             },
-            planes: Vec::new(),
-            frame,
+            sink: match still {
+                true => Sink::Still,
+                false => Sink::Video,
+            },
+            output: Vec::new(),
+            frame: Some(frame),
         };
         editor.prepare();
         Ok(editor)
@@ -137,13 +174,16 @@ impl Editor {
     ///
     /// Called at open and again whenever the match changes, since the warp is the match's.
     fn prepare(&mut self) {
-        let Some(samples) = self.frame.samples16() else {
+        let Some(frame) = self.frame.as_ref() else {
+            return;
+        };
+        let Some(samples) = frame.samples16() else {
             return;
         };
         let source = crate::hdr::Source {
             samples,
-            width: self.frame.width,
-            height: self.frame.height,
+            width: frame.width,
+            height: frame.height,
         };
         let (prepared, width, height) = crate::hdr::prepared_at(&source, self.matched.as_ref());
         self.prepared = prepared;
@@ -154,10 +194,15 @@ impl Editor {
         self.working = vec![0u16; self.prepared.len()];
         self.pq_size = (width, height);
         self.output_size = self.pq_size;
-        // 4:2:0 has no odd dimensions, and `VideoFrame` refuses an odd frame outright.
-        (self.width, self.height) = (width & !1, height & !1);
-        let plane_bytes = self.depth.plane_bytes(self.width, self.height);
-        self.planes = vec![0u8; plane_bytes];
+        // 4:4:4 has a sample per pixel and a PNG has no constraint either, so neither
+        // route gives up the odd column 4:2:0 used to.
+        (self.width, self.height) = (width, height);
+        // Planes are written into a buffer that has to exist first, and it is sized for
+        // the largest grade so a preview can share it. A PNG sizes itself as it is built.
+        self.output = match self.sink {
+            Sink::Video => vec![0u8; self.depth.plane_bytes(width, height)],
+            Sink::Still => Vec::new(),
+        };
     }
 
     #[wasm_bindgen(getter)]
@@ -198,7 +243,10 @@ impl Editor {
         if width == 0 || height == 0 || preview.len() < width * height * 3 {
             return false;
         }
-        let Some(samples) = self.frame.samples16() else {
+        let Some(frame) = self.frame.as_ref() else {
+            return false;
+        };
+        let Some(samples) = frame.samples16() else {
             return false;
         };
         let preview = crate::rgb::Rgb {
@@ -211,8 +259,8 @@ impl Editor {
         // lines here is what produced a curve fitted at the wrong scale.
         let source = crate::hdr::Source {
             samples,
-            width: self.frame.width,
-            height: self.frame.height,
+            width: frame.width,
+            height: frame.height,
         };
         let recorded = crate::lens::read_distortion(&self.raw);
         let geometry = match (recorded.applied, recorded.spline) {
@@ -234,6 +282,23 @@ impl Editor {
         self.matched.is_some()
     }
 
+    /// Drops the decode and the file, which nothing downstream of the open reads.
+    ///
+    /// `prepared` and `preview_prepared` are what a slider tick grades from, and both are
+    /// built by `prepare`. Its inputs - LibRaw's frame and the RAW's own bytes - are then
+    /// dead weight for the rest of the session, and not small: measured in Chromium on a
+    /// 45MP CR3, dropping them takes 66MB off the resident set at 3840 and 32MB at 1920,
+    /// on both routes.
+    ///
+    /// **Call once, after the last `fit_camera_match`.** A match rebuilds the prepared
+    /// frame, so releasing before one is fitted would leave the grade on the neutral arm
+    /// with no way back - which `fit_camera_match` then reports by declining, the same way
+    /// it declines a file with no usable preview.
+    pub fn release_source(&mut self) {
+        self.frame = None;
+        self.raw = Vec::new();
+    }
+
     #[wasm_bindgen(getter)]
     pub fn matched(&self) -> bool {
         self.matched.is_some()
@@ -245,15 +310,12 @@ impl Editor {
     /// what makes it read as stops: the grade ties `white` to 203 nits, so halving it is
     /// one stop up.
     ///
-    /// **Both levels move together**, which is the part that is easy to get wrong. The
-    /// grade reads the roll-off out of `peak / white`, and `tone.rs` records that ratio
-    /// as what makes the grade exposure-invariant - "a property of the scene". Scaling
-    /// `white` alone silently changes it, so a slider meant to move brightness was also
-    /// rewriting how hard the highlights compress: down at -4 EV the scene peak read
-    /// sixteen times lower than it is, and the roll-off stopped engaging at all.
+    /// The levels handed over are the frame's own and the stops go alongside them, which
+    /// is what keeps the colour still as the slider moves. Dividing them here instead
+    /// leaves the grade unable to tell an exposed frame from a dimmer one, and its three
+    /// per-channel curves then rotate the hue - 59/1000 of chromaticity at p99 across
+    /// half a stop, measured. `tone::GradeOptions::exposure` has the rest.
     pub fn grade(&mut self, ev: f32) {
-        let stops = 2f64.powf(f64::from(ev));
-
         // **From the prepared frame, not the decode.** A rendition runs three stages -
         // fit to size, warp by the lens the match was fitted through, then grade - and
         // only the third depends on exposure. The first two are `prepare`, run once per
@@ -265,10 +327,8 @@ impl Editor {
             REFERENCE_WHITE_NITS,
             PEAK_NITS,
             self.matched.as_ref(),
-            Levels {
-                white: self.levels.white / stops,
-                peak: self.levels.peak / stops,
-            },
+            self.levels,
+            2f64.powf(f64::from(ev)),
         );
 
         tone::encode_pq(&mut self.working, PEAK_NITS);
@@ -279,7 +339,7 @@ impl Editor {
             FINISH_STRENGTHS,
         );
         self.output_size = self.pq_size;
-        self.repack();
+        self.emit();
     }
 
     /// Runs the exact shared grade on a cached 960px frame while the slider moves.
@@ -289,17 +349,15 @@ impl Editor {
     /// shadows. Resolution is the disposable part during a drag; tone and colour are not.
     pub fn preview(&mut self, ev: f32) {
         let length = self.preview_prepared.len();
+        let exposure = 2f64.powf(f64::from(ev));
         self.working[..length].copy_from_slice(&self.preview_prepared);
-        let stops = 2f64.powf(f64::from(ev));
         crate::hdr::grade_prepared(
             &mut self.working[..length],
             REFERENCE_WHITE_NITS,
             PEAK_NITS,
             self.matched.as_ref(),
-            Levels {
-                white: self.levels.white / stops,
-                peak: self.levels.peak / stops,
-            },
+            self.levels,
+            exposure,
         );
         tone::encode_pq(&mut self.working[..length], PEAK_NITS);
         crate::image::finish(
@@ -309,44 +367,94 @@ impl Editor {
             FINISH_STRENGTHS,
         );
         self.output_size = self.preview_size;
-        self.repack();
+        self.emit();
     }
 
-    /// The one place planes are written, so interactive and full grades cannot diverge.
-    fn repack(&mut self) {
-        let (source_width, source_height) = self.output_size;
-        crate::pack::pack_i420(
-            &self.working,
-            source_width,
-            source_width & !1,
-            source_height & !1,
-            self.depth,
-            &mut self.planes,
-        );
+    /// The one place the output is written, so interactive and full grades cannot
+    /// diverge, and neither can the two containers.
+    fn emit(&mut self) {
+        // The grade wrote `output_size` pixels into the front of `working`, so the row
+        // stride is its own width in both cases.
+        let (width, height) = self.output_size;
+        match self.sink {
+            Sink::Video => {
+                crate::pack::pack(&self.working, width, width, height, self.depth, &mut self.output)
+            }
+            Sink::Still => crate::png::encode_pq(
+                &mut self.output,
+                &self.working,
+                width,
+                width,
+                height,
+                crate::png::Bits::Sixteen,
+            ),
+        }
     }
 
-    /// Where the planes live in wasm memory.
+    /// Where the finished frame lives in wasm memory.
     ///
     /// The view JS builds over this must be rebuilt whenever wasm memory grows, since
     /// growing detaches every existing `ArrayBuffer` view.
     #[wasm_bindgen(getter)]
-    pub fn planes_ptr(&self) -> *const u8 {
-        self.planes.as_ptr()
+    pub fn output_ptr(&self) -> *const u8 {
+        self.output.as_ptr()
     }
 
+    /// Not `output.len()` on the video path: that buffer is allocated once at the full
+    /// grade's size and a preview writes only the front of it.
     #[wasm_bindgen(getter)]
-    pub fn planes_len(&self) -> usize {
-        self.depth
-            .plane_bytes(self.output_width(), self.output_height())
+    pub fn output_len(&self) -> usize {
+        match self.sink {
+            Sink::Video => self.depth.plane_bytes(self.output_size.0, self.output_size.1),
+            Sink::Still => self.output.len(),
+        }
     }
 
     #[wasm_bindgen(getter)]
     pub fn output_width(&self) -> usize {
-        self.output_size.0 & !1
+        self.output_size.0
     }
 
     #[wasm_bindgen(getter)]
     pub fn output_height(&self) -> usize {
-        self.output_size.1 & !1
+        self.output_size.1
     }
+}
+
+/// A two-patch reference at BT.2408 diffuse white and the display peak, PQ-tagged.
+///
+/// The one thing script cannot read back is whether a frame reached the HDR compositor,
+/// so this exists to be looked at: on a working path the right half is obviously brighter
+/// than paper white, and on a tone-mapped one the two patches sit a few percent apart.
+/// Without it a dark photograph and a defeated PQ tag look the same.
+///
+/// The nits go through `tone::pq` rather than a pair of constants, so it cannot drift
+/// from the transfer the photograph is graded with.
+#[wasm_bindgen]
+pub fn reference_png() -> Vec<u8> {
+    const WIDTH: usize = 512;
+    const HEIGHT: usize = 192;
+
+    let level = |nits: f64| ((nits / PEAK_NITS) * f64::from(u16::MAX)).round() as u16;
+    let mut patches = vec![0u16; WIDTH * HEIGHT * 3];
+    for row in patches.chunks_exact_mut(WIDTH * 3) {
+        for (x, pixel) in row.chunks_exact_mut(3).enumerate() {
+            pixel.fill(match x < WIDTH / 2 {
+                true => level(REFERENCE_WHITE_NITS),
+                false => level(PEAK_NITS),
+            });
+        }
+    }
+    tone::encode_pq(&mut patches, PEAK_NITS);
+
+    let mut out = Vec::new();
+    crate::png::encode_pq(
+        &mut out,
+        &patches,
+        WIDTH,
+        WIDTH,
+        HEIGHT,
+        crate::png::Bits::Sixteen,
+    );
+    out
 }

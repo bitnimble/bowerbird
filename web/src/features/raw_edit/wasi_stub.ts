@@ -49,6 +49,16 @@ export const environ_sizes_get = (count: number, size: number): number => {
   return 0;
 };
 
+export function clock_time_get(clockId: number, _precision: bigint, time: number): number {
+  const memory = view();
+  if (memory == null) return ENOSYS;
+  const milliseconds = clockId === 0 ? Date.now() : performance.now();
+  memory.setBigUint64(time, BigInt(Math.trunc(milliseconds * 1_000_000)), true);
+  return 0;
+}
+
+export const sched_yield = (): number => 0;
+
 export const fd_close = (): number => ENOSYS;
 export const fd_fdstat_get = (): number => ENOSYS;
 export const fd_fdstat_set_flags = (): number => ENOSYS;

@@ -100,6 +100,26 @@ test('serves a Canon original under its own format and filename', withRoot(async
   expect(await res.text()).toBe('RAWBYTES');
 }));
 
+// JPEG cannot carry PQ, so transcoding an HDR rendition would hand back an SDR
+// tone-map of the picture that was on screen and name it the same render.
+test('downloads an HDR render as the AVIF the viewer showed', withRoot(async (root) => {
+  mkdirSync(path.join(root, '.bowerbird', 'renditions', 'full-hdr'), { recursive: true });
+  writeFileSync(path.join(root, '.bowerbird', 'renditions', 'full-hdr', 'p1.avif'), 'AVIFDATA');
+  const res = await buildApp(root, photo({}), true).request('/image/p1/download/full');
+  expect(res.status).toBe(200);
+  expect(res.headers.get('content-type')).toBe('image/avif');
+  expect(res.headers.get('content-disposition')).toBe('attachment; filename="a-rendered.avif"');
+  expect(await res.text()).toBe('AVIFDATA');
+}));
+
+test('downloads an HDR max render under its own name', withRoot(async (root) => {
+  mkdirSync(path.join(root, '.bowerbird', 'renditions', 'max-hdr'), { recursive: true });
+  writeFileSync(path.join(root, '.bowerbird', 'renditions', 'max-hdr', 'p1.avif'), 'AVIFDATA');
+  const res = await buildApp(root, photo({}), true).request('/image/p1/download/max');
+  expect(res.status).toBe(200);
+  expect(res.headers.get('content-disposition')).toBe('attachment; filename="a-rendered-max.avif"');
+}));
+
 test('returns a 404 envelope for an unknown photo', withRoot(async (root) => {
   const res = await buildApp(root, null).request('/image/nope/renditions/grid');
   expect(res.status).toBe(404);

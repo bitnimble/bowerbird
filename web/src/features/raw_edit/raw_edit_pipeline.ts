@@ -9,8 +9,13 @@ export type PipelineState = {
   gradeMs: number;
   /** Frames actually delivered per second, which is what the drag feels like. */
   fps: number;
+  threads: number;
   /** Whether the camera's own colour is in play, or the grade fell back to neutral. */
   matched: boolean;
+  /** Object URL of the latest graded PNG, on the still route. Empty on the video one. */
+  stillUrl: string;
+  /** Object URL of the two-patch PQ reference, once the worker has built it. */
+  referenceUrl: string;
 };
 
 const IDLE: PipelineState = {
@@ -21,7 +26,10 @@ const IDLE: PipelineState = {
   decodeMs: 0,
   gradeMs: 0,
   fps: 0,
+  threads: 0,
   matched: false,
+  stillUrl: '',
+  referenceUrl: '',
 };
 
 /// Frames are timestamped in microseconds. Nothing plays this back, but a track whose
@@ -34,17 +42,18 @@ type ExposureRequest = { ev: number; exact: boolean };
  * Whether this browser will build a 10-bit `VideoFrame`.
  *
  * Measured rather than read off a spec, because the spec is wrong in both directions:
- * `VideoPixelFormat` does not list `I420P10` and Chromium accepts it anyway, while
- * Safari 26.4 and Firefox reject every 10-bit format there is (WebKit validates I420 and
+ * `VideoPixelFormat` lists neither `I444P10` nor `I420P10` and Chromium accepts both,
+ * while Safari 26.4 and Firefox reject every 10-bit format there is (WebKit validates I420 and
  * NV12 alone). 8 bits is not a fall back to SDR - the PQ tagging is accepted either way,
  * and Safari composites it to a real HDR panel - only a coarser ladder, which is what the
  * grade's dither is for.
  */
 export function supportsTenBit(): boolean {
   try {
-    // Two bytes a sample, so this is the smallest legal 10-bit frame.
-    new VideoFrame(new Uint8Array(2 * 2 * 2 * 3), {
-      format: 'I420P10',
+    // Two bytes a sample and three full-resolution planes, so this is the smallest legal
+    // frame in the format the video route packs.
+    new VideoFrame(new Uint8Array(2 * 2 * 3 * 2), {
+      format: 'I444P10',
       codedWidth: 2,
       codedHeight: 2,
       timestamp: 0,
@@ -53,6 +62,20 @@ export function supportsTenBit(): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Whether this browser should take the still route rather than a video track.
+ *
+ * The same measurement decides both, because they are the same limit. A browser that
+ * refuses a 10-bit `VideoFrame` can only put an 8-bit one on a track, and Apple's
+ * guidance for the layer behind a `MediaStream` is that sample buffers need 10 bits or
+ * more to reach EDR - so on WebKit the PQ tag is accepted, then tone-mapped, and an XDR
+ * panel shows a washed-out picture rather than an HDR one. A PNG goes through Core
+ * Graphics, which has no bit-depth floor and reads CICP, and it carries 16 bits.
+ */
+export function prefersStill(): boolean {
+  return !supportsTenBit();
 }
 
 /**
@@ -79,13 +102,20 @@ export class RawEditPipeline {
   private timestamp = 0;
   private windowStarted = 0;
   private windowFrames = 0;
+  /**
+   * The URL one generation back, revoked only once a newer one has replaced it on the
+   * element. Revoking the URL a loaded `<img>` still points at is safe until anything
+   * asks it to re-fetch, and holding one generation costs a frame.
+   */
+  private stale = '';
 
   constructor(
     private readonly onChange: (state: PipelineState) => void,
-    /** Fires once the track exists, whichever side built it. */
+    /** Fires once the track exists, whichever side built it. Never on the still route. */
     private readonly onTrack: (track: MediaStreamTrack) => void,
+    private readonly still: boolean,
   ) {
-    if (typeof MediaStreamTrackGenerator !== 'undefined') {
+    if (!still && typeof MediaStreamTrackGenerator !== 'undefined') {
       const generator = new MediaStreamTrackGenerator({ kind: 'video' });
       this.writer = generator.writable.getWriter();
       this.onTrack(generator);
@@ -95,19 +125,23 @@ export class RawEditPipeline {
   }
 
   async open(path: string, block: number): Promise<void> {
-    this.update({ ...IDLE, status: 'fetching', message: 'fetching the RAW' });
+    const kept = { threads: this.state.threads, referenceUrl: this.state.referenceUrl };
+    this.update({ ...IDLE, ...kept, status: 'fetching', message: 'fetching the RAW' });
     const response = await fetch(`/api/raw-edit/raw?path=${encodeURIComponent(path)}`);
     if (!response.ok) {
       const body: unknown = await response.json().catch(() => null);
       const detail =
         body != null && typeof body === 'object' && 'error' in body ? String(body.error) : response.statusText;
-      this.update({ ...IDLE, status: 'failed', message: detail });
+      this.update({ ...IDLE, ...kept, status: 'failed', message: detail });
       return;
     }
 
     const bytes = await response.arrayBuffer();
     this.update({ ...this.state, status: 'decoding', message: `decoding ${(bytes.byteLength / 1e6).toFixed(1)}MB` });
-    this.send({ type: 'open', bytes, longEdge: block, tenBit: supportsTenBit() }, [bytes]);
+    this.send(
+      { type: 'open', bytes, longEdge: block, tenBit: supportsTenBit(), still: this.still },
+      [bytes],
+    );
   }
 
   /**
@@ -138,6 +172,9 @@ export class RawEditPipeline {
   close(): void {
     this.worker.terminate();
     void this.writer?.close().catch(() => undefined);
+    for (const url of [this.stale, this.state.stillUrl, this.state.referenceUrl]) {
+      if (url !== '') URL.revokeObjectURL(url);
+    }
   }
 
   private readonly receive = async ({ data }: MessageEvent<FromWorker>): Promise<void> => {
@@ -149,6 +186,15 @@ export class RawEditPipeline {
 
     if (data.type === 'track') {
       this.onTrack(data.track);
+      return;
+    }
+
+    if (data.type === 'ready') {
+      this.update({
+        ...this.state,
+        threads: data.threads,
+        referenceUrl: URL.createObjectURL(data.reference),
+      });
       return;
     }
 
@@ -168,6 +214,7 @@ export class RawEditPipeline {
 
     // Null where the worker owns the generator and has already written it.
     if (data.frame != null) await this.writer?.write(data.frame);
+    if (data.still != null) await this.present(data.still);
     this.measure(data.ms);
 
     this.busy = false;
@@ -177,6 +224,49 @@ export class RawEditPipeline {
       this.requestExposure(next);
     }
   };
+
+  /**
+   * Swaps in a newly graded still, decoded before it is shown.
+   *
+   * Awaited rather than left to the element, so a drag never flashes an empty stage
+   * between frames. It also holds `busy` open across the decode, so the delivered-fps
+   * figure counts what the drag actually feels like - the `Grade` number is the worker's
+   * own and covers the grade and the encode alone.
+   *
+   * **This is where the still route's memory goes, and no page can get it back.** A URL
+   * per tick is a decode per tick, and Chromium holds those in `cc::ImageDecodeCache`
+   * outside the JS heap: a six-second drag at 1920 adds ~500MB that a forced major GC
+   * does not touch. It is a cache and not a leak - four times the drag grows it 1.5x, and
+   * a critical memory-pressure notification hands ~330MB straight back - but every lever
+   * that returns it belongs to the browser rather than to script. Measured, and all
+   * within noise of doing nothing: revoking sooner, reusing one `Image` across ticks
+   * (the cache is keyed by URL and there is a new one every tick), blanking the decoded
+   * element's `src`, and freezing the page. The pressure notification is DevTools
+   * protocol only, and the API that would have exposed it to a page is an archived WICG
+   * proposal. Explicit lifetimes exist just once, on `ImageDecoder` and `close()` - which
+   * decodes to a `VideoFrame`, so it is the route this one is the fallback for.
+   */
+  private async present(png: Blob): Promise<void> {
+    const url = URL.createObjectURL(png);
+    const image = new Image();
+    image.src = url;
+    const decoded = await image.decode().then(
+      () => true,
+      () => false,
+    );
+    // Keeping the last good frame beats swapping to a broken one, but silently is how a
+    // malformed encoder ships: this is the only place a bad PNG would ever show up.
+    if (!decoded) {
+      URL.revokeObjectURL(url);
+      this.update({ ...this.state, status: 'failed', message: 'the graded PNG did not decode' });
+      return;
+    }
+
+    const previous = this.state.stillUrl;
+    this.update({ ...this.state, stillUrl: url });
+    if (this.stale !== '') URL.revokeObjectURL(this.stale);
+    this.stale = previous;
+  }
 
   /** Delivered frames over a rolling second, alongside the grade's own cost. */
   private measure(gradeMs: number): void {

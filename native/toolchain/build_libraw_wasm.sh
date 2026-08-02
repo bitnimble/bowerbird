@@ -35,11 +35,11 @@ mkdir -p "$here/include"
 ln -sfn "$src/libraw" "$here/include/libraw"
 mkdir -p "$out/obj"
 
-# threads: no pthreads in this target. jasper/jpeg/lcms: decoders for formats the app
-# does not read, each one a dependency we would otherwise have to port too. openmp is
-# the same story as threads.
+# LibRaw's own workers stay disabled: Rayon owns the browser pool and the decode is a
+# one-shot. The pthread target still supplies a thread-safe allocator once the grade
+# starts using that pool. jasper/jpeg/lcms decode formats the app does not read.
 flags=(
-  --target=wasm32-wasi
+  --target=wasm32-wasip1-threads
   --sysroot="$sdk/share/wasi-sysroot"
   # LibRaw signals its own errors by throwing, so exceptions cannot be switched off.
   #
@@ -50,6 +50,7 @@ flags=(
   # with "uses a mix of legacy and new exception handling instructions", naming
   # `fallback_malloc` inside libc++abi. The libraries are the fixed side, so LibRaw moves.
   -O2 -fwasm-exceptions -mllvm -wasm-use-legacy-eh=false -fno-rtti
+  -matomics -mbulk-memory -pthread
   -DLIBRAW_NOTHREADS
   -DNO_JASPER -DNO_JPEG -DNO_LCMS
   # Not `-DLIBRAW_WIN32_DLLDEFS=0`: the header guards on `#ifdef`, so defining it at all

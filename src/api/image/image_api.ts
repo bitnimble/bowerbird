@@ -73,8 +73,8 @@ export class ImageApi {
     // rendition of its own (§10.2). The RAW itself goes the same way.
     app.get('/:photoId/embedded.jpg', (c) => this.serveEmbedded(c));
     // Every form the viewer offers to take away, as an attachment: the RAW, the
-    // camera's JPEG, and either rendered rendition transcoded to JPEG. One route
-    // because the menu offering them is one list and only the bytes differ.
+    // camera's JPEG, and either rendered rendition. One route because the menu
+    // offering them is one list and only the bytes differ.
     app.get('/:photoId/download/:form', (c) => this.serveDownload(c));
     this.routes = app;
   }
@@ -95,9 +95,10 @@ export class ImageApi {
   }
 
   // One of the four things a photo can be taken away as. The RAW goes over as it
-  // is; the camera's JPEG is lifted out of it; `full` and `max` are transcoded
-  // from the stored rendition on request, because a download is occasional and a
-  // JPEG per rendition on disk would cost more than the transcode does.
+  // is; the camera's JPEG is lifted out of it; `full` and `max` come from the
+  // stored rendition, transcoded to JPEG only where the library is SDR - because a
+  // download is occasional and a JPEG per rendition on disk would cost more than
+  // the transcode does, while an HDR rendition has nothing to gain from one.
   //
   // The rendition has to be on disk already: building it is the viewer's request
   // (`POST /api/photos/:id/renditions/:r`), and a download that silently took
@@ -131,14 +132,22 @@ export class ImageApi {
     if (form !== 'full' && form !== 'max') throw new AppError('NOT_FOUND', `unknown download: ${form}`);
     const renditionPath = getRenditionPath(library, photo.id, form, library.rendition_hdr);
     if (!(await Bun.file(renditionPath).exists())) throw new AppError('NOT_FOUND', `image not found on disk: ${photoId}`);
+    // Suffixed, because a reader comparing the two renders wants both in the same
+    // folder and one name twice is one file and a copy.
+    const name = `${stem}-${form === 'max' ? 'rendered-max' : 'rendered'}`;
+
+    // An HDR library's renditions go over as they are. JPEG cannot carry PQ, so
+    // transcoding one would hand back an SDR tone-map of the picture on screen and
+    // call it the same render - and the AVIF is already the format the viewer showed.
+    if (library.rendition_hdr) {
+      return download(Bun.file(renditionPath), renditionContentType(false), `${name}.avif`);
+    }
 
     // One call, given the path: the rendition's own bytes have no business on this
     // side and never reach it, and the JPEG that does is a response body. Nothing
     // is held between calls, so there is no handle to free on the way out.
     const jpeg = transcodeJpeg(renditionPath, 0, JPEG_QUALITY);
-    // Suffixed, because a reader comparing the two renders wants both in the same
-    // folder and `name.jpg` twice is one file and a copy.
-    return download(new Uint8Array(jpeg), 'image/jpeg', `${stem}-${form === 'max' ? 'rendered-max' : 'rendered'}.jpg`);
+    return download(new Uint8Array(jpeg), 'image/jpeg', `${name}.jpg`);
   }
 
   // 404s go through AppError (not c.notFound()) so every not-available response

@@ -208,7 +208,24 @@ pub struct GradeOptions<'a> {
     /// depend on how many pixels the frame has, so the full-size rendition and the
     /// max-resolution one grade to the same brightness without one of them having to
     /// carry the other's resolution around to be measured at.
+    ///
+    /// These are the frame's own levels, *before* exposure. Pre-dividing them and leaving
+    /// `exposure` at 1 is not the same grade - see `exposure`.
     pub levels: Levels,
+    /// Stops of exposure as a multiplier on the scene, 1.0 for none.
+    ///
+    /// Separate from `levels` rather than folded into them, because the matched arm needs
+    /// both the exposed scene and the unexposed one. Its three per-channel curves have
+    /// three different shapes, so sliding a pixel along them lands each channel somewhere
+    /// its neighbours did not go and the ratios between them - the colour - come out
+    /// different. Measured on a real frame: half a stop moved chromaticity by 14/1000
+    /// mean and 59/1000 at the 99th percentile, where the neutral arm moved 0.27.
+    ///
+    /// So the exposure is taken from the curve's *brightness* response and the channel
+    /// ratios are held at the unexposed pixel's, which is the camera's colour for that
+    /// colour rather than for that brightness. At 1.0 the two evaluations coincide and
+    /// this is arithmetically the old path, which is what leaves renditions untouched.
+    pub exposure: f64,
 }
 
 /// The roll-off is a function of nits alone, so it is a lookup whichever path produced
@@ -233,8 +250,17 @@ pub fn grade(frame: &mut [u16], options: &GradeOptions<'_>) -> bool {
     }
     let reference = options.reference_white_nits;
     let peak = options.peak_nits;
+    let exposure = match options.exposure > 0.0 {
+        true => options.exposure,
+        false => return false,
+    };
 
     let Some(colour) = options.match_colour else {
+        // One shared curve, so the channel ratios survive it whatever the input: the
+        // neutral arm is hue-preserving already and exposure is just where the anchor
+        // sits. Both levels move together - the roll-off reads the scene out of their
+        // ratio, and scaling one alone rewrites how hard the highlights compress.
+        let (white, source_level) = (white / exposure, source_level / exposure);
         let source_peak_nits = (source_level / white) * reference;
         // One curve covers all 65536 possible inputs, so the per-sample work is a
         // lookup. A 60MP frame is 180M samples, and pow() that many times is not free.
@@ -257,18 +283,72 @@ pub fn grade(frame: &mut [u16], options: &GradeOptions<'_>) -> bool {
     // the exact maximum wanted a buffer the size of the frame - 720MB on a 60MP photo -
     // to save clamping a handful of specular samples that the roll-off was compressing
     // into the peak anyway.
+    // Below the ceiling the shared gain is 1 and the tone stage is separable, so it is
+    // a lookup on the input level. That is nearly every pixel of a photograph; only
+    // the highlights take the general path, where the gain depends on all three
+    // channels at once. Interpolating a curve per channel per pixel instead cost about
+    // seven seconds on a 60MP frame, twice per HDR rendition.
+    let ceiling = hdr_fit::TRUST_CEILING * white;
+    let curve_lut: [Vec<f32>; 3] = std::array::from_fn(|c| {
+        (0..=MAX).map(|level| hdr_fit::tone_channel(colour, c, level as f64 / white) as f32).collect()
+    });
+    // The same table read at the exposed scene. Built rather than indexed at `level *
+    // exposure`, because that index leaves the table wherever the exposure is positive.
+    let exposed_lut: Option<[Vec<f32>; 3]> = (exposure != 1.0).then(|| {
+        std::array::from_fn(|c| {
+            (0..=MAX)
+                .map(|level| hdr_fit::tone_channel(colour, c, level as f64 * exposure / white) as f32)
+                .collect()
+        })
+    });
+
+    // `lut` absent means read the curve itself. The subsample below does, because it is
+    // 65536 reads against a table built for millions and because rounding the curve to
+    // f32 there would move `scene_peak`, which every pixel is then rolled off against.
+    let curves = |lut: Option<&[Vec<f32>; 3]>, scene: f64, r: u16, g: u16, b: u16| -> [f64; 3] {
+        let ceiling = ceiling / scene;
+        let separable = f64::from(r) <= ceiling && f64::from(g) <= ceiling && f64::from(b) <= ceiling;
+        match lut.filter(|_| separable) {
+            Some(lut) => [
+                f64::from(lut[0][r as usize]),
+                f64::from(lut[1][g as usize]),
+                f64::from(lut[2][b as usize]),
+            ],
+            None => hdr_fit::tone(
+                colour,
+                f64::from(r) * scene / white,
+                f64::from(g) * scene / white,
+                f64::from(b) * scene / white,
+            ),
+        }
+    };
+
+    // The camera's colour at the pixel's own brightness, moved to the exposed one by the
+    // curve's luma response alone. See `GradeOptions::exposure`.
+    let toned = |lut: Option<&[Vec<f32>; 3]>, exposed: Option<&[Vec<f32>; 3]>, r, g, b| -> [f64; 3] {
+        let base = curves(lut, 1.0, r, g, b);
+        if exposure == 1.0 {
+            return base;
+        }
+        let lit = curves(exposed, exposure, r, g, b);
+        let luma = |v: &[f64; 3]| LUMA[0] * v[0] + LUMA[1] * v[1] + LUMA[2] * v[2];
+        let (from, to) = (luma(&base), luma(&lit));
+        // Black has no ratios to hold, and the two lumas vanish together, so the quotient
+        // there is noise over noise. The exposed pixel is already the right answer.
+        match from > 0.0 {
+            true => base.map(|v| v * to / from),
+            false => lit,
+        }
+    };
+
     let pixels = frame.len() / 3;
     let counted = pixels.min(QUANTILE_SAMPLES).max(1);
     let mut sampled: Vec<f32> = (0..counted)
         .into_par_iter()
         .map(|k| {
             let i = sample_at(k, pixels, counted);
-            let v = hdr_fit::apply_hdr_colour(
-                colour,
-                f64::from(frame[i]) / white,
-                f64::from(frame[i + 1]) / white,
-                f64::from(frame[i + 2]) / white,
-            );
+            let t = toned(None, None, frame[i], frame[i + 1], frame[i + 2]);
+            let v = hdr_fit::finish_colour(colour, t[0], t[1], t[2]);
             v[0].max(v[1]).max(v[2]) as f32
         })
         .collect();
@@ -289,16 +369,6 @@ pub fn grade(frame: &mut [u16], options: &GradeOptions<'_>) -> bool {
         *slot = eetf((i as f64 / (ROLL_BINS - 1) as f64) * scene_peak, scene_peak, peak);
     }
 
-    // Below the ceiling the shared gain is 1 and the tone stage is separable, so it is
-    // a lookup on the input level. That is nearly every pixel of a photograph; only
-    // the highlights take the general path, where the gain depends on all three
-    // channels at once. Interpolating a curve per channel per pixel instead cost about
-    // seven seconds on a 60MP frame, twice per HDR rendition.
-    let ceiling = hdr_fit::TRUST_CEILING * white;
-    let curve_lut: [Vec<f32>; 3] = std::array::from_fn(|c| {
-        (0..=MAX).map(|level| hdr_fit::tone_channel(colour, c, level as f64 / white) as f32).collect()
-    });
-
     // Flat and scalar on purpose. Written with the tuple-returning helpers it was
     // three allocations per pixel, 180M on a 60MP frame, and the collector cost more
     // than all the arithmetic put together.
@@ -313,18 +383,7 @@ pub fn grade(frame: &mut [u16], options: &GradeOptions<'_>) -> bool {
     // Read out before anything is written back, which is what makes the shared buffer
     // safe: the write loop below overwrites the very samples the arithmetic reads.
     frame.par_chunks_exact_mut(3).for_each(|px| {
-        let (r, g, b) = (px[0], px[1], px[2]);
-
-        let (tr, tg, tb) = if f64::from(r) <= ceiling && f64::from(g) <= ceiling && f64::from(b) <= ceiling {
-            (
-                f64::from(curve_lut[0][r as usize]),
-                f64::from(curve_lut[1][g as usize]),
-                f64::from(curve_lut[2][b as usize]),
-            )
-        } else {
-            let t = hdr_fit::tone(colour, f64::from(r) / white, f64::from(g) / white, f64::from(b) / white);
-            (t[0], t[1], t[2])
-        };
+        let [tr, tg, tb] = toned(Some(&curve_lut), exposed_lut.as_ref(), px[0], px[1], px[2]);
 
         let mut or = m[0][0] * tr + m[0][1] * tg + m[0][2] * tb;
         let mut og = m[1][0] * tr + m[1][1] * tg + m[1][2] * tb;
@@ -458,12 +517,89 @@ mod tests {
             peak_nits: 1000.0,
             match_colour: None,
             levels: levels(&flat, 0.9),
+            exposure: 1.0,
         };
         assert!(!grade(&mut flat, &options));
         // Left as it arrived, which is the half an in-place grade could get wrong: a
         // declined grade that had already written some of the frame would ship a
         // half-transformed picture rather than the untouched one.
         assert!(flat.iter().all(|s| *s == 0));
+    }
+
+    /// The matched arm's three curves have three different shapes, so a pixel slid along
+    /// them by exposure lands each channel somewhere its neighbours did not go and the
+    /// colour comes out different. Measured on a real frame before this held: half a stop
+    /// moved chromaticity by 14/1000 mean and 59/1000 at p99, where the neutral arm - one
+    /// shared curve, so hue-preserving by construction - moved 0.27.
+    #[test]
+    fn exposure_moves_brightness_without_moving_colour() {
+        let mut colour = crate::hdr_fit::HdrColour::identity();
+        let bins = colour.curves[0].len();
+        // Deliberately three shapes rather than one. With identical curves this passes
+        // however exposure is applied, and tests nothing.
+        for (channel, gamma) in [0.75f64, 1.0, 1.4].into_iter().enumerate() {
+            colour.curves[channel] = (0..bins)
+                .map(|i| {
+                    let u = i as f64 / (bins - 1) as f64;
+                    u.powf(gamma) * crate::hdr_fit::TRUST_CEILING
+                })
+                .collect();
+        }
+
+        // Spread across hue and across level, the last of them above the trust ceiling
+        // once exposed, so the cross-channel arm is covered as well as the lookup.
+        let white = 20000.0;
+        let base: Vec<u16> = [
+            [6000u16, 3000, 1500],
+            [3000, 6000, 2000],
+            [1500, 2500, 7000],
+            [4000, 4000, 4000],
+            [12000, 8000, 9000],
+        ]
+        .concat();
+
+        let graded = |levels: Levels, exposure: f64| {
+            let mut frame = base.clone();
+            let options = GradeOptions {
+                reference_white_nits: 203.0,
+                peak_nits: 1000.0,
+                match_colour: Some(&colour),
+                levels,
+                exposure,
+            };
+            assert!(grade(&mut frame, &options));
+            frame
+        };
+        let own = Levels { white, peak: white * 4.0 };
+        let dim = graded(own, 1.0);
+        let bright = graded(own, 2.0);
+        // The same stop taken by moving the anchor instead, which is what this used to
+        // do. Asserted against below, so the tolerance cannot quietly become vacuous.
+        let by_levels = graded(Levels { white: white / 2.0, peak: white * 2.0 }, 1.0);
+
+        let luma = |p: &[u16]| LUMA[0] * f64::from(p[0]) + LUMA[1] * f64::from(p[1]) + LUMA[2] * f64::from(p[2]);
+        let chromaticity = |p: &[u16]| {
+            let sum = f64::from(p[0]) + f64::from(p[1]) + f64::from(p[2]);
+            (f64::from(p[0]) / sum, f64::from(p[2]) / sum)
+        };
+        let shift = |a: &[u16], b: &[u16]| {
+            let ((ar, ab), (br, bb)) = (chromaticity(a), chromaticity(b));
+            ((ar - br).powi(2) + (ab - bb).powi(2)).sqrt()
+        };
+
+        let mut worst_by_levels = 0.0f64;
+        for (i, (a, b)) in dim.chunks_exact(3).zip(bright.chunks_exact(3)).enumerate() {
+            assert!(luma(b) > luma(a), "pixel {i} did not brighten: {a:?} -> {b:?}");
+            let moved = shift(a, b);
+            assert!(moved < 0.005, "pixel {i} changed colour by {moved:.4}: {a:?} -> {b:?}");
+        }
+        for (a, c) in dim.chunks_exact(3).zip(by_levels.chunks_exact(3)) {
+            worst_by_levels = worst_by_levels.max(shift(a, c));
+        }
+        assert!(
+            worst_by_levels > 0.02,
+            "moving the anchor should visibly rotate hue, or this frame proves nothing: {worst_by_levels:.4}",
+        );
     }
 
     #[test]
@@ -474,6 +610,7 @@ mod tests {
             peak_nits: 1000.0,
             match_colour: None,
             levels: levels(&out, 0.9),
+            exposure: 1.0,
         };
         assert!(grade(&mut out, &options));
         for i in 3..out.len() {

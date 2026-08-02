@@ -1,6 +1,11 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
+const isolationHeaders = {
+  'Cross-Origin-Embedder-Policy': 'require-corp',
+  'Cross-Origin-Opener-Policy': 'same-origin',
+};
+
 // The client is same-origin (src/api/client.ts): this server proxies /api and
 // /image to the API, which VITE_API_URL / VITE_API_PORT locate. Nothing in the
 // browser knows the API's address, so it need not be reachable from one.
@@ -11,6 +16,7 @@ export default defineConfig({
   // to parse.
   esbuild: { target: 'es2022' },
   build: { target: 'es2022' },
+  worker: { format: 'es' },
   resolve: {
     alias: {
       // rawshim's wasm build links wasi-libc for the C runtime LibRaw needs, which makes
@@ -26,6 +32,7 @@ export default defineConfig({
     // which is the collision this avoids.
     port: 20000 + Math.floor(Math.random() * 20000),
     host: true,
+    headers: isolationHeaders,
     allowedHosts: process.env.VITE_ALLOWED_HOSTS?.split(',').map((h) => h.trim()),
     // Everything the browser asks the API for goes through here: this server is
     // the only one exposed, and the API is internal. /quality-check is the API's
@@ -41,4 +48,5 @@ export default defineConfig({
       ]),
     ),
   },
+  preview: { headers: isolationHeaders },
 });
