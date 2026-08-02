@@ -199,6 +199,28 @@ describe('the keyboard cursor', () => {
 
       expect(store.cursorRow?.folderPath).toBe('f0003');
     });
+
+    test('a leaf has no expand arrow', () => {
+      const { store } = build(0);
+      store.view = 'tree_full';
+      store.browsed = new Map([['', ['a']], ['a', ['a/b']], ['a/b', []]]);
+      store.expanded = new Set(['', 'a']);
+
+      const parent = store.rows.find((r) => r.folderPath === 'a');
+      const leaf = store.rows.find((r) => r.folderPath === 'a/b');
+      expect(parent?.expandable).toBe(true);
+      expect(leaf?.expandable).toBe(false);
+    });
+
+    test('an unbrowsed folder stays expandable so empty children can be found', () => {
+      const { store } = build(0);
+      store.view = 'tree_full';
+      store.browsed = new Map([['', ['a']]]);
+      store.expanded = new Set(['']);
+
+      const row = store.rows.find((r) => r.folderPath === 'a');
+      expect(row?.expandable).toBe(true);
+    });
   });
 
   test('reports no row once its folder has gone', () => {

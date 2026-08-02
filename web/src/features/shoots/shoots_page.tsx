@@ -1,7 +1,7 @@
 import { observer } from 'mobx-react-lite';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ChevronDown, ChevronRight, Folder, FolderPlus, Images, Pencil, Plus, Trash2 } from 'lucide-react';
-import { Link, useParams } from 'react-router-dom';
+import { ChevronDown, ChevronRight, Folder, FolderPlus, MoreVertical, Pencil, Plus, Trash2 } from 'lucide-react';
+import { useNavigate, useParams } from 'react-router-dom';
 import { renditionUrl } from '../../api/client';
 import { useLibrariesStore, usePresenters, useShootsStore } from '../../app/stores_context';
 import { ActionMenu } from '../../ui/action_menu';
@@ -23,7 +23,7 @@ const VIEWS: Option<ShootView>[] = [
   { value: 'tree_full', label: 'All folders' },
 ];
 
-type RowAction = 'adopt' | 'subfolder';
+type RowAction = 'adopt' | 'subfolder' | 'rename' | 'delete';
 
 // The library's folders, with the shoots among them, rather than the shoots
 // alone (§18.3.2). An empty list beside a library full of subfolders was the
@@ -210,6 +210,7 @@ export const ShootsPage = observer(function ShootsPage(): JSX.Element {
 const ShootKeys = observer(function ShootKeys(): null {
   const store = useShootsStore();
   const { shoots } = usePresenters();
+  const navigate = useNavigate();
 
   useEffect(() => {
     function onKey(e: KeyboardEvent): void {
@@ -238,6 +239,18 @@ const ShootKeys = observer(function ShootKeys(): null {
         case 'End':
           shoots.moveCursor(store.rows.length);
           break;
+        // What double-click does, for the keyboard.
+        case 'Enter': {
+          // Same containment the photo grid uses: menus portal outside the list,
+          // and a focused chevron or ⋮ owns its own Enter.
+          const fromList =
+            target == null || target === document.body || target.closest('.list__scroller') != null;
+          if (!fromList || target?.tagName === 'BUTTON') return;
+          const shoot = store.cursorRow?.shoot;
+          if (shoot == null) return;
+          navigate(`/shoots/${shoot.id}`);
+          break;
+        }
         default:
           return;
       }
@@ -247,7 +260,7 @@ const ShootKeys = observer(function ShootKeys(): null {
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [shoots, store]);
+  }, [shoots, store, navigate]);
 
   return null;
 });
@@ -269,6 +282,7 @@ const ShootRow = observer(function ShootRow({
 }): JSX.Element {
   const store = useShootsStore();
   const { shoots } = usePresenters();
+  const navigate = useNavigate();
   const element = useRef<HTMLDivElement>(null);
 
   // Scrolling unmounts the row under the reader's focus, and a removed element
@@ -296,7 +310,13 @@ const ShootRow = observer(function ShootRow({
 
   const options: Option<RowAction>[] = [
     ...(row.shoot == null ? [{ value: 'adopt' as const, label: 'Add as shoot', icon: <Folder size={ICON} /> }] : []),
+    ...(row.shoot != null && !editing
+      ? [{ value: 'rename' as const, label: 'Rename', icon: <Pencil size={ICON} /> }]
+      : []),
     { value: 'subfolder', label: 'Create shoot in subfolder', icon: <FolderPlus size={ICON} /> },
+    ...(row.shoot != null
+      ? [{ value: 'delete' as const, label: 'Delete', icon: <Trash2 size={ICON} />, destructive: true }]
+      : []),
   ];
 
   return (
@@ -320,6 +340,12 @@ const ShootRow = observer(function ShootRow({
       // they were in lands on whichever row happens to be mounted, and moving
       // the cursor there would throw away the place they were keeping.
       onPointerDown={() => shoots.setCursor(row.folderPath)}
+      // Same gesture as a photo tile: one click places the cursor, two opens.
+      onDoubleClick={(e) => {
+        if (row.shoot == null) return;
+        if ((e.target as HTMLElement).closest('button, input') != null) return;
+        navigate(`/shoots/${row.shoot.id}`);
+      }}
     >
       <span className="depth" style={{ width: row.depth * 16 }} />
 
@@ -332,6 +358,9 @@ const ShootRow = observer(function ShootRow({
         >
           {expanded ? <ChevronDown size={ICON} /> : <ChevronRight size={ICON} />}
         </Button>
+      ) : store.view === 'tree_full' ? (
+        // Same width as the chevron button, so a leaf lines up with its siblings.
+        <span aria-hidden="true" style={{ width: 'var(--control-h)', flex: '0 0 auto' }} />
       ) : (
         <span className="depth" style={{ width: 0 }} />
       )}
@@ -367,33 +396,18 @@ const ShootRow = observer(function ShootRow({
         </Text>
       </div>
 
-      {row.shoot != null && (
-        <Button render={<Link to={`/shoots/${row.shoot.id}`} />}>
-          <Images size={ICON} />
-          View photos
-        </Button>
-      )}
-      {row.shoot != null && !editing && (
-        <Button onClick={() => shoots.startRename(row.folderPath, row.name)}>
-          <Pencil size={ICON} />
-          Rename
-        </Button>
-      )}
       <ActionMenu
-        trigger={<Plus size={ICON} />}
-        label={`Add to ${row.name}`}
+        iconOnly
+        trigger={<MoreVertical size={ICON} />}
+        label={`Actions for ${row.name}`}
         options={options}
         onSelect={(action) => {
           if (action === 'subfolder') onCreateIn(row.folderPath);
-          else void shoots.adopt(row.folderPath);
+          else if (action === 'adopt') void shoots.adopt(row.folderPath);
+          else if (action === 'rename') shoots.startRename(row.folderPath, row.name);
+          else onDelete(row);
         }}
       />
-      {row.shoot != null && (
-        <Button variant="danger" onClick={() => onDelete(row)}>
-          <Trash2 size={ICON} />
-          Delete
-        </Button>
-      )}
     </div>
   );
 });

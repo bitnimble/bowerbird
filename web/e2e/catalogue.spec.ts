@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { readdirSync } from 'node:fs';
 import { PHOTOS_DIR, PHOTO_NAMES } from './fixture_library';
-import { addLibrary, addShoot, bulkAction, openLibrary, openPhoto, selectPhoto, syncLibrary } from './helpers';
+import { addLibrary, addShoot, bulkAction, openLibrary, openPhoto, openShoot, selectPhoto, shootAction, syncLibrary } from './helpers';
 
 // One ordered journey: each step depends on the catalogue state the previous one
 // produced, which is also how the bugs below were originally found.
@@ -70,12 +70,14 @@ test('keeps the library in the shell when a shoot is opened by deep link', async
   await addShoot(page, 'Reef');
   await expect(page.locator('.list__name', { hasText: 'Reef' })).toBeVisible();
 
-  const shootHref = await page.getByRole('link', { name: 'View photos' }).first().getAttribute('href');
-  expect(shootHref).not.toBeNull();
+  await openShoot(page, 'Reef');
+  await expect(page).toHaveURL(/\/shoots\//);
+  const shootHref = page.url();
 
   // Regression: /shoots/:id carries no library id, so the rail used to blank out
   // and the user lost every way back into the library.
-  await page.goto(shootHref!);
+  await page.goto('/');
+  await page.goto(shootHref);
   await expect(page.locator('.rail__link', { hasText: 'Bin' })).toBeVisible();
   await expect(page.locator('.rail__link', { hasText: 'Shoots' })).toBeVisible();
   await expect(page.locator(`.rail__link[title="${PHOTOS_DIR}"]`)).toBeVisible();
@@ -120,13 +122,13 @@ test('the folder list is walkable by keyboard, and Tab lands on the cursor', asy
 
   // Merely *focusing* one does not: focus arrives at rows for reasons that are
   // not a choice, and the cursor is the reader's place.
-  await page.locator('.list__row', { hasText: 'Kelp' }).getByRole('button', { name: 'Rename' }).focus();
+  await page.locator('.list__row', { hasText: 'Kelp' }).getByRole('button', { name: 'Actions for Kelp' }).focus();
   await expect(page.locator('.list__row--cursored')).toContainText('Reef');
 
   // Put the list back as it was found: the rest of this file is one ordered
   // journey through a single library. Deleting the shoot and keeping its photos
   // is the reversible half of the dialog, which nothing else exercises.
-  await page.locator('.list__row', { hasText: 'Kelp' }).getByRole('button', { name: 'Delete' }).click();
+  await shootAction(page, 'Kelp', 'Delete');
   await page.locator('.ui-modal').getByRole('button', { name: 'Delete shoot' }).click();
   await expect(page.locator('.list__name', { hasText: 'Kelp' })).toHaveCount(0);
 });
@@ -147,7 +149,7 @@ test('a cursor survives the row under it being unmounted by a scroll', async ({ 
   await expect(page.locator('.list__row--cursored')).toContainText('Deep00');
 
   // Focus something inside the cursored row, then scroll it far out of the window.
-  await page.locator('.list__row--cursored').getByRole('button', { name: 'Rename' }).focus();
+  await page.locator('.list__row--cursored').getByRole('button', { name: 'Actions for Deep00' }).focus();
   await page.locator('.list__scroller').evaluate((el) => {
     el.scrollTop = el.scrollHeight;
   });
@@ -172,7 +174,7 @@ test('a cursor survives the row under it being unmounted by a scroll', async ({ 
   await expect(page.locator('.list__row--cursored')).toBeVisible();
 
   for (const name of made) {
-    await page.locator('.list__row', { hasText: name }).getByRole('button', { name: 'Delete' }).click();
+    await shootAction(page, name, 'Delete');
     await page.locator('.ui-modal').getByRole('button', { name: 'Delete shoot' }).click();
     await expect(page.locator('.list__name', { hasText: name })).toHaveCount(0);
   }
@@ -191,7 +193,7 @@ test('adding a photo to a shoot moves the file out of the library root on disk',
   await page.getByRole('menuitemcheckbox', { name: /Reef/ }).click();
 
   await page.getByRole('link', { name: 'Shoots', exact: true }).click();
-  await page.getByRole('link', { name: 'View photos' }).first().click();
+  await openShoot(page, 'Reef');
   await expect(page.locator('.tile')).toHaveCount(1);
 
   // A shoot is a real folder, so the add is a file move, not just a DB flag.
@@ -208,7 +210,7 @@ test('leaving a photo returns to the collection it was opened from', async ({ pa
   await page.goto('/settings');
   await openLibrary(page, PHOTOS_DIR);
   await page.getByRole('link', { name: 'Shoots', exact: true }).click();
-  await page.getByRole('link', { name: 'View photos' }).first().click();
+  await openShoot(page, 'Reef');
   await expect(page.locator('.tile')).toHaveCount(1);
   const shoot = page.url();
 
@@ -239,7 +241,7 @@ test('a photo can be taken back out of a shoot', async ({ page }) => {
   await page.goto('/settings');
   await openLibrary(page, PHOTOS_DIR);
   await page.getByRole('link', { name: 'Shoots', exact: true }).click();
-  await page.getByRole('link', { name: 'View photos' }).first().click();
+  await openShoot(page, 'Reef');
   await expect(page.locator('.tile')).toHaveCount(1);
 
   // Removal goes over DELETE with a JSON body (§13.3). Hono/Bun do parse that,

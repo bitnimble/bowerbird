@@ -14,6 +14,7 @@ export function ActionMenu<T extends string>({
   toggles = [],
   onSelect,
   disabled = false,
+  iconOnly = false,
 }: {
   trigger: ReactNode;
   /** Required when the trigger is an icon, which carries no accessible name. */
@@ -23,12 +24,18 @@ export function ActionMenu<T extends string>({
   toggles?: ActionToggle[];
   onSelect: (value: T) => void;
   disabled?: boolean;
+  /** Icon trigger with no caret: row overflow (⋮), not a labelled dropdown. */
+  iconOnly?: boolean;
 }): JSX.Element {
   return (
     <Menu.Root>
-      <Menu.Trigger className="ui-btn ui-btn--default" aria-label={label} disabled={disabled}>
+      <Menu.Trigger
+        className={`ui-btn ui-btn--default${iconOnly ? ' ui-btn--icon' : ''}`}
+        aria-label={label}
+        disabled={disabled}
+      >
         {trigger}
-        <ChevronDown size={ICON} className="ui-btn__caret" />
+        {!iconOnly && <ChevronDown size={ICON} className="ui-btn__caret" />}
       </Menu.Trigger>
       <Menu.Portal>
         <Menu.Positioner className="ui-positioner" sideOffset={4}>

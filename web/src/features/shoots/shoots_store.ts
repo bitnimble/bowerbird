@@ -233,7 +233,9 @@ export class ShootsStore {
           subtitle: name === basename(folder) ? '' : basename(folder),
           depth,
           photoCount: shoot?.photo_count ?? 0,
-          expandable: true,
+          // Known children, or not yet asked: expand is what browses for empty
+          // on-disk folders, so a leaf we have never opened must still offer it.
+          expandable: childrenOf(folder).length > 0 || !this.browsed.has(folder),
         });
         if (this.expanded.has(folder)) walk(folder, depth + 1);
       }

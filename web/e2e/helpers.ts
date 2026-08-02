@@ -106,6 +106,16 @@ export async function bulkAction(page: Page, name: string): Promise<void> {
   await page.getByRole('menuitem', { name }).click();
 }
 
+// Row housekeeping lives behind the ⋮ menu; View photos is a double-click on the name.
+export async function shootAction(page: Page, shootName: string, action: string): Promise<void> {
+  await page.locator('.list__row', { hasText: shootName }).getByRole('button', { name: `Actions for ${shootName}` }).click();
+  await page.getByRole('menuitem', { name: action }).click();
+}
+
+export async function openShoot(page: Page, shootName: string): Promise<void> {
+  await page.locator('.list__row', { hasText: shootName }).locator('.list__name').dblclick();
+}
+
 // A tile's frame selects on one click and opens the photo on two (§18.3.1), so
 // every spec that wants the detail view goes through here rather than clicking.
 export function openPhoto(page: Page, nth = 0): Promise<void> {
