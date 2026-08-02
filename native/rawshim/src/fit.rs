@@ -14,8 +14,6 @@
 use crate::image::{polynomial_knots, resize, resize_to_fit, warp};
 use crate::parallel::*;
 use crate::rgb::{Rgb, RgbRef};
-#[cfg(not(target_arch = "wasm32"))]
-use crate::vips;
 
 /// Long edge the fit runs at. Fitting small and applying at full resolution costs
 /// nothing measurable, and every candidate warp is O(pixels), so this is the
@@ -802,7 +800,7 @@ fn chosen(found: Option<(Vec<f64>, f64, f64)>, baseline: f64, source: u32) -> (O
 /// Fits the transform taking `render` to `jpeg_bytes`: the lens, and then the colour.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn fit(render: RgbRef<'_>, jpeg_bytes: &[u8], geometry: Geometry) -> Result<Option<Profile>, String> {
-    let preview = vips::thumbnail(jpeg_bytes, crate::hdr_fit::sample_long_edge())?;
+    let preview = crate::jpeg::decode(jpeg_bytes, crate::hdr_fit::sample_long_edge())?;
     let Some(mut profile) = fit_from_preview(render, preview.as_ref(), geometry)? else {
         return Ok(None);
     };

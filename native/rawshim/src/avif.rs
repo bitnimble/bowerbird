@@ -18,6 +18,7 @@
 // here instead of from another process.
 
 use crate::raw;
+use crate::rgb::Rgb;
 
 /// CICP, the only signalling that matters: what `--cicp 9/16/9` was passing.
 pub struct Cicp {
@@ -47,6 +48,64 @@ const AVIF_PIXEL_FORMAT_YUV444: u32 = 1;
 const AVIF_PIXEL_FORMAT_YUV420: u32 = 3;
 const AVIF_RGB_FORMAT_RGB: u32 = 0;
 const AVIF_RESULT_OK: u32 = 0;
+
+/// Decodes an AVIF back to interleaved 8-bit RGB.
+///
+/// Here because a rendition is stored as AVIF and a download asks for JPEG, so something
+/// has to read one - and libvips, which used to, was the only reason a photo server linked
+/// libheif, ImageMagick and poppler. Reading with the library that wrote the file also
+/// removes a whole second AV1 implementation from the process.
+///
+/// 8-bit RGB out of whatever depth is in the file: libavif scales during the YUV
+/// conversion. No tone mapping and no transfer applied - an SDR rendition is already sRGB,
+/// and a 10-bit PQ still hands back its PQ code values, which is what libheif did too.
+///
+/// The `irot`/`imir` transform boxes are ignored, because nothing this reads has them:
+/// every file comes from `encode_still` or `encode_rendition` a few lines up, and both
+/// write pixels already the right way up. A camera HEIC would need them honoured.
+pub fn decode(bytes: &[u8]) -> Result<Rgb, String> {
+    // SAFETY: the decoder and image are libavif's, freed on every path; `source.pixels`
+    // points into `data`, which outlives the conversion.
+    #[expect(unsafe_code)]
+    unsafe {
+        let decoder = raw::avifDecoderCreate();
+        if decoder.is_null() {
+            return Err("libavif would not allocate a decoder".to_string());
+        }
+        let image = raw::avifImageCreateEmpty();
+        if image.is_null() {
+            raw::avifDecoderDestroy(decoder);
+            return Err("libavif would not allocate an image".to_string());
+        }
+        let result = (|| -> Result<Rgb, String> {
+            (*decoder).maxThreads =
+                std::thread::available_parallelism().map(|n| n.get() as i32).unwrap_or(1);
+            let status =
+                raw::avifDecoderReadMemory(decoder, image, bytes.as_ptr(), bytes.len());
+            if status != AVIF_RESULT_OK {
+                return Err(format!("libavif could not decode: {}", message(status)));
+            }
+
+            let (width, height) = ((*image).width as usize, (*image).height as usize);
+            let mut data = vec![0u8; width * height * 3];
+            let mut source = std::mem::zeroed::<raw::avifRGBImage>();
+            raw::avifRGBImageSetDefaults(&mut source, image);
+            source.format = AVIF_RGB_FORMAT_RGB;
+            source.depth = 8;
+            source.pixels = data.as_mut_ptr();
+            source.rowBytes = (width * 3) as u32;
+
+            let status = raw::avifImageYUVToRGB(image, &mut source);
+            if status != AVIF_RESULT_OK {
+                return Err(format!("libavif could not convert to RGB: {}", message(status)));
+            }
+            Ok(Rgb { width, height, data })
+        })();
+        raw::avifImageDestroy(image);
+        raw::avifDecoderDestroy(decoder);
+        result
+    }
+}
 
 /// Encodes one frame as an AVIF still, straight to `out_path`.
 ///
@@ -242,6 +301,55 @@ mod tests {
         };
         let short = vec![0u16; 8 * 8 * 3 - 1];
         assert!(encode_still(short.into(), 8, 8, &options, "/dev/null").is_err());
+    }
+
+    /// The rendition path both ways: what `encode_rendition` writes is what a download
+    /// reads back, which is the only reason `decode` exists.
+    #[test]
+    fn a_rendition_decodes_back_to_the_pixels_it_was_written_from() {
+        let dir = std::env::temp_dir().join("bb-avif-round-trip");
+        std::fs::create_dir_all(&dir).expect("a scratch directory");
+        let path = dir.join("rendition.avif");
+        let (width, height) = (48usize, 32usize);
+        let mut frame = vec![0u8; width * height * 3];
+        for y in 0..height {
+            for x in 0..width {
+                let i = (y * width + x) * 3;
+                frame[i] = (x * 255 / width) as u8;
+                frame[i + 1] = (y * 255 / height) as u8;
+                frame[i + 2] = 96;
+            }
+        }
+
+        // Lossless-ish and full chroma, so what comes back is the encode's own error and
+        // not 4:2:0's. `decode` is what is under test, not libaom's rate control.
+        encode_rendition(
+            std::borrow::Cow::Borrowed(&frame),
+            width,
+            height,
+            0,
+            10,
+            true,
+            path.to_str().expect("a path"),
+        )
+        .expect("the encode");
+
+        let decoded = decode(&std::fs::read(&path).expect("the file")).expect("the decode");
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!((decoded.width, decoded.height), (width, height));
+        let worst = frame
+            .iter()
+            .zip(decoded.data.iter())
+            .map(|(wrote, read)| wrote.abs_diff(*read))
+            .max()
+            .expect("pixels");
+        assert!(worst <= 4, "the round trip moved a channel by {worst} of 255");
+    }
+
+    #[test]
+    fn bytes_that_are_not_an_avif_are_an_error_rather_than_a_panic() {
+        assert!(decode(b"").is_err());
+        assert!(decode(&[0u8; 64]).is_err());
     }
 
     /// libavif quantises on the **midpoint** of the quantizer pair, which is the claim

@@ -1,9 +1,9 @@
 import { dlopen, FFIType } from 'bun:ffi';
 import path from 'node:path';
 
-// The Rust library (`native/rawshim`), built by `bun run build:native`. It wraps
-// LibRaw and libvips - the two things this app does to pixels - and owns every
-// decoded image for as long as TypeScript holds a handle to it.
+// The Rust library (`native/rawshim`), built by `bun run build:native`. Everything
+// this app does to pixels happens in there, and it owns every decoded image for as
+// long as TypeScript holds a handle to it.
 //
 // Decoding moved out of TypeScript because `params.half_size` has no setter in
 // LibRaw's C API, and the FFI could only reach it by locating the struct at
@@ -17,8 +17,9 @@ import path from 'node:path';
 // Everything else followed because the boundary was in the wrong place. The fit
 // evaluates tens of candidate geometries, each warping, blurring, pairing and
 // solving; running any part of that from TypeScript meant crossing the boundary
-// inside the loop. Resize, decode and encode go through libvips, which is the
-// library sharp wrapped, so nothing about the output changed when they moved.
+// inside the loop. Resize, decode and encode went with it - through libvips at
+// first, which is the library sharp wrapped, so nothing about the output changed
+// when they moved, and since through this side's own Rust.
 
 // In order of preference, first hit wins.
 const CANDIDATES = [

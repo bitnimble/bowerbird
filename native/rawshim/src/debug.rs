@@ -528,7 +528,7 @@ pub fn run(command: &Command) -> Result<Reply, String> {
         Command::ComparePsnr { image_path, raw_path } => {
             let encoded = std::fs::read(image_path)
                 .map_err(|e| format!("could not read {image_path}: {e}"))?;
-            let written = crate::vips::decode_upright(&encoded)
+            let written = crate::image::decode(&encoded, 0)
                 .map_err(|e| format!("could not decode {image_path}: {e}"))?;
             let expected = crate::decode_frame(raw_path, 8, false, 0).ok_or("could not decode")?;
             let expected = expected.rgb8().ok_or("the comparison needs an 8-bit decode")?;
@@ -572,11 +572,11 @@ pub fn run(command: &Command) -> Result<Reply, String> {
             Ok(Reply { used_avifenc: Some(used_avifenc), ..Reply::default() })
         }
         Command::DeltaEToPreview { image_paths, raw_path } => {
-            let images: Vec<crate::vips::Rgb> = image_paths
+            let images: Vec<crate::rgb::Rgb> = image_paths
                 .iter()
                 .map(|path| {
                     let encoded = std::fs::read(path).map_err(|e| format!("could not read {path}: {e}"))?;
-                    crate::vips::decode_upright(&encoded)
+                    crate::image::decode(&encoded, 0)
                         .map_err(|e| format!("could not decode {path}: {e}"))
                 })
                 .collect::<Result<_, String>>()?;
@@ -642,13 +642,12 @@ fn tile_crops(
     window: usize,
     scale: usize,
 ) -> Result<Reply, String> {
-    crate::vips::init();
-    let images: Vec<crate::vips::Rgb> = image_paths
+    let images: Vec<crate::rgb::Rgb> = image_paths
         .iter()
         .map(|path| {
             let encoded =
                 std::fs::read(path).map_err(|e| format!("could not read {path}: {e}"))?;
-            crate::vips::decode_upright(&encoded)
+            crate::image::decode(&encoded, 0)
                 .map_err(|e| format!("could not decode {path}: {e}"))
         })
         .collect::<Result<_, String>>()?;
@@ -700,8 +699,8 @@ fn tile_crops(
             }
         }
     }
-    let tiled = crate::vips::Rgb { width, height: side, data: out };
-    let encoded = crate::vips::encode_jpeg(tiled.as_ref(), 92)
+    let tiled = crate::rgb::Rgb { width, height: side, data: out };
+    let encoded = crate::jpeg::encode(tiled.as_ref(), 92)
         .map_err(|e| format!("could not encode the tile: {e}"))?;
     std::fs::write(output_path, encoded)
         .map_err(|e| format!("could not write {output_path}: {e}"))?;
@@ -715,7 +714,7 @@ fn tile_crops(
 /// rim in the picture. This is the stage's footprint by definition, and it is per-frame:
 /// a photo with no hard edges gets a small mask, and a photo of backlit branches gets a
 /// large one, which is exactly the weighting the question wants.
-fn changed_mask(quiet: crate::vips::RgbRef<'_>, loud: crate::vips::RgbRef<'_>) -> Vec<bool> {
+fn changed_mask(quiet: crate::rgb::RgbRef<'_>, loud: crate::rgb::RgbRef<'_>) -> Vec<bool> {
     // A single code of movement is rounding; two is the stage.
     const MOVED: i32 = 2;
     (0..quiet.width * quiet.height)
@@ -746,7 +745,6 @@ fn defringe_sweep(
     denoise_chroma: f64,
     size: usize,
 ) -> Result<Reply, String> {
-    crate::vips::init();
     let decoded = crate::decode_frame(path, 8, false, size as u32).ok_or("could not decode")?;
     let source = decoded.rgb8().ok_or("the sweep needs an 8-bit decode")?;
     // Resized here for the same reason `job.rs` does it before the finish: every constant
@@ -757,7 +755,7 @@ fn defringe_sweep(
     let c_path = std::ffi::CString::new(path).map_err(|_| "a path with a nul in it")?;
 
     let finished = |amount: f64| {
-        let mut frame = crate::vips::Rgb {
+        let mut frame = crate::rgb::Rgb {
             width: render.width,
             height: render.height,
             data: render.data.clone(),
@@ -804,11 +802,11 @@ fn defringe_sweep(
     }
     let has_lateral = profile.as_ref().is_some_and(|p| p.lens().tca.is_some());
 
-    let matched = |frame: crate::vips::Rgb| match &profile {
+    let matched = |frame: crate::rgb::Rgb| match &profile {
         Some(profile) => crate::fit::apply(frame.as_ref(), profile),
         None => frame,
     };
-    let rendered: Vec<crate::vips::Rgb> =
+    let rendered: Vec<crate::rgb::Rgb> =
         amounts.iter().map(|amount| matched(finished(*amount))).collect();
 
     let strongest = amounts
@@ -873,7 +871,7 @@ fn defringe_sweep(
 }
 
 /// The pixel at a fractional position, so images of different shapes compare.
-fn sample(image: crate::vips::RgbRef<'_>, u: f64, v: f64) -> [f64; 3] {
+fn sample(image: crate::rgb::RgbRef<'_>, u: f64, v: f64) -> [f64; 3] {
     let x = ((u * image.width as f64) as usize).min(image.width.saturating_sub(1));
     let y = ((v * image.height as f64) as usize).min(image.height.saturating_sub(1));
     let i = (y * image.width + x) * 3;
@@ -898,7 +896,7 @@ pub struct Comparison {
     pub psnr: Option<f64>,
 }
 
-fn compare(written: crate::vips::RgbRef<'_>, expected: crate::vips::RgbRef<'_>) -> Comparison {
+fn compare(written: crate::rgb::RgbRef<'_>, expected: crate::rgb::RgbRef<'_>) -> Comparison {
     let n = written.data.len().min(expected.data.len());
     let mut sum = 0f64;
     for i in 0..n {

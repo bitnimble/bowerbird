@@ -11,7 +11,7 @@
 //
 // `bb_` and `Bb` are short for Bowerbird. On the exported functions the prefix is
 // not decoration: C has one flat symbol namespace, and this library is dlopen'd
-// into a process that already holds LibRaw, libvips, libheif and GLib, so a bare
+// into a process that already holds LibRaw, lensfun and libavif, so a bare
 // `decode` or `fit` would be an invitation. The `#[repr(C)]` types carry it too,
 // against the usual rule of naming for behaviour rather than owner, only so that
 // each pairs visibly with the symbol it crosses the boundary in - `BbHeader` with
@@ -39,7 +39,7 @@
 // native/rawshim/src` is the audit, and the count only ever goes down.
 //
 // What is left is the irreducible part: reading the one command buffer at an entry
-// point, and calling LibRaw, libvips, libavif and lensfun, which are C. Nothing is
+// point, and calling LibRaw, libavif and lensfun, which are C. Nothing is
 // marked for our own memory any more - a `Frame` is an owned Rust value with a real
 // lifetime, and the handle API that needed raw pointers for it survives only behind
 // a lint fence, for tests.
@@ -68,6 +68,7 @@ pub mod hdr_fit;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod header;
 pub mod image;
+pub mod jpeg;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod job;
 pub mod lens;
@@ -75,15 +76,16 @@ pub mod lens;
 pub mod lensfun;
 pub mod pack;
 pub mod parallel;
+pub mod png;
 pub mod rgb;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod stacks;
 pub mod tca;
 pub mod tone;
-#[cfg(not(target_arch = "wasm32"))]
-pub mod vips;
 #[cfg(target_arch = "wasm32")]
 pub mod wasm;
+#[cfg(target_arch = "wasm32")]
+pub use wasm_bindgen_rayon::init_thread_pool;
 
 mod raw {
     #![allow(
@@ -828,15 +830,11 @@ fn decode_with_libraw(
 /// falls back to a render.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn decode_embedded_frame(path: &str, long_edge: u32) -> Option<frame::Frame> {
-    vips::init();
     let path = std::ffi::CString::new(path).ok()?;
     let decoded = guard("decode_embedded_frame", None, || {
         #[expect(unsafe_code)]
         unsafe {
-            with_embedded_jpeg(path.as_ptr(), |jpeg| match long_edge {
-                0 => vips::decode_upright(jpeg),
-                edge => vips::thumbnail(jpeg, edge as usize),
-            })
+            with_embedded_jpeg(path.as_ptr(), |jpeg| jpeg::decode(jpeg, long_edge as usize))
         }
     })?;
     let image = decoded.ok()?;
@@ -854,7 +852,6 @@ pub fn decode_embedded_frame(path: &str, long_edge: u32) -> Option<frame::Frame>
 /// untransformed.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn fit_profile_for(render: &frame::Frame, raw_path: &str) -> Option<fit::Profile> {
-    vips::init();
     let source = render.rgb8()?;
     let geometry = ffi::geometry_for(raw_path)?;
     let path = std::ffi::CString::new(raw_path).ok()?;
@@ -1002,12 +999,11 @@ pub fn embedded_jpeg_bytes(raw_bytes: &[u8]) -> Option<Vec<u8>> {
 /// side of the boundary. None when the file embeds no JPEG preview.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn decode_embedded_rgb(path: &str, long_edge: usize) -> Option<rgb::Rgb> {
-    vips::init();
     let c_path = std::ffi::CString::new(path).ok()?;
     // SAFETY: the CString outlives the call.
     #[expect(unsafe_code)]
     let decoded = unsafe {
-        with_embedded_jpeg(c_path.as_ptr(), |bytes| vips::thumbnail(bytes, long_edge))
+        with_embedded_jpeg(c_path.as_ptr(), |bytes| jpeg::decode(bytes, long_edge))
     };
     match decoded {
         Some(Ok(image)) => Some(image),

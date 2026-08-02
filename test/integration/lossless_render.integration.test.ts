@@ -1,6 +1,6 @@
-// The full-resolution export is a second decode path feeding an encoder that
-// lives outside libvips for the HDR case. None of that is visible until someone
-// opens the file (§10.5).
+// The full-resolution export is a second decode path, feeding a different encoder
+// again for the HDR case. None of that is visible until someone opens the file
+// (§10.5).
 //   docker exec bowerbird-dev bun test test/integration
 import { expect, test } from 'bun:test';
 import { mkdtempSync, rmSync, statSync } from 'node:fs';

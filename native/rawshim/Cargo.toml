@@ -24,21 +24,23 @@ fixtures = []
 
 [dependencies]
 fast_image_resize = "6.1.0"
+# libjpeg's DCT scaling is what makes a bounded decode cheap, and `Decoder::scale` is the
+# pure-Rust decoder that exposes it. zune-jpeg is faster at a whole frame and cannot do it,
+# which is the wrong way round here: every decode is bounded to the fit grid or a tile.
+jpeg-decoder = { version = "0.3.2", default-features = false }
+jpeg-encoder = { version = "0.7.1", features = ["simd"] }
 libblur = "0.24"
 rayon = "1.10"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 
-# The resampling and filtering are shared: `fast_image_resize` and `libblur` build for both
-# targets, so the fit runs the same code in the browser as on the server. Both are
-# single-threaded here (no `rayon` feature) - each is already milliseconds, and the callers
-# sit inside their own parallelism.
+# All of the above build for both targets, so the fit runs the same code in the browser as
+# on the server: the resampling, the filtering, and the JPEG decode it is measured against.
+# The resize and blur are single-threaded (no `rayon` feature) - each is already
+# milliseconds, and the callers sit inside their own parallelism.
 #
-# Everything below is the server build's. wasm32 links LibRaw and nothing else: libvips
-# encodes and decodes JPEG, and lensfun is geometry.
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-libvips = "2.3.0"
-
+# The server build links LibRaw, lensfun and libavif on top, through build.rs. wasm32 links
+# LibRaw alone: geometry databases and encoders are not what a live editor does.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2"
 wasm-bindgen-rayon = { git = "https://github.com/RReverser/wasm-bindgen-rayon.git", rev = "4eea1fa55a965ad516ef9f9e9449704c7eac91c5" }

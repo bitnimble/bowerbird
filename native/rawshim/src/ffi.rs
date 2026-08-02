@@ -9,7 +9,6 @@
 
 use crate::fit::{self, Profile};
 use crate::job;
-use crate::vips;
 use std::ffi::{c_char, CStr};
 
 /// Runs one rendition job. The whole boundary, and the shape every other entry
@@ -104,19 +103,14 @@ pub unsafe extern "C" fn bb_transcode_jpeg(
     out: *mut u8,
     out_cap: usize,
 ) -> isize {
-    vips::init();
     if path.is_null() {
         return -1;
     }
     let Ok(path) = (unsafe { CStr::from_ptr(path) }).to_str() else { return -1 };
     let encoded = crate::guard("bb_transcode_jpeg", None, || {
         let bytes = std::fs::read(path).ok()?;
-        let decoded = match long_edge {
-            0 => vips::decode_upright(&bytes),
-            edge => vips::thumbnail(&bytes, edge as usize),
-        }
-        .ok()?;
-        vips::encode_jpeg(decoded.as_ref(), quality).ok()
+        let decoded = crate::image::decode(&bytes, long_edge as usize).ok()?;
+        crate::jpeg::encode(decoded.as_ref(), quality).ok()
     });
     let Some(encoded) = encoded else { return -1 };
 
@@ -146,7 +140,6 @@ pub unsafe extern "C" fn bb_for_testing_debug(
     out: *mut u8,
     out_cap: usize,
 ) -> isize {
-    vips::init();
     if command.is_null() {
         return -1;
     }
@@ -355,11 +348,11 @@ fn lensfun_geometry(path: &str) -> Option<fit::Geometry> {
 /// symbol returning a constant would load and answer perfectly on a CPU that
 /// faults the moment the warp runs. So this grades through a real distortion and a
 /// real falloff, which is `warp` plus the radial lookup plus the folded colour one -
-/// the hot loops - and puts the result through libvips to confirm the linkage too.
+/// the hot loops - and reduces the result, which is the other vectorised kernel a
+/// rendition goes through.
 #[expect(unsafe_code)]
 #[unsafe(no_mangle)]
 pub extern "C" fn bb_selftest() -> i32 {
-    vips::init();
     let width = 64;
     let height = 48;
     let source = crate::rgb::Rgb {
@@ -405,5 +398,78 @@ mod tests {
     fn the_selftest_passes_on_the_machine_that_built_it() {
         // If this can fail here it is worthless as a gate on a tuned build.
         assert_eq!(bb_selftest(), 0);
+    }
+
+    /// The download path end to end: a stored rendition is an AVIF and what goes to the
+    /// browser is a JPEG, so this crosses libavif's decoder and the JPEG encoder in one
+    /// call. Worth having at the symbol rather than at the two halves, because the format
+    /// the file turns out to be is decided in here.
+    #[test]
+    fn transcodes_a_stored_rendition_to_jpeg() {
+        let dir = std::env::temp_dir().join("bb-transcode");
+        std::fs::create_dir_all(&dir).expect("a scratch directory");
+        let path = dir.join("rendition.avif");
+        let (width, height) = (64usize, 48usize);
+        let frame: Vec<u8> = (0..width * height * 3).map(|i| (i % 251) as u8).collect();
+        crate::avif::encode_rendition(
+            std::borrow::Cow::Borrowed(&frame),
+            width,
+            height,
+            20,
+            10,
+            true,
+            path.to_str().expect("a path"),
+        )
+        .expect("the rendition");
+
+        let c_path = std::ffi::CString::new(path.to_str().expect("a path")).expect("nul");
+        // Nothing written when the buffer is too small, and the length needed is what
+        // comes back - the protocol the TypeScript side sizes its second call from.
+        #[expect(unsafe_code)]
+        let needed = unsafe { bb_transcode_jpeg(c_path.as_ptr(), 0, 92, std::ptr::null_mut(), 0) };
+        assert!(needed > 0, "a rendition should transcode to something");
+
+        let mut out = vec![0u8; needed as usize];
+        #[expect(unsafe_code)]
+        let written =
+            unsafe { bb_transcode_jpeg(c_path.as_ptr(), 0, 92, out.as_mut_ptr(), out.len()) };
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(written, needed);
+        assert_eq!(&out[..2], &[0xFF, 0xD8], "the reply is a JPEG");
+
+        let decoded = crate::jpeg::decode(&out[..written as usize], 0).expect("the JPEG decodes");
+        assert_eq!((decoded.width, decoded.height), (width, height));
+    }
+
+    /// The bound is honoured whichever format the file is, which is the half of
+    /// `image::decode` a JPEG never exercises.
+    #[test]
+    fn transcoding_a_rendition_honours_the_long_edge() {
+        let dir = std::env::temp_dir().join("bb-transcode-bounded");
+        std::fs::create_dir_all(&dir).expect("a scratch directory");
+        let path = dir.join("rendition.avif");
+        let (width, height) = (64usize, 48usize);
+        let frame = vec![128u8; width * height * 3];
+        crate::avif::encode_rendition(
+            std::borrow::Cow::Borrowed(&frame),
+            width,
+            height,
+            20,
+            10,
+            true,
+            path.to_str().expect("a path"),
+        )
+        .expect("the rendition");
+
+        let c_path = std::ffi::CString::new(path.to_str().expect("a path")).expect("nul");
+        let mut out = vec![0u8; 64 * 1024];
+        #[expect(unsafe_code)]
+        let written =
+            unsafe { bb_transcode_jpeg(c_path.as_ptr(), 32, 92, out.as_mut_ptr(), out.len()) };
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(written > 0, "a bounded transcode should produce a JPEG");
+
+        let decoded = crate::jpeg::decode(&out[..written as usize], 0).expect("the JPEG decodes");
+        assert_eq!((decoded.width, decoded.height), (32, 24));
     }
 }

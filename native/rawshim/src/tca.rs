@@ -857,7 +857,7 @@ fn slopes(image: RgbRef<'_>) -> Option<(f64, f64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vips::Rgb;
+    use crate::rgb::Rgb;
 
     /// A frame of edges at every orientation, so the regression sees radial gradients
     /// wherever it looks rather than only along one axis.

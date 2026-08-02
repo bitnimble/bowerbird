@@ -199,7 +199,6 @@ pub fn fit_all(
     geometry: crate::fit::Geometry,
     finished: image::Strengths,
 ) -> Option<(crate::fit::Profile, HdrMatch)> {
-    crate::vips::init();
     let path = std::ffi::CString::new(raw_path).ok()?;
 
     // SAFETY: the CString outlives the call.
@@ -212,7 +211,7 @@ pub fn fit_all(
             // twice the grid it is shrunk to 1500 and brought down by a real reduce, and
             // sharing costs the set 4.605 to 4.622 mean chroma deltaE against ~90ms saved
             // (`fit::fit_from_preview`).
-            let preview = crate::vips::thumbnail(jpeg, hdr_fit::sample_long_edge()).ok()?;
+            let preview = crate::jpeg::decode(jpeg, hdr_fit::sample_long_edge()).ok()?;
             let lateral = crate::ffi::recorded_lateral(raw_path);
             fit_all_from_preview(source, quantile, geometry, finished, &preview, lateral)
         })
@@ -320,6 +319,7 @@ fn graded_with(
             peak_nits: options.peak_nits,
             match_colour: matched.map(|m| &m.colour),
             levels,
+            exposure: 1.0,
         },
     );
     (frame, width, height)
@@ -357,12 +357,15 @@ pub fn preview_prepared_at(
     (resized, target_width, target_height)
 }
 
+/// `levels` are the frame's own, unexposed; `exposure` is the slider. Keeping them apart
+/// is what holds the colour still as it moves - see `tone::GradeOptions::exposure`.
 pub fn grade_prepared(
     frame: &mut [u16],
     reference_white_nits: f64,
     peak_nits: f64,
     matched: Option<&HdrMatch>,
     levels: tone::Levels,
+    exposure: f64,
 ) {
     tone::grade(
         frame,
@@ -371,6 +374,7 @@ pub fn grade_prepared(
             peak_nits,
             match_colour: matched.map(|m| &m.colour),
             levels,
+            exposure,
         },
     );
 }

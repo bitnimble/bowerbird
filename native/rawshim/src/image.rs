@@ -298,6 +298,32 @@ pub fn resize(source: RgbRef<'_>, width: usize, height: usize) -> Rgb {
     Rgb { width, height, data: destination.into_vec() }
 }
 
+/// Decodes an encoded file, bounded to `long_edge` on its longest side. 0 decodes it whole.
+///
+/// Two formats, because two is all this app writes: a JPEG is a camera's embedded preview,
+/// an AVIF is one of our own renditions on its way to a download. Sniffed rather than taken
+/// from the caller - the callers that need this hold a path, and a library holds more than
+/// one format - and refused outright rather than guessed at, since the alternative is a
+/// decoder failing deep inside a job with nothing about the file in the message.
+///
+/// Server-side only: the bound to a JPEG belongs to `jpeg::decode`, and it is AVIF that
+/// needs libavif, which the client does not link.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn decode(bytes: &[u8], long_edge: usize) -> Result<Rgb, String> {
+    // The `ftyp` box, at offset 4 because the first four bytes are its own length.
+    let is_avif = bytes.len() > 12 && &bytes[4..8] == b"ftyp";
+    match (bytes.starts_with(&[0xFF, 0xD8]), is_avif) {
+        (true, _) => crate::jpeg::decode(bytes, long_edge),
+        // Unbounded is what the download asks for, and taking that through `resize_to_fit`
+        // regardless would copy a whole rendition to do nothing.
+        (_, true) => crate::avif::decode(bytes).map(|image| match long_edge {
+            0 => image,
+            edge => resize_to_fit(image.as_ref(), edge),
+        }),
+        _ => Err("not a JPEG or an AVIF".to_string()),
+    }
+}
+
 /// Longest-edge fit, preserving aspect. 0 leaves the image alone.
 ///
 /// Only ever shrinks. Nothing here wants an enlargement - a rendition is bounded by the

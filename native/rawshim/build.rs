@@ -9,8 +9,8 @@
 // wasm32-unknown-unknown`) binds LibRaw alone, against the source tree
 // `native/toolchain/build_libraw_wasm.sh` fetched, and links the static archive that
 // script produced - so the browser runs this decode rather than a second one written to
-// avoid it. lensfun, libavif and libvips are not on the client path at all: they are
-// geometry, encoding and resizing, none of which a live editor does.
+// avoid it. lensfun and libavif are not on the client path at all: they are a geometry
+// database and a file format, neither of which a live editor touches.
 use std::env;
 use std::path::PathBuf;
 
@@ -96,13 +96,20 @@ fn server_bindings() -> bindgen::Bindings {
         .allowlist_type("avifImage")
         .allowlist_type("avifRGBImage")
         .allowlist_type("avifEncoder")
+        .allowlist_type("avifDecoder")
         .allowlist_function("avifImageCreate")
+        .allowlist_function("avifImageCreateEmpty")
         .allowlist_function("avifImageDestroy")
         .allowlist_function("avifRGBImageSetDefaults")
         .allowlist_function("avifImageRGBToYUV")
+        .allowlist_function("avifImageYUVToRGB")
         .allowlist_function("avifEncoderCreate")
         .allowlist_function("avifEncoderDestroy")
         .allowlist_function("avifEncoderWrite")
+        // Reading back what this library wrote, which is what libvips was kept for.
+        .allowlist_function("avifDecoderCreate")
+        .allowlist_function("avifDecoderDestroy")
+        .allowlist_function("avifDecoderReadMemory")
         .allowlist_function("avifRWDataFree")
         .allowlist_function("avifResultToString")
         .generate()
@@ -183,7 +190,7 @@ fn client_bindings() -> bindgen::Bindings {
     println!("cargo:rustc-link-search=native={}", archive.display());
     // `eh`, not `noeh`: LibRaw signals its errors by throwing, so the archive is built
     // with `-fwasm-exceptions` and needs the matching C++ runtime.
-    let libs = sysroot.join("lib/wasm32-wasip1");
+    let libs = sysroot.join("lib/wasm32-wasip1-threads");
     println!("cargo:rustc-link-search=native={}", libs.join("eh").display());
     println!("cargo:rustc-link-search=native={}", libs.display());
     println!("cargo:rustc-link-lib=static=raw");

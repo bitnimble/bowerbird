@@ -22,7 +22,6 @@ use crate::hdr;
 use crate::hdr_args::{Chroma, EncodeOptions, Medium};
 use crate::image::Strengths;
 use crate::stacks;
-use crate::vips;
 use serde::{Deserialize, Serialize};
 
 /// How a scene-linear decode is graded to display-referred (10.7).
@@ -289,7 +288,6 @@ fn save_avif(image: &Frame, target: &Target) -> Result<(), String> {
 /// when nothing does. There is no list to forget to add to and no `finally` to skip,
 /// which were two of the three ways the old shape could leak a 366MB frame.
 pub fn run(job: &Job) -> Result<Outcome, String> {
-    vips::init();
     let mut outcome = Outcome::default();
 
     let renders_sdr = job.targets.iter().any(|t| !t.hdr && t.source == Source::Render);

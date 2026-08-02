@@ -12,7 +12,7 @@
 //! the design document for the measurements that settled this shape.
 
 use crate::image::LUMA;
-use crate::vips::RgbRef;
+use crate::rgb::RgbRef;
 
 /// Cells along one edge of the luma and chroma grids.
 const GRID: usize = 20;

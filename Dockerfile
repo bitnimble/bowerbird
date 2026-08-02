@@ -1,12 +1,11 @@
 # Bowerbird backend. Every pixel operation goes through native/rawshim, which links
-# LibRaw, libvips, libavif and lensfun, so the image ships all four as system
-# libraries.
+# LibRaw, libavif and lensfun, so the image ships all three as system libraries.
 #
 # Debian rather than Alpine, which would save ~50MB of base. The original reason no
 # longer holds - it was that Alpine's `vips` is built without libheif and so cannot
-# write an AVIF, which stopped mattering when the encode moved to libavif - so this
-# is now inertia rather than a constraint. Alpine is untested; musl against LibRaw
-# and lensfun is the part to check before trying it.
+# write an AVIF, which stopped mattering when the encode moved to libavif and then
+# libvips left entirely - so this is now inertia rather than a constraint. Alpine is
+# untested; musl against LibRaw and lensfun is the part to check before trying it.
 FROM debian:trixie-slim AS base
 WORKDIR /app
 
@@ -23,9 +22,14 @@ RUN printf '%s\n' \
     > /etc/dpkg/dpkg.cfg.d/01-nodoc
 
 # Runtime libraries only. The headers rawshim compiles against belong to the build
-# stage and are installed there: libvips-dev alone drags 549MB of development tree
-# (libicu-dev, perl, libhdf5-dev, libc6-dev) against 127MB for the library itself,
-# and every byte of it was reaching the final image through this layer.
+# stage and are installed there: a -dev tree drags hundreds of MB of libc6-dev, perl
+# and friends that no runtime reads, and every byte of it was reaching the final image
+# through this layer.
+#
+# No libvips, and dropping it took 29 packages out of the closure - ImageMagick,
+# poppler, OpenEXR, HDF5, NSS, cfitsio and matio among them, ~34MB - for a library
+# that by the end was decoding JPEG and reading back our own AVIFs. `jpeg.rs` does the
+# first in pure Rust and libavif, already linked to write those files, does the second.
 #
 # ffmpeg applies the PQ transfer and encodes the HDR video (§10.7). It needs
 # libzimg for the zscale filter, which is what applies the transfer, and libaom
@@ -57,7 +61,7 @@ RUN printf '%s\n' \
 # why the build stage below opens with --fix-broken.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
-     libraw23t64 libvips42t64 liblensfun1 ffmpeg libavif16 libavif-bin \
+     libraw23t64 liblensfun1 ffmpeg libavif16 libavif-bin \
   && dpkg --force-depends --purge libllvm19 libz3-4 mesa-libgallium libgl1-mesa-dri libglx-mesa0 \
   && rm -rf /var/lib/apt/lists/*
 
@@ -117,7 +121,7 @@ FROM base AS native
 RUN apt-get update \
   && apt-get install -y --fix-broken \
   && apt-get install -y --no-install-recommends \
-     libraw-dev libvips-dev liblensfun-dev libavif-dev \
+     libraw-dev liblensfun-dev libavif-dev \
      build-essential ca-certificates curl libclang-dev \
   && rm -rf /var/lib/apt/lists/*
 # Downloaded to a file rather than piped into sh: in a pipeline the exit status is

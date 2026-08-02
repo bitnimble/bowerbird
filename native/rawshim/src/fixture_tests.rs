@@ -67,7 +67,7 @@ const INJECTED_CORNER: f64 = 0.65;
 /// that wants a gain has to inject one rather than fit the fixture and hope.
 fn injected_falloff() -> crate::fit::Profile {
     let preview = crate::decode_embedded_rgb(sony().to_str().unwrap(), 0).expect("a preview");
-    let target = crate::vips::encode_jpeg(falloff(&preview, INJECTED_CORNER).as_ref(), 95)
+    let target = crate::jpeg::encode(falloff(&preview, INJECTED_CORNER).as_ref(), 95)
         .expect("the injected target encodes");
     let render = decode(&sony(), 8, false, 0);
     // Uncorrected skips the geometry search, so nothing but the falloff is in play.
@@ -84,7 +84,7 @@ fn injected_falloff() -> crate::fit::Profile {
 
 /// Multiplies linear light by `1 + (corner - 1) r^2`, the shape a lens's falloff has
 /// and the one the fit models.
-fn falloff(source: &crate::vips::Rgb, corner: f64) -> crate::vips::Rgb {
+fn falloff(source: &crate::rgb::Rgb, corner: f64) -> crate::rgb::Rgb {
     let (width, height) = (source.width, source.height);
     let (cx, cy) = (width as f64 / 2.0, height as f64 / 2.0);
     let half = (cx * cx + cy * cy).sqrt();
@@ -104,7 +104,7 @@ fn falloff(source: &crate::vips::Rgb, corner: f64) -> crate::vips::Rgb {
             }
         }
     }
-    crate::vips::Rgb { width, height, data }
+    crate::rgb::Rgb { width, height, data }
 }
 
 fn decode(path: &PathBuf, depth: u32, rec2020_linear: bool, long_edge: u32) -> crate::frame::Frame {
@@ -578,7 +578,7 @@ mod camera_match {
 
         // A darkening falloff, so the corners must come out darker with it than
         // without, and the centre must be left where it was.
-        let luma = |image: &crate::vips::Rgb, x: usize, y: usize| {
+        let luma = |image: &crate::rgb::Rgb, x: usize, y: usize| {
             let i = (y * image.width + x) * 3;
             f64::from(image.data[i]) + f64::from(image.data[i + 1]) + f64::from(image.data[i + 2])
         };
@@ -626,7 +626,7 @@ mod camera_match {
         // Scaled to fill, which is the half of the injection that makes it a picture a
         // camera could have produced: one that left the corners black would ask the fit
         // for a geometry it correctly refuses to consider.
-        let target = crate::vips::encode_jpeg(pincushion(&preview, K1, 1.0 / (1.0 + K1)).as_ref(), 95)
+        let target = crate::jpeg::encode(pincushion(&preview, K1, 1.0 / (1.0 + K1)).as_ref(), 95)
             .expect("the injected target encodes");
 
         let render = decode(&sony(), 8, false, 0);
@@ -653,7 +653,7 @@ mod camera_match {
     ///
     /// Hand-rolled rather than calling `image::warp`: injecting with the same code the
     /// fit inverts would let a bug in it cancel itself out.
-    fn pincushion(source: &crate::vips::Rgb, k1: f64, crop: f64) -> crate::vips::Rgb {
+    fn pincushion(source: &crate::rgb::Rgb, k1: f64, crop: f64) -> crate::rgb::Rgb {
         let (width, height) = (source.width, source.height);
         let mut out = vec![0u8; width * height * 3];
         let half = ((width as f64 / 2.0).powi(2) + (height as f64 / 2.0).powi(2)).sqrt();
@@ -681,7 +681,7 @@ mod camera_match {
                 }
             }
         }
-        crate::vips::Rgb { width, height, data: out }
+        crate::rgb::Rgb { width, height, data: out }
     }
 
     /// Load-bearing: the profile is deliberately not stored anywhere. The grid and the
@@ -728,7 +728,7 @@ mod camera_match {
     }
 
     fn same_picture_either_way(
-        source: crate::vips::RgbRef<'_>,
+        source: crate::rgb::RgbRef<'_>,
         profile: &crate::fit::Profile,
         size: usize,
     ) {
@@ -751,7 +751,7 @@ mod camera_match {
         assert!(mean < 1.0, "mean deltaE {mean}");
     }
 
-    fn resize(source: crate::vips::RgbRef<'_>, long: usize) -> crate::vips::Rgb {
+    fn resize(source: crate::rgb::RgbRef<'_>, long: usize) -> crate::rgb::Rgb {
         crate::image::resize_to_fit(source, long)
     }
 
@@ -1203,7 +1203,7 @@ mod hdr_grade {
             / graded.len() as f64;
 
         let encoded = std::fs::read(&path).expect("the still");
-        let decoded = crate::vips::decode_upright(&encoded).expect("the still decodes");
+        let decoded = crate::avif::decode(&encoded).expect("the still decodes");
         let _ = std::fs::remove_dir_all(&dir);
         let mean = decoded.data.iter().map(|v| f64::from(*v) / 255.0).sum::<f64>()
             / decoded.data.len() as f64;

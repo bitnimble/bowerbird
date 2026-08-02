@@ -447,11 +447,11 @@ pub struct Plane {
 
 // ------------------------------------------------------------------ the pair
 
-/// Box average, in f64 rather than through libvips because the operations there are
-/// all 8-bit sRGB: routing a scene-linear plane through them left ~57 distinct levels
-/// across the whole fit domain once it was normalised, and the curve fitted from that
-/// staircase was visibly contrasty. Doing both sides here also means neither gets a
-/// filter the other did not.
+/// Box average, in f64 rather than through the 8-bit resize the rest of the crate uses:
+/// routing a scene-linear plane through 8-bit sRGB left ~57 distinct levels across the
+/// whole fit domain once it was normalised, and the curve fitted from that staircase was
+/// visibly contrasty. Doing both sides here also means neither gets a filter the other
+/// did not.
 ///
 /// `to_f64` converts each sample on the way in, which is what keeps the decode out of
 /// this in its own right: normalising a 61MP frame to diffuse white beforehand meant a
@@ -2766,7 +2766,7 @@ mod tests {
     /// The warm patches stop where they do because an 8-bit sRGB preview cannot hold a
     /// brighter one: rendered, render 0.62 against green's 0.20 leaves the sRGB gamut,
     /// clamps, and the fit then reads a red curve the camera never wrote.
-    fn warm_chart() -> (Plane, crate::vips::Rgb) {
+    fn warm_chart() -> (Plane, crate::rgb::Rgb) {
         const COLS: usize = 10;
         const PATCHES: usize = 80;
         const PATCH: usize = 32;
@@ -2804,7 +2804,7 @@ mod tests {
 
         (
             Plane { width: width * 2, height: height * 2, data: scene },
-            crate::vips::Rgb { width, height, data: rendered },
+            crate::rgb::Rgb { width, height, data: rendered },
         )
     }
 
