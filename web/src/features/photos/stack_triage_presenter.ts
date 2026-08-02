@@ -1,6 +1,7 @@
 import { action, runInAction } from 'mobx';
 import { api } from '../../api/client';
 import type { PhotoSummary, Triage } from '../../api/client';
+import { describe } from '../../errors';
 import type { PhotosPresenter } from './photos_presenter';
 import type { StackTriageStore } from './stack_triage_store';
 import { type Verdict, applyVerdict, keepers, losersOf, openSession, stop } from './stack_triage';
@@ -82,7 +83,7 @@ export class StackTriagePresenter {
     try {
       members = await api.listStackPhotos(stackId);
     } catch (err) {
-      runInAction(() => (this.store.loadError = err instanceof Error ? err.message : String(err)));
+      runInAction(() => (this.store.loadError = describe(err)));
       return;
     }
     // A double mount, or a quick switch to another stack, must not let the

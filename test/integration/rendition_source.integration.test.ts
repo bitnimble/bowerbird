@@ -45,24 +45,14 @@ test('the rendition settings live on the library and round-trip', () => {
     expect(created.rendition_source).toBe('embedded');
     expect(created.rendition_hdr).toBe(false);
 
-    // The video is its own opt-in, off even once HDR is on: it is a second
-    // encode per photo for a file only Firefox reads (§10.7).
-    expect(created.rendition_hdr_video).toBe(false);
-
     libraries.setRenditionSource(id, 'render');
     libraries.setRenditionHdr(id, true);
-    const hdrOnly = libraries.getById(id)!;
-    expect(hdrOnly.rendition_source).toBe('render');
-    expect(hdrOnly.rendition_hdr).toBe(true);
-    expect(hdrOnly.rendition_hdr_video).toBe(false);
+    const rendered = libraries.getById(id)!;
+    expect(rendered.rendition_source).toBe('render');
+    expect(rendered.rendition_hdr).toBe(true);
 
-    libraries.setRenditionHdrVideo(id, true);
-    const withVideo = libraries.getById(id)!;
-    expect(withVideo.rendition_hdr_video).toBe(true);
-
-    // Stored as integers, so they have to come back booleans rather than 1.
-    expect(typeof withVideo.rendition_hdr).toBe('boolean');
-    expect(typeof withVideo.rendition_hdr_video).toBe('boolean');
+    // Stored as an integer, so it has to come back a boolean rather than 1.
+    expect(typeof rendered.rendition_hdr).toBe('boolean');
   } finally {
     db.close();
   }

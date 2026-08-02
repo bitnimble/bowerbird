@@ -1,0 +1,33 @@
+{
+  "name": "avif-hdr-video",
+  "version": "0.1.0",
+  "description": "Show HDR AVIF stills in HDR on Firefox, by rewrapping the AV1 frame as a one-frame MP4. No decode, no dependencies.",
+  "keywords": ["avif", "hdr", "firefox", "polyfill", "av1", "mp4", "pq", "rec2100"],
+  "license": "MIT",
+  "author": "bitnimble",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bitnimble/bowerbird.git",
+    "directory": "packages/avif-hdr-video"
+  },
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "README.md"],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json",
+    "test": "bun test",
+    "prepublishOnly": "bun run build && bun run typecheck && bun run test"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2"
+  }
+}

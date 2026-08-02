@@ -18,6 +18,7 @@
 // here instead of from another process.
 
 use crate::raw;
+#[cfg(not(target_arch = "wasm32"))]
 use crate::rgb::Rgb;
 
 /// CICP, the only signalling that matters: what `--cicp 9/16/9` was passing.
@@ -49,6 +50,19 @@ const AVIF_PIXEL_FORMAT_YUV420: u32 = 3;
 const AVIF_RGB_FORMAT_RGB: u32 = 0;
 const AVIF_RESULT_OK: u32 = 0;
 
+/// One on wasm, deliberately, rather than whatever the browser reports.
+///
+/// libavif spawns its own pthreads for the YUV conversion, and under wasip1-threads those
+/// resolve to a `wasi_thread_spawn` import no browser provides - this module's threads
+/// come from wasm-bindgen-rayon, which spawns workers the browser's way. The libaom
+/// underneath is built single-threaded for the same reason.
+fn max_threads() -> i32 {
+    #[cfg(target_arch = "wasm32")]
+    return 1;
+    #[cfg(not(target_arch = "wasm32"))]
+    std::thread::available_parallelism().map(|n| n.get() as i32).unwrap_or(1)
+}
+
 /// Decodes an AVIF back to interleaved 8-bit RGB.
 ///
 /// Here because a rendition is stored as AVIF and a download asks for JPEG, so something
@@ -63,6 +77,11 @@ const AVIF_RESULT_OK: u32 = 0;
 /// The `irot`/`imir` transform boxes are ignored, because nothing this reads has them:
 /// every file comes from `encode_still` or `encode_rendition` a few lines up, and both
 /// write pixels already the right way up. A camera HEIC would need them honoured.
+///
+/// Server-only: this exists to serve a JPEG download from a stored rendition, which is
+/// not a thing a browser asks this library for, and the wasm libaom is built encoder-only
+/// so there would be no codec behind it.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn decode(bytes: &[u8]) -> Result<Rgb, String> {
     // SAFETY: the decoder and image are libavif's, freed on every path; `source.pixels`
     // points into `data`, which outlives the conversion.
@@ -78,8 +97,7 @@ pub fn decode(bytes: &[u8]) -> Result<Rgb, String> {
             return Err("libavif would not allocate an image".to_string());
         }
         let result = (|| -> Result<Rgb, String> {
-            (*decoder).maxThreads =
-                std::thread::available_parallelism().map(|n| n.get() as i32).unwrap_or(1);
+            (*decoder).maxThreads = max_threads();
             let status =
                 raw::avifDecoderReadMemory(decoder, image, bytes.as_ptr(), bytes.len());
             if status != AVIF_RESULT_OK {
@@ -107,7 +125,7 @@ pub fn decode(bytes: &[u8]) -> Result<Rgb, String> {
     }
 }
 
-/// Encodes one frame as an AVIF still, straight to `out_path`.
+/// Encodes one frame as an AVIF still and hands back the file.
 ///
 /// `pq` is interleaved 16-bit Rec.2020 RGB in the PQ transfer, as `tone::encode_pq`
 /// leaves it. What comes out of that is what libavif's own converter takes to YCbCr, so
@@ -116,25 +134,40 @@ pub fn decode(bytes: &[u8]) -> Result<Rgb, String> {
 ///
 /// `Cow` rather than a slice, and that is the memory knob rather than a signature
 /// preference: an owned frame is handed straight to libavif and dropped as soon as the
-/// YUV conversion has read it. Only the still-plus-video pair has to pass `Borrowed`,
-/// the twin being on another thread with the same samples.
+/// YUV conversion has read it.
 ///
 /// Only one frame of this is left live by the time libaom runs, and libaom's own working
 /// set - ~700MB for a 24MP 10-bit 4:4:4 all-intra frame, five times ours - is what
 /// actually sets the peak. Multiply by `processing_concurrency` on a machine that starts
 /// OOM-killing; DESIGN 10.7 has the measurements.
+///
+/// Bytes rather than a path because the browser has neither (DESIGN 21.3). The frame is
+/// what costs; the encoded file is single-digit MB, so carrying it back through a `Vec`
+/// is not the copy worth avoiding.
 pub fn encode_still(
+    pq: std::borrow::Cow<'_, [u16]>,
+    width: usize,
+    height: usize,
+    options: &StillOptions,
+) -> Result<Vec<u8>, String> {
+    if pq.len() < width * height * 3 {
+        return Err(format!("frame is {} samples, expected {}", pq.len(), width * height * 3));
+    }
+    encode_avif(pq, 16, AVIF_RANGE_LIMITED, width, height, AVIF_DEPTH, options.format,
+        &options.cicp, (options.quantizer, options.quantizer), options.speed)
+}
+
+/// `encode_still` to a file, for the renditions.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn save_still(
     pq: std::borrow::Cow<'_, [u16]>,
     width: usize,
     height: usize,
     options: &StillOptions,
     out_path: &str,
 ) -> Result<(), String> {
-    if pq.len() < width * height * 3 {
-        return Err(format!("frame is {} samples, expected {}", pq.len(), width * height * 3));
-    }
-    write_avif(pq, 16, AVIF_RANGE_LIMITED, width, height, AVIF_DEPTH, options.format,
-        &options.cicp, (options.quantizer, options.quantizer), options.speed, out_path)
+    let file = encode_still(pq, width, height, options)?;
+    std::fs::write(out_path, file).map_err(|e| format!("could not write {out_path}: {e}"))
 }
 
 /// An 8-bit sRGB rendition, straight to disk.
@@ -166,10 +199,11 @@ pub fn encode_rendition(
         true => AVIF_PIXEL_FORMAT_YUV444,
         false => AVIF_PIXEL_FORMAT_YUV420,
     };
-    write_avif(rgb8, 8, AVIF_RANGE_FULL, width, height, 8, format, &cicp, (quantizer, quantizer), speed, out_path)
+    let file = encode_avif(rgb8, 8, AVIF_RANGE_FULL, width, height, 8, format, &cicp, (quantizer, quantizer), speed)?;
+    std::fs::write(out_path, file).map_err(|e| format!("could not write {out_path}: {e}"))
 }
 
-/// Hands interleaved RGB to libavif and writes what comes back.
+/// Hands interleaved RGB to libavif and returns the file it builds.
 ///
 /// Never copies the frame: `avifRGBImage.pixels` points into `rgb`.
 ///
@@ -180,7 +214,7 @@ pub fn encode_rendition(
 /// anything tiling can be traded against. Holding the RGB across `avifEncoderWrite`
 /// stacked a whole frame under that for no reader: 145MB at 24MP, 366MB at 61MP.
 #[allow(clippy::too_many_arguments)]
-fn write_avif<T: Clone>(
+fn encode_avif<T: Clone>(
     rgb: std::borrow::Cow<'_, [T]>,
     rgb_depth: u32,
     range: u32,
@@ -196,8 +230,7 @@ fn write_avif<T: Clone>(
     // pins the midpoint rule is the one caller that does not.
     quantizers: (i32, i32),
     speed: i32,
-    out_path: &str,
-) -> Result<(), String> {
+) -> Result<Vec<u8>, String> {
     // SAFETY: every pointer below is either freshly created by libavif or points into
     // `rgb`, which outlives the call. The image is destroyed on every path.
     #[expect(unsafe_code)]
@@ -206,7 +239,7 @@ fn write_avif<T: Clone>(
         if image.is_null() {
             return Err("libavif would not allocate an image".to_string());
         }
-        let result = (|| -> Result<(), String> {
+        let result = (|| -> Result<Vec<u8>, String> {
             (*image).yuvRange = range;
             (*image).colorPrimaries = cicp.primaries;
             (*image).transferCharacteristics = cicp.transfer;
@@ -233,10 +266,8 @@ fn write_avif<T: Clone>(
             if encoder.is_null() {
                 return Err("libavif would not allocate an encoder".to_string());
             }
-            let written = (|| -> Result<(), String> {
-                (*encoder).maxThreads = std::thread::available_parallelism()
-                    .map(|n| n.get() as i32)
-                    .unwrap_or(1);
+            let written = (|| -> Result<Vec<u8>, String> {
+                (*encoder).maxThreads = max_threads();
                 (*encoder).speed = speed;
                 // Both ends, not `--min 0 --max N`. libavif takes the **midpoint** of
                 // the pair, so a floor of 0 quietly halved every quantizer this app
@@ -252,16 +283,14 @@ fn write_avif<T: Clone>(
 
                 let mut output = std::mem::zeroed::<raw::avifRWData>();
                 let status = raw::avifEncoderWrite(encoder, image, &mut output);
-                // Written straight out of libavif's buffer rather than through a `Vec`
-                // of our own. Inside the free, so the bytes are still there to write.
+                // Copied out inside the free, so the bytes are still there to read.
                 // Freed whatever the status: a write that fails part way has already
                 // allocated, and `avifRWDataFree` is defined on a zeroed struct, so the
                 // ordering costs nothing and the alternative leaks however much of the
                 // file got built.
                 let done = match (status, output.data.is_null()) {
                     (AVIF_RESULT_OK, false) => {
-                        std::fs::write(out_path, std::slice::from_raw_parts(output.data, output.size))
-                            .map_err(|e| format!("could not write {out_path}: {e}"))
+                        Ok(std::slice::from_raw_parts(output.data, output.size).to_vec())
                     }
                     (AVIF_RESULT_OK, true) => Err("libavif returned no bytes".to_string()),
                     _ => Err(format!("libavif could not encode: {}", message(status))),
@@ -300,7 +329,7 @@ mod tests {
             speed: 8,
         };
         let short = vec![0u16; 8 * 8 * 3 - 1];
-        assert!(encode_still(short.into(), 8, 8, &options, "/dev/null").is_err());
+        assert!(encode_still(short.into(), 8, 8, &options).is_err());
     }
 
     /// The rendition path both ways: what `encode_rendition` writes is what a download
@@ -364,8 +393,6 @@ mod tests {
     /// equivalence with nothing to say so. So it is asserted where it can fail loudly.
     #[test]
     fn the_quantizer_pair_is_read_as_its_midpoint() {
-        let dir = std::env::temp_dir().join("bb-avif-midpoint");
-        std::fs::create_dir_all(&dir).expect("a scratch directory");
         // Something with detail to spend bits on: a flat frame encodes to the same few
         // bytes at any quantizer and would pass this without meaning anything.
         let (width, height) = (64usize, 64usize);
@@ -379,35 +406,25 @@ mod tests {
             }
         }
 
-        let encode = |min: i32, max: i32, name: &str| {
-            let path = dir.join(name);
-            let options = StillOptions {
-                cicp: Cicp { primaries: 9, transfer: 16, matrix: 9 },
-                format: AVIF_PIXEL_FORMAT_YUV444,
-                quantizer: 0,
-                speed: 10,
-            };
-            write_avif(
+        let encode = |min: i32, max: i32| {
+            encode_avif(
                 std::borrow::Cow::Borrowed(&frame),
                 16,
                 AVIF_RANGE_LIMITED,
                 width,
                 height,
                 AVIF_DEPTH,
-                options.format,
-                &options.cicp,
+                AVIF_PIXEL_FORMAT_YUV444,
+                &Cicp { primaries: 9, transfer: 16, matrix: 9 },
                 (min, max),
-                options.speed,
-                path.to_str().expect("a path"),
+                10,
             )
-            .expect("the encode");
-            std::fs::read(&path).expect("the file")
+            .expect("the encode")
         };
 
-        let pair = encode(0, 26, "pair.avif");
-        let midpoint = encode(13, 13, "midpoint.avif");
-        let tighter = encode(6, 6, "tighter.avif");
-        let _ = std::fs::remove_dir_all(&dir);
+        let pair = encode(0, 26);
+        let midpoint = encode(13, 13);
+        let tighter = encode(6, 6);
 
         assert_eq!(pair, midpoint, "min 0 / max 26 is not the same encode as min 13 / max 13");
         // And that the knob does something at all, so the equality above cannot be two

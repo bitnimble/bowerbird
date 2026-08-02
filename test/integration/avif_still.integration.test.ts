@@ -29,9 +29,9 @@ const FIXTURE = `${import.meta.dir}/../fixtures/DSC02981.ARW`;
 
 const PROBE = `
 import { _for_testing_encodeHdr } from '${import.meta.dir}/../../src/services/processing/rawshim_for_testing';
-const [file, out, medium, chroma] = process.argv.slice(-4);
+const [file, out, chroma] = process.argv.slice(-3);
 const outcome = _for_testing_encodeHdr(file, {
-  medium, outputPath: out, peakNits: 1000, referenceWhiteNits: 203,
+  outputPath: out, peakNits: 1000, referenceWhiteNits: 203,
   whiteQuantile: 0.9, crf: 30, preset: 10, maxEdge: 640,
   stillFullChroma: chroma === '444',
 }, { decodeSize: 640 });
@@ -39,8 +39,8 @@ console.log(outcome.usedAvifenc ? 'avifenc' : 'linked');
 `;
 
 /** Encodes one still, and reports which route the library says it took. */
-async function encode(out: string, medium: string, viaAvifenc: boolean, chroma: string): Promise<string> {
-  const child = Bun.spawn(['bun', '-e', PROBE, '--', FIXTURE, out, medium, chroma], {
+async function encode(out: string, viaAvifenc: boolean, chroma: string): Promise<string> {
+  const child = Bun.spawn(['bun', '-e', PROBE, '--', FIXTURE, out, chroma], {
     env: { ...process.env, ...(viaAvifenc ? { BOWERBIRD_AVIFENC: '1' } : {}), LOG_LEVEL: 'warn' },
     stdout: 'pipe',
     stderr: 'pipe',
@@ -94,8 +94,8 @@ for (const [chroma, pixFmt] of [
         // First, that there are two routes at all. Rename the environment variable or
         // let the guard in `encode_frame` start declining, and every assertion below
         // still passes having compared a file with itself.
-        expect(await encode(linked, 'still', false, chroma)).toBe('linked');
-        expect(await encode(spawned, 'still', true, chroma)).toBe('avifenc');
+        expect(await encode(linked, false, chroma)).toBe('linked');
+        expect(await encode(spawned, true, chroma)).toBe('avifenc');
 
         // Everything a browser reads to decide what the file is, including the CICP
         // that decides whether it is treated as HDR at all.

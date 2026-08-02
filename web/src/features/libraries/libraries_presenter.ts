@@ -62,10 +62,6 @@ export class LibrariesPresenter {
     await this.update(libraryId, { rendition_hdr });
   }
 
-  async setRenditionHdrVideo(libraryId: string, rendition_hdr_video: boolean): Promise<void> {
-    await this.update(libraryId, { rendition_hdr_video });
-  }
-
   // Automatic photo stacking (§19.4). None of the three is retroactive: they
   // decide what the next detection pass does, and that pass runs when a sync
   // brings something in.

@@ -1,5 +1,5 @@
 import { observer } from 'mobx-react-lite';
-import { Fragment, useCallback, useEffect, useState } from 'react';
+import { Fragment, useCallback, useEffect, useLayoutEffect, useState } from 'react';
 import {
   ArrowLeft,
   ChevronDown,
@@ -14,12 +14,13 @@ import {
   Maximize2,
   RefreshCw,
   RotateCw,
+  SlidersHorizontal,
   Sparkles,
   Trash2,
   Wand2,
 } from 'lucide-react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
-import { needsHdrVideo, renditionVideoUrl, viewerUrl, type PhotoDetail, type ViewerRendition } from '../../api/client';
+import { viewerUrl, type PhotoDetail, type ViewerRendition } from '../../api/client';
 import { captureDateTime, localDateTime } from '../../api/dates';
 import { readSetting, writeSetting } from '../../app/local_setting';
 import {
@@ -39,10 +40,20 @@ import type { Option } from '../../ui/option';
 import { OverflowMenu } from '../../ui/overflow_menu';
 import { Text } from '../../ui/text';
 import { TextArea } from '../../ui/text_area';
+import { RawEditPanel } from '../raw_edit/raw_edit_panel';
+import { RawEditPresenter } from '../raw_edit/raw_edit_presenter';
+import { routeFor } from '../raw_edit/raw_edit_route';
+import { RawEditStage } from '../raw_edit/raw_edit_stage';
+import { RawEditStore } from '../raw_edit/raw_edit_store';
+import { useHdrVideo } from './hdr_video';
 import { photoPath, sourceOfPath, triagePath } from './photos_store';
 import { renditionLabel } from './renditions';
 import { PhotoStage } from './photo_stage';
 import { TRIAGE_KEYS, TriageControl } from './triage_control';
+
+// Longest edge the decode is fitted to. Grade cost is linear in pixels; 3840 keeps
+// settle quality close to a max rendition without making every drag tick pay full res.
+const EDIT_LONG_EDGE = 3840;
 
 type Row = [label: string, value: React.ReactNode];
 
@@ -154,7 +165,8 @@ const DOWNLOADS: Option<'original' | ViewerRendition>[] = [
 
 const STACK_ACTIONS: Option<'triage'>[] = [{ value: 'triage', label: 'Triage stack', icon: <Layers size={ICON} /> }];
 
-const ACTIONS: Option<'metadata' | 'delete'>[] = [
+const ACTIONS: Option<'edit' | 'metadata' | 'delete'>[] = [
+  { value: 'edit', label: 'Edit', icon: <SlidersHorizontal size={ICON} /> },
   { value: 'metadata', label: 'Refresh metadata', icon: <RotateCw size={ICON} /> },
   { value: 'delete', label: 'Move to Bin', icon: <Trash2 size={ICON} />, destructive: true },
 ];
@@ -182,6 +194,8 @@ const DetailNav = observer(function DetailNav({
   toolsRef,
   panelsOpen,
   onTogglePanels,
+  onEdit,
+  editing,
 }: {
   photoId: string;
   /** Where the stage draws its own zoom and fullscreen controls. */
@@ -189,6 +203,8 @@ const DetailNav = observer(function DetailNav({
   /** Null on a phone, where the sheet's own handle owns the panels. */
   panelsOpen: boolean | null;
   onTogglePanels: () => void;
+  onEdit: () => void;
+  editing: boolean;
 }): JSX.Element {
   const store = usePhotosStore();
   const { photos } = usePresenters();
@@ -233,8 +249,14 @@ const DetailNav = observer(function DetailNav({
     menuSection({
       label: 'Actions',
       icon: <RefreshCw size={ICON} />,
-      options: ACTIONS,
+      // Edit is how you enter the grade; once in, Done on the panel is how you leave,
+      // so offering Edit again would only no-op.
+      options: editing ? ACTIONS.filter((a) => a.value !== 'edit') : ACTIONS,
       onSelect: (action) => {
+        if (action === 'edit') {
+          onEdit();
+          return;
+        }
         if (action === 'delete') {
           void photos.deletePhotos({ photo_ids: [photoId] });
           return;
@@ -274,7 +296,9 @@ const DetailNav = observer(function DetailNav({
 
       <div className="detail__tools" ref={toolsRef} />
 
-      {panelsOpen != null && (
+      {/* Forced open while editing (the exposure panel has nowhere else to live),
+          so the toggle would only confuse. */}
+      {panelsOpen != null && !editing && (
         <Button
           iconOnly
           aria-label={panelsOpen ? 'Hide metadata' : 'Show metadata'}
@@ -348,23 +372,22 @@ const DetailFrame = observer(function DetailFrame({ photoId, toolsInto }: { phot
   const stillSrc = viewerUrl(photoId, showing, version);
 
   // Firefox renders an HDR still dark - it applies a PQ transfer to nothing but
-  // video - so it gets the one-frame video of whichever rendition is showing
-  // instead (§10.7). The embedded one never has a twin, being an 8-bit SDR JPEG
-  // with no headroom to carry, so its still is already right.
-  const hdrVideo = needsHdrVideo() && shownFile?.video != null;
+  // video - so there the same AVIF is rewrapped as one and shown through a
+  // `<video>` (§10.7). The camera's JPEG never needs it, being 8-bit SDR with no
+  // headroom to carry, so its still is already right.
+  const hdrVideo = useHdrVideo(stillSrc, shownFile?.hdr === true && showing !== 'embedded');
 
   // Stepping through frames is the whole job, so both neighbours are fetched and
   // decoded while this one is being looked at and paint on arrival - backwards
   // through a cull is as common as forwards. The rendition on screen is the one
   // warmed, so a reader set to the camera's JPEG never pays for a render they
   // will not see. Only where the neighbour is sure to have it: a rendition built
-  // on request is a 404 until something builds it, and the video twin is a poor
-  // guess at what the next photo needs.
+  // on request is a 404 until something builds it. Warming the still warms
+  // Firefox's video too, that being the same file read out of the cache.
   const neighbours = [store.prevPhotoId, store.nextPhotoId];
-  const preloadSrcs =
-    hdrVideo || !store.isAlwaysBuilt(showing)
-      ? undefined
-      : neighbours.flatMap((id) => (id == null ? [] : [viewerUrl(id, showing, store.renditionVersionOf(id, showing))]));
+  const preloadSrcs = !store.isAlwaysBuilt(showing)
+    ? undefined
+    : neighbours.flatMap((id) => (id == null ? [] : [viewerUrl(id, showing, store.renditionVersionOf(id, showing))]));
 
   const filename = photo?.file_path.split('/').pop() ?? photoId;
 
@@ -379,8 +402,11 @@ const DetailFrame = observer(function DetailFrame({ photoId, toolsInto }: { phot
       hold={store.photoFor(photoId) == null}
       busy={store.buildingRendition}
       retryEpoch={store.serverEpoch}
-      sources={[hdrVideo && showing !== 'embedded' ? renditionVideoUrl(photoId, showing, version) : stillSrc]}
-      video={hdrVideo}
+      // Still first in the list while the twin is in flight; once it lands, the
+      // MP4 takes the chosen slot and the AVIF stays mounted underneath so a
+      // Gecko that never fires loadeddata (Linux) keeps a painted frame.
+      sources={hdrVideo != null ? [hdrVideo, stillSrc] : [stillSrc]}
+      video={hdrVideo != null}
       alt={filename}
       filename={filename}
       preloadSrcs={preloadSrcs}
@@ -517,7 +543,6 @@ const RenditionPanel = observer(function RenditionPanel({ photoId, defaultOpen }
   const pending = pendingUntil(photo);
   const showing = store.showing;
   const shownFile = photo?.renditions?.[showing];
-  const shownVideo = needsHdrVideo() ? (shownFile?.video ?? null) : null;
   const shownImage = store.shownImageOf(photoId, showing);
 
   return (
@@ -533,21 +558,11 @@ const RenditionPanel = observer(function RenditionPanel({ photoId, defaultOpen }
         // files reads the same way in both panels. The pixels come off the
         // decoded image, the weight off the file the server served it from.
         ['Dimensions', shownImage == null ? PENDING : `${shownImage.width} × ${shownImage.height}`],
-        [
-          'File size',
-          pending(() => {
-            const bytes = shownVideo?.bytes ?? shownFile?.bytes;
-            return bytes == null ? 'unknown' : fileSizeLabel(bytes);
-          }),
-        ],
-        // The camera's JPEG is passed through untouched, so the encoder settings
-        // the other two are built with say nothing about it.
-        [
-          'Format',
-          pending(() =>
-            shownVideo != null ? 'AV1 (MP4)' : showing === 'embedded' ? 'JPEG' : 'AVIF',
-          ),
-        ],
+        ['File size', pending(() => (shownFile?.bytes == null ? 'unknown' : fileSizeLabel(shownFile.bytes)))],
+        // The file the server holds, which is what a reader can act on. Firefox
+        // is watching an MP4 of the same frame, but that is made in the page and
+        // exists nowhere to be downloaded or measured.
+        ['Format', pending(() => (showing === 'embedded' ? 'JPEG' : 'AVIF'))],
         // The SDR pipeline's output space; an HDR render leaves it for Rec.2020
         // primaries and a PQ transfer.
         ['Colour space', pending(() => (shownFile?.hdr === true ? 'Rec.2020 PQ' : 'sRGB'))],
@@ -563,7 +578,7 @@ const RenditionPanel = observer(function RenditionPanel({ photoId, defaultOpen }
         ],
         // The camera's JPEG has no file of its own: this is the RAW it is lifted
         // out of, and without the qualifier the row reads as the RAW itself.
-        ['Path', pending(() => `${shownVideo?.path ?? shownFile?.path ?? 'unknown'}${showing === 'embedded' ? ' (embedded)' : ''}`)],
+        ['Path', pending(() => `${shownFile?.path ?? 'unknown'}${showing === 'embedded' ? ' (embedded)' : ''}`)],
       ]}
     />
   );
@@ -621,7 +636,15 @@ const RawPanel = observer(function RawPanel({ photoId, defaultOpen }: { photoId:
 // whole point of a detail view during a cull, so the verdict keys work here
 // exactly as they do in the grid. Separate component so that a keystroke
 // re-renders whichever panel owns what it changed, and nothing else.
-const DetailKeys = observer(function DetailKeys({ photoId }: { photoId: string }): null {
+const DetailKeys = observer(function DetailKeys({
+  photoId,
+  editing,
+  onExitEdit,
+}: {
+  photoId: string;
+  editing: boolean;
+  onExitEdit: () => void;
+}): null {
   const store = usePhotosStore();
   const { photos } = usePresenters();
   const navigate = useNavigate();
@@ -633,6 +656,14 @@ const DetailKeys = observer(function DetailKeys({ photoId }: { photoId: string }
       const target = e.target as HTMLElement | null;
       if (target != null && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+      // Edit mode owns Escape: discard the grade and return to the viewer, rather than
+      // leaving the photo the way the ordinary viewer does.
+      if (e.key === 'Escape' && document.fullscreenElement == null && editing) {
+        onExitEdit();
+        e.preventDefault();
+        return;
+      }
 
       const verdict = TRIAGE_KEYS[e.key];
       if (verdict != null) void photos.setTriage(photoId, verdict);
@@ -650,7 +681,7 @@ const DetailKeys = observer(function DetailKeys({ photoId }: { photoId: string }
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [step, navigate, back, photoId, photos]);
+  }, [step, navigate, back, photoId, photos, editing, onExitEdit]);
 
   return null;
 });
@@ -675,12 +706,39 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   // rather than a ref, because the stage has to render again once the slot
   // exists; the setter is stable, so neither part of the bar re-renders after.
   const [toolsSlot, setToolsSlot] = useState<HTMLDivElement | null>(null);
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
+  // Bound to the photo it was opened for: stepping away clears it without a
+  // separate effect, so the editor is never constructed for a frame it is not
+  // showing. `?edit` lands e2e (and a deep link) straight in.
+  const [editPhotoId, setEditPhotoId] = useState<string | null>(() =>
+    new URLSearchParams(search).has('edit') ? photoId : null,
+  );
+  const editing = editPhotoId === photoId;
+  const [session, setSession] = useState<{ store: RawEditStore; presenter: RawEditPresenter } | null>(null);
 
   useEffect(() => {
     void photos.openDetail(photoId, sourceOfPath(pathname));
     void appSettings.load();
   }, [photoId, pathname, photos, appSettings]);
+
+  // Built only while editing. The pair owns a worker and a few hundred MB of wasm
+  // heap, which belong to this visit rather than to the session (§21.4).
+  // Layout effect so the stage mounts before paint - otherwise Edit shows one
+  // frame of the stored rendition beside empty panels.
+  useLayoutEffect(() => {
+    if (!editing) return;
+    const editStore = new RawEditStore(routeFor());
+    const presenter = new RawEditPresenter(editStore);
+    setSession({ store: editStore, presenter });
+    void presenter.open(photoId, EDIT_LONG_EDGE);
+    return () => {
+      presenter.close();
+      setSession(null);
+    };
+  }, [editing, photoId]);
+
+  const startEdit = useCallback(() => setEditPhotoId(photoId), [photoId]);
+  const stopEdit = useCallback(() => setEditPhotoId(null), []);
 
   function togglePanels(): void {
     setPanelsOpen((was) => {
@@ -694,8 +752,11 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   // an effect, so the render that first sees a new id has nothing loaded and
   // nothing in flight - which read as "not found" and tore the whole page down,
   // stage included, for the frame before the effect ran.
+  //
+  // Edit mode is exempt: e2e opens a missing id under `?edit` so the editor's
+  // own failure path (not the detail fetch's) is what surfaces the reason.
   const open = store.open;
-  if (open?.id === photoId && open.status === 'missing') {
+  if (open?.id === photoId && open.status === 'missing' && !editing) {
     return (
       <div className="pad">
         <div className="empty">
@@ -722,7 +783,11 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   // and neither does a phone's sheet.
   const expanded = !mobile && !landscape;
 
-  const metaPanels = (
+  const metaPanels = editing ? (
+    session != null && (
+      <RawEditPanel store={session.store} presenter={session.presenter} onDone={stopEdit} />
+    )
+  ) : (
     <>
       <NotesPanel photoId={photoId} />
       <CameraPanel photoId={photoId} defaultOpen={expanded} />
@@ -738,50 +803,62 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   // screen.
   const panels = mobile ? (
     <div className="detail__sheet">
-      {sheetOpen && (
+      {(sheetOpen || editing) && (
         <div className="detail__panels">
-          <Panel>
-            <PhotoRating photoId={photoId} />
-          </Panel>
+          {!editing && (
+            <Panel>
+              <PhotoRating photoId={photoId} />
+            </Panel>
+          )}
           {metaPanels}
         </div>
       )}
 
-      <div className="row detail__verdict">
-        <PhotoTriage photoId={photoId} />
-        <Button
-          iconOnly
-          aria-label={sheetOpen ? 'Hide details' : 'Show details'}
-          aria-expanded={sheetOpen}
-          onClick={() => setSheetOpen(!sheetOpen)}
-        >
-          {sheetOpen ? <ChevronDown size={ICON} /> : <ChevronUp size={ICON} />}
-        </Button>
-      </div>
+      {!editing && (
+        <div className="row detail__verdict">
+          <PhotoTriage photoId={photoId} />
+          <Button
+            iconOnly
+            aria-label={sheetOpen ? 'Hide details' : 'Show details'}
+            aria-expanded={sheetOpen}
+            onClick={() => setSheetOpen(!sheetOpen)}
+          >
+            {sheetOpen ? <ChevronDown size={ICON} /> : <ChevronUp size={ICON} />}
+          </Button>
+        </div>
+      )}
     </div>
   ) : (
     <div className="detail__panels">
-      <Panel title="Triage">
-        <PhotoTriage photoId={photoId} />
-        <PhotoRating photoId={photoId} />
-      </Panel>
+      {!editing && (
+        <Panel title="Triage">
+          <PhotoTriage photoId={photoId} />
+          <PhotoRating photoId={photoId} />
+        </Panel>
+      )}
       {metaPanels}
     </div>
   );
 
   return (
     <div className="pad detail-page">
-      <DetailKeys photoId={photoId} />
+      <DetailKeys photoId={photoId} editing={editing} onExitEdit={stopEdit} />
       <DetailNav
         photoId={photoId}
         toolsRef={setToolsSlot}
         panelsOpen={mobile ? null : panelsOpen}
         onTogglePanels={togglePanels}
+        onEdit={startEdit}
+        editing={editing}
       />
 
-      <div className={`detail detail--${mobile ? 'sheet' : !panelsOpen ? 'only' : landscape ? 'below' : 'beside'}`}>
-        <DetailFrame photoId={photoId} toolsInto={toolsSlot} />
-        {(mobile || panelsOpen) && panels}
+      <div
+        className={`detail detail--${
+          mobile ? 'sheet' : !panelsOpen && !editing ? 'only' : landscape ? 'below' : 'beside'
+        }`}
+      >
+        {editing && session != null ? <RawEditStage store={session.store} /> : <DetailFrame photoId={photoId} toolsInto={toolsSlot} />}
+        {(mobile || panelsOpen || editing) && panels}
       </div>
     </div>
   );

@@ -249,9 +249,6 @@ pub enum Command {
         #[serde(default)]
         with_match: bool,
         grade: GradeSpec,
-        /// The one-frame AV1 twin, where one is wanted.
-        #[serde(default)]
-        video_output_path: String,
         /// Decode to this longest edge before grading. 0 takes the whole frame, which
         /// is what the pins want and what the encode tests cannot afford.
         #[serde(default)]
@@ -318,10 +315,6 @@ pub struct GradeSpec {
     pub max_edge: Option<f64>,
     #[serde(default)]
     pub still_full_chroma: bool,
-    /// "still" or "video". A still gets avifenc after ffmpeg; a video does not, and
-    /// has no say in its chroma.
-    #[serde(default)]
-    pub medium: Option<String>,
     /// Luma and chroma denoise strengths, and output sharpening. Absent means none of
     /// them, which is what a pin comparing two encode routes wants: whatever these do,
     /// they must do it to both. Used as given rather than scaled - a debug command names
@@ -346,20 +339,22 @@ impl GradeSpec {
         }
     }
 
+    fn grade(&self) -> crate::hdr::Grade {
+        crate::hdr::Grade {
+            peak_nits: self.peak_nits,
+            reference_white_nits: self.reference_white_nits,
+            white_quantile: self.white_quantile,
+        }
+    }
+
     fn options(&self) -> crate::hdr_args::EncodeOptions {
         crate::hdr_args::EncodeOptions {
-            medium: match self.medium.as_deref() {
-                Some(name) => crate::hdr_args::Medium::parse(name).unwrap_or(crate::hdr_args::Medium::Still),
-                None => crate::hdr_args::Medium::Still,
-            },
             still_chroma: match self.still_full_chroma {
                 true => crate::hdr_args::Chroma::Yuv444,
                 false => crate::hdr_args::Chroma::Yuv420,
             },
             output_path: self.output_path.clone(),
-            peak_nits: self.peak_nits,
-            reference_white_nits: self.reference_white_nits,
-            white_quantile: self.white_quantile,
+            grade: self.grade(),
             crf: self.crf,
             preset: self.preset,
             strengths: self.strengths(),
@@ -537,7 +532,7 @@ pub fn run(command: &Command) -> Result<Reply, String> {
                 ..Reply::default()
             })
         }
-        Command::EncodeHdr { path, with_match, grade, video_output_path, decode_size } => {
+        Command::EncodeHdr { path, with_match, grade, decode_size } => {
             // Only the whole-frame decode is shared: it is the one the pins reuse, and
             // a sized one is cheap enough that caching it would only risk handing back
             // the wrong size.
@@ -560,13 +555,9 @@ pub fn run(command: &Command) -> Result<Reply, String> {
             // The route the encode reports having taken, not a second reading of the
             // environment variable that selected it: the differential asserts on this to
             // prove its two arms really ran different code.
-            let used_avifenc = crate::hdr::encode_pair(
+            let used_avifenc = crate::hdr::encode_still(
                 crate::hdr::Decode::Borrowed(source),
                 &grade.options(),
-                match video_output_path.is_empty() {
-                    true => None,
-                    false => Some(video_output_path),
-                },
                 matched.as_ref(),
             )?;
             Ok(Reply { used_avifenc: Some(used_avifenc), ..Reply::default() })

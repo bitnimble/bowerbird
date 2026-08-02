@@ -1,6 +1,6 @@
 import path from 'node:path';
 import type { Library } from '../schemas/libraries';
-import { renditionDir, renditionExtension, type Rendition } from '../services/processing/renditions';
+import { RENDITION_EXTENSION, renditionDir, type Rendition } from '../services/processing/renditions';
 
 // Whether `child` is `parent` or sits beneath it. Resolved first, so a relative
 // path or a `..` cannot slip past by spelling.
@@ -19,9 +19,8 @@ export function getDataPath(library: Library): string {
   return dataPathFor(library.root_path, library.data_path);
 }
 
-// Every rendition is AVIF, or MP4 for the HDR video twin (§10.2). AVIF decodes
-// natively in every current browser with no polyfill, is the only format here
-// that carries HDR to Chrome and Safari alike, and beats WebP on size at matched
+// Every rendition is AVIF (§10.2). It decodes natively in every current browser,
+// is the only format here that carries HDR, and beats WebP on size at matched
 // quality. Files written under the old extensions are swept by the orphan pass,
 // which keys on the extension a directory is supposed to hold (§10.6).
 //
@@ -30,25 +29,12 @@ export function getDataPath(library: Library): string {
 // id. Range is in the directory rather than the filename because the file is the
 // cache: a rendition built before HDR was turned on would otherwise be served
 // forever under the same name.
-export function renditionPathFor(
-  dataPath: string,
-  photoId: string,
-  rendition: Rendition,
-  hdr: boolean,
-  video = false,
-): string {
-  const dir = renditionDir(rendition, hdr, video);
-  return path.join(dataPath, 'renditions', dir, `${photoId}${renditionExtension(video)}`);
+export function renditionPathFor(dataPath: string, photoId: string, rendition: Rendition, hdr: boolean): string {
+  return path.join(dataPath, 'renditions', renditionDir(rendition, hdr), `${photoId}${RENDITION_EXTENSION}`);
 }
 
-export function getRenditionPath(
-  library: Library,
-  photoId: string,
-  rendition: Rendition,
-  hdr: boolean,
-  video = false,
-): string {
-  return renditionPathFor(getDataPath(library), photoId, rendition, hdr, video);
+export function getRenditionPath(library: Library, photoId: string, rendition: Rendition, hdr: boolean): string {
+  return renditionPathFor(getDataPath(library), photoId, rendition, hdr);
 }
 
 // The Bin holds originals, which is why it lives beside the photographs and not

@@ -37,8 +37,6 @@ export interface RenditionTarget {
   rendition: Rendition;
   hdr: boolean;
   outputPath: string;
-  /** The one-frame AV1 twin, for Firefox (§10.7). Null when it is not wanted. */
-  videoOutputPath: string | null;
   /** Longest edge, or 0 for native resolution. */
   size: number;
   // Which pixels to start from. Only the grid is ever built from the camera's

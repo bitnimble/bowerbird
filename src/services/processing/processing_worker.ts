@@ -23,7 +23,7 @@ declare const self: {
 };
 
 function outputsOf(job: WorkerJob): string[] {
-  return job.targets.flatMap((t) => (t.videoOutputPath == null ? [t.outputPath] : [t.outputPath, t.videoOutputPath]));
+  return job.targets.map((t) => t.outputPath);
 }
 
 // Every writer fails on a missing directory rather than creating one, and ffmpeg
@@ -56,7 +56,6 @@ function toCommand(job: RenditionJob): Parameters<typeof runJob>[0] {
       rendition: target.rendition,
       hdr: target.hdr,
       outputPath: target.outputPath,
-      videoOutputPath: target.videoOutputPath,
       size: target.size,
       source: target.source,
       sdrQuantizer: target.sdrQuantizer,

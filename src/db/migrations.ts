@@ -23,10 +23,6 @@ CREATE TABLE IF NOT EXISTS libraries (
   -- Only meaningful with 'render': an embedded JPEG is 8-bit SDR, so there is no
   -- headroom in it to carry.
   rendition_hdr INTEGER NOT NULL DEFAULT 0,
-  -- Also encode the HDR rendition as a one-frame AV1. Off by default: it is a
-  -- second encode per photo for a file only Firefox on Windows ever reads, and
-  -- most installs never serve one.
-  rendition_hdr_video INTEGER NOT NULL DEFAULT 0,
   -- How much of the folder tree this library is, and whether its folders are
   -- shoots (§4.1). Standing rules, not import-time choices: a folder created
   -- next month is in or out for the same reason today's are.
@@ -281,7 +277,6 @@ function renamePreviewColumnsToRenditions(db: Database): void {
   rename('photos', 'preview_rendition', 'viewer_rendition');
   rename('libraries', 'preview_source', 'rendition_source');
   rename('libraries', 'preview_hdr', 'rendition_hdr');
-  rename('libraries', 'preview_hdr_video', 'rendition_hdr_video');
   db.exec("UPDATE settings SET key = 'viewer_rendition_mode' WHERE key = 'preview_rendition_mode'");
   db.exec("UPDATE settings SET key = 'last_viewer_rendition' WHERE key = 'last_preview_rendition'");
 }
@@ -315,6 +310,22 @@ function migrateProcessingStages(db: Database): void {
   db.exec('DROP INDEX IF EXISTS idx_photos_needs_processing');
   db.exec('ALTER TABLE photos DROP COLUMN needs_processing');
   db.exec('ALTER TABLE photos DROP COLUMN date_reprocessed');
+}
+
+// The second AV1 encode per HDR photo that Firefox used to need, which the
+// client now does for itself out of the still it is already sent (§10.7). There
+// is nothing left for the setting to turn on, and the files it produced are
+// cleared by the prune sweep.
+//
+// Named here rather than left as a column nothing reads: a setting still in the
+// row is a setting somebody will wire back up.
+// Under both names it has had: the rename above no longer covers it, there being
+// nothing left to rename it to.
+function dropRenditionHdrVideo(db: Database): void {
+  const cols = columnNames(db, 'libraries');
+  for (const name of ['rendition_hdr_video', 'preview_hdr_video']) {
+    if (cols.has(name)) db.exec(`ALTER TABLE libraries DROP COLUMN ${name}`);
+  }
 }
 
 // The `(collection, date)` pairs the `_order_` indexes above replace. They are a
@@ -463,7 +474,7 @@ export function runMigrations(db: Database): void {
   // (§10.2). The default matches what that setting shipped with.
   ensureColumn(db, 'libraries', 'rendition_source', "TEXT NOT NULL DEFAULT 'embedded'");
   ensureColumn(db, 'libraries', 'rendition_hdr', 'INTEGER NOT NULL DEFAULT 0');
-  ensureColumn(db, 'libraries', 'rendition_hdr_video', 'INTEGER NOT NULL DEFAULT 0');
+  dropRenditionHdrVideo(db);
   // Nullable on add so existing rows can be filled before NOT NULL is applied.
   ensureColumn(db, 'libraries', 'name', 'TEXT');
   requireLibraryNames(db);

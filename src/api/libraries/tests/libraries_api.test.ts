@@ -11,7 +11,7 @@ import { LibrariesApi } from '../libraries_api';
 const library: Library = { id: 'l1', root_path: '/r', data_path: null, bin_name: 'Bin', name: 'lib', ordering: 'taken_desc',
   rendition_source: 'embedded' as const,
   rendition_hdr: false,
-  rendition_hdr_video: false, include_subfolders: true, mirror_shoots: true, auto_stack: true, auto_stack_similarity: 0.78, auto_stack_window_seconds: 60, last_synced_at: null, photo_count: 0 };
+  include_subfolders: true, mirror_shoots: true, auto_stack: true, auto_stack_similarity: 0.78, auto_stack_window_seconds: 60, last_synced_at: null, photo_count: 0 };
 const status = { library_id: 'l1', status: 'processing', photos_added: 3 } as LibrarySyncStatus;
 
 function buildApp(

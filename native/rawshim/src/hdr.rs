@@ -9,72 +9,35 @@
 //
 // The still is an AVIF, which Chrome renders as HDR on Android 14+ and on desktop, and
 // Safari renders on macOS - including at 4:4:4, confirmed on an HDR display. Firefox
-// honours no HDR image tagging at all, so for Firefox the same pixels are also encoded
-// as a one-frame video, since its video pipeline does composite HDR by passing through
-// to the compositor.
+// honours no HDR image tagging at all and is served the same file: it rewraps the
+// bitstream as an MP4 in the page, its video pipeline being the one that composites
+// HDR (§10.7).
 
-#[cfg(not(target_arch = "wasm32"))]
-use crate::hdr_args::{Chroma, Medium};
 use crate::hdr_args::{self, EncodeOptions};
 use crate::hdr_fit::{self, HdrMatch};
 use crate::image;
 use crate::tone::{self, GradeOptions};
+use serde::Deserialize;
 #[cfg(not(target_arch = "wasm32"))]
 use std::io::Write;
 #[cfg(not(target_arch = "wasm32"))]
 use std::process::{Command, Stdio};
 
-/// Runs a command, writing `stdin_data` to it where there is any.
+/// How a scene-linear decode is anchored to a display (DESIGN 10.7).
 ///
-/// The write runs on its own thread. ~366MB down a pipe will fill it long before the
-/// child has read it all, so writing inline and only then waiting deadlocks whenever
-/// the child also has something to say on stderr.
-///
-/// Scoped rather than spawned, so the thread borrows the graded frame instead of
-/// taking a copy of it: that copy was a second ~366MB allocation on every encode, for
-/// bytes this frame already owns and outlives the write.
-#[cfg(not(target_arch = "wasm32"))]
-fn run(args: &[String], stdin_data: Option<&[u8]>) -> Result<(), String> {
-    let (command, rest) = args.split_first().ok_or("no command to run")?;
-    let mut child = Command::new(command)
-        .args(rest)
-        .stdin(if stdin_data.is_some() {
-            Stdio::piped()
-        } else {
-            Stdio::null()
-        })
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("could not start {command}: {e}"))?;
-
-    let waited = match stdin_data {
-        None => child.wait_with_output(),
-        Some(data) => {
-            let mut stdin = child.stdin.take().ok_or("no stdin on the child")?;
-            std::thread::scope(|scope| {
-                // A broken pipe here means the child died early; its stderr says why,
-                // so the write error is the less useful of the two and is dropped.
-                scope.spawn(move || {
-                    let _ = stdin.write_all(data);
-                });
-                child.wait_with_output()
-            })
-        }
-    };
-
-    let output = waited.map_err(|e| format!("{command} did not finish: {e}"))?;
-    if output.status.success() {
-        return Ok(());
-    }
-    let text = String::from_utf8_lossy(&output.stderr);
-    let tail: Vec<&str> = text.trim().lines().rev().take(3).collect();
-    let tail = tail.into_iter().rev().collect::<Vec<_>>().join("; ");
-    Err(format!(
-        "{command} failed ({}): {}",
-        output.status.code().unwrap_or(-1),
-        if tail.is_empty() { "no output" } else { &tail },
-    ))
+/// One value rather than three loose numbers because the three are only meaningful
+/// together: the quantile picks the sample diffuse white is read from, and the two nits
+/// figures say where that sample and the highlights above it land. A rendition and a
+/// slider tick that disagreed on any one of them would be grading different pictures.
+#[derive(Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Grade {
+    /// Display peak the grade rolls highlights into, and the declared mastering peak.
+    pub peak_nits: f64,
+    /// Nits diffuse white maps to (BT.2408 HDR Reference White).
+    pub reference_white_nits: f64,
+    /// Quantile of the frame taken as diffuse white.
+    pub white_quantile: f64,
 }
 
 /// The scene-linear decode, its dimensions, and where its levels sit.
@@ -178,7 +141,7 @@ pub fn fit_match_from(
 ///
 /// **The geometry search reads a *finished* render, for the reason the SDR path records at
 /// its own call site: the defringe and the lateral tier remove the same error.** Measured
-/// on the raw render, the tier corrects a fringe the defringe at the end of `encode_pair`
+/// on the raw render, the tier corrects a fringe the defringe at the end of `encode_still`
 /// then removes as well, and the two together overshoot. Handed the frame as it will
 /// actually look, the tier finds nothing left and declines on its own - no rule needed.
 ///
@@ -242,52 +205,82 @@ pub fn fit_all_from_preview(
     Some((profile, matched))
 }
 
-/// Everything `encode` does up to the point of handing bytes to ffmpeg.
+/// A decode carried as far as it can go without knowing the exposure.
 ///
-/// Split out so the pin that captured the TypeScript's graded output can be held
-/// against this without running an encoder (`hdr_pin.integration.test.ts`).
-pub fn graded(
+/// Fit to size, warped through the lens the colour was fitted against, and measured. A
+/// rendition runs those three once and grades once; an editor runs them once and grades
+/// on every slider tick, which is the whole reason they are a value rather than a phase
+/// of `graded`.
+pub struct Prepared {
+    pub samples: Vec<u16>,
+    pub width: usize,
+    pub height: usize,
+    /// The frame's own, read before the grade so exposure can move against them instead
+    /// of being folded into them (`tone::GradeOptions::exposure`).
+    pub levels: tone::Levels,
+}
+
+impl Prepared {
+    /// A smaller copy carrying the same levels, for the frames a drag throws away.
+    ///
+    /// Resolution is the disposable part while the slider moves; tone and colour are
+    /// not, so this grades through the identical curve at fewer pixels rather than
+    /// approximating it at more.
+    pub fn shrunk_to(&self, long_edge: usize) -> Prepared {
+        let longest = self.width.max(self.height);
+        if longest <= long_edge {
+            return Prepared {
+                samples: self.samples.clone(),
+                width: self.width,
+                height: self.height,
+                levels: self.levels,
+            };
+        }
+        let scaled = |dimension: usize| {
+            let value = dimension as u64 * long_edge as u64 / longest as u64;
+            usize::try_from(value)
+                .expect("a preview dimension must fit the address space")
+                .max(1)
+        };
+        let (width, height) = (scaled(self.width), scaled(self.height));
+        let samples =
+            image::box_resize_u16(&self.samples, self.width, self.height, width, height)
+                .expect("an interactive frame only shrinks");
+        Prepared {
+            samples,
+            width,
+            height,
+            levels: self.levels,
+        }
+    }
+}
+
+/// Everything a grade needs that the exposure does not change.
+///
+/// `fit_to` is the size to resample to, or `None` for a decode that already arrived at
+/// one - LibRaw bounds the browser's decode on the way out, so there is nothing left to
+/// resize there.
+pub fn prepare(
     source: &Source<'_>,
-    options: &EncodeOptions,
+    fit_to: Option<(usize, usize)>,
+    grade: &Grade,
     matched: Option<&HdrMatch>,
-) -> (Vec<u16>, usize, usize) {
+) -> Prepared {
     // Measured wherever the decode happens to be, which is safe now that both ends are
     // quantiles over a fixed sample count: the anchor no longer moves with the frame's
     // resolution, so the decode is free to arrive already fitted (`copy_processed`).
-    graded_with(
-        source,
-        options,
-        matched,
-        tone::levels(source.samples, options.white_quantile),
-    )
-}
+    let levels = tone::levels(source.samples, grade.white_quantile);
 
-/// `graded`, against levels the caller already measured.
-///
-/// Split out for `encode_pair`, which writes two files off one decode and must anchor
-/// both on the same reading whether or not it regrades between them.
-fn graded_with(
-    source: &Source<'_>,
-    options: &EncodeOptions,
-    matched: Option<&HdrMatch>,
-    levels: tone::Levels,
-) -> (Vec<u16>, usize, usize) {
     // Fit before grading, not after. zscale would have done the same resize in the
     // same linear light, but only once the whole frame had been graded - so a 61MP
     // decode was tone-mapped in full to produce a 3840px rendition and 15/16 of that
     // work was thrown away.
-    let size = hdr_args::target_size(source.width as u32, source.height as u32, options);
-
-    let fitted = image::box_resize_u16(
-        source.samples,
-        source.width,
-        source.height,
-        size.width as usize,
-        size.height as usize,
-    );
-    let (width, height) = match fitted.is_some() {
-        true => (size.width as usize, size.height as usize),
-        false => (source.width, source.height),
+    let fitted = fit_to.and_then(|(width, height)| {
+        image::box_resize_u16(source.samples, source.width, source.height, width, height)
+    });
+    let (width, height) = match (fitted.is_some(), fit_to) {
+        (true, Some(size)) => size,
+        _ => (source.width, source.height),
     };
 
     // Geometry before the grade and after the resize. Before the grade because the
@@ -306,63 +299,50 @@ fn graded_with(
     // only a frame that needed neither has to be copied out of the caller's decode,
     // which this must not write to. The grade used to allocate its own on top of these,
     // a third full frame at 61MP.
-    let mut frame = match warped {
+    let samples = match warped {
         Some(warped) => warped,
         None => fitted.unwrap_or_else(|| source.samples.to_vec()),
     };
-
-    // A frame with no exposure to read grades to itself, and is left as it arrived.
-    tone::grade(
-        &mut frame,
-        &GradeOptions {
-            reference_white_nits: options.reference_white_nits,
-            peak_nits: options.peak_nits,
-            match_colour: matched.map(|m| &m.colour),
-            levels,
-            exposure: 1.0,
-        },
-    );
-    (frame, width, height)
-}
-
-pub fn prepared_at(source: &Source<'_>, matched: Option<&HdrMatch>) -> (Vec<u16>, usize, usize) {
-    let warped =
-        matched.and_then(|m| hdr_fit::apply_lens(source.samples, source.width, source.height, m));
-    (
-        warped.unwrap_or_else(|| source.samples.to_vec()),
-        source.width,
-        source.height,
-    )
-}
-
-pub fn preview_prepared_at(
-    prepared: &[u16],
-    width: usize,
-    height: usize,
-    long_edge: usize,
-) -> (Vec<u16>, usize, usize) {
-    let longest = width.max(height);
-    if longest <= long_edge {
-        return (prepared.to_vec(), width, height);
+    Prepared {
+        samples,
+        width,
+        height,
+        levels,
     }
-    let scaled = |dimension: usize| {
-        let value = dimension as u64 * long_edge as u64 / longest as u64;
-        usize::try_from(value)
-            .expect("a preview dimension must fit the address space")
-            .max(1)
-    };
-    let (target_width, target_height) = (scaled(width), scaled(height));
-    let resized = image::box_resize_u16(prepared, width, height, target_width, target_height)
-        .expect("an interactive frame only shrinks");
-    (resized, target_width, target_height)
+}
+
+/// Everything `encode` does up to the point of handing bytes to ffmpeg.
+///
+/// Split out so the pin that captured the TypeScript's graded output can be held
+/// against this without running an encoder (`hdr_pin.integration.test.ts`).
+pub fn graded(
+    source: &Source<'_>,
+    options: &EncodeOptions,
+    matched: Option<&HdrMatch>,
+) -> (Vec<u16>, usize, usize) {
+    let size = hdr_args::target_size(source.width as u32, source.height as u32, options);
+    let mut prepared = prepare(
+        source,
+        Some((size.width as usize, size.height as usize)),
+        &options.grade,
+        matched,
+    );
+    // A frame with no exposure to read grades to itself, and is left as it arrived.
+    grade_prepared(
+        &mut prepared.samples,
+        &options.grade,
+        matched,
+        prepared.levels,
+        1.0,
+    );
+    (prepared.samples, prepared.width, prepared.height)
 }
 
 /// `levels` are the frame's own, unexposed; `exposure` is the slider. Keeping them apart
 /// is what holds the colour still as it moves - see `tone::GradeOptions::exposure`.
 pub fn grade_prepared(
     frame: &mut [u16],
-    reference_white_nits: f64,
-    peak_nits: f64,
+    grade: &Grade,
     matched: Option<&HdrMatch>,
     levels: tone::Levels,
     exposure: f64,
@@ -370,8 +350,8 @@ pub fn grade_prepared(
     tone::grade(
         frame,
         &GradeOptions {
-            reference_white_nits,
-            peak_nits,
+            reference_white_nits: grade.reference_white_nits,
+            peak_nits: grade.peak_nits,
             match_colour: matched.map(|m| &m.colour),
             levels,
             exposure,
@@ -396,9 +376,9 @@ fn as_bytes(graded: &[u16]) -> &[u8] {
 /// Encodes samples that have already been graded and PQ-encoded, at the size they
 /// arrived at.
 ///
-/// `Cow` so an owned frame reaches libavif without a copy and is dropped as soon as the
-/// YUV conversion has read it. Only the still-plus-video pair passes `Borrowed`, because
-/// there the twin is reading the same samples on another thread.
+/// `Cow` because the frame used to be shared with a second encoder on another thread and
+/// the signature outlived that; an owned frame reaches libavif without a copy and is
+/// dropped as soon as the YUV conversion has read it.
 /// Reports whether the still went out through `avifenc`, which is what the differential
 /// that compares the two routes asserts on. **The branch reports itself**: reading the
 /// environment variable a second time would only re-derive the input to the decision, so
@@ -411,14 +391,6 @@ fn encode_frame(
     height: usize,
     options: &EncodeOptions,
 ) -> Result<bool, String> {
-    if options.medium == Medium::Video {
-        run(
-            &hdr_args::ffmpeg_args(width as u32, height as u32, options),
-            Some(as_bytes(&frame)),
-        )?;
-        return Ok(false);
-    }
-
     // In this process, for a PQ still. `avifenc` is a wrapper around libavif, and what
     // it was adding over ffmpeg is the nclx `colr` box, which libavif writes just as
     // well when called directly - so the frame stops being written to ffmpeg's stdin,
@@ -429,7 +401,7 @@ fn encode_frame(
     // which libavif does.
     if !use_avifenc() {
         let (primaries, transfer, matrix) = hdr_args::cicp();
-        crate::avif::encode_still(
+        crate::avif::save_still(
             frame,
             width,
             height,
@@ -470,17 +442,6 @@ fn encode_frame(
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn use_avifenc() -> bool {
     std::env::var("BOWERBIRD_AVIFENC").is_ok_and(|value| value == "1")
-}
-
-/// Copies the still's AV1 bitstream into the MP4 the twin is, in two stages for the
-/// reason `hdr_args::obu_to_mp4_args` gives.
-#[cfg(not(target_arch = "wasm32"))]
-fn remux(still_path: &str, video_path: &str) -> Result<(), String> {
-    pipe(
-        &hdr_args::still_to_obu_args(still_path),
-        &hdr_args::obu_to_mp4_args(video_path),
-        &[],
-    )
 }
 
 /// Runs `first`, feeding it `stdin_data`, with its stdout piped into `second`.
@@ -567,28 +528,26 @@ fn failure(command: &str, output: &std::process::Output) -> String {
     )
 }
 
-/// Grades and encodes one HDR rendition, and its one-frame video twin where one is
-/// asked for.
+/// Grades and encodes one HDR rendition.
 ///
-/// The twin shares the grade outright, and at 4:2:0 it shares the encode as well: it is
-/// the still's own AV1 bitstream in an MP4. Both media run the same resize, warp and
-/// tone map, and both are libaom at the same settings, so the second encode was
-/// producing a file the first one already held. The frame used to be regraded for it
-/// too, paying for the most expensive stage of the pipeline twice on every HDR import.
+/// This used to write a second file beside it, a one-frame AV1 video for Firefox, and
+/// the two shared everything: the same resize, warp and tone map, then libaom at the
+/// same settings. So the twin was a re-encode of a bitstream the still already held. It
+/// is a rewrap of these very bytes now, done in the browser that needs it - no second
+/// encode, no second file, and nothing to leave stale when a setting changes.
+///
 /// Reports whether the still went out through `avifenc` rather than through libavif
 /// here, which is the only thing the differential between the two routes can assert on
 /// now that they produce the same bytes at 4:4:4.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn encode_pair(
+pub fn encode_still(
     decode: Decode<'_>,
     options: &EncodeOptions,
-    video_path: Option<&str>,
     matched: Option<&HdrMatch>,
 ) -> Result<bool, String> {
     let (mut frame, width, height) = {
         let source = decode.source()?;
-        let levels = tone::levels(source.samples, options.white_quantile);
-        graded_with(&source, options, matched, levels)
+        graded(&source, options, matched)
     };
 
     // Dropped here, before the encode allocates anything: everything below reads the
@@ -597,73 +556,42 @@ pub fn encode_pair(
     // comment - `decode` cannot be named again after this line.
     drop(decode);
 
-    // Once, for both media. The transfer used to be the still's alone - libavif's, in
-    // this process - with the video's applied by a `zscale` in ffmpeg, which put the two
-    // encoders in different domains and meant the pair could not share anything that
-    // belongs between the grade and the encode. The denoise and the sharpen are exactly
-    // that: both read a difference against a blur, and a difference taken in linear
-    // light follows absolute luminance rather than what the eye reads.
-    tone::encode_pq(&mut frame, options.peak_nits);
+    // The transfer used to be applied twice, in two domains: libavif's for the still, in
+    // this process, and a `zscale` in ffmpeg for the video. That left nowhere for
+    // anything belonging between the grade and the encode to run once. The denoise and
+    // the sharpen are exactly that: both read a difference against a blur, and a
+    // difference taken in linear light follows absolute luminance rather than what the
+    // eye reads.
+    tone::encode_pq(&mut frame, options.grade.peak_nits);
     crate::image::finish(&mut frame, width, height, options.strengths);
 
-    let Some(video_path) = video_path else {
-        // Handed over rather than lent: with no twin reading it, libavif takes the
-        // frame rather than a copy of it.
-        return encode_frame(std::borrow::Cow::Owned(frame), width, height, options);
-    };
-
-    // Where the still is 4:2:0 the twin is the still's own bitstream in another
-    // container, so nothing is encoded twice and the frame can be handed over here too.
-    //
-    // 4:2:0 is the condition because Firefox composites no 4:4:4 video: measured on the
-    // same PQ frame, the 4:2:0 remux lights the panel and the 4:4:4 one decodes and
-    // stays SDR. `hdr_still_full_chroma` is off by default, so the encode below is the
-    // exception rather than the path.
-    if options.still_chroma == Chroma::Yuv420 {
-        let via_avifenc = encode_frame(std::borrow::Cow::Owned(frame), width, height, options)?;
-        remux(&options.output_path, video_path)?;
-        return Ok(via_avifenc);
-    }
-    let video = EncodeOptions {
-        medium: Medium::Video,
-        output_path: video_path.to_string(),
-        ..options.clone()
-    };
-
-    // Together rather than one after the other. Both only read the frame, and both are
-    // mostly waiting on a child process, so the pair finishes in about the time the
-    // slower one takes on its own.
-    let (still, twin) = std::thread::scope(|scope| {
-        let twin =
-            scope.spawn(|| encode_frame(std::borrow::Cow::Borrowed(&frame), width, height, &video));
-        (
-            encode_frame(std::borrow::Cow::Borrowed(&frame), width, height, options),
-            twin.join(),
-        )
-    });
-    let via_avifenc = still?;
-    twin.map_err(|_| "the video encode panicked".to_string())??;
-    Ok(via_avifenc)
+    // Handed over rather than lent, so libavif takes the frame rather than a copy of it.
+    encode_frame(std::borrow::Cow::Owned(frame), width, height, options)
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
 
+    fn argv(args: &[&str]) -> Vec<String> {
+        args.iter().map(|s| (*s).to_string()).collect()
+    }
+
     #[test]
     fn a_missing_command_is_an_error_rather_than_a_hang() {
-        let args = vec!["definitely-not-a-real-binary-xyz".to_string()];
-        let error = run(&args, None).expect_err("should not have started");
+        let error = pipe(&argv(&["definitely-not-a-real-binary-xyz"]), &argv(&["cat"]), &[])
+            .expect_err("should not have started");
         assert!(error.contains("could not start"), "{error}");
     }
 
     #[test]
     fn a_failing_command_reports_the_tail_of_its_stderr() {
-        let args = ["sh", "-c", "echo first >&2; echo LAST_LINE >&2; exit 3"]
-            .iter()
-            .map(|s| (*s).to_string())
-            .collect::<Vec<_>>();
-        let error = run(&args, None).expect_err("exit 3");
+        let error = pipe(
+            &argv(&["true"]),
+            &argv(&["sh", "-c", "echo first >&2; echo LAST_LINE >&2; exit 3"]),
+            &[],
+        )
+        .expect_err("exit 3");
         assert!(error.contains("(3)"), "{error}");
         assert!(error.contains("LAST_LINE"), "{error}");
     }
@@ -671,13 +599,10 @@ mod tests {
     #[test]
     fn a_large_stdin_write_does_not_deadlock() {
         // The reason the write is on its own thread: 32MB is far past any pipe buffer,
-        // so a child that reads slowly while writing to stderr would wedge an inline
-        // write. `cat` to /dev/null reads it all.
+        // so a stage that reads slowly while writing to stderr would wedge an inline
+        // write.
         let data = vec![7u8; 32 * 1024 * 1024];
-        let args = ["sh", "-c", "cat > /dev/null; echo noise >&2"]
-            .iter()
-            .map(|s| (*s).to_string())
-            .collect::<Vec<_>>();
-        run(&args, Some(&data)).expect("should complete");
+        pipe(&argv(&["cat"]), &argv(&["sh", "-c", "cat > /dev/null; echo noise >&2"]), &data)
+            .expect("should complete");
     }
 }

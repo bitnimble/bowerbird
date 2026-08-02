@@ -49,7 +49,7 @@ function build(over: {
 const library: Library = { id: 'lib', root_path: '/r', data_path: null, bin_name: 'Bin', name: 'lib', ordering: 'added_asc',
   rendition_source: 'embedded' as const,
   rendition_hdr: false,
-  rendition_hdr_video: false, include_subfolders: true, mirror_shoots: true, auto_stack: true, auto_stack_similarity: 0.78, auto_stack_window_seconds: 60, last_synced_at: null, photo_count: 0 };
+  include_subfolders: true, mirror_shoots: true, auto_stack: true, auto_stack_similarity: 0.78, auto_stack_window_seconds: 60, last_synced_at: null, photo_count: 0 };
 const shoot: Shoot = { id: 'sh', parent_id: null, library_id: 'lib', folder_path: 'Trip', name: 'Trip', description: null, banner_photo_id: null, ordering: 'taken_asc', photo_count: 0 };
 const album: Album = { id: 'al', name: 'Faves', ordering: 'taken_desc', banner_photo_id: null, photo_count: 0 };
 const detail = { id: 'p1', file_path: 'a.arw' } as PhotoDetail;
@@ -213,7 +213,7 @@ describe('PhotosService.delete', () => {
       const lib: Library = { id: 'lib', root_path: root, data_path: null, bin_name: 'Bin', name: 'lib', ordering: 'added_asc',
   rendition_source: 'embedded' as const,
   rendition_hdr: false,
-  rendition_hdr_video: false, include_subfolders: true, mirror_shoots: true, auto_stack: true, auto_stack_similarity: 0.78, auto_stack_window_seconds: 60, last_synced_at: null, photo_count: 0 };
+  include_subfolders: true, mirror_shoots: true, auto_stack: true, auto_stack_similarity: 0.78, auto_stack_window_seconds: 60, last_synced_at: null, photo_count: 0 };
       const markDeleted = jest.fn();
       // getBasicByIds, not getById: the delete reads the four columns it needs
       // for a whole batch rather than a detail payload per photo (§12.1).
@@ -254,7 +254,7 @@ describe('PhotosService.delete', () => {
       const lib: Library = { id: 'lib', root_path: root, data_path: null, bin_name: 'Bin', name: 'lib', ordering: 'added_asc',
   rendition_source: 'embedded' as const,
   rendition_hdr: false,
-  rendition_hdr_video: false, include_subfolders: true, mirror_shoots: true, auto_stack: true, auto_stack_similarity: 0.78, auto_stack_window_seconds: 60, last_synced_at: null, photo_count: 0 };
+  include_subfolders: true, mirror_shoots: true, auto_stack: true, auto_stack_similarity: 0.78, auto_stack_window_seconds: 60, last_synced_at: null, photo_count: 0 };
       const markDeleted = jest.fn();
       const setFilePath = jest.fn();
       const rows = [
@@ -289,7 +289,7 @@ describe('PhotosService.delete', () => {
       const lib: Library = { id: 'lib', root_path: root, data_path: null, bin_name: 'Bin', name: 'lib', ordering: 'added_asc',
   rendition_source: 'embedded' as const,
   rendition_hdr: false,
-  rendition_hdr_video: false, include_subfolders: true, mirror_shoots: true, auto_stack: true, auto_stack_similarity: 0.78, auto_stack_window_seconds: 60, last_synced_at: null, photo_count: 0 };
+  include_subfolders: true, mirror_shoots: true, auto_stack: true, auto_stack_similarity: 0.78, auto_stack_window_seconds: 60, last_synced_at: null, photo_count: 0 };
       const photo = { id: 'p1', library_id: 'lib', shoot_id: null, file_path: 'a.arw' };
       const { service } = build({
         photos: {
@@ -337,7 +337,6 @@ describe('PhotosService.delete', () => {
         ordering: 'added_asc',
         rendition_source: 'embedded' as const,
         rendition_hdr: false,
-        rendition_hdr_video: false,
         include_subfolders: true,
         mirror_shoots: true,
         auto_stack: true,
@@ -428,25 +427,6 @@ describe('PhotosService renditions', () => {
       const renditions = detailFor({ ...library, root_path: root }).renditions;
       expect(renditions?.full.bytes).toBe(17);
       expect(renditions?.max.bytes).toBeNull();
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  // Firefox watches the twin rather than the still, so the panel describing what
-  // is on screen has to be able to name that file and say what it weighs.
-  it('reports the video twin with its path and weight, and nothing when there is none', () => {
-    const root = mkdtempSync(path.join(tmpdir(), 'bb-twin-'));
-    try {
-      const dir = path.join(root, '.bowerbird', 'renditions', 'full-hdr-video');
-      mkdirSync(dir, { recursive: true });
-      writeFileSync(path.join(dir, 'p1.mp4'), 'x'.repeat(11));
-
-      const withVideo = detailFor({ ...library, root_path: root, rendition_hdr: true }).renditions;
-      expect(withVideo?.full.video).toEqual({ path: path.join(dir, 'p1.mp4'), bytes: 11 });
-      // Only `full` has one on disk, and an SDR library never gets one at all.
-      expect(withVideo?.max.video).toBeNull();
-      expect(detailFor({ ...library, root_path: root }).renditions?.full.video).toBeNull();
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

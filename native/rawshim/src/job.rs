@@ -19,19 +19,10 @@
 use crate::fit;
 use crate::frame::Frame;
 use crate::hdr;
-use crate::hdr_args::{Chroma, EncodeOptions, Medium};
+use crate::hdr_args::{Chroma, EncodeOptions};
 use crate::image::Strengths;
 use crate::stacks;
 use serde::{Deserialize, Serialize};
-
-/// How a scene-linear decode is graded to display-referred (10.7).
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Grade {
-    pub peak_nits: f64,
-    pub reference_white_nits: f64,
-    pub white_quantile: f64,
-}
 
 /// Where a rendition's pixels come from.
 #[derive(Deserialize, PartialEq, Eq, Clone, Copy)]
@@ -57,8 +48,6 @@ pub struct Target {
     pub rendition: Rendition,
     pub hdr: bool,
     pub output_path: String,
-    /// The one-frame AV1 twin, for Firefox. Absent when none is wanted.
-    pub video_output_path: Option<String>,
     /// Longest edge, or 0 for native resolution.
     pub size: u32,
     pub source: Source,
@@ -88,20 +77,17 @@ pub struct Job {
     /// aberration is a focus difference rather than a magnification one, so the warp cannot
     /// reach it and this is the only stage that does.
     pub defringe: f64,
-    pub grade: Grade,
+    pub grade: hdr::Grade,
     pub targets: Vec<Target>,
 }
 
 impl Job {
-    /// What runs on the frame before the camera match is fitted against it.
-    ///
-    /// The sharpen is deliberately not in here; `render_base` records why it runs after
-    /// the warp instead.
-    fn before_the_fit(&self) -> Strengths {
+    /// Every stage's strength, as the library has them set.
+    fn strengths(&self) -> Strengths {
         Strengths {
             luma: self.denoise_luma,
             chroma: self.denoise_chroma,
-            sharpen: 0.0,
+            sharpen: self.sharpen,
             defringe: self.defringe,
         }
     }
@@ -136,25 +122,17 @@ fn largest_size(targets: &[Target], hdr: bool) -> Option<u32> {
     }
 }
 
-fn encode_options(job: &Job, target: &Target, medium: Medium, output_path: &str) -> EncodeOptions {
+fn encode_options(job: &Job, target: &Target, output_path: &str) -> EncodeOptions {
     EncodeOptions {
-        medium,
         still_chroma: match target.still_full_chroma {
             true => Chroma::Yuv444,
             false => Chroma::Yuv420,
         },
         output_path: output_path.to_string(),
-        peak_nits: job.grade.peak_nits,
-        reference_white_nits: job.grade.reference_white_nits,
-        white_quantile: job.grade.white_quantile,
+        grade: job.grade,
         crf: target.hdr_quantizer,
         preset: target.preset,
-        strengths: Strengths {
-            luma: job.denoise_luma,
-            chroma: job.denoise_chroma,
-            sharpen: job.sharpen,
-            defringe: job.defringe,
-        },
+        strengths: job.strengths(),
         max_edge: match target.size {
             0 => f64::INFINITY,
             size => f64::from(size),
@@ -343,7 +321,7 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
         // together against 4.43s and 26.9s split, at the same peak memory.
         let (width, height) = (frame.width, frame.height);
         let data = frame.rgb8_mut().ok_or("the SDR base needs an 8-bit decode")?;
-        crate::image::finish(data, width, height, job.before_the_fit());
+        crate::image::finish(data, width, height, job.strengths().before_the_fit());
         if job.match_embedded_jpeg {
             profile = crate::fit_profile_for(&frame, &job.raw_file_path);
         }
@@ -363,7 +341,7 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
                 &job.raw_file_path,
                 job.grade.white_quantile,
                 profile.as_ref(),
-                job.before_the_fit(),
+                job.strengths().before_the_fit(),
             );
         }
         linear = Some(frame);
@@ -376,7 +354,7 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
 
     for (index, target) in job.targets.iter().enumerate() {
         if target.hdr {
-            let options = encode_options(job, target, Medium::Still, &target.output_path);
+            let options = encode_options(job, target, &target.output_path);
             // The last HDR rendition hands its decode over rather than lending it, so
             // 366MB of scene-linear samples go back before the encode allocates
             // anything. Anything earlier keeps it, having another rendition to write.
@@ -392,7 +370,7 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
                     })
                 }
             };
-            hdr::encode_pair(decode, &options, target.video_output_path.as_deref(), matched.as_ref())?;
+            hdr::encode_still(decode, &options, matched.as_ref())?;
             continue;
         }
 

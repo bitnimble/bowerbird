@@ -4,13 +4,13 @@
 // headers the runtime library was built from, so `params.half_size` resolves the
 // way a C compiler resolves it and no offset appears anywhere in the source.
 //
-// **Two targets now.** The server build binds LibRaw, lensfun and libavif against the
-// system headers and links the system libraries. The wasm build (`--target
-// wasm32-unknown-unknown`) binds LibRaw alone, against the source tree
-// `native/toolchain/build_libraw_wasm.sh` fetched, and links the static archive that
-// script produced - so the browser runs this decode rather than a second one written to
-// avoid it. lensfun and libavif are not on the client path at all: they are a geometry
-// database and a file format, neither of which a live editor touches.
+// **Two targets.** The server build binds LibRaw, lensfun and libavif against the system
+// headers and links the system libraries. The wasm build (`--target
+// wasm32-unknown-unknown`) binds LibRaw and libavif against the source trees
+// `native/toolchain/build_wasm_libs.sh` fetched, and links the static archives that
+// script produced - so the browser runs this decode and this encode rather than second
+// ones written to avoid them. lensfun stays off the client: it is a geometry database on
+// disk, and the editor's geometry comes out of the RAW's own metadata.
 use std::env;
 use std::path::PathBuf;
 
@@ -71,6 +71,44 @@ fn libraw_functions(builder: bindgen::Builder) -> bindgen::Builder {
         .layout_tests(false)
 }
 
+/// The encode surface, which both targets now bind.
+///
+/// Split out when the editor started encoding: Firefox composites HDR through video and
+/// only video, and the only frame a page can hand it is one this encoder made, so the
+/// client needs libavif for the same reason the server does (DESIGN 21.3).
+///
+/// The decoder is the server's alone. It exists to read renditions back for a JPEG
+/// download, which is not something a browser asks this library for - and the wasm
+/// libaom is built encoder-only, so the symbols behind it would resolve to a codec that
+/// is not there.
+fn avif_functions(builder: bindgen::Builder, decoder: bool) -> bindgen::Builder {
+    let builder = builder
+        .allowlist_type("avifImage")
+        .allowlist_type("avifRGBImage")
+        .allowlist_type("avifEncoder")
+        // Every call's return type. Named rather than left to come through a struct
+        // field, which is how the server run happened to get it.
+        .allowlist_type("avifResult")
+        .allowlist_function("avifImageCreate")
+        .allowlist_function("avifImageDestroy")
+        .allowlist_function("avifRGBImageSetDefaults")
+        .allowlist_function("avifImageRGBToYUV")
+        .allowlist_function("avifEncoderCreate")
+        .allowlist_function("avifEncoderDestroy")
+        .allowlist_function("avifEncoderWrite")
+        .allowlist_function("avifRWDataFree")
+        .allowlist_function("avifResultToString");
+    match decoder {
+        false => builder,
+        true => builder
+            .allowlist_type("avifDecoder")
+            .allowlist_function("avifImageCreateEmpty")
+            .allowlist_function("avifDecoderCreate")
+            .allowlist_function("avifDecoderDestroy")
+            .allowlist_function("avifDecoderReadMemory"),
+    }
+}
+
 fn server_bindings() -> bindgen::Bindings {
     println!("cargo:rustc-link-lib=raw");
     println!("cargo:rustc-link-lib=lensfun");
@@ -79,7 +117,7 @@ fn server_bindings() -> bindgen::Bindings {
     // them, and becomes a pointer.
     println!("cargo:rustc-link-lib=avif");
 
-    libraw_functions(bindgen::Builder::default().header("wrapper.h"))
+    avif_functions(libraw_functions(bindgen::Builder::default().header("wrapper.h")), true)
         // lensfun.h is one header for two languages: under C++ its types are classes
         // with methods, which bindgen renders as an unusable second surface beside
         // the `lf_*` functions. The C half is the flat structs this crate binds.
@@ -93,25 +131,8 @@ fn server_bindings() -> bindgen::Bindings {
         .allowlist_function("lf_free")
         .allowlist_var("LF_SEARCH_LOOSE")
         .allowlist_var("LF_MODIFY_DISTORTION")
-        .allowlist_type("avifImage")
-        .allowlist_type("avifRGBImage")
-        .allowlist_type("avifEncoder")
-        .allowlist_type("avifDecoder")
-        .allowlist_function("avifImageCreate")
-        .allowlist_function("avifImageCreateEmpty")
-        .allowlist_function("avifImageDestroy")
-        .allowlist_function("avifRGBImageSetDefaults")
-        .allowlist_function("avifImageRGBToYUV")
-        .allowlist_function("avifImageYUVToRGB")
-        .allowlist_function("avifEncoderCreate")
-        .allowlist_function("avifEncoderDestroy")
-        .allowlist_function("avifEncoderWrite")
         // Reading back what this library wrote, which is what libvips was kept for.
-        .allowlist_function("avifDecoderCreate")
-        .allowlist_function("avifDecoderDestroy")
-        .allowlist_function("avifDecoderReadMemory")
-        .allowlist_function("avifRWDataFree")
-        .allowlist_function("avifResultToString")
+        .allowlist_function("avifImageYUVToRGB")
         .generate()
         .expect("bindgen failed against the installed LibRaw headers")
 }
@@ -167,7 +188,7 @@ fn host_signatures() -> bindgen::Bindings {
     // here - the very thing this run exists to avoid - and a wasm target carries no
     // default include path, so it cannot even find libraw.h.
     let host = env::var("HOST").expect("HOST");
-    libraw_functions(bindgen::Builder::default().header("wrapper_client.h"))
+    avif_functions(libraw_functions(bindgen::Builder::default().header("wrapper_client.h")), false)
         .clang_args(["-x", "c"])
         .clang_arg(format!("--target={host}"))
         .generate()
@@ -178,13 +199,23 @@ fn client_bindings() -> bindgen::Bindings {
     let toolchain = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"))
         .join("../toolchain")
         .canonicalize()
-        .expect("native/toolchain is missing - run native/toolchain/build_libraw_wasm.sh");
+        .expect("native/toolchain is missing - run native/toolchain/build_wasm_libs.sh");
     let source = toolchain.join("LibRaw-0.21.2");
     let sysroot = toolchain.join("wasi-sdk-33.0-x86_64-linux/share/wasi-sysroot");
     let archive = toolchain.join("wasm");
 
-    for needed in [&source, &sysroot, &archive.join("libraw.a")] {
-        assert!(needed.exists(), "{} is missing - run native/toolchain/build_libraw_wasm.sh", needed.display());
+    for needed in [&source, &sysroot, &toolchain.join("include/avif")] {
+        assert!(needed.exists(), "{} is missing - run native/toolchain/build_wasm_libs.sh", needed.display());
+    }
+
+    for lib in ["libraw.a", "libavif.a", "libaom.a"] {
+        let needed = archive.join(lib);
+        assert!(needed.exists(), "{} is missing - run native/toolchain/build_wasm_libs.sh", needed.display());
+        // Rebuilding the archives has to relink the module. Cargo tracks no file it was
+        // not told about, so without this a toolchain change looks like it worked and
+        // changed nothing: `build:wasm` finds the crate unchanged, finishes in under a
+        // second, and republishes a .wasm with the previous archives still inside it.
+        println!("cargo:rerun-if-changed={}", needed.display());
     }
 
     println!("cargo:rustc-link-search=native={}", archive.display());
@@ -194,6 +225,16 @@ fn client_bindings() -> bindgen::Bindings {
     println!("cargo:rustc-link-search=native={}", libs.join("eh").display());
     println!("cargo:rustc-link-search=native={}", libs.display());
     println!("cargo:rustc-link-lib=static=raw");
+    // Order matters for a static link: libavif calls into libaom, so the codec has to be
+    // searched after the library that references it.
+    println!("cargo:rustc-link-lib=static=avif");
+    println!("cargo:rustc-link-lib=static=aom");
+    // libaom reports codec errors by longjmp-ing out of the encode, which on wasm is
+    // lowered onto exception handling and leaves calls to `__wasm_setjmp`,
+    // `__wasm_setjmp_test` and `__wasm_longjmp`. Without this they become imports from an
+    // `env` module that nothing provides, and the *link still succeeds* - the failure
+    // arrives later as a bundler resolving "env", or a browser refusing the module.
+    println!("cargo:rustc-link-lib=static=setjmp");
     println!("cargo:rustc-link-lib=static=c++");
     println!("cargo:rustc-link-lib=static=c++abi");
     // `_Unwind_CallPersonality` and the landing-pad context, which the throw sites in
@@ -220,25 +261,25 @@ fn client_bindings() -> bindgen::Bindings {
     // compile and then fail at each call site with "cannot find function libraw_init".
     // The assertion in `main` is there to turn that into a build failure.
     let _ = &source;
-    libraw_functions(
-        bindgen::Builder::default()
-            .header("wrapper_client.h")
-            // C, not C++, and not by preference: `libraw_datastream.h` includes <fstream>
-            // unconditionally, and wasi's libc++ ships no <fstream> because there is no
-            // filesystem to stream to. Under C that header is behind `#ifdef __cplusplus`
-            // and never reached.
-            .clang_args(["-x", "c"])
-            .clang_arg("--target=wasm32-wasip1")
-            .clang_arg(format!("--sysroot={}", sysroot.display()))
-            .clang_arg(format!(
-                "-resource-dir={}",
-                toolchain.join("wasi-sdk-33.0-x86_64-linux/lib/clang/22").display()
-            ))
-            // A directory holding only a `libraw/` symlink to the installed public
-            // headers. `-I/usr/include` would find LibRaw and then drag glibc in beside
-            // the sysroot that is meant to be replacing it.
-            .clang_arg(format!("-I{}", toolchain.join("include").display())),
-    )
-    .generate()
-    .expect("bindgen failed against the installed LibRaw headers for wasm32")
+    let builder = bindgen::Builder::default()
+        .header("wrapper_client.h")
+        // C, not C++, and not by preference: `libraw_datastream.h` includes <fstream>
+        // unconditionally, and wasi's libc++ ships no <fstream> because there is no
+        // filesystem to stream to. Under C that header is behind `#ifdef __cplusplus`
+        // and never reached.
+        .clang_args(["-x", "c"])
+        .clang_arg("--target=wasm32-wasip1")
+        .clang_arg(format!("--sysroot={}", sysroot.display()))
+        .clang_arg(format!(
+            "-resource-dir={}",
+            toolchain.join("wasi-sdk-33.0-x86_64-linux/lib/clang/22").display()
+        ))
+        // A directory holding only `libraw/` and `avif/` symlinks to the public headers
+        // of each. `-I/usr/include` would find them and then drag glibc in beside the
+        // sysroot that is meant to be replacing it.
+        .clang_arg(format!("-I{}", toolchain.join("include").display()));
+
+    avif_functions(libraw_functions(builder), false)
+        .generate()
+        .expect("bindgen failed against the installed LibRaw headers for wasm32")
 }

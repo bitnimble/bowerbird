@@ -1750,7 +1750,8 @@ fn defringe(luma: &[f32], red: &mut [f32], blue: &mut [f32], width: usize, heigh
 /// Named rather than four positional `f64`s: the pipeline calls this three times with a
 /// different one of them non-zero each time, and `0.0, 0.0, sharpen, 0.0` at a call site
 /// says nothing about which stage that is.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, serde::Deserialize)]
+#[serde(default)]
 pub struct Strengths {
     pub luma: f64,
     pub chroma: f64,
@@ -1759,6 +1760,19 @@ pub struct Strengths {
 }
 
 impl Strengths {
+    /// What runs on the frame before the camera match is fitted against it.
+    ///
+    /// Everything but the sharpen, which is a deconvolution of the *resample's* blur and
+    /// so has to wait until after the warp that does the resampling (`job::render_base`).
+    /// A fit calibrated against a sharpened render is calibrated against a frame that
+    /// will not exist by the time the transform is applied.
+    pub fn before_the_fit(self) -> Strengths {
+        Strengths {
+            sharpen: 0.0,
+            ..self
+        }
+    }
+
     fn does_anything(&self) -> bool {
         self.luma > 0.0 || self.chroma > 0.0 || self.sharpen > 0.0 || self.defringe > 0.0
     }

@@ -270,29 +270,13 @@ const RenditionSettings = observer(function RenditionSettings({ library }: { lib
       {rendered && (
         <SettingRow
           label="Build HDR renditions"
-          hint={`Stores the large rendition in high dynamic range. Chrome and Safari display it, and Firefox shows it too dark. The grid stays standard range either way (${hdrCapability()}).`}
+          hint={`Stores the large rendition in high dynamic range. Every current browser displays it - Firefox by way of a rewrap the viewer does in the page. The grid stays standard range either way (${hdrCapability()}).`}
         >
           <input
             type="checkbox"
             aria-label="Build HDR renditions"
             checked={library.rendition_hdr}
             onChange={(e) => void libraries.setRenditionHdr(library.id, e.currentTarget.checked)}
-          />
-        </SettingRow>
-      )}
-
-      {/* Nested under HDR because it is a second encode of the same render, and
-          meaningless without one. */}
-      {rendered && library.rendition_hdr && (
-        <SettingRow
-          label="Also encode for Firefox on Windows"
-          hint="Writes a second copy of each HDR rendition as a one-frame video, which is the only form Firefox can display in HDR. It costs about another second per photo and no other browser reads it."
-        >
-          <input
-            type="checkbox"
-            aria-label="Also encode for Firefox on Windows"
-            checked={library.rendition_hdr_video}
-            onChange={(e) => void libraries.setRenditionHdrVideo(library.id, e.currentTarget.checked)}
           />
         </SettingRow>
       )}
@@ -772,7 +756,7 @@ const AdvancedSettings = observer(function AdvancedSettings(): JSX.Element | nul
         <ToggleSetting
           field="hdr_still_full_chroma"
           label="Full colour resolution"
-          hint="Keeps colour at full resolution in the HDR image instead of quarter resolution. Sharper on saturated edges, and a better picture for the file size - but it roughly doubles the memory each worker needs while encoding, so leave it off on a machine that is tight on RAM. Does not affect the video copy, which cannot use it."
+          hint="Keeps colour at full resolution in the HDR image instead of quarter resolution. Sharper on saturated edges, and a better picture for the file size - but it roughly doubles the memory each worker needs while encoding, and Firefox shows these photos washed out rather than in HDR."
           disabledReason={hdrOff}
         />
       </div>

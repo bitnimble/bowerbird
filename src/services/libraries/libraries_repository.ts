@@ -11,7 +11,6 @@ interface LibraryRow {
   ordering: string;
   rendition_source: string;
   rendition_hdr: number;
-  rendition_hdr_video: number;
   include_subfolders: number;
   mirror_shoots: number;
   auto_stack: number;
@@ -23,7 +22,7 @@ interface LibraryRow {
 
 // photo_count excludes binned photos: it answers "how big is this library", and
 // the Bin has its own count in the UI.
-const SELECT = `SELECT l.id, l.root_path, l.data_path, l.bin_name, l.name, l.ordering, l.rendition_source, l.rendition_hdr, l.rendition_hdr_video,
+const SELECT = `SELECT l.id, l.root_path, l.data_path, l.bin_name, l.name, l.ordering, l.rendition_source, l.rendition_hdr,
   l.include_subfolders, l.mirror_shoots, l.auto_stack, l.auto_stack_similarity, l.auto_stack_window_seconds, l.last_synced_at,
   (SELECT COUNT(*) FROM photos p WHERE p.library_id = l.id AND p.is_deleted = 0) AS photo_count
   FROM libraries l`;
@@ -85,10 +84,6 @@ export class LibrariesRepository {
     return this.db.query('UPDATE libraries SET rendition_hdr = ? WHERE id = ?').run(hdr ? 1 : 0, id).changes > 0;
   }
 
-  setRenditionHdrVideo(id: string, enabled: boolean): boolean {
-    return this.db.query('UPDATE libraries SET rendition_hdr_video = ? WHERE id = ?').run(enabled ? 1 : 0, id).changes > 0;
-  }
-
   setIncludeSubfolders(id: string, include: boolean): boolean {
     return this.db.query('UPDATE libraries SET include_subfolders = ? WHERE id = ?').run(include ? 1 : 0, id).changes > 0;
   }
@@ -130,7 +125,6 @@ function mapRow(row: LibraryRow): Library {
     ordering: row.ordering as Ordering,
     rendition_source: row.rendition_source as RenditionSource,
     rendition_hdr: row.rendition_hdr === 1,
-    rendition_hdr_video: row.rendition_hdr_video === 1,
     include_subfolders: row.include_subfolders === 1,
     mirror_shoots: row.mirror_shoots === 1,
     auto_stack: row.auto_stack === 1,

@@ -1,5 +1,5 @@
 import { existsSync, unlinkSync } from 'node:fs';
-import { rm, unlink } from 'node:fs/promises';
+import { rm, rmdir, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { AppError } from '../errors';
 import { containsPath } from './paths';
@@ -32,6 +32,17 @@ export async function deleteGeneratedFile(dataPath: string, target: string): Pro
     throw new AppError('IO_ERROR', `refusing to delete ${target}: it is an original`);
   }
   await rm(target, { force: true });
+}
+
+// An emptied generated directory - one nothing writes to any more, once the sweep
+// has taken everything out of it. Non-recursive on purpose: `rmdir` fails while a
+// file is left, so a rendition that would not go keeps its directory until a later
+// sweep, and no tree can be removed here by mistake.
+export async function deleteGeneratedDirectory(dataPath: string, target: string): Promise<void> {
+  if (!GENERATED_DIRS.some((dir) => containsPath(path.join(dataPath, dir), target))) {
+    throw new AppError('IO_ERROR', `refusing to remove ${target}: not a generated directory under ${dataPath}`);
+  }
+  await rmdir(target);
 }
 
 // The whole data directory, when its library is removed. Refuses while any

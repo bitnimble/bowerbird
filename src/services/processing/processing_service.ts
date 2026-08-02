@@ -16,7 +16,7 @@ import type {
   RenditionWritten,
   RenditionSource,
 } from './processing_types';
-import { renditionDirs, type Rendition } from './renditions';
+import { RENDITION_EXTENSION, renditionDirs, type Rendition } from './renditions';
 
 const WORKER_URL = new URL('./processing_worker.ts', import.meta.url).href;
 
@@ -126,7 +126,7 @@ export class ProcessingService {
       photoId,
       rawFilePath,
       dataPath: getDataPath(library),
-      targets: [this.target(getDataPath(library), library.rendition_hdr_video, photoId, rendition, hdr, source)],
+      targets: [this.target(getDataPath(library), photoId, rendition, hdr, source)],
       grade: this.grade(),
       // The on-demand rendition has to agree with the ones built at import, so it
       // obeys the same settings. The fit is deterministic, so refitting here lands
@@ -141,7 +141,6 @@ export class ProcessingService {
   // size at the tighter lossless quality, because it exists to be pixel-peeped.
   private target(
     dataPath: string,
-    hdrVideo: boolean,
     photoId: string,
     rendition: Rendition,
     hdr: boolean,
@@ -181,7 +180,6 @@ export class ProcessingService {
       hdr,
       source,
       outputPath: renditionPathFor(dataPath, photoId, rendition, hdr),
-      videoOutputPath: hdr && hdrVideo ? renditionPathFor(dataPath, photoId, rendition, hdr, true) : null,
       size: sizes[rendition],
       sdrQuantizer: quantizers[rendition],
       hdrQuantizer: rendition === 'max' ? settings.lossless_quantizer : settings.hdr_crf,
@@ -458,15 +456,15 @@ export class ProcessingService {
         // its first pass wrote is of the same file: sweeping it leaves the grid
         // blank with `needs_tile` already clear, so nothing ever rebuilds it.
         renditionPathFor(photo.dataPath, photo.photoId, 'grid', false),
-        ...targets.flatMap((t) => (t.videoOutputPath == null ? [t.outputPath] : [t.outputPath, t.videoOutputPath])),
+        ...targets.map((t) => t.outputPath),
       ]),
     );
   }
 
   /** Deletes every rendition of `photo` except the ones named in `keep`. */
   private sweepRenditions(photo: StagedPhoto, keep: Set<string>): void {
-    for (const { dir, extension } of renditionDirs()) {
-      const file = path.join(photo.dataPath, 'renditions', dir, `${photo.photoId}${extension}`);
+    for (const dir of renditionDirs()) {
+      const file = path.join(photo.dataPath, 'renditions', dir, `${photo.photoId}${RENDITION_EXTENSION}`);
       if (keep.has(file)) continue;
       void deleteGeneratedFile(photo.dataPath, file).catch(() => {});
     }
@@ -489,7 +487,6 @@ export class ProcessingService {
     // NULL for rows queued before the setting existed, and for anything the sync
     // inserted without naming one; the library's default answers both.
     const source = pending.rendition_source ?? pending.library_rendition_source;
-    const hdrVideo = pending.rendition_hdr_video === 1;
     const photoId = pending.photo_id;
     const rawFilePath = path.join(pending.root_path, pending.file_path);
     const common = {
@@ -508,13 +505,13 @@ export class ProcessingService {
     const owesRenditions = pending.needs_renditions === 1;
     const tile: RenditionJob | null =
       pending.needs_tile === 1
-        ? { ...common, targets: [this.target(dataPath, hdrVideo, photoId, 'grid', false, 'embedded')] }
+        ? { ...common, targets: [this.target(dataPath, photoId, 'grid', false, 'embedded')] }
         : null;
     const renditions: RenditionJob | null =
       source === 'render' && owesRenditions
         ? {
             ...common,
-            targets: [this.target(dataPath, hdrVideo, photoId, 'full', pending.rendition_hdr === 1, 'render')],
+            targets: [this.target(dataPath, photoId, 'full', pending.rendition_hdr === 1, 'render')],
           }
         : null;
 
@@ -600,9 +597,6 @@ export class ProcessingService {
           if (current != null) {
             for (const target of current.targets) {
               void deleteGeneratedFile(current.dataPath, target.outputPath).catch(() => {});
-              if (target.videoOutputPath != null) {
-                void deleteGeneratedFile(current.dataPath, target.videoOutputPath).catch(() => {});
-              }
             }
             onResult({ photoId: current.photoId, success: false, error: `worker crashed: ${event.message}` }, current);
           }

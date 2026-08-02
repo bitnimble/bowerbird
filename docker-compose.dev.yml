@@ -1,24 +1,24 @@
-# Dev variant: no app build. Uses the Dockerfile's `base` stage (bun and the pixel
-# libraries), live-mounts this repo, and runs the API in watch mode plus the web
-# dev server.
+# Dev variant: no app build. Uses the Dockerfile's `dev` stage (bun, the pixel
+# libraries, and the ffmpeg the tests measure against), live-mounts this repo, and
+# runs the API in watch mode plus the web dev server.
 #   docker compose -f docker-compose.dev.yml up
 #
 # Ports: WEB_PORT (default 5173) is the only one published. The API is reached
 # through the web server's proxy, so it stays inside on a fixed 3000.
 #
-# rawshim itself is not in that stage: `base` carries the runtime libraries but not
-# the headers, so build it on the host with `bun run build:native` - which is what
-# the loader prefers in a live-mounted tree anyway. `bun run dev` watches that build
+# rawshim itself is not in that stage: it carries the runtime libraries but not the
+# headers, so build it on the host with `bun run build:native` - which is what the
+# loader prefers in a live-mounted tree anyway. `bun run dev` watches that build
 # output and restarts on a new .so, so a native rebuild needs no container restart.
 services:
   bowerbird-dev:
     build:
       context: .
-      target: base # bun + the pixel libraries; the app source is mounted, not baked in
-    image: bowerbird:dev-base
+      target: dev # bun + the pixel libraries; the app source is mounted, not baked in
+    image: bowerbird:dev
     container_name: bowerbird-dev
-    # Set here rather than inherited: this service builds the `base` stage, which is
-    # shared with the native build and so cannot carry a USER of its own. Without it
+    # Set here rather than inherited: this service builds a stage shared with the
+    # native build, which cannot carry a USER of its own. Without it
     # a dev container writes root-owned renditions into the live-mounted repo and
     # photo library, same as production did.
     user: "1000:1000"
@@ -51,7 +51,7 @@ services:
   # Vite dev server for web/. Same image - it needs bun and nothing else, and
   # reusing it means no second build.
   bowerbird-web-dev:
-    image: bowerbird:dev-base
+    image: bowerbird:dev
     depends_on:
       - bowerbird-dev
     container_name: bowerbird-web-dev

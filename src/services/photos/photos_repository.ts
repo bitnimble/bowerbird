@@ -130,7 +130,6 @@ export interface PendingPhoto {
   // column of the same name: what it was built with, against what to build next.
   library_rendition_source: RenditionSource;
   rendition_hdr: number;
-  rendition_hdr_video: number;
 }
 
 // Minimal shape for file/shoot bookkeeping (moves, adoption, reconciliation).
@@ -912,7 +911,7 @@ export class PhotosRepository {
     const order = libraryId == null ? '' : `ORDER BY ${orderByClause(this.libraryOrdering(libraryId), 'p.')}`;
     const query = (idClause: string): string =>
       `SELECT p.id AS photo_id, p.file_path, p.rendition_source, p.needs_tile, p.needs_renditions,
-              l.root_path, l.data_path, l.rendition_source AS library_rendition_source, l.rendition_hdr, l.rendition_hdr_video
+              l.root_path, l.data_path, l.rendition_source AS library_rendition_source, l.rendition_hdr
        FROM photos p JOIN libraries l ON l.id = p.library_id
        WHERE ${PENDING_PROCESSING('p.')} ${where} ${idClause} ${order}`;
 

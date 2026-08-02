@@ -21,7 +21,6 @@ function target(outputPath: string): RenditionTarget {
     rendition: 'grid',
     hdr: false,
     outputPath,
-    videoOutputPath: null,
     size: 800,
     source: 'render',
     sdrQuantizer: 13,

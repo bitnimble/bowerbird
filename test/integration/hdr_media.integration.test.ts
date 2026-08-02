@@ -38,98 +38,41 @@ function probe(file: string): Probe {
 // Small and fast: these assert tagging, which is independent of resolution, and
 // a full-size encode would put ~10s per case on the suite. One decode, asked for
 // no more than the encode will keep, serves every case.
-type Medium = 'still' | 'video';
-
-async function encoded(medium: Medium, run: (file: string) => void): Promise<void> {
+async function encoded(run: (file: string) => void, fullChroma = false): Promise<void> {
   const dir = mkdtempSync(path.join(tmpdir(), 'bb-hdr-'));
   try {
-    // Only two media now, so the extension is one check rather than a table.
-    const outputPath = path.join(dir, medium === 'video' ? 'pq.mp4' : 'pq.avif');
-    _for_testing_encodeHdr(FIXTURE, { medium, outputPath, peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.99, crf: 40, preset: 12, maxEdge: MAX_EDGE, stillFullChroma: false }, { decodeSize: MAX_EDGE });
+    const outputPath = path.join(dir, 'pq.avif');
+    _for_testing_encodeHdr(FIXTURE, { outputPath, peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.99, crf: 40, preset: 12, maxEdge: MAX_EDGE, stillFullChroma: fullChroma }, { decodeSize: MAX_EDGE });
     run(outputPath);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 }
 
-// The shape an HDR rendition is actually built in: one call, two files, off one
-// graded frame and with the two encoders running together. Everything else here
-// asks for a single medium, so nothing covered the pair until this - and it is the
-// path with two threads writing two files, where a shared temporary or a dropped
-// error would show up as a rendition that silently never appeared.
-test('one call writes the still and its video twin, each tagged as its own medium', () => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'bb-hdr-pair-'));
-  try {
-    const still = path.join(dir, 'rendition.avif');
-    const video = path.join(dir, 'rendition.mp4');
-    _for_testing_encodeHdr(
-      FIXTURE,
-      { medium: 'still', outputPath: still, peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.99, crf: 40, preset: 12, maxEdge: 640, stillFullChroma: true },
-      { videoOutputPath: video },
-    );
-
-    expect(Bun.file(still).size).toBeGreaterThan(0);
-    expect(Bun.file(video).size).toBeGreaterThan(0);
-
-    // Both must carry the PQ signalling, and each its own chroma. Asked for at 4:4:4
-    // rather than the shipped default, because the claim under test is that the two
-    // media are tagged and formatted independently - which needs them to differ. The
-    // video cannot follow it there: 4:2:0 is the only AV1 profile the browsers this
-    // file exists for will decode.
-    for (const [file, chroma] of [[still, 'yuv444p10le'], [video, 'yuv420p10le']] as const) {
-      const found = probe(file);
-      expect(found.color_transfer).toBe('smpte2084');
-      expect(found.color_primaries).toBe('bt2020');
-      expect(found.pix_fmt).toBe(chroma);
-    }
-
-    // The same size, which is the claim the whole shape rests on. One graded frame
-    // serves both encodes and there is no second-grade path any more, and what makes
-    // that legitimate is that nothing can give the two different dimensions - the
-    // 8704-row ceiling that used to impose one went with SVT-AV1. A regression that refitted the
-    // video on its own would show up here and nowhere else.
-    const [videoSize, stillSize] = [probe(video), probe(still)];
-    expect([videoSize.width, videoSize.height]).toEqual([stillSize.width, stillSize.height]);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-}, 120_000);
-
-test('the denoise and the sharpen reach both HDR media', () => {
-  // The HDR half of §10.9 is one call in `encode_pair`, and until this test it was
+test('the denoise and the sharpen reach the HDR encode', () => {
+  // The HDR half of §10.9 is one call in `encode_still`, and until this test it was
   // reachable by nothing: every route in pinned both settings at 0, so deleting the
   // call left every suite green. That is the same hole the SDR wiring test exists to
-  // close, on the half of the pipeline that feeds two encoders rather than one.
+  // close, on the other half of the pipeline.
   //
-  // Only that the pixels moved, and that they moved in *both* files. What the filters
-  // do is measured in `image.rs` against constructed inputs; what cannot be checked
-  // there is whether anything calls them.
+  // Only that the pixels moved. What the filters do is measured in `image.rs` against
+  // constructed inputs; what cannot be checked there is whether anything calls them.
   const dir = mkdtempSync(path.join(tmpdir(), 'bb-hdr-finish-'));
   try {
-    const render = (name: string, denoise: number, sharpen: number): [string, string] => {
+    const render = (name: string, denoise: number, sharpen: number): string => {
       const still = path.join(dir, `${name}.avif`);
-      const video = path.join(dir, `${name}.mp4`);
       _for_testing_encodeHdr(
         FIXTURE,
-        { medium: 'still', outputPath: still, peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.99, crf: 40, preset: 12, maxEdge: MAX_EDGE, stillFullChroma: false, denoiseLuma: denoise, denoiseChroma: denoise, sharpen },
-        { videoOutputPath: video, decodeSize: MAX_EDGE },
+        { outputPath: still, peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.99, crf: 40, preset: 12, maxEdge: MAX_EDGE, stillFullChroma: false, denoiseLuma: denoise, denoiseChroma: denoise, sharpen },
+        { decodeSize: MAX_EDGE },
       );
-      return [still, video];
+      return still;
     };
-    const [plainStill, plainVideo] = render('plain', 0, 0);
-    const [doneStill, doneVideo] = render('processed', 1, 0.6);
+    const plain = render('plain', 0, 0);
+    const processed = render('processed', 1, 0.6);
 
-    for (const [plain, processed, medium] of [
-      [plainStill, doneStill, 'still'],
-      [plainVideo, doneVideo, 'video'],
-    ] as const) {
-      expect(readFileSync(processed).equals(readFileSync(plain))).toBe(false);
-      expect(Bun.file(processed).size).toBeGreaterThan(0);
-      // Named so a failure says which medium lost the stage rather than just "bytes
-      // equal": the two encoders are fed from one frame, so losing it on one only is
-      // not expressible - but losing it on both looks identical to never wiring it.
-      expect(medium).toBeDefined();
-    }
+    expect(readFileSync(processed).equals(readFileSync(plain))).toBe(false);
+    expect(Bun.file(processed).size).toBeGreaterThan(0);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -153,23 +96,10 @@ test('a scene-linear decode keeps the highlight headroom an sRGB one spends', ()
   expect(meanOf(scene)).toBeLessThan(meanOf(display) / 2);
 });
 
-test('the video declares BT.2020 and PQ, which no encoder option alone achieves', async () => {
-  await encoded('video', (file) => {
-    const stream = probe(file);
-    expect(stream.color_primaries).toBe('bt2020');
-    expect(stream.color_transfer).toBe('smpte2084');
-    expect(stream.color_space).toBe('bt2020nc');
-    // 8-bit would band visibly in the shadows a PQ curve stretches. 4:2:0 is
-    // deliberate: it is AV1 Profile 0, the only profile a hardware decoder and
-    // an HDR overlay will take, and 4:4:4 rendered washed out on Firefox.
-    expect(stream.pix_fmt).toBe('yuv420p10le');
-  });
-});
-
 test('the still declares BT.2020 and PQ, which ffmpeg cannot mux into an AVIF at all', async () => {
   // ffmpeg's avif muxer writes no colr box, so this is what proves the detour
   // through avifenc is doing its job.
-  await encoded('still', (file) => {
+  await encoded((file) => {
     const stream = probe(file);
     expect(stream.color_primaries).toBe('bt2020');
     expect(stream.color_transfer).toBe('smpte2084');
@@ -178,11 +108,20 @@ test('the still declares BT.2020 and PQ, which ffmpeg cannot mux into an AVIF at
     expect(stream.pix_fmt).toBe('yuv420p10le');
   });
 });
+
+// Firefox is served this same file and rewraps it as a video for itself, and its
+// video decoder takes 4:2:0 alone: a 4:4:4 still reaches the panel there washed
+// out (§10.7). Nothing in the browser reports that, so the setting is what has to
+// be answerable, and this is where the two chromas are told apart.
+test('the full-chroma setting reaches the encoder, which Firefox needs off', async () => {
+  await encoded((file) => expect(probe(file).pix_fmt).toBe('yuv444p10le'), true);
+}, 120_000);
+
 test('the still leaves no intermediate behind', async () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'bb-hdr-'));
   try {
     const outputPath = path.join(dir, 'pq.avif');
-    _for_testing_encodeHdr(FIXTURE, { medium: 'still', outputPath, peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.99, crf: 40, preset: 12, maxEdge: MAX_EDGE, stillFullChroma: false }, { decodeSize: MAX_EDGE });
+    _for_testing_encodeHdr(FIXTURE, { outputPath, peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.99, crf: 40, preset: 12, maxEdge: MAX_EDGE, stillFullChroma: false }, { decodeSize: MAX_EDGE });
     // The y4m is uncompressed 10-bit, so a leaked one is tens of megabytes per
     // photo sitting next to the output that replaced it.
     expect(await Bun.file(`${outputPath}.y4m`).exists()).toBe(false);

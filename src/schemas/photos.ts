@@ -105,9 +105,6 @@ export const PhotoDetailSchema = PhotoSummarySchema.extend({
         // sizes on a cross-origin resource-timing entry at 0 whatever the
         // response is labelled with, so the panel read "unknown" there.
         bytes: z.number().int().nullable(),
-        // The one-frame AV1 twin when it exists, so a client on Firefox knows it
-        // may reach for it instead of a still it would render dark (§10.7).
-        video: z.object({ path: z.string(), bytes: z.number().int() }).nullable(),
       }),
     )
     .nullable(),

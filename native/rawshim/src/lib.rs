@@ -54,7 +54,6 @@ use std::ffi::CStr;
 use std::os::raw::c_char;
 use std::os::raw::c_int;
 
-#[cfg(not(target_arch = "wasm32"))]
 pub mod avif;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod debug;

@@ -21,6 +21,10 @@ export const PHONE_PHOTOS_DIR = path.join(E2E_ROOT, 'phone-photos');
 // Triage writes a verdict onto every member it judges, so it gets a library of
 // its own rather than leaving the stacks spec's frames triaged behind it.
 export const TRIAGE_PHOTOS_DIR = path.join(E2E_ROOT, 'triage-photos');
+// The editor reads one photo by id and writes nothing, but a root can only be
+// added once against the shared DB, so sharing another spec's would make the two
+// fight over which of them adds it.
+export const EDIT_PHOTOS_DIR = path.join(E2E_ROOT, 'edit-photos');
 export const DB_PATH = path.join(E2E_ROOT, 'e2e.db');
 // Playwright has to know both URLs before it launches anything, so these can't
 // be port 0 - pick one and publish it. The config process picks first and the
@@ -76,7 +80,7 @@ export function prepareFixture(): void {
   // it off (`addLibrary`).
   const namesFor = (dir: string): string[] =>
     dir === TRIAGE_PHOTOS_DIR ? TRIAGE_PHOTO_NAMES : dir === STACK_PHOTOS_DIR ? STACK_PHOTO_NAMES : PHOTO_NAMES;
-  for (const dir of [PHOTOS_DIR, CULL_PHOTOS_DIR, STACK_PHOTOS_DIR, PHONE_PHOTOS_DIR, TRIAGE_PHOTOS_DIR]) {
+  for (const dir of [PHOTOS_DIR, CULL_PHOTOS_DIR, STACK_PHOTOS_DIR, PHONE_PHOTOS_DIR, TRIAGE_PHOTOS_DIR, EDIT_PHOTOS_DIR]) {
     mkdirSync(dir, { recursive: true });
     for (const name of namesFor(dir)) copyFileSync(FIXTURE, path.join(dir, name));
   }

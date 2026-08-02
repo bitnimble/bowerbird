@@ -139,8 +139,6 @@ export interface GradeSpec {
   maxEdge: number;
   stillFullChroma?: boolean;
   outputPath?: string;
-  /** A still gets avifenc after ffmpeg; a video does not. Defaults to a still. */
-  medium?: 'still' | 'video';
   /**
    * The render's denoises and sharpen (§10.9). Absent means none of them, which is what
    * the pins want; a test that needs the HDR half of that stage exercised passes them.
@@ -156,8 +154,7 @@ function gradeArgs(grade: GradeSpec): Record<string, unknown> {
 }
 
 /**
- * One HDR rendition, encoded to `grade.outputPath`, plus the video twin where one is
- * named.
+ * One HDR rendition, encoded to `grade.outputPath`.
  *
  * `decodeSize` bounds the decode before the grade. 0 takes the whole frame, which the
  * pins want and the encode tests cannot afford.
@@ -169,14 +166,13 @@ function gradeArgs(grade: GradeSpec): Record<string, unknown> {
 export function _for_testing_encodeHdr(
   path: string,
   grade: GradeSpec,
-  options: { withMatch?: boolean; videoOutputPath?: string; decodeSize?: number } = {},
+  options: { withMatch?: boolean; decodeSize?: number } = {},
 ): { usedAvifenc: boolean } {
   const reply = ask({
     kind: 'encodeHdr',
     path,
     withMatch: options.withMatch ?? false,
     grade: gradeArgs(grade),
-    videoOutputPath: options.videoOutputPath ?? '',
     decodeSize: options.decodeSize ?? 0,
   });
   return { usedAvifenc: reply?.usedAvifenc ?? false };

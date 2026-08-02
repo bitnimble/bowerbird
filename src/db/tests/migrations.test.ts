@@ -52,8 +52,8 @@ function oldDatabase(): Database {
   return db;
 }
 
-function columns(db: Database): Set<string> {
-  return new Set((db.query('PRAGMA table_info(photos)').all() as { name: string }[]).map((c) => c.name));
+function columns(db: Database, table = 'photos'): Set<string> {
+  return new Set((db.query(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((c) => c.name));
 }
 
 describe('migrations: splitting the import into two stages', () => {
@@ -121,11 +121,14 @@ describe('migrations: splitting the import into two stages', () => {
 
     expect(columns(db).has('preview_rendition')).toBe(false);
     expect(db.query("SELECT viewer_rendition FROM photos WHERE id = 'p'").get()).toEqual({ viewer_rendition: 'max' });
-    expect(db.query("SELECT rendition_source, rendition_hdr, rendition_hdr_video FROM libraries WHERE id = 'lib'").get()).toEqual({
+    expect(db.query("SELECT rendition_source, rendition_hdr FROM libraries WHERE id = 'lib'").get()).toEqual({
       rendition_source: 'render',
       rendition_hdr: 1,
-      rendition_hdr_video: 1,
     });
+    // The video setting is gone rather than renamed: Firefox's twin is made in
+    // the browser now, so there is nothing for it to turn on (§10.7).
+    expect(columns(db, 'libraries').has('preview_hdr_video')).toBe(false);
+    expect(columns(db, 'libraries').has('rendition_hdr_video')).toBe(false);
     expect(db.query('SELECT key, value FROM settings ORDER BY key').all()).toEqual([
       { key: 'last_viewer_rendition', value: 'full' },
       { key: 'viewer_rendition_mode', value: 'max' },

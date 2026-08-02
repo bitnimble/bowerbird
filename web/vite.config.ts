@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
@@ -5,6 +6,8 @@ const isolationHeaders = {
   'Cross-Origin-Embedder-Policy': 'require-corp',
   'Cross-Origin-Opener-Policy': 'same-origin',
 };
+
+const allowedHosts = process.env.VITE_ALLOWED_HOSTS?.split(',').map((h) => h.trim());
 
 // The client is same-origin (src/api/client.ts): this server proxies /api and
 // /image to the API, which VITE_API_URL / VITE_API_PORT locate. Nothing in the
@@ -23,6 +26,11 @@ export default defineConfig({
       // the module import WASI syscalls it never calls - the RAW is opened from a buffer,
       // so nothing touches a file. The stubs satisfy the import list.
       wasi_snapshot_preview1: '/src/features/raw_edit/wasi_stub.ts',
+      // Source rather than the `dist` its package.json publishes, and so an alias rather
+      // than a dependency: the build output is gitignored, and a fresh checkout should
+      // not have to build a sibling package before this one will start. `tsconfig.json`
+      // carries the same mapping for the typecheck.
+      'avif-hdr-video': fileURLToPath(new URL('../packages/avif-hdr-video/src/index.ts', import.meta.url)),
     },
   },
   server: {
@@ -33,7 +41,12 @@ export default defineConfig({
     port: 20000 + Math.floor(Math.random() * 20000),
     host: true,
     headers: isolationHeaders,
-    allowedHosts: process.env.VITE_ALLOWED_HOSTS?.split(',').map((h) => h.trim()),
+    // Vite refuses any Host header that is not an IP or localhost, which is a
+    // DNS-rebinding guard and which a reverse proxy forwarding a real hostname trips -
+    // the editor needs one, since `SharedArrayBuffer` needs a secure context and this
+    // server speaks plain HTTP. Name the hosts, or `all` where the server is already
+    // reachable only from a network you trust.
+    allowedHosts: allowedHosts?.includes('all') ? true : allowedHosts,
     // Everything the browser asks the API for goes through here: this server is
     // the only one exposed, and the API is internal. /quality-check is the API's
     // own diagnostic page, reachable the same way.

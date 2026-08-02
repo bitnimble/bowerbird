@@ -31,38 +31,25 @@ RUN printf '%s\n' \
 # that by the end was decoding JPEG and reading back our own AVIFs. `jpeg.rs` does the
 # first in pure Rust and libavif, already linked to write those files, does the second.
 #
-# ffmpeg applies the PQ transfer and encodes the HDR video (§10.7). It needs
-# libzimg for the zscale filter, which is what applies the transfer, and libaom
-# for the video, driven with `-usage allintra`. Profile 0 (4:2:0) is exactly what
-# is wanted there: 4:4:4 is Profile 1, which no hardware decoder will take, and
-# the video exists to reach a hardware HDR path.
+# No ffmpeg either, which used to apply the PQ transfer and encode the HDR video
+# twin (§10.7). Nothing serves through it now: the still is written by libavif from
+# a frame handed over as a pointer, and the twin Firefox needs is a rewrap of that
+# same file, done in the browser. It survives in the `dev` stage below because the
+# tests measure against it.
 #
-# libavif is what writes every AVIF. rawshim links it directly (`avif.rs`), so
-# the runtime needs the library rather than the binary: the frame is handed over as
-# a pointer instead of being written to ffmpeg's stdin, converted, written again as
-# y4m and read back by avifenc. libavif-bin comes along anyway because `avifenc` is
-# still the reference the linked path is pinned against, and it is 300KB.
-#
-# It cannot be ffmpeg's own avif muxer instead, which writes no colr box and so
-# cannot tag a still as HDR at all - that box is the whole reason libavif is here.
+# libavif is what writes every AVIF, linked directly (`avif.rs`) - so the library
+# rather than the binary. It cannot be ffmpeg's avif muxer instead, which writes no
+# colr box and so cannot tag a still as HDR at all; that box is the whole reason
+# libavif is here.
 #
 # liblensfun1 pulls its data package with it, and both halves are needed: the
 # library is what rawshim links, and the ~4MB of XML under /usr/share/lensfun is
 # where every lens profile lives. Without the data the database loads empty and
 # every Canon frame silently falls back to fitting its own geometry - twice the
 # time for a slightly worse grade, with nothing in the logs to say why.
-#
-# The purge is 192MB of Mesa and LLVM, reached only through ffmpeg -> libsdl2 ->
-# libgl1. SDL2 is ffplay's video output and dlopen's libGL when it opens a window,
-# which a headless encode never does. It runs in this RUN rather than a later one
-# for the same layer reason as the dpkg excludes above. libgbm1 stays: libsdl2 has
-# it as a real DT_NEEDED and ffmpeg will not start without it. Forcing past the
-# dependency leaves apt unable to resolve anything until it is repaired, which is
-# why the build stage below opens with --fix-broken.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
-     libraw23t64 liblensfun1 ffmpeg libavif16 libavif-bin \
-  && dpkg --force-depends --purge libllvm19 libz3-4 mesa-libgallium libgl1-mesa-dri libglx-mesa0 \
+     libraw23t64 liblensfun1 libavif16 \
   && rm -rf /var/lib/apt/lists/*
 
 # Bun's own image is Debian too, so the binary runs here unchanged and needs nothing
@@ -86,6 +73,23 @@ ENV BUN_RUNTIME_TRANSPILER_CACHE_PATH=0
 # over /data in both; created against a root-owned path they arrive root-owned and
 # the app cannot write its own database.
 RUN mkdir -p /app/node_modules /app/web/node_modules /data && chown -R bun:bun /app /data
+
+# What the tests need and the app does not (`docker-compose.dev.yml`). ffprobe reads
+# back what an encode produced, and avifenc is the reference the linked libavif path
+# is pinned against - 300KB of binary behind ~200MB of ffmpeg, which is exactly why
+# neither is in `base`.
+#
+# The purge is 192MB of Mesa and LLVM, reached only through ffmpeg -> libsdl2 ->
+# libgl1. SDL2 is ffplay's video output and dlopen's libGL when it opens a window,
+# which a headless encode never does. libgbm1 stays: libsdl2 has it as a real
+# DT_NEEDED and ffmpeg will not start without it. Forcing past the dependency leaves
+# apt unable to resolve anything in this stage until `--fix-broken` repairs it, so
+# nothing may install after this line.
+FROM base AS dev
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ffmpeg libavif-bin \
+  && dpkg --force-depends --purge libllvm19 libz3-4 mesa-libgallium libgl1-mesa-dri libglx-mesa0 \
+  && rm -rf /var/lib/apt/lists/*
 
 # Dependencies as a cacheable layer.
 FROM base AS deps
@@ -113,13 +117,7 @@ FROM base AS native
 # these headers, so this stage has to inherit base rather than fork beside it: the
 # generated field offsets are only right against the library the headers describe,
 # and inheriting is what makes them the same package at the same version.
-#
-# --fix-broken first because base amputated Mesa and LLVM out from under packages
-# that declare them, and apt refuses to resolve anything at all while that stands.
-# It puts them back, which this stage wants anyway: bindgen goes through libclang,
-# and libclang links libLLVM.
 RUN apt-get update \
-  && apt-get install -y --fix-broken \
   && apt-get install -y --no-install-recommends \
      libraw-dev liblensfun-dev libavif-dev \
      build-essential ca-certificates curl libclang-dev \

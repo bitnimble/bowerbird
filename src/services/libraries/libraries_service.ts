@@ -91,7 +91,6 @@ export class LibrariesService {
       // HDR is opt-in because it only applies to a render.
       rendition_source: 'embedded',
       rendition_hdr: false,
-      rendition_hdr_video: false,
       include_subfolders: request.include_subfolders,
       // A shoot is a subfolder, so mirroring folders the scan will never reach
       // would only ever produce nothing (§4.1).
@@ -158,7 +157,6 @@ export class LibrariesService {
     if (updates.ordering != null) this.repo.setOrdering(libraryId, updates.ordering);
     if (updates.rendition_source != null) this.repo.setRenditionSource(libraryId, updates.rendition_source);
     if (updates.rendition_hdr != null) this.repo.setRenditionHdr(libraryId, updates.rendition_hdr);
-    if (updates.rendition_hdr_video != null) this.repo.setRenditionHdrVideo(libraryId, updates.rendition_hdr_video);
     if (updates.include_subfolders != null) this.repo.setIncludeSubfolders(libraryId, updates.include_subfolders);
     // Mirroring folders the scan will never reach produces nothing, so the two
     // settings cannot be left disagreeing - whichever of them this request moved.

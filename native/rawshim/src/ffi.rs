@@ -83,10 +83,10 @@ struct JobReply {
 
 /// Transcodes a stored rendition to JPEG, for a download.
 ///
-/// The one call that genuinely hands bytes back rather than writing a file: it is a
-/// response body on its way to a socket, which is the exception the rule was always
-/// stated with (10.4). It still crosses no address - the JPEG is copied into a
-/// buffer the caller owns, exactly as a job reply is.
+/// One of two calls that genuinely hand bytes back rather than writing a file, and for
+/// the same reason: it is a response body on its way to a socket, which is the exception
+/// the rule was always stated with (10.4). It still crosses no address - the JPEG is
+/// copied into a buffer the caller owns, exactly as a job reply is.
 ///
 /// Returns the byte length written, or the length needed when that is more than
 /// `out_cap`, in which case nothing was written. Negative is a failure.

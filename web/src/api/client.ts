@@ -73,6 +73,23 @@ interface ErrorEnvelope {
   error?: { code?: string; message?: string };
 }
 
+/**
+ * The error a failed response carries, for callers that read the body themselves.
+ *
+ * `request` covers every JSON route; this exists for the ones that want bytes back and so
+ * call `fetch` directly. Reading `error` off the envelope without reaching `message`
+ * yields the string "[object Object]", which is worth having one place rather than one
+ * per caller.
+ */
+export async function apiError(res: Response): Promise<ApiError> {
+  const envelope = (await res.json().catch(() => null)) as ErrorEnvelope | null;
+  return new ApiError(
+    envelope?.error?.code ?? 'INTERNAL_ERROR',
+    envelope?.error?.message ?? res.statusText,
+    res.status,
+  );
+}
+
 async function request<T>(method: string, path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
   let res: Response;
   try {
@@ -90,12 +107,8 @@ async function request<T>(method: string, path: string, body?: unknown, signal?:
 
   if (res.status === 204) return undefined as T;
 
-  const payload: unknown = await res.json().catch(() => null);
-  if (!res.ok) {
-    const envelope = payload as ErrorEnvelope | null;
-    throw new ApiError(envelope?.error?.code ?? 'INTERNAL_ERROR', envelope?.error?.message ?? res.statusText, res.status);
-  }
-  return payload as T;
+  if (!res.ok) throw await apiError(res);
+  return (await res.json().catch(() => null)) as T;
 }
 
 export interface PhotoListParams {
@@ -252,30 +265,13 @@ export const api = {
 // `version` is appended only once renditions have been rebuilt in this session:
 // the file changes behind a stable URL, and an image already decoded in the page
 // is never re-requested without it.
-// One URL shape for every stored rendition, and `video` for the one-frame AV1
-// twin an HDR one carries. Dynamic range is not in the URL: the library decides
-// it, so a client guessing would ask for a file that was never built (§10.2).
+// One URL shape for every stored rendition. Dynamic range is not in the URL: the
+// library decides it, so a client guessing would ask for a file that was never
+// built (§10.2). Firefox is served the same AVIF as everything else and rewraps
+// it into a video for itself (`hdr_video.ts`).
 export function renditionUrl(photoId: string, rendition: Rendition, version = 0): string {
   const url = `/image/${photoId}/renditions/${rendition}`;
   return version === 0 ? url : `${url}?v=${version}`;
-}
-
-// Only Firefox needs this: it applies a PQ transfer to nothing but video, so it
-// renders an HDR still dark (§10.7). Everything else takes the AVIF, which is
-// better in every way that matters - no video element, no autoplay rules, and it
-// decodes as an image.
-export function renditionVideoUrl(photoId: string, rendition: Rendition, version = 0): string {
-  const url = `/image/${photoId}/renditions/${rendition}/video`;
-  return version === 0 ? url : `${url}?v=${version}`;
-}
-
-// Firefox is the only engine with no HDR image path at all. Sniffing the engine
-// is normally the wrong tool, but there is nothing to feature-detect here: the
-// failure is that Firefox renders a PQ still *wrongly* rather than refusing it,
-// so nothing in the page can observe it.
-export function needsHdrVideo(): boolean {
-  if (typeof navigator === 'undefined') return false;
-  return navigator.userAgent.includes('Firefox');
 }
 
 // The camera's own JPEG, handed over as the camera wrote it (§10.2). Versioned

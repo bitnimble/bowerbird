@@ -45,40 +45,28 @@ function storedAsHdr(rendition: Rendition, hdr: boolean): boolean {
 }
 
 // HDR is stored beside the SDR copy rather than replacing it, so turning the
-// setting off does not throw away work that turning it back on would redo. The
-// video twin gets its own directory rather than sitting beside the still it
-// belongs to, because the orphan sweep keys on the one extension a directory is
-// supposed to hold, and two in one directory would have it delete the video as a
-// superseded format on every pass (§10.6).
-export function renditionDir(rendition: Rendition, hdr: boolean, video = false): string {
-  if (!storedAsHdr(rendition, hdr)) return rendition;
-  return video ? `${rendition}-hdr-video` : `${rendition}-hdr`;
+// setting off does not throw away work that turning it back on would redo.
+export function renditionDir(rendition: Rendition, hdr: boolean): string {
+  return storedAsHdr(rendition, hdr) ? `${rendition}-hdr` : rendition;
 }
 
-// The one-frame AV1 twin of an HDR rendition, for Firefox on Windows (§10.7).
-// Only HDR has one: there is nothing an SDR video would show that the still does
-// not.
-export function renditionExtension(video: boolean): string {
-  return video ? '.mp4' : '.avif';
-}
+export const RENDITION_EXTENSION = '.avif';
+export const RENDITION_CONTENT_TYPE = 'image/avif';
 
-// Every directory a rendition can live in, paired with the one extension it
-// holds, for the sweeps that clear a photo's derived copies and remove orphans.
-export function renditionDirs(): { dir: string; extension: string }[] {
+// Every directory a rendition can live in, for the sweeps that clear a photo's
+// derived copies and remove orphans.
+export function renditionDirs(): string[] {
   return RENDITIONS.flatMap((rendition) => [
-    { dir: renditionDir(rendition, false), extension: renditionExtension(false) },
-    // A rendition with no HDR form has no second directory, and listing one would
-    // pair the SDR directory with the video extension - which the orphan sweep
-    // reads as "every .avif in here is a superseded format" and deletes.
-    ...(storedAsHdr(rendition, true)
-      ? [
-          { dir: renditionDir(rendition, true), extension: renditionExtension(false) },
-          { dir: renditionDir(rendition, true, true), extension: renditionExtension(true) },
-        ]
-      : []),
+    renditionDir(rendition, false),
+    ...(storedAsHdr(rendition, true) ? [renditionDir(rendition, true)] : []),
   ]);
 }
 
-export function renditionContentType(video: boolean): string {
-  return video ? 'video/mp4' : 'image/avif';
+// Directories under `renditions/` that nothing writes any more, emptied by the
+// prune sweep so an upgrade does not leave the disk holding files no code can
+// name (§10.6). `<rendition>-hdr-video` held a one-frame AV1 copy of each HDR
+// still, encoded for Firefox, which the client now makes for itself out of the
+// still (§10.7).
+export function retiredRenditionDirs(): string[] {
+  return RENDITIONS.filter((rendition) => storedAsHdr(rendition, true)).map((rendition) => `${rendition}-hdr-video`);
 }

@@ -152,22 +152,14 @@ export class PhotosService {
     const hdr = library.rendition_hdr;
     const stored = (rendition: Rendition) => {
       const file = getRenditionPath(library, photoId, rendition, hdr);
-      const twin = getRenditionPath(library, photoId, rendition, hdr, true);
       const still = statSync(file, { throwIfNoEntry: false });
-      const video = hdr ? statSync(twin, { throwIfNoEntry: false }) : undefined;
-      return {
-        path: file,
-        built: still != null,
-        bytes: still?.size ?? null,
-        hdr,
-        video: video == null ? null : { path: twin, bytes: video.size },
-      };
+      return { path: file, built: still != null, bytes: still?.size ?? null, hdr };
     };
     const raw = getOriginalPath(library, filePath);
     return {
       // The camera's JPEG is the RAW's own bytes, so it is always available and
       // never built (§10.2).
-      embedded: { path: raw, built: true, bytes: this.embeddedBytes(raw), hdr: false, video: null },
+      embedded: { path: raw, built: true, bytes: this.embeddedBytes(raw), hdr: false },
       full: stored('full'),
       max: stored('max'),
     };
@@ -410,12 +402,9 @@ export class PhotosService {
     const output = getRenditionPath(library, photo.id, rendition, hdr);
     // The file *is* the cache, so forcing a rebuild means removing it: the
     // builder returns early on a file that already exists, and would otherwise
-    // hand back exactly the copy being rejected. Its HDR video twin goes too, or
-    // Firefox would keep the old frame while every other browser got the new one.
+    // hand back exactly the copy being rejected.
     if (force) {
-      const dataPath = getDataPath(library);
-      await deleteGeneratedFile(dataPath, output);
-      await deleteGeneratedFile(dataPath, getRenditionPath(library, photo.id, rendition, hdr, true));
+      await deleteGeneratedFile(getDataPath(library), output);
     } else if (existsSync(output)) {
       return;
     }

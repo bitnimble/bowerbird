@@ -22,8 +22,6 @@ export interface JobTarget {
   rendition: Rendition;
   hdr: boolean;
   outputPath: string;
-  /** The one-frame AV1 twin, for Firefox. Null when none is wanted. */
-  videoOutputPath: string | null;
   /** Longest edge, or 0 for native resolution. */
   size: number;
   source: RenditionSource;

@@ -13,41 +13,17 @@ use std::fmt::Write as _;
 // reference that used to sit beside every HDR file went with the check page it was
 // built to be compared against; what the app serves has never been anything else.
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Medium {
-    /// AVIF. Chrome renders it as HDR on Android 14+ and desktop, Safari on macOS.
-    Still,
-    /// One-frame AV1 in MP4, for Firefox, which honours no HDR image tagging but
-    /// does composite HDR video.
-    Video,
-}
-
-impl Medium {
-    pub fn parse(name: &str) -> Option<Medium> {
-        match name {
-            "still" => Some(Medium::Still),
-            "video" => Some(Medium::Video),
-            _ => None,
-        }
-    }
-
-    fn is_still(self) -> bool {
-        matches!(self, Medium::Still)
-    }
-}
+// There is one medium, and no enum for it. An HDR rendition used to be two encodes -
+// an AVIF still and a one-frame AV1 in MP4 for Firefox, which honours no HDR image
+// tagging - built from the same graded frame by the same encoder at the same settings.
+// The video is a container away from the still, so Firefox rewraps the file it is
+// already served (§10.7) and nothing here encodes or stores one.
 
 #[derive(Clone)]
 pub struct EncodeOptions {
-    pub medium: Medium,
-    /// Chroma for a still. Ignored for the video, which has no choice (`pixel_format`).
     pub still_chroma: Chroma,
     pub output_path: String,
-    /// Display peak the grade rolls highlights into, and the declared mastering peak.
-    pub peak_nits: f64,
-    /// Nits diffuse white maps to (BT.2408 HDR Reference White).
-    pub reference_white_nits: f64,
-    /// Quantile of the frame taken as diffuse white.
-    pub white_quantile: f64,
+    pub grade: crate::hdr::Grade,
     /// Constant-quality level; lower is better and slower.
     pub crf: i32,
     /// Encoder speed, 0 slowest. Clamped per encoder: libaom 0-8, avifenc 0-10.
@@ -102,11 +78,6 @@ fn target_for() -> Target {
 /// zscale names the identity matrix `gbr` and rejects `rgb` outright.
 const RGB_MATRIX: &str = "gbr";
 
-/// libaom's ceiling on `-cpu-used`. avifenc's `--speed` takes 0-10 and maps its own
-/// way in, so the two encoders are clamped separately rather than the setting being
-/// narrowed to the tighter of them.
-const MAX_CPU_USED: i32 = 8;
-
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Size {
     pub width: u32,
@@ -127,28 +98,17 @@ pub fn fitted(width: u32, height: u32, max_edge: f64) -> Size {
     Size { width: even(f64::from(width) * scale), height: even(f64::from(height) * scale) }
 }
 
-/// What this rendition ends up as - the requested edge, whichever medium asks.
+/// What this rendition ends up as: the requested edge, rounded to what the chroma can
+/// carry.
 ///
-/// The video used to have an encoder ceiling on top of it: SVT-AV1 refuses a source
-/// taller than 8704 rows, so a native-resolution portrait frame was squashed to fit and
-/// lost the last 9% of its height. libaom takes either orientation - measured, 6336x9504
-/// encodes in 721ms where SVT-AV1 declines it outright - so moving the video off SVT
-/// gave that back and removed the one case where a still and its twin could differ in
-/// size, which is the one case that needed grading twice.
-///
-/// It also took away the thing that was accidentally keeping the video's dimensions
-/// even. `fitted` hands back the frame untouched when nothing needs shrinking, and a
-/// decode can arrive odd - the masked-border crop takes asymmetric insets off it - so a
+/// `fitted` hands back the frame untouched when nothing needs shrinking, and a decode
+/// can arrive odd - the masked-border crop takes asymmetric insets off it - so a
 /// native-resolution 4:2:0 encode could be asked for an odd width and refuse outright.
-///
-/// So it follows the chroma rather than the medium: 4:2:0 has no odd dimensions on
-/// either, and 4:4:4 does not care on either. Only `fitted` returning the frame
-/// untouched can produce an odd number here, which makes this a native-resolution
-/// concern alone.
+/// Which makes the rounding a native-resolution concern alone: nothing else here can
+/// produce an odd number.
 pub fn target_size(width: u32, height: u32, options: &EncodeOptions) -> Size {
     let size = fitted(width, height, options.max_edge);
-    let subsampled = !options.medium.is_still() || options.still_chroma.subsampled();
-    if !subsampled {
+    if !options.still_chroma.subsampled() {
         return size;
     }
     // Down to even, never up. `even` rounds to nearest, which is right inside `fitted`
@@ -196,18 +156,19 @@ impl Chroma {
     }
 }
 
-/// The video is always 4:2:0, which is AV1 Profile 0. 4:4:4 was tried and reverted: it
-/// is Profile 1, Chromium refuses it outright, Safari cannot hardware-decode it, and on
-/// Firefox/Windows it played but rendered washed out - PQ code values shown with no
-/// transfer applied, which is what a decode that never reaches the HDR compositor looks
-/// like. So it is not a setting there, only on the still.
+/// 10-bit either way, which is what a PQ curve's shadows need: 8 bits band visibly where
+/// it stretches them.
 ///
-/// Both are 10-bit, which is what a PQ curve's shadows need: 8 bits band visibly
-/// where it stretches them.
+/// 4:4:4 is AV1 Profile 1, which is where Firefox is lost: its video path is the only
+/// one there that composites HDR, and it plays Profile 1 washed out - PQ code values
+/// shown with no transfer applied, which is what a decode that never reaches the HDR
+/// compositor looks like. Chromium refuses Profile 1 video outright and Safari cannot
+/// hardware-decode it, but neither needs the video. So a 4:4:4 still is one Firefox
+/// cannot rewrap into anything it will composite, and `hdr_still_full_chroma` says so.
 fn pixel_format(options: &EncodeOptions) -> &'static str {
-    match options.medium.is_still() && options.still_chroma == Chroma::Yuv444 {
-        true => "yuv444p10le",
-        false => "yuv420p10le",
+    match options.still_chroma {
+        Chroma::Yuv444 => "yuv444p10le",
+        Chroma::Yuv420 => "yuv420p10le",
     }
 }
 
@@ -242,8 +203,13 @@ fn filter_chain(options: &EncodeOptions, resize: Option<Size>) -> String {
     chain
 }
 
+/// The still's conversion, on the reference route: ffmpeg turns the graded frame into a
+/// y4m and avifenc encodes and tags it.
+///
+/// ffmpeg's own avif muxer writes no colr box, so the primaries and transfer are lost -
+/// and AVIF has no equivalent of the bitstream filter that used to put them back on the
+/// video side. y4m carries the pixels and nothing else; avifenc does the tagging.
 pub fn ffmpeg_args(width: u32, height: u32, options: &EncodeOptions) -> Vec<String> {
-    let target = target_for();
     let size = target_size(width, height, options);
     let resize = if size.width == width && size.height == height { None } else { Some(size) };
 
@@ -268,128 +234,10 @@ pub fn ffmpeg_args(width: u32, height: u32, options: &EncodeOptions) -> Vec<Stri
         args.push(arg.to_string());
     }
     args.push(filter_chain(options, resize));
-
-    // The still is only converted here, then handed to avifenc: ffmpeg's avif muxer
-    // writes no colr box, so the primaries and transfer are lost exactly as they are
-    // below, and AVIF has no equivalent of the bitstream filter to put them back.
-    // y4m carries the pixels and nothing else; avifenc does the tagging.
-    if options.medium.is_still() {
-        for arg in ["-strict", "-1", "-f", "yuv4mpegpipe"] {
-            args.push(arg.to_string());
-        }
-        args.push(options.output_path.clone());
-        return args;
-    }
-
-    // The encoder drops the primaries and transfer on its own, leaving a file that
-    // says "unknown" where it matters most, so av1_metadata writes them back into
-    // the sequence header. Verified with ffprobe: without the filter the stream
-    // reports color_primaries=unknown, with it bt2020/smpte2084.
-    let metadata = format!(
-        "av1_metadata=color_primaries={}:transfer_characteristics={}:matrix_coefficients={}:color_range=tv",
-        target.primaries.cicp, target.transfer.cicp, target.matrix.cicp,
-    );
-
-    // libaom in all-intra mode, which is what a one-frame video actually is.
-    //
-    // This was SVT-AV1, on the reasoning that it is 2.4x faster than libaom - which is
-    // true of libaom driven the way ffmpeg drives it by default, and beside the point.
-    // SVT-AV1 is built for sequences and cannot use the inter-frame parallelism its
-    // threading is designed around when handed a single frame; `-usage allintra` is
-    // what avifenc has been doing to libaom for the still all along. Measured at 3840
-    // on a 24MP frame, at matched quality (SSIM 0.97998 against 0.97986): 233ms against
-    // 1175ms, for a file of the same size.
-    //
-    // It also means both media now go through libaom, so `avifenc` is here for its
-    // container rather than its encoder - see `avifenc_args`.
-    for arg in ["-c:v", "libaom-av1", "-usage", "allintra", "-row-mt", "1", "-tiles", "2x2", "-cpu-used"] {
+    for arg in ["-strict", "-1", "-f", "yuv4mpegpipe"] {
         args.push(arg.to_string());
     }
-    args.push(options.preset.min(MAX_CPU_USED).to_string());
-    // `-b:v 0` is what puts libaom in constant-quality mode; without it `-crf` is a
-    // ceiling on a bitrate target rather than the quality knob it reads as.
-    for arg in ["-crf", &options.crf.to_string(), "-b:v", "0"] {
-        args.push(arg.to_string());
-    }
-    for (flag, value) in [
-        ("-color_primaries", target.primaries.name),
-        ("-color_trc", target.transfer.name),
-        ("-colorspace", target.matrix.name),
-        ("-color_range", "tv"),
-    ] {
-        args.push(flag.to_string());
-        args.push(value.to_string());
-    }
-    // The SMPTE ST 2086 mastering-display and MaxCLL/MaxFALL block went with SVT-AV1,
-    // which reached it through `-svtav1-params` and which libaom has no equivalent for.
-    // No loss that anything reads: they are a hint for a display's tone mapping, and
-    // Firefox 153 - the only browser this file exists for - does none. The CICP below
-    // is the load-bearing signalling, and it survives.
-    args.push("-bsf:v".to_string());
-    args.push(metadata);
-    // Seekable and decodable from the first byte, since it is displayed rather than
-    // streamed.
-    args.push("-movflags".to_string());
-    args.push("+faststart".to_string());
     args.push(options.output_path.clone());
-    args
-}
-
-/// First half of the twin's remux: the still's AV1 bitstream, on stdout.
-///
-/// The twin used to be a second libaom encode of the same graded frame at the same
-/// settings, which is a file the still already contains. Copying costs nothing next to
-/// the ~230ms that encode took, and the two media come out of the same bitstream rather
-/// than two runs of an encoder that only happen to agree.
-///
-/// Only sound at 4:2:0, which is the caller's condition to check.
-pub fn still_to_obu_args(still_path: &str) -> Vec<String> {
-    let mut args: Vec<String> = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-nostdin", "-i"]
-        .iter()
-        .map(|s| (*s).to_string())
-        .collect();
-    args.push(still_path.to_string());
-    for arg in ["-c:v", "copy", "-f", "obu", "-"] {
-        args.push(arg.to_string());
-    }
-    args
-}
-
-/// Second half, and it is not a detour that could be collapsed into the first.
-///
-/// ffmpeg's AVIF demuxer hands over no `av1C` config OBUs, so copying straight from the
-/// AVIF into MP4 writes a configuration record with no sequence header in it: measured,
-/// 4 bytes of extradata against the 21 an encoded twin carries, and a codec string
-/// truncated to `av01.0.12M.10` with every colour field missing. Firefox decodes the
-/// frame and composites it SDR. Reading the bitstream back as a raw OBU stream makes
-/// ffmpeg parse the sequence header itself and rebuild the record around it.
-///
-/// `-r 1` because an OBU stream carries no timing, and the twin has always been one
-/// frame of one second (`ffmpeg_args` gives its rawvideo input the same).
-pub fn obu_to_mp4_args(video_path: &str) -> Vec<String> {
-    let mut args: Vec<String> = [
-        "ffmpeg",
-        "-y",
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-r",
-        "1",
-        "-f",
-        "obu",
-        "-i",
-        "-",
-        "-c:v",
-        "copy",
-        // Seekable and decodable from the first byte, since it is displayed rather
-        // than streamed.
-        "-movflags",
-        "+faststart",
-    ]
-    .iter()
-    .map(|s| (*s).to_string())
-    .collect();
-    args.push(video_path.to_string());
     args
 }
 
@@ -441,12 +289,12 @@ pub fn avifenc_args(options: &EncodeOptions, y4m_path: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    /// Every argv the encoder builds, across the medium, chroma and size matrix.
+    /// Every argv the encoder builds, across the chroma and size matrix.
     ///
     /// Chroma is a dimension because it reaches three separate arguments that have to
     /// agree - zscale's output format, avifenc's `--yuv`, and whether the target size
     /// is forced even - and 4:2:0 with an odd dimension is refused outright rather
-    /// than rounded. It is fixed on the video, which has no choice about it (§10.7).
+    /// than rounded.
     ///
     /// The argv carries colour signalling whose loss is invisible until a browser
     /// refuses to treat a file as HDR, which is why this is pinned rather than
@@ -458,87 +306,72 @@ mod tests {
         const SIZES: [(u32, u32); 4] = [
             (4024, 6024), // 24MP portrait
             (9504, 6336), // 61MP landscape
-            (6336, 9504), // 61MP portrait: the one that meets SVT's height ceiling
+            (6336, 9504), // 61MP portrait
             (800, 533),   // already inside any edge
         ];
 
         let mut rows: Vec<String> = Vec::new();
-        for medium in [Medium::Still, Medium::Video] {
-            for still_full_chroma in [false, true] {
-                for (width, height) in SIZES {
-                    for max_edge in [3840.0, 800.0, f64::INFINITY] {
-                        let options = EncodeOptions {
-                            medium,
-                            still_chroma: match still_full_chroma {
-                                true => Chroma::Yuv444,
-                                false => Chroma::Yuv420,
-                            },
-                            output_path: match medium {
-                                Medium::Video => "/out/rendition.mp4".to_string(),
-                                Medium::Still => "/out/rendition.avif".to_string(),
-                            },
-                            peak_nits: 1000.0,
-                            reference_white_nits: 203.0,
-                            white_quantile: 0.9,
-                            crf: 8,
-                            preset: 8,
-                            // Not in the argv: both media are denoised and sharpened on
-                            // this side, before either encoder is handed anything.
-                            strengths: crate::image::Strengths::default(),
-                            max_edge,
-                        };
-                        let chroma = match still_full_chroma {
-                            true => "444",
-                            false => "420",
-                        };
-                        // `Infinity`, not Rust's `inf`: the recorded rows came from
-                        // JavaScript and the label is part of what is pinned.
-                        let edge = match max_edge.is_finite() {
-                            true => format!("{max_edge}"),
-                            false => "Infinity".to_string(),
-                        };
-                        let key = format!("{}|{chroma}|{width}x{height}|edge={edge}", match medium { Medium::Still => "still", Medium::Video => "video" });
+        for still_full_chroma in [false, true] {
+            for (width, height) in SIZES {
+                for max_edge in [3840.0, 800.0, f64::INFINITY] {
+                    let options = EncodeOptions {
+                        still_chroma: match still_full_chroma {
+                            true => Chroma::Yuv444,
+                            false => Chroma::Yuv420,
+                        },
+                        output_path: "/out/rendition.avif".to_string(),
+                        grade: SHIPPING_GRADE,
+                        crf: 8,
+                        preset: 8,
+                        // Not in the argv: the frame is denoised and sharpened on this
+                        // side, before either encoder is handed anything.
+                        strengths: crate::image::Strengths::default(),
+                        max_edge,
+                    };
+                    let chroma = match still_full_chroma {
+                        true => "444",
+                        false => "420",
+                    };
+                    // `Infinity`, not Rust's `inf`: the recorded rows came from
+                    // JavaScript and the label is part of what is pinned.
+                    let edge = match max_edge.is_finite() {
+                        true => format!("{max_edge}"),
+                        false => "Infinity".to_string(),
+                    };
+                    let key = format!("still|{chroma}|{width}x{height}|edge={edge}");
 
-                        let size = target_size(width, height, &options);
-                        rows.push(format!("{key}\tsize\t{}x{}", size.width, size.height));
-                        rows.push(format!(
-                            "{key}\tffmpeg\t{}",
-                            ffmpeg_args(width, height, &options).join(SEP)
-                        ));
-                        if medium != Medium::Video {
-                            let argv = avifenc_args(&options, "/out/rendition.avif.y4m");
-                            rows.push(format!("{key}\tavifenc\t{}", argv.join(SEP)));
-                        }
-                    }
+                    let size = target_size(width, height, &options);
+                    rows.push(format!("{key}\tsize\t{}x{}", size.width, size.height));
+                    rows.push(format!(
+                        "{key}\tffmpeg\t{}",
+                        ffmpeg_args(width, height, &options).join(SEP)
+                    ));
+                    let argv = avifenc_args(&options, "/out/rendition.avif.y4m");
+                    rows.push(format!("{key}\tavifenc\t{}", argv.join(SEP)));
                 }
             }
-        }
-        // Size-independent, so once rather than per row, but pinned with the rest
-        // because it carries the same kind of flag: the twin is HDR or not depending
-        // on whether the sequence header survives into the MP4's config record.
-        for (name, argv) in [
-            ("obu", still_to_obu_args("/out/rendition.avif")),
-            ("mp4", obu_to_mp4_args("/out/rendition.mp4")),
-        ] {
-            rows.push(format!("remux\t{name}\t{}", argv.join(SEP)));
         }
         crate::pin::check("hdr_argv.pin.txt", &format!("{}\n", rows.join("\n")));
     }
 
     use super::*;
 
-    fn options(medium: Medium, max_edge: f64) -> EncodeOptions {
-        options_with(medium, max_edge, Chroma::Yuv420)
+    /// The library's own defaults, which is what the recorded rows were captured with.
+    const SHIPPING_GRADE: crate::hdr::Grade = crate::hdr::Grade {
+        peak_nits: 1000.0,
+        reference_white_nits: 203.0,
+        white_quantile: 0.9,
+    };
+
+    fn options(max_edge: f64) -> EncodeOptions {
+        options_with(max_edge, Chroma::Yuv420)
     }
 
-    fn options_with(medium: Medium, max_edge: f64, still_chroma: Chroma) -> EncodeOptions {
+    fn options_with(max_edge: f64, still_chroma: Chroma) -> EncodeOptions {
         EncodeOptions {
-            medium,
             still_chroma,
             output_path: "/out/rendition.avif".to_string(),
-            peak_nits: 1000.0,
-            reference_white_nits: 203.0,
-            white_quantile: 0.9,
+            grade: SHIPPING_GRADE,
             crf: 8,
             preset: 8,
             strengths: crate::image::Strengths::default(),
@@ -565,71 +398,23 @@ mod tests {
         // 4:2:0 has no odd dimensions, and at native size nothing else is rounding
         // them - the masked-border crop can leave a frame odd. It has to come down:
         // asking a 533-row source for 534 makes the encoder invent a row.
-        //
-        // It follows the chroma rather than the medium, which is the part worth
-        // pinning: the video has no choice, but the still does, and the setting that
-        // gives it one has to reach here as well as the pixel format.
-        let video = options(Medium::Video, f64::INFINITY);
-        assert_eq!(target_size(801, 533, &video), Size { width: 800, height: 532 });
-
-        let subsampled = options_with(Medium::Still, f64::INFINITY, Chroma::Yuv420);
+        let subsampled = options_with(f64::INFINITY, Chroma::Yuv420);
         assert_eq!(target_size(801, 533, &subsampled), Size { width: 800, height: 532 });
 
         // 4:4:4 keeps every pixel it was given.
-        let full = options_with(Medium::Still, f64::INFINITY, Chroma::Yuv444);
+        let full = options_with(f64::INFINITY, Chroma::Yuv444);
         assert_eq!(target_size(801, 533, &full), Size { width: 801, height: 533 });
     }
 
     #[test]
-    fn a_tall_video_keeps_its_full_height_now_that_the_encoder_takes_one() {
-        // SVT-AV1 refused a source taller than 8704 rows, so a native-resolution
-        // portrait frame was squashed to fit and lost the last 9% of its height.
-        // libaom takes either orientation - 6336x9504 encodes in 721ms where SVT
-        // declines it outright - so the video is the same size as the still beside it,
-        // which is what lets the two share one graded frame in every case.
-        let video = options(Medium::Video, f64::INFINITY);
-        let still = options(Medium::Still, f64::INFINITY);
-        assert_eq!(target_size(6336, 9504, &video), Size { width: 6336, height: 9504 });
-        assert_eq!(target_size(6336, 9504, &video), target_size(6336, 9504, &still));
-    }
-
-    #[test]
     fn the_still_is_converted_by_ffmpeg_but_tagged_by_avifenc() {
-        let args = ffmpeg_args(800, 533, &options(Medium::Still, 3840.0));
+        let args = ffmpeg_args(800, 533, &options(3840.0));
         assert!(args.contains(&"yuv4mpegpipe".to_string()), "a still leaves ffmpeg as y4m");
         assert!(!args.iter().any(|a| a.contains("av1_metadata")), "and is not encoded here");
 
-        let avif = avifenc_args(&options(Medium::Still, 3840.0), "/tmp/x.y4m");
+        let avif = avifenc_args(&options(3840.0), "/tmp/x.y4m");
         let cicp = avif.iter().position(|a| a == "--cicp").expect("--cicp");
         assert_eq!(avif[cicp + 1], "9/16/9", "bt2020 / smpte2084 / bt2020nc");
-    }
-
-    #[test]
-    fn the_video_restates_the_signalling_the_encoder_drops() {
-        let args = ffmpeg_args(800, 533, &options(Medium::Video, 3840.0));
-        let bsf = args.iter().find(|a| a.contains("av1_metadata")).expect("the bitstream filter");
-        assert!(bsf.contains("color_primaries=9"));
-        assert!(bsf.contains("transfer_characteristics=16"));
-        assert!(bsf.contains("matrix_coefficients=9"));
-    }
-
-    #[test]
-    fn the_video_is_libaom_in_all_intra_at_constant_quality() {
-        // Three flags that look incidental and are not. `allintra` is the whole
-        // speedup - a one-frame video is an intra frame, and SVT-AV1 spent 5x as long
-        // looking for the inter-frame parallelism that is not there. `-b:v 0` is what
-        // makes `-crf` mean constant quality rather than a cap on a bitrate target.
-        // And libaom parallelises across tiles, so without them the threads idle.
-        let args = ffmpeg_args(4024, 6024, &options(Medium::Video, 3840.0));
-        let at = |flag: &str| args.iter().position(|a| a == flag).map(|i| args[i + 1].clone());
-        assert_eq!(at("-c:v").as_deref(), Some("libaom-av1"));
-        assert_eq!(at("-usage").as_deref(), Some("allintra"));
-        assert_eq!(at("-b:v").as_deref(), Some("0"));
-        assert_eq!(at("-tiles").as_deref(), Some("2x2"));
-        // libaom's `-cpu-used` stops at 8 where avifenc's `--speed` takes 10, so the
-        // shared setting is clamped per encoder rather than narrowed to the tighter.
-        let fast = ffmpeg_args(800, 533, &EncodeOptions { preset: 10, ..options(Medium::Video, 3840.0) });
-        assert_eq!(fast.iter().position(|a| a == "-cpu-used").map(|i| fast[i + 1].clone()).as_deref(), Some("8"));
     }
 
     #[test]
@@ -637,7 +422,7 @@ mod tests {
         // The y4m is the whole frame uncompressed - ~366MB at native resolution - so
         // it goes down a pipe rather than through a file. avifenc requires `--stdin`
         // before the output path and forbids an input one alongside it.
-        let args = avifenc_args(&options(Medium::Still, 3840.0), "");
+        let args = avifenc_args(&options(3840.0), "");
         let stdin = args.iter().position(|a| a == "--stdin").expect("--stdin");
         assert_eq!(stdin, args.len() - 2, "must be the last flag before the output path");
         assert!(args.iter().any(|a| a == "--autotiling"), "libaom needs tiles to use its threads");
@@ -645,10 +430,10 @@ mod tests {
 
     #[test]
     fn the_frame_reaches_zscale_already_in_its_output_transfer() {
-        // Both media are PQ-encoded on this side now (`tone::encode_pq`), so the one
+        // The frame is PQ-encoded on this side now (`tone::encode_pq`), so the one
         // thing zscale must not be told is that its input is linear: it would apply the
         // curve a second time and hand the encoder a frame several stops dark.
-        let args = ffmpeg_args(4024, 6024, &options(Medium::Video, 3840.0));
+        let args = ffmpeg_args(4024, 6024, &options(3840.0));
         let chain = args.iter().find(|a| a.starts_with("zscale")).expect("the filter chain");
         assert!(chain.contains("tin=smpte2084"), "{chain}");
         assert!(!chain.contains("npl="), "there is no transfer left for npl to scale");

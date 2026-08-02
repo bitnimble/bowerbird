@@ -36,7 +36,6 @@ beforeAll(() => {
     ordering: 'taken_desc',
     rendition_source: 'render',
     rendition_hdr: false,
-    rendition_hdr_video: false,
     include_subfolders: true,
     mirror_shoots: true,
     auto_stack: true,

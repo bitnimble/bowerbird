@@ -2613,64 +2613,29 @@ p.ui-text--mono {
   border: 0;
 }
 
-/* The client-side RAW editing spike (/test-raw-editing). */
-.raw-edit {
+/* RAW edit mode on the photo detail page. Replaces the metadata strip and the
+   stored-rendition stage while a grade is open. */
+
+.raw-edit-panel__exposure {
   display: flex;
   flex-direction: column;
-  gap: var(--gap);
-  padding: var(--gap);
+  gap: 8px;
 }
 
-.raw-edit__controls {
-  display: flex;
-  gap: var(--gap);
-  align-items: center;
-}
-
-.raw-edit__path {
-  flex: 1;
-  min-width: 0;
-  font-family: var(--mono);
+.raw-edit-panel__status {
+  margin: 8px 0;
 }
 
 /* Black rather than the page's own background: an HDR frame is judged against what
-   surrounds it, and a light surround is what makes a correctly graded one look dim. */
-.raw-edit__stage {
-  width: 100%;
-  max-height: 70vh;
-  object-fit: contain;
+   surrounds it, and a light surround is what makes a correctly graded one look dim.
+   No filter, opacity, transform or blend mode anywhere on this subtree or its ancestors
+   either - any of them forces the compositor to rasterise into an SDR intermediate, which
+   defeats the PQ tagging silently and leaves the picture merely looking washed out. */
+.raw-edit-stage {
+  height: 100%;
   background: #000;
 }
 
-/* No filter, opacity, transform or blend mode anywhere on this subtree or its ancestors.
-   Any of them forces the compositor to rasterise into an SDR intermediate, which defeats
-   the PQ tagging silently - the picture merely looks washed out, which is exactly the
-   symptom this strip exists to distinguish from. */
-.raw-edit__reference {
-  display: flex;
-  align-items: stretch;
-  background: #000;
-}
-
-.raw-edit__reference img {
-  height: 96px;
-}
-
-.raw-edit__reference-sdr {
-  width: 128px;
-  background: #fff;
-}
-
-.raw-edit__slider {
-  display: flex;
-  gap: var(--gap);
-  align-items: center;
-}
-
-.raw-edit__slider input[type='range'] {
-  flex: 1;
-}
-
-.raw-edit__readout {
-  font-family: var(--mono);
+.raw-edit-stage .stage__content {
+  cursor: default;
 }

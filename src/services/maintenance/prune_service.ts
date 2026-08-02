@@ -2,24 +2,19 @@ import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { Logger } from '../../logger';
 import type { Library } from '../../schemas/libraries';
-import { deleteGeneratedFile } from '../../utils/deletions';
+import { deleteGeneratedDirectory, deleteGeneratedFile } from '../../utils/deletions';
 import { getDataPath } from '../../utils/paths';
-import { renditionDirs } from '../processing/renditions';
+import { RENDITION_EXTENSION, renditionDirs, retiredRenditionDirs } from '../processing/renditions';
 import type { LibrariesRepository } from '../libraries/libraries_repository';
 import type { PhotosRepository } from '../photos/photos_repository';
 
-// The directories holding files named `<photoId>.<ext>`, each with the one
-// extension it is supposed to contain. Both are taken from the same helpers that
-// write the files, so changing an output format cannot leave the sweep looking
-// in the wrong place or keeping the superseded files. Everything else under the
-// data directory (the Bin, the sync lock) is keyed by something other than a
-// photo id and must not be touched.
-function generatedDirs(library: Library): Array<{ dir: string; ext: string }> {
-  const renditions = renditionDirs().map(({ dir, extension }) => ({
-    dir: path.join(getDataPath(library), 'renditions', dir),
-    ext: extension,
-  }));
-  return renditions;
+// The directories holding files named `<photoId>.<ext>`. Taken from the same
+// helper that writes the files, so changing an output format cannot leave the
+// sweep looking in the wrong place. Everything else under the data directory
+// (the Bin, the sync lock) is keyed by something other than a photo id and must
+// not be touched.
+function generatedDirs(library: Library): string[] {
+  return renditionDirs().map((dir) => path.join(getDataPath(library), 'renditions', dir));
 }
 
 const log = new Logger('prune');
@@ -34,11 +29,11 @@ export async function deleteGeneratedFilesFor(library: Library, photoIds: readon
   // is looking for files whose ids it does not know; here the ids are the input,
   // and those directories hold one entry per photo in the library - millions of
   // dirents read to delete a few hundred.
-  for (const { dir, ext } of generatedDirs(library)) {
+  for (const dir of generatedDirs(library)) {
     for (const id of photoIds) {
       // A rendition that was never built is not an error (`rm` is forced), and
       // one that will not go now is not either: the sweep is the backstop.
-      await deleteGeneratedFile(dataPath, path.join(dir, `${id}${ext}`)).catch((err: unknown) => {
+      await deleteGeneratedFile(dataPath, path.join(dir, `${id}${RENDITION_EXTENSION}`)).catch((err: unknown) => {
         log.warn('could not remove a rendition; the sweep will', { id, dir, err });
       });
     }
@@ -71,7 +66,13 @@ export class PruneService {
 
     for (const library of this.libraries.list()) {
       const dataPath = getDataPath(library);
-      for (const { dir, ext } of generatedDirs(library)) {
+      const renditions = path.join(dataPath, 'renditions');
+      // A directory nothing writes to any more holds nothing but orphans, so
+      // every file in one goes: the extension check below is what does it, none
+      // of them being the extension a rendition has now.
+      const retired = retiredRenditionDirs().map((dir) => path.join(renditions, dir));
+
+      for (const dir of [...generatedDirs(library), ...retired]) {
         let files: string[];
         try {
           files = await readdir(dir);
@@ -83,7 +84,7 @@ export class PruneService {
           // A live photo still leaves a file behind when the output format
           // changes: the render is rewritten under the new extension and the
           // old one is never touched again.
-          if (live.has(id) && path.extname(file) === ext) continue;
+          if (live.has(id) && path.extname(file) === RENDITION_EXTENSION) continue;
           const target = path.join(dir, file);
           try {
             bytes += (await stat(target)).size;
@@ -96,6 +97,8 @@ export class PruneService {
           }
         }
       }
+
+      for (const dir of retired) await deleteGeneratedDirectory(dataPath, dir).catch(() => {});
     }
 
     return { removed, bytes };

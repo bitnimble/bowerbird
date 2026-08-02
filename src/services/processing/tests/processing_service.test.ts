@@ -72,7 +72,6 @@ describe('ProcessingService.processUnprocessed', () => {
       needs_renditions: 1,
       library_rendition_source: 'render',
       rendition_hdr: 0,
-      rendition_hdr_video: 0,
     };
   }
 
@@ -103,7 +102,7 @@ describe('ProcessingService.processUnprocessed', () => {
     // caller can turn on, and a tile that quietly followed it would still encode,
     // still be the right size, and show up only as an import that got slower.
     const repo = {
-      listPendingProcessing: jest.fn(() => [{ ...pending('a'), rendition_hdr: 1, rendition_hdr_video: 1 }]),
+      listPendingProcessing: jest.fn(() => [{ ...pending('a'), rendition_hdr: 1 }]),
       markTileBuilt: jest.fn(),
       markRenditionsBuilt: jest.fn(),
       markProcessingFailed: jest.fn(),
@@ -117,9 +116,7 @@ describe('ProcessingService.processUnprocessed', () => {
     const targets = posted.flatMap((job) => job.targets);
     const grid = targets.find((target) => target.rendition === 'grid');
     expect(grid?.sdrFullChroma).toBe(false);
-    // Never HDR, and so never a video twin - which the library did ask for.
     expect(grid?.hdr).toBe(false);
-    expect(grid?.videoOutputPath).toBeNull();
     // The rendition that does take the settings still does, or this would pass with
     // them simply not plumbed through.
     const full = targets.find((target) => target.rendition === 'full');
@@ -137,7 +134,7 @@ describe('ProcessingService.processUnprocessed', () => {
     const seen: { photoId: string; descriptor: Uint8Array }[] = [];
     service.onDescribed((photoId, descriptor) => seen.push({ photoId, descriptor }));
 
-    const library = { id: 'lib', root_path: root, data_path: null, rendition_hdr_video: 0 } as never;
+    const library = { id: 'lib', root_path: root, data_path: null } as never;
     await service.renderOne('/lib/a.arw', 'p1', library, 'grid', false, 'embedded');
 
     expect(seen).toEqual([{ photoId: 'p1', descriptor: DESCRIPTOR }]);
@@ -161,7 +158,7 @@ describe('ProcessingService.processUnprocessed', () => {
     // It rejects rather than throwing, which is also load-bearing: the tile repair
     // calls this fire-and-forget and clears its in-flight set in a `.finally()`.
     const service = new ProcessingService({} as unknown as PhotosRepository, settingsWith({}));
-    const library = { id: 'lib', root_path: '/lib', data_path: null, rendition_hdr_video: 1 } as never;
+    const library = { id: 'lib', root_path: '/lib', data_path: null } as never;
 
     await expect(service.renderOne('/lib/a.arw', 'p1', library, 'grid', true, 'embedded')).rejects.toThrow(
       /grid tile is always SDR/,

@@ -40,7 +40,6 @@ export const LibrarySchema = z.object({
   ordering: OrderingSchema,
   rendition_source: RenditionSourceSchema,
   rendition_hdr: z.boolean(),
-  rendition_hdr_video: z.boolean(),
   include_subfolders: z.boolean(),
   mirror_shoots: z.boolean(),
   // Automatic photo stacking (§19.4). Per library rather than global because one
@@ -96,7 +95,6 @@ export const UpdateLibraryRequestSchema = z.object({
   ordering: OrderingSchema.optional(),
   rendition_source: RenditionSourceSchema.optional(),
   rendition_hdr: z.boolean().optional(),
-  rendition_hdr_video: z.boolean().optional(),
   include_subfolders: z.boolean().optional(),
   mirror_shoots: z.boolean().optional(),
   auto_stack: z.boolean().optional(),

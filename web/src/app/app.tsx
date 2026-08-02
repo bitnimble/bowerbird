@@ -9,7 +9,6 @@ import { BinPage } from '../features/photos/bin_page';
 import { LibraryPhotosPage } from '../features/photos/library_photos_page';
 import { PhotoDetailPage } from '../features/photos/photo_detail_page';
 import { StackTriagePage } from '../features/photos/stack_triage_page';
-import { RawEditPage } from '../features/raw_edit/raw_edit_page';
 import { SettingsPage } from '../features/settings/settings_page';
 import { ShootPhotosPage } from '../features/shoots/shoot_photos_page';
 import { ShootsPage } from '../features/shoots/shoots_page';
@@ -303,8 +302,6 @@ export function App(): JSX.Element {
           <Routes>
             <Route path="/" element={<Home />} />
             <Route path="/settings" element={<SettingsPage />} />
-            {/* A spike, not a feature: does client-side RAW editing hold up in HDR. */}
-            <Route path="/test-raw-editing" element={<RawEditPage />} />
             <Route path="/libraries/:libraryId" element={<LibraryPhotosPage />} />
             <Route path="/libraries/:libraryId/shoots" element={<ShootsPage />} />
             <Route path="/libraries/:libraryId/bin" element={<BinPage />} />

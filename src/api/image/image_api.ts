@@ -6,7 +6,7 @@ import { getOriginalPath, getRenditionPath } from '../../utils/paths';
 import { rawMediaType } from '../../utils/scan';
 import { readEmbeddedJpeg } from '../../services/processing/raw_decoder';
 import { transcodeJpeg } from '../../services/processing/rawshim_job';
-import { isRendition, renditionContentType } from '../../services/processing/renditions';
+import { RENDITION_CONTENT_TYPE, isRendition } from '../../services/processing/renditions';
 import type { BasicPhoto } from '../../services/photos/photos_repository';
 import type { PhotosService } from '../../services/photos/photos_service';
 
@@ -55,18 +55,15 @@ export class ImageApi {
   constructor(private readonly photos: PhotosService) {
     const app = new Hono();
     // One route for every stored rendition, named rather than spelled out per
-    // size: `grid`, `full`, `max`, optionally `/video` for the one-frame AV1 twin
-    // an HDR rendition carries for Firefox (§10.7). Dynamic range is not in the
-    // URL - the library decides it, and a client guessing would ask for a file
-    // that was never built.
-    app.get('/:photoId/renditions/:rendition/:video?', (c) => {
+    // size: `grid`, `full`, `max`. Dynamic range is not in the URL - the library
+    // decides it, and a client guessing would ask for a file that was never
+    // built. There is no video form either, though Firefox watches one: it makes
+    // that itself out of these bytes (§10.7).
+    app.get('/:photoId/renditions/:rendition', (c) => {
       const rendition = c.req.param('rendition') ?? '';
-      const suffix = c.req.param('video');
       if (!isRendition(rendition)) throw new AppError('NOT_FOUND', `unknown rendition: ${rendition}`);
-      if (suffix != null && suffix !== 'video') throw new AppError('NOT_FOUND', `unknown rendition form: ${suffix}`);
-      const video = suffix === 'video';
-      return this.serve(c, renditionContentType(video), (lib, photo) =>
-        getRenditionPath(lib, photo.id, rendition, lib.rendition_hdr, video),
+      return this.serve(c, RENDITION_CONTENT_TYPE, (lib, photo) =>
+        getRenditionPath(lib, photo.id, rendition, lib.rendition_hdr),
       );
     });
     // Served as the camera wrote it, never resized or transcoded into a stored
@@ -140,7 +137,7 @@ export class ImageApi {
     // transcoding one would hand back an SDR tone-map of the picture on screen and
     // call it the same render - and the AVIF is already the format the viewer showed.
     if (library.rendition_hdr) {
-      return download(Bun.file(renditionPath), renditionContentType(false), `${name}.avif`);
+      return download(Bun.file(renditionPath), RENDITION_CONTENT_TYPE, `${name}.avif`);
     }
 
     // One call, given the path: the rendition's own bytes have no business on this

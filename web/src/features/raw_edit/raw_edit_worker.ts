@@ -1,6 +1,9 @@
 /// <reference lib="webworker" />
-import init, { Editor, initThreadPool, reference_png, thread_count } from '../../wasm/rawshim';
+import { avifToMp4 } from 'avif-hdr-video';
+import { describe } from '../../errors';
+import init, { Editor, initThreadPool, thread_count } from '../../wasm/rawshim';
 import { useMemory } from './wasi_stub';
+import type { EditorSpec } from './editor_spec';
 
 // The decode and the grade both run here. On the main thread a 20ms grade would land
 // between the slider's pointer events, which is the one place the jank would be blamed on
@@ -13,26 +16,27 @@ import { useMemory } from './wasi_stub';
 // transferable nor cloneable, so it has to be built on the main thread and fed frames from
 // here. Two paths, no way to unify them.
 //
-// The still sink sidesteps both: a PNG needs no track at either end, only a blob.
+// The two file sinks sidestep both: a PNG or an MP4 needs no track at either end, only a
+// blob.
 
 export type ToWorker =
-  | { type: 'open'; bytes: ArrayBuffer; longEdge: number; tenBit: boolean; still: boolean }
+  | { type: 'open'; bytes: ArrayBuffer; spec: EditorSpec }
   | { type: 'grade'; ev: number; exact: boolean; timestamp: number };
 
 export type FromWorker =
-  | { type: 'ready'; threads: number; reference: Blob }
+  | { type: 'ready'; threads: number }
   | { type: 'track'; track: MediaStreamTrack }
   | { type: 'opened'; width: number; height: number; ms: number; matched: boolean }
-  // Exactly one of `frame` and `still` is set. A frame comes back only when the main
-  // thread owns the generator; where this worker owns it, both are null and the message
-  // just reports the cost.
-  | { type: 'frame'; frame: VideoFrame | null; still: Blob | null; ev: number; ms: number }
+  // At most one of `frame` and `file` is set, and the blob carries its own type. A frame
+  // comes back only when the main thread owns the generator; where this worker owns it,
+  // both are null and the message just reports the cost.
+  | { type: 'frame'; frame: VideoFrame | null; file: Blob | null; ev: number; ms: number }
   | { type: 'failed'; message: string };
 
 let editor: Editor | null = null;
 let memory: WebAssembly.Memory | null = null;
 let tenBit = true;
-let still = false;
+let sink: EditorSpec['sink'] = 'video';
 /** Set only when this worker owns the generator, which is the Safari video path. */
 let writer: WritableStreamDefaultWriter<VideoFrame> | null = null;
 
@@ -49,17 +53,30 @@ async function initialize(): Promise<Initialized> {
   useMemory(instance.memory);
   const requested = Math.max(1, navigator.hardwareConcurrency);
   await initThreadPool(requested);
-  const threads = thread_count();
-  // Built whichever sink is coming, because `ready` precedes `open`. It is a 512x192
-  // patch pair and the LUT behind it is the one every grade builds anyway.
-  const reference = new Blob([reference_png() as BlobPart], { type: 'image/png' });
-  post({ type: 'ready', threads, reference });
+  post({ type: 'ready', threads: thread_count() });
   return { memory: instance.memory };
 }
 
 void initialized.catch((error: unknown) => {
-  post({ type: 'failed', message: error instanceof Error ? error.message : String(error) });
+  post({ type: 'failed', message: describe(error) });
 });
+
+const png = (bytes: Uint8Array): Blob =>
+  new Blob([bytes.slice() as BlobPart], { type: 'image/png' });
+
+/**
+ * The AVIF the editor just encoded, in the container Firefox will composite.
+ *
+ * An AVIF *is* an AV1 frame, so this copies the OBUs into an MP4 rather than encoding
+ * anything - about a millisecond, against the encode that produced them. The same
+ * function the photo view rewraps stored renditions with, so there is one implementation
+ * of the container trick rather than one per caller (DESIGN 10.7.2).
+ *
+ * No copy first, unlike the PNG: the rewrap builds its output in a buffer of its own, so
+ * what reaches the `Blob` is already off the shared heap.
+ */
+const clip = (bytes: Uint8Array): Blob =>
+  new Blob([avifToMp4(bytes) as BlobPart], { type: 'video/mp4' });
 
 /** Builds a worker-side track where the browser has one, and reports whether it did. */
 function openTrack(): boolean {
@@ -73,66 +90,19 @@ function openTrack(): boolean {
   return true;
 }
 
-/**
- * Decodes the RAW's embedded JPEG and hands the pixels to the fit.
- *
- * The browser's decoder rather than a Rust one, because it has a good one and the
- * alternative is another image codec in the module. Everything downstream - the
- * resample, the blur, the pairing, the solve - is `hdr_fit`, the same code the AVIF
- * renditions fit with, so there is no second implementation to drift.
- *
- * False where the file embeds no preview or the fit found too few usable pairs. That is
- * not an error: the grade falls back to its neutral arm exactly as a rendition does.
- */
-async function fitCameraMatch(open: Editor): Promise<boolean> {
-  const jpeg = open.preview_jpeg();
-  if (jpeg.length === 0) return false;
-
-  // Resized on decode, to the edge the renditions fit at. Not an optimisation: the fit
-  // linearises the preview whole into f64 first, and a full-size one is 576MB - more than
-  // wasm32 will allocate, which is what made this decline silently.
-  const edge = open.preview_edge;
-  const probe = await createImageBitmap(new Blob([jpeg as BlobPart], { type: 'image/jpeg' }));
-  const scale = edge / Math.max(probe.width, probe.height);
-  const width = Math.max(1, Math.round(probe.width * scale));
-  const height = Math.max(1, Math.round(probe.height * scale));
-
-  // Resized through a canvas rather than `createImageBitmap`'s resize options: in a
-  // worker those silently produced a 0x0 bitmap here, and the draw is one call anyway.
-  const canvas = new OffscreenCanvas(width, height);
-  const context = canvas.getContext('2d', { willReadFrequently: true });
-  if (context == null) return false;
-  context.drawImage(probe, 0, 0, width, height);
-  probe.close();
-  const bitmap = { width, height };
-
-  const { data } = context.getImageData(0, 0, bitmap.width, bitmap.height);
-
-  // Canvas only hands back RGBA; the fit wants packed RGB.
-  const pixels = bitmap.width * bitmap.height;
-  const rgb = new Uint8Array(pixels * 3);
-  for (let pixel = 0; pixel < pixels; pixel++) {
-    rgb[pixel * 3] = data[pixel * 4] ?? 0;
-    rgb[pixel * 3 + 1] = data[pixel * 4 + 1] ?? 0;
-    rgb[pixel * 3 + 2] = data[pixel * 4 + 2] ?? 0;
-  }
-  return open.fit_camera_match(rgb, bitmap.width, bitmap.height);
-}
-
 scope.onmessage = async ({ data }: MessageEvent<ToWorker>): Promise<void> => {
   try {
     if (data.type === 'open') {
       memory = (await initialized).memory;
-      tenBit = data.tenBit;
-      still = data.still;
-      if (!still) openTrack();
+      tenBit = data.spec.tenBit;
+      sink = data.spec.sink;
+      if (sink === 'video') openTrack();
       const started = performance.now();
-      editor = new Editor(new Uint8Array(data.bytes), data.longEdge, data.tenBit, data.still);
+      editor = new Editor(new Uint8Array(data.bytes), JSON.stringify(data.spec));
       const decoded = performance.now() - started;
-      // The camera's own colour, fitted from its embedded JPEG. `hdr_fit` does the
-      // resampling and the solve; the browser only decodes, because that is the one step
-      // with no pure-Rust path in the module.
-      const matched = await fitCameraMatch(editor);
+      // The camera's own colour, fitted from its embedded JPEG - decode, resample, solve
+      // and all, so the browser fits through the very code the renditions do.
+      const matched = editor.fit_camera_match();
       // Unconditional, and only correct here: the fit is the last thing that reads the
       // decode, and every tick after this grades from the prepared frame instead.
       editor.release_source();
@@ -150,16 +120,20 @@ scope.onmessage = async ({ data }: MessageEvent<ToWorker>): Promise<void> => {
     // it, and a detached one reads as an empty frame rather than throwing.
     const bytes = new Uint8Array(memory.buffer, editor.output_ptr, editor.output_len);
 
-    if (still) {
-      // Copied out, which the shared memory the thread pool runs on makes necessary as
-      // well as prudent: `Blob` will not take a view backed by a `SharedArrayBuffer`.
-      const png = new Blob([bytes.slice() as BlobPart], { type: 'image/png' });
-      post({ type: 'frame', frame: null, still: png, ev: data.ev, ms: performance.now() - started });
+    // Copied out, which the shared memory the thread pool runs on makes necessary as well
+    // as prudent: `Blob` will not take a view backed by a `SharedArrayBuffer`.
+    if (sink !== 'video') {
+      if (bytes.length === 0) throw new Error(`the ${sink} encode produced no bytes`);
+      const file = sink === 'still' ? png(bytes) : clip(bytes);
+      post({ type: 'frame', frame: null, file, ev: data.ev, ms: performance.now() - started });
       return;
     }
 
-    // 10-bit where the browser takes it, 8-bit where it does not - both tagged PQ, which
-    // is what makes the 8-bit path a coarser HDR picture rather than an SDR one.
+    // 10-bit where the browser takes it. The 8-bit arm is reachable only by forcing this
+    // route onto an engine that refuses 10 bits, and it is a diagnostic rather than a
+    // fallback: PQ on 8 bits is tagged the same and composited as HDR by neither of the
+    // two engines that reject 10-bit frames (measured - WebKit tone-maps it, Gecko will
+    // not composite it at all), so nothing is blessed on this arm.
     const frameInit: HdrVideoFrameBufferInit = {
       format: tenBit ? 'I444P10' : 'I444',
       codedWidth: editor.output_width,
@@ -171,11 +145,11 @@ scope.onmessage = async ({ data }: MessageEvent<ToWorker>): Promise<void> => {
 
     if (writer != null) {
       await writer.write(frame);
-      post({ type: 'frame', frame: null, still: null, ev: data.ev, ms: performance.now() - started });
+      post({ type: 'frame', frame: null, file: null, ev: data.ev, ms: performance.now() - started });
       return;
     }
-    post({ type: 'frame', frame, still: null, ev: data.ev, ms: performance.now() - started }, [frame]);
+    post({ type: 'frame', frame, file: null, ev: data.ev, ms: performance.now() - started }, [frame]);
   } catch (e) {
-    post({ type: 'failed', message: e instanceof Error ? e.message : String(e) });
+    post({ type: 'failed', message: describe(e) });
   }
 };

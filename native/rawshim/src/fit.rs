@@ -938,6 +938,11 @@ fn fit_grids(grids: Grids, geometry: Geometry) -> Result<Option<Profile>, String
 /// Single-threaded deliberately. At a few milliseconds there is nothing to win by
 /// spreading it, and the fit's own parallelism is already saturating the pool.
 fn blur(source: &Rgb, sigma: f64) -> Rgb {
+    // **Do not build wasm32 with `+simd128` while this call exists.** libblur 0.24 swaps in a
+    // hand-written wasm kernel under that feature which packs float bits as integers, so most
+    // of the blurred plane comes back black; the fit then finds too few pairs and declines,
+    // and a browser edit silently grades on the neutral arm (DESIGN 21.1). Nothing native
+    // touches that kernel, so the e2e camera-match assertion is the only thing that catches it.
     // Swept against vips at both sigmas the fit uses: sigma 3 wants radius 5 and sigma 6
     // wants 11, so a stack blur's support is twice a Gaussian's standard deviation.
     let radius = (2.0 * sigma - 1.0).round().max(1.0) as u32;

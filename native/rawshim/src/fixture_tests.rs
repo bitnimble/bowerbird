@@ -845,7 +845,7 @@ mod camera_match {
 /// weighted - neither would fail an assertion about shape.
 mod hdr_grade {
     use super::*;
-    use crate::hdr_args::{Chroma, EncodeOptions, Medium};
+    use crate::hdr_args::{Chroma, EncodeOptions};
 
     const QUANTILE: f64 = 0.9;
     const REFERENCE: f64 = 203.0;
@@ -853,12 +853,13 @@ mod hdr_grade {
 
     fn options(peak_nits: f64, max_edge: f64, output_path: &str) -> EncodeOptions {
         EncodeOptions {
-            medium: Medium::Still,
             still_chroma: Chroma::Yuv420,
             output_path: output_path.to_string(),
-            peak_nits,
-            reference_white_nits: REFERENCE,
-            white_quantile: QUANTILE,
+            grade: crate::hdr::Grade {
+                peak_nits,
+                reference_white_nits: REFERENCE,
+                white_quantile: QUANTILE,
+            },
             crf: 40,
             preset: 8,
             // The grade is what is pinned here, and all of these run after it.
@@ -984,7 +985,7 @@ mod hdr_grade {
     /// **The HDR geometry search reads a *finished* render, the way the SDR one does.**
     ///
     /// The defringe and the lateral tier remove the same error, so a tier that measures the
-    /// raw render corrects a fringe the defringe at the end of `encode_pair` removes as
+    /// raw render corrects a fringe the defringe at the end of `encode_still` removes as
     /// well, and the two overshoot. The SDR path fixed that by fitting on the finished
     /// frame; this path kept warp-then-defringe for a while afterwards.
     ///
@@ -1148,10 +1149,9 @@ mod hdr_grade {
         let frame = linear();
         let fitted = matched(&frame);
         for (path, m) in [(&plain, None), (&with_match, fitted.as_ref())] {
-            crate::hdr::encode_pair(
+            crate::hdr::encode_still(
                 crate::hdr::Decode::Borrowed(source(&frame)),
                 &options(PEAK, 640.0, path.to_str().unwrap()),
-                None,
                 m,
             )
             .expect("the encode");
@@ -1169,12 +1169,12 @@ mod hdr_grade {
     ///
     /// **Nothing else checks this, and the failure is silent and total.** The transfer
     /// used to live in the argv - `tin=linear:t=smpte2084:npl=1000` across 48 pinned rows
-    /// - so deleting it broke the pin. It is one call in `encode_pair` now
+    /// - so deleting it broke the pin. It is one call in `encode_still` now
     /// (`tone::encode_pq`), and with it removed the argv pin is unchanged, the grade pin
     /// is unchanged because it pins `graded()` from *before* the transfer, the match test
     /// above still differs because both its arms are equally wrong, and `ffprobe` still
     /// reports `smpte2084` because that is the CICP tag rather than the pixels. Every HDR
-    /// still and every video twin would come out several stops dark, with a green suite.
+    /// still would come out several stops dark, with a green suite.
     ///
     /// So it is measured against the two things the file could be. PQ is a steep curve
     /// near black: a mid-grey that is 0.2 of full scale linear sits near 0.58 in PQ, so
@@ -1188,7 +1188,7 @@ mod hdr_grade {
         let frame = linear();
         let options = options(PEAK, 640.0, path.to_str().unwrap());
         let (graded, _, _) = crate::hdr::graded(&source(&frame), &options, None);
-        crate::hdr::encode_pair(crate::hdr::Decode::Borrowed(source(&frame)), &options, None, None)
+        crate::hdr::encode_still(crate::hdr::Decode::Borrowed(source(&frame)), &options, None)
             .expect("the encode");
 
         // What the file would average at if the samples went out linear, and what it
@@ -1212,40 +1212,6 @@ mod hdr_grade {
             (mean - pq_mean).abs() < (mean - linear_mean).abs(),
             "the still averages {mean:.3}; PQ predicts {pq_mean:.3} and untransformed {linear_mean:.3}",
         );
-    }
-
-    /// The twin carries the sequence header inside its `av1C` box.
-    ///
-    /// **This is the whole reason the remux goes out through a raw OBU stream**, and the
-    /// failure it guards is silent: ffmpeg copies the frame either way and the file
-    /// plays, so nothing short of loading it in Firefox shows that the configuration
-    /// record is empty and the video composites SDR. An `av1C` with no config OBUs is 12
-    /// bytes - 4 of box header, 4 of type, 4 of record - so anything larger means the
-    /// sequence header survived.
-    #[test]
-    fn the_video_twin_carries_its_sequence_header() {
-        let dir = std::env::temp_dir().join("bb-hdr-twin-fixture");
-        std::fs::create_dir_all(&dir).expect("a scratch directory");
-        let still = dir.join("still.avif");
-        let video = dir.join("still.mp4");
-
-        let frame = linear();
-        crate::hdr::encode_pair(
-            crate::hdr::Decode::Borrowed(source(&frame)),
-            &options(PEAK, 640.0, still.to_str().unwrap()),
-            Some(video.to_str().unwrap()),
-            None,
-        )
-        .expect("the encode");
-
-        let bytes = std::fs::read(&video).expect("the twin");
-        let _ = std::fs::remove_dir_all(&dir);
-        let at = bytes
-            .windows(4)
-            .position(|w| w == b"av1C")
-            .expect("the twin has no av1C box at all");
-        let size = u32::from_be_bytes(bytes[at - 4..at].try_into().expect("four bytes"));
-        assert!(size > 12, "av1C is {size} bytes, so it carries no sequence header");
     }
 
     /// The graded samples, held to what the TypeScript produced before this subsystem
@@ -1297,4 +1263,5 @@ mod hdr_grade {
 
         crate::pin::check("hdr_grade.pin.txt", &format!("{}\n", rows.join("\n")));
     }
+
 }

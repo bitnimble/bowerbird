@@ -17,6 +17,11 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "noEmit": true,
+    // Matches the Vite alias: the package is consumed as source in this repo, since its
+    // published `dist` is a build artefact nothing here is required to have made.
+    "paths": {
+      "avif-hdr-video": ["../packages/avif-hdr-video/src/index.ts"]
+    },
     // Standard (TC39) decorators, not experimentalDecorators: MobX 6.11+ wires
     // `@observable accessor x` up on its own, so no makeObservable call is needed.
     "useDefineForClassFields": true

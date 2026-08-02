@@ -87,7 +87,6 @@ export class QualityCheckApi {
               rendition: 'full',
               hdr: false,
               outputPath: file,
-              videoOutputPath: null,
               size: settings.full_rendition_size,
               source: 'render',
               sdrQuantizer: quality,
