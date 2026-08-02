@@ -1,9 +1,10 @@
 // The crate's resampling and pixel maths.
 //
-// libvips is down to encoding and decoding JPEG (`vips`); the reduce that used to go
-// through it lives here now, beside the radial warp and the spline it follows, and the
-// render's denoise and sharpen (§10.9): a guided filter, a Richardson-Lucy deconvolution
-// and the box means and noise estimate they are built on, none of which libvips offers.
+// The reduce that used to go through libvips lives here now, beside the radial warp and
+// the spline it follows, and the render's denoise and sharpen (§10.9): a guided filter, a
+// Richardson-Lucy deconvolution and the box means and noise estimate they are built on,
+// none of which libvips offered. The codecs are their own modules - `jpeg` in Rust,
+// `avif` over libavif - and `decode` below is the one entry point that picks between them.
 //
 // Both targets run this code. That is the point: the wasm build once had its own
 // resampler and its own blur, and the two quietly fitted different lens profiles from
@@ -314,12 +315,7 @@ pub fn decode(bytes: &[u8], long_edge: usize) -> Result<Rgb, String> {
     let is_avif = bytes.len() > 12 && &bytes[4..8] == b"ftyp";
     match (bytes.starts_with(&[0xFF, 0xD8]), is_avif) {
         (true, _) => crate::jpeg::decode(bytes, long_edge),
-        // Unbounded is what the download asks for, and taking that through `resize_to_fit`
-        // regardless would copy a whole rendition to do nothing.
-        (_, true) => crate::avif::decode(bytes).map(|image| match long_edge {
-            0 => image,
-            edge => resize_to_fit(image.as_ref(), edge),
-        }),
+        (_, true) => crate::avif::decode(bytes).map(|image| fitted(image, long_edge)),
         _ => Err("not a JPEG or an AVIF".to_string()),
     }
 }
@@ -330,6 +326,17 @@ pub fn decode(bytes: &[u8], long_edge: usize) -> Result<Rgb, String> {
 /// frame it came from, and a fit grid exists to make the comparison cheaper - and a body
 /// that embeds a preview smaller than the fit grid would otherwise have it upscaled into
 /// invented detail.
+/// `resize_to_fit` for a frame the caller owns, handing it straight back when it already
+/// fits. Worth its own function because the copy it avoids is the whole frame - an
+/// unbounded decode of a 61MP embedded preview is 170MB of it.
+pub fn fitted(frame: Rgb, long_edge: usize) -> Rgb {
+    match long_edge {
+        0 => frame,
+        edge if frame.width.max(frame.height) <= edge => frame,
+        edge => resize_to_fit(frame.as_ref(), edge),
+    }
+}
+
 pub fn resize_to_fit(source: RgbRef<'_>, long_edge: usize) -> Rgb {
     let longest = source.width.max(source.height);
     if long_edge == 0 || longest <= long_edge {

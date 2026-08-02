@@ -33,7 +33,7 @@ use crate::rgb::{Rgb, RgbRef};
 /// embeds a *full-resolution* preview - 9504x6336, 5-14MB of JPEG - and the grid tile is
 /// 800px, so decoding it whole spends ~250-540ms to discard 99% of what it produced.
 /// libjpeg's 1/2, 1/4 and 1/8 DCT scaling is the way out of that, and `Decoder::scale`
-/// picks the largest of those factors that still covers the request.
+/// picks the coarsest of those factors that still covers the request.
 ///
 /// Going all the way to the target rather than leaving the reduce a factor of two to work
 /// with is a deliberate quality trade. The scaled IDCT and a Lanczos3 reduce are different
@@ -48,19 +48,16 @@ use crate::rgb::{Rgb, RgbRef};
 pub fn decode(bytes: &[u8], long_edge: usize) -> Result<Rgb, String> {
     let mut decoder = jpeg_decoder::Decoder::new(std::io::Cursor::new(bytes));
     decoder.read_info().map_err(|e| format!("not a readable JPEG: {e}"))?;
-    let header = decoder.info().ok_or("the JPEG has no frame header")?;
 
     if long_edge > 0 {
-        // Per axis rather than a square request: `scale` takes the smallest factor that
-        // covers *either* axis, so asking for a square would let a landscape frame come
-        // back one factor larger than it needs to be.
-        let longest = u64::from(header.width.max(header.height));
-        let bound = |edge: u16| -> u16 {
-            let scaled = u64::from(edge) * long_edge as u64 / longest.max(1);
-            scaled.clamp(1, u64::from(u16::MAX)) as u16
-        };
+        // The bound on **both** axes, not a proportional pair. `scale` takes the smallest
+        // factor covering *either* axis, so a square request is exactly the longest-axis
+        // test, while a proportional one lets the floored short edge satisfy that `or` a
+        // factor early: 6392x4261 asked for (800, 533) comes back 799x533, under the
+        // bound, because 533 was already met at 1:1.
+        let edge = u16::try_from(long_edge).unwrap_or(u16::MAX);
         decoder
-            .scale(bound(header.width), bound(header.height))
+            .scale(edge, edge)
             .map_err(|e| format!("the JPEG would not scale during the decode: {e}"))?;
     }
 
@@ -84,15 +81,11 @@ pub fn decode(bytes: &[u8], long_edge: usize) -> Result<Rgb, String> {
 
     let decoded = Rgb { width: usize::from(scaled.width), height: usize::from(scaled.height), data };
     // The DCT gets within a factor of two; a proper reduce finishes the job. Reduced
-    // before the rotation rather than after, so the transpose moves the smaller image -
-    // on a 60MP portrait preview that ordering is most of the cost of the call. Both
-    // stages take the frame by value and hand back the same one when they have nothing to
-    // do, because an unbounded decode of that preview is 170MB per copy avoided.
-    let reduced = match long_edge {
-        0 => decoded,
-        edge => crate::image::resize_to_fit(decoded.as_ref(), edge),
-    };
-    Ok(turn.applied(reduced))
+    // before the rotation rather than after, so the transpose moves the smaller image - on
+    // a 60MP portrait preview that ordering is most of the cost of the call. Both stages
+    // take the frame by value and hand back the same one when there is nothing to do,
+    // because an unbounded decode of that preview is 170MB per copy avoided.
+    Ok(turn.applied(crate::image::fitted(decoded, long_edge)))
 }
 
 /// Encodes interleaved 8-bit RGB.
@@ -221,9 +214,15 @@ fn orientation(exif: &[u8]) -> Orientation {
     (0..u64::from(entries))
         .map(|i| ifd + 2 + i * 12)
         .find(|entry| short(*entry) == Some(0x0112))
-        // A SHORT sits in the first two bytes of the 4-byte value field, whichever end
-        // of it the byte order puts first.
-        .and_then(|entry| short(entry + 8))
+        .and_then(|entry| match short(entry + 2) {
+            // A SHORT sits in the first two bytes of the 4-byte value field, whichever
+            // end of it the byte order puts first - so reading one as though the field
+            // were a LONG gets 0 on a big-endian file. The spec says SHORT and cameras
+            // write SHORT, but a writer that used LONG would silently read as upright.
+            Some(3) => short(entry + 8),
+            Some(4) => long(entry + 8).and_then(|value| u16::try_from(value).ok()),
+            _ => None,
+        })
         .map(Orientation::from_tag)
         .unwrap_or(Orientation::AsStored)
 }
@@ -284,8 +283,8 @@ mod tests {
         assert_eq!((big.width, big.height), (1600, 900));
     }
 
-    /// The DCT can only scale by 1/2, 1/4 and 1/8, and undershooting is the failure that
-    /// matters: the reduce afterwards would be an upscale.
+    /// The DCT can only scale by 1/2, 1/4 and 1/8, and a frame that comes back under the
+    /// bound cannot be brought up to it: the reduce afterwards only ever shrinks.
     #[test]
     fn the_scaled_decode_never_undershoots_the_bound() {
         // 96x64 shrinks by 1/8 exactly, so each bound lands on a different factor.
@@ -294,6 +293,15 @@ mod tests {
             let decoded = decode(&jpeg, bound).unwrap();
             assert_eq!(decoded.width, expected, "bound {bound}");
             assert_eq!(decoded.data.len(), decoded.width * decoded.height * 3);
+        }
+
+        // A bound a pixel above what 1:1 covers, which is where asking per axis went
+        // wrong: 900/8 met a proportional short-edge request of 113 at 1:1, so the frame
+        // came back 200 wide against a bound of 201.
+        let oblong = encode(gradient(1600, 900).as_ref(), 92).unwrap();
+        for bound in [199, 200, 201, 400, 401] {
+            let decoded = decode(&oblong, bound).unwrap();
+            assert_eq!(decoded.width, bound, "bound {bound}");
         }
     }
 
@@ -329,6 +337,14 @@ mod tests {
         let big = [b'M', b'M', 0x00, 0x2A, 0, 0, 0, 8, 0, 1, 0x01, 0x12, 0, 3, 0, 0, 0, 1, 0, 6, 0, 0];
         assert_eq!(orientation(&little), Orientation::Rotate90);
         assert_eq!(orientation(&big), Orientation::Rotate90);
+
+        // The same field written as a LONG (type 4), which reads as 0 - and so as
+        // upright - if the value is taken as a SHORT regardless of the type.
+        let mut long = big;
+        long[13] = 4;
+        long[19] = 0;
+        long[21] = 6;
+        assert_eq!(orientation(&long), Orientation::Rotate90);
         // Truncated, empty and non-TIFF payloads all mean "as stored" rather than a panic.
         assert_eq!(orientation(&little[..12]), Orientation::AsStored);
         assert_eq!(orientation(b""), Orientation::AsStored);
