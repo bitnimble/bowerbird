@@ -834,10 +834,8 @@ pub fn decode_embedded_frame(path: &str, long_edge: u32) -> Option<frame::Frame>
         #[expect(unsafe_code)]
         unsafe {
             with_embedded_jpeg(path.as_ptr(), |jpeg| match long_edge {
-                0 => vips::Pipeline::decode_upright(jpeg).and_then(vips::Pipeline::finish),
-                edge => {
-                    vips::Pipeline::thumbnail(jpeg, edge as usize).and_then(vips::Pipeline::finish)
-                }
+                0 => vips::decode_upright(jpeg),
+                edge => vips::thumbnail(jpeg, edge as usize),
             })
         }
     })?;
@@ -906,44 +904,27 @@ pub fn fit_hdr_for(
     })
 }
 
-/// Fits an image to a longest edge and writes it as an AVIF, in that order.
+/// Writes an image as an AVIF, at the size it arrives.
 ///
-/// The resize is skipped where the frame already fits, which is not the rare case:
-/// the job builds its base at the largest size it asks for, so the biggest rendition
-/// of every photo arrives here already the right size (10.1).
+/// Sizing belongs to whoever built the frame, not here: the SDR base is resized once
+/// in `job::run` and an embedded preview is shrunk during its JPEG decode, so every
+/// caller already hands over final pixels. A resize at the encode would also land
+/// after `render_base`'s sharpen, which is calibrated for the size it ran at (10.1).
 #[cfg(not(target_arch = "wasm32"))]
 pub fn save_avif_frame(
     source: rgb::RgbRef<'_>,
-    long_edge: u32,
     quantizer: i32,
     effort: i32,
     full_chroma: bool,
     out_path: &str,
 ) -> Result<(), String> {
-    vips::init();
     // libvips counted effort up from 0 as *fastest*; libavif counts speed down from
     // 10 as fastest. Same knob, opposite ends.
     let speed = (10 - effort).clamp(0, 10);
-    if long_edge == 0 || source.width.max(source.height) <= long_edge as usize {
-        return avif::encode_rendition(
-            source.data.into(),
-            source.width,
-            source.height,
-            quantizer,
-            speed,
-            full_chroma,
-            out_path,
-        );
-    }
-    let resized = vips::Pipeline::from_rgb(source)
-        .and_then(|pipeline| pipeline.resize_to_fit(long_edge as usize))
-        .and_then(vips::Pipeline::finish)
-        .map_err(|e| format!("could not resize for the encode: {e}"))?;
-    let (width, height) = (resized.width, resized.height);
     avif::encode_rendition(
-        resized.data.into(),
-        width,
-        height,
+        source.data.into(),
+        source.width,
+        source.height,
         quantizer,
         speed,
         full_chroma,
@@ -1026,9 +1007,7 @@ pub fn decode_embedded_rgb(path: &str, long_edge: usize) -> Option<rgb::Rgb> {
     // SAFETY: the CString outlives the call.
     #[expect(unsafe_code)]
     let decoded = unsafe {
-        with_embedded_jpeg(c_path.as_ptr(), |bytes| {
-            vips::Pipeline::thumbnail(bytes, long_edge).and_then(vips::Pipeline::finish)
-        })
+        with_embedded_jpeg(c_path.as_ptr(), |bytes| vips::thumbnail(bytes, long_edge))
     };
     match decoded {
         Some(Ok(image)) => Some(image),

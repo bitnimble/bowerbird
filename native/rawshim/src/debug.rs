@@ -528,8 +528,7 @@ pub fn run(command: &Command) -> Result<Reply, String> {
         Command::ComparePsnr { image_path, raw_path } => {
             let encoded = std::fs::read(image_path)
                 .map_err(|e| format!("could not read {image_path}: {e}"))?;
-            let written = crate::vips::Pipeline::decode_upright(&encoded)
-                .and_then(crate::vips::Pipeline::finish)
+            let written = crate::vips::decode_upright(&encoded)
                 .map_err(|e| format!("could not decode {image_path}: {e}"))?;
             let expected = crate::decode_frame(raw_path, 8, false, 0).ok_or("could not decode")?;
             let expected = expected.rgb8().ok_or("the comparison needs an 8-bit decode")?;
@@ -577,8 +576,7 @@ pub fn run(command: &Command) -> Result<Reply, String> {
                 .iter()
                 .map(|path| {
                     let encoded = std::fs::read(path).map_err(|e| format!("could not read {path}: {e}"))?;
-                    crate::vips::Pipeline::decode_upright(&encoded)
-                        .and_then(crate::vips::Pipeline::finish)
+                    crate::vips::decode_upright(&encoded)
                         .map_err(|e| format!("could not decode {path}: {e}"))
                 })
                 .collect::<Result<_, String>>()?;
@@ -650,8 +648,7 @@ fn tile_crops(
         .map(|path| {
             let encoded =
                 std::fs::read(path).map_err(|e| format!("could not read {path}: {e}"))?;
-            crate::vips::Pipeline::decode_upright(&encoded)
-                .and_then(crate::vips::Pipeline::finish)
+            crate::vips::decode_upright(&encoded)
                 .map_err(|e| format!("could not decode {path}: {e}"))
         })
         .collect::<Result<_, String>>()?;
@@ -704,8 +701,7 @@ fn tile_crops(
         }
     }
     let tiled = crate::vips::Rgb { width, height: side, data: out };
-    let encoded = crate::vips::Pipeline::from_rgb(tiled.as_ref())
-        .and_then(|pipeline| pipeline.encode_jpeg(92))
+    let encoded = crate::vips::encode_jpeg(tiled.as_ref(), 92)
         .map_err(|e| format!("could not encode the tile: {e}"))?;
     std::fs::write(output_path, encoded)
         .map_err(|e| format!("could not write {output_path}: {e}"))?;
@@ -755,13 +751,7 @@ fn defringe_sweep(
     let source = decoded.rgb8().ok_or("the sweep needs an 8-bit decode")?;
     // Resized here for the same reason `job.rs` does it before the finish: every constant
     // the stages use is in pixels of the frame they read.
-    let render = match source.width.max(source.height) > size {
-        false => crate::vips::Rgb { width: source.width, height: source.height, data: source.data.to_vec() },
-        true => crate::vips::Pipeline::from_rgb(source)
-            .and_then(|pipeline| pipeline.resize_to_fit(size))
-            .and_then(crate::vips::Pipeline::finish)
-            .map_err(|e| format!("could not resize: {e}"))?,
-    };
+    let render = crate::image::resize_to_fit(source, size);
     let preview = crate::decode_embedded_rgb(path, size).ok_or("no embedded preview")?;
     let lateral = crate::ffi::recorded_lateral(path);
     let c_path = std::ffi::CString::new(path).map_err(|_| "a path with a nul in it")?;

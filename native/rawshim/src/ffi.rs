@@ -9,7 +9,7 @@
 
 use crate::fit::{self, Profile};
 use crate::job;
-use crate::vips::{self, Pipeline};
+use crate::vips;
 use std::ffi::{c_char, CStr};
 
 /// Runs one rendition job. The whole boundary, and the shape every other entry
@@ -111,11 +111,12 @@ pub unsafe extern "C" fn bb_transcode_jpeg(
     let Ok(path) = (unsafe { CStr::from_ptr(path) }).to_str() else { return -1 };
     let encoded = crate::guard("bb_transcode_jpeg", None, || {
         let bytes = std::fs::read(path).ok()?;
-        let pipeline = match long_edge {
-            0 => Pipeline::decode_upright(&bytes),
-            edge => Pipeline::thumbnail(&bytes, edge as usize),
-        };
-        pipeline.and_then(|p| p.encode_jpeg(quality)).ok()
+        let decoded = match long_edge {
+            0 => vips::decode_upright(&bytes),
+            edge => vips::thumbnail(&bytes, edge as usize),
+        }
+        .ok()?;
+        vips::encode_jpeg(decoded.as_ref(), quality).ok()
     });
     let Some(encoded) = encoded else { return -1 };
 
@@ -390,8 +391,8 @@ pub extern "C" fn bb_selftest() -> i32 {
     if graded.data.iter().all(|value| *value == 0) {
         return -1;
     }
-    match Pipeline::from_rgb(graded.as_ref()).and_then(|p| p.resize_to_fit(32)).and_then(Pipeline::finish) {
-        Ok(small) if small.width == 32 => 0,
+    match crate::image::resize_to_fit(graded.as_ref(), 32).width {
+        32 => 0,
         _ => -1,
     }
 }

@@ -212,9 +212,7 @@ pub fn fit_all(
             // twice the grid it is shrunk to 1500 and brought down by a real reduce, and
             // sharing costs the set 4.605 to 4.622 mean chroma deltaE against ~90ms saved
             // (`fit::fit_from_preview`).
-            let preview = crate::vips::Pipeline::thumbnail(jpeg, hdr_fit::sample_long_edge())
-                .and_then(crate::vips::Pipeline::finish)
-                .ok()?;
+            let preview = crate::vips::thumbnail(jpeg, hdr_fit::sample_long_edge()).ok()?;
             let lateral = crate::ffi::recorded_lateral(raw_path);
             fit_all_from_preview(source, quantile, geometry, finished, &preview, lateral)
         })
@@ -222,7 +220,6 @@ pub fn fit_all(
     fitted.flatten()
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 pub fn fit_all_from_preview(
     source: &Source<'_>,
     quantile: f64,
@@ -231,49 +228,6 @@ pub fn fit_all_from_preview(
     preview: &crate::rgb::Rgb,
     lateral: Option<[Vec<f64>; 2]>,
 ) -> Option<(crate::fit::Profile, HdrMatch)> {
-    fit_all_with(
-        source,
-        quantile,
-        geometry,
-        finished,
-        preview,
-        lateral,
-        crate::fit::fit_from_preview,
-    )
-}
-
-pub fn fit_all_from_pixels(
-    source: &Source<'_>,
-    quantile: f64,
-    geometry: crate::fit::Geometry,
-    finished: image::Strengths,
-    preview: &crate::rgb::Rgb,
-    lateral: Option<[Vec<f64>; 2]>,
-) -> Option<(crate::fit::Profile, HdrMatch)> {
-    fit_all_with(
-        source,
-        quantile,
-        geometry,
-        finished,
-        preview,
-        lateral,
-        crate::fit::fit_from_pixels,
-    )
-}
-
-fn fit_all_with(
-    source: &Source<'_>,
-    quantile: f64,
-    geometry: crate::fit::Geometry,
-    finished: image::Strengths,
-    preview: &crate::rgb::Rgb,
-    lateral: Option<[Vec<f64>; 2]>,
-    fit_profile: for<'render, 'preview> fn(
-        crate::rgb::RgbRef<'render>,
-        crate::rgb::RgbRef<'preview>,
-        crate::fit::Geometry,
-    ) -> Result<Option<crate::fit::Profile>, String>,
-) -> Option<(crate::fit::Profile, HdrMatch)> {
     let levels = tone::levels(source.samples, quantile);
     if !(levels.white > 0.0) {
         return None;
@@ -281,7 +235,7 @@ fn fit_all_with(
     let plane = hdr_fit::fit_plane(source.samples, source.width, source.height, preview.width);
     let mut render = hdr_fit::render_srgb8(&plane, levels.white);
     image::finish(&mut render.data, render.width, render.height, finished);
-    let mut profile = fit_profile(render.as_ref(), preview.as_ref(), geometry)
+    let mut profile = crate::fit::fit_from_preview(render.as_ref(), preview.as_ref(), geometry)
         .ok()
         .flatten()?;
     crate::fit::with_lateral(&mut profile, render.as_ref(), lateral);

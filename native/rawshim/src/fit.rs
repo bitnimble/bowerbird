@@ -11,9 +11,7 @@
 // capacity the colour model is given - a 33^3 LUT included - because no tone curve
 // can map a pixel onto a different pixel's colour.
 
-#![cfg_attr(target_arch = "wasm32", allow(dead_code))]
-
-use crate::image::{polynomial_knots, warp};
+use crate::image::{polynomial_knots, resize, resize_to_fit, warp};
 use crate::parallel::*;
 use crate::rgb::{Rgb, RgbRef};
 #[cfg(not(target_arch = "wasm32"))]
@@ -664,10 +662,9 @@ fn score_luma(pairs: &Pairs, phase: Phase, gain: Option<&Gain>, curve: &[u8; 256
 }
 
 fn corresponding(grid: &Grid, knots: &[f64], crop: f64) -> Option<Pairs> {
-    // No libvips in here, deliberately. Both planes were blurred once when the grid
-    // was built, so a candidate is a warp and a pair pass over one buffer - where
-    // blurring per candidate meant converting to a VipsImage and materialising back
-    // twice each time, which cost more than the blur.
+    // Nothing is filtered in here. Both planes were blurred once when the grid was
+    // built, so a candidate is a warp and a pair pass over one buffer; blurring per
+    // candidate cost more than every other part of the search put together.
     //
     // Blurring before the warp rather than after is the same picture for this
     // purpose: the filter exists to remove detail neither image can be trusted on,
@@ -805,8 +802,7 @@ fn chosen(found: Option<(Vec<f64>, f64, f64)>, baseline: f64, source: u32) -> (O
 /// Fits the transform taking `render` to `jpeg_bytes`: the lens, and then the colour.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn fit(render: RgbRef<'_>, jpeg_bytes: &[u8], geometry: Geometry) -> Result<Option<Profile>, String> {
-    let preview = vips::Pipeline::thumbnail(jpeg_bytes, crate::hdr_fit::sample_long_edge())?
-        .finish()?;
+    let preview = vips::thumbnail(jpeg_bytes, crate::hdr_fit::sample_long_edge())?;
     let Some(mut profile) = fit_from_preview(render, preview.as_ref(), geometry)? else {
         return Ok(None);
     };
@@ -821,9 +817,7 @@ pub fn fit(render: RgbRef<'_>, jpeg_bytes: &[u8], geometry: Geometry) -> Result<
     // the render arrived at 571x855 against an 855x1280 preview and the pass that exists
     // to see small saturated objects silently never ran - on every portrait frame, and on
     // both fixtures, which is why no test noticed.
-    let sampled = vips::Pipeline::from_rgb(render)?
-        .resize_exact(preview.width, preview.height)?
-        .finish()?;
+    let sampled = resize(render, preview.width, preview.height);
     profile.colour = crate::hdr_fit::fit_display(&sampled, &preview, &profile.lens());
 
     // The gate is on the colour, so it belongs on the route that applies the colour. A
@@ -859,25 +853,13 @@ pub fn fit(render: RgbRef<'_>, jpeg_bytes: &[u8], geometry: Geometry) -> Result<
 /// deltaE. What is shared now is not that. The colour fit needs twice the grid, so the
 /// preview is DCT-shrunk only to 1500 and brought to 1280 by a real reduce, leaving this
 /// a properly filtered resize down to its own 640 rather than a DCT approximation of one.
-#[cfg(not(target_arch = "wasm32"))]
 pub fn fit_from_preview(
     render: RgbRef<'_>,
     preview: RgbRef<'_>,
     geometry: Geometry,
 ) -> Result<Option<Profile>, String> {
-    let jpeg_full = vips::Pipeline::from_rgb(preview)?
-        .resize_to_fit(FIT_LONG_EDGE)?
-        .blur(FIT_BLUR_SIGMA)?
-        .finish()?;
-    fit_against_vips(render, jpeg_full, geometry)
-}
+    let jpeg_full = blur(&resize_to_fit(preview, FIT_LONG_EDGE), FIT_BLUR_SIGMA);
 
-#[cfg(not(target_arch = "wasm32"))]
-fn fit_against_vips(
-    render: RgbRef<'_>,
-    jpeg_full: Rgb,
-    geometry: Geometry,
-) -> Result<Option<Profile>, String> {
     // Twice the fit grid, so the warp resamples from prefiltered pixels: warping
     // straight from 60MP with bilinear taps would alias, and resizing after the
     // warp would blur the geometry being measured.
@@ -890,38 +872,12 @@ fn fit_against_vips(
     // the residual is measuring the difference in blur rather than in colour.
     let source_sigma = FIT_BLUR_SIGMA * (source_width as f64 / jpeg_full.width as f64);
     let full = Grid {
-        source: vips::Pipeline::from_rgb(render)?
-            .resize_exact(source_width, source_height.max(1))?
-            .blur(source_sigma)?
-            .finish()?,
+        source: blur(&resize(render, source_width, source_height.max(1)), source_sigma),
         jpeg: jpeg_full,
     };
     let search = Grid {
-        source: vips::Pipeline::from_rgb(full.source.as_ref())?
-            .resize_exact(full.source.width / 2, full.source.height / 2)?
-            .finish()?,
-        jpeg: vips::Pipeline::from_rgb(full.jpeg.as_ref())?
-            .resize_exact(full.jpeg.width / 2, full.jpeg.height / 2)?
-            .finish()?,
-    };
-    fit_grids(Grids { full, search }, geometry)
-}
-
-pub fn fit_from_pixels(
-    render: RgbRef<'_>,
-    preview: RgbRef<'_>,
-    geometry: Geometry,
-) -> Result<Option<Profile>, String> {
-    let (width, height) = fit_dimensions(preview.width, preview.height, FIT_LONG_EDGE);
-    let jpeg_full = blur(&warp(preview, width, height, &[], 1.0), FIT_BLUR_SIGMA);
-    let source_width = jpeg_full.width * 2;
-    let source_height = ((render.height as f64 / render.width as f64) * source_width as f64).round() as usize;
-    let source_sigma = FIT_BLUR_SIGMA * (source_width as f64 / jpeg_full.width as f64);
-    let resized = warp(render, source_width, source_height.max(1), &[], 1.0);
-    let full = Grid { source: blur(&resized, source_sigma), jpeg: jpeg_full };
-    let search = Grid {
-        source: warp(full.source.as_ref(), full.source.width / 2, full.source.height / 2, &[], 1.0),
-        jpeg: warp(full.jpeg.as_ref(), full.jpeg.width / 2, full.jpeg.height / 2, &[], 1.0),
+        source: resize(full.source.as_ref(), full.source.width / 2, full.source.height / 2),
+        jpeg: resize(full.jpeg.as_ref(), full.jpeg.width / 2, full.jpeg.height / 2),
     };
     fit_grids(Grids { full, search }, geometry)
 }
@@ -971,58 +927,36 @@ fn fit_grids(grids: Grids, geometry: Geometry) -> Result<Option<Profile>, String
     }))
 }
 
-fn fit_dimensions(width: usize, height: usize, long_edge: usize) -> (usize, usize) {
-    let longest = width.max(height).max(1);
-    if longest <= long_edge {
-        return (width, height);
-    }
-    let scaled = |dimension: usize| {
-        usize::try_from(dimension as u64 * long_edge as u64 / longest as u64)
-            .expect("a fit dimension must fit the address space")
-            .max(1)
-    };
-    (scaled(width), scaled(height))
-}
-
+/// Stack blur, the fit's prefilter on both planes of every grid.
+///
+/// Not a Gaussian, and it does not need to be: both planes of a grid are filtered the same
+/// way, so the prefilter only has to suppress noise and detail the residual should not be
+/// measuring. What it does need is to land where the vips `gaussblur` it replaces landed,
+/// or the pins move, and it does - closer than the separable f64 convolution that stood in
+/// for it on wasm (mean 0.60 against 0.95 of 255 at sigma 6), for a 190th of the CPU:
+/// 1.75ms against 338ms on a 1280x853 plane, and 6.5ms for vips itself. The f64 version
+/// cost more CPU than the whole rest of the fit.
+///
+/// Single-threaded deliberately. At a few milliseconds there is nothing to win by
+/// spreading it, and the fit's own parallelism is already saturating the pool.
 fn blur(source: &Rgb, sigma: f64) -> Rgb {
-    let radius = (sigma * 3.0).ceil() as usize;
-    let mut taps: Vec<f64> = (0..=radius)
-        .map(|distance| (-((distance * distance) as f64) / (2.0 * sigma * sigma)).exp())
-        .collect();
-    let total = taps[0] + 2.0 * taps[1..].iter().sum::<f64>();
-    taps.iter_mut().for_each(|tap| *tap /= total);
-
-    let (width, height) = (source.width, source.height);
-    let mut horizontal = vec![0.0f64; source.data.len()];
-    horizontal.par_chunks_mut(width * 3).enumerate().for_each(|(y, row)| {
-        for x in 0..width {
-            for channel in 0..3 {
-                let mut value = taps[0] * f64::from(source.data[(y * width + x) * 3 + channel]);
-                for (distance, tap) in taps.iter().enumerate().skip(1) {
-                    let left = (y * width + x.saturating_sub(distance)) * 3 + channel;
-                    let right = (y * width + (x + distance).min(width - 1)) * 3 + channel;
-                    value += tap * (f64::from(source.data[left]) + f64::from(source.data[right]));
-                }
-                row[x * 3 + channel] = value;
-            }
-        }
-    });
-
-    let mut data = vec![0u8; source.data.len()];
-    data.par_chunks_mut(width * 3).enumerate().for_each(|(y, row)| {
-        for x in 0..width {
-            for channel in 0..3 {
-                let mut value = taps[0] * horizontal[(y * width + x) * 3 + channel];
-                for (distance, tap) in taps.iter().enumerate().skip(1) {
-                    let above = (y.saturating_sub(distance) * width + x) * 3 + channel;
-                    let below = ((y + distance).min(height - 1) * width + x) * 3 + channel;
-                    value += tap * (horizontal[above] + horizontal[below]);
-                }
-                row[x * 3 + channel] = value.clamp(0.0, 255.0).round() as u8;
-            }
-        }
-    });
-    Rgb { width, height, data }
+    // Swept against vips at both sigmas the fit uses: sigma 3 wants radius 5 and sigma 6
+    // wants 11, so a stack blur's support is twice a Gaussian's standard deviation.
+    let radius = (2.0 * sigma - 1.0).round().max(1.0) as u32;
+    let mut data = source.data.clone();
+    let mut image = libblur::BlurImageMut::borrow(
+        &mut data,
+        source.width as u32,
+        source.height as u32,
+        libblur::FastBlurChannels::Channels3,
+    );
+    libblur::stack_blur(
+        &mut image,
+        libblur::AnisotropicRadius::new(radius),
+        libblur::ThreadingPolicy::Single,
+    )
+    .expect("a stack blur over a 3-channel plane it was handed the dimensions of");
+    Rgb { width: source.width, height: source.height, data }
 }
 
 /// Resolves the lateral aberration and folds it into the profile.
@@ -1197,6 +1131,44 @@ mod tests {
             }
         }
         Rgb { width, height, data }
+    }
+
+    /// Noise, hard edges and a gradient: content a blur has something to flatten.
+    fn textured(width: usize, height: usize) -> Rgb {
+        let mut data = vec![0u8; width * height * 3];
+        let mut seed = 0x2545_F491_4F6C_DD1Du64;
+        for y in 0..height {
+            for x in 0..width {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                let noise = ((seed >> 40) & 0x3F) as f64 - 32.0;
+                let edge = if (x / 37 + y / 41) % 2 == 0 { 45.0 } else { 0.0 };
+                let i = (y * width + x) * 3;
+                for (c, base) in [70.0, 110.0, 150.0].into_iter().enumerate() {
+                    let v = base + edge + noise + 40.0 * ((x + c * 37) as f64 / width as f64);
+                    data[i + c] = v.clamp(0.0, 255.0) as u8;
+                }
+            }
+        }
+        Rgb { width, height, data }
+    }
+
+    #[test]
+    fn blur_flattens_detail_without_shifting_the_average() {
+        let source = textured(64, 64);
+        let out = blur(&source, 3.0);
+        assert_eq!((out.width, out.height), (64, 64));
+        let mean = |d: &[u8]| d.iter().map(|v| u64::from(*v)).sum::<u64>() / d.len() as u64;
+        assert!(
+            (mean(&source.data) as i64 - mean(&out.data) as i64).abs() < 3,
+            "a blur should not move the overall level"
+        );
+        let spread = |d: &[u8]| {
+            let (lo, hi) = d.iter().fold((255u8, 0u8), |(lo, hi), v| (lo.min(*v), hi.max(*v)));
+            hi - lo
+        };
+        assert!(spread(&out.data) < spread(&source.data), "a blur should flatten detail");
     }
 
     #[test]

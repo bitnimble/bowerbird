@@ -220,7 +220,7 @@ impl Editor {
             (_, Some(knots)) => crate::fit::Geometry::Recorded(knots),
             (_, None) => crate::fit::Geometry::Unstated,
         };
-        self.matched = crate::hdr::fit_all_from_pixels(
+        self.matched = crate::hdr::fit_all_from_preview(
             &source,
             WHITE_QUANTILE,
             geometry,

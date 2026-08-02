@@ -67,8 +67,7 @@ const INJECTED_CORNER: f64 = 0.65;
 /// that wants a gain has to inject one rather than fit the fixture and hope.
 fn injected_falloff() -> crate::fit::Profile {
     let preview = crate::decode_embedded_rgb(sony().to_str().unwrap(), 0).expect("a preview");
-    let target = crate::vips::Pipeline::from_rgb(falloff(&preview, INJECTED_CORNER).as_ref())
-        .and_then(|p| p.encode_jpeg(95))
+    let target = crate::vips::encode_jpeg(falloff(&preview, INJECTED_CORNER).as_ref(), 95)
         .expect("the injected target encodes");
     let render = decode(&sony(), 8, false, 0);
     // Uncorrected skips the geometry search, so nothing but the falloff is in play.
@@ -627,8 +626,7 @@ mod camera_match {
         // Scaled to fill, which is the half of the injection that makes it a picture a
         // camera could have produced: one that left the corners black would ask the fit
         // for a geometry it correctly refuses to consider.
-        let target = crate::vips::Pipeline::from_rgb(pincushion(&preview, K1, 1.0 / (1.0 + K1)).as_ref())
-            .and_then(|p| p.encode_jpeg(95))
+        let target = crate::vips::encode_jpeg(pincushion(&preview, K1, 1.0 / (1.0 + K1)).as_ref(), 95)
             .expect("the injected target encodes");
 
         let render = decode(&sony(), 8, false, 0);
@@ -754,10 +752,7 @@ mod camera_match {
     }
 
     fn resize(source: crate::vips::RgbRef<'_>, long: usize) -> crate::vips::Rgb {
-        crate::vips::Pipeline::from_rgb(source)
-            .and_then(|p| p.resize_to_fit(long))
-            .and_then(crate::vips::Pipeline::finish)
-            .expect("the resize")
+        crate::image::resize_to_fit(source, long)
     }
 
     /// A transform that returned the render untouched would pass every size assertion
@@ -1208,9 +1203,7 @@ mod hdr_grade {
             / graded.len() as f64;
 
         let encoded = std::fs::read(&path).expect("the still");
-        let decoded = crate::vips::Pipeline::decode_upright(&encoded)
-            .and_then(crate::vips::Pipeline::finish)
-            .expect("the still decodes");
+        let decoded = crate::vips::decode_upright(&encoded).expect("the still decodes");
         let _ = std::fs::remove_dir_all(&dir);
         let mean = decoded.data.iter().map(|v| f64::from(*v) / 255.0).sum::<f64>()
             / decoded.data.len() as f64;

@@ -182,10 +182,9 @@ fn encode_options(job: &Job, target: &Target, medium: Medium, output_path: &str)
 ///
 /// "The size it will be encoded at" holds because the base is built at the *largest*
 /// SDR size the job asks for and every job the service builds names one target. A job
-/// naming two would have the smaller one resized out of this by `save_avif_frame`,
-/// after the sharpen rather than before it - so a second SDR target wants the sharpen
-/// moved to the encode, where the final size is known, and a copy of the base per
-/// target to go with it.
+/// naming two would write the smaller one at the larger one's size: `save_avif_frame`
+/// encodes what it is handed. So a second SDR target wants a copy of the base per
+/// target, each resized before this sharpen rather than after it.
 ///
 /// **Only the sharpen runs here.** The denoise and the defringe already ran, on the decode
 /// and before the fit, for the reasons recorded at that call site: the fit has to be
@@ -276,7 +275,6 @@ fn save_avif(image: &Frame, target: &Target) -> Result<(), String> {
     let source = image.rgb8().ok_or("an SDR rendition needs an 8-bit frame")?;
     crate::save_avif_frame(
         source,
-        target.size,
         target.sdr_quantizer,
         AVIF_EFFORT,
         target.sdr_full_chroma,
@@ -326,10 +324,7 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
             false => decoded_frame,
             true => {
                 let source = decoded_frame.rgb8().ok_or("the SDR base needs an 8-bit decode")?;
-                let resized = vips::Pipeline::from_rgb(source)
-                    .and_then(|pipeline| pipeline.resize_to_fit(sdr_size as usize))
-                    .and_then(vips::Pipeline::finish)
-                    .map_err(|e| format!("could not resize the base: {e}"))?;
+                let resized = crate::image::resize_to_fit(source, sdr_size as usize);
                 Frame::new(resized.width, resized.height, crate::frame::Pixels::Eight(resized.data))
             }
         };
