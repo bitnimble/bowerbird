@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Shell(bun run:*)",
+      "Shell(cargo test:*)",
+      "Shell(cargo build:*)"
+    ],
+    "deny": []
+  }
+}
