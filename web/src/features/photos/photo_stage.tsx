@@ -256,11 +256,7 @@ function StageFrame({
     elementRef.current = element;
   }, []);
 
-  // Only the rewrapped MP4 is a video. The still that stays beside it while that
-  // file decodes - or forever, on a Gecko that never reaches HAVE_CURRENT_DATA -
-  // has to keep being an <img>, or flipping `video` remounts the already-painted
-  // AVIF as <video src="….avif"> and destroys the raster (DESIGN 10.7.2).
-  if (video && source.startsWith('blob:')) {
+  if (video) {
     return (
       <video
         ref={capture}

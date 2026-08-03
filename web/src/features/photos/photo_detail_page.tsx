@@ -402,10 +402,7 @@ const DetailFrame = observer(function DetailFrame({ photoId, toolsInto }: { phot
       hold={store.photoFor(photoId) == null}
       busy={store.buildingRendition}
       retryEpoch={store.serverEpoch}
-      // Still first in the list while the twin is in flight; once it lands, the
-      // MP4 takes the chosen slot and the AVIF stays mounted underneath so a
-      // Gecko that never fires loadeddata (Linux) keeps a painted frame.
-      sources={hdrVideo != null ? [hdrVideo, stillSrc] : [stillSrc]}
+      sources={[hdrVideo ?? stillSrc]}
       video={hdrVideo != null}
       alt={filename}
       filename={filename}
