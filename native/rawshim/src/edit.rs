@@ -167,6 +167,15 @@ fn fit(
     source: &hdr::Source<'_>,
     request: &EditRequest,
 ) -> Option<crate::hdr_fit::HdrMatch> {
+    // A decode narrower than the preview cannot be paired against it: `fit_plane` clamps
+    // its target to the source's own width, so the two grids come out different sizes and
+    // `pairs` asserts on it. Renditions never reach this because they decode at thousands
+    // of pixels; the editor can, because the client asks for the size its stage can show
+    // (`docs/raw-edit-gpu.md` §4.1). Declining is already a supported outcome - the grade
+    // takes its neutral arm - so this is one more reason to decline rather than a failure.
+    if source.width.max(source.height) < crate::hdr_fit::sample_long_edge() {
+        return None;
+    }
     let jpeg = crate::embedded_jpeg_bytes(raw)?;
     // Bounded on the way out, as `hdr::fit_all` bounds it: the fit linearises the preview
     // whole into f64 before resampling, so a full-size one is 576MB.

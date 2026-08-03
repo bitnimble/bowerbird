@@ -1,0 +1,32 @@
+{
+  "$schema": "../web/node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "Bowerbird",
+  "version": "0.1.0",
+  "identifier": "dev.kumo.bowerbird",
+  "build": {
+    "frontendDist": "../web/dist",
+    "devUrl": "http://localhost:5199",
+    "beforeDevCommand": "bun run --cwd web dev",
+    "beforeBuildCommand": "bun run --cwd web build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Bowerbird",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 900,
+        "minHeight": 600,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["deb", "appimage", "dmg", "nsis"],
+    "icon": ["icons/icon.png"]
+  }
+}

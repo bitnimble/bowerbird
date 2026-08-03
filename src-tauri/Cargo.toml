@@ -1,0 +1,29 @@
+[package]
+name = "app"
+version = "0.1.0"
+description = "Bowerbird desktop shell"
+edition = "2021"
+
+[lib]
+name = "app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = [] }
+# The editor's open, in process. The same crate the server links and the same code the
+# renditions grade through, so the desktop shell and the browser cannot drift apart on
+# what a prepared frame is (`docs/raw-edit-gpu.md` §10.2b).
+rawshim = { path = "../native/rawshim" }
+
+# WebdriverIO desktop e2e: the in-app Execute API and the embedded WebDriver server.
+# Optional and behind a feature so they never ride a shipped build.
+tauri-plugin-wdio = { version = "1", optional = true }
+tauri-plugin-wdio-webdriver = { version = "1", optional = true }
+
+[features]
+wdio = ["dep:tauri-plugin-wdio", "dep:tauri-plugin-wdio-webdriver"]
