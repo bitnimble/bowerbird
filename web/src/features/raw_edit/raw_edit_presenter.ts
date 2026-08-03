@@ -41,6 +41,8 @@ export class RawEditPresenter {
    * asks it to re-fetch, and holding one generation costs a frame.
    */
   private stale = '';
+  private closed = false;
+  private shutdown: { resolve: () => void } | null = null;
 
   constructor(private readonly store: RawEditStore) {
     if (store.route === 'track' && typeof MediaStreamTrackGenerator !== 'undefined') {
@@ -77,17 +79,20 @@ export class RawEditPresenter {
         // dead on a file the server served perfectly.
         fetch(downloadUrl(photoId, 'original'), { cache: 'no-store' }),
       ]);
+      if (this.closed) return;
       if (!response.ok) {
-        this.fail((await apiError(response)).message);
+        const message = (await apiError(response)).message;
+        if (!this.closed) this.fail(message);
         return;
       }
 
       const bytes = await response.arrayBuffer();
+      if (this.closed) return;
       this.decoding(bytes.byteLength);
       const spec = editorSpec(settings, longEdge, sinkFor(this.store.route));
       this.send({ type: 'open', bytes, spec }, [bytes]);
     } catch (error) {
-      this.fail(describe(error));
+      if (!this.closed) this.fail(describe(error));
     }
   }
 
@@ -112,14 +117,57 @@ export class RawEditPresenter {
   }
 
   close(): void {
-    this.worker.terminate();
+    if (this.closed) return;
+    this.closed = true;
+    this.pending = null;
+
+    this.store.track?.stop();
+    this.store.track = null;
     void this.writer?.close().catch(() => undefined);
-    for (const url of [this.stale, this.store.fileUrl]) {
-      if (url !== '') URL.revokeObjectURL(url);
-    }
+
+    // Ask the worker to kill its rayon pool before the parent goes away.
+    // A bare terminate() is what pinned every core on the way out of edit mode.
+    void this.shutdownWorker().finally(() => {
+      for (const url of [this.stale, this.store.fileUrl]) {
+        if (url !== '') URL.revokeObjectURL(url);
+      }
+      this.stale = '';
+      this.store.fileUrl = '';
+    });
+  }
+
+  private shutdownWorker(): Promise<void> {
+    return new Promise((resolve) => {
+      const finish = (terminate: boolean): void => {
+        if (this.shutdown == null) return;
+        this.shutdown = null;
+        clearTimeout(timer);
+        // Only force-kill when the worker is already gone (send threw) or it acked —
+        // a timeout terminate while a grade/open still holds the event loop orphans the
+        // rayon pool and reintroduces the spin this close path exists to prevent.
+        if (terminate) {
+          try {
+            this.worker.terminate();
+          } catch {
+            /* already gone */
+          }
+        }
+        resolve();
+      };
+      this.shutdown = { resolve: () => finish(true) };
+      // Give up waiting for the ack so object URLs can be revoked; leave the worker
+      // alive so the queued shutdown can still run once the in-flight work yields.
+      const timer = setTimeout(() => finish(false), 60_000);
+      try {
+        this.send({ type: 'shutdown' });
+      } catch {
+        finish(true);
+      }
+    });
   }
 
   private request(request: ExposureRequest): void {
+    if (this.closed) return;
     if (this.busy) {
       this.pending = request;
       return;
@@ -130,6 +178,15 @@ export class RawEditPresenter {
   }
 
   private readonly receive = async ({ data }: MessageEvent<FromWorker>): Promise<void> => {
+    if (data.type === 'shutdown') {
+      this.shutdown?.resolve();
+      return;
+    }
+    if (this.closed) {
+      if (data.type === 'frame') data.frame?.close();
+      else if (data.type === 'track') data.track.stop();
+      return;
+    }
     if (data.type === 'failed') {
       this.busy = false;
       this.fail(data.message);
@@ -150,8 +207,16 @@ export class RawEditPresenter {
     }
 
     // Null where the worker owns the generator and has already written it.
-    if (data.frame != null) await this.writer?.write(data.frame);
+    if (data.frame != null) {
+      try {
+        await this.writer?.write(data.frame);
+      } catch {
+        data.frame.close();
+      }
+    }
+    if (this.closed) return;
     if (data.file != null) await this.present(data.file);
+    if (this.closed) return;
     this.measure(data.ms);
 
     this.busy = false;
@@ -187,12 +252,17 @@ export class RawEditPresenter {
    * decodes to a `VideoFrame`, so it is the route this one is the fallback for.
    */
   private async present(file: Blob): Promise<void> {
+    if (this.closed) return;
     const url = URL.createObjectURL(file);
     if (this.store.route === 'rewrap') {
       this.show(url);
       return;
     }
     const decoded = await this.decodeStill(url);
+    if (this.closed) {
+      URL.revokeObjectURL(url);
+      return;
+    }
     // Keeping the last good frame beats swapping to a broken one, but silently is how a
     // malformed encoder ships: this is the only place a bad file would ever show up.
     if (!decoded) {
