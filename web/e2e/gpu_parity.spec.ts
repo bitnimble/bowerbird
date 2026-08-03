@@ -14,23 +14,6 @@ import { expect, test } from '@playwright/test';
 //
 // Chromium only. Firefox has WebGPU on Windows first and this box is Linux; the parity is
 // a property of the shaders rather than of the engine, so one runtime proves it.
-// Headless Chromium ships with WebGPU off and no GPU process; these are what turn both on
-// against a real Vulkan adapter. `--ozone-platform=headless` because there is no display,
-// and the GPU is reached through a render node rather than a surface.
-test.use({
-  launchOptions: {
-    args: [
-      '--no-sandbox',
-      '--enable-unsafe-webgpu',
-      '--enable-gpu',
-      '--ignore-gpu-blocklist',
-      '--enable-features=Vulkan',
-      '--use-angle=vulkan',
-      '--ozone-platform=headless',
-    ],
-  },
-});
-
 test.describe('GPU tick parity', () => {
   test.skip(({ browserName }) => browserName !== 'chromium', 'WebGPU, and one engine proves it');
   // Six fixtures, each a whole `finish` at 96x64, and a cold pipeline creation per case.

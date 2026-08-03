@@ -52,9 +52,13 @@ export const RawEditPanel = observer(function RawEditPanel({
         </Text>
       )}
 
-      {/* Threads are not user-facing; e2e asserts the worker actually started multithreaded. */}
-      <span hidden data-testid="raw-edit-threads">
-        {store.threads}
+      {/* Not user-facing; e2e asserts the tick really ran on a GPU rather than falling back
+          to a picture nobody graded. */}
+      <span hidden data-testid="raw-edit-adapter">
+        {store.adapter}
+      </span>
+      <span hidden data-testid="raw-edit-size">
+        {store.width}x{store.height}
       </span>
 
       <Button onClick={onDone}>Done</Button>

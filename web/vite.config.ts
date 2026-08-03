@@ -2,11 +2,6 @@ import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-const isolationHeaders = {
-  'Cross-Origin-Embedder-Policy': 'require-corp',
-  'Cross-Origin-Opener-Policy': 'same-origin',
-};
-
 const allowedHosts = process.env.VITE_ALLOWED_HOSTS?.split(',').map((h) => h.trim());
 
 // The client is same-origin (src/api/client.ts): this server proxies /api and
@@ -22,22 +17,6 @@ export default defineConfig({
   worker: { format: 'es' },
   resolve: {
     alias: [
-      {
-        // wasm-bindgen-rayon's default helpers nest the pool under the caller.
-        // Ours keep Worker refs on the editor daemon so leave-edit can drop the pool
-        // without waiting on a blocked grade worker.
-        // Match the *whole* specifier: a suffix-only regex leaves a broken
-        // `./snippets/<abs-path>` id (Vite replaces only the matched span).
-        find: /^.*wasm-bindgen-rayon-[^/]+\/src\/workerHelpers\.js$/,
-        replacement: fileURLToPath(new URL('./src/features/raw_edit/rayon_worker_helpers.js', import.meta.url)),
-      },
-      {
-        // rawshim's wasm build links wasi-libc for the C runtime LibRaw needs, which makes
-        // the module import WASI syscalls it never calls - the RAW is opened from a buffer,
-        // so nothing touches a file. The stubs satisfy the import list.
-        find: 'wasi_snapshot_preview1',
-        replacement: '/src/features/raw_edit/wasi_stub.ts',
-      },
       {
         // Source rather than the `dist` its package.json publishes, and so an alias rather
         // than a dependency: the build output is gitignored, and a fresh checkout should
@@ -62,12 +41,10 @@ export default defineConfig({
     // which is the collision this avoids.
     port: 20000 + Math.floor(Math.random() * 20000),
     host: true,
-    headers: isolationHeaders,
     // Vite refuses any Host header that is not an IP or localhost, which is a
-    // DNS-rebinding guard and which a reverse proxy forwarding a real hostname trips -
-    // the editor needs one, since `SharedArrayBuffer` needs a secure context and this
-    // server speaks plain HTTP. Name the hosts, or `all` where the server is already
-    // reachable only from a network you trust.
+    // DNS-rebinding guard that a reverse proxy forwarding a real hostname trips. Name
+    // the hosts, or `all` where the server is already reachable only from a network you
+    // trust.
     allowedHosts: allowedHosts?.includes('all') ? true : allowedHosts,
     // Everything the browser asks the API for goes through here: this server is
     // the only one exposed, and the API is internal. /quality-check is the API's
@@ -83,5 +60,4 @@ export default defineConfig({
       ]),
     ),
   },
-  preview: { headers: isolationHeaders },
 });

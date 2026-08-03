@@ -12,21 +12,39 @@ export default defineConfig({
   workers: 1,
   timeout: 60_000,
   expect: { timeout: 15_000 },
-  use: { baseURL: `http://127.0.0.1:${WEB_PORT}`, trace: 'retain-on-failure' },
+  use: {
+    baseURL: `http://127.0.0.1:${WEB_PORT}`,
+    trace: 'retain-on-failure',
+    // The editor's tick is WebGPU now, and headless Chromium ships with it off and no GPU
+    // process. Without these the editor reports "this browser has no WebGPU" and every
+    // editing test fails for a reason that has nothing to do with the app.
+    launchOptions: {
+      args: [
+        '--no-sandbox',
+        '--enable-unsafe-webgpu',
+        '--enable-gpu',
+        '--ignore-gpu-blocklist',
+        '--enable-features=Vulkan',
+        '--use-angle=vulkan',
+        '--ozone-platform=headless',
+      ],
+    },
+  },
   // One engine for the app's behaviour, and a second for the two files whose risk is the
   // engine itself. A whole suite in both would double the run for that much.
   //
   // `band_layout` because aspect ratios against stretched grid rows and capped flex lines
   // are where the two disagree, and a band of photographs is all three at once.
-  // `raw_editing` because the worker, the camera match, the rewrap helper and the
-  // open-failure path all have to work in Gecko (DESIGN 21.3). Painting that MP4 in HDR
-  // is Windows-only (DESIGN 10.7); Linux CI asserts on the bytes, not on videoWidth.
+  // `raw_editing` no longer runs there: the editor needs WebGPU, which Gecko ships on
+  // Windows first, so a Linux run would assert against an engine that cannot open the
+  // editor at all. What it used to cover - the three sinks, the rewrap, the thread pool -
+  // went with the routes (`docs/raw-edit-gpu.md` §7).
   projects: [
     { name: 'chromium', use: { browserName: 'chromium' } },
     {
       name: 'firefox',
       use: { browserName: 'firefox' },
-      testMatch: /(band_layout|raw_editing)\.spec\.ts/,
+      testMatch: /band_layout\.spec\.ts/,
     },
   ],
   webServer: [

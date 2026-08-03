@@ -43,7 +43,6 @@ import { Text } from '../../ui/text';
 import { TextArea } from '../../ui/text_area';
 import { RawEditPanel } from '../raw_edit/raw_edit_panel';
 import { RawEditPresenter } from '../raw_edit/raw_edit_presenter';
-import { routeFor } from '../raw_edit/raw_edit_route';
 import { RawEditStage } from '../raw_edit/raw_edit_stage';
 import { RawEditStore } from '../raw_edit/raw_edit_store';
 import { useHdrVideo } from './hdr_video';
@@ -778,7 +777,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   // frame of the stored rendition beside empty panels.
   useLayoutEffect(() => {
     if (!editing) return;
-    const editStore = new RawEditStore(routeFor());
+    const editStore = new RawEditStore();
     const presenter = new RawEditPresenter(editStore);
     setSession({ store: editStore, presenter });
     void presenter.open(photoId, EDIT_LONG_EDGE);
@@ -902,7 +901,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
           mobile ? 'sheet' : !panelsOpen && !editing ? 'only' : landscape ? 'below' : 'beside'
         }`}
       >
-        {editing && session != null ? <RawEditStage store={session.store} /> : <DetailFrame photoId={photoId} toolsInto={toolsSlot} />}
+        {editing && session != null ? <RawEditStage store={session.store} presenter={session.presenter} /> : <DetailFrame photoId={photoId} toolsInto={toolsSlot} />}
         {(mobile || panelsOpen || editing) && panels}
       </div>
     </div>

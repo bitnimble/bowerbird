@@ -7,7 +7,7 @@
     "jsx": "react-jsx",
     // @types/bun for the `bun:test` imports under src/**/tests; it resolves out
     // of the repo root, which is where the test runner lives too.
-    "types": ["vite/client", "@types/bun"],
+    "types": ["vite/client", "@types/bun", "@webgpu/types"],
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,

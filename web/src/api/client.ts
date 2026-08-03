@@ -305,6 +305,16 @@ export function downloadUrl(photoId: string, form: 'original' | ViewerRendition)
   return `/image/${photoId}/download/${form}`;
 }
 
+/**
+ * The editor's open: the decoded, fitted and warped frame every tick then grades.
+ *
+ * Seconds of work and tens of megabytes back, asked for once per photo rather than per
+ * tick (`docs/raw-edit-gpu.md` §10.2b). `longEdge` is the stage's, not the library's.
+ */
+export function preparedUrl(photoId: string, longEdge: number): string {
+  return `/image/${photoId}/prepared?longEdge=${Math.round(longEdge)}`;
+}
+
 // What the viewer shows for one of its three choices: the camera's JPEG served
 // directly, or a stored rendition.
 export function viewerUrl(photoId: string, rendition: ViewerRendition, version = 0): string {

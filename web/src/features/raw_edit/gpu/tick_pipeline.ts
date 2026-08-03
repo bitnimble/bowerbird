@@ -342,7 +342,7 @@ export class TickPipeline {
     }
   }
 
-  private upload(data: Float32Array): GPUBuffer {
+  private upload(data: Float32Array<ArrayBuffer>): GPUBuffer {
     const buffer = this.device.createBuffer({
       size: Math.max(data.byteLength, 16),
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,

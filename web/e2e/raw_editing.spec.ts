@@ -2,11 +2,9 @@ import { type Page, expect, test } from '@playwright/test';
 import { EDIT_PHOTOS_DIR, PHOTO_NAMES } from './fixture_library';
 import { addLibrary, openLibrary, openPhoto, openPhotoId, syncLibrary, waitForSyncSettled } from './helpers';
 
-// Every test here opens a RAW for real - fetch, decode, fit and grade, in the browser, on
-// however many cores the rest of the suite has left. Alone that is around ten seconds; the
-// first one behind the other eighty-odd tests has measured past the 60s default, and the
-// waits below already allow three minutes. Without this they cannot: a test timeout caps
-// its own expectations, so the poll reports the *page* as wrong when the machine was slow.
+// Every test here opens a RAW for real: the server decodes it, fits the camera match and
+// warps it, and the browser grades it on a GPU. The open is seconds of native work behind
+// however many cores the rest of the suite has left.
 test.describe.configure({ timeout: 180_000 });
 
 // The editor opens a photo by id, so a spec needs a synced library before it can open
@@ -24,26 +22,40 @@ test.beforeAll(async ({ browser }) => {
   await page.close();
 });
 
-test('starts an isolated multithreaded RAW editor worker', async ({ page }) => {
-  await page.goto(`/photos/${photoId}?edit=1`);
+/**
+ * The tick runs on a GPU, and nothing else in the suite can see that it did.
+ *
+ * Without this the editor could be reporting `live` off a canvas nobody ever drew into,
+ * which looks exactly like a frame that graded to black. The adapter is the one piece of
+ * evidence that a device was acquired rather than silently skipped.
+ */
+test('grades on the GPU, at the frame the server prepared', async ({ page }) => {
+  await open(page);
 
-  await expect.poll(() => page.evaluate(() => crossOriginIsolated)).toBe(true);
-  const available = await page.evaluate(() => navigator.hardwareConcurrency);
-  const threads = page.getByTestId('raw-edit-threads');
-  await expect(threads).toHaveText(String(Math.max(1, available)));
+  await expect(page.getByTestId('raw-edit-adapter')).not.toHaveText('');
+  // The stage is the frame's own size, which is what "full resolution tick" means: there
+  // is no interactive downscale any more (`docs/raw-edit-gpu.md` §6).
+  const size = await page.getByTestId('raw-edit-size').textContent();
+  const [width, height] = (size ?? '0x0').split('x').map(Number);
+  expect(width).toBeGreaterThan(1000);
+  expect(height).toBeGreaterThan(1000);
+
+  const canvas = page.locator('canvas.raw-edit__stage');
+  await expect(canvas).toHaveCount(1);
+  expect(await canvas.evaluate((el: HTMLCanvasElement) => el.width)).toBe(width);
 });
 
 /**
- * The camera match has to be fitted *in the browser*, and no other check can see that it
- * was: without one the grade takes its neutral arm and still produces a plausible HDR
- * frame, correctly tagged, at the right size - just flatter and less saturated than the
- * rendition of the same file. Every byte-level assertion below passes either way.
+ * The camera match has to reach the client, and no other check can see that it did:
+ * without it the grade takes its neutral arm and still produces a plausible HDR frame at
+ * the right size, just flatter and less saturated than the rendition of the same file.
  *
- * It has been wrong twice, both times numerically rather than structurally: a preview
- * decoded by the browser instead of by `crate::jpeg`, and libblur's wasm SIMD stack blur
- * returning a mostly-black frame (DESIGN 21.1). Both declined the fit in silence.
+ * It has been wrong twice before, both times numerically rather than structurally, and
+ * both times silently (DESIGN 21.1). The fit runs natively now, so what this guards is the
+ * hand-off: the curves, the matrix and the chroma lattice crossing as arrays a shader can
+ * index, rather than being dropped somewhere in the header.
  */
-test('fits the camera match in the browser, as the renditions do', async ({ page }) => {
+test('grades through the camera match, as the renditions do', async ({ page }) => {
   await open(page);
 
   await expect(page.getByTestId('raw-edit-panel')).toHaveAttribute('data-matched', 'true');
@@ -53,7 +65,7 @@ test('fits the camera match in the browser, as the renditions do', async ({ page
  * A failure the user can act on, which is worth a test because the failure mode is silent
  * plausibility: the API's envelope nests its message under `error`, so a caller that
  * stringifies one level too high reports "[object Object]" for every kind of failure alike
- * and the page still looks like it is working correctly.
+ * and the page still looks like it is working.
  */
 test('says why an id it cannot open failed', async ({ page }) => {
   const missing = '00000000-0000-0000-0000-000000000000';
@@ -62,171 +74,49 @@ test('says why an id it cannot open failed', async ({ page }) => {
 
   const panel = page.getByTestId('raw-edit-panel');
   await expect(panel).toHaveAttribute('data-status', 'failed');
-  await expect(panel).toContainText(`photo not found: ${missing}`);
+  await expect(panel).toContainText(missing);
   await expect(panel).not.toContainText('[object Object]');
 });
 
 /**
- * The still route is HDR only because of four bytes, and a PNG that loses them is a
- * valid, ordinary, SDR picture - so every other check downstream of here would still
- * pass. This asserts on the bytes the browser was actually handed.
+ * Moving the slider has to change the picture, which is the one thing a parity fixture
+ * cannot check: it pins what the shaders compute, not that a slider is wired to them.
  *
- * Against a real graded frame rather than a synthetic patch: the encoder is reached
- * through the whole decode-fit-grade path here, so a chunk dropped anywhere along it is
- * caught, and there is nothing to keep in sync with what the editor really emits.
- *
- * Chromium only: production Firefox never takes this route (DESIGN 21.2), and its
- * `Image.decode()` refuses the 16-bit PQ PNG, so forcing `?route=still` there fails the
- * editor before the `<img>` ever sees the bytes this is asserting on.
+ * Read off the canvas rather than off a status field, because "the exposure changed" and
+ * "a frame was drawn with it" are different claims and only the second one matters.
  */
-test('tags the still route PQ, in the bytes the browser receives', async ({ page, browserName }) => {
-  test.skip(browserName !== 'chromium', 'forced still is a Chromium encoder-byte check');
-  await open(page, 'still');
-
-  const stage = page.locator('img.raw-edit__stage');
-  const chunks = await stage.evaluate(async (img: HTMLImageElement) => {
-    const bytes = new Uint8Array(await (await fetch(img.src)).arrayBuffer());
-    const view = new DataView(bytes.buffer);
-    const found: { kind: string; data: number[] }[] = [];
-    // Past the 8-byte signature, then length/kind/data/CRC until the file runs out.
-    for (let at = 8; at < bytes.length; ) {
-      const length = view.getUint32(at);
-      const kind = String.fromCharCode(...bytes.subarray(at + 4, at + 8));
-      // Only the small ones are worth carrying back; IDAT is the whole picture.
-      const data = kind === 'IDAT' ? [] : [...bytes.subarray(at + 8, at + 8 + length)];
-      found.push({ kind, data });
-      at += 12 + length;
-    }
-    return found;
-  });
-
-  const cicp = chunks.find((c) => c.kind === 'cICP');
-  // BT.2020 primaries, the PQ transfer, identity matrix, full range.
-  expect(cicp?.data).toEqual([9, 16, 0, 1]);
-  // A decoder stops looking for colour once the pixels start.
-  expect(chunks.findIndex((c) => c.kind === 'cICP')).toBeLessThan(
-    chunks.findIndex((c) => c.kind === 'IDAT'),
-  );
-  expect(chunks.at(-1)?.kind).toBe('IEND');
-});
-
-/**
- * The rewrap route, which is the only one that encodes rather than packs - and the reason
- * libaom is compiled into the wasm module at all. Asserts on the bytes the stage was
- * handed, not on whether this engine can paint them: Gecko composites that file in HDR
- * on Windows only (DESIGN 10.7), and Linux CI often cannot decode it either.
- */
-test('encodes the rewrap route as a 10-bit PQ AV1, in the bytes the browser receives', async ({
-  page,
-}) => {
-  await open(page, 'rewrap');
-
-  const stage = page.locator('video.raw-edit__stage');
-  const mp4 = await stage.evaluate(async (video: HTMLVideoElement) => [
-    ...new Uint8Array(await (await fetch(video.src)).arrayBuffer()),
-  ]);
-  const bytes = new Uint8Array(mp4);
-  const sample = ['moov', 'trak', 'mdia', 'minf', 'stbl', 'stsd', 'av01'];
-
-  const colr = find(bytes, [...sample, 'colr']);
-  const view = new DataView(colr.buffer, colr.byteOffset, colr.byteLength);
-  expect(String.fromCharCode(...colr.subarray(0, 4))).toBe('nclx');
-  // BT.2020 primaries, PQ, BT.2020 non-constant luminance - the CICP a rendition's still
-  // is tagged with, since it came out of the same encoder under the same options.
-  expect([view.getUint16(4), view.getUint16(6), view.getUint16(8)]).toEqual([9, 16, 9]);
-
-  // Eight bits is a picture Firefox composites SDR, and the difference is one bit of the
-  // configuration record's third byte, under `seq_tier_0`. The two below it say 4:2:0,
-  // which is not a quality choice either: Firefox decodes 4:4:4 AV1 in software and then
-  // will not composite it in HDR.
-  const flags = find(bytes, [...sample, 'av1C'])[2] ?? 0;
-  expect((flags >> 6) & 1).toBe(1); // high_bitdepth
-  expect((flags >> 5) & 1).toBe(0); // twelve_bit, so ten
-  expect([(flags >> 3) & 1, (flags >> 2) & 1]).toEqual([1, 1]); // chroma subsampling x and y
-});
-
-/**
- * Firefox's production route is the rewrap, not a still. The helper has to be what put
- * the file on the stage - a blob URL of a real MP4 - even where this machine cannot
- * paint it in HDR (Linux; DESIGN 10.7).
- */
-test('takes the rewrap route on Firefox and hands the stage an MP4', async ({ page, browserName }) => {
-  test.skip(browserName !== 'firefox', 'route selection under test');
+test('a slider move redraws the canvas', async ({ page }) => {
   await open(page);
 
-  const stage = page.locator('video.raw-edit__stage');
-  await expect(stage).toHaveCount(1);
-  const kind = await stage.evaluate(async (video: HTMLVideoElement) => {
-    const bytes = new Uint8Array(await (await fetch(video.src)).arrayBuffer());
-    const type = String.fromCharCode(...bytes.subarray(4, 8));
-    return { type, size: bytes.length };
-  });
-  expect(kind.type).toBe('ftyp');
-  expect(kind.size).toBeGreaterThan(1000);
+  const canvas = page.locator('canvas.raw-edit__stage');
+  const before = await canvas.screenshot();
+
+  // The thumb rather than the control: Base UI's slider carries the value on a hidden
+  // range input inside it, and the labelled element is the track around it.
+  const thumb = page.locator('.raw-edit-panel__exposure input[type="range"]');
+  await thumb.focus();
+  // Keyboard rather than filling the input: setting the DOM value directly skips the
+  // events the component listens for, so the picture would never be asked to change.
+  // How far one press moves is the component's business, so assert that it moved.
+  await page.keyboard.press('PageUp');
+  await page.keyboard.press('PageUp');
+
+  const panel = page.getByTestId('raw-edit-panel');
+  await expect(panel).not.toContainText('+0.00 EV');
+  await expect.poll(async () => (await canvas.screenshot()).equals(before), { timeout: 30_000 }).toBe(false);
 });
 
 /**
- * The fixture open and graded, on `route` where one is named.
+ * The fixture open and graded.
  *
- * Waiting on a delivered frame rather than on `status=live` alone: `live` is set when
- * the RAW has decoded and the camera match has fitted, *before* the first grade returns.
- * A test that proceeds on that alone races the frame - and on a route whose off-screen
- * decode then fails, reports an empty stage where the panel already says why.
+ * Waiting on `live`, which the presenter sets only once the prepared frame has arrived and
+ * the pipeline exists. The first draw is submitted immediately after.
  */
-async function open(page: Page, route?: 'still' | 'rewrap' | 'track'): Promise<void> {
-  const params = new URLSearchParams({ edit: '1' });
-  if (route != null) params.set('route', route);
-  await page.goto(`/photos/${photoId}?${params}`);
+async function open(page: Page): Promise<void> {
+  await page.goto(`/photos/${photoId}?edit=1`);
 
   const panel = page.getByTestId('raw-edit-panel');
   await expect
-    .poll(
-      async () => {
-        const status = await panel.getAttribute('data-status');
-        if (status === 'failed') return 'failed';
-        if (status !== 'live') return 'waiting';
-        const img = page.locator('img.raw-edit__stage');
-        if ((await img.count()) > 0) {
-          return (await img.evaluate((el: HTMLImageElement) => el.naturalWidth > 0 && el.src !== ''))
-            ? 'ready'
-            : 'waiting';
-        }
-        const video = page.locator('video.raw-edit__stage');
-        if ((await video.count()) > 0) {
-          return await video.evaluate(
-            (el: HTMLVideoElement) => el.src !== '' || el.srcObject != null,
-          )
-            ? 'ready'
-            : 'waiting';
-        }
-        return 'waiting';
-      },
-      { timeout: 170_000 },
-    )
-    .toBe('ready');
-}
-
-/** The payload of a box, by the path of types leading to it. */
-function find(bytes: Uint8Array, path: string[]): Uint8Array {
-  // What sits between a box's payload and the child boxes inside it: a version, flags and
-  // an entry count for `stsd`, and a VisualSampleEntry's fixed fields for `av01`.
-  const fixed: Record<string, number> = { stsd: 8, av01: 78 };
-  let [start, end] = [0, bytes.length];
-  for (const [depth, type] of path.entries()) {
-    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-    let at = start;
-    let found: [number, number] | null = null;
-    while (at + 8 <= end) {
-      const size = view.getUint32(at);
-      if (size < 8) throw new Error(`a box at ${at} claims ${size} bytes`);
-      if (String.fromCharCode(...bytes.subarray(at + 4, at + 8)) === type) {
-        found = [at + 8, at + size];
-        break;
-      }
-      at += size;
-    }
-    if (found == null) throw new Error(`no ${path.slice(0, depth + 1).join('/')} in the file`);
-    [start, end] = depth === path.length - 1 ? found : [found[0] + (fixed[type] ?? 0), found[1]];
-  }
-  return bytes.subarray(start, end);
+    .poll(async () => panel.getAttribute('data-status'), { timeout: 170_000 })
+    .toBe('live');
 }
