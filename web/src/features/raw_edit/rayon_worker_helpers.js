@@ -29,7 +29,8 @@ if (typeof name !== 'undefined' && name === 'wasm_bindgen_worker') {
 
 /** Held on the daemon so kill can terminate them after exitThreadPool. */
 export async function startWorkers(module, memory, builder) {
-  const workers = [];
+  const workers = (self.__rayonPoolWorkers ??= []);
+  self.__rawshimModule = module;
   const n = builder.numThreads();
   for (let i = 0; i < n; i++) {
     const worker = new Worker(new URL('./rayon_worker_helpers.js', import.meta.url), {
@@ -44,8 +45,6 @@ export async function startWorkers(module, memory, builder) {
     });
     await waitForMsgType(worker, 'wasm_bindgen_worker_ready');
   }
-  self.__rayonPoolWorkers = workers;
-  self.__rawshimModule = module;
   builder.build();
   self.__rayonPoolBuilt = true;
 }

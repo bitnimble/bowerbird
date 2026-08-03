@@ -183,6 +183,7 @@ export class RawEditPresenter {
       return;
     }
     if (data.type === 'failed') {
+      this.broken = true;
       this.busy = false;
       this.fail(data.message);
     }
@@ -195,6 +196,7 @@ export class RawEditPresenter {
       return;
     }
     if (data.type === 'failed') {
+      this.broken = true;
       this.busy = false;
       this.fail(data.message);
       return;

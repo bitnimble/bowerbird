@@ -26,10 +26,13 @@ const post = (message: FromDaemon, transfer: Transferable[] = []): void =>
 
 let editor: Worker | null = null;
 let killed = false;
+/** Rejected when kill() terminates the editor mid-boot so `booted` cannot hang. */
+let abortEditorBoot: ((reason: Error) => void) | null = null;
 
 const booted = boot();
 
 void booted.catch((error: unknown) => {
+  if (killed) return;
   post({ type: 'failed', message: describe(error) });
 });
 
@@ -49,28 +52,41 @@ async function boot(): Promise<void> {
     type: 'module',
     name: 'raw_edit_editor',
   });
-  editor.onerror = (event) => {
-    post({ type: 'failed', message: event.message || 'editor worker error' });
-  };
 
-  await new Promise<void>((resolve, reject) => {
-    const onMessage = ({ data }: MessageEvent<{ type?: string; message?: string }>): void => {
-      if (data?.type === 'booted') {
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const settle = (fn: () => void): void => {
+        abortEditorBoot = null;
         editor?.removeEventListener('message', onMessage);
-        resolve();
-        return;
-      }
-      if (data?.type === 'failed') {
-        editor?.removeEventListener('message', onMessage);
-        reject(new Error(data.message ?? 'editor boot failed'));
-      }
-    };
-    editor?.addEventListener('message', onMessage);
-    editor?.postMessage(
-      { type: 'boot', module, memory: instance.memory, resultPort: channel.port2 },
-      [channel.port2],
-    );
-  });
+        editor?.removeEventListener('error', onError);
+        fn();
+      };
+      const onMessage = ({ data }: MessageEvent<{ type?: string; message?: string }>): void => {
+        if (data?.type === 'booted') {
+          settle(resolve);
+          return;
+        }
+        if (data?.type === 'failed') {
+          settle(() => reject(new Error(data.message ?? 'editor boot failed')));
+        }
+      };
+      const onError = (event: ErrorEvent): void => {
+        settle(() => reject(event.error ?? new Error(event.message || 'editor worker error')));
+      };
+      abortEditorBoot = (reason) => settle(() => reject(reason));
+      editor?.addEventListener('message', onMessage);
+      editor?.addEventListener('error', onError);
+      editor?.postMessage(
+        { type: 'boot', module, memory: instance.memory, resultPort: channel.port2 },
+        [channel.port2],
+      );
+    });
+  } catch (error) {
+    channel.port1.close();
+    editor?.terminate();
+    editor = null;
+    throw error;
+  }
 
   if (killed) {
     editor.terminate();
@@ -100,14 +116,18 @@ async function kill(): Promise<void> {
   }
   killed = true;
 
+  // Unblock boot if it is parked on editor initSync / booted.
+  abortEditorBoot?.(new Error('killed during editor boot'));
+  abortEditorBoot = null;
+
   // Editor first: it may be mid with_pool; drop the pool only after it cannot inject work.
   editor?.terminate();
   editor = null;
 
-  // Finish or fail boot so startWorkers has published the full pool list (or none).
+  // Finish or fail boot so startWorkers has published whatever workers it spawned.
   await booted.catch(() => undefined);
 
-  const pool = scope.__rayonPoolWorkers ?? [];
+  const pool = [...(scope.__rayonPoolWorkers ?? [])];
   scope.__rayonPoolWorkers = [];
 
   if (scope.__rayonPoolBuilt) {
