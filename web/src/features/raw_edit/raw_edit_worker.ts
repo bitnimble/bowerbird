@@ -1,23 +1,12 @@
 /// <reference lib="webworker" />
 import { avifToMp4 } from 'avif-hdr-video';
 import { describe } from '../../errors';
-import init, { Editor, exitThreadPool, initThreadPool, thread_count } from '../../wasm/rawshim';
+import { initSync, Editor } from '../../wasm/rawshim';
 import { useMemory } from './wasi_stub';
 import type { EditorSpec } from './editor_spec';
 
-// The decode and the grade both run here. On the main thread a 20ms grade would land
-// between the slider's pointer events, which is the one place the jank would be blamed on
-// the pipeline rather than on the layout.
-//
-// **Where the track is created depends on the browser, and it cannot be otherwise.**
-// Safari implements the standard `VideoTrackGenerator`, which exists only in a worker, and
-// hands back a transferable `MediaStreamTrack`. Chromium has the older
-// `MediaStreamTrackGenerator`, which is itself a track and - measured - is neither
-// transferable nor cloneable, so it has to be built on the main thread and fed frames from
-// here. Two paths, no way to unify them.
-//
-// The two file sinks sidestep both: a PNG or an MP4 needs no track at either end, only a
-// blob.
+// Decode and grade only. The daemon owns SharedArrayBuffer memory and the rayon pool;
+// this worker initSyncs into that heap and posts results on a MessagePort to the page.
 
 export type ToWorker =
   | { type: 'open'; bytes: ArrayBuffer; spec: EditorSpec }
@@ -27,21 +16,15 @@ export type FromWorker =
   | { type: 'ready'; threads: number }
   | { type: 'track'; track: MediaStreamTrack }
   | { type: 'opened'; width: number; height: number; ms: number; matched: boolean }
-  // At most one of `frame` and `file` is set, and the blob carries its own type. A frame
-  // comes back only when the main thread owns the generator; where this worker owns it,
-  // both are null and the message just reports the cost.
   | { type: 'frame'; frame: VideoFrame | null; file: Blob | null; ev: number; ms: number }
-  | { type: 'failed'; message: string }
-  /** Editor dropped the rayon pool; page may terminate document-owned workers. */
-  | { type: 'shutdownDone' }
-  /** Ask the page to spawn document-owned rayon workers (see rayon_worker_helpers.js). */
-  | {
-      type: 'rayonSpawn';
-      module: WebAssembly.Module;
-      memory: WebAssembly.Memory;
-      receiver: number;
-      numThreads: number;
-    };
+  | { type: 'failed'; message: string };
+
+type Boot = {
+  type: 'boot';
+  module: WebAssembly.Module;
+  memory: WebAssembly.Memory;
+  resultPort: MessagePort;
+};
 
 let editor: Editor | null = null;
 let memory: WebAssembly.Memory | null = null;
@@ -49,27 +32,12 @@ let tenBit = true;
 let sink: EditorSpec['sink'] = 'video';
 /** Set only when this worker owns the generator, which is the Safari video path. */
 let writer: WritableStreamDefaultWriter<VideoFrame> | null = null;
+let results: MessagePort | null = null;
 
-const scope = self as unknown as DedicatedWorkerGlobalScope;
-const post = (message: FromWorker, transfer: Transferable[] = []): void =>
-  scope.postMessage(message, transfer);
-
-type Initialized = { memory: WebAssembly.Memory };
-
-const initialized = initialize();
-
-async function initialize(): Promise<Initialized> {
-  const instance = await init();
-  useMemory(instance.memory);
-  const requested = Math.max(1, navigator.hardwareConcurrency);
-  await initThreadPool(requested);
-  post({ type: 'ready', threads: thread_count() });
-  return { memory: instance.memory };
-}
-
-void initialized.catch((error: unknown) => {
-  post({ type: 'failed', message: describe(error) });
-});
+const post = (message: FromWorker, transfer: Transferable[] = []): void => {
+  if (results == null) throw new Error('editor posted before boot');
+  results.postMessage(message, transfer);
+};
 
 const png = (bytes: Uint8Array): Blob =>
   new Blob([bytes.slice() as BlobPart], { type: 'image/png' });
@@ -100,19 +68,22 @@ function openTrack(): boolean {
   return true;
 }
 
-scope.onmessage = async ({ data }: MessageEvent<ToWorker | { type: 'rayonSpawned' } | { type: 'shutdown' }>): Promise<void> => {
-  // Handled by startWorkers' listener; onmessage sees it too.
-  if (data.type === 'rayonSpawned') return;
+const scope = self as unknown as DedicatedWorkerGlobalScope;
 
-  if (data.type === 'shutdown') {
-    exitThreadPool();
-    post({ type: 'shutdownDone' });
-    return;
-  }
-
+scope.onmessage = async ({ data }: MessageEvent<Boot | ToWorker>): Promise<void> => {
   try {
+    if (data.type === 'boot') {
+      initSync({ module: data.module, memory: data.memory });
+      useMemory(data.memory);
+      memory = data.memory;
+      results = data.resultPort;
+      scope.postMessage({ type: 'booted' });
+      return;
+    }
+
+    if (results == null || memory == null) throw new Error('editor used before boot');
+
     if (data.type === 'open') {
-      memory = (await initialized).memory;
       tenBit = data.spec.tenBit;
       sink = data.spec.sink;
       if (sink === 'video') openTrack();
@@ -129,7 +100,7 @@ scope.onmessage = async ({ data }: MessageEvent<ToWorker | { type: 'rayonSpawned
       return;
     }
 
-    if (editor == null || memory == null) throw new Error('graded before the RAW was opened');
+    if (editor == null) throw new Error('graded before the RAW was opened');
 
     const started = performance.now();
     if (data.exact) editor.grade(data.ev);
@@ -169,6 +140,7 @@ scope.onmessage = async ({ data }: MessageEvent<ToWorker | { type: 'rayonSpawned
     }
     post({ type: 'frame', frame, file: null, ev: data.ev, ms: performance.now() - started }, [frame]);
   } catch (e) {
-    post({ type: 'failed', message: describe(e) });
+    if (results != null) post({ type: 'failed', message: describe(e) });
+    else scope.postMessage({ type: 'failed', message: describe(e) });
   }
 };

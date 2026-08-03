@@ -23,8 +23,9 @@ export default defineConfig({
   resolve: {
     alias: [
       {
-        // wasm-bindgen-rayon's default helpers nest the pool under the editor worker.
-        // Ours ask the page to own them so leave-edit can terminate mid-decode.
+        // wasm-bindgen-rayon's default helpers nest the pool under the caller.
+        // Ours keep Worker refs on the editor daemon so leave-edit can drop the pool
+        // without waiting on a blocked grade worker.
         // Match the *whole* specifier: a suffix-only regex leaves a broken
         // `./snippets/<abs-path>` id (Vite replaces only the matched span).
         find: /^.*wasm-bindgen-rayon-[^/]+\/src\/workerHelpers\.js$/,

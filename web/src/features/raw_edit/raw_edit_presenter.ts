@@ -3,8 +3,9 @@ import { api, apiError, downloadUrl } from '../../api/client';
 import { describe } from '../../errors';
 import { editorSpec } from './editor_spec';
 import { sinkFor } from './raw_edit_route';
-import type { RawEditStore } from './raw_edit_store';
+import type { FromDaemon } from './raw_edit_daemon';
 import type { FromWorker, ToWorker } from './raw_edit_worker';
+import type { RawEditStore } from './raw_edit_store';
 
 /// Frames are timestamped in microseconds. Nothing plays this back, but a track whose
 /// timestamps do not advance is one the compositor is entitled to drop.
@@ -12,17 +13,15 @@ const FRAME_INTERVAL_US = 1e6 / 60;
 
 type ExposureRequest = { ev: number; exact: boolean };
 
-type RayonSpawn = Extract<FromWorker, { type: 'rayonSpawn' }>;
-
 /**
  * Drives one RAW through the decode-once, grade-per-tick loop and out to its route.
  *
- * Owns the worker, the rayon pool, the track and every object URL the stage has held,
- * because all of them are things that have to be given back and none of them are state a
- * view can own. The store is what the view reads; nothing outside here writes it.
+ * Talks to the editor daemon (wasm heap + rayon pool). Open/grade are forwarded to the
+ * editor worker; results arrive on a MessagePort. Leave sends kill to the daemon, which
+ * is never blocked on decode, so it can drop the pool and release the SAB immediately.
  */
 export class RawEditPresenter {
-  private readonly worker: Worker;
+  private readonly daemon: Worker;
   /**
    * Set only where the generator has to live on the main thread, which is Chromium: its
    * `MediaStreamTrackGenerator` is a track, and a track crosses to a worker neither by
@@ -31,15 +30,8 @@ export class RawEditPresenter {
    */
   private readonly writer: WritableStreamDefaultWriter<VideoFrame> | null = null;
 
-  /**
-   * Document-owned rayon workers. Nested under the editor worker they cannot be killed
-   * from here while that worker is blocked in wasm, and Chromium then spins them after a
-   * bare parent terminate(). Spawned on this side so close() can stop decode/grade and
-   * release the SharedArrayBuffer heap immediately.
-   */
-  private pool: Worker[] = [];
-  /** Aborts an in-flight pool spawn when close() or a failed spawn tears the pool down. */
-  private spawnAbort: AbortController | null = null;
+  /** Editor results (frames, opened, …); transferred from the daemon with `ready`. */
+  private results: MessagePort | null = null;
 
   /** The slider has moved but the previous frame has not come back yet. */
   private pending: ExposureRequest | null = null;
@@ -54,7 +46,7 @@ export class RawEditPresenter {
    */
   private stale = '';
   private closed = false;
-  /** Pool init failed; open must not overwrite the failure or talk to a dead worker. */
+  /** Pool/daemon init failed; open must not overwrite the failure. */
   private broken = false;
 
   constructor(private readonly store: RawEditStore) {
@@ -63,8 +55,11 @@ export class RawEditPresenter {
       this.writer = generator.writable.getWriter();
       this.takeTrack(generator);
     }
-    this.worker = new Worker(new URL('./raw_edit_worker.ts', import.meta.url), { type: 'module' });
-    this.worker.onmessage = this.receive;
+    this.daemon = new Worker(new URL('./raw_edit_daemon.ts', import.meta.url), {
+      type: 'module',
+      name: 'raw_edit_daemon',
+    });
+    this.daemon.onmessage = this.receiveDaemon;
   }
 
   /**
@@ -138,7 +133,7 @@ export class RawEditPresenter {
     this.store.track = null;
     void this.writer?.close().catch(() => undefined);
 
-    void this.teardownWorkers();
+    void this.teardown();
 
     for (const url of [this.stale, this.store.fileUrl]) {
       if (url !== '') URL.revokeObjectURL(url);
@@ -148,83 +143,20 @@ export class RawEditPresenter {
   }
 
   /**
-   * Cooperative pool drop, then hard terminate. exitThreadPool signals Rayon so workers
-   * leave main_loop before Worker.terminate(); terminating waiters is the Mac Chrome peg.
-   * finally always hard-stops: leave-during-decode/spawn cannot finish cooperatively in time.
+   * Daemon drops the pool cooperatively then acks; only then tear down the daemon.
+   * No timeout→terminate of waiters (that was the Mac peg).
    */
-  private async teardownWorkers(): Promise<void> {
-    this.spawnAbort?.abort();
-    this.spawnAbort = null;
-    const pool = [...this.pool];
-    this.pool = [];
-
-    const exited = pool.map((worker) => waitWorkerMessage(worker, 'wasm_bindgen_worker_done', 1500));
+  private async teardown(): Promise<void> {
     try {
-      try {
-        const done = waitWorkerMessage(this.worker, 'shutdownDone', 2000);
-        this.worker.postMessage({ type: 'shutdown' });
-        await done;
-      } catch {
-        // Worker already dead, blocked in wasm, or never finished init.
-      }
-      await Promise.allSettled(exited);
-    } finally {
-      for (const worker of pool) worker.terminate();
-      this.worker.terminate();
+      const done = waitWorkerMessage(this.daemon, 'killDone');
+      this.daemon.postMessage({ type: 'kill' });
+      await done;
+    } catch {
+      // Daemon crashed before killDone.
     }
-  }
-
-  private killPool(): void {
-    this.spawnAbort?.abort();
-    this.spawnAbort = null;
-    for (const worker of this.pool) worker.terminate();
-    this.pool = [];
-  }
-
-  private async spawnPool(request: RayonSpawn): Promise<void> {
-    this.killPool();
-    if (this.closed || this.broken) return;
-
-    const spawn = new AbortController();
-    this.spawnAbort = spawn;
-    const mine: Worker[] = [];
-    try {
-      for (let i = 0; i < request.numThreads; i++) {
-        if (this.closed || this.broken || spawn.signal.aborted) return;
-        // URL must sit inside `new Worker(...)` so Vite's worker-import-meta-url
-        // plugin bundles the helpers (and their rawshim import) for production.
-        const worker = new Worker(new URL('./rayon_worker_helpers.js', import.meta.url), {
-          type: 'module',
-          name: 'wasm_bindgen_worker',
-        });
-        mine.push(worker);
-        this.pool.push(worker);
-        worker.postMessage({
-          type: 'wasm_bindgen_worker_init',
-          init: { module: request.module, memory: request.memory },
-          receiver: request.receiver,
-        });
-        await poolWorkerReady(worker, spawn.signal);
-      }
-      if (this.closed || this.broken || spawn.signal.aborted) return;
-      this.worker.postMessage({ type: 'rayonSpawned' });
-    } catch (error) {
-      for (const worker of mine) worker.terminate();
-      this.pool = this.pool.filter((worker) => !mine.includes(worker));
-      if (this.closed || this.broken) return;
-      if (error instanceof DOMException && error.name === 'AbortError') return;
-      // Terminate the editor too: it is parked on rayonSpawned inside initThreadPool,
-      // and leaving it alive lets open() overwrite this failure with "decoding".
-      this.broken = true;
-      this.fail(describe(error));
-      this.worker.terminate();
-    } finally {
-      if (this.spawnAbort === spawn) this.spawnAbort = null;
-      if (this.closed || spawn.signal.aborted) {
-        for (const worker of mine) worker.terminate();
-        this.pool = this.pool.filter((worker) => !mine.includes(worker));
-      }
-    }
+    this.results?.close();
+    this.results = null;
+    this.daemon.terminate();
   }
 
   private request(request: ExposureRequest): void {
@@ -238,12 +170,25 @@ export class RawEditPresenter {
     this.send({ type: 'grade', ...request, timestamp: this.timestamp });
   }
 
-  private readonly receive = async ({ data }: MessageEvent<FromWorker>): Promise<void> => {
-    if (data.type === 'rayonSpawn') {
-      await this.spawnPool(data);
+  private readonly receiveDaemon = ({ data, ports }: MessageEvent<FromDaemon>): void => {
+    if (data.type === 'killDone') return;
+    if (data.type === 'ready') {
+      const port = ports[0];
+      if (port != null) {
+        this.results?.close();
+        this.results = port;
+        port.onmessage = this.receiveResults;
+      }
+      this.ready(data.threads);
       return;
     }
-    if (data.type === 'shutdownDone') return;
+    if (data.type === 'failed') {
+      this.busy = false;
+      this.fail(data.message);
+    }
+  };
+
+  private readonly receiveResults = async ({ data }: MessageEvent<FromWorker>): Promise<void> => {
     if (this.closed || this.broken) {
       if (data.type === 'frame') data.frame?.close();
       else if (data.type === 'track') data.track.stop();
@@ -414,52 +359,24 @@ export class RawEditPresenter {
   }
 
   private send(message: ToWorker, transfer: Transferable[] = []): void {
-    this.worker.postMessage(message, transfer);
+    this.daemon.postMessage(message, transfer);
   }
 }
 
-function waitWorkerMessage(worker: Worker, type: string, timeoutMs: number): Promise<void> {
+function waitWorkerMessage(worker: Worker, type: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      worker.removeEventListener('message', onMessage);
-      reject(new Error(`${type} timed out`));
-    }, timeoutMs);
     const onMessage = ({ data }: MessageEvent<{ type?: string }>): void => {
       if (data?.type !== type) return;
-      clearTimeout(timer);
-      worker.removeEventListener('message', onMessage);
-      resolve();
-    };
-    worker.addEventListener('message', onMessage);
-  });
-}
-
-function poolWorkerReady(worker: Worker, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal.aborted) {
-      reject(new DOMException('aborted', 'AbortError'));
-      return;
-    }
-    const cleanup = (): void => {
       worker.removeEventListener('message', onMessage);
       worker.removeEventListener('error', onError);
-      signal.removeEventListener('abort', onAbort);
-    };
-    const onMessage = ({ data }: MessageEvent<{ type?: string }>): void => {
-      if (data?.type !== 'wasm_bindgen_worker_ready') return;
-      cleanup();
       resolve();
     };
-    const onError = (event: ErrorEvent): void => {
-      cleanup();
-      reject(event.error ?? new Error(event.message));
-    };
-    const onAbort = (): void => {
-      cleanup();
-      reject(new DOMException('aborted', 'AbortError'));
+    const onError = (): void => {
+      worker.removeEventListener('message', onMessage);
+      worker.removeEventListener('error', onError);
+      reject(new Error(`worker error while waiting for ${type}`));
     };
     worker.addEventListener('message', onMessage);
     worker.addEventListener('error', onError);
-    signal.addEventListener('abort', onAbort);
   });
 }

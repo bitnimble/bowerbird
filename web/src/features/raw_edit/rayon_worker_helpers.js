@@ -1,12 +1,9 @@
 /*
  * Replacement for wasm-bindgen-rayon's workerHelpers.js.
  *
- * Same pool-worker bootstrap, but startWorkers asks the page to spawn the pool
- * as document-owned workers. Nested workers cannot be terminated from the page
- * while the editor worker is blocked in wasm, and Chromium then leaves them
- * spinning after a bare parent terminate(). Workers the presenter holds can
- * be killed immediately on leave, together with the editor worker, which also
- * drops the SharedArrayBuffer backing the wasm heap.
+ * Pool workers are nested under whatever called initThreadPool (the editor daemon).
+ * The daemon stays free of decode/grade, so it can exitThreadPool and terminate these
+ * workers on leave without waiting on a blocked editor.
  */
 
 function waitForMsgType(target, type) {
@@ -26,19 +23,29 @@ if (typeof name !== 'undefined' && name === 'wasm_bindgen_worker') {
     initSync(data.init);
     postMessage({ type: 'wasm_bindgen_worker_ready' });
     wbg_rayon_start_worker(data.receiver);
-    // Pool drop (exitThreadPool) returns from run(); tell the page before terminate.
     postMessage({ type: 'wasm_bindgen_worker_done' });
   });
 }
 
+/** Held on the daemon so kill can terminate them after exitThreadPool. */
 export async function startWorkers(module, memory, builder) {
-  self.postMessage({
-    type: 'rayonSpawn',
-    module,
-    memory,
-    receiver: builder.receiver(),
-    numThreads: builder.numThreads(),
-  });
-  await waitForMsgType(self, 'rayonSpawned');
+  const workers = [];
+  const n = builder.numThreads();
+  for (let i = 0; i < n; i++) {
+    const worker = new Worker(new URL('./rayon_worker_helpers.js', import.meta.url), {
+      type: 'module',
+      name: 'wasm_bindgen_worker',
+    });
+    workers.push(worker);
+    worker.postMessage({
+      type: 'wasm_bindgen_worker_init',
+      init: { module, memory },
+      receiver: builder.receiver(),
+    });
+    await waitForMsgType(worker, 'wasm_bindgen_worker_ready');
+  }
+  self.__rayonPoolWorkers = workers;
+  self.__rawshimModule = module;
   builder.build();
+  self.__rayonPoolBuilt = true;
 }
