@@ -765,7 +765,7 @@ p.ui-text--mono {
   background: var(--slate-soft);
   border: 1px solid var(--slate);
   border-radius: 6px;
-  padding: 10px;
+  padding: 0 10px;
   margin-bottom: 10px;
 }
 
@@ -822,14 +822,15 @@ p.ui-text--mono {
 /* Most of the settings are numbers you tune once and never look at again, so
    they open rather than occupy the page. */
 .advanced {
-  margin-top: 18px;
+  margin-top: 12px;
+  margin-bottom: 4px;
 }
 
 .advanced__summary {
   cursor: pointer;
   font-family: var(--display);
   font-size: 13px;
-  padding: 6px 0;
+  padding: 2px 0;
   color: var(--bone-dim);
 }
 
@@ -2210,6 +2211,10 @@ p.ui-text--mono {
 .list__body {
   flex: 1;
   min-width: 0;
+}
+
+.list__meta {
+  margin-top: 4px;
 }
 
 .list__name {

@@ -101,7 +101,7 @@ const LibraryList = observer(function LibraryList(): JSX.Element {
               </Button>
             </div>
 
-            <Text variant="mono" as="div">
+            <Text variant="mono" as="div" className="list__meta">
               {library.root_path} · {library.photo_count} {library.photo_count === 1 ? 'photo' : 'photos'} ·{' '}
               {library.last_synced_at == null ? 'never synced' : `synced ${relativeTime(library.last_synced_at)}`}
             </Text>
@@ -401,7 +401,7 @@ const LibraryJobs = observer(function LibraryJobs({ library }: { library: Librar
           disabledReason={busy ? 'A job is already running for this library.' : undefined}
         >
           <Button disabled={busy} onClick={() => void syncPresenter.rebuildTiles(library.id)}>
-            <Sparkles size={ICON} />
+            <Image size={ICON} />
             Run
           </Button>
         </SettingRow>
@@ -418,7 +418,7 @@ const LibraryJobs = observer(function LibraryJobs({ library }: { library: Librar
           }
         >
           <Button disabled={busy || !renders} onClick={() => void syncPresenter.rebuildRenditions(library.id)}>
-            <Image size={ICON} />
+            <Sparkles size={ICON} />
             Run
           </Button>
         </SettingRow>
@@ -481,30 +481,38 @@ function useSettingWriter(): (patch: UpdateSettingsRequest) => Promise<void> {
 
 // Committed on blur or Enter rather than per keystroke: every character of "3840"
 // would otherwise be a round trip, and "3" is a size the server would accept.
+// `scale` is for UI units that differ from storage (e.g. seconds on screen, ms on the wire).
 const NumberSetting = observer(function NumberSetting({
   field,
   label,
   hint,
   disabledReason,
+  scale = 1,
 }: {
   field: SettingOf<number>;
   label: string;
   hint?: ReactNode;
   disabledReason?: string;
+  scale?: number;
 }): JSX.Element {
   const store = useAppSettingsStore();
   const write = useSettingWriter();
   const value = store.settings?.[field];
-  const [draft, setDraft] = useState(String(value ?? ''));
+  const shown = value == null ? '' : String(value / scale);
+  const [draft, setDraft] = useState(shown);
 
-  useEffect(() => setDraft(String(value ?? '')), [value]);
+  useEffect(() => setDraft(value == null ? '' : String(value / scale)), [value, scale]);
 
   async function commit(): Promise<void> {
-    const next = Number(draft);
-    if (draft.trim() !== '' && Number.isFinite(next) && next !== value) await write({ [field]: next } as UpdateSettingsRequest);
+    const nextDisplay = Number(draft);
+    if (draft.trim() !== '' && Number.isFinite(nextDisplay)) {
+      const next = Math.round(nextDisplay * scale);
+      if (next !== value) await write({ [field]: next } as UpdateSettingsRequest);
+    }
     // Whatever the server made of it, including refusing it outright, is what
     // the field goes back to showing.
-    setDraft(String(store.settings?.[field] ?? ''));
+    const stored = store.settings?.[field];
+    setDraft(stored == null ? '' : String(stored / scale));
   }
 
   return (
@@ -765,7 +773,8 @@ const AdvancedSettings = observer(function AdvancedSettings(): JSX.Element | nul
       <div className="panel">
         <NumberSetting
           field="watch_debounce_ms"
-          label="Change debounce (ms)"
+          label="Change debounce (seconds)"
+          scale={1000}
           hint="How long changes on disk are collected before a sync starts, so copying a hundred files causes one sync rather than a hundred."
         />
         <NumberSetting

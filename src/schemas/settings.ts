@@ -248,7 +248,7 @@ export const DEFAULT_SETTINGS: Settings = {
   cors_origins: '',
 
   watch_enabled: true,
-  watch_debounce_ms: 2000,
+  watch_debounce_ms: 15000,
   full_sync_at: '03:00',
   prune_every_days: 7,
 

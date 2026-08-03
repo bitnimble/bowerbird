@@ -6,6 +6,7 @@
   "scripts": {
     "start": "bun run src/index.ts",
     "dev": "bun run dev.ts",
+    "dev:docker": "bun run build:native && bun run build:wasm && sudo docker compose -f docker-compose.dev.yml up --build",
     "lint": "oxlint",
     "test": "LOG_LEVEL=warn bun test src",
     "test:integration": "LOG_LEVEL=warn bun test test/integration",
