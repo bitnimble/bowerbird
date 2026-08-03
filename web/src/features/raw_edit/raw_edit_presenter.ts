@@ -138,17 +138,40 @@ export class RawEditPresenter {
     this.store.track = null;
     void this.writer?.close().catch(() => undefined);
 
-    // Pool first: they share the wasm heap with the editor worker, and killing the
-    // editor underneath a still-live pool is the Chromium spin on the way out of edit.
-    // Together they drop every reference to the SharedArrayBuffer, so the heap goes too.
-    this.killPool();
-    this.worker.terminate();
+    void this.teardownWorkers();
 
     for (const url of [this.stale, this.store.fileUrl]) {
       if (url !== '') URL.revokeObjectURL(url);
     }
     this.stale = '';
     this.store.fileUrl = '';
+  }
+
+  /**
+   * Cooperative pool drop, then hard terminate. exitThreadPool signals Rayon so workers
+   * leave main_loop before Worker.terminate(); terminating waiters is the Mac Chrome peg.
+   * finally always hard-stops: leave-during-decode/spawn cannot finish cooperatively in time.
+   */
+  private async teardownWorkers(): Promise<void> {
+    this.spawnAbort?.abort();
+    this.spawnAbort = null;
+    const pool = [...this.pool];
+    this.pool = [];
+
+    const exited = pool.map((worker) => waitWorkerMessage(worker, 'wasm_bindgen_worker_done', 1500));
+    try {
+      try {
+        const done = waitWorkerMessage(this.worker, 'shutdownDone', 2000);
+        this.worker.postMessage({ type: 'shutdown' });
+        await done;
+      } catch {
+        // Worker already dead, blocked in wasm, or never finished init.
+      }
+      await Promise.allSettled(exited);
+    } finally {
+      for (const worker of pool) worker.terminate();
+      this.worker.terminate();
+    }
   }
 
   private killPool(): void {
@@ -164,18 +187,17 @@ export class RawEditPresenter {
 
     const spawn = new AbortController();
     this.spawnAbort = spawn;
+    const mine: Worker[] = [];
     try {
       for (let i = 0; i < request.numThreads; i++) {
-        if (this.closed || this.broken || spawn.signal.aborted) {
-          this.killPool();
-          return;
-        }
+        if (this.closed || this.broken || spawn.signal.aborted) return;
         // URL must sit inside `new Worker(...)` so Vite's worker-import-meta-url
         // plugin bundles the helpers (and their rawshim import) for production.
         const worker = new Worker(new URL('./rayon_worker_helpers.js', import.meta.url), {
           type: 'module',
           name: 'wasm_bindgen_worker',
         });
+        mine.push(worker);
         this.pool.push(worker);
         worker.postMessage({
           type: 'wasm_bindgen_worker_init',
@@ -184,13 +206,11 @@ export class RawEditPresenter {
         });
         await poolWorkerReady(worker, spawn.signal);
       }
-      if (this.closed || this.broken || spawn.signal.aborted) {
-        this.killPool();
-        return;
-      }
+      if (this.closed || this.broken || spawn.signal.aborted) return;
       this.worker.postMessage({ type: 'rayonSpawned' });
     } catch (error) {
-      this.killPool();
+      for (const worker of mine) worker.terminate();
+      this.pool = this.pool.filter((worker) => !mine.includes(worker));
       if (this.closed || this.broken) return;
       if (error instanceof DOMException && error.name === 'AbortError') return;
       // Terminate the editor too: it is parked on rayonSpawned inside initThreadPool,
@@ -200,6 +220,10 @@ export class RawEditPresenter {
       this.worker.terminate();
     } finally {
       if (this.spawnAbort === spawn) this.spawnAbort = null;
+      if (this.closed || spawn.signal.aborted) {
+        for (const worker of mine) worker.terminate();
+        this.pool = this.pool.filter((worker) => !mine.includes(worker));
+      }
     }
   }
 
@@ -219,6 +243,7 @@ export class RawEditPresenter {
       await this.spawnPool(data);
       return;
     }
+    if (data.type === 'shutdownDone') return;
     if (this.closed || this.broken) {
       if (data.type === 'frame') data.frame?.close();
       else if (data.type === 'track') data.track.stop();
@@ -391,6 +416,22 @@ export class RawEditPresenter {
   private send(message: ToWorker, transfer: Transferable[] = []): void {
     this.worker.postMessage(message, transfer);
   }
+}
+
+function waitWorkerMessage(worker: Worker, type: string, timeoutMs: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      worker.removeEventListener('message', onMessage);
+      reject(new Error(`${type} timed out`));
+    }, timeoutMs);
+    const onMessage = ({ data }: MessageEvent<{ type?: string }>): void => {
+      if (data?.type !== type) return;
+      clearTimeout(timer);
+      worker.removeEventListener('message', onMessage);
+      resolve();
+    };
+    worker.addEventListener('message', onMessage);
+  });
 }
 
 function poolWorkerReady(worker: Worker, signal: AbortSignal): Promise<void> {

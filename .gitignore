@@ -156,6 +156,8 @@ web/playwright-report/
 # Rust native module build output (native/rawshim). The .so is built by
 # `bun run build:native`, or by the Docker build stage.
 native/rawshim/target/
+# Materialised by ensure-patched-rayon.sh from patches/; not committed.
+native/rawshim/patched/
 
 # Throwaway analysis scripts. `.oxlintrc.json` already ignores the .ts ones;
 # this keeps them out of commits, which a squash otherwise sweeps them into.

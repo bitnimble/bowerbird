@@ -182,32 +182,35 @@ impl Editor {
             serde_json::from_str(spec).map_err(|e| JsError::new(&format!("bad editor spec: {e}")))?;
         let interactive_edge = spec.interactive_edge as usize;
 
-        let frame = crate::decode_frame_bytes(bytes, 16, true, spec.long_edge)
-            .ok_or_else(|| JsError::new("LibRaw could not decode this file"))?;
-        let (prepared, preview) =
-            Editor::prepared_from(&frame, None, &spec.grade, interactive_edge)
-                .ok_or_else(|| JsError::new("the decode was not 16-bit"))?;
+        crate::parallel::with_pool(|| {
+            let frame = crate::decode_frame_bytes(bytes, 16, true, spec.long_edge)
+                .ok_or("LibRaw could not decode this file")?;
+            let (prepared, preview) =
+                Editor::prepared_from(&frame, None, &spec.grade, interactive_edge)
+                    .ok_or("the decode was not 16-bit")?;
 
-        let mut editor = Editor {
-            matched: None,
-            raw: bytes.to_vec(),
-            prepared,
-            preview,
-            working: Vec::new(),
-            output_size: (0, 0),
-            grade: spec.grade,
-            strengths: spec.strengths,
-            interactive_edge,
-            depth: match spec.ten_bit {
-                true => Depth::Ten,
-                false => Depth::Eight,
-            },
-            sink: spec.sink,
-            output: Vec::new(),
-            frame: Some(frame),
-        };
-        editor.size_buffers();
-        Ok(editor)
+            let mut editor = Editor {
+                matched: None,
+                raw: bytes.to_vec(),
+                prepared,
+                preview,
+                working: Vec::new(),
+                output_size: (0, 0),
+                grade: spec.grade,
+                strengths: spec.strengths,
+                interactive_edge,
+                depth: match spec.ten_bit {
+                    true => Depth::Ten,
+                    false => Depth::Eight,
+                },
+                sink: spec.sink,
+                output: Vec::new(),
+                frame: Some(frame),
+            };
+            editor.size_buffers();
+            Ok(editor)
+        })
+        .map_err(JsError::new)
     }
 
     /// The exposure-independent stages, at full size and at the interactive one.
@@ -279,62 +282,64 @@ impl Editor {
     /// on both fixture bodies where the native fit matched, so every browser edit graded
     /// neutral - flatter and less saturated than the rendition beside it.
     pub fn fit_camera_match(&mut self) -> bool {
-        let Some(frame) = self.frame.as_ref() else {
-            return false;
-        };
-        let Some(samples) = frame.samples16() else {
-            return false;
-        };
-        let Some(jpeg) = crate::embedded_jpeg_bytes(&self.raw) else {
-            return false;
-        };
-        // Bounded on the way out, as `hdr::fit_all` bounds it: `hdr_fit` linearises the
-        // preview whole into f64 before resampling, so a full-size one asks for 576MB -
-        // fine on a server, and past what wasm32 will allocate.
-        let Ok(preview) = crate::jpeg::decode(&jpeg, crate::hdr_fit::sample_long_edge()) else {
-            return false;
-        };
-        // `hdr::fit_match_from` assembles the fit's inputs - the anchor's quantile and the
-        // plane at twice the preview's width - so this does not. Reproducing those three
-        // lines here is what produced a curve fitted at the wrong scale.
-        let source = crate::hdr::Source {
-            samples,
-            width: frame.width,
-            height: frame.height,
-        };
-        let recorded = crate::lens::read_distortion(&self.raw);
-        let geometry = match (recorded.applied, recorded.spline) {
-            (Some(false), _) => crate::fit::Geometry::Uncorrected,
-            (_, Some(knots)) => crate::fit::Geometry::Recorded(knots),
-            (_, None) => crate::fit::Geometry::Unstated,
-        };
-        // Without the sharpen, which is what a rendition fits with too: it is a
-        // deconvolution of the resample's blur, so it has not run yet at the point the
-        // match is measured (`Strengths::before_the_fit`).
-        self.matched = crate::hdr::fit_all_from_preview(
-            &source,
-            self.grade.white_quantile,
-            geometry,
-            self.strengths.before_the_fit(),
-            &preview,
-            recorded.lateral,
-        )
-        .map(|(_, matched)| matched);
-        // The warp is the match's, so the prepared frame is stale the moment one is fitted.
-        let rebuilt = self.frame.as_ref().and_then(|frame| {
-            Editor::prepared_from(
-                frame,
-                self.matched.as_ref(),
-                &self.grade,
-                self.interactive_edge,
+        crate::parallel::with_pool(|| {
+            let Some(frame) = self.frame.as_ref() else {
+                return false;
+            };
+            let Some(samples) = frame.samples16() else {
+                return false;
+            };
+            let Some(jpeg) = crate::embedded_jpeg_bytes(&self.raw) else {
+                return false;
+            };
+            // Bounded on the way out, as `hdr::fit_all` bounds it: `hdr_fit` linearises the
+            // preview whole into f64 before resampling, so a full-size one asks for 576MB -
+            // fine on a server, and past what wasm32 will allocate.
+            let Ok(preview) = crate::jpeg::decode(&jpeg, crate::hdr_fit::sample_long_edge()) else {
+                return false;
+            };
+            // `hdr::fit_match_from` assembles the fit's inputs - the anchor's quantile and the
+            // plane at twice the preview's width - so this does not. Reproducing those three
+            // lines here is what produced a curve fitted at the wrong scale.
+            let source = crate::hdr::Source {
+                samples,
+                width: frame.width,
+                height: frame.height,
+            };
+            let recorded = crate::lens::read_distortion(&self.raw);
+            let geometry = match (recorded.applied, recorded.spline) {
+                (Some(false), _) => crate::fit::Geometry::Uncorrected,
+                (_, Some(knots)) => crate::fit::Geometry::Recorded(knots),
+                (_, None) => crate::fit::Geometry::Unstated,
+            };
+            // Without the sharpen, which is what a rendition fits with too: it is a
+            // deconvolution of the resample's blur, so it has not run yet at the point the
+            // match is measured (`Strengths::before_the_fit`).
+            self.matched = crate::hdr::fit_all_from_preview(
+                &source,
+                self.grade.white_quantile,
+                geometry,
+                self.strengths.before_the_fit(),
+                &preview,
+                recorded.lateral,
             )
-        });
-        if let Some((prepared, preview)) = rebuilt {
-            self.prepared = prepared;
-            self.preview = preview;
-            self.size_buffers();
-        }
-        self.matched.is_some()
+            .map(|(_, matched)| matched);
+            // The warp is the match's, so the prepared frame is stale the moment one is fitted.
+            let rebuilt = self.frame.as_ref().and_then(|frame| {
+                Editor::prepared_from(
+                    frame,
+                    self.matched.as_ref(),
+                    &self.grade,
+                    self.interactive_edge,
+                )
+            });
+            if let Some((prepared, preview)) = rebuilt {
+                self.prepared = prepared;
+                self.preview = preview;
+                self.size_buffers();
+            }
+            self.matched.is_some()
+        })
     }
 
     /// Drops the decode and the file, which nothing downstream of the open reads.
@@ -391,27 +396,29 @@ impl Editor {
     /// per-channel curves then rotate the hue - 59/1000 of chromaticity at p99 across
     /// half a stop, measured. `tone::GradeOptions::exposure` has the rest.
     fn grade_from(&mut self, resolution: Resolution, ev: f32) {
-        let source = match resolution {
-            Resolution::Full => &self.prepared,
-            Resolution::Interactive => &self.preview,
-        };
-        let (width, height) = (source.width, source.height);
-        // The interactive frame writes only the front of a buffer sized for the full one.
-        let working = &mut self.working[..source.samples.len()];
+        crate::parallel::with_pool(|| {
+            let source = match resolution {
+                Resolution::Full => &self.prepared,
+                Resolution::Interactive => &self.preview,
+            };
+            let (width, height) = (source.width, source.height);
+            // The interactive frame writes only the front of a buffer sized for the full one.
+            let working = &mut self.working[..source.samples.len()];
 
-        working.copy_from_slice(&source.samples);
-        crate::hdr::grade_prepared(
-            working,
-            &self.grade,
-            self.matched.as_ref().map(|m| &m.colour),
-            source.levels,
-            2f64.powf(f64::from(ev)),
-        );
-        tone::encode_pq(working, self.grade.peak_nits);
-        crate::image::finish(working, width, height, self.strengths);
+            working.copy_from_slice(&source.samples);
+            crate::hdr::grade_prepared(
+                working,
+                &self.grade,
+                self.matched.as_ref().map(|m| &m.colour),
+                source.levels,
+                2f64.powf(f64::from(ev)),
+            );
+            tone::encode_pq(working, self.grade.peak_nits);
+            crate::image::finish(working, width, height, self.strengths);
 
-        self.output_size = (width, height);
-        self.emit();
+            self.output_size = (width, height);
+            self.emit();
+        })
     }
 
     /// The one place the output is written, so interactive and full grades cannot

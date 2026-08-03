@@ -120,7 +120,7 @@ FROM base AS native
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
      libraw-dev liblensfun-dev libavif-dev \
-     build-essential ca-certificates curl libclang-dev \
+     build-essential ca-certificates curl git libclang-dev \
   && rm -rf /var/lib/apt/lists/*
 # Downloaded to a file rather than piped into sh: in a pipeline the exit status is
 # the *last* command's, so `curl ... | sh` reports success when curl fails and leaves
@@ -132,6 +132,7 @@ ENV PATH="/root/.cargo/bin:${PATH}"
 COPY native ./native
 # Separate target dirs: changing target-cpu invalidates every artefact anyway, so
 # sharing one would rebuild the dependencies three times over rather than caching.
+RUN native/rawshim/ensure-patched-rayon.sh
 RUN set -eu; \
   for level in x86-64 x86-64-v3 x86-64-v4; do \
     RUSTFLAGS="-C target-cpu=$level" cargo build --release \

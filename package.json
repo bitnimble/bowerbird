@@ -10,11 +10,11 @@
     "lint": "oxlint",
     "test": "LOG_LEVEL=warn bun test src",
     "test:integration": "LOG_LEVEL=warn bun test test/integration",
-    "test:native": "cargo test --release --manifest-path native/rawshim/Cargo.toml",
-    "test:native:full": "cargo test --release --manifest-path native/rawshim/Cargo.toml --features fixtures",
+    "test:native": "native/rawshim/ensure-patched-rayon.sh && cargo test --release --manifest-path native/rawshim/Cargo.toml",
+    "test:native:full": "native/rawshim/ensure-patched-rayon.sh && cargo test --release --manifest-path native/rawshim/Cargo.toml --features fixtures",
     "typecheck": "tsc --noEmit",
-    "build:native": "cargo build --release --manifest-path native/rawshim/Cargo.toml",
-    "build:wasm": "RUSTFLAGS='-C target-feature=+atomics,+bulk-memory -C link-arg=--shared-memory -C link-arg=--max-memory=1073741824 -C link-arg=--import-memory -C link-arg=--export=__heap_base -C link-arg=--export=__wasm_init_tls -C link-arg=--export=__tls_size -C link-arg=--export=__tls_align -C link-arg=--export=__tls_base' rustup run nightly-2025-11-15 wasm-pack build --release --target web --out-dir ../../web/src/wasm native/rawshim -- -Z build-std=panic_abort,std"
+    "build:native": "native/rawshim/ensure-patched-rayon.sh && cargo build --release --manifest-path native/rawshim/Cargo.toml",
+    "build:wasm": "native/rawshim/ensure-patched-rayon.sh && RUSTFLAGS='-C target-feature=+atomics,+bulk-memory -C link-arg=--shared-memory -C link-arg=--max-memory=1073741824 -C link-arg=--import-memory -C link-arg=--export=__heap_base -C link-arg=--export=__wasm_init_tls -C link-arg=--export=__tls_size -C link-arg=--export=__tls_align -C link-arg=--export=__tls_base' rustup run nightly-2025-11-15 wasm-pack build --release --target web --out-dir ../../web/src/wasm native/rawshim -- -Z build-std=panic_abort,std"
   },
   "dependencies": {
     "@parcel/watcher": "^2.6.0",

@@ -17,6 +17,11 @@ crate-type = ["cdylib", "rlib"]
 [package.metadata.wasm-pack.profile.release]
 wasm-opt = false
 
+# Materialise with `./ensure-patched-rayon.sh` before cargo resolve; package.json
+# cargo scripts and the Docker native stage do this.
+[package.metadata.patch]
+crates = ["wasm-bindgen-rayon"]
+
 [features]
 # The tests that decode a real RAW, which need the LFS fixtures and take seconds
 # rather than milliseconds. Off by default so `cargo test` stays a thing you can run
@@ -45,6 +50,11 @@ serde_json = "1.0.151"
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2"
 wasm-bindgen-rayon = { git = "https://github.com/RReverser/wasm-bindgen-rayon.git", rev = "4eea1fa55a965ad516ef9f9e9449704c7eac91c5" }
+
+# Droppable rayon pool (patches/wasm-bindgen-rayon+1.3.0.patch). Materialise with
+# `./ensure-patched-rayon.sh` before cargo resolve; package.json cargo scripts do this.
+[patch."https://github.com/RReverser/wasm-bindgen-rayon.git"]
+wasm-bindgen-rayon = { path = "./patched/wasm-bindgen-rayon" }
 
 # `usize` is 32 bits on wasm32 and 64 on the server, so an index product can be right in
 # every rendition and wrap silently in the browser. Keep that failure loud in release.

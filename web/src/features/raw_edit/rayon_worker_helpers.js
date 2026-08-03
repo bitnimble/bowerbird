@@ -26,6 +26,8 @@ if (typeof name !== 'undefined' && name === 'wasm_bindgen_worker') {
     initSync(data.init);
     postMessage({ type: 'wasm_bindgen_worker_ready' });
     wbg_rayon_start_worker(data.receiver);
+    // Pool drop (exitThreadPool) returns from run(); tell the page before terminate.
+    postMessage({ type: 'wasm_bindgen_worker_done' });
   });
 }
 

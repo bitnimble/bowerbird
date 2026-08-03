@@ -84,7 +84,7 @@ pub mod tone;
 #[cfg(target_arch = "wasm32")]
 pub mod wasm;
 #[cfg(target_arch = "wasm32")]
-pub use wasm_bindgen_rayon::init_thread_pool;
+pub use wasm_bindgen_rayon::{exit_thread_pool, init_thread_pool};
 
 mod raw {
     #![allow(

@@ -581,7 +581,6 @@ dependencies = [
 [[package]]
 name = "wasm-bindgen-rayon"
 version = "1.3.0"
-source = "git+https://github.com/RReverser/wasm-bindgen-rayon.git?rev=4eea1fa55a965ad516ef9f9e9449704c7eac91c5#4eea1fa55a965ad516ef9f9e9449704c7eac91c5"
 dependencies = [
  "crossbeam-channel",
  "js-sys",

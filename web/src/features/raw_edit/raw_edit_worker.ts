@@ -1,7 +1,7 @@
 /// <reference lib="webworker" />
 import { avifToMp4 } from 'avif-hdr-video';
 import { describe } from '../../errors';
-import init, { Editor, initThreadPool, thread_count } from '../../wasm/rawshim';
+import init, { Editor, exitThreadPool, initThreadPool, thread_count } from '../../wasm/rawshim';
 import { useMemory } from './wasi_stub';
 import type { EditorSpec } from './editor_spec';
 
@@ -32,6 +32,8 @@ export type FromWorker =
   // both are null and the message just reports the cost.
   | { type: 'frame'; frame: VideoFrame | null; file: Blob | null; ev: number; ms: number }
   | { type: 'failed'; message: string }
+  /** Editor dropped the rayon pool; page may terminate document-owned workers. */
+  | { type: 'shutdownDone' }
   /** Ask the page to spawn document-owned rayon workers (see rayon_worker_helpers.js). */
   | {
       type: 'rayonSpawn';
@@ -98,9 +100,15 @@ function openTrack(): boolean {
   return true;
 }
 
-scope.onmessage = async ({ data }: MessageEvent<ToWorker | { type: 'rayonSpawned' }>): Promise<void> => {
+scope.onmessage = async ({ data }: MessageEvent<ToWorker | { type: 'rayonSpawned' } | { type: 'shutdown' }>): Promise<void> => {
   // Handled by startWorkers' listener; onmessage sees it too.
   if (data.type === 'rayonSpawned') return;
+
+  if (data.type === 'shutdown') {
+    exitThreadPool();
+    post({ type: 'shutdownDone' });
+    return;
+  }
 
   try {
     if (data.type === 'open') {
