@@ -12,12 +12,14 @@ const FRAME_INTERVAL_US = 1e6 / 60;
 
 type ExposureRequest = { ev: number; exact: boolean };
 
+type RayonSpawn = Extract<FromWorker, { type: 'rayonSpawn' }>;
+
 /**
  * Drives one RAW through the decode-once, grade-per-tick loop and out to its route.
  *
- * Owns the worker, the track and every object URL the stage has held, because all three
- * are things that have to be given back and none of them are state a view can own. The
- * store is what the view reads; nothing outside here writes it.
+ * Owns the worker, the rayon pool, the track and every object URL the stage has held,
+ * because all of them are things that have to be given back and none of them are state a
+ * view can own. The store is what the view reads; nothing outside here writes it.
  */
 export class RawEditPresenter {
   private readonly worker: Worker;
@@ -28,6 +30,16 @@ export class RawEditPresenter {
    * track back, so this stays null there and the track arrives by message.
    */
   private readonly writer: WritableStreamDefaultWriter<VideoFrame> | null = null;
+
+  /**
+   * Document-owned rayon workers. Nested under the editor worker they cannot be killed
+   * from here while that worker is blocked in wasm, and Chromium then spins them after a
+   * bare parent terminate(). Spawned on this side so close() can stop decode/grade and
+   * release the SharedArrayBuffer heap immediately.
+   */
+  private pool: Worker[] = [];
+  /** Aborts an in-flight pool spawn when close() or a failed spawn tears the pool down. */
+  private spawnAbort: AbortController | null = null;
 
   /** The slider has moved but the previous frame has not come back yet. */
   private pending: ExposureRequest | null = null;
@@ -42,7 +54,8 @@ export class RawEditPresenter {
    */
   private stale = '';
   private closed = false;
-  private shutdown: { resolve: () => void } | null = null;
+  /** Pool init failed; open must not overwrite the failure or talk to a dead worker. */
+  private broken = false;
 
   constructor(private readonly store: RawEditStore) {
     if (store.route === 'track' && typeof MediaStreamTrackGenerator !== 'undefined') {
@@ -79,20 +92,20 @@ export class RawEditPresenter {
         // dead on a file the server served perfectly.
         fetch(downloadUrl(photoId, 'original'), { cache: 'no-store' }),
       ]);
-      if (this.closed) return;
+      if (this.closed || this.broken) return;
       if (!response.ok) {
         const message = (await apiError(response)).message;
-        if (!this.closed) this.fail(message);
+        if (!this.closed && !this.broken) this.fail(message);
         return;
       }
 
       const bytes = await response.arrayBuffer();
-      if (this.closed) return;
+      if (this.closed || this.broken) return;
       this.decoding(bytes.byteLength);
       const spec = editorSpec(settings, longEdge, sinkFor(this.store.route));
       this.send({ type: 'open', bytes, spec }, [bytes]);
     } catch (error) {
-      if (!this.closed) this.fail(describe(error));
+      if (!this.closed && !this.broken) this.fail(describe(error));
     }
   }
 
@@ -125,49 +138,73 @@ export class RawEditPresenter {
     this.store.track = null;
     void this.writer?.close().catch(() => undefined);
 
-    // Ask the worker to kill its rayon pool before the parent goes away.
-    // A bare terminate() is what pinned every core on the way out of edit mode.
-    void this.shutdownWorker().finally(() => {
-      for (const url of [this.stale, this.store.fileUrl]) {
-        if (url !== '') URL.revokeObjectURL(url);
-      }
-      this.stale = '';
-      this.store.fileUrl = '';
-    });
+    // Pool first: they share the wasm heap with the editor worker, and killing the
+    // editor underneath a still-live pool is the Chromium spin on the way out of edit.
+    // Together they drop every reference to the SharedArrayBuffer, so the heap goes too.
+    this.killPool();
+    this.worker.terminate();
+
+    for (const url of [this.stale, this.store.fileUrl]) {
+      if (url !== '') URL.revokeObjectURL(url);
+    }
+    this.stale = '';
+    this.store.fileUrl = '';
   }
 
-  private shutdownWorker(): Promise<void> {
-    return new Promise((resolve) => {
-      const finish = (terminate: boolean): void => {
-        if (this.shutdown == null) return;
-        this.shutdown = null;
-        clearTimeout(timer);
-        // Only force-kill when the worker is already gone (send threw) or it acked —
-        // a timeout terminate while a grade/open still holds the event loop orphans the
-        // rayon pool and reintroduces the spin this close path exists to prevent.
-        if (terminate) {
-          try {
-            this.worker.terminate();
-          } catch {
-            /* already gone */
-          }
+  private killPool(): void {
+    this.spawnAbort?.abort();
+    this.spawnAbort = null;
+    for (const worker of this.pool) worker.terminate();
+    this.pool = [];
+  }
+
+  private async spawnPool(request: RayonSpawn): Promise<void> {
+    this.killPool();
+    if (this.closed || this.broken) return;
+
+    const spawn = new AbortController();
+    this.spawnAbort = spawn;
+    try {
+      for (let i = 0; i < request.numThreads; i++) {
+        if (this.closed || this.broken || spawn.signal.aborted) {
+          this.killPool();
+          return;
         }
-        resolve();
-      };
-      this.shutdown = { resolve: () => finish(true) };
-      // Give up waiting for the ack so object URLs can be revoked; leave the worker
-      // alive so the queued shutdown can still run once the in-flight work yields.
-      const timer = setTimeout(() => finish(false), 60_000);
-      try {
-        this.send({ type: 'shutdown' });
-      } catch {
-        finish(true);
+        // URL must sit inside `new Worker(...)` so Vite's worker-import-meta-url
+        // plugin bundles the helpers (and their rawshim import) for production.
+        const worker = new Worker(new URL('./rayon_worker_helpers.js', import.meta.url), {
+          type: 'module',
+          name: 'wasm_bindgen_worker',
+        });
+        this.pool.push(worker);
+        worker.postMessage({
+          type: 'wasm_bindgen_worker_init',
+          init: { module: request.module, memory: request.memory },
+          receiver: request.receiver,
+        });
+        await poolWorkerReady(worker, spawn.signal);
       }
-    });
+      if (this.closed || this.broken || spawn.signal.aborted) {
+        this.killPool();
+        return;
+      }
+      this.worker.postMessage({ type: 'rayonSpawned' });
+    } catch (error) {
+      this.killPool();
+      if (this.closed || this.broken) return;
+      if (error instanceof DOMException && error.name === 'AbortError') return;
+      // Terminate the editor too: it is parked on rayonSpawned inside initThreadPool,
+      // and leaving it alive lets open() overwrite this failure with "decoding".
+      this.broken = true;
+      this.fail(describe(error));
+      this.worker.terminate();
+    } finally {
+      if (this.spawnAbort === spawn) this.spawnAbort = null;
+    }
   }
 
   private request(request: ExposureRequest): void {
-    if (this.closed) return;
+    if (this.closed || this.broken) return;
     if (this.busy) {
       this.pending = request;
       return;
@@ -178,11 +215,11 @@ export class RawEditPresenter {
   }
 
   private readonly receive = async ({ data }: MessageEvent<FromWorker>): Promise<void> => {
-    if (data.type === 'shutdown') {
-      this.shutdown?.resolve();
+    if (data.type === 'rayonSpawn') {
+      await this.spawnPool(data);
       return;
     }
-    if (this.closed) {
+    if (this.closed || this.broken) {
       if (data.type === 'frame') data.frame?.close();
       else if (data.type === 'track') data.track.stop();
       return;
@@ -354,4 +391,34 @@ export class RawEditPresenter {
   private send(message: ToWorker, transfer: Transferable[] = []): void {
     this.worker.postMessage(message, transfer);
   }
+}
+
+function poolWorkerReady(worker: Worker, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new DOMException('aborted', 'AbortError'));
+      return;
+    }
+    const cleanup = (): void => {
+      worker.removeEventListener('message', onMessage);
+      worker.removeEventListener('error', onError);
+      signal.removeEventListener('abort', onAbort);
+    };
+    const onMessage = ({ data }: MessageEvent<{ type?: string }>): void => {
+      if (data?.type !== 'wasm_bindgen_worker_ready') return;
+      cleanup();
+      resolve();
+    };
+    const onError = (event: ErrorEvent): void => {
+      cleanup();
+      reject(event.error ?? new Error(event.message));
+    };
+    const onAbort = (): void => {
+      cleanup();
+      reject(new DOMException('aborted', 'AbortError'));
+    };
+    worker.addEventListener('message', onMessage);
+    worker.addEventListener('error', onError);
+    signal.addEventListener('abort', onAbort);
+  });
 }

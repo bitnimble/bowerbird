@@ -21,21 +21,38 @@ export default defineConfig({
   build: { target: 'es2022' },
   worker: { format: 'es' },
   resolve: {
-    alias: {
-      // rawshim's wasm build links wasi-libc for the C runtime LibRaw needs, which makes
-      // the module import WASI syscalls it never calls - the RAW is opened from a buffer,
-      // so nothing touches a file. The stubs satisfy the import list.
-      wasi_snapshot_preview1: '/src/features/raw_edit/wasi_stub.ts',
-      // Source rather than the `dist` its package.json publishes, and so an alias rather
-      // than a dependency: the build output is gitignored, and a fresh checkout should
-      // not have to build a sibling package before this one will start. `tsconfig.json`
-      // carries the same mapping for the typecheck.
-      'avif-hdr-video': fileURLToPath(new URL('../packages/avif-hdr-video/src/index.ts', import.meta.url)),
-      // Settings schemas live under ../src and import zod. Vite resolves bare imports
-      // from the importer's directory, which is outside this package - pin it to the
-      // copy web declares rather than walking into /app/node_modules.
-      zod: fileURLToPath(new URL('./node_modules/zod', import.meta.url)),
-    },
+    alias: [
+      {
+        // wasm-bindgen-rayon's default helpers nest the pool under the editor worker.
+        // Ours ask the page to own them so leave-edit can terminate mid-decode.
+        // Match the *whole* specifier: a suffix-only regex leaves a broken
+        // `./snippets/<abs-path>` id (Vite replaces only the matched span).
+        find: /^.*wasm-bindgen-rayon-[^/]+\/src\/workerHelpers\.js$/,
+        replacement: fileURLToPath(new URL('./src/features/raw_edit/rayon_worker_helpers.js', import.meta.url)),
+      },
+      {
+        // rawshim's wasm build links wasi-libc for the C runtime LibRaw needs, which makes
+        // the module import WASI syscalls it never calls - the RAW is opened from a buffer,
+        // so nothing touches a file. The stubs satisfy the import list.
+        find: 'wasi_snapshot_preview1',
+        replacement: '/src/features/raw_edit/wasi_stub.ts',
+      },
+      {
+        // Source rather than the `dist` its package.json publishes, and so an alias rather
+        // than a dependency: the build output is gitignored, and a fresh checkout should
+        // not have to build a sibling package before this one will start. `tsconfig.json`
+        // carries the same mapping for the typecheck.
+        find: 'avif-hdr-video',
+        replacement: fileURLToPath(new URL('../packages/avif-hdr-video/src/index.ts', import.meta.url)),
+      },
+      {
+        // Settings schemas live under ../src and import zod. Vite resolves bare imports
+        // from the importer's directory, which is outside this package - pin it to the
+        // copy web declares rather than walking into /app/node_modules.
+        find: 'zod',
+        replacement: fileURLToPath(new URL('./node_modules/zod', import.meta.url)),
+      },
+    ],
   },
   server: {
     // Random rather than fixed, so several checkouts can run a dev server at
