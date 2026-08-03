@@ -5,7 +5,6 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
-  ChevronUp,
   Download,
   FileType,
   Image as ImageIcon,
@@ -16,6 +15,7 @@ import {
   RotateCw,
   SlidersHorizontal,
   Sparkles,
+  Star,
   Trash2,
   Wand2,
 } from 'lucide-react';
@@ -38,6 +38,7 @@ import { menuSection } from '../../ui/menu_section';
 import { MoreLess } from '../../ui/more_less';
 import type { Option } from '../../ui/option';
 import { OverflowMenu } from '../../ui/overflow_menu';
+import { PopoverButton } from '../../ui/popover_button';
 import { Text } from '../../ui/text';
 import { TextArea } from '../../ui/text_area';
 import { RawEditPanel } from '../raw_edit/raw_edit_panel';
@@ -296,6 +297,16 @@ const DetailNav = observer(function DetailNav({
 
       <div className="detail__tools" ref={toolsRef} />
 
+      {/* Judging lives in the bar so it survives hiding the metadata column: a cull
+          with the panels away is the common case, and the verdict has to stay under
+          the same fingers that step between frames. */}
+      {!mobile && !editing && (
+        <>
+          <PhotoTriage photoId={photoId} compact />
+          <PhotoRatingMenu photoId={photoId} />
+        </>
+      )}
+
       {/* Forced open while editing (the exposure panel has nowhere else to live),
           so the toggle would only confuse. */}
       {panelsOpen != null && !editing && (
@@ -428,41 +439,81 @@ const DetailFrame = observer(function DetailFrame({ photoId, toolsInto }: { phot
 
 // The verdict and the rating, both off the grid row: they are right from the
 // first frame and stay hittable while the detail is in flight, and judging a
-// photo re-renders nothing but the one of these that changed. Separate, because
-// on a phone the verdict is on the bar and the rating is under the fold.
-const PhotoTriage = observer(function PhotoTriage({ photoId }: { photoId: string }): JSX.Element {
+// photo re-renders nothing but the one of these that changed.
+const PhotoTriage = observer(function PhotoTriage({
+  photoId,
+  compact = false,
+  stretch = false,
+}: {
+  photoId: string;
+  compact?: boolean;
+  stretch?: boolean;
+}): JSX.Element {
   const store = usePhotosStore();
   const { photos } = usePresenters();
 
   return (
     <TriageControl
+      compact={compact}
+      stretch={stretch}
       value={store.photoFor(photoId)?.triage ?? 'untriaged'}
       onChange={(next) => void photos.setTriage(photoId, next)}
     />
   );
 });
 
-const PhotoRating = observer(function PhotoRating({ photoId }: { photoId: string }): JSX.Element {
+// Stars only: the sheet shows them under a label, the header drops them into a
+// flyout, and both share the same press-again-to-clear behaviour as the grid.
+const RatingStars = observer(function RatingStars({ photoId }: { photoId: string }): JSX.Element {
   const store = usePhotosStore();
   const { photos } = usePresenters();
-  const photo = store.photoFor(photoId);
+  const rating = store.photoFor(photoId)?.rating ?? 0;
 
+  return (
+    <div className="stars" role="group" aria-label="Rating">
+      {[1, 2, 3, 4, 5].map((n) => (
+        <button
+          key={n}
+          type="button"
+          className={`star${n <= rating ? ' on' : ''}`}
+          aria-label={`Set rating to ${n}`}
+          aria-pressed={n <= rating}
+          onClick={() => void photos.setRating(photoId, n === rating ? 0 : n)}
+        >
+          ★
+        </button>
+      ))}
+    </div>
+  );
+});
+
+// Compact trigger in the header: the stars themselves are too wide for the bar,
+// so they open on demand beside the verdict.
+const PhotoRatingMenu = observer(function PhotoRatingMenu({ photoId }: { photoId: string }): JSX.Element {
+  const store = usePhotosStore();
+  const rating = store.photoFor(photoId)?.rating ?? 0;
+
+  return (
+    <PopoverButton
+      active={rating > 0}
+      trigger={
+        <>
+          <Star size={ICON} />
+          {rating > 0 ? `Rating ${rating}` : 'Rating'}
+          <ChevronDown size={ICON} className="ui-btn__caret" />
+        </>
+      }
+    >
+      <RatingStars photoId={photoId} />
+    </PopoverButton>
+  );
+});
+
+const PhotoRating = observer(function PhotoRating({ photoId }: { photoId: string }): JSX.Element {
   return (
     <div className="row detail__rating">
       <Text variant="label">Rating</Text>
-      <div className="stars">
-        {[1, 2, 3, 4, 5].map((n) => (
-          <button
-            key={n}
-            type="button"
-            className={`star${n <= (photo?.rating ?? 0) ? ' on' : ''}`}
-            aria-label={`Set rating to ${n}`}
-            onClick={() => void photos.setRating(photoId, n === photo?.rating ? 0 : n)}
-          >
-            ★
-          </button>
-        ))}
-      </div>
+      <RatingStars photoId={photoId} />
     </div>
   );
 });
@@ -653,6 +704,9 @@ const DetailKeys = observer(function DetailKeys({
       const target = e.target as HTMLElement | null;
       if (target != null && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
+      // Rating (and any other) flyout owns its own keys while open; arrow-stepping
+      // out from under an open popup is worse than ignoring the cull shortcuts.
+      if (target?.closest('.ui-popup') != null) return;
 
       // Edit mode owns Escape: discard the grade and return to the viewer, rather than
       // leaving the photo the way the ordinary viewer does.
@@ -797,7 +851,8 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   // frame is one bar pinned to the window - the verdict, and the way to the
   // rest - so a thumb finds it in the same place whatever shape the photo is,
   // and the metadata is a fold above it rather than a column stealing the
-  // screen.
+  // screen. Desktop keeps the verdict in the header instead, so hiding the
+  // panels never takes the cull controls with them.
   const panels = mobile ? (
     <div className="detail__sheet">
       {(sheetOpen || editing) && (
@@ -813,28 +868,20 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
 
       {!editing && (
         <div className="row detail__verdict">
-          <PhotoTriage photoId={photoId} />
+          <PhotoTriage photoId={photoId} stretch />
           <Button
             iconOnly
-            aria-label={sheetOpen ? 'Hide details' : 'Show details'}
+            aria-label={sheetOpen ? 'Hide metadata' : 'Show metadata'}
             aria-expanded={sheetOpen}
             onClick={() => setSheetOpen(!sheetOpen)}
           >
-            {sheetOpen ? <ChevronDown size={ICON} /> : <ChevronUp size={ICON} />}
+            <Info size={ICON} />
           </Button>
         </div>
       )}
     </div>
   ) : (
-    <div className="detail__panels">
-      {!editing && (
-        <Panel title="Triage">
-          <PhotoTriage photoId={photoId} />
-          <PhotoRating photoId={photoId} />
-        </Panel>
-      )}
-      {metaPanels}
-    </div>
+    <div className="detail__panels">{metaPanels}</div>
   );
 
   return (

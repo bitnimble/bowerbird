@@ -105,10 +105,10 @@ test('the verdict is on a bar at the foot of the window, with the rest under it'
   if (bar == null || window == null) throw new Error('the sheet has no box');
   expect(Math.round(bar.y + bar.height)).toBe(window.height);
 
-  await sheet.getByRole('button', { name: 'Show details' }).click();
+  await sheet.getByRole('button', { name: 'Show metadata' }).click();
   await expect(sheet.getByRole('button', { name: 'Set rating to 3' })).toBeVisible();
   await expect(sheet.getByRole('button', { name: 'Pick' })).toBeVisible();
 
-  await sheet.getByRole('button', { name: 'Hide details' }).click();
+  await sheet.getByRole('button', { name: 'Hide metadata' }).click();
   await expect(sheet.locator('.panel')).toHaveCount(0);
 });

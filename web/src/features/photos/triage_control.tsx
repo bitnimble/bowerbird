@@ -15,8 +15,38 @@ const OPTIONS: Option<Triage>[] = [
   { value: 'picked', label: 'Pick', icon: <ThumbsUp size={ICON} />, tone: 'pick', hint: 'C' },
 ];
 
+// Icon alone in the header: labels would push the path and the menus off a
+// single line. The foot bar still spells the three out for a thumb. Title keeps
+// the key so hover still teaches Z/X/C after the hint badge is gone.
+const COMPACT_OPTIONS: Option<Triage>[] = OPTIONS.map((option) => ({
+  ...option,
+  iconOnly: true,
+  hint: undefined,
+  label: option.hint == null ? option.label : `${option.label} (${option.hint})`,
+}));
+
 // Three states, not a checkbox: "not yet decided" is different from "decided
 // against", and a two-state control cannot say which one a photo is in.
-export function TriageControl({ value, onChange }: { value: Triage; onChange: (next: Triage) => void }): JSX.Element {
-  return <SegmentedControl stretch label="Triage" options={OPTIONS} value={value} onChange={onChange} />;
+export function TriageControl({
+  value,
+  onChange,
+  compact = false,
+  stretch = false,
+}: {
+  value: Triage;
+  onChange: (next: Triage) => void;
+  /** Icons only: the detail header, where labelled buttons do not fit. */
+  compact?: boolean;
+  /** Fill the row: a phone's foot bar. */
+  stretch?: boolean;
+}): JSX.Element {
+  return (
+    <SegmentedControl
+      stretch={stretch}
+      label="Triage"
+      options={compact ? COMPACT_OPTIONS : OPTIONS}
+      value={value}
+      onChange={onChange}
+    />
+  );
 }

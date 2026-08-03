@@ -1835,8 +1835,7 @@ p.ui-text--mono {
   min-height: 0;
 }
 
-/* Wide enough for the triage control at its natural width: at 288px "Undecided"
-   was clipped by a few pixels. */
+/* Wide enough for a camera/lens string without wrapping mid-word. */
 .detail--beside {
   grid-template-columns: minmax(0, 1fr) 320px;
 }
@@ -1850,8 +1849,8 @@ p.ui-text--mono {
 }
 
 /* minmax(0, 1fr) rather than the implicit `auto` column: an auto track is at
-   least min-content wide, so one unshrinkable child (the triage control) grew
-   every panel past the rail and pushed it off the page. */
+   least min-content wide, so one unshrinkable child grew every panel past the
+   rail and pushed it off the page. */
 .detail__panels {
   display: grid;
   grid-template-columns: minmax(0, 1fr);

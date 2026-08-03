@@ -319,11 +319,16 @@ test('the detail view shows shooting metadata, the triage control and steps betw
   await camera.getByRole('button', { name: /less/ }).click();
   await expect(camera.locator('.meta dt')).toHaveCount(2);
 
-  // Three-way triage, not a checkbox: "undecided" has to be expressible.
-  const triage = page.locator('.ui-seg--stretch');
+  // Three-way triage in the header, not a checkbox: "undecided" has to be
+  // expressible, and the control stays put when the metadata column is hidden.
+  const triage = page.locator('.detail__nav [aria-label="Triage"]');
   await expect(triage.getByRole('button', { name: 'Reject' })).toBeVisible();
   await expect(triage.getByRole('button', { name: 'Undecided' })).toBeVisible();
   await expect(triage.getByRole('button', { name: 'Pick' })).toBeVisible();
+  await page.getByRole('button', { name: 'Hide metadata' }).click();
+  await expect(camera).toHaveCount(0);
+  await expect(triage.getByRole('button', { name: 'Pick' })).toBeVisible();
+  await page.getByRole('button', { name: 'Show metadata' }).click();
 
   // The served rendition reports where its pixels came from and how it was encoded.
   // This library serves the camera's JPEG, which is passed through untouched, so
@@ -727,7 +732,8 @@ test('the panels keep their shape while the next photo is loading', async ({ pag
   await page.getByRole('button', { name: 'Next photo' }).click();
   const camera = page.locator('.panel', { has: page.locator('.panel__title', { hasText: 'CAMERA' }) });
   await expect(camera.getByText('loading').first()).toBeVisible();
-  await expect(page.locator('.detail__panels .panel')).toHaveCount(5);
+  // Notes, Camera, Rendition, Original RAW - triage/rating live in the header now.
+  await expect(page.locator('.detail__panels .panel')).toHaveCount(4);
 });
 
 test('the next photo is fetched while the current one is on screen', async ({ page }) => {
