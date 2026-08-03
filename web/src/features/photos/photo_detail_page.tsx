@@ -281,10 +281,10 @@ const DetailNav = observer(function DetailNav({
         <ArrowLeft size={ICON} />
         {back.label}
       </Button>
-      <Button iconOnly aria-label="Previous photo" disabled={prevId == null} onClick={() => step('prev')}>
+      <Button iconOnly aria-label="Previous photo" title="Previous photo" disabled={prevId == null} onClick={() => step('prev')}>
         <ChevronLeft size={ICON} />
       </Button>
-      <Button iconOnly aria-label="Next photo" disabled={nextId == null} onClick={() => step('next')}>
+      <Button iconOnly aria-label="Next photo" title="Next photo" disabled={nextId == null} onClick={() => step('next')}>
         <ChevronRight size={ICON} />
       </Button>
       {/* The one thing in the bar that gives up width, so the controls stay on a
@@ -313,7 +313,8 @@ const DetailNav = observer(function DetailNav({
         <Button
           iconOnly
           aria-label={panelsOpen ? 'Hide metadata' : 'Show metadata'}
-          aria-pressed={panelsOpen}
+          aria-expanded={panelsOpen}
+          title={panelsOpen ? 'Hide metadata' : 'Show metadata'}
           onClick={onTogglePanels}
         >
           <Info size={ICON} />
@@ -748,10 +749,9 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   // to read the next one's too.
   const [sheetOpen, setSheetOpen] = useState(false);
   // Same on the wide layout, where the bar's info button hides the whole column
-  // and gives its width back to the photograph. Remembered across visits, like
-  // the rail: someone culling with the panels away means it for the session
-  // after this one too.
-  const [panelsOpen, setPanelsOpen] = useState(() => readSetting(PANELS_KEY) !== '0');
+  // and gives its width back to the photograph. Off by default: the photograph is
+  // the job, and the panels are opt-in. Remembered across visits once toggled.
+  const [panelsOpen, setPanelsOpen] = useState(() => readSetting(PANELS_KEY) === '1');
   // The stage draws its own controls into a slot in the bar, so the readout can
   // follow a wheel zoom frame by frame without the page moving with it. State
   // rather than a ref, because the stage has to render again once the slot
@@ -873,6 +873,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
             iconOnly
             aria-label={sheetOpen ? 'Hide metadata' : 'Show metadata'}
             aria-expanded={sheetOpen}
+            title={sheetOpen ? 'Hide metadata' : 'Show metadata'}
             onClick={() => setSheetOpen(!sheetOpen)}
           >
             <Info size={ICON} />

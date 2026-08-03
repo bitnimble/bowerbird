@@ -132,6 +132,16 @@ export function openPhotoId(page: Page): string {
   return new URL(page.url()).pathname.split('/').pop() ?? '';
 }
 
+// Panels start closed; tests that read them have to ask. Waits for the toggle so
+// a call right after openPhoto cannot no-op before DetailNav mounts, and skips
+// the click when a prior toggle in this context already left them open.
+export async function showMetadata(page: Page): Promise<void> {
+  const show = page.getByRole('button', { name: 'Show metadata' });
+  const hide = page.getByRole('button', { name: 'Hide metadata' });
+  await expect(show.or(hide)).toBeVisible();
+  if (await show.isVisible()) await show.click();
+}
+
 // Opens the first photo and swaps the rendition for the full-resolution render,
 // which the server builds on first request.
 export async function viewMaxQuality(page: Page, rootPath: string): Promise<void> {
@@ -144,6 +154,7 @@ export async function viewMaxQuality(page: Page, rootPath: string): Promise<void
 
   await page.getByRole('button', { name: 'Rendition' }).click();
   await page.getByRole('menuitem', { name: 'Rendered RAW (max quality)' }).click();
+  await showMetadata(page);
   await expect(page.locator('.panel', { hasText: 'RENDITION DETAILS' }).getByText('Rendered RAW (max quality)')).toBeVisible({
     timeout: 180_000,
   });

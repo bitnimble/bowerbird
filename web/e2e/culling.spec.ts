@@ -11,6 +11,7 @@ import {
   selectPhoto,
   setRenditionSource,
   setViewerRendition,
+  showMetadata,
   syncLibrary,
   viewMaxQuality,
 } from './helpers';
@@ -302,6 +303,16 @@ test('the detail view shows shooting metadata, the triage control and steps betw
   await openLibrary(page, CULL_PHOTOS_DIR);
   await openPhoto(page);
 
+  // Three-way triage in the header, not a checkbox: "undecided" has to be
+  // expressible, and the control is there even with the metadata column closed
+  // (the default).
+  const triage = page.locator('.detail__nav [aria-label="Triage"]');
+  await expect(triage.getByRole('button', { name: 'Reject' })).toBeVisible();
+  await expect(triage.getByRole('button', { name: 'Undecided' })).toBeVisible();
+  await expect(triage.getByRole('button', { name: 'Pick' })).toBeVisible();
+
+  await showMetadata(page);
+
   // Located by title rather than by any text the panel holds: row values name the
   // camera too, which matches more than one panel.
   const panel = (title: string) => page.locator('.panel', { has: page.locator('.panel__title', { hasText: title }) });
@@ -319,12 +330,6 @@ test('the detail view shows shooting metadata, the triage control and steps betw
   await camera.getByRole('button', { name: /less/ }).click();
   await expect(camera.locator('.meta dt')).toHaveCount(2);
 
-  // Three-way triage in the header, not a checkbox: "undecided" has to be
-  // expressible, and the control stays put when the metadata column is hidden.
-  const triage = page.locator('.detail__nav [aria-label="Triage"]');
-  await expect(triage.getByRole('button', { name: 'Reject' })).toBeVisible();
-  await expect(triage.getByRole('button', { name: 'Undecided' })).toBeVisible();
-  await expect(triage.getByRole('button', { name: 'Pick' })).toBeVisible();
   await page.getByRole('button', { name: 'Hide metadata' }).click();
   await expect(camera).toHaveCount(0);
   await expect(triage.getByRole('button', { name: 'Pick' })).toBeVisible();
@@ -435,6 +440,7 @@ test("a selection's grid tiles can be rebuilt from the bulk bar", async ({ page 
   // What the viewer is served is recorded per photo and a tile rebuild says
   // nothing about it, so the detail view reads the same afterwards.
   await openPhoto(page);
+  await showMetadata(page);
   const renditionPanel = page.locator('.panel', { hasText: 'RENDITION DETAILS' });
   await expect(renditionPanel.getByText('Embedded JPEG')).toBeVisible({ timeout: 30_000 });
 });
@@ -533,6 +539,7 @@ test('a chosen rendition is cached on disk, and survives a tile rebuild', async 
   };
 
   const renditionPanel = page.locator('.panel', { hasText: 'RENDITION DETAILS' });
+  await showMetadata(page);
   await showRendition('Rendered RAW');
   // A build made on request is covered over the photograph while it runs, so the
   // frame underneath is not mistaken for the one that was asked for.
@@ -577,6 +584,7 @@ test('i and o switch between the camera JPEG and the render, and the cache can b
   const photoId = openPhotoId(page);
 
   const renditionPanel = page.locator('.panel', { hasText: 'RENDITION DETAILS' });
+  await showMetadata(page);
   await page.keyboard.press('o');
   await expect(renditionPanel.getByText('Rendered RAW')).toBeVisible({ timeout: 60_000 });
   await page.keyboard.press('i');
@@ -720,6 +728,7 @@ test('the panels keep their shape while the next photo is loading', async ({ pag
   await openLibrary(page, CULL_PHOTOS_DIR);
   await openPhoto(page);
   await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
+  await showMetadata(page);
 
   // Held open, or the API answers before there is a loading state to observe.
   await page.route(/\/api\/photos\/[^/?]+$/, async (route) => {
@@ -808,6 +817,7 @@ test('a photo reopens at the rendition it was last read in, without the library 
 
   // Read it in the camera's JPEG, which this library does not default to.
   await page.keyboard.press('i');
+  await showMetadata(page);
   const renditionPanel = page.locator('.panel', { hasText: 'RENDITION DETAILS' });
   await expect(renditionPanel.getByText('Embedded JPEG')).toBeVisible({ timeout: 60_000 });
 
@@ -1029,6 +1039,7 @@ test('the frame being replaced is held opaque under its replacement for a beat',
   });
 
   await page.keyboard.press('o');
+  await showMetadata(page);
   await expect(page.locator('.panel', { hasText: 'RENDITION DETAILS' }).getByText('Rendered RAW')).toBeVisible({ timeout: 120_000 });
   await page.waitForTimeout(1000);
 
@@ -1066,6 +1077,7 @@ test('stepping to a neighbour slides in from the side it came from', async ({ pa
   // A rendition swap holds the photo, so there is no direction to it and the new
   // file has to replace the old one where it is rather than sliding in.
   await page.keyboard.press('o');
+  await showMetadata(page);
   await expect(page.locator('.panel', { hasText: 'RENDITION DETAILS' }).getByText('Rendered RAW')).toBeVisible({ timeout: 120_000 });
   await expect(page.locator('.stage__viewport img.is-ready:not(.is-stepping-next):not(.is-stepping-prev)')).toBeVisible({
     timeout: 120_000,

@@ -25,7 +25,7 @@ export function OverflowMenu({ label, sections }: { label: string; sections: Men
 
   return (
     <Menu.Root>
-      <Menu.Trigger className="ui-btn ui-btn--default ui-btn--icon" aria-label={label}>
+      <Menu.Trigger className="ui-btn ui-btn--default ui-btn--icon" aria-label={label} title={label}>
         <MoreHorizontal size={ICON} />
       </Menu.Trigger>
       <Menu.Portal>
