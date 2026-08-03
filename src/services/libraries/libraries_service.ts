@@ -4,7 +4,7 @@ import path from 'node:path';
 import { AppError } from '../../errors';
 import { isUniqueViolation } from '../../db/constraints';
 import { Logger } from '../../logger';
-import type { CreateLibraryRequest, Library, UpdateLibraryRequest } from '../../schemas/libraries';
+import { DEFAULT_LIBRARY_SETTINGS, type CreateLibraryRequest, type Library, type UpdateLibraryRequest } from '../../schemas/libraries';
 import { deleteDataDirectory } from '../../utils/deletions';
 import { ensureDir, moveIntoDir } from '../../utils/files';
 import { inferredLibraryName } from '../../utils/library_name';
@@ -87,19 +87,11 @@ export class LibrariesService {
       bin_name: request.bin_name,
       name: request.name == null || request.name === '' ? inferredLibraryName(request.root_path) : request.name,
       ordering: request.ordering,
-      // Matching the column defaults: the embedded JPEG needs no demosaic, and
-      // HDR is opt-in because it only applies to a render.
-      rendition_source: 'embedded',
-      rendition_hdr: false,
+      ...DEFAULT_LIBRARY_SETTINGS,
       include_subfolders: request.include_subfolders,
       // A shoot is a subfolder, so mirroring folders the scan will never reach
       // would only ever produce nothing (§4.1).
       mirror_shoots: request.include_subfolders && request.mirror_shoots,
-      // Matching the column defaults again (§19.2): stacking is on, at the
-      // threshold and window the labelled folder settled on.
-      auto_stack: true,
-      auto_stack_similarity: 0.78,
-      auto_stack_window_seconds: 60,
       last_synced_at: null,
       photo_count: 0,
     };

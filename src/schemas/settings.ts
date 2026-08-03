@@ -24,35 +24,35 @@ export type LogLevel = z.infer<typeof LogLevelSchema>;
 const TimeOfDaySchema = z.string().regex(/^$|^([01]?\d|2[0-3]):[0-5]\d$/, 'expected HH:MM, or "" to disable');
 
 export const SettingsSchema = z.object({
-  viewer_rendition_mode: ViewerRenditionModeSchema,
+  viewer_rendition_mode: ViewerRenditionModeSchema.default('remember'),
   // What 'remember' remembers. Null until something has been chosen, which is
   // why that mode falls back to the library's own rendition rather than building
   // one nobody asked for.
-  last_viewer_rendition: ViewerRenditionSchema.nullable(),
+  last_viewer_rendition: ViewerRenditionSchema.nullable().default(null),
 
   // `debug` adds a line per HTTP request and per finished processing stage;
   // everything an operator normally wants (imports, batches, failures) is `info`.
-  log_level: LogLevelSchema,
+  log_level: LogLevelSchema.default('info'),
   // The web client is a separate app on its own origin, so the API must opt it
   // in. Empty means "any port on whatever host this request reached the API by",
   // which covers serving the client over loopback or the LAN without hardcoding
   // an address. A comma-separated list, or '*', overrides it.
-  cors_origins: z.string(),
+  cors_origins: z.string().default(''),
 
   // Filesystem watching: auto-sync a library when its files change on disk.
-  watch_enabled: z.boolean(),
-  watch_debounce_ms: z.number().int().min(0),
+  watch_enabled: z.boolean().default(true),
+  watch_debounce_ms: z.number().int().min(0).default(15000),
   // Daily full reconcile: the backstop that catches changes the watcher's
   // (scoped, lossy-event-driven) syncs missed; dropped events, cross-dir moves,
   // edits made while the server was down. A full scan holds the library mutex,
   // so the default is overnight, out of the way.
-  full_sync_at: TimeOfDaySchema,
+  full_sync_at: TimeOfDaySchema.default('03:00'),
   // Sweep for generated files whose photo no longer exists (§10.6). Weekly
   // because it only has anything to do after a library is removed or a
   // catalogue is rebuilt, and it reads every rendition directory. 0 disables.
-  prune_every_days: z.number().int().min(0),
+  prune_every_days: z.number().int().min(0).default(7),
 
-  processing_concurrency: z.number().int().min(1),
+  processing_concurrency: z.number().int().min(1).default(4),
   // Give a render the camera's own colour treatment, by fitting the transform that
   // takes it to the JPEG embedded in the same RAW (`jpeg_match.ts`). Applies to SDR
   // renditions built from a render: an embedded-sourced grid already has the look,
@@ -61,7 +61,7 @@ export const SettingsSchema = z.object({
   // On by default: a render that does not look like the camera's own JPEG is the
   // wrong picture, and the cost is a fraction of the decode it rides along with.
   // Turn it off for an import where throughput matters more.
-  match_embedded_jpeg: z.boolean(),
+  match_embedded_jpeg: z.boolean().default(true),
   // What every rendered RAW gets before any rendition is cut from it (§10.9). All
   // are off when 0, and none touches a rendition made from the camera's own JPEG:
   // that one arrives denoised and sharpened by the body already.
@@ -110,9 +110,9 @@ export const SettingsSchema = z.object({
   // the better position in the pipeline and could not be made to work at any setting; and
   // a chroma-only Gaussian blur, which fixed the colour mottle and left the luma grain
   // that is most of what the eye objects to (§10.9).
-  raw_denoise_luma: z.number().min(0).max(3),
-  raw_denoise_chroma: z.number().min(0).max(3),
-  raw_sharpen: z.number().min(0).max(1),
+  raw_denoise_luma: z.number().min(0).max(3).default(0.5),
+  raw_denoise_chroma: z.number().min(0).max(3).default(1),
+  raw_sharpen: z.number().min(0).max(1).default(0.6),
   // A **ceiling** on the colour fringe correction, not the amount of it (§10.8).
   //
   // **The aberration the warp cannot reach.** Lateral CA is a magnification difference and
@@ -158,10 +158,10 @@ export const SettingsSchema = z.object({
   // best -2.83. Mean improvement is 40% larger at 1 than at 0.5, and the large wins appear
   // only there. It fires on 37 of 215 frames: the confounds are what made the version
   // before this one fire on 143.
-  raw_defringe: z.number().min(0).max(1),
+  raw_defringe: z.number().min(0).max(1).default(1),
 
-  grid_rendition_size: z.number().int().min(1),
-  full_rendition_size: z.number().int().min(1),
+  grid_rendition_size: z.number().int().min(1).default(800),
+  full_rendition_size: z.number().int().min(1).default(3840),
   // libaom's quantizer, 0-63, **lower is better** - the same scale as the HDR ones
   // below, because every AVIF this app writes now goes through libavif (§10.7).
   //
@@ -182,28 +182,28 @@ export const SettingsSchema = z.object({
   // the one actually looked at, so it gets the headroom, and the settings that lose
   // visible shadow detail on real frames - the old q60 and q70, which are 26 and 19
   // here - are where a RAW has the most to give and are worth avoiding.
-  grid_rendition_quantizer: z.number().int().min(0).max(63),
-  full_rendition_quantizer: z.number().int().min(0).max(63),
+  grid_rendition_quantizer: z.number().int().min(0).max(63).default(13),
+  full_rendition_quantizer: z.number().int().min(0).max(63).default(13),
 
   // Full-resolution export (§10.5), AVIF. Two numbers because the two paths land at
   // different depths and chroma - 8-bit 4:4:4 for SDR, 10-bit for HDR - so the same
   // quantizer does not buy the same picture. Both are set tight rather than
   // "visually lossless", because this is the view that exists to be pixel-peeped,
   // and kept inside a ~20MB budget on a 60MP frame.
-  lossless_sdr_quantizer: z.number().int().min(0).max(63),
+  lossless_sdr_quantizer: z.number().int().min(0).max(63).default(8),
   // Chroma for the SDR renditions, the same trade as `hdr_still_full_chroma` and
   // separate from it because the numbers are not the same size. Measured on a 24MP
   // frame: the viewer rendition encodes in 224ms against 483ms and lands at 0.53MB
   // against 1.72MB, and the native-resolution one peaks at 651MB against 918MB. The
   // grid tile is where it costs least of all - 15% smaller for an SSIM difference of
   // 0.0008 - and that is the rendition every photo gets (§10.1).
-  sdr_full_chroma: z.boolean(),
-  lossless_quantizer: z.number().int().min(0).max(63),
+  sdr_full_chroma: z.boolean().default(false),
+  lossless_quantizer: z.number().int().min(0).max(63).default(4),
 
   // Display peak the BT.2390 roll-off targets, and what the file declares as its
   // mastering peak. No longer the exposure control: the grade anchors diffuse
   // white independently, so this only sets how much headroom sits above it.
-  hdr_peak_nits: z.number().min(1),
+  hdr_peak_nits: z.number().min(1).default(1000),
   // ITU-R BT.2408 HDR Reference White, and the quantile of the frame taken to be
   // diffuse white. Between them these decide how bright a photo renders, so they
   // are the pair to reach for if a library comes out consistently dark or hot.
@@ -213,8 +213,8 @@ export const SettingsSchema = z.object({
   // - half sky means the brightest 1% is sky and speculars rather than a lit white
   // surface - and capped a daylight frame at 470 nits with its greenery at 40.
   // 0.90 puts the same frame's peak at 823 and its greenery at 70.
-  hdr_reference_white_nits: z.number().min(1),
-  hdr_white_quantile: z.number().min(0).max(1),
+  hdr_reference_white_nits: z.number().min(1).default(203),
+  hdr_white_quantile: z.number().min(0).max(1).default(0.9),
   // libaom's quantizer and speed, for both HDR media. A still is looked at rather
   // than streamed, so this is tighter than a video default.
   //
@@ -227,8 +227,8 @@ export const SettingsSchema = z.object({
   // Firefox, where the still beside it was clean (§10.7).
   // `preset` is clamped per encoder rather than narrowed to the tighter of the two:
   // avifenc's `--speed` takes 0-10, libaom's `-cpu-used` stops at 8.
-  hdr_crf: z.number().int().min(0).max(63),
-  hdr_preset: z.number().int().min(0).max(10),
+  hdr_crf: z.number().int().min(0).max(63).default(10),
+  hdr_preset: z.number().int().min(0).max(10).default(8),
   // Chroma for the HDR still. Off means 4:2:0, which is the default and a memory
   // decision rather than a quality one: it halves what libaom carries, and the
   // encoder is the peak. Measured on a 24MP frame, native resolution, 960MB against
@@ -236,50 +236,28 @@ export const SettingsSchema = z.object({
   // more of them - so this is here for a library that would rather spend the memory
   // than the bitrate (§10.7). The video has no say: 4:4:4 video is AV1 Profile 1,
   // which Chromium refuses and no hardware decodes.
-  hdr_still_full_chroma: z.boolean(),
+  hdr_still_full_chroma: z.boolean().default(false),
 });
 export type Settings = z.infer<typeof SettingsSchema>;
 
-export const DEFAULT_SETTINGS: Settings = {
-  viewer_rendition_mode: 'remember',
-  last_viewer_rendition: null,
+// Derived from the schema's `.default()`s - the single source of shipped values.
+export const DEFAULT_SETTINGS: Settings = SettingsSchema.parse({});
 
-  log_level: 'info',
-  cors_origins: '',
+// Zod's `.partial()` still applies field defaults for omitted keys, which would
+// turn a one-field PATCH into a reset of everything else. Strip defaults first.
+function optionalWithoutDefaults<S extends z.ZodRawShape>(
+  shape: S,
+): { [K in keyof S]: z.ZodOptional<z.ZodTypeAny> } {
+  return Object.fromEntries(
+    Object.entries(shape).map(([key, field]) => {
+      const base =
+        'removeDefault' in field && typeof field.removeDefault === 'function'
+          ? (field.removeDefault() as z.ZodTypeAny)
+          : (field as z.ZodTypeAny);
+      return [key, base.optional()];
+    }),
+  ) as unknown as { [K in keyof S]: z.ZodOptional<z.ZodTypeAny> };
+}
 
-  watch_enabled: true,
-  watch_debounce_ms: 15000,
-  full_sync_at: '03:00',
-  prune_every_days: 7,
-
-  processing_concurrency: 4,
-  match_embedded_jpeg: true,
-  // The halving that landed on the single knob was a complaint about luma smearing fur
-  // and foliage, so it goes to the luma side alone; the chroma filter moves no brightness
-  // and keeps the tuned 1.
-  raw_denoise_luma: 0.5,
-  raw_denoise_chroma: 1,
-  raw_sharpen: 0.6,
-  // **0 until the estimator can tell two effects apart.** See the schema comment: the
-  // coefficient it fits is confounded by lateral aberration and by per-channel noise, and
-  // on a noisy frame the noise term alone is larger than the largest real reading measured.
-  raw_defringe: 1,
-  grid_rendition_size: 800,
-  full_rendition_size: 3840,
-  grid_rendition_quantizer: 13,
-  full_rendition_quantizer: 13,
-
-  lossless_sdr_quantizer: 8,
-  lossless_quantizer: 4,
-
-  hdr_peak_nits: 1000,
-  hdr_reference_white_nits: 203,
-  hdr_white_quantile: 0.9,
-  hdr_crf: 10,
-  hdr_preset: 8,
-  hdr_still_full_chroma: false,
-  sdr_full_chroma: false,
-};
-
-export const UpdateSettingsRequestSchema = SettingsSchema.partial();
+export const UpdateSettingsRequestSchema = z.object(optionalWithoutDefaults(SettingsSchema.shape));
 export type UpdateSettingsRequest = z.infer<typeof UpdateSettingsRequestSchema>;

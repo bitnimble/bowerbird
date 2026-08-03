@@ -44,7 +44,9 @@ async function openLibrarySettings(page: Page, rootPath: string): Promise<void> 
 // The per-library "Group similar photos automatically" toggle (§19.4).
 export async function setAutoStack(page: Page, rootPath: string, on: boolean): Promise<void> {
   await openLibrarySettings(page, rootPath);
-  const toggle = libraryRow(page, rootPath).getByLabel('Group similar photos automatically');
+  // Role rather than getByLabel: a Reset button next to a changed value shares
+  // the setting's name in its accessible name and would steal the click.
+  const toggle = libraryRow(page, rootPath).getByRole('checkbox', { name: 'Group similar photos automatically' });
   if ((await toggle.isChecked()) !== on) await toggle.click();
   await expect(toggle).toBeChecked({ checked: on });
 }
@@ -54,7 +56,7 @@ export async function setAutoStack(page: Page, rootPath: string, on: boolean): P
 // button named after the value, so the value is picked from the menu it opens.
 export async function setRenditionSource(page: Page, rootPath: string, source: string): Promise<void> {
   await openLibrarySettings(page, rootPath);
-  await libraryRow(page, rootPath).getByLabel('Build renditions from').click();
+  await libraryRow(page, rootPath).getByRole('combobox', { name: 'Build renditions from' }).click();
   await page.getByRole('option', { name: source }).click();
 }
 
@@ -62,7 +64,7 @@ export async function setRenditionSource(page: Page, rootPath: string, source: s
 // per-library one. Same shape of control as above, and named for the question it
 // answers rather than for the answer currently showing.
 export async function setViewerRendition(page: Page, rendition: string): Promise<void> {
-  await page.getByLabel('Default rendition in photo viewer').click();
+  await page.getByRole('combobox', { name: 'Default rendition in photo viewer' }).click();
   await page.getByRole('option', { name: rendition, exact: true }).click();
 }
 

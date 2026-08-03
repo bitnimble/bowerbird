@@ -38,26 +38,42 @@ export const LibrarySchema = z.object({
   bin_name: z.string(),
   name: z.string().min(1),
   ordering: OrderingSchema,
-  rendition_source: RenditionSourceSchema,
-  rendition_hdr: z.boolean(),
-  include_subfolders: z.boolean(),
-  mirror_shoots: z.boolean(),
+  // Matching the column defaults: the embedded JPEG needs no demosaic, and HDR
+  // is opt-in because it only applies to a render.
+  rendition_source: RenditionSourceSchema.default('embedded'),
+  rendition_hdr: z.boolean().default(false),
+  include_subfolders: z.boolean().default(true),
+  mirror_shoots: z.boolean().default(true),
   // Automatic photo stacking (§19.4). Per library rather than global because one
   // catalogue may be burst-heavy sport and another a studio where every frame is
-  // deliberate, and the two want different answers.
-  auto_stack: z.boolean(),
+  // deliberate, and the two want different answers. Matching the column defaults
+  // (§19.2): stacking is on, at the threshold and window the labelled folder settled on.
+  auto_stack: z.boolean().default(true),
   // How alike two frames must be, in [0, 1]. 0.78 rather than a rounder number
   // because that is where the labelled folder the descriptor was tuned against
   // reproduces (§19.9).
-  auto_stack_similarity: z.number().min(0).max(1),
+  auto_stack_similarity: z.number().min(0).max(1).default(0.78),
   // How far apart two frames may be and still be considered adjacent. It gates
   // adjacency only: a stack chains as far as it likes, bounded instead by every
   // member matching every other.
-  auto_stack_window_seconds: z.number().int().min(1),
+  auto_stack_window_seconds: z.number().int().min(1).default(60),
   last_synced_at: z.string().nullable(),
   photo_count: z.number().int(),
 });
 export type Library = z.infer<typeof LibrarySchema>;
+
+// The knobs the settings page can reset. Derived from the schema's `.default()`s.
+export const LibrarySettingsSchema = LibrarySchema.pick({
+  include_subfolders: true,
+  mirror_shoots: true,
+  rendition_source: true,
+  rendition_hdr: true,
+  auto_stack: true,
+  auto_stack_similarity: true,
+  auto_stack_window_seconds: true,
+});
+export type LibrarySettings = z.infer<typeof LibrarySettingsSchema>;
+export const DEFAULT_LIBRARY_SETTINGS: LibrarySettings = LibrarySettingsSchema.parse({});
 
 // §4.7. 'excluded' keeps a folder out of the scan entirely; 'plain' lets its
 // photos in but keeps mirroring from making it a shoot.

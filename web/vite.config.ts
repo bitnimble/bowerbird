@@ -31,6 +31,10 @@ export default defineConfig({
       // not have to build a sibling package before this one will start. `tsconfig.json`
       // carries the same mapping for the typecheck.
       'avif-hdr-video': fileURLToPath(new URL('../packages/avif-hdr-video/src/index.ts', import.meta.url)),
+      // Settings schemas live under ../src and import zod. Vite resolves bare imports
+      // from the importer's directory, which is outside this package - pin it to the
+      // copy web declares rather than walking into /app/node_modules.
+      zod: fileURLToPath(new URL('./node_modules/zod', import.meta.url)),
     },
   },
   server: {

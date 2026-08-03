@@ -1,18 +1,17 @@
 import { describe, it, expect } from 'bun:test';
-import { DEFAULT_SETTINGS, SettingsSchema } from '../settings';
+import { DEFAULT_SETTINGS, SettingsSchema, UpdateSettingsRequestSchema } from '../settings';
 
-describe('DEFAULT_SETTINGS', () => {
-  // TypeScript only checks that every field has the right *type*. Every bound the schema
-  // carries - `min(0).max(1)` on `raw_defringe`, the quantizer ranges, the enums - is
-  // invisible to it, so a default outside one compiles and then fails at the first write
-  // through the settings API rather than here.
-  it('satisfies the schema it is typed against', () => {
-    expect(SettingsSchema.safeParse(DEFAULT_SETTINGS)).toMatchObject({ success: true });
+describe('SettingsSchema defaults', () => {
+  // An empty object must fill every field: the repository seeds missing rows from
+  // these, and the settings page compares live values against them for reset.
+  it('fills every field from an empty object', () => {
+    expect(Object.keys(DEFAULT_SETTINGS).sort()).toEqual(Object.keys(SettingsSchema.shape).sort());
   });
 
-  // The repository seeds a missing row from these keys, so one the schema does not know
-  // about is a column nothing ever reads back.
-  it('names exactly the fields the schema declares', () => {
-    expect(Object.keys(DEFAULT_SETTINGS).sort()).toEqual(Object.keys(SettingsSchema.shape).sort());
+  // Zod's `.partial()` still applies defaults for omitted keys, which would turn a
+  // one-field PATCH into a reset of everything else - so the update schema strips
+  // them first.
+  it('accepts a one-field patch without filling the rest', () => {
+    expect(UpdateSettingsRequestSchema.parse({ log_level: 'debug' })).toEqual({ log_level: 'debug' });
   });
 });

@@ -153,7 +153,7 @@ textarea:-webkit-autofill {
 }
 
 p.ui-text--mono {
-  margin: 0 0 10px;
+  margin: 0 0 4px;
 }
 
 .ui-text--label {
@@ -771,11 +771,12 @@ p.ui-text--mono {
 
 .panel__title {
   display: block;
-  margin-bottom: 8px;
+  margin-top: 8px;
 }
 
 .settings__group {
   margin-top: 18px;
+  margin-bottom: 8px;
 }
 
 /* One tuning knob: what it is on the left, the control on the right, and why you
@@ -785,7 +786,7 @@ p.ui-text--mono {
   grid-template-columns: 1fr auto;
   align-items: center;
   gap: 4px 12px;
-  padding: 8px 0;
+  padding: 6px 0;
 }
 
 .setting + .setting {
@@ -795,6 +796,13 @@ p.ui-text--mono {
 .setting__label,
 .setting__hint {
   grid-column: 1;
+}
+
+.setting__value {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  justify-content: flex-end;
 }
 
 /* Sized to the longest value any of these holds (a four-digit pixel edge), so a
