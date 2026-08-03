@@ -71,6 +71,70 @@ pub unsafe extern "C" fn bb_run_job(
     payload.len() as isize
 }
 
+/// Opens a RAW for editing and hands back the frame every tick then grades.
+///
+/// The one call that returns pixels rather than a path, and for the reason the rule was
+/// always stated with: this is a response body on its way to a socket or an IPC channel.
+/// It is also the only way the editor's client can grade at all now that the tick is a
+/// shader (`docs/raw-edit-gpu.md` §6) and there is no decoder in the page.
+///
+/// Same protocol as `bb_run_job` for sizing: returns the byte length the reply needs, and
+/// writes nothing when that exceeds `out_cap`. The reply is `edit::encode`'s framing, a
+/// `u32` header length then JSON then `u16` samples, rather than JSON alone, because
+/// base64 of 59MB is neither cheap nor honest.
+///
+/// Failure is reported as a JSON body with `ok: false` and no samples, which the caller
+/// tells apart by parsing the header it already has to parse.
+///
+/// # Safety
+/// `command` must point at `command_len` readable bytes and `out` at `out_cap` writable
+/// ones. Both are borrowed for the call and neither is retained.
+#[expect(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn bb_prepare_edit(
+    command: *const u8,
+    command_len: usize,
+    out: *mut u8,
+    out_cap: usize,
+) -> isize {
+    if command.is_null() {
+        return -1;
+    }
+    let bytes = unsafe { std::slice::from_raw_parts(command, command_len) };
+    let parsed: Result<crate::edit::EditRequest, _> = serde_json::from_slice(bytes);
+
+    let payload = match parsed {
+        Err(error) => edit_failure(&format!("could not read the edit request: {error}")),
+        Ok(request) => {
+            match crate::guard("bb_prepare_edit", Err("panicked".to_string()), || {
+                crate::edit::prepare(&request)
+            }) {
+                Ok(prepared) => match crate::edit::encode(&prepared) {
+                    Ok(bytes) => bytes,
+                    Err(error) => edit_failure(&error),
+                },
+                Err(error) => edit_failure(&error),
+            }
+        }
+    };
+
+    if payload.len() > out_cap || out.is_null() {
+        return payload.len() as isize;
+    }
+    let destination = unsafe { std::slice::from_raw_parts_mut(out, payload.len()) };
+    destination.copy_from_slice(&payload);
+    payload.len() as isize
+}
+
+/// A failed open in the same framing as a successful one, so the caller has one parse.
+fn edit_failure(error: &str) -> Vec<u8> {
+    let header = serde_json::json!({ "ok": false, "error": error }).to_string();
+    let mut out = Vec::with_capacity(4 + header.len());
+    out.extend_from_slice(&(header.len() as u32).to_le_bytes());
+    out.extend_from_slice(header.as_bytes());
+    out
+}
+
 /// The envelope every job reply comes back in.
 #[derive(serde::Serialize)]
 struct JobReply {

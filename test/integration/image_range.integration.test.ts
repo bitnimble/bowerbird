@@ -14,6 +14,11 @@ import { ImageApi } from '../../src/api/image/image_api';
 import type { Library } from '../../src/schemas/libraries';
 import type { BasicPhoto } from '../../src/services/photos/photos_repository';
 import type { PhotosService } from '../../src/services/photos/photos_service';
+import type { SettingsRepository } from '../../src/services/settings/settings_repository';
+import { DEFAULT_SETTINGS } from '../../src/schemas/settings';
+
+// Only `get` is reached from these routes, and only by the editor's open.
+const settingsForTest = () => ({ get: () => DEFAULT_SETTINGS }) as unknown as SettingsRepository;
 
 const BODY = '0123456789ABCDEF'; // 16 bytes, so byte offsets are readable
 
@@ -55,7 +60,7 @@ beforeAll(() => {
   } as unknown as PhotosService;
 
   const app = new Hono();
-  app.route('/image', new ImageApi(photos).routes);
+  app.route('/image', new ImageApi(photos, settingsForTest()).routes);
   applyErrorHandler(app);
 
   server = Bun.serve({ port: 0, fetch: app.fetch });

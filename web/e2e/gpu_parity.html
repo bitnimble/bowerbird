@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>GPU tick parity</title>
+</head>
+<body>
+<pre id="out">waiting</pre>
+<canvas id="stage" width="96" height="64"></canvas>
+<script type="module">
+// Drives the real `TickPipeline` against `edit_fixture`'s frames.
+//
+// The shaders are a second implementation of the grade, so they are held to the first:
+// same prepared samples, same settings, same exposure, and the CPU's output to compare
+// against (`docs/raw-edit-gpu.md` §6.3). Reported per stage rather than as one number,
+// because grade and PQ are meant to be exact where `finish` is only meant to be close.
+import { TickPipeline } from '/src/features/raw_edit/gpu/tick_pipeline.ts';
+
+const out = document.getElementById('out');
+
+async function fixture(name) {
+  const [header, input, expected, graded] = await Promise.all([
+    fetch(`/e2e/fixtures/gpu/${name}.json`).then((r) => r.json()),
+    fetch(`/e2e/fixtures/gpu/${name}.input.bin`).then((r) => r.arrayBuffer()),
+    fetch(`/e2e/fixtures/gpu/${name}.expected.bin`).then((r) => r.arrayBuffer()),
+    fetch(`/e2e/fixtures/gpu/${name}.graded.bin`).then((r) => r.arrayBuffer()),
+  ]);
+  return {
+    header,
+    input: new Uint16Array(input),
+    expected: new Uint16Array(expected),
+    graded: new Uint16Array(graded),
+  };
+}
+
+/** Absolute difference in `u16` counts, which is the unit the CPU's own pins use. */
+function compare(got, want) {
+  let worst = 0;
+  let total = 0;
+  let over1 = 0;
+  let over16 = 0;
+  for (let i = 0; i < want.length; i++) {
+    const delta = Math.abs(got[i] - want[i]);
+    worst = Math.max(worst, delta);
+    total += delta;
+    if (delta > 1) over1 += 1;
+    if (delta > 16) over16 += 1;
+  }
+  return { worst, mean: total / want.length, over1, over16, samples: want.length };
+}
+
+async function main() {
+  const adapter = await navigator.gpu?.requestAdapter();
+  if (adapter == null) {
+    out.textContent = JSON.stringify({ ok: false, error: 'no WebGPU adapter' });
+    return;
+  }
+  const device = await adapter.requestDevice();
+  device.addEventListener('uncapturederror', (event) => {
+    out.textContent = JSON.stringify({ ok: false, error: String(event.error?.message ?? event.error) });
+  });
+
+  const canvas = document.getElementById('stage');
+  const context = canvas.getContext('webgpu');
+  context.configure({ device, format: 'rgba16float', alphaMode: 'opaque' });
+
+  const names = new URLSearchParams(location.search).get('cases')?.split(',') ?? [
+    'tick-neutral-ev0',
+    'tick-neutral-ev1',
+    'tick-neutral-ev-1.5',
+    'tick-matched-ev0',
+    'tick-matched-ev1',
+    'tick-matched-ev-1.5',
+  ];
+
+  const results = {};
+  for (const name of names) {
+    const { header, input, expected, graded } = await fixture(name);
+    canvas.width = header.width;
+    canvas.height = header.height;
+    device.pushErrorScope('validation');
+    const pipeline = new TickPipeline(device, context, header, input);
+
+    // Twice: the grade alone against the CPU's mid-tick frame, then the whole thing. A
+    // single number cannot say which half moved, and the two are owed different things.
+    pipeline.render(header.ev, true);
+    const gradeOnly = await pipeline.readFrame();
+    pipeline.render(header.ev);
+    const whole = await pipeline.readFrame();
+
+    const failure = await device.popErrorScope().catch(() => null);
+    pipeline.destroy();
+    results[name] = failure == null
+      ? { grade: compare(gradeOnly, graded), finish: compare(whole, expected) }
+      : { error: failure.message };
+  }
+  out.textContent = JSON.stringify({ ok: true, results }, null, 2);
+}
+
+main().catch((error) => {
+  out.textContent = JSON.stringify({ ok: false, error: String(error) });
+});
+</script>
+</body>
+</html>

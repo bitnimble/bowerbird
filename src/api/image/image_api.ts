@@ -5,7 +5,9 @@ import type { Library } from '../../schemas/libraries';
 import { getOriginalPath, getRenditionPath } from '../../utils/paths';
 import { rawMediaType } from '../../utils/scan';
 import { readEmbeddedJpeg } from '../../services/processing/raw_decoder';
+import { prepareEdit } from '../../services/processing/rawshim_edit';
 import { transcodeJpeg } from '../../services/processing/rawshim_job';
+import type { SettingsRepository } from '../../services/settings/settings_repository';
 import { RENDITION_CONTENT_TYPE, isRendition } from '../../services/processing/renditions';
 import type { BasicPhoto } from '../../services/photos/photos_repository';
 import type { PhotosService } from '../../services/photos/photos_service';
@@ -20,6 +22,13 @@ import type { PhotosService } from '../../services/photos/photos_service';
 type PathFor = (library: Library, photo: BasicPhoto) => string;
 
 const JPEG_QUALITY = 92;
+
+// What the editor asks for when the client names nothing, and the ceiling whatever it
+// names. The cap is memory rather than taste: the prepared frame is `w * h * 6` bytes and
+// the client holds it as a GPU texture, so a client asking for a 61MP open would be asking
+// this process for 366MB per request.
+const DEFAULT_EDIT_EDGE = 3840;
+const MAX_EDIT_EDGE = 6144;
 
 // The viewer reports the weight of the rendition it is showing, and reads it off
 // the response it already received rather than asking for a number the server
@@ -52,7 +61,10 @@ function download(body: Blob | Uint8Array, contentType: string, filename: string
 export class ImageApi {
   readonly routes: Hono;
 
-  constructor(private readonly photos: PhotosService) {
+  constructor(
+    private readonly photos: PhotosService,
+    private readonly settings: SettingsRepository,
+  ) {
     const app = new Hono();
     // One route for every stored rendition, named rather than spelled out per
     // size: `grid`, `full`, `max`. Dynamic range is not in the URL - the library
@@ -73,7 +85,58 @@ export class ImageApi {
     // camera's JPEG, and either rendered rendition. One route because the menu
     // offering them is one list and only the bytes differ.
     app.get('/:photoId/download/:form', (c) => this.serveDownload(c));
+    // The editor's open. Everything before the first slider tick happens here, on real
+    // threads, and what goes over is the frame every tick then grades on the GPU
+    // (`docs/raw-edit-gpu.md` §6, §10.2b). The desktop shell runs the same call in
+    // process; this is the browser's transport for it.
+    app.get('/:photoId/prepared', (c) => this.servePrepared(c));
     this.routes = app;
+  }
+
+  // Seconds of work and tens of megabytes back, so it is a GET a client makes once per
+  // photo rather than per tick. `longEdge` is the client's, not the library's: the stage
+  // decides how many pixels are worth grading (§4.1), and the rendition default is a size
+  // chosen for a file kept forever.
+  private servePrepared(c: Context): Response {
+    const photoId = c.req.param('photoId');
+    if (photoId == null) throw new AppError('NOT_FOUND', 'photo not found');
+    const { photo, library } = this.photos.locate(photoId);
+
+    const requested = Number(c.req.query('longEdge') ?? DEFAULT_EDIT_EDGE);
+    if (!Number.isFinite(requested) || requested < 1) {
+      throw new AppError('VALIDATION_ERROR', `longEdge must be a positive number: ${requested}`);
+    }
+    const longEdge = Math.min(Math.round(requested), MAX_EDIT_EDGE);
+
+    const settings = this.settings.get();
+    const prepared = prepareEdit({
+      rawFilePath: getOriginalPath(library, photo.file_path),
+      longEdge,
+      grade: {
+        peakNits: settings.hdr_peak_nits,
+        referenceWhiteNits: settings.hdr_reference_white_nits,
+        whiteQuantile: settings.hdr_white_quantile,
+      },
+      strengths: {
+        luma: settings.raw_denoise_luma,
+        chroma: settings.raw_denoise_chroma,
+        sharpen: settings.raw_sharpen,
+        defringe: settings.raw_defringe,
+      },
+    });
+
+    // The header travels in a header rather than in the body, so the client reads the
+    // samples straight into a texture upload without slicing a JSON prelude off the front
+    // of a 59MB buffer first.
+    return new Response(new Uint8Array(prepared.samples.buffer), {
+      headers: {
+        'Content-Type': 'application/octet-stream',
+        'Content-Disposition': 'inline',
+        'Cache-Control': 'no-store',
+        'X-Prepared': JSON.stringify(prepared.header),
+        ...TIMING_ALLOW_ORIGIN,
+      },
+    });
   }
 
   // The camera's own JPEG, lifted out of the RAW and handed over unchanged. No

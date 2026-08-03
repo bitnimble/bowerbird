@@ -57,6 +57,9 @@ use std::os::raw::c_int;
 pub mod avif;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod debug;
+/// The editor's open half. Native only: the tick that follows it is the client's GPU.
+#[cfg(not(target_arch = "wasm32"))]
+pub mod edit;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod ffi;
 pub mod fit;

@@ -1433,6 +1433,41 @@ pub fn finish<T: Sample>(frame: &mut [T], width: usize, height: usize, strengths
     finish_in_strips(frame, width, height, strengths, interior);
 }
 
+/// The two whole-frame measurements `finish` makes before it filters anything.
+///
+/// For a caller that runs the filters elsewhere: the editor's tick is a shader now, and
+/// re-measuring per exposure would mean a reduction per tick for numbers that barely move
+/// between them. Reusing them across ticks is the lever DESIGN §21.1.1 lists and does not
+/// take; here it is taken, and the strengths are already folded in exactly as
+/// `finish_in_strips` folds them.
+pub fn measurements<T: Sample>(
+    frame: &[T],
+    width: usize,
+    height: usize,
+    strengths: Strengths,
+) -> (f32, (f32, f32)) {
+    if !strengths.does_anything() || width < 3 || height < 3 || frame.len() < width * height * 3 {
+        return (0.0, (0.0, 0.0));
+    }
+    let frame = &frame[..width * height * 3];
+    let interior = strip_interior(width, strengths.halo()).max(strengths.halo()).max(1);
+
+    let sigma = match strengths.luma > 0.0 {
+        true => measure_noise(frame, width, height, interior) * strengths.luma as f32,
+        false => 0.0,
+    };
+    let defocus = match strengths.defringe > 0.0 {
+        true => measure_defocus(frame, width, height)
+            .map(|(r, b)| {
+                let scale = strengths.defringe.clamp(0.0, 1.0) as f32;
+                (r * scale, b * scale)
+            })
+            .unwrap_or((0.0, 0.0)),
+        false => (0.0, 0.0),
+    };
+    (sigma, defocus)
+}
+
 /// `finish`, over strips of a given height.
 ///
 /// The height is a parameter only so a test can drive the same frame through one strip
@@ -1446,14 +1481,13 @@ fn finish_in_strips<T: Sample>(
     strengths: Strengths,
     interior: usize,
 ) {
-    let Strengths { luma, chroma, .. } = strengths;
+    let Strengths { luma, .. } = strengths;
     if !strengths.does_anything() || width < 3 || height < 3 || frame.len() < width * height * 3 {
         return;
     }
     // Bounded to what the dimensions claim, so a caller passing a longer buffer gets the
     // frame processed rather than a chunk indexed past the end of the planes.
     let frame = &mut frame[..width * height * 3];
-    let radii = Radii::for_strength(chroma);
     let halo = strengths.halo();
     // **Enforced here, not just where the caller picks it.** A strip thinner than the
     // halo needs context from rows an earlier strip has already written over, and `carry`
@@ -1485,6 +1519,43 @@ fn finish_in_strips<T: Sample>(
             .unwrap_or((0.0, 0.0)),
         false => (0.0, 0.0),
     };
+
+    filter_in_strips(frame, width, height, strengths, interior, sigma, defocus);
+}
+
+/// `finish`, against measurements the caller already has.
+///
+/// The editor's client takes both once at open and reuses them (`edit::PreparedHeader`), so
+/// the parity fixture has to hold the CPU to the same two numbers - otherwise the harness
+/// measures that decision rather than the port it exists to check.
+pub fn finish_with<T: Sample>(
+    frame: &mut [T],
+    width: usize,
+    height: usize,
+    strengths: Strengths,
+    sigma: f32,
+    defocus: (f32, f32),
+) {
+    if !strengths.does_anything() || width < 3 || height < 3 || frame.len() < width * height * 3 {
+        return;
+    }
+    let frame = &mut frame[..width * height * 3];
+    let interior = strip_interior(width, strengths.halo()).max(strengths.halo()).max(1);
+    filter_in_strips(frame, width, height, strengths, interior, sigma, defocus);
+}
+
+/// The strip loop itself, once the two whole-frame measurements are settled.
+fn filter_in_strips<T: Sample>(
+    frame: &mut [T],
+    width: usize,
+    height: usize,
+    strengths: Strengths,
+    interior: usize,
+    sigma: f32,
+    defocus: (f32, f32),
+) {
+    let radii = Radii::for_strength(strengths.chroma);
+    let halo = strengths.halo();
 
     // The rows a strip overwrites are the next strip's context, so the originals of the
     // last `halo` of them are kept back before the write. Small - `halo` rows of the
@@ -1931,7 +2002,7 @@ fn defringe(luma: &[f32], red: &mut [f32], blue: &mut [f32], width: usize, heigh
 /// Named rather than four positional `f64`s: the pipeline calls this three times with a
 /// different one of them non-zero each time, and `0.0, 0.0, sharpen, 0.0` at a call site
 /// says nothing about which stage that is.
-#[derive(Clone, Copy, Default, serde::Deserialize)]
+#[derive(Clone, Copy, Default, serde::Deserialize, serde::Serialize)]
 #[serde(default)]
 pub struct Strengths {
     pub luma: f64,
@@ -1954,7 +2025,7 @@ impl Strengths {
         }
     }
 
-    fn does_anything(&self) -> bool {
+    pub fn does_anything(&self) -> bool {
         self.luma > 0.0 || self.chroma > 0.0 || self.sharpen > 0.0 || self.defringe > 0.0
     }
 

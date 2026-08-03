@@ -144,6 +144,15 @@ pub struct HdrColour {
 const MAP_CHROMA: usize = 5;
 const MAP_LEVEL: usize = 4;
 
+/// The grid `ChromaMap::correct` walks, for a caller that has to walk the same one.
+pub struct MapShape {
+    pub chroma_count: usize,
+    pub level_count: usize,
+    pub chroma_low: f64,
+    pub chroma_scale: f64,
+    pub level_scale: f64,
+}
+
 /// Every node of the grid, as a compile-time count.
 const MAP_NODES: usize = MAP_CHROMA * MAP_CHROMA * MAP_LEVEL;
 
@@ -244,6 +253,26 @@ impl ChromaMap {
     /// Gaps per unit on each axis, so `axis` multiplies where it used to divide.
     const CHROMA_SCALE: f64 = (MAP_CHROMA - 1) as f64 / (2.0 * CHROMA_REACH);
     const LEVEL_SCALE: f64 = (MAP_LEVEL - 1) as f64 / LEVEL_REACH;
+
+    /// The lattice as one flat array, four values per node, in `correct`'s index order.
+    ///
+    /// For the editor's client, which walks the same map in a shader (`edit.rs`). Handing
+    /// out the shape alongside it rather than letting the other side hardcode the grid is
+    /// what keeps a change here from silently landing a colour on the wrong node there.
+    pub fn nodes_flat(&self) -> Vec<f64> {
+        self.nodes.iter().flatten().copied().collect()
+    }
+
+    /// The axis constants `correct` reads the lattice with.
+    pub fn shape(&self) -> MapShape {
+        MapShape {
+            chroma_count: MAP_CHROMA,
+            level_count: MAP_LEVEL,
+            chroma_low: -CHROMA_REACH,
+            chroma_scale: Self::CHROMA_SCALE,
+            level_scale: Self::LEVEL_SCALE,
+        }
+    }
 
     /// The eight nodes a colour sits between, and how much of each it takes.
     ///

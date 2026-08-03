@@ -42,6 +42,10 @@ const SYMBOLS = {
   bb_run_job: { args: [FFIType.ptr, FFIType.u64, FFIType.ptr, FFIType.u64], returns: FFIType.i64 },
   // Questions about pixels, for tests and pins. Same shape as bb_run_job.
   bb_for_testing_debug: { args: [FFIType.ptr, FFIType.u64, FFIType.ptr, FFIType.u64], returns: FFIType.i64 },
+  // The editor's open: a RAW in, the prepared frame out, framed as a header plus samples
+  // (`rawshim_edit.ts`). The one call that hands back pixels, because the tick that reads
+  // them is a shader on the client and there is no decoder in the page.
+  bb_prepare_edit: { args: [FFIType.ptr, FFIType.u64, FFIType.ptr, FFIType.u64], returns: FFIType.i64 },
   // A response body on its way to a socket, copied into a buffer the caller owns
   // rather than handed over as an address (§10.4).
   bb_transcode_jpeg: {

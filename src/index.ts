@@ -83,7 +83,7 @@ const photosApi = new PhotosApi(photosService, processingService);
 const albumsApi = new AlbumsApi(albumsService, photosService);
 const shootsApi = new ShootsApi(shootsService, photosService);
 const stacksApi = new StacksApi(stacksService, photosService);
-const imageApi = new ImageApi(photosService);
+const imageApi = new ImageApi(photosService, settingsRepo);
 
 // With no configured allowlist, mirror back any origin on the same host the
 // request arrived at (plus loopback). That lets the web client work on

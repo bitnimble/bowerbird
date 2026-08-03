@@ -11,6 +11,11 @@ import { ImageApi } from '../../src/api/image/image_api';
 import type { Library } from '../../src/schemas/libraries';
 import type { BasicPhoto } from '../../src/services/photos/photos_repository';
 import type { PhotosService } from '../../src/services/photos/photos_service';
+import type { SettingsRepository } from '../../src/services/settings/settings_repository';
+import { DEFAULT_SETTINGS } from '../../src/schemas/settings';
+
+// Only `get` is reached from these routes, and only by the editor's open.
+const settingsForTest = () => ({ get: () => DEFAULT_SETTINGS }) as unknown as SettingsRepository;
 
 // Serving bytes needs an id, a library and a file path and nothing else, so the
 // API asks for `locate` rather than the detail payload (§8.2). Stubbing `get` here
@@ -40,7 +45,7 @@ function buildApp(root: string, photo: BasicPhoto | null, renditionHdr = false) 
     },
   } as unknown as PhotosService;
   const app = new Hono();
-  app.route('/image', new ImageApi(photos).routes);
+  app.route('/image', new ImageApi(photos, settingsForTest()).routes);
   applyErrorHandler(app);
   return app;
 }

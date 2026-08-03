@@ -17,7 +17,7 @@ use crate::hdr_args::{self, EncodeOptions};
 use crate::hdr_fit::{self, HdrMatch};
 use crate::image;
 use crate::tone::{self, GradeOptions};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 #[cfg(not(target_arch = "wasm32"))]
 use std::io::Write;
 #[cfg(not(target_arch = "wasm32"))]
@@ -29,7 +29,7 @@ use std::process::{Command, Stdio};
 /// together: the quantile picks the sample diffuse white is read from, and the two nits
 /// figures say where that sample and the highlights above it land. A rendition and a
 /// slider tick that disagreed on any one of them would be grading different pictures.
-#[derive(Deserialize, Clone, Copy, Debug, PartialEq)]
+#[derive(Deserialize, Serialize, Clone, Copy, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Grade {
     /// Display peak the grade rolls highlights into, and the declared mastering peak.

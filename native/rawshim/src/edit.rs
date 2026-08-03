@@ -1,0 +1,253 @@
+// The open half of the editor, natively.
+//
+// Everything `wasm::Editor` does before the first slider tick - decode, prepare, fit the
+// camera match, materialise the lens warp - with none of the per-tick half, because that
+// now runs as shader dispatches on the client (`docs/raw-edit-gpu.md` §6). What crosses is
+// this module's `Prepared`: the scene-linear frame the grade reads, plus the numbers the
+// grade needs and cannot re-derive from pixels.
+//
+// The point of doing it here rather than in wasm is that it is the only stage left that
+// genuinely wants threads: measured at 3.2x between one thread and twelve
+// (`examples/open_threads.rs`), against a tick that is entirely the GPU's.
+
+use crate::hdr::{self, Prepared as HdrPrepared};
+use crate::hdr_fit::{ChromaMap, HdrColour};
+use crate::image::Strengths;
+use serde::{Deserialize, Serialize};
+
+/// What the client has to be told to open a RAW, which is the library's settings and
+/// nothing about this machine.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EditRequest {
+    pub raw_file_path: String,
+    /// Longest edge the decode is fitted to, which is the size every tick then grades.
+    pub long_edge: u32,
+    pub grade: hdr::Grade,
+    pub strengths: Strengths,
+}
+
+/// The camera match, flattened into what a shader can index.
+///
+/// `HdrColour` carries `Vec<f64>` curves and an optional lattice; both become plain arrays
+/// here because the client uploads them as buffers and reads them with the same
+/// interpolation the CPU uses.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ColourPayload {
+    /// Per channel, `BINS` samples spanning render values 0 to `trustCeiling`.
+    pub curves: [Vec<f32>; 3],
+    pub matrix: [[f32; 3]; 3],
+    pub saturation: f32,
+    pub trust_ceiling: f32,
+    /// Flattened `ChromaMap`, or `None` where the fit did not support one.
+    pub chroma: Option<ChromaPayload>,
+}
+
+/// `ChromaMap`'s lattice, flat, with the axis constants the shader needs to walk it.
+///
+/// Four values per node, level-major then `d2` then `d0`, which is the order `correct`
+/// indexes them in. The scales travel with the nodes rather than being hardcoded on the
+/// client so a change to the grid shape cannot leave the two disagreeing about which node
+/// a colour belongs to.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChromaPayload {
+    pub nodes: Vec<f32>,
+    pub chroma_count: u32,
+    pub level_count: u32,
+    pub chroma_low: f32,
+    pub chroma_scale: f32,
+    pub level_scale: f32,
+}
+
+/// The header that travels in front of the samples.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreparedHeader {
+    /// Always true here; a failed open sends the same framing with false and no samples,
+    /// so the caller has one parse rather than two shapes to tell apart.
+    pub ok: bool,
+    pub width: usize,
+    pub height: usize,
+    /// `tone::Levels`: the frame's own diffuse white and peak, in input levels.
+    pub white: f64,
+    pub peak: f64,
+    pub grade: hdr::Grade,
+    pub strengths: Strengths,
+    /// False where the file embeds no preview or the fit found too few pairs, in which
+    /// case the client grades the neutral arm exactly as a rendition does.
+    pub matched: bool,
+    pub colour: Option<ColourPayload>,
+    /// `image::measurements`, taken once here rather than per tick on the client.
+    ///
+    /// Both are properties of the frame's grain and its lens rather than of the exposure,
+    /// and re-deriving them per tick would put a whole-frame reduction in front of every
+    /// slider move for numbers that barely move between them.
+    pub sigma: f32,
+    pub defocus_red: f32,
+    pub defocus_blue: f32,
+    /// Bytes of `u16` little-endian RGB following the header.
+    pub samples_len: usize,
+}
+
+pub struct Prepared {
+    pub header: PreparedHeader,
+    pub samples: Vec<u16>,
+}
+
+impl ColourPayload {
+    fn from(colour: &HdrColour) -> Self {
+        let curve = |c: usize| colour.curves[c].iter().map(|v| *v as f32).collect::<Vec<f32>>();
+        ColourPayload {
+            curves: [curve(0), curve(1), curve(2)],
+            matrix: std::array::from_fn(|r| std::array::from_fn(|c| colour.matrix[r][c] as f32)),
+            saturation: colour.saturation as f32,
+            trust_ceiling: crate::hdr_fit::TRUST_CEILING as f32,
+            chroma: colour.chroma.as_ref().map(ChromaPayload::from),
+        }
+    }
+}
+
+impl ChromaPayload {
+    fn from(map: &ChromaMap) -> Self {
+        let shape = map.shape();
+        ChromaPayload {
+            nodes: map.nodes_flat().iter().map(|v| *v as f32).collect(),
+            chroma_count: shape.chroma_count as u32,
+            level_count: shape.level_count as u32,
+            chroma_low: shape.chroma_low as f32,
+            chroma_scale: shape.chroma_scale as f32,
+            level_scale: shape.level_scale as f32,
+        }
+    }
+}
+
+/// Decodes, prepares, fits and warps, leaving the frame a tick can grade from.
+///
+/// The order is `wasm::Editor::new` plus `fit_camera_match`: prepare once to measure the
+/// levels, fit the match from the embedded JPEG, then rebuild the prepared frame so the
+/// warp the match was fitted through is materialised into the buffer the client uploads.
+/// Grading an unwarped frame through a curve fitted from warped pairs is the bug that
+/// arrangement exists to prevent.
+pub fn prepare(request: &EditRequest) -> Result<Prepared, String> {
+    let bytes = std::fs::read(&request.raw_file_path)
+        .map_err(|e| format!("could not read {}: {e}", request.raw_file_path))?;
+
+    crate::parallel::with_pool(|| {
+        let frame = crate::decode_frame_bytes(&bytes, 16, true, request.long_edge)
+            .ok_or("LibRaw could not decode this file")?;
+        let samples = frame.samples16().ok_or("the decode was not 16-bit")?;
+        let source = hdr::Source { samples, width: frame.width, height: frame.height };
+
+        let matched = fit(&bytes, &source, request);
+        let mut prepared = hdr::prepare(&source, None, &request.grade);
+        if let Some(colour) = matched.as_ref() {
+            if let Some(warped) = crate::hdr_fit::apply_lens(
+                &prepared.samples,
+                prepared.width,
+                prepared.height,
+                colour,
+            ) {
+                prepared.samples = warped;
+            }
+        }
+
+        Ok(payload(prepared, matched.as_ref(), request))
+    })
+}
+
+/// The camera match, or `None` where there is nothing to fit against.
+///
+/// Declining is not an error: `hdr::fit_all_from_preview` returns `None` for a file with
+/// no embedded preview and for one whose fit found too few usable pairs, and the grade
+/// then takes its neutral arm exactly as a rendition's does.
+fn fit(
+    raw: &[u8],
+    source: &hdr::Source<'_>,
+    request: &EditRequest,
+) -> Option<crate::hdr_fit::HdrMatch> {
+    let jpeg = crate::embedded_jpeg_bytes(raw)?;
+    // Bounded on the way out, as `hdr::fit_all` bounds it: the fit linearises the preview
+    // whole into f64 before resampling, so a full-size one is 576MB.
+    let preview = crate::jpeg::decode(&jpeg, crate::hdr_fit::sample_long_edge()).ok()?;
+    let recorded = crate::lens::read_distortion(raw);
+    let geometry = match (recorded.applied, recorded.spline) {
+        (Some(false), _) => crate::fit::Geometry::Uncorrected,
+        (_, Some(knots)) => crate::fit::Geometry::Recorded(knots),
+        (_, None) => crate::fit::Geometry::Unstated,
+    };
+    hdr::fit_all_from_preview(
+        source,
+        request.grade.white_quantile,
+        geometry,
+        // Without the sharpen, which is what a rendition fits with too: it deconvolves the
+        // resample's blur and so has not run at the point the match is measured.
+        request.strengths.before_the_fit(),
+        &preview,
+        recorded.lateral,
+    )
+    .map(|(_, matched)| matched)
+}
+
+/// The frame's noise and its lens's defocus, measured where `finish` measures them.
+///
+/// Both read a *graded, PQ-coded* frame, which is the domain `finish` runs in, so this
+/// grades a throwaway copy at the exposure the editor opens on. It costs one grade on top
+/// of the open and saves a reduction on every tick after it.
+fn measure(prepared: &HdrPrepared, matched: Option<&crate::hdr_fit::HdrMatch>, request: &EditRequest) -> (f32, (f32, f32)) {
+    if !request.strengths.does_anything() {
+        return (0.0, (0.0, 0.0));
+    }
+    let mut working = prepared.samples.clone();
+    crate::hdr::grade_prepared(
+        &mut working,
+        &request.grade,
+        matched.map(|m| &m.colour),
+        prepared.levels,
+        1.0,
+    );
+    crate::tone::encode_pq(&mut working, request.grade.peak_nits);
+    crate::image::measurements(&working, prepared.width, prepared.height, request.strengths)
+}
+
+fn payload(
+    prepared: HdrPrepared,
+    matched: Option<&crate::hdr_fit::HdrMatch>,
+    request: &EditRequest,
+) -> Prepared {
+    let (sigma, (defocus_red, defocus_blue)) = measure(&prepared, matched, request);
+    let header = PreparedHeader {
+        ok: true,
+        width: prepared.width,
+        height: prepared.height,
+        white: prepared.levels.white,
+        peak: prepared.levels.peak,
+        grade: request.grade,
+        strengths: request.strengths,
+        matched: matched.is_some(),
+        colour: matched.map(|m| ColourPayload::from(&m.colour)),
+        sigma,
+        defocus_red,
+        defocus_blue,
+        samples_len: prepared.samples.len() * 2,
+    };
+    Prepared { header, samples: prepared.samples }
+}
+
+/// The wire form: a little-endian `u32` header length, that many bytes of JSON, then the
+/// samples as little-endian `u16`.
+///
+/// One buffer rather than two calls, because the FFI hands back one buffer and the HTTP
+/// route hands back one body, and splitting the header into a second request would let the
+/// two disagree about which frame they describe.
+pub fn encode(prepared: &Prepared) -> Result<Vec<u8>, String> {
+    let header = serde_json::to_vec(&prepared.header).map_err(|e| e.to_string())?;
+    let mut out = Vec::with_capacity(4 + header.len() + prepared.samples.len() * 2);
+    out.extend_from_slice(&(header.len() as u32).to_le_bytes());
+    out.extend_from_slice(&header);
+    for sample in &prepared.samples {
+        out.extend_from_slice(&sample.to_le_bytes());
+    }
+    Ok(out)
+}
