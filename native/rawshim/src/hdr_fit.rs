@@ -2121,66 +2121,28 @@ fn fit_model(
 
 // ------------------------------------------------------------------- the entry
 
-/// Everything the lens did, applied to a 16-bit decode in place of the decode itself:
-/// the warp, then the falloff.
+/// Materialises everything the lens did onto a 16-bit frame: the warp and the falloff,
+/// in one gather.
 ///
-/// Both are resolution-independent - each is in radii normalised to the half-diagonal
-/// - so this is cheapest after any fit-to-size, exactly as the SDR path applies them
-/// after the resize. None when the match asks for neither, which is the caller's cue
-/// to grade the decode where it lies rather than copy it.
+/// Both are resolution-independent - each is in radii normalised to the half-diagonal -
+/// so this is cheapest after any fit-to-size. None when the match asks for neither.
 ///
-/// The falloff runs after the warp because that is the order it was fitted in: the
-/// pairs it was measured from were taken against the warped render, so its radius
-/// means a position in the corrected frame, not in LibRaw's. It brightens corners, so
-/// it clips a little more of the top of the buffer - measured at 0.089% of samples to
-/// 0.124% on the worst of 32 Canon frames, in corners already the brightest thing in
-/// an already-clipping frame (10.8.1).
+/// For the editor, which caches the corrected frame and re-grades on every slider tick.
+/// The one-shot encode builds the same [`crate::image::PlanarWarp`] and warps inside
+/// [`crate::tone::grade_owned`] instead, so prepare need not hold the intermediate.
+/// The falloff is indexed by the output pixel's own radius - the currency it was fitted
+/// in against the warped render - and brightens corners, clipping a little more of the
+/// top of the buffer (0.089% to 0.124% of samples on the worst of 32 Canon frames, 10.8.1).
 pub fn apply_lens(samples: &[u16], width: usize, height: usize, m: &HdrMatch) -> Option<Vec<u16>> {
-    if m.lens.is_identity() {
-        return None;
-    }
-    // Gated on `moves_pixels` rather than on the curve being present: a crop is a
-    // geometry of its own, so a lens with a scale and no spline still has to warp.
-    let knots = m.lens.distortion.as_deref();
-    // The lateral scales count as a geometry too: a lens that only reads red and blue at
-    // their own radius moves pixels, and gating on the distortion alone skipped the
-    // correction entirely while `is_identity` correctly reported the lens was not one.
-    let mut out = match m.lens.tca.is_some() || crate::image::moves_pixels(knots, m.lens.crop) {
-        // The falloff rides along, since the warp is already visiting every pixel with
-        // its radius to hand.
-        true => {
-            return Some(warp_planar(
-                samples,
-                width,
-                height,
-                width,
-                height,
-                knots.unwrap_or_default(),
-                m.lens.crop,
-                m.lens.falloff,
-                &m.lens.channels(),
-                crate::image::Sampling::Bicubic,
-                |v| f64::from(v),
-                |v| v.clamp(0.0, 65535.0) as u16,
-            ));
-        }
-        false => samples.to_vec(),
-    };
-    // Only a frame the lens left straight still needs a pass of its own.
-    if let Some((a, b)) = m.lens.falloff {
-        let (cx, cy) = (width as f64 / 2.0, height as f64 / 2.0);
-        let half = (cx * cx + cy * cy).sqrt().max(1.0);
-        out.par_chunks_mut(width * 3).enumerate().for_each(|(y, row)| {
-            let dy = y as f64 - cy;
-            for (x, pixel) in row.chunks_mut(3).enumerate() {
-                let g = crate::fit::Gain::at(a, b, crate::fit::Gain::radius(x as f64 - cx, dy, half));
-                for c in pixel {
-                    *c = (f64::from(*c) * g).min(65535.0) as u16;
-                }
-            }
-        });
-    }
-    Some(out)
+    let warp = crate::image::PlanarWarp::for_lens(
+        width,
+        height,
+        width,
+        height,
+        &m.lens,
+        crate::image::Sampling::Bicubic,
+    )?;
+    Some(warp.apply_u16(samples))
 }
 
 /// Fits the camera's colour treatment in the HDR grade's own domain, reusing the

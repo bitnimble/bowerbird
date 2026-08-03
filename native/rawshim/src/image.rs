@@ -425,6 +425,196 @@ fn tap<T: Copy>(
     total
 }
 
+/// `tap` specialised on 16-bit sources, so the HDR grade's gather does not pay a
+/// closure call per cubic weight.
+#[inline]
+fn tap_u16(src: &[u16], sw: usize, sh: usize, px: f64, py: f64, channel: usize, sampling: Sampling) -> f64 {
+    let (x0, y0) = ((px as usize).min(sw - 2), (py as usize).min(sh - 2));
+    let (fx, fy) = (px - x0 as f64, py - y0 as f64);
+    if sampling == Sampling::Bilinear {
+        let i00 = (y0 * sw + x0) * 3 + channel;
+        let i01 = i00 + sw * 3;
+        return f64::from(src[i00]) * (1.0 - fx) * (1.0 - fy)
+            + f64::from(src[i00 + 3]) * fx * (1.0 - fy)
+            + f64::from(src[i01]) * (1.0 - fx) * fy
+            + f64::from(src[i01 + 3]) * fx * fy;
+    }
+    let (wx, wy) = (cubic_weights(fx), cubic_weights(fy));
+    let columns = [x0.saturating_sub(1), x0, (x0 + 1).min(sw - 1), (x0 + 2).min(sw - 1)];
+    let rows = [y0.saturating_sub(1), y0, (y0 + 1).min(sh - 1), (y0 + 2).min(sh - 1)];
+    let mut total = 0.0;
+    for (weight_y, row_y) in wy.iter().zip(rows) {
+        let mut across = 0.0;
+        for (weight_x, column) in wx.iter().zip(columns) {
+            across += weight_x * f64::from(src[(row_y * sw + column) * 3 + channel]);
+        }
+        total += weight_y * across;
+    }
+    total
+}
+
+
+/// The planar twin of [`Warp`]: a radial table resolved once, handed out so a caller
+/// can gather per pixel and do its own work in the same sweep.
+///
+/// `Warp` is 8-bit interleaved for the SDR fit; this is every other sample type the
+/// HDR path carries - 16-bit scene-linear and the f64 planes derived from it - and it
+/// folds the falloff in because that correction is indexed by the same output radius
+/// the gather already has.
+pub struct PlanarWarp {
+    /// Empty when every channel shares [`Self::shared`]; otherwise one table per channel.
+    per_channel: Vec<Vec<f64>>,
+    shared: Vec<f64>,
+    falloff: Option<(f64, f64)>,
+    half: f64,
+    step: (f64, f64),
+    centre: (f64, f64),
+    edge: (f64, f64),
+    size: (usize, usize),
+    source_width: usize,
+    source_height: usize,
+    sampling: Sampling,
+}
+
+impl PlanarWarp {
+    pub fn new(
+        source_width: usize,
+        source_height: usize,
+        width: usize,
+        height: usize,
+        knots: &[f64],
+        crop: f64,
+        falloff: Option<(f64, f64)>,
+        channels: &Channels,
+        sampling: Sampling,
+    ) -> PlanarWarp {
+        let half = ((width as f64 / 2.0).powi(2) + (height as f64 / 2.0).powi(2)).sqrt();
+        let (scale_x, scale_y) = (source_width as f64 / width as f64, source_height as f64 / height as f64);
+        let registered = is_registered(channels);
+        PlanarWarp {
+            shared: ratio_table(knots, crop),
+            per_channel: match registered {
+                true => Vec::new(),
+                false => channels.iter().map(|c| channel_ratio_table(knots, c, crop)).collect(),
+            },
+            falloff,
+            half,
+            step: (half * scale_x, half * scale_y),
+            centre: (source_width as f64 / 2.0, source_height as f64 / 2.0),
+            edge: ((source_width - 1) as f64, (source_height - 1) as f64),
+            size: (width, height),
+            source_width,
+            source_height,
+            sampling,
+        }
+    }
+
+    /// A warp for a lens that moves pixels or lifts corners, or None when it would be
+    /// an identity gather.
+    pub fn for_lens(
+        source_width: usize,
+        source_height: usize,
+        width: usize,
+        height: usize,
+        lens: &crate::fit::Lens,
+        sampling: Sampling,
+    ) -> Option<PlanarWarp> {
+        if lens.is_identity() {
+            return None;
+        }
+        Some(PlanarWarp::new(
+            source_width,
+            source_height,
+            width,
+            height,
+            lens.distortion.as_deref().unwrap_or_default(),
+            lens.crop,
+            lens.falloff,
+            &lens.channels(),
+            sampling,
+        ))
+    }
+
+    /// The tight 16-bit gather: same loop as [`warp_planar`], driven from the tables
+    /// this already holds. A per-pixel method over the same tables cost tens of ms on a
+    /// 3840 frame against this loop - do not reintroduce one for whole-frame work.
+    ///
+    /// Quantises the way `warp_planar` does (`as u16`, not round), so the editor's
+    /// materialised warp and the encode's gather cannot drift.
+    pub fn apply_u16(&self, src: &[u16]) -> Vec<u16> {
+        self.map_u16(src, |r, g, b| [r, g, b])
+    }
+
+    /// Gather each output pixel, quantise to `u16`, then map - one sweep for a caller
+    /// that has more to do than materialise the warp (the HDR grade's colour transform).
+    pub fn map_u16(
+        &self,
+        src: &[u16],
+        map: impl Fn(u16, u16, u16) -> [u16; 3] + Sync,
+    ) -> Vec<u16> {
+        let (width, height) = self.size;
+        let mut out = vec![0u16; width * height * 3];
+        let (sw, sh) = (self.source_width, self.source_height);
+        if sw < 2 || sh < 2 {
+            return out;
+        }
+        let registered = self.per_channel.is_empty();
+        let half = self.half;
+        let (step_x, step_y) = self.step;
+        let (centre_x, centre_y) = self.centre;
+        let (edge_x, edge_y) = self.edge;
+        let falloff = self.falloff;
+        let sampling = self.sampling;
+        let ratios = &self.shared;
+        let per_channel = &self.per_channel;
+
+        out.par_chunks_mut(width * 3).enumerate().for_each(|(y, row)| {
+            let dy = (y as f64 - height as f64 / 2.0) / half;
+            let dy2 = dy * dy;
+            for x in 0..width {
+                let dx = (x as f64 - width as f64 / 2.0) / half;
+                let t = (dx * dx + dy2) * RATIO_TABLE_LAST as f64;
+                let slot = if t < RATIO_TABLE_LAST as f64 { t as usize } else { RATIO_TABLE_LAST - 1 };
+                let lift = match falloff {
+                    None => 1.0,
+                    Some((a, b)) => {
+                        let at = (((dx * dx + dy2).sqrt()) * 255.0).min(255.0) as u8;
+                        crate::fit::Gain::at(a, b, at)
+                    }
+                };
+                let mut sample = [0u16; 3];
+                if registered {
+                    let low = ratios[slot];
+                    let ratio = low + (ratios[slot + 1] - low) * (t - slot as f64);
+                    let px = centre_x + dx * ratio * step_x;
+                    let py = centre_y + dy * ratio * step_y;
+                    if px >= 0.0 && py >= 0.0 && px <= edge_x && py <= edge_y {
+                        for (c, slot_out) in sample.iter_mut().enumerate() {
+                            *slot_out = (tap_u16(src, sw, sh, px, py, c, sampling) * lift)
+                                .clamp(0.0, 65535.0) as u16;
+                        }
+                    }
+                } else {
+                    for (c, slot_out) in sample.iter_mut().enumerate() {
+                        let table = &per_channel[c];
+                        let low = table[slot];
+                        let ratio = low + (table[slot + 1] - low) * (t - slot as f64);
+                        let px = centre_x + dx * ratio * step_x;
+                        let py = centre_y + dy * ratio * step_y;
+                        if px < 0.0 || py < 0.0 || px > edge_x || py > edge_y {
+                            continue;
+                        }
+                        *slot_out = (tap_u16(src, sw, sh, px, py, c, sampling) * lift)
+                            .clamp(0.0, 65535.0) as u16;
+                    }
+                }
+                let mapped = map(sample[0], sample[1], sample[2]);
+                row[x * 3..x * 3 + 3].copy_from_slice(&mapped);
+            }
+        });
+        out
+    }
+}
 
 /// `warp` over any sample type, for the HDR path and for every output.
 ///
@@ -435,6 +625,11 @@ fn tap<T: Copy>(
 ///
 /// A row at a time across cores. `warp` deliberately is not: it runs inside the fit's
 /// own candidate scan, which is already parallel.
+///
+/// [`PlanarWarp::apply_u16`] / [`PlanarWarp::map_u16`] are the same gather for a warp
+/// that already exists; this builds the tables and runs them. The HDR encode peaks the
+/// unwarped source then gather+colours through `map_u16`; the fit still calls this for
+/// f64 planes that have no `PlanarWarp` in hand.
 #[allow(clippy::too_many_arguments)]
 /// `falloff` is applied in the same sweep rather than by the caller afterwards. It is
 /// pointwise on what the warp gathered and indexed by the output pixel's own radius,
@@ -460,8 +655,6 @@ pub fn warp_planar<T: Copy + Default + Send + Sync>(
         return out;
     }
     let half = ((width as f64 / 2.0).powi(2) + (height as f64 / 2.0).powi(2)).sqrt();
-    // Almost every frame, and the reason the split is worth having: reading all three
-    // channels at one radius costs one bounds check and one set of tap indices.
     let registered = is_registered(channels);
     let ratios = ratio_table(knots, crop);
     let per_channel: Vec<Vec<f64>> = match registered {
@@ -480,11 +673,6 @@ pub fn warp_planar<T: Copy + Default + Send + Sync>(
             let dx = (x as f64 - width as f64 / 2.0) / half;
             let t = (dx * dx + dy2) * RATIO_TABLE_LAST as f64;
             let slot = if t < RATIO_TABLE_LAST as f64 { t as usize } else { RATIO_TABLE_LAST - 1 };
-            // **Above the split, not inside one arm of it.** `dx` and `dy` are already in
-            // halves of the diagonal, which is the currency the falloff is indexed in, so
-            // its radius costs a square root and no more. Computed in the per-channel arm
-            // alone it silently stopped reaching the registered one - which is almost every
-            // frame, so the falloff was being dropped from the ordinary HDR rendition.
             let lift = match falloff {
                 None => 1.0,
                 Some((a, b)) => {
@@ -505,10 +693,6 @@ pub fn warp_planar<T: Copy + Default + Send + Sync>(
                 }
                 continue;
             }
-
-            // One radius per channel, which is the whole of a lateral CA correction:
-            // red and blue are read a fraction further out or in than green, and the
-            // aberration is undone by the same resample that undoes the distortion.
             for c in 0..3 {
                 let table = &per_channel[c];
                 let low = table[slot];
@@ -518,9 +702,6 @@ pub fn warp_planar<T: Copy + Default + Send + Sync>(
                 if px < 0.0 || py < 0.0 || px > edge_x || py > edge_y {
                     continue;
                 }
-                // The falloff rides along with the warp. Indexed on the pixel's own
-                // radius rather than each channel's, since a lens's illumination falloff
-                // is achromatic and the per-channel radii differ by a fraction of a pixel.
                 row[x * 3 + c] = from_f64(tap(src, sw, sh, px, py, c, sampling, &to_f64) * lift);
             }
         }

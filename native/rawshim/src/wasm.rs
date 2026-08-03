@@ -225,7 +225,16 @@ impl Editor {
             width: frame.width,
             height: frame.height,
         };
-        let prepared = crate::hdr::prepare(&source, None, grade, matched);
+        // Warp once into the prepared buffer so every slider tick re-grades without
+        // re-gathering. The one-shot encode warps inside the grade instead.
+        let mut prepared = crate::hdr::prepare(&source, None, grade);
+        if let Some(m) = matched {
+            if let Some(warped) =
+                crate::hdr_fit::apply_lens(&prepared.samples, prepared.width, prepared.height, m)
+            {
+                prepared.samples = warped;
+            }
+        }
         let preview = prepared.shrunk_to(interactive_edge);
         Some((prepared, preview))
     }
@@ -372,8 +381,9 @@ impl Editor {
     ///
     /// **From a prepared frame, not the decode.** A rendition runs fit-to-size, warp, and
     /// grade, and only the last depends on exposure; the first two are `prepared_from`,
-    /// run once per open. Grading the *decode* would skip the warp, which is the bug this
-    /// replaced: a curve fitted from warped pairs applied to unwarped pixels.
+    /// run once per open (warp materialised into the buffer so ticks do not re-gather).
+    /// Grading the *decode* would skip the warp, which is the bug this replaced: a curve
+    /// fitted from warped pairs applied to unwarped pixels.
     ///
     /// The levels handed over are the frame's own and the stops go alongside them, which
     /// is what keeps the colour still as the slider moves. Dividing them here instead
@@ -393,7 +403,7 @@ impl Editor {
         crate::hdr::grade_prepared(
             working,
             &self.grade,
-            self.matched.as_ref(),
+            self.matched.as_ref().map(|m| &m.colour),
             source.levels,
             2f64.powf(f64::from(ev)),
         );

@@ -207,10 +207,10 @@ pub fn fit_all_from_preview(
 
 /// A decode carried as far as it can go without knowing the exposure.
 ///
-/// Fit to size, warped through the lens the colour was fitted against, and measured. A
-/// rendition runs those three once and grades once; an editor runs them once and grades
-/// on every slider tick, which is the whole reason they are a value rather than a phase
-/// of `graded`.
+/// Fit to size and measured. A one-shot rendition gathers the lens inside the grade; an
+/// editor materialises the warp into this buffer once (`apply_lens`) and re-grades on
+/// every slider tick, which is the whole reason they are a value rather than a phase of
+/// `graded`.
 pub struct Prepared {
     pub samples: Vec<u16>,
     pub width: usize,
@@ -260,12 +260,11 @@ impl Prepared {
 /// `fit_to` is the size to resample to, or `None` for a decode that already arrived at
 /// one - LibRaw bounds the browser's decode on the way out, so there is nothing left to
 /// resize there.
-pub fn prepare(
-    source: &Source<'_>,
-    fit_to: Option<(usize, usize)>,
-    grade: &Grade,
-    matched: Option<&HdrMatch>,
-) -> Prepared {
+///
+/// Leaves the lens alone: the one-shot encode gathers it inside the grade, and the
+/// editor materialises it into the returned buffer when it wants to re-grade without
+/// re-warping.
+pub fn prepare(source: &Source<'_>, fit_to: Option<(usize, usize)>, grade: &Grade) -> Prepared {
     // Measured wherever the decode happens to be, which is safe now that both ends are
     // quantiles over a fixed sample count: the anchor no longer moves with the frame's
     // resolution, so the decode is free to arrive already fitted (`copy_processed`).
@@ -274,7 +273,9 @@ pub fn prepare(
     // Fit before grading, not after. zscale would have done the same resize in the
     // same linear light, but only once the whole frame had been graded - so a 61MP
     // decode was tone-mapped in full to produce a 3840px rendition and 15/16 of that
-    // work was thrown away.
+    // work was thrown away. After the resize because the lens model is in normalised
+    // radii, so warping 61MP to make a 3840px rendition is the same picture for
+    // sixteen times the work.
     let fitted = fit_to.and_then(|(width, height)| {
         image::box_resize_u16(source.samples, source.width, source.height, width, height)
     });
@@ -283,26 +284,9 @@ pub fn prepare(
         _ => (source.width, source.height),
     };
 
-    // Geometry before the grade and after the resize. Before the grade because the
-    // colour was fitted from pairs that only correspond through this warp; after the
-    // resize because the model is in normalised radii, so warping 61MP to make a
-    // 3840px rendition is the same picture for sixteen times the work.
-    //
-    // Scoped so the borrow of `fitted` ends before it is moved from below.
-    let warped = {
-        let samples = fitted.as_deref().unwrap_or(source.samples);
-        matched.and_then(|m| hdr_fit::apply_lens(samples, width, height, m))
-    };
-
-    // One owned buffer for the whole chain, and the grade runs inside it. Whichever
-    // stage last allocated *is* that buffer - the warp's output, or the resize's - so
-    // only a frame that needed neither has to be copied out of the caller's decode,
-    // which this must not write to. The grade used to allocate its own on top of these,
-    // a third full frame at 61MP.
-    let samples = match warped {
-        Some(warped) => warped,
-        None => fitted.unwrap_or_else(|| source.samples.to_vec()),
-    };
+    // One owned buffer for the whole chain. Only a frame that needed no resize has to
+    // be copied out of the caller's decode, which this must not write to.
+    let samples = fitted.unwrap_or_else(|| source.samples.to_vec());
     Prepared {
         samples,
         width,
@@ -325,13 +309,24 @@ pub fn graded(
         source,
         Some((size.width as usize, size.height as usize)),
         &options.grade,
-        matched,
     );
+    // Lens owned by the grade: peak the unwarped source, then gather+colour in one sweep.
+    let lens = matched.and_then(|m| {
+        image::PlanarWarp::for_lens(
+            prepared.width,
+            prepared.height,
+            prepared.width,
+            prepared.height,
+            &m.lens,
+            image::Sampling::Bicubic,
+        )
+    });
     // A frame with no exposure to read grades to itself, and is left as it arrived.
-    grade_prepared(
+    grade_prepared_owned(
         &mut prepared.samples,
         &options.grade,
-        matched,
+        matched.map(|m| &m.colour),
+        lens.as_ref(),
         prepared.levels,
         1.0,
     );
@@ -340,10 +335,14 @@ pub fn graded(
 
 /// `levels` are the frame's own, unexposed; `exposure` is the slider. Keeping them apart
 /// is what holds the colour still as it moves - see `tone::GradeOptions::exposure`.
+///
+/// The frame must already be through the lens: the editor materialises that once into
+/// `Prepared`, and re-grades here on every slider tick. For a one-shot encode that still
+/// owns the unwarped buffer, use [`grade_prepared_owned`].
 pub fn grade_prepared(
     frame: &mut [u16],
     grade: &Grade,
-    matched: Option<&HdrMatch>,
+    colour: Option<&hdr_fit::HdrColour>,
     levels: tone::Levels,
     exposure: f64,
 ) {
@@ -352,7 +351,31 @@ pub fn grade_prepared(
         &GradeOptions {
             reference_white_nits: grade.reference_white_nits,
             peak_nits: grade.peak_nits,
-            match_colour: matched.map(|m| &m.colour),
+            match_colour: colour,
+            lens: None,
+            levels,
+            exposure,
+        },
+    );
+}
+
+/// [`grade_prepared`] for a caller that owns the unwarped buffer and may gather through
+/// a lens - the source is replaced rather than copied over.
+pub fn grade_prepared_owned(
+    frame: &mut Vec<u16>,
+    grade: &Grade,
+    colour: Option<&hdr_fit::HdrColour>,
+    lens: Option<&image::PlanarWarp>,
+    levels: tone::Levels,
+    exposure: f64,
+) {
+    tone::grade_owned(
+        frame,
+        &GradeOptions {
+            reference_white_nits: grade.reference_white_nits,
+            peak_nits: grade.peak_nits,
+            match_colour: colour,
+            lens,
             levels,
             exposure,
         },

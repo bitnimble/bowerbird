@@ -5,9 +5,10 @@ version = "0.1.0"
 # `unsafe_op_in_unsafe_fn` the default, which this crate already denies.
 edition = "2024"
 
-# cdylib so Bun can dlopen it exactly like libraw.so itself.
+# cdylib so Bun can dlopen it exactly like libraw.so itself. rlib so the grade
+# microbench example can link the same crate.
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 # wasm-pack's bundled binaryen predates the wasm exception-handling proposal and aborts
 # on LibRaw's throw sites ("unimplemented DCE control flow structure"). The module is
