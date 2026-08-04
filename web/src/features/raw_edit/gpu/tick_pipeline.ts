@@ -525,8 +525,8 @@ export class TickPipeline {
   /** `image::box_mean`, separably, through a scratch plane. */
   private boxMean(encoder: GPUCommandEncoder, src: PlaneName, dst: PlaneName, scratch: PlaneName, radius: number): void {
     this.writeUniform({ radius });
-    this.op(encoder, 'box_h', src, scratch, src, src, [Math.ceil(this.height / 64), 1]);
-    this.op(encoder, 'box_v', scratch, dst, scratch, scratch, [Math.ceil(this.width / 64), 1]);
+    this.op(encoder, 'box_h', src, scratch);
+    this.op(encoder, 'box_v', scratch, dst);
   }
 
   /**

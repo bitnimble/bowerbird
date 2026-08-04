@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>GPU tick bench</title>
+</head>
+<body>
+<pre id="out">waiting</pre>
+<canvas id="stage"></canvas>
+<script type="module">
+// One tick, timed to GPU completion rather than to submit.
+//
+// `queue.submit` returns as soon as the commands are recorded, so timing around it
+// measures this thread and not the work. `onSubmittedWorkDone` is what actually waits for
+// the dispatches, which is the number worth comparing against `tick_bench`'s.
+import { TickPipeline } from '/src/features/raw_edit/gpu/tick_pipeline.ts';
+
+const out = document.getElementById('out');
+const query = new URLSearchParams(location.search);
+const WIDTH = Number(query.get('width') ?? 2566);
+const HEIGHT = Number(query.get('height') ?? 3840);
+const RUNS = Number(query.get('runs') ?? 5);
+
+/** The shape `tick_bench` uses, so both sides time the same picture. */
+function scene(width, height) {
+  const samples = new Uint16Array(width * height * 3);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const at = (y * width + x) * 3;
+      const noise = (((x * 7919 + y * 104729) % 211) / 211 - 0.5) * 900;
+      const ramp = (x / width) * 42000 + 1200;
+      const edge = x > width / 2 ? 9000 : 0;
+      const patch = y > (height * 3) / 4 && x < width / 4;
+      const r = patch ? ramp + edge + 12000 : ramp + edge;
+      const g = patch ? ramp * 0.35 : ramp + edge * 0.9;
+      const b = patch ? ramp * 0.2 : ramp + edge * 0.8;
+      const clamp = (v) => Math.max(0, Math.min(65535, v | 0));
+      samples[at] = clamp(r + noise);
+      samples[at + 1] = clamp(g + noise * 0.8);
+      samples[at + 2] = clamp(b + noise * 1.1);
+    }
+  }
+  return samples;
+}
+
+async function main() {
+  const adapter = await navigator.gpu?.requestAdapter();
+  if (adapter == null) {
+    out.textContent = JSON.stringify({ ok: false, error: 'no WebGPU adapter' });
+    return;
+  }
+  const device = await adapter.requestDevice();
+  const canvas = document.getElementById('stage');
+  canvas.width = WIDTH;
+  canvas.height = HEIGHT;
+  const context = canvas.getContext('webgpu');
+  context.configure({ device, format: 'rgba16float', alphaMode: 'opaque' });
+
+  const header = {
+    width: WIDTH,
+    height: HEIGHT,
+    white: 34000,
+    peak: 52000,
+    grade: { peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.995 },
+    strengths: { luma: 1, chroma: 1, sharpen: 1, defringe: 1 },
+    matched: false,
+    colour: null,
+    sigma: 0.002,
+    defocusRed: 0.01,
+    defocusBlue: 0.01,
+  };
+
+  const built = performance.now();
+  const pipeline = new TickPipeline(device, context, header, scene(WIDTH, HEIGHT));
+  await device.queue.onSubmittedWorkDone();
+  const upload = performance.now() - built;
+
+  // One warm run first: the first tick pays for pipeline compilation and the texture
+  // upload, neither of which a slider move repeats.
+  pipeline.render(0);
+  await device.queue.onSubmittedWorkDone();
+
+  const runs = [];
+  for (let i = 0; i < RUNS; i++) {
+    const at = performance.now();
+    pipeline.render(0.5 + i * 0.1);
+    await device.queue.onSubmittedWorkDone();
+    runs.push(Number((performance.now() - at).toFixed(1)));
+  }
+
+  // The grade alone, for the same split `tick_bench` reports.
+  const gradeOnly = [];
+  for (let i = 0; i < RUNS; i++) {
+    const at = performance.now();
+    pipeline.render(0.5 + i * 0.1, true);
+    await device.queue.onSubmittedWorkDone();
+    gradeOnly.push(Number((performance.now() - at).toFixed(1)));
+  }
+
+  const info = adapter.info ?? {};
+  out.textContent = JSON.stringify(
+    {
+      ok: true,
+      adapter: [info.vendor, info.architecture].filter(Boolean).join(' / '),
+      size: `${WIDTH}x${HEIGHT}`,
+      megapixels: Number(((WIDTH * HEIGHT) / 1e6).toFixed(1)),
+      openMs: Number(upload.toFixed(1)),
+      tickMs: runs,
+      gradeOnlyMs: gradeOnly,
+    },
+    null,
+    2,
+  );
+}
+
+main().catch((error) => {
+  out.textContent = JSON.stringify({ ok: false, error: String(error) });
+});
+</script>
+</body>
+</html>

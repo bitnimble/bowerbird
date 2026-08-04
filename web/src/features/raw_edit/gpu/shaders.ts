@@ -387,48 +387,42 @@ ${TICK}
 @group(0) @binding(3) var<storage, read> aux0: array<f32>;
 @group(0) @binding(4) var<storage, read> aux1: array<f32>;
 
-/// 'image::box_mean', horizontal half: one invocation per row, sliding the window so the
-/// cost does not grow with the radius. The window shrinks at the border rather than
-/// clamping samples, exactly as the Rust does.
-@compute @workgroup_size(64)
+/// 'image::box_mean', horizontal half.
+///
+/// **Gathered per pixel, not slid along the row.** The Rust slides a window so the cost is
+/// O(1) in the radius, which is the right shape for a core that walks a row anyway. On a
+/// GPU it is the wrong shape twice over: it puts one invocation on a whole row, so a 9.9MP
+/// frame gets 3840 threads where the device wants hundreds of thousands, and each of those
+/// threads runs a 2566-step chain where every step depends on the last. Measured at 3.3s a
+/// tick against the CPU's 0.9s. Gathering is O(r) per pixel and embarrassingly parallel,
+/// which is the trade a GPU exists to take.
+///
+/// The window still shrinks at the border rather than clamping samples, so an edge pixel
+/// is the mean of what is actually there, exactly as the Rust has it.
+@compute @workgroup_size(8, 8)
 fn box_h(@builtin(global_invocation_id) id: vec3u) {
-  let y = id.x;
-  if (y >= tick.height) { return; }
+  if (!in_frame(id)) { return; }
   let radius = tick.radius;
-  let width = tick.width;
-  let row = y * width;
+  let row = id.y * tick.width;
+  let low = select(id.x - radius, 0u, id.x < radius);
+  let high = min(id.x + radius, tick.width - 1u);
 
   var sum = 0.0;
-  let seed = min(radius, width - 1u);
-  for (var x = 0u; x <= seed; x = x + 1u) { sum = sum + src[row + x]; }
-  for (var x = 0u; x < width; x = x + 1u) {
-    let low = select(x - radius, 0u, x < radius);
-    let high = min(x + radius, width - 1u);
-    dst[row + x] = sum / f32(high - low + 1u);
-    if (x + radius + 1u < width) { sum = sum + src[row + x + radius + 1u]; }
-    if (x >= radius) { sum = sum - src[row + x - radius]; }
-  }
+  for (var x = low; x <= high; x = x + 1u) { sum = sum + src[row + x]; }
+  dst[row + id.x] = sum / f32(high - low + 1u);
 }
 
-/// The vertical half, one invocation per column.
-@compute @workgroup_size(64)
+/// The vertical half, the same way.
+@compute @workgroup_size(8, 8)
 fn box_v(@builtin(global_invocation_id) id: vec3u) {
-  let x = id.x;
-  if (x >= tick.width) { return; }
+  if (!in_frame(id)) { return; }
   let radius = tick.radius;
-  let height = tick.height;
-  let width = tick.width;
+  let low = select(id.y - radius, 0u, id.y < radius);
+  let high = min(id.y + radius, tick.height - 1u);
 
   var sum = 0.0;
-  let seed = min(radius, height - 1u);
-  for (var y = 0u; y <= seed; y = y + 1u) { sum = sum + src[y * width + x]; }
-  for (var y = 0u; y < height; y = y + 1u) {
-    let low = select(y - radius, 0u, y < radius);
-    let high = min(y + radius, height - 1u);
-    dst[y * width + x] = sum / f32(high - low + 1u);
-    if (y + radius + 1u < height) { sum = sum + src[(y + radius + 1u) * width + x]; }
-    if (y >= radius) { sum = sum - src[(y - radius) * width + x]; }
-  }
+  for (var y = low; y <= high; y = y + 1u) { sum = sum + src[y * tick.width + id.x]; }
+  dst[id.y * tick.width + id.x] = sum / f32(high - low + 1u);
 }
 
 /// A plane to another plane. Needed where a stage's output is also one of its inputs:
