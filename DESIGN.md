@@ -3839,6 +3839,22 @@ writes over every member it judges.
 
 ## 21. Editing in the browser
 
+> **Status: this section describes the editor that was replaced, and is kept for what it
+> measured rather than for what it builds.** None of the code named below still exists.
+> `rawshim` is no longer compiled to wasm; `raw_edit_route.ts`, `raw_edit_worker.ts`,
+> `raw_edit_daemon.ts`, `wasi_stub.ts`, the rayon pool and the three engine routes were all
+> deleted, and with them the 960px interactive preview, the second `Prepared` and the
+> in-page AV1 encoder. The editor now decodes natively - on the server, or in the desktop
+> shell's own Rust - and grades per tick on the GPU through WGSL. **`docs/raw-edit-gpu.md`
+> is the current architecture**, and its §0 records what that note argued for against what
+> shipped.
+>
+> What is still true here, and why this stays: §21.1's account of how a second
+> implementation of one picture drifts (the editor lost the camera match, twice, silently)
+> is the reason the GPU tick is pinned against CPU fixtures at all, and §21.1.1's and
+> §21.2's timings are the measurements `docs/raw-edit-gpu.md` argues from. Read the rest as
+> history.
+
 A Lightroom exposure slider, in the photo viewer, in HDR. Actions → Edit replaces the metadata strip with the exposure panel and the stage with the live grade; Done (or Escape) discards everything and returns to the stored rendition. There is no save yet - sidecars come later. One RAW is decoded once and then graded per slider tick, entirely client side: `rawshim` compiled to `wasm32-unknown-unknown` runs LibRaw, the embedded preview's JPEG decode, the camera match and the grade. There is no server in the loop below the fetch, and the browser contributes nothing to the picture.
 
 **The point of the exercise was to find out whether the grade could stay exact.** It can, so nothing here approximates tone or colour: a drag grades the *same* transform the renditions do, under the same library settings, and spends resolution instead - 960px on its long edge while the pointer moves, full size once it stops. Resolution is the disposable part of a preview; a cheaper curve is not, because a cheap curve is a different picture and the whole purpose is judging the real one.

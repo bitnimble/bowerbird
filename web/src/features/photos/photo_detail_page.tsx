@@ -776,7 +776,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   }, [photoId, pathname, photos, appSettings]);
 
   // Built only while editing. The pair owns a GPU device and the frame's texture, which
-  // belong to this visit rather than to the session (§21.4).
+  // belong to this visit rather than to the session.
   // Layout effect so the stage mounts before paint - otherwise Edit shows one
   // frame of the stored rendition beside empty panels.
   useLayoutEffect(() => {
