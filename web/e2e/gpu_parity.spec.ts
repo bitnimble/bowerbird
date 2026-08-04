@@ -67,5 +67,38 @@ test.describe('GPU tick parity', () => {
         `${name} fraction past 16`,
       ).toBeLessThanOrEqual(0.005);
     }
+
+    // The tick measures its scene peak off a kept set of the brightest pixels, chosen once
+    // at neutral exposure. Both halves of that are assertable: the candidates have to agree
+    // with a full sample of the frame at every position of the slider, and neither may
+    // saturate the histogram they are binned into - a fixed top made the peak stop climbing
+    // a couple of stops up, which reads as the highlights suddenly clipping.
+    const sweep = report.results['tick-matched-ev0'].sweep as
+      | { ev: number; candidates: number; full: number }[]
+      | undefined;
+    expect(sweep, 'the matched fixture reports a peak sweep').toBeDefined();
+    const neutral = sweep?.find((point) => point.ev === 0)?.full ?? 0;
+    expect(neutral, 'a peak at neutral exposure').toBeGreaterThan(0);
+
+    for (const { ev, candidates, full } of sweep ?? []) {
+      expect(
+        Math.abs(candidates - full) / full,
+        `peak at ${ev} EV: candidates ${candidates} against a full sample's ${full}`,
+      ).toBeLessThanOrEqual(0.02);
+      // The exposure is a gain on the scene, so the peak it measures is that gain on the
+      // peak at neutral. This is the assertion the histogram's top has to survive: bin the
+      // values into a range that does not travel with the exposure and the count saturates,
+      // which reads here as a peak that stops climbing - and in the picture as highlights
+      // that clip a couple of stops up. At +5 EV this fixture measures 6594 nits against a
+      // fixed top's 4872, so the failure is inside the slider's own range.
+      // Only upwards. Dimmed, the peak falls towards the width of a histogram bin - at -5 EV
+      // it is 6.2 nits against a 0.6 nit bin - so the ratio there measures the quantisation
+      // rather than the gain, and saturation is a bright-end failure in any case.
+      if (ev < 0) continue;
+      expect(
+        Math.abs(full / neutral - 2 ** ev) / 2 ** ev,
+        `peak at ${ev} EV is ${full / neutral}x neutral, against 2^${ev}`,
+      ).toBeLessThanOrEqual(0.02);
+    }
   });
 });

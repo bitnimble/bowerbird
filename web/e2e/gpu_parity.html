@@ -108,9 +108,22 @@ async function main() {
     pipeline.render(header.ev);
     const graded = await pipeline.readFrame();
 
+    // The candidate scheme, over the slider's whole range, on the one fixture that has a
+    // camera match to measure. `remeasure` reads a kept set of the brightest pixels rather
+    // than the frame, and `collect` chose them once at neutral exposure; the claim is that
+    // no exposure reorders the frame enough to push an uncollected pixel into the top
+    // hundred. Asserted here because nothing else loads it, and because a fixed histogram
+    // top used to make the peak saturate - and therefore the highlights clip - a couple of
+    // stops into the range.
+    let sweep = null;
+    if (name === 'tick-matched-ev0') {
+      sweep = await pipeline.peakSweep([-5, -2, 0, 2, 3.5, 5]);
+    }
+
     const failure = await device.popErrorScope().catch(() => null);
     pipeline.destroy();
     results[name] = failure == null ? compare(graded, expected) : { error: failure.message };
+    if (sweep != null && failure == null) results[name].sweep = sweep;
   }
   out.textContent = JSON.stringify({ ok: true, results }, null, 2);
 }
