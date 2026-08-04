@@ -1,13 +1,46 @@
 # RAW editor: per-tick stages and GPU reachability
 
-Date: 2026-08-03
+Date: 2026-08-03. **Built, 2026-08-04**, see the status below before reading on.
+
+## 0. Status: what this argued for, and what shipped
+
+This is the note that took the editor from a wasm CPU tick to a WebGPU one. It is
+kept as the record of *why*, so it still describes the CPU pipeline in the present
+tense throughout. That pipeline no longer exists. Read §1–§5 as the baseline being
+argued against, not as the system.
+
+Where the code went:
+
+- `native/rawshim/src/wasm.rs`, **deleted**. The browser-side Rust is gone, and
+  so is the wasm32 target. The open is `native/rawshim/src/edit.rs`, called
+  natively.
+- The tick is `web/src/features/raw_edit/gpu/`: `wgsl/` holds the shaders,
+  `tick_pipeline.ts` orchestrates them.
+- The three sinks, the interactive 960px preview, `Resolution`, and the
+  `VideoFrame` / PNG / AVIF routing all went with §7; the canvas replaced them.
+
+Four things this note got wrong or did not foresee, each fixed by measurement:
+
+- **`image::finish` is not a per-tick stage.** It runs once, at the open, in the
+  PQ domain (`edit::filter_once`). A tick is the grade alone.
+- **The graded frame does not need to exist.** §6 assumed a chain of resident
+  textures; the colour transform is one fragment shader straight to the canvas,
+  and materialising nits between passes cost 5.2ms of a 15ms tick.
+- **The tick's cost is the canvas, not the frame.** §4.1's whole argument about
+  choosing a pixel count is moot: the draw runs once per canvas pixel over a crop,
+  so `EDIT_LONG_EDGE` is gone and the open decodes the sensor. A 61MP frame ticks
+  in 8ms at a 2560x1707 stage.
+- **wgpu in Rust (§6.2) was not taken.** The shaders are WGSL in the page, which
+  is where the canvas is. §6.3's parity pin is what makes that safe, and it holds
+  at 6 counts of 65535.
+
+What §7 concluded; the extended-range canvas, 203 nits, no bespoke gamut mapping; was measured against a real PQ AVIF on both engines and is what ships.
+
+---
 
 What runs on an exposure slider change in the browser editor (`native/rawshim`
 wasm + `web/src/features/raw_edit/`), what it costs, and what a GPU would
 actually buy, including from which thread that GPU is reachable.
-
-Source of truth for the pipeline is `native/rawshim/src/wasm.rs` (`Editor`) and
-DESIGN §21. This note is a consolidation, not a second pipeline.
 
 ## 1. Open vs tick
 
