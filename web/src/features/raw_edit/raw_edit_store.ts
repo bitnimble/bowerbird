@@ -21,10 +21,6 @@ export class RawEditStore {
    */
   @observable accessor region: Region | null = null;
 
-  /** The canvas backing store, which is the viewport in device pixels and then some. */
-  @observable accessor stageWidth = 0;
-  @observable accessor stageHeight = 0;
-
   /** Whether the camera's own colour is in play, or the grade fell back to neutral. */
   @observable accessor matched = false;
 
@@ -34,12 +30,4 @@ export class RawEditStore {
   @computed get live(): boolean {
     return this.status === 'live';
   }
-
-  /** Source pixels per canvas pixel. Below 1 the reader is past the frame's own detail. */
-  @computed get zoom(): number {
-    const region = this.region;
-    if (region == null || this.stageWidth === 0) return 1;
-    return this.stageWidth / region.width;
-  }
-
 }

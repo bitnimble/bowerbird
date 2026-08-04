@@ -45,10 +45,9 @@ const SYMBOLS = {
   // The editor's open: a RAW in, the prepared frame out, framed as a header plus samples
   // (`rawshim_edit.ts`). The one call that hands back pixels, because the tick that reads
   // them is a shader on the client and there is no decoder in the page.
-  bb_prepare_edit: { args: [FFIType.ptr, FFIType.u64, FFIType.ptr, FFIType.u64], returns: FFIType.i64 },
-  // The same open without holding this thread: start it, be told when it is done, copy it
-  // out. `bb_prepare_edit` is seconds of LibRaw, and this process answers every other
-  // request from the same thread (`rawshim_edit.ts`).
+  // The editor's open: start it, be told when it is done, copy it out. Three calls rather
+  // than one because the open is seconds of LibRaw and this process answers every other
+  // request from the same thread, so it runs on one the library owns (`rawshim_edit.ts`).
   bb_prepare_edit_notify: { args: [FFIType.ptr], returns: FFIType.void },
   bb_prepare_edit_start: { args: [FFIType.ptr, FFIType.u64], returns: FFIType.u64 },
   bb_prepare_edit_take: { args: [FFIType.u64, FFIType.ptr, FFIType.u64], returns: FFIType.i64 },

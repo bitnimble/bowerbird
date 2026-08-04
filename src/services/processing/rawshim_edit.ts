@@ -68,31 +68,7 @@ export interface PreparedFrame {
   samples: Uint16Array;
 }
 
-// Only ever the header on the first call: sized for the JSON alone so the sizing call does
-// not allocate a frame's worth of buffer to be told how big the frame is. The camera match
-// carries three 256-sample curves and a 100-node lattice, so a few tens of kB.
-const HEADER_CAPACITY = 256 * 1024;
-
-/**
- * Decodes, prepares, fits the camera match and materialises the lens warp.
- *
- * Two calls by design rather than by accident: the first is handed a header-sized buffer
- * and comes back with the length the frame needs, the second reads it into a buffer that
- * fits. The work is not repeated - `bb_prepare_edit` runs the open on the first call and
- * the second is the copy-out - which is the same protocol `runJob` uses for its replies.
- */
-/**
- * The same open, without stopping the server for the length of it.
- *
- * `prepareEdit` is seconds of LibRaw on the one thread that answers every other request, so
- * an editor open froze the library until it finished. This starts the work on a thread the
- * native side owns and returns a promise: the completion arrives as a callback, which is
- * `postMessage` rather than a thread pool, and needs no worker on this side at all.
- *
- * The callback is registered once and shared. Bun's `threadsafe` flag is what makes it legal
- * to enter from a thread that is not this one, and the pending map is what turns "job 7
- * finished" back into the promise that asked for it.
- */
+/** Which promise a finished job belongs to: "job 7 is done" becomes the call that asked. */
 const pending = new Map<number, (reply: { length: number }) => void>();
 
 const finished = new JSCallback(
@@ -106,6 +82,18 @@ const finished = new JSCallback(
 
 let notified = false;
 
+/**
+ * Decodes, prepares, fits the camera match and materialises the lens warp - without
+ * stopping the server for the length of it.
+ *
+ * The open is seconds of LibRaw on the one thread that answers every other request, so
+ * doing it in line froze the library until it finished. This starts the work on a thread
+ * the native side owns and returns a promise: the completion arrives as a callback, which
+ * is `postMessage` rather than a thread pool, and needs no worker on this side at all.
+ *
+ * The callback is registered once and shared. Bun's `threadsafe` flag is what makes it
+ * legal to enter from a thread that is not this one.
+ */
 export async function prepareEditAsync(request: EditRequest): Promise<PreparedFrame> {
   if (!notified) {
     shim().bb_prepare_edit_notify(finished.ptr);
@@ -135,22 +123,6 @@ export async function prepareEditAsync(request: EditRequest): Promise<PreparedFr
   }
 }
 
-export function prepareEdit(request: EditRequest): PreparedFrame {
-  const command = Buffer.from(JSON.stringify(request), 'utf8');
-  let reply = new Uint8Array(HEADER_CAPACITY);
-  let written = Number(
-    shim().bb_prepare_edit(command, command.byteLength, ptr(reply), reply.byteLength),
-  );
-  if (written < 0) throw new Error('rawshim could not open the RAW for editing');
-  if (written > reply.byteLength) {
-    reply = new Uint8Array(written);
-    written = Number(
-      shim().bb_prepare_edit(command, command.byteLength, ptr(reply), reply.byteLength),
-    );
-    if (written < 0) throw new Error('rawshim could not open the RAW for editing');
-  }
-  return decode(reply.subarray(0, written));
-}
 
 /**
  * The frame as one buffer: a `u32` length, that much JSON, then the samples.

@@ -56,7 +56,11 @@ export function fitScale(box: Size, natural: Size): number {
 
 // `box` is passed in rather than measured here so the caller does the layout
 // read, keeping this a pure function safe to run inside a state updater.
-export function clampPan(view: View, box: DOMRect | null, natural: Size): View {
+//
+// A `Size` rather than a `DOMRect`, because only the extent matters here and that lets the
+// observed box be used where a fresh measurement would otherwise be taken. `zoomAbout` does
+// need the rect - it pins a point, so it wants the origin too.
+export function clampPan(view: View, box: Size | null, natural: Size): View {
   if (box == null || natural.width === 0 || natural.height === 0) return view;
   const fit = fitScale(box, natural);
   const maxX = panLimit(box.width, natural.width * fit * view.scale);
@@ -196,15 +200,20 @@ export function useZoomPan(
     return () => observer.disconnect();
   }, [viewport]);
 
-  // Flipping to a differently-shaped frame can leave an offset that was legal for
-  // the frame before it and is not for this one. `clampPan` is otherwise applied
-  // only while zooming or panning, so without this the photo stays out of range
-  // until the next drag.
+  // An offset that was legal a moment ago and is not now. `clampPan` is otherwise applied
+  // only while zooming or panning, so without this the photo stays out of range until the
+  // next drag - which then snaps it, having moved nothing until it had eaten the excess.
+  //
+  // Two ways that happens, and the box is the one that was missed. Flipping to a
+  // differently-shaped frame is the obvious one. The other is the viewport changing shape
+  // under a view that did not: the pan limit is `(content - viewport) / 2`, so widening the
+  // stage on an axis the fit is not bound by shrinks the limit while the offset stays where
+  // it was. Hiding the detail panels beside a portrait photo does exactly that, and going
+  // fullscreen does far more of it.
   useEffect(() => {
-    if (natural.width === 0) return;
-    const rect = viewport.current?.getBoundingClientRect() ?? null;
-    setView((currentView) => clampPan(currentView, rect, natural));
-  }, [natural.width, natural.height, viewport]);
+    if (natural.width === 0 || box.width === 0) return;
+    setView((currentView) => clampPan(currentView, box, natural));
+  }, [natural.width, natural.height, box.width, box.height]);
 
   // Measures here, outside the updater, so the updater itself stays pure.
   const zoomTo = useCallback(

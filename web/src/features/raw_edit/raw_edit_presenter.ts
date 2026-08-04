@@ -114,8 +114,6 @@ export class RawEditPresenter {
     if (canvas.width === size.width && canvas.height === size.height) return;
     canvas.width = size.width;
     canvas.height = size.height;
-    this.store.stageWidth = size.width;
-    this.store.stageHeight = size.height;
     this.request(this.store.exposureEv);
   }
 

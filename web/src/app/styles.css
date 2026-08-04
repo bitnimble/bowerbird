@@ -2648,6 +2648,7 @@ p.ui-text--mono {
   background: #000;
 }
 
-.raw-edit-stage .stage__content {
-  cursor: default;
-}
+/* The canvas answers to the same gesture the viewer's frame does, so it shows the same
+   cursors. It used to force `default` here, from when it answered to nothing - which
+   outranked `.stage__viewport .stage__content`'s `zoom-in` at equal specificity and hid the
+   affordance in exactly the state where a click does something. */
