@@ -93,10 +93,11 @@ async function request<T>(method: string, path: string, body?: unknown, signal?:
     throw new ApiError('NETWORK_ERROR', `cannot reach the API at ${path}: ${(err as Error).message}`, 0);
   }
 
-  if (reply.status === 204 || reply.bytes.length === 0) return undefined as T;
-
+  // Status first: a 502 from a reverse proxy carries no body, and reading the empty-body
+  // shortcut before the status turns one into a silent success.
   const text = new TextDecoder().decode(reply.bytes);
   if (reply.status < 200 || reply.status >= 300) throw errorFrom(reply.status, text);
+  if (reply.status === 204 || text.length === 0) return undefined as T;
   try {
     return JSON.parse(text) as T;
   } catch {
@@ -124,7 +125,8 @@ function errorFrom(status: number, text: string): ApiError {
   }
   return new ApiError(
     envelope?.error?.code ?? 'INTERNAL_ERROR',
-    envelope?.error?.message ?? text.slice(0, 200),
+    // A transport carries no status text, so a bodiless error has nothing else to say.
+    envelope?.error?.message ?? (text.slice(0, 200) || `the API answered ${status}`),
     status,
   );
 }
