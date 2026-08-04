@@ -11,10 +11,33 @@ edition = "2024"
 crate-type = ["cdylib", "rlib"]
 
 [features]
+default = ["renditions"]
+
+# The server's half: building renditions, which is what wants lensfun and libavif on top
+# of LibRaw.
+#
+# Off, the crate is LibRaw and Rust, which is everything the editor's open needs -
+# `edit::prepare` reads the lens spline the camera recorded in the RAW itself
+# (`lens::read_distortion`) rather than lensfun's database, and the display transform is
+# the client's GPU rather than an AVIF encoder. That is what lets the desktop and mobile
+# shells link one C library instead of four, and lensfun in particular is the one with no
+# prebuilt Android build anywhere.
+renditions = []
+
 # The tests that decode a real RAW, which need the LFS fixtures and take seconds
 # rather than milliseconds. Off by default so `cargo test` stays a thing you can run
 # on every edit; `bun run test:native:full` turns it on for the final check.
 fixtures = []
+
+# Both measure the server's half - one benchmarks the rendition grade, the other compares
+# lensfun against the fitter - so neither builds without the libraries that half links.
+[[example]]
+name = "bench_graded"
+required-features = ["renditions"]
+
+[[example]]
+name = "lensfun_vs_fitted"
+required-features = ["renditions"]
 
 [dependencies]
 fast_image_resize = "6.1.0"

@@ -19,7 +19,9 @@
     "tauri": "bun x @tauri-apps/cli",
     "mac:build": "bun run scripts/mac-build.ts",
     "win:build": "bun run scripts/win-build.ts",
-    "msys:fetch": "bun run scripts/msys-fetch.ts"
+    "android:build": "bun run scripts/android-build.ts",
+    "msys:fetch": "bun run scripts/msys-fetch.ts",
+    "termux:fetch": "bun run scripts/termux-fetch.ts"
   },
   "dependencies": {
     "@parcel/watcher": "^2.6.0",

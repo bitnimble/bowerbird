@@ -303,6 +303,7 @@ pub fn resize(source: RgbRef<'_>, width: usize, height: usize) -> Rgb {
 /// one format - and refused outright rather than guessed at, since the alternative is a
 /// decoder failing deep inside a job with nothing about the file in the message.
 ///
+#[cfg(feature = "renditions")]
 /// Server-side only: the bound to a JPEG belongs to `jpeg::decode`, and it is AVIF that
 /// needs libavif, which the client does not link.
 pub fn decode(bytes: &[u8], long_edge: usize) -> Result<Rgb, String> {

@@ -7,6 +7,8 @@
 // name in one file rather than a second client in the page.
 
 mod api;
+/// The open, run here rather than asked of the library: the RAW is tens of megabytes
+/// where the frame it decodes to is hundreds.
 mod edit;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

@@ -20,7 +20,13 @@ tauri = { version = "2", features = [] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 # The editor's open, in process: the shell fetches the RAW and prepares it here, because
 # the RAW is tens of megabytes where the frame it decodes to is hundreds.
-rawshim = { path = "../native/rawshim" }
+#
+# Without `renditions`, so it links LibRaw and nothing else. The editor's open never
+# touches lensfun or libavif - its geometry is the spline the camera recorded or a fit
+# against the embedded JPEG, and its display transform is the client's GPU - so this is
+# three fewer C libraries on every platform, and the difference between an Android build
+# being possible and not.
+rawshim = { path = "../native/rawshim", default-features = false }
 
 # WebdriverIO desktop e2e: the in-app Execute API and the embedded WebDriver server.
 # Optional and behind a feature so they never ride a shipped build.

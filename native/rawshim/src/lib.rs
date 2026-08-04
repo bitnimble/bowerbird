@@ -52,10 +52,13 @@ use std::ffi::CStr;
 use std::os::raw::c_char;
 use std::os::raw::c_int;
 
+#[cfg(feature = "renditions")]
 pub mod avif;
+#[cfg(feature = "renditions")]
 pub mod debug;
 /// The editor's open half. The tick that follows it is the client's GPU.
 pub mod edit;
+#[cfg(feature = "renditions")]
 pub mod ffi;
 pub mod fit;
 pub mod frame;
@@ -65,12 +68,15 @@ pub mod hdr_fit;
 pub mod header;
 pub mod image;
 pub mod jpeg;
+#[cfg(feature = "renditions")]
 pub mod job;
 pub mod lens;
+#[cfg(feature = "renditions")]
 pub mod lensfun;
 pub mod parallel;
 pub mod png;
 pub mod rgb;
+#[cfg(feature = "renditions")]
 pub mod stacks;
 pub mod tca;
 pub mod tone;
@@ -804,6 +810,7 @@ pub fn decode_embedded_frame(path: &str, long_edge: u32) -> Option<frame::Frame>
 /// None when the file embeds no preview, when the fit found nothing worth applying,
 /// or when there were too few usable pairs - in each case the caller renders
 /// untransformed.
+#[cfg(feature = "renditions")]
 pub fn fit_profile_for(render: &frame::Frame, raw_path: &str) -> Option<fit::Profile> {
     let source = render.rgb8()?;
     let geometry = ffi::geometry_for(raw_path)?;
@@ -830,6 +837,7 @@ pub fn fit_profile_for(render: &frame::Frame, raw_path: &str) -> Option<fit::Pro
 ///
 /// `finished` is what the frame will have had done to it by the time the match is applied,
 /// so the geometry search can be run against that rather than against the raw render.
+#[cfg(feature = "renditions")]
 pub fn fit_hdr_for(
     linear: &frame::Frame,
     raw_path: &str,
@@ -859,6 +867,7 @@ pub fn fit_hdr_for(
 /// in `job::run` and an embedded preview is shrunk during its JPEG decode, so every
 /// caller already hands over final pixels. A resize at the encode would also land
 /// after `render_base`'s sharpen, which is calibrated for the size it ran at (10.1).
+#[cfg(feature = "renditions")]
 pub fn save_avif_frame(
     source: rgb::RgbRef<'_>,
     quantizer: i32,
@@ -947,6 +956,7 @@ pub fn embedded_jpeg_bytes(raw_bytes: &[u8]) -> Option<Vec<u8>> {
 
 /// The camera's embedded preview as RGB, bounded by `long_edge`, for callers on this
 /// side of the boundary. None when the file embeds no JPEG preview.
+#[cfg(feature = "renditions")]
 pub fn decode_embedded_rgb(path: &str, long_edge: usize) -> Option<rgb::Rgb> {
     let c_path = std::ffi::CString::new(path).ok()?;
     // SAFETY: the CString outlives the call.
@@ -972,6 +982,7 @@ pub fn decode_embedded_rgb(path: &str, long_edge: usize) -> Option<rgb::Rgb> {
 /// # Safety
 /// `path` must be a NUL-terminated C string and `out` a writable `BbHeader`.
 #[expect(unsafe_code)]
+#[cfg(feature = "renditions")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn bb_read_header(path: *const c_char, out: *mut header::BbHeader) -> c_int {
     if path.is_null() || out.is_null() {
@@ -994,6 +1005,7 @@ pub unsafe extern "C" fn bb_read_header(path: *const c_char, out: *mut header::B
 
 /// Size of `BbHeader`, which the caller checks against the layout it reads.
 #[expect(unsafe_code)]
+#[cfg(feature = "renditions")]
 #[unsafe(no_mangle)]
 pub extern "C" fn bb_header_size() -> usize {
     std::mem::size_of::<header::BbHeader>()
@@ -1002,6 +1014,7 @@ pub extern "C" fn bb_header_size() -> usize {
 /// How many bytes a stacking descriptor occupies, so the caller can size its
 /// buffer and the database column without either guessing.
 #[expect(unsafe_code)]
+#[cfg(feature = "renditions")]
 #[unsafe(no_mangle)]
 pub extern "C" fn bb_descriptor_size() -> usize {
     stacks::DESCRIPTOR_BYTES
@@ -1019,6 +1032,7 @@ pub extern "C" fn bb_descriptor_size() -> usize {
 /// `descriptors` must hold `count * bb_descriptor_size()` bytes, and
 /// `timestamps` and `out` must each hold `count` elements.
 #[expect(unsafe_code)]
+#[cfg(feature = "renditions")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn bb_stack_groups(
     descriptors: *const u8,

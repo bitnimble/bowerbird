@@ -855,6 +855,24 @@ pub fn fit_from_preview(
     preview: RgbRef<'_>,
     geometry: Geometry,
 ) -> Result<Option<Profile>, String> {
+    grids_from_preview(render, preview).and_then(|grids| fit_grids(grids, geometry))
+}
+
+/// What a geometry leaves on the table: the luma residual against the preview.
+///
+/// The number every tier is chosen by, exposed so the tiers can be compared against each
+/// other rather than only against the baseline each was accepted on. `knots` empty and
+/// `crop` 1.0 is the uncorrected frame, which is the reference the others have to beat.
+pub fn residual_of(
+    render: RgbRef<'_>,
+    preview: RgbRef<'_>,
+    knots: &[f64],
+    crop: f64,
+) -> Result<Option<f64>, String> {
+    Ok(residual_for(&grids_from_preview(render, preview)?.full, knots, crop))
+}
+
+fn grids_from_preview(render: RgbRef<'_>, preview: RgbRef<'_>) -> Result<Grids, String> {
     let jpeg_full = blur(&resize_to_fit(preview, FIT_LONG_EDGE), FIT_BLUR_SIGMA);
 
     // Twice the fit grid, so the warp resamples from prefiltered pixels: warping
@@ -876,7 +894,7 @@ pub fn fit_from_preview(
         source: resize(full.source.as_ref(), full.source.width / 2, full.source.height / 2),
         jpeg: resize(full.jpeg.as_ref(), full.jpeg.width / 2, full.jpeg.height / 2),
     };
-    fit_grids(Grids { full, search }, geometry)
+    Ok(Grids { full, search })
 }
 
 fn fit_grids(grids: Grids, geometry: Geometry) -> Result<Option<Profile>, String> {
