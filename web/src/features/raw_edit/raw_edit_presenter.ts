@@ -272,8 +272,9 @@ export class RawEditPresenter {
  * samples read straight into a texture upload instead of having a JSON prelude sliced off
  * the front of several hundred megabytes.
  *
- * Copied out of the reply rather than viewed: `Uint16Array` needs two-byte alignment and a
- * body offset does not promise one.
+ * A view over those bytes rather than a copy of them. Both transports promise a four-byte
+ * aligned body for exactly this reason, so at 61MP the open holds one 361MB array rather
+ * than three.
  */
 async function fetchPrepared(
   photoId: string,
@@ -288,7 +289,9 @@ async function fetchPrepared(
   const described = reply.headers['x-prepared'];
   if (described == null) throw new Error('the prepared frame arrived with no header');
 
-  const samples = new Uint16Array(reply.bytes.byteLength / 2);
-  new Uint8Array(samples.buffer).set(reply.bytes);
-  return { header: JSON.parse(described) as PreparedHeader, samples };
+  const { buffer, byteOffset, byteLength } = reply.bytes;
+  return {
+    header: JSON.parse(described) as PreparedHeader,
+    samples: new Uint16Array(buffer, byteOffset, byteLength / 2),
+  };
 }

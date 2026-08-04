@@ -77,6 +77,11 @@ async function overHttp(
  * Tauri carries a `Response` as a binary body rather than as base64, which is what makes
  * an open of several hundred megabytes viable over IPC at all - but a binary body is all
  * it carries, so the status and headers travel in front of it rather than beside it.
+ *
+ * A view over the body, never a copy. The Rust side pads the JSON to a multiple of four so
+ * the body lands four-byte aligned, which is what lets the editor take a `Uint16Array` over
+ * these same bytes: at 61MP the copying version held three 361MB arrays at once for a
+ * payload that is read exactly twice.
  */
 async function overIpc(invoke: Invoke, request: unknown): Promise<Reply> {
   const framed = new Uint8Array(await invoke('api', { request: JSON.stringify(request) }));
@@ -86,11 +91,7 @@ async function overIpc(invoke: Invoke, request: unknown): Promise<Reply> {
     status: number;
     headers: Record<string, string>;
   };
-  // Copied rather than viewed: the body starts at a header-dependent offset, which is
-  // almost never the alignment the typed arrays over it need.
-  const bytes = new Uint8Array(framed.byteLength - 4 - length);
-  bytes.set(framed.subarray(4 + length));
-  return { status: head.status, headers: head.headers, bytes };
+  return { status: head.status, headers: head.headers, bytes: framed.subarray(4 + length) };
 }
 
 /**

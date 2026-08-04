@@ -17,6 +17,8 @@
 
 @group(0) @binding(5) var<storage, read> peak_out: array<f32>;
 @group(0) @binding(6) var<storage, read_write> counts: array<u32>;
+// Half resolution and down, so `lod` 0 is the frame and this holds every level above it.
+@group(0) @binding(9) var pyramid: texture_2d<u32>;
 
 // Rec.2020 to Display P3, both D65, applied in linear light. Rows sum to 1.
 const R2020_TO_P3 = mat3x3f(
@@ -49,11 +51,6 @@ fn transfer(v: f32) -> f32 {
   return sign(v) * e;
 }
 
-fn level_at(x: i32, y: i32) -> vec3f {
-  let code = textureLoad(source, vec2i(x, y), 0);
-  return vec3f(f32(code.r), f32(code.g), f32(code.b));
-}
-
 /// The source levels one canvas pixel covers, averaged.
 ///
 /// Fit-to-window on a 61MP frame is about eight source pixels to one along each axis, and
@@ -70,23 +67,46 @@ fn level_at(x: i32, y: i32) -> vec3f {
 ///
 /// At 1:1 both taps fall inside one texel and the average is that texel, so a
 /// pixel-peeping view is not quietly blurred.
+///
+/// The pyramid starts at half resolution, so `lod` 0 is the frame itself and everything
+/// above it is `pyramid` level `lod - 1`.
+///
+/// Which of the two a draw reads is an override rather than a branch, so each pipeline
+/// carries one path and not the other. As a runtime branch it cost the *zoomed-out* case
+/// a third of its time - 6.9ms to 9.2 at 61MP - for a path those fragments never took,
+/// which is the shape of a register-pressure problem: the dead half still has to be
+/// allocated for. The host picks the pipeline off the same ratio the shader computes.
+override FROM_FRAME: bool = true;
+
 fn covered(pos: vec2f) -> vec3f {
   let scale = tick.region_size / tick.canvas_size;
   let lod = clamp(floor(log2(max(max(scale.x, scale.y), 1.0))), 0.0, f32(tick.max_lod));
   let shrink = exp2(lod);
-  let level = i32(lod);
-  let last = vec2f(textureDimensions(source, level)) - vec2f(1.0);
-
   let step = scale / shrink;
   let start = (tick.region_origin + (pos - vec2f(0.5)) * scale) / shrink;
 
   var sum = vec3f(0.0);
-  for (var ty = 0u; ty < 2u; ty = ty + 1u) {
-    for (var tx = 0u; tx < 2u; tx = tx + 1u) {
-      let sample = start + (vec2f(f32(tx), f32(ty)) + 0.5) * 0.5 * step;
-      let coord = vec2u(clamp(floor(sample), vec2f(0.0), last));
-      let code = textureLoad(source, coord, level);
-      sum = sum + vec3f(f32(code.r), f32(code.g), f32(code.b));
+  if (FROM_FRAME) {
+    let last = vec2f(f32(tick.width) - 1.0, f32(tick.height) - 1.0);
+    for (var ty = 0u; ty < 2u; ty = ty + 1u) {
+      for (var tx = 0u; tx < 2u; tx = tx + 1u) {
+        let sample = start + (vec2f(f32(tx), f32(ty)) + 0.5) * 0.5 * step;
+        let coord = vec2u(clamp(floor(sample), vec2f(0.0), last));
+        sum = sum + level_at(coord.x, coord.y);
+      }
+    }
+  } else {
+    // At least 1: the host only selects this pipeline when the ratio calls for it, and a
+    // level of -1 is not a thing to read.
+    let level = max(i32(lod) - 1, 0);
+    let last = vec2f(textureDimensions(pyramid, level)) - vec2f(1.0);
+    for (var ty = 0u; ty < 2u; ty = ty + 1u) {
+      for (var tx = 0u; tx < 2u; tx = tx + 1u) {
+        let sample = start + (vec2f(f32(tx), f32(ty)) + 0.5) * 0.5 * step;
+        let coord = vec2u(clamp(floor(sample), vec2f(0.0), last));
+        let code = textureLoad(pyramid, coord, level);
+        sum = sum + vec3f(f32(code.r), f32(code.g), f32(code.b));
+      }
     }
   }
   return sum * 0.25;
@@ -114,7 +134,7 @@ fn covered(pos: vec2f) -> vec3f {
 @compute @workgroup_size(8, 8)
 fn encode(@builtin(global_invocation_id) id: vec3u) {
   if (!in_frame(id)) { return; }
-  let nits = display_nits(level_at(i32(id.x), i32(id.y)));
+  let nits = display_nits(level_at(id.x, id.y));
   // Through the `u16` the CPU writes between the grade and the PQ. Not incidental: its PQ
   // stage is a 65536-entry table keyed by that integer, so a frame that skipped the
   // quantisation would not be the frame the fixture pins.

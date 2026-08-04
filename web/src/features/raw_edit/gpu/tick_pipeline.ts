@@ -15,7 +15,6 @@ import {
   PEAK_SAMPLES,
   REDUCE,
   TICK_UNIFORM_FLOATS,
-  UNPACK,
 } from './shaders';
 
 /** `Sample::from_f32` for `u16`: rounded, and held inside the range it has to fit. */
@@ -157,8 +156,10 @@ export class TickPipeline {
   private readonly peak: GPUBuffer;
   private readonly candidates: GPUBuffer;
   private readonly matrix: GPUBuffer;
-  private readonly source: GPUTexture;
-  /** How many mips `source` carries, so the draw knows how far out it can average. */
+  /** The frame as it arrived: interleaved RGB `u16`, three to a pixel. */
+  private readonly frame: GPUBuffer;
+  /** Half resolution and down. `lod` 0 is the frame; level L here is `lod` L + 1. */
+  private readonly pyramid: GPUTexture;
   private readonly levels: number;
   private readonly curves: GPUTexture;
   private readonly chroma: GPUTexture;
@@ -169,7 +170,9 @@ export class TickPipeline {
   private readonly peakRemeasure: GPUComputePipeline;
   private readonly peakQuantile: GPUComputePipeline;
   private readonly encodePipeline: GPUComputePipeline;
-  private readonly drawPipeline: GPURenderPipeline;
+  /** The same draw, compiled to read the frame's buffer or the pyramid, never both. */
+  private readonly drawFromFrame: GPURenderPipeline;
+  private readonly drawFromPyramid: GPURenderPipeline;
   private readonly peakLayout: GPUBindGroupLayout;
   private readonly encodeLayout: GPUBindGroupLayout;
   private readonly drawLayout: GPUBindGroupLayout;
@@ -197,16 +200,28 @@ export class TickPipeline {
         `this GPU holds frames to ${device.limits.maxTextureDimension2D}px a side; this one is ${this.width}x${this.height}`,
       );
     }
-    // The whole chain, not a few levels: it is a third more memory whatever depth it goes
-    // to, since each level is a quarter of the one above, and the coarse end is what a
-    // reader zoomed all the way out is looking at.
-    this.levels = Math.floor(Math.log2(Math.max(this.width, this.height))) + 1;
-    this.source = device.createTexture({
-      size: [this.width, this.height],
+    // The frame as it arrived: interleaved RGB `u16`, no fourth component and no second
+    // copy to add one. At 61MP that is 361MB rather than 481.
+    this.frame = device.createBuffer({
+      size: Math.ceil((samples.byteLength + 3) / 4) * 4,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    });
+    device.queue.writeBuffer(this.frame, 0, samples);
+
+    // Half resolution and down, so the frame is not stored twice: a third of half a frame
+    // rather than a third of a whole one, and the level it leaves out is the one the draw
+    // reads from the buffer anyway. The whole chain below that, since each level is a
+    // quarter of the one above and the coarse end is what a reader zoomed out is looking at.
+    const half: [number, number] = [
+      Math.max(1, this.width >> 1),
+      Math.max(1, this.height >> 1),
+    ];
+    this.levels = Math.floor(Math.log2(Math.max(...half))) + 1;
+    this.pyramid = device.createTexture({
+      size: half,
       format: 'rgba16uint',
       mipLevelCount: this.levels,
-      usage:
-        GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.COPY_DST,
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING,
     });
 
     const storage = (length: number) =>
@@ -256,12 +271,13 @@ export class TickPipeline {
     const bindings = (visibility: number) => ({
       colour: [
         { binding: 0, visibility, buffer: { type: 'uniform' as const } },
-        { binding: 1, visibility, texture: { sampleType: 'uint' as const } },
+        { binding: 1, visibility, buffer: { type: 'read-only-storage' as const } },
         { binding: 2, visibility, texture: {} },
         { binding: 3, visibility, texture: { viewDimension: '3d' as const } },
         { binding: 4, visibility, buffer: { type: 'read-only-storage' as const } },
         { binding: 7, visibility, sampler: {} },
       ],
+      pyramid: { binding: 9, visibility, texture: { sampleType: 'uint' as const } },
       readOnly: (binding: number) => ({
         binding,
         visibility,
@@ -280,10 +296,10 @@ export class TickPipeline {
       entries: [...c.colour, c.writable(5), c.writable(6), c.writable(8)],
     });
     this.encodeLayout = device.createBindGroupLayout({
-      entries: [...c.colour, c.readOnly(5), c.writable(6)],
+      entries: [...c.colour, c.readOnly(5), c.writable(6), c.pyramid],
     });
     this.drawLayout = device.createBindGroupLayout({
-      entries: [...f.colour, f.readOnly(5)],
+      entries: [...f.colour, f.readOnly(5), f.pyramid],
     });
 
     const compute = (
@@ -306,117 +322,98 @@ export class TickPipeline {
     this.peakRemeasure = onPeak('remeasure');
     this.peakQuantile = onPeak('quantile');
     this.encodePipeline = compute(frame, 'encode', this.encodeLayout);
-    this.drawPipeline = device.createRenderPipeline({
-      layout: device.createPipelineLayout({ bindGroupLayouts: [this.drawLayout] }),
-      vertex: { module: frame, entryPoint: 'vs' },
-      fragment: { module: frame, entryPoint: 'fs', targets: [{ format: 'rgba16float' }] },
-      primitive: { topology: 'triangle-list' },
-    });
+    // Two pipelines over one entry point, differing in which of the frame and the pyramid
+    // `covered` is compiled to read. `render` picks by the ratio it is drawing at.
+    const drawing = (fromFrame: boolean) =>
+      device.createRenderPipeline({
+        layout: device.createPipelineLayout({ bindGroupLayouts: [this.drawLayout] }),
+        vertex: { module: frame, entryPoint: 'vs' },
+        fragment: {
+          module: frame,
+          entryPoint: 'fs',
+          constants: { FROM_FRAME: fromFrame ? 1 : 0 },
+          targets: [{ format: 'rgba16float' }],
+        },
+        primitive: { topology: 'triangle-list' },
+      });
+    this.drawFromFrame = drawing(true);
+    this.drawFromPyramid = drawing(false);
 
-    this.uploadFrame(samples);
+    this.reduce();
     if (header.matched) this.chooseCandidates();
   }
 
   /**
-   * The frame's levels into `source`, adding the fourth component on the way.
+   * The pyramid the draw averages with, one level per dispatch, once at the open.
    *
-   * The staging buffer is destroyed as soon as the copy is recorded: at 61MP it is 366MB,
-   * and holding it beside the 488MB texture for the life of the editor would be most of a
-   * gigabyte for a padding step that has already happened.
+   * The first level comes off the frame's buffer and every level after it off the one
+   * above, which is two entry points over one layout rather than a padded copy of the
+   * frame to reduce from.
    */
-  private uploadFrame(samples: Uint16Array<ArrayBuffer>): void {
-    const staging = this.device.createBuffer({
-      size: Math.ceil((samples.length * 2) / 4) * 4,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-    });
-    this.device.queue.writeBuffer(staging, 0, samples);
-
-    const layout = this.device.createBindGroupLayout({
+  private reduce(): void {
+    const COMPUTE = GPUShaderStage.COMPUTE;
+    const written = {
+      binding: 3,
+      visibility: COMPUTE,
+      storageTexture: { access: 'write-only' as const, format: 'rgba16uint' as const },
+    };
+    // A layout each, holding exactly what its entry point reads. One shared layout would
+    // have to name `coarser`, and for the first level the only texture to put there is the
+    // one being written - which is a read and a write of one resource in a single pass, and
+    // rejected as such.
+    const first = this.device.createBindGroupLayout({
       entries: [
-        { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
-        { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
-        {
-          binding: 2,
-          visibility: GPUShaderStage.COMPUTE,
-          storageTexture: { access: 'write-only', format: 'rgba16uint' },
-        },
+        { binding: 0, visibility: COMPUTE, buffer: { type: 'uniform' } },
+        { binding: 1, visibility: COMPUTE, buffer: { type: 'read-only-storage' } },
+        written,
       ],
     });
-    const encoder = this.device.createCommandEncoder();
-    const pass = encoder.beginComputePass();
-    pass.setPipeline(
+    const rest = this.device.createBindGroupLayout({
+      entries: [{ binding: 2, visibility: COMPUTE, texture: { sampleType: 'uint' } }, written],
+    });
+
+    const module = this.device.createShaderModule({ code: REDUCE, label: 'reduce' });
+    const pipelineFor = (entryPoint: string, layout: GPUBindGroupLayout) =>
       this.device.createComputePipeline({
         layout: this.device.createPipelineLayout({ bindGroupLayouts: [layout] }),
-        compute: {
-          module: this.device.createShaderModule({ code: UNPACK, label: 'unpack' }),
-          entryPoint: 'unpack',
-        },
-      }),
-    );
+        compute: { module, entryPoint },
+      });
+    const halve = pipelineFor('halve', first);
+    const reduce = pipelineFor('reduce', rest);
+    const oneLevel = (baseMipLevel: number): GPUTextureView =>
+      this.pyramid.createView({ baseMipLevel, mipLevelCount: 1 });
+
     this.uniformsUsed = 0;
     this.writeUniform();
-    pass.setBindGroup(
-      0,
-      this.device.createBindGroup({
-        layout,
-        entries: [
-          { binding: 0, resource: { buffer: this.current } },
-          { binding: 1, resource: { buffer: staging } },
-          // A storage binding takes one level, and `source` now has fourteen.
-          { binding: 2, resource: this.source.createView({ baseMipLevel: 0, mipLevelCount: 1 }) },
-        ],
-      }),
-    );
-    const [x, y] = this.groups(this.width, this.height);
-    pass.dispatchWorkgroups(x, y);
-    pass.end();
-    this.reduce(encoder);
-    this.device.queue.submit([encoder.finish()]);
-    staging.destroy();
-  }
-
-  /** The pyramid the draw averages with, one level per dispatch, in the same submit. */
-  private reduce(encoder: GPUCommandEncoder): void {
-    const layout = this.device.createBindGroupLayout({
-      entries: [
-        { binding: 0, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: 'uint' } },
-        {
-          binding: 1,
-          visibility: GPUShaderStage.COMPUTE,
-          storageTexture: { access: 'write-only', format: 'rgba16uint' },
-        },
-      ],
-    });
-    const pipeline = this.device.createComputePipeline({
-      layout: this.device.createPipelineLayout({ bindGroupLayouts: [layout] }),
-      compute: {
-        module: this.device.createShaderModule({ code: REDUCE, label: 'reduce' }),
-        entryPoint: 'reduce',
-      },
-    });
-    const oneLevel = (baseMipLevel: number): GPUTextureView =>
-      this.source.createView({ baseMipLevel, mipLevelCount: 1 });
-
-    for (let level = 1; level < this.levels; level++) {
+    const encoder = this.device.createCommandEncoder();
+    for (let level = 0; level < this.levels; level++) {
       const pass = encoder.beginComputePass();
-      pass.setPipeline(pipeline);
+      pass.setPipeline(level === 0 ? halve : reduce);
       pass.setBindGroup(
         0,
         this.device.createBindGroup({
-          layout,
-          entries: [
-            { binding: 0, resource: oneLevel(level - 1) },
-            { binding: 1, resource: oneLevel(level) },
-          ],
+          layout: level === 0 ? first : rest,
+          entries:
+            level === 0
+              ? [
+                  { binding: 0, resource: { buffer: this.current } },
+                  { binding: 1, resource: { buffer: this.frame } },
+                  { binding: 3, resource: oneLevel(0) },
+                ]
+              : [
+                  { binding: 2, resource: oneLevel(level - 1) },
+                  { binding: 3, resource: oneLevel(level) },
+                ],
         }),
       );
       const [x, y] = this.groups(
-        Math.max(1, this.width >> level),
-        Math.max(1, this.height >> level),
+        Math.max(1, this.width >> (level + 1)),
+        Math.max(1, this.height >> (level + 1)),
       );
       pass.dispatchWorkgroups(x, y);
       pass.end();
     }
+    this.device.queue.submit([encoder.finish()]);
   }
 
   /**
@@ -436,7 +433,7 @@ export class TickPipeline {
     this.writeUniform({ exposure: 2 ** ev, fromCandidates: true, region });
 
     if (this.header.matched) this.measurePeak(encoder);
-    this.draw(encoder);
+    this.draw(encoder, region);
 
     this.timer?.resolve(encoder);
     this.device.queue.submit([encoder.finish()]);
@@ -546,8 +543,15 @@ export class TickPipeline {
 
   destroy(): void {
     this.timer?.destroy();
-    for (const texture of [this.source, this.curves, this.chroma]) texture.destroy();
-    for (const buffer of [...this.uniforms, this.histogram, this.peak, this.candidates, this.matrix]) {
+    for (const texture of [this.pyramid, this.curves, this.chroma]) texture.destroy();
+    for (const buffer of [
+      ...this.uniforms,
+      this.frame,
+      this.histogram,
+      this.peak,
+      this.candidates,
+      this.matrix,
+    ]) {
       buffer.destroy();
     }
   }
@@ -639,7 +643,8 @@ export class TickPipeline {
     values[25] = region.height;
     values[26] = canvas.width;
     values[27] = canvas.height;
-    ints[28] = this.levels - 1;
+    // `lod` 0 is the frame itself, so the pyramid's levels are 1..levels.
+    ints[28] = this.levels;
     this.device.queue.writeBuffer(this.current, 0, values);
   }
 
@@ -653,7 +658,7 @@ export class TickPipeline {
   private colourEntries(): GPUBindGroupEntry[] {
     return [
       { binding: 0, resource: { buffer: this.current } },
-      { binding: 1, resource: this.source.createView() },
+      { binding: 1, resource: { buffer: this.frame } },
       { binding: 2, resource: this.curves.createView() },
       { binding: 3, resource: this.chroma.createView() },
       { binding: 4, resource: { buffer: this.matrix } },
@@ -663,7 +668,11 @@ export class TickPipeline {
 
   /** The above plus the scene peak, which everything but the pass that measures it reads. */
   private displayEntries(): GPUBindGroupEntry[] {
-    return [...this.colourEntries(), { binding: 5, resource: { buffer: this.peak } }];
+    return [
+      ...this.colourEntries(),
+      { binding: 5, resource: { buffer: this.peak } },
+      { binding: 9, resource: this.pyramid.createView() },
+    ];
   }
 
   /** The rows the peak samples, as a dispatch over about `PEAK_SAMPLES` pixels. */
@@ -724,7 +733,7 @@ export class TickPipeline {
     ]);
   }
 
-  private draw(encoder: GPUCommandEncoder): void {
+  private draw(encoder: GPUCommandEncoder, region: Region): void {
     const pass = encoder.beginRenderPass({
       colorAttachments: [
         {
@@ -736,7 +745,14 @@ export class TickPipeline {
       ],
       timestampWrites: this.timer?.writes('draw'),
     });
-    pass.setPipeline(this.drawPipeline);
+    // The same ratio `covered` takes its level from: below two, the frame's own pixels are
+    // what the taps want, and the pyramid does not hold them.
+    const canvas = this.context.canvas;
+    const ratio = Math.max(
+      region.width / Math.max(canvas.width, 1),
+      region.height / Math.max(canvas.height, 1),
+    );
+    pass.setPipeline(ratio < 2 ? this.drawFromFrame : this.drawFromPyramid);
     pass.setBindGroup(
       0,
       this.device.createBindGroup({ layout: this.drawLayout, entries: this.displayEntries() }),

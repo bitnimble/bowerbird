@@ -23,11 +23,29 @@
 // parity went from 6 counts to 1735 in the shadows. What saves the chroma map is that its
 // corrections multiply chroma differences, which vanish exactly where PQ gets steep.
 
-@group(0) @binding(1) var source: texture_2d<u32>;
+// The frame stays as it arrived: interleaved RGB `u16`, three to a pixel, in the buffer it
+// was uploaded into. Not a texture, and not padded to four components - that padding is a
+// constant 65535 costing a quarter of 481MB at 61MP, plus a second copy of the whole frame
+// to write it. Nothing samples this level bilinearly, so a texture bought only the 2D cache
+// and a raster scan does not need it.
+@group(0) @binding(1) var<storage, read> frame: array<u32>;
 @group(0) @binding(2) var curves: texture_2d<f32>;
 @group(0) @binding(3) var chroma: texture_3d<f32>;
 @group(0) @binding(4) var<storage, read> matrix: array<f32>;
 @group(0) @binding(7) var lerp: sampler;
+
+/// One `u16` of the stream, which is half of a word. Three samples to a pixel means no
+/// pixel is word-aligned, so there is no reading one as a struct.
+fn sample_at(index: u32) -> u32 {
+  let word = frame[index / 2u];
+  return select(word & 0xffffu, word >> 16u, (index & 1u) == 1u);
+}
+
+/// The frame's levels at a pixel, full resolution.
+fn level_at(x: u32, y: u32) -> vec3f {
+  let base = at(x, y) * 3u;
+  return vec3f(f32(sample_at(base)), f32(sample_at(base + 1u)), f32(sample_at(base + 2u)));
+}
 
 /// `hdr_fit::sample_curve`: linear interpolation over BINS samples spanning 0..ceiling.
 ///

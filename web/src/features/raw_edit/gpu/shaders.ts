@@ -11,10 +11,9 @@
 //   prelude   nothing
 //   tick      nothing; declares `tick` at binding 0
 //   colour    prelude and tick; declares bindings 1-4 and 7
-//   frame     all three; declares bindings 5-6
+//   frame     all three; declares bindings 5-6 and 9
 //   peak      prelude, tick, colour; declares bindings 5-6 and 8
-//   unpack    tick; declares bindings 1-2
-//   reduce    nothing
+//   reduce    tick; declares bindings 1-3, on a layout of its own
 //
 // Numbers that both sides need are pipeline-overridable constants rather than string
 // substitutions, so the `.wgsl` files stay valid WGSL on their own.
@@ -25,7 +24,6 @@ import peak from './wgsl/peak.wgsl?raw';
 import prelude from './wgsl/prelude.wgsl?raw';
 import reduceSource from './wgsl/reduce.wgsl?raw';
 import tick from './wgsl/tick.wgsl?raw';
-import unpackSource from './wgsl/unpack.wgsl?raw';
 
 const compose = (...parts: string[]): string => parts.join('\n');
 
@@ -35,11 +33,8 @@ export const FRAME = compose(prelude, tick, colour, frame);
 /** The scene peak: a histogram over the whole frame, and the scan that reads it. */
 export const PEAK = compose(prelude, tick, colour, peak);
 
-/** Interleaved RGB into the RGBA texture, at the open. */
-export const UNPACK = compose(tick, unpackSource);
-
-/** One mip level from the one above it, at the open. */
-export const REDUCE = reduceSource;
+/** The pyramid the draw averages with, built once at the open. */
+export const REDUCE = compose(tick, reduceSource);
 
 /**
  * How many 4-byte words `Tick` occupies, padded.

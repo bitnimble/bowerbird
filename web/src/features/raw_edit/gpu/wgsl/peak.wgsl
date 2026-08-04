@@ -37,11 +37,6 @@ const RANGE: f32 = 24.0;
 /// `tone::PEAK_QUANTILE`.
 const QUANTILE: f32 = 0.9999;
 
-fn level_at(x: u32, y: u32) -> vec3f {
-  let code = textureLoad(source, vec2i(i32(x), i32(y)), 0);
-  return vec3f(f32(code.r), f32(code.g), f32(code.b));
-}
-
 /// What the quantile is taken of: the post-colour peak channel, in units of reference.
 fn measured(level: vec3f) -> f32 {
   let coloured = matched_nits(level) / tick.reference;

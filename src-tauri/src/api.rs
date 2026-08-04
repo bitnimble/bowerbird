@@ -96,8 +96,16 @@ pub async fn api(request: String) -> Result<Response, String> {
 /// Tauri carries a `Response` as a binary body rather than as base64, which is what makes
 /// an open of several hundred megabytes viable over IPC at all - but a binary body is all
 /// it carries, so the status and headers travel in front of it.
+///
+/// The JSON is padded with spaces to a multiple of four, which JSON ignores and the reader
+/// depends on: it puts the body at a four-byte offset, so the page can take a *view* over
+/// those bytes rather than copying them. At 61MP that is the difference between one 361MB
+/// array and three.
 fn frame(head: &Head, body: &[u8]) -> Vec<u8> {
-    let json = serde_json::to_vec(head).unwrap_or_else(|_| b"{\"status\":500,\"headers\":{}}".to_vec());
+    let mut json =
+        serde_json::to_vec(head).unwrap_or_else(|_| b"{\"status\":500,\"headers\":{}}".to_vec());
+    json.resize(json.len().next_multiple_of(4), b' ');
+
     let mut out = Vec::with_capacity(4 + json.len() + body.len());
     out.extend_from_slice(&(json.len() as u32).to_le_bytes());
     out.extend_from_slice(&json);
