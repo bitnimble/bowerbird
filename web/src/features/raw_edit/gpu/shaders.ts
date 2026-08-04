@@ -111,6 +111,10 @@ struct Tick {
   sdr_white: f32,
   /// Rows apart the peak's quantile samples, so it reads about a million pixels.
   row_stride: u32,
+  /// How many the open sampled, which is the population the quantile's rank is over.
+  peak_samples: u32,
+  /// Whether the histogram holds only the brightest of them, which scales that rank.
+  from_candidates: u32,
 };
 @group(0) @binding(0) var<uniform> tick: Tick;
 
@@ -390,12 +394,24 @@ export const PEAK_QUANTILE = 0.9999;
 /** 'tone::QUANTILE_SAMPLES', which is what the quantile is taken over. */
 export const PEAK_SAMPLES = 1 << 20;
 
+/**
+ * How many of the brightest sampled pixels the tick re-measures.
+ *
+ * The quantile wants rank 100 of a million. Keeping 16,384 of them leaves room for 163
+ * places of rank shuffling as the slider moves, which is far more than the exposure gain
+ * varies by across the levels a highlight can hold.
+ */
+export const PEAK_CANDIDATES = 16384;
+
 export const PEAK = /* wgsl */ `
 ${PRELUDE}
 ${TICK}
 ${COLOUR_BINDINGS}
 @group(0) @binding(5) var<storage, read_write> histogram: array<atomic<u32>>;
 @group(0) @binding(6) var<storage, read_write> peak_out: array<f32>;
+// [0] counts what cleared the threshold - which may be more than were kept - and the
+// levels follow from 4, four to a candidate.
+@group(0) @binding(8) var<storage, read_write> candidates: array<atomic<u32>>;
 ${COLOUR}
 
 const BINS: u32 = ${PEAK_BINS}u;
@@ -404,8 +420,31 @@ const BINS: u32 = ${PEAK_BINS}u;
 // is the clamp the CPU's own quantile applies at the top of its sample anyway.
 const RANGE: f32 = 24.0;
 const QUANTILE: f32 = ${PEAK_QUANTILE};
+const CANDIDATES: u32 = ${PEAK_CANDIDATES}u;
 
-/// About a million pixels, as whole rows.
+fn level_at(x: u32, y: u32) -> vec3f {
+  let code = textureLoad(source, vec2i(i32(x), i32(y)), 0);
+  return vec3f(f32(code.r), f32(code.g), f32(code.b));
+}
+
+/// What the quantile is taken of: the post-colour peak channel, in units of reference.
+fn measured(level: vec3f) -> f32 {
+  let coloured = matched_nits(level) / tick.reference;
+  return max(coloured.r, max(coloured.g, coloured.b));
+}
+
+fn count_in(v: f32) {
+  atomicAdd(&histogram[min(u32(max(v, 0.0) / RANGE * f32(BINS)), BINS - 1u)], 1u);
+}
+
+/// The sampled row of the frame this invocation covers, or nothing.
+fn sampled(id: vec3u) -> vec2u {
+  let y = id.y * tick.row_stride;
+  if (id.x >= tick.width || y >= tick.height) { return vec2u(0u, 0xffffffffu); }
+  return vec2u(id.x, y);
+}
+
+/// About a million pixels, as whole rows. Runs at the open, not per tick.
 ///
 /// Three shapes, and the reasoning matters more than the code. Reading every pixel was
 /// first, on the grounds that a shader has no reason to subsample - but this pass runs the
@@ -420,18 +459,57 @@ const QUANTILE: f32 = ${PEAK_QUANTILE};
 /// about, and 'tone::levels' says so - while consecutive lanes stay adjacent.
 @compute @workgroup_size(64)
 fn measure(@builtin(global_invocation_id) id: vec3u) {
-  let y = id.y * tick.row_stride;
-  if (id.x >= tick.width || y >= tick.height) { return; }
-  let x = id.x;
-
-  let code = textureLoad(source, vec2i(i32(x), i32(y)), 0);
-  let coloured = matched_nits(vec3f(f32(code.r), f32(code.g), f32(code.b))) / tick.reference;
-  let v = max(coloured.r, max(coloured.g, coloured.b));
-  let bin = min(u32(max(v, 0.0) / RANGE * f32(BINS)), BINS - 1u);
-  atomicAdd(&histogram[bin], 1u);
+  let at = sampled(id);
+  if (at.y == 0xffffffffu) { return; }
+  count_in(measured(level_at(at.x, at.y)));
 }
 
-/// The quantile off the cumulative count.
+/// The brightest of those million, kept so the tick does not have to find them again.
+///
+/// Runs once, after a full 'measure' and the 'quantile' that turns it into a threshold.
+/// What makes this sound is that the exposure cannot reorder the frame much: 'toned'
+/// returns 'base(level) * gain', where the base colour is fixed at the open and only the
+/// gain moves with the slider, so a pixel's rank changes only by how differently the tone
+/// curve compresses its luma from its neighbours' - and among highlights, which sit in the
+/// same compressed stretch of the curve, hardly at all. Where it does not hold, it does
+/// not matter: ranks shuffle freely only when the values are close together, and then any
+/// of them is the same answer.
+@compute @workgroup_size(64)
+fn collect(@builtin(global_invocation_id) id: vec3u) {
+  let at = sampled(id);
+  if (at.y == 0xffffffffu) { return; }
+  let level = level_at(at.x, at.y);
+  if (measured(level) < peak_out[1]) { return; }
+
+  // Counted past the cap rather than clamped, so the quantile can tell that it is reading
+  // a subsample and scale its rank to match. A blown sky puts far more than 'CANDIDATES'
+  // in one bin, and dropping the overflow silently would move the peak instead.
+  let slot = atomicAdd(&candidates[0], 1u);
+  if (slot >= CANDIDATES) { return; }
+  let base = 4u + slot * 4u;
+  atomicStore(&candidates[base], u32(level.r));
+  atomicStore(&candidates[base + 1u], u32(level.g));
+  atomicStore(&candidates[base + 2u], u32(level.b));
+}
+
+/// The tick's whole measurement: the kept candidates, at this exposure.
+@compute @workgroup_size(64)
+fn remeasure(@builtin(global_invocation_id) id: vec3u) {
+  if (id.x >= min(atomicLoad(&candidates[0]), CANDIDATES)) { return; }
+  let base = 4u + id.x * 4u;
+  count_in(measured(vec3f(
+    f32(atomicLoad(&candidates[base])),
+    f32(atomicLoad(&candidates[base + 1u])),
+    f32(atomicLoad(&candidates[base + 2u])),
+  )));
+}
+
+/// The quantile off the cumulative count, searched from the bright end.
+///
+/// From the top rather than the bottom because that is the end the answer is at, and
+/// because it is the only form that reads the same whether the histogram holds the whole
+/// sample or only its brightest: rank 100-from-the-top is rank 100-from-the-top either
+/// way, where rank 999,900-from-the-bottom is not.
 ///
 /// One invocation walking every bin was fine at 1024 and is not at 8192: that is 16,384
 /// dependent iterations on a single lane, each waiting on a global load, and it measured as
@@ -440,6 +518,10 @@ fn measure(@builtin(global_invocation_id) id: vec3u) {
 /// which is 288 steps rather than 16,384.
 const CHUNKS: u32 = 256u;
 var<workgroup> partial: array<u32, 256>;
+
+fn bin_value(bin: u32) -> f32 {
+  return (f32(bin) + 0.5) / f32(BINS) * RANGE * tick.reference;
+}
 
 @compute @workgroup_size(256)
 fn quantile(@builtin(local_invocation_id) local: vec3u) {
@@ -453,27 +535,47 @@ fn quantile(@builtin(local_invocation_id) local: vec3u) {
 
   if (local.x != 0u) { return; }
 
-  var total = 0u;
-  for (var c = 0u; c < CHUNKS; c = c + 1u) { total = total + partial[c]; }
-  let want = u32(f32(total) * QUANTILE);
-
-  // The chunk the quantile falls in, then the bin inside it.
-  var seen = 0u;
-  var chunk = CHUNKS - 1u;
-  for (var c = 0u; c < CHUNKS; c = c + 1u) {
-    if (seen + partial[c] >= want) { chunk = c; break; }
-    seen = seen + partial[c];
+  // How far down from the brightest the answer sits, over the sample the CPU would have
+  // taken. When the histogram holds only the candidates, that rank is scaled by the share
+  // of the qualifying pixels actually kept - a subsample of a subsample is still a
+  // subsample, which is the same argument 'QUANTILE_SAMPLES' rests on.
+  var rank = max(1.0, (1.0 - QUANTILE) * f32(tick.peak_samples));
+  if (tick.from_candidates == 1u) {
+    let above = max(atomicLoad(&candidates[0]), 1u);
+    rank = max(1.0, rank * f32(min(above, CANDIDATES)) / f32(above));
   }
-  var found = BINS - 1u;
-  for (var b = chunk * width; b < (chunk + 1u) * width; b = b + 1u) {
-    seen = seen + atomicLoad(&histogram[b]);
-    if (seen >= want) { found = b; break; }
+  let want = u32(rank);
+
+  // The chunk the quantile falls in, then the bin inside it, both from the top.
+  var seen = 0u;
+  var chunk = 0u;
+  for (var c = CHUNKS; c > 0u; c = c - 1u) {
+    if (seen + partial[c - 1u] >= want) { chunk = c - 1u; break; }
+    seen = seen + partial[c - 1u];
+  }
+  var found = 0u;
+  for (var b = (chunk + 1u) * width; b > chunk * width; b = b - 1u) {
+    seen = seen + atomicLoad(&histogram[b - 1u]);
+    if (seen >= want) { found = b - 1u; break; }
   }
 
   // The bin's centre, and never zero: a scene peak of zero would put the roll-off in a
   // division by it, which is the same guard 'scene_peak_nits' applies by returning None.
-  let value = (f32(found) + 0.5) / f32(BINS) * RANGE * tick.reference;
-  peak_out[0] = max(value, 1.0);
+  peak_out[0] = max(bin_value(found), 1.0);
+
+  // And the threshold 'collect' keeps a pixel above, which is the same search at a much
+  // shallower rank. Only on the open's run: it walks every bin rather than stopping near
+  // the top, which measured at 0.7ms - most of what the tick's peak now costs at all.
+  if (tick.from_candidates == 1u) { return; }
+  seen = 0u;
+  var edge = 0u;
+  for (var b = BINS; b > 0u; b = b - 1u) {
+    seen = seen + atomicLoad(&histogram[b - 1u]);
+    if (seen >= CANDIDATES / 2u) { edge = b - 1u; break; }
+  }
+  // The bin's lower edge, and in what 'measured' returns rather than in nits: 'collect'
+  // compares against this before the reference has been multiplied back in.
+  peak_out[1] = f32(edge) / f32(BINS) * RANGE;
 }
 `;
 

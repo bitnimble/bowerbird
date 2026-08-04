@@ -21,9 +21,24 @@ const WIDTH = Number(query.get('width') ?? 2566);
 const HEIGHT = Number(query.get('height') ?? 3840);
 const RUNS = Number(query.get('runs') ?? 5);
 
-/** `HdrColour::identity()`: a ramp over the curve's own domain. */
-function rampCurve() {
-  return Array.from({ length: 256 }, (_, i) => (i / 255) * 4);
+/**
+ * A compressive tone curve, per channel, over the curve's own domain.
+ *
+ * Not `HdrColour::identity()`'s ramp, which is what this used to send. A straight line
+ * makes the exposure a global gain - every pixel scales by the same factor, the frame
+ * cannot reorder, and `peakSweep` reports a perfect agreement it did not earn. A fitted
+ * frame's curves compress highlights, so a bright pixel gains less than a dim one, which
+ * is the only thing that can move a pixel in or out of the top hundred.
+ *
+ * The shoulder differs a little per channel for the same reason: the peak is taken over
+ * the maximum channel, so three identical curves would make it a function of luma alone.
+ */
+function toneCurve(channel) {
+  const shoulder = 0.5 + channel * 0.08;
+  return Array.from({ length: 256 }, (_, i) => {
+    const x = (i / 255) * 4;
+    return x / (1 + x * shoulder) / (1 / (1 + shoulder));
+  });
 }
 
 /**
@@ -110,7 +125,7 @@ async function main() {
     colour:
       query.get('matched') === '1'
         ? {
-            curves: [rampCurve(), rampCurve(), rampCurve()],
+            curves: [toneCurve(0), toneCurve(1), toneCurve(2)],
             matrix: [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
             saturation: 1,
             trustCeiling: 4,
@@ -149,6 +164,21 @@ async function main() {
   const runs = await time((i) => pipeline.render(0.5 + i * 0.1));
   const passes = await pipeline.passMs();
 
+  // The candidate set against a full sample, across the slider's range. Reported as the
+  // worst disagreement rather than the sweep, since one number is what would regress.
+  let peak = null;
+  if (header.matched) {
+    const sweep = await pipeline.peakSweep([-5, -3, -2, -1, 0, 1, 2, 3, 5]);
+    peak = {
+      // The range as well as the disagreement: two peaks that agree because both are the
+      // shader's floor of 1 nit would otherwise read as a pass.
+      nits: sweep.map((s) => Math.round(s.full)),
+      drift: Number(
+        Math.max(...sweep.map((s) => Math.abs(s.candidates - s.full) / Math.max(s.full, 1))).toFixed(5),
+      ),
+    };
+  }
+
   const info = adapter.info ?? {};
   out.textContent = JSON.stringify(
     {
@@ -161,6 +191,7 @@ async function main() {
       openMs: Number(upload.toFixed(1)),
       tickMs: runs,
       passMs: passes,
+      peak,
     },
     null,
     2,

@@ -10,7 +10,14 @@
 // source texture is never written) and the encode at the back (a canvas is not a file).
 
 import { type PassMs, PassTimer } from './pass_timer';
-import { FRAME, PEAK, PEAK_BINS, PEAK_SAMPLES, TICK_UNIFORM_FLOATS } from './shaders';
+import {
+  FRAME,
+  PEAK,
+  PEAK_BINS,
+  PEAK_CANDIDATES,
+  PEAK_SAMPLES,
+  TICK_UNIFORM_FLOATS,
+} from './shaders';
 
 /** `Sample::from_f32` for `u16`: rounded, and held inside the range it has to fit. */
 const clamp16 = (v: number): number => Math.max(0, Math.min(65535, Math.round(v)));
@@ -82,6 +89,7 @@ export class TickPipeline {
   private current: GPUBuffer;
   private readonly histogram: GPUBuffer;
   private readonly peak: GPUBuffer;
+  private readonly candidates: GPUBuffer;
   private readonly matrix: GPUBuffer;
   private readonly source: GPUTexture;
   private readonly curves: GPUTexture;
@@ -89,6 +97,8 @@ export class TickPipeline {
   private readonly lerp: GPUSampler;
 
   private readonly peakMeasure: GPUComputePipeline;
+  private readonly peakCollect: GPUComputePipeline;
+  private readonly peakRemeasure: GPUComputePipeline;
   private readonly peakQuantile: GPUComputePipeline;
   private readonly encodePipeline: GPUComputePipeline;
   private readonly drawPipeline: GPURenderPipeline;
@@ -148,6 +158,8 @@ export class TickPipeline {
     this.current = this.uniforms[0]!;
     this.histogram = storage(PEAK_BINS);
     this.peak = storage(4);
+    // A count, three words of padding to keep the levels aligned, and four per candidate.
+    this.candidates = storage(4 + PEAK_CANDIDATES * 4);
 
     const colour = header.colour;
     // A row per channel, which is how the shader picks one: `sample_curve` samples at the
@@ -202,7 +214,7 @@ export class TickPipeline {
     const f = bindings(GPUShaderStage.FRAGMENT);
 
     this.peakLayout = device.createBindGroupLayout({
-      entries: [...c.colour, c.writable(5), c.writable(6)],
+      entries: [...c.colour, c.writable(5), c.writable(6), c.writable(8)],
     });
     this.encodeLayout = device.createBindGroupLayout({
       entries: [...c.colour, c.readOnly(5), c.writable(6)],
@@ -218,6 +230,8 @@ export class TickPipeline {
       });
 
     this.peakMeasure = compute(peak, 'measure', this.peakLayout);
+    this.peakCollect = compute(peak, 'collect', this.peakLayout);
+    this.peakRemeasure = compute(peak, 'remeasure', this.peakLayout);
     this.peakQuantile = compute(peak, 'quantile', this.peakLayout);
     this.encodePipeline = compute(frame, 'encode', this.encodeLayout);
     this.drawPipeline = device.createRenderPipeline({
@@ -226,6 +240,8 @@ export class TickPipeline {
       fragment: { module: frame, entryPoint: 'fs', targets: [{ format: 'rgba16float' }] },
       primitive: { topology: 'triangle-list' },
     });
+
+    if (header.matched) this.chooseCandidates();
   }
 
   /** Grades at `ev` stops and puts the result on the canvas. One submit, no readback. */
@@ -233,7 +249,7 @@ export class TickPipeline {
     const encoder = this.device.createCommandEncoder();
     this.uniformsUsed = 0;
     this.timer?.begin();
-    this.writeUniform({ exposure: 2 ** ev });
+    this.writeUniform({ exposure: 2 ** ev, fromCandidates: true });
 
     if (this.header.matched) this.measurePeak(encoder);
     this.draw(encoder);
@@ -245,6 +261,54 @@ export class TickPipeline {
   /** Milliseconds per pass of the last `render`, if the adapter can tell us. */
   passMs(): Promise<PassMs> {
     return this.timer?.read() ?? Promise.resolve({});
+  }
+
+  /**
+   * The scene peak at each `ev` both ways: off the kept candidates, and off a full sample.
+   *
+   * The evidence for `collect`, and here rather than in a harness so that it can be run
+   * against a real frame whenever the candidate count or the selection changes. What it
+   * has to show is that the two agree across the slider's whole range - the candidates are
+   * chosen once at neutral exposure, and the claim is that the exposure cannot reorder the
+   * frame enough to push an uncollected pixel into the top hundred.
+   */
+  async peakSweep(evs: number[]): Promise<{ ev: number; candidates: number; full: number }[]> {
+    const staging = this.device.createBuffer({
+      size: 16,
+      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+    });
+    const [x, y] = this.sampledGroups;
+
+    const run = async (ev: number, fromCandidates: boolean): Promise<number> => {
+      const encoder = this.device.createCommandEncoder();
+      this.uniformsUsed = 0;
+      this.timer?.begin();
+      this.writeUniform({ exposure: 2 ** ev, fromCandidates });
+      encoder.clearBuffer(this.histogram);
+      this.peakPass(
+        encoder,
+        fromCandidates
+          ? [['remeasure', this.peakRemeasure, Math.ceil(PEAK_CANDIDATES / 64), 1]]
+          : [['measure', this.peakMeasure, x, y]],
+      );
+      this.peakPass(encoder, [['quantile', this.peakQuantile, 1, 1]]);
+      encoder.copyBufferToBuffer(this.peak, 0, staging, 0, 16);
+      this.device.queue.submit([encoder.finish()]);
+      await staging.mapAsync(GPUMapMode.READ);
+      const nits = new Float32Array(staging.getMappedRange())[0]!;
+      staging.unmap();
+      return nits;
+    };
+
+    const sweep = [];
+    for (const ev of evs) {
+      sweep.push({ ev, candidates: await run(ev, true), full: await run(ev, false) });
+    }
+    // The last run left the peak at whatever the sweep ended on, so put it back where a
+    // tick would have it before handing the pipeline back.
+    await run(0, true);
+    staging.destroy();
+    return sweep;
   }
 
   /**
@@ -293,7 +357,7 @@ export class TickPipeline {
   destroy(): void {
     this.timer?.destroy();
     for (const texture of [this.source, this.curves, this.chroma]) texture.destroy();
-    for (const buffer of [...this.uniforms, this.histogram, this.peak, this.matrix]) {
+    for (const buffer of [...this.uniforms, this.histogram, this.peak, this.candidates, this.matrix]) {
       buffer.destroy();
     }
   }
@@ -344,7 +408,7 @@ export class TickPipeline {
     });
   }
 
-  private writeUniform(over: { exposure?: number } = {}): void {
+  private writeUniform(over: { exposure?: number; fromCandidates?: boolean } = {}): void {
     const header = this.header;
     const colour = header.colour;
     if (over.exposure != null) this.exposure = over.exposure;
@@ -372,6 +436,8 @@ export class TickPipeline {
     values[17] = colour?.chroma?.levelScale ?? 1;
     values[18] = SDR_WHITE_NITS;
     ints[19] = this.rowStride;
+    ints[20] = this.width * Math.ceil(this.height / this.rowStride);
+    ints[21] = over.fromCandidates ? 1 : 0;
     this.device.queue.writeBuffer(this.current, 0, values);
   }
 
@@ -398,28 +464,62 @@ export class TickPipeline {
     return [...this.colourEntries(), { binding: 5, resource: { buffer: this.peak } }];
   }
 
-  private measurePeak(encoder: GPUCommandEncoder): void {
+  /** The rows the peak samples, as a dispatch over about `PEAK_SAMPLES` pixels. */
+  private get sampledGroups(): [number, number] {
+    return [Math.ceil(this.width / 64), Math.ceil(this.height / this.rowStride)];
+  }
+
+  private peakPass(
+    encoder: GPUCommandEncoder,
+    passes: [string, GPUComputePipeline, number, number][],
+  ): void {
     const entries: GPUBindGroupEntry[] = [
       ...this.colourEntries(),
       { binding: 5, resource: { buffer: this.histogram } },
       { binding: 6, resource: { buffer: this.peak } },
+      { binding: 8, resource: { buffer: this.candidates } },
     ];
-    encoder.clearBuffer(this.histogram);
-    // A pass each rather than two dispatches in one, so each reports its own time: a
+    // A pass each rather than several dispatches in one, so each reports its own time: a
     // dispatch over a million pixels and a dispatch over one workgroup are the same shape
     // from outside, and the difference is what the tick is being tuned on.
-    for (const [label, pipeline, x, y] of [
-      // About a million pixels rather than the whole frame, which is what the CPU reads.
-      ['measure', this.peakMeasure, Math.ceil(this.width / 64), Math.ceil(this.height / this.rowStride)],
-      // One workgroup: the search is over bins, not pixels.
-      ['quantile', this.peakQuantile, 1, 1],
-    ] as [string, GPUComputePipeline, number, number][]) {
+    for (const [label, pipeline, x, y] of passes) {
       const pass = encoder.beginComputePass({ timestampWrites: this.timer?.writes(label) });
       pass.setPipeline(pipeline);
       pass.setBindGroup(0, this.device.createBindGroup({ layout: this.peakLayout, entries }));
       pass.dispatchWorkgroups(x, y);
       pass.end();
     }
+  }
+
+  /**
+   * The brightest of the sampled pixels, kept once so no tick has to sweep for them again.
+   *
+   * At neutral exposure, since the candidates have to serve every position of the slider
+   * and the middle of its range is the least biased place to pick them from.
+   */
+  private chooseCandidates(): void {
+    const encoder = this.device.createCommandEncoder();
+    this.uniformsUsed = 0;
+    this.writeUniform({ exposure: 1 });
+    encoder.clearBuffer(this.histogram);
+    encoder.clearBuffer(this.candidates, 0, 16);
+    const [x, y] = this.sampledGroups;
+    this.peakPass(encoder, [
+      ['measure', this.peakMeasure, x, y],
+      ['quantile', this.peakQuantile, 1, 1],
+      ['collect', this.peakCollect, x, y],
+    ]);
+    this.device.queue.submit([encoder.finish()]);
+  }
+
+  private measurePeak(encoder: GPUCommandEncoder): void {
+    encoder.clearBuffer(this.histogram);
+    this.peakPass(encoder, [
+      // The candidates, not the frame: 16,384 pixels rather than a million.
+      ['remeasure', this.peakRemeasure, Math.ceil(PEAK_CANDIDATES / 64), 1],
+      // One workgroup: the search is over bins, not pixels.
+      ['quantile', this.peakQuantile, 1, 1],
+    ]);
   }
 
   private draw(encoder: GPUCommandEncoder): void {
