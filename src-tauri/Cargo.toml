@@ -45,3 +45,9 @@ overflow-checks = true
 # The symbol table is 9MB of the Windows binary and 3MB of the macOS one, for builds
 # nothing debugs remotely.
 strip = "symbols"
+# Cargo's release defaults are `lto = false` and `codegen-units = 16`, which is
+# per-crate optimisation and sixteen independent units inside each one. A shipped build
+# has no reason to leave either there: the whole program is available, and the tick's hot
+# path crosses crate boundaries into `rawshim`.
+lto = "fat"
+codegen-units = 1

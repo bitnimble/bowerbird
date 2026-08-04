@@ -57,8 +57,17 @@ serde_json = "1.0.151"
 
 # An index product that wraps is a picture that comes out wrong rather than a crash, and
 # these run over tens of millions of samples. Keep that failure loud in release.
+#
+# Applies when this crate is the root - the server's `build:native` and `cargo test`. The
+# shells set their own, because cargo reads profiles from the top-level package only.
 [profile.release]
 overflow-checks = true
+# Cargo defaults to per-crate optimisation in sixteen independent units. The rendition
+# pipeline's hot loops are generic over `Sample` and cross crate boundaries into
+# `fast_image_resize` and `libblur`, which is exactly what those defaults leave on the
+# table: on the shells the same change took the Windows binary from 26MB of `.text` to 7.
+lto = "fat"
+codegen-units = 1
 
 [build-dependencies]
 bindgen = "0.72"
