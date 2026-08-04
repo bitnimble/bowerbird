@@ -11,12 +11,22 @@
 //! a local handler has an obvious contract to meet.
 
 use std::collections::HashMap;
+use std::sync::OnceLock;
 use tauri::ipc::Response;
 
 /// Where the library lives. One env var rather than a setting, because the shell has to
 /// know it before it can ask anything for a setting.
 fn origin() -> String {
     std::env::var("BOWERBIRD_SERVER").unwrap_or_else(|_| "http://127.0.0.1:3000".into())
+}
+
+/// One client for the process, because a client is a connection pool.
+///
+/// A grid is a hundred thumbnails at once; building a pool per request means a hundred TCP
+/// handshakes, and a hundred TLS ones against a remote library.
+fn client() -> &'static reqwest::Client {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(reqwest::Client::new)
 }
 
 #[derive(serde::Deserialize)]
@@ -51,7 +61,7 @@ pub async fn api(request: String) -> Result<Response, String> {
     let method = reqwest::Method::from_bytes(request.method.as_bytes())
         .map_err(|e| format!("bad method {}: {e}", request.method))?;
 
-    let mut send = reqwest::Client::new().request(method, &url);
+    let mut send = client().request(method, &url);
     if let Some(body) = request.body {
         send = send.header("content-type", "application/json").json(&body);
     }
@@ -101,7 +111,11 @@ fn frame(head: &Head, body: &[u8]) -> Vec<u8> {
 /// so those URLs carry this scheme instead and land here with the same path the API
 /// serves. Registered rather than left to `http://` so the page holds no origin, and the
 /// shell stays the one thing that knows where the library is.
-pub fn asset(request: tauri::http::Request<Vec<u8>>) -> tauri::http::Response<Vec<u8>> {
+///
+/// Asynchronous, and that is not a detail: the synchronous form runs on the thread that
+/// draws, so a grid of thumbnails would freeze the window for as long as the library took
+/// to answer - which for a remote one is the whole point of the app being responsive.
+pub fn asset(request: tauri::http::Request<Vec<u8>>, responder: tauri::UriSchemeResponder) {
     let path = request
         .uri()
         .path_and_query()
@@ -109,26 +123,28 @@ pub fn asset(request: tauri::http::Request<Vec<u8>>) -> tauri::http::Response<Ve
         .unwrap_or_default();
     let url = format!("{}{}", origin(), path);
 
-    let fetched = tauri::async_runtime::block_on(async {
-        let reply = reqwest::Client::new().get(&url).send().await?;
-        let status = reply.status();
-        let kind = reply
-            .headers()
-            .get("content-type")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("application/octet-stream")
-            .to_string();
-        Ok::<_, reqwest::Error>((status, kind, reply.bytes().await?))
+    tauri::async_runtime::spawn(async move {
+        responder.respond(match fetch(&url).await {
+            Ok((status, kind, body)) => tauri::http::Response::builder()
+                .status(status)
+                .header("content-type", kind)
+                .body(body)
+                .unwrap_or_else(|_| bad_gateway("the reply could not be built")),
+            Err(e) => bad_gateway(&format!("could not reach {url}: {e}")),
+        });
     });
+}
 
-    match fetched {
-        Ok((status, kind, body)) => tauri::http::Response::builder()
-            .status(status)
-            .header("content-type", kind)
-            .body(body.to_vec())
-            .unwrap_or_else(|_| bad_gateway("the reply could not be built")),
-        Err(e) => bad_gateway(&format!("could not reach {url}: {e}")),
-    }
+async fn fetch(url: &str) -> Result<(u16, String, Vec<u8>), reqwest::Error> {
+    let reply = client().get(url).send().await?;
+    let status = reply.status().as_u16();
+    let kind = reply
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("application/octet-stream")
+        .to_string();
+    Ok((status, kind, reply.bytes().await?.to_vec()))
 }
 
 fn bad_gateway(why: &str) -> tauri::http::Response<Vec<u8>> {

@@ -18,7 +18,9 @@ pub fn run() {
         .plugin(tauri_plugin_wdio_webdriver::init());
 
     builder
-        .register_uri_scheme_protocol("bowerbird", |_app, request| api::asset(request))
+        .register_asynchronous_uri_scheme_protocol("bowerbird", |_app, request, responder| {
+            api::asset(request, responder)
+        })
         .invoke_handler(tauri::generate_handler![api::api])
         .run(tauri::generate_context!())
         .expect("error while running the Bowerbird shell");
