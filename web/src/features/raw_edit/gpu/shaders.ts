@@ -421,114 +421,102 @@ ${TICK}
 @group(0) @binding(3) var<storage, read> aux0: array<f32>;
 @group(0) @binding(4) var<storage, read> aux1: array<f32>;
 
-/// 'image::box_mean', as a prefix sum and a difference.
+/// 'image::box_mean', in the two shapes a GPU actually wants.
 ///
-/// Three shapes were tried and the reasoning is worth keeping, because each is right
-/// somewhere. The Rust slides a window: O(1) in the radius, and exactly right for a core
-/// that walks a row anyway. Carried across as-is it gave a 9.9MP frame 3840 threads, each
-/// running a 2566-step chain of dependent adds, and cost 3.3s a tick against the CPU's
-/// 0.9s. Gathering the window per pixel fixed the occupancy and cost 1.4s, but it is O(r)
-/// *reads* per pixel, so at the coarse chroma radius of 32 it moves 65x the memory the
-/// sliding window does - and on a part that shares system memory that is the whole budget.
+/// Four attempts, and the reasoning behind each is worth keeping.
 ///
-/// A scan is both: O(1) reads per pixel like the slide, and parallel like the gather. Each
-/// workgroup takes one row, walks it in tiles, and carries the running total between them;
-/// within a tile the scan is Hillis-Steele in workgroup memory.
-const SCAN_WIDTH: u32 = 256u;
-var<workgroup> tile: array<f32, 256>;
+/// The Rust slides a window along the row: O(1) in the radius, right for a core that walks
+/// a row anyway. Carried across as-is it gave a 9.9MP frame 3840 threads, each running a
+/// 2566-step chain of dependent adds - 3.3s a tick against the CPU's 0.9s.
+///
+/// Gathering the window per pixel fixed the occupancy, at 1.4s, but reads 2r+1 values per
+/// output, and every one of them from global memory.
+///
+/// A prefix sum made it O(1) again and changed nothing, which is what showed the limit was
+/// never the arithmetic. It also cannot survive half precision: a row scan reaches
+/// magnitudes near a thousand where f16's ulp is about 1, and the window is recovered by
+/// differencing two of those.
+///
+/// What is left is the access pattern, and the two axes want opposite things. Horizontally
+/// a row is contiguous, so a workgroup can pull its whole span into workgroup memory in
+/// coalesced reads and each lane then gathers from there - fast memory, and the sum stays
+/// bounded by the window, which is what half precision needs. Vertically a column is
+/// strided, so gathering it wastes a cache line per sample; instead each lane owns one
+/// column and slides down a strip of rows, which makes every read coalesced across the
+/// workgroup and O(1) per pixel again. Both keep the shrinking window at the border: an
+/// out-of-frame sample contributes nothing and is not counted, which is the same answer
+/// the Rust gets by narrowing its range.
 
-/// An inclusive prefix sum along each row.
+/// Lanes per workgroup, and the span of one horizontal tile.
+const SPAN: u32 = 256u;
+/// Sized for a radius of 128, which is four times what the coarsest chroma pass asks for
+/// at strength 1 and twice what it asks for at 2.
+var<workgroup> span: array<f32, 512>;
+
 @compute @workgroup_size(256)
-fn scan_h(@builtin(workgroup_id) group: vec3u, @builtin(local_invocation_id) local: vec3u) {
-  let y = group.x;
+fn box_h(@builtin(workgroup_id) group: vec3u, @builtin(local_invocation_id) local: vec3u) {
+  let y = group.y;
   if (y >= tick.height) { return; }
-  let row = y * tick.width;
-  let lane = local.x;
-
-  var carry = 0.0;
-  var base = 0u;
-  // Uniform across the workgroup, which barriers require: every lane computes the same
-  // 'base', and the bound is the frame's width rather than anything per-lane.
-  loop {
-    if (base >= tick.width) { break; }
-    let x = base + lane;
-    tile[lane] = select(0.0, src[row + x], x < tick.width);
-    workgroupBarrier();
-
-    for (var offset = 1u; offset < SCAN_WIDTH; offset = offset << 1u) {
-      // The index is guarded rather than the read: 'select' evaluates both arms, so a
-      // lane below the offset would index past the start of the tile.
-      let reach = select(0u, lane - offset, lane >= offset);
-      let addend = select(0.0, tile[reach], lane >= offset);
-      workgroupBarrier();
-      tile[lane] = tile[lane] + addend;
-      workgroupBarrier();
-    }
-
-    if (x < tick.width) { dst[row + x] = tile[lane] + carry; }
-    workgroupBarrier();
-    carry = carry + tile[SCAN_WIDTH - 1u];
-    workgroupBarrier();
-    base = base + SCAN_WIDTH;
-  }
-}
-
-/// The same down each column.
-@compute @workgroup_size(256)
-fn scan_v(@builtin(workgroup_id) group: vec3u, @builtin(local_invocation_id) local: vec3u) {
-  let x = group.x;
-  if (x >= tick.width) { return; }
-  let lane = local.x;
-
-  var carry = 0.0;
-  var base = 0u;
-  loop {
-    if (base >= tick.height) { break; }
-    let y = base + lane;
-    tile[lane] = select(0.0, src[y * tick.width + x], y < tick.height);
-    workgroupBarrier();
-
-    for (var offset = 1u; offset < SCAN_WIDTH; offset = offset << 1u) {
-      let reach = select(0u, lane - offset, lane >= offset);
-      let addend = select(0.0, tile[reach], lane >= offset);
-      workgroupBarrier();
-      tile[lane] = tile[lane] + addend;
-      workgroupBarrier();
-    }
-
-    if (y < tick.height) { dst[y * tick.width + x] = tile[lane] + carry; }
-    workgroupBarrier();
-    carry = carry + tile[SCAN_WIDTH - 1u];
-    workgroupBarrier();
-    base = base + SCAN_WIDTH;
-  }
-}
-
-/// The window's mean from the row scan: the sum either side of it, differenced.
-///
-/// The window still shrinks at the border rather than clamping samples, so an edge pixel
-/// is the mean of what is actually there, exactly as the Rust has it.
-@compute @workgroup_size(8, 8)
-fn window_h(@builtin(global_invocation_id) id: vec3u) {
-  if (!in_frame(id)) { return; }
   let radius = tick.radius;
-  let row = id.y * tick.width;
-  let low = select(id.x - radius, 0u, id.x < radius);
-  let high = min(id.x + radius, tick.width - 1u);
-  let before = select(src[row + low - 1u], 0.0, low == 0u);
-  dst[row + id.x] = (src[row + high] - before) / f32(high - low + 1u);
+  let row = y * tick.width;
+  let x0 = group.x * SPAN;
+  let width = 2u * radius + SPAN;
+
+  // Coalesced: consecutive lanes read consecutive samples. Out of frame reads as zero,
+  // which is what makes the shrinking window fall out of the count below.
+  for (var i = local.x; i < width; i = i + SPAN) {
+    let at = i32(x0 + i) - i32(radius);
+    let inside = at >= 0 && at < i32(tick.width);
+    span[i] = select(0.0, src[row + u32(max(at, 0))], inside);
+  }
+  workgroupBarrier();
+
+  let x = x0 + local.x;
+  if (x >= tick.width) { return; }
+  let low = select(x - radius, 0u, x < radius);
+  let high = min(x + radius, tick.width - 1u);
+
+  var sum = 0.0;
+  let start = local.x + radius - (x - low);
+  for (var i = 0u; i <= high - low; i = i + 1u) { sum = sum + span[start + i]; }
+  dst[row + x] = sum / f32(high - low + 1u);
 }
 
-/// The same from the column scan.
-@compute @workgroup_size(8, 8)
-fn window_v(@builtin(global_invocation_id) id: vec3u) {
-  if (!in_frame(id)) { return; }
+/// Rows one lane carries before another workgroup takes over. Long enough that seeding the
+/// window amortises, short enough that the frame still fills the device.
+const STRIP: u32 = 64u;
+
+@compute @workgroup_size(64)
+fn box_v(@builtin(workgroup_id) group: vec3u, @builtin(local_invocation_id) local: vec3u) {
+  let x = group.x * 64u + local.x;
+  if (x >= tick.width) { return; }
   let radius = tick.radius;
   let width = tick.width;
-  let low = select(id.y - radius, 0u, id.y < radius);
-  let high = min(id.y + radius, tick.height - 1u);
-  let before = select(src[(low - 1u) * width + id.x], 0.0, low == 0u);
-  dst[id.y * width + id.x] = (src[high * width + id.x] - before) / f32(high - low + 1u);
+  let height = tick.height;
+  let y0 = group.y * STRIP;
+  if (y0 >= height) { return; }
+
+  // Seeded once for the strip's first row, then slid. Every read here is coalesced too:
+  // the lanes of this workgroup are consecutive columns of one row.
+  var low = select(y0 - radius, 0u, y0 < radius);
+  var high = min(y0 + radius, height - 1u);
+  var sum = 0.0;
+  for (var y = low; y <= high; y = y + 1u) { sum = sum + src[y * width + x]; }
+
+  let last = min(y0 + STRIP, height);
+  for (var y = y0; y < last; y = y + 1u) {
+    dst[y * width + x] = sum / f32(high - low + 1u);
+    // The window for the next row: one in at the bottom, one out at the top, and neither
+    // where the frame has run out.
+    if (y + radius + 1u < height) {
+      sum = sum + src[(y + radius + 1u) * width + x];
+      high = y + radius + 1u;
+    }
+    if (y >= radius) {
+      sum = sum - src[(y - radius) * width + x];
+      low = y - radius + 1u;
+    }
+  }
 }
 
 /// A plane to another plane. Needed where a stage's output is also one of its inputs:

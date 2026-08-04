@@ -265,10 +265,8 @@ export class TickPipeline {
     this.gradeLayout = gradeLayout;
     this.gradePipeline = compute(grade, 'grade', gradeLayout);
     for (const entry of [
-      'scan_h',
-      'scan_v',
-      'window_h',
-      'window_v',
+      'box_h',
+      'box_v',
       'square',
       'multiply',
       'subtract_product',
@@ -570,19 +568,19 @@ export class TickPipeline {
   }
 
   /**
-   * `image::box_mean`, separably: a prefix sum along each axis and a difference across it.
+   * `image::box_mean`, separably, two dispatches and two planes.
    *
-   * Four dispatches through the same two planes the sliding version used, so the call
-   * sites are unchanged: the scan lands in `scratch`, the window reads it into `dst`, and
-   * the vertical pair does the same the other way round. `src` is only read by the first
-   * dispatch, so a caller passing `src === dst` is safe.
+   * The horizontal half lands in `scratch` and the vertical reads it into `dst`, so `src`
+   * is only touched by the first dispatch and a caller passing `src === dst` is safe.
    */
   private boxMean(encoder: GPUCommandEncoder, src: PlaneName, dst: PlaneName, scratch: PlaneName, radius: number): void {
     this.writeUniform({ radius });
-    this.op(encoder, 'scan_h', src, scratch, src, src, [this.height, 1]);
-    this.op(encoder, 'window_h', scratch, dst);
-    this.op(encoder, 'scan_v', dst, scratch, dst, dst, [this.width, 1]);
-    this.op(encoder, 'window_v', scratch, dst);
+    // A tile of 256 per workgroup horizontally; 64 columns by a 64-row strip vertically.
+    this.op(encoder, 'box_h', src, scratch, src, src, [Math.ceil(this.width / 256), this.height]);
+    this.op(encoder, 'box_v', scratch, dst, scratch, scratch, [
+      Math.ceil(this.width / 64),
+      Math.ceil(this.height / 64),
+    ]);
   }
 
   /**
