@@ -18,6 +18,7 @@
 // to guess when they disagree, which is its way of saying the build would be
 // irreproducible.
 import { spawnSync } from 'node:child_process';
+import { ensureIcons } from './make-icons.ts';
 import { copyFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
@@ -79,6 +80,8 @@ const env: Record<string, string> = {
     `-I${join(usr, 'include')}`,
   ].join(' '),
 };
+
+ensureIcons();
 
 const args = ['android', 'build', '--target', 'aarch64', '--apk', ...process.argv.slice(2)];
 const built = spawnSync('bun', ['x', '@tauri-apps/cli', ...args], { stdio: 'inherit', env });

@@ -15,6 +15,7 @@
 //
 // `BOWERBIRD_MAC_DIST_DIR` says where to leave the bundle; the target dir otherwise.
 import { spawnSync } from 'node:child_process';
+import { ensureIcons } from './make-icons.ts';
 import {
   chmodSync,
   copyFileSync,
@@ -90,6 +91,8 @@ const env: Record<string, string> = {
 
 // `tauri build` on Linux offers deb/rpm/appimage and no macOS bundler, so this builds the
 // bare binary and assembles the bundle below. A `.app` is a directory with a plist in it.
+ensureIcons();
+
 const args = ['build', '--target', TARGET, '--no-bundle', ...process.argv.slice(2)];
 const built = spawnSync('bun', ['x', '@tauri-apps/cli', ...args], { stdio: 'inherit', env });
 if (built.status !== 0) process.exit(built.status ?? 1);
@@ -145,23 +148,45 @@ chmodSync(join(macos, EXE), 0o755);
 // `@executable_path/../Frameworks`, which is where a `.app` keeps its dylibs.
 const frameworks = join(contents, 'Frameworks');
 mkdirSync(frameworks, { recursive: true });
-// Everything resolvable in the tree, rather than the binary's exact closure: a few
-// megabytes of ncurses is cheaper than an `otool` walk, and MacPorts leaves some absolute
-// symlinks (openssl into `/opt/local/libexec`) which point nowhere on this machine and
-// which nothing here links against anyway.
-const shipped = readdirSync(join(macports, 'lib')).filter(
-  (f) => f.endsWith('.dylib') && existsSync(join(macports, 'lib', f)),
-);
-for (const lib of shipped) copyFileSync(join(macports, 'lib', lib), join(frameworks, lib));
-
+// The binary's actual closure, walked with `otool`, rather than everything MacPorts
+// unpacked. The lazy version shipped 143 dylibs and 175MB against a real need of six and
+// 3.3MB - most of it three copies of ICU at 32MB each, pulled in by packages nothing here
+// links. A `.app` is not the place to leave that.
 const named = readdirSync(bin).find(
   (f) => f.startsWith(`${arch}-apple-darwin`) && f.endsWith('-install_name_tool'),
 );
-if (named == null) {
-  console.error(`[mac-build] no install_name_tool for ${arch} in ${bin}`);
+const otool = readdirSync(bin).find(
+  (f) => f.startsWith(`${arch}-apple-darwin`) && f.endsWith('-otool'),
+);
+if (named == null || otool == null) {
+  console.error(`[mac-build] no install_name_tool/otool for ${arch} in ${bin}`);
   process.exit(1);
 }
 const tool = join(bin, named);
+
+/** What a Mach-O asks for, as bare filenames, whichever prefix it names them by. */
+function dependencies(file: string): string[] {
+  const listed = spawnSync(join(bin, otool), ['-L', file], { encoding: 'utf8' });
+  return (listed.stdout ?? '')
+    .split('\n')
+    .slice(1)
+    .map((line) => line.trim().split(' ')[0] ?? '')
+    .filter((path) => path.startsWith('/opt/local/lib/') || path.includes('/Frameworks/'))
+    .map((path) => path.split('/').pop() ?? '');
+}
+
+const shipped: string[] = [];
+const queue = dependencies(join(macos, EXE));
+while (queue.length > 0) {
+  const lib = queue.shift() ?? '';
+  if (lib === '' || shipped.includes(lib)) continue;
+  const source = join(macports, 'lib', lib);
+  if (!existsSync(source)) continue;
+  shipped.push(lib);
+  copyFileSync(source, join(frameworks, lib));
+  queue.push(...dependencies(join(frameworks, lib)));
+}
+
 for (const lib of shipped) {
   const inside = `@executable_path/../Frameworks/${lib}`;
   spawnSync(tool, ['-change', `/opt/local/lib/${lib}`, inside, join(macos, EXE)], { stdio: 'ignore' });

@@ -16,7 +16,8 @@
 //
 // `BOWERBIRD_WIN_DIST_DIR` says where to leave it; the target dir otherwise.
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
+import { ensureIcons } from './make-icons.ts';
+import { copyFileSync, existsSync, mkdirSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 const TARGET = 'x86_64-pc-windows-gnu';
@@ -57,6 +58,8 @@ const env: Record<string, string> = {
 
 // `--no-bundle`: Tauri's NSIS bundler wants `makensis.exe`, and a folder of files is
 // enough to run the thing.
+ensureIcons();
+
 const args = ['build', '--target', TARGET, '--no-bundle', ...process.argv.slice(2)];
 const built = spawnSync('bun', ['x', '@tauri-apps/cli', ...args], { stdio: 'inherit', env });
 if (built.status !== 0) process.exit(built.status ?? 1);
@@ -76,16 +79,37 @@ mkdirSync(outDir, { recursive: true });
 copyFileSync(exe, join(outDir, 'Bowerbird.exe'));
 
 // The DLLs beside it: Windows resolves imports from the executable's own directory first,
-// so this is all the "installation" a dev build needs. Everything MSYS2 unpacked rather
-// than the exact closure - a few megabytes against a `dumpbin` walk this box cannot do.
-for (const dll of readdirSync(join(mingw, 'bin')).filter((f) => f.endsWith('.dll'))) {
-  copyFileSync(join(mingw, 'bin', dll), join(outDir, dll));
+// so this is all the "installation" a dev build needs.
+//
+// The binary's actual closure, walked with `objdump`, rather than everything MSYS2
+// unpacked - the lazy version shipped seventy DLLs for a handful that are reachable.
+// Searched across both the MSYS2 tree and the compiler's own runtime, since `libstdc++`
+// and `libgcc` come from the toolchain rather than from a package.
+const runtime = join(
+  process.env.HOME ?? '',
+  'local', 'usr', 'lib', 'gcc', 'x86_64-w64-mingw32', '13-posix',
+);
+const search = [join(mingw, 'bin'), runtime];
+
+/** What a PE imports, by name. System DLLs are not in the search path and drop out. */
+function imports(file: string): string[] {
+  const listed = spawnSync('x86_64-w64-mingw32-objdump', ['-p', file], { encoding: 'utf8', env });
+  return (listed.stdout ?? '')
+    .split('\n')
+    .filter((line) => line.includes('DLL Name:'))
+    .map((line) => line.split('DLL Name:')[1]?.trim() ?? '');
 }
-// And the compiler's own runtime, which the MSYS2 tree does not carry.
-const runtime = join(process.env.HOME ?? '', 'local', 'usr', 'lib', 'gcc', 'x86_64-w64-mingw32', '13-posix');
-for (const dll of ['libgcc_s_seh-1.dll', 'libstdc++-6.dll']) {
-  const found = [join(runtime, dll), join(mingw, 'bin', dll)].find((p) => existsSync(p));
-  if (found != null) copyFileSync(found, join(outDir, dll));
+
+const shipped: string[] = [];
+const queue = imports(exe);
+while (queue.length > 0) {
+  const dll = queue.shift() ?? '';
+  if (dll === '' || shipped.includes(dll)) continue;
+  const source = search.map((dir) => join(dir, dll)).find((path) => existsSync(path));
+  if (source == null) continue; // a system DLL; Windows has its own
+  shipped.push(dll);
+  copyFileSync(source, join(outDir, dll));
+  queue.push(...imports(source));
 }
 
 console.error(`[win-build] app: ${outDir} (unsigned; run Bowerbird.exe)`);
