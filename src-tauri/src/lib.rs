@@ -20,7 +20,7 @@ pub fn run() {
 
     builder
         .setup(|app| {
-            api::load_origin(app.handle());
+            api::load_config(app.handle());
             Ok(())
         })
         .register_asynchronous_uri_scheme_protocol("bowerbird", |_app, request, responder| {

@@ -14,24 +14,34 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 use tauri::ipc::Response;
 
-/// Where the library lives.
+/// What this app remembers for itself, as opposed to what the library remembers.
 ///
-/// The one setting that cannot live with the others, because the others are on the far
-/// side of it: asking the server where the server is does not work. So it is a file beside
-/// the app's own config, overridden by `BOWERBIRD_SERVER` for a test run that should not
-/// disturb whatever the reader has saved.
-static ORIGIN: std::sync::RwLock<Option<String>> = std::sync::RwLock::new(None);
+/// Only the server address so far, and that one cannot live with the library's settings
+/// because those are on the far side of it: asking the server where the server is does not
+/// work. A JSON object rather than that one string, because the next app-local setting
+/// should be a field rather than a second file - `serde` ignores what it does not know, so
+/// an older build reading a newer config keeps the fields it understands.
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Config {
+    /// Absent until the reader sets one, which is different from set-to-empty.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub server: Option<String>,
+}
+
+static CONFIG: std::sync::RwLock<Option<Config>> = std::sync::RwLock::new(None);
 
 const DEFAULT_ORIGIN: &str = "http://127.0.0.1:3000";
 
+/// `BOWERBIRD_SERVER` wins, so a test run does not disturb what the reader saved.
 fn origin() -> String {
     if let Ok(from_env) = std::env::var("BOWERBIRD_SERVER") {
         return from_env;
     }
-    ORIGIN
+    CONFIG
         .read()
         .ok()
-        .and_then(|held| held.clone())
+        .and_then(|held| held.as_ref().and_then(|c| c.server.clone()))
         .unwrap_or_else(|| DEFAULT_ORIGIN.into())
 }
 
@@ -46,17 +56,17 @@ fn origin() -> String {
 /// `/Applications` sits somewhere it may not write to, and would otherwise fail to save at
 /// all. Decided by trying rather than by a marker file or a permissions check, because on
 /// Windows the answer depends on which directory it landed in and on who is running it.
-fn origin_file(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
+fn config_file(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
     use tauri::Manager;
     if let Some(beside) = std::env::current_exe()
         .ok()
-        .and_then(|exe| exe.parent().map(|dir| dir.join("bowerbird-server.txt")))
+        .and_then(|exe| exe.parent().map(|dir| dir.join("config.json")))
     {
         if writable(&beside) {
             return Some(beside);
         }
     }
-    app.path().app_config_dir().ok().map(|dir| dir.join("server"))
+    app.path().app_config_dir().ok().map(|dir| dir.join("config.json"))
 }
 
 /// Whether this path can be created and written. Leaves the file behind if it already
@@ -74,15 +84,29 @@ fn writable(path: &std::path::Path) -> bool {
     }
 }
 
-/// Reads the saved origin at startup, so the first request already knows where to go.
-pub fn load_origin(app: &tauri::AppHandle) {
-    let saved = origin_file(app)
+/// Reads the config at startup, so the first request already knows where to go.
+///
+/// A file that will not parse is treated as one that is not there. It holds preferences
+/// rather than anything a reader would grieve, and refusing to start over a stray comma
+/// would be the worse failure.
+pub fn load_config(app: &tauri::AppHandle) {
+    let held = config_file(app)
         .and_then(|path| std::fs::read_to_string(path).ok())
-        .map(|held| held.trim().to_string())
-        .filter(|held| !held.is_empty());
-    if let Ok(mut held) = ORIGIN.write() {
-        *held = saved;
+        .and_then(|text| serde_json::from_str::<Config>(&text).ok())
+        .unwrap_or_default();
+    if let Ok(mut config) = CONFIG.write() {
+        *config = Some(held);
     }
+}
+
+/// Writes the whole object back, so a field added later is not dropped by this one.
+fn save(app: &tauri::AppHandle, config: &Config) -> Result<(), String> {
+    let Some(path) = config_file(app) else { return Ok(()) };
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("could not make {parent:?}: {e}"))?;
+    }
+    let text = serde_json::to_string_pretty(config).map_err(|e| e.to_string())?;
+    std::fs::write(&path, format!("{text}\n")).map_err(|e| format!("could not save {path:?}: {e}"))
 }
 
 /// What the settings screen shows. The effective one, so an env override is visible
@@ -97,19 +121,14 @@ pub fn server_origin() -> String {
 #[tauri::command]
 pub fn set_server_origin(app: tauri::AppHandle, value: String) -> Result<String, String> {
     let trimmed = value.trim().trim_end_matches('/').to_string();
-    let saved = if trimmed.is_empty() { None } else { Some(trimmed) };
+    let server = if trimmed.is_empty() { None } else { Some(trimmed) };
 
-    if let Some(path) = origin_file(&app) {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| format!("could not make {parent:?}: {e}"))?;
-        }
-        match &saved {
-            Some(value) => std::fs::write(&path, value),
-            None => std::fs::remove_file(&path).or(Ok(())),
-        }
-        .map_err(|e| format!("could not save the server address: {e}"))?;
+    {
+        let mut held = CONFIG.write().map_err(|_| "the config is locked".to_string())?;
+        let config = held.get_or_insert_with(Config::default);
+        config.server = server;
+        save(&app, config)?;
     }
-    *ORIGIN.write().map_err(|_| "the server address is locked".to_string())? = saved;
     Ok(origin())
 }
 
