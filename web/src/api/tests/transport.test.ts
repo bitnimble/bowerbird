@@ -1,12 +1,20 @@
 // The two transports have to agree, and the places they quietly did not.
 import { afterEach, describe, expect, test } from 'bun:test';
-import { assetUrl } from '../transport';
+import { assetUrl, subscribeEvents } from '../transport';
 
-type Internals = { convertFileSrc?: (file: string, protocol: string) => string };
-const global = globalThis as { __TAURI_INTERNALS__?: Internals };
+type Internals = {
+  convertFileSrc?: (file: string, protocol: string) => string;
+  invoke?: (command: string, args: unknown) => Promise<unknown>;
+};
+type Listen = (event: string, handler: (message: { payload: unknown }) => void) => Promise<() => void>;
+const global = globalThis as {
+  __TAURI_INTERNALS__?: Internals;
+  __TAURI__?: { core?: { invoke?: (command: string, args: unknown) => Promise<unknown> }; event?: { listen?: Listen } };
+};
 
 afterEach(() => {
   delete global.__TAURI_INTERNALS__;
+  delete global.__TAURI__;
 });
 
 /** What `tauri/scripts/core.js` emits, verbatim, for each platform it distinguishes. */
@@ -46,5 +54,119 @@ describe('assetUrl', () => {
   test('falls back to the bare path where the helper is absent', () => {
     global.__TAURI_INTERNALS__ = {};
     expect(assetUrl('/api/events')).toBe('/api/events');
+  });
+});
+
+describe('subscribeEvents over IPC', () => {
+  /** Stands in for the shell, holding whatever the page registered. */
+  function shellEvents(connected = false): {
+    deliver: (payload: unknown) => void;
+    channel: () => string;
+    unlistened: () => number;
+    settled: () => Promise<void>;
+  } {
+    let handler: ((message: { payload: unknown }) => void) | null = null;
+    let channel = '';
+    let unlistened = 0;
+    let landed: () => void = () => {};
+    const registered = new Promise<void>((resolve) => (landed = resolve));
+
+    global.__TAURI__ = {
+      core: { invoke: async () => connected },
+      event: {
+        listen: async (event, given) => {
+          channel = event;
+          handler = given;
+          landed();
+          return () => {
+            unlistened += 1;
+          };
+        },
+      },
+    };
+    return {
+      deliver: (payload) => handler?.({ payload }),
+      channel: () => channel,
+      unlistened: () => unlistened,
+      // The listen round trip and the state query resolve on their own microtask chains, so
+      // this drains rather than counting ticks and hoping.
+      settled: async () => {
+        await registered;
+        for (let tick = 0; tick < 8; tick++) await Promise.resolve();
+      },
+    };
+  }
+
+  test('routes each kind to its handler', async () => {
+    const shell = shellEvents();
+    const seen: string[] = [];
+    subscribeEvents({
+      open: () => seen.push('open'),
+      rendition: (data) => seen.push(`rendition:${data}`),
+    });
+    await shell.settled();
+
+    expect(shell.channel()).toBe('library:event');
+    shell.deliver({ kind: 'open', data: '' });
+    shell.deliver({ kind: 'rendition', data: '{"id":"a"}' });
+    // A kind the page does not know is ignored rather than thrown on, so a newer shell
+    // emitting a second event type does not break an older page.
+    shell.deliver({ kind: 'something-later', data: 'x' });
+    expect(seen).toEqual(['open', 'rendition:{"id":"a"}']);
+  });
+
+  test('stops listening once closed', async () => {
+    const shell = shellEvents();
+    const stream = subscribeEvents({ open: () => {}, rendition: () => {} });
+    await shell.settled();
+
+    stream.close();
+    expect(shell.unlistened()).toBe(1);
+  });
+
+  // `listen` resolves after a round trip, so a view that mounts and unmounts inside it would
+  // otherwise leave its handler registered for the life of the app.
+  test('unlistens a subscription closed before it was registered', async () => {
+    const shell = shellEvents();
+    subscribeEvents({ open: () => {}, rendition: () => {} }).close();
+    await shell.settled();
+    expect(shell.unlistened()).toBe(1);
+  });
+
+  // The stream is the app's and connects at startup, so by the time a page subscribes its
+  // `open` has already been emitted to nobody. Without asking, `serverReachable` would never
+  // run for that session - which a browser never suffers, because there the page owns the
+  // connection and gets its own `open`.
+  test('opens for a page that subscribed after the stream was already up', async () => {
+    const shell = shellEvents(true);
+    let opens = 0;
+    subscribeEvents({ open: () => (opens += 1), rendition: () => {} });
+    await shell.settled();
+    expect(opens).toBe(1);
+  });
+
+  test('does not open where the stream is down', async () => {
+    const shell = shellEvents(false);
+    let opens = 0;
+    subscribeEvents({ open: () => (opens += 1), rendition: () => {} });
+    await shell.settled();
+    expect(opens).toBe(0);
+  });
+
+  // Once for the state it asked for, then again for each reconnect, and never twice for one
+  // connection - `serverReachable` re-asks every view holding a dead request.
+  test('opens once per connection, and again on a reconnect', async () => {
+    const shell = shellEvents(true);
+    let opens = 0;
+    subscribeEvents({ open: () => (opens += 1), rendition: () => {} });
+    await shell.settled();
+    expect(opens).toBe(1);
+
+    shell.deliver({ kind: 'open', data: '' });
+    expect(opens).toBe(2);
+    shell.deliver({ kind: 'rendition', data: '{}' });
+    expect(opens).toBe(2);
+    shell.deliver({ kind: 'open', data: '' });
+    expect(opens).toBe(3);
   });
 });

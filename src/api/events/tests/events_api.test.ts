@@ -29,12 +29,28 @@ async function readChunk(reader: { read(): Promise<{ value?: Uint8Array }> }): P
 }
 
 describe('EventsApi', () => {
+  // A byte the moment the stream opens, which is what lets a client say it is connected.
+  // Without it the next one is a heartbeat away: a shell that waits for the first byte
+  // before reporting the library reachable waited twenty seconds to do it, and every view
+  // holding a request that failed while it started waited with it.
+  it('writes something immediately, before any event or heartbeat', async () => {
+    const { app } = build();
+    const res = await app.request('/api/events');
+    const reader = res.body!.getReader();
+
+    const opening = await readChunk(reader);
+    // No data, so it dispatches no event on any client - the point is the flush.
+    expect(opening).toBe('event: ping\ndata: \n\n');
+    await reader.cancel();
+  });
+
   it('streams a processed photo to a connected client', async () => {
     const { app, processed } = build();
     const res = await app.request('/api/events');
     expect(res.headers.get('content-type')).toContain('text/event-stream');
 
     const reader = res.body!.getReader();
+    await readChunk(reader);
     processed('photo-a');
     // The exact wire format, because an EventSource that cannot parse it reports
     // nothing at all rather than failing.

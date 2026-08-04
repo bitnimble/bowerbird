@@ -57,6 +57,14 @@ export class EventsApi {
         for (const event of this.since(c.req.header('Last-Event-ID'))) send(event);
         this.clients.add(send);
 
+        // Something immediately, before the first heartbeat is due. A client cannot call
+        // itself connected until a byte arrives, and on a quiet library the next one is
+        // HEARTBEAT_MS away - so a reader who just launched waited twenty seconds to be told
+        // the library was reachable, and every view holding a request that failed while it
+        // was starting waited with them. Carries no data, so it dispatches no event: the
+        // point is the flush.
+        void write({ event: 'ping', data: '' });
+
         // The heartbeat waits on the timer *or* the disconnect, rather than
         // sleeping through it: a dropped client would otherwise hold this handler
         // and its subscription until the next beat, and hold the process open

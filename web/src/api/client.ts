@@ -315,11 +315,6 @@ export function embeddedUrl(photoId: string, version = 0): string {
   return version === 0 ? url : `${url}?v=${version}`;
 }
 
-// Server-sent events: which photos have a rendition worth re-requesting.
-export function eventsUrl(): string {
-  return assetUrl('/api/events');
-}
-
 // One of the four things a photo can be taken away as: the RAW itself, or any of
 // the three renditions the viewer offers. No extension in the URL - the
 // catalogue holds several RAW formats, and the server names the download off the

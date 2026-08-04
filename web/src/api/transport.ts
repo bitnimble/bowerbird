@@ -138,8 +138,112 @@ export async function setServerOrigin(value: string): Promise<string> {
   return await invoke<string>('set_server_origin', { value });
 }
 
+/** A subscription to the library's events, however this build happens to receive them. */
+export interface EventStream {
+  close(): void;
+}
+
+export interface EventHandlers {
+  /** Every (re)connect, so a view holding a request that died with the server re-asks. */
+  open(): void;
+  rendition(data: string): void;
+}
+
 /**
- * A URL an `<img>` or an `EventSource` can load, which cannot go through `send`.
+ * The library's events, over whichever transport is running.
+ *
+ * The one call that is not request/response, and so the one that cannot go through `send`
+ * or through `assetUrl` either. A browser opens its own connection and this is an
+ * `EventSource`; the shell cannot proxy the stream at all, because `UriSchemeResponder`
+ * takes a whole response and this body never ends - so its Rust holds the stream and
+ * forwards each event over IPC, and this is the seam that hides which of the two happened.
+ */
+export function subscribeEvents(handlers: EventHandlers): EventStream {
+  const listen = listener();
+  return listen == null ? overEventSource(handlers) : overIpcEvents(listen, handlers);
+}
+
+type Listen = (
+  event: string,
+  handler: (message: { payload: unknown }) => void,
+) => Promise<() => void>;
+
+function listener(): Listen | null {
+  const bridge = (globalThis as { __TAURI__?: { event?: { listen?: unknown } } }).__TAURI__;
+  const listen = bridge?.event?.listen;
+  return typeof listen === 'function' ? (listen as Listen) : null;
+}
+
+function overEventSource(handlers: EventHandlers): EventStream {
+  // Its own origin, not `assetUrl`: the page and the API are the same server here.
+  const source = new EventSource('/api/events');
+  source.addEventListener('open', () => handlers.open());
+  source.addEventListener('rendition', (event) =>
+    handlers.rendition((event as MessageEvent<string>).data),
+  );
+  return { close: () => source.close() };
+}
+
+/**
+ * The same events, arriving as Tauri events from `src-tauri/src/events.rs`.
+ *
+ * Closing stops this page listening; it does not stop the stream, which belongs to the app
+ * rather than to the view and carries a `Last-Event-ID` across reconnects so nothing that
+ * happened while a view was away is lost.
+ *
+ * `listen` resolves after a round trip, so a subscription closed before it lands has to
+ * unlisten on arrival rather than leave the handler registered.
+ *
+ * And the stream is already up by the time any of this runs - it connects at startup, where
+ * a browser's `EventSource` connects when the page asks it to. A Tauri event reaches only
+ * whoever is listening when it is emitted, so the `open` was emitted before there was a
+ * listener and this would never call `open()` at all. It asks for the state instead, which
+ * is the same question the event answers.
+ */
+function overIpcEvents(listen: Listen, handlers: EventHandlers): EventStream {
+  let stop: (() => void) | null = null;
+  let closed = false;
+  let opened = false;
+
+  const open = (): void => {
+    if (closed || opened) return;
+    opened = true;
+    handlers.open();
+  };
+
+  void listen('library:event', ({ payload }) => {
+    const { kind, data } = payload as { kind: string; data: string };
+    if (kind === 'open') {
+      // A reconnect is a fresh `open`, and the point of one: a view holding a request that
+      // died with the server has to be told to ask again.
+      opened = false;
+      open();
+    } else if (kind === 'rendition') {
+      handlers.rendition(data);
+    }
+  }).then((unlisten) => {
+    if (closed) unlisten();
+    else stop = unlisten;
+  });
+
+  const invoke = invoker();
+  if (invoke != null) {
+    void invoke<boolean>('events_connected', {}).then((connected) => {
+      if (connected) open();
+    });
+  }
+
+  return {
+    close(): void {
+      closed = true;
+      stop?.();
+      stop = null;
+    },
+  };
+}
+
+/**
+ * A URL an `<img>` or a download can load, which cannot go through `send`.
  *
  * The browser fetches those itself, so under the shell they need a scheme its Rust
  * answers. Same paths either way; only the prefix moves.
