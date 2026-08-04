@@ -1181,3 +1181,63 @@ test('the zoom control steps fit, double, then the frame at its own pixels', asy
   await page.getByRole('button', { name: 'Zoom out to fit' }).click();
   await expect(page.locator('.stage--zoomed')).toHaveCount(0);
 });
+
+/**
+ * A zoomed photograph has to stay inside its stage when the stage changes shape.
+ *
+ * The pan limit is half of what the picture overhangs the viewport by, so widening the
+ * stage on an axis the fit is not bound by shrinks the limit while the offset stays where
+ * the reader left it. Only a change of *frame* used to re-clamp, so what was on screen was
+ * a strip of stage background beside the picture, held until the next drag - which then
+ * moved nothing until it had eaten the excess, and snapped.
+ */
+test('holds a zoomed photo inside a stage that changed shape', async ({ page }) => {
+  await page.goto('/settings');
+  await openLibrary(page, CULL_PHOTOS_DIR);
+  await openPhoto(page);
+  await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
+
+  // What the transform is, and what it is allowed to be, measured from the page rather than
+  // assumed: the limit depends on the frame's shape and the box it is fitted into.
+  const state = async (): Promise<{ x: number; limit: number }> => {
+    return page.locator('.stage__viewport').evaluate((viewport: HTMLElement) => {
+      const frame = viewport.querySelector('img.is-ready') as HTMLImageElement;
+      const transform = new DOMMatrixReadOnly(getComputedStyle(frame).transform);
+      const box = viewport.getBoundingClientRect();
+      const fit = Math.min(box.width / frame.naturalWidth, box.height / frame.naturalHeight);
+      const content = frame.naturalWidth * fit * transform.a;
+      return { x: transform.e, limit: Math.max(0, (content - box.width) / 2) };
+    });
+  };
+
+  // All the way to the frame's own pixels, not just the double stop: this photograph is
+  // portrait in a landscape stage, so at 2x it still does not overhang horizontally and
+  // there is no sideways pan to be left out of range.
+  await page.getByRole('button', { name: 'Zoom in' }).click();
+  await page.getByRole('button', { name: 'Zoom to 100%' }).click();
+  await expect(page.locator('.stage--zoomed')).toBeVisible();
+
+  // Panned hard against one edge, so the offset is exactly the limit and any shrinking of
+  // that limit leaves it outside.
+  const box = (await page.locator('.stage__viewport').boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 + 4000, box.y + box.height / 2, { steps: 12 });
+  await page.mouse.up();
+
+  const panned = await state();
+  expect(panned.limit).toBeGreaterThan(0);
+  expect(panned.x).toBeCloseTo(panned.limit, 0);
+
+  // Now give the stage more room across, which is what hiding the panels beside a portrait
+  // photograph does. The frame has not changed, so nothing else would re-clamp.
+  const viewport = page.viewportSize()!;
+  await page.setViewportSize({ width: viewport.width + 500, height: viewport.height });
+
+  await expect
+    .poll(async () => {
+      const after = await state();
+      return after.x - after.limit;
+    })
+    .toBeLessThanOrEqual(1);
+});
