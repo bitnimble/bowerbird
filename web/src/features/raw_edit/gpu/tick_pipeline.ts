@@ -19,10 +19,21 @@ import {
   PRESENT,
   SHARPEN,
   TICK_UNIFORM_FLOATS,
+  withHalfPlanes,
 } from './shaders';
 
 /** `Sample::from_f32` for `u16`: rounded, and held inside the range it has to fit. */
 const clamp16 = (v: number): number => Math.max(0, Math.min(65535, Math.round(v)));
+
+/** IEEE 754 binary16 to a number, for reading a half-precision plane back. */
+function half(bits: number): number {
+  const sign = bits >> 15 ? -1 : 1;
+  const exponent = (bits >> 10) & 0x1f;
+  const fraction = bits & 0x3ff;
+  if (exponent === 0) return sign * fraction * 2 ** -24;
+  if (exponent === 31) return fraction === 0 ? sign * Infinity : NaN;
+  return sign * (fraction + 1024) * 2 ** (exponent - 25);
+}
 
 export interface ChromaPayload {
   nodes: number[];
@@ -119,6 +130,8 @@ export class TickPipeline {
     private readonly context: GPUCanvasContext,
     private readonly header: PreparedHeader,
     samples: Uint16Array,
+    /** Diagnostic: store the working planes at half precision ('withHalfPlanes'). */
+    readonly halfPlanes = false,
   ) {
     this.width = header.width;
     this.height = header.height;
@@ -152,9 +165,17 @@ export class TickPipeline {
       length: number,
       usage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
     ) => device.createBuffer({ size: length * 4, usage });
-    for (const name of PLANES) this.planes.set(name, storage(pixels));
+    // Planes narrow with the storage format; the histogram, the curves and the uniforms do
+    // not, since none of them is walked per pixel.
+    const bytes = halfPlanes ? 2 : 4;
+    const plane = (length: number) =>
+      device.createBuffer({
+        size: length * bytes,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
+      });
+    for (const name of PLANES) this.planes.set(name, plane(pixels));
     // Two values a pixel, since the horizontal extrema sweep carries a low and a high.
-    this.planes.set('extrema', storage(pixels * 2));
+    this.planes.set('extrema', plane(pixels * 2));
 
     // Sized for the deconvolution, which is the stage with the most passes: ten iterations
     // of six, plus the guided filters ahead of it. Grown on demand rather than guessed
@@ -173,11 +194,13 @@ export class TickPipeline {
     );
     this.taps = this.upload(new Float32Array(gaussianTaps()));
 
-    const grade = device.createShaderModule({ code: GRADE, label: 'grade' });
+    // The grade writes the planes and the present reads them, so both follow the format.
+    const half = (code: string) => (halfPlanes ? withHalfPlanes(code) : code);
+    const grade = device.createShaderModule({ code: half(GRADE), label: 'grade' });
     const peak = device.createShaderModule({ code: PEAK, label: 'peak' });
-    const finish = device.createShaderModule({ code: FINISH_WGSL, label: 'finish' });
-    const sharpen = device.createShaderModule({ code: SHARPEN, label: 'sharpen' });
-    const present = device.createShaderModule({ code: PRESENT, label: 'present' });
+    const finish = device.createShaderModule({ code: half(FINISH_WGSL), label: 'finish' });
+    const sharpen = device.createShaderModule({ code: half(SHARPEN), label: 'sharpen' });
+    const present = device.createShaderModule({ code: half(PRESENT), label: 'present' });
 
     // Explicit layouts rather than `auto`, because `auto` derives the layout from what an
     // entry point happens to reference: `copy` reads two of the five bindings the plane
@@ -289,6 +312,8 @@ export class TickPipeline {
   render(ev: number, skipFinish = false): void {
     const encoder = this.device.createCommandEncoder();
     this.uniformsUsed = 0;
+    this.cost.dispatches = 0;
+    this.cost.planeTouches = 0;
     this.writeUniform({ exposure: 2 ** ev });
 
     if (this.header.matched) this.measurePeak(encoder);
@@ -308,15 +333,19 @@ export class TickPipeline {
   async readFrame(): Promise<Uint16Array> {
     const pixels = this.width * this.height;
     const read = async (name: PlaneName): Promise<Float32Array> => {
+      const bytes = pixels * (this.halfPlanes ? 2 : 4);
       const staging = this.device.createBuffer({
-        size: pixels * 4,
+        size: bytes,
         usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
       });
       const encoder = this.device.createCommandEncoder();
-      encoder.copyBufferToBuffer(this.buffer(name), 0, staging, 0, pixels * 4);
+      encoder.copyBufferToBuffer(this.buffer(name), 0, staging, 0, bytes);
       this.device.queue.submit([encoder.finish()]);
       await staging.mapAsync(GPUMapMode.READ);
-      const copy = new Float32Array(staging.getMappedRange()).slice();
+      const range = staging.getMappedRange();
+      const copy = this.halfPlanes
+        ? Float32Array.from(new Uint16Array(range), half)
+        : new Float32Array(range).slice();
       staging.unmap();
       staging.destroy();
       return copy;
@@ -463,6 +492,16 @@ export class TickPipeline {
   }
 
   /** One plane-algebra dispatch: `dst = f(src, aux0, aux1)`. */
+  /**
+   * Dispatches in the last tick, and the plane reads and writes they made.
+   *
+   * The cost model in one number. A plane is 40MB at 9.9MP, and the guided filter walks
+   * one several times per box mean, so what looks like "a 40MB frame" is gigabytes of
+   * traffic by the time `finish` has run. Counted rather than reasoned about, because the
+   * reasoning is what was wrong the first time.
+   */
+  readonly cost = { dispatches: 0, planeTouches: 0 };
+
   private op(
     encoder: GPUCommandEncoder,
     entry: string,
@@ -492,6 +531,10 @@ export class TickPipeline {
     const [x, y] = dispatch ?? this.groups(this.width, this.height);
     pass.dispatchWorkgroups(x, y);
     pass.end();
+    // One write, plus a read for each distinct plane bound. Aux defaults to `src`, so a
+    // one-input kernel counts two touches rather than four.
+    this.cost.dispatches += 1;
+    this.cost.planeTouches += 1 + new Set([src, aux0, aux1]).size;
   }
 
   /** The sharpen shader's bindings differ (taps and the observed plane), so it has its own. */
@@ -522,6 +565,8 @@ export class TickPipeline {
     const [x, y] = this.groups(this.width, this.height);
     pass.dispatchWorkgroups(x, y);
     pass.end();
+    this.cost.dispatches += 1;
+    this.cost.planeTouches += 1 + new Set([src, observed]).size;
   }
 
   /**

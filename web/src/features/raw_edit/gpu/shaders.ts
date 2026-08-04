@@ -16,6 +16,40 @@
 /** 'image::LUMA', BT.709 weights on a Rec.2020 frame, as the Rust side uses them. */
 export const LUMA = [0.2126, 0.7152, 0.0722] as const;
 
+/**
+ * The same shaders with their planes stored at half precision.
+ *
+ * A diagnostic rather than a mode. 'finish' is not bound by the arithmetic in its kernels
+ * but by how many times it walks a whole plane, so halving the element size is the cheapest
+ * way to ask whether the bottleneck really is memory: a tick that gets meaningfully faster
+ * says it is, and one that does not says the cost is somewhere else.
+ *
+ * The arithmetic stays f32, and only the storage narrows. That is the shape a real
+ * implementation would take too: 'variance = mean_squares - mean * mean' is catastrophic
+ * cancellation, and DENOISE_EPS at 1e-4 is an order of magnitude under f16's resolution
+ * near 1.0, so neither can afford to be computed there.
+ */
+export function withHalfPlanes(wgsl: string): string {
+  // Every binding that names a working plane, including the grade's outputs: they are the
+  // same buffers `finish` then reads, and leaving them f32 while the reader expects f16
+  // does not fail to compile - it silently grades one format and filters another.
+  const planes =
+    /(var<storage, (?:read|read_write)> (?:src|dst|aux0|aux1|observed|luma|red|blue|out_luma|out_red|out_blue): array<)f32(>)/g;
+  const load = /\b(src|aux0|aux1|observed|luma|red|blue)\[([^\]]+)\]/g;
+  const writes = /\b(out_luma|out_red|out_blue)\[([^\]]+)\] = ([^;]+);/g;
+  // A read of the output plane, which several kernels do: the two blends and the
+  // deconvolution's scale read what they are about to overwrite. Told apart from a write
+  // by what follows the subscript, so the store rewrite below still sees a bare `dst[...]`.
+  const readBack = /\bdst\[([^\]]+)\](?!\s*=[^=])/g;
+  const store = /\bdst\[([^\]]+)\] = ([^;]+);/g;
+  return `enable f16;\n${wgsl}`
+    .replace(planes, '$1f16$2')
+    .replace(load, 'f32($1[$2])')
+    .replace(readBack, 'f32(dst[$1])')
+    .replace(store, 'dst[$1] = f16($2);')
+    .replace(writes, '$1[$2] = f16($3);');
+}
+
 /** 'image.rs' constants, by their Rust names. */
 export const FINISH = {
   denoiseEps: 1e-4,

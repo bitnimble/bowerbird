@@ -17,6 +17,8 @@
 import { TickPipeline } from '/src/features/raw_edit/gpu/tick_pipeline.ts';
 
 const out = document.getElementById('out');
+// Diagnostic: the working planes at half precision (`?half=1`).
+const HALF = new URLSearchParams(location.search).get('half') === '1';
 
 async function fixture(name) {
   const [header, input, expected, graded] = await Promise.all([
@@ -33,8 +35,20 @@ async function fixture(name) {
   };
 }
 
-/** Absolute difference in `u16` counts, which is the unit the CPU's own pins use. */
+/**
+ * Absolute difference in `u16` counts, which is the unit the CPU's own pins use.
+ *
+ * Split by the sample's own brightness as well as pooled, because a format's error is not
+ * uniform across the range: half precision has a fixed *relative* mantissa, so it is
+ * coarsest where the values are largest, and the deep shadows are where a PQ frame keeps
+ * most of its code space. A single worst-case hides both ends.
+ */
 function compare(got, want) {
+  const bands = {
+    shadow: { limit: 0.1, worst: 0, total: 0, samples: 0 },
+    mid: { limit: 0.9, worst: 0, total: 0, samples: 0 },
+    highlight: { limit: Infinity, worst: 0, total: 0, samples: 0 },
+  };
   let worst = 0;
   let total = 0;
   let over1 = 0;
@@ -45,8 +59,22 @@ function compare(got, want) {
     total += delta;
     if (delta > 1) over1 += 1;
     if (delta > 16) over16 += 1;
+
+    const level = want[i] / 65535;
+    const band = level < bands.shadow.limit ? bands.shadow : level < bands.mid.limit ? bands.mid : bands.highlight;
+    band.worst = Math.max(band.worst, delta);
+    band.total += delta;
+    band.samples += 1;
   }
-  return { worst, mean: total / want.length, over1, over16, samples: want.length };
+  const byBand = {};
+  for (const [name, band] of Object.entries(bands)) {
+    byBand[name] = {
+      worst: band.worst,
+      mean: band.samples === 0 ? 0 : Number((band.total / band.samples).toFixed(3)),
+      samples: band.samples,
+    };
+  }
+  return { worst, mean: total / want.length, over1, over16, samples: want.length, byBand };
 }
 
 async function main() {
@@ -55,7 +83,11 @@ async function main() {
     out.textContent = JSON.stringify({ ok: false, error: 'no WebGPU adapter' });
     return;
   }
-  const device = await adapter.requestDevice();
+  // The adapter having `shader-f16` is not enough: a device only gets an extension it
+  // asked for, and WGSL refuses `enable f16` without it.
+  const device = await adapter.requestDevice(
+    HALF ? { requiredFeatures: ['shader-f16'] } : {},
+  );
   device.addEventListener('uncapturederror', (event) => {
     out.textContent = JSON.stringify({ ok: false, error: String(event.error?.message ?? event.error) });
   });
@@ -79,7 +111,7 @@ async function main() {
     canvas.width = header.width;
     canvas.height = header.height;
     device.pushErrorScope('validation');
-    const pipeline = new TickPipeline(device, context, header, input);
+    const pipeline = new TickPipeline(device, context, header, input, HALF);
 
     // Twice: the grade alone against the CPU's mid-tick frame, then the whole thing. A
     // single number cannot say which half moved, and the two are owed different things.
