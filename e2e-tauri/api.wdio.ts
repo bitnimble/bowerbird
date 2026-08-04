@@ -19,7 +19,14 @@ const SERVER = process.env.BOWERBIRD_E2E_SERVER ?? '';
 // The binary wdio launched, which `wdio.conf.ts` builds to the debug target dir.
 const APP_BINARY = join(import.meta.dirname, '..', 'src-tauri', 'target', 'debug', 'app');
 
-type Bridge = { __TAURI__: { core: { invoke: (c: string, a: unknown) => Promise<ArrayBuffer> } } };
+type Bridge = {
+  __TAURI__: {
+    core: { invoke: (c: string, a: unknown) => Promise<ArrayBuffer> };
+    event: {
+      listen: (e: string, h: (m: { payload: unknown }) => void) => Promise<() => void>;
+    };
+  };
+};
 
 describe('Bowerbird desktop shell', () => {
   it('serves the bundle from the Tauri app', async () => {
@@ -148,6 +155,31 @@ describe('Bowerbird desktop shell', () => {
         await invoke('set_server_origin', { value: restore });
       }, before);
     }
+  });
+
+  // The transport's one exception, and the only part of it a unit test cannot reach: that
+  // the shell really does hold the library's SSE stream and really does put it on the IPC
+  // channel the page listens to. Through the scheme this hung forever without erroring.
+  it('follows the library event stream and forwards it over IPC', async function () {
+    if (SERVER === '') return this.skip();
+
+    const state = await browser.execute(async () => {
+      const { core } = (window as unknown as Bridge).__TAURI__;
+      const origin = (await core.invoke('server_origin', {})) as unknown as string;
+      // Polled rather than sampled: the stream is dialled at startup and reconnects with a
+      // backoff, so the answer depends on where in that the page happens to ask.
+      for (let attempt = 0; attempt < 40; attempt++) {
+        if ((await core.invoke('events_connected', {})) as unknown as boolean) {
+          return { origin, connected: true };
+        }
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+      return { origin, connected: false };
+    });
+
+    // Both at once, so a failure says which server it followed rather than only that it did
+    // not connect to something.
+    expect(state).toEqual({ origin: SERVER, connected: true });
   });
 
   it('reports an unreachable server rather than panicking the shell', async () => {

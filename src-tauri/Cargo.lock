@@ -59,6 +59,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-wdio",
  "tauri-plugin-wdio-webdriver",
+ "tokio",
 ]
 
 [[package]]

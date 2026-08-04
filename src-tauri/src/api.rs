@@ -34,7 +34,7 @@ static CONFIG: std::sync::RwLock<Option<Config>> = std::sync::RwLock::new(None);
 const DEFAULT_ORIGIN: &str = "http://127.0.0.1:3000";
 
 /// `BOWERBIRD_SERVER` wins, so a test run does not disturb what the reader saved.
-fn origin() -> String {
+pub(crate) fn origin() -> String {
     if let Ok(from_env) = std::env::var("BOWERBIRD_SERVER") {
         return from_env;
     }
@@ -140,7 +140,7 @@ pub fn set_server_origin(app: tauri::AppHandle, value: String) -> Result<String,
 ///
 /// A grid is a hundred thumbnails at once; building a pool per request means a hundred TCP
 /// handshakes, and a hundred TLS ones against a remote library.
-fn client() -> &'static reqwest::Client {
+pub(crate) fn client() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
     CLIENT.get_or_init(reqwest::Client::new)
 }
@@ -265,8 +265,7 @@ fn frame(head: &Head, body: &[u8]) -> Vec<u8> {
 /// Registered rather than left to `http://` so the page holds no origin, and the shell stays
 /// the one thing that knows where the library is.
 ///
-/// Not an `EventSource`, though `eventsUrl` still points one here: see `fetch` for why a
-/// stream cannot be answered this way and what it does instead.
+/// Not the event stream, which cannot be answered this way at all and is `events.rs`.
 ///
 /// Asynchronous, and that is not a detail: the synchronous form runs on the thread that
 /// draws, so a grid of thumbnails would freeze the window for as long as the library took
@@ -351,17 +350,12 @@ async fn fetch(url: &str, forwarded: &[(String, String)]) -> Result<Fetched, req
     // A stream cannot come back this way, so say so rather than wait for it forever.
     //
     // `UriSchemeResponder` takes a whole `Response<Vec<u8>>`, so the only way to answer is to
-    // read the body to its end - and `/api/events` is an SSE stream that never ends. What
-    // that produced was not an error but a silence: the task, its connection and the page's
-    // `EventSource` all sat in CONNECTING for the life of the process, `open` never fired,
-    // and no rendition event was ever delivered, so a thumbnail rebuilt by a sync stayed
-    // stale until the window was reloaded.
-    //
-    // 501 rather than a proxy that works, because making it work is a choice between the
-    // page reaching the library's origin directly (which needs CORS on the far side) and the
-    // shell forwarding events over a Tauri channel (which needs a second transport). Until
-    // one is picked this is at least loud: `EventSource` sees an error, retries with backoff,
-    // and the console names the reason.
+    // read the body to its end, and a stream has none. Nothing in the app asks for one here
+    // any more - `events.rs` holds the library's stream and forwards it over IPC - so this
+    // is a backstop for the next URL somebody routes through the scheme without noticing
+    // what it serves. Left in because the failure it replaces was silence: the task, its
+    // connection and the page's `EventSource` sat in CONNECTING for the life of the process
+    // without ever erroring, so nothing anywhere reported it.
     if reply
         .headers()
         .get("content-type")

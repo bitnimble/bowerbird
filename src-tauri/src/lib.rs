@@ -10,6 +10,8 @@ mod api;
 /// The open, run here rather than asked of the library: the RAW is tens of megabytes
 /// where the frame it decodes to is hundreds.
 mod edit;
+/// The one call that is not request/response, and so cannot go through `api.rs`.
+mod events;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -22,7 +24,9 @@ pub fn run() {
 
     builder
         .setup(|app| {
+            // Before the stream, which reads the address it was told about.
             api::load_config(app.handle());
+            events::follow(app.handle());
             Ok(())
         })
         .register_asynchronous_uri_scheme_protocol("bowerbird", |_app, request, responder| {
@@ -31,7 +35,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             api::api,
             api::server_origin,
-            api::set_server_origin
+            api::set_server_origin,
+            events::events_connected
         ])
         .run(tauri::generate_context!())
         .expect("error while running the Bowerbird shell");
