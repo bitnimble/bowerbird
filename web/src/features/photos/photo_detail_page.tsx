@@ -51,9 +51,13 @@ import { renditionLabel } from './renditions';
 import { PhotoStage } from './photo_stage';
 import { TRIAGE_KEYS, TriageControl } from './triage_control';
 
-// Longest edge the decode is fitted to. Grade cost is linear in pixels; 3840 keeps
-// settle quality close to a max rendition without making every drag tick pay full res.
-const EDIT_LONG_EDGE = 3840;
+// Longest edge the decode is fitted to; 0 is the sensor's own.
+//
+// It was 3840, back when a tick cost what the frame cost. The draw runs once per canvas
+// pixel now, so the frame's size is paid for once at the open and never again, and holding
+// the decode below the sensor would only mean a reader who zooms in sees detail the decode
+// threw away (`docs/raw-edit-gpu.md` §4.1).
+const EDIT_LONG_EDGE = 0;
 
 type Row = [label: string, value: React.ReactNode];
 

@@ -23,12 +23,17 @@ type PathFor = (library: Library, photo: BasicPhoto) => string;
 
 const JPEG_QUALITY = 92;
 
-// What the editor asks for when the client names nothing, and the ceiling whatever it
-// names. The cap is memory rather than taste: the prepared frame is `w * h * 6` bytes and
-// the client holds it as a GPU texture, so a client asking for a 61MP open would be asking
-// this process for 366MB per request.
-const DEFAULT_EDIT_EDGE = 3840;
-const MAX_EDIT_EDGE = 6144;
+// What the editor asks for when the client names nothing: the sensor, whatever it is.
+//
+// It used to be 3840 with a 6144 ceiling, because a tick cost what the frame cost and a
+// 61MP grade at sixty frames a second was not on offer. It no longer does - the draw runs
+// once per canvas pixel, so opening the whole sensor buys 1:1 detail and costs nothing per
+// tick (`docs/raw-edit-gpu.md` §6) - and holding the cap would just mean a reader who
+// zooms in sees a frame the decode threw away.
+//
+// A number the client names is still honoured, since it knows what its stage can hold; the
+// decode never enlarges, so asking for more than the sensor has is the sensor.
+const DEFAULT_EDIT_EDGE = 0;
 
 // The viewer reports the weight of the rendition it is showing, and reads it off
 // the response it already received rather than asking for a number the server
@@ -93,7 +98,7 @@ export class ImageApi {
     this.routes = app;
   }
 
-  // Seconds of work and tens of megabytes back, so it is a GET a client makes once per
+  // Seconds of work and hundreds of megabytes back, so it is a GET a client makes once per
   // photo rather than per tick. `longEdge` is the client's, not the library's: the stage
   // decides how many pixels are worth grading (§4.1), and the rendition default is a size
   // chosen for a file kept forever.
@@ -103,10 +108,10 @@ export class ImageApi {
     const { photo, library } = this.photos.locate(photoId);
 
     const requested = Number(c.req.query('longEdge') ?? DEFAULT_EDIT_EDGE);
-    if (!Number.isFinite(requested) || requested < 1) {
-      throw new AppError('VALIDATION_ERROR', `longEdge must be a positive number: ${requested}`);
+    if (!Number.isFinite(requested) || requested < 0) {
+      throw new AppError('VALIDATION_ERROR', `longEdge must not be negative: ${requested}`);
     }
-    const longEdge = Math.min(Math.round(requested), MAX_EDIT_EDGE);
+    const longEdge = Math.round(requested);
 
     const settings = this.settings.get();
     const prepared = prepareEdit({

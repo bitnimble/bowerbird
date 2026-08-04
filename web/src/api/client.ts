@@ -308,8 +308,9 @@ export function downloadUrl(photoId: string, form: 'original' | ViewerRendition)
 /**
  * The editor's open: the decoded, fitted and warped frame every tick then grades.
  *
- * Seconds of work and tens of megabytes back, asked for once per photo rather than per
- * tick (`docs/raw-edit-gpu.md` §10.2b). `longEdge` is the stage's, not the library's.
+ * Seconds of work and hundreds of megabytes back, asked for once per photo rather than per
+ * tick (`docs/raw-edit-gpu.md` §10.2b). `longEdge` is the client's, not the library's, and
+ * 0 is the sensor's own resolution.
  */
 export function preparedUrl(photoId: string, longEdge: number): string {
   return `/image/${photoId}/prepared?longEdge=${Math.round(longEdge)}`;
