@@ -366,7 +366,21 @@ fn encode(@builtin(global_invocation_id) id: vec3u) {
  * The CPU takes a quantile of a million sampled pixels by partial sort. A shader cannot
  * sort a million values cheaply, so this bins them and reads the quantile off the
  * cumulative count, which is the same statistic at the bin's resolution. Two dispatches
- * and no readback: the scan writes the peak into a buffer the grade reads next.
+ * and no readback: the scan writes the peak into a buffer the draw reads next.
+ *
+ * Per tick rather than at open because it is not a property of the sensor: it measures
+ * *after* the colour transform and after the exposure, and `toned` reads the slider. Move
+ * it to the open and raising exposure pushes highlights past a knee placed for a frame
+ * that was never exposed, which is a clip. Everything upstream of the slider - `white`,
+ * `source_level`, the curves, the chroma map - is at the open already.
+ *
+ * Whole frame, always, and this is load-bearing rather than incidental. It is the one
+ * measurement that must not follow the display: sample the visible crop instead and the
+ * highlight roll-off shifts as the reader pans from a dark region to a bright one, which
+ * is the most visible failure this pipeline could have. Same reason the stride is fixed
+ * and unjittered - the sample set has to be the same pixels every tick, or the knee
+ * shimmers between frames. Its cost does not scale with the frame either, since the count
+ * is fixed: 0.9ms at 9.9MP and 0.9ms at 24MP.
  */
 export const PEAK_BINS = 8192;
 
