@@ -40,20 +40,40 @@ fn pq_inv(signal: f32) -> f32 {
 ///
 /// Evaluated rather than tabulated: the CPU builds 4096 bins because it pays per sample in
 /// scalar code, and a shader does not.
-fn eetf(nits: f32, source_peak: f32, peak: f32) -> f32 {
+///
+/// Split so the knee is found once and applied three times. Where the CPU calls 'eetf' per
+/// channel and eats 'pq(source_peak)' and 'pq(peak)' each time, both are constant over the
+/// whole dispatch - they come from the frame and the display, not the pixel.
+struct Rolloff {
+  lw: f32,
+  max_lum: f32,
+  ks: f32,
+  // Whether the scene already fits inside the display, in which case there is nothing to
+  // roll off and every channel returns unchanged.
+  fits: bool,
+};
+
+fn rolloff(source_peak: f32, peak: f32) -> Rolloff {
   let lw = pq(source_peak);
   let max_lum = pq(peak) / lw;
-  if (max_lum >= 1.0) { return nits; }
-  let ks = max(1.5 * max_lum - 0.5, 0.0);
-  let e1 = pq(nits) / lw;
-  if (e1 < ks) { return nits; }
-  let t = (e1 - ks) / (1.0 - ks);
+  return Rolloff(lw, max_lum, max(1.5 * max_lum - 0.5, 0.0), max_lum >= 1.0);
+}
+
+fn roll(nits: f32, knee: Rolloff) -> f32 {
+  if (knee.fits) { return nits; }
+  let e1 = pq(nits) / knee.lw;
+  if (e1 < knee.ks) { return nits; }
+  let t = (e1 - knee.ks) / (1.0 - knee.ks);
   let t2 = t * t;
   let t3 = t2 * t;
-  let e2 = (2.0 * t3 - 3.0 * t2 + 1.0) * ks
-    + (t3 - 2.0 * t2 + t) * (1.0 - ks)
-    + (-2.0 * t3 + 3.0 * t2) * max_lum;
-  return pq_inv(e2 * lw);
+  let e2 = (2.0 * t3 - 3.0 * t2 + 1.0) * knee.ks
+    + (t3 - 2.0 * t2 + t) * (1.0 - knee.ks)
+    + (-2.0 * t3 + 3.0 * t2) * knee.max_lum;
+  return pq_inv(e2 * knee.lw);
+}
+
+fn rolled(nits: vec3f, knee: Rolloff) -> vec3f {
+  return vec3f(roll(nits.r, knee), roll(nits.g, knee), roll(nits.b, knee));
 }
 `;
 
@@ -111,13 +131,17 @@ fn in_frame(id: vec3u) -> bool { return id.x < tick.width && id.y < tick.height;
  */
 const COLOUR = /* wgsl */ `
 /// 'hdr_fit::sample_curve': linear interpolation over BINS samples spanning 0..ceiling.
+///
+/// A row per channel, and the row picked at its own texel centre so the filter that
+/// interpolates along the curve returns that row exactly rather than a blend of two.
 fn sample_curve(channel: u32, x: f32) -> f32 {
   let bins = tick.curve_bins;
   let t = clamp(x / tick.trust_ceiling, 0.0, 1.0) * f32(bins - 1u);
   let below = min(u32(t), bins - 2u);
-  let frac = t - f32(below);
-  let base = channel * bins + below;
-  return mix(curves[base], curves[base + 1u], frac);
+  let row = i32(channel);
+  let lo = textureLoad(curves, vec2i(i32(below), row), 0).r;
+  let hi = textureLoad(curves, vec2i(i32(below) + 1, row), 0).r;
+  return mix(lo, hi, t - f32(below));
 }
 
 /// 'MatchedGrade::curves', which is the per-channel tone at a given exposure scale.
@@ -151,39 +175,21 @@ fn toned(level: vec3f) -> vec3f {
   return base * (lit_luma / base_luma);
 }
 
-/// 'ChromaMap::axis'.
-fn axis(value: f32, nodes: u32, low: f32, scale: f32) -> vec2f {
+/// 'ChromaMap::axis', as a texture coordinate: the node index, at its texel centre.
+fn axis(value: f32, nodes: u32, low: f32, scale: f32) -> f32 {
   let t = min(max((value - low) * scale, 0.0), f32(nodes - 1u));
-  let below = min(u32(t), nodes - 2u);
-  return vec2f(f32(below), t - f32(below));
+  return (t + 0.5) / f32(nodes);
 }
 
-fn node(index: u32, component: u32) -> f32 { return chroma_nodes[index * 4u + component]; }
-
-/// 'ChromaMap::correct', trilinear over the same eight corners.
+/// 'ChromaMap::correct', trilinear over the same eight corners - in one fetch, since a
+/// 2x2 per node is four components and a node lattice is a volume.
 fn correct(level: f32, d0: f32, d2: f32) -> vec2f {
-  let count = tick.chroma_count;
-  let ax = axis(d0, count, tick.chroma_low, tick.chroma_scale);
-  let ay = axis(d2, count, tick.chroma_low, tick.chroma_scale);
-  let az = axis(sqrt(max(level, 0.0)), tick.level_count, 0.0, tick.level_scale);
-  let area = count * count;
-  let base = u32(az.x) * area + u32(ay.x) * count + u32(ax.x);
-
-  var cell = vec4f(0.0);
-  for (var c = 0u; c < 4u; c = c + 1u) {
-    let n00 = node(base, c);
-    let n01 = node(base + 1u, c);
-    let n10 = node(base + count, c);
-    let n11 = node(base + count + 1u, c);
-    let near = mix(mix(n00, n01, ax.y), mix(n10, n11, ax.y), ay.y);
-    let f00 = node(base + area, c);
-    let f01 = node(base + area + 1u, c);
-    let f10 = node(base + area + count, c);
-    let f11 = node(base + area + count + 1u, c);
-    let far = mix(mix(f00, f01, ax.y), mix(f10, f11, ax.y), ay.y);
-    cell[c] = mix(near, far, az.y);
-  }
-  return vec2f(cell[0] * d0 + cell[1] * d2, cell[2] * d0 + cell[3] * d2);
+  let cell = textureSampleLevel(chroma, lerp, vec3f(
+    axis(d0, tick.chroma_count, tick.chroma_low, tick.chroma_scale),
+    axis(d2, tick.chroma_count, tick.chroma_low, tick.chroma_scale),
+    axis(sqrt(max(level, 0.0)), tick.level_count, 0.0, tick.level_scale),
+  ), 0.0);
+  return vec2f(cell.x * d0 + cell.y * d2, cell.z * d0 + cell.w * d2);
 }
 
 /// 'hdr_fit::finish_chroma', given a colour the matrix has already been through.
@@ -219,70 +225,138 @@ fn neutral_nits(level: vec3f) -> vec3f {
   let white = tick.white / tick.exposure;
   let source_level = tick.source_level / tick.exposure;
   let source_peak = (source_level / white) * tick.reference;
-  return vec3f(
-    eetf((level.r / white) * tick.reference, source_peak, tick.peak),
-    eetf((level.g / white) * tick.reference, source_peak, tick.peak),
-    eetf((level.b / white) * tick.reference, source_peak, tick.peak),
-  );
+  return rolled((level / white) * tick.reference, rolloff(source_peak, tick.peak));
 }
 `;
 
-/** The bindings 'COLOUR' reads, identical in both shaders that use it. */
+/**
+ * The bindings 'COLOUR' reads, identical in both shaders that use it.
+ *
+ * The two lookups are textures with a filtering sampler rather than storage buffers with
+ * the blend written out, which is the same data read the way the hardware reads it. The
+ * buffer form was a transcription of `hdr_fit`'s, where an interpolation is arithmetic
+ * because there is nothing else it could be; here a texture unit does the fetch, the
+ * weights and the blend as one instruction. The chroma map is the extreme case: eight
+ * corners times four components was thirty-two dependent scalar loads for one trilinear
+ * that `textureSampleLevel` performs in a single fetch.
+ *
+ * What it costs is the filter weight, which GPUs carry in about eight fractional bits
+ * rather than in a float. Over a 256-bin curve that is a 1/256th of a bin, and both of
+ * these are smooth by construction - a tone curve and a chroma correction - so the error
+ * lands under a count of 65535 rather than anywhere a grade is judged.
+ */
 const COLOUR_BINDINGS = /* wgsl */ `
 @group(0) @binding(1) var source: texture_2d<u32>;
-@group(0) @binding(2) var<storage, read> curves: array<f32>;
-@group(0) @binding(3) var<storage, read> chroma_nodes: array<f32>;
+@group(0) @binding(2) var curves: texture_2d<f32>;
+@group(0) @binding(3) var chroma: texture_3d<f32>;
 @group(0) @binding(4) var<storage, read> matrix: array<f32>;
+@group(0) @binding(7) var lerp: sampler;
 `;
 
-export const GRADE = /* wgsl */ `
+/** The colour, rolled off to what the display can show. Needs 'peak_out' bound. */
+const DISPLAY_NITS = /* wgsl */ `
+fn display_nits(level: vec3f) -> vec3f {
+  return min(max(rolled_off(level), vec3f(0.0)), vec3f(tick.peak));
+}
+
+/// The roll-off leaves the display's peak alone when the scene already fits inside it, so
+/// the clamp above is not redundant: a level past 'source_level' comes back untouched.
+fn rolled_off(level: vec3f) -> vec3f {
+  if (tick.matched == 0u) { return neutral_nits(level); }
+  let scene_peak = peak_out[0];
+  // Clamped to the scene peak before the roll-off, because the CPU's roll table spans
+  // 0..scene_peak and reads the top bin for anything past it. Without the clamp the
+  // brightest pixels get a curve the CPU never evaluates.
+  let coloured = min(max(matched_nits(level), vec3f(0.0)), vec3f(scene_peak));
+  return rolled(coloured, rolloff(scene_peak, tick.peak));
+}
+`;
+
+/**
+ * Sensor levels to what the canvas takes, in one pass.
+ *
+ * There used to be a graded frame between the two: a compute pass wrote 'rgba32float'
+ * nits and the draw read them back. That is the CPU's shape, where every stage
+ * materialises because the next one is a separate loop over 30M samples, and on a GPU it
+ * bought nothing - the value is already in a register when the next stage wants it. What
+ * it cost was 158MB written and 158MB read per tick, which measured as 5.2ms of a 15ms
+ * tick with the arithmetic in it barely visible either side.
+ *
+ * It also PQ-coded the frame on the way out and decoded it on the way in, six 'pow' each
+ * way, because a rendition is a PQ file. The display is not a file. That encoding now
+ * happens only where a file is wanted, which is 'encode' below.
+ *
+ * The other half of the win is not on this bench: the fragment shader runs once per
+ * *canvas* pixel, and a canvas is the viewport. Grading a 9.9MP frame to fill a 2MP
+ * viewport used to cost 9.9MP of colour transform and now costs 2MP of it.
+ */
+export const FRAME = /* wgsl */ `
 ${PRELUDE}
 ${TICK}
 ${COLOUR_BINDINGS}
-@group(0) @binding(5) var graded: texture_storage_2d<rgba32float, write>;
-@group(0) @binding(6) var<storage, read> peak_out: array<f32>;
+@group(0) @binding(5) var<storage, read> peak_out: array<f32>;
+@group(0) @binding(6) var<storage, read_write> counts: array<u32>;
 ${COLOUR}
+${DISPLAY_NITS}
 
+// Rec.2020 to Display P3, both D65, applied in linear light. Rows sum to 1.
+const R2020_TO_P3 = mat3x3f(
+  vec3f( 1.343354, -0.065295,  0.002821),
+  vec3f(-0.282219,  1.075589, -0.019598),
+  vec3f(-0.061397, -0.010491,  1.016761),
+);
+
+/// The sRGB transfer with the sign carried, so an out-of-P3 component survives as a
+/// negative rather than folding back over zero.
+fn transfer(v: f32) -> f32 {
+  let a = abs(v);
+  let e = select(1.055 * pow(a, 1.0 / 2.4) - 0.055, a * 12.92, a <= 0.0031308);
+  return sign(v) * e;
+}
+
+fn level_at(x: i32, y: i32) -> vec3f {
+  let code = textureLoad(source, vec2i(x, y), 0);
+  return vec3f(f32(code.r), f32(code.g), f32(code.b));
+}
+
+@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
+  var corners = array<vec2f, 3>(vec2f(-1.0, -1.0), vec2f(3.0, -1.0), vec2f(-1.0, 3.0));
+  return vec4f(corners[i], 0.0, 1.0);
+}
+
+/// The display transform is the one stage with no CPU counterpart: a rendition is tagged
+/// Rec.2020 PQ and handed to a compositor, where a canvas has neither Rec.2020 nor
+/// absolute luminance, so what the media path declares this has to compute (§7.1, §7.2).
+@fragment fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+  let x = min(i32(pos.x), i32(tick.width) - 1);
+  let y = min(i32(pos.y), i32(tick.height) - 1);
+  let p3 = (R2020_TO_P3 * display_nits(level_at(x, y))) / tick.sdr_white;
+  return vec4f(transfer(p3.r), transfer(p3.g), transfer(p3.b), 1.0);
+}
+
+/// The same frame as a rendition would hold it: 'u16' counts of PQ.
+///
+/// Off the tick's path entirely - the display never wants this - and here rather than in
+/// the harness that reads it so that ST 2084 keeps one implementation in this repo, and
+/// so that what parity compares is the pixel 'fs' draws rather than a cousin of it.
 @compute @workgroup_size(8, 8)
-fn grade(@builtin(global_invocation_id) id: vec3u) {
+fn encode(@builtin(global_invocation_id) id: vec3u) {
   if (!in_frame(id)) { return; }
-  let code = textureLoad(source, vec2i(i32(id.x), i32(id.y)), 0);
-  let level = vec3f(f32(code.r), f32(code.g), f32(code.b));
-
-  var nits: vec3f;
-  if (tick.matched == 1u) {
-    let scene_peak = peak_out[0];
-    // Clamped to the scene peak before the roll-off, because the CPU's roll table spans
-    // 0..scene_peak and reads the top bin for anything past it. Without the clamp the
-    // brightest pixels get a curve the CPU never evaluates.
-    let coloured = min(max(matched_nits(level), vec3f(0.0)), vec3f(scene_peak));
-    nits = vec3f(
-      eetf(coloured.r, scene_peak, tick.peak),
-      eetf(coloured.g, scene_peak, tick.peak),
-      eetf(coloured.b, scene_peak, tick.peak),
-    );
-  } else {
-    nits = neutral_nits(level);
-  }
-
-  // 'grade' leaves display-referred linear where full range is the display's peak, and
-  // 'encode_pq' takes it from there. Fused, since the pixel is already in a register - but
-  // *through* the u16 the CPU writes between them. The quantisation is not incidental: the
-  // PQ stage is a 65536-entry lookup keyed by that integer, so a shader that carried full
-  // precision across the join would be grading a frame the renditions never see.
-  let scaled = min(max(nits, vec3f(0.0)) / tick.peak, vec3f(1.0));
-  let quantised = round(scaled * 65535.0) / 65535.0;
+  let nits = display_nits(level_at(i32(id.x), i32(id.y)));
+  // Through the 'u16' the CPU writes between the grade and the PQ. Not incidental: its PQ
+  // stage is a 65536-entry table keyed by that integer, so a frame that skipped the
+  // quantisation would not be the frame the fixture pins.
+  let quantised = round(min(nits / tick.peak, vec3f(1.0)) * 65535.0) / 65535.0;
   let coded = round(vec3f(
     pq(quantised.r * tick.peak),
     pq(quantised.g * tick.peak),
     pq(quantised.b * tick.peak),
-  ) * 65535.0) / 65535.0;
+  ) * 65535.0);
 
-  // One interleaved write rather than three planes. The split existed for 'image::finish',
-  // which works a plane at a time and does not run here any more; without it, luma and its
-  // two chroma differences were being computed, scattered across three buffers, and
-  // recombined by the next pass for nothing.
-  textureStore(graded, vec2i(i32(id.x), i32(id.y)), vec4f(coded, 1.0));
+  let base = at(id.x, id.y) * 3u;
+  counts[base] = u32(coded.r);
+  counts[base + 1u] = u32(coded.g);
+  counts[base + 2u] = u32(coded.b);
 }
 `;
 
@@ -316,11 +390,6 @@ const BINS: u32 = ${PEAK_BINS}u;
 // is the clamp the CPU's own quantile applies at the top of its sample anyway.
 const RANGE: f32 = 24.0;
 const QUANTILE: f32 = ${PEAK_QUANTILE};
-
-@compute @workgroup_size(64)
-fn clear(@builtin(global_invocation_id) id: vec3u) {
-  if (id.x < BINS) { atomicStore(&histogram[id.x], 0u); }
-}
 
 /// About a million pixels, as whole rows.
 ///
@@ -394,45 +463,3 @@ fn quantile(@builtin(local_invocation_id) local: vec3u) {
 }
 `;
 
-/**
- * The planes back to a picture, and the picture to the canvas.
- *
- * The display transform is the one stage with no CPU counterpart: a rendition is tagged
- * Rec.2020 PQ and handed to a compositor, where a canvas has neither Rec.2020 nor absolute
- * luminance, so what the media path declares this has to compute (§7.1, §7.2).
- */
-export const PRESENT = /* wgsl */ `
-${PRELUDE}
-${TICK}
-@group(0) @binding(1) var graded: texture_2d<f32>;
-
-// Rec.2020 to Display P3, both D65, applied in linear light. Rows sum to 1.
-const R2020_TO_P3 = mat3x3f(
-  vec3f( 1.343354, -0.065295,  0.002821),
-  vec3f(-0.282219,  1.075589, -0.019598),
-  vec3f(-0.061397, -0.010491,  1.016761),
-);
-
-/// The sRGB transfer with the sign carried, so an out-of-P3 component survives as a
-/// negative rather than folding back over zero.
-fn encode(v: f32) -> f32 {
-  let a = abs(v);
-  let e = select(1.055 * pow(a, 1.0 / 2.4) - 0.055, a * 12.92, a <= 0.0031308);
-  return sign(v) * e;
-}
-
-@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
-  var corners = array<vec2f, 3>(vec2f(-1.0, -1.0), vec2f(3.0, -1.0), vec2f(-1.0, 3.0));
-  return vec4f(corners[i], 0.0, 1.0);
-}
-
-@fragment fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
-  let x = min(i32(pos.x), i32(tick.width) - 1);
-  let y = min(i32(pos.y), i32(tick.height) - 1);
-  let coded = textureLoad(graded, vec2i(x, y), 0).rgb;
-
-  let nits = vec3f(pq_inv(coded.r), pq_inv(coded.g), pq_inv(coded.b));
-  let p3 = (R2020_TO_P3 * nits) / tick.sdr_white;
-  return vec4f(encode(p3.r), encode(p3.g), encode(p3.b), 1.0);
-}
-`;

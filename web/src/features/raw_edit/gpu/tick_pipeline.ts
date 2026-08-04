@@ -9,7 +9,8 @@
 // `image::finish`, then the display transform. What has gone is the copy at the front (the
 // source texture is never written) and the encode at the back (a canvas is not a file).
 
-import { GRADE, PEAK, PEAK_BINS, PEAK_SAMPLES, PRESENT, TICK_UNIFORM_FLOATS } from './shaders';
+import { type PassMs, PassTimer } from './pass_timer';
+import { FRAME, PEAK, PEAK_BINS, PEAK_SAMPLES, TICK_UNIFORM_FLOATS } from './shaders';
 
 /** `Sample::from_f32` for `u16`: rounded, and held inside the range it has to fit. */
 const clamp16 = (v: number): number => Math.max(0, Math.min(65535, Math.round(v)));
@@ -54,14 +55,21 @@ export interface PreparedHeader {
  */
 const SDR_WHITE_NITS = 203;
 
+/**
+ * What to ask `requestDevice` for before building a `TickPipeline` on it.
+ *
+ * `float32-filterable` is the one that matters: the tone curve and the chroma map are
+ * `f32` lookups the sampler interpolates, and without it neither is filterable and the
+ * pipeline will not build. Every desktop adapter this has run on offers it, and it is
+ * filtered against the adapter rather than demanded so that a part which does not have it
+ * fails at the pipeline with a reason rather than at `requestDevice` with none.
+ */
+export function tickFeatures(adapter: GPUAdapter): GPUFeatureName[] {
+  const wanted: GPUFeatureName[] = ['float32-filterable', 'timestamp-query'];
+  return wanted.filter((feature) => adapter.features.has(feature));
+}
+
 export class TickPipeline {
-  /**
-   * The graded frame, PQ-coded, between the grade and the draw.
-   *
-   * One interleaved texture rather than three planes: the split existed for
-   * `image::finish`, which works a plane at a time and now runs once at open instead.
-   */
-  private readonly graded: GPUTexture;
   /**
    * One uniform buffer per pass, not one reused across them.
    *
@@ -74,24 +82,25 @@ export class TickPipeline {
   private current: GPUBuffer;
   private readonly histogram: GPUBuffer;
   private readonly peak: GPUBuffer;
-  private readonly curves: GPUBuffer;
-  private readonly chromaNodes: GPUBuffer;
   private readonly matrix: GPUBuffer;
   private readonly source: GPUTexture;
+  private readonly curves: GPUTexture;
+  private readonly chroma: GPUTexture;
+  private readonly lerp: GPUSampler;
 
-  private readonly peakClear: GPUComputePipeline;
   private readonly peakMeasure: GPUComputePipeline;
   private readonly peakQuantile: GPUComputePipeline;
-  private readonly gradePipeline: GPUComputePipeline;
-  private readonly present: GPURenderPipeline;
+  private readonly encodePipeline: GPUComputePipeline;
+  private readonly drawPipeline: GPURenderPipeline;
   private readonly peakLayout: GPUBindGroupLayout;
-  private readonly gradeLayout: GPUBindGroupLayout;
-  private readonly presentLayout: GPUBindGroupLayout;
+  private readonly encodeLayout: GPUBindGroupLayout;
+  private readonly drawLayout: GPUBindGroupLayout;
 
   private readonly width: number;
   private readonly height: number;
   /** Rows apart the peak samples, so it reads about `PEAK_SAMPLES` of them. */
   private readonly rowStride: number;
+  private readonly timer: PassTimer | null;
 
   constructor(
     private readonly device: GPUDevice,
@@ -99,6 +108,7 @@ export class TickPipeline {
     private readonly header: PreparedHeader,
     samples: Uint16Array,
   ) {
+    this.timer = PassTimer.supported(device) ? new PassTimer(device) : null;
     this.width = header.width;
     this.height = header.height;
     const pixels = this.width * this.height;
@@ -126,88 +136,79 @@ export class TickPipeline {
       [this.width, this.height],
     );
 
-    // COPY_SRC on every plane so the parity harness can read one back without a second
-    // pipeline; the cost is a usage flag, and a wrong picture is otherwise invisible.
-    const storage = (
-      length: number,
-      usage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
-    ) => device.createBuffer({ size: length * 4, usage });
-    // COPY_SRC so the parity harness can read the graded frame back without a second
-    // pipeline; the cost is a usage flag, and a wrong picture is otherwise invisible.
-    this.graded = device.createTexture({
-      size: [this.width, this.height],
-      // f32 rather than f16: this is the frame parity is measured on, and half a
-      // float costs 33 counts of 65535 where the whole point of the tick is that tone
-      // and colour land exactly. The canvas it feeds is f16, where it does not matter.
-      format: 'rgba32float',
-      usage:
-        GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC,
-    });
+    const storage = (length: number) =>
+      device.createBuffer({
+        size: length * 4,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
+      });
 
-    // A tick is the peak, the grade and the draw, so a handful is plenty; grown on demand
-    // rather than guessed exactly, since being wrong costs an allocation.
+    // A tick is the peak and the draw, so a handful is plenty; grown on demand rather than
+    // guessed exactly, since being wrong costs an allocation.
     for (let i = 0; i < 8; i++) this.uniforms.push(this.newUniform());
     this.current = this.uniforms[0]!;
     this.histogram = storage(PEAK_BINS);
     this.peak = storage(4);
 
     const colour = header.colour;
-    const curves = colour ? [...colour.curves[0], ...colour.curves[1], ...colour.curves[2]] : [0];
-    this.curves = this.upload(new Float32Array(curves));
-    this.chromaNodes = this.upload(new Float32Array(colour?.chroma?.nodes ?? [0, 0, 0, 0]));
+    // A row per channel, which is how the shader picks one: `sample_curve` samples at the
+    // row's own texel centre so the filter along the curve does not blend red into green.
+    const bins = colour ? colour.curves[0].length : 1;
+    this.curves = this.lookup([bins, 3], '2d', 'r32float', 4, [
+      ...(colour?.curves.flat() ?? [0, 0, 0]),
+    ]);
+    // A 2x2 per node is exactly four components, and a node lattice is exactly a volume,
+    // so `ChromaMap`'s trilinear is what a 3D texture does for free.
+    const chroma = colour?.chroma;
+    this.chroma = this.lookup(
+      [chroma?.chromaCount ?? 1, chroma?.chromaCount ?? 1, chroma?.levelCount ?? 1],
+      '3d',
+      'rgba32float',
+      16,
+      chroma?.nodes ?? [0, 0, 0, 0],
+    );
+    this.lerp = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
     this.matrix = this.upload(
       new Float32Array(colour ? colour.matrix.flat() : [1, 0, 0, 0, 1, 0, 0, 0, 1]),
     );
-    const grade = device.createShaderModule({ code: GRADE, label: 'grade' });
+    const frame = device.createShaderModule({ code: FRAME, label: 'frame' });
     const peak = device.createShaderModule({ code: PEAK, label: 'peak' });
-    const present = device.createShaderModule({ code: PRESENT, label: 'present' });
 
     // Explicit layouts rather than `auto`, because `auto` derives the layout from what an
-    // entry point happens to reference: `copy` reads two of the five bindings the plane
-    // shader declares, so its derived layout has three, and a bind group built for the
-    // shader as written is then rejected. One layout per module, shared by every entry
-    // point in it, is what makes the ops interchangeable at the call site.
-    const COMPUTE = GPUShaderStage.COMPUTE;
-    const uniform = { binding: 0, visibility: COMPUTE, buffer: { type: 'uniform' as const } };
-    const readOnly = (binding: number) => ({
-      binding,
-      visibility: COMPUTE,
-      buffer: { type: 'read-only-storage' as const },
+    // entry point happens to reference: `fs` reads five of the seven bindings `FRAME`
+    // declares, so its derived layout has five, and a bind group built for the shader as
+    // written is then rejected. Two layouts over the one module instead, differing only in
+    // the stage that sees them and in `counts`, which only `encode` writes.
+    const bindings = (visibility: number) => ({
+      colour: [
+        { binding: 0, visibility, buffer: { type: 'uniform' as const } },
+        { binding: 1, visibility, texture: { sampleType: 'uint' as const } },
+        { binding: 2, visibility, texture: {} },
+        { binding: 3, visibility, texture: { viewDimension: '3d' as const } },
+        { binding: 4, visibility, buffer: { type: 'read-only-storage' as const } },
+        { binding: 7, visibility, sampler: {} },
+      ],
+      readOnly: (binding: number) => ({
+        binding,
+        visibility,
+        buffer: { type: 'read-only-storage' as const },
+      }),
+      writable: (binding: number) => ({
+        binding,
+        visibility,
+        buffer: { type: 'storage' as const },
+      }),
     });
-    const writable = (binding: number) => ({
-      binding,
-      visibility: COMPUTE,
-      buffer: { type: 'storage' as const },
-    });
-    const texture = (binding: number) => ({
-      binding,
-      visibility: COMPUTE,
-      texture: { sampleType: 'uint' as const },
-    });
+    const c = bindings(GPUShaderStage.COMPUTE);
+    const f = bindings(GPUShaderStage.FRAGMENT);
 
-    const gradeLayout = device.createBindGroupLayout({
-      entries: [
-        uniform,
-        texture(1),
-        readOnly(2),
-        readOnly(3),
-        readOnly(4),
-        {
-          binding: 5,
-          visibility: COMPUTE,
-          storageTexture: { access: 'write-only', format: 'rgba32float' },
-        },
-        readOnly(6),
-      ],
-    });
     this.peakLayout = device.createBindGroupLayout({
-      entries: [uniform, texture(1), readOnly(2), readOnly(3), readOnly(4), writable(5), writable(6)],
+      entries: [...c.colour, c.writable(5), c.writable(6)],
     });
-    this.presentLayout = device.createBindGroupLayout({
-      entries: [
-        { binding: 0, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
-        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
-      ],
+    this.encodeLayout = device.createBindGroupLayout({
+      entries: [...c.colour, c.readOnly(5), c.writable(6)],
+    });
+    this.drawLayout = device.createBindGroupLayout({
+      entries: [...f.colour, f.readOnly(5)],
     });
 
     const compute = (module: GPUShaderModule, entryPoint: string, layout: GPUBindGroupLayout) =>
@@ -216,15 +217,13 @@ export class TickPipeline {
         compute: { module, entryPoint },
       });
 
-    this.peakClear = compute(peak, 'clear', this.peakLayout);
     this.peakMeasure = compute(peak, 'measure', this.peakLayout);
     this.peakQuantile = compute(peak, 'quantile', this.peakLayout);
-    this.gradeLayout = gradeLayout;
-    this.gradePipeline = compute(grade, 'grade', gradeLayout);
-    this.present = device.createRenderPipeline({
-      layout: device.createPipelineLayout({ bindGroupLayouts: [this.presentLayout] }),
-      vertex: { module: present, entryPoint: 'vs' },
-      fragment: { module: present, entryPoint: 'fs', targets: [{ format: 'rgba16float' }] },
+    this.encodePipeline = compute(frame, 'encode', this.encodeLayout);
+    this.drawPipeline = device.createRenderPipeline({
+      layout: device.createPipelineLayout({ bindGroupLayouts: [this.drawLayout] }),
+      vertex: { module: frame, entryPoint: 'vs' },
+      fragment: { module: frame, entryPoint: 'fs', targets: [{ format: 'rgba16float' }] },
       primitive: { topology: 'triangle-list' },
     });
   }
@@ -233,62 +232,93 @@ export class TickPipeline {
   render(ev: number): void {
     const encoder = this.device.createCommandEncoder();
     this.uniformsUsed = 0;
+    this.timer?.begin();
     this.writeUniform({ exposure: 2 ** ev });
 
     if (this.header.matched) this.measurePeak(encoder);
-    this.grade(encoder);
     this.draw(encoder);
 
+    this.timer?.resolve(encoder);
     this.device.queue.submit([encoder.finish()]);
   }
 
+  /** Milliseconds per pass of the last `render`, if the adapter can tell us. */
+  passMs(): Promise<PassMs> {
+    return this.timer?.read() ?? Promise.resolve({});
+  }
+
   /**
-   * The graded frame as the CPU would have left it, for the parity harness.
+   * The graded frame as a rendition would hold it, for the parity harness.
    *
-   * Scaled back to the `u16` counts `encode_pq` wrote, which is the unit the fixture and
-   * every other pin in this repo is written in.
+   * `u16` counts of PQ, which is the unit the fixture and every other pin in this repo is
+   * written in - and which the tick itself no longer produces, since a display wants nits.
+   * Built here rather than on the way out because ST 2084 has one implementation in this
+   * repo's shaders and this is not the place to write a second.
    */
   async readFrame(): Promise<Uint16Array> {
     const pixels = this.width * this.height;
-    // 256-byte row alignment, which a copy out of a texture requires and 8 bytes a texel
-    // rarely satisfies on its own.
-    const bytesPerRow = Math.ceil((this.width * 16) / 256) * 256;
+    const counts = this.device.createBuffer({
+      size: pixels * 3 * 4,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+    });
     const staging = this.device.createBuffer({
-      size: bytesPerRow * this.height,
+      size: pixels * 3 * 4,
       usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
     });
+
     const encoder = this.device.createCommandEncoder();
-    encoder.copyTextureToBuffer(
-      { texture: this.graded },
-      { buffer: staging, bytesPerRow, rowsPerImage: this.height },
-      [this.width, this.height],
+    const pass = encoder.beginComputePass();
+    pass.setPipeline(this.encodePipeline);
+    pass.setBindGroup(
+      0,
+      this.device.createBindGroup({
+        layout: this.encodeLayout,
+        entries: [...this.displayEntries(), { binding: 6, resource: { buffer: counts } }],
+      }),
     );
+    const [x, y] = this.groups(this.width, this.height);
+    pass.dispatchWorkgroups(x, y);
+    pass.end();
+    encoder.copyBufferToBuffer(counts, 0, staging, 0, staging.size);
     this.device.queue.submit([encoder.finish()]);
     await staging.mapAsync(GPUMapMode.READ);
 
-    const texels = new Float32Array(staging.getMappedRange());
-    const frame = new Uint16Array(pixels * 3);
-    const stride = bytesPerRow / 4;
-    for (let y = 0; y < this.height; y++) {
-      for (let x = 0; x < this.width; x++) {
-        const from = y * stride + x * 4;
-        const to = (y * this.width + x) * 3;
-        frame[to] = clamp16(texels[from]! * 65535);
-        frame[to + 1] = clamp16(texels[from + 1]! * 65535);
-        frame[to + 2] = clamp16(texels[from + 2]! * 65535);
-      }
-    }
+    const frame = Uint16Array.from(new Uint32Array(staging.getMappedRange()), clamp16);
     staging.unmap();
     staging.destroy();
+    counts.destroy();
     return frame;
   }
 
   destroy(): void {
-    this.graded.destroy();
-    this.source.destroy();
-    for (const buffer of [...this.uniforms, this.histogram, this.peak, this.curves, this.chromaNodes, this.matrix]) {
+    this.timer?.destroy();
+    for (const texture of [this.source, this.curves, this.chroma]) texture.destroy();
+    for (const buffer of [...this.uniforms, this.histogram, this.peak, this.matrix]) {
       buffer.destroy();
     }
+  }
+
+  /** A lookup table the sampler can read: `f32` throughout, so the values are the CPU's. */
+  private lookup(
+    size: [number, number] | [number, number, number],
+    dimension: '2d' | '3d',
+    format: GPUTextureFormat,
+    bytesPerTexel: number,
+    values: number[],
+  ): GPUTexture {
+    const texture = this.device.createTexture({
+      size,
+      dimension,
+      format,
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+    });
+    this.device.queue.writeTexture(
+      { texture },
+      new Float32Array(values),
+      { bytesPerRow: size[0] * bytesPerTexel, rowsPerImage: size[1] },
+      size,
+    );
+    return texture;
   }
 
   private upload(data: Float32Array<ArrayBuffer>): GPUBuffer {
@@ -351,52 +381,45 @@ export class TickPipeline {
     return [Math.ceil(x / 8), Math.ceil(y / 8)];
   }
 
-  private measurePeak(encoder: GPUCommandEncoder): void {
-    const entries: GPUBindGroupEntry[] = [
+  /** Everything the colour transform reads, whichever entry point is reading it. */
+  private colourEntries(): GPUBindGroupEntry[] {
+    return [
       { binding: 0, resource: { buffer: this.current } },
       { binding: 1, resource: this.source.createView() },
-      { binding: 2, resource: { buffer: this.curves } },
-      { binding: 3, resource: { buffer: this.chromaNodes } },
+      { binding: 2, resource: this.curves.createView() },
+      { binding: 3, resource: this.chroma.createView() },
       { binding: 4, resource: { buffer: this.matrix } },
+      { binding: 7, resource: this.lerp },
+    ];
+  }
+
+  /** The above plus the scene peak, which everything but the pass that measures it reads. */
+  private displayEntries(): GPUBindGroupEntry[] {
+    return [...this.colourEntries(), { binding: 5, resource: { buffer: this.peak } }];
+  }
+
+  private measurePeak(encoder: GPUCommandEncoder): void {
+    const entries: GPUBindGroupEntry[] = [
+      ...this.colourEntries(),
       { binding: 5, resource: { buffer: this.histogram } },
       { binding: 6, resource: { buffer: this.peak } },
     ];
-    const pass = encoder.beginComputePass();
-    for (const [pipeline, x, y] of [
-      [this.peakClear, Math.ceil(PEAK_BINS / 64), 1],
+    encoder.clearBuffer(this.histogram);
+    // A pass each rather than two dispatches in one, so each reports its own time: a
+    // dispatch over a million pixels and a dispatch over one workgroup are the same shape
+    // from outside, and the difference is what the tick is being tuned on.
+    for (const [label, pipeline, x, y] of [
       // About a million pixels rather than the whole frame, which is what the CPU reads.
-      [this.peakMeasure, Math.ceil(this.width / 64), Math.ceil(this.height / this.rowStride)],
+      ['measure', this.peakMeasure, Math.ceil(this.width / 64), Math.ceil(this.height / this.rowStride)],
       // One workgroup: the search is over bins, not pixels.
-      [this.peakQuantile, 1, 1],
-    ] as [GPUComputePipeline, number, number][]) {
+      ['quantile', this.peakQuantile, 1, 1],
+    ] as [string, GPUComputePipeline, number, number][]) {
+      const pass = encoder.beginComputePass({ timestampWrites: this.timer?.writes(label) });
       pass.setPipeline(pipeline);
       pass.setBindGroup(0, this.device.createBindGroup({ layout: this.peakLayout, entries }));
       pass.dispatchWorkgroups(x, y);
+      pass.end();
     }
-    pass.end();
-  }
-
-  private grade(encoder: GPUCommandEncoder): void {
-    const pass = encoder.beginComputePass();
-    pass.setPipeline(this.gradePipeline);
-    pass.setBindGroup(
-      0,
-      this.device.createBindGroup({
-        layout: this.gradeLayout,
-        entries: [
-          { binding: 0, resource: { buffer: this.current } },
-          { binding: 1, resource: this.source.createView() },
-          { binding: 2, resource: { buffer: this.curves } },
-          { binding: 3, resource: { buffer: this.chromaNodes } },
-          { binding: 4, resource: { buffer: this.matrix } },
-          { binding: 5, resource: this.graded.createView() },
-          { binding: 6, resource: { buffer: this.peak } },
-        ],
-      }),
-    );
-    const [x, y] = this.groups(this.width, this.height);
-    pass.dispatchWorkgroups(x, y);
-    pass.end();
   }
 
   private draw(encoder: GPUCommandEncoder): void {
@@ -409,17 +432,12 @@ export class TickPipeline {
           clearValue: { r: 0, g: 0, b: 0, a: 1 },
         },
       ],
+      timestampWrites: this.timer?.writes('draw'),
     });
-    pass.setPipeline(this.present);
+    pass.setPipeline(this.drawPipeline);
     pass.setBindGroup(
       0,
-      this.device.createBindGroup({
-        layout: this.presentLayout,
-        entries: [
-          { binding: 0, resource: { buffer: this.current } },
-          { binding: 1, resource: this.graded.createView() },
-        ],
-      }),
+      this.device.createBindGroup({ layout: this.drawLayout, entries: this.displayEntries() }),
     );
     pass.draw(3);
     pass.end();

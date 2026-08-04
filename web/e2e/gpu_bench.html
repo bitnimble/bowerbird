@@ -13,7 +13,7 @@
 // `queue.submit` returns as soon as the commands are recorded, so timing around it
 // measures this thread and not the work. `onSubmittedWorkDone` is what actually waits for
 // the dispatches, which is the number worth comparing against `tick_bench`'s.
-import { TickPipeline } from '/src/features/raw_edit/gpu/tick_pipeline.ts';
+import { TickPipeline, tickFeatures } from '/src/features/raw_edit/gpu/tick_pipeline.ts';
 
 const out = document.getElementById('out');
 const query = new URLSearchParams(location.search);
@@ -24,6 +24,32 @@ const RUNS = Number(query.get('runs') ?? 5);
 /** `HdrColour::identity()`: a ramp over the curve's own domain. */
 function rampCurve() {
   return Array.from({ length: 256 }, (_, i) => (i / 255) * 4);
+}
+
+/**
+ * `ChromaMap`'s lattice at its real size, which is `MAP_CHROMA` cubed against `MAP_LEVEL`.
+ *
+ * Off by default so the arms differ by one thing at a time, and worth having because a
+ * fitted frame always carries one: without it `finish_chroma` takes the saturation branch
+ * and the trilinear the tick spends most of its lookups on never runs.
+ */
+function chromaMap() {
+  const count = 5;
+  const levels = 4;
+  const reach = 0.45;
+  const nodes = [];
+  for (let i = 0; i < count * count * levels; i++) {
+    // Near-identity with a little hue dependence, so the fetch is not reading one value.
+    nodes.push(1.02, 0.01 * ((i % 3) - 1), -0.01 * ((i % 5) - 2), 0.98);
+  }
+  return {
+    nodes,
+    chromaCount: count,
+    levelCount: levels,
+    chromaLow: -reach,
+    chromaScale: (count - 1) / (2 * reach),
+    levelScale: (levels - 1) / 0.9,
+  };
 }
 
 /** The shape `tick_bench` uses, so both sides time the same picture. */
@@ -54,7 +80,8 @@ async function main() {
     out.textContent = JSON.stringify({ ok: false, error: 'no WebGPU adapter' });
     return;
   }
-  const device = await adapter.requestDevice();
+  // 'timestamp-query' is in here, so a tick that is slow says which pass made it slow.
+  const device = await adapter.requestDevice({ requiredFeatures: tickFeatures(adapter) });
   // A validation error drops the dispatches it applies to, which reads as a very fast
   // tick rather than as a failure. Without this the bench happily reports 2ms for work
   // that never ran.
@@ -68,24 +95,15 @@ async function main() {
   const context = canvas.getContext('webgpu');
   context.configure({ device, format: 'rgba16float', alphaMode: 'opaque' });
 
-  // One stage per page load rather than several pipelines in one: each holds ten
-  // whole-frame planes, and on a part that shares system memory two of them alive at once
-  // measures the thrash rather than the stage.
-  const only = query.get('only');
-  const strengths =
-    only == null
-      ? { luma: 1, chroma: 1, sharpen: 1, defringe: 1 }
-      : { luma: 0, chroma: 0, sharpen: 0, defringe: 0 };
-  if (only != null && only !== 'defringe') strengths[only] = 1;
-  const fringing = only == null || only === 'defringe' ? 0.01 : 0;
-
   const header = {
     width: WIDTH,
     height: HEIGHT,
     white: 34000,
     peak: 52000,
     grade: { peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.995 },
-    strengths,
+    // Recorded by the open, and no longer read per tick: 'image::finish' runs once in
+    // 'edit::prepare' now, so what arrives here is already denoised and sharpened.
+    strengths: { luma: 1, chroma: 1, sharpen: 1, defringe: 1 },
     // The peak pass only runs on the matched arm, so it is off unless asked for: without
     // this the tick being timed is the grade with no whole-frame reduction in front of it.
     matched: query.get('matched') === '1',
@@ -96,12 +114,12 @@ async function main() {
             matrix: [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
             saturation: 1,
             trustCeiling: 4,
-            chroma: null,
+            chroma: query.get('chroma') === '1' ? chromaMap() : null,
           }
         : null,
     sigma: 0.002,
-    defocusRed: fringing,
-    defocusBlue: fringing,
+    defocusRed: 0.01,
+    defocusBlue: 0.01,
   };
 
   const built = performance.now();
@@ -126,10 +144,7 @@ async function main() {
   };
 
   const runs = await time((i) => pipeline.render(0.5 + i * 0.1));
-  // Captured after a whole tick, not after the grade-only runs: those skip 'finish',
-  // which is where all but a handful of the passes are.
-  const cost = { ...pipeline.cost };
-  const gradeOnly = await time((i) => pipeline.render(0.5 + i * 0.1, true));
+  const passes = await pipeline.passMs();
 
   const info = adapter.info ?? {};
   out.textContent = JSON.stringify(
@@ -138,12 +153,11 @@ async function main() {
       adapter: [info.vendor, info.architecture].filter(Boolean).join(' / '),
       size: `${WIDTH}x${HEIGHT}`,
       megapixels: Number(((WIDTH * HEIGHT) / 1e6).toFixed(1)),
-      only: only ?? 'all',
+      matched: header.matched,
       invalid,
-      cost,
       openMs: Number(upload.toFixed(1)),
       tickMs: runs,
-      gradeOnlyMs: gradeOnly,
+      passMs: passes,
     },
     null,
     2,

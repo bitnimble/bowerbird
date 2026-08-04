@@ -1,7 +1,7 @@
 import { action } from 'mobx';
 import { preparedUrl } from '../../api/client';
 import { describe } from '../../errors';
-import { TickPipeline, type PreparedHeader } from './gpu/tick_pipeline';
+import { TickPipeline, type PreparedHeader, tickFeatures } from './gpu/tick_pipeline';
 import type { RawEditStore } from './raw_edit_store';
 
 /**
@@ -56,7 +56,7 @@ export class RawEditPresenter {
         this.fail('this browser has no WebGPU, which the editor now needs');
         return;
       }
-      const device = await adapter.requestDevice();
+      const device = await adapter.requestDevice({ requiredFeatures: tickFeatures(adapter) });
       if (this.closed) return;
       this.device = device;
       device.lost.then((reason) => {
