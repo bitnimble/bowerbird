@@ -119,10 +119,20 @@ export async function prepareEditAsync(request: EditRequest): Promise<PreparedFr
   const { length } = await new Promise<{ length: number }>((resolve) => pending.set(job, resolve));
   if (length < 0) throw new Error('rawshim could not open the RAW for editing');
 
-  const reply = new Uint8Array(length);
-  const written = Number(shim().bb_prepare_edit_take(BigInt(job), ptr(reply), reply.byteLength));
-  if (written < 0) throw new Error('the prepared frame was gone before it could be read');
-  return decode(reply.subarray(0, written));
+  // Taken or dropped, never left: the reply is held on the far side under this job's id
+  // until one of the two happens, and it is a whole frame. Allocating the buffer is the step
+  // that can fail - at 61MP it is 361MB - and failing it must not strand the 361MB waiting
+  // to be copied into it.
+  let taken = false;
+  try {
+    const reply = new Uint8Array(length);
+    const written = Number(shim().bb_prepare_edit_take(BigInt(job), ptr(reply), reply.byteLength));
+    taken = true;
+    if (written < 0) throw new Error('the prepared frame was gone before it could be read');
+    return decode(reply.subarray(0, written));
+  } finally {
+    if (!taken) shim().bb_prepare_edit_take(BigInt(job), null, 0);
+  }
 }
 
 export function prepareEdit(request: EditRequest): PreparedFrame {

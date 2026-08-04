@@ -251,14 +251,23 @@ pub unsafe extern "C" fn bb_prepare_edit_start(command: *const u8, command_len: 
 
 /// Copies out a finished job's reply, once. -1 for a job that is not waiting to be taken.
 ///
+/// A null `out` drops it instead, which is how a caller that cannot go on - it failed to
+/// allocate, its request was abandoned - says so. Without that the payload would sit in
+/// `FINISHED` for the life of the process, and a prepared frame is hundreds of megabytes:
+/// the one thing here that must not be leaked by an error path.
+///
 /// # Safety
-/// `out` must point at `out_cap` writable bytes.
+/// `out` must point at `out_cap` writable bytes, or be null to discard.
 #[expect(unsafe_code)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn bb_prepare_edit_take(job: u64, out: *mut u8, out_cap: usize) -> isize {
     let Ok(mut done) = FINISHED.lock() else { return -1 };
     let Some(at) = done.iter().position(|(id, _)| *id == job) else { return -1 };
-    if done[at].1.len() > out_cap || out.is_null() {
+    if out.is_null() {
+        done.remove(at);
+        return 0;
+    }
+    if done[at].1.len() > out_cap {
         return -1;
     }
     // Removed whatever happens next: the frame is hundreds of megabytes and the caller has
@@ -670,6 +679,38 @@ mod tests {
         #[expect(unsafe_code)]
         let again = unsafe { bb_prepare_edit_take(job, out.as_mut_ptr(), out.len()) };
         assert_eq!(again, -1, "a job that has been taken is gone");
+    }
+
+    /// The other way a reply leaves: dropped by a caller that cannot take it.
+    ///
+    /// Without this the payload would sit in `FINISHED` for the life of the process, and a
+    /// real one is the whole frame - so the error path that matters is the caller failing to
+    /// allocate the buffer it was about to copy into.
+    #[test]
+    fn a_reply_the_caller_cannot_take_is_dropped_rather_than_kept() {
+        #[expect(unsafe_code)]
+        unsafe {
+            bb_prepare_edit_notify(record)
+        };
+        #[expect(unsafe_code)]
+        let job = unsafe { bb_prepare_edit_start(b"{".as_ptr(), 1) };
+
+        for _ in 0..200 {
+            let seen = REPORTED.lock().ok().is_some_and(|s| s.iter().any(|(id, _)| *id == job));
+            if seen {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        #[expect(unsafe_code)]
+        let dropped = unsafe { bb_prepare_edit_take(job, std::ptr::null_mut(), 0) };
+        assert_eq!(dropped, 0, "a null buffer discards it");
+
+        let mut out = [0u8; 64];
+        #[expect(unsafe_code)]
+        let after = unsafe { bb_prepare_edit_take(job, out.as_mut_ptr(), out.len()) };
+        assert_eq!(after, -1, "and nothing is left holding the frame");
     }
 
     #[test]
