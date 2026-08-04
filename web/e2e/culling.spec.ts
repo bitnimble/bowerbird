@@ -541,9 +541,6 @@ test('a chosen rendition is cached on disk, and survives a tile rebuild', async 
   const renditionPanel = page.locator('.panel', { hasText: 'RENDITION DETAILS' });
   await showMetadata(page);
   await showRendition('Rendered RAW');
-  // A build made on request is covered over the photograph while it runs, so the
-  // frame underneath is not mistaken for the one that was asked for.
-  await expect(page.locator('.stage__busy')).toContainText('Rendering');
   await expect(renditionPanel.getByText('Rendered RAW')).toBeVisible({ timeout: 60_000 });
   await expect(page.locator('.stage__busy')).toBeHidden();
   await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
@@ -555,10 +552,27 @@ test('a chosen rendition is cached on disk, and survives a tile rebuild', async 
 
   // Every rendition stays on offer whichever one is showing, the camera's JPEG
   // included: comparing a render against it is a reason to step back down.
+  //
+  // And stepping between two that are already there costs nothing. Counted rather than
+  // timed, because what went wrong was a request rather than a delay: every choice asked
+  // the server to build - the camera's JPEG, which is never built at all, included - and
+  // waited on a detail fetch before it would swap. So the render flashed "Rendering" over
+  // itself, the JPEG took a round trip to appear, and both views were in the DOM the whole
+  // time.
+  const asked: string[] = [];
+  page.on('request', (request) => {
+    if (/\/api\/photos\//.test(request.url())) asked.push(`${request.method()} ${new URL(request.url()).pathname}`);
+  });
+
   await showRendition('Embedded JPEG');
   await expect(renditionPanel.getByText('Embedded JPEG')).toBeVisible({ timeout: 60_000 });
+  await expect(page.locator('.stage__busy')).toBeHidden();
   await showRendition('Rendered RAW');
   await expect(renditionPanel.getByText('Rendered RAW')).toBeVisible({ timeout: 60_000 });
+  await expect(page.locator('.stage__busy')).toBeHidden();
+  // Nothing at all: not the build, and not the detail fetch that used to be awaited before
+  // the swap was allowed to happen even when there was no build to learn anything about.
+  expect(asked, 'a swap between two renditions already built asks the server for nothing').toEqual([]);
 
   // The grid's rebuild is the grid tile and nothing else. It used to queue both
   // stages, which had the run sweep every rendition it did not itself write - so
@@ -603,7 +617,12 @@ test('i and o switch between the camera JPEG and the render, and the cache can b
   await page.getByRole('button', { name: 'Rendition' }).click();
   await page.locator('.detail__nav .detail__path').click();
   await page.keyboard.press('o');
+  // A build made on request is covered over the photograph while it runs, so the frame
+  // underneath is not mistaken for the one that was asked for. Asserted here rather than on
+  // a plain choice, which is a swap between files that already exist and covers nothing.
+  await expect(page.locator('.stage__busy')).toContainText('Rendering');
   await expect(renditionPanel.getByText('Rendered RAW')).toBeVisible({ timeout: 120_000 });
+  await expect(page.locator('.stage__busy')).toBeHidden();
   await expect.poll(() => statSync(cached).mtimeMs, { timeout: 120_000 }).toBeGreaterThan(before);
 
   // Rewriting the file is only half of it: the URL is stable, so the stage would

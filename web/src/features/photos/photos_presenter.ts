@@ -680,12 +680,25 @@ export class PhotosPresenter {
     // trusting the neighbour's said a file existed that was never built here, and
     // the build was skipped in favour of a 404.
     const built = this.store.detailFor(photoId)?.renditions?.[rendition]?.built === true;
+
+    // Nothing to do is the common case, and it used to cost as much as a build. Swapping
+    // between two renditions already on screen ran this every time: it raised the building
+    // flag - so pressing O for a render already shown flashed "Rendering" over it - and it
+    // awaited a detail fetch before the swap was allowed to happen, which is the delay
+    // before the camera's JPEG appeared on I, and on a slow library was long enough that it
+    // looked as though nothing had happened. Both views are kept in the DOM precisely so
+    // this is instant.
+    //
+    // `embedded` is never built at all: it is the RAW's own bytes (§10.2).
+    if (rendition === 'embedded' || !(force || !built)) return true;
+
     runInAction(() => (this.store.buildingRendition = true));
     try {
-      if (rendition !== 'embedded' && (force || !built)) await api.buildRendition(photoId, rendition, force);
+      await api.buildRendition(photoId, rendition, force);
       // The build may have written an HDR video beside the still, and only the
       // detail knows whether one exists. Without this, Firefox keeps showing the
-      // dark still until the page is reloaded (§10.7).
+      // dark still until the page is reloaded (§10.7). Only after a build, because
+      // only a build can have written one.
       await this.refreshDetail();
       return true;
     } catch (err) {
