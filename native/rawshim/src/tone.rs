@@ -62,6 +62,11 @@ pub fn encode_pq(frame: &mut [u16], peak_nits: f64) {
     frame.par_iter_mut().for_each(|s| *s = lut[*s as usize]);
 }
 
+/// `pq_inv`, for the pre-denoise experiment, which maps into PQ and back out again.
+pub fn pq_inv_for_testing(signal: f64) -> f64 {
+    pq_inv(signal)
+}
+
 fn pq_inv(signal: f64) -> f64 {
     let e = signal.clamp(0.0, 1.0).powf(1.0 / M2);
     PQ_MAX_NITS * ((e - C1).max(0.0) / (C2 - C3 * e)).powf(1.0 / M1)

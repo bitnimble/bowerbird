@@ -955,6 +955,14 @@ fn local_extrema(plane: &[f32], width: usize, height: usize, radius: usize) -> (
 ///
 /// The window shrinks at the border rather than clamping the samples, so an edge pixel
 /// is the mean of what is actually there instead of one sample counted several times.
+/// `box_mean`, for a caller outside this module that needs the same window.
+///
+/// The editor's pre-denoise experiment measures what a filter left behind, and "left
+/// behind" has to be measured against the same mean the filter smoothed by.
+pub fn box_mean_for_testing(plane: &[f32], width: usize, height: usize, radius: usize) -> Vec<f32> {
+    box_mean(plane, width, height, radius)
+}
+
 fn box_mean(plane: &[f32], width: usize, height: usize, radius: usize) -> Vec<f32> {
     let mut horizontal: Vec<f32> = vec![0.0; width * height];
     horizontal.par_chunks_mut(width).enumerate().for_each(|(y, row)| {
