@@ -35,3 +35,13 @@ tauri-plugin-wdio-webdriver = { version = "1", optional = true }
 
 [features]
 wdio = ["dep:tauri-plugin-wdio", "dep:tauri-plugin-wdio-webdriver"]
+
+[profile.release]
+# `rawshim` asks for this in its own manifest and does not get it: cargo reads profiles
+# from the top-level package only, so a dependency's are ignored. Without it here the
+# shells run the decode with wrapping arithmetic where the server does not - and an index
+# product that wraps is a picture that comes out wrong rather than a crash.
+overflow-checks = true
+# The symbol table is 9MB of the Windows binary and 3MB of the macOS one, for builds
+# nothing debugs remotely.
+strip = "symbols"
