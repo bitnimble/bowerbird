@@ -5,9 +5,9 @@
 //! compressed, where the frame it decodes to is 361. Sending the smaller of the two and
 //! doing the work locally is the whole point of there being a desktop build.
 //!
-//! It answers as `GET /image/:id/prepared` would have - a status, an `X-Prepared` header
-//! and the samples - because that is the contract the page already reads, and the browser
-//! still gets its copy the other way.
+//! It answers as `GET /image/:id/prepared` would have - a status, and a body of the frame's
+//! own JSON followed by its samples - because that is the contract the page already reads,
+//! and the browser still gets its copy the other way.
 
 use std::collections::HashMap;
 
@@ -50,18 +50,22 @@ pub async fn prepared(path: &str) -> Result<Vec<u8>, String> {
     .await
     .map_err(|e| format!("the open panicked: {e}"))??;
 
-    let header = serde_json::to_string(&prepared.header).map_err(|e| e.to_string())?;
-    let mut headers = HashMap::new();
-    headers.insert("x-prepared".to_string(), header);
+    // The header in the body, framed exactly as the HTTP route frames it, because the page
+    // has one reader for both. Padded to four so the samples land where a `Uint16Array`
+    // views them rather than copies them.
+    let mut json = serde_json::to_vec(&prepared.header).map_err(|e| e.to_string())?;
+    json.resize(json.len().next_multiple_of(4), b' ');
 
     // The samples as they sit, little-endian, which is what the page maps a `Uint16Array`
     // over. Every target this ships to is little-endian; a big-endian one would need this
     // swapped, and would have the same problem with the HTTP route.
-    let mut bytes = Vec::with_capacity(prepared.samples.len() * 2);
+    let mut bytes = Vec::with_capacity(4 + json.len() + prepared.samples.len() * 2);
+    bytes.extend_from_slice(&(json.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(&json);
     for sample in &prepared.samples {
         bytes.extend_from_slice(&sample.to_le_bytes());
     }
-    Ok(crate::api::reply(200, headers, &bytes))
+    Ok(crate::api::reply(200, HashMap::new(), &bytes))
 }
 
 /// `/image/<id>/prepared?longEdge=<n>`.

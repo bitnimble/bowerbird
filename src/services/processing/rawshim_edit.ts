@@ -102,6 +102,36 @@ export function prepareEdit(request: EditRequest): PreparedFrame {
   return decode(reply.subarray(0, written));
 }
 
+/**
+ * The frame as one buffer: a `u32` length, that much JSON, then the samples.
+ *
+ * The header travels in the body rather than in an `X-Prepared` response header because
+ * once the camera match is in it, it is 11KB - three 256-sample curves and a 400-value
+ * lattice - and nginx answers 502 rather than forward an upstream header past its 4KB
+ * buffer. Measured, not assumed: an unmatched frame's header is 247 bytes, which is why
+ * this only ever failed against real photographs.
+ *
+ * Padded to a multiple of four, which JSON ignores and the reader depends on: it leaves
+ * the samples where a `Uint16Array` can view them rather than copy them, which is what
+ * putting the header outside the body bought in the first place.
+ */
+export function framePrepared(frame: PreparedFrame): Uint8Array {
+  const json = new TextEncoder().encode(JSON.stringify(frame.header));
+  const padded = Math.ceil(json.byteLength / 4) * 4;
+  const samples = new Uint8Array(
+    frame.samples.buffer,
+    frame.samples.byteOffset,
+    frame.samples.byteLength,
+  );
+
+  const out = new Uint8Array(4 + padded + samples.byteLength);
+  new DataView(out.buffer).setUint32(0, padded, true);
+  out.set(json, 4);
+  out.fill(0x20, 4 + json.byteLength, 4 + padded);
+  out.set(samples, 4 + padded);
+  return out;
+}
+
 /** Splits the framing, so the route and the tests read one implementation of it. */
 export function decode(reply: Uint8Array): PreparedFrame {
   const view = new DataView(reply.buffer, reply.byteOffset, reply.byteLength);

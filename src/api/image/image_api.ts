@@ -5,7 +5,7 @@ import type { Library } from '../../schemas/libraries';
 import { getOriginalPath, getRenditionPath } from '../../utils/paths';
 import { rawMediaType } from '../../utils/scan';
 import { readEmbeddedJpeg } from '../../services/processing/raw_decoder';
-import { prepareEdit } from '../../services/processing/rawshim_edit';
+import { framePrepared, prepareEdit } from '../../services/processing/rawshim_edit';
 import { transcodeJpeg } from '../../services/processing/rawshim_job';
 import type { SettingsRepository } from '../../services/settings/settings_repository';
 import { RENDITION_CONTENT_TYPE, isRendition } from '../../services/processing/renditions';
@@ -130,15 +130,11 @@ export class ImageApi {
       },
     });
 
-    // The header travels in a header rather than in the body, so the client reads the
-    // samples straight into a texture upload without slicing a JSON prelude off the front
-    // of a 59MB buffer first.
-    return new Response(new Uint8Array(prepared.samples.buffer), {
+    return new Response(framePrepared(prepared), {
       headers: {
         'Content-Type': 'application/octet-stream',
         'Content-Disposition': 'inline',
         'Cache-Control': 'no-store',
-        'X-Prepared': JSON.stringify(prepared.header),
         ...TIMING_ALLOW_ORIGIN,
       },
     });

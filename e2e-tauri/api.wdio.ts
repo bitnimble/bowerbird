@@ -82,25 +82,43 @@ describe('Bowerbird desktop shell', () => {
           request: JSON.stringify({
             cmd: 'get:prepared',
             method: 'GET',
-            path: `/image/${id}/prepared?longEdge=1024`,
+            // The sensor's own, which is what the editor asks for. At a bounded size the
+            // camera match does not fit and the frame's description is 247 bytes rather
+            // than 11KB, so the path that matters would go untested.
+            path: `/image/${id}/prepared?longEdge=0`,
           }),
         }),
       );
       const view = new DataView(framed.buffer, framed.byteOffset, framed.byteLength);
       const length = view.getUint32(0, true);
       const head = JSON.parse(new TextDecoder().decode(framed.subarray(4, 4 + length)));
-      return { head, length, body: framed.byteLength - 4 - length };
+
+      const body = framed.subarray(4 + length);
+      const described = new DataView(body.buffer, body.byteOffset, body.byteLength).getUint32(
+        0,
+        true,
+      );
+      return {
+        head,
+        header: JSON.parse(new TextDecoder().decode(body.subarray(4, 4 + described))),
+        described,
+        samples: body.byteLength - 4 - described,
+        samplesAt: body.byteOffset + 4 + described,
+      };
     }, photoId);
 
     expect(opened.head.status).toBe(200);
-    const header = JSON.parse(opened.head.headers['x-prepared']);
-    expect(header.ok).toBe(true);
-    expect(header.width).toBeGreaterThan(500);
-    // Three `u16` a pixel, and the body is exactly that: no framing, no padding.
-    expect(opened.body).toBe(header.width * header.height * 6);
-    // Four-byte aligned, which is what lets the page map a `Uint16Array` over it in place
-    // rather than copying 361MB to get the alignment.
-    expect((4 + opened.length) % 4).toBe(0);
+    expect(opened.header.ok).toBe(true);
+    expect(opened.header.width).toBeGreaterThan(500);
+    // The description rides in the body, not in a response header: matched, it is 11KB, and
+    // a reverse proxy answers 502 rather than forward one that size.
+    expect(opened.head.headers['x-prepared']).toBeUndefined();
+    expect(opened.header.matched).toBe(true);
+    expect(opened.described).toBeGreaterThan(4096);
+    // Three `u16` a pixel, at an offset a `Uint16Array` can be mapped over in place rather
+    // than copying 361MB to get the alignment.
+    expect(opened.samples).toBe(opened.header.width * opened.header.height * 6);
+    expect(opened.samplesAt % 4).toBe(0);
   });
 
   it('keeps the server address beside the binary, so an unpacked build is portable', async () => {

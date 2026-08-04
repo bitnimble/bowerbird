@@ -10,9 +10,9 @@
  * The convergence is on HTTP's shape rather than on a bespoke one. A status, a set of
  * headers and some bytes is what the server already answers with, so a proxy is the
  * identity function and a local handler has an obvious contract to meet. It also means the
- * one caller that needs a response header - the editor's open carries its `PreparedHeader`
- * in `X-Prepared`, so the frame reads straight into a texture upload - works the same way
- * on both sides.
+ * one caller with a shape of its own - the editor's open, whose frame is framed into its
+ * body so the samples read straight into a texture upload - works the same way on both
+ * sides.
  */
 
 export interface Reply {
@@ -26,7 +26,7 @@ export function isTauri(): boolean {
   return invoker() != null;
 }
 
-type Invoke = (command: string, args: unknown) => Promise<ArrayBuffer>;
+type Invoke = <T>(command: string, args: unknown) => Promise<T>;
 
 function invoker(): Invoke | null {
   const bridge = (globalThis as { __TAURI__?: { core?: { invoke?: unknown } } }).__TAURI__;
@@ -51,7 +51,28 @@ export async function send(
   const invoke = invoker();
   return invoke == null
     ? await overHttp(method, path, body, signal)
-    : await overIpc(invoke, { cmd, method, path, body });
+    : await overIpc(invoke, { cmd, method, path, body }, signal);
+}
+
+/**
+ * The caller's abort, over a transport that has none.
+ *
+ * Tauri's IPC cannot cancel a command in flight, so the shell's Rust runs to completion
+ * either way. What the caller is actually asking for is that an abandoned request stop
+ * being an answer - a scroll outruns its blocks, and the stale one must not land on top of
+ * the fresh one - and that is the rejection rather than the saved work. Without this the
+ * list calls abort in the browser and quietly do not in the app, which is the same request
+ * resolving twice in a different order on the two.
+ */
+function abortable<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (signal == null) return work;
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return Promise.race([
+    work,
+    new Promise<never>((_resolve, reject) => {
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+    }),
+  ]);
 }
 
 async function overHttp(
@@ -62,8 +83,8 @@ async function overHttp(
 ): Promise<Reply> {
   const response = await fetch(path, {
     method,
-    headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
-    body: body === undefined ? undefined : JSON.stringify(body),
+    headers: body == null ? undefined : { 'Content-Type': 'application/json' },
+    body: body == null ? undefined : JSON.stringify(body),
     ...(signal != null && { signal }),
   });
   const headers: Record<string, string> = {};
@@ -83,8 +104,10 @@ async function overHttp(
  * these same bytes: at 61MP the copying version held three 361MB arrays at once for a
  * payload that is read exactly twice.
  */
-async function overIpc(invoke: Invoke, request: unknown): Promise<Reply> {
-  const framed = new Uint8Array(await invoke('api', { request: JSON.stringify(request) }));
+async function overIpc(invoke: Invoke, request: unknown, signal?: AbortSignal): Promise<Reply> {
+  const framed = new Uint8Array(
+    await abortable(invoke<ArrayBuffer>('api', { request: JSON.stringify(request) }), signal),
+  );
   const view = new DataView(framed.buffer, framed.byteOffset, framed.byteLength);
   const length = view.getUint32(0, true);
   const head = JSON.parse(new TextDecoder().decode(framed.subarray(4, 4 + length))) as {
@@ -105,14 +128,14 @@ async function overIpc(invoke: Invoke, request: unknown): Promise<Reply> {
 export async function serverOrigin(): Promise<string | null> {
   const invoke = invoker();
   if (invoke == null) return null;
-  return (await invoke('server_origin', {})) as unknown as string;
+  return await invoke<string>('server_origin', {});
 }
 
 /** Returns what the shell settled on, which is trimmed and may be a default. */
 export async function setServerOrigin(value: string): Promise<string> {
   const invoke = invoker();
   if (invoke == null) throw new Error('the server address is the desktop app’s to set');
-  return (await invoke('set_server_origin', { value })) as unknown as string;
+  return await invoke<string>('set_server_origin', { value });
 }
 
 /**

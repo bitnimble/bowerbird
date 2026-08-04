@@ -118,7 +118,12 @@ export class RawEditPresenter {
         requiredFeatures: tickFeatures(adapter),
         requiredLimits: tickLimits(adapter),
       });
-      if (this.closed) return;
+      // Destroyed here rather than left to `close`, which has already run and found no
+      // device to take: leaving it would hold the adapter for the life of the page.
+      if (this.closed) {
+        device.destroy();
+        return;
+      }
       this.device = device;
       device.lost.then((reason) => {
         if (!this.closed && reason.reason !== 'destroyed') this.fail(`the GPU device was lost: ${reason.message}`);
@@ -268,13 +273,13 @@ export class RawEditPresenter {
 /**
  * The prepared frame, header and all, over whichever transport is running.
  *
- * The frame's own description arrives in a response header rather than in the body, so the
- * samples read straight into a texture upload instead of having a JSON prelude sliced off
- * the front of several hundred megabytes.
+ * A `u32` length, that much JSON, then the samples - one framing for both transports, and
+ * in the body rather than in an `X-Prepared` response header because a matched frame's
+ * description is 11KB and a reverse proxy answers 502 rather than forward a header that
+ * size.
  *
- * A view over those bytes rather than a copy of them. Both transports promise a four-byte
- * aligned body for exactly this reason, so at 61MP the open holds one 361MB array rather
- * than three.
+ * A view over those bytes rather than a copy of them. Both transports pad the JSON to four
+ * for exactly this reason, so at 61MP the open holds one 361MB array rather than three.
  */
 async function fetchPrepared(
   photoId: string,
@@ -286,12 +291,20 @@ async function fetchPrepared(
     const detail = new TextDecoder().decode(reply.bytes).slice(0, 200);
     throw new Error(`could not open this RAW: ${reply.status} ${detail}`);
   }
-  const described = reply.headers['x-prepared'];
-  if (described == null) throw new Error('the prepared frame arrived with no header');
 
   const { buffer, byteOffset, byteLength } = reply.bytes;
+  if (byteLength < 4) throw new Error('the prepared frame arrived with no header');
+  const described = new DataView(buffer, byteOffset, byteLength).getUint32(0, true);
+  if (described + 4 > byteLength) throw new Error('the prepared frame arrived truncated');
+
   return {
-    header: JSON.parse(described) as PreparedHeader,
-    samples: new Uint16Array(buffer, byteOffset, byteLength / 2),
+    header: JSON.parse(
+      new TextDecoder().decode(reply.bytes.subarray(4, 4 + described)),
+    ) as PreparedHeader,
+    samples: new Uint16Array(
+      buffer,
+      byteOffset + 4 + described,
+      (byteLength - 4 - described) >> 1,
+    ),
   };
 }
