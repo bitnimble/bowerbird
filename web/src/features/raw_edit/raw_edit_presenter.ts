@@ -29,6 +29,9 @@ export class RawEditPresenter {
   private pipeline: TickPipeline | null = null;
   private canvas: HTMLCanvasElement | null = null;
   private viewport: ResizeObserver | null = null;
+  private density: MediaQueryList | null = null;
+  /** The last CSS box the observer reported, so a density change can re-fit against it. */
+  private box: { width: number; height: number } | null = null;
 
   /** The frame the slider is asking for while one is already in flight. */
   private pending: number | null = null;
@@ -48,6 +51,8 @@ export class RawEditPresenter {
   attach(canvas: HTMLCanvasElement | null): void {
     this.viewport?.disconnect();
     this.viewport = null;
+    this.density?.removeEventListener('change', this.onDensity);
+    this.density = null;
     this.canvas = canvas;
     if (canvas == null) return;
     // The observer's own box rather than `getBoundingClientRect`: the size arrives with
@@ -55,9 +60,39 @@ export class RawEditPresenter {
     // which is what gives the canvas its first size.
     this.viewport = new ResizeObserver((entries) => {
       const box = entries[entries.length - 1]?.contentRect;
-      if (box != null) this.fitStage(box.width, box.height);
+      if (box != null) {
+        this.box = { width: box.width, height: box.height };
+        this.fitStage(box.width, box.height);
+      }
     });
     this.viewport.observe(canvas);
+    this.watchPixelRatio();
+  }
+
+  /**
+   * The other thing that changes how many device pixels the stage is worth.
+   *
+   * `devicePixelRatio` is half of `stageResolution`, and dragging the window to a display of
+   * a different density moves it without moving the CSS box - so the resize observer never
+   * fires and the canvas keeps a backing store sized for the panel it left. On a 2x panel
+   * that is a half-resolution photograph, on the way back a wastefully large one, and it
+   * lasts until something else resizes the stage.
+   *
+   * A media query rather than a poll, and re-armed each time because the query names the
+   * ratio it was created at.
+   */
+  private watchPixelRatio(): void {
+    this.density?.removeEventListener('change', this.onDensity);
+    this.density = globalThis.matchMedia?.(`(resolution: ${globalThis.devicePixelRatio || 1}dppx)`) ?? null;
+    this.density?.addEventListener('change', this.onDensity);
+  }
+
+  @action.bound
+  private onDensity(): void {
+    if (this.closed) return;
+    this.watchPixelRatio();
+    const box = this.box;
+    if (box != null) this.fitStage(box.width, box.height);
   }
 
   /**
@@ -181,6 +216,8 @@ export class RawEditPresenter {
     this.closed = true;
     this.viewport?.disconnect();
     this.viewport = null;
+    this.density?.removeEventListener('change', this.onDensity);
+    this.density = null;
     if (this.frame !== 0) cancelAnimationFrame(this.frame);
     this.pipeline?.destroy();
     this.pipeline = null;

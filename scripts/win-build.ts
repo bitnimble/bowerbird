@@ -83,8 +83,11 @@ if (!existsSync(exe)) {
   process.exit(1);
 }
 
+// Empty is unset, not the current directory: `''.trim()` is not null, so `resolve('')` is
+// wherever this happens to be running, and the `rmSync` on `outDir` below would take
+// `Bowerbird` out of it.
 const dist = process.env.BOWERBIRD_WIN_DIST_DIR?.trim();
-const outDir = dist == null ? join(releaseDir, 'Bowerbird') : join(resolve(dist), 'Bowerbird');
+const outDir = dist ? join(resolve(dist), 'Bowerbird') : join(releaseDir, 'Bowerbird');
 rmSync(outDir, { recursive: true, force: true });
 mkdirSync(outDir, { recursive: true });
 copyFileSync(exe, join(outDir, 'Bowerbird.exe'));

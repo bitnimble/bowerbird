@@ -107,9 +107,14 @@ if (found.length === 0) {
 
 // One APK, chosen rather than whichever the walk reached last. Every match used to be
 // copied to the same `Bowerbird.apk` in turn, so what shipped was the last one found - and
-// the same tree holds unsigned intermediates and anything left by an earlier build.
-const signed = found.filter((apk) => !/unsigned/i.test(apk));
-const chosen = signed.length > 0 ? signed : found;
+// nothing cleans this tree, so it holds whatever earlier builds left in it.
+//
+// Chosen by build type, not by the word "unsigned". Nothing here configures signing, so the
+// release APK this produces IS `app-universal-release-unsigned.apk` - filtering that word
+// out selects a debug APK from an earlier `tauri android dev` instead, leaves exactly one
+// candidate so the check below stays quiet, and ships it.
+const release = found.filter((apk) => /[/\\]release[/\\]/.test(apk));
+const chosen = release.length > 0 ? release : found;
 if (chosen.length > 1) {
   console.error(`[android-build] ${chosen.length} APKs under ${outputs}, so which one ships is ambiguous:`);
   for (const apk of chosen) console.error(`  ${apk}`);

@@ -113,11 +113,11 @@ export function stageResolution(
  * lookups the sampler interpolates, and without it neither is filterable and the pipeline
  * will not build. Every desktop adapter this has run on offers it.
  *
- * Thrown for rather than filtered out. Filtering it left the device built without it and
- * the failure to `createRenderPipeline`, which is a WebGPU validation error - asynchronous,
- * reported to an uncaptured-error handler nothing installs, and not an exception the open
- * can catch. So the open ran to the end, the reader was told `live`, and the canvas stayed
- * black with nothing anywhere saying why.
+ * Thrown for rather than filtered out. Filtering it left the device built without it, and
+ * the first call to bind an `r32float` with a filtering sampler then fails validation -
+ * asynchronously, to an uncaptured-error handler nothing installs, and not as an exception
+ * the open can catch. So the open ran to the end, the reader was told `live`, and the canvas
+ * stayed black with nothing anywhere saying why.
  *
  * `timestamp-query` really is optional: without it the readout loses its per-pass
  * milliseconds and the picture is identical.

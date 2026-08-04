@@ -37,8 +37,8 @@ test.describe('GPU tick parity', () => {
     test.skip(report.ok === false && /adapter/.test(report.error ?? ''), 'no WebGPU adapter here');
     expect(report.ok, report.error).toBe(true);
 
-    // Named, not counted: the loop below passes over an empty object, so without this the
-    // pin reports green when the fixtures failed to load and nothing was compared at all.
+    // Named, not counted: the loop below passes over an empty object, and over a report that
+    // holds some other set of cases than the six the fixtures pin.
     expect(Object.keys(report.results ?? {}).sort()).toEqual([
       'tick-matched-ev-1.5',
       'tick-matched-ev0',
@@ -56,11 +56,9 @@ test.describe('GPU tick parity', () => {
       // were hiding read 11.9.
       expect(result.mean as number, `${name} mean`).toBeLessThanOrEqual(0.5);
       // The worst is a handful of pixels rather than a picture, so it is bounded loosely and
-      // by count as well as by size. Two things put single pixels far out and neither is a
-      // defect: PQ is steep enough in the shadows that a last-bit f32 difference is hundreds
-      // of counts, and the scene peak the roll-off is built on is read off an 8192-bin
-      // histogram here against an exact quantile there - up to 0.6 nits apart, which the
-      // brightest pixels feel. Both were invisible while the transform was the identity.
+      // by count as well as by size. PQ is steep enough in the shadows that a last-bit f32
+      // difference against the CPU's f64 is hundreds of counts, and a real transform reaches
+      // that where the identity one it replaced did no arithmetic to round.
       expect(result.worst as number, `${name} worst`).toBeLessThanOrEqual(320);
       expect(
         (result.over16 as number) / (result.samples as number),
