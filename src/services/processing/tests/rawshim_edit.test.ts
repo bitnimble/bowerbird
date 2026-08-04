@@ -90,12 +90,27 @@ describe('framePrepared', () => {
     }
   });
 
-  it('pads with spaces, which JSON ignores and the length counts', () => {
-    const framed = framePrepared(prepared(false, 3));
-    const described = new DataView(framed.buffer, framed.byteOffset).getUint32(0, true);
-    expect(described % 4).toBe(0);
-    const text = new TextDecoder().decode(framed.subarray(4, 4 + described));
-    expect(text).toMatch(/ *$/);
-    expect(JSON.parse(text).ok).toBe(true);
+  // The padding has to be JSON's own whitespace, because the reader hands the whole padded
+  // span to `JSON.parse` rather than trimming it: a NUL is "Unrecognized token" there, and
+  // would fail every open whose header does not already land on a multiple of four. Swept
+  // across widths so all four remainders are covered - at one width it is a coin toss
+  // whether any padding is emitted at all, which is how a wrong byte survives a green run.
+  it('pads to four with whitespace JSON accepts, at every remainder', () => {
+    const seen = new Set<number>();
+    for (let pixels = 1; pixels <= 24; pixels++) {
+      const frame = prepared(pixels % 2 === 0, pixels);
+      const json = new TextEncoder().encode(JSON.stringify(frame.header));
+      seen.add(json.byteLength % 4);
+
+      const framed = framePrepared(frame);
+      const described = new DataView(framed.buffer, framed.byteOffset).getUint32(0, true);
+      expect(described % 4).toBe(0);
+      expect(described).toBeGreaterThanOrEqual(json.byteLength);
+
+      const text = new TextDecoder().decode(framed.subarray(4, 4 + described));
+      expect(text.slice(json.byteLength)).toMatch(/^ *$/);
+      expect(JSON.parse(text).ok).toBe(true);
+    }
+    expect([...seen].sort()).toEqual([0, 1, 2, 3]);
   });
 });

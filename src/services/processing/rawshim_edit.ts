@@ -123,6 +123,10 @@ export function framePrepared(frame: PreparedFrame): Uint8Array {
   const out = new Uint8Array(4 + padded + samples.byteLength);
   new DataView(out.buffer).setUint32(0, padded, true);
   out.set(json, 4);
+  // Spaces, not NULs. The reader hands the whole padded span to `JSON.parse` rather than
+  // trimming it, and a space is JSON's own whitespace where a NUL is "Unrecognized token" -
+  // so this would fail every open whose header does not already land on a multiple of four.
+  // `src-tauri/src/edit.rs` pads the same way, for the same reader.
   out.fill(0x20, 4 + json.byteLength, 4 + padded);
   out.set(samples, 4 + padded);
   return out;
