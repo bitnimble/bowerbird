@@ -11,7 +11,6 @@
 //! rather than connecting, and the origin stays on this side, which is the property the
 //! whole transport seam exists to keep.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 
@@ -22,12 +21,40 @@ use tauri::{AppHandle, Emitter};
 /// webview has finished loading, and stays up across navigations. So a page that subscribes
 /// later would never see an `open` and would never call `serverReachable`, where a browser's
 /// `EventSource` gets one because the page owns the connection. It asks instead.
-static CONNECTED: AtomicBool = AtomicBool::new(false);
+/// Which server, not merely whether: a connection to the library the reader has just left is
+/// not one they can use, and reporting it as "connected" is how an address change looked
+/// like it had worked when the stream had not moved at all.
+static FOLLOWING: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
-/// Whether the library's event stream is currently up.
+fn following(origin: Option<String>) {
+    if let Ok(mut held) = FOLLOWING.lock() {
+        *held = origin;
+    }
+}
+
+/// Rung when the address moves, so the stream stops following the server it was told about
+/// before.
+///
+/// Without it a change in Settings did nothing at all: the connection is only re-dialled
+/// after the current one ends, and against a server that is still running it never does -
+/// the heartbeat holds the socket open indefinitely. So the shell stayed on the old library,
+/// `CONNECTED` stayed true, and the reloaded page was told the stream was up while every
+/// event it was waiting for went to a server it had stopped reading from.
+static MOVED: std::sync::OnceLock<std::sync::Arc<tokio::sync::Notify>> = std::sync::OnceLock::new();
+
+fn moved() -> &'static std::sync::Arc<tokio::sync::Notify> {
+    MOVED.get_or_init(|| std::sync::Arc::new(tokio::sync::Notify::new()))
+}
+
+/// Tells the stream its server has changed. Safe to call before it is following anything.
+pub fn address_changed() {
+    moved().notify_waiters();
+}
+
+/// The library the event stream is currently following, or null while it is not up.
 #[tauri::command]
-pub fn events_connected() -> bool {
-    CONNECTED.load(Ordering::Relaxed)
+pub fn events_following() -> Option<String> {
+    FOLLOWING.lock().ok().and_then(|held| held.clone())
 }
 
 /// The Tauri event the page listens on.
@@ -64,9 +91,17 @@ pub fn follow(app: &AppHandle) {
             // Reset on a stream that actually connected, so a server that drops one
             // connection an hour is not eventually waited on for thirty seconds.
             let held = stream(&app, &mut last_id).await;
-            CONNECTED.store(false, Ordering::Relaxed);
+            following(None);
             match held {
-                Ok(()) => wait = FIRST_RETRY,
+                // A move is not a failure and must not be waited out: the reader is looking
+                // at the new library now. Its ids belong to the old server too, so asking to
+                // resume from one would replay somebody else's events or nothing at all.
+                Ok(Ended::Moved) => {
+                    last_id = None;
+                    wait = FIRST_RETRY;
+                    continue;
+                }
+                Ok(Ended::Closed) => wait = FIRST_RETRY,
                 // The only channel this has. A shell that cannot follow the library still
                 // works for everything the reader does by hand - it just stops noticing what
                 // the library does on its own - so this reports rather than gives up, and
@@ -79,9 +114,24 @@ pub fn follow(app: &AppHandle) {
     });
 }
 
+/// Why a connection that was answered stopped.
+enum Ended {
+    /// The server closed it, or the process is going away.
+    Closed,
+    /// The reader pointed the app at a different library.
+    Moved,
+}
+
 /// One connection, until it ends. `Ok` if it was answered before it did.
-async fn stream(app: &AppHandle, last_id: &mut Option<String>) -> Result<(), String> {
-    let url = format!("{}/api/events", crate::api::origin());
+async fn stream(app: &AppHandle, last_id: &mut Option<String>) -> Result<Ended, String> {
+    // Taken before the request, so an address that changes while this one is being dialled
+    // is still noticed: `notified()` from here on is remembered rather than missed.
+    let moved = moved().clone();
+    let moved = moved.notified();
+    tokio::pin!(moved);
+
+    let origin = crate::api::origin();
+    let url = format!("{origin}/api/events");
     let mut request = crate::api::client().get(&url).header("accept", "text/event-stream");
     if let Some(id) = last_id.as_deref() {
         request = request.header("last-event-id", id);
@@ -94,13 +144,21 @@ async fn stream(app: &AppHandle, last_id: &mut Option<String>) -> Result<(), Str
     // Before any event, and on every reconnect: the page treats it the way it treated
     // `EventSource`'s `open`, which is to re-ask for anything a request lost while the
     // server was away.
-    CONNECTED.store(true, Ordering::Relaxed);
+    following(Some(origin.clone()));
     let _ = app.emit(CHANNEL, Emitted { kind: "open".to_string(), data: String::new() });
 
     // `chunk` rather than `bytes_stream`, which would want reqwest's `stream` feature for a
     // loop this shape gets for nothing.
     let mut frames = Frames::default();
-    while let Some(chunk) = reply.chunk().await.map_err(|e| format!("{url} stopped: {e}"))? {
+    loop {
+        // The read is what has to be interrupted, not the retry: a live server's heartbeat
+        // holds this open forever, so waiting for it to end is waiting for nothing.
+        let chunk = tokio::select! {
+            read = reply.chunk() => read.map_err(|e| format!("{url} stopped: {e}"))?,
+            () = &mut moved => return Ok(Ended::Moved),
+        };
+        let Some(chunk) = chunk else { return Ok(Ended::Closed) };
+
         for frame in frames.push(&chunk) {
             if let Some(id) = frame.id {
                 *last_id = Some(id);
@@ -108,7 +166,6 @@ async fn stream(app: &AppHandle, last_id: &mut Option<String>) -> Result<(), Str
             let _ = app.emit(CHANNEL, Emitted { kind: frame.kind, data: frame.data });
         }
     }
-    Ok(())
 }
 
 struct Frame {

@@ -132,6 +132,10 @@ pub fn set_server_origin(app: tauri::AppHandle, value: String) -> Result<String,
         save(&app, &next)?;
         *held = Some(next);
     }
+    // The event stream is following the old address and will not notice on its own: it
+    // re-reads the origin only when a connection ends, and a server that is still running
+    // never ends one.
+    crate::events::address_changed();
     // Outside the guard: `origin` takes the read lock, and this one is not reentrant.
     Ok(origin())
 }

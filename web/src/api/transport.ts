@@ -228,8 +228,8 @@ function overIpcEvents(listen: Listen, handlers: EventHandlers): EventStream {
 
   const invoke = invoker();
   if (invoke != null) {
-    void invoke<boolean>('events_connected', {}).then((connected) => {
-      if (connected) open();
+    void invoke<string | null>('events_following', {}).then((library) => {
+      if (library != null) open();
     });
   }
 

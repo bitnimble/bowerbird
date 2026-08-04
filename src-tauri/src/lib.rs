@@ -36,7 +36,7 @@ pub fn run() {
             api::api,
             api::server_origin,
             api::set_server_origin,
-            events::events_connected
+            events::events_following
         ])
         .run(tauri::generate_context!())
         .expect("error while running the Bowerbird shell");

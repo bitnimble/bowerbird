@@ -58,8 +58,11 @@ describe('assetUrl', () => {
 });
 
 describe('subscribeEvents over IPC', () => {
+  /** What `events_following` answers with when the stream is up. */
+  const LIBRARY = 'http://127.0.0.1:3000';
+
   /** Stands in for the shell, holding whatever the page registered. */
-  function shellEvents(connected = false): {
+  function shellEvents(following: string | null = null): {
     deliver: (payload: unknown) => void;
     channel: () => string;
     unlistened: () => number;
@@ -72,7 +75,8 @@ describe('subscribeEvents over IPC', () => {
     const registered = new Promise<void>((resolve) => (landed = resolve));
 
     global.__TAURI__ = {
-      core: { invoke: async () => connected },
+      // `events_following` answers with the library it is streaming from, or null.
+      core: { invoke: async () => following },
       event: {
         listen: async (event, given) => {
           channel = event;
@@ -138,7 +142,7 @@ describe('subscribeEvents over IPC', () => {
   // run for that session - which a browser never suffers, because there the page owns the
   // connection and gets its own `open`.
   test('opens for a page that subscribed after the stream was already up', async () => {
-    const shell = shellEvents(true);
+    const shell = shellEvents(LIBRARY);
     let opens = 0;
     subscribeEvents({ open: () => (opens += 1), rendition: () => {} });
     await shell.settled();
@@ -146,7 +150,7 @@ describe('subscribeEvents over IPC', () => {
   });
 
   test('does not open where the stream is down', async () => {
-    const shell = shellEvents(false);
+    const shell = shellEvents(null);
     let opens = 0;
     subscribeEvents({ open: () => (opens += 1), rendition: () => {} });
     await shell.settled();
@@ -156,7 +160,7 @@ describe('subscribeEvents over IPC', () => {
   // Once for the state it asked for, then again for each reconnect, and never twice for one
   // connection - `serverReachable` re-asks every view holding a dead request.
   test('opens once per connection, and again on a reconnect', async () => {
-    const shell = shellEvents(true);
+    const shell = shellEvents(LIBRARY);
     let opens = 0;
     subscribeEvents({ open: () => (opens += 1), rendition: () => {} });
     await shell.settled();

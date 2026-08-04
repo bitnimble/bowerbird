@@ -16,6 +16,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 const SERVER = process.env.BOWERBIRD_E2E_SERVER ?? '';
+// A second running library, for the one case that needs two: moving between them.
+const SECOND_SERVER = process.env.BOWERBIRD_E2E_SERVER_2 ?? '';
 // The binary wdio launched, which `wdio.conf.ts` builds to the debug target dir.
 const APP_BINARY = join(import.meta.dirname, '..', 'src-tauri', 'target', 'debug', 'app');
 
@@ -169,9 +171,8 @@ describe('Bowerbird desktop shell', () => {
       // Polled rather than sampled: the stream is dialled at startup and reconnects with a
       // backoff, so the answer depends on where in that the page happens to ask.
       for (let attempt = 0; attempt < 40; attempt++) {
-        if ((await core.invoke('events_connected', {})) as unknown as boolean) {
-          return { origin, connected: true };
-        }
+        const following = (await core.invoke('events_following', {})) as unknown as string | null;
+        if (following != null) return { origin, connected: true };
         await new Promise((resolve) => setTimeout(resolve, 250));
       }
       return { origin, connected: false };
@@ -180,6 +181,46 @@ describe('Bowerbird desktop shell', () => {
     // Both at once, so a failure says which server it followed rather than only that it did
     // not connect to something.
     expect(state).toEqual({ origin: SERVER, connected: true });
+  });
+
+  // Changing the address has to move the stream, and that is not automatic: a connection is
+  // only re-dialled when the current one ends, and a server that is still running never ends
+  // one - its heartbeat holds the socket open for as long as the process lives. So the shell
+  // stayed on the library the reader had just left, reporting itself connected the whole
+  // time.
+  it('follows the address when it changes, off a server that is still running', async function () {
+    if (SERVER === '' || SECOND_SERVER === '') return this.skip();
+
+    const moved = await browser.execute(
+      async (to: string, back: string) => {
+        const { core } = (window as unknown as Bridge).__TAURI__;
+        // Which library, not whether: a connection to the one just left still answers
+        // "connected", which is exactly how this looked like it worked.
+        const following = async (): Promise<string | null> =>
+          (await core.invoke('events_following', {})) as unknown as string | null;
+
+        for (let attempt = 0; attempt < 40 && (await following()) == null; attempt++) {
+          await new Promise((resolve) => setTimeout(resolve, 250));
+        }
+        const before = await following();
+
+        await core.invoke('set_server_origin', { value: to });
+        // It has to drop the old connection and take up the new one. Both are running, so
+        // nothing but the notify can end the first.
+        let after: string | null = null;
+        for (let attempt = 0; attempt < 40; attempt++) {
+          await new Promise((resolve) => setTimeout(resolve, 250));
+          after = await following();
+          if (after === to) break;
+        }
+        await core.invoke('set_server_origin', { value: back });
+        return { before, after };
+      },
+      SECOND_SERVER,
+      SERVER,
+    );
+
+    expect(moved).toEqual({ before: SERVER, after: SECOND_SERVER });
   });
 
   it('reports an unreachable server rather than panicking the shell', async () => {

@@ -21,7 +21,7 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 # The event stream's reconnect backoff. Already in the tree - `tauri` runs on it - and named
 # here only because `tauri::async_runtime` re-exports the channel and lock types but not the
 # timer. `Response::chunk` is not feature-gated, so reading the stream itself needs nothing.
-tokio = { version = "1", features = ["time"] }
+tokio = { version = "1", features = ["time", "sync", "macros"] }
 # The editor's open, in process: the shell fetches the RAW and prepares it here, because
 # the RAW is tens of megabytes where the frame it decodes to is hundreds.
 #
