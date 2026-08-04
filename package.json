@@ -16,7 +16,8 @@
     "build:native": "cargo build --release --manifest-path native/rawshim/Cargo.toml",
     "e2e:tauri:build": "bun run scripts/build-wdio-app.ts",
     "e2e:tauri": "bun run e2e:tauri:build && xvfb-run -a wdio run wdio.conf.ts",
-    "tauri": "bun x @tauri-apps/cli"
+    "tauri": "bun x @tauri-apps/cli",
+    "mac:build": "bun run scripts/mac-build.ts"
   },
   "dependencies": {
     "@parcel/watcher": "^2.6.0",

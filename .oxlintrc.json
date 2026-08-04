@@ -96,6 +96,15 @@
         "no-restricted-imports": "off",
         "no-console": "off"
       }
+    },
+    {
+      "files": [
+        "scripts/**"
+      ],
+      "rules": {
+        "no-restricted-imports": "off",
+        "no-console": "off"
+      }
     }
   ]
 }
