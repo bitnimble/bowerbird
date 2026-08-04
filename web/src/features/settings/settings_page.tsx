@@ -2,6 +2,8 @@ import { observer } from 'mobx-react-lite';
 import { useEffect, useState, type ReactNode } from 'react';
 import { CircleStop, FolderPlus, Image, RefreshCw, RotateCcw, Sparkles, Trash2 } from 'lucide-react';
 import type { Library, Settings, UpdateSettingsRequest, ViewerRenditionMode, RenditionSource } from '../../api/client';
+import { serverOrigin, setServerOrigin } from '../../api/transport';
+import { describe } from '../../errors';
 import { useAppSettingsStore, useLibrariesStore, usePresenters, useSyncStore } from '../../app/stores_context';
 import { AddLibraryDialog } from '../libraries/add_library_dialog';
 import { libraryLabel } from '../libraries/library_label';
@@ -679,6 +681,73 @@ function GroupTitle({ children }: { children: ReactNode }): JSX.Element {
   );
 }
 
+/**
+ * Which Bowerbird this app talks to. Desktop only, and nothing at all in a browser.
+ *
+ * It cannot live with the settings below it, because those are on the far side of it:
+ * asking the server where the server is does not work. So the shell keeps it beside its
+ * own config and answers for it over IPC, and a page - which already knows its origin -
+ * never sees this section.
+ *
+ * Applied on save rather than as you type: every request in the app goes through this, and
+ * re-pointing them at a half-typed hostname would empty the screen with each keystroke.
+ */
+const ServerAddress = observer(function ServerAddress(): JSX.Element | null {
+  const [saved, setSaved] = useState<string | null>(null);
+  const [draft, setDraft] = useState('');
+  const [failure, setFailure] = useState<string | null>(null);
+
+  useEffect(() => {
+    void serverOrigin().then((origin) => {
+      if (origin == null) return;
+      setSaved(origin);
+      setDraft(origin);
+    });
+  }, []);
+
+  if (saved == null) return null;
+
+  const apply = (): void => {
+    setFailure(null);
+    void setServerOrigin(draft)
+      .then((settled) => {
+        setSaved(settled);
+        setDraft(settled);
+        // A reload rather than a re-fetch: everything already on screen was read from the
+        // old address, and there is no partial version of "this is a different library".
+        window.location.reload();
+      })
+      .catch((error: unknown) => setFailure(describe(error)));
+  };
+
+  return (
+    <>
+      <GroupTitle>This app</GroupTitle>
+      <SettingRow
+        label="Bowerbird server"
+        hint={
+          failure ??
+          'Where this app reads your library from. Editing runs here either way - the app fetches the RAW and prepares it itself, which is why it wants the file rather than the frame.'
+        }
+        onReset={saved === draft ? undefined : () => setDraft(saved)}
+      >
+        <TextField
+          label="Bowerbird server"
+          value={draft}
+          placeholder="http://bowerbird.local:3000"
+          onChange={setDraft}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') apply();
+          }}
+        />
+        <Button variant="primary" disabled={draft === saved} onClick={apply}>
+          Connect
+        </Button>
+      </SettingRow>
+    </>
+  );
+});
+
 // The two decisions worth making without reading anything, then everything else
 // behind one disclosure. Nothing until the settings arrive: a field pre-filled
 // with a default the server may not hold invites editing a value that was never
@@ -899,6 +968,8 @@ export const SettingsPage = observer(function SettingsPage(): JSX.Element {
   return (
     <div className="pad">
       <Heading>Settings</Heading>
+
+      <ServerAddress />
 
       {store.error != null && (
         <div className="error">

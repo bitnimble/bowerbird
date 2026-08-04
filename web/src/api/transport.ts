@@ -95,6 +95,27 @@ async function overIpc(invoke: Invoke, request: unknown): Promise<Reply> {
 }
 
 /**
+ * Where the shell is pointed, and where to point it.
+ *
+ * The one setting that cannot live with the others, because the others are on the far side
+ * of it: asking the server where the server is does not work. So the shell keeps it beside
+ * its own config, and the browser has no use for it at all - a page already knows its
+ * origin.
+ */
+export async function serverOrigin(): Promise<string | null> {
+  const invoke = invoker();
+  if (invoke == null) return null;
+  return (await invoke('server_origin', {})) as unknown as string;
+}
+
+/** Returns what the shell settled on, which is trimmed and may be a default. */
+export async function setServerOrigin(value: string): Promise<string> {
+  const invoke = invoker();
+  if (invoke == null) throw new Error('the server address is the desktop app’s to set');
+  return (await invoke('set_server_origin', { value })) as unknown as string;
+}
+
+/**
  * A URL an `<img>` or an `EventSource` can load, which cannot go through `send`.
  *
  * The browser fetches those itself, so under the shell they need a scheme its Rust

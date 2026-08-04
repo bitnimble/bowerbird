@@ -7,6 +7,7 @@
 // name in one file rather than a second client in the page.
 
 mod api;
+mod edit;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -18,10 +19,18 @@ pub fn run() {
         .plugin(tauri_plugin_wdio_webdriver::init());
 
     builder
+        .setup(|app| {
+            api::load_origin(app.handle());
+            Ok(())
+        })
         .register_asynchronous_uri_scheme_protocol("bowerbird", |_app, request, responder| {
             api::asset(request, responder)
         })
-        .invoke_handler(tauri::generate_handler![api::api])
+        .invoke_handler(tauri::generate_handler![
+            api::api,
+            api::server_origin,
+            api::set_server_origin
+        ])
         .run(tauri::generate_context!())
         .expect("error while running the Bowerbird shell");
 }

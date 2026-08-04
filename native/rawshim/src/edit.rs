@@ -123,14 +123,22 @@ impl ChromaPayload {
 pub fn prepare(request: &EditRequest) -> Result<Prepared, String> {
     let bytes = std::fs::read(&request.raw_file_path)
         .map_err(|e| format!("could not read {}: {e}", request.raw_file_path))?;
+    prepare_bytes(&bytes, request)
+}
 
+/// The same open, for a caller that already holds the file.
+///
+/// The desktop shell does: it fetches the RAW from the library and prepares it in its own
+/// process, which is the point - the RAW is tens of megabytes and the prepared frame is
+/// hundreds, so the smaller of the two is the one worth putting on a network.
+pub fn prepare_bytes(bytes: &[u8], request: &EditRequest) -> Result<Prepared, String> {
     {
-        let frame = crate::decode_frame_bytes(&bytes, 16, true, request.long_edge)
+        let frame = crate::decode_frame_bytes(bytes, 16, true, request.long_edge)
             .ok_or("LibRaw could not decode this file")?;
         let samples = frame.samples16().ok_or("the decode was not 16-bit")?;
         let source = hdr::Source { samples, width: frame.width, height: frame.height };
 
-        let matched = fit(&bytes, &source, request);
+        let matched = fit(bytes, &source, request);
         let mut prepared = hdr::prepare(&source, None, &request.grade);
         if let Some(colour) = matched.as_ref() {
             if let Some(warped) = crate::hdr_fit::apply_lens(

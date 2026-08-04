@@ -15,9 +15,12 @@ tauri-build = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri = { version = "2", features = [] }
-# The shell is a proxy for the hosted server, so it needs a client. `rustls` rather than
-# the system TLS so a bundled build carries its own and does not want OpenSSL on the box.
+# The shell proxies for the hosted server, so it needs a client. `rustls` rather than the
+# system TLS so a bundled build carries its own and does not want OpenSSL on the box.
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# The editor's open, in process: the shell fetches the RAW and prepares it here, because
+# the RAW is tens of megabytes where the frame it decodes to is hundreds.
+rawshim = { path = "../native/rawshim" }
 
 # WebdriverIO desktop e2e: the in-app Execute API and the embedded WebDriver server.
 # Optional and behind a feature so they never ride a shipped build.

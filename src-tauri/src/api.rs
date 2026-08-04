@@ -14,10 +14,69 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 use tauri::ipc::Response;
 
-/// Where the library lives. One env var rather than a setting, because the shell has to
-/// know it before it can ask anything for a setting.
+/// Where the library lives.
+///
+/// The one setting that cannot live with the others, because the others are on the far
+/// side of it: asking the server where the server is does not work. So it is a file beside
+/// the app's own config, overridden by `BOWERBIRD_SERVER` for a test run that should not
+/// disturb whatever the reader has saved.
+static ORIGIN: std::sync::RwLock<Option<String>> = std::sync::RwLock::new(None);
+
+const DEFAULT_ORIGIN: &str = "http://127.0.0.1:3000";
+
 fn origin() -> String {
-    std::env::var("BOWERBIRD_SERVER").unwrap_or_else(|_| "http://127.0.0.1:3000".into())
+    if let Ok(from_env) = std::env::var("BOWERBIRD_SERVER") {
+        return from_env;
+    }
+    ORIGIN
+        .read()
+        .ok()
+        .and_then(|held| held.clone())
+        .unwrap_or_else(|| DEFAULT_ORIGIN.into())
+}
+
+fn origin_file(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
+    use tauri::Manager;
+    app.path().app_config_dir().ok().map(|dir| dir.join("server"))
+}
+
+/// Reads the saved origin at startup, so the first request already knows where to go.
+pub fn load_origin(app: &tauri::AppHandle) {
+    let saved = origin_file(app)
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .map(|held| held.trim().to_string())
+        .filter(|held| !held.is_empty());
+    if let Ok(mut held) = ORIGIN.write() {
+        *held = saved;
+    }
+}
+
+/// What the settings screen shows. The effective one, so an env override is visible
+/// rather than silently disagreeing with what the reader saved.
+#[tauri::command]
+pub fn server_origin() -> String {
+    origin()
+}
+
+/// Trailing slashes trimmed, because every path this is joined to starts with one and
+/// `//api` is a different route to the server that answers it.
+#[tauri::command]
+pub fn set_server_origin(app: tauri::AppHandle, value: String) -> Result<String, String> {
+    let trimmed = value.trim().trim_end_matches('/').to_string();
+    let saved = if trimmed.is_empty() { None } else { Some(trimmed) };
+
+    if let Some(path) = origin_file(&app) {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("could not make {parent:?}: {e}"))?;
+        }
+        match &saved {
+            Some(value) => std::fs::write(&path, value),
+            None => std::fs::remove_file(&path).or(Ok(())),
+        }
+        .map_err(|e| format!("could not save the server address: {e}"))?;
+    }
+    *ORIGIN.write().map_err(|_| "the server address is locked".to_string())? = saved;
+    Ok(origin())
 }
 
 /// One client for the process, because a client is a connection pool.
@@ -42,9 +101,33 @@ struct Request {
 }
 
 #[derive(serde::Serialize)]
-struct Head {
-    status: u16,
-    headers: HashMap<String, String>,
+pub struct Head {
+    pub status: u16,
+    pub headers: HashMap<String, String>,
+}
+
+/// What a command answered with, framed for the page. Shared with `edit`, which builds a
+/// reply rather than forwarding one.
+pub fn reply(status: u16, headers: HashMap<String, String>, body: &[u8]) -> Vec<u8> {
+    frame(&Head { status, headers }, body)
+}
+
+/// A GET against the library, for a command answering locally off its bytes.
+pub async fn get(path: &str) -> Result<Vec<u8>, String> {
+    let url = format!("{}{}", origin(), path);
+    let reply = client()
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("could not reach {url}: {e}"))?;
+    if !reply.status().is_success() {
+        return Err(format!("{url} answered {}", reply.status()));
+    }
+    Ok(reply
+        .bytes()
+        .await
+        .map_err(|e| format!("{url} stopped mid-reply: {e}"))?
+        .to_vec())
 }
 
 /// Forwards a request and frames the reply.
@@ -56,6 +139,12 @@ struct Head {
 pub async fn api(request: String) -> Result<Response, String> {
     let request: Request =
         serde_json::from_str(&request).map_err(|e| format!("bad request: {e}"))?;
+
+    // The first command this shell answers itself rather than forwarding, and the seam
+    // `cmd` was carried for. Everything else still proxies.
+    if request.cmd == "get:prepared" {
+        return crate::edit::prepared(&request.path).await.map(Response::new);
+    }
 
     let url = format!("{}{}", origin(), request.path);
     let method = reqwest::Method::from_bytes(request.method.as_bytes())
