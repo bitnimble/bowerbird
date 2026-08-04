@@ -9,7 +9,7 @@
 // `image::finish`, then the display transform. What has gone is the copy at the front (the
 // source texture is never written) and the encode at the back (a canvas is not a file).
 
-import { GRADE, LUMA, PEAK, PEAK_BINS, PRESENT, TICK_UNIFORM_FLOATS } from './shaders';
+import { GRADE, PEAK, PEAK_BINS, PRESENT, TICK_UNIFORM_FLOATS } from './shaders';
 
 /** `Sample::from_f32` for `u16`: rounded, and held inside the range it has to fit. */
 const clamp16 = (v: number): number => Math.max(0, Math.min(65535, Math.round(v)));
@@ -54,13 +54,14 @@ export interface PreparedHeader {
  */
 const SDR_WHITE_NITS = 203;
 
-/** Every plane the pipeline needs live at once, named so a swap reads as one. */
-type PlaneName = 'luma' | 'red' | 'blue';
-
-const PLANES: PlaneName[] = ['luma', 'red', 'blue'];
-
 export class TickPipeline {
-  private readonly planes = new Map<PlaneName, GPUBuffer>();
+  /**
+   * The graded frame, PQ-coded, between the grade and the draw.
+   *
+   * One interleaved texture rather than three planes: the split existed for
+   * `image::finish`, which works a plane at a time and now runs once at open instead.
+   */
+  private readonly graded: GPUTexture;
   /**
    * One uniform buffer per pass, not one reused across them.
    *
@@ -128,12 +129,17 @@ export class TickPipeline {
       length: number,
       usage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
     ) => device.createBuffer({ size: length * 4, usage });
-    const plane = (length: number) =>
-      device.createBuffer({
-        size: length * 4,
-        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
-      });
-    for (const name of PLANES) this.planes.set(name, plane(pixels));
+    // COPY_SRC so the parity harness can read the graded frame back without a second
+    // pipeline; the cost is a usage flag, and a wrong picture is otherwise invisible.
+    this.graded = device.createTexture({
+      size: [this.width, this.height],
+      // f32 rather than f16: this is the frame parity is measured on, and half a
+      // float costs 33 counts of 65535 where the whole point of the tick is that tone
+      // and colour land exactly. The canvas it feeds is f16, where it does not matter.
+      format: 'rgba32float',
+      usage:
+        GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC,
+    });
 
     // A tick is the peak, the grade and the draw, so a handful is plenty; grown on demand
     // rather than guessed exactly, since being wrong costs an allocation.
@@ -183,10 +189,12 @@ export class TickPipeline {
         readOnly(2),
         readOnly(3),
         readOnly(4),
-        writable(5),
-        writable(6),
-        writable(7),
-        readOnly(8),
+        {
+          binding: 5,
+          visibility: COMPUTE,
+          storageTexture: { access: 'write-only', format: 'rgba32float' },
+        },
+        readOnly(6),
       ],
     });
     this.peakLayout = device.createBindGroupLayout({
@@ -195,9 +203,7 @@ export class TickPipeline {
     this.presentLayout = device.createBindGroupLayout({
       entries: [
         { binding: 0, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
-        { binding: 1, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } },
-        { binding: 2, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } },
-        { binding: 3, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } },
+        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
       ],
     });
 
@@ -234,45 +240,48 @@ export class TickPipeline {
   }
 
   /**
-   * The three planes as the CPU would have left them, for the parity harness.
+   * The graded frame as the CPU would have left it, for the parity harness.
    *
-   * Recombined here rather than in a shader so the comparison is against
-   * `image::recombine`'s arithmetic and not against a second copy of it.
+   * Scaled back to the `u16` counts `encode_pq` wrote, which is the unit the fixture and
+   * every other pin in this repo is written in.
    */
   async readFrame(): Promise<Uint16Array> {
     const pixels = this.width * this.height;
-    const read = async (name: PlaneName): Promise<Float32Array> => {
-      const bytes = pixels * 4;
-      const staging = this.device.createBuffer({
-        size: bytes,
-        usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
-      });
-      const encoder = this.device.createCommandEncoder();
-      encoder.copyBufferToBuffer(this.buffer(name), 0, staging, 0, bytes);
-      this.device.queue.submit([encoder.finish()]);
-      await staging.mapAsync(GPUMapMode.READ);
-      const copy = new Float32Array(staging.getMappedRange()).slice();
-      staging.unmap();
-      staging.destroy();
-      return copy;
-    };
+    // 256-byte row alignment, which a copy out of a texture requires and 8 bytes a texel
+    // rarely satisfies on its own.
+    const bytesPerRow = Math.ceil((this.width * 16) / 256) * 256;
+    const staging = this.device.createBuffer({
+      size: bytesPerRow * this.height,
+      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+    });
+    const encoder = this.device.createCommandEncoder();
+    encoder.copyTextureToBuffer(
+      { texture: this.graded },
+      { buffer: staging, bytesPerRow, rowsPerImage: this.height },
+      [this.width, this.height],
+    );
+    this.device.queue.submit([encoder.finish()]);
+    await staging.mapAsync(GPUMapMode.READ);
 
-    const [luma, red, blue] = await Promise.all([read('luma'), read('red'), read('blue')]);
+    const texels = new Float32Array(staging.getMappedRange());
     const frame = new Uint16Array(pixels * 3);
-    for (let i = 0; i < pixels; i++) {
-      const l = luma[i]!;
-      const dr = red[i]!;
-      const db = blue[i]!;
-      const dg = -(LUMA[0] * dr + LUMA[2] * db) / LUMA[1];
-      frame[i * 3] = clamp16((l + dr) * 65535);
-      frame[i * 3 + 1] = clamp16((l + dg) * 65535);
-      frame[i * 3 + 2] = clamp16((l + db) * 65535);
+    const stride = bytesPerRow / 4;
+    for (let y = 0; y < this.height; y++) {
+      for (let x = 0; x < this.width; x++) {
+        const from = y * stride + x * 4;
+        const to = (y * this.width + x) * 3;
+        frame[to] = clamp16(texels[from]! * 65535);
+        frame[to + 1] = clamp16(texels[from + 1]! * 65535);
+        frame[to + 2] = clamp16(texels[from + 2]! * 65535);
+      }
     }
+    staging.unmap();
+    staging.destroy();
     return frame;
   }
 
   destroy(): void {
-    for (const buffer of this.planes.values()) buffer.destroy();
+    this.graded.destroy();
     this.source.destroy();
     for (const buffer of [...this.uniforms, this.histogram, this.peak, this.curves, this.chromaNodes, this.matrix]) {
       buffer.destroy();
@@ -286,12 +295,6 @@ export class TickPipeline {
     });
     this.device.queue.writeBuffer(buffer, 0, data);
     return buffer;
-  }
-
-  private buffer(name: PlaneName): GPUBuffer {
-    const found = this.planes.get(name);
-    if (found == null) throw new Error(`no plane named ${name}`);
-    return found;
   }
 
   /**
@@ -385,10 +388,8 @@ export class TickPipeline {
           { binding: 2, resource: { buffer: this.curves } },
           { binding: 3, resource: { buffer: this.chromaNodes } },
           { binding: 4, resource: { buffer: this.matrix } },
-          { binding: 5, resource: { buffer: this.buffer('luma') } },
-          { binding: 6, resource: { buffer: this.buffer('red') } },
-          { binding: 7, resource: { buffer: this.buffer('blue') } },
-          { binding: 8, resource: { buffer: this.peak } },
+          { binding: 5, resource: this.graded.createView() },
+          { binding: 6, resource: { buffer: this.peak } },
         ],
       }),
     );
@@ -415,9 +416,7 @@ export class TickPipeline {
         layout: this.presentLayout,
         entries: [
           { binding: 0, resource: { buffer: this.current } },
-          { binding: 1, resource: { buffer: this.buffer('luma') } },
-          { binding: 2, resource: { buffer: this.buffer('red') } },
-          { binding: 3, resource: { buffer: this.buffer('blue') } },
+          { binding: 1, resource: this.graded.createView() },
         ],
       }),
     );

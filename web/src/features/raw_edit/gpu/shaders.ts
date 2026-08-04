@@ -242,10 +242,8 @@ export const GRADE = /* wgsl */ `
 ${PRELUDE}
 ${TICK}
 ${COLOUR_BINDINGS}
-@group(0) @binding(5) var<storage, read_write> out_luma: array<f32>;
-@group(0) @binding(6) var<storage, read_write> out_red: array<f32>;
-@group(0) @binding(7) var<storage, read_write> out_blue: array<f32>;
-@group(0) @binding(8) var<storage, read> peak_out: array<f32>;
+@group(0) @binding(5) var graded: texture_storage_2d<rgba32float, write>;
+@group(0) @binding(6) var<storage, read> peak_out: array<f32>;
 ${COLOUR}
 
 @compute @workgroup_size(8, 8)
@@ -283,13 +281,11 @@ fn grade(@builtin(global_invocation_id) id: vec3u) {
     pq(quantised.b * tick.peak),
   ) * 65535.0) / 65535.0;
 
-  // Deinterleaved on the way out, which is the form 'finish' works in: luma, and the two
-  // chroma differences from it.
-  let l = dot(LUMA, coded);
-  let i = at(id.x, id.y);
-  out_luma[i] = l;
-  out_red[i] = coded.r - l;
-  out_blue[i] = coded.b - l;
+  // One interleaved write rather than three planes. The split existed for 'image::finish',
+  // which works a plane at a time and does not run here any more; without it, luma and its
+  // two chroma differences were being computed, scattered across three buffers, and
+  // recombined by the next pass for nothing.
+  textureStore(graded, vec2i(i32(id.x), i32(id.y)), vec4f(coded, 1.0));
 }
 `;
 
@@ -369,9 +365,7 @@ fn quantile() {
 export const PRESENT = /* wgsl */ `
 ${PRELUDE}
 ${TICK}
-@group(0) @binding(1) var<storage, read> luma: array<f32>;
-@group(0) @binding(2) var<storage, read> red: array<f32>;
-@group(0) @binding(3) var<storage, read> blue: array<f32>;
+@group(0) @binding(1) var graded: texture_2d<f32>;
 
 // Rec.2020 to Display P3, both D65, applied in linear light. Rows sum to 1.
 const R2020_TO_P3 = mat3x3f(
@@ -394,17 +388,9 @@ fn encode(v: f32) -> f32 {
 }
 
 @fragment fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
-  let x = min(u32(pos.x), tick.width - 1u);
-  let y = min(u32(pos.y), tick.height - 1u);
-  let i = at(x, y);
-
-  // 'image::recombine': green is solved from the luma equation so the recombination is
-  // exactly luma-preserving.
-  let l = luma[i];
-  let dr = red[i];
-  let db = blue[i];
-  let dg = -(LUMA.r * dr + LUMA.b * db) / LUMA.g;
-  let coded = vec3f(l + dr, l + dg, l + db);
+  let x = min(i32(pos.x), i32(tick.width) - 1);
+  let y = min(i32(pos.y), i32(tick.height) - 1);
+  let coded = textureLoad(graded, vec2i(x, y), 0).rgb;
 
   let nits = vec3f(pq_inv(coded.r), pq_inv(coded.g), pq_inv(coded.b));
   let p3 = (R2020_TO_P3 * nits) / tick.sdr_white;
