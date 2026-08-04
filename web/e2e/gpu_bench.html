@@ -50,11 +50,29 @@ async function main() {
     return;
   }
   const device = await adapter.requestDevice();
+  // A validation error drops the dispatches it applies to, which reads as a very fast
+  // tick rather than as a failure. Without this the bench happily reports 2ms for work
+  // that never ran.
+  let invalid = null;
+  device.addEventListener('uncapturederror', (event) => {
+    invalid ??= String(event.error?.message ?? event.error);
+  });
   const canvas = document.getElementById('stage');
   canvas.width = WIDTH;
   canvas.height = HEIGHT;
   const context = canvas.getContext('webgpu');
   context.configure({ device, format: 'rgba16float', alphaMode: 'opaque' });
+
+  // One stage per page load rather than several pipelines in one: each holds ten
+  // whole-frame planes, and on a part that shares system memory two of them alive at once
+  // measures the thrash rather than the stage.
+  const only = query.get('only');
+  const strengths =
+    only == null
+      ? { luma: 1, chroma: 1, sharpen: 1, defringe: 1 }
+      : { luma: 0, chroma: 0, sharpen: 0, defringe: 0 };
+  if (only != null && only !== 'defringe') strengths[only] = 1;
+  const fringing = only == null || only === 'defringe' ? 0.01 : 0;
 
   const header = {
     width: WIDTH,
@@ -62,12 +80,12 @@ async function main() {
     white: 34000,
     peak: 52000,
     grade: { peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.995 },
-    strengths: { luma: 1, chroma: 1, sharpen: 1, defringe: 1 },
+    strengths,
     matched: false,
     colour: null,
     sigma: 0.002,
-    defocusRed: 0.01,
-    defocusBlue: 0.01,
+    defocusRed: fringing,
+    defocusBlue: fringing,
   };
 
   const built = performance.now();
@@ -80,22 +98,19 @@ async function main() {
   pipeline.render(0);
   await device.queue.onSubmittedWorkDone();
 
-  const runs = [];
-  for (let i = 0; i < RUNS; i++) {
-    const at = performance.now();
-    pipeline.render(0.5 + i * 0.1);
-    await device.queue.onSubmittedWorkDone();
-    runs.push(Number((performance.now() - at).toFixed(1)));
-  }
+  const time = async (run) => {
+    const taken = [];
+    for (let i = 0; i < RUNS; i++) {
+      const at = performance.now();
+      run(i);
+      await device.queue.onSubmittedWorkDone();
+      taken.push(Number((performance.now() - at).toFixed(1)));
+    }
+    return Math.min(...taken);
+  };
 
-  // The grade alone, for the same split `tick_bench` reports.
-  const gradeOnly = [];
-  for (let i = 0; i < RUNS; i++) {
-    const at = performance.now();
-    pipeline.render(0.5 + i * 0.1, true);
-    await device.queue.onSubmittedWorkDone();
-    gradeOnly.push(Number((performance.now() - at).toFixed(1)));
-  }
+  const runs = await time((i) => pipeline.render(0.5 + i * 0.1));
+  const gradeOnly = await time((i) => pipeline.render(0.5 + i * 0.1, true));
 
   const info = adapter.info ?? {};
   out.textContent = JSON.stringify(
@@ -104,6 +119,8 @@ async function main() {
       adapter: [info.vendor, info.architecture].filter(Boolean).join(' / '),
       size: `${WIDTH}x${HEIGHT}`,
       megapixels: Number(((WIDTH * HEIGHT) / 1e6).toFixed(1)),
+      only: only ?? 'all',
+      invalid,
       openMs: Number(upload.toFixed(1)),
       tickMs: runs,
       gradeOnlyMs: gradeOnly,

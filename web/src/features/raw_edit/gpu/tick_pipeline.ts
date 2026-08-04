@@ -242,8 +242,10 @@ export class TickPipeline {
     this.gradeLayout = gradeLayout;
     this.gradePipeline = compute(grade, 'grade', gradeLayout);
     for (const entry of [
-      'box_h',
-      'box_v',
+      'scan_h',
+      'scan_v',
+      'window_h',
+      'window_v',
       'square',
       'multiply',
       'subtract_product',
@@ -522,11 +524,20 @@ export class TickPipeline {
     pass.end();
   }
 
-  /** `image::box_mean`, separably, through a scratch plane. */
+  /**
+   * `image::box_mean`, separably: a prefix sum along each axis and a difference across it.
+   *
+   * Four dispatches through the same two planes the sliding version used, so the call
+   * sites are unchanged: the scan lands in `scratch`, the window reads it into `dst`, and
+   * the vertical pair does the same the other way round. `src` is only read by the first
+   * dispatch, so a caller passing `src === dst` is safe.
+   */
   private boxMean(encoder: GPUCommandEncoder, src: PlaneName, dst: PlaneName, scratch: PlaneName, radius: number): void {
     this.writeUniform({ radius });
-    this.op(encoder, 'box_h', src, scratch);
-    this.op(encoder, 'box_v', scratch, dst);
+    this.op(encoder, 'scan_h', src, scratch, src, src, [this.height, 1]);
+    this.op(encoder, 'window_h', scratch, dst);
+    this.op(encoder, 'scan_v', dst, scratch, dst, dst, [this.width, 1]);
+    this.op(encoder, 'window_v', scratch, dst);
   }
 
   /**
@@ -625,11 +636,15 @@ export class TickPipeline {
     this.op(encoder, 'intercept', meanInput, 's5', 's4', mean);
     this.boxMean(encoder, 's4', 's4', 's2', radius);
     this.boxMean(encoder, 's5', 's5', 's2', radius);
-    // Through scratch, because `out` is often the guide as well - the luma denoise is
-    // self-guided - and one buffer cannot be both a read and a read_write binding of the
-    // same dispatch.
-    this.op(encoder, 'combine', 's4', 's3', guide, 's5');
-    this.op(encoder, 'copy', 's3', out);
+    // Straight into `out` where nothing else in the dispatch is reading it: one buffer
+    // cannot be both a read and a read_write binding at once. That rules out the guide,
+    // which `out` is for the self-guided luma denoise, and the two scratch planes this
+    // function is holding its own fit in. The chroma passes guide red and blue by luma and
+    // land on neither, so they skip the bounce - worth having, since a whole-frame copy is
+    // two more passes over 40MB and this runs six times a tick.
+    const aliased = out === guide || out === 's4' || out === 's5';
+    this.op(encoder, 'combine', 's4', aliased ? 's3' : out, guide, 's5');
+    if (aliased) this.op(encoder, 'copy', 's3', out);
   }
 
   /**

@@ -387,42 +387,114 @@ ${TICK}
 @group(0) @binding(3) var<storage, read> aux0: array<f32>;
 @group(0) @binding(4) var<storage, read> aux1: array<f32>;
 
-/// 'image::box_mean', horizontal half.
+/// 'image::box_mean', as a prefix sum and a difference.
 ///
-/// **Gathered per pixel, not slid along the row.** The Rust slides a window so the cost is
-/// O(1) in the radius, which is the right shape for a core that walks a row anyway. On a
-/// GPU it is the wrong shape twice over: it puts one invocation on a whole row, so a 9.9MP
-/// frame gets 3840 threads where the device wants hundreds of thousands, and each of those
-/// threads runs a 2566-step chain where every step depends on the last. Measured at 3.3s a
-/// tick against the CPU's 0.9s. Gathering is O(r) per pixel and embarrassingly parallel,
-/// which is the trade a GPU exists to take.
+/// Three shapes were tried and the reasoning is worth keeping, because each is right
+/// somewhere. The Rust slides a window: O(1) in the radius, and exactly right for a core
+/// that walks a row anyway. Carried across as-is it gave a 9.9MP frame 3840 threads, each
+/// running a 2566-step chain of dependent adds, and cost 3.3s a tick against the CPU's
+/// 0.9s. Gathering the window per pixel fixed the occupancy and cost 1.4s, but it is O(r)
+/// *reads* per pixel, so at the coarse chroma radius of 32 it moves 65x the memory the
+/// sliding window does - and on a part that shares system memory that is the whole budget.
+///
+/// A scan is both: O(1) reads per pixel like the slide, and parallel like the gather. Each
+/// workgroup takes one row, walks it in tiles, and carries the running total between them;
+/// within a tile the scan is Hillis-Steele in workgroup memory.
+const SCAN_WIDTH: u32 = 256u;
+var<workgroup> tile: array<f32, 256>;
+
+/// An inclusive prefix sum along each row.
+@compute @workgroup_size(256)
+fn scan_h(@builtin(workgroup_id) group: vec3u, @builtin(local_invocation_id) local: vec3u) {
+  let y = group.x;
+  if (y >= tick.height) { return; }
+  let row = y * tick.width;
+  let lane = local.x;
+
+  var carry = 0.0;
+  var base = 0u;
+  // Uniform across the workgroup, which barriers require: every lane computes the same
+  // 'base', and the bound is the frame's width rather than anything per-lane.
+  loop {
+    if (base >= tick.width) { break; }
+    let x = base + lane;
+    tile[lane] = select(0.0, src[row + x], x < tick.width);
+    workgroupBarrier();
+
+    for (var offset = 1u; offset < SCAN_WIDTH; offset = offset << 1u) {
+      // The index is guarded rather than the read: 'select' evaluates both arms, so a
+      // lane below the offset would index past the start of the tile.
+      let reach = select(0u, lane - offset, lane >= offset);
+      let addend = select(0.0, tile[reach], lane >= offset);
+      workgroupBarrier();
+      tile[lane] = tile[lane] + addend;
+      workgroupBarrier();
+    }
+
+    if (x < tick.width) { dst[row + x] = tile[lane] + carry; }
+    workgroupBarrier();
+    carry = carry + tile[SCAN_WIDTH - 1u];
+    workgroupBarrier();
+    base = base + SCAN_WIDTH;
+  }
+}
+
+/// The same down each column.
+@compute @workgroup_size(256)
+fn scan_v(@builtin(workgroup_id) group: vec3u, @builtin(local_invocation_id) local: vec3u) {
+  let x = group.x;
+  if (x >= tick.width) { return; }
+  let lane = local.x;
+
+  var carry = 0.0;
+  var base = 0u;
+  loop {
+    if (base >= tick.height) { break; }
+    let y = base + lane;
+    tile[lane] = select(0.0, src[y * tick.width + x], y < tick.height);
+    workgroupBarrier();
+
+    for (var offset = 1u; offset < SCAN_WIDTH; offset = offset << 1u) {
+      let reach = select(0u, lane - offset, lane >= offset);
+      let addend = select(0.0, tile[reach], lane >= offset);
+      workgroupBarrier();
+      tile[lane] = tile[lane] + addend;
+      workgroupBarrier();
+    }
+
+    if (y < tick.height) { dst[y * tick.width + x] = tile[lane] + carry; }
+    workgroupBarrier();
+    carry = carry + tile[SCAN_WIDTH - 1u];
+    workgroupBarrier();
+    base = base + SCAN_WIDTH;
+  }
+}
+
+/// The window's mean from the row scan: the sum either side of it, differenced.
 ///
 /// The window still shrinks at the border rather than clamping samples, so an edge pixel
 /// is the mean of what is actually there, exactly as the Rust has it.
 @compute @workgroup_size(8, 8)
-fn box_h(@builtin(global_invocation_id) id: vec3u) {
+fn window_h(@builtin(global_invocation_id) id: vec3u) {
   if (!in_frame(id)) { return; }
   let radius = tick.radius;
   let row = id.y * tick.width;
   let low = select(id.x - radius, 0u, id.x < radius);
   let high = min(id.x + radius, tick.width - 1u);
-
-  var sum = 0.0;
-  for (var x = low; x <= high; x = x + 1u) { sum = sum + src[row + x]; }
-  dst[row + id.x] = sum / f32(high - low + 1u);
+  let before = select(src[row + low - 1u], 0.0, low == 0u);
+  dst[row + id.x] = (src[row + high] - before) / f32(high - low + 1u);
 }
 
-/// The vertical half, the same way.
+/// The same from the column scan.
 @compute @workgroup_size(8, 8)
-fn box_v(@builtin(global_invocation_id) id: vec3u) {
+fn window_v(@builtin(global_invocation_id) id: vec3u) {
   if (!in_frame(id)) { return; }
   let radius = tick.radius;
+  let width = tick.width;
   let low = select(id.y - radius, 0u, id.y < radius);
   let high = min(id.y + radius, tick.height - 1u);
-
-  var sum = 0.0;
-  for (var y = low; y <= high; y = y + 1u) { sum = sum + src[y * tick.width + id.x]; }
-  dst[id.y * tick.width + id.x] = sum / f32(high - low + 1u);
+  let before = select(src[(low - 1u) * width + id.x], 0.0, low == 0u);
+  dst[id.y * width + id.x] = (src[high * width + id.x] - before) / f32(high - low + 1u);
 }
 
 /// A plane to another plane. Needed where a stage's output is also one of its inputs:
