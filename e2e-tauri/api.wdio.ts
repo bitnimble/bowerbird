@@ -12,7 +12,12 @@
 //
 // `BOWERBIRD_E2E_SERVER` points at a running Bowerbird for the round-trip case; without it
 // the reachability case still proves the command runs and reports rather than panicking.
+import { existsSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+
 const SERVER = process.env.BOWERBIRD_E2E_SERVER ?? '';
+// The binary wdio launched, which `wdio.conf.ts` builds to the debug target dir.
+const APP_BINARY = join(import.meta.dirname, '..', 'src-tauri', 'target', 'debug', 'app');
 
 type Bridge = { __TAURI__: { core: { invoke: (c: string, a: unknown) => Promise<ArrayBuffer> } } };
 
@@ -96,6 +101,25 @@ describe('Bowerbird desktop shell', () => {
     // Four-byte aligned, which is what lets the page map a `Uint16Array` over it in place
     // rather than copying 361MB to get the alignment.
     expect((4 + opened.length) % 4).toBe(0);
+  });
+
+  it('keeps the server address beside the binary, so an unpacked build is portable', async () => {
+    const saved = await browser.execute(async () => {
+      const { invoke } = (window as unknown as Bridge).__TAURI__.core;
+      const before = (await invoke('server_origin', {})) as unknown as string;
+      const settled = (await invoke('set_server_origin', {
+        value: 'http://portable.test:1234/',
+      })) as unknown as string;
+      await invoke('set_server_origin', { value: before });
+      return settled;
+    });
+    // Trailing slash trimmed, or every path joined to it would double its first one.
+    expect(saved).toBe('http://portable.test:1234');
+
+    // And it landed next to the executable rather than in a config directory somewhere,
+    // which is what makes deleting the folder the whole uninstall.
+    const beside = join(dirname(APP_BINARY), 'bowerbird-server.txt');
+    expect(existsSync(beside)).toBe(true);
   });
 
   it('reports an unreachable server rather than panicking the shell', async () => {

@@ -35,9 +35,43 @@ fn origin() -> String {
         .unwrap_or_else(|| DEFAULT_ORIGIN.into())
 }
 
+/// Beside the executable where that is writable, and in the app's config directory
+/// otherwise.
+///
+/// Which makes an unpacked build portable: everything it remembers is in the folder it was
+/// unpacked into, so deleting the folder is uninstalling it, and two copies do not fight
+/// over one address. That is what a dev build handed to someone should do.
+///
+/// The fallback is not theoretical - an app installed under `Program Files` or
+/// `/Applications` sits somewhere it may not write to, and would otherwise fail to save at
+/// all. Decided by trying rather than by a marker file or a permissions check, because on
+/// Windows the answer depends on which directory it landed in and on who is running it.
 fn origin_file(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
     use tauri::Manager;
+    if let Some(beside) = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|dir| dir.join("bowerbird-server.txt")))
+    {
+        if writable(&beside) {
+            return Some(beside);
+        }
+    }
     app.path().app_config_dir().ok().map(|dir| dir.join("server"))
+}
+
+/// Whether this path can be created and written. Leaves the file behind if it already
+/// holds something, and removes the one it made if it did not.
+fn writable(path: &std::path::Path) -> bool {
+    if path.exists() {
+        return std::fs::OpenOptions::new().append(true).open(path).is_ok();
+    }
+    match std::fs::write(path, "") {
+        Ok(()) => {
+            let _ = std::fs::remove_file(path);
+            true
+        }
+        Err(_) => false,
+    }
 }
 
 /// Reads the saved origin at startup, so the first request already knows where to go.
