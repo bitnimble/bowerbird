@@ -787,6 +787,21 @@ impl Sample for u16 {
     }
 }
 
+/// Samples that are already the 0..1 the filters work in.
+///
+/// For a caller that has to convert into a perceptual domain anyway (`edit::filter_once`):
+/// going through `u16` there would quantise on the way in, again between the stages, and
+/// again on the way out, for a frame whose whole point is that it is filtered once.
+impl Sample for f32 {
+    const FULL: f32 = 1.0;
+    fn to_f32(self) -> f32 {
+        self
+    }
+    fn from_f32(value: f32) -> f32 {
+        value
+    }
+}
+
 /// The blur the sharpen deconvolves, as a Gaussian sigma in output pixels.
 ///
 /// This is **capture sharpening's** question, not creative sharpening's: what spread did

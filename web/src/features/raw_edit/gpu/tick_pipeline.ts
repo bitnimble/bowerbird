@@ -9,31 +9,10 @@
 // `image::finish`, then the display transform. What has gone is the copy at the front (the
 // source texture is never written) and the encode at the back (a canvas is not a file).
 
-import {
-  FINISH,
-  FINISH_WGSL,
-  GRADE,
-  LUMA,
-  PEAK,
-  PEAK_BINS,
-  PRESENT,
-  SHARPEN,
-  TICK_UNIFORM_FLOATS,
-  withHalfPlanes,
-} from './shaders';
+import { GRADE, LUMA, PEAK, PEAK_BINS, PRESENT, TICK_UNIFORM_FLOATS } from './shaders';
 
 /** `Sample::from_f32` for `u16`: rounded, and held inside the range it has to fit. */
 const clamp16 = (v: number): number => Math.max(0, Math.min(65535, Math.round(v)));
-
-/** IEEE 754 binary16 to a number, for reading a half-precision plane back. */
-function half(bits: number): number {
-  const sign = bits >> 15 ? -1 : 1;
-  const exponent = (bits >> 10) & 0x1f;
-  const fraction = bits & 0x3ff;
-  if (exponent === 0) return sign * fraction * 2 ** -24;
-  if (exponent === 31) return fraction === 0 ? sign * Infinity : NaN;
-  return sign * (fraction + 1024) * 2 ** (exponent - 25);
-}
 
 export interface ChromaPayload {
   nodes: number[];
@@ -76,19 +55,9 @@ export interface PreparedHeader {
 const SDR_WHITE_NITS = 203;
 
 /** Every plane the pipeline needs live at once, named so a swap reads as one. */
-type PlaneName =
-  | 'luma'
-  | 'red'
-  | 'blue'
-  | 's0'
-  | 's1'
-  | 's2'
-  | 's3'
-  | 's4'
-  | 's5'
-  | 'extrema';
+type PlaneName = 'luma' | 'red' | 'blue';
 
-const PLANES: PlaneName[] = ['luma', 'red', 'blue', 's0', 's1', 's2', 's3', 's4', 's5'];
+const PLANES: PlaneName[] = ['luma', 'red', 'blue'];
 
 export class TickPipeline {
   private readonly planes = new Map<PlaneName, GPUBuffer>();
@@ -107,17 +76,13 @@ export class TickPipeline {
   private readonly curves: GPUBuffer;
   private readonly chromaNodes: GPUBuffer;
   private readonly matrix: GPUBuffer;
-  private readonly taps: GPUBuffer;
   private readonly source: GPUTexture;
 
   private readonly peakClear: GPUComputePipeline;
   private readonly peakMeasure: GPUComputePipeline;
   private readonly peakQuantile: GPUComputePipeline;
   private readonly gradePipeline: GPUComputePipeline;
-  private readonly plane: Record<string, GPUComputePipeline> = {};
-  private readonly sharpen: Record<string, GPUComputePipeline> = {};
   private readonly present: GPURenderPipeline;
-  private readonly planeLayout: GPUBindGroupLayout;
   private readonly peakLayout: GPUBindGroupLayout;
   private readonly gradeLayout: GPUBindGroupLayout;
   private readonly presentLayout: GPUBindGroupLayout;
@@ -130,8 +95,6 @@ export class TickPipeline {
     private readonly context: GPUCanvasContext,
     private readonly header: PreparedHeader,
     samples: Uint16Array,
-    /** Diagnostic: store the working planes at half precision ('withHalfPlanes'). */
-    readonly halfPlanes = false,
   ) {
     this.width = header.width;
     this.height = header.height;
@@ -165,22 +128,16 @@ export class TickPipeline {
       length: number,
       usage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
     ) => device.createBuffer({ size: length * 4, usage });
-    // Planes narrow with the storage format; the histogram, the curves and the uniforms do
-    // not, since none of them is walked per pixel.
-    const bytes = halfPlanes ? 2 : 4;
     const plane = (length: number) =>
       device.createBuffer({
-        size: length * bytes,
+        size: length * 4,
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
       });
     for (const name of PLANES) this.planes.set(name, plane(pixels));
-    // Two values a pixel, since the horizontal extrema sweep carries a low and a high.
-    this.planes.set('extrema', plane(pixels * 2));
 
-    // Sized for the deconvolution, which is the stage with the most passes: ten iterations
-    // of six, plus the guided filters ahead of it. Grown on demand rather than guessed
-    // exactly, since being wrong costs an allocation and never a wrong picture.
-    for (let i = 0; i < 128; i++) this.uniforms.push(this.newUniform());
+    // A tick is the peak, the grade and the draw, so a handful is plenty; grown on demand
+    // rather than guessed exactly, since being wrong costs an allocation.
+    for (let i = 0; i < 8; i++) this.uniforms.push(this.newUniform());
     this.current = this.uniforms[0]!;
     this.histogram = storage(PEAK_BINS);
     this.peak = storage(4);
@@ -192,15 +149,9 @@ export class TickPipeline {
     this.matrix = this.upload(
       new Float32Array(colour ? colour.matrix.flat() : [1, 0, 0, 0, 1, 0, 0, 0, 1]),
     );
-    this.taps = this.upload(new Float32Array(gaussianTaps()));
-
-    // The grade writes the planes and the present reads them, so both follow the format.
-    const half = (code: string) => (halfPlanes ? withHalfPlanes(code) : code);
-    const grade = device.createShaderModule({ code: half(GRADE), label: 'grade' });
+    const grade = device.createShaderModule({ code: GRADE, label: 'grade' });
     const peak = device.createShaderModule({ code: PEAK, label: 'peak' });
-    const finish = device.createShaderModule({ code: half(FINISH_WGSL), label: 'finish' });
-    const sharpen = device.createShaderModule({ code: half(SHARPEN), label: 'sharpen' });
-    const present = device.createShaderModule({ code: half(PRESENT), label: 'present' });
+    const present = device.createShaderModule({ code: PRESENT, label: 'present' });
 
     // Explicit layouts rather than `auto`, because `auto` derives the layout from what an
     // entry point happens to reference: `copy` reads two of the five bindings the plane
@@ -225,9 +176,6 @@ export class TickPipeline {
       texture: { sampleType: 'uint' as const },
     });
 
-    this.planeLayout = device.createBindGroupLayout({
-      entries: [uniform, readOnly(1), writable(2), readOnly(3), readOnly(4)],
-    });
     const gradeLayout = device.createBindGroupLayout({
       entries: [
         uniform,
@@ -264,35 +212,6 @@ export class TickPipeline {
     this.peakQuantile = compute(peak, 'quantile', this.peakLayout);
     this.gradeLayout = gradeLayout;
     this.gradePipeline = compute(grade, 'grade', gradeLayout);
-    for (const entry of [
-      'box_h',
-      'box_v',
-      'square',
-      'multiply',
-      'subtract_product',
-      'slope',
-      'intercept',
-      'combine',
-      'copy',
-      'blend_limited',
-      'blend_toward',
-      'laplacian',
-      'defringe',
-      'defringe_blue',
-    ]) {
-      this.plane[entry] = compute(finish, entry, this.planeLayout);
-    }
-    for (const entry of [
-      'convolve_h',
-      'convolve_v',
-      'ratio',
-      'scale_by',
-      'floor_at',
-      'extrema_h',
-      'extrema_v_clamp',
-    ]) {
-      this.sharpen[entry] = compute(sharpen, entry, this.planeLayout);
-    }
     this.present = device.createRenderPipeline({
       layout: device.createPipelineLayout({ bindGroupLayouts: [this.presentLayout] }),
       vertex: { module: present, entryPoint: 'vs' },
@@ -301,22 +220,14 @@ export class TickPipeline {
     });
   }
 
-  /**
-   * Grades at `ev` stops and puts the result on the canvas. One submit, no readback.
-   *
-   * `skipFinish` is the parity harness's, not a mode: it is how a failure says whether the
-   * grade or the denoise drifted, and the two are held to different tolerances (§6.3).
-   */
-  render(ev: number, skipFinish = false): void {
+  /** Grades at `ev` stops and puts the result on the canvas. One submit, no readback. */
+  render(ev: number): void {
     const encoder = this.device.createCommandEncoder();
     this.uniformsUsed = 0;
-    this.cost.dispatches = 0;
-    this.cost.planeTouches = 0;
     this.writeUniform({ exposure: 2 ** ev });
 
     if (this.header.matched) this.measurePeak(encoder);
     this.grade(encoder);
-    if (!skipFinish) this.finish(encoder);
     this.draw(encoder);
 
     this.device.queue.submit([encoder.finish()]);
@@ -331,7 +242,7 @@ export class TickPipeline {
   async readFrame(): Promise<Uint16Array> {
     const pixels = this.width * this.height;
     const read = async (name: PlaneName): Promise<Float32Array> => {
-      const bytes = pixels * (this.halfPlanes ? 2 : 4);
+      const bytes = pixels * 4;
       const staging = this.device.createBuffer({
         size: bytes,
         usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
@@ -340,10 +251,7 @@ export class TickPipeline {
       encoder.copyBufferToBuffer(this.buffer(name), 0, staging, 0, bytes);
       this.device.queue.submit([encoder.finish()]);
       await staging.mapAsync(GPUMapMode.READ);
-      const range = staging.getMappedRange();
-      const copy = this.halfPlanes
-        ? Float32Array.from(new Uint16Array(range), half)
-        : new Float32Array(range).slice();
+      const copy = new Float32Array(staging.getMappedRange()).slice();
       staging.unmap();
       staging.destroy();
       return copy;
@@ -366,7 +274,7 @@ export class TickPipeline {
   destroy(): void {
     for (const buffer of this.planes.values()) buffer.destroy();
     this.source.destroy();
-    for (const buffer of [...this.uniforms, this.histogram, this.peak, this.curves, this.chromaNodes, this.matrix, this.taps]) {
+    for (const buffer of [...this.uniforms, this.histogram, this.peak, this.curves, this.chromaNodes, this.matrix]) {
       buffer.destroy();
     }
   }
@@ -489,229 +397,6 @@ export class TickPipeline {
     pass.end();
   }
 
-  /** One plane-algebra dispatch: `dst = f(src, aux0, aux1)`. */
-  /**
-   * Dispatches in the last tick, and the plane reads and writes they made.
-   *
-   * The cost model in one number. A plane is 40MB at 9.9MP, and the guided filter walks
-   * one several times per box mean, so what looks like "a 40MB frame" is gigabytes of
-   * traffic by the time `finish` has run. Counted rather than reasoned about, because the
-   * reasoning is what was wrong the first time.
-   */
-  readonly cost = { dispatches: 0, planeTouches: 0 };
-
-  private op(
-    encoder: GPUCommandEncoder,
-    entry: string,
-    src: PlaneName,
-    dst: PlaneName,
-    aux0: PlaneName = src,
-    aux1: PlaneName = src,
-    dispatch?: [number, number],
-  ): void {
-    const pipeline = this.plane[entry] ?? this.sharpen[entry];
-    if (pipeline == null) throw new Error(`no pipeline named ${entry}`);
-    const pass = encoder.beginComputePass();
-    pass.setPipeline(pipeline);
-    pass.setBindGroup(
-      0,
-      this.device.createBindGroup({
-        layout: this.planeLayout,
-        entries: [
-          { binding: 0, resource: { buffer: this.current } },
-          { binding: 1, resource: { buffer: this.buffer(src) } },
-          { binding: 2, resource: { buffer: this.buffer(dst) } },
-          { binding: 3, resource: { buffer: this.buffer(aux0) } },
-          { binding: 4, resource: { buffer: this.buffer(aux1) } },
-        ],
-      }),
-    );
-    const [x, y] = dispatch ?? this.groups(this.width, this.height);
-    pass.dispatchWorkgroups(x, y);
-    pass.end();
-    // One write, plus a read for each distinct plane bound. Aux defaults to `src`, so a
-    // one-input kernel counts two touches rather than four.
-    this.cost.dispatches += 1;
-    this.cost.planeTouches += 1 + new Set([src, aux0, aux1]).size;
-  }
-
-  /** The sharpen shader's bindings differ (taps and the observed plane), so it has its own. */
-  private sharpenOp(
-    encoder: GPUCommandEncoder,
-    entry: string,
-    src: PlaneName,
-    dst: PlaneName,
-    observed: PlaneName,
-  ): void {
-    const pipeline = this.sharpen[entry];
-    if (pipeline == null) throw new Error(`no sharpen pipeline named ${entry}`);
-    const pass = encoder.beginComputePass();
-    pass.setPipeline(pipeline);
-    pass.setBindGroup(
-      0,
-      this.device.createBindGroup({
-        layout: this.planeLayout,
-        entries: [
-          { binding: 0, resource: { buffer: this.current } },
-          { binding: 1, resource: { buffer: this.buffer(src) } },
-          { binding: 2, resource: { buffer: this.buffer(dst) } },
-          { binding: 3, resource: { buffer: this.taps } },
-          { binding: 4, resource: { buffer: this.buffer(observed) } },
-        ],
-      }),
-    );
-    const [x, y] = this.groups(this.width, this.height);
-    pass.dispatchWorkgroups(x, y);
-    pass.end();
-    this.cost.dispatches += 1;
-    this.cost.planeTouches += 1 + new Set([src, observed]).size;
-  }
-
-  /**
-   * `image::box_mean`, separably, two dispatches and two planes.
-   *
-   * The horizontal half lands in `scratch` and the vertical reads it into `dst`, so `src`
-   * is only touched by the first dispatch and a caller passing `src === dst` is safe.
-   */
-  private boxMean(encoder: GPUCommandEncoder, src: PlaneName, dst: PlaneName, scratch: PlaneName, radius: number): void {
-    this.writeUniform({ radius });
-    // A tile of 256 per workgroup horizontally; 64 columns by a 64-row strip vertically.
-    this.op(encoder, 'box_h', src, scratch, src, src, [Math.ceil(this.width / 256), this.height]);
-    this.op(encoder, 'box_v', scratch, dst, scratch, scratch, [
-      Math.ceil(this.width / 64),
-      Math.ceil(this.height / 64),
-    ]);
-  }
-
-  /**
-   * `image::finish`, whole-frame.
-   *
-   * The plane names carry the CPU's variables: `luma`, `red` and `blue` are the frame,
-   * and `s0`..`s5` are what the Rust allocates and drops per stage. No strips, no halo and
-   * no carry rows, because the reason for them was a CPU memory budget rather than the
-   * arithmetic.
-   */
-  private finish(encoder: GPUCommandEncoder): void {
-    const { strengths, sigma } = this.header;
-    const chromaRadii = FINISH.chromaRadii.map((base) =>
-      Math.max(Math.round(base * strengths.chroma), 1),
-    ) as [number, number];
-
-    if (this.header.defocusRed !== 0 || this.header.defocusBlue !== 0) {
-      this.writeUniform();
-      this.op(encoder, 'laplacian', 'luma', 's0');
-      this.op(encoder, 'defringe', 's0', 'red');
-      this.op(encoder, 'defringe_blue', 's0', 'blue');
-    }
-
-    if (strengths.luma > 0) {
-      const eps = (FINISH.lumaSigmas * sigma) ** 2;
-      this.guideStats(encoder, 'luma', FINISH.lumaRadius);
-      // Self-guided: the input's mean *is* the guide's mean and the covariance *is* the
-      // variance, which is four of the six box means already in hand.
-      this.guidedWith(encoder, 'luma', 's0', 's1', 's0', 's1', FINISH.lumaRadius, eps, 'luma');
-    }
-
-    if (strengths.chroma > 0) {
-      this.guideStats(encoder, 'luma', chromaRadii[0]);
-      this.guided(encoder, 'red', chromaRadii[0], FINISH.denoiseEps, 'red');
-      this.guided(encoder, 'blue', chromaRadii[0], FINISH.denoiseEps, 'blue');
-
-      this.guideStats(encoder, 'luma', chromaRadii[1]);
-      const limit = FINISH.chromaCoarseLimit * strengths.chroma;
-      for (const channel of ['red', 'blue'] as const) {
-        this.guided(encoder, channel, chromaRadii[1], FINISH.denoiseEps, 's5');
-        this.writeUniform({ limit });
-        this.op(encoder, 'blend_limited', 's5', channel);
-      }
-    }
-
-    if (strengths.sharpen > 0) {
-      this.deconvolve(encoder);
-      this.writeUniform({ limit: Math.min(strengths.sharpen, 1) });
-      this.op(encoder, 'blend_toward', 's2', 'luma');
-    }
-  }
-
-  /** `image::guide_stats`: the guide's mean into `s0` and its variance into `s1`. */
-  private guideStats(encoder: GPUCommandEncoder, guide: PlaneName, radius: number): void {
-    this.boxMean(encoder, guide, 's0', 's4', radius);
-    this.op(encoder, 'square', guide, 's2');
-    this.boxMean(encoder, 's2', 's3', 's4', radius);
-    this.op(encoder, 'subtract_product', 's3', 's1', 's0', 's0');
-  }
-
-  /**
-   * `image::guided`, with the guide's statistics already in `s0` (mean) and `s1`
-   * (variance). The mean of the input lands in `s2` and the covariance in `s3`.
-   */
-  private guided(
-    encoder: GPUCommandEncoder,
-    input: PlaneName,
-    radius: number,
-    eps: number,
-    out: PlaneName,
-  ): void {
-    this.boxMean(encoder, input, 's2', 's4', radius);
-    this.op(encoder, 'multiply', 'luma', 's3', input, input);
-    this.boxMean(encoder, 's3', 's4', 's5', radius);
-    this.op(encoder, 'subtract_product', 's4', 's3', 's0', 's2');
-    this.guidedWith(encoder, 'luma', 's0', 's1', 's2', 's3', radius, eps, out);
-  }
-
-  /**
-   * `image::guided_with`: the slope, the intercept, their means, and the fit averaged back
-   * out. `mean` and `variance` are the guide's; `meanInput` and `covariance` the input's.
-   */
-  private guidedWith(
-    encoder: GPUCommandEncoder,
-    guide: PlaneName,
-    mean: PlaneName,
-    variance: PlaneName,
-    meanInput: PlaneName,
-    covariance: PlaneName,
-    radius: number,
-    eps: number,
-    out: PlaneName,
-  ): void {
-    this.writeUniform({ eps });
-    this.op(encoder, 'slope', covariance, 's4', variance);
-    this.op(encoder, 'intercept', meanInput, 's5', 's4', mean);
-    this.boxMean(encoder, 's4', 's4', 's2', radius);
-    this.boxMean(encoder, 's5', 's5', 's2', radius);
-    // Straight into `out` where nothing else in the dispatch is reading it: one buffer
-    // cannot be both a read and a read_write binding at once. That rules out the guide,
-    // which `out` is for the self-guided luma denoise, and the two scratch planes this
-    // function is holding its own fit in. The chroma passes guide red and blue by luma and
-    // land on neither, so they skip the bounce - worth having, since a whole-frame copy is
-    // two more passes over 40MB and this runs six times a tick.
-    const aliased = out === guide || out === 's4' || out === 's5';
-    this.op(encoder, 'combine', 's4', aliased ? 's3' : out, guide, 's5');
-    if (aliased) this.op(encoder, 'copy', 's3', out);
-  }
-
-  /**
-   * `image::deconvolve`: Richardson-Lucy against a Gaussian point spread, then the
-   * anti-ringing clamp. The observed plane is the luma as `finish` found it; the estimate
-   * lands in `s2`.
-   */
-  private deconvolve(encoder: GPUCommandEncoder): void {
-    this.writeUniform({ radius: FINISH.deconvolveRadius });
-    this.sharpenOp(encoder, 'floor_at', 'luma', 's2', 'luma');
-    for (let i = 0; i < FINISH.deconvolveIterations; i++) {
-      this.sharpenOp(encoder, 'convolve_h', 's2', 's3', 'luma');
-      this.sharpenOp(encoder, 'convolve_v', 's3', 's4', 'luma');
-      this.sharpenOp(encoder, 'ratio', 's4', 's3', 'luma');
-      this.sharpenOp(encoder, 'convolve_h', 's3', 's4', 'luma');
-      this.sharpenOp(encoder, 'convolve_v', 's4', 's5', 'luma');
-      this.sharpenOp(encoder, 'scale_by', 's5', 's2', 'luma');
-    }
-    // The clamp reads a window of the *observed* plane, so its radius is the point
-    // spread's reach rather than the estimate's.
-    this.sharpenOp(encoder, 'extrema_h', 'luma', 'extrema', 'luma');
-    this.sharpenOp(encoder, 'extrema_v_clamp', 'extrema', 's2', 'luma');
-  }
-
   private draw(encoder: GPUCommandEncoder): void {
     const pass = encoder.beginRenderPass({
       colorAttachments: [
@@ -739,12 +424,4 @@ export class TickPipeline {
     pass.draw(3);
     pass.end();
   }
-}
-
-/** `image::gaussian`, normalised over the whole symmetric kernel. */
-function gaussianTaps(): number[] {
-  const { deconvolveSigma: sigma, deconvolveRadius: radius } = FINISH;
-  const taps = Array.from({ length: radius + 1 }, (_, d) => Math.exp(-(d * d) / (2 * sigma * sigma)));
-  const sum = taps[0]! + 2 * taps.slice(1).reduce((a, b) => a + b, 0);
-  return taps.map((t) => t / sum);
 }

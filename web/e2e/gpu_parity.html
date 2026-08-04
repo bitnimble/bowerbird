@@ -12,27 +12,20 @@
 //
 // The shaders are a second implementation of the grade, so they are held to the first:
 // same prepared samples, same settings, same exposure, and the CPU's output to compare
-// against (`docs/raw-edit-gpu.md` §6.3). Reported per stage rather than as one number,
-// because grade and PQ are meant to be exact where `finish` is only meant to be close.
+// against (`docs/raw-edit-gpu.md` §6.3). The tick is the grade and the PQ encode alone now -
+// the filters run once at open, in `edit::filter_once` - so this is owed exactness rather
+// than a tolerance, and the fixture's input is the already-filtered frame.
 import { TickPipeline } from '/src/features/raw_edit/gpu/tick_pipeline.ts';
 
 const out = document.getElementById('out');
-// Diagnostic: the working planes at half precision (`?half=1`).
-const HALF = new URLSearchParams(location.search).get('half') === '1';
 
 async function fixture(name) {
-  const [header, input, expected, graded] = await Promise.all([
+  const [header, input, expected] = await Promise.all([
     fetch(`/e2e/fixtures/gpu/${name}.json`).then((r) => r.json()),
     fetch(`/e2e/fixtures/gpu/${name}.input.bin`).then((r) => r.arrayBuffer()),
     fetch(`/e2e/fixtures/gpu/${name}.expected.bin`).then((r) => r.arrayBuffer()),
-    fetch(`/e2e/fixtures/gpu/${name}.graded.bin`).then((r) => r.arrayBuffer()),
   ]);
-  return {
-    header,
-    input: new Uint16Array(input),
-    expected: new Uint16Array(expected),
-    graded: new Uint16Array(graded),
-  };
+  return { header, input: new Uint16Array(input), expected: new Uint16Array(expected) };
 }
 
 /**
@@ -83,11 +76,7 @@ async function main() {
     out.textContent = JSON.stringify({ ok: false, error: 'no WebGPU adapter' });
     return;
   }
-  // The adapter having `shader-f16` is not enough: a device only gets an extension it
-  // asked for, and WGSL refuses `enable f16` without it.
-  const device = await adapter.requestDevice(
-    HALF ? { requiredFeatures: ['shader-f16'] } : {},
-  );
+  const device = await adapter.requestDevice();
   device.addEventListener('uncapturederror', (event) => {
     out.textContent = JSON.stringify({ ok: false, error: String(event.error?.message ?? event.error) });
   });
@@ -107,24 +96,18 @@ async function main() {
 
   const results = {};
   for (const name of names) {
-    const { header, input, expected, graded } = await fixture(name);
+    const { header, input, expected } = await fixture(name);
     canvas.width = header.width;
     canvas.height = header.height;
     device.pushErrorScope('validation');
-    const pipeline = new TickPipeline(device, context, header, input, HALF);
+    const pipeline = new TickPipeline(device, context, header, input);
 
-    // Twice: the grade alone against the CPU's mid-tick frame, then the whole thing. A
-    // single number cannot say which half moved, and the two are owed different things.
-    pipeline.render(header.ev, true);
-    const gradeOnly = await pipeline.readFrame();
     pipeline.render(header.ev);
-    const whole = await pipeline.readFrame();
+    const graded = await pipeline.readFrame();
 
     const failure = await device.popErrorScope().catch(() => null);
     pipeline.destroy();
-    results[name] = failure == null
-      ? { grade: compare(gradeOnly, graded), finish: compare(whole, expected) }
-      : { error: failure.message };
+    results[name] = failure == null ? compare(graded, expected) : { error: failure.message };
   }
   out.textContent = JSON.stringify({ ok: true, results }, null, 2);
 }

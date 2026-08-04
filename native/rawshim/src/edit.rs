@@ -79,14 +79,6 @@ pub struct PreparedHeader {
     /// case the client grades the neutral arm exactly as a rendition does.
     pub matched: bool,
     pub colour: Option<ColourPayload>,
-    /// `image::measurements`, taken once here rather than per tick on the client.
-    ///
-    /// Both are properties of the frame's grain and its lens rather than of the exposure,
-    /// and re-deriving them per tick would put a whole-frame reduction in front of every
-    /// slider move for numbers that barely move between them.
-    pub sigma: f32,
-    pub defocus_red: f32,
-    pub defocus_blue: f32,
     /// Bytes of `u16` little-endian RGB following the header.
     pub samples_len: usize,
 }
@@ -153,6 +145,8 @@ pub fn prepare(request: &EditRequest) -> Result<Prepared, String> {
             }
         }
 
+        // Filtered here, so a tick is the grade alone.
+        filter_once(&mut prepared, request);
         Ok(payload(prepared, matched.as_ref(), request))
     })
 }
@@ -199,25 +193,52 @@ fn fit(
     .map(|(_, matched)| matched)
 }
 
-/// The frame's noise and its lens's defocus, measured where `finish` measures them.
+/// Denoises, defringes and sharpens the frame once, here, rather than on every tick.
 ///
-/// Both read a *graded, PQ-coded* frame, which is the domain `finish` runs in, so this
-/// grades a throwaway copy at the exposure the editor opens on. It costs one grade on top
-/// of the open and saves a reduction on every tick after it.
-fn measure(prepared: &HdrPrepared, matched: Option<&crate::hdr_fit::HdrMatch>, request: &EditRequest) -> (f32, (f32, f32)) {
+/// **In PQ against the scene's own diffuse white, not in linear and not in the grade's
+/// output.** Linear is the wrong domain and `image.rs` says why: a difference taken there
+/// is proportional to absolute luminance, so a filter calibrated on the bright end of a
+/// frame reads the whole shadow region as flat. Measured, it flattens shadow texture by a
+/// factor of forty (`examples/predenoise.rs`).
+///
+/// But the filter never needed the *grade's* output either - it needed a perceptual domain,
+/// and PQ against a fixed anchor is one that has nothing to do with the exposure. So the
+/// frame goes into PQ, is filtered, and comes back to scene-linear for the grade to read.
+/// Measured against filtering per tick, at three exposures: the mid-tones, which are 29.5M
+/// of a 29.6M-sample frame, land within 20 counts of 65535, and the grain that survives
+/// matches within a few percent.
+///
+/// What that buys is the whole point: a tick is the grade alone, 16ms against 645ms, and a
+/// rendition can cut every size it needs from one filtered base.
+///
+/// f32 throughout rather than the `u16` the frame arrives as, so the round trip costs one
+/// quantisation at the end instead of three.
+fn filter_once(prepared: &mut HdrPrepared, request: &EditRequest) {
     if !request.strengths.does_anything() {
-        return (0.0, (0.0, 0.0));
+        return;
     }
-    let mut working = prepared.samples.clone();
-    crate::hdr::grade_prepared(
-        &mut working,
-        &request.grade,
-        matched.map(|m| &m.colour),
-        prepared.levels,
-        1.0,
+    let scale = request.grade.reference_white_nits / prepared.levels.white.max(1.0);
+    let mut perceptual: Vec<f32> = prepared
+        .samples
+        .iter()
+        .map(|s| crate::tone::pq(f64::from(*s) * scale) as f32)
+        .collect();
+
+    let (sigma, defocus) =
+        crate::image::measurements(&perceptual, prepared.width, prepared.height, request.strengths);
+    crate::image::finish_with(
+        &mut perceptual,
+        prepared.width,
+        prepared.height,
+        request.strengths,
+        sigma,
+        defocus,
     );
-    crate::tone::encode_pq(&mut working, request.grade.peak_nits);
-    crate::image::measurements(&working, prepared.width, prepared.height, request.strengths)
+
+    for (sample, filtered) in prepared.samples.iter_mut().zip(perceptual.iter()) {
+        let nits = crate::tone::pq_inv_for_testing(f64::from(*filtered));
+        *sample = (nits / scale).clamp(0.0, 65535.0).round() as u16;
+    }
 }
 
 fn payload(
@@ -225,7 +246,6 @@ fn payload(
     matched: Option<&crate::hdr_fit::HdrMatch>,
     request: &EditRequest,
 ) -> Prepared {
-    let (sigma, (defocus_red, defocus_blue)) = measure(&prepared, matched, request);
     let header = PreparedHeader {
         ok: true,
         width: prepared.width,
@@ -236,9 +256,6 @@ fn payload(
         strengths: request.strengths,
         matched: matched.is_some(),
         colour: matched.map(|m| ColourPayload::from(&m.colour)),
-        sigma,
-        defocus_red,
-        defocus_blue,
         samples_len: prepared.samples.len() * 2,
     };
     Prepared { header, samples: prepared.samples }

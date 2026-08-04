@@ -64,8 +64,11 @@ fn main() {
                 height: HEIGHT,
                 levels,
             };
-            let (sigma, defocus) = measurements(&prepared, colour.as_ref(), &grade, strengths);
-            let expected = run(&prepared, colour.as_ref(), &grade, strengths, ev, sigma, defocus);
+            // Filtered once, in the perceptual domain the open uses, so the fixture's
+            // input is the frame the client is actually handed.
+            let mut prepared = prepared;
+            filter_once(&mut prepared, &grade, strengths);
+            let expected = run(&prepared, colour.as_ref(), &grade, ev);
 
             let header = serde_json::json!({
                 "width": WIDTH,
@@ -77,68 +80,38 @@ fn main() {
                 "strengths": strengths,
                 "matched": colour.is_some(),
                 "colour": colour.as_ref().map(describe),
-                "sigma": sigma,
-                "defocusRed": defocus.0,
-                "defocusBlue": defocus.1,
             });
 
             let stem = format!("{out}/tick-{name}-ev{ev}");
             std::fs::write(format!("{stem}.json"), header.to_string()).expect("header");
-            std::fs::write(format!("{stem}.input.bin"), le(&samples)).expect("input");
+            std::fs::write(format!("{stem}.input.bin"), le(&prepared.samples)).expect("input");
             std::fs::write(format!("{stem}.expected.bin"), le(&expected)).expect("expected");
-            // The frame as it stands between the two halves, so a failure says which half.
-            // Tone and colour are meant to land exactly; `finish` is not.
-            let graded = graded(&prepared, colour.as_ref(), &grade, ev);
-            std::fs::write(format!("{stem}.graded.bin"), le(&graded)).expect("graded");
             println!("{stem}");
         }
     }
 }
 
-/// `image::measurements` on the frame as the editor's open takes them: at ev 0, once.
-fn measurements(
-    prepared: &Prepared,
-    colour: Option<&HdrColour>,
-    grade: &hdr::Grade,
-    strengths: Strengths,
-) -> (f32, (f32, f32)) {
-    let mut working = prepared.samples.clone();
-    hdr::grade_prepared(&mut working, grade, colour, prepared.levels, 1.0);
-    tone::encode_pq(&mut working, grade.peak_nits);
-    image::measurements(&working, prepared.width, prepared.height, strengths)
-}
-
 /// Exactly `wasm::Editor::grade_from` without the copy and the emit: what the shaders owe.
-fn run(
-    prepared: &Prepared,
-    colour: Option<&HdrColour>,
-    grade: &hdr::Grade,
-    strengths: Strengths,
-    ev: f32,
-    sigma: f32,
-    defocus: (f32, f32),
-) -> Vec<u16> {
+fn run(prepared: &Prepared, colour: Option<&HdrColour>, grade: &hdr::Grade, ev: f32) -> Vec<u16> {
     let mut working = prepared.samples.clone();
     hdr::grade_prepared(&mut working, grade, colour, prepared.levels, 2f64.powf(f64::from(ev)));
     tone::encode_pq(&mut working, grade.peak_nits);
-    // `finish_with` rather than `finish`, so both sides denoise by the same amount: the
-    // client takes these two numbers once at open and reuses them, and re-measuring here
-    // would make the harness report that choice instead of the port.
-    image::finish_with(&mut working, prepared.width, prepared.height, strengths, sigma, defocus);
     working
 }
 
-/// The tick with `finish` left off: grade and PQ alone, which is the exact half.
-fn graded(
-    prepared: &Prepared,
-    colour: Option<&HdrColour>,
-    grade: &hdr::Grade,
-    ev: f32,
-) -> Vec<u16> {
-    let mut working = prepared.samples.clone();
-    hdr::grade_prepared(&mut working, grade, colour, prepared.levels, 2f64.powf(f64::from(ev)));
-    tone::encode_pq(&mut working, grade.peak_nits);
-    working
+/// `edit::filter_once`, which is private to that module: the frame into PQ against its own
+/// diffuse white, filtered, and back to scene-linear.
+fn filter_once(prepared: &mut Prepared, grade: &hdr::Grade, strengths: Strengths) {
+    let scale = grade.reference_white_nits / prepared.levels.white.max(1.0);
+    let mut perceptual: Vec<f32> =
+        prepared.samples.iter().map(|s| tone::pq(f64::from(*s) * scale) as f32).collect();
+    let (sigma, defocus) =
+        image::measurements(&perceptual, prepared.width, prepared.height, strengths);
+    image::finish_with(&mut perceptual, prepared.width, prepared.height, strengths, sigma, defocus);
+    for (sample, filtered) in prepared.samples.iter_mut().zip(perceptual.iter()) {
+        let nits = tone::pq_inv_for_testing(f64::from(*filtered));
+        *sample = (nits / scale).clamp(0.0, 65535.0).round() as u16;
+    }
 }
 
 fn describe(colour: &HdrColour) -> serde_json::Value {

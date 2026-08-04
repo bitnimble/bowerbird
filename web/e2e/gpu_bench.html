@@ -17,8 +17,6 @@ import { TickPipeline } from '/src/features/raw_edit/gpu/tick_pipeline.ts';
 
 const out = document.getElementById('out');
 const query = new URLSearchParams(location.search);
-// Diagnostic: the working planes at half precision (`?half=1`).
-const HALF = query.get('half') === '1';
 const WIDTH = Number(query.get('width') ?? 2566);
 const HEIGHT = Number(query.get('height') ?? 3840);
 const RUNS = Number(query.get('runs') ?? 5);
@@ -51,11 +49,7 @@ async function main() {
     out.textContent = JSON.stringify({ ok: false, error: 'no WebGPU adapter' });
     return;
   }
-  // The adapter having `shader-f16` is not enough: a device only gets an extension it
-  // asked for, and WGSL refuses `enable f16` without it.
-  const device = await adapter.requestDevice(
-    HALF ? { requiredFeatures: ['shader-f16'] } : {},
-  );
+  const device = await adapter.requestDevice();
   // A validation error drops the dispatches it applies to, which reads as a very fast
   // tick rather than as a failure. Without this the bench happily reports 2ms for work
   // that never ran.
@@ -95,7 +89,7 @@ async function main() {
   };
 
   const built = performance.now();
-  const pipeline = new TickPipeline(device, context, header, scene(WIDTH, HEIGHT), HALF);
+  const pipeline = new TickPipeline(device, context, header, scene(WIDTH, HEIGHT));
   await device.queue.onSubmittedWorkDone();
   const upload = performance.now() - built;
 

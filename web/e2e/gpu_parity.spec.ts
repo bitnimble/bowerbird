@@ -37,24 +37,13 @@ test.describe('GPU tick parity', () => {
     test.skip(report.ok === false && /adapter/.test(report.error ?? ''), 'no WebGPU adapter here');
     expect(report.ok, report.error).toBe(true);
 
-    for (const [name, result] of Object.entries<Record<string, Record<string, number> | string>>(
-      report.results,
-    )) {
+    for (const [name, result] of Object.entries<Record<string, number | string>>(report.results)) {
       expect(result.error, `${name}: ${String(result.error)}`).toBeUndefined();
-      const grade = result.grade as Record<string, number>;
-      const finish = result.finish as Record<string, number>;
-
-      // Tone and colour are the promise, so the grade is held to arithmetic noise: what is
-      // left is f32 against the CPU's f64 either side of the u16 the two stages join at.
-      // Measured at 8 counts of 65535 at worst, and a mean nearer a tenth of one.
-      expect(grade.worst, `${name} grade worst`).toBeLessThanOrEqual(16);
-      expect(grade.mean, `${name} grade mean`).toBeLessThanOrEqual(0.5);
-
-      // `finish` may not match exactly and does not need to (§6.3): a 65-tap box mean
-      // summed in a different order and ten Richardson-Lucy iterations after it cannot
-      // reproduce the CPU bit for bit on any hardware. Measured at 12 counts at worst.
-      expect(finish.worst, `${name} finish worst`).toBeLessThanOrEqual(32);
-      expect(finish.mean, `${name} finish mean`).toBeLessThanOrEqual(1);
+      // Tone and colour are the promise, and the tick is now nothing but tone and colour,
+      // so what is left is arithmetic noise: f32 against the CPU's f64 either side of the
+      // u16 the grade and the PQ encode join at. Measured at 8 counts of 65535 at worst.
+      expect(result.worst as number, `${name} worst`).toBeLessThanOrEqual(16);
+      expect(result.mean as number, `${name} mean`).toBeLessThanOrEqual(0.5);
     }
   });
 });
