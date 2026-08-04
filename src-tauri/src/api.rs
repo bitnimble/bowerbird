@@ -260,10 +260,13 @@ fn frame(head: &Head, body: &[u8]) -> Vec<u8> {
 
 /// The same proxy for what the browser loads itself.
 ///
-/// An `<img>` or an `EventSource` fetches its own bytes and cannot go through a command,
-/// so those URLs carry this scheme instead and land here with the same path the API
-/// serves. Registered rather than left to `http://` so the page holds no origin, and the
-/// shell stays the one thing that knows where the library is.
+/// An `<img>` or a download fetches its own bytes and cannot go through a command, so those
+/// URLs carry this scheme instead and land here with the same path the API serves.
+/// Registered rather than left to `http://` so the page holds no origin, and the shell stays
+/// the one thing that knows where the library is.
+///
+/// Not an `EventSource`, though `eventsUrl` still points one here: see `fetch` for why a
+/// stream cannot be answered this way and what it does instead.
 ///
 /// Asynchronous, and that is not a detail: the synchronous form runs on the thread that
 /// draws, so a grid of thumbnails would freeze the window for as long as the library took
@@ -277,8 +280,8 @@ pub fn asset(request: tauri::http::Request<Vec<u8>>, responder: tauri::UriScheme
     let url = format!("{}{}", origin(), path);
 
     // Whatever the page sent, so a conditional request stays conditional and a range stays a
-    // range. `EventSource` sends `Accept`, an `<img>` revalidating sends `If-None-Match`, and
-    // the viewer's seek sends `Range`; dropping them turned every one into a plain GET.
+    // range. An `<img>` revalidating sends `If-None-Match` and the viewer's seek sends
+    // `Range`; dropping them turned every one into a plain GET.
     let forwarded: Vec<(String, String)> = request
         .headers()
         .iter()
@@ -344,6 +347,33 @@ async fn fetch(url: &str, forwarded: &[(String, String)]) -> Result<Fetched, req
         send = send.header(name, value);
     }
     let reply = send.send().await?;
+
+    // A stream cannot come back this way, so say so rather than wait for it forever.
+    //
+    // `UriSchemeResponder` takes a whole `Response<Vec<u8>>`, so the only way to answer is to
+    // read the body to its end - and `/api/events` is an SSE stream that never ends. What
+    // that produced was not an error but a silence: the task, its connection and the page's
+    // `EventSource` all sat in CONNECTING for the life of the process, `open` never fired,
+    // and no rendition event was ever delivered, so a thumbnail rebuilt by a sync stayed
+    // stale until the window was reloaded.
+    //
+    // 501 rather than a proxy that works, because making it work is a choice between the
+    // page reaching the library's origin directly (which needs CORS on the far side) and the
+    // shell forwarding events over a Tauri channel (which needs a second transport). Until
+    // one is picked this is at least loud: `EventSource` sees an error, retries with backoff,
+    // and the console names the reason.
+    if reply
+        .headers()
+        .get("content-type")
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|kind| kind.starts_with("text/event-stream"))
+    {
+        return Ok(Fetched {
+            status: 501,
+            headers: vec![("content-type".to_string(), "text/plain".to_string())],
+            body: b"the desktop shell cannot proxy an event stream".to_vec(),
+        });
+    }
 
     let status = reply.status().as_u16();
     let mut headers: Vec<(String, String)> = reply
