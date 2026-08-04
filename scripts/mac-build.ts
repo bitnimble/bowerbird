@@ -1,13 +1,17 @@
 // Cross-build the macOS `.app` from Linux, via osxcross. Dev testing only.
 //
 // Unsigned and unnotarised, so the first launch is right-click > Open. Modelled on
-// utai.au's `scripts/mac-build.ts`, with one difference that is the whole difficulty:
-// `rawshim` links LibRaw, lensfun and libavif, so the target needs those three built for
-// arm64 Darwin before any of this compiles. osxcross's MacPorts fetcher supplies them:
+// utai.au's `scripts/mac-build.ts`, with one difference that is the whole difficulty: the
+// shell builds `rawshim` without `renditions`, so it links LibRaw - and the target needs
+// that built for arm64 Darwin before any of this compiles. osxcross's MacPorts fetcher
+// supplies it, with the two libraries LibRaw's own build linked against:
 //
 //   export OSXCROSS_ROOT=~/osxcross/target MACOSX_DEPLOYMENT_TARGET=11.0
 //   export PATH="$OSXCROSS_ROOT/bin:$PATH" OSXCROSS_MACPORTS_MIRROR=https://packages.macports.org
-//   osxcross-macports install --arm64 libraw lensfun libavif
+//   osxcross-macports install --arm64 libraw jpeg lcms2 zlib
+//
+// Linked statically, which is a correctness decision rather than a size one - see
+// `RAWSHIM_LIBRAW_STATIC` below for the code-signing reason.
 //
 // One-time host prereqs beyond that: `rustup target add aarch64-apple-darwin` and an
 // osxcross toolchain with the Xcode-extracted macOS SDK (Apple's is not redistributable,
@@ -62,7 +66,7 @@ const sdk =
 const macports = join(root, 'macports', 'pkgs', 'opt', 'local');
 if (!existsSync(join(macports, 'lib', 'pkgconfig', 'libraw.pc'))) {
   console.error(`[mac-build] no LibRaw for ${TARGET} in ${macports}`);
-  console.error('[mac-build] osxcross-macports install --arm64 libraw lensfun libavif');
+  console.error('[mac-build] osxcross-macports install --arm64 libraw jpeg lcms2 zlib');
   process.exit(1);
 }
 
@@ -79,9 +83,32 @@ const env: Record<string, string> = {
   [`PKG_CONFIG_PATH_${under}`]: join(macports, 'lib', 'pkgconfig'),
   PKG_CONFIG_ALLOW_CROSS: '1',
   PKG_CONFIG_LIBDIR: join(macports, 'lib', 'pkgconfig'),
-  // `build.rs` names LibRaw, lensfun and libavif but leaves the search path to the system,
-  // which on a cross build is the wrong system. This is where they actually are.
-  [`CARGO_TARGET_${upper}_RUSTFLAGS`]: `-L native=${join(macports, 'lib')}`,
+  // `build.rs` names LibRaw but leaves the search path to the system, which on a cross build
+  // is the wrong system. This is where it actually is.
+  //
+  // The SDK first, and only because of `iconv`. Rust's std links `-liconv` on this target,
+  // and with only MacPorts on the path that resolved to its GNU build - leaving
+  // `/opt/local/lib/libiconv.2.dylib` in the load commands of a bundle that ships no such
+  // file, and GNU libiconv is LGPL where macOS provides one as a system library. Searching
+  // the SDK first hands `-liconv` the system stub instead. It shadows nothing else here:
+  // the SDK carries `.tbd` stubs where the three below are asked for as `static=`, which
+  // only an `.a` satisfies, and it has no jpeg or lcms2 at all.
+  [`CARGO_TARGET_${upper}_RUSTFLAGS`]: [
+    ...(sdk != null ? [`-L native=${join(sdk, 'usr', 'lib')}`] : []),
+    `-L native=${join(macports, 'lib')}`,
+  ].join(' '),
+  // Statically, which is not a size decision. The linker ad-hoc signs the binary, and this
+  // bundle used to be patched afterwards with `install_name_tool` to repoint
+  // `/opt/local/lib/*` at `@executable_path/../Frameworks` - which rewrites load commands in
+  // page 0 of `__TEXT`, so code directory slot 0 stops matching the file. arm64 macOS
+  // validates every page as it is paged in, so the first page dyld touched was rejected and
+  // the kernel killed the process before any app code ran: `Code Signature Invalid`,
+  // `Invalid Page`, faulting inside dyld's own header read. Rehashing the slots showed it
+  // exactly - 0 of 2159 mismatched as linked, 1 of 2159 after a single `-change`, and the
+  // MacPorts dylibs break the same way, so no ordering of the patching saves it. Linking the
+  // archive in means there is nothing to patch and the linker's signature stays valid.
+  RAWSHIM_LIBRAW_DIR: join(macports, 'lib'),
+  RAWSHIM_LIBRAW_STATIC: '1',
   // bindgen runs its own clang over the C headers and does not inherit any of the above.
   ...(sdk != null && {
     SDKROOT: sdk,
@@ -146,67 +173,10 @@ mkdirSync(resources, { recursive: true });
 copyFileSync(binary, join(macos, EXE));
 chmodSync(join(macos, EXE), 0o755);
 
-// The three C libraries travel with the bundle: a test Mac has no MacPorts, and the
-// binary was linked against `/opt/local/lib`. `install_name_tool` repoints it at
-// `@executable_path/../Frameworks`, which is where a `.app` keeps its dylibs.
-const frameworks = join(contents, 'Frameworks');
-mkdirSync(frameworks, { recursive: true });
-// The binary's actual closure, walked with `otool`, rather than everything MacPorts
-// unpacked. The lazy version shipped 143 dylibs and 175MB against a real need of six and
-// 3.3MB - most of it three copies of ICU at 32MB each, pulled in by packages nothing here
-// links. A `.app` is not the place to leave that.
-const named = readdirSync(bin).find(
-  (f) => f.startsWith(`${arch}-apple-darwin`) && f.endsWith('-install_name_tool'),
-);
-const otool = readdirSync(bin).find(
-  (f) => f.startsWith(`${arch}-apple-darwin`) && f.endsWith('-otool'),
-);
-if (named == null || otool == null) {
-  console.error(`[mac-build] no install_name_tool/otool for ${arch} in ${bin}`);
-  process.exit(1);
-}
-const tool = join(bin, named);
-const lister = join(bin, otool);
-
-/** What a Mach-O asks for, as bare filenames, whichever prefix it names them by. */
-function dependencies(file: string): string[] {
-  const listed = spawnSync(lister, ['-L', file], { encoding: 'utf8' });
-  return (listed.stdout ?? '')
-    .split('\n')
-    .slice(1)
-    .map((line) => line.trim().split(' ')[0] ?? '')
-    .filter((path) => path.startsWith('/opt/local/lib/') || path.includes('/Frameworks/'))
-    .map((path) => path.split('/').pop() ?? '');
-}
-
-const shipped: string[] = [];
-const queue = dependencies(join(macos, EXE));
-while (queue.length > 0) {
-  const lib = queue.shift() ?? '';
-  if (lib === '' || shipped.includes(lib)) continue;
-  const source = join(macports, 'lib', lib);
-  if (!existsSync(source)) continue;
-  shipped.push(lib);
-  copyFileSync(source, join(frameworks, lib));
-  queue.push(...dependencies(join(frameworks, lib)));
-}
-
-for (const lib of shipped) {
-  const inside = `@executable_path/../Frameworks/${lib}`;
-  spawnSync(tool, ['-change', `/opt/local/lib/${lib}`, inside, join(macos, EXE)], { stdio: 'ignore' });
-  // Its own name, so anything that reads it back agrees with where it is. dyld loads by
-  // the path in the *loader*, so this is tidiness rather than function - but a bundle
-  // whose libraries claim to live in a MacPorts prefix invites a confusing afternoon.
-  spawnSync(tool, ['-id', inside, join(frameworks, lib)], { stdio: 'ignore' });
-  // And their references to each other, or those resolve to a tree that is not there.
-  for (const other of shipped) {
-    spawnSync(
-      tool,
-      ['-change', `/opt/local/lib/${other}`, `@executable_path/../Frameworks/${other}`, join(frameworks, lib)],
-      { stdio: 'ignore' },
-    );
-  }
-}
+// No `Frameworks`, and nothing to patch into it. LibRaw and the two libraries it wants are
+// in the binary (`RAWSHIM_LIBRAW_STATIC` above), so the only things left in the load
+// commands are macOS's own - and the linker's ad-hoc signature still describes the file it
+// signed, which is what makes the bundle launchable at all.
 
 const icon = join(repoRoot, 'src-tauri', 'icons', 'icon.icns');
 if (existsSync(icon)) copyFileSync(icon, join(resources, 'icon.icns'));

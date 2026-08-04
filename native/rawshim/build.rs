@@ -150,13 +150,29 @@ fn editor_bindings() -> bindgen::Bindings {
     if let Ok(dir) = env::var("RAWSHIM_LIBRAW_DIR") {
         println!("cargo:rustc-link-search=native={dir}");
     }
-    match env::var("RAWSHIM_LIBRAW_STATIC").is_ok() {
-        // LibRaw is C++, and a static archive brings none of its runtime with it.
-        true => {
-            println!("cargo:rustc-link-lib=static=raw");
+    if !env::var("RAWSHIM_LIBRAW_STATIC").is_ok() {
+        println!("cargo:rustc-link-lib=raw");
+    } else {
+        println!("cargo:rustc-link-lib=static=raw");
+
+        // What the archive leaves undefined, which is not the same on the two targets that
+        // ask for it. Termux builds LibRaw `--disable-jpeg --disable-lcms`, so `-lraw` alone
+        // resolves; MacPorts builds it with both, leaving 17 `_jpeg_*` and `_cms*` symbols
+        // that only the matching archives answer. Nothing references `_jas_*` on either,
+        // despite `pkg-config --static` listing jasper, so it is not linked.
+        //
+        // And LibRaw is C++, which a static archive brings none of the runtime for: the NDK
+        // ships that as a shared `libc++_shared.so` an APK carries, where macOS has it as a
+        // system library.
+        let target = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+        if target == "macos" || target == "ios" {
+            println!("cargo:rustc-link-lib=static=jpeg");
+            println!("cargo:rustc-link-lib=static=lcms2");
+            println!("cargo:rustc-link-lib=static=z");
+            println!("cargo:rustc-link-lib=c++");
+        } else {
             println!("cargo:rustc-link-lib=c++_shared");
         }
-        false => println!("cargo:rustc-link-lib=raw"),
     }
 
     libraw_functions(bindgen::Builder::default().header("wrapper_client.h"))
