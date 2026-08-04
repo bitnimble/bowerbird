@@ -223,12 +223,20 @@ fn filter_once(prepared: &mut HdrPrepared, request: &EditRequest) {
     if !request.strengths.does_anything() {
         return;
     }
+    // Both round trips are threaded, and they are the reason an open sat at a fraction of a
+    // core for half its time: `pq` and its inverse are transcendental, one call per sample,
+    // and at 61MP that is 183M of them each way with `finish_with`'s own threading in
+    // between - so the process alternated between using the machine and using one lane of
+    // it. They are per-sample and order-free, which is the easiest thing rayon ever splits.
+    use crate::parallel::*;
+
     let scale = request.grade.reference_white_nits / prepared.levels.white.max(1.0);
-    let mut perceptual: Vec<f32> = prepared
+    let mut perceptual: Vec<f32> = Vec::with_capacity(prepared.samples.len());
+    prepared
         .samples
-        .iter()
+        .par_iter()
         .map(|s| crate::tone::pq(f64::from(*s) * scale) as f32)
-        .collect();
+        .collect_into_vec(&mut perceptual);
 
     let (sigma, defocus) =
         crate::image::measurements(&perceptual, prepared.width, prepared.height, request.strengths);
@@ -241,10 +249,14 @@ fn filter_once(prepared: &mut HdrPrepared, request: &EditRequest) {
         defocus,
     );
 
-    for (sample, filtered) in prepared.samples.iter_mut().zip(perceptual.iter()) {
-        let nits = crate::tone::pq_inv_for_testing(f64::from(*filtered));
-        *sample = (nits / scale).clamp(0.0, 65535.0).round() as u16;
-    }
+    prepared
+        .samples
+        .par_iter_mut()
+        .zip(perceptual.par_iter())
+        .for_each(|(sample, filtered)| {
+            let nits = crate::tone::pq_inv_for_testing(f64::from(*filtered));
+            *sample = (nits / scale).clamp(0.0, 65535.0).round() as u16;
+        });
 }
 
 fn payload(
