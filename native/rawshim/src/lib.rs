@@ -74,7 +74,6 @@ pub mod lens;
 #[cfg(feature = "renditions")]
 pub mod lensfun;
 pub mod parallel;
-pub mod png;
 pub mod rgb;
 #[cfg(feature = "renditions")]
 pub mod stacks;
