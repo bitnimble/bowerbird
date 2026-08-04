@@ -218,6 +218,27 @@ impl ChromaMap {
         ChromaMap::from_saturation(1.0)
     }
 
+    /// A map built node by node, for the fixtures and the tests.
+    ///
+    /// `from_saturation` puts the same 2x2 at every node, which is enough to say the lookup
+    /// happens and nothing about where it read: a reader that swapped the chroma axes, or
+    /// scaled the level axis wrongly, lands on an identical node and answers correctly. A
+    /// pin against a second implementation needs a lattice whose nodes differ.
+    ///
+    /// `f` is given the node's `(x, y, z)` - the two chroma axes and the level - in the
+    /// order `nodes` is indexed in.
+    pub fn from_nodes(f: impl Fn(usize, usize, usize) -> [f64; 4]) -> ChromaMap {
+        let mut nodes = Box::new([[0.0; 4]; MAP_NODES]);
+        for z in 0..MAP_LEVEL {
+            for y in 0..MAP_CHROMA {
+                for x in 0..MAP_CHROMA {
+                    nodes[(z * MAP_CHROMA + y) * MAP_CHROMA + x] = f(x, y, z);
+                }
+            }
+        }
+        ChromaMap { nodes }
+    }
+
     /// The map that does exactly what the saturation scalar does.
     ///
     /// Which is the point of the shape: one gain applied to every colour alike is this

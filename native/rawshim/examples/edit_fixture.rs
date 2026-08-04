@@ -11,7 +11,7 @@
 //! cargo run --release --example edit_fixture -- <out-dir>
 
 use rawshim::hdr::{self, Prepared};
-use rawshim::hdr_fit::HdrColour;
+use rawshim::hdr_fit::{ChromaMap, HdrColour};
 use rawshim::image::{self, Strengths};
 use rawshim::tone;
 
@@ -47,6 +47,40 @@ fn scene() -> Vec<u16> {
     samples
 }
 
+/// A camera match with something in every part of it.
+///
+/// This arm used to be `HdrColour::identity()` - three copies of a straight ramp, an
+/// identity matrix, saturation 1 and no chroma map at all. So the matched fixtures asked
+/// the shaders for a transform that returns its input, and the three curves, the matrix,
+/// the saturation and the entire chroma lattice were all no-ops the pin could not tell
+/// from a correct implementation or from a missing one. Six fixtures, and the camera match
+/// - which is the editor's whole reason to exist - was pinned by none of them.
+///
+/// Every field here is off the identity, and the lattice varies per node rather than
+/// repeating one saturation, so a reader that swapped the chroma axes or mis-scaled the
+/// level axis lands on the wrong node and fails.
+fn matched() -> HdrColour {
+    let mut colour = HdrColour::identity();
+    for (channel, curve) in colour.curves.iter_mut().enumerate() {
+        let gain = 1.0 + 0.06 * (channel as f64 - 1.0);
+        let bend = 0.10 - 0.03 * channel as f64;
+        let last = (curve.len() - 1) as f64;
+        for (bin, value) in curve.iter_mut().enumerate() {
+            // Monotonic, and a fitted curve's shape: a lifted toe easing into a gentler top.
+            let x = bin as f64 / last;
+            *value *= gain * (1.0 + bend * 4.0 * x * (1.0 - x));
+        }
+    }
+    colour.matrix = [[0.92, 0.06, 0.02], [0.05, 0.90, 0.05], [0.01, 0.07, 0.92]];
+    colour.saturation = 1.08;
+    colour.chroma = Some(ChromaMap::from_nodes(|x, y, z| {
+        let scale = 1.04 + 0.03 * x as f64 - 0.02 * y as f64 + 0.05 * z as f64;
+        let skew = 0.02 * (x as f64 - y as f64);
+        [scale, skew, -skew, scale * 0.98]
+    }));
+    colour
+}
+
 fn main() {
     let out = std::env::args().nth(1).unwrap_or_else(|| ".".to_string());
     let grade = hdr::Grade { peak_nits: 1000.0, reference_white_nits: 203.0, white_quantile: 0.995 };
@@ -56,7 +90,7 @@ fn main() {
 
     // Both arms, because they are different code on both sides: a file whose fit declined
     // grades one shared curve, and a file whose fit landed grades three and a matrix.
-    for (name, colour) in [("neutral", None), ("matched", Some(HdrColour::identity()))] {
+    for (name, colour) in [("neutral", None), ("matched", Some(matched()))] {
         for ev in [0.0f32, 1.0, -1.5] {
             let prepared = Prepared {
                 samples: samples.clone(),

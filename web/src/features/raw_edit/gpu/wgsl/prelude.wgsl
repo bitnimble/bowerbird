@@ -4,8 +4,14 @@
 // implementation of one picture, which is the divergence DESIGN §21.1 warns about, so
 // where a number appears here it appears with the name it has over there.
 
-/// `image::LUMA`, BT.709 weights on a Rec.2020 frame, as the Rust side uses them.
-const LUMA = vec3f(0.2126, 0.7152, 0.0722);
+/// `hdr_fit::LUMA` and `tone::LUMA`, which are BT.2020's weights for a Rec.2020 frame.
+///
+/// Not `image::LUMA`. That one is BT.709 and belongs to the denoise, which is measuring
+/// where detail is rather than what a colour weighs, and never meets this. Taking it here
+/// put the wrong weights under `finish_chroma`'s grey axis, the chroma map's level axis and
+/// its reconstructed middle channel, and the exposure ratio in `toned` - so every matched
+/// photograph was graded around a luma the CPU never computed.
+const LUMA = vec3f(0.2627, 0.678, 0.0593);
 
 // SMPTE ST 2084, both directions. `tone::pq` and `tone::pq_inv`.
 const PQ_M1: f32 = 0.1593017578125;

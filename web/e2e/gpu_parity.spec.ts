@@ -37,13 +37,35 @@ test.describe('GPU tick parity', () => {
     test.skip(report.ok === false && /adapter/.test(report.error ?? ''), 'no WebGPU adapter here');
     expect(report.ok, report.error).toBe(true);
 
+    // Named, not counted: the loop below passes over an empty object, so without this the
+    // pin reports green when the fixtures failed to load and nothing was compared at all.
+    expect(Object.keys(report.results ?? {}).sort()).toEqual([
+      'tick-matched-ev-1.5',
+      'tick-matched-ev0',
+      'tick-matched-ev1',
+      'tick-neutral-ev-1.5',
+      'tick-neutral-ev0',
+      'tick-neutral-ev1',
+    ]);
+
     for (const [name, result] of Object.entries<Record<string, number | string>>(report.results)) {
       expect(result.error, `${name}: ${String(result.error)}`).toBeUndefined();
-      // Tone and colour are the promise, and the tick is now nothing but tone and colour,
-      // so what is left is arithmetic noise: f32 against the CPU's f64 either side of the
-      // u16 the grade and the PQ encode join at. Measured at 8 counts of 65535 at worst.
-      expect(result.worst as number, `${name} worst`).toBeLessThanOrEqual(16);
+      // The mean is the assertion that matters, and it is the tight one: a wrong constant or
+      // a wrong stage moves every pixel, so it lands here and nowhere else. When the matched
+      // fixtures were still an identity transform this read 0.1; the wrong luma weights they
+      // were hiding read 11.9.
       expect(result.mean as number, `${name} mean`).toBeLessThanOrEqual(0.5);
+      // The worst is a handful of pixels rather than a picture, so it is bounded loosely and
+      // by count as well as by size. Two things put single pixels far out and neither is a
+      // defect: PQ is steep enough in the shadows that a last-bit f32 difference is hundreds
+      // of counts, and the scene peak the roll-off is built on is read off an 8192-bin
+      // histogram here against an exact quantile there - up to 0.6 nits apart, which the
+      // brightest pixels feel. Both were invisible while the transform was the identity.
+      expect(result.worst as number, `${name} worst`).toBeLessThanOrEqual(320);
+      expect(
+        (result.over16 as number) / (result.samples as number),
+        `${name} fraction past 16`,
+      ).toBeLessThanOrEqual(0.005);
     }
   });
 });
