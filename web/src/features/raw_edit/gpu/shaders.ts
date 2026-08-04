@@ -89,11 +89,8 @@ struct Tick {
   chroma_scale: f32,
   level_scale: f32,
   sdr_white: f32,
-  radius: u32,
-  eps: f32,
-  limit: f32,
-  defocus_red: f32,
-  defocus_blue: f32,
+  /// Rows apart the peak's quantile samples, so it reads about a million pixels.
+  row_stride: u32,
 };
 @group(0) @binding(0) var<uniform> tick: Tick;
 
@@ -302,6 +299,9 @@ export const PEAK_BINS = 8192;
 /** 'tone::PEAK_QUANTILE'. */
 export const PEAK_QUANTILE = 0.9999;
 
+/** 'tone::QUANTILE_SAMPLES', which is what the quantile is taken over. */
+export const PEAK_SAMPLES = 1 << 20;
+
 export const PEAK = /* wgsl */ `
 ${PRELUDE}
 ${TICK}
@@ -322,32 +322,71 @@ fn clear(@builtin(global_invocation_id) id: vec3u) {
   if (id.x < BINS) { atomicStore(&histogram[id.x], 0u); }
 }
 
-/// Every pixel rather than the CPU's strided million: a shader has no reason to subsample,
-/// and reading all of them removes the one place the two could disagree about *which*
-/// pixels were measured.
-@compute @workgroup_size(8, 8)
+/// About a million pixels, as whole rows.
+///
+/// Three shapes, and the reasoning matters more than the code. Reading every pixel was
+/// first, on the grounds that a shader has no reason to subsample - but this pass runs the
+/// same colour transform the grade does, so at full frame it costs what the grade costs.
+/// Measured at 12.5ms against the grade's 12.8, and the atomics are not what dominates it.
+/// The CPU never read every pixel either: 'tone::QUANTILE_SAMPLES' caps it at a million.
+///
+/// Copying the CPU's stride exactly was second, and it barely helped: 'k * pixels /
+/// counted' scatters consecutive lanes about ten pixels apart, so every one of them takes
+/// its own cache line and the pass is back to fetching the whole frame to read a tenth of
+/// it. Whole rows, every nth, samples just as evenly - the count is what the quantile cares
+/// about, and 'tone::levels' says so - while consecutive lanes stay adjacent.
+@compute @workgroup_size(64)
 fn measure(@builtin(global_invocation_id) id: vec3u) {
-  if (!in_frame(id)) { return; }
-  let code = textureLoad(source, vec2i(i32(id.x), i32(id.y)), 0);
+  let y = id.y * tick.row_stride;
+  if (id.x >= tick.width || y >= tick.height) { return; }
+  let x = id.x;
+
+  let code = textureLoad(source, vec2i(i32(x), i32(y)), 0);
   let coloured = matched_nits(vec3f(f32(code.r), f32(code.g), f32(code.b))) / tick.reference;
   let v = max(coloured.r, max(coloured.g, coloured.b));
   let bin = min(u32(max(v, 0.0) / RANGE * f32(BINS)), BINS - 1u);
   atomicAdd(&histogram[bin], 1u);
 }
 
-/// The quantile off the cumulative count, in one invocation because 1024 bins is nothing
-/// and a parallel scan here would be more code than the whole pass saves.
-@compute @workgroup_size(1)
-fn quantile() {
+/// The quantile off the cumulative count.
+///
+/// One invocation walking every bin was fine at 1024 and is not at 8192: that is 16,384
+/// dependent iterations on a single lane, each waiting on a global load, and it measured as
+/// most of what the peak pass costs. So the bins are summed in parallel first - a lane per
+/// chunk - and only the search across 256 partials and then within one chunk stays serial,
+/// which is 288 steps rather than 16,384.
+const CHUNKS: u32 = 256u;
+var<workgroup> partial: array<u32, 256>;
+
+@compute @workgroup_size(256)
+fn quantile(@builtin(local_invocation_id) local: vec3u) {
+  let width = BINS / CHUNKS;
+  let first = local.x * width;
+
+  var sum = 0u;
+  for (var b = first; b < first + width; b = b + 1u) { sum = sum + atomicLoad(&histogram[b]); }
+  partial[local.x] = sum;
+  workgroupBarrier();
+
+  if (local.x != 0u) { return; }
+
   var total = 0u;
-  for (var b = 0u; b < BINS; b = b + 1u) { total = total + atomicLoad(&histogram[b]); }
+  for (var c = 0u; c < CHUNKS; c = c + 1u) { total = total + partial[c]; }
   let want = u32(f32(total) * QUANTILE);
+
+  // The chunk the quantile falls in, then the bin inside it.
   var seen = 0u;
+  var chunk = CHUNKS - 1u;
+  for (var c = 0u; c < CHUNKS; c = c + 1u) {
+    if (seen + partial[c] >= want) { chunk = c; break; }
+    seen = seen + partial[c];
+  }
   var found = BINS - 1u;
-  for (var b = 0u; b < BINS; b = b + 1u) {
+  for (var b = chunk * width; b < (chunk + 1u) * width; b = b + 1u) {
     seen = seen + atomicLoad(&histogram[b]);
     if (seen >= want) { found = b; break; }
   }
+
   // The bin's centre, and never zero: a scene peak of zero would put the roll-off in a
   // division by it, which is the same guard 'scene_peak_nits' applies by returning None.
   let value = (f32(found) + 0.5) / f32(BINS) * RANGE * tick.reference;

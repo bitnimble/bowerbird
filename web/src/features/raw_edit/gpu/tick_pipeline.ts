@@ -9,7 +9,7 @@
 // `image::finish`, then the display transform. What has gone is the copy at the front (the
 // source texture is never written) and the encode at the back (a canvas is not a file).
 
-import { GRADE, PEAK, PEAK_BINS, PRESENT, TICK_UNIFORM_FLOATS } from './shaders';
+import { GRADE, PEAK, PEAK_BINS, PEAK_SAMPLES, PRESENT, TICK_UNIFORM_FLOATS } from './shaders';
 
 /** `Sample::from_f32` for `u16`: rounded, and held inside the range it has to fit. */
 const clamp16 = (v: number): number => Math.max(0, Math.min(65535, Math.round(v)));
@@ -90,6 +90,8 @@ export class TickPipeline {
 
   private readonly width: number;
   private readonly height: number;
+  /** Rows apart the peak samples, so it reads about `PEAK_SAMPLES` of them. */
+  private readonly rowStride: number;
 
   constructor(
     private readonly device: GPUDevice,
@@ -100,6 +102,7 @@ export class TickPipeline {
     this.width = header.width;
     this.height = header.height;
     const pixels = this.width * this.height;
+    this.rowStride = Math.max(1, Math.round(pixels / PEAK_SAMPLES));
 
     this.source = device.createTexture({
       size: [this.width, this.height],
@@ -311,7 +314,7 @@ export class TickPipeline {
     });
   }
 
-  private writeUniform(over: { exposure?: number; radius?: number; eps?: number; limit?: number } = {}): void {
+  private writeUniform(over: { exposure?: number } = {}): void {
     const header = this.header;
     const colour = header.colour;
     if (over.exposure != null) this.exposure = over.exposure;
@@ -338,11 +341,7 @@ export class TickPipeline {
     values[16] = colour?.chroma?.chromaScale ?? 1;
     values[17] = colour?.chroma?.levelScale ?? 1;
     values[18] = SDR_WHITE_NITS;
-    ints[19] = over.radius ?? 0;
-    values[20] = over.eps ?? 0;
-    values[21] = over.limit ?? 0;
-    values[22] = header.defocusRed;
-    values[23] = header.defocusBlue;
+    ints[19] = this.rowStride;
     this.device.queue.writeBuffer(this.current, 0, values);
   }
 
@@ -365,7 +364,9 @@ export class TickPipeline {
     const pass = encoder.beginComputePass();
     for (const [pipeline, x, y] of [
       [this.peakClear, Math.ceil(PEAK_BINS / 64), 1],
-      [this.peakMeasure, ...this.groups(this.width, this.height)],
+      // About a million pixels rather than the whole frame, which is what the CPU reads.
+      [this.peakMeasure, Math.ceil(this.width / 64), Math.ceil(this.height / this.rowStride)],
+      // One workgroup: the search is over bins, not pixels.
       [this.peakQuantile, 1, 1],
     ] as [GPUComputePipeline, number, number][]) {
       pass.setPipeline(pipeline);

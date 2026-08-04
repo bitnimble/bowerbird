@@ -21,6 +21,11 @@ const WIDTH = Number(query.get('width') ?? 2566);
 const HEIGHT = Number(query.get('height') ?? 3840);
 const RUNS = Number(query.get('runs') ?? 5);
 
+/** `HdrColour::identity()`: a ramp over the curve's own domain. */
+function rampCurve() {
+  return Array.from({ length: 256 }, (_, i) => (i / 255) * 4);
+}
+
 /** The shape `tick_bench` uses, so both sides time the same picture. */
 function scene(width, height) {
   const samples = new Uint16Array(width * height * 3);
@@ -81,8 +86,19 @@ async function main() {
     peak: 52000,
     grade: { peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.995 },
     strengths,
-    matched: false,
-    colour: null,
+    // The peak pass only runs on the matched arm, so it is off unless asked for: without
+    // this the tick being timed is the grade with no whole-frame reduction in front of it.
+    matched: query.get('matched') === '1',
+    colour:
+      query.get('matched') === '1'
+        ? {
+            curves: [rampCurve(), rampCurve(), rampCurve()],
+            matrix: [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+            saturation: 1,
+            trustCeiling: 4,
+            chroma: null,
+          }
+        : null,
     sigma: 0.002,
     defocusRed: fringing,
     defocusBlue: fringing,
