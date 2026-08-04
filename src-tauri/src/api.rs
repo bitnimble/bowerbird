@@ -276,28 +276,88 @@ pub fn asset(request: tauri::http::Request<Vec<u8>>, responder: tauri::UriScheme
         .unwrap_or_default();
     let url = format!("{}{}", origin(), path);
 
+    // Whatever the page sent, so a conditional request stays conditional and a range stays a
+    // range. `EventSource` sends `Accept`, an `<img>` revalidating sends `If-None-Match`, and
+    // the viewer's seek sends `Range`; dropping them turned every one into a plain GET.
+    let forwarded: Vec<(String, String)> = request
+        .headers()
+        .iter()
+        .filter(|(name, _)| FORWARDED_TO_LIBRARY.contains(&name.as_str()))
+        .filter_map(|(name, value)| {
+            value.to_str().ok().map(|value| (name.as_str().to_string(), value.to_string()))
+        })
+        .collect();
+
     tauri::async_runtime::spawn(async move {
-        responder.respond(match fetch(&url).await {
-            Ok((status, kind, body)) => tauri::http::Response::builder()
-                .status(status)
-                .header("content-type", kind)
-                .body(body)
-                .unwrap_or_else(|_| bad_gateway("the reply could not be built")),
+        responder.respond(match fetch(&url, &forwarded).await {
+            Ok(reply) => {
+                let mut built = tauri::http::Response::builder().status(reply.status);
+                for (name, value) in &reply.headers {
+                    built = built.header(name, value);
+                }
+                built
+                    // The page is at the app's own origin and this is a scheme of its own, so
+                    // every one of these fetches is cross-origin. Tauri sets this for the
+                    // protocols it registers itself and nothing sets it for ours, so without
+                    // it the browser drops the reply whatever the library answered.
+                    .header("access-control-allow-origin", "*")
+                    .body(reply.body)
+                    .unwrap_or_else(|_| bad_gateway("the reply could not be built"))
+            }
             Err(e) => bad_gateway(&format!("could not reach {url}: {e}")),
         });
     });
 }
 
-async fn fetch(url: &str) -> Result<(u16, String, Vec<u8>), reqwest::Error> {
-    let reply = client().get(url).send().await?;
+/// What a reply has to keep for the element that asked for it to behave.
+///
+/// `content-type` so it is decoded as what it is; `content-disposition` so a download saves
+/// under the library's name rather than navigating the window to bytes; `etag` and
+/// `last-modified` and `cache-control` so a rendition rebuilt behind a stable URL is
+/// re-fetched and one that was not is left alone; the range trio so the viewer can seek.
+///
+/// Not `content-length`: the body handed on is the one this decoded, and a length copied
+/// from the reply that produced it is a claim about different bytes.
+const KEPT_FROM_LIBRARY: [&str; 7] = [
+    "content-type",
+    "content-disposition",
+    "cache-control",
+    "etag",
+    "last-modified",
+    "accept-ranges",
+    "content-range",
+];
+
+/// And what the page's own request has to carry through for those to mean anything.
+const FORWARDED_TO_LIBRARY: [&str; 5] =
+    ["accept", "range", "if-none-match", "if-modified-since", "cache-control"];
+
+struct Fetched {
+    status: u16,
+    headers: Vec<(String, String)>,
+    body: Vec<u8>,
+}
+
+async fn fetch(url: &str, forwarded: &[(String, String)]) -> Result<Fetched, reqwest::Error> {
+    let mut send = client().get(url);
+    for (name, value) in forwarded {
+        send = send.header(name, value);
+    }
+    let reply = send.send().await?;
+
     let status = reply.status().as_u16();
-    let kind = reply
+    let mut headers: Vec<(String, String)> = reply
         .headers()
-        .get("content-type")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("application/octet-stream")
-        .to_string();
-    Ok((status, kind, reply.bytes().await?.to_vec()))
+        .iter()
+        .filter(|(name, _)| KEPT_FROM_LIBRARY.contains(&name.as_str()))
+        .filter_map(|(name, value)| {
+            value.to_str().ok().map(|value| (name.as_str().to_string(), value.to_string()))
+        })
+        .collect();
+    if !headers.iter().any(|(name, _)| name == "content-type") {
+        headers.push(("content-type".to_string(), "application/octet-stream".to_string()));
+    }
+    Ok(Fetched { status, headers, body: reply.bytes().await?.to_vec() })
 }
 
 fn bad_gateway(why: &str) -> tauri::http::Response<Vec<u8>> {
