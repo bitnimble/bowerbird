@@ -1,14 +1,12 @@
 // The desktop shell.
 //
-// One command that matters: the editor's open, run natively in this process rather than in
-// the page. That is the whole reason the shell exists for this feature - the open is the
-// only stage left that wants threads, measured at 3.2x between one and twelve
-// (`native/rawshim/examples/open_threads.rs`), and the tick after it is the GPU's.
-//
-// The browser client reaches the same code over HTTP (`GET /image/:id/prepared`). Same
-// `edit::prepare`, same bytes, two transports.
+// A transport, not a second application. The page calls `api` instead of `fetch` and loads
+// its images from `bowerbird://`, and both land in `api.rs`, which forwards them to the
+// hosted Bowerbird server. What that buys today is that the page holds no origin and no
+// credentials; what it buys later is offline mode, which becomes a `match` on the command
+// name in one file rather than a second client in the page.
 
-mod edit;
+mod api;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -20,7 +18,8 @@ pub fn run() {
         .plugin(tauri_plugin_wdio_webdriver::init());
 
     builder
-        .invoke_handler(tauri::generate_handler![edit::prepare_edit])
+        .register_uri_scheme_protocol("bowerbird", |_app, request| api::asset(request))
+        .invoke_handler(tauri::generate_handler![api::api])
         .run(tauri::generate_context!())
         .expect("error while running the Bowerbird shell");
 }

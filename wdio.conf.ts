@@ -1,8 +1,8 @@
 import { join } from 'node:path';
 
 // Drives the REAL desktop binary and the webview it embeds, which is the one thing the
-// Chromium Playwright suite cannot cover: the editor's open runs in this process now
-// (`src-tauri/src/edit.rs`), and IPC is the seam Playwright has to stub.
+// Chromium Playwright suite cannot cover: every request the page makes crosses IPC in this
+// build (`src-tauri/src/api.rs`), and IPC is the seam Playwright has to stub.
 //
 // The embedded driver provider runs a W3C WebDriver server inside the app
 // (tauri-plugin-wdio-webdriver), so no system WebKitWebDriver or tauri-driver is needed.

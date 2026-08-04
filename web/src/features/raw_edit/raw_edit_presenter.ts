@@ -1,5 +1,6 @@
 import { action } from 'mobx';
-import { preparedUrl } from '../../api/client';
+import { preparedPath } from '../../api/client';
+import { send } from '../../api/transport';
 import { describe } from '../../errors';
 import {
   TickPipeline,
@@ -265,86 +266,29 @@ export class RawEditPresenter {
 }
 
 /**
- * The prepared frame, header and all, from whichever side of the app is running.
+ * The prepared frame, header and all, over whichever transport is running.
  *
- * The desktop shell runs `edit::prepare` in its own process, so the frame never leaves the
- * machine; the browser asks the server for the same call over HTTP. One `PreparedHeader`
- * either way, because both are `edit::encode`'s framing.
+ * The frame's own description arrives in a response header rather than in the body, so the
+ * samples read straight into a texture upload instead of having a JSON prelude sliced off
+ * the front of several hundred megabytes.
+ *
+ * Copied out of the reply rather than viewed: `Uint16Array` needs two-byte alignment and a
+ * body offset does not promise one.
  */
 async function fetchPrepared(
   photoId: string,
   longEdge: number,
 ): Promise<{ header: PreparedHeader; samples: Uint16Array<ArrayBuffer> }> {
-  return desktop() == null
-    ? await overHttp(photoId, longEdge)
-    : await inProcess(photoId, longEdge);
-}
-
-/** Tauri's IPC, where the app is the desktop shell rather than a page. */
-function desktop(): ((command: string, args: unknown) => Promise<ArrayBuffer>) | null {
-  const bridge = (globalThis as { __TAURI__?: { core?: { invoke?: unknown } } }).__TAURI__;
-  const invoke = bridge?.core?.invoke;
-  return typeof invoke === 'function'
-    ? (invoke as (command: string, args: unknown) => Promise<ArrayBuffer>)
-    : null;
-}
-
-async function inProcess(
-  photoId: string,
-  longEdge: number,
-): Promise<{ header: PreparedHeader; samples: Uint16Array<ArrayBuffer> }> {
-  const invoke = desktop();
-  if (invoke == null) throw new Error('the desktop bridge went away mid-open');
-  // The shell owns no library yet, so the path still comes from the server's own record of
-  // this photo. That is the spike's shortcut, not the destination: the desktop build should
-  // read the library directly rather than asking a server for where a file is.
-  const located = await fetch(`/api/photos/${photoId}`).then((r) => r.json());
-  const settings = await fetch('/api/settings').then((r) => r.json());
-  const reply = await invoke('prepare_edit', {
-    request: JSON.stringify({
-      rawFilePath: located.file_path,
-      longEdge: Math.round(longEdge),
-      grade: {
-        peakNits: settings.hdr_peak_nits,
-        referenceWhiteNits: settings.hdr_reference_white_nits,
-        whiteQuantile: settings.hdr_white_quantile,
-      },
-      strengths: {
-        luma: settings.raw_denoise_luma,
-        chroma: settings.raw_denoise_chroma,
-        sharpen: settings.raw_sharpen,
-        defringe: settings.raw_defringe,
-      },
-    }),
-  });
-  return split(new Uint8Array(reply));
-}
-
-async function overHttp(
-  photoId: string,
-  longEdge: number,
-): Promise<{ header: PreparedHeader; samples: Uint16Array<ArrayBuffer> }> {
-  const response = await fetch(preparedUrl(photoId, longEdge), { cache: 'no-store' });
-  if (!response.ok) {
-    const detail = await response.text().catch(() => '');
-    throw new Error(`the server could not open this RAW: ${response.status} ${detail.slice(0, 200)}`);
+  const path = preparedPath(photoId, longEdge);
+  const reply = await send('get:prepared', 'GET', path);
+  if (reply.status < 200 || reply.status >= 300) {
+    const detail = new TextDecoder().decode(reply.bytes).slice(0, 200);
+    throw new Error(`could not open this RAW: ${reply.status} ${detail}`);
   }
-  // In a header rather than the body, so the samples read straight into a texture upload
-  // without slicing a JSON prelude off the front of a buffer that is tens of megabytes.
-  const described = response.headers.get('X-Prepared');
+  const described = reply.headers['x-prepared'];
   if (described == null) throw new Error('the prepared frame arrived with no header');
-  return { header: JSON.parse(described) as PreparedHeader, samples: new Uint16Array(await response.arrayBuffer()) };
-}
 
-/** `edit::encode`'s framing: a u32 header length, the header, then the samples. */
-function split(reply: Uint8Array): { header: PreparedHeader; samples: Uint16Array<ArrayBuffer> } {
-  const view = new DataView(reply.buffer, reply.byteOffset, reply.byteLength);
-  const length = view.getUint32(0, true);
-  const header = JSON.parse(new TextDecoder().decode(reply.subarray(4, 4 + length)));
-  if (header.ok === false) throw new Error(header.error ?? 'the shell could not open this RAW');
-  // Copied rather than viewed: the samples start at a header-dependent offset, which is
-  // almost never the alignment a `Uint16Array` over the same buffer needs.
-  const samples = new Uint16Array(header.samplesLen / 2);
-  new Uint8Array(samples.buffer).set(reply.subarray(4 + length, 4 + length + header.samplesLen));
-  return { header: header as PreparedHeader, samples };
+  const samples = new Uint16Array(reply.bytes.byteLength / 2);
+  new Uint8Array(samples.buffer).set(reply.bytes);
+  return { header: JSON.parse(described) as PreparedHeader, samples };
 }

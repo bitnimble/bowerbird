@@ -25,6 +25,7 @@ import type { ViewerRendition, ViewerRenditionMode, Settings, UpdateSettingsRequ
 import type { CreateShootRequest, Shoot, ShootRemoval, UpdateShootRequest } from '../../../src/schemas/shoots';
 import type { Rendition } from '../../../src/services/processing/renditions';
 import type { ProcessingStage } from '../../../src/services/processing/processing_types';
+import { type Reply, assetUrl, send } from './transport';
 
 // Types come straight from the server's Zod schemas as type-only imports, so the
 // client can never drift from the API and nothing is added to the bundle.
@@ -76,41 +77,56 @@ interface ErrorEnvelope {
 }
 
 /**
- * The error a failed response carries, for callers that read the body themselves.
+ * Every call below, over whichever transport is running (`transport.ts`).
  *
- * `request` covers every JSON route; this exists for the ones that want bytes back and so
- * call `fetch` directly. Reading `error` off the envelope without reaching `message`
- * yields the string "[object Object]", which is worth having one place rather than one
- * per caller.
+ * `cmd` is the caller's own name and is carried rather than used: it is what a Rust side
+ * answering from a local library would match on, and until offline mode exists every one
+ * of them proxies. Derived from the method and path so a new call cannot forget one.
  */
-export async function apiError(res: Response): Promise<ApiError> {
-  const envelope = (await res.json().catch(() => null)) as ErrorEnvelope | null;
-  return new ApiError(
-    envelope?.error?.code ?? 'INTERNAL_ERROR',
-    envelope?.error?.message ?? res.statusText,
-    res.status,
-  );
-}
-
 async function request<T>(method: string, path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
-  let res: Response;
+  let reply: Reply;
   try {
-    res = await fetch(path, {
-      method,
-      headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
-      body: body === undefined ? undefined : JSON.stringify(body),
-      signal,
-    });
+    reply = await send(commandName(method, path), method, path, body, signal);
   } catch (err) {
-    // fetch only rejects on transport failure, so this is "API unreachable",
+    // A transport only rejects when it never got an answer, so this is "API unreachable",
     // which is a different thing for the UI to say than any HTTP status.
     throw new ApiError('NETWORK_ERROR', `cannot reach the API at ${path}: ${(err as Error).message}`, 0);
   }
 
-  if (res.status === 204) return undefined as T;
+  if (reply.status === 204 || reply.bytes.length === 0) return undefined as T;
 
-  if (!res.ok) throw await apiError(res);
-  return (await res.json().catch(() => null)) as T;
+  const text = new TextDecoder().decode(reply.bytes);
+  if (reply.status < 200 || reply.status >= 300) throw errorFrom(reply.status, text);
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return null as T;
+  }
+}
+
+/** `PATCH /api/libraries/abc/photos` becomes `patch:libraries/:id/photos`. */
+function commandName(method: string, path: string): string {
+  const route = path
+    .split('?')[0]!
+    .replace(/^\/(api|image)\//, '')
+    .split('/')
+    .map((part) => (/^[0-9a-f-]{16,}$/i.test(part) ? ':id' : part))
+    .join('/');
+  return `${method.toLowerCase()}:${route}`;
+}
+
+function errorFrom(status: number, text: string): ApiError {
+  let envelope: ErrorEnvelope | null = null;
+  try {
+    envelope = JSON.parse(text) as ErrorEnvelope;
+  } catch {
+    envelope = null;
+  }
+  return new ApiError(
+    envelope?.error?.code ?? 'INTERNAL_ERROR',
+    envelope?.error?.message ?? text.slice(0, 200),
+    status,
+  );
 }
 
 export interface PhotoListParams {
@@ -271,6 +287,11 @@ export const api = {
     request('POST', '/api/photos/range', body, signal),
 };
 
+// The URLs below are loaded by the browser itself - an `<img>`, an `EventSource`, a
+// download - so they cannot go through `send`, and under the desktop shell they carry its
+// own scheme instead (`assetUrl`). Everything after the prefix is the same path the API
+// serves, which is what keeps one set of routes for both.
+
 // `version` is appended only once renditions have been rebuilt in this session:
 // the file changes behind a stable URL, and an image already decoded in the page
 // is never re-requested without it.
@@ -279,7 +300,7 @@ export const api = {
 // built (§10.2). Firefox is served the same AVIF as everything else and rewraps
 // it into a video for itself (`hdr_video.ts`).
 export function renditionUrl(photoId: string, rendition: Rendition, version = 0): string {
-  const url = `/image/${photoId}/renditions/${rendition}`;
+  const url = assetUrl(`/image/${photoId}/renditions/${rendition}`);
   return version === 0 ? url : `${url}?v=${version}`;
 }
 
@@ -288,13 +309,13 @@ export function renditionUrl(photoId: string, rendition: Rendition, version = 0)
 // RAW on each request, so a RAW replaced on disk changes these bytes too, and a
 // page holding the previous ones would otherwise never ask again.
 export function embeddedUrl(photoId: string, version = 0): string {
-  const url = `/image/${photoId}/embedded.jpg`;
+  const url = assetUrl(`/image/${photoId}/embedded.jpg`);
   return version === 0 ? url : `${url}?v=${version}`;
 }
 
 // Server-sent events: which photos have a rendition worth re-requesting.
 export function eventsUrl(): string {
-  return '/api/events';
+  return assetUrl('/api/events');
 }
 
 // One of the four things a photo can be taken away as: the RAW itself, or any of
@@ -302,7 +323,7 @@ export function eventsUrl(): string {
 // catalogue holds several RAW formats, and the server names the download off the
 // file it served.
 export function downloadUrl(photoId: string, form: 'original' | ViewerRendition): string {
-  return `/image/${photoId}/download/${form}`;
+  return assetUrl(`/image/${photoId}/download/${form}`);
 }
 
 /**
@@ -311,8 +332,11 @@ export function downloadUrl(photoId: string, form: 'original' | ViewerRendition)
  * Seconds of work and hundreds of megabytes back, asked for once per photo rather than per
  * tick (`docs/raw-edit-gpu.md` §10.2b). `longEdge` is the client's, not the library's, and
  * 0 is the sensor's own resolution.
+ *
+ * A path rather than a URL: this one *is* fetched, through `send`, because the frame is the
+ * one response whose bytes go straight into a texture upload.
  */
-export function preparedUrl(photoId: string, longEdge: number): string {
+export function preparedPath(photoId: string, longEdge: number): string {
   return `/image/${photoId}/prepared?longEdge=${Math.round(longEdge)}`;
 }
 

@@ -10,6 +10,7 @@
     "beforeBuildCommand": "bun run --cwd web build"
   },
   "app": {
+    "withGlobalTauri": true,
     "windows": [
       {
         "title": "Bowerbird",

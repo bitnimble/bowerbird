@@ -15,10 +15,9 @@ tauri-build = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri = { version = "2", features = [] }
-# The editor's open, in process. The same crate the server links and the same code the
-# renditions grade through, so the desktop shell and the browser cannot drift apart on
-# what a prepared frame is (`docs/raw-edit-gpu.md` §10.2b).
-rawshim = { path = "../native/rawshim" }
+# The shell is a proxy for the hosted server, so it needs a client. `rustls` rather than
+# the system TLS so a bundled build carries its own and does not want OpenSSL on the box.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
 # WebdriverIO desktop e2e: the in-app Execute API and the embedded WebDriver server.
 # Optional and behind a feature so they never ride a shipped build.
