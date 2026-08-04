@@ -46,3 +46,34 @@ describe('a failed request', () => {
     await expect(api.getSettings()).resolves.toBeUndefined();
   });
 });
+
+// The two transports do not reject alike, and only one of them rejects with an `Error`.
+// A Tauri command returning `Result<_, String>` rejects with the bare string, so reading
+// `.message` off it gave `undefined` - and the reason the Rust produced, which is the whole
+// point of the message, was thrown away on the one screen where it is being read.
+describe('a transport that never got an answer', () => {
+  const global = globalThis as {
+    __TAURI__?: { core?: { invoke?: (command: string, args: unknown) => Promise<unknown> } };
+  };
+  afterEach(() => {
+    delete global.__TAURI__;
+  });
+
+  test('carries a string rejection through, as the shell produces', async () => {
+    const why = 'could not reach http://127.0.0.1:9999/api/settings: Connection refused';
+    global.__TAURI__ = { core: { invoke: async () => Promise.reject(why) } };
+
+    const error = (await api.getSettings().catch((e: unknown) => e)) as ApiError;
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error.code).toBe('NETWORK_ERROR');
+    expect(error.message).toContain('Connection refused');
+    expect(error.message).not.toContain('undefined');
+  });
+
+  test('and an Error rejection, as fetch produces', async () => {
+    globalThis.fetch = (() => Promise.reject(new TypeError('Failed to fetch'))) as unknown as typeof fetch;
+
+    const error = (await api.getSettings().catch((e: unknown) => e)) as ApiError;
+    expect(error.message).toContain('Failed to fetch');
+  });
+});

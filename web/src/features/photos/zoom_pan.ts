@@ -315,8 +315,21 @@ export function useZoomPan(
   }
 
   function onPointerUp(e: React.PointerEvent): void {
+    // Before ending anything. `onPointerDown` ignores a second finger so it cannot restart
+    // the gesture in flight, but the release was ending it for everyone: a second finger
+    // tapped and lifted while the first was still panning cleared `dragging`, and the photo
+    // stopped following a finger that had never left the glass.
+    if (!e.isPrimary) {
+      // Its own capture, if it somehow took one; the primary's is by pointer id and is left
+      // exactly where it was.
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      } catch {
+        /* nothing was captured for this one */
+      }
+      return;
+    }
     onPointerCancel(e);
-    if (!e.isPrimary) return;
     const dx = e.clientX - dragStart.current.x;
     const dy = e.clientY - dragStart.current.y;
     travelled.current = Math.abs(dx) + Math.abs(dy);

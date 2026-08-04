@@ -25,6 +25,7 @@ import type { ViewerRendition, ViewerRenditionMode, Settings, UpdateSettingsRequ
 import type { CreateShootRequest, Shoot, ShootRemoval, UpdateShootRequest } from '../../../src/schemas/shoots';
 import type { Rendition } from '../../../src/services/processing/renditions';
 import type { ProcessingStage } from '../../../src/services/processing/processing_types';
+import { describe } from '../errors';
 import { type Reply, assetUrl, send } from './transport';
 
 // Types come straight from the server's Zod schemas as type-only imports, so the
@@ -90,7 +91,14 @@ async function request<T>(method: string, path: string, body?: unknown, signal?:
   } catch (err) {
     // A transport only rejects when it never got an answer, so this is "API unreachable",
     // which is a different thing for the UI to say than any HTTP status.
-    throw new ApiError('NETWORK_ERROR', `cannot reach the API at ${path}: ${(err as Error).message}`, 0);
+    //
+    // `describe` rather than `.message`, because the two transports do not reject alike:
+    // `fetch` throws a `TypeError`, where a Tauri command that returns `Result<_, String>`
+    // rejects with the bare string. Reading `.message` off that is `undefined`, so the shell
+    // reported "cannot reach the API at /api/settings: undefined" and threw away the reason
+    // the Rust had gone to the trouble of producing - on the one screen where the reader is
+    // trying to work out why the address is wrong.
+    throw new ApiError('NETWORK_ERROR', `cannot reach the API at ${path}: ${describe(err)}`, 0);
   }
 
   // Status first: a 502 from a reverse proxy carries no body, and reading the empty-body
