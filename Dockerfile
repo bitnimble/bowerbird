@@ -132,7 +132,6 @@ ENV PATH="/root/.cargo/bin:${PATH}"
 COPY native ./native
 # Separate target dirs: changing target-cpu invalidates every artefact anyway, so
 # sharing one would rebuild the dependencies three times over rather than caching.
-RUN native/rawshim/ensure-patched-rayon.sh
 RUN set -eu; \
   for level in x86-64 x86-64-v3 x86-64-v4; do \
     RUSTFLAGS="-C target-cpu=$level" cargo build --release \

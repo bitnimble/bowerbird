@@ -18,7 +18,6 @@
 // here instead of from another process.
 
 use crate::raw;
-#[cfg(not(target_arch = "wasm32"))]
 use crate::rgb::Rgb;
 
 /// CICP, the only signalling that matters: what `--cicp 9/16/9` was passing.
@@ -50,16 +49,7 @@ const AVIF_PIXEL_FORMAT_YUV420: u32 = 3;
 const AVIF_RGB_FORMAT_RGB: u32 = 0;
 const AVIF_RESULT_OK: u32 = 0;
 
-/// One on wasm, deliberately, rather than whatever the browser reports.
-///
-/// libavif spawns its own pthreads for the YUV conversion, and under wasip1-threads those
-/// resolve to a `wasi_thread_spawn` import no browser provides - this module's threads
-/// come from wasm-bindgen-rayon, which spawns workers the browser's way. The libaom
-/// underneath is built single-threaded for the same reason.
 fn max_threads() -> i32 {
-    #[cfg(target_arch = "wasm32")]
-    return 1;
-    #[cfg(not(target_arch = "wasm32"))]
     std::thread::available_parallelism().map(|n| n.get() as i32).unwrap_or(1)
 }
 
@@ -78,10 +68,6 @@ fn max_threads() -> i32 {
 /// every file comes from `encode_still` or `encode_rendition` a few lines up, and both
 /// write pixels already the right way up. A camera HEIC would need them honoured.
 ///
-/// Server-only: this exists to serve a JPEG download from a stored rendition, which is
-/// not a thing a browser asks this library for, and the wasm libaom is built encoder-only
-/// so there would be no codec behind it.
-#[cfg(not(target_arch = "wasm32"))]
 pub fn decode(bytes: &[u8]) -> Result<Rgb, String> {
     // SAFETY: the decoder and image are libavif's, freed on every path; `source.pixels`
     // points into `data`, which outlives the conversion.
@@ -158,7 +144,6 @@ pub fn encode_still(
 }
 
 /// `encode_still` to a file, for the renditions.
-#[cfg(not(target_arch = "wasm32"))]
 pub fn save_still(
     pq: std::borrow::Cow<'_, [u16]>,
     width: usize,

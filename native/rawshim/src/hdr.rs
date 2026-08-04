@@ -18,9 +18,7 @@ use crate::hdr_fit::{self, HdrMatch};
 use crate::image;
 use crate::tone::{self, GradeOptions};
 use serde::{Deserialize, Serialize};
-#[cfg(not(target_arch = "wasm32"))]
 use std::io::Write;
-#[cfg(not(target_arch = "wasm32"))]
 use std::process::{Command, Stdio};
 
 /// How a scene-linear decode is anchored to a display (DESIGN 10.7).
@@ -59,7 +57,6 @@ pub struct Source<'a> {
 /// grade has copied out, and anything that tried to read it afterwards would not
 /// build. `Borrowed` is for a caller with another rendition still to write off the
 /// same frame; it keeps its decode and pays for it.
-#[cfg(not(target_arch = "wasm32"))]
 pub enum Decode<'a> {
     /// For a caller with another rendition still to write off the same frame. It
     /// keeps its decode and pays for it.
@@ -69,7 +66,6 @@ pub enum Decode<'a> {
     Owned(crate::frame::Frame),
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl Decode<'_> {
     fn source(&self) -> Result<Source<'_>, String> {
         match self {
@@ -99,7 +95,6 @@ impl Decode<'_> {
 ///
 /// The preview is decoded here rather than passed in, so the JPEG never leaves this
 /// side. None when the file embeds no preview, or when there are too few usable pairs.
-#[cfg(not(target_arch = "wasm32"))]
 pub fn fit_match(
     raw_path: &str,
     source: &Source<'_>,
@@ -154,7 +149,6 @@ pub fn fit_match_from(
 ///
 /// None when the file embeds no preview, when the fit found nothing worth applying, or
 /// when there were too few usable pairs - in each case the caller grades neutrally.
-#[cfg(not(target_arch = "wasm32"))]
 pub fn fit_all(
     raw_path: &str,
     source: &Source<'_>,
@@ -386,7 +380,6 @@ pub fn grade_prepared_owned(
 ///
 /// Native byte order, which is what `-pixel_format rgb48le` says on the little-endian
 /// targets this ships for.
-#[cfg(not(target_arch = "wasm32"))]
 fn as_bytes(graded: &[u16]) -> &[u8] {
     // SAFETY: `u16` has no padding and every bit pattern of it is a valid `u8` pair, so
     // this is a reinterpret of the same allocation rather than a copy of it.
@@ -407,7 +400,6 @@ fn as_bytes(graded: &[u16]) -> &[u8] {
 /// environment variable a second time would only re-derive the input to the decision, so
 /// any further condition added below would leave the test comparing one route with
 /// itself and passing.
-#[cfg(not(target_arch = "wasm32"))]
 fn encode_frame(
     frame: std::borrow::Cow<'_, [u16]>,
     width: usize,
@@ -462,7 +454,6 @@ fn encode_frame(
 ///
 /// For the test that holds the two against each other, and as a way out if a build
 /// turns up where the linked library and the binary disagree.
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn use_avifenc() -> bool {
     std::env::var("BOWERBIRD_AVIFENC").is_ok_and(|value| value == "1")
 }
@@ -472,7 +463,6 @@ pub(crate) fn use_avifenc() -> bool {
 /// Both are waited on, and both errors are reported: the interesting failure is
 /// usually the downstream one, but a first stage that died explains a second stage
 /// that saw no frames.
-#[cfg(not(target_arch = "wasm32"))]
 fn pipe(first: &[String], second: &[String], stdin_data: &[u8]) -> Result<(), String> {
     let (upstream, up_rest) = first.split_first().ok_or("no command to run")?;
     let (downstream, down_rest) = second.split_first().ok_or("no command to pipe into")?;
@@ -539,7 +529,6 @@ fn pipe(first: &[String], second: &[String], stdin_data: &[u8]) -> Result<(), St
 }
 
 /// A child's exit code and the tail of whatever it had to say about it.
-#[cfg(not(target_arch = "wasm32"))]
 fn failure(command: &str, output: &std::process::Output) -> String {
     let text = String::from_utf8_lossy(&output.stderr);
     let tail: Vec<&str> = text.trim().lines().rev().take(3).collect();
@@ -562,7 +551,6 @@ fn failure(command: &str, output: &std::process::Output) -> String {
 /// Reports whether the still went out through `avifenc` rather than through libavif
 /// here, which is the only thing the differential between the two routes can assert on
 /// now that they produce the same bytes at 4:4:4.
-#[cfg(not(target_arch = "wasm32"))]
 pub fn encode_still(
     decode: Decode<'_>,
     options: &EncodeOptions,
@@ -592,7 +580,7 @@ pub fn encode_still(
     encode_frame(std::borrow::Cow::Owned(frame), width, height, options)
 }
 
-#[cfg(all(test, not(target_arch = "wasm32")))]
+#[cfg(test)]
 mod tests {
     use super::*;
 

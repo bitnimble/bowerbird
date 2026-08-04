@@ -48,46 +48,32 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
 use crate::parallel::*;
-#[cfg(not(target_arch = "wasm32"))]
 use std::ffi::CStr;
-#[cfg(not(target_arch = "wasm32"))]
 use std::os::raw::c_char;
 use std::os::raw::c_int;
 
 pub mod avif;
-#[cfg(not(target_arch = "wasm32"))]
 pub mod debug;
-/// The editor's open half. Native only: the tick that follows it is the client's GPU.
-#[cfg(not(target_arch = "wasm32"))]
+/// The editor's open half. The tick that follows it is the client's GPU.
 pub mod edit;
-#[cfg(not(target_arch = "wasm32"))]
 pub mod ffi;
 pub mod fit;
 pub mod frame;
 pub mod hdr;
 pub mod hdr_args;
 pub mod hdr_fit;
-#[cfg(not(target_arch = "wasm32"))]
 pub mod header;
 pub mod image;
 pub mod jpeg;
-#[cfg(not(target_arch = "wasm32"))]
 pub mod job;
 pub mod lens;
-#[cfg(not(target_arch = "wasm32"))]
 pub mod lensfun;
-pub mod pack;
 pub mod parallel;
 pub mod png;
 pub mod rgb;
-#[cfg(not(target_arch = "wasm32"))]
 pub mod stacks;
 pub mod tca;
 pub mod tone;
-#[cfg(target_arch = "wasm32")]
-pub mod wasm;
-#[cfg(target_arch = "wasm32")]
-pub use wasm_bindgen_rayon::{exit_thread_pool, init_thread_pool};
 
 mod raw {
     #![allow(
@@ -99,36 +85,6 @@ mod raw {
     #![expect(unsafe_code)]
     include!(concat!(env!("OUT_DIR"), "/libraw.rs"));
 }
-
-#[cfg(target_arch = "wasm32")]
-mod alloc_via_libc {
-    use std::alloc::{GlobalAlloc, Layout};
-
-    #[expect(unsafe_code)]
-    unsafe extern "C" {
-        fn aligned_alloc(alignment: usize, size: usize) -> *mut std::ffi::c_void;
-        fn free(ptr: *mut std::ffi::c_void);
-    }
-
-    pub struct LibcAlloc;
-
-    #[expect(unsafe_code)]
-    unsafe impl GlobalAlloc for LibcAlloc {
-        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-            let alignment = layout.align().max(1);
-            let size = layout.size().next_multiple_of(alignment);
-            unsafe { aligned_alloc(alignment, size).cast() }
-        }
-
-        unsafe fn dealloc(&self, ptr: *mut u8, _layout: Layout) {
-            unsafe { free(ptr.cast()) }
-        }
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-#[global_allocator]
-static ALLOCATOR: alloc_via_libc::LibcAlloc = alloc_via_libc::LibcAlloc;
 
 /// Runs `body`, turning a panic into `fallback` rather than letting it out of the
 /// library.
@@ -794,7 +750,6 @@ fn decode_with_libraw(
                             let (tw, th) = decode_target(cw, ch, at_least_long_edge);
                             match (tw, th) == (cw, ch) {
                                 true => (cw, ch, frame::Pixels::Sixteen(samples)),
-                                #[cfg(not(target_arch = "wasm32"))]
                                 false => (
                                     tw,
                                     th,
@@ -802,8 +757,6 @@ fn decode_with_libraw(
                                         &samples, cw, ch, tw, th,
                                     )?),
                                 ),
-                                #[cfg(target_arch = "wasm32")]
-                                false => return None,
                             }
                         }
                     }
@@ -830,7 +783,6 @@ fn decode_with_libraw(
 /// The whole of an import's tile pass in one call. None when the file embeds no
 /// JPEG preview, which is a property of the file rather than an error: the caller
 /// falls back to a render.
-#[cfg(not(target_arch = "wasm32"))]
 pub fn decode_embedded_frame(path: &str, long_edge: u32) -> Option<frame::Frame> {
     let path = std::ffi::CString::new(path).ok()?;
     let decoded = guard("decode_embedded_frame", None, || {
@@ -852,7 +804,6 @@ pub fn decode_embedded_frame(path: &str, long_edge: u32) -> Option<frame::Frame>
 /// None when the file embeds no preview, when the fit found nothing worth applying,
 /// or when there were too few usable pairs - in each case the caller renders
 /// untransformed.
-#[cfg(not(target_arch = "wasm32"))]
 pub fn fit_profile_for(render: &frame::Frame, raw_path: &str) -> Option<fit::Profile> {
     let source = render.rgb8()?;
     let geometry = ffi::geometry_for(raw_path)?;
@@ -879,7 +830,6 @@ pub fn fit_profile_for(render: &frame::Frame, raw_path: &str) -> Option<fit::Pro
 ///
 /// `finished` is what the frame will have had done to it by the time the match is applied,
 /// so the geometry search can be run against that rather than against the raw render.
-#[cfg(not(target_arch = "wasm32"))]
 pub fn fit_hdr_for(
     linear: &frame::Frame,
     raw_path: &str,
@@ -909,7 +859,6 @@ pub fn fit_hdr_for(
 /// in `job::run` and an embedded preview is shrunk during its JPEG decode, so every
 /// caller already hands over final pixels. A resize at the encode would also land
 /// after `render_base`'s sharpen, which is calibrated for the size it ran at (10.1).
-#[cfg(not(target_arch = "wasm32"))]
 pub fn save_avif_frame(
     source: rgb::RgbRef<'_>,
     quantizer: i32,
@@ -949,7 +898,6 @@ const LIBRAW_IMAGE_JPEG: raw::LibRaw_image_formats = 1;
 /// # Safety
 /// `path` must be a NUL-terminated C string.
 #[expect(unsafe_code)]
-#[cfg(not(target_arch = "wasm32"))]
 unsafe fn with_embedded_jpeg<T>(
     path: *const c_char,
     use_bytes: impl FnOnce(&[u8]) -> T,
@@ -999,7 +947,6 @@ pub fn embedded_jpeg_bytes(raw_bytes: &[u8]) -> Option<Vec<u8>> {
 
 /// The camera's embedded preview as RGB, bounded by `long_edge`, for callers on this
 /// side of the boundary. None when the file embeds no JPEG preview.
-#[cfg(not(target_arch = "wasm32"))]
 pub fn decode_embedded_rgb(path: &str, long_edge: usize) -> Option<rgb::Rgb> {
     let c_path = std::ffi::CString::new(path).ok()?;
     // SAFETY: the CString outlives the call.
@@ -1026,7 +973,6 @@ pub fn decode_embedded_rgb(path: &str, long_edge: usize) -> Option<rgb::Rgb> {
 /// `path` must be a NUL-terminated C string and `out` a writable `BbHeader`.
 #[expect(unsafe_code)]
 #[unsafe(no_mangle)]
-#[cfg(not(target_arch = "wasm32"))]
 pub unsafe extern "C" fn bb_read_header(path: *const c_char, out: *mut header::BbHeader) -> c_int {
     if path.is_null() || out.is_null() {
         return -1;
@@ -1049,7 +995,6 @@ pub unsafe extern "C" fn bb_read_header(path: *const c_char, out: *mut header::B
 /// Size of `BbHeader`, which the caller checks against the layout it reads.
 #[expect(unsafe_code)]
 #[unsafe(no_mangle)]
-#[cfg(not(target_arch = "wasm32"))]
 pub extern "C" fn bb_header_size() -> usize {
     std::mem::size_of::<header::BbHeader>()
 }
@@ -1058,7 +1003,6 @@ pub extern "C" fn bb_header_size() -> usize {
 /// buffer and the database column without either guessing.
 #[expect(unsafe_code)]
 #[unsafe(no_mangle)]
-#[cfg(not(target_arch = "wasm32"))]
 pub extern "C" fn bb_descriptor_size() -> usize {
     stacks::DESCRIPTOR_BYTES
 }
@@ -1076,7 +1020,6 @@ pub extern "C" fn bb_descriptor_size() -> usize {
 /// `timestamps` and `out` must each hold `count` elements.
 #[expect(unsafe_code)]
 #[unsafe(no_mangle)]
-#[cfg(not(target_arch = "wasm32"))]
 pub unsafe extern "C" fn bb_stack_groups(
     descriptors: *const u8,
     timestamps: *const i64,

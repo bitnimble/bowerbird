@@ -2,12 +2,8 @@
 //
 // `Prepared` crosses once and becomes a texture that stays on the GPU; after that a slider
 // move writes a uniform and submits dispatches, and nothing is uploaded, downloaded or
-// encoded (`docs/raw-edit-gpu.md` §6). There is no wasm on this path: the decode, the
-// camera fit and the lens warp all happened natively before the bytes arrived.
-//
-// The stage order is `wasm::Editor::grade_from`'s, because it has to be: grade, PQ,
-// `image::finish`, then the display transform. What has gone is the copy at the front (the
-// source texture is never written) and the encode at the back (a canvas is not a file).
+// encoded (`docs/raw-edit-gpu.md` §6). The decode, the camera fit, the lens warp and the
+// denoise all happened natively before the bytes arrived, so a tick is the grade alone.
 
 import { type PassMs, PassTimer } from './pass_timer';
 import {

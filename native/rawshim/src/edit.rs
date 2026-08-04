@@ -1,14 +1,13 @@
-// The open half of the editor, natively.
+// The open half of the editor.
 //
-// Everything `wasm::Editor` does before the first slider tick - decode, prepare, fit the
-// camera match, materialise the lens warp - with none of the per-tick half, because that
-// now runs as shader dispatches on the client (`docs/raw-edit-gpu.md` §6). What crosses is
+// Everything before the first slider tick - decode, prepare, fit the camera match,
+// materialise the lens warp, denoise and sharpen - with none of the per-tick half, which
+// runs as shader dispatches on the client (`docs/raw-edit-gpu.md` §6). What crosses is
 // this module's `Prepared`: the scene-linear frame the grade reads, plus the numbers the
 // grade needs and cannot re-derive from pixels.
 //
-// The point of doing it here rather than in wasm is that it is the only stage left that
-// genuinely wants threads: measured at 3.2x between one thread and twelve
-// (`examples/open_threads.rs`), against a tick that is entirely the GPU's.
+// This half is where the threads are worth having - measured at 3.2x between one and
+// twelve - against a tick that is entirely the GPU's.
 
 use crate::hdr::{self, Prepared as HdrPrepared};
 use crate::hdr_fit::{ChromaMap, HdrColour};
@@ -117,16 +116,15 @@ impl ChromaPayload {
 
 /// Decodes, prepares, fits and warps, leaving the frame a tick can grade from.
 ///
-/// The order is `wasm::Editor::new` plus `fit_camera_match`: prepare once to measure the
-/// levels, fit the match from the embedded JPEG, then rebuild the prepared frame so the
-/// warp the match was fitted through is materialised into the buffer the client uploads.
-/// Grading an unwarped frame through a curve fitted from warped pairs is the bug that
-/// arrangement exists to prevent.
+/// Prepare once to measure the levels, fit the match from the embedded JPEG, then rebuild
+/// the prepared frame so the warp the match was fitted through is materialised into the
+/// buffer the client uploads. Grading an unwarped frame through a curve fitted from warped
+/// pairs is the bug that arrangement exists to prevent.
 pub fn prepare(request: &EditRequest) -> Result<Prepared, String> {
     let bytes = std::fs::read(&request.raw_file_path)
         .map_err(|e| format!("could not read {}: {e}", request.raw_file_path))?;
 
-    crate::parallel::with_pool(|| {
+    {
         let frame = crate::decode_frame_bytes(&bytes, 16, true, request.long_edge)
             .ok_or("LibRaw could not decode this file")?;
         let samples = frame.samples16().ok_or("the decode was not 16-bit")?;
@@ -148,7 +146,7 @@ pub fn prepare(request: &EditRequest) -> Result<Prepared, String> {
         // Filtered here, so a tick is the grade alone.
         filter_once(&mut prepared, request);
         Ok(payload(prepared, matched.as_ref(), request))
-    })
+    }
 }
 
 /// The camera match, or `None` where there is nothing to fit against.

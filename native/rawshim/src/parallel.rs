@@ -1,24 +1,7 @@
 pub use rayon::prelude::*;
 
 pub fn thread_count() -> usize {
-    #[cfg(target_arch = "wasm32")]
-    {
-        wasm_bindgen_rayon::pool_num_threads()
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        rayon::current_num_threads()
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-pub fn with_pool<R: Send>(f: impl FnOnce() -> R + Send) -> R {
-    wasm_bindgen_rayon::with_thread_pool(f)
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-pub fn with_pool<R: Send>(f: impl FnOnce() -> R + Send) -> R {
-    f()
+    rayon::current_num_threads()
 }
 
 pub trait ReduceParallel: rayon::iter::ParallelIterator + Sized {

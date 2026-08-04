@@ -7,8 +7,7 @@ import type { RawEditStore } from './raw_edit_store';
  * The graded frame in the detail stage's slot.
  *
  * One canvas, and no `<img>`, `<video>`, blob URL or track behind it: the tick draws
- * straight into an extended-range WebGPU canvas, which is what let the three sinks and
- * their per-engine routing go (`docs/raw-edit-gpu.md` §7).
+ * straight into an extended-range WebGPU canvas (`docs/raw-edit-gpu.md` §7).
  *
  * The element is handed to the presenter rather than configured here, because configuring
  * it *is* the picture - the format and the tone mapping decide whether anything above SDR

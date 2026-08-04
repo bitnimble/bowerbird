@@ -5,10 +5,6 @@
 // Richardson-Lucy deconvolution and the box means and noise estimate they are built on,
 // none of which libvips offered. The codecs are their own modules - `jpeg` in Rust,
 // `avif` over libavif - and `decode` below is the one entry point that picks between them.
-//
-// Both targets run this code. That is the point: the wasm build once had its own
-// resampler and its own blur, and the two quietly fitted different lens profiles from
-// the same frame.
 
 use crate::parallel::*;
 use crate::rgb::{Rgb, RgbRef};
@@ -309,7 +305,6 @@ pub fn resize(source: RgbRef<'_>, width: usize, height: usize) -> Rgb {
 ///
 /// Server-side only: the bound to a JPEG belongs to `jpeg::decode`, and it is AVIF that
 /// needs libavif, which the client does not link.
-#[cfg(not(target_arch = "wasm32"))]
 pub fn decode(bytes: &[u8], long_edge: usize) -> Result<Rgb, String> {
     // The `ftyp` box, at offset 4 because the first four bytes are its own length.
     let is_avif = bytes.len() > 12 && &bytes[4..8] == b"ftyp";
@@ -970,14 +965,6 @@ fn local_extrema(plane: &[f32], width: usize, height: usize, radius: usize) -> (
 ///
 /// The window shrinks at the border rather than clamping the samples, so an edge pixel
 /// is the mean of what is actually there instead of one sample counted several times.
-/// `box_mean`, for a caller outside this module that needs the same window.
-///
-/// The editor's pre-denoise experiment measures what a filter left behind, and "left
-/// behind" has to be measured against the same mean the filter smoothed by.
-pub fn box_mean_for_testing(plane: &[f32], width: usize, height: usize, radius: usize) -> Vec<f32> {
-    box_mean(plane, width, height, radius)
-}
-
 fn box_mean(plane: &[f32], width: usize, height: usize, radius: usize) -> Vec<f32> {
     let mut horizontal: Vec<f32> = vec![0.0; width * height];
     horizontal.par_chunks_mut(width).enumerate().for_each(|(y, row)| {

@@ -128,7 +128,7 @@ export class RawEditPresenter {
    *
    * A pointer emits far more positions than a display can show, and queueing them would
    * replay the drag in slow motion after the user let go. Only the latest is ever
-   * outstanding, which is what the worker's `busy` flag used to do.
+   * outstanding.
    */
   private request(ev: number): void {
     if (this.closed || this.pipeline == null) return;

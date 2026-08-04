@@ -10,18 +10,6 @@ edition = "2024"
 [lib]
 crate-type = ["cdylib", "rlib"]
 
-# wasm-pack's bundled binaryen predates the wasm exception-handling proposal and aborts
-# on LibRaw's throw sites ("unimplemented DCE control flow structure"). The module is
-# already `-O3` from rustc and `--gc-sections` from the linker; what wasm-opt would add
-# is not worth a second toolchain pinned to a compatible version.
-[package.metadata.wasm-pack.profile.release]
-wasm-opt = false
-
-# Materialise with `./ensure-patched-rayon.sh` before cargo resolve; package.json
-# cargo scripts and the Docker native stage do this.
-[package.metadata.patch]
-crates = ["wasm-bindgen-rayon"]
-
 [features]
 # The tests that decode a real RAW, which need the LFS fixtures and take seconds
 # rather than milliseconds. Off by default so `cargo test` stays a thing you can run
@@ -40,30 +28,14 @@ rayon = "1.10"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 
-# All of the above build for both targets, so the fit runs the same code in the browser as
-# on the server: the resampling, the filtering, and the JPEG decode it is measured against.
 # The resize and blur are single-threaded (no `rayon` feature) - each is already
-# milliseconds, and the callers sit inside their own parallelism.
-#
-# The server build links LibRaw, lensfun and libavif on top, through build.rs. wasm32 links
-# LibRaw alone: geometry databases and encoders are not what a live editor does.
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-wasm-bindgen = "0.2"
-wasm-bindgen-rayon = { git = "https://github.com/RReverser/wasm-bindgen-rayon.git", rev = "4eea1fa55a965ad516ef9f9e9449704c7eac91c5" }
+# milliseconds, and the callers sit inside their own parallelism. LibRaw, lensfun and
+# libavif are linked on top, through build.rs.
 
-# Droppable rayon pool (patches/wasm-bindgen-rayon+1.3.0.patch). Materialise with
-# `./ensure-patched-rayon.sh` before cargo resolve; package.json cargo scripts do this.
-[patch."https://github.com/RReverser/wasm-bindgen-rayon.git"]
-wasm-bindgen-rayon = { path = "./patched/wasm-bindgen-rayon" }
-
-# `usize` is 32 bits on wasm32 and 64 on the server, so an index product can be right in
-# every rendition and wrap silently in the browser. Keep that failure loud in release.
+# An index product that wraps is a picture that comes out wrong rather than a crash, and
+# these run over tens of millions of samples. Keep that failure loud in release.
 [profile.release]
 overflow-checks = true
 
 [build-dependencies]
-# 0.69 emits no functions at all for a wasm32 target - measured on a one-line header:
-# `int probe(int);` generates `pub fn probe` under x86_64 and an empty file under
-# wasm32-wasip1. Types come through either way, so the failure surfaces only as
-# "cannot find function libraw_init" at every call site.
 bindgen = "0.72"
