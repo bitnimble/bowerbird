@@ -1,5 +1,7 @@
 import { observer } from 'mobx-react-lite';
 import { useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
+import { ZoomControl } from '../photos/zoom_control';
 import { NO_SIZE, regionOf, useZoomPan } from '../photos/zoom_pan';
 import type { RawEditPresenter } from './raw_edit_presenter';
 import type { RawEditStore } from './raw_edit_store';
@@ -23,9 +25,16 @@ import type { RawEditStore } from './raw_edit_store';
 export const RawEditStage = observer(function RawEditStage({
   store,
   presenter,
+  toolsInto,
 }: {
   store: RawEditStore;
   presenter: RawEditPresenter;
+  /**
+   * Where to draw the zoom control, which is the viewer's own and goes where the viewer's
+   * goes. A portal for the reason the viewer uses one: the readout changes on every frame of
+   * a wheel zoom, and handing it upwards would redraw the page around the stage at that rate.
+   */
+  toolsInto?: HTMLElement | null;
 }): JSX.Element {
   const canvas = useRef<HTMLCanvasElement>(null);
   const viewport = useRef<HTMLDivElement>(null);
@@ -41,7 +50,8 @@ export const RawEditStage = observer(function RawEditStage({
 
   const natural =
     store.width === 0 ? NO_SIZE : { width: store.width, height: store.height };
-  const { view, box, handlers, zoomed } = useZoomPan(viewport, stage, natural);
+  const zoom = useZoomPan(viewport, stage, natural);
+  const { view, box, handlers, zoomed } = zoom;
 
   // The gesture is state in React and the region is state in the store, so one has to follow
   // the other. An effect rather than a call inside the handler, because the view settles
@@ -51,8 +61,11 @@ export const RawEditStage = observer(function RawEditStage({
     presenter.showRegion(regionOf(view, box, natural));
   }, [presenter, view, box, natural.width, natural.height]);
 
+  const tools = <ZoomControl zoom={zoom} variant={toolsInto == null ? 'ghost' : 'default'} />;
+
   return (
     <div ref={stage} className={`stage raw-edit-stage${zoomed ? ' stage--zoomed' : ''}`}>
+      {toolsInto == null ? <div className="stage__tools">{tools}</div> : createPortal(tools, toolsInto)}
       <div ref={viewport} className="stage__viewport" {...handlers}>
         <canvas ref={canvas} className="stage__content is-ready raw-edit__stage" />
       </div>

@@ -125,6 +125,22 @@ test('zooms and pans the frame the viewer’s way, into a region', async ({ page
   expect(panned.h).toBe(zoomed.h);
   // And never off the frame.
   expect(panned.x + panned.w).toBeLessThanOrEqual(width + 1);
+
+  // The viewer's zoom control, in the viewer's slot, climbing the viewer's ladder: fitted,
+  // twice that, the frame's own pixels, and round to fitted again. Two presses from here,
+  // because 1:1 on a 4024px frame in a stage this size is a stop of its own.
+  await expect(page.getByText(/^\d+%$/)).toBeVisible();
+  // By role rather than by one of its labels: the button says what the *next* stop is, so
+  // its name changes as the ladder is climbed - "Zoom to 100%" here, "Zoom out to fit" at
+  // the top.
+  const zoomButton = page.getByRole('button', { name: /^Zoom/ });
+  await zoomButton.click();
+  await expect.poll(async () => (await read()).w).toBeLessThan(panned.w);
+  // At the top it turns around, which is how the reader gets back without a gesture.
+  await expect(zoomButton).toHaveAccessibleName('Zoom out to fit');
+  await zoomButton.click();
+  await expect.poll(async () => (await read()).w).toBe(width);
+  await expect(region).toHaveText(`0,0 ${width}x${height}`);
 });
 
 /**

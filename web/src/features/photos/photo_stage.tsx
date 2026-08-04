@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Maximize, Minimize, ZoomIn, ZoomOut } from 'lucide-react';
+import { Maximize, Minimize } from 'lucide-react';
 import { Button } from '../../ui/button';
 import { ICON } from '../../ui/icon';
 import { Text } from '../../ui/text';
-import { MIN_SCALE, NO_SIZE, STOP_EPSILON, type Size, useZoomPan } from './zoom_pan';
+import { NO_SIZE, type Size, useZoomPan } from './zoom_pan';
+import { ZoomControl } from './zoom_control';
 
 // Fit, zoom and pan live in `zoom_pan.ts`, because the editor's canvas needs the same
 // gesture and cannot be transformed the way an `<img>` can.
@@ -296,8 +297,8 @@ export function PhotoStage({
     },
     [onSwipe],
   );
-  const { view, fit, nativeScale, nextStop, reset, zoomTo: zoomBy, stopAfter, zoomed, handlers } =
-    useZoomPan(viewportRef, stageRef, natural, onGestureEnd);
+  const zoom = useZoomPan(viewportRef, stageRef, natural, onGestureEnd);
+  const { view, reset, zoomed, handlers } = zoom;
 
   // A new photo starts fitted; carrying a pan offset across frames would show
   // the next one scrolled to a corner. Keyed on the photo rather than the source,
@@ -469,33 +470,12 @@ export function PhotoStage({
     await stageRef.current?.requestFullscreen();
   }, []);
 
-  // Against the frame's own pixels rather than the fitted size, so the readout
-  // answers "am I looking at this at 1:1" - which is the question a cull asks of
-  // a render - instead of restating the zoom factor.
-  const scalePercent = fit == null ? null : Math.round(fit * view.scale * 100);
-
-  const zoomLabel =
-    nextStop === MIN_SCALE
-      ? 'Zoom out to fit'
-      : Math.abs(nextStop - nativeScale) < STOP_EPSILON
-        ? 'Zoom to 100%'
-        : 'Zoom in';
   // Ghost over the photograph, where the chip behind it is the frame; a plain
   // button in a page's own bar, beside the plain buttons already there.
   const toolVariant = toolsInto == null ? 'ghost' : 'default';
   const tools = (
     <>
-      {scalePercent != null && <Text variant="mono" className="stage__scale">{`${scalePercent}%`}</Text>}
-      <Button
-        variant={toolVariant}
-        iconOnly
-        aria-pressed={zoomed}
-        aria-label={zoomLabel}
-        title={zoomLabel}
-        onClick={() => zoomBy(stopAfter, null)}
-      >
-        {nextStop === MIN_SCALE ? <ZoomOut size={ICON} /> : <ZoomIn size={ICON} />}
-      </Button>
+      <ZoomControl zoom={zoom} variant={toolVariant} />
       <Button variant={toolVariant} iconOnly aria-label="Fullscreen" title="Fullscreen (F)" onClick={() => void toggleFullscreen()}>
         <Maximize size={ICON} />
       </Button>

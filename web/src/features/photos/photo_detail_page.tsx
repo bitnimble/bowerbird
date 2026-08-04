@@ -905,7 +905,13 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
           mobile ? 'sheet' : !panelsOpen && !editing ? 'only' : landscape ? 'below' : 'beside'
         }`}
       >
-        {editing && session != null ? <RawEditStage store={session.store} presenter={session.presenter} /> : <DetailFrame photoId={photoId} toolsInto={toolsSlot} />}
+        {editing && session != null ? (
+          // The same slot the viewer's stage draws into, so the zoom control sits where it
+          // always sits rather than moving when the reader opens the editor.
+          <RawEditStage store={session.store} presenter={session.presenter} toolsInto={toolsSlot} />
+        ) : (
+          <DetailFrame photoId={photoId} toolsInto={toolsSlot} />
+        )}
         {(mobile || panelsOpen || editing) && panels}
       </div>
     </div>
