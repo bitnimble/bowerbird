@@ -2,8 +2,6 @@ import { observer } from 'mobx-react-lite';
 import { useEffect, useState, type ReactNode } from 'react';
 import { CircleStop, FolderPlus, Image, RefreshCw, RotateCcw, Sparkles, Trash2 } from 'lucide-react';
 import type { Library, Settings, UpdateSettingsRequest, ViewerRenditionMode, RenditionSource } from '../../api/client';
-import { DEFAULT_SETTINGS } from '../../../../src/schemas/settings';
-import { DEFAULT_LIBRARY_SETTINGS } from '../../../../src/schemas/libraries';
 import { useAppSettingsStore, useLibrariesStore, usePresenters, useSyncStore } from '../../app/stores_context';
 import { AddLibraryDialog } from '../libraries/add_library_dialog';
 import { libraryLabel } from '../libraries/library_label';
@@ -16,6 +14,16 @@ import type { Option } from '../../ui/option';
 import { Select } from '../../ui/select';
 import { Text } from '../../ui/text';
 import { TextField } from '../../ui/text_field';
+
+// A reset handler, or nothing where there is nothing to undo.
+//
+// `undefined` covers both reasons for nothing: the value already is the default,
+// and the defaults have not arrived from the server yet. A default that is
+// legitimately null - `last_viewer_rendition` - is still a value to go back to.
+function resetTo<T>(current: T, fallback: T | undefined, apply: (value: T) => void): (() => void) | undefined {
+  if (fallback === undefined || current === fallback) return undefined;
+  return () => apply(fallback);
+}
 
 // "3 minutes ago" answers "is my catalogue stale?" at a glance; a timestamp does not.
 function relativeTime(iso: string): string {
@@ -184,6 +192,7 @@ function hdrCapability(): string {
 // the same reason today's are (§4.1).
 const FolderSettings = observer(function FolderSettings({ library }: { library: Library }): JSX.Element {
   const { libraries } = usePresenters();
+  const defaults = useLibrariesStore().defaults;
 
   return (
     <div className="panel">
@@ -194,11 +203,9 @@ const FolderSettings = observer(function FolderSettings({ library }: { library: 
       <SettingRow
         label="Include subfolders"
         hint="Off, the library is the photographs sitting in its root folder and nothing else, however deep the tree goes. Turning it off drops the photos already imported from the subfolders; the files themselves are never touched."
-        onReset={
-          library.include_subfolders === DEFAULT_LIBRARY_SETTINGS.include_subfolders
-            ? undefined
-            : () => void libraries.setIncludeSubfolders(library.id, DEFAULT_LIBRARY_SETTINGS.include_subfolders)
-        }
+        onReset={resetTo(library.include_subfolders, defaults?.include_subfolders, (v) =>
+          void libraries.setIncludeSubfolders(library.id, v),
+        )}
       >
         <input
           type="checkbox"
@@ -214,11 +221,9 @@ const FolderSettings = observer(function FolderSettings({ library }: { library: 
         label="Make shoots from folders"
         hint="Keeps a shoot for every folder holding photographs, so the catalogue always agrees with the tree on disk. Off, a shoot exists only where you make one, and the rest are offered on the Shoots page."
         disabledReason={library.include_subfolders ? undefined : 'This library is its root folder only, so it has no folders to mirror.'}
-        onReset={
-          library.mirror_shoots === DEFAULT_LIBRARY_SETTINGS.mirror_shoots
-            ? undefined
-            : () => void libraries.setMirrorShoots(library.id, DEFAULT_LIBRARY_SETTINGS.mirror_shoots)
-        }
+        onReset={resetTo(library.mirror_shoots, defaults?.mirror_shoots, (v) =>
+          void libraries.setMirrorShoots(library.id, v),
+        )}
       >
         <input
           type="checkbox"
@@ -275,6 +280,7 @@ const FolderRuleList = observer(function FolderRuleList({ library }: { library: 
 // thousands of files behind your back.
 const RenditionSettings = observer(function RenditionSettings({ library }: { library: Library }): JSX.Element {
   const { libraries } = usePresenters();
+  const defaults = useLibrariesStore().defaults;
   const rendered = library.rendition_source === 'render';
 
   return (
@@ -286,11 +292,9 @@ const RenditionSettings = observer(function RenditionSettings({ library }: { lib
       <SettingRow
         label="Build renditions from"
         hint="The camera's JPEG is much faster and carries the colour the camera chose, but it is only as large as the camera saved it. Rendering develops the RAW at full resolution and is the only source that can produce HDR."
-        onReset={
-          library.rendition_source === DEFAULT_LIBRARY_SETTINGS.rendition_source
-            ? undefined
-            : () => void libraries.setRenditionSource(library.id, DEFAULT_LIBRARY_SETTINGS.rendition_source)
-        }
+        onReset={resetTo(library.rendition_source, defaults?.rendition_source, (v) =>
+          void libraries.setRenditionSource(library.id, v),
+        )}
       >
         <Select
           label="Build renditions from"
@@ -306,11 +310,9 @@ const RenditionSettings = observer(function RenditionSettings({ library }: { lib
         <SettingRow
           label="Build HDR renditions"
           hint={`Stores the large rendition in high dynamic range. Every current browser displays it - Firefox by way of a rewrap the viewer does in the page. The grid stays standard range either way (${hdrCapability()}).`}
-          onReset={
-            library.rendition_hdr === DEFAULT_LIBRARY_SETTINGS.rendition_hdr
-              ? undefined
-              : () => void libraries.setRenditionHdr(library.id, DEFAULT_LIBRARY_SETTINGS.rendition_hdr)
-          }
+          onReset={resetTo(library.rendition_hdr, defaults?.rendition_hdr, (v) =>
+            void libraries.setRenditionHdr(library.id, v),
+          )}
         >
           <input
             type="checkbox"
@@ -328,6 +330,7 @@ const RenditionSettings = observer(function RenditionSettings({ library }: { lib
 // the unit of work and another a studio where every frame is deliberate.
 const StackSettings = observer(function StackSettings({ library }: { library: Library }): JSX.Element {
   const { libraries } = usePresenters();
+  const defaults = useLibrariesStore().defaults;
 
   return (
     <div className="panel">
@@ -338,11 +341,9 @@ const StackSettings = observer(function StackSettings({ library }: { library: Li
       <SettingRow
         label="Group similar photos automatically"
         hint="Runs after a sync that brought new photos in, grouping frames of the same shot into one tile. Photos imported before this was switched on are not looked at; rebuilding a library's grid renditions is what gives them something to compare."
-        onReset={
-          library.auto_stack === DEFAULT_LIBRARY_SETTINGS.auto_stack
-            ? undefined
-            : () => void libraries.setAutoStack(library.id, DEFAULT_LIBRARY_SETTINGS.auto_stack)
-        }
+        onReset={resetTo(library.auto_stack, defaults?.auto_stack, (v) =>
+          void libraries.setAutoStack(library.id, v),
+        )}
       >
         <input
           type="checkbox"
@@ -402,13 +403,11 @@ const LibraryNumberField = observer(function LibraryNumberField({
     setDraft(String(store.byId.get(libraryId)?.[field] ?? value));
   }
 
-  const fallback = DEFAULT_LIBRARY_SETTINGS[field];
-
   return (
     <SettingRow
       label={label}
       hint={hint}
-      onReset={value === fallback ? undefined : () => void onCommit(fallback)}
+      onReset={resetTo(value, store.defaults?.[field], (v) => void onCommit(v))}
     >
       <TextField
         label={label}
@@ -502,11 +501,9 @@ const ViewingSettings = observer(function ViewingSettings(): JSX.Element {
       <SettingRow
         label="Default rendition in photo viewer"
         hint="Each rendition is built the first time it is asked for and then kept, so opening at a larger one than your library builds costs a wait the first time you open a photo."
-        onReset={
-          mode === DEFAULT_SETTINGS.viewer_rendition_mode
-            ? undefined
-            : () => void appSettings.setViewerRenditionMode(DEFAULT_SETTINGS.viewer_rendition_mode)
-        }
+        onReset={resetTo(mode, settings.defaults?.viewer_rendition_mode, (v) =>
+          void appSettings.setViewerRenditionMode(v),
+        )}
       >
         <Select
           label="Default rendition in photo viewer"
@@ -574,14 +571,12 @@ const NumberSetting = observer(function NumberSetting({
     setDraft(stored == null ? '' : String(stored / scale));
   }
 
-  const fallback = DEFAULT_SETTINGS[field];
-
   return (
     <SettingRow
       label={label}
       hint={hint}
       disabledReason={disabledReason}
-      onReset={value === fallback ? undefined : () => void write({ [field]: fallback } as UpdateSettingsRequest)}
+      onReset={resetTo(value, store.defaults?.[field], (v) => void write({ [field]: v } as UpdateSettingsRequest))}
     >
       <TextField
         label={label}
@@ -618,13 +613,11 @@ const TextSetting = observer(function TextSetting({
     setDraft(store.settings?.[field] ?? '');
   }
 
-  const fallback = DEFAULT_SETTINGS[field];
-
   return (
     <SettingRow
       label={label}
       hint={hint}
-      onReset={value === fallback ? undefined : () => void write({ [field]: fallback } as UpdateSettingsRequest)}
+      onReset={resetTo(value, store.defaults?.[field], (v) => void write({ [field]: v } as UpdateSettingsRequest))}
     >
       <TextField
         label={label}
@@ -652,14 +645,13 @@ const ToggleSetting = observer(function ToggleSetting({
   const store = useAppSettingsStore();
   const write = useSettingWriter();
   const value = store.settings?.[field] ?? false;
-  const fallback = DEFAULT_SETTINGS[field];
 
   return (
     <SettingRow
       label={label}
       hint={hint}
       disabledReason={disabledReason}
-      onReset={value === fallback ? undefined : () => void write({ [field]: fallback } as UpdateSettingsRequest)}
+      onReset={resetTo(value, store.defaults?.[field], (v) => void write({ [field]: v } as UpdateSettingsRequest))}
     >
       <input
         type="checkbox"
@@ -868,11 +860,9 @@ const AdvancedSettings = observer(function AdvancedSettings(): JSX.Element | nul
         <SettingRow
           label="Log level"
           hint="debug adds a line for every request and every finished processing stage."
-          onReset={
-            store.settings.log_level === DEFAULT_SETTINGS.log_level
-              ? undefined
-              : () => void write({ log_level: DEFAULT_SETTINGS.log_level })
-          }
+          onReset={resetTo(store.settings.log_level, store.defaults?.log_level, (v) =>
+            void write({ log_level: v }),
+          )}
         >
           <Select
             label="Log level"

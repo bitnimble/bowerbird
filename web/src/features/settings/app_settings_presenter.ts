@@ -10,11 +10,16 @@ export class AppSettingsPresenter {
   async load(): Promise<void> {
     if (this.loaded) return;
     try {
-      this.apply(await api.getSettings());
+      const [settings, defaults] = await Promise.all([api.getSettings(), api.getSettingsDefaults()]);
+      runInAction(() => {
+        this.store.settings = settings;
+        this.store.defaults = defaults;
+      });
       this.loaded = true;
     } catch {
-      // Non-fatal: the store's defaults are the shipped behaviour, and a photo
-      // opening at its own rendition is better than not opening.
+      // Non-fatal: the store's fallbacks are the shipped behaviour, and a photo
+      // opening at its own rendition is better than not opening. Without the
+      // defaults the settings page simply offers nothing to reset.
     }
   }
 

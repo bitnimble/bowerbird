@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { runMigrations } from '../migrations';
+import { DEFAULT_SETTINGS } from '../../schemas/settings';
 
 // The photos table as it stood before the import's two passes were tracked
 // separately: one pending flag and one written-at stamp for the whole photo.
@@ -54,6 +55,14 @@ function oldDatabase(): Database {
 
 function columns(db: Database, table = 'photos'): Set<string> {
   return new Set((db.query(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((c) => c.name));
+}
+
+// Every shipped default is a row once the migrations have run (`seedSettings`), so
+// what a migration did to the keys it names is read off those keys rather than off
+// the whole table - which would otherwise be re-listed here on every new setting.
+function settingsFor(db: Database, keys: string[]): Record<string, string> {
+  const rows = db.query('SELECT key, value FROM settings').all() as { key: string; value: string }[];
+  return Object.fromEntries(rows.filter((row) => keys.includes(row.key)).map((row) => [row.key, row.value]));
 }
 
 describe('migrations: splitting the import into two stages', () => {
@@ -129,10 +138,10 @@ describe('migrations: splitting the import into two stages', () => {
     // the browser now, so there is nothing for it to turn on (§10.7).
     expect(columns(db, 'libraries').has('preview_hdr_video')).toBe(false);
     expect(columns(db, 'libraries').has('rendition_hdr_video')).toBe(false);
-    expect(db.query('SELECT key, value FROM settings ORDER BY key').all()).toEqual([
-      { key: 'last_viewer_rendition', value: 'full' },
-      { key: 'viewer_rendition_mode', value: 'max' },
-    ]);
+    expect(settingsFor(db, ['viewer_rendition_mode', 'last_viewer_rendition'])).toEqual({
+      last_viewer_rendition: 'full',
+      viewer_rendition_mode: 'max',
+    });
   });
 
   it('splits a tuned denoise into the luma and chroma pair, and keeps a later edit', () => {
@@ -143,11 +152,11 @@ describe('migrations: splitting the import into two stages', () => {
     runMigrations(db);
     // What the user tuned for the pair as one, carried onto both so the upgrade renders
     // what it rendered before.
-    expect(db.query('SELECT key, value FROM settings ORDER BY key').all()).toEqual([
-      { key: 'raw_denoise_chroma', value: '1.4' },
-      { key: 'raw_denoise_luma', value: '1.4' },
-      { key: 'raw_sharpen', value: '0.6' },
-    ]);
+    expect(settingsFor(db, ['raw_denoise_chroma', 'raw_denoise_luma', 'raw_sharpen'])).toEqual({
+      raw_denoise_chroma: '1.4',
+      raw_denoise_luma: '1.4',
+      raw_sharpen: '0.6',
+    });
 
     // And a value chosen afterwards survives a re-run, which is what a downgrade and
     // re-upgrade leaves behind.
@@ -164,6 +173,33 @@ describe('migrations: splitting the import into two stages', () => {
     expect(cols.has('needs_tile')).toBe(true);
     expect(cols.has('renditions_built_at')).toBe(true);
     expect(cols.has('needs_processing')).toBe(false);
+  });
+
+  // Asserted against the table rather than through `SettingsRepository`, which
+  // defaults a missing key and so reads the same either way: what this pins is
+  // that the rows are actually there, which is what lets the API hand the
+  // defaults out and the client stop carrying its own copy.
+  it('writes every shipped default as a row, and keeps a chosen value over one', () => {
+    const db = new Database(':memory:');
+    runMigrations(db);
+
+    const seeded = db.query('SELECT key, value FROM settings').all() as { key: string; value: string }[];
+    const keys = new Set(seeded.map((row) => row.key));
+    // Every key but the ones whose default is null: an absent row is already
+    // "nothing chosen", which is what `last_viewer_rendition` is until something is.
+    for (const [key, value] of Object.entries(DEFAULT_SETTINGS)) {
+      expect(keys.has(key)).toBe(value != null);
+    }
+    expect(keys.has('last_viewer_rendition')).toBe(false);
+    expect(seeded.find((row) => row.key === 'hdr_peak_nits')?.value).toBe('1000');
+    expect(seeded.find((row) => row.key === 'watch_enabled')?.value).toBe('true');
+    expect(seeded.find((row) => row.key === 'cors_origins')?.value).toBe('');
+
+    // `OR IGNORE`, so a re-run cannot put a tuned value back to the default -
+    // which is every restart, not an edge case.
+    db.exec("UPDATE settings SET value = '4000' WHERE key = 'hdr_peak_nits'");
+    runMigrations(db);
+    expect(settingsFor(db, ['hdr_peak_nits'])).toEqual({ hdr_peak_nits: '4000' });
   });
 
   // Names used to be optional placeholders for the root folder. Existing blank
@@ -196,19 +232,22 @@ describe('migrations: splitting the import into two stages', () => {
   it('halves a tuned quantizer once, whatever it is run over', () => {
     const db = new Database(':memory:');
     runMigrations(db);
-    db.exec("INSERT INTO settings (key, value) VALUES ('full_rendition_quantizer', '26'), ('hdr_crf', '20'), ('full_rendition_size', '3840')");
+    // `OR REPLACE` because the first run seeded these keys with their defaults, and
+    // what this is about is a value chosen over the top of them afterwards.
+    db.exec(
+      "INSERT OR REPLACE INTO settings (key, value) VALUES ('full_rendition_quantizer', '26'), ('hdr_crf', '20'), ('full_rendition_size', '3840')",
+    );
     // Stamped by the first run, so a settings row written afterwards is on the new
     // scale already and must be left alone. Halving twice would double every
     // rendition's size, which is the failure this cannot self-detect.
     runMigrations(db);
     runMigrations(db);
 
-    const values = db.query('SELECT key, value FROM settings ORDER BY key').all();
-    expect(values).toEqual([
-      { key: 'full_rendition_quantizer', value: '26' },
-      { key: 'full_rendition_size', value: '3840' },
-      { key: 'hdr_crf', value: '20' },
-    ]);
+    expect(settingsFor(db, ['full_rendition_quantizer', 'full_rendition_size', 'hdr_crf'])).toEqual({
+      full_rendition_quantizer: '26',
+      full_rendition_size: '3840',
+      hdr_crf: '20',
+    });
   });
 
   it('halves the quantizers a database predating the rescale had tuned', () => {
@@ -226,14 +265,23 @@ describe('migrations: splitting the import into two stages', () => {
     // Only the quantizers, and only once: a size on the same table is not on this
     // scale and a second run finds the stamp.
     runMigrations(db);
-    expect(db.query('SELECT key, value FROM settings ORDER BY key').all()).toEqual([
-      { key: 'full_rendition_quantizer', value: '13' },
-      { key: 'full_rendition_size', value: '3840' },
-      { key: 'grid_rendition_quantizer', value: '13' },
-      { key: 'hdr_crf', value: '10' },
-      { key: 'lossless_quantizer', value: '4' },
-      { key: 'lossless_sdr_quantizer', value: '8' },
-    ]);
+    expect(
+      settingsFor(db, [
+        'full_rendition_quantizer',
+        'full_rendition_size',
+        'grid_rendition_quantizer',
+        'hdr_crf',
+        'lossless_quantizer',
+        'lossless_sdr_quantizer',
+      ]),
+    ).toEqual({
+      full_rendition_quantizer: '13',
+      full_rendition_size: '3840',
+      grid_rendition_quantizer: '13',
+      hdr_crf: '10',
+      lossless_quantizer: '4',
+      lossless_sdr_quantizer: '8',
+    });
   });
 
   it('leaves a quantizer it cannot parse for the settings reader to discard', () => {
@@ -256,13 +304,21 @@ describe('migrations: splitting the import into two stages', () => {
 
     runMigrations(db);
 
-    expect(db.query('SELECT key, value FROM settings ORDER BY key').all()).toEqual([
-      { key: 'full_rendition_quantizer', value: '26abc' },
-      { key: 'grid_rendition_quantizer', value: 'lots' },
-      { key: 'hdr_crf', value: '' },
+    expect(
+      settingsFor(db, [
+        'full_rendition_quantizer',
+        'grid_rendition_quantizer',
+        'hdr_crf',
+        'lossless_quantizer',
+        'lossless_sdr_quantizer',
+      ]),
+    ).toEqual({
+      full_rendition_quantizer: '26abc',
+      grid_rendition_quantizer: 'lots',
+      hdr_crf: '',
       // Already the tightest the scale goes, and halving it would say nothing new.
-      { key: 'lossless_quantizer', value: '0' },
-      { key: 'lossless_sdr_quantizer', value: '80' },
-    ]);
+      lossless_quantizer: '0',
+      lossless_sdr_quantizer: '80',
+    });
   });
 });

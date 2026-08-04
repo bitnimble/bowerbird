@@ -20,9 +20,13 @@ export class LibrariesPresenter {
   async load(): Promise<void> {
     this.beginLoad();
     try {
-      const libraries = await api.listLibraries();
+      // Alongside the list rather than once at startup: it is one small immutable
+      // record, and pairing them means the settings page never has a library in
+      // hand with nothing to compare it against.
+      const [libraries, defaults] = await Promise.all([api.listLibraries(), api.getLibraryDefaults()]);
       runInAction(() => {
         this.store.libraries = libraries;
+        this.store.defaults = defaults;
         this.store.loading = false;
       });
     } catch (err) {

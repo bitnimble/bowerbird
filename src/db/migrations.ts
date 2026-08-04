@@ -1,4 +1,5 @@
 import type { Database } from 'bun:sqlite';
+import { DEFAULT_SETTINGS } from '../schemas/settings';
 import { inferredLibraryName } from '../utils/library_name';
 
 // Schema creation. Tables are ordered so every REFERENCES target already exists.
@@ -555,4 +556,20 @@ export function runMigrations(db: Database): void {
   ensureColumn(db, 'libraries', 'auto_stack', 'INTEGER NOT NULL DEFAULT 1');
   ensureColumn(db, 'libraries', 'auto_stack_similarity', 'REAL NOT NULL DEFAULT 0.78');
   ensureColumn(db, 'libraries', 'auto_stack_window_seconds', 'INTEGER NOT NULL DEFAULT 60');
+  seedSettings(db);
+}
+
+// The shipped defaults as rows, so a fresh database holds what the app is running
+// on rather than leaving every untouched key implicit and readable only from the
+// schema. `OR IGNORE`, so this fills in a key a later version adds and never
+// overwrites one somebody set.
+//
+// A null default is left absent rather than written as a string: an absent row
+// already means "nothing chosen", which is what `last_viewer_rendition` is until
+// a rendition has been.
+function seedSettings(db: Database): void {
+  const insert = db.query('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)');
+  for (const [key, value] of Object.entries(DEFAULT_SETTINGS)) {
+    if (value != null) insert.run(key, String(value));
+  }
 }

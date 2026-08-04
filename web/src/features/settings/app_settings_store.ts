@@ -12,6 +12,8 @@ import type { Settings, ViewerRendition, ViewerRenditionMode } from '../../api/c
 // what the server holds rather than a guess it would then correct.
 export class AppSettingsStore {
   @observable.ref accessor settings: Settings | null = null;
+  /** What the app ships with, for the settings page's reset. Null until it has arrived. */
+  @observable.ref accessor defaults: Settings | null = null;
 
   // The viewer opens photos before the settings arrive, so these two answer
   // with the shipped behaviour rather than nothing.

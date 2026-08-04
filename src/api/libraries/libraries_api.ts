@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import {
   CreateLibraryRequestSchema,
+  DEFAULT_LIBRARY_SETTINGS,
   FolderPathSchema,
   SetFolderRuleRequestSchema,
   UpdateLibraryRequestSchema,
@@ -27,6 +28,11 @@ export class LibrariesApi {
     });
 
     app.get('/', (c) => c.json(this.service.list()));
+
+    // What a new library is created with, so a client can offer "put this back"
+    // without carrying a copy of the schema's defaults. Above `/:id`, which would
+    // otherwise take `defaults` for a library id.
+    app.get('/defaults', (c) => c.json(DEFAULT_LIBRARY_SETTINGS));
 
     // Folders inside this library, in the root-relative paths a shoot's folder
     // is stored as. Fenced at the root: a shoot's folder cannot be outside the

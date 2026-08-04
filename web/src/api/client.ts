@@ -4,6 +4,7 @@ import type {
   CreateLibraryRequest,
   FolderRule,
   Library,
+  LibrarySettings,
   LibrarySyncStatus,
   SetFolderRuleRequest,
   UpdateLibraryRequest,
@@ -33,6 +34,7 @@ export type {
   CreateLibraryRequest,
   FolderRule,
   Library,
+  LibrarySettings,
   LibrarySyncStatus,
   PhotoDetail,
   PhotoListResponse,
@@ -143,6 +145,11 @@ function query(params: PhotoListParams): string {
 export const api = {
   getSettings: (): Promise<Settings> => request('GET', '/api/settings'),
   updateSettings: (body: UpdateSettingsRequest): Promise<Settings> => request('PATCH', '/api/settings', body),
+  // What the app ships with, so the settings page can say which values have been
+  // moved and put them back. Asked for rather than compiled in: the defaults are
+  // the server's, and a client holding its own copy is a client that can disagree
+  // with the database about what "default" means.
+  getSettingsDefaults: (): Promise<Settings> => request('GET', '/api/settings/defaults'),
   // The server's directories, not this browser's: a library root is a path the
   // server has to be able to open.
   browse: (path?: string): Promise<BrowseResponse> =>
@@ -158,6 +165,8 @@ export const api = {
   clearFolderRule: (libraryId: string, folderPath: string): Promise<void> =>
     request('DELETE', `/api/libraries/${libraryId}/folder-rules?folder_path=${encodeURIComponent(folderPath)}`),
   listLibraries: (): Promise<Library[]> => request('GET', '/api/libraries'),
+  /** The per-library knobs a new library is created with, for the same reason as `getSettingsDefaults`. */
+  getLibraryDefaults: (): Promise<LibrarySettings> => request('GET', '/api/libraries/defaults'),
   getLibrary: (id: string): Promise<Library> => request('GET', `/api/libraries/${id}`),
   createLibrary: (body: CreateLibraryRequest): Promise<Library> => request('POST', '/api/libraries', body),
   updateLibrary: (id: string, body: UpdateLibraryRequest): Promise<Library> => request('PATCH', `/api/libraries/${id}`, body),

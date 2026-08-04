@@ -1,9 +1,11 @@
 import { computed, observable } from 'mobx';
-import type { FolderRule, Library } from '../../api/client';
+import type { FolderRule, Library, LibrarySettings } from '../../api/client';
 
 // Data only: observables + computeds. Every mutation lives on LibrariesPresenter.
 export class LibrariesStore {
   @observable.shallow accessor libraries: Library[] = [];
+  /** What a new library is created with, for the settings page's reset. Null until it arrives. */
+  @observable.ref accessor defaults: LibrarySettings | null = null;
   // Per library, keyed by id, because only the library being looked at in
   // Settings has ever had its rules read.
   @observable.shallow accessor folderRules = new Map<string, FolderRule[]>();

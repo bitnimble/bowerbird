@@ -42,8 +42,10 @@ test('numbers and booleans survive the round trip as numbers and booleans', () =
 // the viewer down with it: these are preferences, and a photo has to open.
 test('a value the app no longer understands reads as the default', () => {
   const { settings, db } = repo();
-  db.query("INSERT INTO settings (key, value) VALUES ('viewer_rendition_mode', 'holographic')").run();
-  db.query("INSERT INTO settings (key, value) VALUES ('grid_rendition_quantizer', 'lots')").run();
+  // Over the top of the seeded default, which is what a newer build writing a
+  // value this one cannot read actually leaves behind.
+  db.query("INSERT OR REPLACE INTO settings (key, value) VALUES ('viewer_rendition_mode', 'holographic')").run();
+  db.query("INSERT OR REPLACE INTO settings (key, value) VALUES ('grid_rendition_quantizer', 'lots')").run();
   expect(settings.get().viewer_rendition_mode).toBe('remember');
   expect(settings.get().grid_rendition_quantizer).toBe(DEFAULT_SETTINGS.grid_rendition_quantizer);
   db.close();
