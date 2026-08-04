@@ -11,7 +11,7 @@
 //! cargo run --release --example edit_fixture -- <out-dir>
 
 use rawshim::hdr::{self, Prepared};
-use rawshim::hdr_fit::{ChromaMap, HdrColour};
+use rawshim::hdr_fit::{ChromaMap, HdrColour, TRUST_CEILING};
 use rawshim::image::{self, Strengths};
 use rawshim::tone;
 
@@ -63,12 +63,17 @@ fn matched() -> HdrColour {
     let mut colour = HdrColour::identity();
     for (channel, curve) in colour.curves.iter_mut().enumerate() {
         let gain = 1.0 + 0.06 * (channel as f64 - 1.0);
-        let bend = 0.10 - 0.03 * channel as f64;
+        // A shoulder, which a fitted curve has and a straight ramp does not. It is what
+        // makes this fixture able to say anything about the peak: the exposure is a gain on
+        // the scene, but the curve compresses what the gain produces, so the measured peak
+        // rises more slowly than the slider does. A near-linear curve hides every way of
+        // getting the peak's histogram wrong, because there the two rise together.
+        let bend = 2.2 + 0.4 * channel as f64;
         let last = (curve.len() - 1) as f64;
+        let full = 1.0 - (-bend).exp();
         for (bin, value) in curve.iter_mut().enumerate() {
-            // Monotonic, and a fitted curve's shape: a lifted toe easing into a gentler top.
             let x = bin as f64 / last;
-            *value *= gain * (1.0 + bend * 4.0 * x * (1.0 - x));
+            *value = TRUST_CEILING * gain * (1.0 - (-bend * x).exp()) / full;
         }
     }
     colour.matrix = [[0.92, 0.06, 0.02], [0.05, 0.90, 0.05], [0.01, 0.07, 0.92]];

@@ -89,14 +89,25 @@ test.describe('GPU tick parity', () => {
       // which reads here as a peak that stops climbing - and in the picture as highlights
       // that clip a couple of stops up. At +5 EV this fixture measures 6594 nits against a
       // fixed top's 4872, so the failure is inside the slider's own range.
-      // Only upwards. Dimmed, the peak falls towards the width of a histogram bin - at -5 EV
-      // it is 6.2 nits against a 0.6 nit bin - so the ratio there measures the quantisation
-      // rather than the gain, and saturation is a bright-end failure in any case.
+      // Upwards only, and because of the curve rather than the histogram: the tone curve
+      // compresses, so below neutral the peak sits above the gain by a few percent. Above
+      // neutral is where the highlights are and where saturating the histogram would show.
       if (ev < 0) continue;
       expect(
         Math.abs(full / neutral - 2 ** ev) / 2 ** ev,
         `peak at ${ev} EV is ${full / neutral}x neutral, against 2^${ev}`,
       ).toBeLessThanOrEqual(0.02);
+    }
+
+    // And strictly rising across the whole slider, which is the shape both ways of getting
+    // the histogram wrong break. Bins fixed at a few times reference saturate, so the peak
+    // stops climbing; bins grown with the gain lose the values instead, because the curve
+    // compresses faster than the range opens, and the peak falls towards nothing - which
+    // reads on screen as the picture going dark and flat at particular slider positions.
+    const peaks = (sweep ?? []).map((point) => point.full);
+    for (let at = 1; at < peaks.length; at++) {
+      expect(peaks[at]!, `the peak rises from ${sweep?.[at - 1]?.ev} to ${sweep?.[at]?.ev} EV`)
+        .toBeGreaterThan(peaks[at - 1]!);
     }
   });
 });

@@ -128,16 +128,36 @@ app.use('*', async (c, next) => {
   await next();
   c.header('X-Content-Type-Options', 'nosniff');
 });
-// A read is only worth a line when it went wrong: a grid scrolling through a
-// shoot is hundreds of rendition GETs a minute, and burying the import that is
-// actually running is how a log stops being read. Anything that changes state
-// is worth one whatever it returns.
+// A read is only worth a line when it went wrong, or when it cost something: a grid
+// scrolling through a shoot is hundreds of rendition GETs a minute, and burying the import
+// that is actually running is how a log stops being read. Anything that changes state is
+// worth one whatever it returns.
+//
+// Expensive reads are the exception, and by what they cost rather than by which route they
+// are - an editor open is seconds of LibRaw and hundreds of megabytes, and was invisible
+// here, which is the wrong way round: it is the first thing anyone looks for when the app
+// feels slow, and a route named in a list would only have covered the one anybody thought
+// of.
+const SLOW_MS = 1_000;
+const LARGE_BYTES = 8 * 1024 * 1024;
+
 app.use('*', async (c, next) => {
   const started = Date.now();
   await next();
   const status = c.res.status;
-  const level = status >= 500 ? 'error' : status >= 400 ? 'warn' : c.req.method === 'GET' ? 'debug' : 'info';
-  requestLog[level](`${c.req.method} ${c.req.path}`, { status, ms: Date.now() - started });
+  const ms = Date.now() - started;
+  const bytes = Number(c.res.headers.get('content-length') ?? 0);
+  const notable = ms >= SLOW_MS || bytes >= LARGE_BYTES;
+  const level =
+    status >= 500 ? 'error'
+    : status >= 400 ? 'warn'
+    : c.req.method !== 'GET' || notable ? 'info'
+    : 'debug';
+  requestLog[level](`${c.req.method} ${c.req.path}`, {
+    status,
+    ms,
+    ...(bytes > 0 && { bytes }),
+  });
 });
 app.route('/api/events', new EventsApi(processingService).routes);
 app.route('/api/settings', new SettingsApi(settingsRepo).routes);

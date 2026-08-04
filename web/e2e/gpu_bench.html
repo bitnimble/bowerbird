@@ -175,7 +175,10 @@ async function main() {
   // worst disagreement rather than the sweep, since one number is what would regress.
   let peak = null;
   if (header.matched) {
-    const sweep = await pipeline.peakSweep([-5, -3, -2, -1, 0, 1, 2, 3, 5]);
+    // `evs` overrides the sample points, for hunting a peak that misbehaves at a particular
+    // slider position rather than across the range.
+    const evs = (query.get('evs') ?? '-5,-3,-2,-1,0,1,2,3,5').split(',').map(Number);
+    const sweep = await pipeline.peakSweep(evs);
     peak = {
       // The range as well as the disagreement: two peaks that agree because both are the
       // shader's floor of 1 nit would otherwise read as a pass.

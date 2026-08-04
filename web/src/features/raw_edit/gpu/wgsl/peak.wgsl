@@ -30,22 +30,45 @@
 override BINS: u32 = 8192u;
 override CANDIDATES: u32 = 16384u;
 
-// The top of the histogram, as a multiple of reference white, at neutral exposure.
+// The histogram is logarithmic, in stops either side of reference white.
 //
-// A frame's post-colour peak runs to a few times diffuse white, so 24 is generous there.
-// It is not a constant, though, and that was the bug: `measured` is taken *after* the
-// exposure, so the slider carries it up with the gain, and past about +2 EV a real
-// highlight lands in the last bin. The quantile then reads the peak as 24 whatever it
-// really is, the roll-off is built for a scene that stops there, and everything above it
-// clamps - a hard clip in the highlights, arriving as the reader raises exposure, which is
-// the one place a grade is judged.
+// Linear bins cannot hold this, and both ways of sizing them are wrong. Fixed at a few
+// times diffuse white, they saturate: `measured` is taken *after* the exposure, so the
+// slider carries it up with the gain, and a couple of stops up every real highlight lands
+// in the last bin - the quantile reads the peak as the top of the range whatever the frame
+// holds, and the highlights hard-clip.
 //
-// So the top travels with the gain, and only upwards: below neutral the values shrink and
-// the extra range would only cost resolution.
-const RANGE: f32 = 24.0;
+// Growing the top with the gain instead is worse, because `measured` does not grow with the
+// gain: the tone curve compresses highlights, so it rises more slowly, and a range that
+// rose linearly left the candidates collapsing towards the first bin. There the quantile
+// reads a peak of nearly nothing, the roll-off clamps the whole frame to it, and the
+// picture goes dark and flat - at particular slider positions, on the photographs whose
+// curves compress hardest.
+//
+// In stops both problems disappear, because relative resolution is what a peak needs: 8192
+// bins over 28 stops is 0.0034 of a stop each, and the range covers anything a sensor and a
+// slider can produce between them.
+const LOG_LOW: f32 = -14.0;
+const LOG_HIGH: f32 = 14.0;
+const LOG_SPAN: f32 = LOG_HIGH - LOG_LOW;
 
-fn range() -> f32 {
-  return RANGE * max(tick.exposure, 1.0);
+/// Which bin a value in units of reference white falls in.
+fn bin_of(v: f32) -> u32 {
+  // Below the range is the bottom bin rather than an error: a black pixel is a real sample
+  // and `log2(0)` is not a number to clamp.
+  let stops = log2(max(v, 1e-9));
+  let t = (stops - LOG_LOW) / LOG_SPAN;
+  return min(u32(max(t, 0.0) * f32(BINS)), BINS - 1u);
+}
+
+/// The value at a bin's own centre, in units of reference white.
+fn bin_centre(bin: u32) -> f32 {
+  return exp2(LOG_LOW + ((f32(bin) + 0.5) / f32(BINS)) * LOG_SPAN);
+}
+
+/// And at its lower edge, which is the form a threshold wants.
+fn bin_floor(bin: u32) -> f32 {
+  return exp2(LOG_LOW + (f32(bin) / f32(BINS)) * LOG_SPAN);
 }
 
 /// `tone::PEAK_QUANTILE`.
@@ -58,7 +81,7 @@ fn measured(level: vec3f) -> f32 {
 }
 
 fn count_in(v: f32) {
-  atomicAdd(&histogram[min(u32(max(v, 0.0) / range() * f32(BINS)), BINS - 1u)], 1u);
+  atomicAdd(&histogram[bin_of(v)], 1u);
 }
 
 /// The sampled row of the frame this invocation covers, or nothing.
@@ -144,7 +167,7 @@ const CHUNKS: u32 = 256u;
 var<workgroup> partial: array<u32, 256>;
 
 fn bin_value(bin: u32) -> f32 {
-  return (f32(bin) + 0.5) / f32(BINS) * range() * tick.reference;
+  return bin_centre(bin) * tick.reference;
 }
 
 @compute @workgroup_size(256)
@@ -199,8 +222,5 @@ fn quantile(@builtin(local_invocation_id) local: vec3u) {
   }
   // The bin's lower edge, and in what `measured` returns rather than in nits: `collect`
   // compares against this before the reference has been multiplied back in.
-  // `range()` rather than `RANGE`, though this arm only ever runs at neutral exposure where
-  // the two are equal: reading the same top the bins were filled at is what makes it a
-  // threshold in `measured`'s units rather than a number that happens to match today.
-  peak_out[1] = f32(edge) / f32(BINS) * range();
+  peak_out[1] = bin_floor(edge);
 }
