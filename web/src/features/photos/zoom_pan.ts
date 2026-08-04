@@ -9,7 +9,7 @@
 // The maths is pure and takes the viewport box as an argument rather than measuring it, so
 // it is safe to run inside a React state updater - which is where it has to run, since
 // zooming about a point reads the current offset to compute the next one.
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 export const MIN_SCALE = 1; // 1 = fitted to the stage
 // The zoom control's middle stop; its third is the frame's own pixel scale.
@@ -171,9 +171,20 @@ export interface ZoomPan {
 export function useZoomPan(
   viewport: React.RefObject<HTMLElement | null>,
   gestures: React.RefObject<HTMLElement | null>,
-  natural: Size,
+  size: Size,
   onGestureEnd?: (travel: { dx: number; dy: number; zoomed: boolean }) => void,
 ): ZoomPan {
+  // Held by its extent rather than by the object it arrived in. A caller that builds the
+  // size inline - which is the natural way to write it from a store - hands over a new
+  // object every render, and everything below that depends on it would be rebuilt: the
+  // wheel listener detaches and reattaches on each one, and in the editor that is every
+  // frame of a drag. Cheaper to be indifferent to it here than to require every caller to
+  // remember.
+  const natural = useMemo(
+    () => ({ width: size.width, height: size.height }),
+    [size.width, size.height],
+  );
+
   const [view, setView] = useState<View>(FITTED);
   const [dragging, setDragging] = useState(false);
   const [box, setBox] = useState<Size>(NO_SIZE);
