@@ -162,6 +162,115 @@ fn keep_prepared(command: &[u8], payload: Vec<u8>) {
     }
 }
 
+// ---------------------------------------------------------------------------------------
+// The same open, without holding the caller's thread.
+//
+// `bb_prepare_edit` is seconds of LibRaw, and the server calls it from the one thread that
+// answers every other request - so an editor open stopped the library dead for as long as it
+// took. This is that call with the waiting taken out: it starts the work on a thread of its
+// own and returns immediately, and the caller learns it is done through a function pointer
+// it registered rather than by blocking or polling.
+//
+// It is `postMessage` rather than a thread pool, which is what makes it fit: Bun's
+// `JSCallback { threadsafe: true }` can be entered from a thread that is not the JS one, so
+// the completion arrives as an event, and a `Map` of pending ids turns it back into a
+// promise. Nothing on the JS side has to know a thread exists.
+
+/// What a finished open calls, with the job's id and the bytes its reply needs.
+///
+/// Negative length is a failure that produced no reply at all; a failed *open* is a positive
+/// length carrying `ok: false`, exactly as the blocking call reports it.
+type Finished = extern "C" fn(u64, i64);
+
+static ON_FINISHED: std::sync::Mutex<Option<Finished>> = std::sync::Mutex::new(None);
+static NEXT_JOB: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+static FINISHED: std::sync::Mutex<Vec<(u64, Vec<u8>)>> = std::sync::Mutex::new(Vec::new());
+
+/// Registers the function every finished open reports through. Call once, before starting.
+///
+/// # Safety
+/// `callback` must remain callable for as long as any job may still be running, and must be
+/// safe to enter from a thread this library owns.
+#[expect(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn bb_prepare_edit_notify(callback: Finished) {
+    if let Ok(mut held) = ON_FINISHED.lock() {
+        *held = Some(callback);
+    }
+}
+
+/// Starts an open and returns its job id, without waiting for it.
+///
+/// 0 is a refusal that will never be reported: a null command, or no callback registered to
+/// report through. Anything else is a job that will call the callback exactly once.
+///
+/// # Safety
+/// `command` must point at `command_len` readable bytes. It is copied before this returns,
+/// so the caller may free it immediately.
+#[expect(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn bb_prepare_edit_start(command: *const u8, command_len: usize) -> u64 {
+    if command.is_null() {
+        return 0;
+    }
+    let Some(finished) = ON_FINISHED.lock().ok().and_then(|held| *held) else {
+        return 0;
+    };
+    // Copied rather than borrowed, because the caller is about to return to its event loop
+    // and the buffer is its own.
+    let bytes = unsafe { std::slice::from_raw_parts(command, command_len) }.to_vec();
+    let job = NEXT_JOB.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+    std::thread::spawn(move || {
+        let payload = match serde_json::from_slice::<crate::edit::EditRequest>(&bytes) {
+            Err(error) => edit_failure(&format!("could not read the edit request: {error}")),
+            Ok(request) => {
+                match crate::guard("bb_prepare_edit_start", Err("panicked".to_string()), || {
+                    crate::edit::prepare(&request)
+                }) {
+                    Ok(prepared) => match crate::edit::encode(&prepared) {
+                        Ok(bytes) => bytes,
+                        Err(error) => edit_failure(&error),
+                    },
+                    Err(error) => edit_failure(&error),
+                }
+            }
+        };
+
+        let length = payload.len() as i64;
+        match FINISHED.lock() {
+            Ok(mut done) => done.push((job, payload)),
+            // Nowhere to leave it, so report the failure rather than a length the caller
+            // would then ask for and not get.
+            Err(_) => return finished(job, -1),
+        }
+        finished(job, length);
+    });
+    job
+}
+
+/// Copies out a finished job's reply, once. -1 for a job that is not waiting to be taken.
+///
+/// # Safety
+/// `out` must point at `out_cap` writable bytes.
+#[expect(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn bb_prepare_edit_take(job: u64, out: *mut u8, out_cap: usize) -> isize {
+    let Ok(mut done) = FINISHED.lock() else { return -1 };
+    let Some(at) = done.iter().position(|(id, _)| *id == job) else { return -1 };
+    if done[at].1.len() > out_cap || out.is_null() {
+        return -1;
+    }
+    // Removed whatever happens next: the frame is hundreds of megabytes and the caller has
+    // asked for it exactly once.
+    let (_, payload) = done.remove(at);
+    drop(done);
+
+    let destination = unsafe { std::slice::from_raw_parts_mut(out, payload.len()) };
+    destination.copy_from_slice(&payload);
+    payload.len() as isize
+}
+
 /// A failed open in the same framing as a successful one, so the caller has one parse.
 fn edit_failure(error: &str) -> Vec<u8> {
     let header = serde_json::json!({ "ok": false, "error": error }).to_string();
@@ -512,6 +621,55 @@ mod tests {
         );
         assert_eq!(take_prepared(command), Some(vec![7u8; 32]), "the retry finds it");
         assert_eq!(take_prepared(command), None, "and it is freed once copied out");
+    }
+
+    /// The event-based open's protocol, end to end, without needing a RAW to decode.
+    ///
+    /// A command that will not parse fails inside the worker rather than at the call, which
+    /// is exactly the path being checked: `start` has to return a job id anyway, the
+    /// callback has to arrive from the other thread, and the reply has to be waiting to be
+    /// taken when it does.
+    static REPORTED: std::sync::Mutex<Vec<(u64, i64)>> = std::sync::Mutex::new(Vec::new());
+
+    extern "C" fn record(job: u64, length: i64) {
+        if let Ok(mut seen) = REPORTED.lock() {
+            seen.push((job, length));
+        }
+    }
+
+    #[test]
+    fn an_open_reports_itself_finished_from_its_own_thread() {
+        #[expect(unsafe_code)]
+        unsafe {
+            bb_prepare_edit_notify(record)
+        };
+        #[expect(unsafe_code)]
+        let job = unsafe { bb_prepare_edit_start(b"not json".as_ptr(), 8) };
+        assert_ne!(job, 0, "a registered callback means the job starts");
+
+        let mut length = 0;
+        for _ in 0..200 {
+            if let Some((_, len)) =
+                REPORTED.lock().ok().and_then(|seen| seen.iter().find(|(id, _)| *id == job).copied())
+            {
+                length = len;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(length > 0, "a failed open is a reply, not an absent one");
+
+        // Once, and only once: the frame is hundreds of megabytes and the slot is freed by
+        // the call that reads it.
+        let mut out = vec![0u8; length as usize];
+        #[expect(unsafe_code)]
+        let written = unsafe { bb_prepare_edit_take(job, out.as_mut_ptr(), out.len()) };
+        assert_eq!(written, length as isize);
+        assert!(String::from_utf8_lossy(&out).contains("could not read the edit request"));
+
+        #[expect(unsafe_code)]
+        let again = unsafe { bb_prepare_edit_take(job, out.as_mut_ptr(), out.len()) };
+        assert_eq!(again, -1, "a job that has been taken is gone");
     }
 
     #[test]

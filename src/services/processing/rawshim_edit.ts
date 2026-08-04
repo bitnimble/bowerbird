@@ -9,7 +9,7 @@
 // of JSON, then the samples as little-endian u16 RGB. Base64 of 59MB would be neither
 // cheap nor honest, and splitting the header into a second request would let the two
 // disagree about which frame they describe.
-import { ptr } from 'bun:ffi';
+import { FFIType, JSCallback, ptr } from 'bun:ffi';
 import { shim } from './rawshim';
 import type { JobGrade } from './rawshim_job';
 
@@ -81,6 +81,50 @@ const HEADER_CAPACITY = 256 * 1024;
  * fits. The work is not repeated - `bb_prepare_edit` runs the open on the first call and
  * the second is the copy-out - which is the same protocol `runJob` uses for its replies.
  */
+/**
+ * The same open, without stopping the server for the length of it.
+ *
+ * `prepareEdit` is seconds of LibRaw on the one thread that answers every other request, so
+ * an editor open froze the library until it finished. This starts the work on a thread the
+ * native side owns and returns a promise: the completion arrives as a callback, which is
+ * `postMessage` rather than a thread pool, and needs no worker on this side at all.
+ *
+ * The callback is registered once and shared. Bun's `threadsafe` flag is what makes it legal
+ * to enter from a thread that is not this one, and the pending map is what turns "job 7
+ * finished" back into the promise that asked for it.
+ */
+const pending = new Map<number, (reply: { length: number }) => void>();
+
+const finished = new JSCallback(
+  (job: number | bigint, length: number | bigint) => {
+    const settle = pending.get(Number(job));
+    pending.delete(Number(job));
+    settle?.({ length: Number(length) });
+  },
+  { args: [FFIType.u64, FFIType.i64], returns: FFIType.void, threadsafe: true },
+);
+
+let notified = false;
+
+export async function prepareEditAsync(request: EditRequest): Promise<PreparedFrame> {
+  if (!notified) {
+    shim().bb_prepare_edit_notify(finished.ptr);
+    notified = true;
+  }
+
+  const command = Buffer.from(JSON.stringify(request), 'utf8');
+  const job = Number(shim().bb_prepare_edit_start(command, command.byteLength));
+  if (job === 0) throw new Error('rawshim would not start the open');
+
+  const { length } = await new Promise<{ length: number }>((resolve) => pending.set(job, resolve));
+  if (length < 0) throw new Error('rawshim could not open the RAW for editing');
+
+  const reply = new Uint8Array(length);
+  const written = Number(shim().bb_prepare_edit_take(BigInt(job), ptr(reply), reply.byteLength));
+  if (written < 0) throw new Error('the prepared frame was gone before it could be read');
+  return decode(reply.subarray(0, written));
+}
+
 export function prepareEdit(request: EditRequest): PreparedFrame {
   const command = Buffer.from(JSON.stringify(request), 'utf8');
   let reply = new Uint8Array(HEADER_CAPACITY);

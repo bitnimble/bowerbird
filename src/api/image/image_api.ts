@@ -5,7 +5,7 @@ import type { Library } from '../../schemas/libraries';
 import { getOriginalPath, getRenditionPath } from '../../utils/paths';
 import { rawMediaType } from '../../utils/scan';
 import { readEmbeddedJpeg } from '../../services/processing/raw_decoder';
-import { framePrepared, prepareEdit } from '../../services/processing/rawshim_edit';
+import { framePrepared, prepareEditAsync } from '../../services/processing/rawshim_edit';
 import { transcodeJpeg } from '../../services/processing/rawshim_job';
 import type { SettingsRepository } from '../../services/settings/settings_repository';
 import { RENDITION_CONTENT_TYPE, isRendition } from '../../services/processing/renditions';
@@ -102,7 +102,7 @@ export class ImageApi {
   // photo rather than per tick. `longEdge` is the client's, not the library's: the stage
   // decides how many pixels are worth grading (§4.1), and the rendition default is a size
   // chosen for a file kept forever.
-  private servePrepared(c: Context): Response {
+  private async servePrepared(c: Context): Promise<Response> {
     const photoId = c.req.param('photoId');
     if (photoId == null) throw new AppError('NOT_FOUND', 'photo not found');
     const { photo, library } = this.photos.locate(photoId);
@@ -114,7 +114,11 @@ export class ImageApi {
     const longEdge = Math.round(requested);
 
     const settings = this.settings.get();
-    const prepared = prepareEdit({
+    // Awaited, not called: the open is seconds of LibRaw, and every other request this
+    // server answers comes off the same thread. It runs on one the native side owns and
+    // reports back through a callback (`rawshim_edit.ts`), so a reader opening the editor no
+    // longer stops the grid loading for anybody, themselves included.
+    const prepared = await prepareEditAsync({
       rawFilePath: getOriginalPath(library, photo.file_path),
       longEdge,
       grade: {
