@@ -21,7 +21,7 @@ use tauri::ipc::Response;
 /// work. A JSON object rather than that one string, because the next app-local setting
 /// should be a field rather than a second file - `serde` ignores what it does not know, so
 /// an older build reading a newer config keeps the fields it understands.
-#[derive(Default, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Config {
     /// Absent until the reader sets one, which is different from set-to-empty.
@@ -125,10 +125,14 @@ pub fn set_server_origin(app: tauri::AppHandle, value: String) -> Result<String,
 
     {
         let mut held = CONFIG.write().map_err(|_| "the config is locked".to_string())?;
-        let config = held.get_or_insert_with(Config::default);
-        config.server = server;
-        save(&app, config)?;
+        // Saved before it is adopted, so a write that fails leaves the running app and the
+        // file still agreeing on the old address rather than disagreeing until a restart.
+        let mut next = (*held).clone().unwrap_or_default();
+        next.server = server;
+        save(&app, &next)?;
+        *held = Some(next);
     }
+    // Outside the guard: `origin` takes the read lock, and this one is not reentrant.
     Ok(origin())
 }
 
