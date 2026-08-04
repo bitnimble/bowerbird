@@ -34,8 +34,6 @@ export class RawEditPresenter {
   private pending: number | null = null;
   private frame = 0;
   private closed = false;
-  private windowStarted = 0;
-  private windowFrames = 0;
 
   constructor(private readonly store: RawEditStore) {}
 
@@ -131,7 +129,6 @@ export class RawEditPresenter {
       this.describeAdapter(adapter);
 
       this.preparing();
-      const started = performance.now();
       const { header, samples } = await fetchPrepared(photoId, longEdge);
       if (this.closed) return;
 
@@ -157,7 +154,7 @@ export class RawEditPresenter {
       } as GPUCanvasConfiguration);
 
       this.pipeline = new TickPipeline(device, context, header, samples);
-      this.opened(header, performance.now() - started);
+      this.opened(header);
       // Re-attached rather than left as it was: the observer needs a region and a device
       // to size against, and neither existed when React handed the element over.
       this.attach(canvas);
@@ -207,23 +204,8 @@ export class RawEditPresenter {
       const next = this.pending;
       this.pending = null;
       if (next == null || this.closed || this.pipeline == null) return;
-      const started = performance.now();
       this.pipeline.render(next, this.store.region ?? this.pipeline.wholeFrame);
-      this.measure(performance.now() - started);
     });
-  }
-
-  @action.bound
-  private measure(ms: number): void {
-    this.store.gradeMs = Math.round(ms);
-    const now = performance.now();
-    this.windowFrames += 1;
-    if (this.windowStarted === 0) this.windowStarted = now;
-    const elapsed = now - this.windowStarted;
-    if (elapsed < 500) return;
-    this.store.fps = Math.round((this.windowFrames / elapsed) * 1000);
-    this.windowStarted = now;
-    this.windowFrames = 0;
   }
 
   @action.bound
@@ -241,9 +223,6 @@ export class RawEditPresenter {
     this.store.height = 0;
     this.store.exposureEv = 0;
     this.store.matched = false;
-    this.store.openMs = 0;
-    this.store.gradeMs = 0;
-    this.store.fps = 0;
   }
 
   @action.bound
@@ -253,13 +232,12 @@ export class RawEditPresenter {
   }
 
   @action.bound
-  private opened(header: PreparedHeader, ms: number): void {
+  private opened(header: PreparedHeader): void {
     this.store.status = 'live';
     this.store.message = '';
     this.store.width = header.width;
     this.store.height = header.height;
     this.store.matched = header.matched;
-    this.store.openMs = Math.round(ms);
     this.store.region = { x: 0, y: 0, width: header.width, height: header.height };
   }
 

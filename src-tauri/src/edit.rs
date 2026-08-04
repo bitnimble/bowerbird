@@ -32,15 +32,15 @@ pub async fn prepared(path: &str) -> Result<Vec<u8>, String> {
         raw_file_path: String::new(),
         long_edge,
         grade: rawshim::hdr::Grade {
-            peak_nits: number(&settings, "hdr_peak_nits", 1000.0),
-            reference_white_nits: number(&settings, "hdr_reference_white_nits", 203.0),
-            white_quantile: number(&settings, "hdr_white_quantile", 0.995),
+            peak_nits: number(&settings, "hdr_peak_nits")?,
+            reference_white_nits: number(&settings, "hdr_reference_white_nits")?,
+            white_quantile: number(&settings, "hdr_white_quantile")?,
         },
         strengths: rawshim::image::Strengths {
-            luma: number(&settings, "raw_denoise_luma", 1.0),
-            chroma: number(&settings, "raw_denoise_chroma", 1.0),
-            sharpen: number(&settings, "raw_sharpen", 1.0),
-            defringe: number(&settings, "raw_defringe", 1.0),
+            luma: number(&settings, "raw_denoise_luma")?,
+            chroma: number(&settings, "raw_denoise_chroma")?,
+            sharpen: number(&settings, "raw_sharpen")?,
+            defringe: number(&settings, "raw_defringe")?,
         },
     };
 
@@ -84,6 +84,17 @@ fn parse(path: &str) -> Result<(String, u32), String> {
     Ok((photo_id.to_string(), long_edge))
 }
 
-fn number(settings: &serde_json::Value, key: &str, fallback: f64) -> f64 {
-    settings.get(key).and_then(|v| v.as_f64()).unwrap_or(fallback)
+/// One setting, or a failed open.
+///
+/// No fallback, deliberately. There were seven, and three of them had drifted from the
+/// schema that resolves these - `raw_denoise_luma` 1.0 against 0.5, `raw_sharpen` 1.0
+/// against 0.6, `hdr_white_quantile` 0.995 against 0.9 - so the shell and the library
+/// could grade the same photograph differently and nothing would say so. `/api/settings`
+/// answers with every value already resolved, so a key missing here is a version
+/// disagreement worth reporting rather than a number worth guessing.
+fn number(settings: &serde_json::Value, key: &str) -> Result<f64, String> {
+    settings
+        .get(key)
+        .and_then(serde_json::Value::as_f64)
+        .ok_or_else(|| format!("the library's settings carry no {key}"))
 }

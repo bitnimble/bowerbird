@@ -28,12 +28,6 @@ export class RawEditStore {
   /** Whether the camera's own colour is in play, or the grade fell back to neutral. */
   @observable accessor matched = false;
 
-  /** How long the server spent decoding, fitting and warping the frame. */
-  @observable accessor openMs = 0;
-  /** How long a tick takes, wall clock, from slider move to submitted frame. */
-  @observable accessor gradeMs = 0;
-  @observable accessor fps = 0;
-
   /** The adapter behind the tick, for the readout: this is a GPU pipeline now. */
   @observable accessor adapter = '';
 
@@ -48,8 +42,4 @@ export class RawEditStore {
     return this.stageWidth / region.width;
   }
 
-  /** What the readout calls the frame this route delivers. There is only one now. */
-  @computed get output(): string {
-    return 'extended-range WebGPU canvas, Display P3, 16-bit float';
-  }
 }
