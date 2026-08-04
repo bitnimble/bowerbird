@@ -11,8 +11,11 @@ import {
   PEAK,
   PEAK_BINS,
   PEAK_CANDIDATES,
+  PEAK_CONSTANTS,
   PEAK_SAMPLES,
+  REDUCE,
   TICK_UNIFORM_FLOATS,
+  UNPACK,
 } from './shaders';
 
 /** `Sample::from_f32` for `u16`: rounded, and held inside the range it has to fit. */
@@ -58,6 +61,55 @@ export interface PreparedHeader {
  */
 const SDR_WHITE_NITS = 203;
 
+/** The part of the frame on screen, in source pixels. Zoom and pan move this and nothing else. */
+export interface Region {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * Canvas pixels per device pixel.
+ *
+ * The draw point-samples the region it shows, and a photograph's edges are exactly where
+ * that reads as a jagged line rather than a soft one. Rendering half again as wide and
+ * letting the compositor's own downscale do the smoothing is the cheap version of an
+ * antialiased draw, and it is cheap because the cost is per canvas pixel: 1.5 costs 2.25x
+ * a pass that no longer scales with the frame at all.
+ */
+export const SUPERSAMPLE = 1.5;
+
+/**
+ * The backing store to give the canvas, for a CSS box and the region it is showing.
+ *
+ * The shape is the region's, not the box's. The element is laid out `object-fit: contain`
+ * and the draw fills whatever canvas it is given, so a backing store of a different aspect
+ * ratio is a stretched photograph. Fitting here rather than letterboxing in the shader
+ * also means no canvas pixel is ever drawn and then thrown away.
+ *
+ * Then the two multipliers and the two clamps. `devicePixelRatio` is how many device
+ * pixels a CSS pixel is, so without it a Retina panel shows a half-resolution picture, and
+ * `SUPERSAMPLE` is on top of that. The clamps stop them compounding into nonsense: past
+ * the region's own resolution there is nothing left to resolve, and past
+ * `maxTextureDimension2D` there is no canvas.
+ *
+ * Exported because sizing the canvas belongs to whoever owns the element, and reading a
+ * layout box is not something the tick may do.
+ */
+export function stageResolution(
+  css: { width: number; height: number },
+  region: Region,
+  maxTexture: number,
+): { width: number; height: number } {
+  const dpr = globalThis.devicePixelRatio || 1;
+  const contain = Math.min(css.width / region.width, css.height / region.height);
+  const scale = contain * dpr * SUPERSAMPLE;
+  const fit = (source: number): number =>
+    Math.max(1, Math.min(Math.round(source * scale), Math.ceil(source), maxTexture));
+  return { width: fit(region.width), height: fit(region.height) };
+}
+
 /**
  * What to ask `requestDevice` for before building a `TickPipeline` on it.
  *
@@ -70,6 +122,24 @@ const SDR_WHITE_NITS = 203;
 export function tickFeatures(adapter: GPUAdapter): GPUFeatureName[] {
   const wanted: GPUFeatureName[] = ['float32-filterable', 'timestamp-query'];
   return wanted.filter((feature) => adapter.features.has(feature));
+}
+
+/**
+ * The limits a full-resolution frame needs, which are nothing like the defaults.
+ *
+ * `requestDevice` hands back the *default* limits however capable the adapter is, and the
+ * defaults are sized for a web page rather than for a sensor: `maxTextureDimension2D` is
+ * 8192 against the 9504 a 61MP frame is wide, and `maxBufferSize` is 256MB against the
+ * 366MB that frame's levels take. Both failures are validation errors, which drop the
+ * dispatches and read as a very fast tick rather than as a failure - this has cost a
+ * morning twice.
+ *
+ * Asked for as the adapter's own maximum rather than as a computed need, because the
+ * alternative is re-requesting a device when a larger photograph is opened.
+ */
+export function tickLimits(adapter: GPUAdapter): Record<string, number> {
+  const { maxTextureDimension2D, maxBufferSize, maxStorageBufferBindingSize } = adapter.limits;
+  return { maxTextureDimension2D, maxBufferSize, maxStorageBufferBindingSize };
 }
 
 export class TickPipeline {
@@ -88,6 +158,8 @@ export class TickPipeline {
   private readonly candidates: GPUBuffer;
   private readonly matrix: GPUBuffer;
   private readonly source: GPUTexture;
+  /** How many mips `source` carries, so the draw knows how far out it can average. */
+  private readonly levels: number;
   private readonly curves: GPUTexture;
   private readonly chroma: GPUTexture;
   private readonly lerp: GPUSampler;
@@ -112,7 +184,7 @@ export class TickPipeline {
     private readonly device: GPUDevice,
     private readonly context: GPUCanvasContext,
     private readonly header: PreparedHeader,
-    samples: Uint16Array,
+    samples: Uint16Array<ArrayBuffer>,
   ) {
     this.timer = PassTimer.supported(device) ? new PassTimer(device) : null;
     this.width = header.width;
@@ -120,27 +192,22 @@ export class TickPipeline {
     const pixels = this.width * this.height;
     this.rowStride = Math.max(1, Math.round(pixels / PEAK_SAMPLES));
 
+    if (Math.max(this.width, this.height) > device.limits.maxTextureDimension2D) {
+      throw new Error(
+        `this GPU holds frames to ${device.limits.maxTextureDimension2D}px a side; this one is ${this.width}x${this.height}`,
+      );
+    }
+    // The whole chain, not a few levels: it is a third more memory whatever depth it goes
+    // to, since each level is a quarter of the one above, and the coarse end is what a
+    // reader zoomed all the way out is looking at.
+    this.levels = Math.floor(Math.log2(Math.max(this.width, this.height))) + 1;
     this.source = device.createTexture({
       size: [this.width, this.height],
       format: 'rgba16uint',
-      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+      mipLevelCount: this.levels,
+      usage:
+        GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.COPY_DST,
     });
-    // Padded to four components here rather than in the shader: a texture takes RGBA and
-    // the frame is RGB, and doing it on the way in costs one pass over a buffer that is
-    // about to be uploaded anyway.
-    const rgba = new Uint16Array(pixels * 4);
-    for (let i = 0, o = 0; o < rgba.length; i += 3, o += 4) {
-      rgba[o] = samples[i]!;
-      rgba[o + 1] = samples[i + 1]!;
-      rgba[o + 2] = samples[i + 2]!;
-      rgba[o + 3] = 65535;
-    }
-    device.queue.writeTexture(
-      { texture: this.source },
-      rgba,
-      { bytesPerRow: this.width * 8, rowsPerImage: this.height },
-      [this.width, this.height],
-    );
 
     const storage = (length: number) =>
       device.createBuffer({
@@ -219,16 +286,25 @@ export class TickPipeline {
       entries: [...f.colour, f.readOnly(5)],
     });
 
-    const compute = (module: GPUShaderModule, entryPoint: string, layout: GPUBindGroupLayout) =>
+    const compute = (
+      module: GPUShaderModule,
+      entryPoint: string,
+      layout: GPUBindGroupLayout,
+      constants?: Record<string, number>,
+    ) =>
       device.createComputePipeline({
         layout: device.createPipelineLayout({ bindGroupLayouts: [layout] }),
-        compute: { module, entryPoint },
+        compute: { module, entryPoint, ...(constants != null && { constants }) },
       });
 
-    this.peakMeasure = compute(peak, 'measure', this.peakLayout);
-    this.peakCollect = compute(peak, 'collect', this.peakLayout);
-    this.peakRemeasure = compute(peak, 'remeasure', this.peakLayout);
-    this.peakQuantile = compute(peak, 'quantile', this.peakLayout);
+    // The peak's two lengths are its shader's overrides, so the buffers below and the
+    // loops above cannot come to disagree about them.
+    const onPeak = (entryPoint: string) =>
+      compute(peak, entryPoint, this.peakLayout, PEAK_CONSTANTS);
+    this.peakMeasure = onPeak('measure');
+    this.peakCollect = onPeak('collect');
+    this.peakRemeasure = onPeak('remeasure');
+    this.peakQuantile = onPeak('quantile');
     this.encodePipeline = compute(frame, 'encode', this.encodeLayout);
     this.drawPipeline = device.createRenderPipeline({
       layout: device.createPipelineLayout({ bindGroupLayouts: [this.drawLayout] }),
@@ -237,15 +313,127 @@ export class TickPipeline {
       primitive: { topology: 'triangle-list' },
     });
 
+    this.uploadFrame(samples);
     if (header.matched) this.chooseCandidates();
   }
 
-  /** Grades at `ev` stops and puts the result on the canvas. One submit, no readback. */
-  render(ev: number): void {
+  /**
+   * The frame's levels into `source`, adding the fourth component on the way.
+   *
+   * The staging buffer is destroyed as soon as the copy is recorded: at 61MP it is 366MB,
+   * and holding it beside the 488MB texture for the life of the editor would be most of a
+   * gigabyte for a padding step that has already happened.
+   */
+  private uploadFrame(samples: Uint16Array<ArrayBuffer>): void {
+    const staging = this.device.createBuffer({
+      size: Math.ceil((samples.length * 2) / 4) * 4,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    });
+    this.device.queue.writeBuffer(staging, 0, samples);
+
+    const layout = this.device.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
+        { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
+        {
+          binding: 2,
+          visibility: GPUShaderStage.COMPUTE,
+          storageTexture: { access: 'write-only', format: 'rgba16uint' },
+        },
+      ],
+    });
+    const encoder = this.device.createCommandEncoder();
+    const pass = encoder.beginComputePass();
+    pass.setPipeline(
+      this.device.createComputePipeline({
+        layout: this.device.createPipelineLayout({ bindGroupLayouts: [layout] }),
+        compute: {
+          module: this.device.createShaderModule({ code: UNPACK, label: 'unpack' }),
+          entryPoint: 'unpack',
+        },
+      }),
+    );
+    this.uniformsUsed = 0;
+    this.writeUniform();
+    pass.setBindGroup(
+      0,
+      this.device.createBindGroup({
+        layout,
+        entries: [
+          { binding: 0, resource: { buffer: this.current } },
+          { binding: 1, resource: { buffer: staging } },
+          // A storage binding takes one level, and `source` now has fourteen.
+          { binding: 2, resource: this.source.createView({ baseMipLevel: 0, mipLevelCount: 1 }) },
+        ],
+      }),
+    );
+    const [x, y] = this.groups(this.width, this.height);
+    pass.dispatchWorkgroups(x, y);
+    pass.end();
+    this.reduce(encoder);
+    this.device.queue.submit([encoder.finish()]);
+    staging.destroy();
+  }
+
+  /** The pyramid the draw averages with, one level per dispatch, in the same submit. */
+  private reduce(encoder: GPUCommandEncoder): void {
+    const layout = this.device.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: 'uint' } },
+        {
+          binding: 1,
+          visibility: GPUShaderStage.COMPUTE,
+          storageTexture: { access: 'write-only', format: 'rgba16uint' },
+        },
+      ],
+    });
+    const pipeline = this.device.createComputePipeline({
+      layout: this.device.createPipelineLayout({ bindGroupLayouts: [layout] }),
+      compute: {
+        module: this.device.createShaderModule({ code: REDUCE, label: 'reduce' }),
+        entryPoint: 'reduce',
+      },
+    });
+    const oneLevel = (baseMipLevel: number): GPUTextureView =>
+      this.source.createView({ baseMipLevel, mipLevelCount: 1 });
+
+    for (let level = 1; level < this.levels; level++) {
+      const pass = encoder.beginComputePass();
+      pass.setPipeline(pipeline);
+      pass.setBindGroup(
+        0,
+        this.device.createBindGroup({
+          layout,
+          entries: [
+            { binding: 0, resource: oneLevel(level - 1) },
+            { binding: 1, resource: oneLevel(level) },
+          ],
+        }),
+      );
+      const [x, y] = this.groups(
+        Math.max(1, this.width >> level),
+        Math.max(1, this.height >> level),
+      );
+      pass.dispatchWorkgroups(x, y);
+      pass.end();
+    }
+  }
+
+  /**
+   * Grades at `ev` stops and puts `region` of the frame on the canvas.
+   *
+   * `region` is in source pixels and defaults to the whole frame; it is what zoom and pan
+   * move. Not the peak's business, and deliberately: that reads the whole frame at a fixed
+   * stride whatever is on screen, or the highlight roll-off would shift as the reader
+   * panned from a dark part of the picture to a bright one.
+   *
+   * One submit, no readback.
+   */
+  render(ev: number, region: Region = this.wholeFrame): void {
     const encoder = this.device.createCommandEncoder();
     this.uniformsUsed = 0;
     this.timer?.begin();
-    this.writeUniform({ exposure: 2 ** ev, fromCandidates: true });
+    this.writeUniform({ exposure: 2 ** ev, fromCandidates: true, region });
 
     if (this.header.matched) this.measurePeak(encoder);
     this.draw(encoder);
@@ -253,6 +441,12 @@ export class TickPipeline {
     this.timer?.resolve(encoder);
     this.device.queue.submit([encoder.finish()]);
   }
+
+  /** The whole frame, which is what a fresh open shows. */
+  get wholeFrame(): Region {
+    return { x: 0, y: 0, width: this.width, height: this.height };
+  }
+
 
   /** Milliseconds per pass of the last `render`, if the adapter can tell us. */
   passMs(): Promise<PassMs> {
@@ -404,7 +598,9 @@ export class TickPipeline {
     });
   }
 
-  private writeUniform(over: { exposure?: number; fromCandidates?: boolean } = {}): void {
+  private writeUniform(
+    over: { exposure?: number; fromCandidates?: boolean; region?: Region } = {},
+  ): void {
     const header = this.header;
     const colour = header.colour;
     if (over.exposure != null) this.exposure = over.exposure;
@@ -434,6 +630,16 @@ export class TickPipeline {
     ints[19] = this.rowStride;
     ints[20] = this.width * Math.ceil(this.height / this.rowStride);
     ints[21] = over.fromCandidates ? 1 : 0;
+
+    const region = over.region ?? this.wholeFrame;
+    const canvas = this.context.canvas;
+    values[22] = region.x;
+    values[23] = region.y;
+    values[24] = region.width;
+    values[25] = region.height;
+    values[26] = canvas.width;
+    values[27] = canvas.height;
+    ints[28] = this.levels - 1;
     this.device.queue.writeBuffer(this.current, 0, values);
   }
 

@@ -1,7 +1,14 @@
 import { action } from 'mobx';
 import { preparedUrl } from '../../api/client';
 import { describe } from '../../errors';
-import { TickPipeline, type PreparedHeader, tickFeatures } from './gpu/tick_pipeline';
+import {
+  TickPipeline,
+  type PreparedHeader,
+  type Region,
+  stageResolution,
+  tickFeatures,
+  tickLimits,
+} from './gpu/tick_pipeline';
 import type { RawEditStore } from './raw_edit_store';
 
 /**
@@ -20,6 +27,7 @@ export class RawEditPresenter {
   private device: GPUDevice | null = null;
   private pipeline: TickPipeline | null = null;
   private canvas: HTMLCanvasElement | null = null;
+  private viewport: ResizeObserver | null = null;
 
   /** The frame the slider is asking for while one is already in flight. */
   private pending: number | null = null;
@@ -39,7 +47,56 @@ export class RawEditPresenter {
    */
   @action.bound
   attach(canvas: HTMLCanvasElement | null): void {
+    this.viewport?.disconnect();
+    this.viewport = null;
     this.canvas = canvas;
+    if (canvas == null) return;
+    // The observer's own box rather than `getBoundingClientRect`: the size arrives with
+    // the callback, so nothing on this path reads layout. It also fires once on observe,
+    // which is what gives the canvas its first size.
+    this.viewport = new ResizeObserver((entries) => {
+      const box = entries[entries.length - 1]?.contentRect;
+      if (box != null) this.fitStage(box.width, box.height);
+    });
+    this.viewport.observe(canvas);
+  }
+
+  /**
+   * Sizes the canvas backing store for the viewport and redraws into it.
+   *
+   * Held to what the frame can actually fill, which is why it needs the region: on a
+   * 61MP frame the whole picture is more than any display, and zoomed in far enough it is
+   * fewer source pixels than the panel has.
+   */
+  @action.bound
+  private fitStage(cssWidth: number, cssHeight: number): void {
+    const canvas = this.canvas;
+    const device = this.device;
+    if (canvas == null || device == null || cssWidth === 0 || cssHeight === 0) return;
+    const region = this.store.region;
+    if (region == null) return;
+
+    const size = stageResolution({ width: cssWidth, height: cssHeight }, region, device.limits.maxTextureDimension2D);
+    if (canvas.width === size.width && canvas.height === size.height) return;
+    canvas.width = size.width;
+    canvas.height = size.height;
+    this.store.stageWidth = size.width;
+    this.store.stageHeight = size.height;
+    this.request(this.store.exposureEv);
+  }
+
+  /** Zoom and pan: the rectangle of the frame on screen, held inside the frame. */
+  @action.bound
+  showRegion(region: Region): void {
+    const width = Math.min(Math.max(region.width, 1), this.store.width);
+    const height = Math.min(Math.max(region.height, 1), this.store.height);
+    this.store.region = {
+      width,
+      height,
+      x: Math.min(Math.max(region.x, 0), this.store.width - width),
+      y: Math.min(Math.max(region.y, 0), this.store.height - height),
+    };
+    this.request(this.store.exposureEv);
   }
 
   /**
@@ -56,7 +113,10 @@ export class RawEditPresenter {
         this.fail('this browser has no WebGPU, which the editor now needs');
         return;
       }
-      const device = await adapter.requestDevice({ requiredFeatures: tickFeatures(adapter) });
+      const device = await adapter.requestDevice({
+        requiredFeatures: tickFeatures(adapter),
+        requiredLimits: tickLimits(adapter),
+      });
       if (this.closed) return;
       this.device = device;
       device.lost.then((reason) => {
@@ -74,8 +134,6 @@ export class RawEditPresenter {
         this.fail('the stage was not mounted before the RAW arrived');
         return;
       }
-      canvas.width = header.width;
-      canvas.height = header.height;
       const context = canvas.getContext('webgpu');
       if (context == null) {
         this.fail('this browser has no WebGPU canvas context');
@@ -94,7 +152,9 @@ export class RawEditPresenter {
 
       this.pipeline = new TickPipeline(device, context, header, samples);
       this.opened(header, performance.now() - started);
-      this.request(this.store.exposureEv);
+      // Re-attached rather than left as it was: the observer needs a region and a device
+      // to size against, and neither existed when React handed the element over.
+      this.attach(canvas);
     } catch (error) {
       if (!this.closed) this.fail(describe(error));
     }
@@ -116,6 +176,8 @@ export class RawEditPresenter {
   close(): void {
     if (this.closed) return;
     this.closed = true;
+    this.viewport?.disconnect();
+    this.viewport = null;
     if (this.frame !== 0) cancelAnimationFrame(this.frame);
     this.pipeline?.destroy();
     this.pipeline = null;
@@ -140,7 +202,7 @@ export class RawEditPresenter {
       this.pending = null;
       if (next == null || this.closed || this.pipeline == null) return;
       const started = performance.now();
-      this.pipeline.render(next);
+      this.pipeline.render(next, this.store.region ?? this.pipeline.wholeFrame);
       this.measure(performance.now() - started);
     });
   }
@@ -192,6 +254,7 @@ export class RawEditPresenter {
     this.store.height = header.height;
     this.store.matched = header.matched;
     this.store.openMs = Math.round(ms);
+    this.store.region = { x: 0, y: 0, width: header.width, height: header.height };
   }
 
   @action.bound
@@ -211,7 +274,7 @@ export class RawEditPresenter {
 async function fetchPrepared(
   photoId: string,
   longEdge: number,
-): Promise<{ header: PreparedHeader; samples: Uint16Array }> {
+): Promise<{ header: PreparedHeader; samples: Uint16Array<ArrayBuffer> }> {
   return desktop() == null
     ? await overHttp(photoId, longEdge)
     : await inProcess(photoId, longEdge);
@@ -229,7 +292,7 @@ function desktop(): ((command: string, args: unknown) => Promise<ArrayBuffer>) |
 async function inProcess(
   photoId: string,
   longEdge: number,
-): Promise<{ header: PreparedHeader; samples: Uint16Array }> {
+): Promise<{ header: PreparedHeader; samples: Uint16Array<ArrayBuffer> }> {
   const invoke = desktop();
   if (invoke == null) throw new Error('the desktop bridge went away mid-open');
   // The shell owns no library yet, so the path still comes from the server's own record of
@@ -260,7 +323,7 @@ async function inProcess(
 async function overHttp(
   photoId: string,
   longEdge: number,
-): Promise<{ header: PreparedHeader; samples: Uint16Array }> {
+): Promise<{ header: PreparedHeader; samples: Uint16Array<ArrayBuffer> }> {
   const response = await fetch(preparedUrl(photoId, longEdge), { cache: 'no-store' });
   if (!response.ok) {
     const detail = await response.text().catch(() => '');
@@ -274,7 +337,7 @@ async function overHttp(
 }
 
 /** `edit::encode`'s framing: a u32 header length, the header, then the samples. */
-function split(reply: Uint8Array): { header: PreparedHeader; samples: Uint16Array } {
+function split(reply: Uint8Array): { header: PreparedHeader; samples: Uint16Array<ArrayBuffer> } {
   const view = new DataView(reply.buffer, reply.byteOffset, reply.byteLength);
   const length = view.getUint32(0, true);
   const header = JSON.parse(new TextDecoder().decode(reply.subarray(4, 4 + length)));

@@ -29,20 +29,26 @@ test.beforeAll(async ({ browser }) => {
  * which looks exactly like a frame that graded to black. The adapter is the one piece of
  * evidence that a device was acquired rather than silently skipped.
  */
-test('grades on the GPU, at the frame the server prepared', async ({ page }) => {
+test('grades on the GPU, into a stage sized for the viewport', async ({ page }) => {
   await open(page);
 
   await expect(page.getByTestId('raw-edit-adapter')).not.toHaveText('');
-  // The stage is the frame's own size, which is what "full resolution tick" means: there
-  // is no interactive downscale any more (`docs/raw-edit-gpu.md` §6).
   const size = await page.getByTestId('raw-edit-size').textContent();
   const [width, height] = (size ?? '0x0').split('x').map(Number);
   expect(width).toBeGreaterThan(1000);
   expect(height).toBeGreaterThan(1000);
 
+  // The canvas is the viewport in device pixels and then some, not the frame: the draw
+  // runs once per canvas pixel, so a stage the size of a 61MP sensor would be grading
+  // fifteen times the pixels any display can show (`docs/raw-edit-gpu.md` §6).
   const canvas = page.locator('canvas.raw-edit__stage');
   await expect(canvas).toHaveCount(1);
-  expect(await canvas.evaluate((el: HTMLCanvasElement) => el.width)).toBe(width);
+  const stage = await canvas.evaluate((el: HTMLCanvasElement) => ({ w: el.width, h: el.height }));
+  expect(stage.w).toBeGreaterThan(0);
+  expect(stage.w).toBeLessThanOrEqual(width);
+  expect(stage.h).toBeLessThanOrEqual(height);
+  // And it keeps the frame's shape, or `object-fit: contain` would show it stretched.
+  expect(stage.w / stage.h).toBeCloseTo(width / height, 1);
 });
 
 /**

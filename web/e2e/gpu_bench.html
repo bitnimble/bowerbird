@@ -13,7 +13,7 @@
 // `queue.submit` returns as soon as the commands are recorded, so timing around it
 // measures this thread and not the work. `onSubmittedWorkDone` is what actually waits for
 // the dispatches, which is the number worth comparing against `tick_bench`'s.
-import { TickPipeline, tickFeatures } from '/src/features/raw_edit/gpu/tick_pipeline.ts';
+import { TickPipeline, tickFeatures, tickLimits } from '/src/features/raw_edit/gpu/tick_pipeline.ts';
 
 const out = document.getElementById('out');
 const query = new URLSearchParams(location.search);
@@ -96,7 +96,10 @@ async function main() {
     return;
   }
   // 'timestamp-query' is in here, so a tick that is slow says which pass made it slow.
-  const device = await adapter.requestDevice({ requiredFeatures: tickFeatures(adapter) });
+  const device = await adapter.requestDevice({
+    requiredFeatures: tickFeatures(adapter),
+    requiredLimits: tickLimits(adapter),
+  });
   // A validation error drops the dispatches it applies to, which reads as a very fast
   // tick rather than as a failure. Without this the bench happily reports 2ms for work
   // that never ran.
@@ -105,8 +108,12 @@ async function main() {
     invalid ??= String(event.error?.message ?? event.error);
   });
   const canvas = document.getElementById('stage');
-  canvas.width = WIDTH;
-  canvas.height = HEIGHT;
+  // The canvas the draw actually fills. Defaults to the frame, which is the 1:1 worst
+  // case and what every earlier number here was taken at; `?canvas=2560x1440` is the
+  // shape a viewport really has, where the draw no longer scales with the frame.
+  const [canvasWidth, canvasHeight] = (query.get('canvas') ?? `${WIDTH}x${HEIGHT}`).split('x').map(Number);
+  canvas.width = canvasWidth;
+  canvas.height = canvasHeight;
   const context = canvas.getContext('webgpu');
   context.configure({ device, format: 'rgba16float', alphaMode: 'opaque' });
 
@@ -186,6 +193,7 @@ async function main() {
       adapter: [info.vendor, info.architecture].filter(Boolean).join(' / '),
       size: `${WIDTH}x${HEIGHT}`,
       megapixels: Number(((WIDTH * HEIGHT) / 1e6).toFixed(1)),
+      canvas: `${canvasWidth}x${canvasHeight}`,
       matched: header.matched,
       invalid,
       openMs: Number(upload.toFixed(1)),
