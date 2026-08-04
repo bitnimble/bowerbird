@@ -83,6 +83,13 @@ pub unsafe extern "C" fn bb_run_job(
 /// `u32` header length then JSON then `u16` samples, rather than JSON alone, because
 /// base64 of 59MB is neither cheap nor honest.
 ///
+/// Where it parts company with `bb_run_job` is what a short buffer costs. That one can
+/// promise a retry does not repeat the work, because a job's reply is a few hundred bytes
+/// of JSON and fits the caller's first buffer every time. This reply is the frame, so the
+/// sizing call never fits and the retry is certain - and inheriting the protocol unchanged
+/// meant every open decoded, fitted, warped and denoised the RAW twice. So the payload that
+/// did not fit is kept for the call that asks again.
+///
 /// Failure is reported as a JSON body with `ok: false` and no samples, which the caller
 /// tells apart by parsing the header it already has to parse.
 ///
@@ -101,29 +108,58 @@ pub unsafe extern "C" fn bb_prepare_edit(
         return -1;
     }
     let bytes = unsafe { std::slice::from_raw_parts(command, command_len) };
-    let parsed: Result<crate::edit::EditRequest, _> = serde_json::from_slice(bytes);
 
-    let payload = match parsed {
-        Err(error) => edit_failure(&format!("could not read the edit request: {error}")),
-        Ok(request) => {
-            match crate::guard("bb_prepare_edit", Err("panicked".to_string()), || {
-                crate::edit::prepare(&request)
-            }) {
-                Ok(prepared) => match crate::edit::encode(&prepared) {
-                    Ok(bytes) => bytes,
+    let payload = match take_prepared(bytes) {
+        Some(kept) => kept,
+        None => match serde_json::from_slice::<crate::edit::EditRequest>(bytes) {
+            Err(error) => edit_failure(&format!("could not read the edit request: {error}")),
+            Ok(request) => {
+                match crate::guard("bb_prepare_edit", Err("panicked".to_string()), || {
+                    crate::edit::prepare(&request)
+                }) {
+                    Ok(prepared) => match crate::edit::encode(&prepared) {
+                        Ok(bytes) => bytes,
+                        Err(error) => edit_failure(&error),
+                    },
                     Err(error) => edit_failure(&error),
-                },
-                Err(error) => edit_failure(&error),
+                }
             }
-        }
+        },
     };
 
     if payload.len() > out_cap || out.is_null() {
-        return payload.len() as isize;
+        let needed = payload.len();
+        keep_prepared(bytes, payload);
+        return needed as isize;
     }
     let destination = unsafe { std::slice::from_raw_parts_mut(out, payload.len()) };
     destination.copy_from_slice(&payload);
     payload.len() as isize
+}
+
+/// The open whose caller's buffer was too small, held for the call that asks again.
+///
+/// One slot, keyed by the command that produced it, and taken rather than read so the frame
+/// is freed the moment it has been copied out. Keyed because a second photo must not be
+/// served the first one's pixels; one slot because the caller retries immediately, in the
+/// same function, and a queue would only be somewhere for a frame to be forgotten.
+///
+/// No address crosses the boundary, which is the rule this module is built on. What is held
+/// is a `Vec` on this side, copied out like every other reply.
+static PREPARED: std::sync::Mutex<Option<(Vec<u8>, Vec<u8>)>> = std::sync::Mutex::new(None);
+
+fn take_prepared(command: &[u8]) -> Option<Vec<u8>> {
+    let mut held = PREPARED.lock().ok()?;
+    if held.as_ref().is_none_or(|(kept, _)| kept != command) {
+        return None;
+    }
+    held.take().map(|(_, payload)| payload)
+}
+
+fn keep_prepared(command: &[u8], payload: Vec<u8>) {
+    if let Ok(mut held) = PREPARED.lock() {
+        *held = Some((command.to_vec(), payload));
+    }
 }
 
 /// A failed open in the same framing as a successful one, so the caller has one parse.
@@ -457,6 +493,26 @@ pub extern "C" fn bb_selftest() -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The sizing call keeps its payload, so the retry copies rather than opens again.
+    ///
+    /// Held at the slot rather than through the FFI symbol, because reaching it needs a RAW
+    /// and this is about the protocol, not the decode: what the two calls have to agree on
+    /// is that the second finds what the first left, and that a different command does not.
+    #[test]
+    fn a_short_buffer_keeps_the_open_for_the_call_that_asks_again() {
+        let command = br#"{"rawFilePath":"a.arw"}"#;
+        assert_eq!(take_prepared(command), None, "nothing kept yet");
+
+        keep_prepared(command, vec![7u8; 32]);
+        assert_eq!(
+            take_prepared(br#"{"rawFilePath":"b.arw"}"#),
+            None,
+            "another photo is not served this one's pixels",
+        );
+        assert_eq!(take_prepared(command), Some(vec![7u8; 32]), "the retry finds it");
+        assert_eq!(take_prepared(command), None, "and it is freed once copied out");
+    }
 
     #[test]
     fn the_selftest_passes_on_the_machine_that_built_it() {
