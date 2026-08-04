@@ -207,16 +207,50 @@ The ordering constraint that survives is `finish`'s: defringe before either
 denoise, chroma guided by cleaned luma, sharpen last (§10.9). That is a
 dependency chain between dispatches, not a reason to round-trip.
 
-### 6.1 Textures, not storage buffers, and tiles above 8192
+### 6.1 The limits are defaults, and defaults are the floor
 
-Default WebGPU limits decide the layout, so they belong in the design rather
-than in a later surprise:
+Every WebGPU limit quoted here is what a device gets when it asks for nothing.
+The adapter's own maximum is usually far higher, and reaching it is one line at
+device creation:
 
-- `maxStorageBufferBindingSize` is 128MB. An interleaved f32 RGB frame at 9.8MP
-  is 118MB, under it by 8% and over it at any larger edge. Per-plane buffers
-  (39MB) or textures do not have the problem
-- `maxTextureDimension2D` is 8192. The 9504-wide frame `strip_interior` exists
-  for does not fit one texture, so the native-resolution case still tiles
+```js
+const shared = Math.min(32768, adapter.limits.maxComputeWorkgroupStorageSize);
+const device = await adapter.requestDevice({
+  requiredLimits: { maxComputeWorkgroupStorageSize: shared },
+});
+```
+
+Three things make that worth writing down rather than assuming. Asking for more
+than the adapter has **rejects** rather than clamping, so the clamp is the
+caller's. The shader then has to branch on `device.limits`, not on what it asked
+for. And an adapter is **consumed** by its first `requestDevice`, so a fallback
+device needs a second `requestAdapter` rather than a second call.
+
+A raised limit is therefore not a free win: it is a second code path, worth
+taking only where the default genuinely does not fit. The request itself costs
+nothing, but spending the memory does - a workgroup claiming 32KB halves how many
+an SM can hold resident, which is how a GPU hides memory latency.
+
+Measured on this machine's integrated RDNA2, defaults against what the adapter
+actually offers:
+
+| limit | default | this adapter |
+|---|---|---|
+| `maxComputeWorkgroupStorageSize` | 16KB | 64KB |
+| `maxStorageBufferBindingSize` | 128MB | 4GB |
+| `maxTextureDimension2D` | 8192 | 16384 |
+
+The design consequences, at the defaults:
+
+- an interleaved f32 RGB frame at 9.8MP is 118MB, inside the 128MB binding by 8%
+  and over it at any larger edge. Per-plane buffers (39MB) or textures do not
+  have the problem, and neither does a raised limit where one is available
+- the 9504-wide frame `strip_interior` exists for does not fit an 8192 texture,
+  so the native-resolution case tiles unless the limit is raised
+- a workgroup histogram wants 8192 bins at 4 bytes, which is 32KB: over the
+  default, inside this adapter. That is exactly the case for a two-level
+  histogram rather than a raised limit, since the fallback has to exist anyway
+  for the parts that stop at 16KB - which is most mobile hardware
 
 Tiles are not strips: no `carry` rows, no sequential dependency. But the reason
 `halo()` computes a reach (a guided filter of radius r reaches 2r, composed
