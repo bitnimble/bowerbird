@@ -122,8 +122,11 @@ async function main() {
     defocusBlue: 0.01,
   };
 
+  // The scene is generated outside the timing: it is this file's synthetic stand-in for a
+  // decode, and a 9.9M-iteration JS loop counted as "open" hides what the open costs.
+  const samples = scene(WIDTH, HEIGHT);
   const built = performance.now();
-  const pipeline = new TickPipeline(device, context, header, scene(WIDTH, HEIGHT));
+  const pipeline = new TickPipeline(device, context, header, samples);
   await device.queue.onSubmittedWorkDone();
   const upload = performance.now() - built;
 
