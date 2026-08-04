@@ -17,7 +17,7 @@
 // `BOWERBIRD_WIN_DIST_DIR` says where to leave it; the target dir otherwise.
 import { spawnSync } from 'node:child_process';
 import { ensureIcons } from './make-icons.ts';
-import { copyFileSync, existsSync, mkdirSync, rmSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 const TARGET = 'x86_64-pc-windows-gnu';
@@ -39,8 +39,19 @@ if (!existsSync(join(mingw, 'lib', 'pkgconfig', 'libraw.pc'))) {
 const gcc = 'x86_64-w64-mingw32-gcc-posix';
 const gxx = 'x86_64-w64-mingw32-g++-posix';
 
+// The cross toolchain's own bin directory, put on PATH here rather than assumed to be on it
+// already. It was assumed: the build worked from a shell whose profile had added it and
+// failed from one that had not, with `linker not found` and nothing pointing at why.
+const toolchain = process.env.MINGW_BIN ?? join(process.env.HOME ?? '', 'local', 'usr', 'bin');
+if (!existsSync(join(toolchain, gcc))) {
+  console.error(`[win-build] no ${gcc} in ${toolchain}`);
+  console.error('[win-build] set MINGW_BIN, or install the mingw-w64 cross toolchain there');
+  process.exit(1);
+}
+
 const env: Record<string, string> = {
   ...(process.env as Record<string, string>),
+  PATH: `${toolchain}:${process.env.PATH ?? ''}`,
   [`CARGO_TARGET_${upper}_LINKER`]: gcc,
   [`CC_${under}`]: gcc,
   [`CXX_${under}`]: gxx,
@@ -85,11 +96,47 @@ copyFileSync(exe, join(outDir, 'Bowerbird.exe'));
 // unpacked - the lazy version shipped seventy DLLs for a handful that are reachable.
 // Searched across both the MSYS2 tree and the compiler's own runtime, since `libstdc++`
 // and `libgcc` come from the toolchain rather than from a package.
-const runtime = join(
-  process.env.HOME ?? '',
-  'local', 'usr', 'lib', 'gcc', 'x86_64-w64-mingw32', '13-posix',
-);
-const search = [join(mingw, 'bin'), runtime];
+//
+// Asked of the compiler rather than spelled out. This was one unpack directory under one
+// `$HOME` with a GCC version in it, so on a box whose mingw came from the distro, or whose
+// GCC moved off 13, the runtime DLLs were simply not found - and an unfound import was
+// taken for a system DLL and dropped, which ships an app that will not start.
+function runtimeDirs(): string[] {
+  const printed = spawnSync(gcc, ['-print-search-dirs'], { encoding: 'utf8', env });
+  const libraries = (printed.stdout ?? '')
+    .split('\n')
+    .find((line) => line.startsWith('libraries:'));
+  return (libraries?.split('=')[1] ?? '')
+    .split(':')
+    .map((dir) => dir.trim())
+    .filter((dir) => dir !== '' && existsSync(dir));
+}
+/// Where `webview2-com-sys` keeps the loader wry's MinGW build imports by name.
+///
+/// Not Windows's own, whatever the name suggests: the Evergreen runtime keeps its copy in a
+/// versioned directory of its own and nothing puts it on the app's search path. Without it
+/// beside the exe the app does not start at all, and this is exactly what the bundle was
+/// missing until the walk began reporting what it had assumed away.
+function webview2Dirs(): string[] {
+  const registry = join(
+    process.env.CARGO_HOME ?? join(process.env.HOME ?? '', '.cargo'),
+    'registry',
+    'src',
+  );
+  if (!existsSync(registry)) return [];
+  const found: string[] = [];
+  for (const index of readdirSync(registry)) {
+    const dir = join(registry, index);
+    for (const crate of readdirSync(dir)) {
+      if (!crate.startsWith('webview2-com-sys-')) continue;
+      const x64 = join(dir, crate, 'x64');
+      if (existsSync(x64)) found.push(x64);
+    }
+  }
+  return found;
+}
+
+const search = [join(mingw, 'bin'), ...runtimeDirs(), ...webview2Dirs()];
 
 /** What a PE imports, by name. System DLLs are not in the search path and drop out. */
 function imports(file: string): string[] {
@@ -101,15 +148,33 @@ function imports(file: string): string[] {
 }
 
 const shipped: string[] = [];
+const assumedSystem: string[] = [];
 const queue = imports(exe);
 while (queue.length > 0) {
   const dll = queue.shift() ?? '';
   if (dll === '' || shipped.includes(dll)) continue;
   const source = search.map((dir) => join(dir, dll)).find((path) => existsSync(path));
-  if (source == null) continue; // a system DLL; Windows has its own
+  if (source == null) {
+    if (!assumedSystem.includes(dll)) assumedSystem.push(dll);
+    continue;
+  }
   shipped.push(dll);
   copyFileSync(source, join(outDir, dll));
   queue.push(...imports(source));
+}
+
+// An import the search could not place is assumed to be Windows's own, and mostly is. What
+// it must never be is a MinGW runtime: `lib*.dll` is that naming and no system DLL uses it,
+// so finding one here means the toolchain moved and the bundle is missing a library it
+// cannot start without. Silently, until now - the app installs and dies on launch.
+const missing = assumedSystem.filter((dll) => /^lib/i.test(dll));
+if (missing.length > 0) {
+  console.error(`[win-build] not found in ${search.join(', ')}:`);
+  for (const dll of missing) console.error(`  ${dll}`);
+  process.exit(1);
+}
+if (assumedSystem.length > 0) {
+  console.error(`[win-build] assumed to be Windows's own: ${assumedSystem.join(', ')}`);
 }
 
 console.error(`[win-build] app: ${outDir} (unsigned; run Bowerbird.exe)`);

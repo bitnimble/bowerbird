@@ -129,9 +129,12 @@ function infoPlist(): string {
 `;
 }
 
+// Empty is unset, not the current directory: `''.trim()` is not null, so the old test took
+// the dist branch for `BOWERBIRD_MAC_DIST_DIR=`, `resolve('')` is wherever this is running,
+// and the `rmSync` below would then delete `Bowerbird.app` out of the repo.
 const dist = process.env.BOWERBIRD_MAC_DIST_DIR?.trim();
-const appDir = dist == null ? join(releaseDir, APP_NAME) : join(resolve(dist), APP_NAME);
-if (dist != null) mkdirSync(resolve(dist), { recursive: true });
+const appDir = dist ? join(resolve(dist), APP_NAME) : join(releaseDir, APP_NAME);
+if (dist) mkdirSync(resolve(dist), { recursive: true });
 
 rmSync(appDir, { recursive: true, force: true });
 const contents = join(appDir, 'Contents');

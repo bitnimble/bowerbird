@@ -105,9 +105,24 @@ if (found.length === 0) {
   process.exit(1);
 }
 
-const dist = process.env.BOWERBIRD_ANDROID_DIST_DIR?.trim();
-if (dist != null) {
-  mkdirSync(resolve(dist), { recursive: true });
-  for (const apk of found) copyFileSync(apk, join(resolve(dist), 'Bowerbird.apk'));
+// One APK, chosen rather than whichever the walk reached last. Every match used to be
+// copied to the same `Bowerbird.apk` in turn, so what shipped was the last one found - and
+// the same tree holds unsigned intermediates and anything left by an earlier build.
+const signed = found.filter((apk) => !/unsigned/i.test(apk));
+const chosen = signed.length > 0 ? signed : found;
+if (chosen.length > 1) {
+  console.error(`[android-build] ${chosen.length} APKs under ${outputs}, so which one ships is ambiguous:`);
+  for (const apk of chosen) console.error(`  ${apk}`);
+  console.error('[android-build] clear the outputs tree and build again');
+  process.exit(1);
 }
-for (const apk of found) console.error(`[android-build] apk: ${dist == null ? apk : join(resolve(dist), 'Bowerbird.apk')}`);
+
+// Empty is unset, not the current directory: `''.trim()` is not null, and `resolve('')` is
+// wherever this happens to be running.
+const dist = process.env.BOWERBIRD_ANDROID_DIST_DIR?.trim();
+const apk = chosen[0]!;
+if (dist) {
+  mkdirSync(resolve(dist), { recursive: true });
+  copyFileSync(apk, join(resolve(dist), 'Bowerbird.apk'));
+}
+console.error(`[android-build] apk: ${dist ? join(resolve(dist), 'Bowerbird.apk') : apk}`);
