@@ -107,8 +107,10 @@ test('a slider move redraws the canvas', async ({ page }) => {
   await page.keyboard.press('PageUp');
   await page.keyboard.press('PageUp');
 
-  const panel = page.getByTestId('raw-edit-panel');
-  await expect(panel).not.toContainText('+0.00 EV');
+  // Not `+0.00 EV`, which was here and could not fail: the panel writes the sign only above
+  // zero, so at rest it reads `Exposure 0.00 EV` and the negated match held before the
+  // keypresses as well as after. `0.00 EV` is the reading that has to stop being true.
+  await expect(page.locator('.raw-edit-panel__exposure')).not.toContainText('0.00 EV');
   await expect.poll(async () => (await canvas.screenshot()).equals(before), { timeout: 30_000 }).toBe(false);
 });
 

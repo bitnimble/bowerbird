@@ -109,15 +109,28 @@ export function stageResolution(
 /**
  * What to ask `requestDevice` for before building a `TickPipeline` on it.
  *
- * `float32-filterable` is the one that matters: the tone curve and the chroma map are
- * `f32` lookups the sampler interpolates, and without it neither is filterable and the
- * pipeline will not build. Every desktop adapter this has run on offers it, and it is
- * filtered against the adapter rather than demanded so that a part which does not have it
- * fails at the pipeline with a reason rather than at `requestDevice` with none.
+ * `float32-filterable` is the one that matters: the tone curve and the chroma map are `f32`
+ * lookups the sampler interpolates, and without it neither is filterable and the pipeline
+ * will not build. Every desktop adapter this has run on offers it.
+ *
+ * Thrown for rather than filtered out. Filtering it left the device built without it and
+ * the failure to `createRenderPipeline`, which is a WebGPU validation error - asynchronous,
+ * reported to an uncaptured-error handler nothing installs, and not an exception the open
+ * can catch. So the open ran to the end, the reader was told `live`, and the canvas stayed
+ * black with nothing anywhere saying why.
+ *
+ * `timestamp-query` really is optional: without it the readout loses its per-pass
+ * milliseconds and the picture is identical.
  */
 export function tickFeatures(adapter: GPUAdapter): GPUFeatureName[] {
-  const wanted: GPUFeatureName[] = ['float32-filterable', 'timestamp-query'];
-  return wanted.filter((feature) => adapter.features.has(feature));
+  if (!adapter.features.has('float32-filterable')) {
+    throw new Error(
+      'this GPU cannot filter float textures (float32-filterable), which the tone curve and the camera match are',
+    );
+  }
+  return (['float32-filterable', 'timestamp-query'] as GPUFeatureName[]).filter((feature) =>
+    adapter.features.has(feature),
+  );
 }
 
 /**
@@ -201,7 +214,15 @@ export class TickPipeline {
       size: Math.ceil((samples.byteLength + 3) / 4) * 4,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
-    device.queue.writeBuffer(this.frame, 0, samples);
+    // In whole 4-byte words, then the odd `u16` on its own. `writeBuffer` rejects a size
+    // that is not a multiple of four, and three `u16` a pixel is exactly that whenever both
+    // dimensions are odd - a validation error, so the frame would stay zeroed and the
+    // picture black, on nothing more exotic than a fit that landed on 3841x2561.
+    const words = samples.length & ~1;
+    device.queue.writeBuffer(this.frame, 0, samples, 0, words);
+    if (words !== samples.length) {
+      device.queue.writeBuffer(this.frame, words * 2, new Uint16Array([samples[words]!, 0]));
+    }
 
     // Half resolution and down, so the frame is not stored twice: a third of half a frame
     // rather than a third of a whole one, and the level it leaves out is the one the draw
