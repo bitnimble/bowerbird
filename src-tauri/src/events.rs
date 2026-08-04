@@ -124,11 +124,16 @@ enum Ended {
 
 /// One connection, until it ends. `Ok` if it was answered before it did.
 async fn stream(app: &AppHandle, last_id: &mut Option<String>) -> Result<Ended, String> {
-    // Taken before the request, so an address that changes while this one is being dialled
-    // is still noticed: `notified()` from here on is remembered rather than missed.
+    // Registered before the request, so an address that changes while this one is being
+    // dialled is still noticed. `enable` is what does that: a `Notified` joins the waiter
+    // list when it is first polled, and the first poll here is in the `select!` below -
+    // after the connect - so without it a change inside that window wakes nobody and the
+    // stream stays on the old server until that connection ends, which against a running
+    // one is never. `notify_waiters` leaves no permit behind to catch it later.
     let moved = moved().clone();
     let moved = moved.notified();
     tokio::pin!(moved);
+    moved.as_mut().enable();
 
     let origin = crate::api::origin();
     let url = format!("{origin}/api/events");
