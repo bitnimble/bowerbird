@@ -133,31 +133,29 @@ app.use('*', async (c, next) => {
 // that is actually running is how a log stops being read. Anything that changes state is
 // worth one whatever it returns.
 //
-// Expensive reads are the exception, and by what they cost rather than by which route they
-// are - an editor open is seconds of LibRaw and hundreds of megabytes, and was invisible
-// here, which is the wrong way round: it is the first thing anyone looks for when the app
-// feels slow, and a route named in a list would only have covered the one anybody thought
-// of.
+// A slow one is the exception, and by what it cost rather than by which route it is: an
+// editor open is seconds of LibRaw and was invisible here, which is the wrong way round -
+// it is the first thing anyone looks for when the app feels slow, and a list of routes
+// would only have covered the one somebody thought of.
+//
+// Time rather than size, having tried both. Size is the better instinct and it cannot be
+// had: `content-length` is not on `c.res` by the time this runs, so the test never fired
+// once in 125 requests. It would also have been the wrong question - a large rendition read
+// straight off disk is exactly the flood this stays quiet about, and what makes a read worth
+// a line is that it kept someone waiting.
 const SLOW_MS = 1_000;
-const LARGE_BYTES = 8 * 1024 * 1024;
 
 app.use('*', async (c, next) => {
   const started = Date.now();
   await next();
   const status = c.res.status;
   const ms = Date.now() - started;
-  const bytes = Number(c.res.headers.get('content-length') ?? 0);
-  const notable = ms >= SLOW_MS || bytes >= LARGE_BYTES;
   const level =
     status >= 500 ? 'error'
     : status >= 400 ? 'warn'
-    : c.req.method !== 'GET' || notable ? 'info'
+    : c.req.method !== 'GET' || ms >= SLOW_MS ? 'info'
     : 'debug';
-  requestLog[level](`${c.req.method} ${c.req.path}`, {
-    status,
-    ms,
-    ...(bytes > 0 && { bytes }),
-  });
+  requestLog[level](`${c.req.method} ${c.req.path}`, { status, ms });
 });
 app.route('/api/events', new EventsApi(processingService).routes);
 app.route('/api/settings', new SettingsApi(settingsRepo).routes);
