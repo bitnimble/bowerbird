@@ -37,7 +37,12 @@ tauri-build = { git = "https://github.com/tauri-apps/tauri", branch = "feat/cef"
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-rawshim = { path = "../native/rawshim" }
+# Mirrors the real manifest, which is the whole contract of this file: it is copied over
+# `Cargo.toml`, so anything only that one carries is absent from a CEF build. `reqwest` is
+# what the proxy is written against, and `default-features = false` keeps `rawshim` down to
+# LibRaw rather than relinking lensfun and libavif for an open that never asks for them.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+rawshim = { path = "../native/rawshim", default-features = false }
 
 # `default-features = false` is load-bearing. Nothing emits a compile_error when both
 # runtimes are on: build.rs would report `cef` (so the build takes the CEF manifest and
@@ -62,6 +67,16 @@ optional = true
 
 [features]
 wdio = ["dep:tauri-plugin-wdio", "dep:tauri-plugin-wdio-webdriver"]
+
+# The same profile as the real manifest, and for the same reasons: cargo reads profiles from
+# the top-level package only, so a CEF build inherits nothing from `rawshim` and gets cargo's
+# defaults - wrapping arithmetic through the decode, no cross-crate inlining, and a symbol
+# table larger than the code.
+[profile.release]
+overflow-checks = true
+strip = "symbols"
+lto = "fat"
+codegen-units = 1
 
 # The wdio plugins depend on `tauri` from crates.io, and `tauri` sets `links = "Tauri"`, so
 # a graph carrying both it and the git one does not resolve at all. Patching every crate in

@@ -148,9 +148,8 @@ fn client() -> &'static reqwest::Client {
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Request {
-    /// What the caller asked for, by name. Unused while everything proxies; carried
-    /// because it is the seam a local handler dispatches on.
-    #[allow(dead_code)]
+    /// What the caller asked for, by name. The seam a locally-answered command dispatches
+    /// on, which `get:prepared` already does.
     cmd: String,
     method: String,
     path: String,
