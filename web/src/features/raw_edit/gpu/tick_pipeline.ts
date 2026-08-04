@@ -46,9 +46,6 @@ export interface PreparedHeader {
   strengths: { luma: number; chroma: number; sharpen: number; defringe: number };
   matched: boolean;
   colour: ColourPayload | null;
-  sigma: number;
-  defocusRed: number;
-  defocusBlue: number;
 }
 
 /**
@@ -598,7 +595,7 @@ export class TickPipeline {
     values[4] = header.grade.referenceWhiteNits;
     values[5] = header.grade.peakNits;
     values[6] = this.exposure;
-    values[7] = (colour?.trustCeiling ?? 1) * header.white;
+    // 7 is `pad0`, which aligns the vectors below and is read by nothing.
     ints[8] = header.matched ? 1 : 0;
     values[9] = colour?.saturation ?? 1;
     ints[10] = colour?.chroma == null ? 0 : 1;

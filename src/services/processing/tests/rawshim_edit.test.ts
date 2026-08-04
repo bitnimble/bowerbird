@@ -35,9 +35,6 @@ function prepared(matched: boolean, pixels = 4): PreparedFrame {
           },
         }
       : null,
-    sigma: 1,
-    defocusRed: 0,
-    defocusBlue: 0,
     samplesLen: pixels * 3 * 2,
   };
   const samples = new Uint16Array(pixels * 3);

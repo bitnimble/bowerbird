@@ -15,8 +15,9 @@ struct Tick {
   reference: f32,
   peak: f32,
   exposure: f32,
-  // `hdr_fit::TRUST_CEILING * white`, above which the matched path stops being separable.
-  ceiling: f32,
+  // Load-bearing despite being unread: it is what puts `region_origin` on the multiple of
+  // eight a `vec2f` needs. Reuse it before adding a field past the vectors.
+  pad0: u32,
   matched: u32,
   saturation: f32,
   has_chroma: u32,

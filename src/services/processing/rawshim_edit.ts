@@ -59,10 +59,6 @@ export interface PreparedHeader {
   strengths: EditStrengths;
   matched: boolean;
   colour: ColourPayload | null;
-  /** `image::measurements`, taken once at open and reused by every tick. */
-  sigma: number;
-  defocusRed: number;
-  defocusBlue: number;
   samplesLen: number;
 }
 
