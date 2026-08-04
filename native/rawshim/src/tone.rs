@@ -601,6 +601,37 @@ mod tests {
         assert!(out.white > 0.0);
     }
 
+    /// The input `grade` refuses on, and `edit::prepare_bytes` now refuses on too.
+    ///
+    /// A frame whose white quantile lands on level 0 has no exposure to read, and every
+    /// consumer divides by it. The rendition path ships such a frame ungraded; the editor
+    /// cannot, because `white` crosses to a shader that divides by it in both arms.
+    #[test]
+    fn a_frame_that_is_almost_all_black_reads_no_white_at_all() {
+        // 95% black, above the 0.9 quantile, with a few bright pixels at the end.
+        let mut samples: Vec<u16> = vec![0; 2850 * 3];
+        samples.extend((0..150).flat_map(|_| [40000u16, 40000, 40000]));
+
+        let out = levels(&samples, 0.9);
+        assert_eq!(out.white, 0.0, "nothing to anchor the grade to");
+        assert!(out.peak > 0.0, "and a peak that would divide by it");
+
+        let mut frame = samples.clone();
+        let graded = grade(
+            &mut frame,
+            &GradeOptions {
+                levels: out,
+                reference_white_nits: 203.0,
+                peak_nits: 1000.0,
+                lens: None,
+                match_colour: None,
+                exposure: 1.0,
+            },
+        );
+        assert!(!graded, "the CPU refuses rather than dividing by zero");
+        assert_eq!(frame, samples, "and leaves the frame as it arrived");
+    }
+
     #[test]
     fn sample_positions_survive_a_thirty_two_bit_index() {
         let (pixels, counted) = (9_830_400usize, QUANTILE_SAMPLES);

@@ -140,6 +140,19 @@ pub fn prepare_bytes(bytes: &[u8], request: &EditRequest) -> Result<Prepared, St
 
         let matched = fit(bytes, &source, request);
         let mut prepared = hdr::prepare(&source, None, &request.grade);
+
+        // The same refusal `tone::grade` makes, and for the same reason: the grade divides
+        // by diffuse white, and `tone::levels` reports zero when the white quantile lands on
+        // level 0 - a frame that is essentially all black, a lens cap, a failed exposure.
+        //
+        // A rendition ships such a frame ungraded. The editor cannot: `white` crosses to the
+        // shader, and both arms of the colour transform divide by it, so what the reader
+        // would get is `level / 0` rolling every pixel to display peak and `0 / 0` leaving
+        // the black ones indeterminate - a flat white canvas reporting itself live. Better
+        // to say so.
+        if prepared.levels.white <= 0.0 {
+            return Err("this frame is too dark to read an exposure from".to_string());
+        }
         if let Some(colour) = matched.as_ref() {
             if let Some(warped) = crate::hdr_fit::apply_lens(
                 &prepared.samples,
