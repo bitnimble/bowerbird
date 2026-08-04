@@ -143,15 +143,13 @@ export function tickLimits(adapter: GPUAdapter): Record<string, number> {
 
 export class TickPipeline {
   /**
-   * One uniform buffer per pass, not one reused across them.
+   * One buffer, written once per submit and read by every pass in it.
    *
-   * `queue.writeBuffer` takes effect before the command buffer it was recorded alongside
-   * ever runs, so a single uniform written per stage would leave every stage reading the
-   * last stage's radius. A ring costs 96 bytes a pass and keeps the tick to one submit.
+   * Sound only while no two passes of one submit want different values: `queue.writeBuffer`
+   * lands before the command buffer it was recorded alongside runs, so a second write would
+   * reach the earlier passes too. Add a buffer per pass on the day a pass needs its own.
    */
-  private readonly uniforms: GPUBuffer[] = [];
-  private uniformsUsed = 0;
-  private current: GPUBuffer;
+  private readonly uniform: GPUBuffer;
   private readonly histogram: GPUBuffer;
   private readonly peak: GPUBuffer;
   private readonly candidates: GPUBuffer;
@@ -230,10 +228,10 @@ export class TickPipeline {
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
       });
 
-    // A tick is the peak and the draw, so a handful is plenty; grown on demand rather than
-    // guessed exactly, since being wrong costs an allocation.
-    for (let i = 0; i < 8; i++) this.uniforms.push(this.newUniform());
-    this.current = this.uniforms[0]!;
+    this.uniform = device.createBuffer({
+      size: TICK_UNIFORM_FLOATS * 4,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
     this.histogram = storage(PEAK_BINS);
     this.peak = storage(4);
     // A count, three words of padding to keep the levels aligned, and four per candidate.
@@ -383,7 +381,6 @@ export class TickPipeline {
     const oneLevel = (baseMipLevel: number): GPUTextureView =>
       this.pyramid.createView({ baseMipLevel, mipLevelCount: 1 });
 
-    this.uniformsUsed = 0;
     this.writeUniform();
     const encoder = this.device.createCommandEncoder();
     for (let level = 0; level < this.levels; level++) {
@@ -396,7 +393,7 @@ export class TickPipeline {
           entries:
             level === 0
               ? [
-                  { binding: 0, resource: { buffer: this.current } },
+                  { binding: 0, resource: { buffer: this.uniform } },
                   { binding: 1, resource: { buffer: this.frame } },
                   { binding: 3, resource: oneLevel(0) },
                 ]
@@ -428,7 +425,6 @@ export class TickPipeline {
    */
   render(ev: number, region: Region = this.wholeFrame): void {
     const encoder = this.device.createCommandEncoder();
-    this.uniformsUsed = 0;
     this.timer?.begin();
     this.writeUniform({ exposure: 2 ** ev, fromCandidates: true, region });
 
@@ -468,7 +464,6 @@ export class TickPipeline {
 
     const run = async (ev: number, fromCandidates: boolean): Promise<number> => {
       const encoder = this.device.createCommandEncoder();
-      this.uniformsUsed = 0;
       this.timer?.begin();
       this.writeUniform({ exposure: 2 ** ev, fromCandidates });
       encoder.clearBuffer(this.histogram);
@@ -545,7 +540,7 @@ export class TickPipeline {
     this.timer?.destroy();
     for (const texture of [this.pyramid, this.curves, this.chroma]) texture.destroy();
     for (const buffer of [
-      ...this.uniforms,
+      this.uniform,
       this.frame,
       this.histogram,
       this.peak,
@@ -588,28 +583,12 @@ export class TickPipeline {
     return buffer;
   }
 
-  /**
-   * The one uniform every pass reads.
-   *
-   * Written per pass rather than per tick because `radius`, `eps` and `limit` change
-   * between stages, and a second uniform buffer per stage would be more state to keep in
-   * step than one write of 96 bytes costs.
-   */
-  private newUniform(): GPUBuffer {
-    return this.device.createBuffer({
-      size: TICK_UNIFORM_FLOATS * 4,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
-  }
-
   private writeUniform(
     over: { exposure?: number; fromCandidates?: boolean; region?: Region } = {},
   ): void {
     const header = this.header;
     const colour = header.colour;
     if (over.exposure != null) this.exposure = over.exposure;
-    if (this.uniformsUsed >= this.uniforms.length) this.uniforms.push(this.newUniform());
-    this.current = this.uniforms[this.uniformsUsed++]!;
     const values = new Float32Array(TICK_UNIFORM_FLOATS);
     const ints = new Uint32Array(values.buffer);
     ints[0] = this.width;
@@ -645,7 +624,7 @@ export class TickPipeline {
     values[27] = canvas.height;
     // `lod` 0 is the frame itself, so the pyramid's levels are 1..levels.
     ints[28] = this.levels;
-    this.device.queue.writeBuffer(this.current, 0, values);
+    this.device.queue.writeBuffer(this.uniform, 0, values);
   }
 
   private exposure = 1;
@@ -657,7 +636,7 @@ export class TickPipeline {
   /** Everything the colour transform reads, whichever entry point is reading it. */
   private colourEntries(): GPUBindGroupEntry[] {
     return [
-      { binding: 0, resource: { buffer: this.current } },
+      { binding: 0, resource: { buffer: this.uniform } },
       { binding: 1, resource: { buffer: this.frame } },
       { binding: 2, resource: this.curves.createView() },
       { binding: 3, resource: this.chroma.createView() },
@@ -710,7 +689,6 @@ export class TickPipeline {
    */
   private chooseCandidates(): void {
     const encoder = this.device.createCommandEncoder();
-    this.uniformsUsed = 0;
     this.writeUniform({ exposure: 1 });
     encoder.clearBuffer(this.histogram);
     encoder.clearBuffer(this.candidates, 0, 16);
