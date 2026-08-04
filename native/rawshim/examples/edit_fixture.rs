@@ -148,7 +148,7 @@ fn filter_once(prepared: &mut Prepared, grade: &hdr::Grade, strengths: Strengths
         image::measurements(&perceptual, prepared.width, prepared.height, strengths);
     image::finish_with(&mut perceptual, prepared.width, prepared.height, strengths, sigma, defocus);
     for (sample, filtered) in prepared.samples.iter_mut().zip(perceptual.iter()) {
-        let nits = tone::pq_inv_for_testing(f64::from(*filtered));
+        let nits = tone::pq_inv(f64::from(*filtered));
         *sample = (nits / scale).clamp(0.0, 65535.0).round() as u16;
     }
 }

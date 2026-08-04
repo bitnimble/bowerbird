@@ -62,12 +62,12 @@ pub fn encode_pq(frame: &mut [u16], peak_nits: f64) {
     frame.par_iter_mut().for_each(|s| *s = lut[*s as usize]);
 }
 
-/// `pq_inv`, for the pre-denoise experiment, which maps into PQ and back out again.
-pub fn pq_inv_for_testing(signal: f64) -> f64 {
-    pq_inv(signal)
-}
-
-fn pq_inv(signal: f64) -> f64 {
+/// ST 2084 the other way: a signal back to the nits it was coded from.
+///
+/// Public because the open goes through it: `edit::filter_once` puts the frame into PQ to
+/// filter it in a perceptual domain and brings it back. That began as an experiment, and
+/// this was called `pq_inv_for_testing` long after the experiment became the shipped path.
+pub fn pq_inv(signal: f64) -> f64 {
     let e = signal.clamp(0.0, 1.0).powf(1.0 / M2);
     PQ_MAX_NITS * ((e - C1).max(0.0) / (C2 - C3 * e)).powf(1.0 / M1)
 }

@@ -43,8 +43,22 @@ test('grades on the GPU, into a stage sized for the viewport', async ({ page }) 
   // fifteen times the pixels any display can show (`docs/raw-edit-gpu.md` §6).
   const canvas = page.locator('canvas.raw-edit__stage');
   await expect(canvas).toHaveCount(1);
-  const stage = await canvas.evaluate((el: HTMLCanvasElement) => ({ w: el.width, h: el.height }));
+  const stage = await canvas.evaluate((el: HTMLCanvasElement) => ({
+    w: el.width,
+    h: el.height,
+    // What it is allowed to be: the box it is laid out in, in device pixels, and the 1.5x
+    // supersample on top. Measured here rather than assumed, because the runner's window is
+    // not the only size this ever runs at.
+    bound: Math.ceil(
+      Math.max(el.clientWidth, el.clientHeight) * (globalThis.devicePixelRatio || 1) * 1.5,
+    ),
+  }));
   expect(stage.w).toBeGreaterThan(0);
+  // Against the viewport, not against the frame. `<= width` was the frame's own size, which
+  // is the one number that cannot fail: a stage sized to a 61MP sensor - the thing this
+  // exists to catch - satisfies it exactly.
+  expect(stage.w).toBeLessThanOrEqual(stage.bound + 1);
+  expect(stage.h).toBeLessThanOrEqual(stage.bound + 1);
   expect(stage.w).toBeLessThanOrEqual(width);
   expect(stage.h).toBeLessThanOrEqual(height);
   // And it keeps the frame's shape, or `object-fit: contain` would show it stretched.

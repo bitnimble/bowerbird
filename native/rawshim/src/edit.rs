@@ -254,7 +254,7 @@ fn filter_once(prepared: &mut HdrPrepared, request: &EditRequest) {
         .par_iter_mut()
         .zip(perceptual.par_iter())
         .for_each(|(sample, filtered)| {
-            let nits = crate::tone::pq_inv_for_testing(f64::from(*filtered));
+            let nits = crate::tone::pq_inv(f64::from(*filtered));
             *sample = (nits / scale).clamp(0.0, 65535.0).round() as u16;
         });
 }

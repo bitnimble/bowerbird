@@ -1536,9 +1536,12 @@ fn finish_in_strips<T: Sample>(
 
 /// `finish`, against measurements the caller already has.
 ///
-/// The editor's client takes both once at open and reuses them (`edit::PreparedHeader`), so
-/// the parity fixture has to hold the CPU to the same two numbers - otherwise the harness
-/// measures that decision rather than the port it exists to check.
+/// Which is what lets `edit::filter_once` take them once and the parity fixture reuse the
+/// same two numbers: the harness would otherwise be measuring whether the two agreed on a
+/// measurement rather than whether the shaders reproduce the frame.
+///
+/// Not carried to the client - `edit::PreparedHeader` has held no `sigma` or `defocus` since
+/// the filter moved inside the open, because nothing on the far side filters any more.
 pub fn finish_with<T: Sample>(
     frame: &mut [T],
     width: usize,
