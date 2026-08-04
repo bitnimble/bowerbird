@@ -10,10 +10,12 @@
     "noImplicitOverride": true,
     "esModuleInterop": true,
     "resolveJsonModule": true,
+    // The build scripts import each other by full filename, which is what Bun runs them as.
+    "allowImportingTsExtensions": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "verbatimModuleSyntax": false,
     "noEmit": true
   },
-  "include": ["src", "test", "dev.ts"]
+  "include": ["src", "test", "scripts", "dev.ts"]
 }

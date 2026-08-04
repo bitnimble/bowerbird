@@ -13,6 +13,16 @@ import { join } from 'node:path';
 // `**/*.spec.ts` runner nor `bun test` picks up.
 const APP_BINARY = join(import.meta.dirname, 'src-tauri', 'target', 'debug', 'app');
 
+// `@wdio/tauri-service` reads this capability but ships no declaration for it, and a
+// vendor-prefixed key is not part of the W3C shape the runner's own types describe.
+declare global {
+  namespace WebdriverIO {
+    interface Capabilities {
+      'tauri:options'?: { application: string };
+    }
+  }
+}
+
 export const config: WebdriverIO.Config = {
   runner: 'local',
   specs: ['./e2e-tauri/*.wdio.ts'],

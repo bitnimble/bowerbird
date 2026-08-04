@@ -163,10 +163,11 @@ if (named == null || otool == null) {
   process.exit(1);
 }
 const tool = join(bin, named);
+const lister = join(bin, otool);
 
 /** What a Mach-O asks for, as bare filenames, whichever prefix it names them by. */
 function dependencies(file: string): string[] {
-  const listed = spawnSync(join(bin, otool), ['-L', file], { encoding: 'utf8' });
+  const listed = spawnSync(lister, ['-L', file], { encoding: 'utf8' });
   return (listed.stdout ?? '')
     .split('\n')
     .slice(1)

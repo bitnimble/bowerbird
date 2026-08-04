@@ -61,8 +61,8 @@ while (queue.length > 0) {
     encoding: 'utf8',
   });
   for (const line of info.split('\n')) {
-    const dep = line.match(/^depend = mingw-w64-x86_64-([^>=<\s]+)/);
-    if (dep != null) queue.push(dep[1]);
+    const dep = line.match(/^depend = mingw-w64-x86_64-([^>=<\s]+)/)?.[1];
+    if (dep != null) queue.push(dep);
   }
 }
 

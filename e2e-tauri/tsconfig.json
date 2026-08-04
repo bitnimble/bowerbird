@@ -1,0 +1,11 @@
+{
+  // Its own, rather than a folder in the root config: these specs run in a browser through
+  // WebDriver, so they need `DOM` and the wdio globals - and the server the root config
+  // covers must not be able to see either.
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "types": ["node", "mocha", "@wdio/globals/types", "expect-webdriverio"],
+    "lib": ["ESNext", "DOM"]
+  },
+  "include": [".", "../wdio.conf.ts"]
+}
