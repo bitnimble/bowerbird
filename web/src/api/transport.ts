@@ -143,7 +143,20 @@ export async function setServerOrigin(value: string): Promise<string> {
  *
  * The browser fetches those itself, so under the shell they need a scheme its Rust
  * answers. Same paths either way; only the prefix moves.
+ *
+ * And the prefix is not one string. A registered scheme is served at `bowerbird://localhost`
+ * on macOS and Linux but at `http://bowerbird.localhost` on Windows and Android, which are
+ * the two targets that gained a build here - hardcoding either form 404s every rendition,
+ * download and event stream on the other. Only the injected script knows which, so it is
+ * asked rather than guessed: `convertFileSrc` percent-encodes what it is handed, so it is
+ * handed nothing and the path is appended after.
  */
 export function assetUrl(path: string): string {
-  return isTauri() ? `bowerbird://localhost${path}` : path;
+  const convert = (
+    globalThis as {
+      __TAURI_INTERNALS__?: { convertFileSrc?: (file: string, protocol: string) => string };
+    }
+  ).__TAURI_INTERNALS__?.convertFileSrc;
+  if (typeof convert !== 'function') return path;
+  return convert('', 'bowerbird').replace(/\/$/, '') + path;
 }
