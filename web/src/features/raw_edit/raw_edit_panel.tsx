@@ -60,6 +60,13 @@ export const RawEditPanel = observer(function RawEditPanel({
       <span hidden data-testid="raw-edit-size">
         {store.width}x{store.height}
       </span>
+      {/* The part of the frame on screen. Zoom and pan move this and nothing else, so it is
+          the one value that says whether the gesture reached the tick. */}
+      <span hidden data-testid="raw-edit-region">
+        {store.region == null
+          ? ''
+          : `${Math.round(store.region.x)},${Math.round(store.region.y)} ${Math.round(store.region.width)}x${Math.round(store.region.height)}`}
+      </span>
 
       <Button onClick={onDone}>Done</Button>
     </div>

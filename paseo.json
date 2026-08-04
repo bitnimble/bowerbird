@@ -1,6 +1,7 @@
 {
   "worktree": {
     "setup": [
+      "cp $PASEO_SOURCE_CHECKOUT_PATH/.env $PASEO_WORKTREE_PATH/",
       "bun install && bun run build:native",
       "cd web && bun install"
     ]

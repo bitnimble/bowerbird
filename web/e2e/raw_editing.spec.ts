@@ -66,6 +66,68 @@ test('grades on the GPU, into a stage sized for the viewport', async ({ page }) 
 });
 
 /**
+ * The same zoom the viewer has, on a surface that cannot be transformed.
+ *
+ * The viewer scales an `<img>` and the browser does the rest; a canvas has nothing to scale,
+ * so the gesture has to come out the other side as a *region* and the frame be redrawn at
+ * it. That conversion is the whole of what is new here - the gesture itself is the viewer's
+ * code (`zoom_pan.ts`) - and it is the part that can be silently wrong: a region that never
+ * moves looks exactly like a zoom that works, because the canvas is upscaled by CSS either
+ * way and the picture does get bigger.
+ */
+test('zooms and pans the frame the viewer’s way, into a region', async ({ page }) => {
+  await open(page);
+
+  const region = page.getByTestId('raw-edit-region');
+  const size = await page.getByTestId('raw-edit-size').textContent();
+  const [width, height] = (size ?? '0x0').split('x').map(Number);
+
+  // Fitted: the whole frame, which is what an open shows.
+  await expect(region).toHaveText(`0,0 ${width}x${height}`);
+
+  const read = async (): Promise<{ x: number; y: number; w: number; h: number }> => {
+    const text = (await region.textContent()) ?? '';
+    const [at, extent] = text.split(' ');
+    const [x, y] = (at ?? '').split(',').map(Number);
+    const [w, h] = (extent ?? '').split('x').map(Number);
+    return { x: x ?? 0, y: y ?? 0, w: w ?? 0, h: h ?? 0 };
+  };
+
+  // A click zooms to the next stop about the point clicked, so the region shrinks and sits
+  // around it rather than around the middle.
+  const viewport = page.locator('.raw-edit-stage .stage__viewport');
+  const box = (await viewport.boundingBox())!;
+  await page.mouse.click(box.x + box.width * 0.25, box.y + box.height * 0.25);
+
+  await expect.poll(async () => (await read()).w).toBeLessThan(width);
+  const zoomed = await read();
+  expect(zoomed.h).toBeLessThan(height);
+  // Up and to the left of centre, because that is where the pointer was.
+  expect(zoomed.x).toBeLessThan((width - zoomed.w) / 2);
+  expect(zoomed.y).toBeLessThan((height - zoomed.h) / 2);
+  // And still inside the frame.
+  expect(zoomed.x).toBeGreaterThanOrEqual(0);
+  expect(zoomed.y).toBeGreaterThanOrEqual(0);
+  expect(zoomed.x + zoomed.w).toBeLessThanOrEqual(width + 1);
+
+  // Dragging pans. Leftwards, because zooming about the top-left corner has already put the
+  // window against the frame's left edge and the clamp holds it there - the room to move is
+  // to the right, and the picture goes the other way to the pointer.
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 - 120, box.y + box.height / 2, { steps: 8 });
+  await page.mouse.up();
+
+  await expect.poll(async () => (await read()).x).toBeGreaterThan(zoomed.x);
+  const panned = await read();
+  // A pan moves the window, it does not resize it.
+  expect(panned.w).toBe(zoomed.w);
+  expect(panned.h).toBe(zoomed.h);
+  // And never off the frame.
+  expect(panned.x + panned.w).toBeLessThanOrEqual(width + 1);
+});
+
+/**
  * The camera match has to reach the client, and no other check can see that it did:
  * without it the grade takes its neutral arm and still produces a plausible HDR frame at
  * the right size, just flatter and less saturated than the rendition of the same file.

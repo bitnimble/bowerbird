@@ -119,17 +119,44 @@ export class RawEditPresenter {
     this.request(this.store.exposureEv);
   }
 
-  /** Zoom and pan: the rectangle of the frame on screen, held inside the frame. */
+  /**
+   * Zoom and pan: the rectangle of the frame on screen, held inside the frame.
+   *
+   * Re-fitted rather than only redrawn, because the region is half of what the stage's
+   * resolution is computed from: zoomed in, fewer source pixels have to cover the same box,
+   * so the backing store is capped by the region's own resolution rather than the panel's -
+   * past 1:1 there is nothing left to resolve and the compositor's upscale is the honest
+   * answer. Zoomed back out it has to grow again.
+   */
   @action.bound
   showRegion(region: Region): void {
     const width = Math.min(Math.max(region.width, 1), this.store.width);
     const height = Math.min(Math.max(region.height, 1), this.store.height);
-    this.store.region = {
+    const next = {
       width,
       height,
       x: Math.min(Math.max(region.x, 0), this.store.width - width),
       y: Math.min(Math.max(region.y, 0), this.store.height - height),
     };
+    const held = this.store.region;
+    if (
+      held != null &&
+      held.x === next.x &&
+      held.y === next.y &&
+      held.width === next.width &&
+      held.height === next.height
+    ) {
+      return;
+    }
+    this.store.region = next;
+
+    const box = this.box;
+    if (box == null) {
+      this.request(this.store.exposureEv);
+      return;
+    }
+    // Which redraws, whether or not the backing store had to change.
+    this.fitStage(box.width, box.height);
     this.request(this.store.exposureEv);
   }
 
