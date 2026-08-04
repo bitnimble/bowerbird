@@ -98,7 +98,15 @@ export class PruneService {
         }
       }
 
-      for (const dir of retired) await deleteGeneratedDirectory(dataPath, dir).catch(() => {});
+      // ENOTEMPTY is the expected outcome whenever a file above would not go, and
+      // ENOENT whenever the directory was never there. Anything else is the path
+      // guard refusing, which is a bug in `retiredRenditionDirs` and must be said.
+      for (const dir of retired) {
+        await deleteGeneratedDirectory(dataPath, dir).catch((err: NodeJS.ErrnoException) => {
+          if (err.code === 'ENOTEMPTY' || err.code === 'ENOENT') return;
+          log.warn('could not remove a retired rendition directory', { dir, err });
+        });
+      }
     }
 
     return { removed, bytes };

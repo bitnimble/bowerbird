@@ -89,7 +89,7 @@ async function boot(): Promise<void> {
   }
 
   if (killed) {
-    editor.terminate();
+    editor?.terminate();
     editor = null;
     channel.port1.close();
     return;

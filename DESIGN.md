@@ -2505,7 +2505,7 @@ the bounds; the reasoning behind each number lives beside it there.
 | `hdr_preset` | `8` | Encoder speed; libaom `-cpu-used` 0-8 and avifenc `--speed` 0-10, both clamped (§10.7) |
 | `hdr_still_full_chroma` | `false` | 4:4:4 rather than 4:2:0 for the HDR still. Holds chroma detail, roughly double the encoder's memory (§10.7). The video has no say |
 | `watch_enabled` | `true` | Auto-sync a library when its files change on disk (§9.8) |
-| `watch_debounce_ms` | `2000` | Debounce window for coalescing filesystem events (§9.8) |
+| `watch_debounce_ms` | `15000` | Debounce window for coalescing filesystem events (§9.8) |
 | `full_sync_at` | `03:00` | Local `HH:MM` for the daily full reconcile; `""` disables (§9.8) |
 | `prune_every_days` | `7` | Interval for the orphaned-file sweep; `0` disables (§10.6) |
 
@@ -3096,9 +3096,9 @@ After a sync **and the processing it queued** have both settled, and only when
 that sync added or changed photos. It waits for processing rather than for the
 scan because what it needs is the derived files: photos imported a moment ago
 have nothing to compare yet. The added-or-changed condition is not an
-optimisation - watching is on by default with a two-second debounce, so a save
-starts a scoped sync, and without it a library would re-clique its whole
-collection every couple of seconds while somebody worked in it.
+optimisation - watching is on by default with a fifteen-second debounce, so a
+save starts a scoped sync, and without it a library would re-clique its whole
+collection every quarter of a minute while somebody worked in it.
 
 There is no separate "scan now" control: a manual sync is already how you ask a
 library to re-look at itself.

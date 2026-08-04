@@ -514,7 +514,7 @@ export class SyncService implements LibraryLifecycleListener {
       // returns promptly and re-syncs aren't blocked for the whole processing run.
       releaseSyncLock(lockPath);
       if (syncedStatus != null) {
-        this.detachProcessing(libraryId, token, syncedStatus, processingIds);
+        this.detachProcessing(libraryId, token, syncedStatus, processingIds, startedAt);
       }
     }
   }
@@ -555,6 +555,7 @@ export class SyncService implements LibraryLifecycleListener {
   // Sync now that has the lock and not yet marked itself busy would lose its
   // generation to this and never settle.
   private rebuildStage(libraryId: string, stage: 'tiles' | 'renditions'): LibrarySyncStatus {
+    const startedAt = Date.now();
     const library = this.libraries.getById(libraryId);
     if (!library) throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
     const current = this.statuses.get(libraryId);
@@ -585,7 +586,7 @@ export class SyncService implements LibraryLifecycleListener {
       };
       this.processingBatch.set(libraryId, { queued, photoIds: null });
       this.statuses.set(libraryId, status);
-      this.detachProcessing(libraryId, token, status, null);
+      this.detachProcessing(libraryId, token, status, null, startedAt);
       return status;
     } finally {
       releaseSyncLock(lockPath);
@@ -599,6 +600,7 @@ export class SyncService implements LibraryLifecycleListener {
     token: AbortController,
     finalStatus: LibrarySyncStatus,
     photoIds: readonly string[] | null,
+    startedAt: number,
   ): void {
     // Runs on both success and failure: processing throwing must not leave the
     // status stuck at 'processing'. Skipped if a newer sync generation started
@@ -647,7 +649,7 @@ export class SyncService implements LibraryLifecycleListener {
       // still settles, and saying so every time the watcher fires buries the
       // runs that are doing work.
       if (finalStatus.photos_processing > 0) {
-        log.info('processing settled', { library: libraryId, processed, stillPending });
+        log.info('processing settled', { library: libraryId, processed, stillPending, ms: Date.now() - startedAt });
       }
     };
     // Asks about whichever generation is current rather than about this one:

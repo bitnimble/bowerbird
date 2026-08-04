@@ -215,10 +215,21 @@ export class RawEditPresenter {
       return;
     }
 
-    // Null where the worker owns the generator and has already written it.
+    // Null where the worker owns the generator and has already written it. A frame
+    // arriving with no writer here means neither side built a generator, which
+    // `routeFor` cannot see: it probes whether a 10-bit `VideoFrame` constructs, and
+    // the track that carries one is a separate capability. Said rather than dropped -
+    // without this the stage stays blank and leaks a frame per tick.
     if (data.frame != null) {
+      if (this.writer == null) {
+        data.frame.close();
+        this.broken = true;
+        this.busy = false;
+        this.fail('this browser builds 10-bit video frames but has no track generator to show them');
+        return;
+      }
       try {
-        await this.writer?.write(data.frame);
+        await this.writer.write(data.frame);
       } catch {
         data.frame.close();
       }
