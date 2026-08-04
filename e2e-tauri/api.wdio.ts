@@ -129,19 +129,25 @@ describe('Bowerbird desktop shell', () => {
       return held;
     });
 
-    // Beside the executable rather than in a config directory somewhere, which is what
-    // makes deleting the folder the whole uninstall. As one property of a JSON object, so
-    // the next app-local setting is a field rather than a second file.
-    const beside = join(dirname(APP_BINARY), 'config.json');
-    expect(existsSync(beside)).toBe(true);
-    const written = JSON.parse(readFileSync(beside, 'utf8')) as { server?: string };
-    // Trailing slash trimmed, or every path joined to it would double its first one.
-    expect(written.server).toBe('http://portable.test:1234');
-
-    await browser.execute(async (restore: string) => {
-      const { invoke } = (window as unknown as Bridge).__TAURI__.core;
-      await invoke('set_server_origin', { value: restore });
-    }, before);
+    // Restored whatever the assertions do. Left to the happy path, a failure here wrote
+    // `http://portable.test:1234` into the config beside the binary and left it there, so
+    // every later test in the file - and every later run - pointed the shell at a host that
+    // does not exist, and failed for a reason that had nothing to do with them.
+    try {
+      // Beside the executable rather than in a config directory somewhere, which is what
+      // makes deleting the folder the whole uninstall. As one property of a JSON object, so
+      // the next app-local setting is a field rather than a second file.
+      const beside = join(dirname(APP_BINARY), 'config.json');
+      expect(existsSync(beside)).toBe(true);
+      const written = JSON.parse(readFileSync(beside, 'utf8')) as { server?: string };
+      // Trailing slash trimmed, or every path joined to it would double its first one.
+      expect(written.server).toBe('http://portable.test:1234');
+    } finally {
+      await browser.execute(async (restore: string) => {
+        const { invoke } = (window as unknown as Bridge).__TAURI__.core;
+        await invoke('set_server_origin', { value: restore });
+      }, before);
+    }
   });
 
   it('reports an unreachable server rather than panicking the shell', async () => {

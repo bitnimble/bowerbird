@@ -1,11 +1,14 @@
 // Builds the desktop binary the WebdriverIO run drives (see `wdio.conf.ts`).
 //
-// Two things a normal build does not do, both test-only:
-//   - `tauri/custom-protocol`, which serves the embedded `frontendDist` instead of the dev
-//     URL. It is the feature the Tauri CLI passes for a real build, and the switch that
-//     takes the binary out of dev mode.
-//   - `withGlobalTauri`, which exposes `window.__TAURI__` for the wdio plugin to wire its
-//     execute/mock API onto. Passed by env so a shipped build never carries it.
+// One thing a normal build does not do: `tauri/custom-protocol`, which serves the embedded
+// `frontendDist` instead of the dev URL. It is the feature the Tauri CLI passes for a real
+// build, and the switch that takes the binary out of dev mode.
+//
+// It used to pass `withGlobalTauri` by env as well, with a comment saying that kept it out
+// of a shipped build. It does not and cannot: `tauri.conf.json` sets it for every build, and
+// has to, because `transport.ts` reaches the shell through `window.__TAURI__.core.invoke` -
+// so the override set what was already set and the comment described the opposite of what
+// ships.
 import { spawnSync } from 'node:child_process';
 
 function run(cmd: string, args: string[], env: Record<string, string> = {}): void {
@@ -14,8 +17,10 @@ function run(cmd: string, args: string[], env: Record<string, string> = {}): voi
 }
 
 run('bun', ['run', '--cwd', 'web', 'build']);
-run(
-  'cargo',
-  ['build', '--manifest-path', 'src-tauri/Cargo.toml', '--features', 'wdio,tauri/custom-protocol'],
-  { TAURI_CONFIG: JSON.stringify({ app: { withGlobalTauri: true } }) },
-);
+run('cargo', [
+  'build',
+  '--manifest-path',
+  'src-tauri/Cargo.toml',
+  '--features',
+  'wdio,tauri/custom-protocol',
+]);
