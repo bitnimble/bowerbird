@@ -3,7 +3,29 @@
 // `native/rawshim/src/edit.rs` - so there is nothing here that takes a frame apart to check
 // it, and nothing that puts one back together.
 import { describe, it, expect } from 'bun:test';
+import { readFileSync } from 'node:fs';
 import { headerOf, prepareEditAsync } from '../rawshim_edit';
+
+// Read rather than run, because what this guards cannot be run for: a threadsafe `JSCallback`
+// standing at import time and still open at exit segfaults Bun 1.3.14 in teardown, about one
+// run in five. An intermittent crash is not something a test can wait for - and the crash is
+// the runtime's, so there is nothing here that could catch it. Where it is built is the part
+// this side owns, and it is checkable outright.
+//
+// Measured before it moved: twelve runs clean after, against two crashes in ten before, and
+// `main` - which carries no `JSCallback` at all - clean in six.
+describe('the completion callback', () => {
+  it('is built when an open needs it, not when this module is imported', () => {
+    const source = readFileSync(new URL('../rawshim_edit.ts', import.meta.url), 'utf8');
+    const built = source.split('\n').filter((line) => line.includes('new JSCallback('));
+
+    // One, or the reading below is answering about the wrong one.
+    expect(built).toHaveLength(1);
+    // Indented, so it sits inside something that has to be called. At the top level, merely
+    // loading this file stands one up - which every `bun test src` run does.
+    expect(built[0]).toMatch(/^\s+/);
+  });
+});
 
 // Nothing else bounds how many opens run at once. It used to block this thread, which
 // serialised it by accident; a thread per call does not, and the client cannot cancel work

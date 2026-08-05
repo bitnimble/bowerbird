@@ -65,16 +65,31 @@ export interface PreparedHeader {
 /** Which promise a finished job belongs to: "job 7 is done" becomes the call that asked. */
 const pending = new Map<number, (reply: { length: number }) => void>();
 
-const finished = new JSCallback(
-  (job: number | bigint, length: number | bigint) => {
-    const settle = pending.get(Number(job));
-    pending.delete(Number(job));
-    settle?.({ length: Number(length) });
-  },
-  { args: [FFIType.u64, FFIType.i64], returns: FFIType.void, threadsafe: true },
-);
+/**
+ * Registered with the native side the first time an open starts, and never torn down.
+ *
+ * Built on demand rather than at import, because a `threadsafe` callback is a live
+ * cross-thread entry point into this runtime and building one is not free of consequences: a
+ * process that merely imports this module - every `bun test src` run, since the tests reach
+ * the modules that reach this one - was standing one up and then exiting with it open, and
+ * Bun 1.3.14 segfaults in teardown doing that, about one run in five. Measured against `main`,
+ * which carries no `JSCallback` at all and does not crash. Nothing else here wants it, so the
+ * server that never opens the editor no longer has one.
+ */
+let finished: JSCallback | null = null;
 
-let notified = false;
+function notify(): void {
+  if (finished != null) return;
+  finished = new JSCallback(
+    (job: number | bigint, length: number | bigint) => {
+      const settle = pending.get(Number(job));
+      pending.delete(Number(job));
+      settle?.({ length: Number(length) });
+    },
+    { args: [FFIType.u64, FFIType.i64], returns: FFIType.void, threadsafe: true },
+  );
+  shim().bb_prepare_edit_notify(finished.ptr);
+}
 
 /**
  * Identical opens in flight share one, keyed by the whole request.
@@ -117,10 +132,7 @@ export function prepareEditAsync(request: EditRequest): Promise<Uint8Array> {
 }
 
 async function startEdit(request: EditRequest): Promise<Uint8Array> {
-  if (!notified) {
-    shim().bb_prepare_edit_notify(finished.ptr);
-    notified = true;
-  }
+  notify();
 
   const command = Buffer.from(JSON.stringify(request), 'utf8');
   const job = Number(shim().bb_prepare_edit_start(command, command.byteLength));
