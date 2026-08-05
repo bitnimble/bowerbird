@@ -83,6 +83,22 @@ const finished = new JSCallback(
 let notified = false;
 
 /**
+ * Identical opens in flight share one, keyed by the whole request.
+ *
+ * Nothing else bounds how many of these run at once. The open used to block this thread,
+ * which serialised it by accident; now it is a thread per call, and a reader who opens the
+ * editor, presses Escape and opens it again has left the first one running - the client
+ * cannot cancel work the native side has already started, and would not stop it by
+ * abandoning the request. Ten of those in five seconds is ten simultaneous LibRaw decodes
+ * of the same 61MP RAW, which is several gigabytes and the end of the process.
+ *
+ * The prepare is a pure function of its request, so the second caller wants exactly what
+ * the first is already waiting for. Same shape as `processing_service`'s batch dedup, for
+ * the same reason.
+ */
+const inFlight = new Map<string, Promise<PreparedFrame>>();
+
+/**
  * Decodes, prepares, fits the camera match and materialises the lens warp - without
  * stopping the server for the length of it.
  *
@@ -94,7 +110,19 @@ let notified = false;
  * The callback is registered once and shared. Bun's `threadsafe` flag is what makes it
  * legal to enter from a thread that is not this one.
  */
-export async function prepareEditAsync(request: EditRequest): Promise<PreparedFrame> {
+export function prepareEditAsync(request: EditRequest): Promise<PreparedFrame> {
+  const key = JSON.stringify(request);
+  const running = inFlight.get(key);
+  if (running != null) return running;
+
+  const run = startEdit(request).finally(() => inFlight.delete(key));
+  // Before any `.finally` callback can run, since those are microtasks and this is not -
+  // so the key is never deleted before it is set.
+  inFlight.set(key, run);
+  return run;
+}
+
+async function startEdit(request: EditRequest): Promise<PreparedFrame> {
   if (!notified) {
     shim().bb_prepare_edit_notify(finished.ptr);
     notified = true;

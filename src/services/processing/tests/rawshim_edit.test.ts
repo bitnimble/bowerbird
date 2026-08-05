@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test';
-import { framePrepared, type PreparedFrame, type PreparedHeader } from '../rawshim_edit';
+import { framePrepared, prepareEditAsync, type PreparedFrame, type PreparedHeader } from '../rawshim_edit';
 
 // A matched frame's description, at the shape the fitter actually produces: three
 // `BINS`-sample curves and a 5x5x4 lattice of four-component nodes. The size is the point
@@ -112,5 +112,51 @@ describe('framePrepared', () => {
       expect(JSON.parse(text).ok).toBe(true);
     }
     expect([...seen].sort()).toEqual([0, 1, 2, 3]);
+  });
+});
+
+// Nothing else bounds how many opens run at once. It used to block this thread, which
+// serialised it by accident; a thread per call does not, and the client cannot cancel work
+// the native side has already begun - so opening the editor, pressing Escape and opening it
+// again leaves the first decode running with the second beside it. Ten of those is ten
+// simultaneous LibRaw decodes of the same 61MP RAW, several gigabytes, and the process.
+//
+// A missing file rather than a fixture: the dedup happens before the work does, and the
+// request being refused is what makes this fast and what pins the release.
+describe('opens in flight', () => {
+  const request = {
+    rawFilePath: '/nonexistent/never-was.arw',
+    longEdge: 8000,
+    grade: { peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.995 },
+    strengths: { luma: 1, chroma: 1, sharpen: 1, defringe: 1 },
+  };
+
+  // Settled before the assertion rather than after it, so a failing one does not also leave
+  // a rejection with nobody holding it - which Bun reports against whichever test is
+  // running by then, and that is not this one.
+  it('share one, when they are the same open', async () => {
+    const first = prepareEditAsync(request);
+    const second = prepareEditAsync({ ...request });
+    const done = Promise.allSettled([first, second]);
+    expect(second).toBe(first);
+    await done;
+  });
+
+  it('do not share one across different requests', async () => {
+    const first = prepareEditAsync(request);
+    const other = prepareEditAsync({ ...request, longEdge: 4000 });
+    const done = Promise.allSettled([first, other]);
+    expect(other).not.toBe(first);
+    await done;
+  });
+
+  // The other half: held only while it is in flight, or the second visit to a photo would
+  // be answered by the first visit's frame forever.
+  it('are let go of once they have finished', async () => {
+    const first = prepareEditAsync(request);
+    await first.catch(() => {});
+    const second = prepareEditAsync({ ...request });
+    expect(second).not.toBe(first);
+    await second.catch(() => {});
   });
 });
