@@ -139,36 +139,60 @@ export function tickFeatures(adapter: GPUAdapter): GPUFeatureName[] {
   );
 }
 
+/** The bytes a frame's samples occupy on the GPU: interleaved RGB `u16`, padded to a word. */
+export function frameBytes(width: number, height: number): number {
+  return Math.ceil((width * height * 3 * 2 + 3) / 4) * 4;
+}
+
+/**
+ * Why a frame will not open on this adapter, or `null` if it will.
+ *
+ * Both halves are said here rather than left to the driver, because neither is an exception
+ * where it happens: an oversized texture or buffer is a *validation* error, which drops the
+ * dispatch and reads as a very fast tick rather than as a failure - the reader is told `live`
+ * over a black canvas, and this has cost a morning twice.
+ *
+ * The side is measured against the pyramid rather than against the frame, because the frame is
+ * not a texture: it stays an interleaved buffer, and the largest texture made from it is the
+ * pyramid's base at half a side. Held to the frame's own width this refused a 9504px sensor on
+ * any adapter capped at 8192 - most phones, and the Android build cannot raise the cap past
+ * what its GPU offers - for a texture it was never going to create.
+ *
+ * What such a frame needs instead is buffer capacity, and that is the check the side used to
+ * stand in for: at 61MP the samples are 361MB against a 256MB default, and against whatever
+ * the adapter itself will admit once `tickLimits` has asked for its maximum. Storage binding
+ * as well as allocation, since the frame is bound to every pass that reads it.
+ */
+export function frameTooBig(
+  width: number,
+  height: number,
+  limits: { maxTextureDimension2D: number; maxBufferSize: number; maxStorageBufferBindingSize: number },
+): string | null {
+  const side = Math.max(width, height) >> 1;
+  if (side > limits.maxTextureDimension2D) {
+    const held = limits.maxTextureDimension2D * 2;
+    return `this GPU holds frames to ${held}px a side; this one is ${width}x${height}`;
+  }
+  const bytes = frameBytes(width, height);
+  const room = Math.min(limits.maxBufferSize, limits.maxStorageBufferBindingSize);
+  if (bytes > room) {
+    const megabytes = (n: number): string => `${Math.round(n / 1024 / 1024)}MB`;
+    return `this GPU holds frames to ${megabytes(room)}; this one is ${megabytes(bytes)}`;
+  }
+  return null;
+}
+
 /**
  * The limits a full-resolution frame needs, which are nothing like the defaults.
  *
  * `requestDevice` hands back the *default* limits however capable the adapter is, and the
  * defaults are sized for a web page rather than for a sensor: `maxTextureDimension2D` is
  * 8192 against the 9504 a 61MP frame is wide, and `maxBufferSize` is 256MB against the
- * 366MB that frame's levels take. Both failures are validation errors, which drop the
- * dispatches and read as a very fast tick rather than as a failure - this has cost a
- * morning twice.
+ * 366MB that frame's levels take.
  *
  * Asked for as the adapter's own maximum rather than as a computed need, because the
  * alternative is re-requesting a device when a larger photograph is opened.
  */
-/**
- * Why a frame will not open on this adapter, or `null` if it will.
- *
- * Measured against the pyramid rather than against the frame, because the frame is not a
- * texture: it stays an interleaved buffer, and the largest texture made from it is the
- * pyramid's base at half a side. Held to the frame's own width, this refused a 9504px sensor
- * on any adapter capped at 8192 - which is most phones, and the Android build is the one that
- * cannot raise the cap past what its GPU offers - for a texture it was never going to create.
- *
- * What a full-resolution frame really needs is `maxBufferSize`, which `tickLimits` asks for
- * and `createBuffer` enforces.
- */
-export function frameTooBig(width: number, height: number, maxTexture: number): string | null {
-  if (Math.max(width, height) >> 1 <= maxTexture) return null;
-  return `this GPU holds frames to ${maxTexture * 2}px a side; this one is ${width}x${height}`;
-}
-
 export function tickLimits(adapter: GPUAdapter): Record<string, number> {
   const { maxTextureDimension2D, maxBufferSize, maxStorageBufferBindingSize } = adapter.limits;
   return { maxTextureDimension2D, maxBufferSize, maxStorageBufferBindingSize };
@@ -233,12 +257,12 @@ export class TickPipeline {
     const pixels = this.width * this.height;
     this.rowStride = Math.max(1, Math.round(pixels / PEAK_SAMPLES));
 
-    const tooBig = frameTooBig(this.width, this.height, device.limits.maxTextureDimension2D);
+    const tooBig = frameTooBig(this.width, this.height, device.limits);
     if (tooBig != null) throw new Error(tooBig);
     // The frame as it arrived: interleaved RGB `u16`, no fourth component and no second
     // copy to add one. At 61MP that is 361MB rather than 481.
     this.frame = device.createBuffer({
-      size: Math.ceil((samples.byteLength + 3) / 4) * 4,
+      size: frameBytes(this.width, this.height),
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
     // In whole 4-byte words, then the odd `u16` on its own. `writeBuffer` rejects a size

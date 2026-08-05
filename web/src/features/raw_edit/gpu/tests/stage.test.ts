@@ -89,22 +89,50 @@ describe('tickFeatures', () => {
 });
 
 describe('frameTooBig', () => {
-  // A 61MP sensor against the cap most phones report. The frame is a buffer and the biggest
-  // texture cut from it is the pyramid's base at half a side, so 9504 needs 4752 - and
-  // measuring the cap against 9504 refused the frame for a texture nothing creates. The
+  // What an adapter that raised its limits offers. `tickLimits` asks for the adapter's own
+  // maximum, and a desktop one answers in gigabytes.
+  const ROOMY = {
+    maxTextureDimension2D: 8192,
+    maxBufferSize: 4 * 1024 ** 3,
+    maxStorageBufferBindingSize: 4 * 1024 ** 3,
+  };
+
+  // A 61MP sensor against the side cap most phones report. The frame is a buffer and the
+  // biggest texture cut from it is the pyramid's base at half a side, so 9504 needs 4752 -
+  // and measuring that cap against 9504 refused the frame for a texture nothing creates. The
   // Android build is where this bites: it cannot ask for more than its GPU offers.
   test('lets a frame open when the pyramid it needs fits', () => {
-    expect(frameTooBig(9504, 6336, 8192)).toBeNull();
+    expect(frameTooBig(9504, 6336, ROOMY)).toBeNull();
   });
 
   test('refuses one whose pyramid does not, and says the size that would', () => {
-    expect(frameTooBig(9504, 6336, 4096)).toContain('8192px');
-    expect(frameTooBig(9504, 6336, 4096)).toContain('9504x6336');
+    const tight = { ...ROOMY, maxTextureDimension2D: 4096 };
+    expect(frameTooBig(9504, 6336, tight)).toContain('8192px');
+    expect(frameTooBig(9504, 6336, tight)).toContain('9504x6336');
   });
 
   // The boundary itself, both sides of it, since the halving is where an off-by-one would go.
   test('holds at the exact edge', () => {
-    expect(frameTooBig(16384, 100, 8192)).toBeNull();
-    expect(frameTooBig(16386, 100, 8192)).not.toBeNull();
+    expect(frameTooBig(16384, 100, ROOMY)).toBeNull();
+    expect(frameTooBig(16386, 100, ROOMY)).not.toBeNull();
+  });
+
+  // And the half the side used to stand in for. Loosening the side check let a frame past
+  // that the adapter cannot hold, and `createBuffer` refusing it is a validation error rather
+  // than an exception - so the open ran to the end and the reader was told `live` over a black
+  // canvas. 61MP is 345MiB against WebGPU's 256MiB default; both are said in the units the
+  // limits themselves are round numbers in, which is why this is not the 361MB the comments
+  // elsewhere quote for the same frame in decimal.
+  test('refuses a frame the adapter has no room for, in bytes', () => {
+    const small = { ...ROOMY, maxBufferSize: 256 * 1024 ** 2 };
+    expect(frameTooBig(9504, 6336, small)).toContain('256MB');
+    expect(frameTooBig(9504, 6336, small)).toContain('345MB');
+  });
+
+  // Binding as well as allocation: the frame is bound as storage to every pass that reads it,
+  // and the two limits are reported separately and are not always the same number.
+  test('refuses one it could allocate but not bind', () => {
+    const bindless = { ...ROOMY, maxStorageBufferBindingSize: 128 * 1024 ** 2 };
+    expect(frameTooBig(9504, 6336, bindless)).toContain('128MB');
   });
 });
