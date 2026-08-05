@@ -31,8 +31,12 @@ Four things this note got wrong or did not foresee, each fixed by measurement:
   so `EDIT_LONG_EDGE` is gone and the open decodes the sensor. A 61MP frame ticks
   in 8ms at a 2560x1707 stage.
 - **wgpu in Rust (§6.2) was not taken.** The shaders are WGSL in the page, which
-  is where the canvas is. §6.3's parity pin is what makes that safe, and it holds
-  at 6 counts of 65535.
+  is where the canvas is. §6.3's parity pin is what makes that safe: against the
+  CPU it holds the mean within 0.5 counts of 65535, with the worst pixel bounded
+  at 320 and under 0.5% of samples past 16. The mean is the assertion that
+  matters; the worst is loose because f32 against f64 either side of PQ separates
+  a handful of pixels, and it only reaches hundreds at all because the fixtures
+  carry a real camera fit rather than the identity they started as.
 
 What §7 concluded; the extended-range canvas, 203 nits, no bespoke gamut mapping; was measured against a real PQ AVIF on both engines and is what ships.
 

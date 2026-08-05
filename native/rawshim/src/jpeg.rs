@@ -20,10 +20,10 @@
 // production decode is a shrink-on-load to the fit grid, where the two are a wash, and the
 // full-size encode happens once per manual download.
 //
-// **Both crates build for wasm32.** Nothing on the client calls them yet - the browser
-// decodes the embedded preview with its own decoder - but that is one decoder feeding the
-// client's fit and another feeding the server's, which is the divergence `image::resize`
-// was just introduced to remove. This is the module that closes it.
+// One decoder, for everybody. There were two for a while - this one behind the server's fit
+// and the browser's own behind the editor's - and the editor's went with the wasm build: a
+// shell fetches the RAW and prepares it through `edit::fit`, which reads the embedded preview
+// through here, so no client decodes anything any more.
 
 use crate::rgb::{Rgb, RgbRef};
 

@@ -3,6 +3,22 @@
 Date: 2026-08-03  
 Reviewed: 2026-08-03 (claims re-checked against live GitHub/API, Tauri docs, and this repo)
 
+> **Status: §2 and §4.4 are current; §3 and §4.1–§4.2, §5 and §6 describe the shell as it was
+> before there was one, and the editor that has since been replaced.** Written while the
+> editor was wasm in the page and Bowerbird had no `src-tauri` at all. Both changed: the
+> shell exists, it registers a `bowerbird://` scheme and answers `invoke`, and the editor
+> decodes natively and grades per tick on the GPU through WGSL in the page.
+>
+> So §4.1's premise is gone rather than resolved, §4.2's `SharedArrayBuffer` went with the
+> wasm build (nothing needs cross-origin isolation now), and §5's "grade in the native Rust
+> backend, pushed down one custom-protocol response into a `<video>`" is a decision that was
+> considered and **not** taken - `docs/raw-edit-gpu.md` §0 and §6.2 record why, and it is the
+> current architecture. §6's smoke tests are for that unbuilt editor.
+>
+> What stands, and why this stays: §2 on what the `feat/cef` branch is, and §4.4 on CEF for
+> Linux with wry elsewhere, which is what `src-tauri/Cargo.cef.toml` cites and the reason
+> that manifest exists.
+
 Whether Bowerbird’s desktop shell should be **Tauri with a bundled Chromium
 (CEF)** rather than Electron or stock Tauri (system webview). Product constraint:
 UI is bundled into the app; the frontend talks only to the in-app Tauri Rust
@@ -14,11 +30,14 @@ Tauri + CEF is a reasonable fit. Nothing in the current codebase is a hard
 blocker.
 
 The two checks this doc first called load-bearing (Chromium feature parity for
-the HDR editor, cross-origin isolation for `SharedArrayBuffer`) are load-bearing
-only while the shell grades in wasm. It should not. Under Tauri the grade belongs
-in the native Rust backend, which **deletes** both risks rather than mitigating
-them (§4.1). What is left to check on a real pin is packaging (§6), not product
-logic.
+the HDR editor, cross-origin isolation for `SharedArrayBuffer`) were load-bearing
+only while the shell graded in wasm, and it no longer does. The second is gone
+outright: nothing holds a `SharedArrayBuffer` any more, so cross-origin isolation
+is not needed anywhere. The first came back sharper than this doc expected -
+§4.1's answer was to grade in Rust, and what shipped grades in WGSL in the page,
+so **Chromium feature parity is the whole reason a CEF pin is wanted on Linux**:
+WebKitGTK is built with `ENABLE_WEBGPU` off and cannot run the tick at all.
+See `docs/raw-edit-gpu.md` §0 and §6.2.
 
 Stock Tauri (WebView2 / WKWebView / WebKitGTK) is the wrong default: Linux
 WebKitGTK is a known QA sink (maintainers have said as much on

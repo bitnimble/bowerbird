@@ -42,9 +42,6 @@ const SYMBOLS = {
   bb_run_job: { args: [FFIType.ptr, FFIType.u64, FFIType.ptr, FFIType.u64], returns: FFIType.i64 },
   // Questions about pixels, for tests and pins. Same shape as bb_run_job.
   bb_for_testing_debug: { args: [FFIType.ptr, FFIType.u64, FFIType.ptr, FFIType.u64], returns: FFIType.i64 },
-  // The editor's open: a RAW in, the prepared frame out, framed as a header plus samples
-  // (`rawshim_edit.ts`). The one call that hands back pixels, because the tick that reads
-  // them is a shader on the client and there is no decoder in the page.
   // The editor's open: start it, be told when it is done, copy it out. Three calls rather
   // than one because the open is seconds of LibRaw and this process answers every other
   // request from the same thread, so it runs on one the library owns (`rawshim_edit.ts`).
