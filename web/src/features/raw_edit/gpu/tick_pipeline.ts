@@ -486,7 +486,7 @@ export class TickPipeline {
   render(ev: number, region: Region = this.wholeFrame): void {
     const encoder = this.device.createCommandEncoder();
     this.timer?.begin();
-    this.writeUniform({ exposure: 2 ** ev, fromCandidates: this.useCandidates, region });
+    this.writeUniform({ exposure: 2 ** ev, region });
 
     if (this.header.matched) this.measurePeak(encoder);
     this.draw(encoder, region);
@@ -537,7 +537,7 @@ export class TickPipeline {
     const run = async (ev: number, fromCandidates: boolean): Promise<number> => {
       const encoder = this.device.createCommandEncoder();
       this.timer?.begin();
-      this.writeUniform({ exposure: 2 ** ev, fromCandidates });
+      this.writeUniform({ exposure: 2 ** ev });
       encoder.clearBuffer(this.histogram);
       this.peakPass(
         encoder,
@@ -655,9 +655,7 @@ export class TickPipeline {
     return buffer;
   }
 
-  private writeUniform(
-    over: { exposure?: number; fromCandidates?: boolean; region?: Region } = {},
-  ): void {
+  private writeUniform(over: { exposure?: number; region?: Region } = {}): void {
     const header = this.header;
     const colour = header.colour;
     if (over.exposure != null) this.exposure = over.exposure;
@@ -684,7 +682,6 @@ export class TickPipeline {
     values[AT.sdr_white] = SDR_WHITE_NITS;
     ints[AT.row_stride] = this.rowStride;
     ints[AT.peak_samples] = this.width * Math.ceil(this.height / this.rowStride);
-    ints[AT.from_candidates] = over.fromCandidates ? 1 : 0;
 
     const region = over.region ?? this.wholeFrame;
     const canvas = this.context.canvas;

@@ -35,8 +35,6 @@ struct Tick {
   row_stride: u32,
   /// How many the open sampled, which is the population the quantile's rank is over.
   peak_samples: u32,
-  /// Whether the histogram holds only the brightest of them, which scales that rank.
-  from_candidates: u32,
   /// The part of the frame on screen, in source pixels, and the canvas showing it.
   region_origin: vec2f,
   region_size: vec2f,

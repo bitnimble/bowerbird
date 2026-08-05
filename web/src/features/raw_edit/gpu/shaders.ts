@@ -71,7 +71,6 @@ export const TICK_LAYOUT = [
   ['sdr_white', 'f32'],
   ['row_stride', 'u32'],
   ['peak_samples', 'u32'],
-  ['from_candidates', 'u32'],
   ['region_origin', 'vec2f'],
   ['region_size', 'vec2f'],
   ['canvas_size', 'vec2f'],

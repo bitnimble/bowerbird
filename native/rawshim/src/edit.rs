@@ -233,6 +233,17 @@ fn fit(
     // whole into f64 before resampling, so a full-size one is 576MB.
     let preview = crate::jpeg::decode(&jpeg, crate::hdr_fit::sample_long_edge()).ok()?;
     let recorded = crate::lens::read_distortion(raw);
+    // Three outcomes where `ffi::geometry_for` has four: no `Profiled`, so a lens with no
+    // recorded spline is fitted from the picture rather than looked up in lensfun. Chosen,
+    // not missed. The editor links LibRaw alone - the whole crate does without the
+    // `renditions` feature - and that is what makes the desktop and Android shells buildable
+    // at all, since lensfun has no Android build and wants glib underneath it.
+    //
+    // Measured before it went: over 32 Canon frames lensfun is worth 0.049 luma levels of
+    // 65535 against the fitted geometry, and the gap lives almost entirely in wide and
+    // superzoom glass where the distortion is not a one-parameter shape. The editor never
+    // consulted it on any platform, so nothing regressed; what a rendition still gets is the
+    // fourth tier, and the two agree to within that.
     let geometry = match (recorded.applied, recorded.spline) {
         (Some(false), _) => crate::fit::Geometry::Uncorrected,
         (_, Some(knots)) => crate::fit::Geometry::Recorded(knots),
