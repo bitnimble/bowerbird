@@ -1,6 +1,6 @@
 // The two pure decisions the open makes before a single dispatch is recorded.
 import { afterEach, describe, expect, test } from 'bun:test';
-import { SUPERSAMPLE, stageResolution, tickFeatures } from '../tick_pipeline';
+import { SUPERSAMPLE, frameTooBig, stageResolution, tickFeatures } from '../tick_pipeline';
 
 const global = globalThis as { devicePixelRatio?: number };
 const real = global.devicePixelRatio;
@@ -85,5 +85,26 @@ describe('tickFeatures', () => {
       'float32-filterable',
       'timestamp-query',
     ]);
+  });
+});
+
+describe('frameTooBig', () => {
+  // A 61MP sensor against the cap most phones report. The frame is a buffer and the biggest
+  // texture cut from it is the pyramid's base at half a side, so 9504 needs 4752 - and
+  // measuring the cap against 9504 refused the frame for a texture nothing creates. The
+  // Android build is where this bites: it cannot ask for more than its GPU offers.
+  test('lets a frame open when the pyramid it needs fits', () => {
+    expect(frameTooBig(9504, 6336, 8192)).toBeNull();
+  });
+
+  test('refuses one whose pyramid does not, and says the size that would', () => {
+    expect(frameTooBig(9504, 6336, 4096)).toContain('8192px');
+    expect(frameTooBig(9504, 6336, 4096)).toContain('9504x6336');
+  });
+
+  // The boundary itself, both sides of it, since the halving is where an off-by-one would go.
+  test('holds at the exact edge', () => {
+    expect(frameTooBig(16384, 100, 8192)).toBeNull();
+    expect(frameTooBig(16386, 100, 8192)).not.toBeNull();
   });
 });

@@ -152,6 +152,23 @@ export function tickFeatures(adapter: GPUAdapter): GPUFeatureName[] {
  * Asked for as the adapter's own maximum rather than as a computed need, because the
  * alternative is re-requesting a device when a larger photograph is opened.
  */
+/**
+ * Why a frame will not open on this adapter, or `null` if it will.
+ *
+ * Measured against the pyramid rather than against the frame, because the frame is not a
+ * texture: it stays an interleaved buffer, and the largest texture made from it is the
+ * pyramid's base at half a side. Held to the frame's own width, this refused a 9504px sensor
+ * on any adapter capped at 8192 - which is most phones, and the Android build is the one that
+ * cannot raise the cap past what its GPU offers - for a texture it was never going to create.
+ *
+ * What a full-resolution frame really needs is `maxBufferSize`, which `tickLimits` asks for
+ * and `createBuffer` enforces.
+ */
+export function frameTooBig(width: number, height: number, maxTexture: number): string | null {
+  if (Math.max(width, height) >> 1 <= maxTexture) return null;
+  return `this GPU holds frames to ${maxTexture * 2}px a side; this one is ${width}x${height}`;
+}
+
 export function tickLimits(adapter: GPUAdapter): Record<string, number> {
   const { maxTextureDimension2D, maxBufferSize, maxStorageBufferBindingSize } = adapter.limits;
   return { maxTextureDimension2D, maxBufferSize, maxStorageBufferBindingSize };
@@ -216,11 +233,8 @@ export class TickPipeline {
     const pixels = this.width * this.height;
     this.rowStride = Math.max(1, Math.round(pixels / PEAK_SAMPLES));
 
-    if (Math.max(this.width, this.height) > device.limits.maxTextureDimension2D) {
-      throw new Error(
-        `this GPU holds frames to ${device.limits.maxTextureDimension2D}px a side; this one is ${this.width}x${this.height}`,
-      );
-    }
+    const tooBig = frameTooBig(this.width, this.height, device.limits.maxTextureDimension2D);
+    if (tooBig != null) throw new Error(tooBig);
     // The frame as it arrived: interleaved RGB `u16`, no fourth component and no second
     // copy to add one. At 61MP that is 361MB rather than 481.
     this.frame = device.createBuffer({
