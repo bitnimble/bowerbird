@@ -85,19 +85,17 @@ struct Emitted {
 pub fn follow(app: &AppHandle) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        let mut last_id: Option<String> = None;
+        let mut resume = Resume::default();
         let mut wait = FIRST_RETRY;
         loop {
             // Reset on a stream that actually connected, so a server that drops one
             // connection an hour is not eventually waited on for thirty seconds.
-            let held = stream(&app, &mut last_id).await;
+            let held = stream(&app, &mut resume).await;
             following(None);
             match held {
                 // A move is not a failure and must not be waited out: the reader is looking
-                // at the new library now. Its ids belong to the old server too, so asking to
-                // resume from one would replay somebody else's events or nothing at all.
+                // at the new library now.
                 Ok(Ended::Moved) => {
-                    last_id = None;
                     wait = FIRST_RETRY;
                     continue;
                 }
@@ -122,8 +120,32 @@ enum Ended {
     Moved,
 }
 
+/// Where to resume from, and the server that said so.
+///
+/// An id means nothing to a library that did not issue it, so it travels with the origin it
+/// came from rather than on its own. Tying it to how the last connection *ended* is what does
+/// not work: a reader fixes the address in Settings precisely because the old server has gone,
+/// so the dial that notices the move is usually the one that fails to connect - which is an
+/// `Err`, not `Moved`, and would carry the old library's cursor to the new one.
+#[derive(Default)]
+struct Resume {
+    origin: Option<String>,
+    id: Option<String>,
+}
+
+impl Resume {
+    /// The id to ask `origin` to resume from, forgetting one issued by anybody else.
+    fn at(&mut self, origin: &str) -> Option<&str> {
+        if self.origin.as_deref() != Some(origin) {
+            self.origin = Some(origin.to_string());
+            self.id = None;
+        }
+        self.id.as_deref()
+    }
+}
+
 /// One connection, until it ends. `Ok` if it was answered before it did.
-async fn stream(app: &AppHandle, last_id: &mut Option<String>) -> Result<Ended, String> {
+async fn stream(app: &AppHandle, resume: &mut Resume) -> Result<Ended, String> {
     // Registered before the request, so an address that changes while this one is being
     // dialled is still noticed. `enable` is what does that: a `Notified` joins the waiter
     // list when it is first polled, and the first poll here is in the `select!` below -
@@ -138,7 +160,7 @@ async fn stream(app: &AppHandle, last_id: &mut Option<String>) -> Result<Ended, 
     let origin = crate::api::origin();
     let url = format!("{origin}/api/events");
     let mut request = crate::api::client().get(&url).header("accept", "text/event-stream");
-    if let Some(id) = last_id.as_deref() {
+    if let Some(id) = resume.at(&origin) {
         request = request.header("last-event-id", id);
     }
 
@@ -166,7 +188,7 @@ async fn stream(app: &AppHandle, last_id: &mut Option<String>) -> Result<Ended, 
 
         for frame in frames.push(&chunk) {
             if let Some(id) = frame.id {
-                *last_id = Some(id);
+                resume.id = Some(id);
             }
             let _ = app.emit(CHANNEL, Emitted { kind: frame.kind, data: frame.data });
         }
@@ -326,5 +348,28 @@ mod tests {
         let read = frames(&["event: rendition\ndata: one\n\ndata: two\n\n"]);
         assert_eq!(read[0].kind, "rendition");
         assert_eq!(read[1].kind, "message");
+    }
+
+    #[test]
+    fn resumes_the_same_library_where_it_left_off() {
+        let mut resume = Resume::default();
+        assert_eq!(resume.at("http://one.local"), None);
+        resume.id = Some("42".to_string());
+        assert_eq!(resume.at("http://one.local"), Some("42"));
+    }
+
+    /// The reason it is kept beside the origin at all. A reader fixes the address because the
+    /// old server has gone, so the dial that first sees the new one is the retry after a
+    /// failed connect - which never passed through the `Moved` arm and would otherwise still
+    /// be holding the old library's cursor.
+    #[test]
+    fn does_not_carry_one_library_id_to_another() {
+        let mut resume = Resume::default();
+        resume.at("http://one.local");
+        resume.id = Some("42".to_string());
+
+        assert_eq!(resume.at("http://two.local"), None);
+        // And having forgotten it, does not remember it again on the way back.
+        assert_eq!(resume.at("http://one.local"), None);
     }
 }
