@@ -15,7 +15,7 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p e2e-tauri/tsconfig.json",
     "build:native": "cargo build --release --manifest-path native/rawshim/Cargo.toml",
     "e2e:tauri:build": "bun run scripts/build-wdio-app.ts",
-    "e2e:tauri": "bun run e2e:tauri:build && xvfb-run -a wdio run wdio.conf.ts",
+    "e2e:tauri": "bun run e2e:tauri:build && bun run scripts/e2e-tauri-full.ts",
     "tauri": "bun x @tauri-apps/cli",
     "mac:build": "bun run scripts/mac-build.ts",
     "win:build": "bun run scripts/win-build.ts",

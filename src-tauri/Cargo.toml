@@ -40,6 +40,13 @@ tauri-plugin-wdio-webdriver = { version = "1", optional = true }
 [features]
 wdio = ["dep:tauri-plugin-wdio", "dep:tauri-plugin-wdio-webdriver"]
 
+# The wdio build is a debug build, and an unoptimised demosaic of a 24MP frame does not
+# finish inside the suite's 120s timeout - so the one spec covering the whole reason the
+# desktop build exists could only ever time out. Dependencies only: this crate stays
+# debug, and it is `rawshim` that does the work.
+[profile.dev.package."*"]
+opt-level = 2
+
 [profile.release]
 # `rawshim` asks for this in its own manifest and does not get it: cargo reads profiles
 # from the top-level package only, so a dependency's are ignored. Without it here the

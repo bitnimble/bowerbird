@@ -10,8 +10,10 @@
 // `web/e2e/gpu_parity.spec.ts` against the CPU, and the webview here has no WebGPU to grade
 // with anyway (WebKitGTK is built with ENABLE_WEBGPU off, `docs/raw-edit-gpu.md` §10.1).
 //
-// `BOWERBIRD_E2E_SERVER` points at a running Bowerbird for the round-trip case; without it
-// the reachability case still proves the command runs and reports rather than panicking.
+// The servers come from `scripts/e2e-tauri-full.ts`, which `e2e:tauri` runs. These used to be
+// optional, and every specimen needing one skipped itself without it - so the ordinary run
+// reported green over four specimens while five never executed. The RAW round-trip below was
+// among them, and was timing out the whole time. Missing now is a failure, not a skip.
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
@@ -38,7 +40,9 @@ describe('Bowerbird desktop shell', () => {
   // followed then fails for that reason rather than its own, which is a morning spent
   // reading the wrong code.
   before(async function () {
-    if (SERVER === '') return;
+    if (SERVER === '' || SECOND_SERVER === '') {
+      throw new Error('run this through `bun run e2e:tauri`, which stands the servers up');
+    }
     await browser.execute(async (origin: string) => {
       const { invoke } = (window as unknown as Bridge).__TAURI__.core;
       await invoke('set_server_origin', { value: origin });
@@ -58,9 +62,7 @@ describe('Bowerbird desktop shell', () => {
     expect(hasInvoke).toBe(true);
   });
 
-  it('frames a reply as a length, a header and bytes', async function () {
-    if (SERVER === '') return this.skip();
-
+  it('frames a reply as a length, a header and bytes', async () => {
     const reply = await browser.execute(async () => {
       const { invoke } = (window as unknown as Bridge).__TAURI__.core;
       const framed = new Uint8Array(
@@ -82,21 +84,18 @@ describe('Bowerbird desktop shell', () => {
     expect(() => JSON.parse(reply.body)).not.toThrow();
   });
 
-  it('prepares a RAW in the shell process rather than forwarding for it', async function () {
-    if (SERVER === '') return this.skip();
-
+  it('prepares a RAW in the shell process rather than forwarding for it', async () => {
     // The one command this shell answers itself. What it proves is the whole reason the
     // desktop build exists: the frame is decoded here, so what crosses the network is the
     // RAW rather than the several hundred megabytes it becomes.
     const photoId = await browser.execute(async (origin: string) => {
       const libraries = (await (await fetch(`${origin}/api/libraries`)).json()) as { id: string }[];
-      if (libraries.length === 0) return '';
       const listed = (await (
         await fetch(`${origin}/api/libraries/${libraries[0]!.id}/photos?limit=1`)
       ).json()) as { photos: { id: string }[] };
       return listed.photos[0]?.id ?? '';
     }, SERVER);
-    if (photoId === '') return this.skip();
+    expect(photoId).not.toBe('');
 
     const opened = await browser.execute(async (id: string) => {
       const { invoke } = (window as unknown as Bridge).__TAURI__.core;
@@ -181,9 +180,7 @@ describe('Bowerbird desktop shell', () => {
   // The transport's one exception, and the only part of it a unit test cannot reach: that
   // the shell really does hold the library's SSE stream and really does put it on the IPC
   // channel the page listens to. Through the scheme this hung forever without erroring.
-  it('follows the library event stream and forwards it over IPC', async function () {
-    if (SERVER === '') return this.skip();
-
+  it('follows the library event stream and forwards it over IPC', async () => {
     const state = await browser.execute(async () => {
       const { core } = (window as unknown as Bridge).__TAURI__;
       const origin = (await core.invoke('server_origin', {})) as unknown as string;
@@ -207,9 +204,7 @@ describe('Bowerbird desktop shell', () => {
   // one - its heartbeat holds the socket open for as long as the process lives. So the shell
   // stayed on the library the reader had just left, reporting itself connected the whole
   // time.
-  it('follows the address when it changes, off a server that is still running', async function () {
-    if (SERVER === '' || SECOND_SERVER === '') return this.skip();
-
+  it('follows the address when it changes, off a server that is still running', async () => {
     const moved = await browser.execute(
       async (to: string, back: string) => {
         const { core } = (window as unknown as Bridge).__TAURI__;
@@ -247,9 +242,7 @@ describe('Bowerbird desktop shell', () => {
   // that doubles to thirty seconds. A `Notify` reaches only the waits registered when it is
   // raised and there are none during a sleep, so the correction used to be dropped and took
   // effect whenever the backoff next happened to expire.
-  it('takes up a corrected address without waiting out the backoff', async function () {
-    if (SERVER === '') return this.skip();
-
+  it('takes up a corrected address without waiting out the backoff', async () => {
     try {
       const moved = await browser.execute(async (to: string) => {
         const { core } = (window as unknown as Bridge).__TAURI__;
