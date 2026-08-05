@@ -3,30 +3,13 @@
 // `native/rawshim/src/edit.rs` - so there is nothing here that takes a frame apart to check
 // it, and nothing that puts one back together.
 import { describe, it, expect } from 'bun:test';
-import { readFileSync } from 'node:fs';
 import { headerOf, prepareEditAsync } from '../rawshim_edit';
 
-// Read rather than run: a threadsafe `JSCallback` left standing at exit is a documented way to
-// segfault Bun in teardown, and an intermittent runtime crash is not something a test can wait
-// for or catch. Where the callback is built is the part this side owns, and that is checkable
-// outright.
-//
-// No crash here has been traced to this. The intermittent `bun test src` segfault that prompted
-// the move turned out to be `delete globalThis.Worker` in `processing_service.test.ts`, and it
-// outlived the move. Building on demand is still the right shape - nothing should stand a
-// threadsafe callback up merely by being imported - so the guard stays; the claim does not.
-describe('the completion callback', () => {
-  it('is built when an open needs it, not when this module is imported', () => {
-    const source = readFileSync(new URL('../rawshim_edit.ts', import.meta.url), 'utf8');
-    const built = source.split('\n').filter((line) => line.includes('new JSCallback('));
-
-    // One, or the reading below is answering about the wrong one.
-    expect(built).toHaveLength(1);
-    // Indented, so it sits inside something that has to be called. At the top level, merely
-    // loading this file stands one up - which every `bun test src` run does.
-    expect(built[0]).toMatch(/^\s+/);
-  });
-});
+// The specimens below are the ones that cross into the native library, and they are the ones
+// that used to segfault Bun: the completion arrived through a `JSCallback` marked `threadsafe`,
+// entered from the thread doing the open. Five crashes in forty runs of these, against none of
+// the pure ones. `test/integration/threadsafe_callback.integration.test.ts` keeps it gone -
+// nothing a test here could catch a runtime crash with.
 
 // Nothing else bounds how many opens run at once. It used to block this thread, which
 // serialised it by accident; a thread per call does not, and the client cannot cancel work

@@ -37,8 +37,8 @@ class MockWorker {
   terminate(): void {}
 }
 
-// Put back, never `delete`: Worker is a lazily-built Bun builtin, and dropping the
-// slot segfaults the runtime when it next reaches for it (~1 run in 8).
+// Put back rather than `delete`d, so what the runtime hands the next reader of this global is
+// the builtin it started with rather than nothing.
 const REAL_WORKER = globalThis.Worker;
 
 function settingsWith(overrides: Partial<Settings> = {}): SettingsRepository {

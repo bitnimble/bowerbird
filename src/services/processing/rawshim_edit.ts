@@ -9,7 +9,7 @@
 // of JSON, then the samples as little-endian u16 RGB. Base64 of 59MB would be neither
 // cheap nor honest, and splitting the header into a second request would let the two
 // disagree about which frame they describe.
-import { FFIType, JSCallback, ptr } from 'bun:ffi';
+import { ptr } from 'bun:ffi';
 import { shim } from './rawshim';
 import type { JobGrade } from './rawshim_job';
 
@@ -62,33 +62,29 @@ export interface PreparedHeader {
   samplesLen: number;
 }
 
-/** Which promise a finished job belongs to: "job 7 is done" becomes the call that asked. */
-const pending = new Map<number, (reply: { length: number }) => void>();
+/** `EDIT_RUNNING` in `native/rawshim/src/ffi.rs`: not a length and not a failure, come back. */
+const RUNNING = -2;
+
+// Two frames at 60Hz. An open is seconds of LibRaw, so this is nowhere near the cost of the
+// work it waits on, and it is short enough that the wait adds nothing a reader could see.
+const POLL_MS = 32;
 
 /**
- * Registered with the native side the first time an open starts, and never torn down.
+ * Waits for a job by asking, rather than being told.
  *
- * Built on demand rather than at import, because a `threadsafe` callback is a live
- * cross-thread entry point into this runtime and building one is not free of consequences: a
- * process that merely imports this module - every `bun test src` run, since the tests reach
- * the modules that reach this one - was standing one up and then exiting with it open, and
- * Bun 1.3.14 segfaults in teardown doing that, about one run in five. Measured against `main`,
- * which carries no `JSCallback` at all and does not crash. Nothing else here wants it, so the
- * server that never opens the editor no longer has one.
+ * The native side used to announce a finished open through a Bun `JSCallback` marked
+ * `threadsafe`, entered from the thread that did the work. That is the shape the API is for,
+ * and it segfaults the runtime: five crashes in forty runs of the specimens that cross this
+ * boundary, against none of the ones that do not, always on the main thread and mid-run. The
+ * frame is already parked under its job id waiting to be taken, so there is nothing the
+ * announcement bought that asking does not.
  */
-let finished: JSCallback | null = null;
-
-function notify(): void {
-  if (finished != null) return;
-  finished = new JSCallback(
-    (job: number | bigint, length: number | bigint) => {
-      const settle = pending.get(Number(job));
-      pending.delete(Number(job));
-      settle?.({ length: Number(length) });
-    },
-    { args: [FFIType.u64, FFIType.i64], returns: FFIType.void, threadsafe: true },
-  );
-  shim().bb_prepare_edit_notify(finished.ptr);
+async function settled(job: number): Promise<number> {
+  for (;;) {
+    const length = Number(shim().bb_prepare_edit_poll(BigInt(job)));
+    if (length !== RUNNING) return length;
+    await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+  }
 }
 
 /**
@@ -113,11 +109,7 @@ const inFlight = new Map<string, Promise<Uint8Array>>();
  *
  * The open is seconds of LibRaw on the one thread that answers every other request, so
  * doing it in line froze the library until it finished. This starts the work on a thread
- * the native side owns and returns a promise: the completion arrives as a callback, which
- * is `postMessage` rather than a thread pool, and needs no worker on this side at all.
- *
- * The callback is registered once and shared. Bun's `threadsafe` flag is what makes it
- * legal to enter from a thread that is not this one.
+ * the native side owns and returns a promise, so there is no worker on this side at all.
  */
 export function prepareEditAsync(request: EditRequest): Promise<Uint8Array> {
   const key = JSON.stringify(request);
@@ -132,13 +124,11 @@ export function prepareEditAsync(request: EditRequest): Promise<Uint8Array> {
 }
 
 async function startEdit(request: EditRequest): Promise<Uint8Array> {
-  notify();
-
   const command = Buffer.from(JSON.stringify(request), 'utf8');
   const job = Number(shim().bb_prepare_edit_start(command, command.byteLength));
   if (job === 0) throw new Error('rawshim would not start the open');
 
-  const { length } = await new Promise<{ length: number }>((resolve) => pending.set(job, resolve));
+  const length = await settled(job);
   if (length < 0) throw new Error('rawshim could not open the RAW for editing');
 
   // Taken or dropped, never left: the reply is held on the far side under this job's id

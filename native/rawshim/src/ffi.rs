@@ -85,38 +85,32 @@ pub unsafe extern "C" fn bb_run_job(
 // a job id is what this does anyway. The desktop shell never crossed this boundary at all -
 // it calls `edit::prepare_bytes` in process.
 //
-// It is `postMessage` rather than a thread pool, which is what makes it fit: Bun's
-// `JSCallback { threadsafe: true }` can be entered from a thread that is not the JS one, so
-// the completion arrives as an event, and a `Map` of pending ids turns it back into a
-// promise. Nothing on the JS side has to know a thread exists.
+// The finished open is left here to be collected rather than announced. It used to be
+// announced, through a Bun `JSCallback { threadsafe: true }` entered from the thread that did
+// the work - which reads as the better shape, and is a way to segfault the runtime: measured
+// at five crashes in forty runs of the specimens that cross this boundary, against none of the
+// ones that do not, always on the main thread and mid-run. The caller polls instead, and
+// nothing this library owns ever enters the JS runtime.
 
-/// What a finished open calls, with the job's id and the bytes its reply needs.
-///
-/// Negative length is a failure that produced no reply at all; a failed *open* is a positive
-/// length carrying `ok: false`, exactly as the blocking call reports it.
-type Finished = extern "C" fn(u64, i64);
-
-static ON_FINISHED: std::sync::Mutex<Option<Finished>> = std::sync::Mutex::new(None);
 static NEXT_JOB: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-static FINISHED: std::sync::Mutex<Vec<(u64, Vec<u8>)>> = std::sync::Mutex::new(Vec::new());
 
-/// Registers the function every finished open reports through. Call once, before starting.
-///
-/// # Safety
-/// `callback` must remain callable for as long as any job may still be running, and must be
-/// safe to enter from a thread this library owns.
-#[expect(unsafe_code)]
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn bb_prepare_edit_notify(callback: Finished) {
-    if let Ok(mut held) = ON_FINISHED.lock() {
-        *held = Some(callback);
-    }
+/// Every job that has been started and not yet taken. `None` is still running.
+static JOBS: std::sync::Mutex<Option<std::collections::HashMap<u64, Option<Vec<u8>>>>> =
+    std::sync::Mutex::new(None);
+
+/// Still running: not an error, and not a length. Distinct from -1 so a caller can tell
+/// "come back" from "there is no such job", which is what ends its wait.
+pub const EDIT_RUNNING: i64 = -2;
+
+fn jobs<T>(with: impl FnOnce(&mut std::collections::HashMap<u64, Option<Vec<u8>>>) -> T) -> Option<T> {
+    let mut held = JOBS.lock().ok()?;
+    Some(with(held.get_or_insert_with(std::collections::HashMap::new)))
 }
 
 /// Starts an open and returns its job id, without waiting for it.
 ///
-/// 0 is a refusal that will never be reported: a null command, or no callback registered to
-/// report through. Anything else is a job that will call the callback exactly once.
+/// 0 is a refusal that will never be reported: a null command, or a thread that would not
+/// start. Anything else is a job `bb_prepare_edit_poll` will answer for.
 ///
 /// # Safety
 /// `command` must point at `command_len` readable bytes. It is copied before this returns,
@@ -127,38 +121,51 @@ pub unsafe extern "C" fn bb_prepare_edit_start(command: *const u8, command_len: 
     if command.is_null() {
         return 0;
     }
-    let Some(finished) = ON_FINISHED.lock().ok().and_then(|held| *held) else {
-        return 0;
-    };
     // Copied rather than borrowed, because the caller is about to return to its event loop
     // and the buffer is its own.
     let bytes = unsafe { std::slice::from_raw_parts(command, command_len) }.to_vec();
     let job = NEXT_JOB.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+    // Entered before the thread starts, not by it: a poll that lands in between would
+    // otherwise read "no such job" and end a wait for work that is about to begin.
+    if jobs(|open| open.insert(job, None)).is_none() {
+        return 0;
+    }
 
     // Spawning is what can fail here, and it fails by panicking - which out of an
     // `extern "C"` function is an abort, so a machine that has run out of threads would take
     // the server with it rather than refuse one open. 0 is the refusal the caller can read.
     let spawned = crate::guard("bb_prepare_edit_start spawning a thread", false, || {
         std::thread::spawn(move || {
-            // The whole job, not just the decode: a panic anywhere in here and the callback
-            // below is never reached, which is not a failed open but a promise that never
-            // settles - the request hangs until the reader gives up, with the editor still
-            // saying "decoding".
+            // The whole job, not just the decode: a panic anywhere in here and the slot below
+            // is never filled, which is not a failed open but a promise that never settles -
+            // the request hangs until the reader gives up, with the editor still saying
+            // "decoding".
             let payload = crate::guard("an open", None, || Some(open_reply(&bytes)))
                 .unwrap_or_else(|| crate::edit::refusal("the open panicked"));
-
-            let length = payload.len() as i64;
-            match FINISHED.lock() {
-                Ok(mut done) => done.push((job, payload)),
-                // Nowhere to leave it, so report the failure rather than a length the caller
-                // would then ask for and not get.
-                Err(_) => return finished(job, -1),
-            }
-            finished(job, length);
+            jobs(|open| open.insert(job, Some(payload)));
         });
         true
     });
-    if spawned { job } else { 0 }
+    if spawned {
+        job
+    } else {
+        jobs(|open| open.remove(&job));
+        0
+    }
+}
+
+/// How a job is getting on: `EDIT_RUNNING`, or the bytes its reply needs, or -1 for a job
+/// that was never started, has already been taken, or could not be tracked.
+#[expect(unsafe_code)]
+#[unsafe(no_mangle)]
+pub extern "C" fn bb_prepare_edit_poll(job: u64) -> i64 {
+    jobs(|open| match open.get(&job) {
+        Some(Some(payload)) => payload.len() as i64,
+        Some(None) => EDIT_RUNNING,
+        None => -1,
+    })
+    .unwrap_or(-1)
 }
 
 /// One open, from its command to the bytes its reply is made of. Failures are replies too.
@@ -187,20 +194,19 @@ fn open_reply(command: &[u8]) -> Vec<u8> {
 #[expect(unsafe_code)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn bb_prepare_edit_take(job: u64, out: *mut u8, out_cap: usize) -> isize {
-    let Ok(mut done) = FINISHED.lock() else { return -1 };
-    let Some(at) = done.iter().position(|(id, _)| *id == job) else { return -1 };
+    // Only a finished job is takeable. A running one stays where it is: removing it would let
+    // its thread put the frame back under an id nobody will ask for again, which is the one
+    // leak here that costs hundreds of megabytes.
+    let taken = jobs(|open| match open.get(&job) {
+        Some(Some(payload)) if !out.is_null() && payload.len() > out_cap => None,
+        Some(Some(_)) => open.remove(&job).flatten(),
+        _ => None,
+    });
+
+    let Some(payload) = taken.flatten() else { return -1 };
     if out.is_null() {
-        done.remove(at);
         return 0;
     }
-    if done[at].1.len() > out_cap {
-        return -1;
-    }
-    // Removed whatever happens next: the frame is hundreds of megabytes and the caller has
-    // asked for it exactly once.
-    let (_, payload) = done.remove(at);
-    drop(done);
-
     let destination = unsafe { std::slice::from_raw_parts_mut(out, payload.len()) };
     destination.copy_from_slice(&payload);
     payload.len() as isize
@@ -532,38 +538,28 @@ mod tests {
 
     /// The event-based open's protocol, end to end, without needing a RAW to decode.
     ///
-    /// A command that will not parse fails inside the worker rather than at the call, which
-    /// is exactly the path being checked: `start` has to return a job id anyway, the
-    /// callback has to arrive from the other thread, and the reply has to be waiting to be
-    /// taken when it does.
-    static REPORTED: std::sync::Mutex<Vec<(u64, i64)>> = std::sync::Mutex::new(Vec::new());
-
-    extern "C" fn record(job: u64, length: i64) {
-        if let Ok(mut seen) = REPORTED.lock() {
-            seen.push((job, length));
-        }
-    }
-
-    #[test]
-    fn an_open_reports_itself_finished_from_its_own_thread() {
-        #[expect(unsafe_code)]
-        unsafe {
-            bb_prepare_edit_notify(record)
-        };
-        #[expect(unsafe_code)]
-        let job = unsafe { bb_prepare_edit_start(b"not json".as_ptr(), 8) };
-        assert_ne!(job, 0, "a registered callback means the job starts");
-
-        let mut length = 0;
+    /// Polls until the job stops saying it is running, and answers with what it settled on.
+    fn settled(job: u64) -> i64 {
         for _ in 0..200 {
-            if let Some((_, len)) =
-                REPORTED.lock().ok().and_then(|seen| seen.iter().find(|(id, _)| *id == job).copied())
-            {
-                length = len;
-                break;
+            let length = bb_prepare_edit_poll(job);
+            if length != EDIT_RUNNING {
+                return length;
             }
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
+        panic!("job {job} never finished");
+    }
+
+    /// A command that will not parse fails inside the worker rather than at the call, which
+    /// is exactly the path being checked: `start` has to return a job id anyway, the reply
+    /// has to arrive from the other thread, and it has to be waiting to be taken when it does.
+    #[test]
+    fn an_open_finishes_on_its_own_thread_and_waits_to_be_taken() {
+        #[expect(unsafe_code)]
+        let job = unsafe { bb_prepare_edit_start(b"not json".as_ptr(), 8) };
+        assert_ne!(job, 0, "the job starts");
+
+        let length = settled(job);
         assert!(length > 0, "a failed open is a reply, not an absent one");
 
         // Once, and only once: the frame is hundreds of megabytes and the slot is freed by
@@ -577,29 +573,27 @@ mod tests {
         #[expect(unsafe_code)]
         let again = unsafe { bb_prepare_edit_take(job, out.as_mut_ptr(), out.len()) };
         assert_eq!(again, -1, "a job that has been taken is gone");
+        assert_eq!(bb_prepare_edit_poll(job), -1, "and polling it says so rather than waiting");
+    }
+
+    /// The distinction the whole wait rests on. A caller that read "still running" as "no such
+    /// job" would give up on every open; one that read the reverse would wait out its timeout
+    /// on a job that was never started.
+    #[test]
+    fn a_job_that_was_never_started_is_not_a_job_that_is_still_running() {
+        assert_eq!(bb_prepare_edit_poll(u64::MAX), -1);
     }
 
     /// The other way a reply leaves: dropped by a caller that cannot take it.
     ///
-    /// Without this the payload would sit in `FINISHED` for the life of the process, and a
+    /// Without this the payload would sit under its job id for the life of the process, and a
     /// real one is the whole frame - so the error path that matters is the caller failing to
     /// allocate the buffer it was about to copy into.
     #[test]
     fn a_reply_the_caller_cannot_take_is_dropped_rather_than_kept() {
         #[expect(unsafe_code)]
-        unsafe {
-            bb_prepare_edit_notify(record)
-        };
-        #[expect(unsafe_code)]
         let job = unsafe { bb_prepare_edit_start(b"{".as_ptr(), 1) };
-
-        for _ in 0..200 {
-            let seen = REPORTED.lock().ok().is_some_and(|s| s.iter().any(|(id, _)| *id == job));
-            if seen {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
+        assert!(settled(job) > 0);
 
         #[expect(unsafe_code)]
         let dropped = unsafe { bb_prepare_edit_take(job, std::ptr::null_mut(), 0) };
