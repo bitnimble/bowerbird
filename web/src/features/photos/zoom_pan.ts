@@ -61,7 +61,11 @@ export function fitScale(box: Size, natural: Size): number {
 // observed box be used where a fresh measurement would otherwise be taken. `zoomAbout` does
 // need the rect - it pins a point, so it wants the origin too.
 export function clampPan(view: View, box: Size | null, natural: Size): View {
-  if (box == null || natural.width === 0 || natural.height === 0) return view;
+  // A box of no extent is a box this cannot clamp against, exactly as a missing one is:
+  // taken at face value it says nothing fits and pulls the offset to zero, which would jump
+  // a zoomed photo back to the middle. It is what the observer holds before it first fires.
+  if (box == null || box.width === 0 || box.height === 0) return view;
+  if (natural.width === 0 || natural.height === 0) return view;
   const fit = fitScale(box, natural);
   const maxX = panLimit(box.width, natural.width * fit * view.scale);
   const maxY = panLimit(box.height, natural.height * fit * view.scale);
@@ -287,9 +291,11 @@ export function useZoomPan(
     if (zoomed) setDragging(true);
   }
 
+  // The observed box, not a fresh measurement: a pan emits a move per pointer position and
+  // all this needs is the extent, which the observer already holds. `zoomTo` reads the rect
+  // because it pins a point and so wants the origin too; this does not.
   function onPointerMove(e: React.PointerEvent): void {
     if (!dragging) return;
-    const rect = viewport.current?.getBoundingClientRect() ?? null;
     setView((currentView) =>
       clampPan(
         {
@@ -297,7 +303,7 @@ export function useZoomPan(
           x: dragStart.current.offsetX + (e.clientX - dragStart.current.x),
           y: dragStart.current.offsetY + (e.clientY - dragStart.current.y),
         },
-        rect,
+        box,
         natural,
       ),
     );
