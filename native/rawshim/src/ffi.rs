@@ -135,32 +135,42 @@ pub unsafe extern "C" fn bb_prepare_edit_start(command: *const u8, command_len: 
     let bytes = unsafe { std::slice::from_raw_parts(command, command_len) }.to_vec();
     let job = NEXT_JOB.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-    std::thread::spawn(move || {
-        let payload = match serde_json::from_slice::<crate::edit::EditRequest>(&bytes) {
-            Err(error) => edit_failure(&format!("could not read the edit request: {error}")),
-            Ok(request) => {
-                match crate::guard("bb_prepare_edit_start", Err("panicked".to_string()), || {
-                    crate::edit::prepare(&request)
-                }) {
-                    Ok(prepared) => match crate::edit::encode(&prepared) {
-                        Ok(bytes) => bytes,
-                        Err(error) => edit_failure(&error),
-                    },
-                    Err(error) => edit_failure(&error),
-                }
-            }
-        };
+    // Spawning is what can fail here, and it fails by panicking - which out of an
+    // `extern "C"` function is an abort, so a machine that has run out of threads would take
+    // the server with it rather than refuse one open. 0 is the refusal the caller can read.
+    let spawned = crate::guard("bb_prepare_edit_start spawning a thread", false, || {
+        std::thread::spawn(move || {
+            // The whole job, not just the decode: a panic anywhere in here and the callback
+            // below is never reached, which is not a failed open but a promise that never
+            // settles - the request hangs until the reader gives up, with the editor still
+            // saying "decoding".
+            let payload = crate::guard("an open", None, || Some(open_reply(&bytes)))
+                .unwrap_or_else(|| edit_failure("the open panicked"));
 
-        let length = payload.len() as i64;
-        match FINISHED.lock() {
-            Ok(mut done) => done.push((job, payload)),
-            // Nowhere to leave it, so report the failure rather than a length the caller
-            // would then ask for and not get.
-            Err(_) => return finished(job, -1),
-        }
-        finished(job, length);
+            let length = payload.len() as i64;
+            match FINISHED.lock() {
+                Ok(mut done) => done.push((job, payload)),
+                // Nowhere to leave it, so report the failure rather than a length the caller
+                // would then ask for and not get.
+                Err(_) => return finished(job, -1),
+            }
+            finished(job, length);
+        });
+        true
     });
-    job
+    if spawned { job } else { 0 }
+}
+
+/// One open, from its command to the bytes its reply is made of. Failures are replies too.
+fn open_reply(command: &[u8]) -> Vec<u8> {
+    let request = match serde_json::from_slice::<crate::edit::EditRequest>(command) {
+        Ok(request) => request,
+        Err(error) => return edit_failure(&format!("could not read the edit request: {error}")),
+    };
+    match crate::edit::prepare(&request).and_then(|frame| crate::edit::encode(&frame)) {
+        Ok(bytes) => bytes,
+        Err(error) => edit_failure(&error),
+    }
 }
 
 /// Copies out a finished job's reply, once. -1 for a job that is not waiting to be taken.
