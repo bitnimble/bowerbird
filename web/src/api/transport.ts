@@ -144,8 +144,15 @@ export interface EventStream {
 }
 
 export interface EventHandlers {
-  /** Every (re)connect, so a view holding a request that died with the server re-asks. */
-  open(): void;
+  /**
+   * Every (re)connect, so a view holding a request that died with the server re-asks.
+   *
+   * `reconnect` is false for exactly one case: a stream that was already up when this
+   * subscribed, which is the baseline the view was rendered against and carries no news. A
+   * stream that comes up *after* is a library that was unreachable and now is not - whether
+   * or not this page ever saw it up - and that is what a view has to re-ask on.
+   */
+  open(reconnect: boolean): void;
   rendition(data: string): void;
 }
 
@@ -177,7 +184,14 @@ function listener(): Listen | null {
 function overEventSource(handlers: EventHandlers): EventStream {
   // Its own origin, not `assetUrl`: the page and the API are the same server here.
   const source = new EventSource('/api/events');
-  source.addEventListener('open', () => handlers.open());
+  // Which is also why the first connect is the baseline: a page served by the API cannot have
+  // loaded while the API was unreachable, so only the connects after it are a server coming
+  // back. The shell is the build where that does not hold.
+  let seen = false;
+  source.addEventListener('open', () => {
+    handlers.open(seen);
+    seen = true;
+  });
   source.addEventListener('rendition', (event) =>
     handlers.rendition((event as MessageEvent<string>).data),
   );
@@ -194,30 +208,40 @@ function overEventSource(handlers: EventHandlers): EventStream {
  * `listen` resolves after a round trip, so a subscription closed before it lands has to
  * unlisten on arrival rather than leave the handler registered.
  *
- * And the stream is already up by the time any of this runs - it connects at startup, where
- * a browser's `EventSource` connects when the page asks it to. A Tauri event reaches only
- * whoever is listening when it is emitted, so the `open` was emitted before there was a
- * listener and this would never call `open()` at all. It asks for the state instead, which
- * is the same question the event answers.
+ * And the stream is usually already up by the time any of this runs - it connects at startup,
+ * where a browser's `EventSource` connects when the page asks it to. A Tauri event reaches
+ * only whoever is listening when it is emitted, so that `open` was emitted before there was a
+ * listener and this would never hear it. It asks for the state instead, which is the same
+ * question the event answers - and the answer is also what says which kind of open the next
+ * one is.
+ *
+ * `null` from the probe means the stream is *down*: the shell renders from its embedded
+ * bundle, so a page can be up and complete against a library that is not there. The `open`
+ * that eventually arrives is then a server becoming reachable rather than a baseline, and
+ * treating it as the first connect left every failed thumbnail a placeholder for the life of
+ * the page.
  */
 function overIpcEvents(listen: Listen, handlers: EventHandlers): EventStream {
   let stop: (() => void) | null = null;
   let closed = false;
-  let opened = false;
+  // Whether the page has been told where it stands. Only the probe can settle it without a
+  // reconnect, and only if it wins the race - a real `open` arriving first settles it too,
+  // and as the reconnect it is.
+  let settled = false;
 
-  const open = (): void => {
-    if (closed || opened) return;
-    opened = true;
-    handlers.open();
+  const open = (reconnect: boolean): void => {
+    if (closed || (settled && !reconnect)) return;
+    settled = true;
+    handlers.open(reconnect);
   };
 
   void listen('library:event', ({ payload }) => {
     const { kind, data } = payload as { kind: string; data: string };
     if (kind === 'open') {
-      // A reconnect is a fresh `open`, and the point of one: a view holding a request that
-      // died with the server has to be told to ask again.
-      opened = false;
-      open();
+      // Always a reconnect: this is the shell dialling, which it does at startup before the
+      // probe and again every time a connection ends. Either way the library is reachable
+      // now and was not a moment ago.
+      open(true);
     } else if (kind === 'rendition') {
       handlers.rendition(data);
     }
@@ -229,7 +253,7 @@ function overIpcEvents(listen: Listen, handlers: EventHandlers): EventStream {
   const invoke = invoker();
   if (invoke != null) {
     void invoke<string | null>('events_following', {}).then((library) => {
-      if (library != null) open();
+      if (library != null) open(false);
     });
   }
 

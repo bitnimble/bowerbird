@@ -4,7 +4,6 @@ import type { PhotosPresenter } from '../photos/photos_presenter';
 
 export class EventsPresenter {
   private stream: EventStream | null = null;
-  private connectedBefore = false;
 
   constructor(private readonly photos: PhotosPresenter) {}
 
@@ -15,15 +14,18 @@ export class EventsPresenter {
   connect(): void {
     if (this.stream != null) return;
     this.stream = subscribeEvents({
-      // Every *re*connect, and not the first one. What `serverReachable` does is invalidate
+      // Every *re*connect, and not the baseline. What `serverReachable` does is invalidate
       // what the views are holding, so a server that went away and came back makes them ask
-      // again - and on the first connect nothing went away and everything on screen was
-      // fetched moments ago, so it is a cache thrown away for nothing. It used to be
-      // unreachable rather than harmless: the stream's first byte was a heartbeat up to
-      // twenty seconds out, so the page was usually gone before its own `open` arrived.
-      open: () => {
-        if (this.connectedBefore) this.photos.serverReachable();
-        this.connectedBefore = true;
+      // again - where against a stream that was already up when this subscribed nothing went
+      // away and everything on screen was fetched moments ago, so it is a cache thrown away
+      // for nothing.
+      //
+      // Which of the two it is comes from the transport rather than from a counter here. A
+      // count says "not the first", and the first is the meaningful one in the shell: the
+      // page renders from its embedded bundle against a library that is not running, and the
+      // connect that follows is exactly the news these views are waiting for.
+      open: (reconnect) => {
+        if (reconnect) this.photos.serverReachable();
       },
       rendition: (payload) => {
         // The announcement carries the row's new value rather than a bare "it changed", so

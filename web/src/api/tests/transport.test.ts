@@ -157,6 +157,37 @@ describe('subscribeEvents over IPC', () => {
     expect(opens).toBe(0);
   });
 
+  // Which kind of open it is, not merely that one happened, because the two mean opposite
+  // things to a view. A stream already up when the page subscribed is the baseline it was
+  // rendered against; one that comes up after is a library that was unreachable and now is
+  // not - and in the shell that is the ordinary case, since the page renders from its
+  // embedded bundle whether or not the library is running.
+  test('says the baseline is not a reconnect', async () => {
+    const shell = shellEvents(LIBRARY);
+    const opens: boolean[] = [];
+    subscribeEvents({ open: (reconnect) => opens.push(reconnect), rendition: () => {} });
+    await shell.settled();
+    expect(opens).toEqual([false]);
+
+    shell.deliver({ kind: 'open', data: '' });
+    expect(opens).toEqual([false, true]);
+  });
+
+  // The regression: launched against a library that was not running, the page's first open is
+  // a server becoming reachable. Reported as a first connect, `serverReachable` never ran and
+  // every thumbnail that failed while the library was down stayed a placeholder for the life
+  // of the page.
+  test('says a stream that comes up later is a reconnect', async () => {
+    const shell = shellEvents(null);
+    const opens: boolean[] = [];
+    subscribeEvents({ open: (reconnect) => opens.push(reconnect), rendition: () => {} });
+    await shell.settled();
+    expect(opens).toEqual([]);
+
+    shell.deliver({ kind: 'open', data: '' });
+    expect(opens).toEqual([true]);
+  });
+
   // Once for the state it asked for, then again for each reconnect, and never twice for one
   // connection - `serverReachable` re-asks every view holding a dead request.
   test('opens once per connection, and again on a reconnect', async () => {
