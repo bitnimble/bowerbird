@@ -6,14 +6,15 @@ import { describe, it, expect } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { headerOf, prepareEditAsync } from '../rawshim_edit';
 
-// Read rather than run, because what this guards cannot be run for: a threadsafe `JSCallback`
-// standing at import time and still open at exit segfaults Bun 1.3.14 in teardown, about one
-// run in five. An intermittent crash is not something a test can wait for - and the crash is
-// the runtime's, so there is nothing here that could catch it. Where it is built is the part
-// this side owns, and it is checkable outright.
+// Read rather than run: a threadsafe `JSCallback` left standing at exit is a documented way to
+// segfault Bun in teardown, and an intermittent runtime crash is not something a test can wait
+// for or catch. Where the callback is built is the part this side owns, and that is checkable
+// outright.
 //
-// Measured before it moved: twelve runs clean after, against two crashes in ten before, and
-// `main` - which carries no `JSCallback` at all - clean in six.
+// No crash here has been traced to this. The intermittent `bun test src` segfault that prompted
+// the move turned out to be `delete globalThis.Worker` in `processing_service.test.ts`, and it
+// outlived the move. Building on demand is still the right shape - nothing should stand a
+// threadsafe callback up merely by being imported - so the guard stays; the claim does not.
 describe('the completion callback', () => {
   it('is built when an open needs it, not when this module is imported', () => {
     const source = readFileSync(new URL('../rawshim_edit.ts', import.meta.url), 'utf8');

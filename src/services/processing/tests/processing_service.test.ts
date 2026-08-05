@@ -37,6 +37,10 @@ class MockWorker {
   terminate(): void {}
 }
 
+// Put back, never `delete`: Worker is a lazily-built Bun builtin, and dropping the
+// slot segfaults the runtime when it next reaches for it (~1 run in 8).
+const REAL_WORKER = globalThis.Worker;
+
 function settingsWith(overrides: Partial<Settings> = {}): SettingsRepository {
   const settings: Settings = { ...DEFAULT_SETTINGS, processing_concurrency: 2, ...overrides };
   return { get: () => settings } as SettingsRepository;
@@ -57,7 +61,7 @@ describe('ProcessingService.processUnprocessed', () => {
     (globalThis as { Worker?: unknown }).Worker = MockWorker;
   });
   afterEach(() => {
-    delete (globalThis as { Worker?: unknown }).Worker;
+    globalThis.Worker = REAL_WORKER;
     rmSync(root, { recursive: true, force: true });
   });
 
