@@ -145,7 +145,7 @@ pub unsafe extern "C" fn bb_prepare_edit_start(command: *const u8, command_len: 
             // settles - the request hangs until the reader gives up, with the editor still
             // saying "decoding".
             let payload = crate::guard("an open", None, || Some(open_reply(&bytes)))
-                .unwrap_or_else(|| edit_failure("the open panicked"));
+                .unwrap_or_else(|| crate::edit::refusal("the open panicked"));
 
             let length = payload.len() as i64;
             match FINISHED.lock() {
@@ -165,11 +165,13 @@ pub unsafe extern "C" fn bb_prepare_edit_start(command: *const u8, command_len: 
 fn open_reply(command: &[u8]) -> Vec<u8> {
     let request = match serde_json::from_slice::<crate::edit::EditRequest>(command) {
         Ok(request) => request,
-        Err(error) => return edit_failure(&format!("could not read the edit request: {error}")),
+        Err(error) => {
+            return crate::edit::refusal(&format!("could not read the edit request: {error}"))
+        }
     };
     match crate::edit::prepare(&request).and_then(|frame| crate::edit::encode(&frame)) {
         Ok(bytes) => bytes,
-        Err(error) => edit_failure(&error),
+        Err(error) => crate::edit::refusal(&error),
     }
 }
 
@@ -204,14 +206,6 @@ pub unsafe extern "C" fn bb_prepare_edit_take(job: u64, out: *mut u8, out_cap: u
     payload.len() as isize
 }
 
-/// A failed open in the same framing as a successful one, so the caller has one parse.
-fn edit_failure(error: &str) -> Vec<u8> {
-    let header = serde_json::json!({ "ok": false, "error": error }).to_string();
-    let mut out = Vec::with_capacity(4 + header.len());
-    out.extend_from_slice(&(header.len() as u32).to_le_bytes());
-    out.extend_from_slice(header.as_bytes());
-    out
-}
 
 /// The envelope every job reply comes back in.
 #[derive(serde::Serialize)]

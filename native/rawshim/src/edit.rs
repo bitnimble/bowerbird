@@ -121,9 +121,13 @@ impl ChromaPayload {
 /// buffer the client uploads. Grading an unwarped frame through a curve fitted from warped
 /// pairs is the bug that arrangement exists to prevent.
 pub fn prepare(request: &EditRequest) -> Result<Prepared, String> {
+    // Admitted before the file is read, not after: a queued open should be waiting on its
+    // turn holding nothing, and a RAW is tens of megabytes. The shell's own lock sits above
+    // its download for the same reason.
+    let _open = admit();
     let bytes = std::fs::read(&request.raw_file_path)
         .map_err(|e| format!("could not read {}: {e}", request.raw_file_path))?;
-    prepare_bytes(&bytes, request)
+    open(&bytes, request)
 }
 
 /// The same open, for a caller that already holds the file.
@@ -132,30 +136,41 @@ pub fn prepare(request: &EditRequest) -> Result<Prepared, String> {
 /// process, which is the point - the RAW is tens of megabytes and the prepared frame is
 /// hundreds, so the smaller of the two is the one worth putting on a network.
 pub fn prepare_bytes(bytes: &[u8], request: &EditRequest) -> Result<Prepared, String> {
-    // One open at a time, across every caller.
-    //
-    // An open cannot be cancelled: a reader who opens the editor and changes their mind
-    // leaves the decode running, because neither the browser abandoning a request nor Tauri
-    // dropping an invoke reaches the thread already inside LibRaw. So what bounds this is
-    // how many can be *underway*, and until now nothing did - the server's dedup collapses
-    // repeats of one photograph and says nothing about the next one, and the shell had not
-    // even that. Stepping through a few photographs and opening each was that many
-    // full-sensor decodes at once, and at 61MP one of those is the decode plus a f32 buffer
-    // of the same shape, well over a gigabyte.
-    //
-    // Serialised rather than metered, because concurrency buys nothing here to trade away:
-    // the work inside is already spread across every core by rayon, so a second open running
-    // beside the first makes neither finish sooner and doubles what is held. Waiting is what
-    // a reader would want even if memory were free.
-    //
-    // ponytail: a whole-process lock, so two libraries on one server queue behind each other
-    // too. A permit count would let that through; nothing today has two.
-    static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    // A poisoned lock means a previous open panicked. That was reported to its own caller
-    // and left nothing shared behind - the guard owns no data - so refusing every open after
-    // it would turn one failure into a permanent one.
-    let _open = ONE_AT_A_TIME.lock().unwrap_or_else(|held| held.into_inner());
+    let _open = admit();
+    open(bytes, request)
+}
 
+/// A turn to open something. One at a time, across every caller.
+///
+/// An open cannot be cancelled: a reader who opens the editor and changes their mind leaves
+/// the decode running, because neither the browser abandoning a request nor Tauri dropping an
+/// invoke reaches the thread already inside LibRaw. So what bounds this is how many can be
+/// *underway*, and until now nothing did - the server's dedup collapses repeats of one
+/// photograph and says nothing about the next one, and the shell had not even that. Stepping
+/// through a few photographs and opening each was that many full-sensor decodes at once, and
+/// at 61MP one of those is the decode plus an f32 buffer of the same shape, well over a
+/// gigabyte.
+///
+/// Serialised rather than metered, because concurrency buys nothing here to trade away: the
+/// work inside is already spread across every core by rayon, so a second open running beside
+/// the first makes neither finish sooner and doubles what is held. Waiting is what a reader
+/// would want even if memory were free.
+///
+/// Taken by the two entry points and nowhere below them, which is what keeps a `Mutex` that
+/// does not re-enter safe to hold across the whole open.
+///
+/// ponytail: a whole-process lock, so two libraries on one server queue behind each other
+/// too. A permit count would let that through; nothing today has two.
+fn admit() -> std::sync::MutexGuard<'static, ()> {
+    static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    // A poisoned lock means a previous open panicked. That was reported to its own caller and
+    // left nothing shared behind - the guard owns no data - so refusing every open after it
+    // would turn one failure into a permanent one.
+    ONE_AT_A_TIME.lock().unwrap_or_else(|held| held.into_inner())
+}
+
+/// The open itself, with the turn already taken.
+fn open(bytes: &[u8], request: &EditRequest) -> Result<Prepared, String> {
     {
         let frame = crate::decode_frame_bytes(bytes, 16, true, request.long_edge)
             .ok_or("LibRaw could not decode this file")?;
@@ -333,16 +348,33 @@ fn payload(
 /// Spaces, not NULs: the reader hands the whole padded span to `JSON.parse` rather than
 /// trimming it, and a NUL is "Unrecognized token" where a space is JSON's own whitespace.
 pub fn encode(prepared: &Prepared) -> Result<Vec<u8>, String> {
-    let mut header = serde_json::to_vec(&prepared.header).map_err(|e| e.to_string())?;
+    let header = serde_json::to_vec(&prepared.header).map_err(|e| e.to_string())?;
+    Ok(framed(header, &prepared.samples))
+}
+
+/// A refused open, in the same wire form as a successful one.
+///
+/// The page has one reader, so a failure has to arrive as a frame like any other - `ok` and
+/// a reason where a header would be, and nothing after it. Here rather than at the FFI
+/// boundary that raises it, because the framing is written once: this was the third hand
+/// that wrote a length prefix and the only one that forgot the padding, and the last time
+/// two of them disagreed about a byte it was a NUL where the reader wanted a space.
+pub fn refusal(error: &str) -> Vec<u8> {
+    let header = serde_json::json!({ "ok": false, "error": error }).to_string();
+    framed(header.into_bytes(), &[])
+}
+
+/// The framing itself, and the only place that writes it.
+fn framed(mut header: Vec<u8>, samples: &[u16]) -> Vec<u8> {
     header.resize(header.len().next_multiple_of(4), b' ');
 
-    let mut out = Vec::with_capacity(4 + header.len() + prepared.samples.len() * 2);
+    let mut out = Vec::with_capacity(4 + header.len() + samples.len() * 2);
     out.extend_from_slice(&(header.len() as u32).to_le_bytes());
     out.extend_from_slice(&header);
-    for sample in &prepared.samples {
+    for sample in samples {
         out.extend_from_slice(&sample.to_le_bytes());
     }
-    Ok(out)
+    out
 }
 
 #[cfg(test)]
@@ -350,7 +382,7 @@ mod tests {
     use super::*;
 
     /// A header of a given weight, so the padding can be swept across all four remainders.
-    fn framed(pixels: usize, matched: bool) -> Vec<u8> {
+    fn encoded(pixels: usize, matched: bool) -> Vec<u8> {
         let samples = vec![7u16; pixels * 3];
         let header = PreparedHeader {
             ok: true,
@@ -385,7 +417,7 @@ mod tests {
     fn leaves_the_samples_where_the_page_can_map_over_them() {
         let mut remainders = std::collections::HashSet::new();
         for pixels in 1..=24 {
-            let bytes = framed(pixels, pixels % 2 == 0);
+            let bytes = encoded(pixels, pixels % 2 == 0);
             let length = described(&bytes);
             assert_eq!(length % 4, 0, "header length {length} is not a multiple of four");
             assert_eq!((4 + length) % 2, 0, "the samples do not start on a u16 boundary");
@@ -404,13 +436,27 @@ mod tests {
         assert!(remainders.len() > 1, "every width padded the same way: {remainders:?}");
     }
 
-    /// A failed open is the same framing with `ok: false`, so the caller has one parse. It
-    /// carries no samples, and the padding still has to leave it valid JSON.
+    /// A failed open is the same framing with `ok: false`, so the caller has one parse.
+    ///
+    /// Through `refusal`, which is what actually writes one - a version of this that built a
+    /// successful frame with no pixels and called that the failure case was checking the
+    /// writer that was already right. The reason is swept for length so the padding is
+    /// exercised at every remainder here too.
     #[test]
     fn frames_a_failed_open_the_same_way() {
-        let bytes = framed(0, false);
-        let length = described(&bytes);
-        assert_eq!(length % 4, 0);
-        assert_eq!(bytes.len(), 4 + length);
+        for length in 0..8 {
+            let reason = "x".repeat(length);
+            let bytes = refusal(&reason);
+            let described = described(&bytes);
+
+            assert_eq!(described % 4, 0, "a refusal's header is not padded: {described}");
+            assert_eq!(bytes.len(), 4 + described, "a refusal carries samples");
+
+            let text = std::str::from_utf8(&bytes[4..]).expect("the header is utf8");
+            let parsed: serde_json::Value =
+                serde_json::from_str(text).expect("the padded refusal parses as JSON");
+            assert_eq!(parsed["ok"], serde_json::json!(false));
+            assert_eq!(parsed["error"], serde_json::json!(reason));
+        }
     }
 }
