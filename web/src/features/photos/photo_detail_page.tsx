@@ -761,13 +761,19 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   // exists; the setter is stable, so neither part of the bar re-renders after.
   const [toolsSlot, setToolsSlot] = useState<HTMLDivElement | null>(null);
   const { pathname, search } = useLocation();
-  // Bound to the photo it was opened for: stepping away clears it without a
-  // separate effect, so the editor is never constructed for a frame it is not
-  // showing. `?edit` lands e2e (and a deep link) straight in.
-  const [editPhotoId, setEditPhotoId] = useState<string | null>(() =>
-    new URLSearchParams(search).has('edit') ? photoId : null,
-  );
-  const editing = editPhotoId === photoId;
+  const navigate = useNavigate();
+  // In the address rather than in state, because the address is the one thing stepping
+  // already changes: `useStep` navigates to a bare photo path, so walking away drops `?edit`
+  // and there is nothing left to go stale.
+  //
+  // It was state, remembered against the photo it was opened for. That masks the flag while
+  // the reader is elsewhere but does not clear it, so stepping to the next photograph and
+  // back re-entered the editor nobody had asked for again - and each re-entry was another
+  // full-sensor decode. The comment here used to claim stepping away cleared it.
+  //
+  // Back now leaves the editor, which is what it looks like it should do, and `?edit` still
+  // lands a deep link (and e2e) straight in.
+  const editing = new URLSearchParams(search).has('edit');
   const [session, setSession] = useState<{ store: RawEditStore; presenter: RawEditPresenter } | null>(null);
 
   useEffect(() => {
@@ -791,8 +797,13 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
     };
   }, [editing, photoId]);
 
-  const startEdit = useCallback(() => setEditPhotoId(photoId), [photoId]);
-  const stopEdit = useCallback(() => setEditPhotoId(null), []);
+  // Replaced rather than pushed on the way out, so Done and Escape leave no entry for Back
+  // to walk straight into the editor through.
+  const startEdit = useCallback(() => navigate(`${pathname}?edit`), [navigate, pathname]);
+  const stopEdit = useCallback(
+    () => navigate(pathname, { replace: true }),
+    [navigate, pathname],
+  );
 
   function togglePanels(): void {
     setPanelsOpen((was) => {

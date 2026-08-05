@@ -207,6 +207,33 @@ test('a slider move redraws the canvas', async ({ page }) => {
 });
 
 /**
+ * Leaving the editor has to mean leaving it, including on the way back.
+ *
+ * Editing was remembered as the photo it had been opened for. Stepping to the next
+ * photograph stopped it matching, which reads as closed - but the flag was still set, so
+ * stepping back matched again and re-entered the editor nobody had asked for, on a page that
+ * had no triage or rating controls while it was there, and paid another full-sensor decode
+ * for the privilege. It is read off `?edit` now, which a step drops on its own.
+ *
+ * Stepped away while still editing, with no Escape first. Escape clears the flag, so a
+ * version of this that pressed it went green against the bug it was written for: what has to
+ * be walked away from is an editor that is still open.
+ */
+test('stepping away from the editor and back does not reopen it', async ({ page }) => {
+  await open(page);
+
+  await page.keyboard.press('ArrowRight');
+  await expect.poll(async () => new URL(page.url()).pathname).not.toContain(photoId);
+  await page.keyboard.press('ArrowLeft');
+  await expect.poll(async () => new URL(page.url()).pathname).toContain(photoId);
+
+  // Given a moment to reopen if it were going to: the editor mounts in a layout effect, so
+  // a bare assertion here would pass before the frame that would have shown it.
+  await page.waitForTimeout(500);
+  await expect(page.getByTestId('raw-edit-panel')).toBeHidden();
+});
+
+/**
  * The fixture open and graded.
  *
  * Waiting on `live`, which the presenter sets only once the prepared frame has arrived and
