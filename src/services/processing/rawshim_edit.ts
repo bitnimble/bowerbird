@@ -62,12 +62,6 @@ export interface PreparedHeader {
   samplesLen: number;
 }
 
-export interface PreparedFrame {
-  header: PreparedHeader;
-  /** Scene-linear `u16` RGB, warped, at `width * height * 3`. */
-  samples: Uint16Array;
-}
-
 /** Which promise a finished job belongs to: "job 7 is done" becomes the call that asked. */
 const pending = new Map<number, (reply: { length: number }) => void>();
 
@@ -96,7 +90,7 @@ let notified = false;
  * the first is already waiting for. Same shape as `processing_service`'s batch dedup, for
  * the same reason.
  */
-const inFlight = new Map<string, Promise<PreparedFrame>>();
+const inFlight = new Map<string, Promise<Uint8Array>>();
 
 /**
  * Decodes, prepares, fits the camera match and materialises the lens warp - without
@@ -110,7 +104,7 @@ const inFlight = new Map<string, Promise<PreparedFrame>>();
  * The callback is registered once and shared. Bun's `threadsafe` flag is what makes it
  * legal to enter from a thread that is not this one.
  */
-export function prepareEditAsync(request: EditRequest): Promise<PreparedFrame> {
+export function prepareEditAsync(request: EditRequest): Promise<Uint8Array> {
   const key = JSON.stringify(request);
   const running = inFlight.get(key);
   if (running != null) return running;
@@ -122,7 +116,7 @@ export function prepareEditAsync(request: EditRequest): Promise<PreparedFrame> {
   return run;
 }
 
-async function startEdit(request: EditRequest): Promise<PreparedFrame> {
+async function startEdit(request: EditRequest): Promise<Uint8Array> {
   if (!notified) {
     shim().bb_prepare_edit_notify(finished.ptr);
     notified = true;
@@ -145,7 +139,13 @@ async function startEdit(request: EditRequest): Promise<PreparedFrame> {
     const written = Number(shim().bb_prepare_edit_take(BigInt(job), ptr(reply), reply.byteLength));
     taken = true;
     if (written < 0) throw new Error('the prepared frame was gone before it could be read');
-    return decode(reply.subarray(0, written));
+    const framed = reply.subarray(0, written);
+    // The header is read, and nothing else is. `encode` already writes the frame in the shape
+    // the page reads, padding and all, so this hands the buffer on rather than taking it
+    // apart and putting it back together: at 61MP that round trip was two 361MB copies with
+    // three of them alive at once, for a reply that arrived correct.
+    throwIfFailed(framed);
+    return framed;
   } finally {
     if (!taken) shim().bb_prepare_edit_take(BigInt(job), null, 0);
   }
@@ -153,52 +153,19 @@ async function startEdit(request: EditRequest): Promise<PreparedFrame> {
 
 
 /**
- * The frame as one buffer: a `u32` length, that much JSON, then the samples.
+ * The header, read out of a framed reply without touching the samples after it.
  *
- * The header travels in the body rather than in an `X-Prepared` response header because
- * once the camera match is in it, it is 11KB - three 256-sample curves and a 400-value
- * lattice - and nginx answers 502 rather than forward an upstream header past its 4KB
- * buffer. Measured, not assumed: an unmatched frame's header is 247 bytes, which is why
- * this only ever failed against real photographs.
- *
- * Padded to a multiple of four, which JSON ignores and the reader depends on: it leaves
- * the samples where a `Uint16Array` can view them rather than copy them, which is what
- * putting the header outside the body bought in the first place.
+ * A failed open is a reply like any other - `ok: false` and a reason - so somebody has to
+ * look, and this is the only part of the frame the server has any use for. The samples are
+ * the client's, and the whole point of the framing is that they cross without being handled.
  */
-export function framePrepared(frame: PreparedFrame): Uint8Array {
-  const json = new TextEncoder().encode(JSON.stringify(frame.header));
-  const padded = Math.ceil(json.byteLength / 4) * 4;
-  const samples = new Uint8Array(
-    frame.samples.buffer,
-    frame.samples.byteOffset,
-    frame.samples.byteLength,
-  );
-
-  const out = new Uint8Array(4 + padded + samples.byteLength);
-  new DataView(out.buffer).setUint32(0, padded, true);
-  out.set(json, 4);
-  // Spaces, not NULs. The reader hands the whole padded span to `JSON.parse` rather than
-  // trimming it, and a space is JSON's own whitespace where a NUL is "Unrecognized token" -
-  // so this would fail every open whose header does not already land on a multiple of four.
-  // `src-tauri/src/edit.rs` pads the same way, for the same reader.
-  out.fill(0x20, 4 + json.byteLength, 4 + padded);
-  out.set(samples, 4 + padded);
-  return out;
+export function headerOf(framed: Uint8Array): PreparedHeader {
+  const view = new DataView(framed.buffer, framed.byteOffset, framed.byteLength);
+  const length = view.getUint32(0, true);
+  return JSON.parse(new TextDecoder().decode(framed.subarray(4, 4 + length))) as PreparedHeader;
 }
 
-/** Splits the framing, so the route and the tests read one implementation of it. */
-export function decode(reply: Uint8Array): PreparedFrame {
-  const view = new DataView(reply.buffer, reply.byteOffset, reply.byteLength);
-  const headerLength = view.getUint32(0, true);
-  const header = JSON.parse(
-    new TextDecoder().decode(reply.subarray(4, 4 + headerLength)),
-  ) as PreparedHeader;
+function throwIfFailed(framed: Uint8Array): void {
+  const header = headerOf(framed);
   if (!header.ok) throw new Error(header.error ?? 'rawshim could not open the RAW for editing');
-
-  const at = 4 + headerLength;
-  // Copied rather than viewed: the samples begin at a header-dependent offset, which is
-  // almost never the 2-byte alignment a `Uint16Array` view over the same buffer needs.
-  const samples = new Uint16Array(header.samplesLen / 2);
-  new Uint8Array(samples.buffer).set(reply.subarray(at, at + header.samplesLen));
-  return { header, samples };
 }

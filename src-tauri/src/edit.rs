@@ -50,21 +50,10 @@ pub async fn prepared(path: &str) -> Result<Vec<u8>, String> {
     .await
     .map_err(|e| format!("the open panicked: {e}"))??;
 
-    // The header in the body, framed exactly as the HTTP route frames it, because the page
-    // has one reader for both. Padded to four so the samples land where a `Uint16Array`
-    // views them rather than copies them.
-    let mut json = serde_json::to_vec(&prepared.header).map_err(|e| e.to_string())?;
-    json.resize(json.len().next_multiple_of(4), b' ');
-
-    // The samples as they sit, little-endian, which is what the page maps a `Uint16Array`
-    // over. Every target this ships to is little-endian; a big-endian one would need this
-    // swapped, and would have the same problem with the HTTP route.
-    let mut bytes = Vec::with_capacity(4 + json.len() + prepared.samples.len() * 2);
-    bytes.extend_from_slice(&(json.len() as u32).to_le_bytes());
-    bytes.extend_from_slice(&json);
-    for sample in &prepared.samples {
-        bytes.extend_from_slice(&sample.to_le_bytes());
-    }
+    // The same `encode` the HTTP route's frame comes out of, rather than a second copy of
+    // the framing here: the page has one reader for both transports, and two writers of a
+    // padded length prefix is how they drift apart.
+    let bytes = rawshim::edit::encode(&prepared)?;
     Ok(crate::api::reply(200, HashMap::new(), &bytes))
 }
 

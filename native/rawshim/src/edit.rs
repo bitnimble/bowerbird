@@ -298,8 +298,20 @@ fn payload(
 /// One buffer rather than two calls, because the FFI hands back one buffer and the HTTP
 /// route hands back one body, and splitting the header into a second request would let the
 /// two disagree about which frame they describe.
+///
+/// **The header is padded to four with spaces**, which JSON ignores and the reader depends
+/// on: it leaves the samples on an offset a `Uint16Array` can be mapped over rather than
+/// copied to. Padded here rather than by whoever serves it, because the alternative is what
+/// the server used to do - take this apart and put it back together with the padding in,
+/// which at 61MP is two 361MB copies and three of them alive at once for a reply that is one
+/// buffer already. `src-tauri/src/edit.rs` pads the same way for the same reader.
+///
+/// Spaces, not NULs: the reader hands the whole padded span to `JSON.parse` rather than
+/// trimming it, and a NUL is "Unrecognized token" where a space is JSON's own whitespace.
 pub fn encode(prepared: &Prepared) -> Result<Vec<u8>, String> {
-    let header = serde_json::to_vec(&prepared.header).map_err(|e| e.to_string())?;
+    let mut header = serde_json::to_vec(&prepared.header).map_err(|e| e.to_string())?;
+    header.resize(header.len().next_multiple_of(4), b' ');
+
     let mut out = Vec::with_capacity(4 + header.len() + prepared.samples.len() * 2);
     out.extend_from_slice(&(header.len() as u32).to_le_bytes());
     out.extend_from_slice(&header);
@@ -307,4 +319,74 @@ pub fn encode(prepared: &Prepared) -> Result<Vec<u8>, String> {
         out.extend_from_slice(&sample.to_le_bytes());
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A header of a given weight, so the padding can be swept across all four remainders.
+    fn framed(pixels: usize, matched: bool) -> Vec<u8> {
+        let samples = vec![7u16; pixels * 3];
+        let header = PreparedHeader {
+            ok: true,
+            width: pixels,
+            height: 1,
+            white: 1000.0,
+            peak: 4000.0,
+            grade: hdr::Grade {
+                peak_nits: 1000.0,
+                reference_white_nits: 203.0,
+                white_quantile: 0.995,
+            },
+            strengths: Strengths { luma: 1.0, chroma: 1.0, sharpen: 1.0, defringe: 1.0 },
+            matched,
+            colour: None,
+            samples_len: samples.len() * 2,
+        };
+        encode(&Prepared { header, samples }).expect("encoding a frame")
+    }
+
+    fn described(framed: &[u8]) -> usize {
+        u32::from_le_bytes([framed[0], framed[1], framed[2], framed[3]]) as usize
+    }
+
+    /// What the padding is for. The page maps a `Uint16Array` over the samples where they
+    /// sit, which needs the offset they start at to be even - and it hands the whole padded
+    /// span to `JSON.parse`, which needs the padding to be whitespace JSON accepts.
+    ///
+    /// Swept across widths so all four remainders are covered: at one width it is a coin toss
+    /// whether any padding is emitted at all, which is how a wrong byte survives a green run.
+    #[test]
+    fn leaves_the_samples_where_the_page_can_map_over_them() {
+        let mut remainders = std::collections::HashSet::new();
+        for pixels in 1..=24 {
+            let bytes = framed(pixels, pixels % 2 == 0);
+            let length = described(&bytes);
+            assert_eq!(length % 4, 0, "header length {length} is not a multiple of four");
+            assert_eq!((4 + length) % 2, 0, "the samples do not start on a u16 boundary");
+
+            let text = std::str::from_utf8(&bytes[4..4 + length]).expect("the header is utf8");
+            let parsed: serde_json::Value =
+                serde_json::from_str(text).expect("the padded span parses as JSON");
+            assert_eq!(parsed["ok"], serde_json::json!(true));
+            assert!(text.ends_with(|c: char| c == '}' || c == ' '), "padded with {text:?}");
+
+            let json = serde_json::to_vec(&serde_json::from_str::<serde_json::Value>(text).unwrap())
+                .unwrap();
+            remainders.insert(json.len() % 4);
+        }
+        // The sweep really did cover every case rather than landing on one repeatedly.
+        assert!(remainders.len() > 1, "every width padded the same way: {remainders:?}");
+    }
+
+    /// A failed open is the same framing with `ok: false`, so the caller has one parse. It
+    /// carries no samples, and the padding still has to leave it valid JSON.
+    #[test]
+    fn frames_a_failed_open_the_same_way() {
+        let bytes = framed(0, false);
+        let length = described(&bytes);
+        assert_eq!(length % 4, 0);
+        assert_eq!(bytes.len(), 4 + length);
+    }
 }
