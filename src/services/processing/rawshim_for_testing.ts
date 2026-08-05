@@ -1,8 +1,8 @@
 // What a test can ask about pixels, for tests and pins alone.
 //
-// This replaces `rawshim_pixels.ts`, and the difference is the point: that module
-// read samples back into a `Buffer`, which meant the native side had to hand out an
-// address and keep it valid across calls. Everything the pins actually assert - that
+// This replaces a module that read samples back into a `Buffer`, and the difference
+// is the point: that meant the native side had to hand out an address and keep it
+// valid across calls. Everything the pins actually assert - that
 // two decode routes agree, that a grade is stable, that a decode is scene-referred -
 // is a digest or a statistic, and both are cheaper to compute where the pixels
 // already are.

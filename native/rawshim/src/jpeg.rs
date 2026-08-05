@@ -180,8 +180,8 @@ impl Orientation {
 /// this is a byte order, an offset and a walk over 12-byte entries. Anything malformed
 /// reads as "as stored", which is also what a frame with no orientation means.
 ///
-/// Offsets are added as `u64` because the file supplies them: on wasm32 a corrupt IFD
-/// pointer near `u32::MAX` would otherwise overflow a `usize` and panic, and this crate
+/// Offsets are added as `u64` because the file supplies them: on a 32-bit target a corrupt
+/// IFD pointer near `u32::MAX` would otherwise overflow a `usize` and panic, and this crate
 /// keeps overflow checks on in release.
 fn orientation(exif: &[u8]) -> Orientation {
     let big_endian = match exif.get(..2) {

@@ -297,8 +297,8 @@ pub fn prepare(source: &Source<'_>, fit_to: Option<(usize, usize)>, grade: &Grad
 
 /// Everything `encode` does up to the point of handing bytes to ffmpeg.
 ///
-/// Split out so the pin that captured the TypeScript's graded output can be held
-/// against this without running an encoder (`hdr_pin.integration.test.ts`).
+/// Split out so a pin can be held against the graded frame without running an encoder,
+/// which is what `debug::run`'s luma quantiles reach it for.
 pub fn graded(
     source: &Source<'_>,
     options: &EncodeOptions,

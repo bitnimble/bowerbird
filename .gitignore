@@ -166,13 +166,3 @@ web/src/wasm/
 # this keeps them out of commits, which a squash otherwise sweeps them into.
 .scratch-*
 
-# Everything build_wasm_libs.sh fetches or builds: the cross-compiler, CMake, the three
-# library sources and their outputs. The script is the source, all of this is reproducible.
-native/toolchain/wasi-sdk-*/
-native/toolchain/cmake-*/
-native/toolchain/LibRaw-*/
-native/toolchain/libaom-*/
-native/toolchain/libavif-*/
-native/toolchain/build-*/
-native/toolchain/include/
-native/toolchain/wasm/

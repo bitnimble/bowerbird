@@ -68,7 +68,7 @@ pub struct Job {
     /// to the render rather than to one rendition of it, so every target gets the same set.
     ///
     /// None is scaled here. How much noise a frame actually has is measured off its
-    /// own pixels where the filters run (`image::noise_level`), which is why nothing on
+    /// own pixels where the filters run (`image::measure_noise`), which is why nothing on
     /// this side needs its ISO.
     pub denoise_luma: f64,
     pub denoise_chroma: f64,

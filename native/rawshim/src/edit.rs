@@ -218,7 +218,7 @@ fn fit(
 /// output.** Linear is the wrong domain and `image.rs` says why: a difference taken there
 /// is proportional to absolute luminance, so a filter calibrated on the bright end of a
 /// frame reads the whole shadow region as flat. Measured, it flattens shadow texture by a
-/// factor of forty (`examples/predenoise.rs`).
+/// factor of forty.
 ///
 /// But the filter never needed the *grade's* output either - it needed a perceptual domain,
 /// and PQ against a fixed anchor is one that has nothing to do with the exposure. So the

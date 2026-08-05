@@ -130,7 +130,8 @@ fn main() {
     }
 }
 
-/// Exactly `wasm::Editor::grade_from` without the copy and the emit: what the shaders owe.
+/// One tick on the CPU: the grade and the PQ encode, and nothing else. This is the answer
+/// the shaders owe, which is what makes it the fixture.
 fn run(prepared: &Prepared, colour: Option<&HdrColour>, grade: &hdr::Grade, ev: f32) -> Vec<u16> {
     let mut working = prepared.samples.clone();
     hdr::grade_prepared(&mut working, grade, colour, prepared.levels, 2f64.powf(f64::from(ev)));

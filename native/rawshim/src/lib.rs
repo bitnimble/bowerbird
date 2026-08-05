@@ -143,7 +143,7 @@ const OUTPUT_REC2020: c_int = 8;
 
 // The denoise used to be scaled here by the frame's ISO, on the reasoning that shot
 // noise goes as its square root. It is measured off the frame instead now
-// (`image::noise_level`), which answers the same question better: by the time the
+// (`image::measure_noise`), which answers the same question better: by the time the
 // denoise runs, the frame has been through a demosaic, a resample that averaged some of
 // the noise away and a grade that may have lifted it several stops, and none of that is
 // in the ISO. Asking the pixels costs one box mean and needs no reference ISO, no cap
@@ -360,8 +360,8 @@ fn camera_multipliers(cam_mul: &[f32; 4]) -> Option<[f32; 4]> {
 /// what those constants make the curve.
 ///
 /// A pin holds the output byte-for-byte against `dcraw_make_mem_image`
-/// (`raw_decode.integration.test.ts`), because that reasoning is exactly the kind that
-/// looks right and renders half a frame wrong.
+/// (`fixture_tests::fused_decode_matches_libraw`), because that reasoning is exactly the
+/// kind that looks right and renders half a frame wrong.
 ///
 /// **Fits to `long_edge` on the way out**, which is where the memory goes rather than
 /// the time. A 3840px rendition off a 24MP frame wants 59MB, and building the whole
@@ -750,8 +750,9 @@ fn decode_with_libraw(
                                 .collect();
                             // The fit the direct path fuses into its copy, applied here as the
                             // separate pass it used to be. That is what keeps the two
-                            // comparable: `raw_decode.integration.test.ts` holds them against
-                            // each other, so it pins the fusion as well as the interleave.
+                            // comparable: `fixture_tests::fused_decode_matches_libraw` holds
+                            // them against each other, so it pins the fusion as well as the
+                            // interleave.
                             let (tw, th) = decode_target(cw, ch, at_least_long_edge);
                             match (tw, th) == (cw, ch) {
                                 true => (cw, ch, frame::Pixels::Sixteen(samples)),
