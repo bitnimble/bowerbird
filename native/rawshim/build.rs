@@ -43,18 +43,14 @@ fn main() {
 }
 
 fn libraw_functions(builder: bindgen::Builder) -> bindgen::Builder {
-    // libclang reports no calling convention for wasm32 targets, and bindgen skips any
-    // function whose ABI it cannot name - silently, so the bindings come out full of
-    // types with not one `extern "C"` block in them. Naming it here is what puts the
-    // functions back.
     builder
         .allowlist_type("libraw_data_t")
         .allowlist_type("libraw_processed_image_t")
         .allowlist_function("libraw_init")
         .allowlist_function("libraw_open_file")
-        // The browser has no filesystem, so the client opens the RAW as bytes. Bound on
-        // both targets rather than gated: one binding surface is easier to reason about
-        // than two, and an unused extern costs nothing.
+        // Not the server's alone: the desktop and mobile shells fetch the RAW from the
+        // library over the network and open it from memory, which is the whole of
+        // `edit::prepare_bytes` and so the whole of their editor.
         .allowlist_function("libraw_open_buffer")
         .allowlist_function("libraw_unpack")
         .allowlist_function("libraw_adjust_sizes_info_only")
@@ -68,18 +64,13 @@ fn libraw_functions(builder: bindgen::Builder) -> bindgen::Builder {
         .layout_tests(false)
 }
 
-/// The encode surface, which both targets now bind.
+/// AVIF, encode and decode, which only a `renditions` build binds.
 ///
-/// Split out when the editor started encoding: Firefox composites HDR through video and
-/// only video, and the only frame a page can hand it is one this encoder made, so the
-/// client needs libavif for the same reason the server does (DESIGN 21.3).
-///
-/// The decoder is the server's alone. It exists to read renditions back for a JPEG
-/// download, which is not something a browser asks this library for - and the wasm
-/// libaom is built encoder-only, so the symbols behind it would resolve to a codec that
-/// is not there.
-fn avif_functions(builder: bindgen::Builder, decoder: bool) -> bindgen::Builder {
-    let builder = builder
+/// It was split out when the editor encoded its own frames and needed the encode half on its
+/// own; the editor draws to a canvas now and asks for neither, so the split has one caller
+/// left and the whole surface goes to it.
+fn avif_functions(builder: bindgen::Builder) -> bindgen::Builder {
+    builder
         .allowlist_type("avifImage")
         .allowlist_type("avifRGBImage")
         .allowlist_type("avifEncoder")
@@ -94,16 +85,15 @@ fn avif_functions(builder: bindgen::Builder, decoder: bool) -> bindgen::Builder 
         .allowlist_function("avifEncoderDestroy")
         .allowlist_function("avifEncoderWrite")
         .allowlist_function("avifRWDataFree")
-        .allowlist_function("avifResultToString");
-    match decoder {
-        false => builder,
-        true => builder
-            .allowlist_type("avifDecoder")
-            .allowlist_function("avifImageCreateEmpty")
-            .allowlist_function("avifDecoderCreate")
-            .allowlist_function("avifDecoderDestroy")
-            .allowlist_function("avifDecoderReadMemory"),
-    }
+        .allowlist_function("avifResultToString")
+        // The decode half reads renditions back for a JPEG download, which is what libvips
+        // was kept for.
+        .allowlist_type("avifDecoder")
+        .allowlist_function("avifImageCreateEmpty")
+        .allowlist_function("avifDecoderCreate")
+        .allowlist_function("avifDecoderDestroy")
+        .allowlist_function("avifDecoderReadMemory")
+        .allowlist_function("avifImageYUVToRGB")
 }
 
 fn server_bindings() -> bindgen::Bindings {
@@ -114,7 +104,7 @@ fn server_bindings() -> bindgen::Bindings {
     // them, and becomes a pointer.
     println!("cargo:rustc-link-lib=avif");
 
-    avif_functions(libraw_functions(bindgen::Builder::default().header("wrapper.h")), true)
+    avif_functions(libraw_functions(bindgen::Builder::default().header("wrapper.h")))
         // lensfun.h is one header for two languages: under C++ its types are classes
         // with methods, which bindgen renders as an unusable second surface beside
         // the `lf_*` functions. The C half is the flat structs this crate binds.
@@ -128,8 +118,6 @@ fn server_bindings() -> bindgen::Bindings {
         .allowlist_function("lf_free")
         .allowlist_var("LF_SEARCH_LOOSE")
         .allowlist_var("LF_MODIFY_DISTORTION")
-        // Reading back what this library wrote, which is what libvips was kept for.
-        .allowlist_function("avifImageYUVToRGB")
         .generate()
         .expect("bindgen failed against the installed LibRaw headers")
 }
