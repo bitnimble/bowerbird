@@ -234,6 +234,33 @@ test('stepping away from the editor and back does not reopen it', async ({ page 
 });
 
 /**
+ * Opening and closing the editor leaves the history where it found it.
+ *
+ * Edit mode is in the address now, so it can put entries there - and a version of this that
+ * pushed on the way in and replaced on the way out left a duplicate: the entry Escape wrote
+ * was the one already behind it, so the first Back after leaving the editor did nothing. Both
+ * replace, so one photograph is one entry however many times the editor is opened on it.
+ */
+test('opening and closing the editor leaves the history alone', async ({ page }) => {
+  await page.goto(`/photos/${photoId}`);
+  await expect(page.getByRole('button', { name: 'Actions' })).toBeEnabled();
+
+  // Through the menu the reader uses, because it is `startEdit` that puts anything in the
+  // history and `?edit` in the address arrives without having called it.
+  const before = await page.evaluate(() => history.length);
+  await page.getByRole('button', { name: 'Actions' }).click();
+  await page.getByRole('menuitem', { name: 'Edit', exact: true }).click();
+  await expect(page.getByTestId('raw-edit-panel')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('raw-edit-panel')).toBeHidden();
+
+  expect(await page.evaluate(() => history.length)).toBe(before);
+  // And Back goes somewhere, rather than spending a press on an entry for the same photo.
+  await page.goBack();
+  await expect.poll(async () => new URL(page.url()).pathname).not.toContain(photoId);
+});
+
+/**
  * The fixture open and graded.
  *
  * Waiting on `live`, which the presenter sets only once the prepared frame has arrived and

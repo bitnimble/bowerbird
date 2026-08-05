@@ -771,8 +771,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   // back re-entered the editor nobody had asked for again - and each re-entry was another
   // full-sensor decode. The comment here used to claim stepping away cleared it.
   //
-  // Back now leaves the editor, which is what it looks like it should do, and `?edit` still
-  // lands a deep link (and e2e) straight in.
+  // `?edit` still lands a deep link (and e2e) straight in.
   const editing = new URLSearchParams(search).has('edit');
   const [session, setSession] = useState<{ store: RawEditStore; presenter: RawEditPresenter } | null>(null);
 
@@ -797,9 +796,17 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
     };
   }, [editing, photoId]);
 
-  // Replaced rather than pushed on the way out, so Done and Escape leave no entry for Back
-  // to walk straight into the editor through.
-  const startEdit = useCallback(() => navigate(`${pathname}?edit`), [navigate, pathname]);
+  // Both replace, so opening and closing the editor leaves the history where it found it:
+  // one entry for this photograph, and Back goes wherever the photograph was reached from.
+  // Which is what it did when edit mode was state and the address never moved.
+  //
+  // Pushing on the way in reads better - Back would leave the editor - but it costs a dead
+  // press: the entry the way out replaces is then identical to the one already behind it, so
+  // the first Back after Done or Escape does nothing at all.
+  const startEdit = useCallback(
+    () => navigate(`${pathname}?edit`, { replace: true }),
+    [navigate, pathname],
+  );
   const stopEdit = useCallback(
     () => navigate(pathname, { replace: true }),
     [navigate, pathname],
