@@ -1265,3 +1265,77 @@ mod hdr_grade {
     }
 
 }
+
+/// What bounds the editor's open, which is the only thing that can: it cannot be cancelled.
+///
+/// A reader who opens the editor and changes their mind leaves the decode running - neither
+/// a browser abandoning a request nor Tauri dropping an invoke reaches the thread already
+/// inside LibRaw - so the question is how many can be underway at once, and the answer has
+/// to be one. Two 61MP opens together are the decode plus an f32 buffer of the same shape,
+/// each, which is where a laptop runs out of memory.
+///
+/// Timed, because the exclusion is the whole behaviour and it is not otherwise visible: the
+/// lock is private, and a caller cannot see whether it waited.
+///
+/// The two opens are timed against each other rather than against a single one measured
+/// first, which is the difference between a pin and a flaky one. A baseline says how long an
+/// open takes on an idle machine, and the rest of this suite runs in parallel with it - so
+/// under `cargo test` the baseline came out inflated and the comparison collapsed. Two
+/// threads started together share whatever load there is equally: if they queued, one of them
+/// waited out the other and took about twice as long, and that ratio holds however busy the
+/// machine is.
+mod one_open_at_a_time {
+    use super::*;
+    use std::time::Instant;
+
+    fn request(path: &PathBuf) -> crate::edit::EditRequest {
+        crate::edit::EditRequest {
+            raw_file_path: path.to_str().unwrap().to_string(),
+            // Small, so this costs a second rather than ten. What is being measured is
+            // whether two of them overlap, which does not depend on how big each one is.
+            long_edge: 1200,
+            grade: crate::hdr::Grade {
+                peak_nits: 1000.0,
+                reference_white_nits: 203.0,
+                white_quantile: 0.9,
+            },
+            strengths: crate::image::Strengths {
+                luma: 0.5,
+                chroma: 0.5,
+                sharpen: 0.6,
+                defringe: 0.5,
+            },
+        }
+    }
+
+    /// One open, and how long the caller spent inside it - the wait included, since waiting is
+    /// the thing being looked for.
+    fn open(path: &PathBuf) -> f64 {
+        let started = Instant::now();
+        crate::edit::prepare(&request(path)).expect("the fixture opens");
+        started.elapsed().as_secs_f64()
+    }
+
+    #[test]
+    fn a_second_open_waits_for_the_first() {
+        let path = sony();
+        // Warmed, so neither timing carries a cold page cache for a 24MP file.
+        open(&path);
+
+        let mut spent = std::thread::scope(|scope| {
+            let threads: Vec<_> = (0..2).map(|_| scope.spawn(|| open(&path))).collect();
+            threads.into_iter().map(|t| t.join().expect("the open finished")).collect::<Vec<_>>()
+        });
+        spent.sort_by(f64::total_cmp);
+        let (first, second) = (spent[0], spent[1]);
+
+        // Half way between the two outcomes. One that waited out the other took about twice as
+        // long as it; two that ran side by side took about the same as each other. Anything
+        // above 1.5 is the queue, which leaves room for the threads not starting at quite the
+        // same moment without leaving room for the lock being gone.
+        assert!(
+            second > first * 1.5,
+            "two opens took {second:.3}s and {first:.3}s, so neither waited for the other",
+        );
+    }
+}

@@ -132,6 +132,30 @@ pub fn prepare(request: &EditRequest) -> Result<Prepared, String> {
 /// process, which is the point - the RAW is tens of megabytes and the prepared frame is
 /// hundreds, so the smaller of the two is the one worth putting on a network.
 pub fn prepare_bytes(bytes: &[u8], request: &EditRequest) -> Result<Prepared, String> {
+    // One open at a time, across every caller.
+    //
+    // An open cannot be cancelled: a reader who opens the editor and changes their mind
+    // leaves the decode running, because neither the browser abandoning a request nor Tauri
+    // dropping an invoke reaches the thread already inside LibRaw. So what bounds this is
+    // how many can be *underway*, and until now nothing did - the server's dedup collapses
+    // repeats of one photograph and says nothing about the next one, and the shell had not
+    // even that. Stepping through a few photographs and opening each was that many
+    // full-sensor decodes at once, and at 61MP one of those is the decode plus a f32 buffer
+    // of the same shape, well over a gigabyte.
+    //
+    // Serialised rather than metered, because concurrency buys nothing here to trade away:
+    // the work inside is already spread across every core by rayon, so a second open running
+    // beside the first makes neither finish sooner and doubles what is held. Waiting is what
+    // a reader would want even if memory were free.
+    //
+    // ponytail: a whole-process lock, so two libraries on one server queue behind each other
+    // too. A permit count would let that through; nothing today has two.
+    static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    // A poisoned lock means a previous open panicked. That was reported to its own caller
+    // and left nothing shared behind - the guard owns no data - so refusing every open after
+    // it would turn one failure into a permanent one.
+    let _open = ONE_AT_A_TIME.lock().unwrap_or_else(|held| held.into_inner());
+
     {
         let frame = crate::decode_frame_bytes(bytes, 16, true, request.long_edge)
             .ok_or("LibRaw could not decode this file")?;

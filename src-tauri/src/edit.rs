@@ -18,6 +18,18 @@ use std::collections::HashMap;
 pub async fn prepared(path: &str) -> Result<Vec<u8>, String> {
     let (photo_id, long_edge) = parse(path)?;
 
+    // Before the download rather than around the decode alone.
+    //
+    // `edit::prepare_bytes` already admits one open at a time, so the decodes could not pile
+    // up - but an invoke cannot be cancelled, so a reader who opens the editor and changes
+    // their mind leaves this running, and everything above that lock still ran. Ten of those
+    // is ten RAWs pulled off the library and held, tens of megabytes each, waiting for a turn
+    // to be decoded that the reader stopped wanting several photographs ago.
+    //
+    // Held across the fetch, so a queued open is a parked task holding nothing.
+    static ONE_AT_A_TIME: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    let _open = ONE_AT_A_TIME.lock().await;
+
     // The RAW and the library's grade settings, both from the server. Sequentially rather
     // than joined: the settings are a few hundred bytes and the RAW is tens of megabytes,
     // so overlapping them saves nothing and doubles what is held at once on a failure.
