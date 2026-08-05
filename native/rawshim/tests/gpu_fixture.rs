@@ -1,14 +1,26 @@
-//! Writes the parity fixture the GPU tick is checked against.
+//! The parity fixture the GPU tick is checked against, and the check that it is still current.
 //!
-//! The client runs a second implementation of the grade (`docs/raw-edit-gpu.md` §6.3), and
-//! a second implementation of a picture is exactly the divergence DESIGN §21.1 exists to
+//! The client runs a second implementation of the grade (`docs/raw-edit-gpu.md` §6.3), and a
+//! second implementation of a picture is exactly the divergence DESIGN §21.1 exists to
 //! prevent. So the shaders are held to this: the same prepared samples, the same settings,
 //! and the frame the CPU produces from them, stage by stage.
 //!
+//! **This is a test rather than an example because of what the arrangement leaves unchecked
+//! otherwise.** `web/e2e/gpu_parity.spec.ts` asserts the shaders reproduce
+//! `web/e2e/fixtures/gpu/*.expected.bin`, which are committed bytes; it does not assert those
+//! bytes are what the CPU produces *now*. Written as an example run by hand, nothing did.
+//! Change `tone::eetf`'s knee or anything in `hdr::grade_prepared`, update the Rust pins that
+//! move with it, forget to regenerate, and every suite stays green while the two
+//! implementations quietly disagree - the pin the whole conversion rests on comparing the
+//! shaders against a CPU that no longer exists.
+//!
+//! So the bytes are rebuilt here and compared, in the suite that already runs on every edit.
+//! Regenerate deliberately, after reading why they moved:
+//!
+//!   BOWERBIRD_WRITE_FIXTURES=1 cargo test --release --manifest-path native/rawshim/Cargo.toml --test gpu_fixture
+//!
 //! Synthetic rather than a real RAW on purpose. The open path is the same code either way,
 //! and a fixture that decodes a 25MB file cannot live in the repo or run in a second.
-//!
-//! cargo run --release --example edit_fixture -- <out-dir>
 
 use rawshim::hdr::{self, Prepared};
 use rawshim::hdr_fit::{ChromaMap, HdrColour, TRUST_CEILING};
@@ -17,6 +29,11 @@ use rawshim::tone;
 
 const WIDTH: usize = 96;
 const HEIGHT: usize = 64;
+
+/// Where the browser harness fetches them from, which is what makes them a fixture at all.
+fn fixture_dir() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../web/e2e/fixtures/gpu")
+}
 
 /// A frame with something for every stage to find: a gradient for the tone curve, a hard
 /// edge for the guided filters and the deconvolution, a saturated patch for the chroma
@@ -86,18 +103,26 @@ fn matched() -> HdrColour {
     colour
 }
 
-fn main() {
-    let out = std::env::args().nth(1).unwrap_or_else(|| ".".to_string());
+/// One case, as the three files the harness fetches for it.
+struct Case {
+    stem: String,
+    header: String,
+    input: Vec<u8>,
+    expected: Vec<u8>,
+}
+
+fn cases() -> Vec<Case> {
     let grade = hdr::Grade { peak_nits: 1000.0, reference_white_nits: 203.0, white_quantile: 0.995 };
     let strengths = Strengths { luma: 1.0, chroma: 1.0, sharpen: 1.0, defringe: 1.0 };
     let samples = scene();
     let levels = tone::levels(&samples, grade.white_quantile);
 
+    let mut out = Vec::new();
     // Both arms, because they are different code on both sides: a file whose fit declined
     // grades one shared curve, and a file whose fit landed grades three and a matrix.
     for (name, colour) in [("neutral", None), ("matched", Some(matched()))] {
         for ev in [0.0f32, 1.0, -1.5] {
-            let prepared = Prepared {
+            let mut prepared = Prepared {
                 samples: samples.clone(),
                 width: WIDTH,
                 height: HEIGHT,
@@ -105,7 +130,6 @@ fn main() {
             };
             // Filtered once, in the perceptual domain the open uses, so the fixture's
             // input is the frame the client is actually handed.
-            let mut prepared = prepared;
             filter_once(&mut prepared, &grade, strengths);
             let expected = run(&prepared, colour.as_ref(), &grade, ev);
 
@@ -121,13 +145,15 @@ fn main() {
                 "colour": colour.as_ref().map(describe),
             });
 
-            let stem = format!("{out}/tick-{name}-ev{ev}");
-            std::fs::write(format!("{stem}.json"), header.to_string()).expect("header");
-            std::fs::write(format!("{stem}.input.bin"), le(&prepared.samples)).expect("input");
-            std::fs::write(format!("{stem}.expected.bin"), le(&expected)).expect("expected");
-            println!("{stem}");
+            out.push(Case {
+                stem: format!("tick-{name}-ev{ev}"),
+                header: header.to_string(),
+                input: le(&prepared.samples),
+                expected: le(&expected),
+            });
         }
     }
+    out
 }
 
 /// One tick on the CPU: the grade and the PQ encode, and nothing else. This is the answer
@@ -179,4 +205,53 @@ fn le(samples: &[u16]) -> Vec<u8> {
         out.extend_from_slice(&sample.to_le_bytes());
     }
     out
+}
+
+#[test]
+fn the_committed_fixture_is_what_the_cpu_produces_now() {
+    let dir = fixture_dir();
+    let rewrite = std::env::var("BOWERBIRD_WRITE_FIXTURES").is_ok();
+    if rewrite {
+        std::fs::create_dir_all(&dir).expect("the fixture directory");
+    }
+
+    for case in cases() {
+        let files: [(&str, Vec<u8>); 3] = [
+            ("json", case.header.into_bytes()),
+            ("input.bin", case.input),
+            ("expected.bin", case.expected),
+        ];
+        for (suffix, built) in files {
+            let path = dir.join(format!("{}.{suffix}", case.stem));
+            if rewrite {
+                std::fs::write(&path, &built).expect("writing the fixture");
+                continue;
+            }
+            let committed = std::fs::read(&path).unwrap_or_else(|e| {
+                panic!("{}: {e}. BOWERBIRD_WRITE_FIXTURES=1 writes it", path.display())
+            });
+            // Length first: a whole-frame diff of 36,864 bytes says nothing a reader can use,
+            // where "this many bytes, this many differ, first at index n" says which stage.
+            assert_eq!(
+                committed.len(),
+                built.len(),
+                "{} is {} bytes and the CPU now produces {}",
+                path.display(),
+                committed.len(),
+                built.len(),
+            );
+            let differing = committed.iter().zip(built.iter()).filter(|(a, b)| a != b).count();
+            let first = committed.iter().zip(built.iter()).position(|(a, b)| a != b);
+            assert_eq!(
+                differing,
+                0,
+                "{} no longer matches the CPU: {differing} of {} bytes differ, first at {:?}. \
+                 Either the grade changed and the fixture needs regenerating \
+                 (BOWERBIRD_WRITE_FIXTURES=1), or it changed by accident",
+                path.display(),
+                committed.len(),
+                first,
+            );
+        }
+    }
 }

@@ -108,6 +108,11 @@ describe('Bowerbird desktop shell', () => {
             // The sensor's own, which is what the editor asks for. At a bounded size the
             // camera match does not fit and the frame's description is 247 bytes rather
             // than 11KB, so the path that matters would go untested.
+            //
+            // Spelled out rather than built by `preparedPath`, which this cannot reach: the
+            // callback runs in the page, against a built bundle with no module to import
+            // from. That it agrees with `preparedPath` and with the shell's `parse` is held
+            // by `web/src/api/tests/prepared_path.test.ts` instead.
             path: `/image/${id}/prepared?longEdge=0`,
           }),
         }),

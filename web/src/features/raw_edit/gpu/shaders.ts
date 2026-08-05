@@ -37,12 +37,70 @@ export const PEAK = compose(prelude, tick, colour, peak);
 export const REDUCE = compose(tick, reduceSource);
 
 /**
- * How many 4-byte words `Tick` occupies, padded.
+ * `struct Tick` in `wgsl/tick.wgsl`, field for field and in its order.
  *
- * The struct is written field for field by `writeUniform`, in the order `tick.wgsl`
- * declares them; this is the buffer it is written into.
+ * The shader is the source of truth; this is the same declaration in a form the host can
+ * index by. `writeUniform` wrote bare numbers into the buffer before - `values[22] = region.x`
+ * - which is the shader's field order copied out by hand into two dozen literals, with
+ * nothing checking either the order or the alignment. Swapping two fields in the WGSL left
+ * every suite green and drew the wrong rectangle of the frame, because the only thing that
+ * reads the tail is the draw and no test looks at a drawn pixel.
+ *
+ * `gpu/tests/tick_uniform.test.ts` parses the struct out of the `.wgsl` and holds this
+ * against it, so the two cannot drift without something saying so.
  */
-export const TICK_UNIFORM_FLOATS = 32;
+export const TICK_LAYOUT = [
+  ['width', 'u32'],
+  ['height', 'u32'],
+  ['white', 'f32'],
+  ['source_level', 'f32'],
+  ['reference', 'f32'],
+  ['peak', 'f32'],
+  ['exposure', 'f32'],
+  ['pad0', 'u32'],
+  ['matched', 'u32'],
+  ['saturation', 'f32'],
+  ['has_chroma', 'u32'],
+  ['curve_bins', 'u32'],
+  ['trust_ceiling', 'f32'],
+  ['chroma_count', 'u32'],
+  ['level_count', 'u32'],
+  ['chroma_low', 'f32'],
+  ['chroma_scale', 'f32'],
+  ['level_scale', 'f32'],
+  ['sdr_white', 'f32'],
+  ['row_stride', 'u32'],
+  ['peak_samples', 'u32'],
+  ['from_candidates', 'u32'],
+  ['region_origin', 'vec2f'],
+  ['region_size', 'vec2f'],
+  ['canvas_size', 'vec2f'],
+  ['max_lod', 'u32'],
+  ['pad', 'u32'],
+] as const;
+
+export type TickField = (typeof TICK_LAYOUT)[number][0];
+
+/**
+ * Where each field starts, in 4-byte words, under WGSL's uniform layout rules.
+ *
+ * Only two of them bite here: a `vec2f` starts on a multiple of two, and the struct as a
+ * whole is rounded up to a multiple of four. Computed rather than written down, because a
+ * hand-written offset is the thing that went wrong.
+ */
+export function tickOffsets(): { at: Record<TickField, number>; floats: number } {
+  const at = {} as Record<TickField, number>;
+  let next = 0;
+  for (const [name, type] of TICK_LAYOUT) {
+    if (type === 'vec2f') next = Math.ceil(next / 2) * 2;
+    at[name] = next;
+    next += type === 'vec2f' ? 2 : 1;
+  }
+  return { at, floats: Math.ceil(next / 4) * 4 };
+}
+
+/** How many 4-byte words `Tick` occupies, padded. The buffer `writeUniform` writes into. */
+export const TICK_UNIFORM_FLOATS = tickOffsets().floats;
 
 /**
  * Bins in the peak's histogram, and the buffer that holds them.

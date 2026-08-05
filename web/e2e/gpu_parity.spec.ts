@@ -4,8 +4,15 @@ import { expect, test } from '@playwright/test';
 //
 // This is the pin the whole conversion rests on: the shaders are a second implementation
 // of one picture, and DESIGN §21.1 records what happens when two implementations of one
-// picture are allowed to drift - the editor lost the camera match, twice, silently. So
-// `edit_fixture` writes what the CPU produces and this asserts the shaders reproduce it.
+// picture are allowed to drift - the editor lost the camera match, twice, silently.
+//
+// Half the pin, and the half that needs a GPU. It asserts the shaders reproduce the bytes in
+// `fixtures/gpu/`, which is only worth anything while those bytes are still what the CPU
+// produces - and that is the other half, `native/rawshim/tests/gpu_fixture.rs`, which rebuilds
+// and compares them inside `cargo test`. It has to be checked rather than remembered: the
+// fixtures were written by hand for a while, and a change to the grade that updated the Rust
+// pins and not the fixtures would have left this comparing the shaders against a CPU that no
+// longer existed, green.
 //
 // Split by stage rather than pooled into one number, because the two halves promise
 // different things: tone and colour are the editor's whole reason to exist and must land

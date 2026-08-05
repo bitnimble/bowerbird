@@ -1,6 +1,6 @@
 // The tick, orchestrated.
 //
-// `Prepared` crosses once and becomes a texture that stays on the GPU; after that a slider
+// `Prepared` crosses once and becomes a storage buffer that stays on the GPU; after that a slider
 // move writes a uniform and submits dispatches, and nothing is uploaded, downloaded or
 // encoded (`docs/raw-edit-gpu.md` §6). The decode, the camera fit, the lens warp and the
 // denoise all happened natively before the bytes arrived, so a tick is the grade alone.
@@ -15,7 +15,11 @@ import {
   PEAK_SAMPLES,
   REDUCE,
   TICK_UNIFORM_FLOATS,
+  tickOffsets,
 } from './shaders';
+
+/** Where each `Tick` field lives, by name. Computed once from the layout the shader declares. */
+const AT = tickOffsets().at;
 
 /** `Sample::from_f32` for `u16`: rounded, and held inside the range it has to fit. */
 const clamp16 = (v: number): number => Math.max(0, Math.min(65535, Math.round(v)));
@@ -109,9 +113,11 @@ export function stageResolution(
 /**
  * What to ask `requestDevice` for before building a `TickPipeline` on it.
  *
- * `float32-filterable` is the one that matters: the tone curve and the chroma map are `f32`
- * lookups the sampler interpolates, and without it neither is filterable and the pipeline
- * will not build. Every desktop adapter this has run on offers it.
+ * `float32-filterable` is the one that matters: the chroma map is an `f32` texture read with
+ * a filtering sampler, and without it that texture is not filterable and the pipeline will
+ * not build. Not the tone curve, which `colour.wgsl` interpolates by hand for a stated
+ * precision reason - the hardware's eight fractional bits of filter weight took parity in
+ * the shadows from 6 counts to 1735. Every desktop adapter this has run on offers it.
  *
  * Thrown for rather than filtered out. Filtering it left the device built without it, and
  * the first call to bind an `r32float` with a filtering sampler then fails validation -
@@ -125,7 +131,7 @@ export function stageResolution(
 export function tickFeatures(adapter: GPUAdapter): GPUFeatureName[] {
   if (!adapter.features.has('float32-filterable')) {
     throw new Error(
-      'this GPU cannot filter float textures (float32-filterable), which the tone curve and the camera match are',
+      'this GPU cannot filter float textures (float32-filterable), which the camera match’s chroma map needs',
     );
   }
   return (['float32-filterable', 'timestamp-query'] as GPUFeatureName[]).filter((feature) =>
@@ -256,8 +262,8 @@ export class TickPipeline {
     this.candidates = storage(4 + PEAK_CANDIDATES * 4);
 
     const colour = header.colour;
-    // A row per channel, which is how the shader picks one: `sample_curve` samples at the
-    // row's own texel centre so the filter along the curve does not blend red into green.
+    // A row per channel, which is how the shader picks one: `sample_curve` loads the two
+    // texels of its own row by index, so nothing can blend red into green.
     const bins = colour ? colour.curves[0].length : 1;
     this.curves = this.lookup([bins, 3], '2d', 'r32float', 4, [
       ...(colour?.curves.flat() ?? [0, 0, 0]),
@@ -280,10 +286,11 @@ export class TickPipeline {
     const peak = device.createShaderModule({ code: PEAK, label: 'peak' });
 
     // Explicit layouts rather than `auto`, because `auto` derives the layout from what an
-    // entry point happens to reference: `fs` reads five of the seven bindings `FRAME`
-    // declares, so its derived layout has five, and a bind group built for the shader as
-    // written is then rejected. Two layouts over the one module instead, differing only in
-    // the stage that sees them and in `counts`, which only `encode` writes.
+    // entry point happens to reference rather than from what the module declares: `encode`
+    // never calls `covered`, so it never reaches the pyramid at binding 9, and a layout
+    // derived for it has eight of `FRAME`'s nine bindings - which rejects the bind group
+    // built for the shader as written. Two layouts over the one module instead, differing
+    // only in the stage that sees them and in `counts`, which only `encode` writes.
     const bindings = (visibility: number) => ({
       colour: [
         { binding: 0, visibility, buffer: { type: 'uniform' as const } },
@@ -354,6 +361,34 @@ export class TickPipeline {
       });
     this.drawFromFrame = drawing(true);
     this.drawFromPyramid = drawing(false);
+
+    this.colourEntries = [
+      { binding: 0, resource: { buffer: this.uniform } },
+      { binding: 1, resource: { buffer: this.frame } },
+      { binding: 2, resource: this.curves.createView() },
+      { binding: 3, resource: this.chroma.createView() },
+      { binding: 4, resource: { buffer: this.matrix } },
+      { binding: 7, resource: this.lerp },
+    ];
+    this.displayEntries = [
+      ...this.colourEntries,
+      { binding: 5, resource: { buffer: this.peak } },
+      { binding: 9, resource: this.pyramid.createView() },
+    ];
+    this.peakEntries = [
+      ...this.colourEntries,
+      { binding: 5, resource: { buffer: this.histogram } },
+      { binding: 6, resource: { buffer: this.peak } },
+      { binding: 8, resource: { buffer: this.candidates } },
+    ];
+    this.drawGroup = device.createBindGroup({
+      layout: this.drawLayout,
+      entries: this.displayEntries,
+    });
+    this.peakGroup = device.createBindGroup({
+      layout: this.peakLayout,
+      entries: this.peakEntries,
+    });
 
     this.reduce();
     if (header.matched) this.chooseCandidates();
@@ -537,7 +572,7 @@ export class TickPipeline {
       0,
       this.device.createBindGroup({
         layout: this.encodeLayout,
-        entries: [...this.displayEntries(), { binding: 6, resource: { buffer: counts } }],
+        entries: [...this.displayEntries, { binding: 6, resource: { buffer: counts } }],
       }),
     );
     const [x, y] = this.groups(this.width, this.height);
@@ -609,39 +644,39 @@ export class TickPipeline {
     if (over.exposure != null) this.exposure = over.exposure;
     const values = new Float32Array(TICK_UNIFORM_FLOATS);
     const ints = new Uint32Array(values.buffer);
-    ints[0] = this.width;
-    ints[1] = this.height;
-    values[2] = header.white;
-    values[3] = header.peak;
-    values[4] = header.grade.referenceWhiteNits;
-    values[5] = header.grade.peakNits;
-    values[6] = this.exposure;
-    // 7 is `pad0`, which aligns the vectors below and is read by nothing.
-    ints[8] = header.matched ? 1 : 0;
-    values[9] = colour?.saturation ?? 1;
-    ints[10] = colour?.chroma == null ? 0 : 1;
-    ints[11] = colour ? colour.curves[0].length : 2;
-    values[12] = colour?.trustCeiling ?? 1;
-    ints[13] = colour?.chroma?.chromaCount ?? 2;
-    ints[14] = colour?.chroma?.levelCount ?? 2;
-    values[15] = colour?.chroma?.chromaLow ?? 0;
-    values[16] = colour?.chroma?.chromaScale ?? 1;
-    values[17] = colour?.chroma?.levelScale ?? 1;
-    values[18] = SDR_WHITE_NITS;
-    ints[19] = this.rowStride;
-    ints[20] = this.width * Math.ceil(this.height / this.rowStride);
-    ints[21] = over.fromCandidates ? 1 : 0;
+    ints[AT.width] = this.width;
+    ints[AT.height] = this.height;
+    values[AT.white] = header.white;
+    values[AT.source_level] = header.peak;
+    values[AT.reference] = header.grade.referenceWhiteNits;
+    values[AT.peak] = header.grade.peakNits;
+    values[AT.exposure] = this.exposure;
+    // `pad0` aligns the vectors below and is read by nothing.
+    ints[AT.matched] = header.matched ? 1 : 0;
+    values[AT.saturation] = colour?.saturation ?? 1;
+    ints[AT.has_chroma] = colour?.chroma == null ? 0 : 1;
+    ints[AT.curve_bins] = colour ? colour.curves[0].length : 2;
+    values[AT.trust_ceiling] = colour?.trustCeiling ?? 1;
+    ints[AT.chroma_count] = colour?.chroma?.chromaCount ?? 2;
+    ints[AT.level_count] = colour?.chroma?.levelCount ?? 2;
+    values[AT.chroma_low] = colour?.chroma?.chromaLow ?? 0;
+    values[AT.chroma_scale] = colour?.chroma?.chromaScale ?? 1;
+    values[AT.level_scale] = colour?.chroma?.levelScale ?? 1;
+    values[AT.sdr_white] = SDR_WHITE_NITS;
+    ints[AT.row_stride] = this.rowStride;
+    ints[AT.peak_samples] = this.width * Math.ceil(this.height / this.rowStride);
+    ints[AT.from_candidates] = over.fromCandidates ? 1 : 0;
 
     const region = over.region ?? this.wholeFrame;
     const canvas = this.context.canvas;
-    values[22] = region.x;
-    values[23] = region.y;
-    values[24] = region.width;
-    values[25] = region.height;
-    values[26] = canvas.width;
-    values[27] = canvas.height;
+    values[AT.region_origin] = region.x;
+    values[AT.region_origin + 1] = region.y;
+    values[AT.region_size] = region.width;
+    values[AT.region_size + 1] = region.height;
+    values[AT.canvas_size] = canvas.width;
+    values[AT.canvas_size + 1] = canvas.height;
     // `lod` 0 is the frame itself, so the pyramid's levels are 1..levels.
-    ints[28] = this.levels;
+    ints[AT.max_lod] = this.levels;
     this.device.queue.writeBuffer(this.uniform, 0, values);
   }
 
@@ -651,26 +686,27 @@ export class TickPipeline {
     return [Math.ceil(x / 8), Math.ceil(y / 8)];
   }
 
-  /** Everything the colour transform reads, whichever entry point is reading it. */
-  private colourEntries(): GPUBindGroupEntry[] {
-    return [
-      { binding: 0, resource: { buffer: this.uniform } },
-      { binding: 1, resource: { buffer: this.frame } },
-      { binding: 2, resource: this.curves.createView() },
-      { binding: 3, resource: this.chroma.createView() },
-      { binding: 4, resource: { buffer: this.matrix } },
-      { binding: 7, resource: this.lerp },
-    ];
-  }
+  /**
+   * Everything the colour transform reads, whichever entry point is reading it.
+   *
+   * Built once. A bind group names resources rather than their contents, and every resource
+   * here is fixed at construction - `writeUniform`'s writes into `this.uniform` are invisible
+   * to it, and the swapchain texture the draw ends at is an attachment rather than a binding.
+   * So there is nothing per-tick about these, and rebuilding them was two texture views and
+   * a validation pass per pass per frame for an object identical to the last one.
+   */
+  private readonly colourEntries: GPUBindGroupEntry[];
 
   /** The above plus the scene peak, which everything but the pass that measures it reads. */
-  private displayEntries(): GPUBindGroupEntry[] {
-    return [
-      ...this.colourEntries(),
-      { binding: 5, resource: { buffer: this.peak } },
-      { binding: 9, resource: this.pyramid.createView() },
-    ];
-  }
+  private readonly displayEntries: GPUBindGroupEntry[];
+
+  /** The above with the histogram and the candidates, which only the peak's passes touch. */
+  private readonly peakEntries: GPUBindGroupEntry[];
+
+  /** The two groups nothing about a tick changes. `readFrame`'s is not one: it names a
+   * `counts` buffer created for that one call. */
+  private readonly drawGroup: GPUBindGroup;
+  private readonly peakGroup: GPUBindGroup;
 
   /** The rows the peak samples, as a dispatch over about `PEAK_SAMPLES` pixels. */
   private get sampledGroups(): [number, number] {
@@ -681,19 +717,13 @@ export class TickPipeline {
     encoder: GPUCommandEncoder,
     passes: [string, GPUComputePipeline, number, number][],
   ): void {
-    const entries: GPUBindGroupEntry[] = [
-      ...this.colourEntries(),
-      { binding: 5, resource: { buffer: this.histogram } },
-      { binding: 6, resource: { buffer: this.peak } },
-      { binding: 8, resource: { buffer: this.candidates } },
-    ];
     // A pass each rather than several dispatches in one, so each reports its own time: a
     // dispatch over a million pixels and a dispatch over one workgroup are the same shape
     // from outside, and the difference is what the tick is being tuned on.
     for (const [label, pipeline, x, y] of passes) {
       const pass = encoder.beginComputePass({ timestampWrites: this.timer?.writes(label) });
       pass.setPipeline(pipeline);
-      pass.setBindGroup(0, this.device.createBindGroup({ layout: this.peakLayout, entries }));
+      pass.setBindGroup(0, this.peakGroup);
       pass.dispatchWorkgroups(x, y);
       pass.end();
     }
@@ -749,10 +779,7 @@ export class TickPipeline {
       region.height / Math.max(canvas.height, 1),
     );
     pass.setPipeline(ratio < 2 ? this.drawFromFrame : this.drawFromPyramid);
-    pass.setBindGroup(
-      0,
-      this.device.createBindGroup({ layout: this.drawLayout, entries: this.displayEntries() }),
-    );
+    pass.setBindGroup(0, this.drawGroup);
     pass.draw(3);
     pass.end();
   }
