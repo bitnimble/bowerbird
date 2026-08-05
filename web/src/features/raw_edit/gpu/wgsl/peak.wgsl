@@ -128,9 +128,9 @@ fn collect(@builtin(global_invocation_id) id: vec3u) {
   let level = level_at(at.x, at.y);
   if (measured(level) < peak_out[1]) { return; }
 
-  // Counted past the cap rather than clamped, so the quantile can tell that it is reading
-  // a subsample and scale its rank to match. A blown sky puts far more than `CANDIDATES`
-  // in one bin, and dropping the overflow silently would move the peak instead.
+  // Counted past the cap rather than clamped, so the caller can tell that more qualified
+  // than were kept and stop reading them. A blown sky puts far more than `CANDIDATES` in one
+  // bin; what is kept then is the top of the frame, since these arrive in dispatch order.
   let slot = atomicAdd(&candidates[0], 1u);
   if (slot >= CANDIDATES) { return; }
   let base = 4u + slot * 4u;
@@ -183,15 +183,15 @@ fn quantile(@builtin(local_invocation_id) local: vec3u) {
   if (local.x != 0u) { return; }
 
   // How far down from the brightest the answer sits, over the sample the CPU would have
-  // taken. When the histogram holds only the candidates, that rank is scaled by the share
-  // of the qualifying pixels actually kept - a subsample of a subsample is still a
-  // subsample, which is the same argument `QUANTILE_SAMPLES` rests on.
-  var rank = max(1.0, (1.0 - QUANTILE) * f32(tick.peak_samples));
-  if (tick.from_candidates == 1u) {
-    let above = max(atomicLoad(&candidates[0]), 1u);
-    rank = max(1.0, rank * f32(min(above, CANDIDATES)) / f32(above));
-  }
-  let want = u32(rank);
+  // taken. The same rank whether the histogram holds the whole sample or only the candidates,
+  // because the candidates are read only when they are every pixel that cleared the
+  // threshold - the caller checks the count and reads the frame instead when they are not.
+  //
+  // There was a rescale here, by the share of qualifying pixels kept. It read that share as a
+  // fair sample and it is not one: `collect` keeps whichever arrive first, in dispatch order,
+  // so an overflow keeps the top rows of the frame rather than a spread of it - and the peak
+  // it measures is that region's rather than the picture's.
+  let want = u32(max(1.0, (1.0 - QUANTILE) * f32(tick.peak_samples)));
 
   // The chunk the quantile falls in, then the bin inside it, both from the top.
   var seen = 0u;

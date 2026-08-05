@@ -85,6 +85,17 @@ test.describe('GPU tick parity', () => {
     const neutral = sweep?.find((point) => point.ev === 0)?.full ?? 0;
     expect(neutral, 'a peak at neutral exposure').toBeGreaterThan(0);
 
+    // And that a tick is taking the shortcut those numbers are about. The candidates are read
+    // only when they are every pixel that cleared the threshold; where more qualify than fit,
+    // what is kept is the frame's top rows rather than a spread of it, and the tick reads the
+    // frame instead. At 6144 samples against a cap of 16,384 this fixture cannot overflow, so
+    // the answer has to be yes. If it silently became no the picture would be identical and
+    // every tick would just pay the millisecond `collect` exists to save.
+    expect(
+      report.results['tick-matched-ev0'].readsCandidates,
+      'the tick reads its peak off the candidates when they are exact',
+    ).toBe(true);
+
     for (const { ev, candidates, full } of sweep ?? []) {
       expect(
         Math.abs(candidates - full) / full,

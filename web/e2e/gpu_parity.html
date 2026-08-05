@@ -117,14 +117,26 @@ async function main() {
     // top used to make the peak saturate - and therefore the highlights clip - a couple of
     // stops into the range.
     let sweep = null;
+    let readsCandidates = null;
     if (name === 'tick-matched-ev0') {
       sweep = await pipeline.peakSweep([-5, -2, 0, 2, 3.5, 5]);
+      // And that a tick is actually taking the shortcut those numbers are about. A frame is
+      // read off the candidates only where they are every pixel that cleared the threshold;
+      // where more qualified than fit, what is kept is the top rows of the frame rather than
+      // a spread of it, so the tick reads the frame instead. This fixture is 6144 samples
+      // against a cap of 16,384 and cannot overflow, so the answer here has to be yes - and
+      // if it silently became no, every tick would pay a millisecond and the picture would
+      // be identical, which is the sort of thing that goes unnoticed for a year.
+      readsCandidates = pipeline.readsCandidates;
     }
 
     const failure = await device.popErrorScope().catch(() => null);
     pipeline.destroy();
     results[name] = failure == null ? compare(graded, expected) : { error: failure.message };
-    if (sweep != null && failure == null) results[name].sweep = sweep;
+    if (sweep != null && failure == null) {
+      results[name].sweep = sweep;
+      results[name].readsCandidates = readsCandidates;
+    }
   }
   out.textContent = JSON.stringify({ ok: true, results }, null, 2);
 }

@@ -169,6 +169,13 @@ export class TickPipeline {
   private readonly histogram: GPUBuffer;
   private readonly peak: GPUBuffer;
   private readonly candidates: GPUBuffer;
+  /**
+   * Whether the kept candidates are every qualifying pixel rather than the first of many.
+   *
+   * False until the open's count says otherwise, which is the answer that is always correct:
+   * a tick that reads the frame measures the same peak, only slower.
+   */
+  private useCandidates = false;
   private readonly matrix: GPUBuffer;
   /** The frame as it arrived: interleaved RGB `u16`, three to a pixel. */
   private readonly frame: GPUBuffer;
@@ -479,7 +486,7 @@ export class TickPipeline {
   render(ev: number, region: Region = this.wholeFrame): void {
     const encoder = this.device.createCommandEncoder();
     this.timer?.begin();
-    this.writeUniform({ exposure: 2 ** ev, fromCandidates: true, region });
+    this.writeUniform({ exposure: 2 ** ev, fromCandidates: this.useCandidates, region });
 
     if (this.header.matched) this.measurePeak(encoder);
     this.draw(encoder, region);
@@ -491,6 +498,18 @@ export class TickPipeline {
   /** The whole frame, which is what a fresh open shows. */
   get wholeFrame(): Region {
     return { x: 0, y: 0, width: this.width, height: this.height };
+  }
+
+  /**
+   * Whether a tick measures the peak off the kept candidates or off the frame.
+   *
+   * Exposed for the harness. Both answers are correct - the fallback is what the candidates
+   * replaced - so the failure this guards is the quiet one: the count never arriving, or the
+   * rule inverting, and every tick paying the millisecond that `collect` exists to avoid,
+   * with the picture identical either way.
+   */
+  get readsCandidates(): boolean {
+    return this.useCandidates;
   }
 
 
@@ -734,6 +753,18 @@ export class TickPipeline {
    *
    * At neutral exposure, since the candidates have to serve every position of the slider
    * and the middle of its range is the least biased place to pick them from.
+   *
+   * Then how many qualified, because that is what says whether the kept ones can be trusted.
+   * `collect` keeps whichever arrive first and they arrive in dispatch order, so if more
+   * qualify than fit, what is kept is the top of the frame rather than a spread of it - and a
+   * blown sky can put hundreds of thousands over the threshold. The peak measured off that
+   * prefix is the sky's, and `rolled_off` clamps every pixel to it, so genuine highlights
+   * lower down the frame flatten onto the sky and the roll-off knee lands in the wrong place.
+   * The renditions, which take the same quantile over a full partial sort, would not agree.
+   *
+   * So the shortcut is used only where it is exact: nothing overflowed, and the kept set is
+   * every qualifying pixel rather than a sample of them. Otherwise every tick reads the frame,
+   * which costs about a millisecond and is what this replaced.
    */
   private chooseCandidates(): void {
     const encoder = this.device.createCommandEncoder();
@@ -746,14 +777,38 @@ export class TickPipeline {
       ['quantile', this.peakQuantile, 1, 1],
       ['collect', this.peakCollect, x, y],
     ]);
+
+    const counted = this.device.createBuffer({
+      size: 4,
+      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+    });
+    encoder.copyBufferToBuffer(this.candidates, 0, counted, 0, 4);
     this.device.queue.submit([encoder.finish()]);
+
+    // Off the submit rather than awaited, so the open does not wait on the GPU for a decision
+    // whose safe answer is the one already in place. Ticks before it lands read the frame.
+    void counted
+      .mapAsync(GPUMapMode.READ)
+      .then(() => {
+        const above = new Uint32Array(counted.getMappedRange())[0] ?? 0;
+        counted.unmap();
+        this.useCandidates = above > 0 && above <= PEAK_CANDIDATES;
+      })
+      .catch(() => {
+        // A device lost between here and there. Nothing to decide, and nothing to report:
+        // whatever asked for a tick will find out from the tick.
+      })
+      .finally(() => counted.destroy());
   }
 
   private measurePeak(encoder: GPUCommandEncoder): void {
     encoder.clearBuffer(this.histogram);
+    const [x, y] = this.sampledGroups;
     this.peakPass(encoder, [
-      // The candidates, not the frame: 16,384 pixels rather than a million.
-      ['remeasure', this.peakRemeasure, Math.ceil(PEAK_CANDIDATES / 64), 1],
+      this.useCandidates
+        ? // The candidates, not the frame: 16,384 pixels rather than a million.
+          (['remeasure', this.peakRemeasure, Math.ceil(PEAK_CANDIDATES / 64), 1] as const)
+        : (['measure', this.peakMeasure, x, y] as const),
       // One workgroup: the search is over bins, not pixels.
       ['quantile', this.peakQuantile, 1, 1],
     ]);
