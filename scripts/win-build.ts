@@ -1,13 +1,13 @@
 // Cross-build the Windows app from Linux, via MinGW. Dev testing only.
 //
 // `x86_64-pc-windows-gnu`, not `-msvc`, and that choice is the whole reason this is
-// possible here. `rawshim` links LibRaw, lensfun and libavif, so a Windows build needs
-// those three built for Windows first - and for MSVC there is no way to get them on a
-// Linux box short of a vcpkg-from-source project (lensfun wants glib). MSYS2 ships them
-// prebuilt for MinGW, and its packages are zstd tarballs over HTTP, so the same trick that
-// osxcross-macports plays for the Mac works here:
+// possible here. The shell takes `rawshim` without `renditions`, so it links LibRaw and its
+// own dependencies and nothing else - but they still have to exist built for Windows first,
+// and for MSVC there is no way to get them on a Linux box short of a vcpkg-from-source
+// project. MSYS2 ships them prebuilt for MinGW, and its packages are zstd tarballs over
+// HTTP, so the same trick that osxcross-macports plays for the Mac works here:
 //
-//   bun /tmp/msys_fetch.mjs libraw lensfun libavif      # see scripts/msys-fetch.ts
+//   bun run scripts/msys-fetch.ts libraw
 //
 // One-time host prereqs: `rustup target add x86_64-pc-windows-gnu`, and a mingw-w64 cross
 // toolchain (`gcc-mingw-w64-x86-64-posix`, `binutils-mingw-w64-x86-64`,
@@ -30,7 +30,7 @@ const prefix = process.env.MSYS_PREFIX ?? join(process.env.HOME ?? '', 'local', 
 const mingw = join(prefix, 'mingw64');
 if (!existsSync(join(mingw, 'lib', 'pkgconfig', 'libraw.pc'))) {
   console.error(`[win-build] no LibRaw for ${TARGET} in ${mingw}`);
-  console.error('[win-build] bun run scripts/msys-fetch.ts libraw lensfun libavif');
+  console.error('[win-build] bun run scripts/msys-fetch.ts libraw');
   process.exit(1);
 }
 
@@ -166,14 +166,41 @@ while (queue.length > 0) {
   queue.push(...imports(source));
 }
 
-// An import the search could not place is assumed to be Windows's own, and mostly is. What
-// it must never be is a MinGW runtime: `lib*.dll` is that naming and no system DLL uses it,
-// so finding one here means the toolchain moved and the bundle is missing a library it
-// cannot start without. Silently, until now - the app installs and dies on launch.
-const missing = assumedSystem.filter((dll) => /^lib/i.test(dll));
+// What this binary is expected to find on Windows itself, as observed from the bundle's own
+// import closure. Anything else the search could not place is a library the folder needs and
+// does not have, which installs and then dies on launch - so it fails the build.
+//
+// A list of what is Windows's rather than a pattern for what is not. The guard this replaces
+// tested `/^lib/i`, on the reasoning that no system DLL is named that way: true, and it
+// caught the MinGW runtimes it was written for, but it left `WebView2Loader.dll` and
+// `zlib1.dll` outside itself - and the loader is the one import the app cannot start
+// without, which is what the walk was added to stop losing in the first place. It only
+// happens to be found today because `webview2Dirs()` guesses right about where cargo put the
+// crate; a vendored or relocated tree drops it and, under the old test, said nothing.
+//
+// A name reaching this that really is Windows's belongs on the list. Failing that way round
+// is a build that stops and tells somebody, rather than a bundle that ships broken.
+const WINDOWS_OWN = [
+  'advapi32', 'bcrypt', 'bcryptprimitives', 'comctl32', 'dwmapi', 'gdi32', 'kernel32',
+  'msvcrt', 'ntdll', 'ole32', 'oleaut32', 'shell32', 'shlwapi', 'user32', 'ws2_32',
+];
+
+// The API sets are Windows's by construction and there are hundreds of them, so those are a
+// prefix rather than fifteen more entries.
+function windowsOwn(dll: string): boolean {
+  const name = dll.toLowerCase().replace(/\.dll$/, '');
+  return (
+    name.startsWith('api-ms-win-') ||
+    name.startsWith('ext-ms-win-') ||
+    WINDOWS_OWN.includes(name)
+  );
+}
+
+const missing = assumedSystem.filter((dll) => !windowsOwn(dll));
 if (missing.length > 0) {
   console.error(`[win-build] not found in ${search.join(', ')}:`);
   for (const dll of missing) console.error(`  ${dll}`);
+  console.error("[win-build] ship each of these, or add it to WINDOWS_OWN if it is Windows's");
   process.exit(1);
 }
 if (assumedSystem.length > 0) {

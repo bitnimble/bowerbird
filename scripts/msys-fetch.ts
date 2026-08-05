@@ -2,12 +2,13 @@
 // extract them into a local prefix. No MSYS2 install, no pacman: the packages are just
 // zstd tarballs over HTTP, and `.PKGINFO` lists what each one needs.
 //
-// This is what makes a Windows build possible from Linux at all. `rawshim` links LibRaw,
-// lensfun and libavif, and for an MSVC target there is no way to get those here short of
-// building them and their dependencies from source. MSYS2 has them prebuilt for MinGW,
-// which is why `win-build.ts` targets `x86_64-pc-windows-gnu`.
+// This is what makes a Windows build possible from Linux at all. The shell takes `rawshim`
+// without `renditions`, so it links LibRaw and LibRaw's own dependencies, and for an MSVC
+// target there is no way to get those here short of building them and their dependencies
+// from source. MSYS2 has them prebuilt for MinGW, which is why `win-build.ts` targets
+// `x86_64-pc-windows-gnu`.
 //
-//   bun run msys:fetch libraw lensfun libavif
+//   bun run msys:fetch libraw
 //
 // A few names go unresolved every time - `cc-libs`, `libjpeg`, `omp`, `libsharpyuv` are
 // virtual or provided under another name - and none of them has been missing from the
