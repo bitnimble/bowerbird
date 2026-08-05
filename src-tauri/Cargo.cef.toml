@@ -42,6 +42,10 @@ serde_json = "1"
 # what the proxy is written against, and `default-features = false` keeps `rawshim` down to
 # LibRaw rather than relinking lensfun and libavif for an open that never asks for them.
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# The event stream's reconnect backoff. Already in the tree - `tauri` runs on it - and named
+# here only because `tauri::async_runtime` re-exports the channel and lock types but not the
+# timer. `Response::chunk` is not feature-gated, so reading the stream itself needs nothing.
+tokio = { version = "1", features = ["time", "sync", "macros"] }
 rawshim = { path = "../native/rawshim", default-features = false }
 
 # `default-features = false` is load-bearing. Nothing emits a compile_error when both

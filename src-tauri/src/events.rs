@@ -40,15 +40,23 @@ fn following(origin: Option<String>) {
 /// the heartbeat holds the socket open indefinitely. So the shell stayed on the old library,
 /// `CONNECTED` stayed true, and the reloaded page was told the stream was up while every
 /// event it was waiting for went to a server it had stopped reading from.
-static MOVED: std::sync::OnceLock<std::sync::Arc<tokio::sync::Notify>> = std::sync::OnceLock::new();
+///
+/// A watch rather than a `Notify`, because this is a change to remember and not an edge to
+/// catch. A notification reaches only the waits already registered when it is raised, and the
+/// follower has two long stretches with none: the retry backoff, and a dial whose wait is
+/// dropped along with the connection when it fails. Both are precisely where it sits when the
+/// address is wrong - which is the one situation in which anybody ever changes it. A watch
+/// receiver is marked and stays marked until it is read, so a change cannot land in a gap.
+static MOVED: std::sync::OnceLock<tokio::sync::watch::Sender<()>> = std::sync::OnceLock::new();
 
-fn moved() -> &'static std::sync::Arc<tokio::sync::Notify> {
-    MOVED.get_or_init(|| std::sync::Arc::new(tokio::sync::Notify::new()))
+fn moved() -> &'static tokio::sync::watch::Sender<()> {
+    MOVED.get_or_init(|| tokio::sync::watch::channel(()).0)
 }
 
 /// Tells the stream its server has changed. Safe to call before it is following anything.
 pub fn address_changed() {
-    moved().notify_waiters();
+    // `Err` only when nothing is following yet, which is what the next dial reads anyway.
+    let _ = moved().send(());
 }
 
 /// The library the event stream is currently following, or null while it is not up.
@@ -86,11 +94,12 @@ pub fn follow(app: &AppHandle) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         let mut resume = Resume::default();
+        let mut moved = moved().subscribe();
         let mut wait = FIRST_RETRY;
         loop {
             // Reset on a stream that actually connected, so a server that drops one
             // connection an hour is not eventually waited on for thirty seconds.
-            let held = stream(&app, &mut resume).await;
+            let held = stream(&app, &mut resume, &mut moved).await;
             following(None);
             match held {
                 // A move is not a failure and must not be waited out: the reader is looking
@@ -106,8 +115,16 @@ pub fn follow(app: &AppHandle) {
                 // saying so is the difference from the silence it replaced.
                 Err(why) => eprintln!("[bowerbird] event stream: {why}; retrying in {wait:?}"),
             }
-            tokio::time::sleep(wait).await;
-            wait = (wait * 2).min(LONGEST_RETRY);
+            // Raced, not slept through. Against a server that has gone the dial fails in
+            // milliseconds, so within a minute of launch this is where the follower spends
+            // essentially all of its time - and it is the same minute in which the reader is
+            // in Settings typing the address that would fix it. Sleeping through the change
+            // made the correction take effect whenever the backoff happened to expire, up to
+            // thirty seconds later, with the grid on placeholders until it did.
+            tokio::select! {
+                () = tokio::time::sleep(wait) => wait = (wait * 2).min(LONGEST_RETRY),
+                _ = moved.changed() => wait = FIRST_RETRY,
+            }
         }
     });
 }
@@ -145,17 +162,18 @@ impl Resume {
 }
 
 /// One connection, until it ends. `Ok` if it was answered before it did.
-async fn stream(app: &AppHandle, resume: &mut Resume) -> Result<Ended, String> {
-    // Registered before the request, so an address that changes while this one is being
-    // dialled is still noticed. `enable` is what does that: a `Notified` joins the waiter
-    // list when it is first polled, and the first poll here is in the `select!` below -
-    // after the connect - so without it a change inside that window wakes nobody and the
-    // stream stays on the old server until that connection ends, which against a running
-    // one is never. `notify_waiters` leaves no permit behind to catch it later.
-    let moved = moved().clone();
-    let moved = moved.notified();
-    tokio::pin!(moved);
-    moved.as_mut().enable();
+async fn stream(
+    app: &AppHandle,
+    resume: &mut Resume,
+    moved: &mut tokio::sync::watch::Receiver<()>,
+) -> Result<Ended, String> {
+    // Marked seen before the address is read rather than after, so this dial owns every
+    // change from here on. A change while the connect is in flight leaves the receiver
+    // marked, and it stays marked whether that connect succeeds - where the `select!` below
+    // takes it - or fails, where the caller's backoff does. Against a running server the
+    // heartbeat holds the socket open indefinitely, so a change that fell in that gap would
+    // not be noticed at all.
+    moved.borrow_and_update();
 
     let origin = crate::api::origin();
     let url = format!("{origin}/api/events");
@@ -182,7 +200,7 @@ async fn stream(app: &AppHandle, resume: &mut Resume) -> Result<Ended, String> {
         // holds this open forever, so waiting for it to end is waiting for nothing.
         let chunk = tokio::select! {
             read = reply.chunk() => read.map_err(|e| format!("{url} stopped: {e}"))?,
-            () = &mut moved => return Ok(Ended::Moved),
+            _ = moved.changed() => return Ok(Ended::Moved),
         };
         let Some(chunk) = chunk else { return Ok(Ended::Closed) };
 
@@ -348,6 +366,25 @@ mod tests {
         let read = frames(&["event: rendition\ndata: one\n\ndata: two\n\n"]);
         assert_eq!(read[0].kind, "rendition");
         assert_eq!(read[1].kind, "message");
+    }
+
+    /// Why this is a watch and not a `Notify`. Nobody is waiting at the moment the address
+    /// is changed - the follower is asleep in its backoff, or dropped its wait along with a
+    /// dial that failed - and the change still has to be there when it next looks. A
+    /// notification raised into an empty waiter list is gone, which is what left a corrected
+    /// address unread until the backoff happened to expire, up to thirty seconds later.
+    #[test]
+    fn an_address_change_survives_until_the_follower_looks() {
+        let mut following = moved().subscribe();
+        following.borrow_and_update();
+        assert!(!following.has_changed().unwrap());
+
+        address_changed();
+
+        assert!(following.has_changed().unwrap());
+        // And is not read twice: the dial that acts on it is the only one that should.
+        following.borrow_and_update();
+        assert!(!following.has_changed().unwrap());
     }
 
     #[test]

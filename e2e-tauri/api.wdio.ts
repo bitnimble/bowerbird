@@ -31,6 +31,20 @@ type Bridge = {
 };
 
 describe('Bowerbird desktop shell', () => {
+  // The address lives in a `config.json` beside the binary and survives the run that wrote
+  // it, so a suite that only ever reads it inherits whatever the last one left - a port from
+  // a server that is no longer there, or one of these tests' own deliberate detours if it
+  // failed before its restore. Every specimen below that asserts on which library the shell
+  // followed then fails for that reason rather than its own, which is a morning spent
+  // reading the wrong code.
+  before(async function () {
+    if (SERVER === '') return;
+    await browser.execute(async (origin: string) => {
+      const { invoke } = (window as unknown as Bridge).__TAURI__.core;
+      await invoke('set_server_origin', { value: origin });
+    }, SERVER);
+  });
+
   it('serves the bundle from the Tauri app', async () => {
     expect(await browser.getTitle()).toContain('Bowerbird');
   });
@@ -221,6 +235,50 @@ describe('Bowerbird desktop shell', () => {
     );
 
     expect(moved).toEqual({ before: SERVER, after: SECOND_SERVER });
+  });
+
+  // The other half, and the harder one: a reader corrects the address *because* the server
+  // has gone, so the follower is not connected when they do it - it is asleep in a backoff
+  // that doubles to thirty seconds. A `Notify` reaches only the waits registered when it is
+  // raised and there are none during a sleep, so the correction used to be dropped and took
+  // effect whenever the backoff next happened to expire.
+  it('takes up a corrected address without waiting out the backoff', async function () {
+    if (SERVER === '') return this.skip();
+
+    try {
+      const took = await browser.execute(async (to: string) => {
+        const { core } = (window as unknown as Bridge).__TAURI__;
+        const following = async (): Promise<string | null> =>
+          (await core.invoke('events_following', {})) as unknown as string | null;
+        const rest = (ms: number): Promise<unknown> =>
+          new Promise((resolve) => setTimeout(resolve, ms));
+
+        // Nothing can be listening on port 1, so every dial is refused in milliseconds.
+        await core.invoke('set_server_origin', { value: 'http://127.0.0.1:1' });
+        for (let attempt = 0; attempt < 40 && (await following()) != null; attempt++) {
+          await rest(250);
+        }
+        // Long enough for the backoff to have doubled well past the window asserted below,
+        // so waiting one out and reacting to the change are told apart.
+        await rest(8000);
+
+        await core.invoke('set_server_origin', { value: to });
+        const asked = Date.now();
+        for (let attempt = 0; attempt < 12; attempt++) {
+          if ((await following()) === to) return Date.now() - asked;
+          await rest(250);
+        }
+        return -1;
+      }, SERVER);
+
+      expect(took).toBeGreaterThanOrEqual(0);
+      expect(took).toBeLessThan(3000);
+    } finally {
+      await browser.execute(async (restore: string) => {
+        const { invoke } = (window as unknown as Bridge).__TAURI__.core;
+        await invoke('set_server_origin', { value: restore });
+      }, SERVER);
+    }
   });
 
   it('reports an unreachable server rather than panicking the shell', async () => {
