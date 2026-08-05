@@ -57,9 +57,12 @@ describe('the library event channel', () => {
   test('carries the kinds the page knows how to read', () => {
     const rust = read('src-tauri/src/events.rs');
     const web = read('web/src/api/transport.ts');
-    const emitted = new Set(
-      [...rust.matchAll(/kind: "([a-z]+)"\.to_string\(\)/g)].map((match) => match[1] ?? ''),
-    );
+    const written = [...rust.matchAll(/kind: "([a-z]+)"\.to_string\(\)/g)];
+    // Or the sweep below runs over nothing and passes by finding no work, which is how a
+    // parse-based check rots: the shell changes how it builds `Emitted` and this quietly
+    // becomes an assertion about the one kind hand-added underneath.
+    expect(written.length, 'events.rs no longer writes any kind this can see').toBeGreaterThan(0);
+    const emitted = new Set(written.map((match) => match[1] ?? ''));
     // `rendition` is the SSE event's own name, forwarded rather than written here, so it is
     // named where the reader picks it up rather than where the shell emits it.
     emitted.add('rendition');

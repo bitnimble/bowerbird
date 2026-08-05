@@ -651,7 +651,7 @@ export class TickPipeline {
     values[AT.reference] = header.grade.referenceWhiteNits;
     values[AT.peak] = header.grade.peakNits;
     values[AT.exposure] = this.exposure;
-    // `pad0` aligns the vectors below and is read by nothing.
+    // `pad0` is a named spare word, read by nothing and written by nothing.
     ints[AT.matched] = header.matched ? 1 : 0;
     values[AT.saturation] = colour?.saturation ?? 1;
     ints[AT.has_chroma] = colour?.chroma == null ? 0 : 1;

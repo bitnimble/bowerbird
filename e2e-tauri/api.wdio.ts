@@ -251,7 +251,7 @@ describe('Bowerbird desktop shell', () => {
     if (SERVER === '') return this.skip();
 
     try {
-      const took = await browser.execute(async (to: string) => {
+      const moved = await browser.execute(async (to: string) => {
         const { core } = (window as unknown as Bridge).__TAURI__;
         const following = async (): Promise<string | null> =>
           (await core.invoke('events_following', {})) as unknown as string | null;
@@ -260,8 +260,10 @@ describe('Bowerbird desktop shell', () => {
 
         // Nothing can be listening on port 1, so every dial is refused in milliseconds.
         await core.invoke('set_server_origin', { value: 'http://127.0.0.1:1' });
-        for (let attempt = 0; attempt < 40 && (await following()) != null; attempt++) {
-          await rest(250);
+        let left = false;
+        for (let attempt = 0; attempt < 40 && !left; attempt++) {
+          left = (await following()) == null;
+          if (!left) await rest(250);
         }
         // Long enough for the backoff to have doubled well past the window asserted below,
         // so waiting one out and reacting to the change are told apart.
@@ -270,14 +272,20 @@ describe('Bowerbird desktop shell', () => {
         await core.invoke('set_server_origin', { value: to });
         const asked = Date.now();
         for (let attempt = 0; attempt < 12; attempt++) {
-          if ((await following()) === to) return Date.now() - asked;
+          if ((await following()) === to) return { left, took: Date.now() - asked };
           await rest(250);
         }
-        return -1;
+        return { left, took: -1 };
       }, SERVER);
 
-      expect(took).toBeGreaterThanOrEqual(0);
-      expect(took).toBeLessThan(3000);
+      // Reported rather than merely waited for. Left silent, this loop's timeout was the
+      // whole test's escape hatch: a shell that ignored the address change never leaves
+      // SERVER, so it is still following it when the origin is set back, and the wait below
+      // returns instantly. The test passed against exactly the thing it was written to catch.
+      // `left` false means the follower never left the address it was told to leave.
+      expect(moved.left).toBe(true);
+      expect(moved.took).toBeGreaterThanOrEqual(0);
+      expect(moved.took).toBeLessThan(3000);
     } finally {
       await browser.execute(async (restore: string) => {
         const { invoke } = (window as unknown as Bridge).__TAURI__.core;
@@ -286,21 +294,34 @@ describe('Bowerbird desktop shell', () => {
     }
   });
 
+  // Against an address nothing answers, rather than against whichever one the shell happens
+  // to hold. Written the second way it accepted "resolved" as a pass, which is what a
+  // reachable server returns for a 404 - so in every configured run it asserted nothing about
+  // unreachability, which is the whole of what it is named for.
   it('reports an unreachable server rather than panicking the shell', async () => {
-    const reply = await browser.execute(async () => {
-      const { invoke } = (window as unknown as Bridge).__TAURI__.core;
-      try {
-        // A path no server serves, against whichever origin the shell was told about: the
-        // failure being reported at all is what this asserts.
-        await invoke('api', {
-          request: JSON.stringify({ cmd: 'get:nothing', method: 'GET', path: '/api/nothing' }),
-        });
-        return 'resolved';
-      } catch (error) {
-        return String(error);
-      }
-    });
-    // Either the server answered 404 (which resolves, framed) or it was not there at all.
-    expect(reply === 'resolved' || reply.includes('could not reach')).toBe(true);
+    try {
+      const reply = await browser.execute(async () => {
+        const { invoke } = (window as unknown as Bridge).__TAURI__.core;
+        // Port 1 needs root to bind, so nothing is listening and the dial is refused.
+        await invoke('set_server_origin', { value: 'http://127.0.0.1:1' });
+        try {
+          await invoke('api', {
+            request: JSON.stringify({ cmd: 'get:nothing', method: 'GET', path: '/api/nothing' }),
+          });
+          return 'resolved';
+        } catch (error) {
+          return String(error);
+        }
+      });
+      // The reason, not merely a rejection: the shell going quiet and the shell saying why
+      // are the two outcomes this tells apart, and only one of them is any use to a reader
+      // looking at Settings.
+      expect(reply).toContain('could not reach');
+    } finally {
+      await browser.execute(async (restore: string) => {
+        const { invoke } = (window as unknown as Bridge).__TAURI__.core;
+        await invoke('set_server_origin', { value: restore });
+      }, SERVER);
+    }
   });
 });

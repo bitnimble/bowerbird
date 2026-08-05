@@ -33,9 +33,16 @@ async function read(path: string): Promise<Manifest> {
   return (await import(path)) as Manifest;
 }
 
-/** Every dependency the crate takes, wherever it is declared, minus the Tauri family. */
+/**
+ * Every dependency the crate takes, wherever it is declared, minus the Tauri family.
+ *
+ * `[build-dependencies]` included, and not as an afterthought: today it holds `tauri-build`
+ * alone, which the filter removes, so the two manifests would agree on an empty set - and a
+ * build dependency added to one and not the other is exactly the divergence this file exists
+ * for, in a block nobody thinks to check.
+ */
 function ownDependencies(manifest: Manifest): Record<string, unknown> {
-  const all = { ...manifest.dependencies };
+  const all = { ...manifest.dependencies, ...manifest['build-dependencies'] };
   for (const block of Object.values(manifest.target ?? {})) {
     Object.assign(all, block.dependencies);
   }

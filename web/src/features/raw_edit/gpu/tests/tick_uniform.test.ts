@@ -12,36 +12,68 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { TICK_LAYOUT, TICK_UNIFORM_FLOATS, tickOffsets } from '../shaders';
 
-/** `struct Tick`'s members, in order, read out of the shader that owns them. */
-function declared(): [string, string][] {
+/**
+ * `struct Tick`'s members, in order, read out of the shader that owns them.
+ *
+ * What it could not read comes back too, and is asserted on. A parser that drops what it does
+ * not recognise turns the comparison below into a comparison of two subsets: a field added to
+ * the WGSL in a spelling this misses is absent from both lists, so the parity test passes
+ * while the host never writes the field at all. Silence is the failure mode to design out.
+ */
+function declared(): { members: [string, string][]; unread: string[] } {
   const source = readFileSync(join(import.meta.dir, '..', 'wgsl', 'tick.wgsl'), 'utf8');
   const body = /struct Tick \{([\s\S]*?)\n\};/.exec(source);
-  expect(body).not.toBeNull();
-  return (body?.[1] ?? '')
-    .split('\n')
-    .map((line) => /^\s*([a-z_0-9]+)\s*:\s*([a-z0-9]+)\s*,/.exec(line))
-    .filter((match): match is RegExpExecArray => match != null)
-    .map((match) => [match[1] ?? '', match[2] ?? '']);
+  expect(body, 'struct Tick is no longer where this looks for it').not.toBeNull();
+
+  const members: [string, string][] = [];
+  const unread: string[] = [];
+  for (const line of (body?.[1] ?? '').split('\n')) {
+    const bare = line.trim();
+    if (bare === '' || bare.startsWith('//')) continue;
+    const member = /^([A-Za-z_][A-Za-z_0-9]*)\s*:\s*([^,]+?),?$/.exec(bare);
+    if (member == null) {
+      unread.push(bare);
+      continue;
+    }
+    // `vec2<f32>` and `vec2f` are one type spelled two ways, and this is about the layout
+    // rather than the spelling.
+    members.push([member[1] ?? '', (member[2] ?? '').replace(/^vec([234])<f32>$/, 'vec$1f')]);
+  }
+  return { members, unread };
 }
 
 describe('the Tick uniform', () => {
+  test('is read whole out of the shader', () => {
+    const { members, unread } = declared();
+    expect(unread, 'a member this cannot parse is a member the check below ignores').toEqual([]);
+    expect(members.length).toBe(TICK_LAYOUT.length);
+  });
+
   test('is declared here in the order the shader declares it', () => {
     // Both halves as one comparison, so a failure prints the two lists side by side and says
     // which field moved rather than only that a count is wrong.
     expect(TICK_LAYOUT.map(([name, type]) => `${name}: ${type}`)).toEqual(
-      declared().map(([name, type]) => `${name}: ${type}`),
+      declared().members.map(([name, type]) => `${name}: ${type}`),
     );
   });
 
-  // WGSL rounds a `vec2f` up to a multiple of two words. The host writes into a flat
-  // `Float32Array`, so an unaligned vector is not an error anywhere - it is six floats landing
-  // one slot from where the shader reads them, which is a region and a canvas size read as
-  // each other's halves.
-  test('puts every vector where the shader will look for it', () => {
+  // WGSL rounds a `vec2f` up to a multiple of two words, and the host writes into a flat
+  // `Float32Array` where an unaligned vector is not an error anywhere - it is six floats
+  // landing one slot from where the shader reads them, which is a region and a canvas size
+  // read as each other's halves.
+  //
+  // Computed from the shader's own declaration rather than from `TICK_LAYOUT`, because
+  // `tickOffsets` rounds vectors up by construction: asked where it put one, it can only
+  // answer with a number it has already rounded. The question worth asking is whether the two
+  // sources agree, so the offsets are derived here from the `.wgsl` and held against the ones
+  // the host writes by.
+  test('agrees with the shader about where every field starts', () => {
     const { at } = tickOffsets();
-    for (const [name, type] of TICK_LAYOUT) {
-      if (type !== 'vec2f') continue;
-      expect(`${name} at ${at[name]}`).toBe(`${name} at ${Math.ceil(at[name] / 2) * 2}`);
+    let next = 0;
+    for (const [name, type] of declared().members) {
+      if (type === 'vec2f') next = Math.ceil(next / 2) * 2;
+      expect(`${name} at ${at[name as keyof typeof at]}`).toBe(`${name} at ${next}`);
+      next += type === 'vec2f' ? 2 : 1;
     }
   });
 
@@ -51,19 +83,5 @@ describe('the Tick uniform', () => {
     expect(TICK_UNIFORM_FLOATS).toBeGreaterThanOrEqual(words);
     // And no slacker than it has to be, or the padding is hiding a field somebody removed.
     expect(TICK_UNIFORM_FLOATS - words).toBeLessThan(4);
-  });
-
-  // The reason `pad0` is in the struct at all, which its comment states and nothing checked.
-  test('keeps the padding that is load-bearing', () => {
-    const withoutPad0 = TICK_LAYOUT.filter(([name]) => name !== 'pad0');
-    let next = 0;
-    let misaligned = 0;
-    for (const [, type] of withoutPad0) {
-      if (type === 'vec2f' && next % 2 !== 0) misaligned++;
-      if (type === 'vec2f') next = Math.ceil(next / 2) * 2;
-      next += type === 'vec2f' ? 2 : 1;
-    }
-    // Not a tautology: it says the field earns its place. Remove it and the vectors shift.
-    expect(misaligned).toBeGreaterThan(0);
   });
 });

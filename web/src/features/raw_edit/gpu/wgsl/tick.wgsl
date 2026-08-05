@@ -15,8 +15,10 @@ struct Tick {
   reference: f32,
   peak: f32,
   exposure: f32,
-  // Load-bearing despite being unread: it is what puts `region_origin` on the multiple of
-  // eight a `vec2f` needs. Reuse it before adding a field past the vectors.
+  // A spare word, written down rather than left implicit. WGSL would insert the same padding
+  // here anyway to put `region_origin` on the multiple of eight a `vec2f` needs, so this
+  // changes no offset - it is a slot with a name, to be taken by the next scalar rather than
+  // growing the struct.
   pad0: u32,
   matched: u32,
   saturation: f32,

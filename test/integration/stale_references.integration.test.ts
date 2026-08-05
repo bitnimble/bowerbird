@@ -114,10 +114,12 @@ describe('a Rust comment naming a path', () => {
       .concat(walk(join(ROOT, 'src-tauri', 'src')))
       .filter((path) => extname(path) === '.rs');
     const source = new Map(rust.map((path) => [path, readFileSync(path, 'utf8')]));
-    // Comment markers stripped, so a name that appears only in prose does not vouch for
-    // itself - which is the whole failure being looked for.
+    // Comments stripped, so a name that appears only in prose does not vouch for itself,
+    // which is the whole failure being looked for. From wherever `//` starts rather than
+    // only from the start of a line: a trailing comment is still a comment, and one on the
+    // same line as code was the way a dead name went on proving it was alive.
     const code = [...source.values()]
-      .map((text) => text.replaceAll(/^\s*(\/\/|\/\*|\*).*$/gm, ''))
+      .map((text) => text.replaceAll(/\/\/.*$/gm, '').replaceAll(/^\s*\*.*$/gm, ''))
       .join('\n');
 
     const dangling: string[] = [];

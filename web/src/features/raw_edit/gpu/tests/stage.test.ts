@@ -39,11 +39,19 @@ describe('stageResolution', () => {
     expect(size.height).toBeLessThanOrEqual(region.height);
   });
 
+  // A region wider than the limit, which is the only case that reaches the limit at all: the
+  // clamp against the region's own resolution binds first for anything smaller. Written with
+  // `WHOLE` at 6000px it asserted `6000 <= 8192` and held for any limit, including none -
+  // deleting the limit from the `Math.min` left it green.
+  //
+  // 9504 is a 61MP body's long edge and 8192 is what several adapters report, so this is the
+  // pair the branch was built for.
   test('never asks for more than the GPU can hold', () => {
     global.devicePixelRatio = 4;
-    const size = stageResolution({ width: 20000, height: 20000 }, WHOLE, 8192);
-    expect(size.width).toBeLessThanOrEqual(8192);
-    expect(size.height).toBeLessThanOrEqual(8192);
+    const sensor = { x: 0, y: 0, width: 9504, height: 6336 };
+    expect(stageResolution({ width: 20000, height: 20000 }, sensor, 8192).width).toBe(8192);
+    // And the limit is what did it, rather than something else that happens to land there.
+    expect(stageResolution({ width: 20000, height: 20000 }, sensor, 16384).width).toBe(9504);
   });
 
   // A zero box arrives before layout, and a canvas of zero is a validation error rather than
