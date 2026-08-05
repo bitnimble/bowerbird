@@ -143,8 +143,25 @@ const search = [join(mingw, 'bin'), ...runtimeDirs(), ...webview2Dirs()];
 
 /** What a PE imports, by name. System DLLs are not in the search path and drop out. */
 function imports(file: string): string[] {
-  const listed = spawnSync('x86_64-w64-mingw32-objdump', ['-p', file], { encoding: 'utf8', env });
-  return (listed.stdout ?? '')
+  // `-p` prints the whole private-header dump, which for a 10MB executable is several
+  // megabytes and overflows `spawnSync`'s 1MB default. That truncation was already happening
+  // and was invisible: the import table lands early enough in the output to survive it, so
+  // the right DLLs came out by luck rather than by reading the whole answer.
+  const listed = spawnSync('x86_64-w64-mingw32-objdump', ['-p', file], {
+    encoding: 'utf8',
+    env,
+    maxBuffer: 256 * 1024 * 1024,
+  });
+  // Loudly, because the quiet version of this ships. `objdump` missing gives no stdout, which
+  // reads as "imports nothing", so the walk below starts with an empty queue, copies no DLLs
+  // at all, reports success, and hands over a folder holding one executable that will not
+  // start on Windows - and the line about what was assumed to be Windows's own is empty too,
+  // so nothing about the output looks wrong.
+  if (listed.error != null || listed.status !== 0) {
+    const why = listed.error?.message ?? listed.stderr ?? `exit ${String(listed.status)}`;
+    throw new Error(`could not read what ${file} imports: ${why}`);
+  }
+  return listed.stdout
     .split('\n')
     .filter((line) => line.includes('DLL Name:'))
     .map((line) => line.split('DLL Name:')[1]?.trim() ?? '');
