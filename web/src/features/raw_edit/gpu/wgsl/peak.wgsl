@@ -213,7 +213,14 @@ fn quantile(@builtin(local_invocation_id) local: vec3u) {
   // And the threshold `collect` keeps a pixel above, which is the same search at a much
   // shallower rank. Only on the open's run: it walks every bin rather than stopping near
   // the top, which measured at 0.7ms - most of what the tick's peak now costs at all.
-  if (tick.from_candidates == 1u) { return; }
+  //
+  // Asked as "has anything been collected yet", which is what the open's run actually is:
+  // `collect` runs after this and in the same submit, so the count is zero here and only
+  // here. It used to ask whether the tick was reading the candidates, which meant the same
+  // thing right up until a tick could stop reading them - a frame whose candidates overflowed
+  // falls back to reading the whole frame, and every one of those ticks was then re-walking
+  // all 8192 bins for a threshold nothing would read again.
+  if (atomicLoad(&candidates[0]) != 0u) { return; }
   seen = 0u;
   var edge = 0u;
   for (var b = BINS; b > 0u; b = b - 1u) {
