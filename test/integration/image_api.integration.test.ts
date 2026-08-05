@@ -146,3 +146,25 @@ test('returns a 404 envelope when the file is missing on disk', withRoot(async (
   expect(res.status).toBe(404);
   expect(await res.json()).toMatchObject({ error: { code: 'NOT_FOUND' } });
 }));
+
+// The editor's open answered 500 here, because `locate` reads the catalogue and the catalogue
+// knows nothing about the disk - so a RAW that had been moved or unplugged reached LibRaw as
+// a path that is not there, and the reason came back quoting the server's own absolute path.
+// A library that is not mounted is not a server error, and where the server keeps its files
+// is not the reader's business.
+test('returns a 404 for an open whose RAW is gone, not a 500', withRoot(async (root) => {
+  const res = await buildApp(root, photo({})).request('/image/p1/prepared?longEdge=0');
+  expect(res.status).toBe(404);
+  const body = (await res.json()) as { error: { code: string; message: string } };
+  expect(body.error.code).toBe('NOT_FOUND');
+  expect(body.error.message).not.toContain(root);
+}));
+
+// `long_edge` crosses the FFI as a `u32`, so a number past that wraps rather than being
+// refused: it spawned a thread and decoded whatever the truncation happened to mean. Refused
+// here instead, before any of it.
+test('refuses a longEdge no sensor could have', withRoot(async (root) => {
+  const res = await buildApp(root, photo({})).request('/image/p1/prepared?longEdge=5000000000');
+  expect(res.status).toBe(400);
+  expect(await res.json()).toMatchObject({ error: { code: 'VALIDATION_ERROR' } });
+}));

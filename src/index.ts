@@ -198,10 +198,10 @@ applySettings(settingsRepo.get());
 applyErrorHandler(app);
 
 // Bun.serve idles a request out after 10s by default, which is shorter than the
-// work some endpoints are synchronously waiting on: a full-resolution lossless
-// render, and the six HDR renditions, both run to tens of seconds on a 60MP
-// frame. The client sees the socket closed rather than an error, so this looks
-// like a crash rather than a timeout. 255 is Bun's maximum.
+// work some endpoints are waiting on: a full-resolution lossless render, and the
+// editor's open, both run to tens of seconds on a 60MP frame. The client sees the
+// socket closed rather than an error, so this looks like a crash rather than a
+// timeout. 255 is Bun's maximum.
 const IDLE_TIMEOUT_SECONDS = 255;
 
 // Served explicitly rather than by default export, because with the default

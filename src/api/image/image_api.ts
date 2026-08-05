@@ -5,7 +5,7 @@ import type { Library } from '../../schemas/libraries';
 import { getOriginalPath, getRenditionPath } from '../../utils/paths';
 import { rawMediaType } from '../../utils/scan';
 import { readEmbeddedJpeg } from '../../services/processing/raw_decoder';
-import { framePrepared, prepareEditAsync } from '../../services/processing/rawshim_edit';
+import { prepareEditAsync } from '../../services/processing/rawshim_edit';
 import { transcodeJpeg } from '../../services/processing/rawshim_job';
 import type { SettingsRepository } from '../../services/settings/settings_repository';
 import { RENDITION_CONTENT_TYPE, isRendition } from '../../services/processing/renditions';
@@ -34,6 +34,12 @@ const JPEG_QUALITY = 92;
 // A number the client names is still honoured, since it knows what its stage can hold; the
 // decode never enlarges, so asking for more than the sensor has is the sensor.
 const DEFAULT_EDIT_EDGE = 0;
+
+// A ceiling on what a client may ask for, which the native side cannot express: `long_edge`
+// crosses as a `u32`, so a larger number wraps rather than being refused. Well past any
+// sensor - a 61MP body's long edge is 9504 - because the decode never enlarges, so this is a
+// bound on what is worth parsing rather than on what is worth decoding.
+const MAX_EDIT_EDGE = 100_000;
 
 // The viewer reports the weight of the rendition it is showing, and reads it off
 // the response it already received rather than asking for a number the server
@@ -108,10 +114,27 @@ export class ImageApi {
     const { photo, library } = this.photos.locate(photoId);
 
     const requested = Number(c.req.query('longEdge') ?? DEFAULT_EDIT_EDGE);
-    if (!Number.isFinite(requested) || requested < 0) {
-      throw new AppError('VALIDATION_ERROR', `longEdge must not be negative: ${requested}`);
+    // Bounded at both ends. The native side takes a `u32`, so anything past that wraps on the
+    // way across rather than being refused - it crosses the FFI, spawns a thread and decodes
+    // whatever the truncation happened to mean, then answers 500. Held to the largest sensor
+    // this could ever be asked for instead, which is a 400 saying so before any of that.
+    if (!Number.isFinite(requested) || requested < 0 || requested > MAX_EDIT_EDGE) {
+      throw new AppError(
+        'VALIDATION_ERROR',
+        `longEdge must be between 0 and ${MAX_EDIT_EDGE}: ${requested}`,
+      );
     }
     const longEdge = Math.round(requested);
+
+    // Before the open rather than after it. `locate` answers from the catalogue, which knows
+    // nothing about the disk, so a file that has been moved or unplugged reaches LibRaw as a
+    // path that is not there - and comes back as a 500 quoting the server's own absolute
+    // path, where every sibling route here answers 404. The reader's own library is not a
+    // server error, and where it lives is not theirs to be told.
+    const original = getOriginalPath(library, photo.file_path);
+    if (!(await Bun.file(original).exists())) {
+      throw new AppError('NOT_FOUND', `image not found on disk: ${photoId}`);
+    }
 
     const settings = this.settings.get();
     // Awaited, not called: the open is seconds of LibRaw, and every other request this
@@ -119,7 +142,7 @@ export class ImageApi {
     // reports back through a callback (`rawshim_edit.ts`), so a reader opening the editor no
     // longer stops the grid loading for anybody, themselves included.
     const prepared = await prepareEditAsync({
-      rawFilePath: getOriginalPath(library, photo.file_path),
+      rawFilePath: original,
       longEdge,
       grade: {
         peakNits: settings.hdr_peak_nits,
@@ -134,7 +157,7 @@ export class ImageApi {
       },
     });
 
-    return new Response(framePrepared(prepared), {
+    return new Response(prepared, {
       headers: {
         'Content-Type': 'application/octet-stream',
         'Content-Disposition': 'inline',
