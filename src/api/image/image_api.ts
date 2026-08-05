@@ -35,10 +35,12 @@ const JPEG_QUALITY = 92;
 // decode never enlarges, so asking for more than the sensor has is the sensor.
 const DEFAULT_EDIT_EDGE = 0;
 
-// A ceiling on what a client may ask for, which the native side cannot express: `long_edge`
-// crosses as a `u32`, so a larger number wraps rather than being refused. Well past any
-// sensor - a 61MP body's long edge is 9504 - because the decode never enlarges, so this is a
-// bound on what is worth parsing rather than on what is worth decoding.
+// A ceiling on what a client may ask for. Well past any sensor - a 61MP body's long edge is
+// 9504 - because the decode never enlarges, so every value between here and there already
+// meant "the sensor" and still does. What this changes is only the absurd end: `long_edge`
+// crosses as a `u32`, and serde refuses one that will not fit rather than truncating it, so
+// `longEdge=5000000000` used to spawn a thread, fail to parse the request inside it, and come
+// back a 500. The same answer, arrived at before any of that, and as the 400 it always was.
 const MAX_EDIT_EDGE = 100_000;
 
 // The viewer reports the weight of the rendition it is showing, and reads it off
@@ -114,10 +116,9 @@ export class ImageApi {
     const { photo, library } = this.photos.locate(photoId);
 
     const requested = Number(c.req.query('longEdge') ?? DEFAULT_EDIT_EDGE);
-    // Bounded at both ends. The native side takes a `u32`, so anything past that wraps on the
-    // way across rather than being refused - it crosses the FFI, spawns a thread and decodes
-    // whatever the truncation happened to mean, then answers 500. Held to the largest sensor
-    // this could ever be asked for instead, which is a 400 saying so before any of that.
+    // Bounded at both ends, and answered here rather than several layers down: a number the
+    // native side will refuse still crosses the FFI and starts a thread first, and comes back
+    // as a 500 for what the reader plainly got wrong.
     if (!Number.isFinite(requested) || requested < 0 || requested > MAX_EDIT_EDGE) {
       throw new AppError(
         'VALIDATION_ERROR',

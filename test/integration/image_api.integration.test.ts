@@ -160,9 +160,9 @@ test('returns a 404 for an open whose RAW is gone, not a 500', withRoot(async (r
   expect(body.error.message).not.toContain(root);
 }));
 
-// `long_edge` crosses the FFI as a `u32`, so a number past that wraps rather than being
-// refused: it spawned a thread and decoded whatever the truncation happened to mean. Refused
-// here instead, before any of it.
+// `long_edge` crosses the FFI as a `u32`, and serde refuses one too big to fit - but only
+// after the thread carrying it has been spawned, and as a 500 for something the reader got
+// wrong. Refused here instead, before any of that.
 test('refuses a longEdge no sensor could have', withRoot(async (root) => {
   const res = await buildApp(root, photo({})).request('/image/p1/prepared?longEdge=5000000000');
   expect(res.status).toBe(400);
