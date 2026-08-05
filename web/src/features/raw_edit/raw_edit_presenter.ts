@@ -172,6 +172,9 @@ export class RawEditPresenter {
         this.fail('this browser has no WebGPU, which the editor now needs');
         return;
       }
+      // Before the device rather than after it, so a failure below is reported against the
+      // GPU that refused rather than against no GPU at all.
+      this.describeAdapter(adapter);
       const device = await adapter.requestDevice({
         requiredFeatures: tickFeatures(adapter),
         requiredLimits: tickLimits(adapter),
@@ -186,7 +189,13 @@ export class RawEditPresenter {
       device.lost.then((reason) => {
         if (!this.closed && reason.reason !== 'destroyed') this.fail(`the GPU device was lost: ${reason.message}`);
       });
-      this.describeAdapter(adapter);
+      // The failure mode this whole path is written around. A validation error is
+      // asynchronous and rejects nothing: the offending call returns, the dispatch is
+      // dropped, the reader is told `live`, and the canvas stays black with nothing anywhere
+      // saying why. Reported here so the next one names itself.
+      device.onuncapturederror = (event) => {
+        if (!this.closed) this.fail(`the GPU refused a command: ${event.error.message}`);
+      };
 
       this.preparing();
       const { header, samples } = await fetchPrepared(photoId, longEdge);
@@ -202,6 +211,10 @@ export class RawEditPresenter {
         this.fail('this browser has no WebGPU canvas context');
         return;
       }
+      // Everything the open builds on the device, under one scope: a texture, a layout or a
+      // pipeline the GPU will not have is a validation error rather than an exception, and
+      // the open is the one place that can still say so before the reader is told `live`.
+      device.pushErrorScope('validation');
       context.configure({
         device,
         format: 'rgba16float',
@@ -214,6 +227,16 @@ export class RawEditPresenter {
       } as GPUCanvasConfiguration);
 
       this.pipeline = new TickPipeline(device, context, header, samples);
+      const refused = await device.popErrorScope();
+      if (this.closed) return;
+      if (refused != null) {
+        // Dropped here rather than left to `close`: what it holds is the frame, which at
+        // 61MP is 361MB of GPU memory for a tick that will never run.
+        this.pipeline?.destroy();
+        this.pipeline = null;
+        this.fail(`this GPU refused the tick: ${refused.message}`);
+        return;
+      }
       this.opened(header);
       // Re-attached rather than left as it was: the observer needs a region and a device
       // to size against, and neither existed when React handed the element over.
