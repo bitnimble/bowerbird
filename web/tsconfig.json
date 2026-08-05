@@ -3,7 +3,9 @@
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    // ESNext.Float16 alone rather than ESNext: the chroma map is uploaded as half floats
+    // (`tick_pipeline.ts`), and nothing else here wants a type ahead of the target.
+    "lib": ["ES2022", "ESNext.Float16", "DOM", "DOM.Iterable"],
     "jsx": "react-jsx",
     // @types/bun for the `bun:test` imports under src/**/tests; it resolves out
     // of the repo root, which is where the test runner lives too.

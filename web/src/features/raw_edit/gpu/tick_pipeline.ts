@@ -113,28 +113,17 @@ export function stageResolution(
 /**
  * What to ask `requestDevice` for before building a `TickPipeline` on it.
  *
- * `float32-filterable` is the one that matters: the chroma map is an `f32` texture read with
- * a filtering sampler, and without it that texture is not filterable and the pipeline will
- * not build. Not the tone curve, which `colour.wgsl` interpolates by hand for a stated
- * precision reason - the hardware's eight fractional bits of filter weight took parity in
- * the shadows from 6 counts to 1735. Every desktop adapter this has run on offers it.
+ * Nothing required, and that is the point. This used to demand `float32-filterable` for the
+ * chroma map, which no Apple GPU offers - Metal gates 32-bit float filtering behind
+ * `MTLDevice.supports32BitFloatFiltering`, true on a few iPad parts and on no iPhone - so
+ * every RAW refused to open on iOS, matched or not. The map is `rgba16float` instead, which
+ * core WebGPU filters everywhere.
  *
- * Thrown for rather than filtered out. Filtering it left the device built without it, and
- * the first call to bind an `r32float` with a filtering sampler then fails validation -
- * asynchronously, to an uncaptured-error handler nothing installs, and not as an exception
- * the open can catch. So the open ran to the end, the reader was told `live`, and the canvas
- * stayed black with nothing anywhere saying why.
- *
- * `timestamp-query` really is optional: without it the readout loses its per-pass
- * milliseconds and the picture is identical.
+ * `timestamp-query` is optional in the ordinary way: without it the readout loses its
+ * per-pass milliseconds and the picture is identical.
  */
 export function tickFeatures(adapter: GPUAdapter): GPUFeatureName[] {
-  if (!adapter.features.has('float32-filterable')) {
-    throw new Error(
-      'this GPU cannot filter float textures (float32-filterable), which the camera match’s chroma map needs',
-    );
-  }
-  return (['float32-filterable', 'timestamp-query'] as GPUFeatureName[]).filter((feature) =>
+  return (['timestamp-query'] as GPUFeatureName[]).filter((feature) =>
     adapter.features.has(feature),
   );
 }
@@ -310,18 +299,29 @@ export class TickPipeline {
     // A row per channel, which is how the shader picks one: `sample_curve` loads the two
     // texels of its own row by index, so nothing can blend red into green.
     const bins = colour ? colour.curves[0].length : 1;
-    this.curves = this.lookup([bins, 3], '2d', 'r32float', 4, [
-      ...(colour?.curves.flat() ?? [0, 0, 0]),
-    ]);
+    this.curves = this.lookup(
+      [bins, 3],
+      '2d',
+      'r32float',
+      4,
+      new Float32Array(colour?.curves.flat() ?? [0, 0, 0]),
+    );
     // A 2x2 per node is exactly four components, and a node lattice is exactly a volume,
     // so `ChromaMap`'s trilinear is what a 3D texture does for free.
+    //
+    // Half floats because `f32` is not filterable on any Apple GPU (`tickFeatures`), and the
+    // 2^-11 that costs is measured rather than assumed: over the parity fixtures and over
+    // every colour the lattice spans, the worst pixel moves 0.109 deltaE ITP, where 1.0 is
+    // the threshold of visibility. The corrections multiply chroma differences, so the error
+    // vanishes on the grey axis where the eye is least forgiving, and quantising nodes before
+    // interpolating them leaves the surface continuous - no contour to see.
     const chroma = colour?.chroma;
     this.chroma = this.lookup(
       [chroma?.chromaCount ?? 1, chroma?.chromaCount ?? 1, chroma?.levelCount ?? 1],
       '3d',
-      'rgba32float',
-      16,
-      chroma?.nodes ?? [0, 0, 0, 0],
+      'rgba16float',
+      8,
+      new Float16Array(chroma?.nodes ?? [0, 0, 0, 0]),
     );
     this.lerp = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
     this.matrix = this.upload(
@@ -340,7 +340,12 @@ export class TickPipeline {
       colour: [
         { binding: 0, visibility, buffer: { type: 'uniform' as const } },
         { binding: 1, visibility, buffer: { type: 'read-only-storage' as const } },
-        { binding: 2, visibility, texture: {} },
+        // Declared for what an `r32float` view actually is without `float32-filterable`,
+        // which is `unfilterable-float`. The default is `float`, and against this texture
+        // that is rejected where the bind group is built - asynchronously, to an
+        // uncaptured-error handler nothing installs, and not as an exception the open can
+        // catch. `sample_curve` only ever loads from it, so nothing is given up.
+        { binding: 2, visibility, texture: { sampleType: 'unfilterable-float' as const } },
         { binding: 3, visibility, texture: { viewDimension: '3d' as const } },
         { binding: 4, visibility, buffer: { type: 'read-only-storage' as const } },
         { binding: 7, visibility, sampler: {} },
@@ -667,7 +672,7 @@ export class TickPipeline {
     dimension: '2d' | '3d',
     format: GPUTextureFormat,
     bytesPerTexel: number,
-    values: number[],
+    values: Float32Array<ArrayBuffer> | Float16Array<ArrayBuffer>,
   ): GPUTexture {
     const texture = this.device.createTexture({
       size,
@@ -677,7 +682,7 @@ export class TickPipeline {
     });
     this.device.queue.writeTexture(
       { texture },
-      new Float32Array(values),
+      values,
       { bytesPerRow: size[0] * bytesPerTexel, rowsPerImage: size[1] },
       size,
     );

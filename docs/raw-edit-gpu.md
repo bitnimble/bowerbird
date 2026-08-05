@@ -293,6 +293,27 @@ Tiles are not strips: no `carry` rows, no sequential dependency. But the reason
 `halo()` computes a reach (a guided filter of radius r reaches 2r, composed
 three deep, plus the deconvolution) applies unchanged to a tile's overlap.
 
+**A feature is not a limit, and `float32-filterable` is the one with no
+fallback.** A limit clamps; an optional feature is simply absent, and that one is
+absent on every Apple GPU - Metal gates 32-bit float filtering behind
+`MTLDevice.supports32BitFloatFiltering`, true on a few iPad parts and on no
+iPhone. Requiring it refused every RAW on iOS at the open, matched or not, since
+the device is requested before the frame arrives. So the tick requires nothing:
+the chroma map is `rgba16float`, which core WebGPU filters everywhere, and the
+tone curve's `r32float` is declared `unfilterable-float` - `sample_curve` only
+ever loads from it, and the default `float` sample type is rejected against a
+format the device cannot filter, at bind-group creation, asynchronously.
+
+Half precision costs 2^-11 on nodes bounded near 1, measured rather than argued:
+the worst pixel over every colour the lattice spans moves 0.109 deltaE ITP, where
+1.0 is the threshold of visibility, and §6.3's parity mean goes from 0.14 to 0.18
+counts against a 0.5 pin. The corrections multiply chroma differences, so the
+error vanishes on the grey axis where the eye is least forgiving, and quantising
+nodes before interpolating them leaves the surface continuous. The same treatment
+of the tone curve does not: it changes the step between neighbouring levels by
+eleven times the step itself, which is a contour, and is why `sample_curve`
+interpolates by hand.
+
 ### 6.2 wgpu in Rust, not a device in JS
 
 A device in JS with shaders beside it is a second implementation of `finish` in

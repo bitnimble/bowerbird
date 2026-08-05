@@ -72,17 +72,16 @@ describe('tickFeatures', () => {
   const adapter = (features: string[]): GPUAdapter =>
     ({ features: new Set(features) }) as unknown as GPUAdapter;
 
-  // Filtered rather than required, this left the device built without it and the failure to
-  // a validation error the open cannot catch - so the reader was told `live` over a black
-  // canvas, with nothing anywhere saying why.
-  test('refuses an adapter that cannot filter float textures', () => {
-    expect(() => tickFeatures(adapter(['timestamp-query']))).toThrow(/float32-filterable/);
+  // The chroma map is `rgba16float` so that this need not be asked for. Required, it refused
+  // every iPhone at the open - no Apple GPU filters 32-bit float - and asking for it where it
+  // happens to exist would leave the two platforms reading a differently-quantised map.
+  test('never asks for float32-filterable, even where it exists', () => {
+    expect(tickFeatures(adapter(['float32-filterable']))).toEqual([]);
   });
 
   test('asks for the timer only where it exists', () => {
-    expect(tickFeatures(adapter(['float32-filterable']))).toEqual(['float32-filterable']);
+    expect(tickFeatures(adapter([]))).toEqual([]);
     expect(tickFeatures(adapter(['float32-filterable', 'timestamp-query']))).toEqual([
-      'float32-filterable',
       'timestamp-query',
     ]);
   });
