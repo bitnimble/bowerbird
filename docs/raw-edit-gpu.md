@@ -840,7 +840,11 @@ The part worth spelling out is that **the tick path needs no wasm at all**.
    the settle is sized to the stage (§4.1). Tens of milliseconds, against an
    open already measured at ~900ms. The camera match's colour tables go with it
    and are small
-3. Upload, once: `queue.writeTexture` into the resident texture of §6
+3. Upload, once: `queue.writeBuffer` into the resident storage buffer of §6.
+   Written here as `writeTexture` into a texture, which is what it was when this
+   was argued; a texture wanted a fourth component that is a constant 65535 and a
+   second full-frame copy to write it, and nothing samples the frame bilinearly,
+   so it is a packed buffer
 4. Every tick after that: write a uniform of a few dozen bytes, dispatch grade
    to PQ to finish, present. No transfer, no LibRaw, no wasm module in the
    webview at all

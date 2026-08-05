@@ -17,7 +17,7 @@ import type { RawEditStore } from './raw_edit_store';
  *
  * The open happens on the server, natively and on real threads (`edit::prepare`); what
  * crosses is the prepared frame, once. Every slider move after that is a uniform write and
- * a dispatch chain over a texture that never leaves the GPU, so there is no worker, no
+ * a dispatch chain over a buffer that never leaves the GPU, so there is no worker, no
  * `SharedArrayBuffer`, no rayon pool, no encode and no blob (`docs/raw-edit-gpu.md` §6).
  *
  * The drag and the settle are the same call now. `Resolution::Interactive` existed because
