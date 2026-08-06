@@ -365,12 +365,12 @@ In `syncLibrary`:
 3. `present` and `changed` are partitioned by the binned paths before `buildDiff`:
    the live channel gets the rest, the bin channel (§6) gets the binned half.
 
-**Step 2 is the whole of the cost story, and it is one line.** An earlier draft
-subtracted binned paths *after* the scan, which throws the work away having already
-paid for it: `dbByPath` came from `listForSync` alone, so every binned file looked
-new, and a catalogue with 100k binned RAWs would have decoded 100k RAW headers every
-night for ever. Merging the two row sets into the lookup fixes it wherever the
-partition happens, so no ordering rule has to be remembered.
+**Step 2 is the whole of the cost story, and it is one line.** Partitioning *after*
+the scan instead would throw the work away having already paid for it: with
+`dbByPath` built from `listForSync` alone, every binned file looks new, and a
+catalogue with 100k binned RAWs decodes 100k RAW headers every night for ever.
+Merging the two row sets into the lookup fixes that wherever the partition happens,
+so no ordering rule has to be remembered.
 
 **`isPathAllowed`'s bin rule stays where it is** (`scope.ts:59`), and the bin gets
 its own walk instead (§6.1). It is a choke point with six callers, all of which want
@@ -412,10 +412,7 @@ with the binned rows as the database side:
 | `added` | unclaimed under the bin | §6.3 |
 
 Those four branches already exist (`sync_algorithm.ts:81-104`) and already mean
-exactly this. An earlier draft restated them as a bespoke three-arm table and then
-argued for several lines that the middle arm was not redundant - it did not need
-arguing, because it is `reappeared`, which the live channel has had since it was
-written.
+exactly this, so none of it is restated here as rules of its own.
 
 `is_missing` on a binned row is unreachable today, because nothing walks the bin.
 So a photograph whose RAW was deleted out of the Bin folder still appears there with
