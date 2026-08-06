@@ -83,7 +83,10 @@ test('a root-only library is woken by its root and not by its subfolders', async
   expect(calls.flatMap((c) => c ?? [])).toContain('top.arw');
 });
 
-test('the Bin and the data directory never wake a sync', async () => {
+// The data directory is not under the root at all any more (§6), so what is left
+// to prove here is the Bin - and a legacy `.bowerbird` tree, which is skipped as
+// a dotfolder like any other.
+test('the Bin and a legacy .bowerbird tree never wake a sync', async () => {
   mkdirSync(path.join(root, 'Bin', 'Trip'), { recursive: true });
   mkdirSync(path.join(root, '.bowerbird'), { recursive: true });
   await start({});

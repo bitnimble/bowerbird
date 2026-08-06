@@ -65,8 +65,8 @@ describe('scanLibraryTree', () => {
   }));
 
   it('skips excluded dirs (dotfolders, Bin)', withRoot(async (root) => {
-    mkdirSync(path.join(root, '.bowerbird'));
-    writeFileSync(path.join(root, '.bowerbird', 'hidden.arw'), '');
+    mkdirSync(path.join(root, '.cache'));
+    writeFileSync(path.join(root, '.cache', 'hidden.arw'), '');
     mkdirSync(path.join(root, 'Bin'));
     writeFileSync(path.join(root, 'Bin', 'deleted.arw'), '');
     writeFileSync(path.join(root, 'keep.arw'), '');

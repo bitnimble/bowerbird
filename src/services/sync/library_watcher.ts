@@ -210,6 +210,12 @@ export class LibraryWatcher implements LibraryLifecycleListener {
     // watching a tree that only grows costs an inotify handle per directory to
     // learn what that walk is going to read anyway.
     // A library with no bin has nothing to ignore there (§4.1).
+    //
+    // `.bowerbird` is a *legacy* tree, not the data directory: generated files
+    // live outside the root now (§6). The per-event check skips it as a dotfolder
+    // either way, so this only keeps an old rendition tree - as many directories
+    // as the library has folders - from costing an inotify handle apiece to watch
+    // and then discard.
     const bin = getBinPath(library);
     const ignored = [path.join(library.root_path, '.bowerbird'), ...(bin == null ? [] : [bin])];
     for (const folder of scope.excluded) ignored.push(path.join(library.root_path, folder));

@@ -118,7 +118,7 @@ describe('ShootsService.create', () => {
   it('refuses a shoot inside a hidden folder, which the scan never looks at', withRoot(async (root) => {
     const service = new ShootsService(mockShoots(), mockPhotos(), mockLibs(root), mockRules());
     await expect(
-      service.create({ library_id: 'lib', parent_path: '.bowerbird', name: 'Trip', ordering: 'taken_desc' }),
+      service.create({ library_id: 'lib', parent_path: '.cache', name: 'Trip', ordering: 'taken_desc' }),
     ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
   }));
 

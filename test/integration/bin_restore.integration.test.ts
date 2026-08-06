@@ -13,6 +13,7 @@ import { PhotosRepository } from '../../src/services/photos/photos_repository';
 import { PhotosService } from '../../src/services/photos/photos_service';
 import type { ProcessingService } from '../../src/services/processing/processing_service';
 import { ShootsRepository } from '../../src/services/shoots/shoots_repository';
+import { dataPathForLibraryId } from '../../src/utils/paths';
 
 const LIB = '00000000-0000-4000-8000-0000000000ba';
 const SHOOT = '00000000-0000-4000-8000-0000000000bb';
@@ -136,7 +137,10 @@ test('a photo in the library root bins to <root>/Bin, never into the data direct
   await service.delete([LOOSE]);
 
   expect(existsSync(path.join(root, 'Bin', 'loose.arw'))).toBe(true);
-  expect(existsSync(path.join(root, '.bowerbird', 'bin', 'loose.arw'))).toBe(false);
+  // Beside the photographs, not in the tree that goes with the library: the data
+  // directory is deleted wholesale (§6), and a bin inside it would take every
+  // binned RAW with it.
+  expect(existsSync(path.join(dataPathForLibraryId(LIB), 'bin', 'loose.arw'))).toBe(false);
 
   await service.restore([LOOSE]);
   expect(existsSync(path.join(root, 'loose.arw'))).toBe(true);
