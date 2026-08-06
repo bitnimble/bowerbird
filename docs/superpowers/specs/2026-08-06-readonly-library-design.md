@@ -401,11 +401,43 @@ CREATE TABLE sync_locks (
 );
 ```
 
-Acquisition is an `INSERT` whose primary key does the excluding - the same job
-`O_CREAT | O_EXCL` was doing, done by SQLite instead of by the filesystem, and
-inside a transaction with the staleness check so the check and the claim cannot be
-separated. Release is a `DELETE`. `ON DELETE CASCADE` means a library removed
-mid-sync leaves no orphan row.
+`ON DELETE CASCADE` means a library removed mid-sync leaves no orphan row.
+
+**Acquire** is one statement, so there is no check-then-claim window to reason
+about:
+
+```sql
+INSERT INTO sync_locks (library_id, owner, pid, started_at, refreshed_at)
+VALUES (?1, ?2, ?3, ?4, ?4)
+ON CONFLICT(library_id) DO UPDATE SET
+  owner = excluded.owner, pid = excluded.pid,
+  started_at = excluded.started_at, refreshed_at = excluded.refreshed_at
+WHERE sync_locks.owner = excluded.owner        -- our own, from a previous run
+   OR sync_locks.refreshed_at < ?5;            -- the lease has expired
+```
+
+`changes()` is 1 when the lock was taken and 0 when a live holder kept it, which is
+the `SYNC_IN_PROGRESS` case. SQLite's upsert is the compare-and-swap: the row is
+read and written inside one statement, so this needs no `BEGIN IMMEDIATE` and
+cannot lose a race the way a `SELECT` followed by an `INSERT` inside a deferred
+transaction would - both readers there would see a stale lock and one would fail on
+upgrade.
+
+**Refresh**, every 10 seconds while the sync runs:
+
+```sql
+UPDATE sync_locks SET refreshed_at = ?2 WHERE library_id = ?1 AND owner = ?3;
+```
+
+Scoped to `owner` so a stalled heartbeat cannot resurrect a lock somebody else has
+since taken over. `changes() === 0` means exactly that has happened - this process
+was declared dead and another is now syncing the same library - so the sync
+**aborts** rather than carrying on writing rows underneath the new holder. That
+check is the reason the heartbeat is worth having at all, rather than only a
+timestamp nobody reads back.
+
+**Release** is `DELETE FROM sync_locks WHERE library_id = ?1 AND owner = ?2`, also
+owner-scoped, so a `finally` running late cannot delete a successor's lock.
 
 What this deletes: `sync_lock.ts`'s file handling, `SYNC_LOCK_NAME` and
 `deleteSyncLockSync` from `deletions.ts`, the lock's entry in the watcher's ignore
@@ -420,6 +452,41 @@ exclude each other's syncs. Per the paragraph above, that costs duplicated
 scanning and nothing else. Concurrent *file* moves from two instances were never
 covered by this lock - `moveIntoDir`'s `link()`/`COPYFILE_EXCL` claim is what makes
 those safe (`files.ts:7-10`), and it still is.
+
+### 8.2 Two containers sharing /config
+
+This is the configuration the table has to be right for: two Bowerbird containers
+over one library, both mounting the same `/config`, so both open the same SQLite
+file. It works, and it is the case the file lock gets **wrong** today.
+
+**SQLite's own locking is namespace-blind, which is the whole point.** It excludes
+writers with `fcntl` advisory locks, and those live on the inode in the kernel -
+not in a PID namespace, not in a process table. Two containers holding the same
+inode through the same volume contend for the same lock, whatever either one calls
+its own processes. That is exactly the property `pidAlive` lacks and cannot be
+given (§8.1): a number that means one thing in one namespace and something else in
+another. Moving the lock into SQLite is not merely relocating it, it is handing the
+mutual exclusion to something that can actually see both sides.
+
+The pragmas this needs are already set (`connection.ts:10-12`): WAL, which is
+cross-process on one host because both containers mmap the same `-shm` file off
+the shared volume, and `busy_timeout = 5000`, so the loser of a write race waits
+rather than failing. Nothing new to configure.
+
+What the two containers then do, concretely: both watchers see the file change,
+both debounce, one wins the upsert and syncs, the other's `changes()` is 0 and it
+raises `SYNC_IN_PROGRESS`. Its watcher already handles that correctly - it
+re-queues its paths and re-arms (`library_watcher.ts:325-327`), so nothing it
+observed is dropped, it is retried once the lease frees and finds the work already
+done. Their rendition builds are idempotent whether `/data` is shared or not (the
+file is the cache and the builder returns early on one that exists), and two prune
+sweeps deleting the same orphan are both `force: true`.
+
+One clock, because one host. The lease compares timestamps written by whichever
+process wrote them, so two hosts would need their clocks to agree - but two hosts
+sharing `/config` means SQLite over a network filesystem, where WAL's shared memory
+does not work and the database is unsafe regardless of anything in this document.
+That configuration is unsupported, and was before the lock moved.
 
 ### 8.1 Liveness stops depending on the PID
 
@@ -612,6 +679,9 @@ Unit, against the existing service tests:
 - A lock row carrying this process's own `owner` is reclaimed immediately.
 - Two concurrent `syncLibrary` calls: the second throws `SYNC_IN_PROGRESS`, and
   the row is gone afterwards on both the success and the throw path.
+- A refresh whose row has been taken over by another `owner` reports 0 changes and
+  aborts its sync, rather than continuing to write rows under the new holder.
+- A release cannot delete a row another `owner` now holds.
 - Deleting a library mid-sync leaves no `sync_locks` row (the cascade).
 - `getDataPath` resolves under `DATA_DIR` and nowhere near the library root, for a
   writable library as much as a read-only one.
@@ -621,6 +691,15 @@ Unit, against the existing service tests:
 Integration (`test/integration`): a read-only library over a fixture tree with
 the directory permissions actually dropped, so a stray write fails the test
 rather than passing unnoticed. Sync, bin, restore, undo, rate, stack, album.
+
+Also integration, for §8.2: **two processes over one database file**, not two
+`Database` handles in one process. Only a second process exercises what the file
+lock got wrong - `fcntl` locks are per-inode and would be invisible to a test that
+shares a process. Both are pointed at one fixture library and told to sync at once;
+exactly one wins, the loser raises `SYNC_IN_PROGRESS`, and the photo count
+afterwards is the file count rather than twice it. That last assertion is the one
+that matters: double insertion is the corruption the lock exists to prevent, and it
+is the thing a same-process test cannot see.
 
 E2E: one spec adding a read-only library, binning a selection, checking the Bin,
 restoring, and confirming the tree on disk is byte-identical to what it was.
