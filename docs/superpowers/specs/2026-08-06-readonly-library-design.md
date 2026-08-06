@@ -453,41 +453,6 @@ scanning and nothing else. Concurrent *file* moves from two instances were never
 covered by this lock - `moveIntoDir`'s `link()`/`COPYFILE_EXCL` claim is what makes
 those safe (`files.ts:7-10`), and it still is.
 
-### 8.2 Two containers sharing /config
-
-This is the configuration the table has to be right for: two Bowerbird containers
-over one library, both mounting the same `/config`, so both open the same SQLite
-file. It works, and it is the case the file lock gets **wrong** today.
-
-**SQLite's own locking is namespace-blind, which is the whole point.** It excludes
-writers with `fcntl` advisory locks, and those live on the inode in the kernel -
-not in a PID namespace, not in a process table. Two containers holding the same
-inode through the same volume contend for the same lock, whatever either one calls
-its own processes. That is exactly the property `pidAlive` lacks and cannot be
-given (§8.1): a number that means one thing in one namespace and something else in
-another. Moving the lock into SQLite is not merely relocating it, it is handing the
-mutual exclusion to something that can actually see both sides.
-
-The pragmas this needs are already set (`connection.ts:10-12`): WAL, which is
-cross-process on one host because both containers mmap the same `-shm` file off
-the shared volume, and `busy_timeout = 5000`, so the loser of a write race waits
-rather than failing. Nothing new to configure.
-
-What the two containers then do, concretely: both watchers see the file change,
-both debounce, one wins the upsert and syncs, the other's `changes()` is 0 and it
-raises `SYNC_IN_PROGRESS`. Its watcher already handles that correctly - it
-re-queues its paths and re-arms (`library_watcher.ts:325-327`), so nothing it
-observed is dropped, it is retried once the lease frees and finds the work already
-done. Their rendition builds are idempotent whether `/data` is shared or not (the
-file is the cache and the builder returns early on one that exists), and two prune
-sweeps deleting the same orphan are both `force: true`.
-
-One clock, because one host. The lease compares timestamps written by whichever
-process wrote them, so two hosts would need their clocks to agree - but two hosts
-sharing `/config` means SQLite over a network filesystem, where WAL's shared memory
-does not work and the database is unsafe regardless of anything in this document.
-That configuration is unsupported, and was before the lock moved.
-
 ### 8.1 Liveness stops depending on the PID
 
 The staleness check is broken today, independently of anything else in this
@@ -527,6 +492,41 @@ reach for `flock(2)`, which would otherwise be the better answer for a file - th
 kernel releases it when the holder dies, so there is no staleness heuristic at all.
 Neither Node nor Bun exposes it, and FFI to acquire a lock file was always more
 machinery than a 30-second window is worth.
+
+### 8.2 Two containers sharing /config
+
+This is the configuration the table has to be right for: two Bowerbird containers
+over one library, both mounting the same `/config`, so both open the same SQLite
+file. It works, and it is the case the file lock gets **wrong** today.
+
+**SQLite's own locking is namespace-blind, which is the whole point.** It excludes
+writers with `fcntl` advisory locks, and those live on the inode in the kernel -
+not in a PID namespace, not in a process table. Two containers holding the same
+inode through the same volume contend for the same lock, whatever either one calls
+its own processes. That is exactly the property §8.1's PID number lacks and cannot
+be given: it means one thing in one namespace and something else in another. Moving
+the lock into SQLite is not merely relocating it, it is handing the mutual exclusion
+to something that can actually see both sides.
+
+The pragmas this needs are already set (`connection.ts:10-12`): WAL, which is
+cross-process on one host because both containers mmap the same `-shm` file off
+the shared volume, and `busy_timeout = 5000`, so the loser of a write race waits
+rather than failing. Nothing new to configure.
+
+What the two containers then do, concretely: both watchers see the file change,
+both debounce, one wins the upsert and syncs, the other's `changes()` is 0 and it
+raises `SYNC_IN_PROGRESS`. Its watcher already handles that correctly - it
+re-queues its paths and re-arms (`library_watcher.ts:325-327`), so nothing it
+observed is dropped, it is retried once the lease frees and finds the work already
+done. Their rendition builds are idempotent whether `/data` is shared or not (the
+file is the cache and the builder returns early on one that exists), and two prune
+sweeps deleting the same orphan are both `force: true`.
+
+One clock, because one host. The lease compares timestamps written by whichever
+process wrote them, so two hosts would need their clocks to agree - but two hosts
+sharing `/config` means SQLite over a network filesystem, where WAL's shared memory
+does not work and the database is unsafe regardless of anything in this document.
+That configuration is unsupported, and was before the lock moved.
 
 ## 9. Removing a library
 
