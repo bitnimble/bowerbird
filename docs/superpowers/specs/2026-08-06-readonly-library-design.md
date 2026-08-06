@@ -45,7 +45,7 @@ stands alone and each fixes something already wrong:
 - **The bin folder is created with the library, and `bin_name` stops being
   write-once** (§2.3, §2.4): renaming it moves the folder, which is what the rule
   against renaming existed to avoid having to do. Writable libraries only - a
-  read-only library has no bin to rename (§15).
+  read-only library has no bin to rename (§16).
 - **The bin gets its own scan channel** (§5, §6), so a binned file deleted, changed,
   moved or renamed by hand is noticed instead of ignored. This makes `is_missing`
   reachable on a binned row, which it is not today.
@@ -1051,7 +1051,80 @@ Unit, the ones the document's own arguments hang on:
 E2E: adding a read-only library, binning a selection, checking the Bin, restoring,
 and confirming the tree on disk is byte-identical.
 
-## 15. Known limitations
+## 15. Comments that stop being true
+
+This codebase states its invariants in comments, thoroughly enough that they are the
+fastest way to understand it - which makes a comment that quietly becomes false the
+most expensive kind of debt here. Several of the assumptions this design breaks are
+*written down* in the code today, and each must be rewritten in the commit that
+falsifies it, not left for a reader to trip over.
+
+Every one of these is accurate right now. That is the point: they describe a world
+this document ends.
+
+**Falsified by in-place binning (§4)** - both assume a binned row's file is inside
+the bin, which stops being true when nothing moved it there:
+
+- `photos_repository.ts:625-633`, `rewritePathPrefix`: "A soft-deleted row's file is
+  in the bin at the library root and did not move with the folder, so its `file_path`
+  is left exactly as it is." The code matching that comment is the duplicate-creating
+  bug in §6.1.
+- `photos_repository.ts:576-578`, `listUnderFolder`: "the bin is one tree at the
+  library root (§12.3), so a binned photo's `file_path` sits under the bin and its
+  `deleted_from_path` is what says which folder it belongs to." The behaviour survives
+  (for an in-place row the two columns are equal, so the `deleted_from_path` branch
+  still matches), but the stated reason does not.
+- `photos_service.ts:428-438` and `:535-540`, `delete`'s and `restore`'s doc comments,
+  which describe moving the RAW to a Bin as what binning *is*.
+
+`delete`'s comment is **already** wrong on a second count, before this design touches
+it: "the library's sync lock is taken once" describes a lock the method does not take -
+`:447` takes `libraryMutex.run`. Harmless today and actively misleading after §8, where
+"the sync lock" becomes a row and the distinction between the two is the whole of §8's
+argument. Fix it in passing.
+
+**Falsified by the table-driven exclusion (§5)**:
+
+- `photos_repository.ts:564-567`, `getBasicByIds`: a Bin-resident row "must not be
+  movable/settable via these paths (it would escape the Bin while still flagged
+  `is_deleted` and get re-imported as a duplicate)". The filter stays; the re-import
+  hazard it names is exactly what §5 removes, so the justification has to be restated
+  as the shoot-move argument it really is (§7).
+- `sync_algorithm.ts:62-67`, `buildDiff`: "`presentPaths` is every supported file on
+  disk". It becomes every supported file outside the bin, and `dbPhotos` narrows with
+  it - the pairing of those two inputs is the invariant §5 has to keep.
+- `sync_algorithm.ts:124-125`, `detectMoves`: gains the channel tags of §6.1.
+- `scope.ts:39-43`, `isHidden`: cites `.bowerbird` as the case it exists for, which
+  §3 moves out of the root.
+
+**Falsified by the lock becoming a table (§8)**:
+
+- `utils/deletions.ts:8-11`, the module's own contract, and the `SYNC_LOCK_NAME`
+  comment at `:18-20` explaining why the name lives there. `deleteSyncLockSync` goes;
+  `deleteEmptyBinFolder` (§2.3) arrives under the same contract.
+- `sync_service.ts:222-224`: "file lock first keeps sync-vs-sync fail-fast (409),
+  while the mutex makes file-moving mutations queue behind this scan" - the sentence
+  this document leans on to argue where correctness comes from, and which stops
+  describing a file.
+- `sync_service.ts:552-556`, `rebuildStage`: "The sync lock is held only for the claim".
+- `library_mutex.ts:6-10`: "Cross-process would instead need the sync lock file to
+  wait rather than fail" - still the right idea, no longer a file.
+- `library_watcher.ts:206-218`, `ignoredPaths`: the lock entry and its
+  wakes-the-watcher-that-wrote-it rationale go; the bin entry's reasoning changes with
+  §6.6.
+
+**Falsified by the data directory moving (§3)** - `utils/paths.ts:41-43`,
+`utils/deletions.ts:22` and `:48-52`, `libraries_service.ts:24-34`, and
+`library_watcher.ts:346-350`'s `scopeKey` ("Only the parts that decide which paths are
+watched", which loses `dataPath` and gains `binName`). §3.1 already lists the first
+four; the `scopeKey` one belongs with them.
+
+**Falsified by the bin being renameable (§2.4)** - `utils/paths.ts:44-51`,
+`getBinPath`: "Asked at creation and never after" is DESIGN §4.1's phrasing of the same
+rule, and the path helper's own comment explains the bin's name as fixed. It stays "the
+only place the bin's folder name is spelled", which is what makes the rename tractable.
+
+## 16. Known limitations
 
 - No bin folder to open in Finder. A binned photograph is visible in the app and
   untouched on disk, and nowhere else. A read-only library's bin also cannot be
