@@ -10,7 +10,7 @@ import { createDatabase } from '../../src/db/connection';
 import { LATEST_USER_VERSION } from '../../src/db/migrations';
 import { BackupService, ScheduledBackup, findBackup, listBackups } from '../../src/services/maintenance/backup_service';
 import { spaceNeededFor } from '../../src/services/maintenance/backup_worker';
-import { restoreBackup } from '../../src/services/maintenance/restore';
+import { holdAgainstUse, restoreBackup } from '../../src/services/maintenance/restore';
 import { deleteBackupFile } from '../../src/utils/deletions';
 import { backupsDir } from '../../src/utils/paths';
 
@@ -306,13 +306,14 @@ test('restoring puts the catalogue back and keeps the one it displaced', async (
   const { movedAside, version } = await restoreBackup(dbPath, file);
 
   expect(version).toBe(LATEST_USER_VERSION);
-  // Nothing of the old catalogue is left at the path SQLite would derive a WAL
-  // name from. Left behind, it would be replayed over the restored file.
-  expect(existsSync(`${dbPath}-wal`)).toBe(false);
+  // Nothing of the old catalogue is left at any of the paths SQLite would derive a
+  // sidecar name from. Left behind, a `-wal` is replayed over the restored file.
+  for (const suffix of ['-wal', '-shm', '-journal']) expect(existsSync(`${dbPath}${suffix}`)).toBe(false);
   // The work that was in that WAL went with the catalogue it belongs to, so the
-  // displaced copy is complete and the restore stays undoable. (The in-use probe
-  // recovers the WAL into the main file on its way past, so it travels inside the
-  // parked catalogue rather than beside it.)
+  // displaced copy is complete and the restore stays undoable. Reading it back
+  // proves the sidecar travelled: the row lives in the parked `-wal`, not in the
+  // parked main file.
+  expect(existsSync(`${movedAside}-wal`)).toBe(true);
   expect(libraryNames(movedAside!).sort()).toEqual(['holiday', 'later']);
 
   // Reopened the way the server opens it, so the assertion covers what a restart
@@ -672,13 +673,64 @@ test('a catalogue whose own filename carries a date does not date every snapshot
 
 test('rotation never deletes the snapshot it just took', async () => {
   addLibrary(LIB, 'holiday');
-  // The future-stamped one sorts last, so the snapshot taken now sorts *first* -
-  // which is the only arrangement where deleting from the front could reach it.
-  await futureStampedSnapshot();
+  // Two hours of history, then a clock that steps backwards - which is the only
+  // thing that makes the snapshot taken *now* look older than the history it joins,
+  // and so the only arrangement where rotation could reach it.
+  for (const hoursAgo of [3, 2]) {
+    const when = new Date(Date.now() - hoursAgo * 60 * 60 * 1000);
+    const file = path.join(backupsDir(dbPath), `${path.basename(dbPath)}-${when.toISOString().replace(/[:.]/g, '-')}.db`);
+    mkdirSync(backupsDir(dbPath), { recursive: true });
+    createDatabase(file).close();
+  }
 
-  const { path: taken } = await backups.backup(1);
+  const realNow = Date.now;
+  Date.now = () => realNow() - 60 * 60 * 1000;
+  let taken: string;
+  try {
+    taken = (await backups.backup(2)).path;
+  } finally {
+    Date.now = realNow;
+  }
 
   expect(existsSync(taken)).toBe(true);
+});
+
+test('a staging file left by a killed restore is swept by the next one', async () => {
+  addLibrary(LIB, 'holiday');
+  const { path: file } = await backups.backup(7);
+  db.close();
+  // Killed between the vacuum and the rename, this is catalogue-sized and nothing
+  // else names it - the same litter the backup side sweeps for itself.
+  const abandoned = `${dbPath}.restoring-2020-01-01T00-00-00-000Z`;
+  writeFileSync(abandoned, 'half a catalogue');
+
+  await restoreBackup(dbPath, file);
+
+  expect(existsSync(abandoned)).toBe(false);
+  db = createDatabase(dbPath);
+});
+
+test('the in-use lock is still held when the check that took it returns', () => {
+  db.close(); // nothing else holding it, so the lock is this check's to take
+  // The check is worth nothing sampled. Everything after it - vacuuming the
+  // snapshot out, then four renames - takes as long as the catalogue is big, and a
+  // server starting in that window writes through its handle to the inode about to
+  // be parked: reads right, shutdown clean, work gone at the next start.
+  const held = holdAgainstUse(dbPath);
+
+  try {
+    expect(held).not.toBeNull();
+    const other = new Database(dbPath);
+    try {
+      other.exec('PRAGMA busy_timeout = 0;');
+      expect(() => other.exec('BEGIN IMMEDIATE')).toThrow();
+    } finally {
+      other.close();
+    }
+  } finally {
+    held?.close();
+    db = createDatabase(dbPath);
+  }
 });
 
 test('a catalogue that has gone missing is refused rather than silently replaced', async () => {

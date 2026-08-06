@@ -36,8 +36,8 @@ function userVersion(db: Database): number {
 // top, because a guard against filling the disk that leaves no margin is a guard
 // that passes and then fills the disk.
 //
-// Against the backup directory rather than the database's: they can be different
-// volumes, and in the shipped container they are.
+// Against the backup directory rather than the database's, which can be a different
+// volume even though the shipped compose file puts both on `/config`.
 export function spaceNeededFor(mainBytes: number, walBytes: number): number {
   return Math.ceil(Math.max(mainBytes, walBytes) * 1.5);
 }

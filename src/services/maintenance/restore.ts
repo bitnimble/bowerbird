@@ -85,7 +85,7 @@ function checkVersion(db: Database, backupPath: string): number {
 // `restart: unless-stopped` makes that window a likely place for a server to appear,
 // not a theoretical one. The returned connection is closed by the caller, once the
 // swap is done.
-function holdAgainstUse(dbPath: string): Database | null {
+export function holdAgainstUse(dbPath: string): Database | null {
   if (!existsSync(dbPath)) return null;
   let probe: Database;
   try {
