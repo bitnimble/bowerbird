@@ -79,14 +79,15 @@ commit that breaks it rather than discovered later:
   started the next one", and that "The lock is in the `ignore` list now". Both stop
   being true. §5 claims DESIGN §9.8 "stands unamended" - that is right about the
   one-predicate rule and wrong about this paragraph.
-- **DESIGN §10.2**, whose rendition table gives every path as `<data_path>/renditions/…`.
+- **DESIGN §10.1**, whose rendition table gives every path as `<data_path>/renditions/…`.
 - **DESIGN §10.6**, which has three: removing a library reasons about `data_path`
   being "user-supplied" and rescues originals from it (§3.1 deletes that); the sweep's
   "Only `renditions/` and `hdr/` are swept, so the sync lock is untouched" loses its
   point once the lock is a row; and "two libraries may share a data directory" becomes
   impossible once the directory is keyed by library id.
-- **DESIGN §11**'s deletion table, which lists `deleteSyncLockSync(lockPath)` with its
-  basename guard, and gains `deleteEmptyBinFolder` (§2.3).
+- **DESIGN §10.6.1** ("One place that deletes"), whose table lists
+  `deleteSyncLockSync(lockPath)` with its basename guard, and which gains
+  `deleteEmptyBinFolder` (§2.3).
 
 Two of DESIGN's own statements are **already** wrong, independent of this design, and
 should be corrected while the surrounding text is being edited: DESIGN §12.1's "resolve
