@@ -1,16 +1,18 @@
 // Putting a snapshot back (§4.9). Offline, from `scripts/restore-backup.ts`,
 // because the running server holds the file this replaces.
 import { Database } from 'bun:sqlite';
-import { existsSync, realpathSync } from 'node:fs';
+import { existsSync, lstatSync, readlinkSync } from 'node:fs';
 import { rename } from 'node:fs/promises';
 import path from 'node:path';
 import { LATEST_USER_VERSION } from '../../db/migrations';
 import { deleteRestoreStaging } from '../../utils/deletions';
 
-// SQLite derives these names from the database's filename, so a `-wal` belonging
-// to the catalogue being replaced is replayed over the restored file on the next
-// start. They move with the database they belong to.
-const SIDECARS = ['-wal', '-shm'];
+// SQLite derives these names from the database's filename, so one belonging to the
+// catalogue being replaced is replayed over the restored file on the next start.
+// They move with the database they belong to. `-journal` is here for completeness
+// rather than because this app writes one: it is what a rollback-mode SQLite leaves,
+// and a stale one beside the restored file would be replayed the same way.
+const SIDECARS = ['-wal', '-shm', '-journal'];
 
 export interface RestoreResult {
   /** Where the previous catalogue was parked, or null if there was none to park. */
@@ -68,15 +70,29 @@ function checkVersion(db: Database, backupPath: string): number {
 // Exclusive locking rather than a pidfile, because it asks the question that
 // matters - can anyone else be writing to this catalogue - of the database itself,
 // and gets it right for a server in another container sharing the volume.
+//
+// **Only a lock counts.** Every other way this can fail - not a database, a trashed
+// header, a read-only file or directory - says the catalogue is broken or
+// unwritable, which is precisely why somebody is restoring. Refusing on those
+// leaves them no way through at all, told to stop a server that is not running,
+// with the only remaining move being to delete their catalogue by hand.
 function refuseIfInUse(dbPath: string): void {
   if (!existsSync(dbPath)) return;
-  const probe = new Database(dbPath);
+  let probe: Database;
+  try {
+    probe = new Database(dbPath);
+  } catch {
+    return; // nothing can be serving from a file that will not open
+  }
   try {
     probe.exec('PRAGMA busy_timeout = 0;');
+    // Exclusive locking mode rather than the write lock alone: an *idle* server
+    // holds no write lock, and it is still a server.
     probe.exec('PRAGMA locking_mode = EXCLUSIVE;');
     probe.exec('BEGIN IMMEDIATE');
     probe.exec('COMMIT');
-  } catch {
+  } catch (err) {
+    if ((err as { code?: string }).code !== 'SQLITE_BUSY') return;
     throw new Error(`${dbPath} is open in another process. Stop Bowerbird first, or the work it is holding will be lost.`);
   } finally {
     probe.close();
@@ -86,8 +102,17 @@ function refuseIfInUse(dbPath: string): void {
 // A symlinked DB_PATH is a deliberate placement - the catalogue lives on another
 // volume - and writing the restored file at the link's own path silently relocates
 // it, orphaning the real one where nothing will ever look again.
+//
+// `lstat` rather than `existsSync`, which follows the link: a link whose target is
+// missing is exactly when this matters, because a volume that failed to mount is
+// one of the two ways people arrive here. Reading it as "no catalogue" would put
+// the restored file on top of the link and leave the real one unreachable.
 function resolveCatalogue(dbPath: string): string {
-  return existsSync(dbPath) ? realpathSync(dbPath) : path.resolve(dbPath);
+  const link = lstatSync(dbPath, { throwIfNoEntry: false });
+  if (link?.isSymbolicLink() === true) {
+    return path.resolve(path.dirname(dbPath), readlinkSync(dbPath));
+  }
+  return path.resolve(dbPath);
 }
 
 export async function restoreBackup(rawDbPath: string, backupPath: string): Promise<RestoreResult> {
@@ -95,14 +120,15 @@ export async function restoreBackup(rawDbPath: string, backupPath: string): Prom
   const dbPath = resolveCatalogue(rawDbPath);
   if (path.resolve(backupPath) === dbPath) throw new Error('the backup and the catalogue are the same file');
 
-  // Every refusal lands before anything on disk moves.
-  refuseIfInUse(dbPath);
-
   const staged = `${dbPath}.restoring-${new Date().toISOString().replace(/[:.]/g, '-')}`;
   const source = openBackup(backupPath);
   let version: number;
   try {
+    // Before the in-use probe, which opens the catalogue read-write and so may
+    // checkpoint a stale `-wal` into it. Harmless in itself, but a restore that is
+    // then refused for a bad backup must not have touched the live catalogue at all.
     version = checkVersion(source, backupPath);
+    refuseIfInUse(dbPath);
     // `VACUUM INTO` rather than a file copy, for the same reason the backup uses it:
     // a copy takes the main file alone, and a catalogue's committed work can be
     // almost entirely in its `-wal`. Copying one of those restores an empty

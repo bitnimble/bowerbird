@@ -3,7 +3,7 @@
 //   docker exec bowerbird-dev bun test test/integration
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createDatabase } from '../../src/db/connection';
@@ -402,9 +402,12 @@ test('a backup from a newer Bowerbird is refused rather than restored', async ()
   db.close();
 
   await expect(restoreBackup(dbPath, file)).rejects.toThrow(/newer Bowerbird/);
-  // Refused before anything moved: the catalogue is still where the server left it.
+  // Refused before anything moved: the catalogue is still where the server left it,
+  // and no staging copy was left beside it. The staged name carries a stamp, so
+  // this has to match on the prefix rather than on a fixed name.
   expect(existsSync(dbPath)).toBe(true);
-  expect(existsSync(`${dbPath}.restoring`)).toBe(false);
+  expect(readdirSync(dir).filter((name) => name.includes('.restoring'))).toEqual([]);
+  expect(readdirSync(dir).filter((name) => name.includes('.pre-restore'))).toEqual([]);
 
   db = createDatabase(dbPath);
 });
@@ -449,10 +452,50 @@ test('a symlinked catalogue stays on the volume it was put on', async () => {
 
   await restoreBackup(dbPath, file);
 
-  expect(statSync(dbPath).isSymbolicLink === undefined || existsSync(real)).toBe(true);
-  expect(existsSync(real)).toBe(true);
+  // `lstat`, not `stat`: the question is whether DB_PATH is still the link the user
+  // made it, and `stat` follows the link and answers about the target either way.
+  expect(lstatSync(dbPath).isSymbolicLink()).toBe(true);
   expect(libraryNames(real)).toEqual(['holiday']);
   db = createDatabase(dbPath);
+});
+
+test('a symlinked catalogue whose volume is missing is not replaced by a plain file', async () => {
+  // The two ways people arrive at a restore both produce this: the volume failed to
+  // mount, or they deleted the catalogue they thought was broken. Read as "no
+  // catalogue here", the restored file lands on top of the link - so the catalogue
+  // silently moves onto the container's writable layer, is deleted at the next
+  // rebuild, and the real one is orphaned when the volume comes back.
+  const real = path.join(dir, 'volume', 'bowerbird.db');
+  mkdirSync(path.dirname(real), { recursive: true });
+  db.close();
+  const { path: file } = await backups.backup(7);
+  rmSync(dbPath);
+  symlinkSync(real, dbPath);
+  expect(existsSync(dbPath)).toBe(false); // dangling: existsSync follows the link
+
+  await restoreBackup(dbPath, file);
+
+  expect(lstatSync(dbPath).isSymbolicLink()).toBe(true);
+  expect(existsSync(real)).toBe(true);
+
+  rmSync(dbPath);
+  db = createDatabase(dbPath);
+});
+
+test('a catalogue too corrupt to open can still be restored over', async () => {
+  addLibrary(LIB, 'holiday');
+  const { path: file } = await backups.backup(7);
+  db.close();
+  // The reason anyone runs this tool. Refusing here - on the grounds that the probe
+  // for a running server failed - tells them to stop a server that is not running
+  // and leaves deleting their only catalogue by hand as the sole way through.
+  writeFileSync(dbPath, 'the header is gone');
+
+  const { version } = await restoreBackup(dbPath, file);
+
+  expect(version).toBe(LATEST_USER_VERSION);
+  db = createDatabase(dbPath);
+  expect(libraryNames(dbPath)).toEqual(['holiday']);
 });
 
 test('an unreadable backup directory is raised, not reported as having no backups', async () => {
@@ -465,6 +508,10 @@ test('an unreadable backup directory is raised, not reported as having no backup
   // is exactly the moment somebody is looking for one.
   try {
     await expect(listBackups(dbPath)).rejects.toThrow();
+    // ...but it must not take a rescued copy down with it. That path names its file
+    // directly and has no business being refused because a directory it never reads
+    // cannot be listed.
+    expect(await findBackup(dbPath, path.join(dir, 'rescued.db'))).toBe(path.join(dir, 'rescued.db'));
   } finally {
     chmodSync(backupDir, 0o755);
   }
@@ -489,22 +536,55 @@ test('a bare name is never resolved against the working directory', async () => 
   }
 });
 
-test('a snapshot stamped in the future counts as due rather than stopping the schedule', async () => {
-  addLibrary(LIB, 'holiday');
-  const { path: first } = await backups.backup(7);
-  // A clock that was briefly ahead - a VM before NTP settles, a fileserver leading
-  // the client. Read as "not due yet" this stops backups for the length of the
-  // skew, with nothing logged and nothing on screen to see it by.
+// A snapshot a skewed clock stamped in the future, in the name as well as the
+// mtime - which is what actually happens, since both come from the same clock.
+// Named that way it sorts last for ever, so anything that reads "the newest
+// snapshot" off the end of the list keeps finding it.
+async function futureStampedSnapshot(): Promise<string> {
   const ahead = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
-  utimesSync(first, ahead, ahead);
-  expect(await backups.ageOfNewest()).toBeLessThan(0);
+  const file = path.join(
+    backupsDir(dbPath),
+    `${path.basename(dbPath)}-${ahead.toISOString().replace(/[:.]/g, '-')}.db`,
+  );
+  mkdirSync(backupsDir(dbPath), { recursive: true });
+  const seeded = createDatabase(file);
+  seeded.query('INSERT INTO libraries (id, root_path, name) VALUES (?, ?, ?)').run('from-the-future', '/f', 'from-the-future');
+  seeded.close();
+  utimesSync(file, ahead, ahead);
+  return file;
+}
+
+test('a snapshot stamped in the future neither stalls the schedule nor makes it spin', async () => {
+  addLibrary(LIB, 'holiday');
+  const stuck = await futureStampedSnapshot();
+  // Trusting it stalls backups for the length of the skew. Treating it as due is
+  // worse: it stays newest by name for ever, so every hourly check finds itself due
+  // again and rotation grinds a week of history away in hours, logging success each
+  // time. Neither - it is ignored, and the snapshot taken now answers next time.
+  expect(await backups.ageOfNewest()).toBeNull();
 
   const scheduled = new ScheduledBackup(backups, 1, 7);
   scheduled.start();
-  for (let attempt = 0; attempt < 100 && (await listBackups(dbPath)).length < 2; attempt++) await Bun.sleep(20);
+  const taken = await settled();
+  await Bun.sleep(200);
   scheduled.stop();
 
+  expect(taken.length).toBeGreaterThan(0);
+  // One catch-up snapshot beside the stuck one, and no further spinning.
   expect((await listBackups(dbPath)).length).toBe(2);
+  expect(await backups.ageOfNewest()).toBeGreaterThanOrEqual(0);
+  expect(existsSync(stuck)).toBe(true);
+});
+
+test('“latest” is the most recent backup, not one a skewed clock stamped years ahead', async () => {
+  addLibrary(LIB, 'holiday');
+  const stuck = await futureStampedSnapshot();
+  const { path: real } = await backups.backup(7);
+
+  // By name the future one wins for ever, so `bun run restore latest` would hand
+  // back the oldest catalogue in the directory and report success.
+  expect(await findBackup(dbPath, 'latest')).toBe(real);
+  expect(await findBackup(dbPath, 'latest')).not.toBe(stuck);
 });
 
 test('history is not rotated away for a snapshot of a suddenly-empty catalogue', async () => {
@@ -524,6 +604,24 @@ test('history is not rotated away for a snapshot of a suddenly-empty catalogue',
 
   expect(await listBackups(dbPath)).toContain(real.path);
   expect(libraryNames(real.path).length).toBeGreaterThan(200);
+});
+
+test('a catalogue emptied on purpose still rotates, without eating the history', async () => {
+  addLibrary(LIB, 'holiday');
+  for (let i = 0; i < 200; i++) addLibrary(`00000000-0000-4000-8000-${String(i).padStart(12, '0')}`, `lib-${i}`);
+  const real = await backups.backup(3);
+
+  // Removing the last library is a thing people do. Refusing to rotate outright
+  // once that happens would keep every empty snapshot for ever, on the volume
+  // holding the catalogue, with an error logged each time.
+  db.query('DELETE FROM libraries').run();
+  for (let i = 0; i < 6; i++) await backups.backup(3);
+
+  const kept = await listBackups(dbPath);
+  expect(kept).toContain(real.path);
+  // The history is safe and the empty ones rotate among themselves rather than
+  // accumulating one per run for ever.
+  expect(kept.length).toBeLessThanOrEqual(4);
 });
 
 test('a working file from a run that is still going is left alone', async () => {

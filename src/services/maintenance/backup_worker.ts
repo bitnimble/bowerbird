@@ -32,16 +32,21 @@ function userVersion(db: Database): number {
 // What a snapshot costs, and it is not `stat(dbPath).size`: committed work sits in
 // the `-wal` until a checkpoint moves it, and a long-lived reader - which the
 // backup itself is - stops checkpoints advancing. Measured, a 220KB main file
-// beside a 56MB WAL vacuumed to 46MB, 200x what the main file alone suggested. Half
-// again on top, because a guard against filling the disk that leaves no margin is
-// a guard that passes and then fills the disk.
+// beside a 56MB WAL vacuumed to 46MB, 200x what the main file alone suggested.
+//
+// The larger of the two rather than their sum, because a checkpoint-starved WAL is
+// mostly *rewrites of pages already in the main file* - measured 15.7MB beside a
+// 15.7MB main file for a 15.7MB result, where adding them would demand three times
+// what the snapshot actually takes and refuse backups that had room. Half again on
+// top, because a guard against filling the disk that leaves no margin is a guard
+// that passes and then fills the disk.
 //
 // Against the backup directory rather than the database's: they can be different
 // volumes, and in the shipped container they are.
 async function requireSpaceFor(job: BackupJob): Promise<void> {
   const main = await stat(job.dbPath);
   const wal = await stat(`${job.dbPath}-wal`).then((s) => s.size, () => 0);
-  const needed = Math.ceil((main.size + wal) * 1.5);
+  const needed = Math.ceil(Math.max(main.size, wal) * 1.5);
   const { bavail, bsize } = await statfs(path.dirname(job.outPath));
   const free = bavail * bsize;
   if (free < needed) throw new Error(`not enough space: needs ~${needed} bytes, ${free} free`);

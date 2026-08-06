@@ -44,6 +44,27 @@ export async function listBackups(dbPath: string): Promise<string[]> {
     .map((name) => path.join(dir, name));
 }
 
+// The most recent snapshot whose timestamp can be believed, and null if there is
+// none.
+//
+// A snapshot dated in the future is a clock that was wrong, not a backup taken
+// later, and it cannot be allowed to answer "when was the last backup" or "which is
+// the latest". Trusting it stalls the schedule for the length of the skew. Reading
+// it as *due* is worse, and was measured: it keeps its future stamp so it stays
+// newest by name forever, so every hourly check finds itself due again, and a week
+// of history rotates away in eight hours with every run logging success. Ignoring
+// it does neither - the snapshot this run takes is dated now, and answers next time.
+async function newestDatable(files: readonly string[]): Promise<{ file: string; mtimeMs: number } | null> {
+  const now = Date.now();
+  let newest: { file: string; mtimeMs: number } | null = null;
+  for (const file of files) {
+    const mtimeMs = await stat(file).then((s) => s.mtimeMs, () => Number.NaN);
+    if (!(mtimeMs <= now)) continue;
+    if (newest == null || mtimeMs >= newest.mtimeMs) newest = { file, mtimeMs };
+  }
+  return newest;
+}
+
 // Which snapshot a person meant, from `latest` or from a name as `listBackups`
 // prints it.
 //
@@ -54,9 +75,13 @@ export async function listBackups(dbPath: string): Promise<string[]> {
 // downstream can catch - it is intact, and its `user_version` matches. Restoring a
 // copy kept elsewhere still works, by giving a path rather than a name.
 export async function findBackup(dbPath: string, requested: string): Promise<string | undefined> {
-  const backups = await listBackups(dbPath);
-  if (requested === 'latest') return backups.at(-1);
+  // Before the listing: a path names a file directly, and a backup directory that
+  // cannot be read is no reason to refuse a copy rescued from somewhere else.
   if (requested.includes(path.sep) || requested.includes('/')) return requested;
+  const backups = await listBackups(dbPath);
+  // By date rather than by name, so a snapshot a skewed clock stamped years ahead
+  // does not become "latest" forever and hand back the oldest catalogue there is.
+  if (requested === 'latest') return (await newestDatable(backups))?.file ?? backups.at(-1);
   return backups.find((file) => path.basename(file) === requested);
 }
 
@@ -118,15 +143,14 @@ export class BackupService {
   }
 
   /**
-   * How long ago the newest snapshot was taken. Negative if its timestamp is in the
-   * future, which callers must treat as "due" rather than "not yet" (§4.9).
+   * How long ago the last datable snapshot was taken, or null if there is none -
+   * which includes a directory holding nothing but future-stamped ones (§4.9).
    */
   async ageOfNewest(): Promise<number | null> {
-    const newest = (await listBackups(this.dbPath)).at(-1);
-    if (newest == null) return null;
-    // Its mtime rather than the stamp in its name: the two agree, and one of them
-    // is a filename being parsed back into a date.
-    return Date.now() - (await stat(newest)).mtimeMs;
+    // mtime rather than the stamp in the name: the two agree, and one of them is a
+    // filename being parsed back into a date.
+    const newest = await newestDatable(await listBackups(this.dbPath));
+    return newest == null ? null : Date.now() - newest.mtimeMs;
   }
 
   // What a killed process leaves behind. The cleanup on the failure path above only
@@ -205,19 +229,27 @@ export class BackupService {
     // Emptiness rather than a size ratio, because size cannot tell them apart: an
     // empty migrated catalogue is already 225KB of schema, and a real but modest one
     // is only a few times that. Both conditions together, so a genuinely new install
-    // - empty, and no larger history to lose - still rotates normally.
-    const sizes = await Promise.all(others.map((file) => stat(file).then((s) => s.size, () => 0)));
-    const largest = Math.max(0, ...sizes);
+    // - empty, with no larger history to lose - still rotates normally.
+    const sizes = new Map<string, number>();
+    for (const file of others) sizes.set(file, await stat(file).then((s) => s.size, () => 0));
+    const largest = Math.max(0, ...sizes.values());
+
+    // Only the snapshots that are no bigger than this one, which is what makes the
+    // refusal safe to leave in place indefinitely: removing the last library is a
+    // thing people legitimately do, and refusing outright would then accumulate
+    // snapshots for ever. The larger history is preserved, the equally-empty ones
+    // still rotate among themselves.
+    let candidates = others;
     if (snapshot.libraries === 0 && snapshot.bytes < largest) {
-      log.error('this snapshot has no libraries and is smaller than the history it would replace; keeping all of it', {
+      candidates = others.filter((file) => (sizes.get(file) ?? 0) <= snapshot.bytes);
+      log.error('this snapshot has no libraries and is smaller than the history it would replace; that history is being kept', {
         bytes: snapshot.bytes,
         largest,
         db: this.dbPath,
       });
-      return 0;
     }
 
-    const stale = others.slice(0, excess);
+    const stale = candidates.slice(0, Math.min(excess, candidates.length));
     for (const file of stale) await deleteBackupFile(dir, file);
     return stale.length;
   }
@@ -293,11 +325,7 @@ export class ScheduledBackup {
     });
     // Re-read after the await: the setting can have been turned off while it ran.
     if (!(this.everyDays > 0)) return;
-    // A negative age is a snapshot stamped in the future - a clock that was ahead
-    // and got corrected, or a fileserver whose clock leads this one's. Waiting for
-    // the wall clock to catch up would stop backups for as long as the skew, with
-    // nothing logged and nothing to see, so it counts as due.
-    if (age != null && age >= 0 && age < due) return;
+    if (age != null && age < due) return;
     await this.take();
   }
 
