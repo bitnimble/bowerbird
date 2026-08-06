@@ -158,6 +158,15 @@ behind by a failed insert is then refused by the very check above, so the librar
 never be created with that bin name again. Both mkdir-then-commit sequences (creation
 and clearing the flag) remove the directory they made if the commit fails.
 
+That removal is a **deletion**, so it goes through `utils/deletions.ts` like every
+other one: `.oxlintrc.json` bans `rm`/`rmdir`/`unlink` outside that module, and the
+module's own contract is that every deletion "goes through a guard that proves its
+target is not an original". So `deleteEmptyBinFolder(library, target)` lives there,
+refusing anything that is not exactly `getBinPath(library)` and refusing a non-empty
+directory - a plain `rmdir`, which fails while anything is inside it. Both properties
+matter: this runs on an error path, where the thing it is about to delete is a
+directory the app believes it just created and might be wrong about.
+
 Only the bin's **root** is created. Its interior mirrors the folder a photograph came
 from (DESIGN §12.3), so `PhotosService.delete` keeps making `<bin>/A/B/` on demand.
 
@@ -487,6 +496,24 @@ prefix; a bin rename proves nothing about individual files, and §6.2's diff is 
 decides `is_missing`. Copy that statement and flip the flag and every hand-deleted
 binned file is resurrected on every rename.
 
+**And `rewritePathPrefix` itself needs fixing for in-place binning**, which is a
+separate change in the same file. Its comment states the assumption it rests on: "A
+soft-deleted row's file is in the bin at the library root and did not move with the
+folder, so its `file_path` is left exactly as it is." An **in-place** binned row's
+file is not in the bin - it is under the shoot folder that just got renamed, and it
+*did* move with it. So a hand-renamed shoot folder in a read-only library leaves
+those rows with a stale `file_path`: §5 partitions the dead path out of the live
+channel so nothing notices, the file at the new path is unclaimed and imports as a
+**new live photograph**, and the binned row is orphaned pointing at nothing. One
+duplicate per in-place binned photo under any renamed folder.
+
+The rule that replaces the comment's assumption: a binned row's `file_path` follows a
+folder rename when the row's file moved with the folder, which is exactly when the
+row is binned in place (`deleted_from_path = file_path`) - and `deleted_from_path`
+follows in that case too, since both name the same moved file. A bin-resident binned
+row keeps today's behaviour. `is_missing` is still only cleared for rows proven
+present, so the in-place arm does not clear it.
+
 `insertFromSync` also needs widening: it hardcodes `is_deleted = 0`,
 `needs_tile = 1`, `needs_renditions = 1` and takes no `deleted_from_path`
 (`photos_repository.ts:784-793`), and §6.5 needs all four different.
@@ -657,11 +684,32 @@ live diff** (`sync_service.ts:392-443`), so a run that aborts leaves neither hal
 The in-memory rewrites of §6.3 are not deferred to it - the diff has to see matched
 paths.
 
+**Order inside that transaction matters, because two of the writes are
+path-guarded.** §6.3's persisted prefix rewrite runs *first*. `setMissing(photoId,
+expectedFilePath)` only marks a row whose `file_path` still equals the path the scan
+saw, and its comment says why: "if a concurrent move/soft-delete changed `file_path`
+during the (async) scan, the row is no longer missing at that path, so this is a
+no-op" (`photos_repository.ts:890-895`). After a followed rename the scan's paths are
+the *new* ones while the rows still hold the old, so a `setMissing` issued before the
+prefix rewrite matches nothing and **silently does nothing** - a guard designed to
+absorb a race quietly absorbing a correct write instead. The same applies to any
+other path-guarded update the bin channel issues.
+
 A **scoped sync runs no bin channel**: the watcher never reports events inside the bin
 (`library_watcher.ts:217`, kept - watching a tree that only grows costs an inotify
 handle per directory), so a scoped run has no evidence and must not conclude
 `is_missing` on rows it did not look at. Hand-managed bin changes are noticed by the
 nightly full sync. §6.3's detection is the one exception.
+
+**That makes the bin channel depend on a setting the photographer can switch off.**
+`full_sync_at` defaults to `03:00` and `''` disables the daily reconcile entirely
+(`DailySync.start` returns immediately), and it is the only thing that runs a full
+sync unprompted - so with it off, a hand-binned file is never imported, a hand-deleted
+one never marked missing, a renamed bin never followed, and §2.4's `IO_ERROR` remedy
+("run a full sync, then retry") has to be performed by hand. That is acceptable but it
+must be said: the Settings copy for `full_sync_at` names the bin as something the
+nightly run reconciles, so turning it off is an informed choice rather than a silent
+loss of a feature the photographer was told they had.
 
 Counts: §6.2's `is_missing` transitions and re-hashes are `photosModified`, crossings
 and within-bin moves `photosMoved`, §6.5's imports `photosAdded`, and a followed
@@ -684,7 +732,15 @@ becomes `READ_ONLY` instead of an `ensureDir`), and refuse `addPhotos` and
 shoot per folder holding photographs, so most exist before anyone asks.
 
 Albums need no changes: pure membership rows, already accepting the same
-`PhotoTarget` shapes (`albums_presenter.ts:69-74`). Everything else about shoots
+`PhotoTarget` shapes (`albums_presenter.ts:69-74`). One inherited limit is worth
+knowing, since this document makes albums the answer: `getBasicByIds` filters
+`is_deleted = 0` (`photos_repository.ts:564-574`), so a **binned** photograph cannot
+be added to an album. Its comment gives the reason - a Bin-resident row "must not be
+movable/settable via these paths (it would escape the Bin while still flagged
+`is_deleted` and get re-imported as a duplicate)" - which is a shoot-move argument
+that album membership was swept up by. §5 removes the re-import hazard it names, so
+the filter could be narrowed to the shoot paths later; left alone here because
+binning a photograph and then filing it is a rare thing to want. Everything else about shoots
 keeps working, none of it touching disk - renaming, descriptions, banners, ordering,
 deletion with `photos: 'keep'` or `'remove'` (a folder rule and rows, DESIGN §4.7,
 never a file), and mirroring itself.
@@ -910,9 +966,12 @@ no `ensureColumn`, no table rebuild, no data move. `migrations.ts:486`'s
 contradicts the nullable column and goes with it.
 
 In `libraries`: add `read_only`, `bin_dev`, `bin_ino`, `bin_birthtime`; make
-`bin_name` nullable; delete `data_path`. Plus `sync_locks` (§8). A `sync_locks` row
-at startup means "stale within 30 seconds", not "syncing" - a crashed process leaves
-its row and expiry clears it, so startup deletes nothing.
+`bin_name` nullable; delete `data_path`. Plus `sync_locks` (§8), which goes **after
+`libraries`** in `SCHEMA` - the file's opening comment is "Tables are ordered so every
+REFERENCES target already exists", and `sync_locks` references `libraries(id)` with
+`PRAGMA foreign_keys = ON` (`connection.ts:11`). A `sync_locks` row at startup means
+"stale within 30 seconds", not "syncing" - a crashed process leaves its row and expiry
+clears it, so startup deletes nothing.
 
 The ten incremental migrations already in the file carry the same dead weight, but
 folding them into `SCHEMA` is a separate change and not this document's call.
@@ -965,6 +1024,13 @@ Unit, the ones the document's own arguments hang on:
   reports is still followed and imports no duplicates.
 - A create whose insert fails leaves no bin folder behind. `ensureBinFolder`
   re-records the identity when it recreates a deleted bin.
+- **A hand-renamed shoot folder in a read-only library leaves its in-place binned rows
+  reachable**: one row afterwards, not a live duplicate plus an orphan. This is
+  `rewritePathPrefix`'s stale-`file_path` bug (§6.1) and nothing else in the suite
+  covers it, because it needs a *shoot* rename over a library whose binned rows sit
+  outside any bin.
+- A followed bin rename that also marks a row missing does both, rather than the
+  `setMissing` guard swallowing the second write (§6.6's ordering).
 - Two acquires without a release between do not both succeed, whatever process they
   come from. A 31-second-stale row is reclaimed, a 5-second one is not. A release
   cannot delete another owner's row. An apply whose owner changed rolls back and
