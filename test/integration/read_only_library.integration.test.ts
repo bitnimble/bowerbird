@@ -16,6 +16,8 @@ import type { ProcessingService } from '../../src/services/processing/processing
 import { FolderRulesRepository } from '../../src/services/shoots/folder_rules_repository';
 import { ShootsRepository } from '../../src/services/shoots/shoots_repository';
 import { ShootsService } from '../../src/services/shoots/shoots_service';
+import { StacksRepository } from '../../src/services/stacks/stacks_repository';
+import { StacksService } from '../../src/services/stacks/stacks_service';
 import { SyncService } from '../../src/services/sync/sync_service';
 import { SyncLocksRepository } from '../../src/services/sync/sync_locks_repository';
 import { extractMetadata } from '../../src/services/processing/metadata';
@@ -30,6 +32,7 @@ let sync: SyncService;
 let service: PhotosService;
 let shootsService: ShootsService;
 let albumsService: AlbumsService;
+let stacksService: StacksService;
 
 const abs = (rel: string) => path.join(root, rel);
 
@@ -80,6 +83,7 @@ beforeEach(async () => {
   } as unknown as ProcessingService);
   shootsService = new ShootsService(shoots, photos, libraries, new FolderRulesRepository(db));
   albumsService = new AlbumsService(albums, photos);
+  stacksService = new StacksService(new StacksRepository(db), photos, libraries);
 
   await sync.syncLibrary(LIB);
   // Only after the import, so the scan could read the tree: from here the app
@@ -117,11 +121,21 @@ test('everything the catalogue owns still works, and the tree is byte-identical 
   expect(photos.isBinned(first!)).toBe(false);
   expect(readdirSync(abs('Trip'))).toEqual(['a.arw']);
 
-  // Ratings, triage, notes and albums are rows, so none of them is in question.
+  // Ratings, triage, notes, albums and stacks are rows, so none of them is in
+  // question - which is the whole claim: what a read-only library gives up is
+  // short, and none of the catalogue's own work is in it.
   photos.update(second!, { rating: 4, triage: 'picked', notes: 'keep' });
   const album = albumsService.create({ name: 'Keepers', ordering: 'taken_asc' });
   albumsService.addPhotos(album.id, [second!]);
   expect(new AlbumsRepository(db).getAlbumIdsForPhoto(second!)).toEqual([album.id]);
+
+  const stack = stacksService.create([first!, second!]);
+  expect(
+    stacksService
+      .photosOf(stack.id)
+      .map((p) => p.id)
+      .sort(),
+  ).toEqual([first!, second!].sort());
 
   // A second sync sees exactly what the first left.
   const status = await sync.syncLibrary(LIB);

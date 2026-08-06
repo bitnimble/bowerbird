@@ -415,6 +415,65 @@ test('a binned file whose stat has not changed is never opened', async () => {
   expect(opened).toEqual([]);
 });
 
+// Both writes are path-guarded, and they disagree about which path: after a
+// followed rename the scan's paths are the new ones while the rows still hold the
+// old, so a `setMissing` issued before the prefix rewrite matches nothing and
+// silently does nothing - a guard written to absorb a race quietly absorbing a
+// correct write.
+test('a followed bin rename that also loses a file does both, not just the rename', async () => {
+  makeLibrary();
+  copyFileSync(FIXTURE, abs('a.arw'));
+  copyFileSync(FIXTURE, abs('b.arw'));
+  await sync.syncLibrary(LIB);
+  const kept = rows().find((r) => r.file_path === 'a.arw')!.id;
+  const lost = rows().find((r) => r.file_path === 'b.arw')!.id;
+  await service.delete([kept, lost]);
+
+  // Renamed and emptied of one frame in the same window.
+  renameSync(abs('Bin'), abs('Rubbish'));
+  unlinkSync(abs('Rubbish/b.arw'));
+  await sync.syncLibrary(LIB);
+
+  expect(libraries.getById(LIB)!.bin_name).toBe('Rubbish');
+  expect(rows().find((r) => r.id === kept)).toMatchObject({ file_path: 'Rubbish/a.arw', is_missing: 0 });
+  expect(rows().find((r) => r.id === lost)).toMatchObject({ file_path: 'Rubbish/b.arw', is_missing: 1 });
+});
+
+// A Finder rename of a root-level folder *is* delivered by the watcher, so the
+// detection runs on a scoped sync even though the bin's walk and diff do not -
+// without it the bin's files are unclaimed live additions and every binned RAW
+// gets a second, live row.
+test('a bin rename the watcher reports is followed on a scoped sync', async () => {
+  makeLibrary();
+  copyFileSync(FIXTURE, abs('a.arw'));
+  await sync.syncLibrary(LIB);
+  await service.delete([only().id]);
+
+  renameSync(abs('Bin'), abs('Rubbish'));
+  await sync.syncLibrary(LIB, ['Rubbish']);
+
+  expect(libraries.getById(LIB)!.bin_name).toBe('Rubbish');
+  expect(only()).toMatchObject({ file_path: 'Rubbish/a.arw', is_deleted: 1, is_missing: 0 });
+});
+
+// The identity has to be re-recorded when the folder is remade, or the next
+// rename of it can never be followed - and the freed inode is the likeliest to
+// be handed to something else.
+test('recreating a deleted bin records the new folder identity', async () => {
+  makeLibrary();
+  copyFileSync(FIXTURE, abs('a.arw'));
+  await sync.syncLibrary(LIB);
+  const before = libraries.getBinIdentity(LIB)!;
+
+  rmSync(abs('Bin'), { recursive: true });
+  await sync.syncLibrary(LIB);
+
+  expect(existsSync(abs('Bin'))).toBe(true);
+  const after = libraries.getBinIdentity(LIB)!;
+  expect(after.ino).toBe(statSync(abs('Bin')).ino);
+  expect(after.ino).not.toBe(before.ino);
+});
+
 // The watcher never reports events inside the bin, so a scoped run has no
 // evidence and must not conclude `is_missing` on rows it did not look at.
 test('a scoped sync touches no binned row', async () => {

@@ -146,6 +146,17 @@ test('a photo in the library root bins to <root>/Bin, never into the data direct
   expect(existsSync(path.join(root, 'loose.arw'))).toBe(true);
 });
 
+// "No move" is not "no validation". Without the existence check the row would go
+// live with `is_missing` cleared and nothing behind it, and the renditions make
+// the grid look fine while every original 404s.
+test('restoring a photo whose file has gone raises IO_ERROR rather than going live', async () => {
+  await service.delete([PHOTO]);
+  rmSync(path.join(root, 'Bin', 'Trip', 'a.arw'));
+
+  await expect(service.restore([PHOTO])).rejects.toMatchObject({ code: 'IO_ERROR' });
+  expect(photoRow().is_deleted).toBe(1);
+});
+
 test('restoring a photo that is not deleted is a no-op', async () => {
   await service.restore([PHOTO]);
   expect(photoRow().file_path).toBe('Trip/a.arw');

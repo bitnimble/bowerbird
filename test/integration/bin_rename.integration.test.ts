@@ -114,6 +114,29 @@ test('a request that both sets read_only and renames the bin is refused before e
   expect(existsSync(abs('Bin'))).toBe(true);
 });
 
+// A library flipped to read-only and back holds both kinds of binned row. The
+// prefix rewrite is scoped to the ones actually under the bin, so the in-place
+// ones - whose files are out among the photographs - must not be dragged into it.
+test('renaming the bin leaves a formerly-read-only library\'s in-place rows alone', async () => {
+  makeLibrary('Bin');
+  const IN_PLACE = '00000000-0000-4000-8000-0000000000e3';
+  mkdirSync(abs('Trip'), { recursive: true });
+  writeFileSync(abs('Trip/b.arw'), 'RAW');
+  db.query(
+    `INSERT INTO photos (id, library_id, file_path, deleted_from_path, width, height, date_added, is_deleted, needs_tile, needs_renditions)
+     VALUES (?, ?, 'Trip/b.arw', 'Trip/b.arw', 100, 100, '2026-01-01T00:00:00.000Z', 1, 0, 0)`,
+  ).run(IN_PLACE, LIB);
+
+  await service.update(LIB, { bin_name: 'Rubbish' });
+
+  // The bin-resident row moved with the folder; the in-place one did not move at
+  // all, and its file is still where the photographer left it.
+  expect(photoRow()).toEqual({ file_path: 'Rubbish/Trip/a.arw', deleted_from_path: 'Trip/a.arw' });
+  const inPlace = db.query('SELECT file_path, deleted_from_path FROM photos WHERE id = ?').get(IN_PLACE);
+  expect(inPlace).toEqual({ file_path: 'Trip/b.arw', deleted_from_path: 'Trip/b.arw' });
+  expect(existsSync(abs('Trip/b.arw'))).toBe(true);
+});
+
 // Setting the flag keeps the bin: the RAWs the app already put there are still
 // its own, and the bin channel goes on reconciling the folder by hand.
 test('setting read_only keeps the bin folder and moves nothing', async () => {
