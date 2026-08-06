@@ -47,11 +47,14 @@ export function getRenditionPath(library: Library, photoId: string, rendition: R
 // was binned from: `A/B/c.arw` bins to `<bin>/A/B/c.arw` (§12.3). `relFolder` is
 // that folder, and empty for a photo binned from the root.
 //
+// Null when the library has no bin, which is what a library born read-only is:
+// nothing on disk can record a binning, so `is_deleted` is the only truth (§2).
+//
 // The only place the bin's folder name is spelled: it is per library (§12.3) and
 // the scan skips it by name, so a second spelling anywhere is a bin the scan
-// walks straight back into.
-export function getBinPath(library: Library, relFolder = ''): string {
-  return path.join(library.root_path, library.bin_name, relFolder);
+// walks straight back into. That is also what makes renaming it tractable (§2.4).
+export function getBinPath(library: Pick<Library, 'root_path' | 'bin_name'>, relFolder = ''): string | null {
+  return library.bin_name == null ? null : path.join(library.root_path, library.bin_name, relFolder);
 }
 
 // Absolute path to a photo's original RAW, given its root-relative file_path.

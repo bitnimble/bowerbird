@@ -1,8 +1,13 @@
-// One process, one sync, so the two-process lease test has something to race
-// against itself: `fcntl` locks are per-inode and invisible to two Database
-// handles in one process, so the contention §8 is about cannot be staged
-// in-process. Prints `ok` or the AppError code, nothing else.
-import { mkdirSync, readdirSync, writeFileSync } from 'node:fs';
+// Two roles for the two-process lease test (§8), because a same-process test
+// cannot stage what it is about: `libraryMutex` is process-global, so in one
+// process it is the mutex and not the lease that would be doing the excluding.
+//
+//   hold  - takes the lease directly, announces it, holds it, releases it
+//   sync  - waits for that announcement, then syncs twice: once while the lease
+//           is held, once after it is gone
+//
+// Prints one line per attempt, nothing else.
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { createDatabase } from '../../../src/db/connection';
 import { AlbumsRepository } from '../../../src/services/albums/albums_repository';
@@ -15,43 +20,45 @@ import { SyncService } from '../../../src/services/sync/sync_service';
 import { extractMetadata } from '../../../src/services/processing/metadata';
 import { AppError } from '../../../src/errors';
 
-const [dbPath, libraryId, barrier, id] = process.argv.slice(2) as [string, string, string, string];
-
-// A barrier rather than a wall-clock instant: `bun run` plus this module's own
-// native loading is seconds on a cold cache, which is long enough for one process
-// to finish a whole sync before the other has started.
-mkdirSync(barrier, { recursive: true });
-writeFileSync(path.join(barrier, id), '');
-for (let i = 0; i < 600 && readdirSync(barrier).length < 2; i++) await Bun.sleep(50);
+const [role, dbPath, libraryId, signals] = process.argv.slice(2) as ['hold' | 'sync', string, string, string];
+const held = path.join(signals, 'held');
+const released = path.join(signals, 'released');
 
 const db = createDatabase(dbPath);
-const sync = new SyncService(
-  new PhotosRepository(db),
-  new LibrariesRepository(db),
-  new AlbumsRepository(db),
-  new ShootsRepository(db),
-  new FolderRulesRepository(db),
-  new SyncLocksRepository(db),
-  { processUnprocessed() {} },
-  extractMetadata,
-);
+const locks = new SyncLocksRepository(db);
 
-// Repeated for a fixed window rather than a fixed count: a sync of a small
-// fixture holds the lease for a few milliseconds, so two processes released from
-// a barrier can run a whole count of them past each other. A window both are
-// certainly inside makes the collision structural rather than lucky.
-const until = Date.now() + 3_000;
-let ok = 0;
-let busy = 0;
-let unexpected = '';
-while (Date.now() < until) {
+const outcome = async (attempt: () => Promise<unknown>): Promise<string> => {
   try {
-    await sync.syncLibrary(libraryId);
-    ok++;
+    await attempt();
+    return 'ok';
   } catch (err) {
-    if (err instanceof AppError && err.code === 'SYNC_IN_PROGRESS') busy++;
-    else unexpected ||= String(err);
+    return err instanceof AppError ? err.code : `unexpected: ${String(err)}`;
   }
+};
+
+if (role === 'hold') {
+  mkdirSync(signals, { recursive: true });
+  console.log(locks.acquire(libraryId, 'holder') ? 'held' : 'could not take the lease');
+  writeFileSync(held, '');
+  // Long enough for the other process to have started, synced and reported.
+  await Bun.sleep(3_000);
+  locks.release(libraryId, 'holder');
+  writeFileSync(released, '');
+} else {
+  const sync = new SyncService(
+    new PhotosRepository(db),
+    new LibrariesRepository(db),
+    new AlbumsRepository(db),
+    new ShootsRepository(db),
+    new FolderRulesRepository(db),
+    locks,
+    { processUnprocessed() {} },
+    extractMetadata,
+  );
+  for (let i = 0; i < 600 && !existsSync(held); i++) await Bun.sleep(20);
+  console.log(`while held: ${await outcome(() => sync.syncLibrary(libraryId))}`);
+  for (let i = 0; i < 600 && !existsSync(released); i++) await Bun.sleep(20);
+  console.log(`once free: ${await outcome(() => sync.syncLibrary(libraryId))}`);
 }
+
 db.close();
-console.log(unexpected === '' ? `ok=${ok} busy=${busy}` : `unexpected: ${unexpected}`);

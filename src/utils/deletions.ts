@@ -2,7 +2,8 @@ import { existsSync } from 'node:fs';
 import { rm, rmdir, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { AppError } from '../errors';
-import { containsPath } from './paths';
+import type { Library } from '../schemas/libraries';
+import { containsPath, getBinPath } from './paths';
 import { findOriginalsAnywhere, isSupportedFile } from './scan';
 
 // The only module allowed to remove anything from disk: the `no-restricted-imports`
@@ -51,6 +52,22 @@ export async function deleteDataDirectory(dataPath: string): Promise<void> {
     throw new AppError('IO_ERROR', `refusing to delete ${dataPath}: it still holds ${strays.length} original file(s)`);
   }
   await rm(dataPath, { recursive: true, force: true });
+}
+
+// The bin folder a failed library create (or a failed flag clear) left behind,
+// which the "a folder of that name already exists" refusal would otherwise make
+// permanent: the library could never be created with that bin name again.
+//
+// Both guards matter, because this runs on an error path where the thing it is
+// about to delete is a directory the app believes it just created and might be
+// wrong about: it must be exactly this library's bin, and `rmdir` fails while
+// anything at all is inside it.
+export async function deleteEmptyBinFolder(library: Pick<Library, 'root_path' | 'bin_name'>, target: string): Promise<void> {
+  const bin = getBinPath(library);
+  if (bin == null || path.resolve(target) !== path.resolve(bin)) {
+    throw new AppError('IO_ERROR', `refusing to remove ${target}: not this library's bin folder`);
+  }
+  await rmdir(target);
 }
 
 // The source half of a move: `movedTo` already holds the bytes (a hard link to

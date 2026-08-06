@@ -40,6 +40,7 @@ beforeAll(() => {
     id: LIB,
     root_path: root,
     bin_name: 'Bin',
+    read_only: false,
     name: 'lib',
     ordering: 'taken_desc',
     rendition_source: 'render',

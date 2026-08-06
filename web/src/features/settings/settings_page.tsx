@@ -238,8 +238,56 @@ const FolderSettings = observer(function FolderSettings({ library }: { library: 
         />
       </SettingRow>
 
+      <SettingRow
+        label="Don't change anything in this folder"
+        hint="The app writes nothing under the library root: no bin folder, no shoot folders, and a binned photograph stays exactly where it is. Ratings, albums and stacks are unaffected."
+      >
+        <input
+          type="checkbox"
+          aria-label="Don't change anything in this folder"
+          checked={library.read_only}
+          onChange={(e) => void libraries.setReadOnly(library.id, e.currentTarget.checked, library.bin_name ?? 'Bin')}
+        />
+      </SettingRow>
+
+      <BinNameField library={library} />
       <FolderRuleList library={library} />
     </div>
+  );
+});
+
+// Renaming the bin moves the folder, which is why this can exist at all: the
+// setting on its own would strand every already-binned RAW in a folder the scan
+// walks straight back in.
+const BinNameField = observer(function BinNameField({ library }: { library: Library }): JSX.Element {
+  const { libraries } = usePresenters();
+  const [draft, setDraft] = useState(library.bin_name ?? '');
+  useEffect(() => setDraft(library.bin_name ?? ''), [library.bin_name]);
+
+  function commit(): void {
+    const next = draft.trim();
+    if (next === '' || next === library.bin_name) {
+      setDraft(library.bin_name ?? '');
+      return;
+    }
+    void libraries.setBinName(library.id, next);
+  }
+
+  return (
+    <SettingRow
+      label="Bin folder name"
+      hint="Deleted photographs are moved into a folder of this name, beside the photographs they came from. Renaming it here moves the folder on disk."
+      disabledReason={library.read_only ? 'This library is read-only, so it has no bin folder.' : undefined}
+    >
+      <TextField
+        label="Bin folder name"
+        value={draft}
+        disabled={library.read_only}
+        onChange={setDraft}
+        onBlur={commit}
+        onKeyDown={(e) => e.key === 'Enter' && commit()}
+      />
+    </SettingRow>
   );
 });
 
@@ -778,7 +826,7 @@ const AppSettings = observer(function AppSettings(): JSX.Element | null {
           field="full_sync_at"
           label="Daily full scan at"
           placeholder="03:00"
-          hint="Local time as HH:MM, or empty to turn it off. A full scan catches anything the watcher missed, and it locks the library while it runs, so pick a quiet hour."
+          hint="Local time as HH:MM, or empty to turn it off. A full scan catches anything the watcher missed, and it is the only thing that reconciles the Bin folder against the catalogue. It locks the library while it runs, so pick a quiet hour."
         />
       </div>
 

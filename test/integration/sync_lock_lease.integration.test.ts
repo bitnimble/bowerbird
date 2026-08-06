@@ -40,28 +40,29 @@ beforeEach(() => {
 
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-async function syncInOwnProcess(id: string): Promise<string> {
-  const barrier = path.join(dir, 'barrier');
-  const proc = Bun.spawn(['bun', 'run', RUNNER, dbPath, LIB, barrier, id], { stdout: 'pipe', stderr: 'pipe' });
+async function run(role: 'hold' | 'sync'): Promise<string[]> {
+  const proc = Bun.spawn(['bun', 'run', RUNNER, role, dbPath, LIB, path.join(dir, 'signals')], {
+    stdout: 'pipe',
+    stderr: 'pipe',
+  });
   const out = await new Response(proc.stdout).text();
   const err = await new Response(proc.stderr).text();
   await proc.exited;
-  if (err.trim() !== '') console.error(`child ${id} stderr: ${err}`);
-  return out.trim().split('\n').at(-1) ?? '';
+  if (err.trim() !== '') console.error(`${role} stderr: ${err}`);
+  return out.trim().split('\n');
 }
 
 test(
-  'two processes syncing one library: whoever is second is told a sync is running',
+  'a lease held by another process refuses the sync, and lets it through once released',
   async () => {
-    const results = await Promise.all([syncInOwnProcess('a'), syncInOwnProcess('b')]);
-    for (const result of results) expect(result).toMatch(/^ok=\d+ busy=\d+$/);
+    const [holder, syncer] = await Promise.all([run('hold'), run('sync')]);
 
-    // Neither process can see the other's `libraryMutex`, so the only thing that
-    // can have refused a run is the lease.
-    const refused = results.reduce((total, r) => total + Number(/busy=(\d+)/.exec(r)![1]), 0);
-    expect(refused).toBeGreaterThan(0);
+    expect(holder).toEqual(['held']);
+    // Nothing else can have refused it: `libraryMutex` is process-global, so the
+    // two processes cannot see each other's.
+    expect(syncer).toEqual(['while held: SYNC_IN_PROGRESS', 'once free: ok']);
 
-    // The point of the exclusion: no run imported the same tree a second time.
+    // And the refused run imported nothing, so the tree is in the catalogue once.
     const db = createDatabase(dbPath);
     const { count } = db.query('SELECT COUNT(*) AS count FROM photos').get() as { count: number };
     db.close();

@@ -70,6 +70,11 @@ export const BulkBar = observer(function BulkBar({ removeFrom }: Props): JSX.Ele
   // own count carries none there: the stacks in the rows this client never held
   // stand for a number only the server knows.
   const binLabel = count < 2 ? 'Move to Bin' : store.allSelected ? 'Move all to Bin' : `Move ${count} to Bin`;
+  // A read-only library's shoot moves are refused by the server, and so is a
+  // restore out of a bin it still holds from before the flag was set.
+  const library = store.sourceLibrary;
+  const readOnly = library?.read_only === true;
+  const binMovesAreRefused = readOnly && library?.bin_name != null;
 
   return (
     <div className="bulkbar">
@@ -145,13 +150,24 @@ export const BulkBar = observer(function BulkBar({ removeFrom }: Props): JSX.Ele
       )}
 
       {inBin ? (
-        <Button variant="primary" disabled={none} onClick={() => void photos.restoreSelected()}>
+        <Button
+          variant="primary"
+          // Still visible rather than hidden: the reader is looking at the Bin,
+          // and an action that is simply absent there reads as a page that has
+          // lost its point.
+          disabled={none || binMovesAreRefused}
+          title={binMovesAreRefused ? 'This library is read-only; clear that setting before restoring from its bin folder.' : undefined}
+          onClick={() => void photos.restoreSelected()}
+        >
           <RotateCcw size={ICON} />
           Restore to original location
         </Button>
       ) : (
         <>
-          {shoots.shoots.length > 0 && (
+          {/* A shoot is a folder, so putting a photograph in one is a file move -
+              which a read-only library does not do. An album is the grouping that
+              needs no write. */}
+          {shoots.shoots.length > 0 && !readOnly && (
             <CheckMenu
               disabled={none}
               // One action, not a set of boxes to tick, so the menu closes behind

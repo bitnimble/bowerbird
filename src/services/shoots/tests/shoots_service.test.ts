@@ -48,7 +48,7 @@ function mockPhotos(over: Partial<PhotosRepository> = {}): PhotosRepository {
   } as unknown as PhotosRepository;
 }
 function library(root: string): Library {
-  return { id: 'lib', root_path: root, bin_name: 'Bin', name: 'lib', ordering: 'taken_desc',
+  return { id: 'lib', root_path: root, bin_name: 'Bin', read_only: false, name: 'lib', ordering: 'taken_desc',
   rendition_source: 'embedded' as const,
   rendition_hdr: false,
   include_subfolders: true, mirror_shoots: true, auto_stack: true, auto_stack_similarity: 0.78, auto_stack_window_seconds: 60, last_synced_at: null, photo_count: 0 };

@@ -10,13 +10,14 @@ import { containsPath, toLibraryRelative } from './paths';
 // listing the files would be handing over the catalogue's contents to answer it.
 
 /** Anywhere on the server, in absolute paths. */
-export async function browseAbsolute(dir: string): Promise<BrowseResponse> {
+export async function browseAbsolute(dir: string, writable?: (dir: string) => boolean): Promise<BrowseResponse> {
   const names = await directoryNames(dir);
   const parent = path.dirname(dir);
   return {
     path: dir,
     parent: parent === dir ? null : parent,
     directories: names.map((name) => ({ name, path: path.join(dir, name) })),
+    writable: writable?.(dir),
   };
 }
 

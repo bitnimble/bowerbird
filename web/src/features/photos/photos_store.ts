@@ -1,5 +1,5 @@
 import { computed, observable } from 'mobx';
-import type { Ordering, PhotoDetail, PhotoSummary, Rendition, Triage, ViewerRendition } from '../../api/client';
+import type { Library, Ordering, PhotoDetail, PhotoSummary, Rendition, Triage, ViewerRendition } from '../../api/client';
 import type { LibrariesStore } from '../libraries/libraries_store';
 import type { AppSettingsStore } from '../settings/app_settings_store';
 import { type Span, visibleRows } from '../../ui/virtual_rows';
@@ -490,6 +490,15 @@ export class PhotosStore {
 
   @computed get isBin(): boolean {
     return this.source?.kind === 'bin';
+  }
+
+  // The library the open collection belongs to, which is what decides whether the
+  // actions that move files are offered at all (§12). A shoot or an album names
+  // no library of its own, so its rows answer for it.
+  @computed get sourceLibrary(): Library | null {
+    const source = this.source;
+    const libraryId = source != null && 'libraryId' in source ? source.libraryId : this.rows.get(0)?.library_id;
+    return this.libraries.byId.get(libraryId ?? '') ?? null;
   }
 
   // The shell reads this rather than detail?.library_id. As a computed it only

@@ -38,6 +38,7 @@ export const AddLibraryDialog = observer(function AddLibraryDialog({
   const [name, setName] = useState('');
   const [nameTouched, setNameTouched] = useState(false);
   const [binName, setBinName] = useState('Bin');
+  const [readOnly, setReadOnly] = useState(false);
   const [ordering, setOrdering] = useState<Ordering>('taken_asc');
   const [includeSubfolders, setIncludeSubfolders] = useState(true);
   const [mirrorShoots, setMirrorShoots] = useState(true);
@@ -52,6 +53,7 @@ export const AddLibraryDialog = observer(function AddLibraryDialog({
     setName('');
     setNameTouched(false);
     setBinName('Bin');
+    setReadOnly(false);
     setOrdering('taken_asc');
     setIncludeSubfolders(true);
     setMirrorShoots(true);
@@ -80,13 +82,18 @@ export const AddLibraryDialog = observer(function AddLibraryDialog({
   const bin = binName.trim();
   const listing = browser.store.listing;
   const binTaken = bin !== '' && listing?.path === root && listing.directories.some((directory) => directory.name === bin);
+  // A folder the server cannot write in can only be added read-only, so the box
+  // is ticked and locked for it rather than letting the create fail.
+  const unwritable = listing?.path === root && listing.writable === false;
+  const readOnlyLibrary = readOnly || unwritable;
 
   async function submit(): Promise<void> {
     setSaving(true);
     const created = await libraries.create({
       root_path: root,
       name: name.trim(),
-      bin_name: bin,
+      read_only: readOnlyLibrary,
+      bin_name: readOnlyLibrary ? null : bin,
       ordering,
       include_subfolders: includeSubfolders,
       mirror_shoots: mirrorShoots,
@@ -130,16 +137,35 @@ export const AddLibraryDialog = observer(function AddLibraryDialog({
         </div>
 
         <div className="field">
-          <Text variant="label" as="span">
-            Bin folder name
-          </Text>
-          <TextField grow label="Bin folder name" value={binName} onChange={setBinName} invalid={binTaken} />
-          <Text variant="mono" as="p" className={binTaken ? 'field__error' : undefined}>
-            {binTaken
-              ? `${root} already has a folder called "${bin}". Pick another name: the library never scans this folder, so everything already inside it would be left out.`
-              : 'Deleted photographs are moved into a folder of this name, beside the photographs they came from. It is never scanned.'}
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={readOnlyLibrary}
+              disabled={unwritable}
+              onChange={(e) => setReadOnly(e.currentTarget.checked)}
+            />
+            Don&apos;t change anything in this folder
+          </label>
+          <Text variant="mono" as="p">
+            {unwritable
+              ? 'The server cannot write in this folder, so the library can only be added this way.'
+              : 'Ratings, albums, stacks and the Bin all still work. What the app will not do is move, rename or delete a file: a binned photograph stays exactly where it is.'}
           </Text>
         </div>
+
+        {!readOnlyLibrary && (
+          <div className="field">
+            <Text variant="label" as="span">
+              Bin folder name
+            </Text>
+            <TextField grow label="Bin folder name" value={binName} onChange={setBinName} invalid={binTaken} />
+            <Text variant="mono" as="p" className={binTaken ? 'field__error' : undefined}>
+              {binTaken
+                ? `${root} already has a folder called "${bin}". Pick another name: the library never scans this folder, so everything already inside it would be left out.`
+                : 'Deleted photographs are moved into a folder of this name, beside the photographs they came from. It is never scanned.'}
+            </Text>
+          </div>
+        )}
 
         <div className="field">
           <Text variant="label" as="span">
@@ -179,7 +205,9 @@ export const AddLibraryDialog = observer(function AddLibraryDialog({
           <Button onClick={() => onOpenChange(false)}>Cancel</Button>
           <Button
             variant="primary"
-            disabled={root === '' || name.trim() === '' || bin === '' || binTaken || saving}
+            // The bin name is not part of the answer for a read-only library, so
+            // it must not be part of the guard either - Add would never enable.
+            disabled={root === '' || name.trim() === '' || (!readOnlyLibrary && (bin === '' || binTaken)) || saving}
             onClick={() => void submit()}
           >
             Add library

@@ -2,10 +2,18 @@ import type { Database } from 'bun:sqlite';
 import type { Ordering, RenditionSource } from '../../schemas/common';
 import type { Library } from '../../schemas/libraries';
 
+/** The bin folder's identity, which is not on `Library` (§2). */
+export interface BinIdentity {
+  dev: number | null;
+  ino: number | null;
+  birthtime: number | null;
+}
+
 interface LibraryRow {
   id: string;
   root_path: string;
-  bin_name: string;
+  bin_name: string | null;
+  read_only: number;
   name: string;
   ordering: string;
   rendition_source: string;
@@ -21,7 +29,7 @@ interface LibraryRow {
 
 // photo_count excludes binned photos: it answers "how big is this library", and
 // the Bin has its own count in the UI.
-const SELECT = `SELECT l.id, l.root_path, l.bin_name, l.name, l.ordering, l.rendition_source, l.rendition_hdr,
+const SELECT = `SELECT l.id, l.root_path, l.bin_name, l.read_only, l.name, l.ordering, l.rendition_source, l.rendition_hdr,
   l.include_subfolders, l.mirror_shoots, l.auto_stack, l.auto_stack_similarity, l.auto_stack_window_seconds, l.last_synced_at,
   (SELECT COUNT(*) FROM photos p WHERE p.library_id = l.id AND p.is_deleted = 0) AS photo_count
   FROM libraries l`;
@@ -32,22 +40,27 @@ export class LibrariesRepository {
   insert(
     library: Pick<
       Library,
-      'id' | 'root_path' | 'bin_name' | 'name' | 'ordering' | 'include_subfolders' | 'mirror_shoots'
-    >,
+      'id' | 'root_path' | 'bin_name' | 'read_only' | 'name' | 'ordering' | 'include_subfolders' | 'mirror_shoots'
+    > & { identity?: BinIdentity },
   ): void {
     this.db
       .query(
-        `INSERT INTO libraries (id, root_path, bin_name, name, ordering, include_subfolders, mirror_shoots)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO libraries (id, root_path, bin_name, read_only, name, ordering, include_subfolders, mirror_shoots,
+           bin_dev, bin_ino, bin_birthtime)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         library.id,
         library.root_path,
         library.bin_name,
+        library.read_only ? 1 : 0,
         library.name,
         library.ordering,
         library.include_subfolders ? 1 : 0,
         library.mirror_shoots ? 1 : 0,
+        library.identity?.dev ?? null,
+        library.identity?.ino ?? null,
+        library.identity?.birthtime ?? null,
       );
   }
 
@@ -102,6 +115,29 @@ export class LibrariesRepository {
     return this.db.query('UPDATE libraries SET auto_stack_window_seconds = ? WHERE id = ?').run(seconds, id).changes > 0;
   }
 
+  setReadOnly(id: string, readOnly: boolean): boolean {
+    return this.db.query('UPDATE libraries SET read_only = ? WHERE id = ?').run(readOnly ? 1 : 0, id).changes > 0;
+  }
+
+  setBinName(id: string, binName: string | null): boolean {
+    return this.db.query('UPDATE libraries SET bin_name = ? WHERE id = ?').run(binName, id).changes > 0;
+  }
+
+  // Read and written apart from `Library`, mirroring the shoots' folder identity
+  // (`shoots_repository.ts`): on the row it would leak into every API response.
+  getBinIdentity(id: string): BinIdentity | null {
+    const row = this.db.query('SELECT bin_dev, bin_ino, bin_birthtime FROM libraries WHERE id = ?').get(id) as
+      | { bin_dev: number | null; bin_ino: number | null; bin_birthtime: number | null }
+      | null;
+    return row == null ? null : { dev: row.bin_dev, ino: row.bin_ino, birthtime: row.bin_birthtime };
+  }
+
+  setBinIdentity(id: string, identity: BinIdentity): void {
+    this.db
+      .query('UPDATE libraries SET bin_dev = ?, bin_ino = ?, bin_birthtime = ? WHERE id = ?')
+      .run(identity.dev, identity.ino, identity.birthtime, id);
+  }
+
   // Stamped when a sync finishes, so the UI can say how stale the catalogue is
   // even after a restart (the in-memory status does not survive one, §9.6).
   setLastSyncedAt(id: string, iso: string): void {
@@ -118,6 +154,7 @@ function mapRow(row: LibraryRow): Library {
     id: row.id,
     root_path: row.root_path,
     bin_name: row.bin_name,
+    read_only: row.read_only === 1,
     name: row.name,
     ordering: row.ordering as Ordering,
     rendition_source: row.rendition_source as RenditionSource,

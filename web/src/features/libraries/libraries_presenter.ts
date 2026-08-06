@@ -94,6 +94,20 @@ export class LibrariesPresenter {
     await this.update(libraryId, { mirror_shoots });
   }
 
+  // Whether the app may write under the library root at all. Clearing it on a
+  // library that has never had a bin needs one named in the same request, since
+  // that is a folder this is about to make.
+  async setReadOnly(libraryId: string, read_only: boolean, bin_name?: string): Promise<void> {
+    await this.update(libraryId, read_only ? { read_only } : { read_only, bin_name });
+  }
+
+  // Renames the folder on disk as well as the setting: changing one without the
+  // other would strand every already-binned RAW in a folder the scan walks back in.
+  async setBinName(libraryId: string, bin_name: string): Promise<void> {
+    if (bin_name.trim() === '') return;
+    await this.update(libraryId, { bin_name: bin_name.trim() });
+  }
+
   async loadFolderRules(libraryId: string): Promise<void> {
     try {
       const rules = await api.listFolderRules(libraryId);

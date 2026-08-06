@@ -10,8 +10,8 @@ import type { Library } from '../schemas/libraries';
 export interface LibraryScope {
   rootPath: string;
   includeSubfolders: boolean;
-  /** The library's bin folder, skipped along with everything under it (§12.3). */
-  binName: string;
+  /** The library's bin folder, skipped along with everything under it (§12.3). Null when it has none (§2.5). */
+  binName: string | null;
   /** Root-relative folder paths carrying an `excluded` rule (§4.7). */
   excluded: ReadonlySet<string>;
 }
@@ -50,7 +50,7 @@ export function isPathAllowed(scope: LibraryScope, relPath: string): boolean {
   // than matched at every depth because that is the only place a bin is ever made
   // (§12.3): a folder of the user's own called `Bin` further down is theirs, and
   // excluding it by name would drop its photographs from the import in silence.
-  if (segments[0] === scope.binName) return false;
+  if (scope.binName != null && segments[0] === scope.binName) return false;
 
   // Excluded is subtree-wide: a folder that is never walked has no children to
   // consider, so an ancestor's rule answers for everything beneath it.

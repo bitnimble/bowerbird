@@ -16,17 +16,26 @@ export interface DiskFile {
   metadata: FileMetadata;
 }
 
+// Which walk an entry came from, and so which set of rows it is about: the live
+// tree against the live rows, the bin against the binned ones (§6). Carried on
+// the entries rather than inferred from the path, because an in-place binned row
+// is `is_deleted = 1` with its file *outside* the bin, which position cannot
+// tell from a hand-restore.
+export type Channel = 'live' | 'bin';
+
 export interface RemovedEntry {
   photoId: string;
   filePath: string;
   fileHash: string | null;
   wasMissing: boolean;
+  channel: Channel;
 }
 
 export interface AddedEntry {
   filePath: string;
   fileHash: string;
   metadata: FileMetadata;
+  channel: Channel;
 }
 
 export interface ModifiedEntry {
@@ -36,6 +45,19 @@ export interface ModifiedEntry {
   newHash: string;
   metadata: FileMetadata;
   wasMissing: boolean;
+  channel: Channel;
+}
+
+/**
+ * A move whose halves landed in different channels: the file entered or left the
+ * bin by hand. `within` is a move inside the bin, which is structurally the same
+ * question and equally not evidence about a live shoot folder (§6.4).
+ */
+export interface Crossing {
+  photoId: string;
+  oldFilePath: string;
+  newFilePath: string;
+  direction: 'in' | 'out' | 'within';
 }
 
 export interface LibraryDiff {
@@ -53,14 +75,18 @@ export interface MoveEntry {
 }
 
 export interface MoveResult {
-  moves: MoveEntry[];
+  moves: MoveEntry[]; // live-to-live only, so shoot relocation can read them
+  crossings: Crossing[]; // §6.4
   added: AddedEntry[]; // leftover additions (new photos)
   removed: RemovedEntry[]; // leftover removals (mark is_missing)
   modified: ModifiedEntry[]; // applied in place
 }
 
-// Phase 1 diff (DESIGN §9.1). `presentPaths` is every supported file on disk
-// (cheap: readdir + stat). `changed` is only the files that are new or whose
+// Phase 1 diff (DESIGN §9.1). `presentPaths` is every supported file this
+// channel's walk found (cheap: readdir + stat) - the library minus the bin for
+// the live channel, the bin alone for the bin one - and `dbPhotos` narrows with
+// it. Pairing those two inputs is the invariant §5 has to keep: a path claimed
+// by a binned row is not the live channel's business. `changed` is only the files that are new or whose
 // stat changed, i.e. the ones actually opened + re-hashed; unchanged files are
 // omitted from `changed` and only appear in `presentPaths`, so they are never
 // opened. Already-missing records still on disk reappear in `removed` so a
@@ -70,6 +96,7 @@ export function buildDiff(
   presentPaths: ReadonlySet<string>,
   changed: readonly DiskFile[],
   failedPaths: ReadonlySet<string> = new Set(),
+  channel: Channel = 'live',
 ): LibraryDiff {
   const changedByPath = new Map(changed.map((f) => [f.filePath, f]));
   const dbByPath = new Map(dbPhotos.map((p) => [p.file_path, p]));
@@ -80,7 +107,7 @@ export function buildDiff(
 
   for (const db of dbPhotos) {
     if (!presentPaths.has(db.file_path)) {
-      removed.push({ photoId: db.id, filePath: db.file_path, fileHash: db.file_hash, wasMissing: db.is_missing });
+      removed.push({ photoId: db.id, filePath: db.file_path, fileHash: db.file_hash, wasMissing: db.is_missing, channel });
       continue;
     }
     // Present but unreadable (stat ok, extract threw): we never confirmed its
@@ -96,6 +123,7 @@ export function buildDiff(
         newHash: change.hash,
         metadata: change.metadata,
         wasMissing: db.is_missing,
+        channel,
       });
     } else if (db.is_missing) {
       // present at its path, unchanged (or re-hashed identical): reappearance.
@@ -105,7 +133,7 @@ export function buildDiff(
 
   const added: AddedEntry[] = changed
     .filter((f) => !dbByPath.has(f.filePath))
-    .map((f) => ({ filePath: f.filePath, fileHash: f.hash, metadata: f.metadata }));
+    .map((f) => ({ filePath: f.filePath, fileHash: f.hash, metadata: f.metadata, channel }));
 
   return { removed, added, modified, reappeared };
 }
@@ -121,8 +149,17 @@ function groupByHash<T extends { fileHash: string | null }>(entries: readonly T[
   return map;
 }
 
+const CROSSING: Record<string, Crossing['direction']> = { 'live>bin': 'in', 'bin>live': 'out', 'bin>bin': 'within' };
+
 // Phase 2 move detection (DESIGN §9.3). `isInAlbum` biases which duplicates are
 // kept as moves (preserving album membership) when removals outnumber additions.
+//
+// Called **once** over both channels' diffs concatenated, because a file that
+// entered or left the bin by hand is a removal in one and an addition in the
+// other, and neither half can be paired by a run that can only see one of them.
+// A pair whose halves disagree on channel becomes a `Crossing` rather than a
+// `MoveEntry`: `detectShootRelocations` reads `moves`, and a binned file's
+// movement is not evidence about a live shoot folder.
 export function detectMoves(diff: LibraryDiff, isInAlbum: (photoId: string) => boolean): MoveResult {
   const addedByHash = groupByHash(diff.added);
   const removedByHash = groupByHash(diff.removed);
@@ -130,13 +167,18 @@ export function detectMoves(diff: LibraryDiff, isInAlbum: (photoId: string) => b
   // A modified file's old hash reappearing as an addition is the relocated
   // original (§9.3): reserve ONE such addition per modified file (it becomes a new
   // photo, not a move source), but leave any other same-hash additions available
-  // to pair as moves with their own removed counterparts.
+  // to pair as moves with their own removed counterparts. Scoped to the
+  // modification's own channel, or a bin-side modification consumes a live
+  // addition (§6.1).
   for (const m of diff.modified) {
     if (m.oldHash == null) continue;
-    addedByHash.get(m.oldHash)?.shift();
+    const list = addedByHash.get(m.oldHash);
+    const at = list?.findIndex((a) => a.channel === m.channel) ?? -1;
+    if (at >= 0) list!.splice(at, 1);
   }
 
   const moves: MoveEntry[] = [];
+  const crossings: Crossing[] = [];
   const usedAdded = new Set<AddedEntry>();
   const usedRemoved = new Set<RemovedEntry>();
 
@@ -144,22 +186,37 @@ export function detectMoves(diff: LibraryDiff, isInAlbum: (photoId: string) => b
     const addedList = addedByHash.get(hash);
     if (!addedList || addedList.length === 0) continue;
 
-    // Album members first, so the excess (kept as removals) are non-album photos.
-    const orderedRemoved = [...removedList].sort(
-      (a, b) => Number(isInAlbum(b.photoId)) - Number(isInAlbum(a.photoId)),
-    );
-    const pairs = Math.min(orderedRemoved.length, addedList.length);
-    for (let i = 0; i < pairs; i++) {
-      const r = orderedRemoved[i]!;
-      const a = addedList[i]!;
-      moves.push({ photoId: r.photoId, oldFilePath: r.filePath, newFilePath: a.filePath, fileHash: hash });
+    // Channel first, then album membership. Today's sort was album membership
+    // alone, which let a binned album member outrank a live non-album removal and
+    // take its addition - the swallow §6.4 promises could not happen, on the most
+    // ordinary input.
+    const pair = (r: RemovedEntry, a: AddedEntry): void => {
       usedRemoved.add(r);
       usedAdded.add(a);
+      const direction = CROSSING[`${r.channel}>${a.channel}`];
+      if (direction == null) moves.push({ photoId: r.photoId, oldFilePath: r.filePath, newFilePath: a.filePath, fileHash: hash });
+      else crossings.push({ photoId: r.photoId, oldFilePath: r.filePath, newFilePath: a.filePath, direction });
+    };
+
+    // Album members first, so the excess (kept as removals) are non-album photos.
+    const free = (list: readonly RemovedEntry[]): RemovedEntry[] =>
+      list.filter((r) => !usedRemoved.has(r)).sort((a, b) => Number(isInAlbum(b.photoId)) - Number(isInAlbum(a.photoId)));
+
+    for (const channel of ['live', 'bin'] as const) {
+      const removals = free(removedList.filter((r) => r.channel === channel));
+      const additions = addedList.filter((a) => a.channel === channel && !usedAdded.has(a));
+      for (let i = 0; i < Math.min(removals.length, additions.length); i++) pair(removals[i]!, additions[i]!);
     }
+    // Whatever is left can only pair across the channels, which is what a hand
+    // binning or a hand restore looks like.
+    const removals = free(removedList);
+    const additions = addedList.filter((a) => !usedAdded.has(a));
+    for (let i = 0; i < Math.min(removals.length, additions.length); i++) pair(removals[i]!, additions[i]!);
   }
 
   return {
     moves,
+    crossings,
     added: diff.added.filter((a) => !usedAdded.has(a)),
     removed: diff.removed.filter((r) => !usedRemoved.has(r)),
     modified: diff.modified,

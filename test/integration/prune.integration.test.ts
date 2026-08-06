@@ -105,7 +105,7 @@ test('prune is a no-op when nothing is orphaned', async () => {
 });
 
 test('removing a library takes its data directory but not the photographs', async () => {
-  const service = new LibrariesService(libraries);
+  const service = new LibrariesService(libraries, photos);
   seedFile('renditions/grid', `${LIVE}.avif`);
   const rawPhoto = path.join(root, 'DSC00001.ARW');
   writeFileSync(rawPhoto, 'raw');
@@ -124,7 +124,7 @@ test('removing a library takes its data directory but not the photographs', asyn
 test('a data directory holding an original is left alone', async () => {
   const stray = seedFile('renditions/grid', 'DSC00001.ARW');
 
-  await new LibrariesService(libraries).delete(LIB);
+  await new LibrariesService(libraries, photos).delete(LIB);
 
   expect(existsSync(stray)).toBe(true);
 });

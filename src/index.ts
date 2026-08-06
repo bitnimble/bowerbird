@@ -66,7 +66,7 @@ const syncLocksRepo = new SyncLocksRepository(db);
 
 const processingService = new ProcessingService(photosRepo, settingsRepo);
 
-const librariesService = new LibrariesService(librariesRepo);
+const librariesService = new LibrariesService(librariesRepo, photosRepo);
 const photosService = new PhotosService(photosRepo, albumsRepo, shootsRepo, librariesRepo, processingService);
 const albumsService = new AlbumsService(albumsRepo, photosRepo);
 const shootsService = new ShootsService(shootsRepo, photosRepo, librariesRepo, folderRulesRepo);

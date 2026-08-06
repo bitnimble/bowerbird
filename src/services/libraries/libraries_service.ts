@@ -1,4 +1,5 @@
-import { existsSync, statSync } from 'node:fs';
+import { accessSync, constants, existsSync, statSync } from 'node:fs';
+import { rename } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { AppError } from '../../errors';
@@ -6,11 +7,14 @@ import { config } from '../../config';
 import { isUniqueViolation } from '../../db/constraints';
 import { Logger } from '../../logger';
 import { DEFAULT_LIBRARY_SETTINGS, type CreateLibraryRequest, type Library, type UpdateLibraryRequest } from '../../schemas/libraries';
-import { deleteDataDirectory } from '../../utils/deletions';
+import { deleteDataDirectory, deleteEmptyBinFolder } from '../../utils/deletions';
 import { ensureDir } from '../../utils/files';
 import { inferredLibraryName } from '../../utils/library_name';
-import { containsPath, getDataPath } from '../../utils/paths';
+import { containsPath, getBinPath, getDataPath } from '../../utils/paths';
 import { renditionDirs } from '../processing/renditions';
+import type { PhotosRepository } from '../photos/photos_repository';
+import { libraryMutex } from '../sync/library_mutex';
+import { ensureBinFolder } from './bin_folder';
 import type { LibrariesRepository } from './libraries_repository';
 
 const log = new Logger('libraries');
@@ -51,10 +55,27 @@ export function assertNoDataDirectoryOverlap(rootPath: string): void {
   }
 }
 
+// One mechanism, and it writes nothing: a real write test would put a file in a
+// folder the photographer may have asked us never to touch (§2.1). `access` can
+// be fooled by an exotic ACL, but a root where it lies is the same case as a
+// volume remounted read-only later, which already surfaces as an `IO_ERROR` from
+// the write that fails.
+export function isWritable(dir: string): boolean {
+  try {
+    accessSync(dir, constants.W_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export class LibrariesService {
   private readonly listeners: LibraryLifecycleListener[] = [];
 
-  constructor(private readonly repo: LibrariesRepository) {}
+  constructor(
+    private readonly repo: LibrariesRepository,
+    private readonly photos: PhotosRepository,
+  ) {}
 
   addLifecycleListener(listener: LibraryLifecycleListener): void {
     this.listeners.push(listener);
@@ -72,21 +93,31 @@ export class LibrariesService {
     } catch (err) {
       throw new AppError('VALIDATION_ERROR', (err as Error).message);
     }
+    // Refused rather than silently upgraded: the client supplied a `bin_name`
+    // assuming the root was writable, so it asked for something this root cannot
+    // do (§2.1).
+    if (!request.read_only && !isWritable(request.root_path)) {
+      throw new AppError('READ_ONLY', `${request.root_path} is not writable; add it as a read-only library`);
+    }
+    // A bin is a folder the app makes under the root, which is exactly what the
+    // flag forbids.
+    const binName = request.read_only ? null : request.bin_name;
     // The scan skips whatever is at this path sight unseen (§12.3), so adopting a
     // folder the user already keeps there would drop everything inside from the
     // import without saying so. Asked for a different name instead, which is why
     // the name is a field on the create form at all.
-    if (existsSync(path.join(request.root_path, request.bin_name))) {
+    if (binName != null && existsSync(path.join(request.root_path, binName))) {
       throw new AppError(
         'VALIDATION_ERROR',
-        `a folder named "${request.bin_name}" already exists at ${request.root_path}: choose another bin folder name, or the photographs inside it would never be imported`,
+        `a folder named "${binName}" already exists at ${request.root_path}: choose another bin folder name, or the photographs inside it would never be imported`,
       );
     }
 
     const library: Library = {
       id: randomUUID(),
       root_path: request.root_path,
-      bin_name: request.bin_name,
+      bin_name: binName,
+      read_only: request.read_only,
       name: request.name == null || request.name === '' ? inferredLibraryName(request.root_path) : request.name,
       ordering: request.ordering,
       ...DEFAULT_LIBRARY_SETTINGS,
@@ -103,17 +134,41 @@ export class LibrariesService {
     const dataPath = getDataPath(library);
     for (const dir of renditionDirs()) await ensureDir(path.join(dataPath, 'renditions', dir));
 
+    // The bin exists from the moment the library does (§2.3), in the order
+    // `ShootsService.create` uses: made, stat'ed, then the row inserted.
+    const bin = binName == null ? null : await this.makeBinFolder(library);
+
     try {
-      this.repo.insert(library);
+      this.repo.insert({ ...library, identity: bin?.identity });
     } catch (err) {
+      // A bin left behind by a failed insert is then refused by the check above,
+      // so the library could never be created with that bin name again.
+      if (bin != null) {
+        await deleteEmptyBinFolder(library, bin.path).catch((e: unknown) =>
+          log.error('could not remove the bin folder a failed create left behind', { path: bin.path, err: e }),
+        );
+      }
       // getByRootPath above catches the common case; a concurrent create with the
       // same root_path can still pass it before either commits and hit UNIQUE here.
       if (isUniqueViolation(err)) throw new AppError('CONFLICT', `library root already registered: ${request.root_path}`);
       throw err;
     }
-    log.info('library created', { library: library.id, root: library.root_path, data: dataPath });
+    log.info('library created', { library: library.id, root: library.root_path, data: dataPath, readOnly: library.read_only });
     for (const listener of this.listeners) listener.onLibraryCreated(library);
     return library;
+  }
+
+  // Creation's own bin step, which cannot go through `ensureBinFolder`: the row
+  // does not exist yet, so there is nothing to write the identity to. The
+  // identity rides into the INSERT instead.
+  private async makeBinFolder(library: Library): Promise<{ path: string; identity: { dev: number | null; ino: number | null; birthtime: number | null } }> {
+    const bin = getBinPath(library)!;
+    await ensureDir(bin);
+    const stats = statSync(bin, { throwIfNoEntry: false });
+    return {
+      path: bin,
+      identity: { dev: stats?.dev ?? null, ino: stats?.ino ?? null, birthtime: stats?.birthtimeMs ?? null },
+    };
   }
 
   get(libraryId: string): Library {
@@ -130,9 +185,15 @@ export class LibrariesService {
   // field left out keeps its stored value. Changing a rendition setting does not
   // touch existing photos - it is the default for what gets built next, and for
   // an explicit rebuild (§10.2).
-  update(libraryId: string, updates: UpdateLibraryRequest): Library {
+  async update(libraryId: string, updates: UpdateLibraryRequest): Promise<Library> {
     const current = this.repo.getById(libraryId);
     if (current == null) throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
+    // Both of these touch the tree, so both go first and under the mutex, before
+    // anything that only writes a column.
+    if (updates.read_only != null && updates.read_only !== current.read_only) {
+      await this.setReadOnly(current, updates.read_only, updates.bin_name);
+    }
+    if (updates.bin_name != null) await this.renameBin(this.get(libraryId), updates.bin_name);
     if (updates.name != null) this.repo.setName(libraryId, updates.name);
     if (updates.ordering != null) this.repo.setOrdering(libraryId, updates.ordering);
     if (updates.rendition_source != null) this.repo.setRenditionSource(libraryId, updates.rendition_source);
@@ -149,10 +210,115 @@ export class LibrariesService {
     if (updates.auto_stack_similarity != null) this.repo.setAutoStackSimilarity(libraryId, updates.auto_stack_similarity);
     if (updates.auto_stack_window_seconds != null) this.repo.setAutoStackWindow(libraryId, updates.auto_stack_window_seconds);
     const updated = this.get(libraryId);
-    // The watcher holds a scope built from these, so an excluded folder would
-    // otherwise keep waking syncs until a restart.
+    // The watcher holds a scope built from these, so an excluded folder - or a
+    // renamed bin, which it would otherwise keep in its ignore list under the old
+    // name and then watch under the new one (§2.4) - would keep waking syncs
+    // until a restart.
     for (const listener of this.listeners) listener.onLibraryUpdated?.(updated);
     return updated;
+  }
+
+  // **Setting it** keeps `bin_name` and moves nothing: new binnings are in place
+  // from that point (§4), and the bin channel goes on reconciling the folder that
+  // is already there, so the photographer can manage it by hand.
+  //
+  // **Clearing it** on a library with no bin needs one named in the same request,
+  // and makes the folder exactly as creation does. A flipped library already has
+  // both, so clearing its flag creates nothing and re-stats nothing - and the
+  // "a folder of that name already exists" refusal does not apply to it, since a
+  // library that already owns that folder is not colliding with anything.
+  private async setReadOnly(library: Library, readOnly: boolean, binName: string | undefined): Promise<void> {
+    if (readOnly) {
+      this.repo.setReadOnly(library.id, true);
+      return;
+    }
+    if (!isWritable(library.root_path)) {
+      throw new AppError('READ_ONLY', `${library.root_path} is still not writable`);
+    }
+    if (library.bin_name != null) {
+      this.repo.setReadOnly(library.id, false);
+      return;
+    }
+    if (binName == null) {
+      throw new AppError('VALIDATION_ERROR', 'clearing read_only needs a bin_name: the library has no bin folder yet');
+    }
+    if (existsSync(path.join(library.root_path, binName))) {
+      throw new AppError('CONFLICT', `a folder named "${binName}" already exists at ${library.root_path}`);
+    }
+
+    await libraryMutex.run(library.id, async () => {
+      this.repo.setBinName(library.id, binName);
+      this.repo.setReadOnly(library.id, false);
+      try {
+        await ensureBinFolder(this.get(library.id), this.repo);
+      } catch (err) {
+        this.repo.setBinName(library.id, null);
+        this.repo.setReadOnly(library.id, true);
+        throw err;
+      }
+    });
+  }
+
+  // Renaming the bin **moves the folder**. DESIGN §4.1 refused this because it
+  // would "strand every already-binned RAW in a folder the scan would then walk
+  // straight back in" - an argument against changing the setting *alone*.
+  // Changing it and moving the folder together strands nothing.
+  private async renameBin(library: Library, binName: string): Promise<void> {
+    if (library.bin_name === binName) return; // a no-op, not a rename
+    if (library.read_only) {
+      // First, so a read-only library never sees CONFLICT.
+      throw new AppError('READ_ONLY', `${library.name} is read-only; clear the flag before renaming its bin folder`);
+    }
+    if (library.bin_name == null) {
+      throw new AppError('VALIDATION_ERROR', 'this library has no bin folder; clear read_only in the same request to make one');
+    }
+
+    const from = getBinPath(library)!;
+    const to = path.join(library.root_path, binName);
+    const identity = this.repo.getBinIdentity(library.id);
+    // On a case-insensitive filesystem `existsSync(<root>/bin)` is true when the
+    // folder is `Bin`, so a case-only rename has to compare inodes rather than
+    // collide with itself. Advisory anyway: POSIX `rename` onto an existing empty
+    // directory removes it, so a folder appearing in the window is a race, bounded
+    // by `libraryMutex` on our own side.
+    const occupant = statSync(to, { throwIfNoEntry: false });
+    if (occupant != null && !(occupant.dev === identity?.dev && occupant.ino === identity?.ino)) {
+      throw new AppError('CONFLICT', `a folder named "${binName}" already exists at ${library.root_path}`);
+    }
+
+    await libraryMutex.run(library.id, async () => {
+      // The rename goes first, and outside any transaction - a filesystem
+      // operation has no commit to join. A crash between it and the commit leaves
+      // disk at the new name with stale columns, which is exactly what §6.3
+      // follows; committing first would leave the mirror image, and §6.3 would
+      // follow the *old* folder and revert the name just set.
+      try {
+        // Same parent directory, so EXDEV is impossible and no copy fallback is
+        // needed - this is not `moveIntoDir`, which exists to suffix colliding files.
+        await rename(from, to);
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code === 'ENOENT') {
+          // Recreating is right for a deleted folder and wrong for a moved one,
+          // where it would orphan the real bin and leave §6.3 to adopt the orphan
+          // and revert the name just set. A full sync distinguishes them (§2.3).
+          throw new AppError('IO_ERROR', `the bin folder is not at ${from}: run a full sync, then retry`);
+        }
+        if (code === 'EBUSY' || code === 'EPERM') {
+          throw new AppError('IO_ERROR', `could not move ${from}: it may be a mount point, or open elsewhere`);
+        }
+        throw err;
+      }
+
+      this.photos.transaction(() => {
+        this.repo.setBinName(library.id, binName);
+        // `deleted_from_path` records where the photograph came from, outside the
+        // bin, which has not moved.
+        this.photos.rewriteBinnedPathPrefix(library.id, library.bin_name!, binName);
+      });
+      // bin_dev/bin_ino/bin_birthtime are left alone: `rename` preserves the inode.
+      log.info('bin folder renamed', { library: library.id, from, to });
+    });
   }
 
   async delete(libraryId: string): Promise<void> {

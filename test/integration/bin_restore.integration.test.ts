@@ -38,7 +38,15 @@ beforeEach(() => {
   writeFileSync(path.join(root, 'Trip', 'a.arw'), 'RAW');
 
   db = createDatabase(':memory:');
-  db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(LIB, root, 'lib', 'taken_desc');
+  // `bin_name` is nullable now and NULL means "no bin", so a library that bins by
+  // moving has to say so (§2).
+  db.query('INSERT INTO libraries (id, root_path, name, ordering, bin_name) VALUES (?, ?, ?, ?, ?)').run(
+    LIB,
+    root,
+    'lib',
+    'taken_desc',
+    'Bin',
+  );
   db.query('INSERT INTO shoots (id, library_id, folder_path, name, ordering) VALUES (?, ?, ?, ?, ?)').run(
     SHOOT,
     LIB,
@@ -115,8 +123,8 @@ test('restoring onto an occupied path suffixes rather than overwriting a live ph
   expect(existsSync(path.join(root, 'Trip', 'a_1.arw'))).toBe(true);
 });
 
-// The data directory is disposable, so a photo in the library root bins to the
-// bin's own root rather than under `.bowerbird` (DESIGN §12.3).
+// The Bin holds originals, so it sits beside the photographs rather than in the
+// disposable tree the data directory is (DESIGN §12.3).
 test('a photo in the library root bins to <root>/Bin, never into the data directory', async () => {
   const LOOSE = '00000000-0000-4000-8000-0000000000be';
   writeFileSync(path.join(root, 'loose.arw'), 'RAW');

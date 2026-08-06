@@ -27,6 +27,7 @@ describe('LibrarySchema.name', () => {
       id: '00000000-0000-4000-8000-000000000001',
       root_path: '/photos',
       bin_name: 'Bin',
+      read_only: false,
       name: 'Trip',
       ordering: 'taken_asc' as const,
       rendition_source: 'embedded' as const,

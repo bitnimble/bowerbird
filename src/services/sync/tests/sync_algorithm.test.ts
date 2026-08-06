@@ -57,11 +57,11 @@ describe('detectMoves', () => {
   it('duplicate handling: 3 removed + 1 added of one hash = 1 move + 2 removals', () => {
     const diff: LibraryDiff = {
       removed: [
-        { photoId: 'p1', filePath: 'x1.arw', fileHash: 'h', wasMissing: false },
-        { photoId: 'p2', filePath: 'x2.arw', fileHash: 'h', wasMissing: false },
-        { photoId: 'p3', filePath: 'x3.arw', fileHash: 'h', wasMissing: false },
+        { photoId: 'p1', filePath: 'x1.arw', fileHash: 'h', wasMissing: false, channel: 'live' },
+        { photoId: 'p2', filePath: 'x2.arw', fileHash: 'h', wasMissing: false, channel: 'live' },
+        { photoId: 'p3', filePath: 'x3.arw', fileHash: 'h', wasMissing: false, channel: 'live' },
       ],
-      added: [{ filePath: 'y.arw', fileHash: 'h', metadata: META }],
+      added: [{ filePath: 'y.arw', fileHash: 'h', metadata: META, channel: 'live' }],
       modified: [],
       reappeared: [],
     };
@@ -74,10 +74,10 @@ describe('detectMoves', () => {
   it('album bias: keeps the album member as the move, non-album as the removal', () => {
     const diff: LibraryDiff = {
       removed: [
-        { photoId: 'notInAlbum', filePath: 'x1.arw', fileHash: 'h', wasMissing: false },
-        { photoId: 'inAlbum', filePath: 'x2.arw', fileHash: 'h', wasMissing: false },
+        { photoId: 'notInAlbum', filePath: 'x1.arw', fileHash: 'h', wasMissing: false, channel: 'live' },
+        { photoId: 'inAlbum', filePath: 'x2.arw', fileHash: 'h', wasMissing: false, channel: 'live' },
       ],
-      added: [{ filePath: 'y.arw', fileHash: 'h', metadata: META }],
+      added: [{ filePath: 'y.arw', fileHash: 'h', metadata: META, channel: 'live' }],
       modified: [],
       reappeared: [],
     };
@@ -89,9 +89,9 @@ describe('detectMoves', () => {
   it('modified+added-with-old-hash: the addition becomes a new photo, not a move', () => {
     // A modified in place (h1 -> h2); B added carrying the original h1.
     const diff: LibraryDiff = {
-      removed: [{ photoId: 'pRemoved', filePath: 'gone.arw', fileHash: 'h1', wasMissing: false }],
-      added: [{ filePath: 'B.arw', fileHash: 'h1', metadata: META }],
-      modified: [{ photoId: 'pA', filePath: 'A.arw', oldHash: 'h1', newHash: 'h2', metadata: META, wasMissing: false }],
+      removed: [{ photoId: 'pRemoved', filePath: 'gone.arw', fileHash: 'h1', wasMissing: false, channel: 'live' }],
+      added: [{ filePath: 'B.arw', fileHash: 'h1', metadata: META, channel: 'live' }],
+      modified: [{ photoId: 'pA', filePath: 'A.arw', oldHash: 'h1', newHash: 'h2', metadata: META, wasMissing: false, channel: 'live' }],
       reappeared: [],
     };
     const result = detectMoves(diff, noAlbums);
@@ -106,12 +106,12 @@ describe('detectMoves', () => {
     // P1 modified h1->h2; two files carry h1: one is the relocated original (a new
     // photo), the other is the move destination of removed P2.
     const diff: LibraryDiff = {
-      removed: [{ photoId: 'p2', filePath: 'gone.arw', fileHash: 'h1', wasMissing: false }],
+      removed: [{ photoId: 'p2', filePath: 'gone.arw', fileHash: 'h1', wasMissing: false, channel: 'live' }],
       added: [
-        { filePath: 'B.arw', fileHash: 'h1', metadata: META },
-        { filePath: 'C.arw', fileHash: 'h1', metadata: META },
+        { filePath: 'B.arw', fileHash: 'h1', metadata: META, channel: 'live' },
+        { filePath: 'C.arw', fileHash: 'h1', metadata: META, channel: 'live' },
       ],
-      modified: [{ photoId: 'p1', filePath: 'A.arw', oldHash: 'h1', newHash: 'h2', metadata: META, wasMissing: false }],
+      modified: [{ photoId: 'p1', filePath: 'A.arw', oldHash: 'h1', newHash: 'h2', metadata: META, wasMissing: false, channel: 'live' }],
       reappeared: [],
     };
     const result = detectMoves(diff, noAlbums);
@@ -119,6 +119,57 @@ describe('detectMoves', () => {
     expect(result.moves[0]!.photoId).toBe('p2');
     expect(result.added).toHaveLength(1); // exactly one addition reserved as a new photo
     expect(result.removed).toHaveLength(0);
+  });
+
+  // The bucket's tie-break is channel first, then album membership. Album
+  // membership alone let a binned album member outrank a live non-album removal
+  // and take its addition, so the live row was marked missing and the binned one
+  // silently restored - on the most ordinary input there is.
+  it('does not let a binned album member outrank a live removal for the same hash', () => {
+    const diff: LibraryDiff = {
+      removed: [
+        { photoId: 'live', filePath: 'a.arw', fileHash: 'h', wasMissing: false, channel: 'live' },
+        { photoId: 'binnedInAlbum', filePath: 'Bin/a.arw', fileHash: 'h', wasMissing: false, channel: 'bin' },
+      ],
+      added: [{ filePath: 'moved/a.arw', fileHash: 'h', metadata: META, channel: 'live' }],
+      modified: [],
+      reappeared: [],
+    };
+    const result = detectMoves(diff, (id) => id === 'binnedInAlbum');
+    expect(result.moves.map((m) => m.photoId)).toEqual(['live']);
+    expect(result.crossings).toEqual([]);
+    expect(result.removed.map((r) => r.photoId)).toEqual(['binnedInAlbum']);
+  });
+
+  it('reads a pair whose halves disagree on channel as a crossing, not a move', () => {
+    const diff: LibraryDiff = {
+      removed: [{ photoId: 'p1', filePath: 'Trip/a.arw', fileHash: 'h', wasMissing: false, channel: 'live' }],
+      added: [{ filePath: 'Bin/Trip/a.arw', fileHash: 'h', metadata: META, channel: 'bin' }],
+      modified: [],
+      reappeared: [],
+    };
+    const result = detectMoves(diff, noAlbums);
+    // Out of `moves` entirely: `detectShootRelocations` reads that array, and a
+    // binned file's movement says nothing about a live shoot folder.
+    expect(result.moves).toEqual([]);
+    expect(result.crossings).toEqual([
+      { photoId: 'p1', oldFilePath: 'Trip/a.arw', newFilePath: 'Bin/Trip/a.arw', direction: 'in' },
+    ]);
+  });
+
+  // A bin-side modification consuming a live addition would leave the relocated
+  // original unimported.
+  it('reserves a modified file\'s old hash within its own channel', () => {
+    const diff: LibraryDiff = {
+      removed: [],
+      added: [{ filePath: 'B.arw', fileHash: 'h1', metadata: META, channel: 'live' }],
+      modified: [
+        { photoId: 'binned', filePath: 'Bin/A.arw', oldHash: 'h1', newHash: 'h2', metadata: META, wasMissing: false, channel: 'bin' },
+      ],
+      reappeared: [],
+    };
+    const result = detectMoves(diff, noAlbums);
+    expect(result.added.map((a) => a.filePath)).toEqual(['B.arw']);
   });
 
   it('matches a previously-missing record against a reappearance at a new path', () => {

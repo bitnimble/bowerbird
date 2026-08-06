@@ -19,6 +19,8 @@ import type {
 import { deleteGeneratedFile } from '../../utils/deletions';
 import { getBinPath, getDataPath, getOriginalPath, getRenditionPath, toLibraryRelative } from '../../utils/paths';
 import { ensureDir, moveIntoDir } from '../../utils/files';
+import { shootContains } from '../../utils/shoots';
+import { ensureBinFolder } from '../libraries/bin_folder';
 import type { Rendition } from '../processing/renditions';
 import { extractMetadata, type FileMetadata } from '../processing/metadata';
 import { readEmbeddedJpeg } from '../processing/raw_decoder';
@@ -425,14 +427,17 @@ export class PhotosService {
     return this.get(photoId);
   }
 
-  // Soft-delete: move the RAW to a Bin and flag is_deleted (§12). Renditions are
-  // deliberately KEPT: the Bin exists to be browsed and restored from, which is
-  // impossible without them, and a WebP pair is ~1% of the RAW the Bin is already
-  // holding. A photo that fails is reported and the rest still go.
+  // Soft-delete: flag is_deleted, and where the library has a bin, move the RAW
+  // into it (§12). The move is not what makes a photograph binned - the flag is;
+  // the move exists so the next scan does not re-import the file, and the bin
+  // channel (§6) arranges that without one. Renditions are deliberately KEPT: the
+  // Bin exists to be browsed and restored from, which is impossible without them,
+  // and a WebP pair is ~1% of the RAW the Bin is already holding. A photo that
+  // fails is reported and the rest still go.
   //
   // Everything that is not per-file is done per *batch* (§12.1): the rows are
   // read in one query rather than one detail payload each, each bin directory is
-  // created once however many photos land in it, the library mutex is taken
+  // created once however many photos land in it, `libraryMutex` is taken
   // once, and the flags are committed a chunk at a time. Done per photo - which is what
   // this was - binning a selection of a million cost 34 minutes before a single
   // byte moved on disk.
@@ -440,11 +445,12 @@ export class PhotosService {
     const failures: string[] = [];
     let deleted = 0;
     for (const [libraryId, photos] of this.byLibrary(photoIds)) {
-      const library = this.libraries.getById(libraryId);
-      if (library == null) continue;
-      // Queue behind any in-flight sync of this library: the Bin moves would
-      // otherwise invalidate its mid-scan snapshot. Once for the whole batch.
+      // Re-read inside the mutex, not before it: `bin_name` can be renamed now
+      // (§2.4), and a queued bin move resuming with a stale name would recreate
+      // the old folder and land its RAWs where the bin channel never walks.
       await libraryMutex.run(libraryId, async () => {
+        const library = this.libraries.getById(libraryId);
+        if (library == null) return;
         const binDirs = new Set<string>();
         for (const chunk of inChunks(photos, DELETE_CHUNK)) {
           const moved: { id: string; from: string; to: string; binRelPath: string; wasAt: string }[] = [];
@@ -452,13 +458,17 @@ export class PhotosService {
             const from = getOriginalPath(library, photo.file_path);
             try {
               // A row whose file has already gone still gets flagged, so the Bin
-              // is not missing photos the catalogue thinks are binned.
-              if (!existsSync(from)) {
+              // is not missing photos the catalogue thinks are binned. A read-only
+              // library takes the same branch for every row: nothing moves,
+              // `file_path` is left alone, and `deleted_from_path` ends up equal
+              // to it (§4).
+              const binDir = library.read_only ? null : getBinPath(library, path.dirname(photo.file_path));
+              if (binDir == null || !existsSync(from)) {
                 moved.push({ id: photo.id, from, to: from, binRelPath: photo.file_path, wasAt: photo.file_path });
                 continue;
               }
-              const binDir = getBinPath(library, path.dirname(photo.file_path));
               if (!binDirs.has(binDir)) {
+                await ensureBinFolder(library, this.libraries);
                 await ensureDir(binDir);
                 binDirs.add(binDir);
               }
@@ -492,9 +502,11 @@ export class PhotosService {
           } catch (dbErr) {
             // The DB write failed AFTER the files moved. Unlike the shoot
             // move-ops (whose destination is scanned, so a later sync
-            // move-detects and self-heals), the Bin is excluded from scanning, so
-            // a photo left is_deleted=0 with its file in the Bin is orphaned
-            // forever. Move them back out, as if the delete never ran.
+            // move-detects and self-heals), the Bin is excluded from the live
+            // scan, so a photo left is_deleted=0 with its file in the Bin is
+            // orphaned forever. Move them back out, as if the delete never ran.
+            // Unreachable for an in-place binning, where every row's `to` equals
+            // its `from`.
             for (const row of moved) {
               if (row.to === row.from) continue;
               await moveIntoDir(row.to, path.dirname(row.from), path.basename(row.from)).catch((e: unknown) =>
@@ -532,9 +544,14 @@ export class PhotosService {
     return grouped;
   }
 
-  // Undo of delete: move the RAW out of the Bin back to exactly where it was and
-  // clear is_deleted (§12.3). Shoot and album membership are untouched by delete,
-  // so they need no restoring; only the file and its path moved.
+  // Undo of delete: clear is_deleted, and where the file is inside the bin, move
+  // it back to exactly where it was (§12.3). Shoot and album membership are
+  // untouched by delete, so they need no restoring.
+  //
+  // It branches on **where the file is**, not on the flag: `read_only` only
+  // decides whether the bin arm may move anything. Two arms would break every
+  // writable library, whose binned files are all inside the bin.
+  //
   // Batched exactly as `delete` is, and for the same reason: an undo puts back
   // however many the bin took, so per-photo lookups and one commit each would
   // make the undo as slow as the thing it is undoing.
@@ -542,16 +559,39 @@ export class PhotosService {
     const failures: string[] = [];
     let restored = 0;
     for (const [libraryId, photos] of this.deletedByLibrary(photoIds)) {
-      const library = this.libraries.getById(libraryId);
-      if (library == null) continue;
       await libraryMutex.run(libraryId, async () => {
+        const library = this.libraries.getById(libraryId);
+        if (library == null) return;
+        // Every row's position is tested before any of them is restored: a
+        // half-landed undo is worse than none.
+        const stuck = photos.filter((photo) => library.read_only && this.isInBin(library, photo.file_path));
+        if (stuck.length > 0) {
+          throw new AppError(
+            'READ_ONLY',
+            `${stuck.length} of these photographs are in a read-only library's bin folder; clear the flag on ${library.name} first`,
+          );
+        }
+
         const dirs = new Set<string>();
         for (const chunk of inChunks(photos, DELETE_CHUNK)) {
           const moved: { id: string; path: string }[] = [];
           for (const photo of chunk) {
             try {
               const from = getOriginalPath(library, photo.file_path);
-              if (!existsSync(from)) throw new AppError('IO_ERROR', `the file is no longer in the Bin: ${photo.file_path}`);
+              // "No move" is not "no validation": without this a row whose file
+              // has gone goes live with `is_missing` cleared and nothing behind
+              // it, and the renditions make the grid look fine while every
+              // original 404s.
+              if (!existsSync(from)) throw new AppError('IO_ERROR', `the file is no longer there: ${photo.file_path}`);
+
+              // Binned in place: the file is already where it belongs. It cannot
+              // merely skip the move - `moveIntoDir` would claim the name the file
+              // already holds, hit EEXIST, walk its suffix loop to `a_1.arw` and
+              // then unlink the source, silently renaming it under the photographer.
+              if (!this.isInBin(library, photo.file_path)) {
+                moved.push({ id: photo.id, path: photo.file_path });
+                continue;
+              }
 
               // Pre-column rows have no recorded origin; the library root is the
               // only safe guess, and the next sync reconciles shoot membership
@@ -584,6 +624,12 @@ export class PhotosService {
     if (failures.length > 0) {
       throw new AppError('IO_ERROR', `failed to restore ${failures.length} photo(s): ${failures.join('; ')}`);
     }
+  }
+
+  // Position, not the flag: a library flipped to read-only still holds the RAWs
+  // the app put in its bin, and an in-place binned row's file is outside it.
+  private isInBin(library: Library, filePath: string): boolean {
+    return library.bin_name != null && shootContains(library.bin_name, filePath);
   }
 
   private deletedByLibrary(photoIds: string[]): Map<string, DeletedPhoto[]> {

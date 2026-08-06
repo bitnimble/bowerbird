@@ -32,7 +32,20 @@ CREATE TABLE IF NOT EXISTS libraries (
   -- skips everywhere (§12.3). Per library because it is chosen against the root's
   -- existing contents: a root already holding a 'Bin' of the user's own gets a
   -- different name rather than having that folder quietly excluded.
-  bin_name    TEXT NOT NULL DEFAULT 'Bin'
+  --
+  -- NULL means this library has no bin: nothing on disk records a binning, so
+  -- is_deleted is the only truth. Nullable rather than '' because joining '' onto
+  -- the root gives the root, which would point the bin channel at the whole
+  -- library.
+  bin_name    TEXT,
+  -- The app writes nothing under root_path. read_only = 0 with a NULL bin_name
+  -- never persists.
+  read_only   INTEGER NOT NULL DEFAULT 0,
+  -- The bin folder's identity, recorded when the folder is made, so a hand-rename
+  -- of it is followed rather than read as the whole bin being restored.
+  bin_dev       INTEGER,
+  bin_ino       INTEGER,
+  bin_birthtime REAL
 );
 
 -- "This library is syncing", as a leased row rather than a file at the library
@@ -494,8 +507,6 @@ export function runMigrations(db: Database): void {
   // What the library contains, and whether its folders are shoots (§4.1).
   ensureColumn(db, 'libraries', 'include_subfolders', 'INTEGER NOT NULL DEFAULT 1');
   ensureColumn(db, 'libraries', 'mirror_shoots', 'INTEGER NOT NULL DEFAULT 1');
-  // The default is what every library predating the column already has on disk.
-  ensureColumn(db, 'libraries', 'bin_name', "TEXT NOT NULL DEFAULT 'Bin'");
   ensureColumn(db, 'shoots', 'folder_dev', 'INTEGER'); // folder identity across a rename (§9.4.1)
   ensureColumn(db, 'shoots', 'folder_ino', 'INTEGER');
   ensureColumn(db, 'shoots', 'folder_birthtime', 'REAL');

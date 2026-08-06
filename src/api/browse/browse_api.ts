@@ -2,6 +2,7 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import { Hono } from 'hono';
 import { browseAbsolute } from '../../utils/browse';
+import { isWritable } from '../../services/libraries/libraries_service';
 
 // Walking the server's directories, so a library can be added by finding the
 // folder rather than typing its absolute path from memory. No service layer:
@@ -23,7 +24,7 @@ export class BrowseApi {
     app.get('/', async (c) => {
       const requested = c.req.query('path');
       const dir = requested == null || requested === '' ? homedir() : path.resolve(requested);
-      return c.json(await browseAbsolute(dir));
+      return c.json(await browseAbsolute(dir, isWritable));
     });
 
     this.routes = app;

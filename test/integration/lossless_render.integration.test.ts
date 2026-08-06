@@ -21,6 +21,7 @@ function library(id: string, hdr: boolean): Library {
     id,
     root_path: '/does-not-matter',
     bin_name: 'Bin',
+    read_only: false,
     name: 'lib',
     ordering: 'added_desc',
     rendition_source: 'render',
