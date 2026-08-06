@@ -148,14 +148,29 @@ file is not in the bin channel's walk, so the bin channel has no opinion about i
 (§6.5).
 
 `bin_name` is **write-once through the API**: `PATCH` accepts it only while the
-stored value is `NULL`, and never replaces one name with another. Renaming the
-setting on its own would strand every already-binned RAW in a folder the scan would
-then walk as live photographs.
+stored value is `NULL`, and never replaces one name with another. Sync is the one
+writer that may replace it, and only by *following* a rename the photographer
+already made on disk (§6.2) - the same asymmetry shoots have (DESIGN §9.4.1).
 
-Sync is the one writer that may replace it, and only by *following* a rename the
-photographer already made on disk (§6.2) - which is the same asymmetry shoots have
-(DESIGN §9.4.1): a folder renamed outside the app is followed rather than repaired,
-while the app will not rename it for you.
+**The reason DESIGN §4.1 gives for that rule no longer holds.** It says renaming
+would "strand every already-binned RAW in a folder the scan would then walk straight
+back in", and §5 fixes exactly that: the old bin's files are claimed by binned rows,
+so they are partitioned out of the live channel and cannot be re-imported whatever
+`bin_name` says.
+
+What justifies it now is §6.2, and differently: **the folder's identity is
+authoritative, so the setting cannot be allowed to disagree with it.** Rename the
+setting alone and `<root>/Bin` still exists, is no longer skipped by name, appears in
+`dirs` carrying the recorded `bin_ino` - and §6.2 dutifully follows it, reverting
+`bin_name` on the next sync. A field the API rejects and sync silently rewrites is a
+coherent state, but only just.
+
+**Lifting it is now small, and worth doing when someone asks.** A real rename is
+`rename(oldBinPath, newBinPath)` plus the binned-row prefix rewrite §6.2 already
+specifies - the same write, app-initiated instead of followed - and refused with
+`READ_ONLY` for a read-only library, whose bin the app may not touch. Out of scope
+here because read-only mode does not need it; noted because §6.2 has already built
+the half that looked hard.
 
 ### 2.3 What a library with no bin does
 
@@ -479,9 +494,15 @@ The identification rules are DESIGN §9.4.1's, unchanged, because the ambiguitie
 the same: exactly one candidate or it is not an identification, and birthtimes must
 agree where both sides report one. Two further constraints are the bin's own:
 
-- **Root-level only.** `getBinPath` is `path.join(root_path, bin_name)` and
-  `BinNameSchema` refuses separators, so a bin moved *into* another folder cannot be
-  expressed. A candidate whose `relPath` contains a `/` is not followed.
+- **Root-level only**, which is an inherited constraint and not a principle. It
+  holds because `BinNameSchema` is a single folder name rather than a path
+  (`schemas/libraries.ts:7-12`) and `getBinPath` is `path.join(root_path, bin_name)`,
+  so a bin one folder deep is not *expressible* - not unsafe. A candidate whose
+  `relPath` contains a `/` is therefore not followed. Nothing else in this design
+  needs it: the bin's mirrored layout strips whatever prefix the bin sits at (§6.4),
+  and the scan's skip would become a path-prefix test instead of a first-segment one.
+  Allowing `Archive/Bin` is a schema change and two one-line edits, if anybody ever
+  wants their bin out of the way.
 - **Detected after the walk and before `buildDiff`**, so the bin channel can be
   re-rooted at the new path and that subtree removed from the live channel's files
   before either diff runs. The renamed folder is then also spoken for, and cannot be
