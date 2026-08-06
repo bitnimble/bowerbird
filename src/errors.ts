@@ -6,6 +6,10 @@ export type ErrorCode =
   | 'NOT_FOUND'
   | 'VALIDATION_ERROR'
   | 'CONFLICT'
+  // The library forbids the write this needed. Distinct from VALIDATION_ERROR
+  // because the request is well-formed and would have succeeded against another
+  // library (§14).
+  | 'READ_ONLY'
   | 'IO_ERROR'
   | 'SYNC_IN_PROGRESS'
   | 'INTERNAL_ERROR';
@@ -14,6 +18,7 @@ const STATUS: Record<ErrorCode, ContentfulStatusCode> = {
   NOT_FOUND: 404,
   VALIDATION_ERROR: 400,
   CONFLICT: 409,
+  READ_ONLY: 403,
   IO_ERROR: 500,
   SYNC_IN_PROGRESS: 409,
   INTERNAL_ERROR: 500,

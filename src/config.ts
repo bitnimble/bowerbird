@@ -1,7 +1,9 @@
-// Where the server listens and where its database is: the three things that
-// have to be known before the database can be opened. Everything else is a
-// setting in that database, editable from the app (DESIGN §15).
+// Where the server listens, where its database is, and where it writes the files
+// it generates: the things that have to be known before the database can be
+// opened. Everything else is a setting in that database, editable from the app
+// (DESIGN §15).
 
+import path from 'node:path';
 import { parseArgs } from 'node:util';
 
 // -p/--port, taking precedence over PORT so a specific port can be pinned
@@ -31,4 +33,7 @@ export const config = {
   port: argPort() ?? envPort(),
   host: process.env.HOST ?? '0.0.0.0',
   dbPath: process.env.DB_PATH ?? './bowerbird.db',
+  // Every generated file, one subdirectory per library (§6). Resolved absolute
+  // at load, so nothing downstream has to care what the working directory was.
+  dataDir: path.resolve(process.env.DATA_DIR ?? './data'),
 } as const;

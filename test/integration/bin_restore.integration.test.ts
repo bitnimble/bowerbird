@@ -13,6 +13,7 @@ import { PhotosRepository } from '../../src/services/photos/photos_repository';
 import { PhotosService } from '../../src/services/photos/photos_service';
 import type { ProcessingService } from '../../src/services/processing/processing_service';
 import { ShootsRepository } from '../../src/services/shoots/shoots_repository';
+import { dataPathForLibraryId } from '../../src/utils/paths';
 
 const LIB = '00000000-0000-4000-8000-0000000000ba';
 const SHOOT = '00000000-0000-4000-8000-0000000000bb';
@@ -38,7 +39,15 @@ beforeEach(() => {
   writeFileSync(path.join(root, 'Trip', 'a.arw'), 'RAW');
 
   db = createDatabase(':memory:');
-  db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(LIB, root, 'lib', 'taken_desc');
+  // `bin_name` is nullable now and NULL means "no bin", so a library that bins by
+  // moving has to say so (§4.1).
+  db.query('INSERT INTO libraries (id, root_path, name, ordering, bin_name) VALUES (?, ?, ?, ?, ?)').run(
+    LIB,
+    root,
+    'lib',
+    'taken_desc',
+    'Bin',
+  );
   db.query('INSERT INTO shoots (id, library_id, folder_path, name, ordering) VALUES (?, ?, ?, ?, ?)').run(
     SHOOT,
     LIB,
@@ -115,8 +124,8 @@ test('restoring onto an occupied path suffixes rather than overwriting a live ph
   expect(existsSync(path.join(root, 'Trip', 'a_1.arw'))).toBe(true);
 });
 
-// The data directory is disposable, so a photo in the library root bins to the
-// bin's own root rather than under `.bowerbird` (DESIGN §12.3).
+// The Bin holds originals, so it sits beside the photographs rather than in the
+// disposable tree the data directory is (DESIGN §12.3).
 test('a photo in the library root bins to <root>/Bin, never into the data directory', async () => {
   const LOOSE = '00000000-0000-4000-8000-0000000000be';
   writeFileSync(path.join(root, 'loose.arw'), 'RAW');
@@ -128,10 +137,24 @@ test('a photo in the library root bins to <root>/Bin, never into the data direct
   await service.delete([LOOSE]);
 
   expect(existsSync(path.join(root, 'Bin', 'loose.arw'))).toBe(true);
-  expect(existsSync(path.join(root, '.bowerbird', 'bin', 'loose.arw'))).toBe(false);
+  // Beside the photographs, not in the tree that goes with the library: the data
+  // directory is deleted wholesale (§6), and a bin inside it would take every
+  // binned RAW with it.
+  expect(existsSync(path.join(dataPathForLibraryId(LIB), 'bin', 'loose.arw'))).toBe(false);
 
   await service.restore([LOOSE]);
   expect(existsSync(path.join(root, 'loose.arw'))).toBe(true);
+});
+
+// "No move" is not "no validation". Without the existence check the row would go
+// live with `is_missing` cleared and nothing behind it, and the renditions make
+// the grid look fine while every original 404s.
+test('restoring a photo whose file has gone raises IO_ERROR rather than going live', async () => {
+  await service.delete([PHOTO]);
+  rmSync(path.join(root, 'Bin', 'Trip', 'a.arw'));
+
+  await expect(service.restore([PHOTO])).rejects.toMatchObject({ code: 'IO_ERROR' });
+  expect(photoRow().is_deleted).toBe(1);
 });
 
 test('restoring a photo that is not deleted is a no-op', async () => {

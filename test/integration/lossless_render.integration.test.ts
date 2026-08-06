@@ -3,25 +3,25 @@
 // (§10.5).
 //   docker exec bowerbird-dev bun test test/integration
 import { expect, test } from 'bun:test';
-import { mkdtempSync, rmSync, statSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import path from 'node:path';
+import { rmSync, statSync } from 'node:fs';
 import type { Library } from '../../src/schemas/libraries';
 import { DEFAULT_SETTINGS, type Settings } from '../../src/schemas/settings';
 import { ProcessingService } from '../../src/services/processing/processing_service';
 import type { SettingsRepository } from '../../src/services/settings/settings_repository';
 import { readRawHeader } from '../../src/services/processing/raw_decoder';
 import { _for_testing_comparePsnr, _for_testing_decodeSummary } from '../../src/services/processing/rawshim_for_testing';
-import { getRenditionPath } from '../../src/utils/paths';
+import { getDataPath, getRenditionPath } from '../../src/utils/paths';
 
 // The output path is the library's business now, so the test asks for it the
-// same way the server does rather than naming a file of its own.
-function library(dataPath: string, hdr: boolean): Library {
+// same way the server does rather than naming a file of its own. The id is what
+// that path is keyed by (§6), so each test needs its own or two files that clean
+// up after themselves share a directory.
+function library(id: string, hdr: boolean): Library {
   return {
-    id: 'lib',
-    root_path: dataPath,
-    data_path: dataPath,
+    id,
+    root_path: '/does-not-matter',
     bin_name: 'Bin',
+    read_only: false,
     name: 'lib',
     ordering: 'added_desc',
     rendition_source: 'render',
@@ -75,8 +75,8 @@ test('a 16-bit decode yields twice the bytes of an 8-bit one', () => {
 // wrote a file of exactly the right dimensions whose pixels were the 16-bit
 // buffer misread as 8-bit, which only the shipped path can catch.
 test('the SDR render the service produces decodes back to the image that went in', async () => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'bb-lossless-'));
-  const lib = library(dir, false);
+  const lib = library('lossless-sdr', false);
+  const dir = getDataPath(lib);
   const output = getRenditionPath(lib, 'test-photo', 'max', false);
   try {
     await service().renderOne(FIXTURE, 'test-photo', lib, 'max', false);
@@ -115,8 +115,8 @@ test('the SDR render the service produces decodes back to the image that went in
 }, 180_000);
 
 test('the HDR render is 10-bit PQ at full resolution', async () => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'bb-lossless-hdr-'));
-  const lib = library(dir, true);
+  const lib = library('lossless-hdr', true);
+  const dir = getDataPath(lib);
   const output = getRenditionPath(lib, 'test-photo', 'max', true);
   try {
     await service().renderOne(FIXTURE, 'test-photo', lib, 'max', true);

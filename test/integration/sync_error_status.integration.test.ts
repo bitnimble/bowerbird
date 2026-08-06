@@ -13,6 +13,7 @@ import { PhotosRepository } from '../../src/services/photos/photos_repository';
 import { FolderRulesRepository } from '../../src/services/shoots/folder_rules_repository';
 import { ShootsRepository } from '../../src/services/shoots/shoots_repository';
 import { SyncService } from '../../src/services/sync/sync_service';
+import { SyncLocksRepository } from '../../src/services/sync/sync_locks_repository';
 import { extractMetadata } from '../../src/services/processing/metadata';
 
 const LIB = '00000000-0000-4000-8000-0000000000ef';
@@ -32,12 +33,21 @@ afterEach(() => {
 });
 
 function build(photos: PhotosRepository, processing: { processUnprocessed: () => void | Promise<void> }): SyncService {
-  return new SyncService(photos, new LibrariesRepository(db), new AlbumsRepository(db), new ShootsRepository(db), new FolderRulesRepository(db), processing, extractMetadata);
+  return new SyncService(
+    photos,
+    new LibrariesRepository(db),
+    new AlbumsRepository(db),
+    new ShootsRepository(db),
+    new FolderRulesRepository(db),
+    new SyncLocksRepository(db),
+    processing,
+    extractMetadata,
+  );
 }
 
 test('an apply-phase throw resets status to idle (not stuck scanning)', async () => {
   class FailingPhotos extends PhotosRepository {
-    override transaction<T>(_fn: () => T): T {
+    override immediateTransaction<T>(_fn: () => T): T {
       throw new Error('apply failed');
     }
   }

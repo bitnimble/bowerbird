@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { config } from '../config';
 import type { Library } from '../schemas/libraries';
 import { RENDITION_EXTENSION, renditionDir, type Rendition } from '../services/processing/renditions';
 
@@ -10,13 +11,13 @@ export function containsPath(parent: string, child: string): boolean {
   return c === p || c.startsWith(`${p}${path.sep}`);
 }
 
-// Column-level variant, for callers holding a joined row rather than a Library.
-export function dataPathFor(rootPath: string, dataPath: string | null): string {
-  return dataPath ?? path.join(rootPath, '.bowerbird');
+// Id-level variant, for callers holding a joined row rather than a Library.
+export function dataPathForLibraryId(libraryId: string): string {
+  return path.join(config.dataDir, libraryId);
 }
 
-export function getDataPath(library: Library): string {
-  return dataPathFor(library.root_path, library.data_path);
+export function getDataPath(library: Pick<Library, 'id'>): string {
+  return dataPathForLibraryId(library.id);
 }
 
 // Every rendition is AVIF (§10.2). It decodes natively in every current browser,
@@ -38,19 +39,22 @@ export function getRenditionPath(library: Library, photoId: string, rendition: R
 }
 
 // The Bin holds originals, which is why it lives beside the photographs and not
-// in the data directory: everything under `data_path` is generated and must stay
-// disposable, so that removing a library (or the user clearing `.bowerbird` by
+// in the data directory: everything under `DATA_DIR` is generated and must stay
+// disposable, so that removing a library (or the user clearing that directory by
 // hand) can never cost a RAW.
 //
 // One bin per library, at its root, mirroring inside itself the folder a photo
 // was binned from: `A/B/c.arw` bins to `<bin>/A/B/c.arw` (§12.3). `relFolder` is
 // that folder, and empty for a photo binned from the root.
 //
+// Null when the library has no bin, which is what a library born read-only is:
+// nothing on disk can record a binning, so `is_deleted` is the only truth (§4.1).
+//
 // The only place the bin's folder name is spelled: it is per library (§12.3) and
 // the scan skips it by name, so a second spelling anywhere is a bin the scan
-// walks straight back into.
-export function getBinPath(library: Library, relFolder = ''): string {
-  return path.join(library.root_path, library.bin_name, relFolder);
+// walks straight back into. That is also what makes renaming it tractable (§4.1).
+export function getBinPath(library: Pick<Library, 'root_path' | 'bin_name'>, relFolder = ''): string | null {
+  return library.bin_name == null ? null : path.join(library.root_path, library.bin_name, relFolder);
 }
 
 // Absolute path to a photo's original RAW, given its root-relative file_path.

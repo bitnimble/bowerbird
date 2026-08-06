@@ -5,10 +5,14 @@ import path from 'node:path';
 import { DEFAULT_SETTINGS, type Settings } from '../../../schemas/settings';
 import type { PendingPhoto, PhotosRepository } from '../../photos/photos_repository';
 import type { SettingsRepository } from '../../settings/settings_repository';
+import { dataPathForLibraryId } from '../../../utils/paths';
 import { ProcessingService } from '../processing_service';
 import type { RenditionJob, ProcessingResult, RenditionSource } from '../processing_types';
 
 const CRASH = 'crash-photo';
+// This file's own library id, because the data directory is keyed by one (§6)
+// and two test files sharing a directory would race each other's cleanup.
+const LIB = 'processing-service-test';
 
 /** Every job the service handed to a worker, so its shape can be asserted. */
 const posted: RenditionJob[] = [];
@@ -63,14 +67,18 @@ describe('ProcessingService.processUnprocessed', () => {
   afterEach(() => {
     globalThis.Worker = REAL_WORKER;
     rmSync(root, { recursive: true, force: true });
+    rmSync(dataPathForLibraryId(LIB), { recursive: true, force: true });
   });
+
+  // Generated files live outside the library root, keyed by library id (§6).
+  const renditions = (dir: string): string => path.join(dataPathForLibraryId(LIB), 'renditions', dir);
 
   function pending(photoId: string): PendingPhoto {
     return {
       photo_id: photoId,
       file_path: `${photoId}.arw`,
       root_path: root,
-      data_path: null,
+      library_id: LIB,
       rendition_source: 'render',
       needs_tile: 1,
       needs_renditions: 1,
@@ -138,7 +146,7 @@ describe('ProcessingService.processUnprocessed', () => {
     const seen: { photoId: string; descriptor: Uint8Array }[] = [];
     service.onDescribed((photoId, descriptor) => seen.push({ photoId, descriptor }));
 
-    const library = { id: 'lib', root_path: root, data_path: null } as never;
+    const library = { id: 'lib', root_path: root } as never;
     await service.renderOne('/lib/a.arw', 'p1', library, 'grid', false, 'embedded');
 
     expect(seen).toEqual([{ photoId: 'p1', descriptor: DESCRIPTOR }]);
@@ -162,7 +170,7 @@ describe('ProcessingService.processUnprocessed', () => {
     // It rejects rather than throwing, which is also load-bearing: the tile repair
     // calls this fire-and-forget and clears its in-flight set in a `.finally()`.
     const service = new ProcessingService({} as unknown as PhotosRepository, settingsWith({}));
-    const library = { id: 'lib', root_path: '/lib', data_path: null } as never;
+    const library = { id: 'lib', root_path: '/lib' } as never;
 
     await expect(service.renderOne('/lib/a.arw', 'p1', library, 'grid', true, 'embedded')).rejects.toThrow(
       /grid tile is always SDR/,
@@ -245,7 +253,7 @@ describe('ProcessingService.processUnprocessed', () => {
     // the old file. The tile of a run resumed at its second pass is not: its own pass
     // already rebuilt it, and `needs_tile` is clear - so deleting it left the grid
     // blank with nothing that would ever build it again.
-    const gridDir = path.join(root, '.bowerbird', 'renditions', 'grid');
+    const gridDir = renditions('grid');
     mkdirSync(gridDir, { recursive: true });
     const tile = path.join(gridDir, 'a.avif');
     writeFileSync(tile, 'kept');
@@ -268,7 +276,7 @@ describe('ProcessingService.processUnprocessed', () => {
     // The grid's own action, on a file whose pixels have not changed: stamping the
     // viewer's side here would sweep every rendition this run did not write, so
     // regenerating a rendition deleted the photo view's copies behind it.
-    const fullDir = path.join(root, '.bowerbird', 'renditions', 'full');
+    const fullDir = renditions('full');
     mkdirSync(fullDir, { recursive: true });
     const full = path.join(fullDir, 'a.avif');
     writeFileSync(full, 'kept');
@@ -344,8 +352,8 @@ describe('ProcessingService.processUnprocessed', () => {
   });
 
   it('on a worker crash of a present file: marks it failed and deletes stale renditions', async () => {
-    const gridDir = path.join(root, '.bowerbird', 'renditions', 'grid');
-    const fullDir = path.join(root, '.bowerbird', 'renditions', 'full');
+    const gridDir = renditions('grid');
+    const fullDir = renditions('full');
     mkdirSync(gridDir, { recursive: true });
     mkdirSync(fullDir, { recursive: true });
     const staleSmall = path.join(gridDir, `${CRASH}.avif`);

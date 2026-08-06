@@ -120,7 +120,7 @@ bowerbird/
 │   │   │   ├── sync_service.ts     # Library sync algorithm (integration-tested; needs bun:sqlite + LibRaw)
 │   │   │   └── tests/
 │   │   │       ├── sync_algorithm.test.ts  # pure diff / move-detection
-│   │   │       └── sync_lock.test.ts       # lock-file module
+│   │   │       └── sync_locks.test.ts      # the leased row (§9.7)
 │   │   └── processing/
 │   │       ├── processing_service.ts  # Rendition generation orchestrator
 │   │       ├── processing_worker.ts   # Bun worker thread for image processing
@@ -179,7 +179,6 @@ Foreign keys are enforced. `bun:sqlite` does not enable this by default, so `mig
 CREATE TABLE libraries (
   id          TEXT PRIMARY KEY,
   root_path   TEXT NOT NULL UNIQUE,
-  data_path   TEXT,  -- path to .bowerbird/ data folder; NULL means default (<root_path>/.bowerbird/)
   name        TEXT NOT NULL,  -- display name; create stores the folder name (or parent + year) when none is given
   ordering    TEXT NOT NULL DEFAULT 'taken_asc'
     CHECK (ordering IN ('taken_asc', 'taken_desc', 'added_asc', 'added_desc')),
@@ -187,17 +186,26 @@ CREATE TABLE libraries (
   -- shoots (§4.7).
   include_subfolders INTEGER NOT NULL DEFAULT 1,
   mirror_shoots      INTEGER NOT NULL DEFAULT 1,
-  bin_name    TEXT NOT NULL DEFAULT 'Bin'  -- folder soft-deleted RAWs move into, and the name the scan skips (§12.3)
+  bin_name    TEXT,             -- folder soft-deleted RAWs move into, and the name the scan skips (§12.3); NULL = no bin
+  read_only   INTEGER NOT NULL DEFAULT 0,  -- the app writes nothing under root_path
+  -- The bin folder's identity, so a hand-rename of it is followed rather than
+  -- read as the whole bin being restored (§9.4.1 for the same idea on shoots).
+  bin_dev       INTEGER,
+  bin_ino       INTEGER,
+  bin_birthtime REAL
 );
 ```
 
 - `root_path`, absolute path to the library root folder on disk.
-- `data_path`, absolute path to the data directory for generated files. If NULL, defaults to `<root_path>/.bowerbird/`.
 - `name`, what the library is called in the rail and in Settings. Required. On create, an omitted or blank name is filled from the root folder and stored: the last path segment, or when that segment is a four-digit year, `"<parent> <year>"` so date-sorted trees do not all show as `"2025"`. Renaming the folder on disk afterwards does not change the stored name.
 - `ordering`, default ordering for photo listings in this library.
 - `include_subfolders`, whether the scan descends past the root at all (§9.1). A standing rule rather than a decision taken once at import: a folder created next month is out of scope for the same reason today's are, so turning it off writes no `folder_rules` rows and never needs revisiting. Off makes shoots meaningless for the library - a shoot *is* a subfolder, and its photos would never be scanned - so the UI disables the Shoots section and forces `mirror_shoots` off with that as the reason.
 - `mirror_shoots`, whether sync keeps shoots in step with the folders on disk (§9.4.1). On, every folder holding photos is a shoot and the catalogue cannot disagree with the tree; off, a shoot exists only where the user made one, and untracked folders are offered on the Shoots page instead (§18.3.4).
-- `bin_name`, what this library's bin folder is called at its root (§12.3). Per library rather than a constant because the name is also what the scan skips: a root that already keeps a folder called `Bin` would otherwise have it adopted as the bin, and everything inside it dropped from the import with nothing said. `POST /api/libraries` refuses a root already holding a folder of this name and the Add-library dialog marks the field, so the collision is settled while the name is still being chosen. Create-only, and deliberately absent from `PATCH`: renaming it later would strand every already-binned RAW in a folder the scan would then walk straight back in.
+- `bin_name`, what this library's bin folder is called at its root (§12.3). Per library rather than a constant because the name is also what the scan skips: a root that already keeps a folder called `Bin` would otherwise have it adopted as the bin, and everything inside it dropped from the import with nothing said. `POST /api/libraries` refuses a root already holding a folder of this name and the Add-library dialog marks the field, so the collision is settled while the name is still being chosen. **NULL means the library has no bin at all**, which is what a library born read-only is: nothing on disk records a binning, so `is_deleted` is the only truth. Nullable rather than `''` because joining `''` onto the root gives the root, which would point the bin channel at the whole library.
+- `read_only`, whether the app may write under `root_path` at all: an archive volume, a NAS export mounted read-only, or a collection the photographer would rather no software rearranged. Almost nothing the catalogue knows was ever about the files, so what this actually turns off is short - binning moves nothing (§12.1), and a shoot has to be a folder that already exists (§4.3). `read_only = 0` with a NULL `bin_name` never persists: clearing the flag needs a `bin_name` in the same request, and makes the folder. Detected, not guessed: `access(dir, W_OK)`, reported per listing by `GET /api/browse`, and a create that says the root is writable when it is not is refused with `READ_ONLY` rather than silently upgraded.
+- `bin_dev` / `bin_ino` / `bin_birthtime`, the bin folder's identity, recorded when the folder is made. A photographer renaming `<root>/Bin` to `<root>/Rubbish` has done to the bin what §9.4.1 already handles for a shoot, and it is answered the same way. Deliberately not on the `Library` API type: they would leak into every response.
+
+**`bin_name` is no longer create-only.** `PATCH` with one **renames the folder**, which is what the rule against renaming existed to avoid having to do: changing the setting alone would strand every already-binned RAW in a folder the scan then walks back in, and changing it together with the folder strands nothing. The `rename` runs first and outside the transaction, because a crash between it and the commit leaves disk at the new name with stale columns - which is exactly the state the bin channel repairs by identity (§9.1); committing first would leave the mirror image, and the repair would revert the name just set.
 
 ### 4.2 `photos` table
 
@@ -366,6 +374,21 @@ The exceptions to what the two library settings (§4.1) say in general. Both are
 - Both rules are recorded whether or not `mirror_shoots` is on, because deleting a shoot is a statement about the folder rather than about the current setting, and turning mirroring on later should not resurrect a shoot the user has already dismissed.
 - The `PRIMARY KEY` means one rule per folder: `excluded` and `plain` are answers to the same question ("what is this folder to the library"), so the second write replaces the first rather than stacking.
 
+### 4.8 `sync_locks` table
+
+```sql
+CREATE TABLE sync_locks (
+  library_id    TEXT PRIMARY KEY REFERENCES libraries(id) ON DELETE CASCADE,
+  owner         TEXT NOT NULL,   -- UUID, one per acquire rather than per process
+  started_at    TEXT NOT NULL,   -- toISOString(), UTC, which is what makes the comparison valid
+  refreshed_at  TEXT NOT NULL
+);
+```
+
+"This library is syncing", as a leased row (§9.7). `owner` is minted per **acquire**, not per process: a per-process owner let a run whose lease had lapsed delete its successor's row on the way out, and let two syncs in one server both believe they held it. No `pid` column - a PID means nothing outside the namespace it was minted in, which is the whole reason this is not a file at the library root any more.
+
+A row present at startup means "stale within the lease", not "syncing": a crashed process leaves its row and expiry clears it, so startup deletes nothing.
+
 ---
 
 ## 5. Schemas (Zod)
@@ -408,19 +431,19 @@ export const PhotoIdListSchema = z.object({
 ```typescript
 export const CreateLibraryRequestSchema = z.object({
   root_path: z.string().min(1),
-  data_path: z.string().optional(),
   name: z.string().trim().optional(),          // blank: store the inferred folder name (§4.1)
   ordering: OrderingSchema.default('taken_asc'),
   include_subfolders: z.boolean().default(true),  // §4.1
   mirror_shoots: z.boolean().default(true),
-  bin_name: BinNameSchema.default('Bin'),      // one folder name, not a path (§12.3)
+  read_only: z.boolean().default(false),       // §4.1; forces bin_name to null
+  bin_name: BinNameSchema.nullable().default('Bin'),  // one folder name, not a path (§12.3)
 });
 
 export const LibrarySchema = z.object({
   id: UuidSchema,
   root_path: z.string(),
-  data_path: z.string().nullable(),
-  bin_name: z.string(),
+  bin_name: z.string().nullable(),             // null = no bin folder (§4.1)
+  read_only: z.boolean(),
   name: z.string().min(1),
   ordering: OrderingSchema,
   rendition_source: RenditionSourceSchema,
@@ -596,14 +619,16 @@ export const AlbumSchema = z.object({
 
 ## 6. Library Data Directory
 
-Each library has a **data directory** for generated files. By default, this is `<library_root>/.bowerbird/`. It can be overridden per-library via the `data_path` column.
+Generated files live **outside every library root**, under `DATA_DIR` (§15), one subdirectory per library keyed by its id. Nothing the app generates is written among the photographs, which is what lets a library be read-only (`docs/superpowers/specs/2026-08-06-readonly-library-design.md` §3) and what makes bulk storage a mount rather than a per-library setting.
 
-**Everything under it is disposable, and nothing under it is an original.** Removing a library removes the whole tree (§10.6), and a user is free to delete `.bowerbird/` by hand to reclaim the space; both must cost only renders. That is why the Bin lives at the library root rather than in here (§12.3), why `POST /api/libraries` refuses a `root_path` inside an existing library's data directory (and a `data_path` that would contain an existing root), and why the removal itself refuses to run while any RAW is still inside.
+**Everything under it is disposable, and nothing under it is an original.** Removing a library removes its whole subtree (§10.6), and a user is free to delete it by hand to reclaim the space; both must cost only renders. That is why the Bin lives at the library root rather than in here (§12.3), why a `root_path` inside `DATA_DIR` (and a `DATA_DIR` inside a root) is refused in both directions at creation *and* at startup - `DATA_DIR` is an environment variable, so a catalogue that was valid yesterday can be started against one that now swallows a root - and why the removal itself refuses to run while any RAW is still inside.
+
+`DATA_DIR` is created and tested for writability at startup, before the database is opened; each library's subtree and every rendition directory in it are created when the library is, so a library that has built nothing yet still has somewhere for the orphan sweep to look. The processing worker creates its own outputs' parents before every job regardless (`ensureOutputDirs`), because a rendition added later would otherwise have to be remembered in two places.
 
 ### Structure
 
 ```
-<data_path>/
+<DATA_DIR>/<library id>/
 ├── renditions/         # Derived copies of a photo (§10.1)
 │   ├── grid/           # 800px AVIF, the library grid; always SDR
 │   ├── full/           # 3840px AVIF, the photo view
@@ -617,23 +642,26 @@ Each library has a **data directory** for generated files. By default, this is `
 
 ```typescript
 function getDataPath(library: Library): string {
-  return library.data_path ?? path.join(library.root_path, '.bowerbird');
+  return path.join(config.dataDir, library.id);
 }
 
 // Originals, so outside the data directory (§12.3). One bin at the library root,
 // laid out inside itself like the library around it: `relFolder` is the folder a
 // photo was binned from, empty for one binned from the root. The only place the
 // bin's name is spelled, so a second spelling cannot disagree with the scan.
-function getBinPath(library: Library, relFolder = ''): string {
-  return path.join(library.root_path, library.bin_name, relFolder);
+// Null for a library with no bin (§4.1), which every caller has a branch for:
+// the watcher has nothing to ignore, `delete` bins in place, and the bin channel
+// has no root to walk.
+function getBinPath(library: Library, relFolder = ''): string | null {
+  return library.bin_name == null ? null : path.join(library.root_path, library.bin_name, relFolder);
 }
 ```
 
 ### Sync Exclusion
 
-The scanner must skip the data directory (`.bowerbird/` or whatever `data_path` points to if it is a subdirectory of the library root) when recursively listing files. It should also skip any directory named `.bowerbird` to avoid picking up nested data directories.
+The data directory needs no rule of its own any more: it is not under the root. A `<root>/.bowerbird` left by the layout that predates this is skipped by the hidden-directory rule and by nothing else, and is abandoned rather than swept - the sweep can no longer reach it.
 
-This is one of five rules that together answer "is this path part of this library", alongside hidden directories, the library's bin (§12.3), its `include_subfolders` setting (§4.1) and its `excluded` folders (§4.7). They live together in `isInScope` (§9.1) rather than being restated by each caller, because the scan and the watcher answering it differently is not a visible failure - it is a folder that quietly still wakes syncs, or a sync queued for paths the scan will discard.
+This leaves four rules that together answer "is this path part of this library": hidden directories, the library's bin (§12.3), its `include_subfolders` setting (§4.1) and its `excluded` folders (§4.7). They live together in `isInScope` (§9.1) rather than being restated by each caller, because the scan and the watcher answering it differently is not a visible failure - it is a folder that quietly still wakes syncs, or a sync queued for paths the scan will discard.
 
 ---
 
@@ -688,7 +716,7 @@ function isSupportedFile(filename: string): boolean {
 
 ### 8.2 Photos Service (`photos_service.ts`)
 
-**Constructor dependencies:** `PhotosRepository`, `AlbumsRepository`, `ShootsRepository`, `LibrariesRepository`. `delete()` needs the library for its root and `bin_name`; the bin path then follows from the photo's own `file_path` and asks no shoot anything (§12.3).
+**Constructor dependencies:** `PhotosRepository`, `AlbumsRepository`, `ShootsRepository`, `LibrariesRepository`. `delete()` needs the library for its root and for whether it has a bin at all - `bin_name` no longer decides *where* the file goes so much as *whether* it moves (§12.1); the bin path then follows from the photo's own `file_path` and asks no shoot anything (§12.3).
 
 **Methods:**
 
@@ -737,11 +765,11 @@ This service handles the full sync algorithm. See §9 for the detailed algorithm
 
 | Method | Description |
 |---|---|
-| `create(request)` | Creates a shoot record. The folder is named after the shoot `name`, created inside `parent_path` (the library root when it is empty); `folder_path` is stored as the full root-relative path (§4.3). A `parent_path` that resolves outside the library root, or inside its data directory (§6), is refused: a shoot's photographs must be inside the library and must not be in the tree that goes with it when it is removed. `parent_id` is **derived**, not requested: it is the most-specific shoot whose folder contains the new one, which is the same rule that decides which shoot a photo belongs to (§9.4), so the tree can never disagree with the folders on disk. That also means a shoot can sit under a plain folder that is not a shoot itself. If the folder does not exist, it is created. If it **already exists**, it is kept as-is and its photos are **adopted**: every existing non-deleted photo record whose `file_path` falls under this folder and for which this shoot is the most-specific matching shoot (i.e. not already claimed by a more-specific descendant shoot) has its `shoot_id` set to the new shoot. No files move on disk and no reprocessing occurs (renditions are keyed by photo UUID, unaffected by shoot membership). This mirrors the sync reconciliation rule (§9.4) and makes an orphaned folder from a prior shoot delete re-adoptable. RAW files physically present but not yet in the DB are picked up by the next sync, which will assign them to this shoot via the same reconciliation. The folder is `stat`ed either way and its identity recorded (§4.3), so a shoot can be followed through a rename from the moment it exists rather than from its first scan. Creating a shoot for a folder that carries a `plain` or `excluded` rule (§4.7) clears that rule: the user is answering the same question again, the other way. |
+| `create(request)` | Creates a shoot record. The folder is named after the shoot `name`, created inside `parent_path` (the library root when it is empty); `folder_path` is stored as the full root-relative path (§4.3). A `parent_path` that resolves outside the library root is refused: a shoot's photographs must be inside the library. In a **read-only** library a folder that does not exist yet is refused too (`READ_ONLY`, §4.1) - a shoot *is* a folder, so making one is a write; mirroring already makes a shoot per folder holding photographs, so most exist before anyone asks. `parent_id` is **derived**, not requested: it is the most-specific shoot whose folder contains the new one, which is the same rule that decides which shoot a photo belongs to (§9.4), so the tree can never disagree with the folders on disk. That also means a shoot can sit under a plain folder that is not a shoot itself. If the folder does not exist, it is created. If it **already exists**, it is kept as-is and its photos are **adopted**: every existing non-deleted photo record whose `file_path` falls under this folder and for which this shoot is the most-specific matching shoot (i.e. not already claimed by a more-specific descendant shoot) has its `shoot_id` set to the new shoot. No files move on disk and no reprocessing occurs (renditions are keyed by photo UUID, unaffected by shoot membership). This mirrors the sync reconciliation rule (§9.4) and makes an orphaned folder from a prior shoot delete re-adoptable. RAW files physically present but not yet in the DB are picked up by the next sync, which will assign them to this shoot via the same reconciliation. The folder is `stat`ed either way and its identity recorded (§4.3), so a shoot can be followed through a rename from the moment it exists rather than from its first scan. Creating a shoot for a folder that carries a `plain` or `excluded` rule (§4.7) clears that rule: the user is answering the same question again, the other way. |
 | `get(shootId)` | Returns a shoot by ID. |
 | `list(libraryId)` | Returns all shoots in a library. |
-| `addPhotos(shootId, photoIds)` | Moves photo files on disk into the shoot's folder. Updates each photo's `file_path` and `shoot_id` in the DB. A photo can only belong to one shoot; if it already belongs to another, it is moved out of the old shoot folder. If a file with the same name already exists in the destination folder, append a numeric suffix (e.g. `IMG_0001_1.ARW`, `IMG_0001_2.ARW`) so no existing file is overwritten and no two records share a `file_path` (§12.1). |
-| `removePhotos(shootId, photoIds)` | Moves photo files back to the library root. Updates each photo's `file_path` and clears its `shoot_id`. If a file with the same name already exists in the library root, append a numeric suffix (e.g. `IMG_0001_1.ARW`, `IMG_0001_2.ARW`) so no existing file is overwritten and no two records share a `file_path` (§12.1). |
+| `addPhotos(shootId, photoIds)` | Moves photo files on disk into the shoot's folder. Updates each photo's `file_path` and `shoot_id` in the DB. A photo can only belong to one shoot; if it already belongs to another, it is moved out of the old shoot folder. If a file with the same name already exists in the destination folder, append a numeric suffix (e.g. `IMG_0001_1.ARW`, `IMG_0001_2.ARW`) so no existing file is overwritten and no two records share a `file_path` (§12.1). Refused with `READ_ONLY` in a read-only library: membership is decided by the folder a file sits in, so this *is* a file move, and a database-only override would be reverted by the next mirroring sync. Albums are the grouping that needs no write. |
+| `removePhotos(shootId, photoIds)` | Moves photo files back to the library root. Updates each photo's `file_path` and clears its `shoot_id`. If a file with the same name already exists in the library root, append a numeric suffix (e.g. `IMG_0001_1.ARW`, `IMG_0001_2.ARW`) so no existing file is overwritten and no two records share a `file_path` (§12.1). Refused with `READ_ONLY` in a read-only library, for the same reason as `addPhotos`. |
 | `delete(shootId, photos)` | Deletes the shoot record. **No files or folders on disk are touched** (see principle above), whichever disposition is chosen. Shoots *beneath* it survive: they are re-parented onto its own parent first, because `parent_id` cascades and mirroring would otherwise rebuild those folders as fresh shoots with default names, losing every label, description, banner and ordering they had. `photos: 'keep'` leaves every photo in the library and clears its `shoot_id` via `ON DELETE SET NULL`, writing a `plain` rule (§4.7) so mirroring does not recreate the shoot on the next sync. `photos: 'remove'` writes an `excluded` rule instead and **hard-deletes** the photo rows under the folder, along with their renditions (via `deletions.ts`, §10.6.1, rather than waiting for the sweep). The originals stay exactly where they are on disk; what goes is the catalogue's record of them, and with it their ratings, verdicts and notes. Clearing the rule later re-imports them as new photos, with new ids and rebuilt renditions. |
 | `update(shootId, updates)` | Updates mutable fields: `name`, `description`, `ordering`. A **name change is metadata only**: the name is a label, so nothing moves on disk and no `folder_path` or `file_path` is rewritten, and it cannot conflict, since a shoot is identified by its folder rather than its name (§4.3). Setting `banner_photo_id` upserts the `shoot_banners` row; clearing it (null) deletes that row; it is not a column on `shoots` (§4.6). |
 
@@ -771,14 +799,13 @@ The sync algorithm is the most complex component. It is a stateless comparison b
 
 For each library:
 
-1. Resolve the library's `root_path` and `data_path`.
+1. Resolve the library's `root_path`.
 2. List all files under `root_path`, descending into subfolders only when the library's `include_subfolders` is set (§4.1), and skipping:
-   - The data directory (`.bowerbird/` or custom `data_path` if it's under `root_path`).
-   - Any hidden directories (starting with `.`).
+   - Any hidden directories (starting with `.`), which is what a legacy `<root>/.bowerbird` falls under (§6).
    - The library's bin, `<root>/<bin_name>` and everything under it (§12.3), so soft-deleted files are never re-imported. Anchored at the root, unlike the rules above it: that is the only place a bin is ever made, and matching the name at every depth would take a folder of the user's own called `Bin` out of the library in silence.
    - Any directory carrying an `excluded` rule (§4.7), and therefore everything beneath it.
 
-   These five questions live together in `src/utils/scope.ts`, and the **watcher asks them too** (§9.8). It had its own copy of the first three rules, which is two lists to keep in agreement about what the library contains; with the last two added the cost of them drifting is a folder the user excluded still waking a sync on every change, and scoped syncs queued for paths the scan will then ignore.
+   These four questions live together in `src/utils/scope.ts`, and the **watcher asks them too** (§9.8). It had its own copy of the first two rules, which is two lists to keep in agreement about what the library contains; with the last two added the cost of them drifting is a folder the user excluded still waking a sync on every change, and scoped syncs queued for paths the scan will then ignore.
 
    They split in two, and the split is not cosmetic. Four of them read the path alone and answer the same whether what sits there is a file or a folder, since each is about a *segment*: that is `isPathAllowed`. Only `include_subfolders` needs to know which it is looking at, because a root-only library keeps the files in its root and discards the folders beside them - the same string answers differently depending on what it names. The scan always knows what it is looking at, so `isDirInScope` is the two halves together. A watcher event names a path and not what kind of thing is at it, so the watcher asks `isPathAllowed` and settles the remaining question for files alone; a stray folder path costs nothing downstream, because the scoped sync tests it with `isDirInScope` before reading it.
 3. Filter to supported extensions only (`.arw`, `.cr3`). This yields the set of **present** file paths.
@@ -803,6 +830,27 @@ For each entry in changed:
 Unchanged files (present but not in `changed`) produce no diff entry, so they are never opened and never re-hashed.
 
 The REAPPEARED case matters: a file that went missing and returns **at its original path with the same content** is neither modified nor moved, so without this it would stay flagged `is_missing = 1` forever. (Reappearance at a *different* path is handled by move detection.)
+
+#### 9.1.1 The bin channel
+
+The scan runs **twice**, over two channels: the walk above against the non-deleted rows (**live**), and a second walk of `<root>/<bin_name>` against the `is_deleted = 1` rows (**bin**). Same code, same diff, different pair of inputs.
+
+> **A path claimed by a binned row is not the live channel's business.**
+
+That sentence is what the bin folder used to say by being somewhere the walk did not go, and it has to be said in the table now, because a photograph can be binned **in place** (§12.1) - flagged, with its file still sitting in the live tree. The binned rows are therefore read on every run and their paths partitioned out of the live half *before* the diff, not after: with the live rows alone every binned file looks new, and 100k binned RAWs would decode 100k RAW headers nightly.
+
+What the second channel buys is that `is_missing` becomes reachable on a binned row. A photograph whose RAW was deleted out of the Bin by hand used to sit there for ever with an original that 404s.
+
+- **A crossing** is a pair whose halves land in different channels: a removal in one and an addition in the other, which is a file hand-binned or hand-restored. The channel tags give the direction, so there is no position to test - and position could not answer it anyway, an in-place binned row being `is_deleted = 1` with its file outside the bin. Crossings stay out of `moves`, which `detectShootRelocations` reads: a binned file's movement is not evidence about a live shoot folder.
+- **An unclaimed file under the bin is imported already-binned**, with where it would restore to read off the mirrored layout. A path test runs before the hash one: a file copied into the bin and the original deleted has its own mtime, and so its own hash.
+- **A hand-renamed bin folder is followed** by the recorded identity, exactly as a shoot is (§9.4.1). Undetected it is the worst outcome in the design: the live walk takes the renamed folder's files as unclaimed additions whose hashes match the binned rows exactly, and every binned row pairs as a crossing *out* of the bin - the whole bin restored and `deleted_from_path` destroyed. Excluding the folder is unconditional; **rewriting `bin_name` needs two more conditions**, because dropping the recorded-path absence test admits a bind mount, a hardlinked directory and a recycled inode, and following any of them would silently bin a real shoot.
+- **A scoped sync runs no bin channel.** The watcher does not watch the bin, so a scoped run has no evidence and must not conclude `is_missing` on rows it did not look at. The rename detection is the one exception: it is a `dirs` test and costs nothing, and a Finder rename of a root-level folder *is* delivered by the watcher.
+- **A missing bin root is a skip, not a throw**, and not an empty walk either: the run remakes the folder, records its new identity and leaves every binned row alone. Not for a read-only library, which keeps the bin it had from before the flag and whose photographer may have deleted that folder deliberately - remaking it would be a write under a root the app may not write to.
+- **Only a candidate that still might be the bin is excluded from the live walk.** Exclusion is unconditional while the identity is ambiguous, because any of those folders may be the bin. It is *not* applied to one already shown not to be - a folder that inherited the freed inode and holds none of the bin's files - because dropping a real shoot from the live walk marks its photographs missing, which is the same harm as following it reached more quietly.
+
+The two conditions on rewriting `bin_name` are worth stating exactly, because getting the second wrong is what makes the first useless. The recorded path must fail to `stat`, or resolve to a **different** `dev:ino` - not merely be absent, since a case-only rename on a case-insensitive filesystem still resolves, to the same inode, and is handled by exclusion alone. And the candidate must **hold a file some binned row claims**, tested by looking for that file *inside the candidate*: asking whether the library has anything in its bin is true of every library that has ever binned anything, and lets the recycled inode straight through.
+
+So how often the bin is reconciled depends on the nightly full sync (`full_sync_at`) and on the watcher's 256-path fallback. A large hand-managed change self-corrects promptly; three files dropped in by hand stay under the threshold and wait for a full run. The Settings copy for `full_sync_at` names the bin among what the nightly run reconciles, so turning it off is an informed choice.
 
 Result per library:
 ```typescript
@@ -957,7 +1005,7 @@ This is updated as the sync progresses and is exposed via the API for client pol
 
 **Both phases of a run report progress, not just the second one.** `photosProcessed` against what was queued covers rendition building; `photosScanned` against `photosToScan` covers the scan, which on a first import is the longer of the two: minutes of opening and hashing every file, during which a status that only carried zeros left the client with nothing to say but "scanning". The counters are updated from the loop that opens and hashes, which is where a scan's whole cost is (the `stat` pass before it opens nothing), and `photosToScan` is only known once that pass has collapsed hardlink pairs, so a run reads 0/0 for the walk and the stats, then counts through the files. Both settle on the number of files found, so the client renders one bar per phase off the same pair of numbers.
 
-No generation guard on those writes, unlike the ones after the scan: the sync lock is not released until scan and apply are both done, so no newer generation of the same library can exist to stomp.
+No generation guard on those writes, unlike the ones after the scan: the sync lease is not released until scan and apply are both done, so no newer generation of the same library can exist to stomp.
 
 **A process with no status in memory reads the outstanding work off the database.** The status object does not survive a restart, but the work does: `needs_tile` / `needs_renditions` are columns, so a library the last process had half-imported comes back owing exactly what it owed. Reporting a flat `idle` with zeros there is a lie the client cannot see past; the strip would show nothing to do while thousands of renditions were missing. `getSyncStatus` therefore falls back to `countPendingProcessing` and reports it as `photosProcessing` against `idle`: work waiting, not work running.
 
@@ -967,14 +1015,16 @@ No generation guard on those writes, unlike the ones after the scan: the sync lo
 
 ### 9.7 Sync Lock
 
-Sync is locked **per library**, so two different libraries can sync concurrently while the same library cannot be synced twice at once. The lock is a **file at the library root**, `<root_path>/.bowerbird-sync.lock`, created with exclusive semantics (`open` with `O_CREAT | O_EXCL`, i.e. Bun/Node `wx` flag) and holding the owning PID and an ISO start timestamp. (It is a hidden file with no RAW extension, so the scanner ignores it regardless.)
+Sync is locked **per library**, so two different libraries can sync concurrently while the same library cannot be synced twice at once. The lock is a **leased row** in `sync_locks`, keyed by library id and holding an owner UUID minted per acquire, plus the ISO instants the lease started and was last refreshed. It guards the catalogue rather than the tree, which is where it belongs: the tree is what a read-only library forbids writing to, and a lock file at the root was one write per library that had nothing to do with the photographs.
 
-- `syncLibrary(id)` acquires that library's lock; if already held it throws `SYNC_IN_PROGRESS` (409).
-- `syncAll()` acquires each library's lock independently as it processes it; a library whose lock is already held is skipped (and logged), and the remaining libraries proceed.
-- **Stale-lock recovery:** if the lock exists but its PID is no longer alive (crash during a prior sync), it is reclaimed rather than blocking forever.
-- The lock is released (file removed) in a `finally` so it is cleared on both success and error.
+- `syncLibrary(id)` acquires the lease with a single upsert whose `WHERE` clause is the staleness test, so there is no check-then-claim window; if a live holder keeps it, `SYNC_IN_PROGRESS` (409).
+- `syncAll()` acquires each library's lease independently as it processes it; a library whose lease is held is collected and **re-attempted once** at the end of the loop, by which point a lease left by a killed process has lapsed.
+- **Stale-lease recovery:** a lease is reclaimable 30s after its last refresh. A run refreshes from the work rather than from a timer - the walk, both scan loops and each insert batch - because the scan and apply are synchronous and a `setInterval` is starved precisely when the lease matters.
+- The lease is released in a `finally`, scoped to its own owner so a late release cannot delete a successor's lock. The apply re-reads the owner as the first statement of a `BEGIN IMMEDIATE` transaction and rolls back on a mismatch: it is the one stretch no refresh point can reach.
 
-The in-memory `SyncStatus` (§9.6) is process-local and lost on restart; the per-library lock file is the cross-process source of truth for "is this library syncing".
+Liveness deliberately does not depend on a PID. `process.kill(pid, 0)` asks in the *asking* process's PID namespace, which is not the one the number was minted in: two containers over one volume would either refuse to sync for ever (B finds its own init at A's PID 1) or both sync at once (A's PID 37 does not exist in B). A timestamp means the same thing everywhere.
+
+The in-memory `SyncStatus` (§9.6) is process-local and lost on restart; the `sync_locks` row is the cross-process source of truth for "is this library syncing". A row present at startup means "stale within 30 seconds", not "syncing", so startup deletes nothing.
 
 ### 9.8 Sync Triggers: Manual, Scoped Watcher, Daily Backstop
 
@@ -995,9 +1045,9 @@ The in-memory `SyncStatus` (§9.6) is process-local and lost on restart; the per
 
 `@parcel/watcher` takes 204 watches and 35 MB on that same tree, settles in 55 ms, and names both halves of every move - same level, into a subfolder, out to the root - including the rename of a folder holding no photographs, which §9.4.1's photo evidence structurally cannot see. Its `ignore` list takes the data directory, the bin (§12.3) and the excluded folders, so none of those subtrees is walked at all rather than filtered afterwards, and the per-event check applies the scan's own rules (§9.1) so the two cannot disagree about what the library contains. The bin earns its place there twice over: it is one known path, and it only grows, mirroring the whole folder tree as photographs are binned.
 
-**An event the library does not contain schedules nothing.** The watcher used to arm its debounce for every batch it was handed and decide relevance afterwards, per path. A batch where nothing survived that filter then ran the timer down to a sync with an empty path set - which is a *full* one, because an empty scope is how a dirty re-run asks for the whole tree. The sync lock (§9.7) is a file at the library root, so every sync's own lock woke the watcher that started the next one: a library nobody was touching syncing once per debounce window, for ever, each run reporting `added=0 removed=0`. The lock is in the `ignore` list now, and a batch that recorded nothing arms no timer, which answers the class rather than that one path.
+**An event the library does not contain schedules nothing.** The watcher used to arm its debounce for every batch it was handed and decide relevance afterwards, per path. A batch where nothing survived that filter then ran the timer down to a sync with an empty path set - which is a *full* one, because an empty scope is how a dirty re-run asks for the whole tree. A batch that recorded nothing arms no timer now, which answers the class rather than each path that raised it. (The sync lock used to be the standing example: a file at the library root, so every sync's own lock woke the watcher that started the next one, for ever. It is a row now, §9.7, and writes nothing under the root at all.)
 
-**Nor does a file the library will never hold.** A text file, a sidecar, a JPEG export saved beside the raws is in scope by *path* - `isPathAllowed` is about folders - so it used to be handed to a scoped sync like a candidate photograph, and a whole sync run (a mutex, a lock file, a transaction, a settled announcement) went by to conclude it was never one. The watcher settles it instead, with one `stat`, asked only of paths whose extension is not one of ours (§7) so a bulk import stats nothing extra. A folder always passes, because an empty one's rename reports no other event at all and dropping it would lose the shoot relocation (§9.4.1); so does a path that is already gone, which is a deletion and could have been either.
+**Nor does a file the library will never hold.** A text file, a sidecar, a JPEG export saved beside the raws is in scope by *path* - `isPathAllowed` is about folders - so it used to be handed to a scoped sync like a candidate photograph, and a whole sync run (a mutex, a lease, a transaction, a settled announcement) went by to conclude it was never one. The watcher settles it instead, with one `stat`, asked only of paths whose extension is not one of ours (§7) so a bulk import stats nothing extra. A folder always passes, because an empty one's rename reports no other event at all and dropping it would lose the shoot relocation (§9.4.1); so does a path that is already gone, which is a deletion and could have been either.
 
 It is a native module, which is why its prebuilt bindings matter: they cover linux x64 and arm64 in both glibc and musl, plus macOS and Windows, so nothing is compiled at install time on any platform this runs on.
 
@@ -1007,7 +1057,7 @@ A moved folder reports as the folder, with no per-file events beneath it. That i
 
 Sync snapshots the DB, then scans **asynchronously**, then applies. A user mutation that moves files (shoot add/remove/rename, photo delete) landing mid-scan would make that snapshot stale. `libraryMutex` (one process-global instance) serializes those mutations against sync **per library**: whoever arrives second queues rather than failing, since these are interactive requests.
 
-- `syncLibrary` takes the sync **lock file first, then the mutex**. Lock-first keeps sync-vs-sync fail-fast (`SYNC_IN_PROGRESS`, 409, §9.7); the mutex only makes *mutations* wait. Mutations never take the lock file, so there is no cycle to deadlock on.
+- `syncLibrary` takes the sync **lease first, then the mutex**. Lease-first keeps sync-vs-sync fail-fast (`SYNC_IN_PROGRESS`, 409, §9.7); the mutex only makes *mutations* wait. Mutations never take the lease, so there is no cycle to deadlock on.
 - The mutex is acquired at exactly one level per operation (e.g. in `rename`, not its caller `update`), since it is not re-entrant.
 - This closes the mutation-vs-scan race class at the source, rather than guarding each symptom. The per-write guards it supersedes are kept anyway (path-guarded `setMissing`, the `(dev, ino)` collapse, the re-checks before FK writes) because they also cover the cross-process case the in-memory mutex cannot.
 
@@ -1039,9 +1089,9 @@ Processing converts RAW files into **renditions**: derived copies of one photo, 
 
 | Rendition | Constraint | Why it exists | Output path |
 |---|---|---|---|
-| `grid` | Longest edge = `GRID_RENDITION_SIZE` (default 800px) | The library grid. Always SDR | `<data_path>/renditions/grid/<photo_uuid>.avif` |
-| `full` | Longest edge = `FULL_RENDITION_SIZE` (default 3840px) | The photo view | `<data_path>/renditions/full[-hdr]/<photo_uuid>.avif` |
-| `max` | Native resolution, never fitted | Pixel-peeping (§10.5) | `<data_path>/renditions/max[-hdr]/<photo_uuid>.avif` |
+| `grid` | Longest edge = `GRID_RENDITION_SIZE` (default 800px) | The library grid. Always SDR | `<DATA_DIR>/<library id>/renditions/grid/<photo_uuid>.avif` |
+| `full` | Longest edge = `FULL_RENDITION_SIZE` (default 3840px) | The photo view | `<DATA_DIR>/<library id>/renditions/full[-hdr]/<photo_uuid>.avif` |
+| `max` | Native resolution, never fitted | Pixel-peeping (§10.5) | `<DATA_DIR>/<library id>/renditions/max[-hdr]/<photo_uuid>.avif` |
 
 Sizes and quality come from configuration (§15). Nothing in the pipeline hardcodes them.
 
@@ -1485,8 +1535,8 @@ Generated files are named `<photoId>.<ext>`, and photo ids are minted per insert
 
 Two things close that off:
 
-- **Removing a library removes its data directory.** Re-adding the same folder can never reuse the renditions (new ids), so keeping them is dead weight. The RAW files are not ours and are left alone: the Bin is outside the data directory (§12.3), and `data_path` is user-supplied, so a library configured to keep its data alongside or above the photographs is skipped with a warning rather than having that directory removed. Anything that still looks like an original under there - a `<data_path>/bin` from the layout that predates the Bin's move - is carried out into the library's Bin first, and the removal refuses outright if any is left behind. Losing renditions is recoverable; losing originals is not.
-- **A scheduled sweep** (`PRUNE_EVERY_DAYS`, default 7, 0 disables) walks each generated directory and deletes any file whose id has no row. The directories and the extension each is supposed to hold both come from the path helpers that write the files, so changing an output format cannot leave the sweep looking in the wrong place. A file whose extension no longer matches goes too, even when its photo is alive: a format change writes the new render beside the old one rather than over it, which the PNG-to-JXL switch made real at ~100 MB per photo ever opened. That rule is also what empties a **retired directory** - one nothing writes to any more, listed by `retiredRenditionDirs()` and swept alongside the live ones, where every file is by definition the wrong extension. `<rendition>-hdr-video` is the one there is: an MP4 per HDR photo for Firefox, which the browser now makes for itself (§10.7). The directory is `rmdir`'d once it comes up empty, and a file that would not go keeps it until a later sweep. Only `renditions/` and `hdr/` are swept, so the sync lock is untouched (and the Bin is not in the data directory at all). Ids are checked against the whole `photos` table, not one library's, because the id space is global and two libraries may share a data directory. Soft-deleted rows count as live, since their renditions are what make the Bin browsable (§12.1).
+- **Removing a library removes its data directory**, `<DATA_DIR>/<library id>` (§6). Re-adding the same folder can never reuse the renditions (new ids), so keeping them is dead weight. The RAW files are not ours and are left alone: the directory is outside every library root, and the Bin is beside the photographs (§12.3). The removal still refuses outright while anything under there looks like an original - not as a trigger for a rescue, but because `rm -rf` is the one call here that cannot be undone and an original under there means the directory is not what it is believed to be.
+- **A scheduled sweep** (`PRUNE_EVERY_DAYS`, default 7, 0 disables) walks each generated directory and deletes any file whose id has no row. The directories and the extension each is supposed to hold both come from the path helpers that write the files, so changing an output format cannot leave the sweep looking in the wrong place. A file whose extension no longer matches goes too, even when its photo is alive: a format change writes the new render beside the old one rather than over it, which the PNG-to-JXL switch made real at ~100 MB per photo ever opened. That rule is also what empties a **retired directory** - one nothing writes to any more, listed by `retiredRenditionDirs()` and swept alongside the live ones, where every file is by definition the wrong extension. `<rendition>-hdr-video` is the one there is: an MP4 per HDR photo for Firefox, which the browser now makes for itself (§10.7). The directory is `rmdir`'d once it comes up empty, and a file that would not go keeps it until a later sweep. Only `renditions/` and `hdr/` are swept, so a stray the user left is untouched (and the Bin is not in the data directory at all). Ids are checked against the whole `photos` table, not one library's, because the id space is global. Soft-deleted rows count as live, since their renditions are what make the Bin browsable (§12.1).
 
 ### 10.6.1 One place that deletes
 
@@ -1497,8 +1547,9 @@ Each entry point states what it will not do:
 | | Guard |
 |---|---|
 | `deleteGeneratedFile(dataPath, target)` | Target must resolve under `<dataPath>/renditions` or `<dataPath>/hdr`, and must not carry a supported RAW extension. `dataPath` comes from the caller's own library, so a path from elsewhere cannot satisfy it. |
+| `deleteGeneratedDirectory(dataPath, target)` | Same containment test, and `rmdir` rather than a recursive remove: a directory still holding a file it would not delete keeps it until a later sweep. |
 | `deleteDataDirectory(dataPath)` | Refuses while any supported file exists anywhere beneath, symlinks excluded. |
-| `deleteSyncLockSync(lockPath)` | Basename must be `.bowerbird-sync.lock`. |
+| `deleteEmptyBinFolder(library, target)` | Target must be exactly this library's bin (§12.3), and `rmdir` again, so anything at all inside it stops the removal. Runs on the error path of a library create, where what it is about to delete is a directory the app believes it just made. |
 | `unlinkMovedFile(from, movedTo)` | Removes the source half of a move only once the destination exists, so a failed link or copy can never leave the move having consumed the file. |
 
 It runs on an interval rather than at startup: a restart is no evidence anything was orphaned, and in development that would sweep on every reload.
@@ -2202,10 +2253,11 @@ For each photo:
 
 1. **Keep the renditions.** They are *not* removed. The Bin is a view the user browses to find something to restore, and it is useless if every frame in it is a grey placeholder. The two AVIFs are roughly 1% of the size of the RAW the Bin is already retaining, so deleting them saves almost nothing and costs the feature. They are removed only when a photo is permanently purged.
 
-2. **Move RAW file to Bin:**
+2. **Move the RAW into the Bin, if this library has one:**
    - Determine the bin path, where `<bin>` is the library's `bin_name` (§12.3): `<library_root>/<bin>/<folder the photo was in>/<original_filename>`. A photo at `A/B/c.arw` bins to `<bin>/A/B/c.arw`; one in the root bins to `<bin>/c.arw`.
    - If a file with the same name already exists in the Bin, append a numeric suffix (e.g. `IMG_0001_1.ARW`, `IMG_0001_2.ARW`).
    - Move (rename) the file. Do **not** copy-and-delete.
+   - **A read-only library takes neither step.** Nothing moves, no directory is made, `file_path` is left alone and `deleted_from_path` ends up equal to it. This is not new machinery: it is the branch a photo whose file had already gone has always taken. The move was never what made a photograph binned - the flag is; the move existed so the next scan would not re-import the file, and the bin channel (§9.1.1) arranges that from the table instead.
 
 3. **Update DB record:**
    - Set `is_deleted = 1`.
@@ -2214,11 +2266,21 @@ For each photo:
 
 ### 12.2 Restore
 
-`POST /api/photos/restore` is the undo of a soft-delete. Delete records the pre-Bin `file_path` in `deleted_from_path`, and restore moves the RAW back to exactly that path, clears `is_deleted` and blanks the column.
+`POST /api/photos/restore` is the undo of a soft-delete. Delete records the pre-Bin `file_path` in `deleted_from_path`, and restore moves the RAW back to exactly that path, clears `is_deleted` and blanks the column. Both pending flags go back to 1, because the delete zeroed them: a photograph that comes back having never had its renditions built would otherwise sit unbuilt for ever.
+
+**It branches on where the file is, not on the flag**, and it has three arms rather than two - the middle one is every writable library there is:
+
+| the row's file | result |
+|---|---|
+| outside the bin | the flag clears, nothing moves |
+| inside the bin, writable | today's move out of the bin |
+| inside the bin, read-only | refused with `READ_ONLY` |
+
+The first arm cannot merely skip the move: `moveIntoDir` would claim the name the file already holds, hit `EEXIST`, walk its suffix loop to `a_1.arw` and then unlink the source - the file is not duplicated, it is silently renamed under the photographer. It keeps the existence check, though: "no move" is not "no validation", and a row whose file has gone would otherwise go live with `is_missing` cleared and every original 404ing behind renditions that still look fine. The third arm exists because the row would otherwise go live with its RAW still in the bin, and the bin channel would re-bin it on the next sync - a restore repeatable for ever, with `deleted_from_path` replaced by a guess each time. **An undo by batch tests every row's position before restoring any of them**: a half-landed undo is worse than none.
 
 **An undo names the bin, not its photographs.** Delete also stamps every row it takes with a `deleted_batch` the *client* generates, and the undo posts that batch back (`PhotoTargetSchema`, §14). The ids never travel: a bin of a million would be a 36MB response and a 36MB request to reverse it, and the selection those photos came from resolves to different ones the moment they leave the collection (§18.3.3). Client-generated so the undo survives an answer that never arrives - the delete may outlive the socket, and it is exactly then that being able to reverse it matters.
 
-**Everything that is not per-file is done per batch.** Both `delete` and `restore` read their rows in one query rather than a detail payload each, resolve the library and take its sync lock once, create each Bin directory once, and commit a chunk of flags at a time. Per photo - which is what these were - it was a join plus a second query for album membership neither reads, a lock acquire, and its own transaction: **2.231ms per photo before a byte moved on disk**, or 34 minutes to bin a million. Batched, and now measured *including* the renames, it is **0.14ms per photo**.
+**Everything that is not per-file is done per batch.** Both `delete` and `restore` read their rows in one query rather than a detail payload each, resolve the library and take `libraryMutex` once, create each Bin directory once, and commit a chunk of flags at a time. Per photo - which is what these were - it was a join plus a second query for album membership neither reads, a mutex acquire, and its own transaction: **2.231ms per photo before a byte moved on disk**, or 34 minutes to bin a million. Batched, and now measured *including* the renames, it is **0.14ms per photo**.
 
 The chunk is what bounds the exposure the per-photo commit used to bound: the files move, then the flags commit, so a crash in between leaves at most one chunk of RAWs in a Bin the scanner does not look at. A DB failure rolls its chunk's moves back, exactly as the per-photo path did.
 
@@ -2233,15 +2295,21 @@ The chunk is what bounds the exposure the per-photo commit used to bound: the fi
 
 The mirror is what makes one bin possible. Flat, a bin is a heap in which `IMG_0001.ARW` from three shoots are three files distinguished only by the numeric suffix the collision handling adds - fine for the catalogue, which knows, and useless to anyone reading the folder. Mirrored, the bin is browsable on its own terms: where a file came from is written in the path, so it can be recovered by hand if the catalogue is ever lost. Bins inside each shoot folder bought the same legibility, but scattered: one library's deleted photographs in as many places as it has folders, each needing its own skip rule, and none of it visible in one place.
 
-**Never under `data_path`.** A Bin holds originals, and the data directory is the one tree the system deletes wholesale (§6, §10.6); a bin inside it would mean removing a library, or clearing `.bowerbird/` by hand, silently destroying every photograph the user had binned. The bin therefore sits beside the photographs it came from, where the only thing that can remove it is the user.
+**Never under the data directory.** A Bin holds originals, and the data directory is the one tree the system deletes wholesale (§6, §10.6); a bin inside it would mean removing a library, or clearing `DATA_DIR` by hand, silently destroying every photograph the user had binned. The bin therefore sits beside the photographs it came from, where the only thing that can remove it is the user.
 
 The scanner skips `<root>/<bin_name>` and everything under it, so soft-deleted files are never re-imported. That is a rule about the root, not about the name: see §9.1.
 
-**A binned photo's folder is `deleted_from_path`, not `file_path`.** Its file is in the bin, so `file_path` points there and no longer shares a prefix with the folder it was taken from - which every folder-scoped operation is keyed on. `listUnderFolder` therefore matches live rows on `file_path` and deleted ones on `deleted_from_path`, and a folder rename (§9.4.1) rewrites `file_path` for the live rows and `deleted_from_path` for the deleted ones. The binned file itself does not move on a rename: it is in the bin, not in the folder that moved, and only where it restores *to* has changed.
+**A binned photo's folder is `deleted_from_path`, not `file_path`.** A bin-resident file is in the bin, so `file_path` points there and no longer shares a prefix with the folder it was taken from - which every folder-scoped operation is keyed on. `listUnderFolder` therefore matches live rows on `file_path` and binned ones on `deleted_from_path`; for a row binned in place the two are equal, so that arm answers for both.
+
+A folder rename (§9.4.1) rewrites `file_path` for the live rows and `deleted_from_path` for every binned one. **It rewrites a binned row's `file_path` too, exactly when that row was binned in place** - which is when the file was under the renamed folder and moved with it. A bin-resident one did not move: it is in the bin, not in the folder, and only where it restores *to* has changed. Without that arm, an in-place binned row under a hand-renamed folder is left pointing at nothing while the file at the new path imports as a second, live photograph: one duplicate per in-place binned photo under any renamed folder. `is_missing` is still only cleared for rows proven present, which a binned row is not.
 
 Removing a folder from the library (§4.7) takes the deleted rows with the live ones, since what leaves is the catalogue's record of that folder. No file is touched either way - the live ones stay in the folder and the binned ones stay in the bin, both now out of scope, so the next sync re-imports neither.
 
-**Which is why the name is asked for at creation and refused if taken.** The bin is created lazily on the first delete, and the scan skips whatever is at `<root>/<bin_name>` sight unseen - so a root that already keeps its own `Bin` would have had it adopted as one, and every photograph inside it dropped from the import with nothing on screen saying so. `POST /api/libraries` refuses that root outright and the Add-library dialog marks the field against the folder listing it already has, which turns a silent gap into a choice made before the library exists. It is not offered by `PATCH`: the name is what the scan skips, so changing it afterwards leaves the old bin's RAWs in a folder the next sync walks back in and re-imports as new photographs.
+**Which is why the name is asked for at creation and refused if taken.** The scan skips whatever is at `<root>/<bin_name>` sight unseen - so a root that already keeps its own `Bin` would have it adopted as one, and every photograph inside it dropped from the import with nothing on screen saying so. `POST /api/libraries` refuses that root outright and the Add-library dialog marks the field against the folder listing it already has, which turns a silent gap into a choice made before the library exists.
+
+**The folder exists from the moment the library does**, made and `stat`ed into the identity columns before the row is inserted, in the order `ShootsService.create` uses. One helper owns creating it, and records the identity whenever it creates: without a single owner, an `ensureDir` on the delete path silently recreates a hand-deleted bin with a **new inode** while the columns still name the dead one, after which no rename of it can ever be followed - and that freed inode number is the likeliest to be recycled into the false-positive case the follow has to refuse. A bin left behind by a *failed* insert is removed, through `utils/deletions.ts` like every other deletion and guarded twice: it must be exactly this library's bin, and `rmdir` fails while anything at all is inside it.
+
+`PATCH` with a `bin_name` is a **rename**, which moves the folder (§4.1). Nothing in the app removes the folder, but the photographer can, so every consumer handles its absence: the bin channel skips the run and remakes it (§9.1.1), and a rename refuses with an `IO_ERROR` naming the remedy - recreating would be right for a deleted folder and wrong for a moved one, where it would orphan the real bin.
 
 ---
 
@@ -2262,10 +2330,10 @@ All endpoints return JSON. Error responses use a standard envelope:
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/api/libraries` | Create a library. 400 if the root already holds a folder named by `bin_name` (§12.3) |
+| `POST` | `/api/libraries` | Create a library. 400 if the root already holds a folder named by `bin_name` (§12.3); 403 `READ_ONLY` for `read_only: false` over a root that is not writable. `read_only` forces `bin_name` to null |
 | `GET` | `/api/libraries` | List all libraries |
 | `GET` | `/api/libraries/:id` | Get a library |
-| `PATCH` | `/api/libraries/:id` | Update a library (name, default ordering, rendition settings, `include_subfolders`, `mirror_shoots`) |
+| `PATCH` | `/api/libraries/:id` | Update a library (name, default ordering, rendition settings, `include_subfolders`, `mirror_shoots`, `read_only`, `bin_name`). A `bin_name` **renames the folder** (§4.1): 409 if that name is taken, 403 for a read-only library - that check first, so a read-only library never sees the 409. Clearing `read_only` on a library with no bin needs a `bin_name` in the same request |
 | `DELETE` | `/api/libraries/:id` | Delete a library |
 | `POST` | `/api/libraries/:id/sync` | Trigger sync for a library |
 | `DELETE` | `/api/libraries/:id/sync` | Stop the library's current sync (§9.10) |
@@ -2406,7 +2474,7 @@ app.get('/image/:photoId/renditions/:rendition', async (c) => {
 | `GET` | `/api/settings` | Everything the user can change that is not a property of one library |
 | `PATCH` | `/api/settings` | Update them |
 | `GET` | `/api/events` | Server-sent events; `rendition` carries the id of a photo whose renditions were just written (§18.6) |
-| `GET` | `/api/browse` | Directories inside `?path=`, or the home directory when it is omitted, for the folder picker that adds a library. Absolute paths, and unfenced: a library root can be on any mount, and `POST /api/libraries` already accepts any absolute path. The per-library form (§13.1) is fenced, because there a folder outside the root is wrong rather than merely unhelpful. |
+| `GET` | `/api/browse` | Directories inside `?path=`, or the home directory when it is omitted, for the folder picker that adds a library. Absolute paths, and unfenced: a library root can be on any mount, and `POST /api/libraries` already accepts any absolute path. The per-library form (§13.1) is fenced, because there a folder outside the root is wrong rather than merely unhelpful. Carries a `writable` boolean for the folder being listed - one per listing, not per child - so the dialog can tick and lock "don't change anything in this folder" for a root the server cannot write in (§4.1). |
 
 Two scopes, not three: the `libraries` row holds what belongs to one catalogue (the rendition source and HDR, §10.2), and `settings` holds everything app-wide - the viewer's `viewer_rendition_mode` and the rendition `remember` remembers, alongside the server's own tuning (§15). A key/value table rather than a column per setting because they are read one at a time and never queried across, and adding one should not need a migration; values are stored as text, and the default's type says what to read one back as. A value the build no longer understands reads as its default rather than failing the request: a bad row must not stop the viewer opening or the server booting.
 
@@ -2422,7 +2490,8 @@ Two scopes, not three: the `libraries` row holds what belongs to one catalogue (
 | `VALIDATION_ERROR` | 400 | Request validation failed |
 | `CONFLICT` | 409 | Conflicting operation (e.g. library root already registered) |
 | `IO_ERROR` | 500 | Filesystem operation failed |
-| `SYNC_IN_PROGRESS` | 409 | A sync is already running for this library (per-library lock, §9.7) |
+| `READ_ONLY` | 403 | The library forbids the write this needed (§4.1). Distinct from `VALIDATION_ERROR` because the request is well-formed and would have succeeded against another library |
+| `SYNC_IN_PROGRESS` | 409 | A sync is already running for this library (per-library lease, §9.7) |
 | `INTERNAL_ERROR` | 500 | Unexpected error |
 
 ### 14.2 API Layer Error Handling
@@ -2462,7 +2531,7 @@ A scan reports progress every 500 files, because a 300k-frame import is hours of
 
 ## 15. Configuration
 
-Three environment variables, and only three: what has to be known before the
+Four environment variables, and only four: what has to be known before the
 catalogue can be opened.
 
 | Variable | Default | Description |
@@ -2470,6 +2539,7 @@ catalogue can be opened.
 | `HOST` | `0.0.0.0` | HTTP server bind address |
 | `PORT` | random | HTTP server port, printed on startup; `-p <port>` overrides it |
 | `DB_PATH` | `./bowerbird.db` | SQLite database file path |
+| `DATA_DIR` | `./data` | Where every generated file lives, one subdirectory per library (§6). Resolved absolute at load, created and tested for writability at startup |
 
 Everything else is a **setting**, stored in the `settings` table (§13.6) and
 edited from the app's Settings page. Deployment config that can only be changed
@@ -2551,21 +2621,40 @@ The sync-service, photo-deletion, and image-streaming cases below run in the int
 - Duplicate handling: 3 copies → 2 removed + 1 added = 1 move + 1 removal
 - Album membership bias: prefer removing photos not in albums
 - Modified + added with original hash (special case from §9.3)
-- Files in `.bowerbird/` directory are excluded
+- Files in a hidden directory are excluded, which covers a legacy `.bowerbird/` (§6)
 - Files in the library's bin are excluded, and a folder of the user's own further down sharing its name is not (§12.3)
 - Non-ARW files are ignored
 - Reappearance: a previously-missing file back at its original path clears `is_missing` (§9.4 step 4)
 - Move into a known shoot folder sets `shoot_id`; move out to root clears it (§9.4 step 1)
 - mtime change (e.g. in-place edit) marks a file MODIFIED and re-processes it (§9.2)
-- Sync lock: a second concurrent sync of the *same* library throws `SYNC_IN_PROGRESS`; two *different* libraries sync concurrently; a stale lock (dead PID) is reclaimed (§9.7)
+- Sync lease: a second concurrent sync of the *same* library throws `SYNC_IN_PROGRESS`; two *different* libraries sync concurrently; a lease stale by more than 30s is reclaimed and a fresher one is not (§9.7)
 - Concurrency vs. a user mutation mid-scan: an in-flight move's hardlink pair (link+unlink) is collapsed by inode so no duplicate row is inserted; a library deleted mid-scan aborts `NOT_FOUND` (no FK crash); a stale sync generation's detached processing tail doesn't stomp a newer sync's status
 - Stopping (§9.10): a stopped rescan applies nothing and marks nothing missing, opens no further files and returns an idle status; a stopped *first* scan keeps the photos it reached (nothing to be absent from) and adds no missing rows; mid-processing the run ends rather than waiting itself out, leaving the unreached photos pending; a batch a later sync coalesced into is still what a stop reaches
+
+**The bin channel (§9.1.1):**
+- A photograph binned in place is not re-imported as a duplicate, however many syncs run
+- A binned file deleted by hand is marked `is_missing`, and counts as modified rather than removed
+- A file moved into the bin by hand becomes that row rather than a second one, even when its mtime (and so its hash) differs
+- A file taken back out of the bin by hand goes live again, and owes its renditions
+- A hand-renamed bin folder is followed: `bin_name` and the binned prefixes move, `deleted_from_path` does not, no binned file is opened and nothing counts as moved
+- A folder carrying the bin's identity but claiming no binned file is **not** followed
+- A deleted bin folder skips the channel and leaves every binned row alone
+- An unclaimed file under the bin is imported already-binned, with no rendition work queued
+- A hand-renamed shoot folder keeps its in-place binned rows reachable: one row afterwards, not a live duplicate plus an orphan
+- A scoped sync touches no binned row
+- A binned album member does not outrank a live removal for the same hash
 
 **Photo deletion:**
 - Renditions are kept, so the Bin can be browsed
 - RAW file is moved into the library's one bin, under the folder it came from (`A/B/c.arw` → `<bin>/A/B/c.arw`, root → `<bin>/c.arw`)
 - DB record is marked `is_deleted = 1`, not removed
 - Filename collision in Bin (numeric suffix), which the mirror leaves for two files of one name in one folder rather than one name anywhere in the library
+- A read-only library moves nothing, and restoring from one renames nothing - asserted by listing the directory, since the regression is a silent `a_1.arw` rename a row assertion would miss
+- An undo batch holding one row inside a read-only library's bin is refused before any row is restored
+
+**Read-only libraries**, over a fixture tree with the directory permissions actually dropped, so a stray write fails the test rather than passing unnoticed: sync, bin, restore, rate and album all work, and the tree is byte-identical afterwards. A shoot has to be a folder that already exists, and `addPhotos` is refused.
+
+**The bin folder's lifecycle:** a create whose insert fails leaves no bin behind; a read-only create makes none whatever `bin_name` was sent; a rename moves the folder, keeps its inode, re-prefixes the binned rows and leaves `deleted_from_path`; a rename onto a taken name is a 409 and a read-only library's is a 403 first.
 
 **Shoot operations:**
 - Creating a shoot whose folder already exists adopts the photos already in it (sets `shoot_id`, no file moves)
@@ -2597,6 +2686,15 @@ docker exec -w /app bowerbird-dev bun test test/integration
 
 These live in `test/integration/*.integration.test.ts` and cover the sync engine, image streaming, and repository DB behaviour end-to-end against a real Sony ARW fixture.
 
+### 16.4 Known limits, stated rather than discovered
+
+- **A crossing pairs on `file_hash`, which is a digest of the stat and the header** - extension, dimensions, mtime, colour space, size, orientation (§9.2) - **not of the pixels.** Two byte-identical copies collide by construction. Not new: live move detection has always had it. What the bin channel adds is that the collision can now cross the bin, and §9.1.1's path test only covers the common false *negative* (a copy whose mtime moved); the false positive stands.
+- **Two instances sharing `/config` must share `/data`**, and only one of them may bin or move photographs. `needs_tile`, `needs_renditions` and `renditions_built_at` are columns in the shared database while the files are per-`DATA_DIR`, so with separate data directories whichever container builds a rendition clears the flags for both and the other serves 404s for ever with nothing able to queue the work. `libraryMutex` is process-global (§9.9) and cannot see the other container; mutations taking the lease and waiting is the fix, and is not implemented.
+- **Two hosts are unsupported**, and were before: SQLite over a network filesystem has no working WAL shared memory.
+- **A read-only library has no bin folder to open in Finder.** A binned photograph is visible in the app and untouched on disk, and nowhere else. Its bin also cannot be renamed from the app, there being none; renaming one by hand in a *flipped* library works and is followed (§9.1.1).
+- **Photographs cannot be moved into or out of shoot folders** in a read-only library; albums cover the grouping (§8.6).
+- **There is no migration onto this schema.** The `libraries` columns this added - `read_only`, the bin identity - and the `data_path` it removed are edits to `SCHEMA` in `migrations.ts` with no `ensureColumn` and no drop, on the stated basis that there are no installs to carry forward. A catalogue predating it is neither migrated nor recreated: it has to be rebuilt, and nothing detects that for you.
+
 ---
 
 ## 17. Implementation Order
@@ -2613,7 +2711,7 @@ The following order respects dependency chains — each step depends on the step
 8. **Metadata extraction**: `metadata.ts` (per-format header parse; LibRaw for ARW and CR3).
 9. **Photos service + API**: CRUD, listing, filtering.
 10. **Processing service**: Worker-based rendition generation (reuses the RAW decoder).
-11. **Sync service**: Full sync algorithm with move detection, reappearance handling, shoot-membership reconciliation, and the per-library sync lock (§9.7). Depends on the processing service (§8.4), which it calls to trigger rendition generation (§9.5).
+11. **Sync service**: Full sync algorithm with move detection, reappearance handling, shoot-membership reconciliation, and the per-library sync lease (§9.7). Depends on the processing service (§8.4), which it calls to trigger rendition generation (§9.5).
 12. **Shoots service + API**: CRUD, photo assignment with file moves.
 13. **Albums service + API**: CRUD, photo assignment.
 14. **Image streaming API**: Static-path file streaming endpoints.
@@ -2670,6 +2768,8 @@ Every registered library is listed permanently in the rail, and the active one e
 Adding a library is one button and a dialog, holding everything the library needs before it exists: the folder, a name, and the ordering its gallery starts in. The folder is walked with a picker over `/api/browse` as well as typed, because the path is read on the server, which may not be the machine the page is open on, so a path that exists in this browser's world is not necessarily one the server can open.
 
 Adding a library also decides how much of the folder tree it is and whether those folders are shoots (§4.1). Both belong in the dialog rather than in Settings afterwards, because the answers change what the first sync imports, and a library that has already spent an hour building renditions for a folder of decade-old rejects has answered the question the expensive way. They remain editable per library in Settings, where turning subfolders off disables the shoots controls and says why.
+
+**"Don't change anything in this folder"** is a checkbox in the same dialog, ticked and disabled when the listing reports the folder is not writable (§4.1). Ticking it hides the bin-name field - and takes it out of the submit guard too, which otherwise leaves Add disabled for ever. A `READ_ONLY` from the create re-ticks the box rather than surfacing a bare error, since `access` can be wrong. In Settings the same flag is per library, beside a **bin folder name** field that renames the folder on disk (§4.1) and is disabled, with the reason, for a read-only library. The Bin page reads its line off the library: photographs moved into `<bin_name>`, or left exactly where they were when there is no bin. Restore stays visible but disabled for a photograph inside a read-only library's bin, and *Add to shoot* is not offered at all - an album is the thing to reach for.
 
 Adding a shoot is **not** a dialog with a folder picker any more, for the reason the picker existed: a shoot is a folder, and the Shoots page is now a view of the folders themselves (§18.3.4), so the folder is chosen by pointing at it rather than by re-walking the tree inside a modal. What survives as a dialog is the part a folder cannot answer - a name for a folder that does not exist yet, and the shoot's own ordering.
 

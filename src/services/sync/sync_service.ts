@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import path from 'node:path';
 import { AppError } from '../../errors';
@@ -8,7 +8,6 @@ import type { Library, LibrarySyncStatus } from '../../schemas/libraries';
 import { isSupportedFile, scanLibraryTree, type ScannedDir, type ScannedFile } from '../../utils/scan';
 import { isDirInScope, isFileInScope, libraryScope, type LibraryScope } from '../../utils/scope';
 import { computeFileHash } from '../../utils/hash';
-import { getDataPath } from '../../utils/paths';
 import { shootContains } from '../../utils/shoots';
 import type { AlbumsRepository } from '../albums/albums_repository';
 import type { LibrariesRepository } from '../libraries/libraries_repository';
@@ -23,11 +22,15 @@ import {
   detectMoves,
   detectRelocationsByIdentity,
   detectShootRelocations,
+  findBinByIdentity,
   type AddedEntry,
+  type Crossing,
   type DiskFile,
+  type MoveResult,
 } from './sync_algorithm';
+import { ensureBinFolder } from '../libraries/bin_folder';
 import { libraryMutex } from './library_mutex';
-import { acquireSyncLock, releaseSyncLock } from './sync_lock';
+import { LEASE_MS, type SyncLocksRepository } from './sync_locks_repository';
 
 export interface ProcessingTrigger {
   processUnprocessed(scope?: ProcessingScope, stopped?: () => boolean): void | Promise<void>;
@@ -49,6 +52,12 @@ const INSERT_BATCH = 1000;
 // hours of work, and a log that says nothing until it finishes is
 // indistinguishable from one that has hung.
 const SCAN_PROGRESS_EVERY = 500;
+
+// How often a run refreshes its lease, driven by the work rather than by a timer:
+// the scan and apply are synchronous, so a `setInterval` is starved precisely
+// when the lease matters (§9.7). A third of the lease, so two missed refresh points
+// still do not lose the lock.
+const LEASE_REFRESH_MS = LEASE_MS / 3;
 
 // What the detached rendition batch a run hands off covers, kept so the status
 // endpoint can report progress against the same set the batch is working on.
@@ -119,8 +128,9 @@ export class SyncService implements LibraryLifecycleListener {
   // background bookkeeping: the live pending count comes from the DB on read.
   private readonly processingBatch = new Map<string, ProcessingBatch>();
   private readonly settledListeners = new Set<(libraryId: string, changed: boolean) => void>();
+  private readonly libraryChangedListeners = new Set<(library: Library) => void>();
   // Identity token per in-flight sync generation, and the handle that stops it.
-  // The lock is released before the detached processing runs, so a newer sync can
+  // The lease is released before the detached processing runs, so a newer sync can
   // start while the old one's processing tail is still going; the token lets a
   // stale tail skip its status write instead of stomping the newer generation's.
   private readonly generation = new Map<string, AbortController>();
@@ -131,6 +141,7 @@ export class SyncService implements LibraryLifecycleListener {
     private readonly albums: AlbumsRepository,
     private readonly shoots: ShootsRepository,
     private readonly folderRules: FolderRulesRepository,
+    private readonly syncLocks: SyncLocksRepository,
     private readonly processing: ProcessingTrigger,
     private readonly extract: MetadataExtractor = extractMetadata,
   ) {}
@@ -139,7 +150,7 @@ export class SyncService implements LibraryLifecycleListener {
   // (§9.1). Built per run: a folder rule set between two syncs takes effect on
   // the next one without anything having to invalidate a cache.
   scopeFor(library: Library): LibraryScope {
-    return libraryScope(library, getDataPath(library), this.folderRules.pathsWithRule(library.id, 'excluded'));
+    return libraryScope(library, this.folderRules.pathsWithRule(library.id, 'excluded'));
   }
 
   onLibraryCreated(_library: Library): void {
@@ -168,18 +179,95 @@ export class SyncService implements LibraryLifecycleListener {
     this.settledListeners.add(listener);
   }
 
+  /**
+   * Called when a sync wrote a library's own row, which today means following a
+   * renamed bin folder (§9.1.1). The watcher builds its ignore list from
+   * `bin_name`, so without this it goes on ignoring a folder that is not there
+   * and watching the one that is - after which every binning wakes a sync, and a
+   * scoped sync over bin paths reads them as unclaimed live additions.
+   */
+  onLibraryChanged(listener: (library: Library) => void): void {
+    this.libraryChangedListeners.add(listener);
+  }
+
   async syncAll(): Promise<void> {
+    // Reclaim is by expiry now (§9.7), so a container killed and restarted within
+    // seconds finds its own dead run still holding the lease. Skipping silently
+    // would drop that library until tomorrow, so the ones that were locked are
+    // re-attempted at the end of the loop.
+    const skipped: string[] = [];
     for (const library of this.libraries.list()) {
-      try {
-        await this.syncLibrary(library.id, undefined, 'daily');
-      } catch (err) {
-        // Never let one library abort the batch (§9.7): skip locked ones silently,
-        // log anything else, and move on to the remaining libraries.
-        if (!(err instanceof AppError && err.code === 'SYNC_IN_PROGRESS')) {
-          log.error('library failed during syncAll', { library: library.id, err });
-        }
-      }
+      if (!(await this.syncOne(library.id))) skipped.push(library.id);
     }
+    if (skipped.length === 0) return;
+
+    // **Waited out, not retried straight away.** The lease that refused these is
+    // reclaimable at a stated instant, and a retry before it is refused for
+    // exactly the reason the first attempt was - which made the re-attempt a
+    // no-op in the one case it exists for, a dead process whose row has not
+    // expired yet. Bounded by one lease, and skipped entirely when the loop
+    // already took that long or the holder has since released.
+    const reclaimable = skipped
+      .map((libraryId) => this.syncLocks.expiresAt(libraryId)?.getTime())
+      .filter((at): at is number => at != null);
+    const waitFor = Math.min(reclaimable.length === 0 ? 0 : Math.max(...reclaimable) - Date.now(), LEASE_MS);
+    if (waitFor > 0) {
+      log.info('waiting for a held sync lease before re-attempting', { libraries: skipped.length, ms: waitFor });
+      await Bun.sleep(waitFor);
+    }
+    for (const libraryId of skipped) await this.syncOne(libraryId);
+  }
+
+  /** False when the library was locked; every other failure is logged and swallowed. */
+  private async syncOne(libraryId: string): Promise<boolean> {
+    try {
+      await this.syncLibrary(libraryId, undefined, 'daily');
+      return true;
+    } catch (err) {
+      // Never let one library abort the batch (§9.7).
+      if (err instanceof AppError && err.code === 'SYNC_IN_PROGRESS') return false;
+      log.error('library failed during syncAll', { library: libraryId, err });
+      return true;
+    }
+  }
+
+  // Keeps this run's lease alive across a stretch of synchronous work, throttled
+  // so a per-file call costs a clock read (§9.7).
+  private leaseKeeper(libraryId: string, owner: string): () => void {
+    let refreshedAt = Date.now();
+    return () => {
+      const now = Date.now();
+      if (now - refreshedAt < LEASE_REFRESH_MS) return;
+      refreshedAt = now;
+      this.syncLocks.refresh(libraryId, owner, new Date(now));
+    };
+  }
+
+  // The fifth blocking stretch, and the only one where a timer is the right
+  // instrument: the lease is taken before `libraryMutex` (§9.9), and waiting for
+  // it is genuinely idle - a bin of 20k photographs holds that mutex for minutes
+  // while this run has done no work to hang a refresh off. Left uncovered, the
+  // run's lease lapses in the queue, a second sync takes it, and this one throws
+  // its whole completed scan away at the apply's owner check.
+  private holdLeaseWhileQueued(libraryId: string, owner: string): () => void {
+    const timer = setInterval(() => this.syncLocks.refresh(libraryId, owner), LEASE_REFRESH_MS);
+    // Node keeps the process alive for a pending interval, and a sync must not.
+    timer.unref?.();
+    return () => clearInterval(timer);
+  }
+
+  // The one stretch no refresh point can reach is the apply itself, so it re-reads
+  // the owner as its first statement and rolls back on a mismatch. BEGIN IMMEDIATE
+  // because a leading SELECT in a deferred transaction takes the read snapshot
+  // there, and the first write would then have to upgrade - returning
+  // SQLITE_BUSY_SNAPSHOT, which `busy_timeout` does not retry.
+  private applyOwned<T>(libraryId: string, owner: string, fn: () => T): T {
+    return this.photos.immediateTransaction(() => {
+      if (this.syncLocks.ownerOf(libraryId) !== owner) {
+        throw new AppError('SYNC_IN_PROGRESS', 'this sync lost its lease to a newer run');
+      }
+      return fn();
+    });
   }
 
   // A full sync (scopePaths omitted) walks the whole tree. A scoped sync (from the
@@ -193,22 +281,31 @@ export class SyncService implements LibraryLifecycleListener {
     scopePaths?: readonly string[],
     trigger: SyncTrigger = 'api',
   ): Promise<LibrarySyncStatus> {
-    const library = this.libraries.getById(libraryId);
-    if (!library) throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
+    // Only to fail fast and to name the root in the log. The row this run reads
+    // its paths from is taken inside the mutex, below.
+    const known = this.libraries.getById(libraryId);
+    if (!known) throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
 
     log.info('sync start', {
       library: libraryId,
-      root: library.root_path,
+      root: known.root_path,
       trigger,
       mode: scopePaths == null ? 'full' : 'scoped',
       paths: scopePaths?.length,
     });
     const startedAt = Date.now();
-    const lockPath = acquireSyncLock(library.root_path);
+    const owner = randomUUID();
+    if (!this.syncLocks.acquire(libraryId, owner)) {
+      throw new AppError('SYNC_IN_PROGRESS', 'a sync is already running for this library');
+    }
+    const keepLease = this.leaseKeeper(libraryId, owner);
+    // Cleared as soon as the mutex lets this run in, and again in `finally` for
+    // the paths that never get there.
+    let stopHolding = this.holdLeaseWhileQueued(libraryId, owner);
     const token = new AbortController();
     this.generation.set(libraryId, token);
     // Before the first await: rebuild jobs only gate on in-memory status, and the
-    // lock alone is not enough for them - they do not take it for the whole run.
+    // lease alone is not enough for them - they do not hold it for the whole run.
     // Leaving 'idle' until inside `libraryMutex.run` let a rebuild replace this
     // generation in the gap, after which this run's settle no-ops and the strip
     // can stick on 'processing'.
@@ -219,16 +316,25 @@ export class SyncService implements LibraryLifecycleListener {
     // library's whole backlog.
     let processingIds: readonly string[] | null = null;
     try {
-      // Inside the mutex, outside the file lock: file lock first keeps sync-vs-sync
+      // Inside the mutex, outside the lease: the lease first keeps sync-vs-sync
       // fail-fast (409), while the mutex makes file-moving mutations queue behind
       // this scan instead of invalidating its snapshot mid-flight.
       const synced = await libraryMutex.run(libraryId, async () => {
+      stopHolding();
+      stopHolding = () => {};
+      // Re-read here, not from the snapshot taken before the mutex: `bin_name` is
+      // renameable (§4.1), and every path this run derives from it - the scope's
+      // skip rule, the bin walk, the resident/in-place split - would otherwise be
+      // built from a name the rename has already moved off.
+      const library = this.libraries.getById(libraryId);
+      if (library == null) throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
       this.statuses.set(libraryId, idle(libraryId, 'scanning'));
 
       // The scan is the long half of an import, and the status endpoint is the
-      // only thing that can say so while it runs. No generation guard: the sync
-      // lock is not released until after the scan, so nothing newer can exist.
+      // only thing that can say so while it runs. No generation guard: the lease
+      // is not released until after the scan, so nothing newer can exist.
       const reportScan = (scanned: number, toScan: number): void => {
+        keepLease();
         this.statuses.set(libraryId, { ...idle(libraryId, 'scanning'), photos_to_scan: toScan, photos_scanned: scanned });
         if (scanned > 0 && scanned % SCAN_PROGRESS_EVERY === 0) {
           log.info('scanning', { library: libraryId, scanned, of: toScan, ms: Date.now() - startedAt });
@@ -277,16 +383,24 @@ export class SyncService implements LibraryLifecycleListener {
         // mid-scan, and its photos are then cascade-gone. Nothing awaits between
         // here and the (synchronous) transaction, so the delete cannot interleave.
         if (!this.libraries.getById(libraryId)) throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
+        keepLease();
         const batchAt = new Date().toISOString();
-        this.photos.transaction(() => {
+        // Owner-checked like the closing transaction; batches already committed
+        // are not rolled back with it.
+        this.applyOwned(libraryId, owner, () => {
           for (const file of batch) {
-            insertPhoto({ filePath: file.filePath, fileHash: file.hash, metadata: file.metadata }, batchAt);
+            insertPhoto({ filePath: file.filePath, fileHash: file.hash, metadata: file.metadata, channel: 'live' }, batchAt);
           }
         });
         added += batch.length;
       };
 
       const scope = this.scopeFor(library);
+      // The rows whose paths are not the live channel's business (§9.1.1). Read on
+      // every run, scoped or not: without them an in-place binned file the
+      // watcher reports is an unclaimed addition and inserts a second live row
+      // every time anyone touches it.
+      const binned = this.photos.listBinnedForSync(libraryId);
       let dbPhotos: SyncDbPhoto[];
       let files: readonly ScannedFile[];
       // The folders this run saw, and their identities: every one of them on a
@@ -305,19 +419,78 @@ export class SyncService implements LibraryLifecycleListener {
         dirs = await this.scopedDirs(scope, scopePaths);
       } else {
         dbPhotos = this.photos.listForSync(libraryId);
-        ({ files, dirs } = await scanLibraryTree(scope));
+        ({ files, dirs } = await scanLibraryTree(scope, '', keepLease));
       }
+
+      // A hand-renamed bin folder is the worst outcome in this design if it goes
+      // unnoticed: the live walk would take its files as unclaimed additions
+      // whose hashes match the binned rows exactly, and every binned row would
+      // pair as a crossing *out* of the bin - the whole bin restored,
+      // `deleted_from_path` destroyed, every undo batch unresolvable. Detected
+      // here, immediately after the walk and before `scanFiles`, or the run
+      // re-hashes the whole bin and then partitions on paths that match nothing.
+      const followed = this.followBinRename(library, dirs, binned);
+      for (const under of followed.exclude) {
+        files = files.filter((file) => !shootContains(under, file.relPath));
+        // And out of `dirs` too, or a shoot folder the photographer had earlier
+        // moved into the bin gets relocated into the renamed bin by identity.
+        dirs = dirs.filter((dir) => dir.relPath !== under && !shootContains(under, dir.relPath));
+      }
+
+      // Whole-folder moves the inode can prove are resolved before the diff, not
+      // after it: an **in-place** binned row's file sits in the live tree (§12.1) and
+      // moved with the folder, so a rename would leave its recorded path stale
+      // while the file at the new path read as an unclaimed live addition - one
+      // duplicate per in-place binned photograph. The identity needs only `dirs`
+      // and the shoots, both of which are already in hand.
+      //
+      // The photo-evidence fallback below cannot come this early, and does not
+      // need to: it only fires when the move minted a new inode, where the binned
+      // file is a genuinely new file too.
+      const onDisk = (folder: string): boolean => existsSync(path.join(library.root_path, folder));
+      const byIdentity = detectRelocationsByIdentity(this.shoots.listIdentities(libraryId), dirs, onDisk);
+      for (const r of byIdentity) {
+        for (const row of binned) {
+          if (shootContains(r.oldFolderPath, row.file_path)) {
+            row.file_path = r.newFolderPath + row.file_path.slice(r.oldFolderPath.length);
+          }
+        }
+      }
+
+      // The bin channel does not run on a scoped sync: the watcher never reports events inside
+      // the bin, so a scoped run has no evidence and must not conclude
+      // `is_missing` on rows it did not look at. The rename detection above is the
+      // one exception - it is a `dirs` test and costs nothing.
+      // Null when the bin was not walked at all, which is a different thing from
+      // walking it and finding it empty: a run with no evidence must leave the
+      // binned rows exactly as they are.
+      const binScan = scopePaths == null && followed.root != null ? await this.scanBinTree(library, followed.root, keepLease) : null;
+      const binRoot = binScan == null ? null : followed.root;
+      const binFiles = binScan ?? [];
+      // What the bin is called after any rename this run followed, which is what
+      // decides whether a binned row is in the bin or binned in place - a
+      // different question from whether the bin was walked.
+      const binFolder = followed.rename?.to ?? library.bin_name;
+
       const { present, changed, failed } = await this.scanFiles(
-        files,
-        dbPhotos,
+        // Binned files included, so `dbByPath` covers them and the unchanged test
+        // answers correctly: nothing binned is opened or hashed unless it changed.
+        [...files, ...binFiles],
+        [...dbPhotos, ...binned],
         token.signal,
         reportScan,
-        dbPhotos.length === 0 ? insertBatch : null,
+        // The resumable first-scan path inserts every file it is handed as a new
+        // live photograph, which a file under the bin is not (§9.1.1). A library
+        // with rows, with binned rows, or with anything already in its bin takes
+        // the ordinary diff instead.
+        dbPhotos.length === 0 && binned.length === 0 && binFiles.length === 0 ? insertBatch : null,
+        keepLease,
       );
       log.info('scan done', {
         library: libraryId,
         files: present.size,
         rows: dbPhotos.length,
+        binned: binned.length,
         // The files whose stat changed, so the scan opened and hashed them; the
         // rest cost a stat each. This is what a slow scan's time went on.
         opened: changed.length + added,
@@ -325,8 +498,51 @@ export class SyncService implements LibraryLifecycleListener {
         ms: Date.now() - startedAt,
       });
 
-      const diff = buildDiff(dbPhotos, present, changed, failed);
+      // Partitioned here rather than after the scan, which would throw away work
+      // already paid for: with `dbByPath` from the live rows alone every binned
+      // file looks new, and 100k binned RAWs would decode 100k RAW headers nightly.
+      const binPaths = new Set(binned.map((p) => p.file_path));
+      const isBinSide = (filePath: string): boolean => binPaths.has(filePath) || (binRoot != null && shootContains(binRoot, filePath));
+      const livePresent = new Set([...present].filter((p) => !isBinSide(p)));
+      const binPresent = new Set([...present].filter(isBinSide));
+      const liveChanged = changed.filter((c) => !isBinSide(c.filePath));
+      const binChanged = changed.filter((c) => isBinSide(c.filePath));
+
+      // A row binned **in place** (§12.1) is not in the bin, so the bin's walk is not
+      // the walk that answers for it - the live one is, its file being in the live
+      // tree. Split rather than lumped in with the bin-resident rows: diffed
+      // against the bin walk it would be absent from it every time and go
+      // `is_missing`, and left out of both it would be invisible to a folder
+      // rename the inode cannot follow, whose file then imports as a second, live
+      // photograph.
+      const inPlace = binned.filter((row) => binFolder == null || !shootContains(binFolder, row.file_path));
+      const resident = binned.filter((row) => binFolder != null && shootContains(binFolder, row.file_path));
+      const inPlacePaths = new Set(inPlace.map((row) => row.file_path));
+
+      const live = buildDiff(dbPhotos, livePresent, liveChanged, failed);
+      // On a scoped run both halves are discarded rather than diffed: there was no
+      // walk to be an absence from.
+      const empty = { removed: [], added: [], modified: [], reappeared: [] };
+      const bin = binRoot == null ? empty : buildDiff(resident, binPresent, binChanged, failed, 'bin');
+      // The whole `present` set, since these rows are claimed anywhere in the live
+      // tree, and only their own `changed` entries: an addition from the live walk
+      // is the live channel's, and handing this one the rest would make every new
+      // photograph a bin-side addition.
+      const loose =
+        scopePaths != null
+          ? empty
+          : buildDiff(inPlace, present, changed.filter((c) => inPlacePaths.has(c.filePath)), failed, 'bin');
+      const diff = {
+        removed: [...live.removed, ...bin.removed, ...loose.removed],
+        added: [...live.added, ...bin.added, ...loose.added],
+        modified: [...live.modified, ...bin.modified, ...loose.modified],
+        reappeared: [...live.reappeared, ...bin.reappeared, ...loose.reappeared],
+      };
       const result = detectMoves(diff, (id) => this.albums.getAlbumIdsForPhoto(id).length > 0);
+      // A path test beats a hash test for the crossings §9.1.1 can still see: a file
+      // copied into the bin and the original deleted, or touched on the way, has a
+      // different mtime and so a different hash.
+      const imported = this.pairByPath(result, binRoot);
 
       // Whole-folder moves are resolved before anything per-photo. A shoot folder
       // renamed outside the app shows up as one move per frame it holds, and
@@ -335,11 +551,9 @@ export class SyncService implements LibraryLifecycleListener {
       // shoot membership does not change at all. What is left is the moves that
       // are genuinely about individual files.
       //
-      // The inode answers first and exactly (§9.4.1); the photos answer the cases
-      // it cannot see, which is any move that minted a new inode - across a
-      // filesystem, or a whole library restored from a backup.
-      const onDisk = (folder: string): boolean => existsSync(path.join(library.root_path, folder));
-      const byIdentity = detectRelocationsByIdentity(this.shoots.listIdentities(libraryId), dirs, onDisk);
+      // The inode answered first and exactly, above (§9.4.1); the photos answer
+      // the cases it cannot see, which is any move that minted a new inode -
+      // across a filesystem, or a whole library restored from a backup.
       const settled = new Set(byIdentity.map((r) => r.shootId));
       const claimed = new Set(byIdentity.map((r) => r.newFolderPath));
       const relocations = [
@@ -359,6 +573,12 @@ export class SyncService implements LibraryLifecycleListener {
         // then fails to match, leaving rows pointing at a file that is not there
         // while `is_missing` still reads 0.
         .sort((a, b) => b.oldFolderPath.split('/').length - a.oldFolderPath.split('/').length);
+      // Where a path the scan saw ends up once the relocations below have been
+      // applied by prefix.
+      const relocatedPath = (filePath: string): string => {
+        const moved = relocations.find((r) => shootContains(r.oldFolderPath, filePath));
+        return moved == null ? filePath : moved.newFolderPath + filePath.slice(moved.oldFolderPath.length);
+      };
       const relocatedFolders = relocations.map((r) => r.oldFolderPath);
       const moves = result.moves.filter((mv) => !relocatedFolders.some((folder) => shootContains(folder, mv.oldFilePath)));
 
@@ -389,7 +609,17 @@ export class SyncService implements LibraryLifecycleListener {
       // transaction, so the delete can't interleave, and abort cleanly.
       if (!this.libraries.getById(libraryId)) throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
 
-      this.photos.transaction(() => {
+      this.applyOwned(libraryId, owner, () => {
+        // **Before anything path-guarded.** `setMissing` only marks a row whose
+        // `file_path` still equals the path the scan saw, and after a followed
+        // rename the scan's paths are the new ones while the rows still hold the
+        // old - so a `setMissing` issued first would match nothing and silently do
+        // nothing, a guard designed to absorb a race quietly absorbing a correct
+        // write instead (§9.1.1).
+        if (followed.rename != null) {
+          this.libraries.setBinName(libraryId, followed.rename.to);
+          this.photos.rewriteBinnedPathPrefix(libraryId, followed.rename.from, followed.rename.to);
+        }
         // First, so the per-photo work below is only ever the remainder.
         for (const r of relocations) {
           this.shoots.relocate(r.shootId, r.oldFolderPath, r.newFolderPath);
@@ -422,8 +652,20 @@ export class SyncService implements LibraryLifecycleListener {
           touched?.push(md.photoId);
           modified++;
         }
+        for (const cr of result.crossings) {
+          this.applyCrossing(cr, shootFor, binFolder);
+          moved++;
+        }
         for (const ad of result.added) {
+          if (ad.channel === 'bin') continue; // §9.1.1, below
           insertPhoto(ad, nowUtc);
+          added++;
+        }
+        // An unclaimed file under the bin is imported as already-binned, with
+        // where it would restore to read off the mirrored layout: `<bin>/A/B/c.arw`
+        // came from `A/B/c.arw`, and `<bin>/c.arw` from the library root.
+        for (const ad of imported) {
+          this.insertAdded(libraryId, ad, null, nowUtc, { deleted_from_path: ad.filePath.slice(binRoot!.length + 1) });
           added++;
         }
         for (const photoId of diff.reappeared) {
@@ -435,16 +677,47 @@ export class SyncService implements LibraryLifecycleListener {
           touched?.push(photoId);
         }
         for (const rm of result.removed) {
+          // Keyed on where the row is *now*, which a relocation applied a few
+          // lines up may have moved: `setMissing` only marks a row whose
+          // `file_path` still equals the path handed to it, so one keyed on the
+          // pre-rename path matches nothing and silently does nothing - a guard
+          // written to absorb a race quietly absorbing a correct write (§9.1.1).
+          // A frame deleted out of a folder that was renamed in the same window
+          // would otherwise read as present with a 404ing original.
+          const at = relocatedPath(rm.filePath);
           // Skips if a concurrent rename/move relocated the photo during the scan
           // (its file_path no longer matches what we scanned); it isn't missing.
-          const marked = this.photos.setMissing(rm.photoId, rm.filePath);
-          if (marked && !rm.wasMissing) removed++; // per-sync delta only (§9.4 step 5)
+          const marked = this.photos.setMissing(rm.photoId, at);
+          if (!marked || rm.wasMissing) continue; // per-sync delta only (§9.4 step 5)
+          // A binned row going missing is not a photograph leaving the library,
+          // which is what `photosRemoved` counts: it is a change to a row that is
+          // already out of the collection (§9.1.1).
+          if (rm.channel === 'bin') modified++;
+          else removed++;
         }
       });
 
+      // Outside the transaction, so a listener cannot hold the write lock, and
+      // only once it has committed: the watcher would otherwise re-arm against a
+      // name this run may still roll back.
+      if (followed.rename != null) {
+        const renamed = this.libraries.getById(libraryId);
+        if (renamed != null) {
+          for (const listener of this.libraryChangedListeners) {
+            try {
+              listener(renamed);
+            } catch (err) {
+              log.error('a library-changed listener failed', { library: libraryId, err });
+            }
+          }
+        }
+      }
+
       // After the photos are written, so the folders' contents are settled: which
-      // folders hold photographs is the whole question mirroring answers.
-      const mirrored = this.reconcileShootFolders(library, dirs, present, scopePaths == null);
+      // folders hold photographs is the whole question mirroring answers. The
+      // live half only - the bin mirrors the folder tree inside itself, and a
+      // shoot per bin folder is not a thing anyone asked for.
+      const mirrored = this.reconcileShootFolders(library, dirs, livePresent, scopePaths == null);
 
       // Survives a restart, unlike the in-memory status, so the UI can always say
       // how stale the catalogue is (§9.6).
@@ -493,7 +766,7 @@ export class SyncService implements LibraryLifecycleListener {
       return synced;
     } catch (err) {
       // Scan/apply threw (e.g. root unmounted, DB error): reset status so the API
-      // doesn't report 'scanning' forever. Still our generation here (the lock,
+      // doesn't report 'scanning' forever. Still our generation here (the lease,
       // released in finally, blocks a newer one), but guard for consistency.
       if (this.generation.get(libraryId) === token) this.statuses.set(libraryId, idle(libraryId));
       // Stopped mid-scan on a populated library, where the writes are one closing
@@ -509,10 +782,11 @@ export class SyncService implements LibraryLifecycleListener {
       else log.error('sync failed', { library: libraryId, ms: Date.now() - startedAt, err });
       throw err;
     } finally {
-      // Release the lock as soon as scan+apply is done. Rendition generation runs
+      stopHolding();
+      // Release the lease as soon as scan+apply is done. Rendition generation runs
       // detached (§9.5/§9.6: background work, client polls status), so POST /sync
       // returns promptly and re-syncs aren't blocked for the whole processing run.
-      releaseSyncLock(lockPath);
+      this.syncLocks.release(libraryId, owner);
       if (syncedStatus != null) {
         this.detachProcessing(libraryId, token, syncedStatus, processingIds, startedAt);
       }
@@ -550,9 +824,9 @@ export class SyncService implements LibraryLifecycleListener {
   }
 
   // Queue one processing stage for the whole library and hand it to the same
-  // detached batch a sync uses. The sync lock is held only for the claim
+  // detached batch a sync uses. The lease is held only for the claim
   // (queue + generation + status): nothing walks the tree, but without it a
-  // Sync now that has the lock and not yet marked itself busy would lose its
+  // Sync now that has the lease and not yet marked itself busy would lose its
   // generation to this and never settle.
   private rebuildStage(libraryId: string, stage: 'tiles' | 'renditions'): LibrarySyncStatus {
     const startedAt = Date.now();
@@ -563,9 +837,12 @@ export class SyncService implements LibraryLifecycleListener {
       throw new AppError('SYNC_IN_PROGRESS', 'a sync is already running for this library');
     }
 
-    const lockPath = acquireSyncLock(library.root_path);
+    const owner = randomUUID();
+    if (!this.syncLocks.acquire(libraryId, owner)) {
+      throw new AppError('SYNC_IN_PROGRESS', 'a sync is already running for this library');
+    }
     try {
-      // Sync may have claimed between the idle check and the lock.
+      // Sync may have claimed between the idle check and the lease.
       const claimed = this.statuses.get(libraryId);
       if (claimed != null && claimed.status !== 'idle') {
         throw new AppError('SYNC_IN_PROGRESS', 'a sync is already running for this library');
@@ -589,7 +866,7 @@ export class SyncService implements LibraryLifecycleListener {
       this.detachProcessing(libraryId, token, status, null, startedAt);
       return status;
     } finally {
-      releaseSyncLock(lockPath);
+      this.syncLocks.release(libraryId, owner);
     }
   }
 
@@ -687,12 +964,54 @@ export class SyncService implements LibraryLifecycleListener {
     return { ...status, photos_processing: stillPending, photos_processed: Math.max(0, queued - stillPending) };
   }
 
+  // A file that entered or left the bin by hand (§9.1.1). The `channel` tags gave
+  // the direction, so there is no position to test - which matters because an
+  // in-place binned row is `is_deleted = 1` with its file outside the bin,
+  // indistinguishable by position from a hand-restore.
+  private applyCrossing(crossing: Crossing, shootFor: (relPath: string) => string | null, binFolder: string | null): void {
+    const wasBinned = this.photos.isBinned(crossing.photoId);
+    if (crossing.direction === 'in') {
+      this.photos.setFilePath(crossing.photoId, crossing.newFilePath);
+      // Already binned: a path update only. `markDeleted` would null
+      // `deleted_batch` and drop the row out of its batch's undo. Otherwise
+      // `shoot_id` is kept rather than nulled by the move's own
+      // `setFilePathAndShoot`, matching what an app-driven binning does.
+      if (!wasBinned) this.photos.markDeleted(crossing.photoId, crossing.oldFilePath);
+      return;
+    }
+    if (crossing.direction === 'out') {
+      if (!wasBinned) return; // it was never in the bin; nothing to restore
+      // **Leaving the bin is what restores a photograph, and a row binned in
+      // place was never in it** - its file has simply been moved, which is not
+      // the photographer saying they want it back. Position rather than the flag,
+      // because the flag is what both of these rows have in common.
+      if (binFolder == null || !shootContains(binFolder, crossing.oldFilePath)) {
+        this.photos.moveBinnedInPlace(crossing.photoId, crossing.newFilePath);
+        return;
+      }
+      this.photos.markRestored(crossing.photoId, crossing.newFilePath);
+      // `markRestored` does not touch `shoot_id`, and `reconcileShootFolders`
+      // only restates claims under newly created folders - so without this the
+      // photograph lands in the grid with no shoot for good.
+      this.photos.setShoot(crossing.photoId, shootFor(crossing.newFilePath));
+      return;
+    }
+    this.photos.setFilePath(crossing.photoId, crossing.newFilePath); // moved within the bin
+  }
+
   // One new photo, at the shoot its path falls under. Returns its id, which the
   // run collects so a scoped one can hand the rendition batch its own photos.
-  private insertAdded(libraryId: string, entry: AddedEntry, shootId: string | null, addedAt: string): string {
+  private insertAdded(
+    libraryId: string,
+    entry: AddedEntry,
+    shootId: string | null,
+    addedAt: string,
+    binned?: { deleted_from_path: string },
+  ): string {
     const id = randomUUID();
     this.photos.insertFromSync({
       id,
+      binned,
       library_id: libraryId,
       shoot_id: shootId,
       file_hash: entry.fileHash,
@@ -836,6 +1155,152 @@ export class SyncService implements LibraryLifecycleListener {
     });
   }
 
+  // The bin's own walk, over the bin alone (§9.1.1). `scanLibraryTree` with a start
+  // directory rather than 45 forked lines of walk, which is also what keeps every
+  // relPath library-root relative, as every path in the bin channel requires.
+  //
+  // A missing bin root is a **skip, not a throw**: the state §4.1 hands to §9.1.1
+  // for repair is exactly one where the folder is briefly not where the columns
+  // say, and a sync that dies there would make §4.1's safety argument circular.
+  // Scoped to the bin, so an unreadable root still fails the run loudly rather
+  // than reading as "the whole bin was deleted".
+  private async scanBinTree(library: Library, binRoot: string, keepLease: () => void): Promise<ScannedFile[] | null> {
+    const abs = path.join(library.root_path, binRoot);
+    if (statSync(abs, { throwIfNoEntry: false })?.isDirectory() !== true) {
+      log.warn('the bin folder is not there; skipping the bin channel for this run', { library: library.id, bin: binRoot });
+      // The walk is the only place with enough evidence to tell "deleted" from
+      // "renamed", and it has just said deleted: remake it, and record the new
+      // folder's identity, so the next rename is still followable.
+      //
+      // Not for a read-only library, which keeps the bin it had from before the
+      // flag (§4.1) and is exactly the library whose photographer may have
+      // deleted that folder on purpose. Making it again is a write under a root
+      // this may not write to, and on a genuinely read-mounted volume it is an
+      // error logged on every sync.
+      if (!library.read_only) {
+        await ensureBinFolder(library, this.libraries).catch((err: unknown) =>
+          log.error('could not recreate the bin folder', { library: library.id, err }),
+        );
+      }
+      return null;
+    }
+    // Everything under the bin is the bin's, so the walk descends unconditionally:
+    // the bin rule would skip the very tree this is walking, the bin mirrors
+    // folders even in a root-only library, an excluded folder's binned frames are
+    // still binned, and a bin named with a leading dot is not a dotfolder to skip.
+    const inside: LibraryScope = { rootPath: library.root_path, includeSubfolders: true, binName: null, excluded: new Set() };
+    const { files } = await scanLibraryTree(inside, binRoot, keepLease, () => true);
+    return files;
+  }
+
+  // A photographer renaming `<root>/Bin` to `<root>/Rubbish` has done to the bin
+  // what §9.4.1 already handles for a shoot, and it is answered the same way: by
+  // the folder's inode identity (§9.1.1).
+  //
+  // The trigger is that identity turning up in `dirs`. A directory reaches `dirs`
+  // only if the live walk did not skip it, and the walk skips by *name*, so a
+  // directory carrying the recorded identity **is** the bin under a name that no
+  // longer matches - including a case-only difference, where the recorded path
+  // still resolves and no existence test would fire.
+  private followBinRename(
+    library: Library,
+    dirs: readonly ScannedDir[],
+    binned: SyncDbPhoto[],
+  ): { root: string | null; rename: { from: string; to: string } | null; exclude: readonly string[] } {
+    const none = { root: library.bin_name, rename: null, exclude: [] };
+    const identity = this.libraries.getBinIdentity(library.id);
+    if (library.bin_name == null) return none;
+
+    const found = findBinByIdentity(dirs, identity);
+    if (found.kind === 'none') return none;
+    if (found.kind === 'ambiguous') {
+      log.warn('the bin folder identity is ambiguous; skipping the bin channel for this run', {
+        library: library.id,
+        candidates: found.candidates,
+      });
+      // Every candidate, not just the first: each of them *is* the bin by
+      // identity, and one left in the live walk is a second copy of the whole bin
+      // imported as live photographs.
+      return { root: null, rename: null, exclude: found.candidates };
+    }
+    const target = found.target;
+
+    // Excluding is safe unconditionally; rewriting `bin_name` needs two more
+    // conditions, because dropping the recorded-path absence test that
+    // `detectRelocationsByIdentity` uses admits three false positives - a bind
+    // mount of the bin elsewhere under the root, a hardlinked directory, and a
+    // recycled inode - and following any of them would silently bin a real shoot.
+    const recorded = statSync(path.join(library.root_path, library.bin_name), { throwIfNoEntry: false });
+    // Not an existence test: on a case-insensitive filesystem the recorded path
+    // still resolves, to the *same* inode, so a case-only rename is handled by
+    // exclusion alone. Bind mounts and hardlinks die here too.
+    if (recorded != null && recorded.dev === target.dev && recorded.ino === target.ino) {
+      return { root: library.bin_name, rename: null, exclude: [target.relPath] };
+    }
+    // **The candidate has to hold one of them**, which is what tells a renamed bin
+    // from a folder that merely inherited its freed inode number. Asked of the
+    // candidate rather than of the rows: "does this library have anything in its
+    // bin" is true of every library that has ever binned anything, and would let
+    // the recycled inode through - the case this exists to refuse, and the one
+    // that silently turns a real shoot into the bin.
+    const from = library.bin_name;
+    const claimed = binned.some(
+      (row) =>
+        shootContains(from, row.file_path) &&
+        existsSync(path.join(library.root_path, target.relPath + row.file_path.slice(from.length))),
+    );
+    if (!claimed) {
+      log.warn('a folder carries the bin identity but holds no binned file; not following it', {
+        library: library.id,
+        candidate: target.relPath,
+      });
+      // And **not excluded either**. Exclusion is unconditional only while the
+      // candidate might be the bin; here it has just been shown not to be, and
+      // dropping it from the live walk would mark a real shoot's photographs
+      // missing - the same harm as following it, arrived at more quietly.
+      return { root: library.bin_name, rename: null, exclude: [] };
+    }
+
+    // The in-memory rewrite is not deferred to the apply: the diff has to see
+    // matched paths.
+    for (const row of binned) {
+      if (shootContains(from, row.file_path)) row.file_path = target.relPath + row.file_path.slice(from.length);
+    }
+    log.info('following a renamed bin folder', { library: library.id, from, to: target.relPath });
+    return { root: target.relPath, rename: { from, to: target.relPath }, exclude: [target.relPath] };
+  }
+
+  // §9.1.1's path test, run before anything is imported: if `<bin>/A/c.arw` is
+  // unclaimed and `A/c.arw` is an unpaired live removal, that **is** the crossing,
+  // whatever the hashes say - the file may have been copied in and the original
+  // deleted, or touched on the way. Without it that crossing produces a missing
+  // live row *and* a second already-binned row for one frame.
+  //
+  // Returns the bin additions that are left, which are genuinely new.
+  private pairByPath(result: MoveResult, binRoot: string | null): AddedEntry[] {
+    const binAdditions = result.added.filter((a) => a.channel === 'bin');
+    if (binRoot == null || binAdditions.length === 0) return binAdditions;
+
+    const removedByPath = new Map(result.removed.filter((r) => r.channel === 'live').map((r) => [r.filePath, r]));
+    const claimed: AddedEntry[] = [];
+    for (const addition of binAdditions) {
+      const cameFrom = addition.filePath.slice(binRoot.length + 1);
+      const removal = removedByPath.get(cameFrom);
+      if (removal == null) continue;
+      result.crossings.push({
+        photoId: removal.photoId,
+        oldFilePath: removal.filePath,
+        newFilePath: addition.filePath,
+        direction: 'in',
+      });
+      // Out of `removed` too, or `setMissing` fires on a row that just moved.
+      result.removed = result.removed.filter((r) => r !== removal);
+      claimed.push(addition);
+    }
+    result.added = result.added.filter((a) => !claimed.includes(a));
+    return binAdditions.filter((a) => !claimed.includes(a));
+  }
+
   // The rows a scoped sync reconciles: those at the changed + discovered paths
   // (candidates for remove/modify/reappear/add) plus every already-missing row (so
   // a new file can still hash-pair into a move across syncs). Deduped by id.
@@ -902,6 +1367,7 @@ export class SyncService implements LibraryLifecycleListener {
     signal: AbortSignal,
     onProgress: (scanned: number, toScan: number) => void,
     onBatch: ((batch: readonly DiskFile[]) => void) | null,
+    keepLease: () => void,
   ): Promise<{ present: Set<string>; changed: DiskFile[]; failed: Set<string> }> {
     const dbByPath = new Map(dbPhotos.map((p) => [p.file_path, p]));
 
@@ -914,6 +1380,9 @@ export class SyncService implements LibraryLifecycleListener {
     const byInode = new Map<string, Scanned>();
     for (const file of files) {
       if (signal.aborted) break;
+      // This loop reports nothing, so it is the one blocking stretch of a scan
+      // with no other refresh point in it (§9.7).
+      keepLease();
       let stats;
       try {
         stats = await stat(file.absPath);

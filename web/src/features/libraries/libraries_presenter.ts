@@ -34,16 +34,24 @@ export class LibrariesPresenter {
     }
   }
 
-  async create(request: CreateLibraryRequest): Promise<boolean> {
+  /**
+   * False when the library was not created. `READ_ONLY` is handed back to the
+   * caller as well as reported, because it is the one refusal the dialog can act
+   * on: the root is not writable after all, and the answer is to tick the box
+   * rather than to read an error. `access(2)` can be wrong - an exotic ACL, a
+   * volume remounted between the listing and the create - so this is reachable
+   * even when the picker said the folder was writable.
+   */
+  async create(request: CreateLibraryRequest): Promise<{ created: boolean; readOnlyRoot: boolean }> {
     this.beginLoad();
     try {
       await api.createLibrary(request);
     } catch (err) {
       this.fail(message(err));
-      return false;
+      return { created: false, readOnlyRoot: err instanceof ApiError && err.code === 'READ_ONLY' };
     }
     await this.load();
-    return true;
+    return { created: true, readOnlyRoot: false };
   }
 
   async setOrdering(libraryId: string, ordering: Ordering): Promise<void> {
@@ -92,6 +100,20 @@ export class LibrariesPresenter {
 
   async setMirrorShoots(libraryId: string, mirror_shoots: boolean): Promise<void> {
     await this.update(libraryId, { mirror_shoots });
+  }
+
+  // Whether the app may write under the library root at all. Clearing it on a
+  // library that has never had a bin needs one named in the same request, since
+  // that is a folder this is about to make.
+  async setReadOnly(libraryId: string, read_only: boolean, bin_name?: string): Promise<void> {
+    await this.update(libraryId, read_only ? { read_only } : { read_only, bin_name });
+  }
+
+  // Renames the folder on disk as well as the setting: changing one without the
+  // other would strand every already-binned RAW in a folder the scan walks back in.
+  async setBinName(libraryId: string, bin_name: string): Promise<void> {
+    if (bin_name.trim() === '') return;
+    await this.update(libraryId, { bin_name: bin_name.trim() });
   }
 
   async loadFolderRules(libraryId: string): Promise<void> {

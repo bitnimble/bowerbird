@@ -492,6 +492,23 @@ export class PhotosStore {
     return this.source?.kind === 'bin';
   }
 
+  /**
+   * The file paths of the selected rows this client is actually holding.
+   *
+   * A **sample**, not the answer: a selection reaches rows that were never
+   * loaded or have since been evicted, so absence from here means "not seen"
+   * rather than "not selected". Only good for a guard that must not block what
+   * it cannot see - the server is what refuses.
+   */
+  @computed get selectedLoadedPaths(): string[] {
+    const paths: string[] = [];
+    for (const [index, row] of this.rows) if (this.selection.has(index)) paths.push(row.file_path);
+    for (const open of this.expansions.values()) {
+      for (const photo of open.photos) if (this.selectedMembers.has(photo.id)) paths.push(photo.file_path);
+    }
+    return paths;
+  }
+
   // The shell reads this rather than detail?.library_id. As a computed it only
   // notifies when the *library* changes, so stepping through photos in one
   // library never re-renders the rail or the title bar.

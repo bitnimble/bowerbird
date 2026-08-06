@@ -143,6 +143,8 @@ vite.config.ts.timestamp-*
 /.photos/
 bowerbird.db
 bowerbird.db-*
+# DATA_DIR's default, i.e. every generated file when the app runs from a checkout.
+/data/
 
 # Playwright / E2E
 web/test-results/

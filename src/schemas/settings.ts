@@ -44,8 +44,10 @@ export const SettingsSchema = z.object({
   watch_debounce_ms: z.number().int().min(0).default(15000),
   // Daily full reconcile: the backstop that catches changes the watcher's
   // (scoped, lossy-event-driven) syncs missed; dropped events, cross-dir moves,
-  // edits made while the server was down. A full scan holds the library mutex,
-  // so the default is overnight, out of the way.
+  // edits made while the server was down. It is also the only run that walks the
+  // bin (§9.1.1), the watcher not watching it, so turning this off gives up
+  // reconciling the Bin rather than merely delaying it. A full scan holds the
+  // library mutex, so the default is overnight, out of the way.
   full_sync_at: TimeOfDaySchema.default('03:00'),
   // Sweep for generated files whose photo no longer exists (§10.6). Weekly
   // because it only has anything to do after a library is removed or a

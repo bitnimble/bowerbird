@@ -77,6 +77,13 @@ export interface SyncInsert {
   camera_make: string | null;
   camera_model: string | null;
   lens_model: string | null;
+  /**
+   * An unclaimed file found under the bin comes in already binned (§9.1.1), with
+   * where it would restore to and no rendition work queued: `PENDING_PROCESSING`
+   * excludes `is_deleted = 1` anyway, and building renditions for something
+   * already thrown away is work nobody asked for.
+   */
+  binned?: { deleted_from_path: string };
 }
 
 export interface SyncModification {
@@ -117,7 +124,7 @@ export interface PendingPhoto {
   photo_id: string;
   file_path: string;
   root_path: string;
-  data_path: string | null;
+  library_id: string;
   // Which passes this photo still owes. A run interrupted between them comes back
   // needing only the second, and staging reads these rather than rebuilding both.
   needs_tile: number;
@@ -561,10 +568,14 @@ export class PhotosRepository {
     return this.db.query('SELECT id, library_id, file_path, shoot_id FROM photos WHERE id = ?').get(id) as BasicPhoto | null;
   }
 
-  // Excludes soft-deleted photos. Callers are shoot/album membership ops and
-  // banner validation; a Bin-resident deleted photo must not be movable/settable
-  // via these paths (it would escape the Bin while still flagged is_deleted and
-  // get re-imported as a duplicate).
+  // Excludes binned photos. Callers are shoot/album membership ops and banner
+  // validation, and the shoot ones are what the exclusion is really about: a
+  // shoot move is a file move (§7), and moving a binned photograph out of the Bin
+  // while it is still flagged `is_deleted` is not something either half means.
+  // (It used to be justified by the duplicate re-import that would follow, which
+  // §9.1.1 removes: the exclusion is now the row's, not the folder's. Album
+  // membership was swept up by the same filter, so a binned photograph cannot be
+  // filed - a rare thing to want, and left alone here.)
   getBasicByIds(ids: string[]): BasicPhoto[] {
     if (ids.length === 0) return [];
     const placeholders = ids.map(() => '?').join(', ');
@@ -574,10 +585,10 @@ export class PhotosRepository {
   }
 
   // Photos belonging to `folderPath` (any depth), which for a live photo is where
-  // its file is and for a soft-deleted one is where its file came from: the bin
-  // is one tree at the library root (§12.3), so a binned photo's `file_path` sits
-  // under the bin rather than under the folder it was taken from, and only
-  // `deleted_from_path` still points at that folder.
+  // its file is and for a binned one is where its file came from. Two columns
+  // because a bin-resident row's `file_path` sits under the bin rather than under
+  // the folder it was taken from; for a row binned in place (§12.1) the two are
+  // equal, so the `deleted_from_path` arm answers for both.
   listUnderFolder(libraryId: string, folderPath: string, includeDeleted = false): BasicPhoto[] {
     const [lo, hi] = folderRange(folderPath);
     const live = 'is_deleted = 0 AND file_path >= ? AND file_path < ?';
@@ -626,11 +637,18 @@ export class PhotosRepository {
   // The non-deleted rows are provably present at the new prefix; the move is
   // only inferred when every one of them was found there; so is_missing clears.
   //
-  // A soft-deleted row's file is in the bin at the library root and did not move
-  // with the folder, so its `file_path` is left exactly as it is. What does have
-  // to follow is `deleted_from_path`: it is where a restore puts the photo back,
-  // and left pointing at the old prefix a restore would recreate the folder that
-  // was renamed away and put the photo outside the shoot it still belongs to.
+  // `deleted_from_path` follows for every binned row: it is where a restore puts
+  // the photo back, and left pointing at the old prefix a restore would recreate
+  // the folder that was renamed away and put the photo outside the shoot it still
+  // belongs to.
+  //
+  // A binned row's `file_path` follows a folder rename exactly when the file
+  // moved with the folder, which is when it was **binned in place**
+  // (`deleted_from_path = file_path`, §12.1): a bin-resident one sits under the bin
+  // at the library root and did not move. Without that arm, an in-place binned
+  // row under a hand-renamed shoot folder is left pointing at nothing while the
+  // file at the new path imports as a second, live photograph. `is_missing` is
+  // still only cleared for rows proven present, which a binned row is not.
   rewritePathPrefix(libraryId: string, oldFolderPath: string, newFolderPath: string): void {
     const [lo, hi] = folderRange(oldFolderPath);
     const tailFrom = oldFolderPath.length + 1; // 1-based: first char after the old prefix
@@ -642,10 +660,37 @@ export class PhotosRepository {
       .run(newFolderPath, tailFrom, libraryId, lo, hi);
     this.db
       .query(
+        `UPDATE photos SET file_path = ? || substr(file_path, ?)
+           WHERE library_id = ? AND is_deleted = 1 AND deleted_from_path = file_path
+             AND file_path >= ? AND file_path < ?`,
+      )
+      .run(newFolderPath, tailFrom, libraryId, lo, hi);
+    this.db
+      .query(
         `UPDATE photos SET deleted_from_path = ? || substr(deleted_from_path, ?)
            WHERE library_id = ? AND is_deleted = 1 AND deleted_from_path >= ? AND deleted_from_path < ?`,
       )
       .run(newFolderPath, tailFrom, libraryId, lo, hi);
+  }
+
+  // The bin folder moved, so every binned row's `file_path` moved with it (§4.1,
+  // §9.1.1). Deliberately not `rewritePathPrefix` above, which does the two halves
+  // the opposite way round and, critically, **clears `is_missing`**: that is right
+  // for a shoot relocation, which is only inferred once every file is proven
+  // present at the new prefix, but a bin rename proves nothing about individual
+  // files - the bin channel's own diff is what decides `is_missing`, and clearing
+  // it here would resurrect every hand-deleted binned file on every rename.
+  //
+  // `deleted_from_path` is left alone: it records where the photograph came from,
+  // outside the bin, which has not moved.
+  rewriteBinnedPathPrefix(libraryId: string, oldPrefix: string, newPrefix: string): void {
+    const [lo, hi] = folderRange(oldPrefix);
+    this.db
+      .query(
+        `UPDATE photos SET file_path = ? || substr(file_path, ?)
+           WHERE library_id = ? AND is_deleted = 1 AND file_path >= ? AND file_path < ?`,
+      )
+      .run(newPrefix, oldPrefix.length + 1, libraryId, lo, hi);
   }
 
   setShoot(photoId: string, shootId: string | null): void {
@@ -722,10 +767,17 @@ export class PhotosRepository {
     return row?.deleted_from_path ?? null;
   }
 
+  // `needs_tile` and `needs_renditions` go back to 1 because `markDeleted` zeroed
+  // them: without this a photograph that comes back out of the Bin having never
+  // had its renditions built would sit unbuilt for ever, since nothing revisits a
+  // row that is not flagged.
   markRestored(id: string, filePath: string): void {
     this.db.transaction(() => {
       this.db
-        .query('UPDATE photos SET is_deleted = 0, file_path = ?, deleted_from_path = NULL, is_missing = 0 WHERE id = ?')
+        .query(
+          `UPDATE photos SET is_deleted = 0, file_path = ?, deleted_from_path = NULL, is_missing = 0,
+             needs_tile = 1, needs_renditions = 1 WHERE id = ?`,
+        )
         .run(filePath, id);
       this.refreshStackOf(id);
     })();
@@ -738,6 +790,15 @@ export class PhotosRepository {
       this.db
         .query(`SELECT ${SYNC_COLUMNS} FROM photos WHERE library_id = ? AND is_deleted = 0`)
         .all(libraryId) as SyncRow[],
+    );
+  }
+
+  // The binned rows, which the bin channel diffs its own walk against and which
+  // the live channel needs in order to know that a path is already claimed (§9.1.1).
+  // Never restricted by scope: one read on `idx_photos_is_deleted`.
+  listBinnedForSync(libraryId: string): SyncDbPhoto[] {
+    return this.mapSyncRows(
+      this.db.query(`SELECT ${SYNC_COLUMNS} FROM photos WHERE library_id = ? AND is_deleted = 1`).all(libraryId) as SyncRow[],
     );
   }
 
@@ -781,16 +842,26 @@ export class PhotosRepository {
     return this.db.transaction(fn)();
   }
 
+  // Takes the write lock up front, for a transaction that reads before it writes.
+  // A deferred one takes its read snapshot at that first SELECT and has to
+  // upgrade at the first write, which returns SQLITE_BUSY_SNAPSHOT - and
+  // `busy_timeout` does not retry that one (§9.7).
+  immediateTransaction<T>(fn: () => T): T {
+    return this.db.transaction(fn).immediate();
+  }
+
   insertFromSync(record: SyncInsert): void {
+    const binned = record.binned != null;
     this.db
       .query(
         `INSERT INTO photos
           (id, library_id, shoot_id, file_hash, file_path, file_size, width, height, orientation,
            is_missing, is_deleted, date_taken, date_taken_offset, date_added, date_updated,
-           needs_tile, needs_renditions,
+           needs_tile, needs_renditions, deleted_from_path,
            latitude, longitude, iso, shutter_speed, aperture, focal_length,
            camera_make, camera_model, lens_model, rating)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, 1, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ${binned ? 1 : 0}, ?, ?, ?, ?, ${binned ? '0, 0' : '1, 1'}, ${binned ? '?' : 'NULL'},
+           ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
       )
       .run(
         record.id,
@@ -806,6 +877,7 @@ export class PhotosRepository {
         record.date_taken_offset,
         record.date_added,
         record.date_updated,
+        ...(record.binned == null ? [] : [record.binned.deleted_from_path]),
         record.latitude,
         record.longitude,
         record.iso,
@@ -883,6 +955,23 @@ export class PhotosRepository {
     return (this.db.query('SELECT id FROM photos').all() as { id: string }[]).map((r) => r.id);
   }
 
+  // A row binned in place whose file was moved by hand. Both columns follow,
+  // because for such a row they name the same file: `deleted_from_path` is where
+  // a restore puts it back, and left at the old path the restore would recreate
+  // the folder the photographer just renamed away.
+  moveBinnedInPlace(photoId: string, filePath: string): void {
+    this.db
+      .query('UPDATE photos SET file_path = ?, deleted_from_path = ?, is_missing = 0 WHERE id = ?')
+      .run(filePath, filePath, photoId);
+  }
+
+  // Which side of the bin a crossing's row is on now, which decides whether it is
+  // a flag change or only a path update (§9.1.1).
+  isBinned(photoId: string): boolean {
+    const row = this.db.query('SELECT is_deleted FROM photos WHERE id = ?').get(photoId) as { is_deleted: number } | null;
+    return row?.is_deleted === 1;
+  }
+
   clearMissing(photoId: string): void {
     this.db.query('UPDATE photos SET is_missing = 0 WHERE id = ?').run(photoId);
   }
@@ -911,7 +1000,7 @@ export class PhotosRepository {
     const order = libraryId == null ? '' : `ORDER BY ${orderByClause(this.libraryOrdering(libraryId), 'p.')}`;
     const query = (idClause: string): string =>
       `SELECT p.id AS photo_id, p.file_path, p.rendition_source, p.needs_tile, p.needs_renditions,
-              l.root_path, l.data_path, l.rendition_source AS library_rendition_source, l.rendition_hdr
+              l.root_path, l.id AS library_id, l.rendition_source AS library_rendition_source, l.rendition_hdr
        FROM photos p JOIN libraries l ON l.id = p.library_id
        WHERE ${PENDING_PROCESSING('p.')} ${where} ${idClause} ${order}`;
 

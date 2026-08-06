@@ -10,13 +10,14 @@ import { containsPath, toLibraryRelative } from './paths';
 // listing the files would be handing over the catalogue's contents to answer it.
 
 /** Anywhere on the server, in absolute paths. */
-export async function browseAbsolute(dir: string): Promise<BrowseResponse> {
+export async function browseAbsolute(dir: string, writable?: (dir: string) => boolean): Promise<BrowseResponse> {
   const names = await directoryNames(dir);
   const parent = path.dirname(dir);
   return {
     path: dir,
     parent: parent === dir ? null : parent,
     directories: names.map((name) => ({ name, path: path.join(dir, name) })),
+    writable: writable?.(dir),
   };
 }
 
@@ -51,9 +52,7 @@ async function directoryNames(dir: string): Promise<string[]> {
   const names: string[] = [];
   for (const entry of entries) {
     // Hidden directories are configuration and caches rather than photographs,
-    // and they are most of what a home directory holds. It also keeps a
-    // library's own `.bowerbird` out of the shoot picker, where choosing it
-    // would put photographs inside the disposable tree (§6).
+    // and they are most of what a home directory holds.
     if (entry.name.startsWith('.')) continue;
     if (!(await isDirectory(dir, entry))) continue;
     names.push(entry.name);

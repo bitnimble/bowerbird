@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { deleteDataDirectory, deleteGeneratedFile, deleteSyncLockSync, unlinkMovedFile } from '../deletions';
+import { deleteDataDirectory, deleteGeneratedFile, unlinkMovedFile } from '../deletions';
 
 function withTmp(run: (root: string) => Promise<void> | void): () => Promise<void> {
   return async () => {
@@ -63,7 +63,9 @@ describe('deleteDataDirectory', () => {
   it(
     'removes a tree of generated files',
     withTmp(async (root) => {
-      const data = path.join(root, '.bowerbird');
+      // Shaped like the real thing: `<DATA_DIR>/<library id>`, outside every
+      // library root (§6).
+      const data = path.join(root, 'library-id');
       mkdirSync(path.join(data, 'renditions', 'grid'), { recursive: true });
       writeFileSync(path.join(data, 'renditions', 'grid', 'p1.avif'), '');
       await deleteDataDirectory(data);
@@ -74,28 +76,11 @@ describe('deleteDataDirectory', () => {
   it(
     'refuses while an original is still inside, however deeply buried',
     withTmp(async (root) => {
-      const data = path.join(root, '.bowerbird');
-      mkdirSync(path.join(data, 'bin'), { recursive: true });
-      writeFileSync(path.join(data, 'bin', 'a.arw'), 'raw');
+      const data = path.join(root, 'library-id');
+      mkdirSync(path.join(data, 'renditions', 'grid'), { recursive: true });
+      writeFileSync(path.join(data, 'renditions', 'grid', 'a.arw'), 'raw');
       await expect(deleteDataDirectory(data)).rejects.toThrow(/still holds 1 original/);
-      expect(existsSync(path.join(data, 'bin', 'a.arw'))).toBe(true);
-    }),
-  );
-});
-
-describe('deleteSyncLockSync', () => {
-  it(
-    'removes the lock and nothing else',
-    withTmp((root) => {
-      const lock = path.join(root, '.bowerbird-sync.lock');
-      writeFileSync(lock, '{}');
-      deleteSyncLockSync(lock);
-      expect(existsSync(lock)).toBe(false);
-
-      const raw = path.join(root, 'a.arw');
-      writeFileSync(raw, 'raw');
-      expect(() => deleteSyncLockSync(raw)).toThrow(/not a sync lock/);
-      expect(existsSync(raw)).toBe(true);
+      expect(existsSync(path.join(data, 'renditions', 'grid', 'a.arw'))).toBe(true);
     }),
   );
 });

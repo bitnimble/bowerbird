@@ -13,12 +13,14 @@ export const BinNameSchema = z
 
 export const CreateLibraryRequestSchema = z.object({
   root_path: z.string().min(1),
-  data_path: z.string().optional(),
-  // Asked at creation and never after: the name is what the scan skips, so
-  // changing it later would strand every already-binned RAW in a folder the scan
-  // would then walk back in (§12.3). A root that already holds this folder is
-  // refused rather than adopted, since its contents would silently never import.
-  bin_name: BinNameSchema.default('Bin'),
+  // The app writes nothing under this root: no bin, no shoot folders, no moves.
+  // Refused over a root that is actually writable only in the other direction -
+  // a false here over a root that is not is a READ_ONLY (§4.1).
+  read_only: z.boolean().default(false),
+  // A root that already holds this folder is refused rather than adopted, since
+  // its contents would silently never import. Forced to null when `read_only` is
+  // set: a bin is a folder the app makes under the root.
+  bin_name: BinNameSchema.nullable().default('Bin'),
   // Omitted or blank: named after the root folder (a year leaf includes its
   // parent) and that name is stored, not held as a placeholder.
   name: z.string().trim().optional(),
@@ -34,8 +36,10 @@ export type CreateLibraryRequest = z.infer<typeof CreateLibraryRequestSchema>;
 export const LibrarySchema = z.object({
   id: UuidSchema,
   root_path: z.string(),
-  data_path: z.string().nullable(),
-  bin_name: z.string(),
+  // NULL means this library has no bin at all (§4.1). The bin folder's recorded
+  // identity is deliberately not here: it would leak into every API response.
+  bin_name: z.string().nullable(),
+  read_only: z.boolean().default(false),
   name: z.string().min(1),
   ordering: OrderingSchema,
   // Matching the column defaults: the embedded JPEG needs no demosaic, and HDR
@@ -108,6 +112,10 @@ export type SetFolderRuleRequest = z.infer<typeof SetFolderRuleRequestSchema>;
 // partial update must not reset the others to their defaults.
 export const UpdateLibraryRequestSchema = z.object({
   name: z.string().trim().min(1).optional(),
+  read_only: z.boolean().optional(),
+  // On a library that already has one this is a **rename**, which moves the
+  // folder (§4.1), not an error.
+  bin_name: BinNameSchema.optional(),
   ordering: OrderingSchema.optional(),
   rendition_source: RenditionSourceSchema.optional(),
   rendition_hdr: z.boolean().optional(),

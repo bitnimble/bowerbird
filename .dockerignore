@@ -6,6 +6,9 @@ Dockerfile
 .dockerignore
 bowerbird.db
 bowerbird.db-*
+# Where a checkout's own run puts every generated file (DATA_DIR's default), plus
+# the pre-move layout that kept them under the library root.
+data
 **/.bowerbird
 coverage
 # Rust build artefacts, 787MB of them. The image builds the crate itself, and the

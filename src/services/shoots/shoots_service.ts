@@ -6,7 +6,7 @@ import { isUniqueViolation } from '../../db/constraints';
 import type { CreateShootRequest, Shoot, UpdateShootRequest } from '../../schemas/shoots';
 import type { Library } from '../../schemas/libraries';
 import { ensureDir, moveIntoDir } from '../../utils/files';
-import { containsPath, getDataPath, toLibraryRelative } from '../../utils/paths';
+import { containsPath, toLibraryRelative } from '../../utils/paths';
 import { isDirInScope, libraryScope, type LibraryScope } from '../../utils/scope';
 import { mostSpecificShoot } from '../../utils/shoots';
 import type { LibrariesRepository } from '../libraries/libraries_repository';
@@ -37,12 +37,6 @@ export class ShootsService {
     // matches the folder actually created, leaving a shoot no photo can join.
     const folderPath = toLibraryRelative(library.root_path, absFolder);
 
-    // Everything under the data directory is disposable and goes with the
-    // library when it is removed (§6), so a shoot there would be photographs
-    // queued for deletion.
-    if (containsPath(getDataPath(library), absFolder)) {
-      throw new AppError('VALIDATION_ERROR', `shoot folder is inside the library's data directory: ${folderPath}`);
-    }
     // A folder the scan will never look at cannot hold a shoot: the bin, a
     // dotfolder or one the user has excluded. Its photos would be moved in and
     // then never seen again.
@@ -59,7 +53,14 @@ export class ShootsService {
     // shoot a photo belongs to (§9.4), so the two cannot drift apart.
     const parent = mostSpecificShoot(folderPath, this.shoots.listByLibrary(library.id));
 
+    // A shoot *is* a folder and membership is decided by the folder a file sits
+    // in (§9.4), so a read-only library can only take the folders that are already
+    // there. Mirroring already makes a shoot per folder holding photographs, so
+    // most exist before anyone asks.
     const existed = existsSync(absFolder);
+    if (!existed && library.read_only) {
+      throw new AppError('READ_ONLY', `${library.name} is read-only; a shoot there has to be a folder that already exists`);
+    }
     await ensureDir(absFolder);
     // From the moment the shoot exists rather than from its first scan, so a
     // rename before then is still followed (§9.4.1).
@@ -121,6 +122,12 @@ export class ShootsService {
         throw new AppError('VALIDATION_ERROR', `photo ${photo.id} is not in this shoot's library`);
       }
     }
+    // "Add these photographs to that shoot" *is* a file move (§8.5), so it is not
+    // something a read-only library can do. Albums are the grouping that needs no
+    // write. Before `ensureDir`, which runs outside the mutex.
+    if (library.read_only) {
+      throw new AppError('READ_ONLY', `${library.name} is read-only; use an album to group photographs instead`);
+    }
     await ensureDir(destDir);
 
     // Queue behind any in-flight sync of this library: these moves would otherwise
@@ -159,6 +166,9 @@ export class ShootsService {
   async removePhotos(shootId: string, photoIds: string[]): Promise<void> {
     const shoot = this.get(shootId);
     const library = this.requireLibrary(shoot.library_id);
+    if (library.read_only) {
+      throw new AppError('READ_ONLY', `${library.name} is read-only; use an album to group photographs instead`);
+    }
 
     await libraryMutex.run(shoot.library_id, async () => {
     for (const photo of this.photos.getBasicByIds(photoIds)) {
@@ -266,7 +276,7 @@ export class ShootsService {
   }
 
   private scopeFor(library: Library): LibraryScope {
-    return libraryScope(library, getDataPath(library), this.folderRules.pathsWithRule(library.id, 'excluded'));
+    return libraryScope(library, this.folderRules.pathsWithRule(library.id, 'excluded'));
   }
 
   private requireLibrary(libraryId: string): Library {

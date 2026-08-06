@@ -10,9 +10,9 @@ import type { PhotosRepository } from '../photos/photos_repository';
 
 // The directories holding files named `<photoId>.<ext>`. Taken from the same
 // helper that writes the files, so changing an output format cannot leave the
-// sweep looking in the wrong place. Everything else under the data directory
-// (the Bin, the sync lock) is keyed by something other than a photo id and must
-// not be touched.
+// sweep looking in the wrong place. Anything else under the data directory - a
+// stray the user left, a directory a later feature adds - is keyed by something
+// other than a photo id and must not be touched.
 function generatedDirs(library: Library): string[] {
   return renditionDirs().map((dir) => path.join(getDataPath(library), 'renditions', dir));
 }

@@ -15,6 +15,7 @@ import { PhotosRepository } from '../../src/services/photos/photos_repository';
 import { FolderRulesRepository } from '../../src/services/shoots/folder_rules_repository';
 import { ShootsRepository } from '../../src/services/shoots/shoots_repository';
 import { SyncService, type ProcessingTrigger } from '../../src/services/sync/sync_service';
+import { SyncLocksRepository } from '../../src/services/sync/sync_locks_repository';
 
 const LIB = '00000000-0000-4000-8000-0000000000ce';
 const flush = (): Promise<unknown> => new Promise((r) => setTimeout(r, 10));
@@ -53,6 +54,7 @@ function build(processing: ProcessingTrigger, extract: (absPath: string) => Prom
     new AlbumsRepository(db),
     new ShootsRepository(db),
     new FolderRulesRepository(db),
+    new SyncLocksRepository(db),
     processing,
     extract,
   );

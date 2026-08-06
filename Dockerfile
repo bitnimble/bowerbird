@@ -69,10 +69,10 @@ ENV BUN_RUNTIME_TRANSPILER_CACHE_PATH=0
 
 # Owned by `bun` (uid 1000) here, in the stage every other one inherits, because a
 # fresh Docker volume takes its ownership from the image directory it shadows. The
-# dev compose file mounts named volumes over node_modules, and a named one over
-# /data in both; created against a root-owned path they arrive root-owned and
-# the app cannot write its own database.
-RUN mkdir -p /app/node_modules /app/web/node_modules /data && chown -R bun:bun /app /data
+# dev compose file mounts named volumes over node_modules, and named ones over
+# /config and /data in both; created against a root-owned path they arrive
+# root-owned and the app can write neither its database nor a rendition.
+RUN mkdir -p /app/node_modules /app/web/node_modules /config /data && chown -R bun:bun /app /config /data
 
 # What the tests need and the app does not (`docker-compose.dev.yml`). ffprobe reads
 # back what an encode produced, and avifenc is the reference the linked libavif path

@@ -48,7 +48,7 @@ function mockPhotos(over: Partial<PhotosRepository> = {}): PhotosRepository {
   } as unknown as PhotosRepository;
 }
 function library(root: string): Library {
-  return { id: 'lib', root_path: root, data_path: null, bin_name: 'Bin', name: 'lib', ordering: 'taken_desc',
+  return { id: 'lib', root_path: root, bin_name: 'Bin', read_only: false, name: 'lib', ordering: 'taken_desc',
   rendition_source: 'embedded' as const,
   rendition_hdr: false,
   include_subfolders: true, mirror_shoots: true, auto_stack: true, auto_stack_similarity: 0.78, auto_stack_window_seconds: 60, last_synced_at: null, photo_count: 0 };
@@ -113,10 +113,12 @@ describe('ShootsService.create', () => {
     ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
   }));
 
-  it('refuses a shoot inside the data directory, which is deleted with the library', withRoot(async (root) => {
+  // A hidden folder is configuration rather than photographs, and the scan never
+  // walks one - so a shoot there would take its photos out of the library.
+  it('refuses a shoot inside a hidden folder, which the scan never looks at', withRoot(async (root) => {
     const service = new ShootsService(mockShoots(), mockPhotos(), mockLibs(root), mockRules());
     await expect(
-      service.create({ library_id: 'lib', parent_path: '.bowerbird', name: 'Trip', ordering: 'taken_desc' }),
+      service.create({ library_id: 'lib', parent_path: '.cache', name: 'Trip', ordering: 'taken_desc' }),
     ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
   }));
 
