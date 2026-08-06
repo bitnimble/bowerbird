@@ -65,6 +65,36 @@ file), DESIGN §12.1 and DESIGN §12.3 (binning and the bin folder), DESIGN §13
 API surface), DESIGN §15 (configuration, which gains `DATA_DIR`) and DESIGN §16
 (testing).
 
+Six more sections are falsified in passing, and each needs the edit made with the
+commit that breaks it rather than discovered later:
+
+- **DESIGN §8.2**, whose constructor note says `delete()` "needs the library for its
+  root and `bin_name`" - still true, but §4's in-place branch means `bin_name` is no
+  longer what decides where the file goes.
+- **DESIGN §9.6**: "the sync lock is not released until scan and apply are both done,
+  so no newer generation of the same library can exist to stomp." The reasoning
+  survives the lease exactly (§8 keeps that boundary); the noun does not.
+- **DESIGN §9.8**, whose watcher paragraph explains at length that "The sync lock
+  (§9.7) is a file at the library root, so every sync's own lock woke the watcher that
+  started the next one", and that "The lock is in the `ignore` list now". Both stop
+  being true. §5 claims DESIGN §9.8 "stands unamended" - that is right about the
+  one-predicate rule and wrong about this paragraph.
+- **DESIGN §10.2**, whose rendition table gives every path as `<data_path>/renditions/…`.
+- **DESIGN §10.6**, which has three: removing a library reasons about `data_path`
+  being "user-supplied" and rescues originals from it (§3.1 deletes that); the sweep's
+  "Only `renditions/` and `hdr/` are swept, so the sync lock is untouched" loses its
+  point once the lock is a row; and "two libraries may share a data directory" becomes
+  impossible once the directory is keyed by library id.
+- **DESIGN §11**'s deletion table, which lists `deleteSyncLockSync(lockPath)` with its
+  basename guard, and gains `deleteEmptyBinFolder` (§2.3).
+
+Two of DESIGN's own statements are **already** wrong, independent of this design, and
+should be corrected while the surrounding text is being edited: DESIGN §12.1's "resolve
+the library and take its sync lock once" and DESIGN §17's "the per-library sync lock
+(§9.7)" both describe `delete`/`restore` taking the sync lock, which they never have -
+they take `libraryMutex`. That is the same error this design already fixed in
+`photos_service.ts`'s own comment (§15).
+
 ## 2. The flag
 
 Five columns on `libraries` - two for the flag and the bin's name, three for the bin
@@ -306,12 +336,37 @@ The Bin does not move: originals belong beside the photographs they came from
   at `:914`; `processing_service.ts:486`, which needs only a library id.
 - **Comments that become false**: `utils/paths.ts:41-43`, `utils/deletions.ts:22,51`,
   `libraries_service.ts:24-34`.
-- **Two integration tests that fail at runtime rather than typecheck**, so they must
-  land in this commit: `test/integration/prune.integration.test.ts:126` (`UPDATE
-  libraries SET … data_path`) and
-  `test/integration/lossless_render.integration.test.ts:19-23`, which points
-  `data_path` at the fixture directory. Plus mechanical fixture-field removal in
-  ~10 test files.
+- **`test/integration/prune.integration.test.ts:126`** fails at runtime rather than
+  typecheck (`UPDATE libraries SET … data_path` → "no such column"), so it must land in
+  this commit. Plus mechanical `data_path: null` removal in ~15 test files, which the
+  compiler does find.
+
+**The dangerous one is silent, and it is how every test that writes a rendition
+isolates itself.** `data_path` is what points a test's generated files at its own
+`mkdtempSync` directory, and
+`test/integration/lossless_render.integration.test.ts:17-18` says so in as many words:
+"The output path is the library's business now, so the test asks for it the same way
+the server does rather than naming a file of its own." Once `getDataPath` is
+`path.join(config.dataDir, library.id)`, that test still writes a file, still reads it
+back, and still passes its PSNR assertion - into `./data/lib/` in the working tree,
+outside the tmpdir it cleans up. It stops isolating without failing.
+
+Two things follow, and both need doing in this commit:
+
+- **The test scripts set `DATA_DIR` to a temporary directory.** `config.dataDir` is
+  resolved once at module load (§3), so a test cannot redirect it afterwards; it has to
+  come from the environment, beside the `LOG_LEVEL=warn` already in `package.json`'s
+  `test` and `test:integration` scripts.
+- **Tests that write renditions need distinct library ids.** The data directory is
+  keyed by id alone now, where it used to be keyed by a path the test chose, and
+  `id: 'lib'` appears **42 times** across `src` and `test`. Sharing one directory
+  between files that clean up after themselves is a flake waiting for a parallel run.
+
+Also worth checking rather than assuming: `src/db/tests/migrations.test.ts:37,210`
+hand-builds a legacy `libraries` table *including* `data_path`, to test migrating from
+it. None of the ten migrations reads that column, so those fixtures should keep
+passing - but they now describe a shape the app never produces, and that is the kind of
+fixture that quietly stops meaning anything.
 
 One guard replaces all of it, in **both** directions: `DATA_DIR` inside a library's
 root, and a library's root inside `DATA_DIR`. The second is the one that loses
@@ -438,8 +493,10 @@ in-library browser (`libraries_api.ts:49`), and the two scoped-sync helpers
 each omission is a bug: a shoot created in the bin whose `addPhotos` then moves live
 RAWs into it; a bin folder in `dirs` letting `detectRelocationsByIdentity` relocate a
 shoot inside the bin; mirroring duplicating the shoots tree; the bin pickable in the
-UI. One guard in a shared function beats four in its callers, and DESIGN §6's
-one-predicate rule and DESIGN §9.8 stand unamended.
+UI. One guard in a shared function beats four in its callers, so DESIGN §6's
+one-predicate rule and DESIGN §9.8's claim that the scan and watcher "cannot disagree"
+both stand - it is only DESIGN §9.8's *lock* paragraph that this design falsifies, for
+an unrelated reason (§1).
 
 ## 6. The bin channel
 
