@@ -701,14 +701,23 @@ handle per directory), so a scoped run has no evidence and must not conclude
 `is_missing` on rows it did not look at. Hand-managed bin changes are noticed by the
 nightly full sync. §6.3's detection is the one exception.
 
-**That makes the bin channel depend on a setting the photographer can switch off.**
-`full_sync_at` defaults to `03:00` and `''` disables the daily reconcile entirely
-(`DailySync.start` returns immediately), and it is the only thing that runs a full
-sync unprompted - so with it off, a hand-binned file is never imported, a hand-deleted
-one never marked missing, a renamed bin never followed, and §2.4's `IO_ERROR` remedy
-("run a full sync, then retry") has to be performed by hand. That is acceptable but it
-must be said: the Settings copy for `full_sync_at` names the bin as something the
-nightly run reconciles, so turning it off is an informed choice rather than a silent
+**So how often the bin is reconciled depends on two things the photographer
+controls.** A full sync happens either nightly - `full_sync_at`, default `03:00`,
+where `''` disables the reconcile entirely (`DailySync.start` returns immediately) -
+or when the watcher's own pending set is empty or exceeds `MAX_SCOPE = 256` paths, at
+which point it falls back to a full run (`library_watcher.ts:309`).
+
+That gives an uneven guarantee, and the doc should say so rather than leaning on "the
+nightly sync catches it". A *large* hand-managed change self-corrects quickly: a bin
+folder rename delivers events for the folder and its contents, so a sizeable bin trips
+the 256-path fallback within a debounce window and the bin channel runs. A *small* one
+- three files dropped into the bin by hand - stays under the threshold, takes the
+scoped path, and is not noticed until something else triggers a full run. With
+`full_sync_at` off, "something else" may never come, and §2.4's `IO_ERROR` remedy ("run
+a full sync, then retry") has to be invoked by hand.
+
+Acceptable, but the Settings copy for `full_sync_at` names the bin among what the
+nightly run reconciles, so turning it off is an informed choice rather than the silent
 loss of a feature the photographer was told they had.
 
 Counts: §6.2's `is_missing` transitions and re-hashes are `photosModified`, crossings
@@ -966,10 +975,11 @@ no `ensureColumn`, no table rebuild, no data move. `migrations.ts:486`'s
 contradicts the nullable column and goes with it.
 
 In `libraries`: add `read_only`, `bin_dev`, `bin_ino`, `bin_birthtime`; make
-`bin_name` nullable; delete `data_path`. Plus `sync_locks` (§8), which goes **after
-`libraries`** in `SCHEMA` - the file's opening comment is "Tables are ordered so every
-REFERENCES target already exists", and `sync_locks` references `libraries(id)` with
-`PRAGMA foreign_keys = ON` (`connection.ts:11`). A `sync_locks` row at startup means
+`bin_name` nullable; delete `data_path`. Plus `sync_locks` (§8), placed after
+`libraries` in `SCHEMA` to follow the file's stated convention ("Tables are ordered so
+every REFERENCES target already exists") - a convention, not a requirement: SQLite
+resolves FK targets lazily, and a `CREATE TABLE` naming a table that does not exist
+yet succeeds, with the cascade working once both are there. A `sync_locks` row at startup means
 "stale within 30 seconds", not "syncing" - a crashed process leaves its row and expiry
 clears it, so startup deletes nothing.
 
