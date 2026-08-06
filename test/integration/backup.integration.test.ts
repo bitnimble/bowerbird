@@ -9,6 +9,7 @@ import path from 'node:path';
 import { createDatabase } from '../../src/db/connection';
 import { LATEST_USER_VERSION } from '../../src/db/migrations';
 import { BackupService, ScheduledBackup, findBackup, listBackups } from '../../src/services/maintenance/backup_service';
+import { spaceNeededFor } from '../../src/services/maintenance/backup_worker';
 import { restoreBackup } from '../../src/services/maintenance/restore';
 import { deleteBackupFile } from '../../src/utils/deletions';
 import { backupsDir } from '../../src/utils/paths';
@@ -459,6 +460,30 @@ test('a symlinked catalogue stays on the volume it was put on', async () => {
   db = createDatabase(dbPath);
 });
 
+test('a chain of symlinks resolves to the catalogue at the end of it', async () => {
+  // A link into a link is what a re-pointed volume leaves. Unwrapping only the
+  // first writes the restored catalogue into the middle of the chain, leaving the
+  // real one live, orphaned, and named as the thing to delete once happy.
+  const real = path.join(dir, 'volume', 'bowerbird.db');
+  const middle = path.join(dir, 'mid.db');
+  mkdirSync(path.dirname(real), { recursive: true });
+  db.close();
+  renameSync(dbPath, real);
+  symlinkSync(real, middle);
+  symlinkSync(middle, dbPath);
+  db = createDatabase(dbPath);
+  addLibrary(LIB, 'holiday');
+  const { path: file } = await new BackupService(dbPath).backup(7);
+  db.close();
+
+  await restoreBackup(dbPath, file);
+
+  expect(lstatSync(dbPath).isSymbolicLink()).toBe(true);
+  expect(lstatSync(middle).isSymbolicLink()).toBe(true);
+  expect(libraryNames(real)).toEqual(['holiday']);
+  db = createDatabase(dbPath);
+});
+
 test('a symlinked catalogue whose volume is missing is not replaced by a plain file', async () => {
   // The two ways people arrive at a restore both produce this: the volume failed to
   // mount, or they deleted the catalogue they thought was broken. Read as "no
@@ -587,13 +612,59 @@ test('“latest” is the most recent backup, not one a skewed clock stamped yea
   expect(await findBackup(dbPath, 'latest')).not.toBe(stuck);
 });
 
+test('“latest” survives a backup directory whose timestamps were not preserved', async () => {
+  addLibrary(LIB, 'holiday');
+  const oldest = await backups.backup(7);
+  addLibrary(LATER, 'later');
+  const newest = await backups.backup(7);
+
+  // What `cp -r`, an unzip, a download or an rsync without `-t` leaves - and those
+  // are exactly how backups reach the machine that has to restore them. Dating by
+  // mtime here handed back the *oldest* snapshot and reported success.
+  const now = new Date();
+  const earlier = new Date(Date.now() - 60_000);
+  utimesSync(newest.path, earlier, earlier);
+  utimesSync(oldest.path, now, now);
+
+  expect(await findBackup(dbPath, 'latest')).toBe(newest.path);
+  expect(libraryNames(newest.path).sort()).toEqual(['holiday', 'later']);
+});
+
+test('a snapshot with a bogus date is rotated out rather than made immortal', async () => {
+  addLibrary(LIB, 'holiday');
+  const stuck = await futureStampedSnapshot();
+
+  // It sorts last by name for ever, so deleting from the front of the name order
+  // never reaches it - while it still counts against `keep`. Measured before the
+  // fix: seven of these collapse `backup_keep: 7` to "one snapshot, at most one
+  // interval old", every run reporting a successful backup and a rotation.
+  const first = await backups.backup(2);
+  const second = await backups.backup(2);
+
+  const kept = await listBackups(dbPath);
+  expect(kept).toContain(second.path);
+  expect(kept).toContain(first.path);
+  expect(kept).not.toContain(stuck);
+});
+
+test('rotation never deletes the snapshot it just took', async () => {
+  addLibrary(LIB, 'holiday');
+  // The future-stamped one sorts last, so the snapshot taken now sorts *first* -
+  // which is the only arrangement where deleting from the front could reach it.
+  await futureStampedSnapshot();
+
+  const { path: taken } = await backups.backup(1);
+
+  expect(existsSync(taken)).toBe(true);
+});
+
 test('history is not rotated away for a snapshot of a suddenly-empty catalogue', async () => {
   addLibrary(LIB, 'holiday');
   for (let i = 0; i < 200; i++) addLibrary(`00000000-0000-4000-8000-${String(i).padStart(12, '0')}`, `lib-${i}`);
   const real = await backups.backup(2);
   db.close();
 
-  // Anything that leaves DB_PATH absent gets a fresh 8KB catalogue on the next
+  // Anything that leaves DB_PATH absent gets a fresh 225KB catalogue on the next
   // start, because the server creates on open. Rotating on those wipes the real
   // catalogue's entire history within `keep` runs - at the defaults, a week - with
   // every run logging a successful backup.
@@ -635,6 +706,52 @@ test('a working file from a run that is still going is left alone', async () => 
   await backups.backup(7);
 
   expect(existsSync(inFlight)).toBe(true);
+});
+
+// A stub worker, so the two ways a real one can fail to answer are reachable at
+// all. Both are the same class of hazard: the promise never settles, the in-flight
+// flag latches, and every later run is skipped by a schedule still logging health.
+function stubWorker(body: string): string {
+  const file = path.join(dir, `stub-worker-${body.length}.ts`);
+  writeFileSync(file, `declare const self: { onmessage: ((e: MessageEvent) => void) | null };\n${body}`);
+  return `file://${file}`;
+}
+
+test('a worker that exits without reporting is a failure, not silence', async () => {
+  addLibrary(LIB, 'holiday');
+  const service = new BackupService(dbPath, {
+    workerUrl: stubWorker('self.onmessage = () => { process.exit(0); };'),
+  });
+
+  await expect(service.backup(7)).rejects.toThrow(/exited without reporting/);
+});
+
+test('a worker that wedges is given up on rather than latching the schedule', async () => {
+  addLibrary(LIB, 'holiday');
+  // A thread alive but stuck - inside VACUUM INTO or statfs on a hung mount - emits
+  // no event at all, so `close` never fires and only the deadline breaks it.
+  const service = new BackupService(dbPath, {
+    workerUrl: stubWorker('self.onmessage = () => { setInterval(() => {}, 1000); };'),
+    deadlineMs: 200,
+  });
+
+  await expect(service.backup(7)).rejects.toThrow(/did not finish within/);
+  // And the schedule keeps going afterwards rather than being stuck for good.
+  const scheduled = new ScheduledBackup(service, 1, 7);
+  scheduled.start();
+  await Bun.sleep(400);
+  scheduled.stop();
+  expect(await listBackups(dbPath)).toEqual([]);
+});
+
+test('the space a snapshot needs is the larger of the catalogue and its WAL', () => {
+  // Both directions have shipped as bugs. Ignoring the WAL under-demands by 200x
+  // when a reader has been holding checkpoints off; summing them over-demands by
+  // 3x, because a checkpoint-starved WAL is mostly rewrites of pages already in
+  // the main file, and refuses backups that had room.
+  expect(spaceNeededFor(4096, 1_800_000)).toBe(2_700_000);
+  expect(spaceNeededFor(15_700_000, 15_700_000)).toBe(23_550_000);
+  expect(spaceNeededFor(1_000_000, 0)).toBe(1_500_000);
 });
 
 test('deleting a backup refuses anything that is not a flat file in the backup directory', async () => {

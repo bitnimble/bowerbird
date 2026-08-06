@@ -43,10 +43,14 @@ function userVersion(db: Database): number {
 //
 // Against the backup directory rather than the database's: they can be different
 // volumes, and in the shipped container they are.
+export function spaceNeededFor(mainBytes: number, walBytes: number): number {
+  return Math.ceil(Math.max(mainBytes, walBytes) * 1.5);
+}
+
 async function requireSpaceFor(job: BackupJob): Promise<void> {
   const main = await stat(job.dbPath);
   const wal = await stat(`${job.dbPath}-wal`).then((s) => s.size, () => 0);
-  const needed = Math.ceil(Math.max(main.size, wal) * 1.5);
+  const needed = spaceNeededFor(main.size, wal);
   const { bavail, bsize } = await statfs(path.dirname(job.outPath));
   const free = bavail * bsize;
   if (free < needed) throw new Error(`not enough space: needs ~${needed} bytes, ${free} free`);
@@ -93,10 +97,15 @@ async function run(job: BackupJob): Promise<{ bytes: number; libraries: number }
 // A part-written file is left for the caller to remove: it has to handle the case
 // where this thread dies without reporting anyway, so cleaning up here as well
 // would be two owners for one file.
-self.onmessage = async (event) => {
-  try {
-    self.postMessage(await run(event.data));
-  } catch (error) {
-    self.postMessage({ error: error instanceof Error ? error.message : String(error) });
-  }
-};
+//
+// Guarded so the module can be imported from the main thread - which is only for
+// the pure helper above, and is what lets it be tested without a worker at all.
+if (typeof self !== 'undefined') {
+  self.onmessage = async (event) => {
+    try {
+      self.postMessage(await run(event.data));
+    } catch (error) {
+      self.postMessage({ error: error instanceof Error ? error.message : String(error) });
+    }
+  };
+}

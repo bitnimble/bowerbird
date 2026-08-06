@@ -6,6 +6,9 @@ import { backupsDir } from '../../utils/paths';
 import type { BackupJob, BackupOutcome } from './backup_worker';
 
 const WORKER_URL = new URL('./backup_worker.ts', import.meta.url).href;
+// Not a performance bound - a snapshot of a huge catalogue may take as long as it
+// takes. It is a ceiling on how long a wedge can pass for work (§4.9).
+const WORKER_DEADLINE_MS = 6 * 60 * 60 * 1000;
 
 const log = new Logger('backup');
 
@@ -22,7 +25,41 @@ function backupBase(dbPath: string): string {
 // stamp's shape is what separates them.
 function snapshotPattern(base: string): RegExp {
   const literal = base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`^${literal}-\\d{4}-\\d{2}-\\d{2}T[\\d-]+Z\\.db$`);
+  return new RegExp(`^${literal}-${STAMP.source}\\.db$`);
+}
+
+// `2026-08-06T15-04-35-704Z`, which is `toISOString()` with its colons and dot
+// swapped for dashes so it can be a filename.
+const STAMP = /(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z/;
+
+/**
+ * When a snapshot says it was taken, from its name, or null if the name does not
+ * carry a readable one.
+ *
+ * The name rather than the mtime. It is what this app wrote down at the time, and
+ * it survives the file being copied, unzipped, downloaded or rsync'd without
+ * `-t` - every one of which rewrites mtimes, and every one of which is how a
+ * backup reaches the machine that has to restore it. Dating by mtime made
+ * `latest` hand back the *oldest* snapshot in a directory that had been copied off
+ * a dead machine, which is the disaster-recovery path itself.
+ */
+function snapshotTime(file: string): number | null {
+  const match = STAMP.exec(path.basename(file));
+  if (match == null) return null;
+  const [, date, hh, mm, ss, ms] = match;
+  const at = Date.parse(`${date}T${hh}:${mm}:${ss}.${ms}Z`);
+  return Number.isNaN(at) ? null : at;
+}
+
+/** Whether a snapshot's own account of when it was taken can be believed. */
+function isDatable(file: string, now: number): boolean {
+  const at = snapshotTime(file);
+  return at != null && at <= now;
+}
+
+/** How old a snapshot claims to be, and `Infinity` if it will not say credibly. */
+function age(file: string, now: number): number {
+  return isDatable(file, now) ? now - snapshotTime(file)! : Number.POSITIVE_INFINITY;
 }
 
 // Oldest first: the stamp is ISO, so sorting by name is chronological.
@@ -44,25 +81,20 @@ export async function listBackups(dbPath: string): Promise<string[]> {
     .map((name) => path.join(dir, name));
 }
 
-// The most recent snapshot whose timestamp can be believed, and null if there is
-// none.
+// The most recent snapshot whose date can be believed, and null if there is none.
 //
 // A snapshot dated in the future is a clock that was wrong, not a backup taken
 // later, and it cannot be allowed to answer "when was the last backup" or "which is
 // the latest". Trusting it stalls the schedule for the length of the skew. Reading
 // it as *due* is worse, and was measured: it keeps its future stamp so it stays
-// newest by name forever, so every hourly check finds itself due again, and a week
-// of history rotates away in eight hours with every run logging success. Ignoring
-// it does neither - the snapshot this run takes is dated now, and answers next time.
-async function newestDatable(files: readonly string[]): Promise<{ file: string; mtimeMs: number } | null> {
+// newest for ever, so every hourly check finds itself due again, and a week of
+// history rotates away in eight hours with every run logging success. Ignoring it
+// does neither - the snapshot this run takes is dated now, and answers next time.
+function newestDatable(files: readonly string[]): string | null {
   const now = Date.now();
-  let newest: { file: string; mtimeMs: number } | null = null;
-  for (const file of files) {
-    const mtimeMs = await stat(file).then((s) => s.mtimeMs, () => Number.NaN);
-    if (!(mtimeMs <= now)) continue;
-    if (newest == null || mtimeMs >= newest.mtimeMs) newest = { file, mtimeMs };
-  }
-  return newest;
+  const datable = files.filter((file) => isDatable(file, now));
+  // Names sort chronologically, being fixed-width ISO, so the last is the newest.
+  return datable.at(-1) ?? null;
 }
 
 // Which snapshot a person meant, from `latest` or from a name as `listBackups`
@@ -79,9 +111,9 @@ export async function findBackup(dbPath: string, requested: string): Promise<str
   // cannot be read is no reason to refuse a copy rescued from somewhere else.
   if (requested.includes(path.sep) || requested.includes('/')) return requested;
   const backups = await listBackups(dbPath);
-  // By date rather than by name, so a snapshot a skewed clock stamped years ahead
-  // does not become "latest" forever and hand back the oldest catalogue there is.
-  if (requested === 'latest') return (await newestDatable(backups))?.file ?? backups.at(-1);
+  // Skipping any a skewed clock stamped years ahead, which would otherwise be
+  // "latest" for ever and hand back the oldest catalogue there is.
+  if (requested === 'latest') return newestDatable(backups) ?? backups.at(-1);
   return backups.find((file) => path.basename(file) === requested);
 }
 
@@ -99,9 +131,29 @@ export interface BackupResult {
 // do to each other.
 const ABANDONED_AFTER_MS = 60 * 60 * 1000;
 
+/**
+ * Where the snapshot work happens and how long it may take. Both are here so the
+ * two ways a worker can fail to answer - exiting mute, and wedging - can be tested
+ * against a stub, which is otherwise a code path nothing can reach and which is
+ * precisely the "backups have silently stopped" class.
+ */
+export interface BackupWorkerOptions {
+  workerUrl?: string;
+  deadlineMs?: number;
+}
+
 // Rolling snapshots of the catalogue (§4.9).
 export class BackupService {
-  constructor(private readonly dbPath: string) {}
+  private readonly workerUrl: string;
+  private readonly deadlineMs: number;
+
+  constructor(
+    private readonly dbPath: string,
+    options: BackupWorkerOptions = {},
+  ) {
+    this.workerUrl = options.workerUrl ?? WORKER_URL;
+    this.deadlineMs = options.deadlineMs ?? WORKER_DEADLINE_MS;
+  }
 
   /** Takes one snapshot, then trims the directory to the newest `keep` of them. */
   async backup(keep: number): Promise<BackupResult> {
@@ -147,10 +199,9 @@ export class BackupService {
    * which includes a directory holding nothing but future-stamped ones (§4.9).
    */
   async ageOfNewest(): Promise<number | null> {
-    // mtime rather than the stamp in the name: the two agree, and one of them is a
-    // filename being parsed back into a date.
-    const newest = await newestDatable(await listBackups(this.dbPath));
-    return newest == null ? null : Date.now() - newest.mtimeMs;
+    const newest = newestDatable(await listBackups(this.dbPath));
+    const at = newest == null ? null : snapshotTime(newest);
+    return at == null ? null : Date.now() - at;
   }
 
   // What a killed process leaves behind. The cleanup on the failure path above only
@@ -168,7 +219,7 @@ export class BackupService {
 
   private write(outPath: string): Promise<{ bytes: number; libraries: number }> {
     return new Promise((resolve, reject) => {
-      const worker = new Worker(WORKER_URL);
+      const worker = new Worker(this.workerUrl);
       let settled = false;
       const finish = (outcome: () => void): void => {
         if (settled) return;
@@ -185,8 +236,8 @@ export class BackupService {
       // process - every later backup silently skipped by a schedule that still logs
       // as healthy.
       const deadline = setTimeout(
-        () => finish(() => reject(new Error(`the backup worker did not finish within ${WORKER_DEADLINE_MS}ms`))),
-        WORKER_DEADLINE_MS,
+        () => finish(() => reject(new Error(`the backup worker did not finish within ${this.deadlineMs}ms`))),
+        this.deadlineMs,
       );
 
       worker.onmessage = (event: MessageEvent<BackupOutcome>) => {
@@ -249,7 +300,15 @@ export class BackupService {
       });
     }
 
-    const stale = candidates.slice(0, Math.min(excess, candidates.length));
+    // Least trustworthy first. A snapshot stamped in the future sorts last by name
+    // for ever, so ordering deletion by name makes it immortal - and it still counts
+    // against `keep`, so it permanently burns a retention slot. Measured: seven of
+    // them collapse `backup_keep: 7` to "one snapshot, at most one interval old",
+    // with every run reporting a successful backup and a rotation. A bogus date is
+    // exactly what should go first.
+    const now = Date.now();
+    const oldestFirst = [...candidates].sort((a, b) => age(b, now) - age(a, now));
+    const stale = oldestFirst.slice(0, Math.min(excess, oldestFirst.length));
     for (const file of stale) await deleteBackupFile(dir, file);
     return stale.length;
   }
@@ -262,7 +321,6 @@ function nextAttempt(): number {
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-const WORKER_DEADLINE_MS = 6 * 60 * 60 * 1000;
 // How often the schedule asks whether a backup is due, which is not how often one
 // is taken. Deliberately short and fixed: `setInterval` clamps a delay past its
 // signed 32-bit range to 1ms, so an interval of 25 days or more fires continuously

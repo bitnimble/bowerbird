@@ -92,7 +92,13 @@ function refuseIfInUse(dbPath: string): void {
     probe.exec('BEGIN IMMEDIATE');
     probe.exec('COMMIT');
   } catch (err) {
-    if ((err as { code?: string }).code !== 'SQLITE_BUSY') return;
+    // `startsWith`, because bun reports SQLite's *extended* result codes. A lock
+    // refusal can arrive as `SQLITE_BUSY_RECOVERY` - another process recovering this
+    // WAL after a crash, which with `restart: unless-stopped` is the exact shape of
+    // "the server died and came back while I was restoring" - or as
+    // `SQLITE_BUSY_SNAPSHOT`. Matching the primary code alone lets those through as
+    // "not a lock", and a restore under a live server loses everything since.
+    if ((err as { code?: string }).code?.startsWith('SQLITE_BUSY') !== true) return;
     throw new Error(`${dbPath} is open in another process. Stop Bowerbird first, or the work it is holding will be lost.`);
   } finally {
     probe.close();
@@ -108,11 +114,17 @@ function refuseIfInUse(dbPath: string): void {
 // one of the two ways people arrive here. Reading it as "no catalogue" would put
 // the restored file on top of the link and leave the real one unreachable.
 function resolveCatalogue(dbPath: string): string {
-  const link = lstatSync(dbPath, { throwIfNoEntry: false });
-  if (link?.isSymbolicLink() === true) {
-    return path.resolve(path.dirname(dbPath), readlinkSync(dbPath));
+  let at = path.resolve(dbPath);
+  // Chains, not just one link: a link into a link is what a re-pointed volume
+  // leaves, and unwrapping only the first writes the restored catalogue into the
+  // middle of the chain, leaving the real one live and orphaned. Bounded, because a
+  // link that points at itself is a loop rather than a path.
+  for (let hop = 0; hop < 32; hop++) {
+    const link = lstatSync(at, { throwIfNoEntry: false });
+    if (link?.isSymbolicLink() !== true) return at;
+    at = path.resolve(path.dirname(at), readlinkSync(at));
   }
-  return path.resolve(dbPath);
+  throw new Error(`${dbPath} is a symlink loop`);
 }
 
 export async function restoreBackup(rawDbPath: string, backupPath: string): Promise<RestoreResult> {
@@ -163,10 +175,19 @@ export async function restoreBackup(rawDbPath: string, backupPath: string): Prom
     // Failing here would otherwise leave no catalogue at all: the real one renamed
     // to a name nothing has been told about, and a server that creates a fresh empty
     // one at the next start. Put back what was moved before giving up.
+    const stranded: string[] = [];
     for (const suffix of moved.reverse()) {
-      await rename(`${aside}${suffix}`, `${dbPath}${suffix}`).catch(() => {});
+      await rename(`${aside}${suffix}`, `${dbPath}${suffix}`).catch(() => stranded.push(`${aside}${suffix}`));
     }
     await deleteRestoreStaging(dbPath, staged).catch(() => {});
+    // Saying "undone" when it could not be undone is the one thing worse than the
+    // failure: the catalogue would be sitting at a path nobody has been shown, and
+    // the next start would make a fresh empty one on top of the gap.
+    if (stranded.length > 0) {
+      throw new Error(
+        `the restore failed and could not be undone: ${reason(err)}. Your catalogue is at ${stranded.join(', ')} - move it back by hand.`,
+      );
+    }
     throw new Error(`the restore was undone: ${reason(err)}`);
   }
 
