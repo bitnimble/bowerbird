@@ -64,11 +64,12 @@ Out of scope: read-only *photographs* within a writable library, per-folder
 write permissions, exporting edited renditions anywhere (no export exists yet),
 and importing into a read-only library from elsewhere.
 
-**Documents this supersedes.** DESIGN §4.1 (the `libraries` columns), §6 (the data
-directory and the scan's exclusions), §9.7 (the whole sync lock), §9.8's ignore-list
-paragraph, §12.1 and §12.3 (binning and the bin folder), §13.1 and §15 are rewritten
-with this change. Nothing this document contradicts is left standing there; DESIGN
-§9.7 in particular describes a file that stops existing.
+**Documents this supersedes**, each qualified because several of these numbers
+collide with this document's own: DESIGN §4.1 (the `libraries` columns), DESIGN §6
+(the data directory and the scan's exclusions), DESIGN §9.7 (the whole sync lock),
+DESIGN §9.8's ignore-list paragraph, DESIGN §12.1 and DESIGN §12.3 (binning and the
+bin folder), DESIGN §13.1 and DESIGN §15. Nothing this document contradicts is left
+standing there; DESIGN §9.7 in particular describes a file that stops existing.
 
 ## 2. The flag
 
