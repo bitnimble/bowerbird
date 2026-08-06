@@ -55,7 +55,18 @@ export interface TreeScan {
 //
 // `onDir` is called as each directory is entered: the walk is one of the four
 // stretches long enough for a sync lease to lapse inside it (§8).
-export async function scanLibraryTree(scope: LibraryScope, startDir = '', onDir?: () => void): Promise<TreeScan> {
+//
+// `descend` overrides which directories the walk enters. The bin channel passes
+// one, because inside the bin none of the library's rules apply: the bin mirrors
+// folders even in a root-only library, an excluded folder's binned frames are
+// still the bin's, and a bin the photographer named with a leading dot is not a
+// dotfolder to skip - it is the tree being walked (§6.2).
+export async function scanLibraryTree(
+  scope: LibraryScope,
+  startDir = '',
+  onDir?: () => void,
+  descend: (relDir: string) => boolean = (relDir) => isDirInScope(scope, relDir),
+): Promise<TreeScan> {
   const files: ScannedFile[] = [];
   const dirs: ScannedDir[] = [];
   const visitedDirs = new Set<string>(); // real paths, to stop symlink cycles
@@ -83,7 +94,7 @@ export async function scanLibraryTree(scope: LibraryScope, startDir = '', onDir?
 
       const rel = relative(abs);
       if (isDir) {
-        if (!isDirInScope(scope, rel)) continue;
+        if (!descend(rel)) continue;
         const real = await realpath(abs).catch(() => abs);
         if (visitedDirs.has(real)) continue;
         visitedDirs.add(real);

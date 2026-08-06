@@ -113,7 +113,9 @@ describe('ShootsService.create', () => {
     ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
   }));
 
-  it('refuses a shoot inside the data directory, which is deleted with the library', withRoot(async (root) => {
+  // A hidden folder is configuration rather than photographs, and the scan never
+  // walks one - so a shoot there would take its photos out of the library.
+  it('refuses a shoot inside a hidden folder, which the scan never looks at', withRoot(async (root) => {
     const service = new ShootsService(mockShoots(), mockPhotos(), mockLibs(root), mockRules());
     await expect(
       service.create({ library_id: 'lib', parent_path: '.bowerbird', name: 'Trip', ordering: 'taken_desc' }),

@@ -558,20 +558,36 @@ export class PhotosService {
   async restore(photoIds: string[]): Promise<void> {
     const failures: string[] = [];
     let restored = 0;
-    for (const [libraryId, photos] of this.deletedByLibrary(photoIds)) {
+    const byLibrary = this.deletedByLibrary(photoIds);
+
+    // Every row's position is tested before any of them is restored, and across
+    // every library the batch spans rather than one at a time: an undo is stamped
+    // with a batch id, not with a library, so grouping first and refusing per
+    // group restores whichever libraries happened to be iterated before the one
+    // that refuses. A half-landed undo is worse than none.
+    const stuck: string[] = [];
+    for (const [libraryId, photos] of byLibrary) {
+      const library = this.libraries.getById(libraryId);
+      if (library?.read_only !== true) continue;
+      for (const photo of photos) if (this.isInBin(library, photo.file_path)) stuck.push(library.name);
+    }
+    if (stuck.length > 0) {
+      throw new AppError(
+        'READ_ONLY',
+        `${stuck.length} of these photographs are in a read-only library's bin folder; clear the flag on ${[...new Set(stuck)].join(', ')} first`,
+      );
+    }
+
+    for (const [libraryId, photos] of byLibrary) {
       await libraryMutex.run(libraryId, async () => {
         const library = this.libraries.getById(libraryId);
         if (library == null) return;
-        // Every row's position is tested before any of them is restored: a
-        // half-landed undo is worse than none.
-        const stuck = photos.filter((photo) => library.read_only && this.isInBin(library, photo.file_path));
-        if (stuck.length > 0) {
-          throw new AppError(
-            'READ_ONLY',
-            `${stuck.length} of these photographs are in a read-only library's bin folder; clear the flag on ${library.name} first`,
-          );
+        // Re-read inside the fence, where `bin_name` and the flag are held still.
+        // The check above is what keeps a batch from half-landing; this is the
+        // narrow window where the flag was set while this queued.
+        if (library.read_only && photos.some((photo) => this.isInBin(library, photo.file_path))) {
+          throw new AppError('READ_ONLY', `${library.name} became read-only while this undo was queued`);
         }
-
         const dirs = new Set<string>();
         for (const chunk of inChunks(photos, DELETE_CHUNK)) {
           const moved: { id: string; path: string }[] = [];

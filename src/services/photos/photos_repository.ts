@@ -955,6 +955,16 @@ export class PhotosRepository {
     return (this.db.query('SELECT id FROM photos').all() as { id: string }[]).map((r) => r.id);
   }
 
+  // A row binned in place whose file was moved by hand. Both columns follow,
+  // because for such a row they name the same file: `deleted_from_path` is where
+  // a restore puts it back, and left at the old path the restore would recreate
+  // the folder the photographer just renamed away.
+  moveBinnedInPlace(photoId: string, filePath: string): void {
+    this.db
+      .query('UPDATE photos SET file_path = ?, deleted_from_path = ?, is_missing = 0 WHERE id = ?')
+      .run(filePath, filePath, photoId);
+  }
+
   // Which side of the bin a crossing's row is on now, which decides whether it is
   // a flag change or only a path update (§6.4).
   isBinned(photoId: string): boolean {

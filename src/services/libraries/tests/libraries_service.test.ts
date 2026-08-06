@@ -103,6 +103,21 @@ describe('LibrariesService.create', () => {
     }
   });
 
+  // The one combination the columns must never hold: a writable library with no
+  // bin bins in place, silently, for a photographer who was shown a bin-name
+  // field - and `update` cannot repair it, since the flag is already false.
+  it('refuses a writable library with no bin name', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'bb-nobin-'));
+    try {
+      const service = build(mockRepo());
+      await expect(
+        service.create({ root_path: root, bin_name: null, read_only: false, ordering: 'added_asc', include_subfolders: true, mirror_shoots: true }),
+      ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('makes no bin folder for a read-only library, whatever bin_name was sent', async () => {
     const root = mkdtempSync(path.join(tmpdir(), 'bb-ro-'));
     const insert = jest.fn();

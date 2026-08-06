@@ -608,7 +608,7 @@ Generated files live **outside every library root**, under `DATA_DIR` (§15), on
 
 **Everything under it is disposable, and nothing under it is an original.** Removing a library removes its whole subtree (§10.6), and a user is free to delete it by hand to reclaim the space; both must cost only renders. That is why the Bin lives at the library root rather than in here (§12.3), why a `root_path` inside `DATA_DIR` (and a `DATA_DIR` inside a root) is refused in both directions at creation *and* at startup - `DATA_DIR` is an environment variable, so a catalogue that was valid yesterday can be started against one that now swallows a root - and why the removal itself refuses to run while any RAW is still inside.
 
-`DATA_DIR` is created and tested for writability at startup, before the database is opened; each library's subtree and every rendition directory in it are created when the library is, so nothing is made lazily by a writer.
+`DATA_DIR` is created and tested for writability at startup, before the database is opened; each library's subtree and every rendition directory in it are created when the library is, so a library that has built nothing yet still has somewhere for the orphan sweep to look. The processing worker creates its own outputs' parents before every job regardless (`ensureOutputDirs`), because a rendition added later would otherwise have to be remembered in two places.
 
 ### Structure
 

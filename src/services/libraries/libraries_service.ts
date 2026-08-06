@@ -102,6 +102,13 @@ export class LibrariesService {
     // A bin is a folder the app makes under the root, which is exactly what the
     // flag forbids.
     const binName = request.read_only ? null : request.bin_name;
+    // The one combination the columns must never hold (§2): a writable library
+    // with no bin bins in place, silently, in a catalogue whose photographer was
+    // shown a bin-name field. Refused here rather than defaulted, because a
+    // client that sent null meant something by it.
+    if (!request.read_only && binName == null) {
+      throw new AppError('VALIDATION_ERROR', 'a writable library needs a bin_name; send read_only to have no bin folder');
+    }
     // The scan skips whatever is at this path sight unseen (§12.3), so adopting a
     // folder the user already keeps there would drop everything inside from the
     // import without saying so. Asked for a different name instead, which is why
@@ -129,8 +136,12 @@ export class LibrariesService {
       photo_count: 0,
     };
 
-    // Every directory a rendition can land in, up front: nothing is created
-    // lazily by a writer, so a build is a write and not a mkdir-then-write.
+    // Every directory a rendition can land in, up front, so a library that has
+    // not built anything yet still has somewhere for the orphan sweep to look
+    // and for a reader to go and see. Not the thing that makes a build work:
+    // `ensureOutputDirs` in the processing worker creates its own outputs' parents
+    // before every job, because a rendition added later would otherwise need
+    // remembering in two places.
     const dataPath = getDataPath(library);
     for (const dir of renditionDirs()) await ensureDir(path.join(dataPath, 'renditions', dir));
 
@@ -188,12 +199,22 @@ export class LibrariesService {
   async update(libraryId: string, updates: UpdateLibraryRequest): Promise<Library> {
     const current = this.repo.getById(libraryId);
     if (current == null) throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
+    // Before anything is written. `read_only` and `bin_name` are applied in that
+    // order, so a request asking to set the flag *and* rename would commit the
+    // flag and then refuse the rename against it - a 403 saying nothing happened,
+    // over a library that is now read-only.
+    if (updates.read_only === true && updates.bin_name != null && !current.read_only) {
+      throw new AppError('VALIDATION_ERROR', 'a library cannot be made read-only and have its bin renamed in one request');
+    }
     // Both of these touch the tree, so both go first and under the mutex, before
     // anything that only writes a column.
     if (updates.read_only != null && updates.read_only !== current.read_only) {
       await this.setReadOnly(current, updates.read_only, updates.bin_name);
     }
-    if (updates.bin_name != null) await this.renameBin(this.get(libraryId), updates.bin_name);
+    // Skipped when clearing the flag just made a bin of that name: `setReadOnly`
+    // has already written it, so this would be a no-op rename at best.
+    const renamed = this.get(libraryId);
+    if (updates.bin_name != null && updates.bin_name !== renamed.bin_name) await this.renameBin(renamed, updates.bin_name);
     if (updates.name != null) this.repo.setName(libraryId, updates.name);
     if (updates.ordering != null) this.repo.setOrdering(libraryId, updates.ordering);
     if (updates.rendition_source != null) this.repo.setRenditionSource(libraryId, updates.rendition_source);

@@ -4,7 +4,7 @@
 // duplicate on every sync (§5).
 //   docker exec bowerbird-dev bun test test/integration
 import { afterEach, beforeEach, expect, test } from 'bun:test';
-import { copyFileSync, mkdirSync, mkdtempSync, renameSync, rmSync, statSync, unlinkSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, statSync, unlinkSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createDatabase } from '../../src/db/connection';
@@ -188,24 +188,116 @@ test('a hand-renamed bin folder is followed, not read as the whole bin being res
   expect(only()).toMatchObject({ file_path: 'Trip/a.arw', is_deleted: 0 });
 });
 
-// A folder that merely inherited the bin's recycled inode number claims none of
-// its files, and following it would silently bin a real shoot.
-test('a folder carrying the bin identity but no binned file is not followed', async () => {
+// A folder that merely inherited the bin's freed inode number does not hold the
+// bin's files, and following it would silently bin a real shoot - the worst
+// outcome in the design. The library has binned rows, which is the case the
+// guard has to survive: "does this library have anything in its bin" is true of
+// every library that has ever binned anything.
+test('a folder carrying the bin identity but not holding its files is not followed', async () => {
   makeLibrary();
   copyFileSync(FIXTURE, abs('a.arw'));
-  await sync.syncLibrary(LIB);
-
-  // The bin is gone and something else now carries its identity.
-  const identity = libraries.getBinIdentity(LIB)!;
   mkdirSync(abs('Keepers'));
+  copyFileSync(FIXTURE, abs('Keepers/kept.arw'));
+  await sync.syncLibrary(LIB);
+  const binnedId = rows().find((r) => r.file_path === 'a.arw')!.id;
+  await service.delete([binnedId]);
+  expect(rows().find((r) => r.id === binnedId)!.file_path).toBe('Bin/a.arw');
+
+  // The photographer deletes the bin, contents and all, and the filesystem hands
+  // the freed inode to a real shoot folder.
   rmSync(abs('Bin'), { recursive: true });
   const innocent = statSync(abs('Keepers'));
-  libraries.setBinIdentity(LIB, { ...identity, dev: innocent.dev, ino: innocent.ino });
+  libraries.setBinIdentity(LIB, { dev: innocent.dev, ino: innocent.ino, birthtime: innocent.birthtimeMs });
 
   await sync.syncLibrary(LIB);
 
   expect(libraries.getById(LIB)!.bin_name).toBe('Bin');
-  expect(only()).toMatchObject({ file_path: 'a.arw', is_deleted: 0 });
+  // The shoot is still a shoot: its photograph is live, present, and its file was
+  // not adopted as a binned one.
+  expect(rows().find((r) => r.file_path === 'Keepers/kept.arw')).toMatchObject({ is_deleted: 0, is_missing: 0 });
+  expect(rows()).toHaveLength(2);
+});
+
+// A bin the photographer named with a leading dot is the tree being walked, not
+// a dotfolder to skip - and skipping it marked every binned frame below the bin
+// root missing while the files sat right there.
+test('a bin named with a leading dot is still walked', async () => {
+  makeLibrary({ bin_name: '.Trash' });
+  mkdirSync(abs('Trip'));
+  copyFileSync(FIXTURE, abs('Trip/a.arw'));
+  await sync.syncLibrary(LIB);
+  await service.delete([only().id]);
+  expect(only().file_path).toBe('.Trash/Trip/a.arw');
+
+  await sync.syncLibrary(LIB);
+
+  expect(only()).toMatchObject({ is_deleted: 1, is_missing: 0 });
+});
+
+// A read-only library keeps the bin it had from before the flag, and its
+// photographer may have deleted that folder on purpose. Making it again is a
+// write under a root the app may not write to.
+test('a deleted bin is not recreated in a read-only library', async () => {
+  makeLibrary();
+  copyFileSync(FIXTURE, abs('a.arw'));
+  await sync.syncLibrary(LIB);
+  await service.delete([only().id]);
+  rmSync(abs('Bin'), { recursive: true });
+  db.query('UPDATE libraries SET read_only = 1 WHERE id = ?').run(LIB);
+
+  await sync.syncLibrary(LIB);
+  expect(existsSync(abs('Bin'))).toBe(false);
+
+  // And a writable one does get it back, so this is the flag doing the work.
+  db.query('UPDATE libraries SET read_only = 0 WHERE id = ?').run(LIB);
+  await sync.syncLibrary(LIB);
+  expect(existsSync(abs('Bin'))).toBe(true);
+});
+
+// The inode answers a rename; it cannot answer a copy-and-delete or a library
+// restored from a backup. An in-place binned row's file moved with the folder
+// either way, and reading that as a hand-restore puts a thrown-away photograph
+// back in the collection - or, with no bin at all, leaves an orphan pointing at
+// nothing beside a fresh live duplicate.
+test('a folder move the inode cannot follow does not restore an in-place binned row', async () => {
+  makeLibrary({ read_only: true, bin_name: null });
+  mkdirSync(abs('Trip'));
+  copyFileSync(FIXTURE, abs('Trip/a.arw'));
+  await sync.syncLibrary(LIB);
+  await service.delete([only().id]);
+
+  // Copied and deleted rather than renamed, so the new folder has its own inode
+  // and §9.4.1 cannot answer. Timestamps preserved, as a restore from a backup
+  // preserves them - which is what leaves the frame recognisable at all, the
+  // hash being a digest of the stat rather than of the pixels.
+  const was = statSync(abs('Trip/a.arw'));
+  mkdirSync(abs('Trip 2019'));
+  copyFileSync(abs('Trip/a.arw'), abs('Trip 2019/a.arw'));
+  utimesSync(abs('Trip 2019/a.arw'), was.atime, was.mtime);
+  rmSync(abs('Trip'), { recursive: true });
+
+  await sync.syncLibrary(LIB);
+
+  expect(only()).toMatchObject({ file_path: 'Trip 2019/a.arw', deleted_from_path: 'Trip 2019/a.arw', is_deleted: 1 });
+});
+
+// A frame deleted out of a folder that was renamed in the same window: the
+// relocation moves the row by prefix, so a `setMissing` keyed on the path the
+// scan saw matches nothing and silently does nothing.
+test('a file deleted from a folder renamed in the same window is still marked missing', async () => {
+  makeLibrary();
+  mkdirSync(abs('Trip'));
+  copyFileSync(FIXTURE, abs('Trip/a.arw'));
+  copyFileSync(FIXTURE, abs('Trip/b.arw'));
+  await sync.syncLibrary(LIB);
+
+  renameSync(abs('Trip'), abs('Trip 2019'));
+  unlinkSync(abs('Trip 2019/b.arw'));
+  const status = await sync.syncLibrary(LIB);
+
+  expect(rows().find((r) => r.file_path === 'Trip 2019/a.arw')).toMatchObject({ is_missing: 0 });
+  expect(rows().find((r) => r.file_path === 'Trip 2019/b.arw')).toMatchObject({ is_missing: 1 });
+  expect(status.photos_removed).toBe(1);
 });
 
 // Unclaimed files under the bin are the catalogue's, and they come in already

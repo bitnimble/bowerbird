@@ -102,6 +102,18 @@ test('clearing read_only needs a bin name, and then makes the folder and records
   expect(libraries.getBinIdentity(LIB)!.ino).toBe(statSync(abs('Bin')).ino);
 });
 
+// `read_only` is applied before `bin_name`, so a request asking for both would
+// commit the flag and then refuse the rename against it: a 403 saying nothing
+// happened, over a library that is now read-only.
+test('a request that both sets read_only and renames the bin is refused before either lands', async () => {
+  makeLibrary('Bin');
+  await expect(service.update(LIB, { read_only: true, bin_name: 'Rubbish' })).rejects.toMatchObject({
+    code: 'VALIDATION_ERROR',
+  });
+  expect(libraries.getById(LIB)).toMatchObject({ read_only: false, bin_name: 'Bin' });
+  expect(existsSync(abs('Bin'))).toBe(true);
+});
+
 // Setting the flag keeps the bin: the RAWs the app already put there are still
 // its own, and the bin channel goes on reconciling the folder by hand.
 test('setting read_only keeps the bin folder and moves nothing', async () => {
