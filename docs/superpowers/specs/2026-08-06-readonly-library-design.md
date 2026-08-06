@@ -136,12 +136,15 @@ hand. New binnings from that point are in-place (§4). Nothing else happens: wit
 
 **Clearing it** requires a `bin_name` if the library has none, in the same
 request; a `PATCH` naming `bin_name` on its own is a `VALIDATION_ERROR`, because
-`read_only = 1` with a `bin_name` and no bin folder on disk is a state the bin
-channel would then point at a folder that does not exist. The `access` check
-(§2.1) runs first and the request is refused if the root is not writable. The same
-"a folder of that name already exists at the root" refusal `POST` applies
-(`libraries_service.ts:76-81`) applies here too - without it, naming an existing
-folder of photographs as the bin would move every row under it into the bin
+`read_only = 1` with a `bin_name` is a library the app would have to make a bin
+folder for and may not. Clearing the flag is what makes it - the folder and its
+recorded identity, exactly as creation does (§2.4) - so the invariant "a `bin_name`
+means the folder is there" holds from that moment on.
+
+The `access` check (§2.1) runs first and the request is refused if the root is not
+writable. The same "a folder of that name already exists at the root" refusal `POST`
+applies (`libraries_service.ts:76-81`) applies here too - without it, naming an
+existing folder of photographs as the bin would move every row under it into the bin
 channel.
 
 Photographs already binned in place stay where they are, still flagged. Nothing
@@ -163,7 +166,26 @@ callers:
 - `PhotosService.delete` takes the in-place branch (§4).
 - §6's bin channel has no root to walk, so it does not run.
 
-### 2.4 Renaming the bin moves the folder
+### 2.4 The bin exists from creation, and renaming it moves the folder
+
+**A library with a `bin_name` always has the folder.** `LibrariesService.create`
+makes it beside the data directory it already makes (`libraries_service.ts:99`) and
+`statSync`s it into `bin_dev`/`bin_ino`/`bin_birthtime` before the row is inserted -
+the same order `ShootsService.create` uses for a shoot's identity
+(`shoots_service.ts:62-66`). Nothing can be clobbered, because `POST` already
+refuses a root that holds a folder of that name (`libraries_service.ts:76-81`);
+that check is now load-bearing for the creation rather than only for the scan.
+
+Only the bin's **root** is created. Its interior still mirrors the folder a
+photograph came from (DESIGN §12.3), so `PhotosService.delete` keeps making
+`<bin>/A/B/` on demand.
+
+A read-only library has no `bin_name` and gets no folder. Clearing the flag makes
+one at that point, and records its identity then (§2.2).
+
+That invariant is worth having for its own sake - it is why §6.2 can always answer,
+having an identity to match from the library's first moment - and it makes the rename
+below unconditional.
 
 `PATCH /api/libraries/:id` accepts `bin_name` and renames `<root>/<old>` to
 `<root>/<new>` on disk. DESIGN §4.1 refuses this today on the grounds that it would
@@ -173,15 +195,13 @@ moving the folder together strands nothing.
 
 Refused with `READ_ONLY` for a read-only library: renaming a folder is writing under
 the root. Refused with `CONFLICT` when `<root>/<new>` already exists, which is the
-same refusal `POST` applies (`libraries_service.ts:76-81`) for the same reason -
-adopting a folder the photographer already keeps there would put live photographs
-into the bin.
+same refusal `POST` applies for the same reason - adopting a folder the photographer
+already keeps there would put live photographs into the bin.
 
 Setting `bin_name` on a library whose stored value is `NULL` is **not** a rename:
-there is no folder yet, so it only names where one will be made (§2.2). Likewise a
-writable library that has never binned anything has no bin folder on disk - it is
-created lazily by `PhotosService.delete` - so the rename is a column write and
-nothing more, and there are no binned rows to rewrite either.
+there is no folder yet, so it creates one (§2.2). Every other case is a rename, with
+no branch for an empty bin or a library that has never binned anything - the folder
+is there either way.
 
 Three writes, in this order:
 
@@ -196,6 +216,14 @@ Three writes, in this order:
 Steps 2 and 3 commit together. `bin_dev`, `bin_ino` and `bin_birthtime` are left
 alone - `rename` preserves the inode, so the identity §6.2 matches on is still the
 same folder's.
+
+`ENOENT` from step 1 is an `IO_ERROR` naming the path, not a recovery. The invariant
+says the folder is there, so its absence means the photographer moved or deleted it
+and the catalogue has not caught up - and the two possibilities want opposite
+answers. Recreating an empty folder is right if they deleted it and wrong if they
+renamed it, where it would orphan the real bin and leave §6.2 to adopt the orphan on
+the next sync and revert the name the user just set. Refusing lets that sync happen
+first, after which the rename means what the user meant.
 
 **The rename goes first, and §6.2 is why that is safe.** A crash between the rename
 and the commit leaves `<root>/<new>` on disk with rows still saying `<old>/` and
@@ -511,10 +539,12 @@ bin_ino        INTEGER
 bin_birthtime  REAL
 ```
 
-Recorded when the bin is first created (`PhotosService.delete`'s `ensureDir`, which
-already `statSync`s in the shoot case) and when a sync first stats a bin that has
-none - the same "no identity until something writes one" the shoots reconcile
-handles (`sync_service.ts:727-741`).
+Recorded when the bin folder is made, which §2.4 puts at library creation - so a
+library with a `bin_name` has an identity from its first moment and there is no
+"not recorded yet" state to handle. A sync that finds one missing anyway (a column
+added to a library that predates this, if that ever happens) stats and records it,
+the same way `reconcileShootFolders` writes an identity for a shoot never scanned
+(`sync_service.ts:727-741`).
 
 **The trigger is the identity turning up in `dirs`, not the recorded path being
 absent.** A directory reaches `dirs` only if the live walk did not skip it, and the
@@ -553,10 +583,10 @@ Worth naming, because the two are one edit apart and a future reader will reach 
 it.
 
 **When the identity cannot answer, the bin channel is skipped for that run** and the
-reason logged: no identity recorded yet, no candidate, more than one, disagreeing
-birthtimes, a nested candidate, or a filesystem reporting `ino` 0. The rows are left
-exactly as they are. A bin folder whose fate is unclear is not evidence that five
-hundred photographs were restored, and the next sync gets another chance.
+reason logged: no candidate, more than one, disagreeing birthtimes, a nested
+candidate, or a filesystem reporting `ino` 0. The rows are left exactly as they are.
+A bin folder whose fate is unclear is not evidence that five hundred photographs
+were restored, and the next sync gets another chance.
 
 ### 6.3 A crossing is structural, not a rule
 
@@ -1078,8 +1108,12 @@ Unit, against the existing service tests:
   proves the two halves were split correctly.
 - The rename is refused with `CONFLICT` when a folder of the new name already exists
   at the root, and with `READ_ONLY` for a read-only library.
-- Renaming on a library that has never binned anything moves nothing and rewrites
-  nothing; renaming from `NULL` is not a rename at all.
+- Creating a writable library makes the bin folder and records its identity in the
+  same insert; creating a read-only one makes neither. A library that has never
+  binned anything is renamed by the same unconditional path as any other, since the
+  folder is there.
+- A rename whose source folder has been removed by hand raises `IO_ERROR` rather
+  than recreating it.
 - A rename that commits the disk half and then fails is completed by the next sync
   via §6.2, not left half-applied. Asserted by renaming the folder, leaving the
   columns stale, and syncing.
@@ -1134,10 +1168,10 @@ Stated so they are choices rather than surprises:
 - Hand-managed bin changes are noticed by the nightly full sync, not within a
   watcher debounce (§6.1).
 - A bin folder rename the inode cannot identify - moved into a subfolder, two
-  candidates sharing an inode, a filesystem reporting `ino` 0, or no identity
-  recorded yet - is not followed. The bin channel skips that run and the rows are
-  left alone (§6.2), so the bin is simply not reconciled until the folder is put
-  back or the name is fixed by hand.
+  candidates sharing an inode, or a filesystem reporting `ino` 0 - is not followed.
+  The bin channel skips that run and the rows are left alone (§6.2), so the bin is
+  simply not reconciled until the folder is put back or the name is fixed by hand.
+  Renaming it through the app while it is in that state raises `IO_ERROR` (§2.4).
 - A file imported already-binned (§6.4) has no renditions and nothing will queue
   any; the Bin page shows a hole until it is opened.
 - Two instances with separate databases no longer exclude each other's syncs (§8).
