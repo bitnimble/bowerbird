@@ -287,6 +287,44 @@ export function detectRelocationsByIdentity(
   return relocations;
 }
 
+/**
+ * Which walked directory carries the bin's recorded identity (DESIGN §9.1.1).
+ *
+ * `ambiguous` names every candidate rather than one, because each of them *is*
+ * the bin as far as the inode goes: one left in the live walk is a second copy
+ * of the whole bin imported as live photographs. That is what a **bind mount**
+ * of the bin elsewhere under the root looks like, and a **hardlinked
+ * directory**, and a filesystem recycling a number within one scan - all three
+ * arrive here as nothing but two `ScannedDir`s sharing a `dev:ino`, which is why
+ * this half is separated out and can be reasoned about without them.
+ *
+ * A nested candidate is ambiguous too: `getBinPath` joins a single name, so a
+ * bin one folder deep is not expressible, a constraint inherited from
+ * `BinNameSchema` rather than a rule of its own.
+ */
+export type BinCandidates =
+  | { kind: 'none' }
+  | { kind: 'ambiguous'; candidates: string[] }
+  | { kind: 'one'; target: ScannedDir };
+
+export function findBinByIdentity(
+  dirs: readonly ScannedDir[],
+  identity: { dev: number | null; ino: number | null } | null,
+): BinCandidates {
+  // Nothing recorded to match, or a filesystem that reports no inode at all -
+  // where guessing would be exactly the mistake the device half is there to
+  // prevent.
+  if (identity?.ino == null || identity.dev == null || identity.ino === 0) return { kind: 'none' };
+
+  const candidates = dirs.filter((dir) => dir.dev === identity.dev && dir.ino === identity.ino);
+  if (candidates.length === 0) return { kind: 'none' };
+  const target = candidates.length === 1 ? candidates[0]! : null;
+  if (target == null || target.relPath.includes('/')) {
+    return { kind: 'ambiguous', candidates: candidates.map((c) => c.relPath) };
+  }
+  return { kind: 'one', target };
+}
+
 function birthtimesAgree(recorded: number | null, found: number): boolean {
   if (recorded == null || recorded === 0 || found === 0) return true;
   return recorded === found;

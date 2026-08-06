@@ -52,4 +52,19 @@ export class SyncLocksRepository {
     const row = this.db.query('SELECT owner FROM sync_locks WHERE library_id = ?').get(libraryId) as { owner: string } | null;
     return row?.owner ?? null;
   }
+
+  /**
+   * When the current lease becomes reclaimable, or null if nothing holds one.
+   *
+   * What `syncAll` waits on before re-attempting a library it was refused
+   * (§9.7): the run that refused it may be a *dead* process whose row has not
+   * expired yet, and retrying before then is refused for the same reason the
+   * first attempt was.
+   */
+  expiresAt(libraryId: string): Date | null {
+    const row = this.db.query('SELECT refreshed_at FROM sync_locks WHERE library_id = ?').get(libraryId) as
+      | { refreshed_at: string }
+      | null;
+    return row == null ? null : new Date(Date.parse(row.refreshed_at) + LEASE_MS);
+  }
 }

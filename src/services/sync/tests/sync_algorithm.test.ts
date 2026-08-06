@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'bun:test';
 import type { FileMetadata } from '../../processing/metadata';
-import { buildDiff, detectMoves, detectRelocationsByIdentity, detectShootRelocations } from '../sync_algorithm';
+import { buildDiff, detectMoves, detectRelocationsByIdentity, detectShootRelocations, findBinByIdentity } from '../sync_algorithm';
 import type { ScannedDir } from '../../../utils/scan';
 import type { DbPhoto, DiskFile, LibraryDiff, MoveEntry } from '../sync_algorithm';
 
@@ -176,6 +176,47 @@ describe('detectMoves', () => {
     const diff = buildDiff([db('p1', 'old.arw', 'h1', true)], present('new.arw'), [disk('new.arw', 'h1')]);
     const result = detectMoves(diff, noAlbums);
     expect(result.moves).toEqual([{ photoId: 'p1', oldFilePath: 'old.arw', newFilePath: 'new.arw', fileHash: 'h1' }]);
+  });
+});
+
+// The half of following a renamed bin that needs no filesystem. A bind mount of
+// the bin elsewhere under the root and a hardlinked directory both arrive here as
+// nothing but two ScannedDirs sharing a dev:ino - which is why this is worth
+// having apart from the IO, since neither can be staged without root.
+describe('findBinByIdentity', () => {
+  const dir = (relPath: string, ino: number, dev = 1): ScannedDir => ({ relPath, dev, ino, birthtimeMs: 0 });
+  const bin = { dev: 1, ino: 42 };
+
+  it('finds the one directory carrying the identity, under whatever name', () => {
+    const found = findBinByIdentity([dir('Trip', 7), dir('Rubbish', 42)], bin);
+    expect(found).toEqual({ kind: 'one', target: dir('Rubbish', 42) });
+  });
+
+  // Following either would rewrite `bin_name` onto it and re-prefix every binned
+  // row into it, after which that folder's live photographs read as removed.
+  it('refuses two directories sharing the identity, and names both', () => {
+    const found = findBinByIdentity([dir('Bin', 42), dir('mirror-of-bin', 42)], bin);
+    expect(found).toEqual({ kind: 'ambiguous', candidates: ['Bin', 'mirror-of-bin'] });
+  });
+
+  // `getBinPath` joins a single name, so a bin one folder deep cannot even be
+  // expressed - a constraint inherited from `BinNameSchema`.
+  it('refuses a nested candidate', () => {
+    expect(findBinByIdentity([dir('Trip/Rubbish', 42)], bin)).toEqual({ kind: 'ambiguous', candidates: ['Trip/Rubbish'] });
+  });
+
+  // The device is half the key: inode numbers repeat across filesystems, so a
+  // card reader mounted inside the library would otherwise match.
+  it('does not match the same inode on another device', () => {
+    expect(findBinByIdentity([dir('Rubbish', 42, 2)], bin)).toEqual({ kind: 'none' });
+  });
+
+  it('answers nothing when there is nothing recorded to match', () => {
+    expect(findBinByIdentity([dir('Rubbish', 42)], null)).toEqual({ kind: 'none' });
+    expect(findBinByIdentity([dir('Rubbish', 42)], { dev: 1, ino: null })).toEqual({ kind: 'none' });
+    // Some filesystems report 0, and treating that as a key would match anything
+    // else that reports it.
+    expect(findBinByIdentity([dir('Rubbish', 0)], { dev: 1, ino: 0 })).toEqual({ kind: 'none' });
   });
 });
 

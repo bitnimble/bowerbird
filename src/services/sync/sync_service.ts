@@ -22,6 +22,7 @@ import {
   detectMoves,
   detectRelocationsByIdentity,
   detectShootRelocations,
+  findBinByIdentity,
   type AddedEntry,
   type Crossing,
   type DiskFile,
@@ -193,10 +194,26 @@ export class SyncService implements LibraryLifecycleListener {
     // Reclaim is by expiry now (§9.7), so a container killed and restarted within
     // seconds finds its own dead run still holding the lease. Skipping silently
     // would drop that library until tomorrow, so the ones that were locked are
-    // re-attempted at the end of the loop, by which point a real lease has lapsed.
+    // re-attempted at the end of the loop.
     const skipped: string[] = [];
     for (const library of this.libraries.list()) {
       if (!(await this.syncOne(library.id))) skipped.push(library.id);
+    }
+    if (skipped.length === 0) return;
+
+    // **Waited out, not retried straight away.** The lease that refused these is
+    // reclaimable at a stated instant, and a retry before it is refused for
+    // exactly the reason the first attempt was - which made the re-attempt a
+    // no-op in the one case it exists for, a dead process whose row has not
+    // expired yet. Bounded by one lease, and skipped entirely when the loop
+    // already took that long or the holder has since released.
+    const reclaimable = skipped
+      .map((libraryId) => this.syncLocks.expiresAt(libraryId)?.getTime())
+      .filter((at): at is number => at != null);
+    const waitFor = Math.min(reclaimable.length === 0 ? 0 : Math.max(...reclaimable) - Date.now(), LEASE_MS);
+    if (waitFor > 0) {
+      log.info('waiting for a held sync lease before re-attempting', { libraries: skipped.length, ms: waitFor });
+      await Bun.sleep(waitFor);
     }
     for (const libraryId of skipped) await this.syncOne(libraryId);
   }
@@ -1192,25 +1209,21 @@ export class SyncService implements LibraryLifecycleListener {
   ): { root: string | null; rename: { from: string; to: string } | null; exclude: readonly string[] } {
     const none = { root: library.bin_name, rename: null, exclude: [] };
     const identity = this.libraries.getBinIdentity(library.id);
-    if (library.bin_name == null || identity?.ino == null || identity.dev == null || identity.ino === 0) return none;
+    if (library.bin_name == null) return none;
 
-    const candidates = dirs.filter((dir) => dir.dev === identity.dev && dir.ino === identity.ino);
-    if (candidates.length === 0) return none;
-    // Two folders sharing an inode are hardlinked directories or a filesystem
-    // recycling numbers within one scan, and either way the identity is genuinely
-    // ambiguous. A nested candidate is not even expressible as a bin name, which
-    // is a constraint inherited from `BinNameSchema`.
-    const target = candidates.length === 1 ? candidates[0]! : null;
-    if (target == null || target.relPath.includes('/')) {
+    const found = findBinByIdentity(dirs, identity);
+    if (found.kind === 'none') return none;
+    if (found.kind === 'ambiguous') {
       log.warn('the bin folder identity is ambiguous; skipping the bin channel for this run', {
         library: library.id,
-        candidates: candidates.map((c) => c.relPath),
+        candidates: found.candidates,
       });
       // Every candidate, not just the first: each of them *is* the bin by
       // identity, and one left in the live walk is a second copy of the whole bin
       // imported as live photographs.
-      return { root: null, rename: null, exclude: candidates.map((c) => c.relPath) };
+      return { root: null, rename: null, exclude: found.candidates };
     }
+    const target = found.target;
 
     // Excluding is safe unconditionally; rewriting `bin_name` needs two more
     // conditions, because dropping the recorded-path absence test that
@@ -1221,7 +1234,7 @@ export class SyncService implements LibraryLifecycleListener {
     // Not an existence test: on a case-insensitive filesystem the recorded path
     // still resolves, to the *same* inode, so a case-only rename is handled by
     // exclusion alone. Bind mounts and hardlinks die here too.
-    if (recorded != null && recorded.dev === identity.dev && recorded.ino === identity.ino) {
+    if (recorded != null && recorded.dev === target.dev && recorded.ino === target.ino) {
       return { root: library.bin_name, rename: null, exclude: [target.relPath] };
     }
     // **The candidate has to hold one of them**, which is what tells a renamed bin
