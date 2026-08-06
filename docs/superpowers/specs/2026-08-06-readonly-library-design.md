@@ -47,7 +47,7 @@ Terms, used exactly and only this way throughout:
   into and out of shoot folders refused (§7).
 - The API, error and UI surfaces of those (§11-§13).
 
-Four of the changes it needs turn out to be worth making for **every** library,
+Five of the changes it needs turn out to be worth making for **every** library,
 read-only or not, and this document specifies them that way. Each stands alone and
 each fixes something already wrong:
 
@@ -59,11 +59,13 @@ each fixes something already wrong:
   file that was deleted, changed or moved by hand is noticed instead of ignored, and
   a renamed bin folder is followed the way a renamed shoot folder already is. This
   makes `is_missing` reachable on a binned row, which it is not today.
+- **`bin_name` stops being write-once** (§2.4): renaming it moves the folder, which
+  is what the rule against renaming existed to avoid having to do.
 - **The sync lock becomes a leased row** (§8), because it protects the catalogue
   rather than the tree, and because its PID-based staleness check is wrong across
   containers today (§8.1).
 
-After all four, a read-only library needs no special case for its data directory
+After all five, a read-only library needs no special case for its data directory
 and none for its lock.
 
 Out of scope: read-only *photographs* within a writable library, per-folder
@@ -147,30 +149,8 @@ sweeps them into the newly-named bin, and nothing un-flags them: an in-place bin
 file is not in the bin channel's walk, so the bin channel has no opinion about it
 (§6.5).
 
-`bin_name` is **write-once through the API**: `PATCH` accepts it only while the
-stored value is `NULL`, and never replaces one name with another. Sync is the one
-writer that may replace it, and only by *following* a rename the photographer
-already made on disk (§6.2) - the same asymmetry shoots have (DESIGN §9.4.1).
-
-**The reason DESIGN §4.1 gives for that rule no longer holds.** It says renaming
-would "strand every already-binned RAW in a folder the scan would then walk straight
-back in", and §5 fixes exactly that: the old bin's files are claimed by binned rows,
-so they are partitioned out of the live channel and cannot be re-imported whatever
-`bin_name` says.
-
-What justifies it now is §6.2, and differently: **the folder's identity is
-authoritative, so the setting cannot be allowed to disagree with it.** Rename the
-setting alone and `<root>/Bin` still exists, is no longer skipped by name, appears in
-`dirs` carrying the recorded `bin_ino` - and §6.2 dutifully follows it, reverting
-`bin_name` on the next sync. A field the API rejects and sync silently rewrites is a
-coherent state, but only just.
-
-**Lifting it is now small, and worth doing when someone asks.** A real rename is
-`rename(oldBinPath, newBinPath)` plus the binned-row prefix rewrite §6.2 already
-specifies - the same write, app-initiated instead of followed - and refused with
-`READ_ONLY` for a read-only library, whose bin the app may not touch. Out of scope
-here because read-only mode does not need it; noted because §6.2 has already built
-the half that looked hard.
+`bin_name` stops being write-once. Renaming it **moves the folder** (§2.4), which is
+what the old rule existed to avoid having to do.
 
 ### 2.3 What a library with no bin does
 
@@ -182,6 +162,59 @@ callers:
 - `libraries_service.ts:44`'s rescue step is deleted anyway (§3.1).
 - `PhotosService.delete` takes the in-place branch (§4).
 - §6's bin channel has no root to walk, so it does not run.
+
+### 2.4 Renaming the bin moves the folder
+
+`PATCH /api/libraries/:id` accepts `bin_name` and renames `<root>/<old>` to
+`<root>/<new>` on disk. DESIGN §4.1 refuses this today on the grounds that it would
+"strand every already-binned RAW in a folder the scan would then walk straight back
+in" - which is an argument against changing the setting *alone*. Changing it and
+moving the folder together strands nothing.
+
+Refused with `READ_ONLY` for a read-only library: renaming a folder is writing under
+the root. Refused with `CONFLICT` when `<root>/<new>` already exists, which is the
+same refusal `POST` applies (`libraries_service.ts:76-81`) for the same reason -
+adopting a folder the photographer already keeps there would put live photographs
+into the bin.
+
+Setting `bin_name` on a library whose stored value is `NULL` is **not** a rename:
+there is no folder yet, so it only names where one will be made (§2.2). Likewise a
+writable library that has never binned anything has no bin folder on disk - it is
+created lazily by `PhotosService.delete` - so the rename is a column write and
+nothing more, and there are no binned rows to rewrite either.
+
+Three writes, in this order:
+
+1. `rename(oldBinPath, newBinPath)`. One atomic rename, both paths being children of
+   the root, so there is no cross-device case and no copy fallback - this is not
+   `moveIntoDir`, which exists to suffix colliding *files*.
+2. `bin_name` to the new name.
+3. The `file_path` prefix of every binned row, from `<old>/` to `<new>/`.
+   `deleted_from_path` is **not** rewritten: it records where the photograph came
+   from, which is outside the bin and has not moved.
+
+Steps 2 and 3 commit together. `bin_dev`, `bin_ino` and `bin_birthtime` are left
+alone - `rename` preserves the inode, so the identity §6.2 matches on is still the
+same folder's.
+
+**The rename goes first, and §6.2 is why that is safe.** A crash between the rename
+and the commit leaves `<root>/<new>` on disk with rows still saying `<old>/` and
+`bin_name` still `<old>`. That is exactly the state §6.2 already repairs: `<old>/` is
+gone, `<new>/` turns up in `dirs` carrying the recorded `bin_ino`, and the next sync
+follows it and finishes the job. Committing first would leave the mirror image -
+rows naming a folder that does not exist while the real one still carries the old
+name - and §6.2 would then follow the old folder and revert the name, fighting the
+half-applied rename instead of completing it.
+
+Both writers therefore share one prefix-rewrite helper, which is the shape §6.2 asks
+for and now has two callers to justify: `rewritePathPrefix`
+(`photos_repository.ts:634-649`) does the two halves the opposite way round and is
+the wrong function for both.
+
+Held under `libraryMutex` for the whole operation, like every other mutation that
+moves files, so it cannot land mid-scan and rewrite binned paths under a sync's
+snapshot. It does not take the sync lease - mutations do not, which is §8.3's stated
+limitation for the two-container case and unchanged here.
 
 ## 3. Where the catalogue's own files go
 
@@ -508,15 +541,16 @@ agree where both sides report one. Two further constraints are the bin's own:
   before either diff runs. The renamed folder is then also spoken for, and cannot be
   claimed by `detectRelocationsByIdentity` as a shoot relocation.
 
-What it writes: `bin_name` to the new name, and the `file_path` prefix of every
-binned row. `deleted_from_path` is deliberately **not** rewritten - it records where
-the photograph came from, which is outside the bin and has not moved.
+What it writes is what §2.4's app-initiated rename writes, minus the `rename` call
+the photographer already performed: `bin_name` to the new name, and the `file_path`
+prefix of every binned row, with `deleted_from_path` left alone. The two share one
+helper.
 
-`rewritePathPrefix` (`photos_repository.ts:634-649`) does the two halves the
-opposite way round: `file_path` for `is_deleted = 0` rows and `deleted_from_path`
-for `is_deleted = 1`. That is right for a shoot and wrong for the bin, so this needs
-its own statement rather than that function. Naming why, because the two are one
-edit apart and a future reader will reach for it.
+That helper is **not** `rewritePathPrefix` (`photos_repository.ts:634-649`), which
+does the two halves the opposite way round: `file_path` for `is_deleted = 0` rows and
+`deleted_from_path` for `is_deleted = 1`. Right for a shoot, wrong for the bin.
+Worth naming, because the two are one edit apart and a future reader will reach for
+it.
 
 **When the identity cannot answer, the bin channel is skipped for that run** and the
 reason logged: no identity recorded yet, no candidate, more than one, disagreeing
@@ -894,6 +928,9 @@ Raised by:
   read-only library** (§4). A writable library's in-bin restore is unaffected.
 - `LibrariesService.create` for `read_only: false` over a root that fails the
   `access` check, and `update` when clearing `read_only` on such a root.
+- `LibrariesService.update` for a `bin_name` rename on a read-only library (§2.4).
+  The same call raises `CONFLICT`, not `READ_ONLY`, when the new name is already a
+  folder at the root: that one is refused in a writable library too.
 
 Not raised by binning: that succeeds, differently.
 
@@ -908,8 +945,9 @@ CreateLibraryRequest    read_only: z.boolean().default(false)
                         bin_name: BinNameSchema.nullable().default('Bin')  // forced to null when read_only
                         // data_path: gone
 UpdateLibraryRequest    read_only: z.boolean().optional()
-                        bin_name: BinNameSchema.optional()   // only while stored is null, and only
-                                                             // in a request that also clears read_only
+                        bin_name: BinNameSchema.optional()   // renames the folder (§2.4); required in
+                                                             // the request that clears read_only on a
+                                                             // library whose bin_name is null
 ```
 
 ```ts
@@ -940,6 +978,12 @@ surfacing a bare error.
 **Settings** shows the flag per library, with the consequences named: no bin
 folder on disk, and shoots that follow the folders as they are. Clearing it asks
 for a bin name.
+
+**The bin-name field becomes editable** for a writable library, and says what it
+does: the folder is renamed on disk and the photographs inside it move with it
+(§2.4). It stays read-only for a read-only library, with the reason. A `CONFLICT`
+names the folder that is in the way rather than reporting a bare failure, since the
+remedy is to pick another name.
 
 **Bulk bar and the Bin page** keep their labels - the photograph *is* binned, and
 that is the word for it - but the Bin page's line about the files
@@ -1026,8 +1070,19 @@ Unit, against the existing service tests:
 - `create`, `addPhotos` and `removePhotos` on a read-only library's shoots throw
   `READ_ONLY`; renaming one does not.
 - Creating a library with `read_only: false` over an unwritable root is refused with
-  `READ_ONLY`, not silently flagged. A `PATCH` replacing an existing `bin_name` is
-  refused. An unwritable `DATA_DIR` fails startup rather than starting.
+  `READ_ONLY`, not silently flagged. An unwritable `DATA_DIR` fails startup rather
+  than starting.
+- Renaming `bin_name` (§2.4) moves the folder, rewrites every binned row's
+  `file_path` prefix, and leaves `deleted_from_path` alone. A restore afterwards
+  still lands the photograph where it originally came from - the assertion that
+  proves the two halves were split correctly.
+- The rename is refused with `CONFLICT` when a folder of the new name already exists
+  at the root, and with `READ_ONLY` for a read-only library.
+- Renaming on a library that has never binned anything moves nothing and rewrites
+  nothing; renaming from `NULL` is not a rename at all.
+- A rename that commits the disk half and then fails is completed by the next sync
+  via §6.2, not left half-applied. Asserted by renaming the folder, leaving the
+  columns stale, and syncing.
 - `getDataPath` resolves under `DATA_DIR` for a writable library as much as a
   read-only one, and is absolute regardless of the working directory. `DATA_DIR`
   inside a library root, and a library root inside `DATA_DIR`, are both refused at
@@ -1068,6 +1123,9 @@ Stated so they are choices rather than surprises:
   the app and untouched on disk, and nowhere else.
 - Photographs cannot be moved into or out of shoot folders. Albums cover the
   grouping; the folders stay as they are.
+- A read-only library's bin cannot be renamed from the app either (§2.4), since that
+  is a write under the root. Renaming the folder by hand works and is followed
+  (§6.2), which is the same answer this design gives everywhere else.
 - Crossings pair on `file_hash`, which is a digest of extension, dimensions, mtime,
   colour space, size and orientation rather than of pixels (`hash.ts:7-21`), so two
   byte-identical copies of one RAW collide by construction. Not new - the live
