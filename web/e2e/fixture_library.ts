@@ -25,7 +25,21 @@ export const TRIAGE_PHOTOS_DIR = path.join(E2E_ROOT, 'triage-photos');
 // added once against the shared DB, so sharing another spec's would make the two
 // fight over which of them adds it.
 export const EDIT_PHOTOS_DIR = path.join(E2E_ROOT, 'edit-photos');
+// The read-only spec bins and restores, and its whole point is that the tree it
+// does that over is untouched afterwards - which another spec's frames moving
+// around in it would make unassertable.
+export const ARCHIVE_PHOTOS_DIR = path.join(E2E_ROOT, 'archive-photos');
 export const DB_PATH = path.join(E2E_ROOT, 'e2e.db');
+// Every generated file, outside every library root (§3). Under the fixture rather
+// than left to default: `./data` is relative to the API's cwd, which is the
+// checkout, so an unset DATA_DIR fills the working tree with the run's renditions
+// and leaves them there.
+export const DATA_DIR = path.join(E2E_ROOT, 'data');
+
+/** Where a library's renditions land, which is keyed by its id rather than by its root. */
+export function libraryDataDir(libraryId: string): string {
+  return path.join(DATA_DIR, libraryId);
+}
 // Playwright has to know both URLs before it launches anything, so these can't
 // be port 0 - pick one and publish it. The config process picks first and the
 // worker processes it forks inherit the choice through the environment, which is
@@ -80,7 +94,15 @@ export function prepareFixture(): void {
   // it off (`addLibrary`).
   const namesFor = (dir: string): string[] =>
     dir === TRIAGE_PHOTOS_DIR ? TRIAGE_PHOTO_NAMES : dir === STACK_PHOTOS_DIR ? STACK_PHOTO_NAMES : PHOTO_NAMES;
-  for (const dir of [PHOTOS_DIR, CULL_PHOTOS_DIR, STACK_PHOTOS_DIR, PHONE_PHOTOS_DIR, TRIAGE_PHOTOS_DIR, EDIT_PHOTOS_DIR]) {
+  for (const dir of [
+    PHOTOS_DIR,
+    CULL_PHOTOS_DIR,
+    STACK_PHOTOS_DIR,
+    PHONE_PHOTOS_DIR,
+    TRIAGE_PHOTOS_DIR,
+    EDIT_PHOTOS_DIR,
+    ARCHIVE_PHOTOS_DIR,
+  ]) {
     mkdirSync(dir, { recursive: true });
     for (const name of namesFor(dir)) copyFileSync(FIXTURE, path.join(dir, name));
   }

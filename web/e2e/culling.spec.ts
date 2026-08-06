@@ -1,7 +1,7 @@
 import { existsSync, rmSync, statSync } from 'node:fs';
 import path from 'node:path';
-import { expect, test } from '@playwright/test';
-import { API_URL, CULL_PHOTOS_DIR, PHOTO_NAMES } from './fixture_library';
+import { expect, test, type APIRequestContext } from '@playwright/test';
+import { API_URL, CULL_PHOTOS_DIR, PHOTO_NAMES, libraryDataDir } from './fixture_library';
 import {
   addLibrary,
   bulkAction,
@@ -19,6 +19,16 @@ import {
 // This spec has its own library root, so binning and rejecting here cannot
 // disturb the counts the other spec asserts.
 test.describe.configure({ mode: 'serial' });
+
+// Where this library's renditions land. Generated files live outside every
+// library root now (§3) and the directory is keyed by the library's id, so the
+// path is asked for rather than built from the root the spec already holds.
+async function renditionPath(request: APIRequestContext, rendition: string, photoId: string): Promise<string> {
+  const libraries = (await (await request.get(`${API_URL}/api/libraries`)).json()) as { id: string; root_path: string }[];
+  const library = libraries.find((l) => l.root_path === CULL_PHOTOS_DIR);
+  expect(library, 'the cull library is registered').toBeDefined();
+  return path.join(libraryDataDir(library!.id), 'renditions', rendition, `${photoId}.avif`);
+}
 
 test('sync indexes the cull library', async ({ page }) => {
   await addLibrary(page, CULL_PHOTOS_DIR);
@@ -513,7 +523,7 @@ test('opening a photo whose rendition is gone builds that rendition back', async
   // rendition rather than at the JPEG.
   await page.goto('/settings');
   await setRenditionSource(page, CULL_PHOTOS_DIR, 'Rendered RAW');
-  const full = path.join(CULL_PHOTOS_DIR, '.bowerbird', 'renditions', 'full', `${photoId}.avif`);
+  const full = await renditionPath(page.request, 'full', photoId);
 
   await page.goto(`/photos/${photoId}`);
   await expect.poll(() => existsSync(full), { timeout: 90_000 }).toBe(true);
@@ -547,7 +557,7 @@ test('a chosen rendition is cached on disk, and survives a tile rebuild', async 
 
   // The photo's own renditions are the embedded rendition, so only the render had
   // to be built and stored; the embedded one is served from what already existed.
-  const cached = path.join(CULL_PHOTOS_DIR, '.bowerbird', 'renditions', 'full', `${photoId}.avif`);
+  const cached = await renditionPath(page.request, 'full', photoId);
   expect(existsSync(cached)).toBe(true);
 
   // Every rendition stays on offer whichever one is showing, the camera's JPEG
@@ -607,7 +617,7 @@ test('i and o switch between the camera JPEG and the render, and the cache can b
   // The file is the cache, so nothing rebuilds a rendition once it exists. This
   // is the escape hatch for working on the pipeline: the same choice, but the
   // stored copy is dropped first.
-  const cached = path.join(CULL_PHOTOS_DIR, '.bowerbird', 'renditions', 'full', `${photoId}.avif`);
+  const cached = await renditionPath(page.request, 'full', photoId);
   const before = statSync(cached).mtimeMs;
   await page.getByRole('button', { name: 'Rendition' }).click();
   await page.getByRole('menuitemcheckbox', { name: 'Disable cache when changing rendition' }).click();
