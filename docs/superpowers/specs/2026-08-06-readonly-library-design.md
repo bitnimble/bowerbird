@@ -34,15 +34,26 @@ Terms, used exactly and only this way throughout:
 
 - A per-library `read_only` flag, probed at creation and changeable afterwards.
 - Binning, restoring and undo, with no move on disk.
-- The catalogue's own generated files relocated out of the library root.
-- The scan's exclusion of binned files moved from the bin folder to the `photos`
-  table, which also lets the bin be hand-managed (§5, §6). This applies to every
-  library, read-only or not.
 - Shoot creation restricted to folders that already exist; moving photographs
   into and out of shoot folders refused (§7).
-- The sync lock's staleness check rewritten as a lease, since PIDs are not
-  comparable across containers and the existing check is wrong today (§8.1). Also
-  applies to every library.
+
+Three of the changes it needs turn out to be worth making for **every** library,
+read-only or not, and this document specifies them that way. Each stands alone and
+each fixes something already wrong:
+
+- **Generated files leave the library root**, `data_path` is deleted, and config
+  and data get separate directories (§3). Removes four guards that only existed to
+  survive a user-supplied path.
+- **The scan's exclusion of binned files moves from the bin folder to the `photos`
+  table** (§5), which closes a hole where a library adopting a folder called `Bin`
+  silently drops its photographs, and lets the bin be hand-managed (§6).
+- **The sync lock becomes a leased row** (§8), because it protects the catalogue
+  rather than the tree, and because its PID-based staleness check is wrong across
+  containers today (§8.1).
+
+After all three, a read-only library needs no special case for its data directory
+and none for its lock. What is left that is genuinely about `read_only` is §2, §4
+and §7.
 
 Out of scope: read-only *photographs* within a writable library, per-folder
 write permissions, exporting edited renditions anywhere (no export exists yet),
@@ -97,7 +108,9 @@ fails, which is what it is.
 **Setting it** keeps `bin_name`. Files already in the bin stay there, their rows
 keep pointing at them, and the bin keeps being reconciled against disk (§6) - so
 the photographer can go on emptying, refilling or reorganising that folder by
-hand. New binnings from that point are in-place (§4).
+hand. New binnings from that point are in-place (§4). Nothing else happens: with
+`data_path` gone (§3) the flip moves no files and touches no other column, which
+is the whole of what it used to have to arrange.
 
 **Clearing it** requires a `bin_name` if the library has none, supplied in the
 same request. The probe (§2.1) runs first and the request is refused if the root
@@ -112,66 +125,98 @@ RAW, which is why it is create-only today.
 
 ## 3. Where the catalogue's own files go
 
-`data_path` defaults to `<root_path>/.bowerbird` (`paths.ts:15`), which a
-read-only library cannot have. At creation, a read-only library with no explicit
-`data_path` gets one written into the row:
+Generated files leave the library root **for every library**, read-only or not,
+and `data_path` is deleted.
+
+Two locations, both the app's, neither inside anybody's photographs:
+
+| | holds | env | Docker |
+|---|---|---|---|
+| **config** | the SQLite database | `DB_PATH` | `/config` |
+| **data** | every generated file, per library | `DATA_DIR` | `/data` |
 
 ```
-<dirname(config.dbPath)>/libraries/<library id>
+/config/bowerbird.db
+/data/<library id>/renditions/<rendition>-<sdr|hdr>/<photoId>.avif
+/data/<library id>/hdr/…
 ```
 
-Stored explicitly rather than derived, so every existing reader of
-`getDataPath()` is untouched and the location does not move if `DB_PATH` changes
-later. The database's own directory is the app's data directory by definition -
-it is what `DB_PATH` already means in Docker and in the Tauri build.
+`getDataPath(library)` becomes `path.join(config.dataDir, library.id)`. Split
+from the database because they want different volumes: the catalogue is megabytes
+and wants to be backed up, and renditions are the bulk of the footprint and want
+bulk storage. Pointing `/data` at a spinning disk while `/config` stays on an SSD
+is then a compose line rather than a schema field.
 
-`assertNoDataDirectoryOverlap` gains one rule: a `data_path` inside a read-only
-root is refused, since the app could not create it.
+The Bin does not move. Originals belong beside the photographs they came from
+(§12.3), and `<root>/<bin_name>` is still exactly where a photographer expects to
+find a RAW they deleted.
 
-Everything else follows: renditions, HDR checks and the orphan sweep all address
-`data_path` and need no change at all. The quality-check page already writes to
-`tmpdir`.
+### 3.1 What this deletes
 
-Under Docker this is the writable named volume and needs no new mount.
-`DB_PATH: /data/bowerbird.db` makes the layout:
+A user-supplied `data_path` was the source of a whole family of hazards, and each
+guard against them goes with it:
 
+- **`assertNoDataDirectoryOverlap`** (`libraries_service.ts:118-129`) and its
+  tests. Its entire job was refusing a `data_path` that would swallow another
+  library's root, or a root sitting inside one. An app-owned directory keyed by
+  library id cannot do either.
+- **The data-directory rule in `isPathAllowed`** (`scope.ts:69-71`) and
+  `LibraryScope.resolvedDataPath` with it. Nothing generated is under the root any
+  more. A legacy `<root>/.bowerbird` left behind on disk is still skipped, by the
+  dotfolder rule that was always covering it anyway.
+- **The "it contains the library root" guard** in `removeDataDirectory`
+  (`libraries_service.ts:37-40`).
+- **The rescue-originals-to-the-Bin step** (`libraries_service.ts:42-48`), which
+  existed for a pre-Bin-move `<data_path>/bin` and for a `data_path` aimed at the
+  photographer's own files. `deleteDataDirectory`'s `findOriginalsAnywhere` check
+  stays as the assertion that this is now impossible, rather than as a rescue.
+- **`data_path` threaded through queries and signatures**: `dataPathFor`, the
+  column in `libraries`, the join in `photos_repository.ts:914`, and
+  `processing_service.ts:486`, which reads `pending.root_path, pending.data_path`
+  and needs only a library id.
+- **§2's read-only special case for the data directory, and the whole of the
+  flip-time relocation.** Nothing about `read_only` decides where generated files
+  go, because that answer is now the same for every library.
+
+One guard replaces all of it: `DATA_DIR` inside any library's root is refused at
+library creation, since the scan would otherwise walk the app's own renditions.
+One check against one path, not a pairwise comparison across every library.
+
+### 3.2 Migrating existing installs
+
+Existing libraries have their generated files at `<root>/.bowerbird`, or at
+whatever `data_path` they were given. Dropping the column means moving them once,
+at the migration:
+
+1. `rename()` the old directory to `<DATA_DIR>/<library id>`. Free when the two
+   are on one filesystem.
+2. On `EXDEV`, **drop it** rather than copying. Renditions are a cache - the file
+   *is* the cache (§10.2), `buildRendition` rebuilds on demand and
+   `processUnprocessed` refills tiles on the next sync - so the cost is a
+   re-render pass, not lost work. A cross-device copy of every AVIF in a
+   catalogue, with the progress reporting and resumability that a long copy needs
+   to be honest, is a great deal of machinery to avoid re-running a decode the app
+   is already built to re-run.
+
+The `EXDEV` case is the common one under Docker (`/photos` and `/data` are
+separate mounts), so most installs re-render. That is the trade being made
+deliberately: one throwaway migration instead of a copy engine.
+
+### 3.3 Docker
+
+```yaml
+volumes:
+  - "${PHOTOS_DIR:-./photos}:/photos:ro"   # :ro for a read-only library
+  - bowerbird-config:/config
+  - "${DATA_DIR:-bowerbird-data}:/data"    # point at bulk storage if you like
+environment:
+  DB_PATH: /config/bowerbird.db
+  DATA_DIR: /data
 ```
-/data/bowerbird.db
-/data/libraries/<library id>/renditions/<rendition>-<sdr|hdr>/<photoId>.avif
-/data/libraries/<library id>/hdr/…
-/data/libraries/<library id>/.bowerbird-sync.lock
-```
 
-The compose file's only change is `${PHOTOS_DIR}:/photos:ro`, with a comment
-correcting the one above it (`docker-compose.yml:20-23` currently states that
-renditions live in `<root>/.bowerbird` and the Bin in `<root>/Bin`, which a
-read-only library makes untrue) and warning that renditions are the bulk of the
-footprint and now sit on a volume most people size for a SQLite file.
-
-### 3.1 Relocating an existing data directory
-
-Setting `read_only` on a library that has `data_path = null` cannot just set the
-flag: the path still resolves to `<root>/.bowerbird` and every rendition write
-would fail on the next sync. The flip relocates the tree.
-
-1. Copy `<root>/.bowerbird` to `<dirname(config.dbPath)>/libraries/<id>`. Reading
-   the source is a read of the root, which is allowed; the destination is outside
-   it.
-2. Write the new `data_path` and `read_only` in one transaction, so a crash
-   between them cannot leave the row pointing at a tree that is no longer being
-   written to.
-3. Attempt to remove the old directory. A genuinely read-only mount refuses, which
-   is logged and otherwise ignored: what is left behind is the app's own generated
-   files, not the photographer's, and the flag's promise is about the latter.
-
-A copy rather than a re-point-and-rebuild because the alternative discards every
-rendition in the library - potentially hours of decoding - to save one pass of
-file copying.
-
-**Not bidirectional.** Clearing `read_only` leaves `data_path` where it is. It is
-an explicit path once written, nothing about a writable library requires the data
-to sit inside the root, and dragging gigabytes of renditions back in would be a
-second long copy to reach a state nobody asked for.
+`docker-compose.yml:20-23`'s comment needs rewriting either way: it currently
+says renditions live in `<root>/.bowerbird`, which stops being true for every
+library and not just read-only ones.
 
 ## 4. Binning without a bin
 
@@ -347,42 +392,62 @@ renaming, descriptions, banner photos, ordering, deletion with `photos: 'keep'`
 or `'remove'` (which writes a folder rule and removes rows - §4.7 - and never a
 file), and mirroring itself.
 
-## 8. The sync lock
+## 8. The sync lock becomes a table
 
-`acquireSyncLock` writes `<root>/.bowerbird-sync.lock`. For a read-only library
-it writes `<data_path>/.bowerbird-sync.lock` instead.
+**The lock protects the catalogue, not the tree, so it belongs in the catalogue.**
+DESIGN §9.7 says as much - "the cross-process source of truth for *is this library
+syncing*" - and the code agrees: `acquireSyncLock` is taken by
+`SyncService.run` and `syncAll` and by nothing else (`sync_service.ts:207,566`).
+No bin move, no shoot move and no restore ever acquires it.
 
-This is a real reduction in what the lock guarantees, and it should be recorded
-rather than glossed. The lock is at the root because that is the one path two
-independent server processes are certain to share; two servers with their own
-databases also have their own `data_path`, so a lock there no longer excludes
-them. A read-only library shared by two servers is protected only by each
-server's in-process `libraryMutex`.
+Which settles the question. Two processes with **separate** databases syncing one
+library are both read-only against the tree: they scan, they hash, and each writes
+only into its own data directory. Wasted effort, nothing corrupted. The hazard the
+lock exists for is two syncs racing over the **same rows** - the diff and its
+application are not one transaction, so two runs can both decide a file is new and
+insert it twice - and that is by definition the same-database case, which a table
+covers exactly.
 
-The tradeoff is acceptable because the thing the lock protects against is two
-syncs interleaving their *writes*, and a read-only library's sync writes nothing
-under the root. Two concurrent scans of the same read-only tree waste effort;
-they cannot corrupt anything.
+So:
 
-`deleteSyncLockSync` guards on the basename only, so it needs no change.
-`library_watcher.ts:216` ignores the lock at the root; it must also ignore the
-one in `data_path`, which it already does by ignoring `data_path` wholesale.
+```sql
+CREATE TABLE sync_locks (
+  library_id    TEXT PRIMARY KEY REFERENCES libraries(id) ON DELETE CASCADE,
+  owner         TEXT NOT NULL,   -- UUID, one per server process
+  pid           INTEGER NOT NULL,-- for the log line only
+  started_at    TEXT NOT NULL,
+  refreshed_at  TEXT NOT NULL
+);
+```
 
-**The lock stays a file, and does not become a table.** A row in `photos.db`
-would be per-database, and the case the root lock exists for is two independent
-server processes over one library - which is the Docker case, where each container
-has its own `bowerbird-db` volume (`docker-compose.yml:25`) and shares only
-`/photos`. A lock in the database would exclude nothing there, and the only thing
-left protecting the library would be each process's own in-memory
-`libraryMutex`. The file is the one thing both instances can see.
+Acquisition is an `INSERT` whose primary key does the excluding - the same job
+`O_CREAT | O_EXCL` was doing, done by SQLite instead of by the filesystem, and
+inside a transaction with the staleness check so the check and the claim cannot be
+separated. Release is a `DELETE`. `ON DELETE CASCADE` means a library removed
+mid-sync leaves no orphan row.
+
+What this deletes: `sync_lock.ts`'s file handling, `SYNC_LOCK_NAME` and
+`deleteSyncLockSync` from `deletions.ts`, the lock's entry in the watcher's ignore
+list (`library_watcher.ts:216`) and the comment above it explaining that a sync's
+own lock file used to wake the watcher that wrote it, and `.bowerbird-sync.lock`
+as a thing that exists at all. It also removes one more write from the library
+root for **every** library, which is the whole point of this document arriving at
+a place where a read-only library needs no special case here either.
+
+What is genuinely given up: two instances with separate databases no longer
+exclude each other's syncs. Per the paragraph above, that costs duplicated
+scanning and nothing else. Concurrent *file* moves from two instances were never
+covered by this lock - `moveIntoDir`'s `link()`/`COPYFILE_EXCL` claim is what makes
+those safe (`files.ts:7-10`), and it still is.
 
 ### 8.1 Liveness stops depending on the PID
 
-The lock's staleness check is broken today, independently of anything in this
-document, and read-only libraries make it worse by putting locks somewhere even
-fewer processes share. `ownerPid` reads the holder's PID out of the file and
-`pidAlive` asks `process.kill(pid, 0)` **in the asking process's own PID
-namespace**, which is not the namespace the number was minted in:
+The staleness check is broken today, independently of anything else in this
+document, and moving the lock into the database does not fix it by itself: two
+containers can share one `/config` volume and still have separate PID namespaces.
+`ownerPid` reads the holder's PID and `pidAlive` asks `process.kill(pid, 0)` **in
+the asking process's own PID namespace**, which is not the namespace the number
+was minted in:
 
 - Container A holds the lock as its PID 1. Container B checks PID 1, finds its own
   init, and concludes the lock is live. It refuses to sync **permanently** - not
@@ -394,49 +459,45 @@ namespace**, which is not the namespace the number was minted in:
 Which one happens depends on the number. It is not Docker-specific either: a PID
 reused after a hard kill gives the same permanent refusal on a plain host.
 
-The replacement is a **lease**. The lock file holds:
+The replacement is a **lease**, which is why the table carries `owner` and
+`refreshed_at`:
 
-```ts
-{ owner: string, pid: number, startedAt: string, refreshedAt: string }
-```
-
-- `owner` is a UUID minted once per server process. A lock whose `owner` matches
+- `owner` is a UUID minted once per server process. A row whose `owner` matches
   this process's own is always reclaimable: that is a restart, and no other
   process can be holding it.
-- `refreshedAt` is rewritten every 10 seconds while the sync runs. A lock is stale
-  once `refreshedAt` is more than 30 seconds old.
-- `pid` is retained for the log line only, and is never asked about.
+- `refreshed_at` is rewritten every 10 seconds while the sync runs. A lock is
+  stale once `refreshed_at` is more than 30 seconds old.
+- `pid` is kept for the log line only, and is never asked about.
 
-No namespace assumptions, no PID reuse hazard, and correct over NFS, where a
-timestamp is the only thing about another host's process that can be observed at
-all. The cost is that reclaiming a crashed sync's lock takes up to 30 seconds
-rather than being instant, which is invisible against a sync that runs on a
-15-second watcher debounce and a nightly schedule.
+No namespace assumptions and no PID reuse hazard. The cost is that reclaiming a
+crashed sync's lock takes up to 30 seconds rather than being instant, which is
+invisible against a sync that runs on a 15-second watcher debounce and a nightly
+schedule.
 
-`flock(2)` would be better still - the kernel releases it when the holder dies, so
-there is no heuristic at all - but neither Node nor Bun exposes it, and reaching
-for FFI to acquire a lock file is more machinery than the 30-second window is
-worth.
+A lock held in a row rather than in a file also ends the question of whether to
+reach for `flock(2)`, which would otherwise be the better answer for a file - the
+kernel releases it when the holder dies, so there is no staleness heuristic at all.
+Neither Node nor Bun exposes it, and FFI to acquire a lock file was always more
+machinery than a 30-second window is worth.
 
 ## 9. Removing a library
 
-`removeDataDirectory` deletes `data_path`, which for a read-only library sits
-outside the root and is therefore fine. Its rescue step is not: it moves any
-original found under the data directory into the library's bin
-(`libraries_service.ts:45-46`), which writes to the root.
+`removeDataDirectory` deletes `<DATA_DIR>/<library id>`, which is the app's own
+directory and outside every root. Its rescue step - moving any original found in
+there into the library's bin (`libraries_service.ts:42-48`) - is deleted with
+`data_path` (§3.1): it existed for a `data_path` the photographer had aimed
+somewhere unwise, and there is no such path any more.
 
-For a read-only library there should be nothing to rescue - the data directory
-was created by this app, outside the root, and only ever held generated files.
-If `findOriginalsAnywhere` finds one anyway, the removal is abandoned with a
-warning and the directory left in place, which is what `deleteDataDirectory`
-already does when a rescue leaves something behind. Losing renditions is
-recoverable; writing a RAW into a library the photographer asked the app not to
-touch is not.
+`deleteDataDirectory`'s `findOriginalsAnywhere` check stays, now as an assertion
+rather than a trigger. If it ever finds an original the removal is abandoned and
+the directory left in place, which is what it already does. Losing renditions is
+recoverable; deleting a RAW is not, and that asymmetry is worth one walk of a
+directory that should never contain one.
 
 ## 10. What needs nothing
 
 Verified against the code, not assumed. All of these are database rows or files
-under `data_path`:
+under the data directory:
 
 Ratings, triage verdicts, notes, albums and album membership, stacks and
 auto-stacking, shoot names/descriptions/banners/orderings, folder rules
@@ -469,14 +530,25 @@ Not raised by binning, restoring or undo: those succeed, differently.
 // schemas/libraries.ts
 LibrarySchema           read_only: z.boolean().default(false)
                         bin_name: z.string().nullable()
+                        // data_path: gone
 CreateLibraryRequest    read_only: z.boolean().default(false)
                         bin_name: BinNameSchema.nullable().default('Bin')  // forced to null when read_only
+                        // data_path: gone
 UpdateLibraryRequest    read_only: z.boolean().optional()
                         bin_name: BinNameSchema.optional()   // accepted only while the stored value is null
 ```
 
+```ts
+// config.ts - alongside port, host, dbPath
+dataDir: process.env.DATA_DIR ?? './data'
+```
+
 `GET /api/browse` listings gain `writable: boolean` per directory entry, from the
 probe in §2.1.
+
+`POST /api/libraries` stops accepting `data_path`. A client that still sends one
+gets it ignored rather than rejected: it named a location the app no longer has a
+concept of, and there is nothing to tell it to do instead.
 
 `POST /api/libraries` forces `bin_name` to `null` when `read_only` is set, rather
 than rejecting a supplied one: the field is simply not asked for, and a client
@@ -487,8 +559,7 @@ that sends it is not wrong so much as out of date.
 **Add-library dialog** (`add_library_dialog.tsx`) gains one checkbox, *Don't
 change anything in this folder*, ticked and disabled with an explanation when the
 probe says the folder is unwritable. When it is ticked, the bin-name field is
-hidden (there is no bin), and a line states where the catalogue's own files will
-be kept, since that is no longer inside the folder being added.
+hidden, because there is no bin.
 
 **Settings** shows the flag per library, with the consequences named: no bin
 folder on disk, and shoots that follow the folders as they are. Clearing it asks
@@ -506,21 +577,26 @@ library. *Add to album* is unaffected and is the thing to reach for.
 
 ## 14. Migration
 
-One migration, in `db/migrations.ts`:
+In `db/migrations.ts`, one table rebuild of `libraries` (SQLite cannot drop a
+`NOT NULL` or a column in place, and the file already does rebuilds elsewhere):
 
-- `ALTER TABLE libraries ADD COLUMN read_only INTEGER NOT NULL DEFAULT 0`
-- `bin_name` to nullable. SQLite cannot drop a `NOT NULL`, so this is the
-  table-rebuild the file already does elsewhere; existing rows keep their names
-  and no existing library ever sees `NULL`.
+- add `read_only INTEGER NOT NULL DEFAULT 0`
+- `bin_name` to nullable; existing rows keep their names, so no existing library
+  ever sees `NULL`
+- drop `data_path`, after §3.2 has moved what it pointed at
 
-No data migration. Every existing library is writable with a bin, which is
-exactly the state the new columns describe.
+Plus `CREATE TABLE sync_locks` (§8). Nothing seeds it: an empty lock table is a
+library nobody is syncing, which is true at startup.
 
-The change in §5 needs no migration but does change behaviour for existing
-libraries on their next full sync: the bin is walked, its files are matched to
-the rows already claiming them, and only genuinely unclaimed files - which means
-hand-binned ones - are imported. A library whose bin the photographer has never
-touched sees no row change at all, at the cost of one pass of hashing.
+Two behaviour changes for existing libraries that no schema step can express:
+
+**§3.2's data move**, which runs once. A `rename()` where the old and new
+directories share a filesystem, and a drop-and-rebuild where they do not.
+
+**§5's walk of the bin**, on the next full sync. Its files are matched against the
+rows already claiming them, and only genuinely unclaimed ones - hand-binned files -
+are imported. A library whose bin the photographer has never touched sees no row
+change at all, at the cost of one pass of hashing.
 
 ## 15. Testing
 
@@ -543,13 +619,18 @@ Unit, against the existing service tests:
 - Mirroring over a library with a populated bin makes no shoot inside the bin.
 - `create`, `addPhotos` and `removePhotos` on a read-only library's shoots throw
   `READ_ONLY`; renaming one does not.
-- A lock whose `refreshedAt` is 31 seconds old is reclaimed; one 5 seconds old is
-  not, whatever PID it names. A lock naming a live PID belonging to another owner
-  is still reclaimed once its lease expires - the test that pins §8.1's whole
-  point, since it is the case that deadlocks today.
-- A lock carrying this process's own `owner` is reclaimed immediately.
-- Setting `read_only` on a library with `data_path = null` relocates the tree,
-  writes the new path, and leaves the renditions readable at their new location.
+- A lock row whose `refreshed_at` is 31 seconds old is reclaimed; one 5 seconds
+  old is not, whatever PID it names. A row naming a live PID belonging to another
+  owner is still reclaimed once its lease expires - the test that pins §8.1's
+  whole point, since it is the case that deadlocks today.
+- A lock row carrying this process's own `owner` is reclaimed immediately.
+- Two concurrent `syncLibrary` calls: the second throws `SYNC_IN_PROGRESS`, and
+  the row is gone afterwards on both the success and the throw path.
+- Deleting a library mid-sync leaves no `sync_locks` row (the cascade).
+- The §3.2 migration renames the old data directory when it can and drops it on
+  `EXDEV`; either way `getDataPath` resolves under `DATA_DIR` afterwards and a
+  rendition builds.
+- `DATA_DIR` inside a library root is refused at library creation.
 - Clearing `read_only` without a bin name is refused; with one, it sticks.
 
 Integration (`test/integration`): a read-only library over a fixture tree with
@@ -567,16 +648,17 @@ Stated so they are choices rather than surprises:
   the app and untouched on disk, and nowhere else.
 - Photographs cannot be moved into or out of shoot folders. Albums cover the
   grouping; the folders stay as they are.
-- Cross-process sync exclusion degrades to per-`data_path` for a read-only
-  library (§8).
+- Two instances with separate databases no longer exclude each other's syncs.
+  Costs duplicated scanning and nothing else, and concurrent file moves were never
+  covered by that lock in the first place (§8).
 - Reclaiming a crashed sync's lock takes up to 30 seconds instead of being
   instant, which is the price of not asking about PIDs (§8.1).
 - Hand-managed bin changes are noticed by the daily full sync, not within a
   watcher debounce (§5).
 - The first full sync after this ships hashes every already-binned file once
   (§5).
-- Renditions for a read-only library land on the same volume as the database,
-  which most deployments size for a SQLite file (§3).
+- Most installs re-render their renditions once, because `/photos` and `/data` are
+  usually separate mounts (§3.2).
 - A photographer who moves a binned file *out* of a read-only library's tree
   entirely leaves a binned row marked `is_missing`, with no way for the app to
   know it was deliberate.
