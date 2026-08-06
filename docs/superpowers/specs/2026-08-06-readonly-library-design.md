@@ -40,6 +40,9 @@ Terms, used exactly and only this way throughout:
   library, read-only or not.
 - Shoot creation restricted to folders that already exist; moving photographs
   into and out of shoot folders refused (§7).
+- The sync lock's staleness check rewritten as a lease, since PIDs are not
+  comparable across containers and the existing check is wrong today (§8.1). Also
+  applies to every library.
 
 Out of scope: read-only *photographs* within a writable library, per-folder
 write permissions, exporting edited renditions anywhere (no export exists yet),
@@ -128,6 +131,47 @@ root is refused, since the app could not create it.
 Everything else follows: renditions, HDR checks and the orphan sweep all address
 `data_path` and need no change at all. The quality-check page already writes to
 `tmpdir`.
+
+Under Docker this is the writable named volume and needs no new mount.
+`DB_PATH: /data/bowerbird.db` makes the layout:
+
+```
+/data/bowerbird.db
+/data/libraries/<library id>/renditions/<rendition>-<sdr|hdr>/<photoId>.avif
+/data/libraries/<library id>/hdr/…
+/data/libraries/<library id>/.bowerbird-sync.lock
+```
+
+The compose file's only change is `${PHOTOS_DIR}:/photos:ro`, with a comment
+correcting the one above it (`docker-compose.yml:20-23` currently states that
+renditions live in `<root>/.bowerbird` and the Bin in `<root>/Bin`, which a
+read-only library makes untrue) and warning that renditions are the bulk of the
+footprint and now sit on a volume most people size for a SQLite file.
+
+### 3.1 Relocating an existing data directory
+
+Setting `read_only` on a library that has `data_path = null` cannot just set the
+flag: the path still resolves to `<root>/.bowerbird` and every rendition write
+would fail on the next sync. The flip relocates the tree.
+
+1. Copy `<root>/.bowerbird` to `<dirname(config.dbPath)>/libraries/<id>`. Reading
+   the source is a read of the root, which is allowed; the destination is outside
+   it.
+2. Write the new `data_path` and `read_only` in one transaction, so a crash
+   between them cannot leave the row pointing at a tree that is no longer being
+   written to.
+3. Attempt to remove the old directory. A genuinely read-only mount refuses, which
+   is logged and otherwise ignored: what is left behind is the app's own generated
+   files, not the photographer's, and the flag's promise is about the latter.
+
+A copy rather than a re-point-and-rebuild because the alternative discards every
+rendition in the library - potentially hours of decoding - to save one pass of
+file copying.
+
+**Not bidirectional.** Clearing `read_only` leaves `data_path` where it is. It is
+an explicit path once written, nothing about a writable library requires the data
+to sit inside the root, and dragging gigabytes of renditions back in would be a
+second long copy to reach a state nobody asked for.
 
 ## 4. Binning without a bin
 
@@ -259,11 +303,20 @@ whether it is still binned.
 `A/B/c.arw` exactly. A file dropped in the bin root yields the library root,
 which is the best available answer and is where a restore will put it.
 
-**A binned row whose file has gone gets `is_missing = 1`.** Today this is
-unobservable, so the Bin page shows a photograph whose original 404s with nothing
-to explain it. `listMissingForSync` and `listMissing` both filter `is_deleted =
-0`, so a missing binned photo does not appear in the missing-photos view; it
-appears in the Bin, marked. `restore` already refuses it with a clear message.
+**A binned row whose file has gone gets `is_missing = 1`.** This fixes a standing
+bug rather than adding a feature. Nothing sets the flag on a binned row today,
+because the scan never walks the bin - so a photograph whose RAW the photographer
+deleted out of the Bin folder still appears there, and its original 404s with
+nothing on screen to explain why. The display side already works: `photo_grid.tsx:254`
+renders a `missing` badge and the Bin page already uses `PhotoGrid`, which is why
+a photo binned while *already* missing does show it. Only the flag was
+unreachable.
+
+`listMissingForSync` and `listMissing` both filter `is_deleted = 0`, so a missing
+binned photo stays out of the missing-photos view and is marked in the Bin
+instead. That separation is deliberate: the missing view is a list of things to
+go and find, and a binned photograph is not one. `restore` already refuses a
+missing file with a clear message.
 
 ## 7. Shoots
 
@@ -314,6 +367,56 @@ they cannot corrupt anything.
 `deleteSyncLockSync` guards on the basename only, so it needs no change.
 `library_watcher.ts:216` ignores the lock at the root; it must also ignore the
 one in `data_path`, which it already does by ignoring `data_path` wholesale.
+
+**The lock stays a file, and does not become a table.** A row in `photos.db`
+would be per-database, and the case the root lock exists for is two independent
+server processes over one library - which is the Docker case, where each container
+has its own `bowerbird-db` volume (`docker-compose.yml:25`) and shares only
+`/photos`. A lock in the database would exclude nothing there, and the only thing
+left protecting the library would be each process's own in-memory
+`libraryMutex`. The file is the one thing both instances can see.
+
+### 8.1 Liveness stops depending on the PID
+
+The lock's staleness check is broken today, independently of anything in this
+document, and read-only libraries make it worse by putting locks somewhere even
+fewer processes share. `ownerPid` reads the holder's PID out of the file and
+`pidAlive` asks `process.kill(pid, 0)` **in the asking process's own PID
+namespace**, which is not the namespace the number was minted in:
+
+- Container A holds the lock as its PID 1. Container B checks PID 1, finds its own
+  init, and concludes the lock is live. It refuses to sync **permanently** - not
+  once, but every attempt, forever.
+- Container A holds it as PID 37, which does not exist in B. B declares the lock
+  stale, deletes it, and both sync at once - the exact interleaving the lock
+  exists to prevent.
+
+Which one happens depends on the number. It is not Docker-specific either: a PID
+reused after a hard kill gives the same permanent refusal on a plain host.
+
+The replacement is a **lease**. The lock file holds:
+
+```ts
+{ owner: string, pid: number, startedAt: string, refreshedAt: string }
+```
+
+- `owner` is a UUID minted once per server process. A lock whose `owner` matches
+  this process's own is always reclaimable: that is a restart, and no other
+  process can be holding it.
+- `refreshedAt` is rewritten every 10 seconds while the sync runs. A lock is stale
+  once `refreshedAt` is more than 30 seconds old.
+- `pid` is retained for the log line only, and is never asked about.
+
+No namespace assumptions, no PID reuse hazard, and correct over NFS, where a
+timestamp is the only thing about another host's process that can be observed at
+all. The cost is that reclaiming a crashed sync's lock takes up to 30 seconds
+rather than being instant, which is invisible against a sync that runs on a
+15-second watcher debounce and a nightly schedule.
+
+`flock(2)` would be better still - the kernel releases it when the holder dies, so
+there is no heuristic at all - but neither Node nor Bun exposes it, and reaching
+for FFI to acquire a lock file is more machinery than the 30-second window is
+worth.
 
 ## 9. Removing a library
 
@@ -392,8 +495,11 @@ folder on disk, and shoots that follow the folders as they are. Clearing it asks
 for a bin name.
 
 **Bulk bar and the Bin page** keep their labels - the photograph *is* binned, and
-that is the word for it - but the Bin page states that the files have not moved,
-so nobody goes looking for a folder that was never made.
+that is the word for it - but the Bin page's line about the files (`bin_page.tsx:23`,
+"The RAW files still exist, moved into a Bin folder on disk") is now false for a
+read-only library and needs to read off the library: moved into `<bin_name>` when
+there is one, left exactly where they were when there is not. Either way it stays
+a statement about where to find the RAW, which is the question that line answers.
 
 **Photo actions** hide *Add to shoot* and *Remove from shoot* for a read-only
 library. *Add to album* is unaffected and is the thing to reach for.
@@ -437,6 +543,13 @@ Unit, against the existing service tests:
 - Mirroring over a library with a populated bin makes no shoot inside the bin.
 - `create`, `addPhotos` and `removePhotos` on a read-only library's shoots throw
   `READ_ONLY`; renaming one does not.
+- A lock whose `refreshedAt` is 31 seconds old is reclaimed; one 5 seconds old is
+  not, whatever PID it names. A lock naming a live PID belonging to another owner
+  is still reclaimed once its lease expires - the test that pins §8.1's whole
+  point, since it is the case that deadlocks today.
+- A lock carrying this process's own `owner` is reclaimed immediately.
+- Setting `read_only` on a library with `data_path = null` relocates the tree,
+  writes the new path, and leaves the renditions readable at their new location.
 - Clearing `read_only` without a bin name is refused; with one, it sticks.
 
 Integration (`test/integration`): a read-only library over a fixture tree with
@@ -454,11 +567,16 @@ Stated so they are choices rather than surprises:
   the app and untouched on disk, and nowhere else.
 - Photographs cannot be moved into or out of shoot folders. Albums cover the
   grouping; the folders stay as they are.
-- Cross-process sync exclusion degrades to per-`data_path` (§8).
+- Cross-process sync exclusion degrades to per-`data_path` for a read-only
+  library (§8).
+- Reclaiming a crashed sync's lock takes up to 30 seconds instead of being
+  instant, which is the price of not asking about PIDs (§8.1).
 - Hand-managed bin changes are noticed by the daily full sync, not within a
   watcher debounce (§5).
 - The first full sync after this ships hashes every already-binned file once
   (§5).
+- Renditions for a read-only library land on the same volume as the database,
+  which most deployments size for a SQLite file (§3).
 - A photographer who moves a binned file *out* of a read-only library's tree
   entirely leaves a binned row marked `is_missing`, with no way for the app to
   know it was deliberate.
