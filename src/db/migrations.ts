@@ -36,6 +36,19 @@ CREATE TABLE IF NOT EXISTS libraries (
   bin_name    TEXT NOT NULL DEFAULT 'Bin'
 );
 
+-- "This library is syncing", as a leased row rather than a file at the library
+-- root (§8). It guards the catalogue rather than the tree, so it belongs in the
+-- catalogue, and a timestamp means the same thing in every PID namespace where
+-- the file lock's owner PID did not (§8.1). A row present at startup means
+-- "stale within the lease", not "syncing": a crashed process leaves its row and
+-- expiry clears it, so nothing deletes these on the way up.
+CREATE TABLE IF NOT EXISTS sync_locks (
+  library_id    TEXT PRIMARY KEY REFERENCES libraries(id) ON DELETE CASCADE,
+  owner         TEXT NOT NULL,   -- UUID, one per acquire rather than per process
+  started_at    TEXT NOT NULL,   -- toISOString(), UTC, which is what makes the comparison valid
+  refreshed_at  TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS shoots (
   id            TEXT PRIMARY KEY,
   parent_id     TEXT REFERENCES shoots(id) ON DELETE CASCADE,

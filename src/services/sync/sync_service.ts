@@ -27,7 +27,7 @@ import {
   type DiskFile,
 } from './sync_algorithm';
 import { libraryMutex } from './library_mutex';
-import { acquireSyncLock, releaseSyncLock } from './sync_lock';
+import { LEASE_MS, type SyncLocksRepository } from './sync_locks_repository';
 
 export interface ProcessingTrigger {
   processUnprocessed(scope?: ProcessingScope, stopped?: () => boolean): void | Promise<void>;
@@ -49,6 +49,12 @@ const INSERT_BATCH = 1000;
 // hours of work, and a log that says nothing until it finishes is
 // indistinguishable from one that has hung.
 const SCAN_PROGRESS_EVERY = 500;
+
+// How often a run refreshes its lease, driven by the work rather than by a timer:
+// the scan and apply are synchronous, so a `setInterval` is starved precisely
+// when the lease matters (§8). A third of the lease, so two missed refresh points
+// still do not lose the lock.
+const LEASE_REFRESH_MS = LEASE_MS / 3;
 
 // What the detached rendition batch a run hands off covers, kept so the status
 // endpoint can report progress against the same set the batch is working on.
@@ -120,7 +126,7 @@ export class SyncService implements LibraryLifecycleListener {
   private readonly processingBatch = new Map<string, ProcessingBatch>();
   private readonly settledListeners = new Set<(libraryId: string, changed: boolean) => void>();
   // Identity token per in-flight sync generation, and the handle that stops it.
-  // The lock is released before the detached processing runs, so a newer sync can
+  // The lease is released before the detached processing runs, so a newer sync can
   // start while the old one's processing tail is still going; the token lets a
   // stale tail skip its status write instead of stomping the newer generation's.
   private readonly generation = new Map<string, AbortController>();
@@ -131,6 +137,7 @@ export class SyncService implements LibraryLifecycleListener {
     private readonly albums: AlbumsRepository,
     private readonly shoots: ShootsRepository,
     private readonly folderRules: FolderRulesRepository,
+    private readonly syncLocks: SyncLocksRepository,
     private readonly processing: ProcessingTrigger,
     private readonly extract: MetadataExtractor = extractMetadata,
   ) {}
@@ -169,17 +176,54 @@ export class SyncService implements LibraryLifecycleListener {
   }
 
   async syncAll(): Promise<void> {
+    // Reclaim is by expiry now (§8), so a container killed and restarted within
+    // seconds finds its own dead run still holding the lease. Skipping silently
+    // would drop that library until tomorrow, so the ones that were locked are
+    // re-attempted at the end of the loop, by which point a real lease has lapsed.
+    const skipped: string[] = [];
     for (const library of this.libraries.list()) {
-      try {
-        await this.syncLibrary(library.id, undefined, 'daily');
-      } catch (err) {
-        // Never let one library abort the batch (§9.7): skip locked ones silently,
-        // log anything else, and move on to the remaining libraries.
-        if (!(err instanceof AppError && err.code === 'SYNC_IN_PROGRESS')) {
-          log.error('library failed during syncAll', { library: library.id, err });
-        }
-      }
+      if (!(await this.syncOne(library.id))) skipped.push(library.id);
     }
+    for (const libraryId of skipped) await this.syncOne(libraryId);
+  }
+
+  /** False when the library was locked; every other failure is logged and swallowed. */
+  private async syncOne(libraryId: string): Promise<boolean> {
+    try {
+      await this.syncLibrary(libraryId, undefined, 'daily');
+      return true;
+    } catch (err) {
+      // Never let one library abort the batch (§9.7).
+      if (err instanceof AppError && err.code === 'SYNC_IN_PROGRESS') return false;
+      log.error('library failed during syncAll', { library: libraryId, err });
+      return true;
+    }
+  }
+
+  // Keeps this run's lease alive across a stretch of synchronous work, throttled
+  // so a per-file call costs a clock read (§8).
+  private leaseKeeper(libraryId: string, owner: string): () => void {
+    let refreshedAt = Date.now();
+    return () => {
+      const now = Date.now();
+      if (now - refreshedAt < LEASE_REFRESH_MS) return;
+      refreshedAt = now;
+      this.syncLocks.refresh(libraryId, owner, new Date(now));
+    };
+  }
+
+  // The one stretch no refresh point can reach is the apply itself, so it re-reads
+  // the owner as its first statement and rolls back on a mismatch. BEGIN IMMEDIATE
+  // because a leading SELECT in a deferred transaction takes the read snapshot
+  // there, and the first write would then have to upgrade - returning
+  // SQLITE_BUSY_SNAPSHOT, which `busy_timeout` does not retry.
+  private applyOwned<T>(libraryId: string, owner: string, fn: () => T): T {
+    return this.photos.immediateTransaction(() => {
+      if (this.syncLocks.ownerOf(libraryId) !== owner) {
+        throw new AppError('SYNC_IN_PROGRESS', 'this sync lost its lease to a newer run');
+      }
+      return fn();
+    });
   }
 
   // A full sync (scopePaths omitted) walks the whole tree. A scoped sync (from the
@@ -204,11 +248,15 @@ export class SyncService implements LibraryLifecycleListener {
       paths: scopePaths?.length,
     });
     const startedAt = Date.now();
-    const lockPath = acquireSyncLock(library.root_path);
+    const owner = randomUUID();
+    if (!this.syncLocks.acquire(libraryId, owner)) {
+      throw new AppError('SYNC_IN_PROGRESS', 'a sync is already running for this library');
+    }
+    const keepLease = this.leaseKeeper(libraryId, owner);
     const token = new AbortController();
     this.generation.set(libraryId, token);
     // Before the first await: rebuild jobs only gate on in-memory status, and the
-    // lock alone is not enough for them - they do not take it for the whole run.
+    // lease alone is not enough for them - they do not hold it for the whole run.
     // Leaving 'idle' until inside `libraryMutex.run` let a rebuild replace this
     // generation in the gap, after which this run's settle no-ops and the strip
     // can stick on 'processing'.
@@ -219,16 +267,17 @@ export class SyncService implements LibraryLifecycleListener {
     // library's whole backlog.
     let processingIds: readonly string[] | null = null;
     try {
-      // Inside the mutex, outside the file lock: file lock first keeps sync-vs-sync
+      // Inside the mutex, outside the lease: the lease first keeps sync-vs-sync
       // fail-fast (409), while the mutex makes file-moving mutations queue behind
       // this scan instead of invalidating its snapshot mid-flight.
       const synced = await libraryMutex.run(libraryId, async () => {
       this.statuses.set(libraryId, idle(libraryId, 'scanning'));
 
       // The scan is the long half of an import, and the status endpoint is the
-      // only thing that can say so while it runs. No generation guard: the sync
-      // lock is not released until after the scan, so nothing newer can exist.
+      // only thing that can say so while it runs. No generation guard: the lease
+      // is not released until after the scan, so nothing newer can exist.
       const reportScan = (scanned: number, toScan: number): void => {
+        keepLease();
         this.statuses.set(libraryId, { ...idle(libraryId, 'scanning'), photos_to_scan: toScan, photos_scanned: scanned });
         if (scanned > 0 && scanned % SCAN_PROGRESS_EVERY === 0) {
           log.info('scanning', { library: libraryId, scanned, of: toScan, ms: Date.now() - startedAt });
@@ -277,8 +326,11 @@ export class SyncService implements LibraryLifecycleListener {
         // mid-scan, and its photos are then cascade-gone. Nothing awaits between
         // here and the (synchronous) transaction, so the delete cannot interleave.
         if (!this.libraries.getById(libraryId)) throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
+        keepLease();
         const batchAt = new Date().toISOString();
-        this.photos.transaction(() => {
+        // Owner-checked like the closing transaction; batches already committed
+        // are not rolled back with it.
+        this.applyOwned(libraryId, owner, () => {
           for (const file of batch) {
             insertPhoto({ filePath: file.filePath, fileHash: file.hash, metadata: file.metadata }, batchAt);
           }
@@ -305,7 +357,7 @@ export class SyncService implements LibraryLifecycleListener {
         dirs = await this.scopedDirs(scope, scopePaths);
       } else {
         dbPhotos = this.photos.listForSync(libraryId);
-        ({ files, dirs } = await scanLibraryTree(scope));
+        ({ files, dirs } = await scanLibraryTree(scope, '', keepLease));
       }
       const { present, changed, failed } = await this.scanFiles(
         files,
@@ -313,6 +365,7 @@ export class SyncService implements LibraryLifecycleListener {
         token.signal,
         reportScan,
         dbPhotos.length === 0 ? insertBatch : null,
+        keepLease,
       );
       log.info('scan done', {
         library: libraryId,
@@ -389,7 +442,7 @@ export class SyncService implements LibraryLifecycleListener {
       // transaction, so the delete can't interleave, and abort cleanly.
       if (!this.libraries.getById(libraryId)) throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
 
-      this.photos.transaction(() => {
+      this.applyOwned(libraryId, owner, () => {
         // First, so the per-photo work below is only ever the remainder.
         for (const r of relocations) {
           this.shoots.relocate(r.shootId, r.oldFolderPath, r.newFolderPath);
@@ -493,7 +546,7 @@ export class SyncService implements LibraryLifecycleListener {
       return synced;
     } catch (err) {
       // Scan/apply threw (e.g. root unmounted, DB error): reset status so the API
-      // doesn't report 'scanning' forever. Still our generation here (the lock,
+      // doesn't report 'scanning' forever. Still our generation here (the lease,
       // released in finally, blocks a newer one), but guard for consistency.
       if (this.generation.get(libraryId) === token) this.statuses.set(libraryId, idle(libraryId));
       // Stopped mid-scan on a populated library, where the writes are one closing
@@ -509,10 +562,10 @@ export class SyncService implements LibraryLifecycleListener {
       else log.error('sync failed', { library: libraryId, ms: Date.now() - startedAt, err });
       throw err;
     } finally {
-      // Release the lock as soon as scan+apply is done. Rendition generation runs
+      // Release the lease as soon as scan+apply is done. Rendition generation runs
       // detached (§9.5/§9.6: background work, client polls status), so POST /sync
       // returns promptly and re-syncs aren't blocked for the whole processing run.
-      releaseSyncLock(lockPath);
+      this.syncLocks.release(libraryId, owner);
       if (syncedStatus != null) {
         this.detachProcessing(libraryId, token, syncedStatus, processingIds, startedAt);
       }
@@ -550,9 +603,9 @@ export class SyncService implements LibraryLifecycleListener {
   }
 
   // Queue one processing stage for the whole library and hand it to the same
-  // detached batch a sync uses. The sync lock is held only for the claim
+  // detached batch a sync uses. The lease is held only for the claim
   // (queue + generation + status): nothing walks the tree, but without it a
-  // Sync now that has the lock and not yet marked itself busy would lose its
+  // Sync now that has the lease and not yet marked itself busy would lose its
   // generation to this and never settle.
   private rebuildStage(libraryId: string, stage: 'tiles' | 'renditions'): LibrarySyncStatus {
     const startedAt = Date.now();
@@ -563,9 +616,12 @@ export class SyncService implements LibraryLifecycleListener {
       throw new AppError('SYNC_IN_PROGRESS', 'a sync is already running for this library');
     }
 
-    const lockPath = acquireSyncLock(library.root_path);
+    const owner = randomUUID();
+    if (!this.syncLocks.acquire(libraryId, owner)) {
+      throw new AppError('SYNC_IN_PROGRESS', 'a sync is already running for this library');
+    }
     try {
-      // Sync may have claimed between the idle check and the lock.
+      // Sync may have claimed between the idle check and the lease.
       const claimed = this.statuses.get(libraryId);
       if (claimed != null && claimed.status !== 'idle') {
         throw new AppError('SYNC_IN_PROGRESS', 'a sync is already running for this library');
@@ -589,7 +645,7 @@ export class SyncService implements LibraryLifecycleListener {
       this.detachProcessing(libraryId, token, status, null, startedAt);
       return status;
     } finally {
-      releaseSyncLock(lockPath);
+      this.syncLocks.release(libraryId, owner);
     }
   }
 
@@ -902,6 +958,7 @@ export class SyncService implements LibraryLifecycleListener {
     signal: AbortSignal,
     onProgress: (scanned: number, toScan: number) => void,
     onBatch: ((batch: readonly DiskFile[]) => void) | null,
+    keepLease: () => void,
   ): Promise<{ present: Set<string>; changed: DiskFile[]; failed: Set<string> }> {
     const dbByPath = new Map(dbPhotos.map((p) => [p.file_path, p]));
 
@@ -914,6 +971,9 @@ export class SyncService implements LibraryLifecycleListener {
     const byInode = new Map<string, Scanned>();
     for (const file of files) {
       if (signal.aborted) break;
+      // This loop reports nothing, so it is the one blocking stretch of a scan
+      // with no other refresh point in it (§8).
+      keepLease();
       let stats;
       try {
         stats = await stat(file.absPath);

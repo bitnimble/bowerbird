@@ -48,7 +48,14 @@ export interface TreeScan {
 // Walk everything the library contains, per `isInScope` (§9.1). Directories are
 // `stat`ed as they are entered: one call each, against the per-file stats the
 // scan already does, for the folder identities relocation reads.
-export async function scanLibraryTree(scope: LibraryScope): Promise<TreeScan> {
+//
+// `startDir` is root-relative and defaults to the whole library. The bin channel
+// walks its own subtree through it (§6.2), which is what keeps every relPath
+// library-root relative on both channels.
+//
+// `onDir` is called as each directory is entered: the walk is one of the four
+// stretches long enough for a sync lease to lapse inside it (§8).
+export async function scanLibraryTree(scope: LibraryScope, startDir = '', onDir?: () => void): Promise<TreeScan> {
   const files: ScannedFile[] = [];
   const dirs: ScannedDir[] = [];
   const visitedDirs = new Set<string>(); // real paths, to stop symlink cycles
@@ -56,6 +63,7 @@ export async function scanLibraryTree(scope: LibraryScope): Promise<TreeScan> {
   const relative = (abs: string): string => path.relative(scope.rootPath, abs).split(path.sep).join('/');
 
   async function walk(absDir: string): Promise<void> {
+    onDir?.();
     const entries = await readdir(absDir, { withFileTypes: true });
     for (const entry of entries) {
       const abs = path.join(absDir, entry.name);
@@ -92,8 +100,9 @@ export async function scanLibraryTree(scope: LibraryScope): Promise<TreeScan> {
     }
   }
 
-  visitedDirs.add(await realpath(scope.rootPath).catch(() => path.resolve(scope.rootPath))); // so a symlink back to root can't re-walk the tree
-  await walk(scope.rootPath);
+  const absStart = startDir === '' ? scope.rootPath : path.join(scope.rootPath, startDir);
+  visitedDirs.add(await realpath(absStart).catch(() => path.resolve(absStart))); // so a symlink back to the start can't re-walk the tree
+  await walk(absStart);
   return { files, dirs };
 }
 

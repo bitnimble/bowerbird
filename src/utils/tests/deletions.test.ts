@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { deleteDataDirectory, deleteGeneratedFile, deleteSyncLockSync, unlinkMovedFile } from '../deletions';
+import { deleteDataDirectory, deleteGeneratedFile, unlinkMovedFile } from '../deletions';
 
 function withTmp(run: (root: string) => Promise<void> | void): () => Promise<void> {
   return async () => {
@@ -79,23 +79,6 @@ describe('deleteDataDirectory', () => {
       writeFileSync(path.join(data, 'bin', 'a.arw'), 'raw');
       await expect(deleteDataDirectory(data)).rejects.toThrow(/still holds 1 original/);
       expect(existsSync(path.join(data, 'bin', 'a.arw'))).toBe(true);
-    }),
-  );
-});
-
-describe('deleteSyncLockSync', () => {
-  it(
-    'removes the lock and nothing else',
-    withTmp((root) => {
-      const lock = path.join(root, '.bowerbird-sync.lock');
-      writeFileSync(lock, '{}');
-      deleteSyncLockSync(lock);
-      expect(existsSync(lock)).toBe(false);
-
-      const raw = path.join(root, 'a.arw');
-      writeFileSync(raw, 'raw');
-      expect(() => deleteSyncLockSync(raw)).toThrow(/not a sync lock/);
-      expect(existsSync(raw)).toBe(true);
     }),
   );
 });

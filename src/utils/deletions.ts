@@ -1,4 +1,4 @@
-import { existsSync, unlinkSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { rm, rmdir, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { AppError } from '../errors';
@@ -11,13 +11,9 @@ import { findOriginalsAnywhere, isSupportedFile } from './scan';
 // guard that proves its target is not one before the call is made.
 
 // The subdirectories of a data directory that hold generated files, and so the
-// only ones a file may be deleted from one at a time. Everything else under there
-// - the sync lock, a stray the user left - is not ours to remove.
+// only ones a file may be deleted from one at a time. Everything else under
+// there - a stray the user left - is not ours to remove.
 const GENERATED_DIRS = ['renditions', 'hdr'];
-
-// Lives here rather than beside the lock's own code so the guard below and the
-// name it guards cannot drift apart.
-export const SYNC_LOCK_NAME = '.bowerbird-sync.lock';
 
 // A generated rendition or HDR check file. `dataPath` is passed rather than
 // derived from `target` so the guard is checked against the caller's own library
@@ -56,16 +52,6 @@ export async function deleteDataDirectory(dataPath: string): Promise<void> {
     throw new AppError('IO_ERROR', `refusing to delete ${dataPath}: it still holds ${strays.length} original file(s)`);
   }
   await rm(dataPath, { recursive: true, force: true });
-}
-
-// Synchronous to match the lock itself: acquiring one has to be a single
-// uninterrupted step, or two syncs of the same library can both pass the
-// staleness check before either creates the file.
-export function deleteSyncLockSync(lockPath: string): void {
-  if (path.basename(lockPath) !== SYNC_LOCK_NAME) {
-    throw new AppError('IO_ERROR', `refusing to delete ${lockPath}: not a sync lock`);
-  }
-  unlinkSync(lockPath);
 }
 
 // The source half of a move: `movedTo` already holds the bytes (a hard link to

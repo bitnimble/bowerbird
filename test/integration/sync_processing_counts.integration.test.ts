@@ -13,6 +13,7 @@ import { PhotosRepository } from '../../src/services/photos/photos_repository';
 import { FolderRulesRepository } from '../../src/services/shoots/folder_rules_repository';
 import { ShootsRepository } from '../../src/services/shoots/shoots_repository';
 import { SyncService } from '../../src/services/sync/sync_service';
+import { SyncLocksRepository } from '../../src/services/sync/sync_locks_repository';
 import { extractMetadata } from '../../src/services/processing/metadata';
 
 const FIXTURE = path.join(import.meta.dir, '../fixtures/DSC02981.ARW');
@@ -45,6 +46,7 @@ test('processing counts track rendition progress, then settle when the tail fini
     new AlbumsRepository(db),
     new ShootsRepository(db),
     new FolderRulesRepository(db),
+    new SyncLocksRepository(db),
     { processUnprocessed: () => blocked },
     extractMetadata,
   );

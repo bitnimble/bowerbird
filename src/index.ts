@@ -25,6 +25,7 @@ import { SettingsApi } from './api/settings/settings_api';
 import { BrowseApi } from './api/browse/browse_api';
 import { SettingsRepository } from './services/settings/settings_repository';
 import { SyncService } from './services/sync/sync_service';
+import { SyncLocksRepository } from './services/sync/sync_locks_repository';
 import { LibraryWatcher } from './services/sync/library_watcher';
 import { DailySync } from './services/sync/daily_sync';
 import { PruneService, ScheduledPrune } from './services/maintenance/prune_service';
@@ -45,6 +46,7 @@ const shootsRepo = new ShootsRepository(db);
 const folderRulesRepo = new FolderRulesRepository(db);
 const albumsRepo = new AlbumsRepository(db);
 const stacksRepo = new StacksRepository(db);
+const syncLocksRepo = new SyncLocksRepository(db);
 
 const processingService = new ProcessingService(photosRepo, settingsRepo);
 
@@ -52,7 +54,15 @@ const librariesService = new LibrariesService(librariesRepo);
 const photosService = new PhotosService(photosRepo, albumsRepo, shootsRepo, librariesRepo, processingService);
 const albumsService = new AlbumsService(albumsRepo, photosRepo);
 const shootsService = new ShootsService(shootsRepo, photosRepo, librariesRepo, folderRulesRepo);
-const syncService = new SyncService(photosRepo, librariesRepo, albumsRepo, shootsRepo, folderRulesRepo, processingService);
+const syncService = new SyncService(
+  photosRepo,
+  librariesRepo,
+  albumsRepo,
+  shootsRepo,
+  folderRulesRepo,
+  syncLocksRepo,
+  processingService,
+);
 const stacksService = new StacksService(stacksRepo, photosRepo, librariesRepo);
 // Prune sync's per-library in-memory state when a library is deleted (unbounded otherwise).
 librariesService.addLifecycleListener(syncService);

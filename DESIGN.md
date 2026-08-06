@@ -957,7 +957,7 @@ This is updated as the sync progresses and is exposed via the API for client pol
 
 **Both phases of a run report progress, not just the second one.** `photosProcessed` against what was queued covers rendition building; `photosScanned` against `photosToScan` covers the scan, which on a first import is the longer of the two: minutes of opening and hashing every file, during which a status that only carried zeros left the client with nothing to say but "scanning". The counters are updated from the loop that opens and hashes, which is where a scan's whole cost is (the `stat` pass before it opens nothing), and `photosToScan` is only known once that pass has collapsed hardlink pairs, so a run reads 0/0 for the walk and the stats, then counts through the files. Both settle on the number of files found, so the client renders one bar per phase off the same pair of numbers.
 
-No generation guard on those writes, unlike the ones after the scan: the sync lock is not released until scan and apply are both done, so no newer generation of the same library can exist to stomp.
+No generation guard on those writes, unlike the ones after the scan: the sync lease is not released until scan and apply are both done, so no newer generation of the same library can exist to stomp.
 
 **A process with no status in memory reads the outstanding work off the database.** The status object does not survive a restart, but the work does: `needs_tile` / `needs_renditions` are columns, so a library the last process had half-imported comes back owing exactly what it owed. Reporting a flat `idle` with zeros there is a lie the client cannot see past; the strip would show nothing to do while thousands of renditions were missing. `getSyncStatus` therefore falls back to `countPendingProcessing` and reports it as `photosProcessing` against `idle`: work waiting, not work running.
 
@@ -967,14 +967,16 @@ No generation guard on those writes, unlike the ones after the scan: the sync lo
 
 ### 9.7 Sync Lock
 
-Sync is locked **per library**, so two different libraries can sync concurrently while the same library cannot be synced twice at once. The lock is a **file at the library root**, `<root_path>/.bowerbird-sync.lock`, created with exclusive semantics (`open` with `O_CREAT | O_EXCL`, i.e. Bun/Node `wx` flag) and holding the owning PID and an ISO start timestamp. (It is a hidden file with no RAW extension, so the scanner ignores it regardless.)
+Sync is locked **per library**, so two different libraries can sync concurrently while the same library cannot be synced twice at once. The lock is a **leased row** in `sync_locks`, keyed by library id and holding an owner UUID minted per acquire, plus the ISO instants the lease started and was last refreshed. It guards the catalogue rather than the tree, which is where it belongs: the tree is what a read-only library forbids writing to, and a lock file at the root was one write per library that had nothing to do with the photographs.
 
-- `syncLibrary(id)` acquires that library's lock; if already held it throws `SYNC_IN_PROGRESS` (409).
-- `syncAll()` acquires each library's lock independently as it processes it; a library whose lock is already held is skipped (and logged), and the remaining libraries proceed.
-- **Stale-lock recovery:** if the lock exists but its PID is no longer alive (crash during a prior sync), it is reclaimed rather than blocking forever.
-- The lock is released (file removed) in a `finally` so it is cleared on both success and error.
+- `syncLibrary(id)` acquires the lease with a single upsert whose `WHERE` clause is the staleness test, so there is no check-then-claim window; if a live holder keeps it, `SYNC_IN_PROGRESS` (409).
+- `syncAll()` acquires each library's lease independently as it processes it; a library whose lease is held is collected and **re-attempted once** at the end of the loop, by which point a lease left by a killed process has lapsed.
+- **Stale-lease recovery:** a lease is reclaimable 30s after its last refresh. A run refreshes from the work rather than from a timer - the walk, both scan loops and each insert batch - because the scan and apply are synchronous and a `setInterval` is starved precisely when the lease matters.
+- The lease is released in a `finally`, scoped to its own owner so a late release cannot delete a successor's lock. The apply re-reads the owner as the first statement of a `BEGIN IMMEDIATE` transaction and rolls back on a mismatch: it is the one stretch no refresh point can reach.
 
-The in-memory `SyncStatus` (§9.6) is process-local and lost on restart; the per-library lock file is the cross-process source of truth for "is this library syncing".
+Liveness deliberately does not depend on a PID. `process.kill(pid, 0)` asks in the *asking* process's PID namespace, which is not the one the number was minted in: two containers over one volume would either refuse to sync for ever (B finds its own init at A's PID 1) or both sync at once (A's PID 37 does not exist in B). A timestamp means the same thing everywhere.
+
+The in-memory `SyncStatus` (§9.6) is process-local and lost on restart; the `sync_locks` row is the cross-process source of truth for "is this library syncing". A row present at startup means "stale within 30 seconds", not "syncing", so startup deletes nothing.
 
 ### 9.8 Sync Triggers: Manual, Scoped Watcher, Daily Backstop
 
@@ -995,9 +997,9 @@ The in-memory `SyncStatus` (§9.6) is process-local and lost on restart; the per
 
 `@parcel/watcher` takes 204 watches and 35 MB on that same tree, settles in 55 ms, and names both halves of every move - same level, into a subfolder, out to the root - including the rename of a folder holding no photographs, which §9.4.1's photo evidence structurally cannot see. Its `ignore` list takes the data directory, the bin (§12.3) and the excluded folders, so none of those subtrees is walked at all rather than filtered afterwards, and the per-event check applies the scan's own rules (§9.1) so the two cannot disagree about what the library contains. The bin earns its place there twice over: it is one known path, and it only grows, mirroring the whole folder tree as photographs are binned.
 
-**An event the library does not contain schedules nothing.** The watcher used to arm its debounce for every batch it was handed and decide relevance afterwards, per path. A batch where nothing survived that filter then ran the timer down to a sync with an empty path set - which is a *full* one, because an empty scope is how a dirty re-run asks for the whole tree. The sync lock (§9.7) is a file at the library root, so every sync's own lock woke the watcher that started the next one: a library nobody was touching syncing once per debounce window, for ever, each run reporting `added=0 removed=0`. The lock is in the `ignore` list now, and a batch that recorded nothing arms no timer, which answers the class rather than that one path.
+**An event the library does not contain schedules nothing.** The watcher used to arm its debounce for every batch it was handed and decide relevance afterwards, per path. A batch where nothing survived that filter then ran the timer down to a sync with an empty path set - which is a *full* one, because an empty scope is how a dirty re-run asks for the whole tree. A batch that recorded nothing arms no timer now, which answers the class rather than each path that raised it. (The sync lock used to be the standing example: a file at the library root, so every sync's own lock woke the watcher that started the next one, for ever. It is a row now, §9.7, and writes nothing under the root at all.)
 
-**Nor does a file the library will never hold.** A text file, a sidecar, a JPEG export saved beside the raws is in scope by *path* - `isPathAllowed` is about folders - so it used to be handed to a scoped sync like a candidate photograph, and a whole sync run (a mutex, a lock file, a transaction, a settled announcement) went by to conclude it was never one. The watcher settles it instead, with one `stat`, asked only of paths whose extension is not one of ours (§7) so a bulk import stats nothing extra. A folder always passes, because an empty one's rename reports no other event at all and dropping it would lose the shoot relocation (§9.4.1); so does a path that is already gone, which is a deletion and could have been either.
+**Nor does a file the library will never hold.** A text file, a sidecar, a JPEG export saved beside the raws is in scope by *path* - `isPathAllowed` is about folders - so it used to be handed to a scoped sync like a candidate photograph, and a whole sync run (a mutex, a lease, a transaction, a settled announcement) went by to conclude it was never one. The watcher settles it instead, with one `stat`, asked only of paths whose extension is not one of ours (§7) so a bulk import stats nothing extra. A folder always passes, because an empty one's rename reports no other event at all and dropping it would lose the shoot relocation (§9.4.1); so does a path that is already gone, which is a deletion and could have been either.
 
 It is a native module, which is why its prebuilt bindings matter: they cover linux x64 and arm64 in both glibc and musl, plus macOS and Windows, so nothing is compiled at install time on any platform this runs on.
 
@@ -1007,7 +1009,7 @@ A moved folder reports as the folder, with no per-file events beneath it. That i
 
 Sync snapshots the DB, then scans **asynchronously**, then applies. A user mutation that moves files (shoot add/remove/rename, photo delete) landing mid-scan would make that snapshot stale. `libraryMutex` (one process-global instance) serializes those mutations against sync **per library**: whoever arrives second queues rather than failing, since these are interactive requests.
 
-- `syncLibrary` takes the sync **lock file first, then the mutex**. Lock-first keeps sync-vs-sync fail-fast (`SYNC_IN_PROGRESS`, 409, §9.7); the mutex only makes *mutations* wait. Mutations never take the lock file, so there is no cycle to deadlock on.
+- `syncLibrary` takes the sync **lease first, then the mutex**. Lease-first keeps sync-vs-sync fail-fast (`SYNC_IN_PROGRESS`, 409, §9.7); the mutex only makes *mutations* wait. Mutations never take the lease, so there is no cycle to deadlock on.
 - The mutex is acquired at exactly one level per operation (e.g. in `rename`, not its caller `update`), since it is not re-entrant.
 - This closes the mutation-vs-scan race class at the source, rather than guarding each symptom. The per-write guards it supersedes are kept anyway (path-guarded `setMissing`, the `(dev, ino)` collapse, the re-checks before FK writes) because they also cover the cross-process case the in-memory mutex cannot.
 
@@ -1486,7 +1488,7 @@ Generated files are named `<photoId>.<ext>`, and photo ids are minted per insert
 Two things close that off:
 
 - **Removing a library removes its data directory.** Re-adding the same folder can never reuse the renditions (new ids), so keeping them is dead weight. The RAW files are not ours and are left alone: the Bin is outside the data directory (§12.3), and `data_path` is user-supplied, so a library configured to keep its data alongside or above the photographs is skipped with a warning rather than having that directory removed. Anything that still looks like an original under there - a `<data_path>/bin` from the layout that predates the Bin's move - is carried out into the library's Bin first, and the removal refuses outright if any is left behind. Losing renditions is recoverable; losing originals is not.
-- **A scheduled sweep** (`PRUNE_EVERY_DAYS`, default 7, 0 disables) walks each generated directory and deletes any file whose id has no row. The directories and the extension each is supposed to hold both come from the path helpers that write the files, so changing an output format cannot leave the sweep looking in the wrong place. A file whose extension no longer matches goes too, even when its photo is alive: a format change writes the new render beside the old one rather than over it, which the PNG-to-JXL switch made real at ~100 MB per photo ever opened. That rule is also what empties a **retired directory** - one nothing writes to any more, listed by `retiredRenditionDirs()` and swept alongside the live ones, where every file is by definition the wrong extension. `<rendition>-hdr-video` is the one there is: an MP4 per HDR photo for Firefox, which the browser now makes for itself (§10.7). The directory is `rmdir`'d once it comes up empty, and a file that would not go keeps it until a later sweep. Only `renditions/` and `hdr/` are swept, so the sync lock is untouched (and the Bin is not in the data directory at all). Ids are checked against the whole `photos` table, not one library's, because the id space is global and two libraries may share a data directory. Soft-deleted rows count as live, since their renditions are what make the Bin browsable (§12.1).
+- **A scheduled sweep** (`PRUNE_EVERY_DAYS`, default 7, 0 disables) walks each generated directory and deletes any file whose id has no row. The directories and the extension each is supposed to hold both come from the path helpers that write the files, so changing an output format cannot leave the sweep looking in the wrong place. A file whose extension no longer matches goes too, even when its photo is alive: a format change writes the new render beside the old one rather than over it, which the PNG-to-JXL switch made real at ~100 MB per photo ever opened. That rule is also what empties a **retired directory** - one nothing writes to any more, listed by `retiredRenditionDirs()` and swept alongside the live ones, where every file is by definition the wrong extension. `<rendition>-hdr-video` is the one there is: an MP4 per HDR photo for Firefox, which the browser now makes for itself (§10.7). The directory is `rmdir`'d once it comes up empty, and a file that would not go keeps it until a later sweep. Only `renditions/` and `hdr/` are swept, so a stray the user left is untouched (and the Bin is not in the data directory at all). Ids are checked against the whole `photos` table, not one library's, because the id space is global and two libraries may share a data directory. Soft-deleted rows count as live, since their renditions are what make the Bin browsable (§12.1).
 
 ### 10.6.1 One place that deletes
 
@@ -1498,7 +1500,6 @@ Each entry point states what it will not do:
 |---|---|
 | `deleteGeneratedFile(dataPath, target)` | Target must resolve under `<dataPath>/renditions` or `<dataPath>/hdr`, and must not carry a supported RAW extension. `dataPath` comes from the caller's own library, so a path from elsewhere cannot satisfy it. |
 | `deleteDataDirectory(dataPath)` | Refuses while any supported file exists anywhere beneath, symlinks excluded. |
-| `deleteSyncLockSync(lockPath)` | Basename must be `.bowerbird-sync.lock`. |
 | `unlinkMovedFile(from, movedTo)` | Removes the source half of a move only once the destination exists, so a failed link or copy can never leave the move having consumed the file. |
 
 It runs on an interval rather than at startup: a restart is no evidence anything was orphaned, and in development that would sweep on every reload.
@@ -2218,7 +2219,7 @@ For each photo:
 
 **An undo names the bin, not its photographs.** Delete also stamps every row it takes with a `deleted_batch` the *client* generates, and the undo posts that batch back (`PhotoTargetSchema`, §14). The ids never travel: a bin of a million would be a 36MB response and a 36MB request to reverse it, and the selection those photos came from resolves to different ones the moment they leave the collection (§18.3.3). Client-generated so the undo survives an answer that never arrives - the delete may outlive the socket, and it is exactly then that being able to reverse it matters.
 
-**Everything that is not per-file is done per batch.** Both `delete` and `restore` read their rows in one query rather than a detail payload each, resolve the library and take its sync lock once, create each Bin directory once, and commit a chunk of flags at a time. Per photo - which is what these were - it was a join plus a second query for album membership neither reads, a lock acquire, and its own transaction: **2.231ms per photo before a byte moved on disk**, or 34 minutes to bin a million. Batched, and now measured *including* the renames, it is **0.14ms per photo**.
+**Everything that is not per-file is done per batch.** Both `delete` and `restore` read their rows in one query rather than a detail payload each, resolve the library and take `libraryMutex` once, create each Bin directory once, and commit a chunk of flags at a time. Per photo - which is what these were - it was a join plus a second query for album membership neither reads, a mutex acquire, and its own transaction: **2.231ms per photo before a byte moved on disk**, or 34 minutes to bin a million. Batched, and now measured *including* the renames, it is **0.14ms per photo**.
 
 The chunk is what bounds the exposure the per-photo commit used to bound: the files move, then the flags commit, so a crash in between leaves at most one chunk of RAWs in a Bin the scanner does not look at. A DB failure rolls its chunk's moves back, exactly as the per-photo path did.
 
@@ -2422,7 +2423,7 @@ Two scopes, not three: the `libraries` row holds what belongs to one catalogue (
 | `VALIDATION_ERROR` | 400 | Request validation failed |
 | `CONFLICT` | 409 | Conflicting operation (e.g. library root already registered) |
 | `IO_ERROR` | 500 | Filesystem operation failed |
-| `SYNC_IN_PROGRESS` | 409 | A sync is already running for this library (per-library lock, §9.7) |
+| `SYNC_IN_PROGRESS` | 409 | A sync is already running for this library (per-library lease, §9.7) |
 | `INTERNAL_ERROR` | 500 | Unexpected error |
 
 ### 14.2 API Layer Error Handling
@@ -2557,7 +2558,7 @@ The sync-service, photo-deletion, and image-streaming cases below run in the int
 - Reappearance: a previously-missing file back at its original path clears `is_missing` (§9.4 step 4)
 - Move into a known shoot folder sets `shoot_id`; move out to root clears it (§9.4 step 1)
 - mtime change (e.g. in-place edit) marks a file MODIFIED and re-processes it (§9.2)
-- Sync lock: a second concurrent sync of the *same* library throws `SYNC_IN_PROGRESS`; two *different* libraries sync concurrently; a stale lock (dead PID) is reclaimed (§9.7)
+- Sync lease: a second concurrent sync of the *same* library throws `SYNC_IN_PROGRESS`; two *different* libraries sync concurrently; a lease stale by more than 30s is reclaimed and a fresher one is not (§9.7)
 - Concurrency vs. a user mutation mid-scan: an in-flight move's hardlink pair (link+unlink) is collapsed by inode so no duplicate row is inserted; a library deleted mid-scan aborts `NOT_FOUND` (no FK crash); a stale sync generation's detached processing tail doesn't stomp a newer sync's status
 - Stopping (§9.10): a stopped rescan applies nothing and marks nothing missing, opens no further files and returns an idle status; a stopped *first* scan keeps the photos it reached (nothing to be absent from) and adds no missing rows; mid-processing the run ends rather than waiting itself out, leaving the unreached photos pending; a batch a later sync coalesced into is still what a stop reaches
 
@@ -2613,7 +2614,7 @@ The following order respects dependency chains — each step depends on the step
 8. **Metadata extraction**: `metadata.ts` (per-format header parse; LibRaw for ARW and CR3).
 9. **Photos service + API**: CRUD, listing, filtering.
 10. **Processing service**: Worker-based rendition generation (reuses the RAW decoder).
-11. **Sync service**: Full sync algorithm with move detection, reappearance handling, shoot-membership reconciliation, and the per-library sync lock (§9.7). Depends on the processing service (§8.4), which it calls to trigger rendition generation (§9.5).
+11. **Sync service**: Full sync algorithm with move detection, reappearance handling, shoot-membership reconciliation, and the per-library sync lease (§9.7). Depends on the processing service (§8.4), which it calls to trigger rendition generation (§9.5).
 12. **Shoots service + API**: CRUD, photo assignment with file moves.
 13. **Albums service + API**: CRUD, photo assignment.
 14. **Image streaming API**: Static-path file streaming endpoints.

@@ -781,6 +781,14 @@ export class PhotosRepository {
     return this.db.transaction(fn)();
   }
 
+  // Takes the write lock up front, for a transaction that reads before it writes.
+  // A deferred one takes its read snapshot at that first SELECT and has to
+  // upgrade at the first write, which returns SQLITE_BUSY_SNAPSHOT - and
+  // `busy_timeout` does not retry that one (§8).
+  immediateTransaction<T>(fn: () => T): T {
+    return this.db.transaction(fn).immediate();
+  }
+
   insertFromSync(record: SyncInsert): void {
     this.db
       .query(

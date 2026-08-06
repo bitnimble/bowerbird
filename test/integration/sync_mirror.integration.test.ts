@@ -14,6 +14,7 @@ import { FolderRulesRepository } from '../../src/services/shoots/folder_rules_re
 import { ShootsRepository } from '../../src/services/shoots/shoots_repository';
 import { ShootsService } from '../../src/services/shoots/shoots_service';
 import { SyncService } from '../../src/services/sync/sync_service';
+import { SyncLocksRepository } from '../../src/services/sync/sync_locks_repository';
 
 const FIXTURE = path.join(import.meta.dir, '../fixtures/DSC02981.ARW');
 const LIB = '00000000-0000-4000-8000-0000000000a1';
@@ -57,6 +58,7 @@ beforeEach(() => {
     new AlbumsRepository(db),
     shoots,
     rules,
+    new SyncLocksRepository(db),
     { processUnprocessed() {} },
   );
 });

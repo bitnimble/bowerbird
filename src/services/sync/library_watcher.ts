@@ -4,7 +4,6 @@ import path from 'node:path';
 import { AppError } from '../../errors';
 import { Logger } from '../../logger';
 import type { Library } from '../../schemas/libraries';
-import { SYNC_LOCK_NAME } from '../../utils/deletions';
 import { isSupportedFile } from '../../utils/scan';
 import { isPathAllowed, type LibraryScope } from '../../utils/scope';
 import { getBinPath, getDataPath } from '../../utils/paths';
@@ -208,14 +207,7 @@ export class LibraryWatcher implements LibraryLifecycleListener {
     // so: it is one known path (§12.3) that only ever grows, mirroring the whole
     // folder tree as photographs are binned, and nothing inside it is ever the
     // library's to look at.
-    // The lock is written by sync itself at the root, so watching it is a loop:
-    // every sync wakes the watcher that starts the next one.
-    const ignored = [
-      getDataPath(library),
-      path.join(library.root_path, '.bowerbird'),
-      path.join(library.root_path, SYNC_LOCK_NAME),
-      getBinPath(library),
-    ];
+    const ignored = [getDataPath(library), path.join(library.root_path, '.bowerbird'), getBinPath(library)];
     for (const folder of scope.excluded) ignored.push(path.join(library.root_path, folder));
     return ignored;
   }

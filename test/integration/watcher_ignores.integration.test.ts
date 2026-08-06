@@ -10,7 +10,6 @@ import type { Library } from '../../src/schemas/libraries';
 import type { LibrariesRepository } from '../../src/services/libraries/libraries_repository';
 import { LibraryWatcher } from '../../src/services/sync/library_watcher';
 import type { SyncService } from '../../src/services/sync/sync_service';
-import { SYNC_LOCK_NAME } from '../../src/utils/deletions';
 import { libraryScope, type LibraryScope } from '../../src/utils/scope';
 
 const LIB = 'lib-ignores';
@@ -92,22 +91,6 @@ test('the Bin and the data directory never wake a sync', async () => {
 
   writeFileSync(path.join(root, 'Bin', 'Trip', 'binned.arw'), '');
   writeFileSync(path.join(root, '.bowerbird', 'stray.arw'), '');
-  await quiet();
-  expect(calls).toHaveLength(0);
-});
-
-// A sync writes its lock at the root, so a watcher that wakes for it starts the
-// next sync, which writes it again: a library nobody is touching syncs forever,
-// once per debounce window. Out of scope on its own (it is hidden), which is
-// exactly the case that used to schedule a *full* sync with nothing to reconcile.
-test('a sync lock file at the root never wakes a sync', async () => {
-  await start({});
-
-  // Taken and released a window apart, as a real sync holds it: created and
-  // removed inside one window the watcher coalesces them away and proves nothing.
-  writeFileSync(path.join(root, SYNC_LOCK_NAME), '{}');
-  await quiet();
-  rmSync(path.join(root, SYNC_LOCK_NAME));
   await quiet();
   expect(calls).toHaveLength(0);
 });
