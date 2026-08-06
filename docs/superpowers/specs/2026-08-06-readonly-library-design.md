@@ -515,12 +515,35 @@ rather than failing. Nothing new to configure.
 
 What the two containers then do, concretely: both watchers see the file change,
 both debounce, one wins the upsert and syncs, the other's `changes()` is 0 and it
-raises `SYNC_IN_PROGRESS`. Its watcher already handles that correctly - it
-re-queues its paths and re-arms (`library_watcher.ts:325-327`), so nothing it
-observed is dropped, it is retried once the lease frees and finds the work already
-done. Their rendition builds are idempotent whether `/data` is shared or not (the
-file is the cache and the builder returns early on one that exists), and two prune
-sweeps deleting the same orphan are both `force: true`.
+raises `SYNC_IN_PROGRESS`.
+
+**The loser queues rather than giving up, and that is deliberate.** It re-records
+its paths and re-arms (`library_watcher.ts:325-327`) so the retry stays scoped. The
+reason is in the comment above that line and is about timing, not identity: the
+holder's scan may have *started before* the loser's change happened, in which case
+that scan will not see it, and a loser that concluded "somebody else is syncing, so
+my change is covered" would drop it silently until the nightly full sync.
+
+**The redundant retry is close to free, by construction.** A scan decides what to
+open by comparing each file's `mtime` and `size` against the row
+(`sync_service.ts:957-959`), and the winner has already written the new values into
+the database they share. So the loser's retry stats its handful of paths, finds every
+one unchanged, opens nothing, hashes nothing, and applies an empty diff. The stat
+pass is the cheap half of a scan and the hashing loop is the expensive one - this
+skips the expensive one entirely.
+
+So there is no case worth optimising here, and one that argues against trying.
+Because `sync_locks` is a row in the loser's *own* database, any lock it loses is
+necessarily held by a process writing the same catalogue - which is new information
+the file lock could never give it. That still does not license skipping the retry:
+the holder may be running a **scoped** sync over paths that do not include the
+loser's, in which case it will not see the change however late it started. Skipping
+correctly would mean recording the holder's scope in the lock row and comparing
+against it, which is a column and a rule to save a few `stat` calls.
+
+Their rendition builds are idempotent whether `/data` is shared or not (the file is
+the cache and the builder returns early on one that exists), and two prune sweeps
+deleting the same orphan are both `force: true`.
 
 One clock, because one host. The lease compares timestamps written by whichever
 process wrote them, so two hosts would need their clocks to agree - but two hosts
@@ -700,6 +723,10 @@ exactly one wins, the loser raises `SYNC_IN_PROGRESS`, and the photo count
 afterwards is the file count rather than twice it. That last assertion is the one
 that matters: double insertion is the corruption the lock exists to prevent, and it
 is the thing a same-process test cannot see.
+
+And one for the loser's retry: after the winner finishes, the loser's re-armed sync
+adds, removes and modifies nothing. Asserted on the counts rather than on whether
+files were opened, because the counts are what a duplicate would show up in.
 
 E2E: one spec adding a read-only library, binning a selection, checking the Bin,
 restoring, and confirming the tree on disk is byte-identical to what it was.
