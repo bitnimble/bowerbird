@@ -1,4 +1,4 @@
-// The sync lease's one unique contribution is cross-process exclusion (§8), and
+// The sync lease's one unique contribution is cross-process exclusion (§9.7), and
 // it is invisible to a same-process test: `fcntl` locks are per-inode, so two
 // Database handles in one process contend with nobody. Two real processes over
 // one database file, told to sync one library at once.
@@ -110,13 +110,11 @@ test('a sync whose lease was taken over rolls its apply back', async () => {
     new AlbumsRepository(db),
     new ShootsRepository(db),
     new FolderRulesRepository(db),
-    // Every acquire reports success, so the run believes it holds a lease that
-    // somebody else's owner is written into - which is the crash the apply's
-    // owner re-read exists to catch.
+    // A real acquire and a real release - only the owner read is faked, so the
+    // run takes the lease it thinks it has and the row it wrote is the one the
+    // assertions below look at. The apply then reads somebody else's owner back,
+    // which is the takeover its re-read exists to catch.
     new (class extends SyncLocksRepository {
-      override acquire(): boolean {
-        return true;
-      }
       override ownerOf(): string | null {
         return 'somebody-else';
       }

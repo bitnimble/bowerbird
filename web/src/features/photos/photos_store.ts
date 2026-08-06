@@ -1,5 +1,5 @@
 import { computed, observable } from 'mobx';
-import type { Library, Ordering, PhotoDetail, PhotoSummary, Rendition, Triage, ViewerRendition } from '../../api/client';
+import type { Ordering, PhotoDetail, PhotoSummary, Rendition, Triage, ViewerRendition } from '../../api/client';
 import type { LibrariesStore } from '../libraries/libraries_store';
 import type { AppSettingsStore } from '../settings/app_settings_store';
 import { type Span, visibleRows } from '../../ui/virtual_rows';
@@ -492,13 +492,21 @@ export class PhotosStore {
     return this.source?.kind === 'bin';
   }
 
-  // The library the open collection belongs to, which is what decides whether the
-  // actions that move files are offered at all (§12). A shoot or an album names
-  // no library of its own, so its rows answer for it.
-  @computed get sourceLibrary(): Library | null {
-    const source = this.source;
-    const libraryId = source != null && 'libraryId' in source ? source.libraryId : this.rows.get(0)?.library_id;
-    return this.libraries.byId.get(libraryId ?? '') ?? null;
+  /**
+   * The file paths of the selected rows this client is actually holding.
+   *
+   * A **sample**, not the answer: a selection reaches rows that were never
+   * loaded or have since been evicted, so absence from here means "not seen"
+   * rather than "not selected". Only good for a guard that must not block what
+   * it cannot see - the server is what refuses.
+   */
+  @computed get selectedLoadedPaths(): string[] {
+    const paths: string[] = [];
+    for (const [index, row] of this.rows) if (this.selection.has(index)) paths.push(row.file_path);
+    for (const open of this.expansions.values()) {
+      for (const photo of open.photos) if (this.selectedMembers.has(photo.id)) paths.push(photo.file_path);
+    }
+    return paths;
   }
 
   // The shell reads this rather than detail?.library_id. As a computed it only

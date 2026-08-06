@@ -19,15 +19,21 @@ export const BinPage = observer(function BinPage(): JSX.Element {
 
   // Read off the library rather than stated: a library the app never writes to
   // has no bin folder, and the photographs it holds have not moved at all.
-  const binName = libraries.byId.get(libraryId)?.bin_name;
+  //
+  // Nothing at all until the library list lands, which on a reload straight onto
+  // this route is a paint or two: an absent library is not one without a bin, and
+  // saying the files never moved is the wrong half of the sentence to guess.
+  const library = libraries.byId.get(libraryId);
+  const line =
+    library == null ? ''
+    : library.bin_name == null ? 'Deleted photos. The RAW files still exist, left exactly where they were on disk.'
+    : `Deleted photos. The RAW files still exist, moved into a ${library.bin_name} folder on disk.`;
 
   return (
     <div className="pad pad--fill">
       <Heading>Bin</Heading>
       <Text variant="mono" as="p">
-        {binName == null
-          ? 'Deleted photos. The RAW files still exist, left exactly where they were on disk.'
-          : `Deleted photos. The RAW files still exist, moved into a ${binName} folder on disk.`}
+        {line}
       </Text>
 
       <GridControls />

@@ -44,7 +44,7 @@ export async function deleteGeneratedDirectory(dataPath: string, target: string)
 
 // The whole data directory, when its library is removed. Refuses while any
 // original is still inside it: nothing under `DATA_DIR` is written by anyone but
-// this app (§3), so an original there means the directory is not what it is
+// this app (§6), so an original there means the directory is not what it is
 // believed to be, and this is the one call here that cannot be undone.
 export async function deleteDataDirectory(dataPath: string): Promise<void> {
   const strays = await findOriginalsAnywhere(dataPath);

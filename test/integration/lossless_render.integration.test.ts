@@ -14,7 +14,7 @@ import { getDataPath, getRenditionPath } from '../../src/utils/paths';
 
 // The output path is the library's business now, so the test asks for it the
 // same way the server does rather than naming a file of its own. The id is what
-// that path is keyed by (§3), so each test needs its own or two files that clean
+// that path is keyed by (§6), so each test needs its own or two files that clean
 // up after themselves share a directory.
 function library(id: string, hdr: boolean): Library {
   return {

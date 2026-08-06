@@ -39,7 +39,7 @@ beforeEach(() => {
 
   db = createDatabase(':memory:');
   // `bin_name` is nullable now and NULL means "no bin", so a library that bins by
-  // moving has to say so (§2).
+  // moving has to say so (§4.1).
   db.query('INSERT INTO libraries (id, root_path, name, ordering, bin_name) VALUES (?, ?, ?, ?, ?)').run(
     LIB,
     root,

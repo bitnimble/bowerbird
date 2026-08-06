@@ -73,7 +73,7 @@ describe('PhotosService.get', () => {
   it('rebuilds a missing grid tile in the background, from the source the import used', async () => {
     const root = mkdtempSync(path.join(tmpdir(), 'bb-tile-'));
     // Its own id, because the tile the third assertion puts on disk has to land
-    // where the service looks for it - under DATA_DIR, keyed by library id (§3).
+    // where the service looks for it - under DATA_DIR, keyed by library id (§6).
     const lib = { ...library, id: 'photos-tile', root_path: root, rendition_source: 'render' as const };
     const data = getDataPath(lib);
     try {
@@ -241,7 +241,7 @@ describe('PhotosService.delete', () => {
       // Kept, not deleted: the Bin is browsable and restorable only if the
       // binned photos can still be seen. Under the library's real data directory,
       // or this asserts that a path nothing writes to still holds what the test
-      // put there (§3.1).
+      // put there (§6).
       expect(existsSync(path.join(dataDir, 'renditions', 'grid', 'p1.avif'))).toBe(true);
       expect(existsSync(path.join(dataDir, 'renditions', 'full', 'p1.avif'))).toBe(true);
       // The pre-delete path is recorded so restore can put the file back there,

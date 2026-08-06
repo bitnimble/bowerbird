@@ -17,7 +17,7 @@ export interface DiskFile {
 }
 
 // Which walk an entry came from, and so which set of rows it is about: the live
-// tree against the live rows, the bin against the binned ones (§6). Carried on
+// tree against the live rows, the bin against the binned ones (§9.1.1). Carried on
 // the entries rather than inferred from the path, because an in-place binned row
 // is `is_deleted = 1` with its file *outside* the bin, which position cannot
 // tell from a hand-restore.
@@ -51,7 +51,7 @@ export interface ModifiedEntry {
 /**
  * A move whose halves landed in different channels: the file entered or left the
  * bin by hand. `within` is a move inside the bin, which is structurally the same
- * question and equally not evidence about a live shoot folder (§6.4).
+ * question and equally not evidence about a live shoot folder (§9.1.1).
  */
 export interface Crossing {
   photoId: string;
@@ -76,7 +76,7 @@ export interface MoveEntry {
 
 export interface MoveResult {
   moves: MoveEntry[]; // live-to-live only, so shoot relocation can read them
-  crossings: Crossing[]; // §6.4
+  crossings: Crossing[]; // §9.1.1
   added: AddedEntry[]; // leftover additions (new photos)
   removed: RemovedEntry[]; // leftover removals (mark is_missing)
   modified: ModifiedEntry[]; // applied in place
@@ -85,7 +85,7 @@ export interface MoveResult {
 // Phase 1 diff (DESIGN §9.1). `presentPaths` is every supported file this
 // channel's walk found (cheap: readdir + stat) - the library minus the bin for
 // the live channel, the bin alone for the bin one - and `dbPhotos` narrows with
-// it. Pairing those two inputs is the invariant §5 has to keep: a path claimed
+// it. Pairing those two inputs is the invariant §9.1.1 has to keep: a path claimed
 // by a binned row is not the live channel's business. `changed` is only the files that are new or whose
 // stat changed, i.e. the ones actually opened + re-hashed; unchanged files are
 // omitted from `changed` and only appear in `presentPaths`, so they are never
@@ -169,7 +169,7 @@ export function detectMoves(diff: LibraryDiff, isInAlbum: (photoId: string) => b
   // photo, not a move source), but leave any other same-hash additions available
   // to pair as moves with their own removed counterparts. Scoped to the
   // modification's own channel, or a bin-side modification consumes a live
-  // addition (§6.1).
+  // addition (§9.1.1).
   for (const m of diff.modified) {
     if (m.oldHash == null) continue;
     const list = addedByHash.get(m.oldHash);
@@ -188,7 +188,7 @@ export function detectMoves(diff: LibraryDiff, isInAlbum: (photoId: string) => b
 
     // Channel first, then album membership. Today's sort was album membership
     // alone, which let a binned album member outrank a live non-album removal and
-    // take its addition - the swallow §6.4 promises could not happen, on the most
+    // take its addition - the swallow §9.1.1 promises could not happen, on the most
     // ordinary input.
     const pair = (r: RemovedEntry, a: AddedEntry): void => {
       usedRemoved.add(r);

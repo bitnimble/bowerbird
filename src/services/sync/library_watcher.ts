@@ -204,10 +204,12 @@ export class LibraryWatcher implements LibraryLifecycleListener {
   // what makes the rules hold; this is what makes them cheap.
   private ignoredPaths(library: Library, scope: LibraryScope): string[] {
     // The bin belongs here for the same reason an excluded folder does, and more
-    // so: it is one known path (§12.3) that only ever grows, mirroring the whole
-    // folder tree as photographs are binned, and nothing inside it is ever the
-    // library's to look at.
-    // A library with no bin has nothing to ignore there (§2.5).
+    // so: it is one known path (DESIGN §12.3) that only ever grows, mirroring the
+    // whole folder tree as photographs are binned. Not because nothing in it
+    // matters - the nightly full sync walks it (DESIGN §9.1.1) - but because
+    // watching a tree that only grows costs an inotify handle per directory to
+    // learn what that walk is going to read anyway.
+    // A library with no bin has nothing to ignore there (§4.1).
     const bin = getBinPath(library);
     const ignored = [path.join(library.root_path, '.bowerbird'), ...(bin == null ? [] : [bin])];
     for (const folder of scope.excluded) ignored.push(path.join(library.root_path, folder));

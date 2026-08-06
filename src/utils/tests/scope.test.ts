@@ -41,7 +41,7 @@ describe('isDirInScope', () => {
     expect(isDirInScope(renamed, 'Bin')).toBe(true);
   });
 
-  // Generated files live outside the root now (§3), so a legacy `.bowerbird`
+  // Generated files live outside the root now (§6), so a legacy `.bowerbird`
   // tree is skipped by the dotfolder rule and by nothing else.
   it('skips a legacy .bowerbird tree', () => {
     expect(isDirInScope(scope(), '.bowerbird')).toBe(false);

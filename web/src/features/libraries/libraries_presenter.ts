@@ -34,16 +34,24 @@ export class LibrariesPresenter {
     }
   }
 
-  async create(request: CreateLibraryRequest): Promise<boolean> {
+  /**
+   * False when the library was not created. `READ_ONLY` is handed back to the
+   * caller as well as reported, because it is the one refusal the dialog can act
+   * on: the root is not writable after all, and the answer is to tick the box
+   * rather than to read an error. `access(2)` can be wrong - an exotic ACL, a
+   * volume remounted between the listing and the create - so this is reachable
+   * even when the picker said the folder was writable.
+   */
+  async create(request: CreateLibraryRequest): Promise<{ created: boolean; readOnlyRoot: boolean }> {
     this.beginLoad();
     try {
       await api.createLibrary(request);
     } catch (err) {
       this.fail(message(err));
-      return false;
+      return { created: false, readOnlyRoot: err instanceof ApiError && err.code === 'READ_ONLY' };
     }
     await this.load();
-    return true;
+    return { created: true, readOnlyRoot: false };
   }
 
   async setOrdering(libraryId: string, ordering: Ordering): Promise<void> {

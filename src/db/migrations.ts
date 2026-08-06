@@ -49,9 +49,9 @@ CREATE TABLE IF NOT EXISTS libraries (
 );
 
 -- "This library is syncing", as a leased row rather than a file at the library
--- root (§8). It guards the catalogue rather than the tree, so it belongs in the
+-- root (§9.7). It guards the catalogue rather than the tree, so it belongs in the
 -- catalogue, and a timestamp means the same thing in every PID namespace where
--- the file lock's owner PID did not (§8.1). A row present at startup means
+-- the file lock's owner PID did not (§9.7). A row present at startup means
 -- "stale within the lease", not "syncing": a crashed process leaves its row and
 -- expiry clears it, so nothing deletes these on the way up.
 CREATE TABLE IF NOT EXISTS sync_locks (

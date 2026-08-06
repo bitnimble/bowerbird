@@ -89,7 +89,7 @@ export const AddLibraryDialog = observer(function AddLibraryDialog({
 
   async function submit(): Promise<void> {
     setSaving(true);
-    const created = await libraries.create({
+    const { created, readOnlyRoot } = await libraries.create({
       root_path: root,
       name: name.trim(),
       read_only: readOnlyLibrary,
@@ -99,6 +99,11 @@ export const AddLibraryDialog = observer(function AddLibraryDialog({
       mirror_shoots: mirrorShoots,
     });
     setSaving(false);
+    // The server found the root unwritable after all - `access(2)` can be wrong,
+    // and the listing may be of a different folder from the one typed. Ticking
+    // the box is the answer, so tick it: the reader can press Add again rather
+    // than work out what an error about permissions wants from them.
+    if (readOnlyRoot) setReadOnly(true);
     if (created) onOpenChange(false);
   }
 

@@ -1,4 +1,4 @@
-// Two roles for the two-process lease test (§8), because a same-process test
+// Two roles for the two-process lease test (§9.7), because a same-process test
 // cannot stage what it is about: `libraryMutex` is process-global, so in one
 // process it is the mutex and not the lease that would be doing the excluding.
 //

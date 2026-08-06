@@ -430,7 +430,7 @@ export class PhotosService {
   // Soft-delete: flag is_deleted, and where the library has a bin, move the RAW
   // into it (§12). The move is not what makes a photograph binned - the flag is;
   // the move exists so the next scan does not re-import the file, and the bin
-  // channel (§6) arranges that without one. Renditions are deliberately KEPT: the
+  // channel (§9.1.1) arranges that without one. Renditions are deliberately KEPT: the
   // Bin exists to be browsed and restored from, which is impossible without them,
   // and a WebP pair is ~1% of the RAW the Bin is already holding. A photo that
   // fails is reported and the rest still go.
@@ -446,7 +446,7 @@ export class PhotosService {
     let deleted = 0;
     for (const [libraryId, photos] of this.byLibrary(photoIds)) {
       // Re-read inside the mutex, not before it: `bin_name` can be renamed now
-      // (§2.4), and a queued bin move resuming with a stale name would recreate
+      // (§4.1), and a queued bin move resuming with a stale name would recreate
       // the old folder and land its RAWs where the bin channel never walks.
       await libraryMutex.run(libraryId, async () => {
         const library = this.libraries.getById(libraryId);
@@ -461,7 +461,7 @@ export class PhotosService {
               // is not missing photos the catalogue thinks are binned. A read-only
               // library takes the same branch for every row: nothing moves,
               // `file_path` is left alone, and `deleted_from_path` ends up equal
-              // to it (§4).
+              // to it (§12.1).
               const binDir = library.read_only ? null : getBinPath(library, path.dirname(photo.file_path));
               if (binDir == null || !existsSync(from)) {
                 moved.push({ id: photo.id, from, to: from, binRelPath: photo.file_path, wasAt: photo.file_path });

@@ -118,7 +118,7 @@ test('removing a library takes its data directory but not the photographs', asyn
   expect(existsSync(rawPhoto)).toBe(true);
 });
 
-// The data directory holds nothing but generated files (§3), so an original
+// The data directory holds nothing but generated files (§6), so an original
 // inside it means the directory is not what it is believed to be - and this is
 // the one call here that cannot be undone.
 test('a data directory holding an original is left alone', async () => {

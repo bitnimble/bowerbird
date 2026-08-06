@@ -15,7 +15,7 @@ export const CreateLibraryRequestSchema = z.object({
   root_path: z.string().min(1),
   // The app writes nothing under this root: no bin, no shoot folders, no moves.
   // Refused over a root that is actually writable only in the other direction -
-  // a false here over a root that is not is a READ_ONLY (§2.1).
+  // a false here over a root that is not is a READ_ONLY (§4.1).
   read_only: z.boolean().default(false),
   // A root that already holds this folder is refused rather than adopted, since
   // its contents would silently never import. Forced to null when `read_only` is
@@ -36,7 +36,7 @@ export type CreateLibraryRequest = z.infer<typeof CreateLibraryRequestSchema>;
 export const LibrarySchema = z.object({
   id: UuidSchema,
   root_path: z.string(),
-  // NULL means this library has no bin at all (§2). The bin folder's recorded
+  // NULL means this library has no bin at all (§4.1). The bin folder's recorded
   // identity is deliberately not here: it would leak into every API response.
   bin_name: z.string().nullable(),
   read_only: z.boolean().default(false),
@@ -114,7 +114,7 @@ export const UpdateLibraryRequestSchema = z.object({
   name: z.string().trim().min(1).optional(),
   read_only: z.boolean().optional(),
   // On a library that already has one this is a **rename**, which moves the
-  // folder (§2.4), not an error.
+  // folder (§4.1), not an error.
   bin_name: BinNameSchema.optional(),
   ordering: OrderingSchema.optional(),
   rendition_source: RenditionSourceSchema.optional(),

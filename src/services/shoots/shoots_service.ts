@@ -54,7 +54,7 @@ export class ShootsService {
     const parent = mostSpecificShoot(folderPath, this.shoots.listByLibrary(library.id));
 
     // A shoot *is* a folder and membership is decided by the folder a file sits
-    // in (§7), so a read-only library can only take the folders that are already
+    // in (§9.4), so a read-only library can only take the folders that are already
     // there. Mirroring already makes a shoot per folder holding photographs, so
     // most exist before anyone asks.
     const existed = existsSync(absFolder);
@@ -122,7 +122,7 @@ export class ShootsService {
         throw new AppError('VALIDATION_ERROR', `photo ${photo.id} is not in this shoot's library`);
       }
     }
-    // "Add these photographs to that shoot" *is* a file move (§7), so it is not
+    // "Add these photographs to that shoot" *is* a file move (§8.5), so it is not
     // something a read-only library can do. Albums are the grouping that needs no
     // write. Before `ensureDir`, which runs outside the mutex.
     if (library.read_only) {

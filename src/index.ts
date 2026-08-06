@@ -39,7 +39,7 @@ const log = new Logger('server');
 const requestLog = new Logger('http');
 
 // Before the database is opened, because it needs nothing but `config`: every
-// generated file in the install lands under here (§3), so a directory that
+// generated file in the install lands under here (§6), so a directory that
 // cannot be made or written is a deployment that will 404 every rendition it
 // ever builds.
 mkdirSync(config.dataDir, { recursive: true });
@@ -55,7 +55,7 @@ const settingsRepo = new SettingsRepository(db);
 const librariesRepo = new LibrariesRepository(db);
 // After the repository exists, because it reads every library's root. `DATA_DIR`
 // is an environment variable, so a catalogue that was valid yesterday can be
-// started against a data directory that now swallows one of its roots (§3.1).
+// started against a data directory that now swallows one of its roots (§6).
 for (const library of librariesRepo.list()) assertNoDataDirectoryOverlap(library.root_path);
 const photosRepo = new PhotosRepository(db);
 const shootsRepo = new ShootsRepository(db);

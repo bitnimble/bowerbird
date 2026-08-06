@@ -120,7 +120,7 @@ bowerbird/
 │   │   │   ├── sync_service.ts     # Library sync algorithm (integration-tested; needs bun:sqlite + LibRaw)
 │   │   │   └── tests/
 │   │   │       ├── sync_algorithm.test.ts  # pure diff / move-detection
-│   │   │       └── sync_lock.test.ts       # lock-file module
+│   │   │       └── sync_locks.test.ts      # the leased row (§9.7)
 │   │   └── processing/
 │   │       ├── processing_service.ts  # Rendition generation orchestrator
 │   │       ├── processing_worker.ts   # Bun worker thread for image processing
@@ -373,6 +373,21 @@ The exceptions to what the two library settings (§4.1) say in general. Both are
 - A `plain` rule is what makes "delete this shoot but keep its photos" survive the next sync; without it, mirroring would recreate the shoot within seconds and the delete would read as broken (§8.5).
 - Both rules are recorded whether or not `mirror_shoots` is on, because deleting a shoot is a statement about the folder rather than about the current setting, and turning mirroring on later should not resurrect a shoot the user has already dismissed.
 - The `PRIMARY KEY` means one rule per folder: `excluded` and `plain` are answers to the same question ("what is this folder to the library"), so the second write replaces the first rather than stacking.
+
+### 4.8 `sync_locks` table
+
+```sql
+CREATE TABLE sync_locks (
+  library_id    TEXT PRIMARY KEY REFERENCES libraries(id) ON DELETE CASCADE,
+  owner         TEXT NOT NULL,   -- UUID, one per acquire rather than per process
+  started_at    TEXT NOT NULL,   -- toISOString(), UTC, which is what makes the comparison valid
+  refreshed_at  TEXT NOT NULL
+);
+```
+
+"This library is syncing", as a leased row (§9.7). `owner` is minted per **acquire**, not per process: a per-process owner let a run whose lease had lapsed delete its successor's row on the way out, and let two syncs in one server both believe they held it. No `pid` column - a PID means nothing outside the namespace it was minted in, which is the whole reason this is not a file at the library root any more.
+
+A row present at startup means "stale within the lease", not "syncing": a crashed process leaves its row and expiry clears it, so startup deletes nothing.
 
 ---
 
@@ -1529,7 +1544,9 @@ Each entry point states what it will not do:
 | | Guard |
 |---|---|
 | `deleteGeneratedFile(dataPath, target)` | Target must resolve under `<dataPath>/renditions` or `<dataPath>/hdr`, and must not carry a supported RAW extension. `dataPath` comes from the caller's own library, so a path from elsewhere cannot satisfy it. |
+| `deleteGeneratedDirectory(dataPath, target)` | Same containment test, and `rmdir` rather than a recursive remove: a directory still holding a file it would not delete keeps it until a later sweep. |
 | `deleteDataDirectory(dataPath)` | Refuses while any supported file exists anywhere beneath, symlinks excluded. |
+| `deleteEmptyBinFolder(library, target)` | Target must be exactly this library's bin (§12.3), and `rmdir` again, so anything at all inside it stops the removal. Runs on the error path of a library create, where what it is about to delete is a directory the app believes it just made. |
 | `unlinkMovedFile(from, movedTo)` | Removes the source half of a move only once the destination exists, so a failed link or copy can never leave the move having consumed the file. |
 
 It runs on an interval rather than at startup: a restart is no evidence anything was orphaned, and in development that would sweep on every reload.

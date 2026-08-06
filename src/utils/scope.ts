@@ -10,7 +10,7 @@ import type { Library } from '../schemas/libraries';
 export interface LibraryScope {
   rootPath: string;
   includeSubfolders: boolean;
-  /** The library's bin folder, skipped along with everything under it (§12.3). Null when it has none (§2.5). */
+  /** The library's bin folder, skipped along with everything under it (§12.3). Null when it has none (§4.1). */
   binName: string | null;
   /** Root-relative folder paths carrying an `excluded` rule (§4.7). */
   excluded: ReadonlySet<string>;
@@ -31,7 +31,7 @@ export function libraryScope(
 
 // Hidden dirs (leading '.') at any depth: configuration and caches rather than
 // photographs, including a legacy `<root>/.bowerbird` from before generated files
-// left the library root (§3). See DESIGN §6.
+// left the library root. See DESIGN §6.
 function isHidden(name: string): boolean {
   return name.startsWith('.');
 }

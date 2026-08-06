@@ -22,7 +22,7 @@ import { dataPathForLibraryId } from '../../src/utils/paths';
 const settingsForTest = () => ({ get: () => DEFAULT_SETTINGS }) as unknown as SettingsRepository;
 
 const BODY = '0123456789ABCDEF'; // 16 bytes, so byte offsets are readable
-// Its own id, because the data directory is keyed by one now (§3).
+// Its own id, because the data directory is keyed by one now (§6).
 const LIB = 'image-range';
 
 let root: string;

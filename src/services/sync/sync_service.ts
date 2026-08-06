@@ -54,7 +54,7 @@ const SCAN_PROGRESS_EVERY = 500;
 
 // How often a run refreshes its lease, driven by the work rather than by a timer:
 // the scan and apply are synchronous, so a `setInterval` is starved precisely
-// when the lease matters (§8). A third of the lease, so two missed refresh points
+// when the lease matters (§9.7). A third of the lease, so two missed refresh points
 // still do not lose the lock.
 const LEASE_REFRESH_MS = LEASE_MS / 3;
 
@@ -180,7 +180,7 @@ export class SyncService implements LibraryLifecycleListener {
 
   /**
    * Called when a sync wrote a library's own row, which today means following a
-   * renamed bin folder (§6.3). The watcher builds its ignore list from
+   * renamed bin folder (§9.1.1). The watcher builds its ignore list from
    * `bin_name`, so without this it goes on ignoring a folder that is not there
    * and watching the one that is - after which every binning wakes a sync, and a
    * scoped sync over bin paths reads them as unclaimed live additions.
@@ -190,7 +190,7 @@ export class SyncService implements LibraryLifecycleListener {
   }
 
   async syncAll(): Promise<void> {
-    // Reclaim is by expiry now (§8), so a container killed and restarted within
+    // Reclaim is by expiry now (§9.7), so a container killed and restarted within
     // seconds finds its own dead run still holding the lease. Skipping silently
     // would drop that library until tomorrow, so the ones that were locked are
     // re-attempted at the end of the loop, by which point a real lease has lapsed.
@@ -215,7 +215,7 @@ export class SyncService implements LibraryLifecycleListener {
   }
 
   // Keeps this run's lease alive across a stretch of synchronous work, throttled
-  // so a per-file call costs a clock read (§8).
+  // so a per-file call costs a clock read (§9.7).
   private leaseKeeper(libraryId: string, owner: string): () => void {
     let refreshedAt = Date.now();
     return () => {
@@ -264,12 +264,14 @@ export class SyncService implements LibraryLifecycleListener {
     scopePaths?: readonly string[],
     trigger: SyncTrigger = 'api',
   ): Promise<LibrarySyncStatus> {
-    const library = this.libraries.getById(libraryId);
-    if (!library) throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
+    // Only to fail fast and to name the root in the log. The row this run reads
+    // its paths from is taken inside the mutex, below.
+    const known = this.libraries.getById(libraryId);
+    if (!known) throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
 
     log.info('sync start', {
       library: libraryId,
-      root: library.root_path,
+      root: known.root_path,
       trigger,
       mode: scopePaths == null ? 'full' : 'scoped',
       paths: scopePaths?.length,
@@ -303,6 +305,12 @@ export class SyncService implements LibraryLifecycleListener {
       const synced = await libraryMutex.run(libraryId, async () => {
       stopHolding();
       stopHolding = () => {};
+      // Re-read here, not from the snapshot taken before the mutex: `bin_name` is
+      // renameable (§4.1), and every path this run derives from it - the scope's
+      // skip rule, the bin walk, the resident/in-place split - would otherwise be
+      // built from a name the rename has already moved off.
+      const library = this.libraries.getById(libraryId);
+      if (library == null) throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
       this.statuses.set(libraryId, idle(libraryId, 'scanning'));
 
       // The scan is the long half of an import, and the status endpoint is the
@@ -371,7 +379,7 @@ export class SyncService implements LibraryLifecycleListener {
       };
 
       const scope = this.scopeFor(library);
-      // The rows whose paths are not the live channel's business (§5). Read on
+      // The rows whose paths are not the live channel's business (§9.1.1). Read on
       // every run, scoped or not: without them an in-place binned file the
       // watcher reports is an unclaimed addition and inserts a second live row
       // every time anyone touches it.
@@ -413,7 +421,7 @@ export class SyncService implements LibraryLifecycleListener {
       }
 
       // Whole-folder moves the inode can prove are resolved before the diff, not
-      // after it: an **in-place** binned row's file sits in the live tree (§4) and
+      // after it: an **in-place** binned row's file sits in the live tree (§12.1) and
       // moved with the folder, so a rename would leave its recorded path stale
       // while the file at the new path read as an unclaimed live addition - one
       // duplicate per in-place binned photograph. The identity needs only `dirs`
@@ -432,7 +440,7 @@ export class SyncService implements LibraryLifecycleListener {
         }
       }
 
-      // §6 does not run on a scoped sync: the watcher never reports events inside
+      // The bin channel does not run on a scoped sync: the watcher never reports events inside
       // the bin, so a scoped run has no evidence and must not conclude
       // `is_missing` on rows it did not look at. The rename detection above is the
       // one exception - it is a `dirs` test and costs nothing.
@@ -455,7 +463,7 @@ export class SyncService implements LibraryLifecycleListener {
         token.signal,
         reportScan,
         // The resumable first-scan path inserts every file it is handed as a new
-        // live photograph, which a file under the bin is not (§6.5). A library
+        // live photograph, which a file under the bin is not (§9.1.1). A library
         // with rows, with binned rows, or with anything already in its bin takes
         // the ordinary diff instead.
         dbPhotos.length === 0 && binned.length === 0 && binFiles.length === 0 ? insertBatch : null,
@@ -483,7 +491,7 @@ export class SyncService implements LibraryLifecycleListener {
       const liveChanged = changed.filter((c) => !isBinSide(c.filePath));
       const binChanged = changed.filter((c) => isBinSide(c.filePath));
 
-      // A row binned **in place** (§4) is not in the bin, so the bin's walk is not
+      // A row binned **in place** (§12.1) is not in the bin, so the bin's walk is not
       // the walk that answers for it - the live one is, its file being in the live
       // tree. Split rather than lumped in with the bin-resident rows: diffed
       // against the bin walk it would be absent from it every time and go
@@ -514,7 +522,7 @@ export class SyncService implements LibraryLifecycleListener {
         reappeared: [...live.reappeared, ...bin.reappeared, ...loose.reappeared],
       };
       const result = detectMoves(diff, (id) => this.albums.getAlbumIdsForPhoto(id).length > 0);
-      // A path test beats a hash test for the crossings §6.5 can still see: a file
+      // A path test beats a hash test for the crossings §9.1.1 can still see: a file
       // copied into the bin and the original deleted, or touched on the way, has a
       // different mtime and so a different hash.
       const imported = this.pairByPath(result, binRoot);
@@ -590,7 +598,7 @@ export class SyncService implements LibraryLifecycleListener {
         // rename the scan's paths are the new ones while the rows still hold the
         // old - so a `setMissing` issued first would match nothing and silently do
         // nothing, a guard designed to absorb a race quietly absorbing a correct
-        // write instead (§6.6).
+        // write instead (§9.1.1).
         if (followed.rename != null) {
           this.libraries.setBinName(libraryId, followed.rename.to);
           this.photos.rewriteBinnedPathPrefix(libraryId, followed.rename.from, followed.rename.to);
@@ -632,7 +640,7 @@ export class SyncService implements LibraryLifecycleListener {
           moved++;
         }
         for (const ad of result.added) {
-          if (ad.channel === 'bin') continue; // §6.5, below
+          if (ad.channel === 'bin') continue; // §9.1.1, below
           insertPhoto(ad, nowUtc);
           added++;
         }
@@ -656,7 +664,7 @@ export class SyncService implements LibraryLifecycleListener {
           // lines up may have moved: `setMissing` only marks a row whose
           // `file_path` still equals the path handed to it, so one keyed on the
           // pre-rename path matches nothing and silently does nothing - a guard
-          // written to absorb a race quietly absorbing a correct write (§6.6).
+          // written to absorb a race quietly absorbing a correct write (§9.1.1).
           // A frame deleted out of a folder that was renamed in the same window
           // would otherwise read as present with a 404ing original.
           const at = relocatedPath(rm.filePath);
@@ -666,7 +674,7 @@ export class SyncService implements LibraryLifecycleListener {
           if (!marked || rm.wasMissing) continue; // per-sync delta only (§9.4 step 5)
           // A binned row going missing is not a photograph leaving the library,
           // which is what `photosRemoved` counts: it is a change to a row that is
-          // already out of the collection (§6.6).
+          // already out of the collection (§9.1.1).
           if (rm.channel === 'bin') modified++;
           else removed++;
         }
@@ -939,7 +947,7 @@ export class SyncService implements LibraryLifecycleListener {
     return { ...status, photos_processing: stillPending, photos_processed: Math.max(0, queued - stillPending) };
   }
 
-  // A file that entered or left the bin by hand (§6.4). The `channel` tags gave
+  // A file that entered or left the bin by hand (§9.1.1). The `channel` tags gave
   // the direction, so there is no position to test - which matters because an
   // in-place binned row is `is_deleted = 1` with its file outside the bin,
   // indistinguishable by position from a hand-restore.
@@ -1130,13 +1138,13 @@ export class SyncService implements LibraryLifecycleListener {
     });
   }
 
-  // The bin's own walk, over the bin alone (§6.2). `scanLibraryTree` with a start
+  // The bin's own walk, over the bin alone (§9.1.1). `scanLibraryTree` with a start
   // directory rather than 45 forked lines of walk, which is also what keeps every
-  // relPath library-root relative, as every path in §6 requires.
+  // relPath library-root relative, as every path in the bin channel requires.
   //
-  // A missing bin root is a **skip, not a throw**: the state §2.4 hands to §6.3
+  // A missing bin root is a **skip, not a throw**: the state §4.1 hands to §9.1.1
   // for repair is exactly one where the folder is briefly not where the columns
-  // say, and a sync that dies there would make §2.4's safety argument circular.
+  // say, and a sync that dies there would make §4.1's safety argument circular.
   // Scoped to the bin, so an unreadable root still fails the run loudly rather
   // than reading as "the whole bin was deleted".
   private async scanBinTree(library: Library, binRoot: string, keepLease: () => void): Promise<ScannedFile[] | null> {
@@ -1148,7 +1156,7 @@ export class SyncService implements LibraryLifecycleListener {
       // folder's identity, so the next rename is still followable.
       //
       // Not for a read-only library, which keeps the bin it had from before the
-      // flag (§2.2) and is exactly the library whose photographer may have
+      // flag (§4.1) and is exactly the library whose photographer may have
       // deleted that folder on purpose. Making it again is a write under a root
       // this may not write to, and on a genuinely read-mounted volume it is an
       // error logged on every sync.
@@ -1170,7 +1178,7 @@ export class SyncService implements LibraryLifecycleListener {
 
   // A photographer renaming `<root>/Bin` to `<root>/Rubbish` has done to the bin
   // what §9.4.1 already handles for a shoot, and it is answered the same way: by
-  // the folder's inode identity (§6.3).
+  // the folder's inode identity (§9.1.1).
   //
   // The trigger is that identity turning up in `dirs`. A directory reaches `dirs`
   // only if the live walk did not skip it, and the walk skips by *name*, so a
@@ -1249,7 +1257,7 @@ export class SyncService implements LibraryLifecycleListener {
     return { root: target.relPath, rename: { from, to: target.relPath }, exclude: [target.relPath] };
   }
 
-  // §6.5's path test, run before anything is imported: if `<bin>/A/c.arw` is
+  // §9.1.1's path test, run before anything is imported: if `<bin>/A/c.arw` is
   // unclaimed and `A/c.arw` is an unpaired live removal, that **is** the crossing,
   // whatever the hashes say - the file may have been copied in and the original
   // deleted, or touched on the way. Without it that crossing produces a missing
@@ -1360,7 +1368,7 @@ export class SyncService implements LibraryLifecycleListener {
     for (const file of files) {
       if (signal.aborted) break;
       // This loop reports nothing, so it is the one blocking stretch of a scan
-      // with no other refresh point in it (§8).
+      // with no other refresh point in it (§9.7).
       keepLease();
       let stats;
       try {

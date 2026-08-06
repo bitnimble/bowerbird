@@ -2,7 +2,7 @@ import type { Database } from 'bun:sqlite';
 import type { Ordering, RenditionSource } from '../../schemas/common';
 import type { Library } from '../../schemas/libraries';
 
-/** The bin folder's identity, which is not on `Library` (§2). */
+/** The bin folder's identity, which is not on `Library` (§4.1). */
 export interface BinIdentity {
   dev: number | null;
   ino: number | null;

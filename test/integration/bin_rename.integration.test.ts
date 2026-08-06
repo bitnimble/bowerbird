@@ -1,4 +1,4 @@
-// Renaming the bin moves the folder (§2.4). The setting on its own was refused
+// Renaming the bin moves the folder (§4.1). The setting on its own was refused
 // because it would strand every already-binned RAW in a folder the scan then
 // walks straight back in; changing it and moving the folder together strands
 // nothing.

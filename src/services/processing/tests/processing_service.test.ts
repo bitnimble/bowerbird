@@ -10,7 +10,7 @@ import { ProcessingService } from '../processing_service';
 import type { RenditionJob, ProcessingResult, RenditionSource } from '../processing_types';
 
 const CRASH = 'crash-photo';
-// This file's own library id, because the data directory is keyed by one (§3)
+// This file's own library id, because the data directory is keyed by one (§6)
 // and two test files sharing a directory would race each other's cleanup.
 const LIB = 'processing-service-test';
 
@@ -70,7 +70,7 @@ describe('ProcessingService.processUnprocessed', () => {
     rmSync(dataPathForLibraryId(LIB), { recursive: true, force: true });
   });
 
-  // Generated files live outside the library root, keyed by library id (§3).
+  // Generated files live outside the library root, keyed by library id (§6).
   const renditions = (dir: string): string => path.join(dataPathForLibraryId(LIB), 'renditions', dir);
 
   function pending(photoId: string): PendingPhoto {

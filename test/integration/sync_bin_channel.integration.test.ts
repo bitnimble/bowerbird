@@ -1,7 +1,7 @@
 // The bin gets its own walk and its own diff (§6), so a binned file deleted,
 // changed, moved or renamed by hand is noticed instead of ignored - and, in a
 // read-only library, so a photograph binned in place is not re-imported as a
-// duplicate on every sync (§5).
+// duplicate on every sync (§9.1.1).
 //   docker exec bowerbird-dev bun test test/integration
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, statSync, unlinkSync, utimesSync } from 'node:fs';
@@ -44,6 +44,8 @@ const only = (): Row => {
   expect(all).toHaveLength(1);
   return all[0]!;
 };
+const shootOf = (id: string): string | null =>
+  (db.query('SELECT shoot_id FROM photos WHERE id = ?').get(id) as { shoot_id: string | null }).shoot_id;
 
 function makeLibrary(over: { read_only?: boolean; bin_name?: string | null } = {}): void {
   db.query('INSERT INTO libraries (id, root_path, name, ordering, bin_name, read_only) VALUES (?, ?, ?, ?, ?, ?)').run(
@@ -91,7 +93,7 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
-// The whole point of §5: the exclusion is the row, not the folder. Without it the
+// The whole point of the bin channel: the exclusion is the row, not the folder. Without it the
 // in-place binned file is in scope with no row to match and imports as a *new*
 // photograph on every sync, for ever.
 test('a photograph binned in place is not re-imported as a duplicate', async () => {
@@ -129,9 +131,30 @@ test('a binned file deleted by hand is marked missing rather than ignored', asyn
   expect(status.photos_removed).toBe(0);
 });
 
-// A file dropped into the bin by hand: the path test in §6.5 catches the crossing
-// even though the copy has its own mtime and so its own hash.
+// A file moved into the bin by hand pairs on its hash, which a rename preserves.
+// Its shoot membership is kept rather than nulled by the move's own write, which
+// is what an app-driven binning does.
 test('a file moved into the bin by hand becomes the binned row, not a second one', async () => {
+  makeLibrary();
+  mkdirSync(abs('Trip'));
+  copyFileSync(FIXTURE, abs('Trip/a.arw'));
+  await sync.syncLibrary(LIB);
+  const id = only().id;
+  const shoot = shootOf(id);
+  expect(shoot).not.toBeNull();
+
+  mkdirSync(abs('Bin/Trip'), { recursive: true });
+  renameSync(abs('Trip/a.arw'), abs('Bin/Trip/a.arw'));
+  await sync.syncLibrary(LIB);
+
+  expect(only()).toMatchObject({ id, file_path: 'Bin/Trip/a.arw', deleted_from_path: 'Trip/a.arw', is_deleted: 1 });
+  expect(shootOf(id)).toBe(shoot);
+});
+
+// Copied in and the original deleted, or touched on the way: the hashes differ,
+// so only the path test (§9.1.1) can see this is one photograph rather than a missing
+// live row plus a second already-binned one.
+test('a file copied into the bin with its own mtime is still one row, not two', async () => {
   makeLibrary();
   mkdirSync(abs('Trip'));
   copyFileSync(FIXTURE, abs('Trip/a.arw'));
@@ -139,23 +162,35 @@ test('a file moved into the bin by hand becomes the binned row, not a second one
   const id = only().id;
 
   mkdirSync(abs('Bin/Trip'), { recursive: true });
-  renameSync(abs('Trip/a.arw'), abs('Bin/Trip/a.arw'));
+  copyFileSync(abs('Trip/a.arw'), abs('Bin/Trip/a.arw'));
+  // A fresh mtime, which is what a copy leaves and what the hash is a digest of.
+  utimesSync(abs('Bin/Trip/a.arw'), new Date(), new Date());
+  unlinkSync(abs('Trip/a.arw'));
+
   await sync.syncLibrary(LIB);
 
   expect(only()).toMatchObject({ id, file_path: 'Bin/Trip/a.arw', deleted_from_path: 'Trip/a.arw', is_deleted: 1 });
 });
 
-test('a file taken back out of the bin by hand goes live again', async () => {
+test('a file taken back out of the bin by hand goes live again, in the shoot it landed in', async () => {
   makeLibrary();
+  mkdirSync(abs('Keepers'));
   copyFileSync(FIXTURE, abs('a.arw'));
+  copyFileSync(FIXTURE, abs('Keepers/kept.arw')); // so `Keepers` is a mirrored shoot
   await sync.syncLibrary(LIB);
-  const id = only().id;
+  const id = rows().find((r) => r.file_path === 'a.arw')!.id;
   await service.delete([id]);
+  expect(shootOf(id)).toBeNull();
 
-  renameSync(abs('Bin/a.arw'), abs('a.arw'));
+  // Back out of the bin, and into a folder that is a shoot: `markRestored` does
+  // not touch `shoot_id`, and mirroring only restates claims under folders it has
+  // just made - so without the crossing setting it the photograph would land in
+  // the grid with no shoot for good.
+  renameSync(abs('Bin/a.arw'), abs('Keepers/a.arw'));
   await sync.syncLibrary(LIB);
 
-  expect(only()).toMatchObject({ id, file_path: 'a.arw', is_deleted: 0, is_missing: 0 });
+  expect(rows().find((r) => r.id === id)).toMatchObject({ file_path: 'Keepers/a.arw', is_deleted: 0, is_missing: 0 });
+  expect(shootOf(id)).toBe(shootOf(rows().find((r) => r.file_path === 'Keepers/kept.arw')!.id));
   // The renditions it never had while it was binned are owed again.
   const flags = db.query('SELECT needs_tile, needs_renditions FROM photos WHERE id = ?').get(id) as {
     needs_tile: number;
@@ -339,7 +374,7 @@ test('a hand-renamed shoot folder keeps its in-place binned rows reachable', asy
 });
 
 // The run that finds the bin gone has no evidence about the files that were in
-// it: "the folder is not there" is the state §2.4 hands §6.3 for repair as much
+// it: "the folder is not there" is the state a bin rename (§4.1) hands the channel for repair as much
 // as it is a deletion.
 test('a deleted bin folder skips the channel rather than marking every binned row missing', async () => {
   makeLibrary();

@@ -50,17 +50,17 @@ export interface TreeScan {
 // scan already does, for the folder identities relocation reads.
 //
 // `startDir` is root-relative and defaults to the whole library. The bin channel
-// walks its own subtree through it (§6.2), which is what keeps every relPath
+// walks its own subtree through it (§9.1.1), which is what keeps every relPath
 // library-root relative on both channels.
 //
 // `onDir` is called as each directory is entered: the walk is one of the four
-// stretches long enough for a sync lease to lapse inside it (§8).
+// stretches long enough for a sync lease to lapse inside it (§9.7).
 //
 // `descend` overrides which directories the walk enters. The bin channel passes
 // one, because inside the bin none of the library's rules apply: the bin mirrors
 // folders even in a root-only library, an excluded folder's binned frames are
 // still the bin's, and a bin the photographer named with a leading dot is not a
-// dotfolder to skip - it is the tree being walked (§6.2).
+// dotfolder to skip - it is the tree being walked (§9.1.1).
 export async function scanLibraryTree(
   scope: LibraryScope,
   startDir = '',

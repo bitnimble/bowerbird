@@ -195,6 +195,9 @@ function hdrCapability(): string {
 const FolderSettings = observer(function FolderSettings({ library }: { library: Library }): JSX.Element {
   const { libraries } = usePresenters();
   const defaults = useLibrariesStore().defaults;
+  // Held here rather than in the field, because the checkbox above sends it too.
+  const [binDraft, setBinDraft] = useState(library.bin_name ?? 'Bin');
+  useEffect(() => setBinDraft(library.bin_name ?? 'Bin'), [library.bin_name]);
 
   return (
     <div className="panel">
@@ -246,11 +249,14 @@ const FolderSettings = observer(function FolderSettings({ library }: { library: 
           type="checkbox"
           aria-label="Don't change anything in this folder"
           checked={library.read_only}
-          onChange={(e) => void libraries.setReadOnly(library.id, e.currentTarget.checked, library.bin_name ?? 'Bin')}
+          // Letting the app write again means making a bin, so the name goes with
+          // the request - whatever is in the field below, which is where the
+          // reader picks another when the root already holds one of that name.
+          onChange={(e) => void libraries.setReadOnly(library.id, e.currentTarget.checked, binDraft.trim() || 'Bin')}
         />
       </SettingRow>
 
-      <BinNameField library={library} />
+      <BinNameField library={library} draft={binDraft} onDraft={setBinDraft} />
       <FolderRuleList library={library} />
     </div>
   );
@@ -259,15 +265,30 @@ const FolderSettings = observer(function FolderSettings({ library }: { library: 
 // Renaming the bin moves the folder, which is why this can exist at all: the
 // setting on its own would strand every already-binned RAW in a folder the scan
 // walks straight back in.
-const BinNameField = observer(function BinNameField({ library }: { library: Library }): JSX.Element {
+const BinNameField = observer(function BinNameField({
+  library,
+  draft,
+  onDraft,
+}: {
+  library: Library;
+  draft: string;
+  onDraft: (value: string) => void;
+}): JSX.Element {
   const { libraries } = usePresenters();
-  const [draft, setDraft] = useState(library.bin_name ?? '');
-  useEffect(() => setDraft(library.bin_name ?? ''), [library.bin_name]);
+
+  // Editable for a library that has no bin, even while it is read-only: clearing
+  // that flag has to name the folder it is about to make, and the root may
+  // already hold one called `Bin` - which is refused. Left disabled, the only way
+  // out of that would be to remove the library and add it again.
+  const noBinYet = library.bin_name == null;
+  const locked = library.read_only && !noBinYet;
 
   function commit(): void {
     const next = draft.trim();
-    if (next === '' || next === library.bin_name) {
-      setDraft(library.bin_name ?? '');
+    // Nothing to rename while there is no folder: the name is only a choice for
+    // the checkbox above to send when it makes one.
+    if (next === '' || next === library.bin_name || noBinYet) {
+      if (next === '') onDraft(library.bin_name ?? 'Bin');
       return;
     }
     void libraries.setBinName(library.id, next);
@@ -276,14 +297,18 @@ const BinNameField = observer(function BinNameField({ library }: { library: Libr
   return (
     <SettingRow
       label="Bin folder name"
-      hint="Deleted photographs are moved into a folder of this name, beside the photographs they came from. Renaming it here moves the folder on disk."
-      disabledReason={library.read_only ? 'This library is read-only, so it has no bin folder.' : undefined}
+      hint={
+        noBinYet
+          ? 'This library has no bin folder. Name the one to make when you let the app write here again; deleted photographs move into it.'
+          : 'Deleted photographs are moved into a folder of this name, beside the photographs they came from. Renaming it here moves the folder on disk.'
+      }
+      disabledReason={locked ? 'This library is read-only, so its bin folder cannot be moved.' : undefined}
     >
       <TextField
         label="Bin folder name"
         value={draft}
-        disabled={library.read_only}
-        onChange={setDraft}
+        disabled={locked}
+        onChange={onDraft}
         onBlur={commit}
         onKeyDown={(e) => e.key === 'Enter' && commit()}
       />

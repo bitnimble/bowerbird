@@ -8,7 +8,7 @@ export type ErrorCode =
   | 'CONFLICT'
   // The library forbids the write this needed. Distinct from VALIDATION_ERROR
   // because the request is well-formed and would have succeeded against another
-  // library (§10).
+  // library (§14).
   | 'READ_ONLY'
   | 'IO_ERROR'
   | 'SYNC_IN_PROGRESS'

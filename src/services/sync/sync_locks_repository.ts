@@ -2,13 +2,13 @@ import type { Database } from 'bun:sqlite';
 
 // How long a lease stands without being refreshed. Long enough that a slow
 // decode between two refresh points cannot lose the lock, short enough that a
-// killed container's library is syncable again within a restart (§8).
+// killed container's library is syncable again within a restart (§9.7).
 export const LEASE_MS = 30_000;
 
-// The cross-process "is this library syncing" claim (§8). A row rather than a
+// The cross-process "is this library syncing" claim (§9.7). A row rather than a
 // file at the library root: it protects the catalogue, not the tree, so a
 // read-only library needs no special case and a PID from another namespace never
-// enters into it (§8.1).
+// enters into it (§9.7).
 export class SyncLocksRepository {
   constructor(private readonly db: Database) {}
 

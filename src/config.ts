@@ -33,7 +33,7 @@ export const config = {
   port: argPort() ?? envPort(),
   host: process.env.HOST ?? '0.0.0.0',
   dbPath: process.env.DB_PATH ?? './bowerbird.db',
-  // Every generated file, one subdirectory per library (§3). Resolved absolute
+  // Every generated file, one subdirectory per library (§6). Resolved absolute
   // at load, so nothing downstream has to care what the working directory was.
   dataDir: path.resolve(process.env.DATA_DIR ?? './data'),
 } as const;

@@ -23,7 +23,7 @@ const settingsForTest = () => ({ get: () => DEFAULT_SETTINGS }) as unknown as Se
 // instead left every one of these tests failing with a 500.
 function buildApp(root: string, photo: BasicPhoto | null, renditionHdr = false) {
   const library: Library = {
-    // Per root, because the data directory is keyed by library id now (§3) and
+    // Per root, because the data directory is keyed by library id now (§6) and
     // these tests clean up after themselves.
     id: path.basename(root),
     root_path: root,
@@ -58,7 +58,7 @@ function photo(over: Partial<BasicPhoto>): BasicPhoto {
 }
 
 // Where this root's library keeps its generated files, which is outside the root
-// (§3): the tests write renditions the same way the server reads them.
+// (§6): the tests write renditions the same way the server reads them.
 function renditions(root: string, dir: string): string {
   return path.join(dataPathForLibraryId(path.basename(root)), 'renditions', dir);
 }

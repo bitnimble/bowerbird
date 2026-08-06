@@ -151,12 +151,12 @@ describe('LibrariesService.create', () => {
       expect(library.ordering).toBe('added_asc');
       expect(library.id).toMatch(/^[0-9a-f-]{36}$/);
       // The bin folder's identity rides into the INSERT, since the row it would
-      // otherwise be written to does not exist yet (§2.3).
+      // otherwise be written to does not exist yet (§12.3).
       expect(insert).toHaveBeenCalledWith({ ...library, identity: expect.objectContaining({ ino: expect.any(Number) }) });
       // The bin exists from the moment the library does.
       expect(existsSync(path.join(root, 'Bin'))).toBe(true);
       // Outside the root, keyed by library id, with every rendition directory
-      // made up front rather than lazily by a writer (§3).
+      // made up front rather than lazily by a writer (§6).
       const data = getDataPath(library);
       expect(containsPath(root, data)).toBe(false);
       for (const dir of renditionDirs()) expect(existsSync(path.join(data, 'renditions', dir))).toBe(true);

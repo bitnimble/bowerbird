@@ -10,7 +10,7 @@ export const BrowseResponseSchema = z.object({
   parent: z.string().nullable(),
   directories: z.array(z.object({ name: z.string(), path: z.string() })),
   // Whether the app could write in the folder being listed, so the add-library
-  // dialog can tick "don't change anything in this folder" for it (§2.1). One
+  // dialog can tick "don't change anything in this folder" for it (§4.1). One
   // boolean per listing, not per child entry, and optional because the
   // in-library picker shares this shape and has nothing to say about it.
   writable: z.boolean().optional(),
