@@ -156,6 +156,11 @@ COPY --chown=bun:bun native/entrypoint.sh native/verify_shim.ts ./native/
 RUN chmod +x ./native/entrypoint.sh
 COPY --chown=bun:bun package.json bun.lock tsconfig.json ./
 COPY --chown=bun:bun src ./src
+# `bun run restore` is the documented way back from a bad catalogue (§4.9), and the
+# backups it reads are on a named volume inside this image's world. Left out, the
+# only supported deployment is the one deployment that cannot restore its own
+# backups, discovered during the outage that needs it.
+COPY --chown=bun:bun scripts/restore-backup.ts ./scripts/
 EXPOSE 3000
 
 # Everything the app writes lands on a bind mount - the photo library, its

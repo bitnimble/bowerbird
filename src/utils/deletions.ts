@@ -70,6 +70,16 @@ export async function deleteEmptyBinFolder(library: Pick<Library, 'root_path' | 
   await rmdir(target);
 }
 
+// The copy a restore stages beside the catalogue before renaming it into place
+// (§4.9), when the restore does not get that far. Named from the catalogue it is
+// destined for, which is the whole guard: nothing else can be spelled that way.
+export async function deleteRestoreStaging(dbPath: string, target: string): Promise<void> {
+  if (!path.resolve(target).startsWith(`${path.resolve(dbPath)}.restoring-`)) {
+    throw new AppError('IO_ERROR', `refusing to delete ${target}: not a restore staging file for ${dbPath}`);
+  }
+  await rm(target, { force: true });
+}
+
 // A snapshot of the catalogue, rotated out or abandoned part-written (§4.9).
 // Directly inside the backup directory rather than anywhere beneath it: that
 // directory holds nothing but flat files this app wrote, and a subtree under it

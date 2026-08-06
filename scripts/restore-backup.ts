@@ -1,6 +1,6 @@
-// Put a catalogue backup back (§4.9). Stop the server first: it holds the file
-// this replaces, and a running one would keep writing to the catalogue being
-// moved aside.
+// Put a catalogue backup back (§4.9). Stop the server first - it holds the file
+// this replaces - though that is enforced rather than asked for: a restore under a
+// running server is refused.
 //
 //   bun run restore              # list what there is
 //   bun run restore <file>       # restore that one, by the name listed or by path

@@ -1,10 +1,11 @@
 // Putting a snapshot back (§4.9). Offline, from `scripts/restore-backup.ts`,
 // because the running server holds the file this replaces.
 import { Database } from 'bun:sqlite';
-import { existsSync } from 'node:fs';
-import { copyFile, rename } from 'node:fs/promises';
+import { existsSync, realpathSync } from 'node:fs';
+import { rename } from 'node:fs/promises';
 import path from 'node:path';
 import { LATEST_USER_VERSION } from '../../db/migrations';
+import { deleteRestoreStaging } from '../../utils/deletions';
 
 // SQLite derives these names from the database's filename, so a `-wal` belonging
 // to the catalogue being replaced is replayed over the restored file on the next
@@ -12,7 +13,7 @@ import { LATEST_USER_VERSION } from '../../db/migrations';
 const SIDECARS = ['-wal', '-shm'];
 
 export interface RestoreResult {
-  /** Where the previous catalogue and its sidecars were parked, or null if there were none. */
+  /** Where the previous catalogue was parked, or null if there was none to park. */
   movedAside: string | null;
   version: number;
 }
@@ -35,8 +36,12 @@ function openBackup(backupPath: string): Database {
 // bring it forward. The other direction cannot work - this build's migrations have
 // no route to a schema they predate - and it would surface as a corrupt-looking
 // catalogue rather than an error, so it is refused.
-function readVersion(backupPath: string): number {
-  const db = openBackup(backupPath);
+//
+// The check is weaker than it looks and is a backstop rather than a guarantee:
+// only one migration stamps `user_version` at all, the rest recognising their own
+// work from the schema, so a future build that adds no stamped migration produces
+// backups this cannot tell from its own (§4.9).
+function checkVersion(db: Database, backupPath: string): number {
   let check: string;
   let version: number;
   try {
@@ -44,8 +49,6 @@ function readVersion(backupPath: string): number {
     ({ user_version: version } = db.query('PRAGMA user_version').get() as { user_version: number });
   } catch (err) {
     throw new Error(`${backupPath} is not intact: ${reason(err)}`);
-  } finally {
-    db.close();
   }
   if (check !== 'ok') throw new Error(`${backupPath} is not intact: quick_check says ${check}`);
   if (version > LATEST_USER_VERSION) {
@@ -56,31 +59,92 @@ function readVersion(backupPath: string): number {
   return version;
 }
 
-export async function restoreBackup(dbPath: string, backupPath: string): Promise<RestoreResult> {
-  if (!existsSync(backupPath)) throw new Error(`no such backup: ${backupPath}`);
-  if (path.resolve(backupPath) === path.resolve(dbPath)) throw new Error('the backup and the catalogue are the same file');
-  // Both refusals land before anything on disk moves.
-  const version = readVersion(backupPath);
+// A restore while the server is up looks like it worked and throws away everything
+// written afterwards: the server keeps writing through its open handle to the inode
+// this moves aside, so its reads stay right, its shutdown is clean, and the work is
+// discarded at the next start. `restart: unless-stopped` in the compose file means
+// "stop the server first" cannot be left to a comment.
+//
+// Exclusive locking rather than a pidfile, because it asks the question that
+// matters - can anyone else be writing to this catalogue - of the database itself,
+// and gets it right for a server in another container sharing the volume.
+function refuseIfInUse(dbPath: string): void {
+  if (!existsSync(dbPath)) return;
+  const probe = new Database(dbPath);
+  try {
+    probe.exec('PRAGMA busy_timeout = 0;');
+    probe.exec('PRAGMA locking_mode = EXCLUSIVE;');
+    probe.exec('BEGIN IMMEDIATE');
+    probe.exec('COMMIT');
+  } catch {
+    throw new Error(`${dbPath} is open in another process. Stop Bowerbird first, or the work it is holding will be lost.`);
+  } finally {
+    probe.close();
+  }
+}
 
-  // Staged beside the catalogue and renamed in, rather than copied over it: a copy
-  // is not atomic, so a full disk partway through would leave a truncated file
-  // where the catalogue used to be, after the real one had already been moved away.
-  const staged = `${dbPath}.restoring`;
-  await copyFile(backupPath, staged);
+// A symlinked DB_PATH is a deliberate placement - the catalogue lives on another
+// volume - and writing the restored file at the link's own path silently relocates
+// it, orphaning the real one where nothing will ever look again.
+function resolveCatalogue(dbPath: string): string {
+  return existsSync(dbPath) ? realpathSync(dbPath) : path.resolve(dbPath);
+}
+
+export async function restoreBackup(rawDbPath: string, backupPath: string): Promise<RestoreResult> {
+  if (!existsSync(backupPath)) throw new Error(`no such backup: ${backupPath}`);
+  const dbPath = resolveCatalogue(rawDbPath);
+  if (path.resolve(backupPath) === dbPath) throw new Error('the backup and the catalogue are the same file');
+
+  // Every refusal lands before anything on disk moves.
+  refuseIfInUse(dbPath);
+
+  const staged = `${dbPath}.restoring-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+  const source = openBackup(backupPath);
+  let version: number;
+  try {
+    version = checkVersion(source, backupPath);
+    // `VACUUM INTO` rather than a file copy, for the same reason the backup uses it:
+    // a copy takes the main file alone, and a catalogue's committed work can be
+    // almost entirely in its `-wal`. Copying one of those restores an empty
+    // database that passes every check - measured, a 4KB main file beside a 1.8MB
+    // WAL holding all 300 rows, and the copy had not even the table. That is not a
+    // hypothetical here: the two sources this is pointed at are a catalogue parked
+    // by an earlier restore, which keeps its `-wal` by design, and a copy rescued
+    // from elsewhere, which normally arrives with one.
+    source.run('VACUUM INTO ?', [staged]);
+  } catch (err) {
+    source.close();
+    await deleteRestoreStaging(dbPath, staged).catch(() => {});
+    throw err;
+  }
+  source.close();
 
   const aside = `${dbPath}.pre-restore-${new Date().toISOString().replace(/[:.]/g, '-')}`;
-  let movedAside: string | null = null;
-  // The empty suffix is the catalogue itself, moved first. The sidecars move
-  // whether or not it is still there, which is the case that actually happens:
-  // someone whose catalogue looks broken deletes it and restores, and a `-wal` left
-  // behind then replays the broken catalogue straight back over the restore, with
-  // nothing about the result looking wrong.
-  for (const suffix of ['', ...SIDECARS]) {
-    if (!existsSync(`${dbPath}${suffix}`)) continue;
-    await rename(`${dbPath}${suffix}`, `${aside}${suffix}`);
-    movedAside = aside;
+  // The empty suffix is the catalogue itself, moved first. The sidecars move whether
+  // or not it is still there, which is the case that actually happens: someone whose
+  // catalogue looks broken deletes it and restores, and a `-wal` left behind then
+  // replays the broken catalogue straight back over the restore, with nothing about
+  // the result looking wrong.
+  const moved: string[] = [];
+  try {
+    for (const suffix of ['', ...SIDECARS]) {
+      if (!existsSync(`${dbPath}${suffix}`)) continue;
+      await rename(`${dbPath}${suffix}`, `${aside}${suffix}`);
+      moved.push(suffix);
+    }
+    await rename(staged, dbPath);
+  } catch (err) {
+    // Failing here would otherwise leave no catalogue at all: the real one renamed
+    // to a name nothing has been told about, and a server that creates a fresh empty
+    // one at the next start. Put back what was moved before giving up.
+    for (const suffix of moved.reverse()) {
+      await rename(`${aside}${suffix}`, `${dbPath}${suffix}`).catch(() => {});
+    }
+    await deleteRestoreStaging(dbPath, staged).catch(() => {});
+    throw new Error(`the restore was undone: ${reason(err)}`);
   }
 
-  await rename(staged, dbPath);
-  return { movedAside, version };
+  // Only when the catalogue itself was parked. A lone `-wal` moved out of the way is
+  // not something to point anyone at as "the catalogue that was there".
+  return { movedAside: moved.includes('') ? aside : null, version };
 }
