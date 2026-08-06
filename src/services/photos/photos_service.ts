@@ -432,7 +432,7 @@ export class PhotosService {
   //
   // Everything that is not per-file is done per *batch* (§12.1): the rows are
   // read in one query rather than one detail payload each, each bin directory is
-  // created once however many photos land in it, the library's sync lock is taken
+  // created once however many photos land in it, the library mutex is taken
   // once, and the flags are committed a chunk at a time. Done per photo - which is what
   // this was - binning a selection of a million cost 34 minutes before a single
   // byte moved on disk.

@@ -1077,11 +1077,11 @@ the bin, which stops being true when nothing moved it there:
 - `photos_service.ts:428-438` and `:535-540`, `delete`'s and `restore`'s doc comments,
   which describe moving the RAW to a Bin as what binning *is*.
 
-`delete`'s comment is **already** wrong on a second count, before this design touches
-it: "the library's sync lock is taken once" describes a lock the method does not take -
+`delete`'s comment was **already** wrong on a second count, before this design touched
+it: "the library's sync lock is taken once" described a lock the method does not take -
 `:447` takes `libraryMutex.run`. Harmless today and actively misleading after §8, where
 "the sync lock" becomes a row and the distinction between the two is the whole of §8's
-argument. Fix it in passing.
+argument, so it is already corrected on `main` rather than left for the implementation.
 
 **Falsified by the table-driven exclusion (§5)**:
 
