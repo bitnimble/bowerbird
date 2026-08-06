@@ -14,7 +14,9 @@ services:
     environment:
       HOST: 0.0.0.0
       PORT: 3000
-      # The catalogue and the generated files, on the two volumes below.
+      # The catalogue and the generated files, on the two volumes below. The
+      # rolling backups (§4.9) sit beside the catalogue in /config/backups, which
+      # is why they are on this volume and not the disposable one.
       DB_PATH: /config/bowerbird.db
       # Container-side and fixed. What varies is which host directory or volume
       # is mounted here, which is DATA_VOLUME below: one name for both would have

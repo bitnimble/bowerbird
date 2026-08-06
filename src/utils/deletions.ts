@@ -70,6 +70,22 @@ export async function deleteEmptyBinFolder(library: Pick<Library, 'root_path' | 
   await rmdir(target);
 }
 
+// A snapshot of the catalogue, rotated out or abandoned part-written (§4.9).
+// Directly inside the backup directory rather than anywhere beneath it: that
+// directory holds nothing but flat files this app wrote, and a subtree under it
+// is something somebody else put there.
+export async function deleteBackupFile(backupsDir: string, target: string): Promise<void> {
+  if (path.dirname(path.resolve(target)) !== path.resolve(backupsDir)) {
+    throw new AppError('IO_ERROR', `refusing to delete ${target}: not a file in ${backupsDir}`);
+  }
+  // The same last word as everywhere else: whatever a directory is supposed to
+  // hold, a RAW in it is an original.
+  if (isSupportedFile(target)) {
+    throw new AppError('IO_ERROR', `refusing to delete ${target}: it is an original`);
+  }
+  await rm(target, { force: true });
+}
+
 // The source half of a move: `movedTo` already holds the bytes (a hard link to
 // the same inode, or a completed copy), so removing `from` loses nothing. That
 // the destination exists is the entire safety argument, which is why it is

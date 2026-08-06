@@ -389,6 +389,43 @@ CREATE TABLE sync_locks (
 
 A row present at startup means "stale within the lease", not "syncing": a crashed process leaves its row and expiry clears it, so startup deletes nothing.
 
+### 4.9 Backups and restore
+
+The catalogue is the only copy of everything about the photographs that is not in the photographs: ratings, notes, verdicts, album membership, shoot assignments, stacks, and edits, which are stored here with no sidecar file on disk to fall back on. A rescan brings back the files and none of that, so the database is backed up on a schedule of its own (`backup_every_days`, `backup_keep`, §15); daily, seven kept, both editable and `0` days turning it off.
+
+**`VACUUM INTO`, not a file copy.** It reads a consistent snapshot inside a read transaction, so nothing has to be paused around it, and it writes one self-contained file; no `-wal` to be restored alongside it and no way to restore half a pair. The path is bound rather than interpolated.
+
+**Atomic by construction.** `VACUUM INTO` refuses an existing destination, so each run writes a dot-prefixed working file and renames it into place only once it has been verified. Rename is atomic: nothing that has ever appeared under a real backup name is a partial file, and a partial backup that looks whole is worse than no backup at all. Whatever goes wrong, a refusal, a full disk partway through, a dead thread, the caller removes the working file, which is the size of the catalogue and which nothing else would ever come looking for.
+
+**On a thread of its own** (`backup_worker.ts`). bun:sqlite is synchronous and the main thread owns all DB writes (§10.2), so vacuuming from the server's connection would hold the event loop for the whole copy; seconds, on a large catalogue, of a server that answers nothing. The worker opens its own read-only connection; a read transaction blocks no writer. A run still in flight when the next is due is skipped rather than stacked.
+
+**Verified before it counts.** The snapshot is reopened for `PRAGMA quick_check` and its `user_version` compared against the source's; a copy of the wrong database would pass the integrity check alone. Cheap, and the only thing standing between a backup that was never readable and finding that out at restore time. Free space is checked against the *backup* directory before the write, since it can be a different volume from the database's.
+
+**The WAL it inflates is bounded by `journal_size_limit`, not by a checkpoint.** A checkpoint rewinds the WAL to be overwritten from the start rather than shrinking it, so the file keeps the high-water mark of the worst burst the database has ever seen, for the life of that database. Under ordinary load that mark is just the autocheckpoint threshold: measured, 40MB written in small commits holds the WAL at 3.9MB, however long it goes on. What overshoots it is a long-lived *reader*, which pins the snapshot a checkpoint would have to move past; and this backup's read transaction is exactly one. With a reader held open across that same 40MB the WAL reached 120MB and stayed there, because every version of every page touched has to be kept while somebody may still read the old one.
+
+So `connection.ts` sets `journal_size_limit` to 16MB, four times the autocheckpoint threshold: clear of anything normal operation reaches, low enough to reclaim a blowup like that. The alternative, a periodic `wal_checkpoint(TRUNCATE)` when the server looks idle, needs idle detection to be safe, because TRUNCATE waits out every reader and takes the write lock. The limit needs none: it is applied at the next WAL reset, so the space comes back once writing resumes and wraps, with nothing blocking.
+
+**Caught up at startup, not just on a timer.** The orphan sweep can wait for its interval to come round, because a restart is not evidence that anything was orphaned. A backup cannot: a timer alone means a laptop shut each night, or a server restarted more often than the interval, reaches its first backup never. The age of the newest snapshot decides, not this process's uptime, which is also what keeps a development reload from taking one every time.
+
+**Beside the database, in `backups/`.** Deliberately *not* under `DATA_DIR`, which is where everything else this app generates lives: that directory is disposable by design (§6) - removing a library takes its subtree, and a user is free to delete the lot by hand to reclaim space, both of which must cost only renders. A backup is the one generated file for which that is false, so it belongs beside the thing it is a copy of. In the container that is the difference between the `/config` volume and the `/data` one.
+
+Rotation keeps the newest `backup_keep` and deletes the rest, matching on the database's own filename so two catalogues sharing a directory do not rotate each other's files. Names carry an ISO stamp, so the directory sorts chronologically and rotation needs no `stat`.
+
+**Restore is offline** (`scripts/restore-backup.ts`, `bun run restore`), because the running server holds the file it replaces:
+
+```bash
+bun run restore                # list what there is
+bun run restore latest         # or a name exactly as that listing prints it
+```
+
+A bare name is resolved against the backup directory rather than the shell's working directory; following the tool's own output would otherwise fail with "no such backup"; and only ever against *this* catalogue's snapshots, so `latest` in a shared directory can never mean another database's. An explicit path is still taken as one, for restoring from somewhere else entirely.
+
+Two things it refuses, and one it will not delete:
+
+- **A backup from a newer Bowerbird.** Restoring an *older* one is fine; the migrations run on the next start and bring it forward. The other direction is not: this build's migrations have no route to a schema they predate, and the failure would look like a corrupt catalogue rather than an error. `user_version` against `LATEST_USER_VERSION` is the check.
+- **A backup that does not pass `quick_check`.** Both refusals happen before anything on disk moves.
+- **The catalogue that was there.** It is renamed aside to `<db>.pre-restore-<stamp>`, **with its `-wal` and `-shm`**. Moving the sidecars is half of what makes this correct: SQLite derives their names from the database's filename, so a live `-wal` left in place would replay the old catalogue's uncheckpointed pages over the restored file and quietly undo the restore. Taking them along also keeps the displaced catalogue openable, which is what makes a restore chosen in a panic itself undoable.
+
 ---
 
 ## 5. Schemas (Zod)
@@ -2578,6 +2615,8 @@ the bounds; the reasoning behind each number lives beside it there.
 | `watch_debounce_ms` | `15000` | Debounce window for coalescing filesystem events (§9.8) |
 | `full_sync_at` | `03:00` | Local `HH:MM` for the daily full reconcile; `""` disables (§9.8) |
 | `prune_every_days` | `7` | Interval for the orphaned-file sweep; `0` disables (§10.6) |
+| `backup_every_days` | `1` | Interval for the rolling catalogue backup; `0` disables (§4.9) |
+| `backup_keep` | `7` | How many backups to keep. A count of files rather than of days, so lengthening the interval does not silently shorten the window (§4.9) |
 
 Two shapes of consumer, and they take a setting differently:
 
@@ -2585,7 +2624,7 @@ Two shapes of consumer, and they take a setting differently:
   and grade of every job it builds, so an edit lands on the next photo without
   anything being told about it.
 - **Configured, then re-configured.** The watcher, the daily reconcile, the
-  orphan sweep and the log level are established once at startup and re-applied
+  orphan sweep, the catalogue backup and the log level are established once at startup and re-applied
   from `settingsRepo.onChange`. A `configure()` on each restarts only what
   actually moved, so a knob on the Settings page never means "after the next
   restart".
@@ -2655,6 +2694,16 @@ The sync-service, photo-deletion, and image-streaming cases below run in the int
 **Read-only libraries**, over a fixture tree with the directory permissions actually dropped, so a stray write fails the test rather than passing unnoticed: sync, bin, restore, rate and album all work, and the tree is byte-identical afterwards. A shoot has to be a folder that already exists, and `addPhotos` is refused.
 
 **The bin folder's lifecycle:** a create whose insert fails leaves no bin behind; a read-only create makes none whatever `bin_name` was sent; a rename moves the folder, keeps its inode, re-prefixes the binned rows and leaves `deleted_from_path`; a rename onto a taken name is a 409 and a read-only library's is a 403 first.
+
+**Catalogue backups (§4.9), in the integration suite:**
+- A snapshot holds writes still sitting in the WAL, and is one file with no sidecars beside it
+- Nothing part-written survives a run, under any name
+- Rotation keeps the newest N, and counts only backups of the same database
+- Starting with nothing backed up takes one immediately; starting again within the interval does not
+- A backup is found by the name the listing prints, not against the shell's working directory; another catalogue's snapshot is neither listed nor reachable by name, including as `latest`
+- A WAL inflated past `journal_size_limit` by a pinned reader is handed back once writing resumes (`wal_size.integration.test.ts`, which fails at 24MB without the pragma)
+- Restoring puts the catalogue back, moves the displaced one aside **with its `-wal`**, and the result is what a restart would find
+- A backup with a `user_version` ahead of this build is refused, before anything on disk moves; so is one that fails `quick_check`
 
 **Shoot operations:**
 - Creating a shoot whose folder already exists adopts the photos already in it (sets `shoot_id`, no file moves)

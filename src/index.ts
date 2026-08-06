@@ -30,6 +30,7 @@ import { SyncLocksRepository } from './services/sync/sync_locks_repository';
 import { LibraryWatcher } from './services/sync/library_watcher';
 import { DailySync } from './services/sync/daily_sync';
 import { PruneService, ScheduledPrune } from './services/maintenance/prune_service';
+import { BackupService, ScheduledBackup } from './services/maintenance/backup_service';
 import { ProcessingService } from './services/processing/processing_service';
 import { config } from './config';
 import { Logger, setLogLevel } from './logger';
@@ -214,12 +215,14 @@ folderRulesRepo.onChange((libraryId) => {
 syncService.onLibraryChanged((library) => watcher.onLibraryUpdated(library));
 const dailySync = new DailySync(syncService);
 const scheduledPrune = new ScheduledPrune(new PruneService(librariesRepo, photosRepo));
+const scheduledBackup = new ScheduledBackup(new BackupService(config.dbPath));
 
 function applySettings(settings: Settings): void {
   setLogLevel(settings.log_level);
   watcher.configure(settings.watch_enabled, settings.watch_debounce_ms);
   dailySync.configure(settings.full_sync_at);
   scheduledPrune.configure(settings.prune_every_days);
+  scheduledBackup.configure(settings.backup_every_days, settings.backup_keep);
 }
 settingsRepo.onChange(applySettings);
 applySettings(settingsRepo.get());

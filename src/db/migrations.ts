@@ -440,6 +440,11 @@ function migrateShootsToFolderUniqueness(db: Database): void {
 // database that predates this and leaves no row for anything else to trip over.
 const QUANTIZER_RESCALE = 1;
 
+// The highest `user_version` this build stamps. A backup carrying more than this
+// was taken by a newer Bowerbird, and restoring it would hand this one a
+// catalogue whose migrations it has never heard of (§4.9).
+export const LATEST_USER_VERSION = QUANTIZER_RESCALE;
+
 function halveQuantizersLibavifWasAlreadyHalving(db: Database): void {
   const { user_version: stamped } = db.query('PRAGMA user_version').get() as { user_version: number };
   if (stamped >= QUANTIZER_RESCALE) return;

@@ -995,6 +995,19 @@ const AdvancedSettings = observer(function AdvancedSettings(): JSX.Element | nul
           label="Orphan sweep every (days)"
           hint="Deletes generated files whose photo no longer exists. 0 turns it off, and it only has work to do after a library is removed or a catalogue is rebuilt."
         />
+        <NumberSetting
+          field="backup_every_days"
+          label="Back up the catalogue every (days)"
+          hint="Copies the catalogue into a backups folder beside it. Your photo files are not touched: what this protects is everything about them that only exists here - ratings, notes, picks, albums, shoots and edits. 0 turns it off."
+        />
+        <NumberSetting
+          field="backup_keep"
+          label="Backups to keep"
+          hint="The oldest is deleted once there are more than this. At one a day, seven is a week to notice something went wrong in."
+          disabledReason={
+            store.settings.backup_every_days > 0 ? undefined : 'Backups are turned off, so there is nothing to keep.'
+          }
+        />
       </div>
 
       <GroupTitle>Server</GroupTitle>
