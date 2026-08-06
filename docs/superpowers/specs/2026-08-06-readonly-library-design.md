@@ -305,8 +305,14 @@ that name survives only as a legacy sweep target (`deletions.ts:16`).
 `<DATA_DIR>/<library id>` plus one directory per rendition kind at library creation -
 where `ensureDir(getDataPath(library))` runs today (`libraries_service.ts:99`).
 Nothing is created lazily by a writer. A `DATA_DIR` the process cannot write is a
-fatal startup error naming the path (thrown before `serve`, in `src/index.ts`, where
-the containment check below also lives).
+fatal startup error naming the path.
+
+The two startup checks sit on **opposite sides of the database opening**, which is
+`createDatabase(config.dbPath)` at `src/index.ts:39`, the first statement in the file:
+creating `DATA_DIR` and testing that it is writable needs only `config`, so it goes
+before that line; the containment check (§3.1) reads every library's `root_path`, so it
+cannot run until `librariesRepo` exists at `:42`. Both are top-level throws during
+module evaluation, well before `serve`.
 
 The Bin does not move: originals belong beside the photographs they came from
 (DESIGN §12.3).
@@ -986,6 +992,34 @@ UpdateLibraryRequest    read_only: z.boolean().optional()
 dataDir: path.resolve(process.env.DATA_DIR ?? './data')
 ```
 
+**`read_only` and the three identity columns stay out of `LibrarySettingsSchema`**
+(`schemas/libraries.ts:66-76`), and that is worth stating because `read_only` looks
+exactly like the per-library setting it is not. Two things would break if it were
+added to that `pick`:
+
+- `DEFAULT_LIBRARY_SETTINGS` is `LibrarySettingsSchema.parse({})`, and
+  `LibrariesService.create` spreads it at `libraries_service.ts:90` **before** the
+  explicit fields. A `read_only` assigned before that spread is silently overwritten
+  with `false` - a library the photographer asked to be read-only, created writable,
+  with no error anywhere.
+- It is a **public contract**: `GET /api/libraries/defaults` returns
+  `DEFAULT_LIBRARY_SETTINGS` verbatim (`libraries_api.ts:35`) and the web client holds
+  it as `defaults` (`libraries_store.ts:8`). The endpoint answers "what does a new
+  library look like", and a flag decided per root does not have a default worth
+  publishing.
+
+**The web is not covered by the repo's typecheck.** `web/src/api/client.ts:31-32` says
+"Types come straight from the server's Zod schemas as type-only imports, so the client
+can never drift from the API" - true, and the mechanism is real - but the root
+`tsconfig.json` includes only `["src", "test", "scripts", "dev.ts"]`, and
+`bun run typecheck` is that project plus `e2e-tauri`. `web/` is typechecked only by
+`web/package.json`'s own `typecheck` and `build`. So a nullable `bin_name` or a deleted
+`data_path` reaching a web component is invisible to the check this repo runs, and
+these are precisely the schema changes that reach it. The blast radius today is one
+line - `add_library_dialog.tsx:89` sends `bin_name: bin` - so running
+`cd web && bun run typecheck` as part of this change is cheap; it is the assumption
+that the compiler finds things which is worth not trusting blindly.
+
 `BinNameSchema` (`schemas/libraries.ts:7-12`) is unchanged - one path segment,
 rejecting `/`, `\`, `.`, `..` and empty - and that is still the whole of the
 validation, because the rename adds no new expressible shapes.
@@ -1154,6 +1188,10 @@ argument, so it is already corrected on `main` rather than left for the implemen
 - `sync_algorithm.ts:124-125`, `detectMoves`: gains the channel tags of §6.1.
 - `scope.ts:39-43`, `isHidden`: cites `.bowerbird` as the case it exists for, which
   §3 moves out of the root.
+- `utils/browse.ts:53-57`, `directoryNames`: skipping hidden directories "also keeps a
+  library's own `.bowerbird` out of the shoot picker, where choosing it would put
+  photographs inside the disposable tree (§6)". The rule stays for its first reason
+  (hidden directories are configuration, not photographs); the second stops applying.
 
 **Falsified by the lock becoming a table (§8)**:
 
