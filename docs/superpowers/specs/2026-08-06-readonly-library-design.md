@@ -56,8 +56,9 @@ each fixes something already wrong:
 - **The scan's exclusion of binned files moves from the bin folder to the `photos`
   table** (§5), which is what a read-only library needs in place of the move.
 - **Disk gets a say about binning** (§6): the bin gets its own walk, so a binned
-  file that was deleted, changed or moved by hand is noticed instead of ignored.
-  This makes `is_missing` reachable on a binned row, which it is not today.
+  file that was deleted, changed or moved by hand is noticed instead of ignored, and
+  a renamed bin folder is followed the way a renamed shoot folder already is. This
+  makes `is_missing` reachable on a binned row, which it is not today.
 - **The sync lock becomes a leased row** (§8), because it protects the catalogue
   rather than the tree, and because its PID-based staleness check is wrong across
   containers today (§8.1).
@@ -144,11 +145,17 @@ channel.
 Photographs already binned in place stay where they are, still flagged. Nothing
 sweeps them into the newly-named bin, and nothing un-flags them: an in-place binned
 file is not in the bin channel's walk, so the bin channel has no opinion about it
-(§6.4).
+(§6.5).
 
-`bin_name` is **write-once**: `PATCH` accepts it only while the stored value is
-`NULL`, and never replaces one name with another. Renaming it would strand every
-already-binned RAW in a folder the scan would then walk as live photographs.
+`bin_name` is **write-once through the API**: `PATCH` accepts it only while the
+stored value is `NULL`, and never replaces one name with another. Renaming the
+setting on its own would strand every already-binned RAW in a folder the scan would
+then walk as live photographs.
+
+Sync is the one writer that may replace it, and only by *following* a rename the
+photographer already made on disk (§6.2) - which is the same asymmetry shoots have
+(DESIGN §9.4.1): a folder renamed outside the app is followed rather than repaired,
+while the app will not rename it for you.
 
 ### 2.3 What a library with no bin does
 
@@ -357,7 +364,7 @@ In `syncLibrary`:
 
 1. `binned = photos.listBinnedForSync(libraryId)` - id, `file_path`, `file_hash`,
    the stored file `mtime` and `file_size`, for `is_deleted = 1` rows. Never
-   restricted by scope: it is one indexed query, and §6.2 needs all of it.
+   restricted by scope: it is one indexed query, and §6.3 needs all of it.
 2. `dbByPath` inside `scanFiles` is built from `[...dbPhotos, ...binned]`
    (`sync_service.ts:906`), so a binned file's `mtime` and `size` are compared
    against its row like any other and the `unchanged` test at `:957` answers
@@ -409,7 +416,7 @@ with the binned rows as the database side:
 | `removed` | the file is gone from the bin | `is_missing = 1` |
 | `reappeared` | it is back where the row says | clear `is_missing` |
 | `modified` | a different file under that name | re-hash, update the row |
-| `added` | unclaimed under the bin | §6.3 |
+| `added` | unclaimed under the bin | §6.4 |
 
 Those four branches already exist (`sync_algorithm.ts:81-104`) and already mean
 exactly this, so none of it is restated here as rules of its own.
@@ -425,19 +432,6 @@ binned photo stays out of the missing-photos view and is marked in the Bin inste
 The missing view is a list of things to go and find, and a binned photograph is not
 one.
 
-**The bin channel is skipped entirely when the recorded bin folder is not on disk.**
-One `existsSync(getBinPath(library))` per run, and without it a photographer who
-renames `<root>/Bin` to `<root>/Rubbish` in Finder gets a catastrophe: `Rubbish/` is
-walked by the live channel, its files are unclaimed additions whose hashes match the
-binned rows exactly (a rename preserves mtime and size, and `computeFileHash` is a
-digest of those - `hash.ts:7-21`), every binned row reads as removed, and §6.2 pairs
-all of them as crossings out of the bin. The whole bin would be silently restored,
-`deleted_from_path` destroyed with no copy anywhere, and every undo batch left
-unresolvable because `idsDeletedInBatch` filters `is_deleted = 1`
-(`photos_repository.ts:698`). A bin folder that is not there is not evidence that
-five hundred photographs were restored. The rows are left alone and the reason is
-logged.
-
 **A scoped sync does not run the bin channel.** The watcher never reports events
 inside the bin (`library_watcher.ts:217`, kept: watching a tree that only grows
 costs an inotify handle per directory), so a scoped run has no evidence about it and
@@ -445,7 +439,71 @@ must not draw conclusions - least of all `is_missing` on rows it did not look at
 Hand-managed bin changes are noticed by the nightly full sync, which is what that
 sync is for.
 
-### 6.2 A crossing is structural, not a rule
+### 6.2 A renamed bin folder is followed, exactly as a renamed shoot folder is
+
+A photographer who renames `<root>/Bin` to `<root>/Rubbish` in Finder has done to
+the bin precisely what DESIGN §9.4.1 already handles for a shoot: renamed a folder
+outside the app, keeping its contents. It is answered the same way, **by the
+folder's own identity rather than by its name**, and it has to be - left undetected
+it is the worst outcome in this document. `Rubbish/` would be walked by the live
+channel, its files would be unclaimed additions whose hashes match the binned rows
+exactly (a rename preserves mtime and size, and `computeFileHash` is a digest of
+those - `hash.ts:7-21`), every binned row would read as removed, and §6.3 would
+pair all of them as crossings *out* of the bin. The entire bin silently restored,
+`deleted_from_path` destroyed with no copy anywhere, and every undo batch left
+unresolvable because `idsDeletedInBatch` filters `is_deleted = 1`
+(`photos_repository.ts:698`).
+
+Three more columns on `libraries`, mirroring `shoots`' three
+(`shoots_repository.ts:126-150`):
+
+```sql
+bin_dev        INTEGER   -- the bin folder's identity, NULL until first seen
+bin_ino        INTEGER
+bin_birthtime  REAL
+```
+
+Recorded when the bin is first created (`PhotosService.delete`'s `ensureDir`, which
+already `statSync`s in the shoot case) and when a sync first stats a bin that has
+none - the same "no identity until something writes one" the shoots reconcile
+handles (`sync_service.ts:727-741`).
+
+**The trigger is the identity turning up in `dirs`, not the recorded path being
+absent.** A directory reaches `dirs` only if the live walk did not skip it, and the
+walk skips by name - so a directory carrying the bin's recorded identity *is* the
+bin under a name that no longer matches `bin_name`. That covers the rename, and it
+also covers a case-only difference on a case-insensitive filesystem, where
+`existsSync(<root>/Bin)` still answers true and an absence test would never fire.
+
+The identification rules are DESIGN §9.4.1's, unchanged, because the ambiguities are
+the same: exactly one candidate or it is not an identification, and birthtimes must
+agree where both sides report one. Two further constraints are the bin's own:
+
+- **Root-level only.** `getBinPath` is `path.join(root_path, bin_name)` and
+  `BinNameSchema` refuses separators, so a bin moved *into* another folder cannot be
+  expressed. A candidate whose `relPath` contains a `/` is not followed.
+- **Detected after the walk and before `buildDiff`**, so the bin channel can be
+  re-rooted at the new path and that subtree removed from the live channel's files
+  before either diff runs. The renamed folder is then also spoken for, and cannot be
+  claimed by `detectRelocationsByIdentity` as a shoot relocation.
+
+What it writes: `bin_name` to the new name, and the `file_path` prefix of every
+binned row. `deleted_from_path` is deliberately **not** rewritten - it records where
+the photograph came from, which is outside the bin and has not moved.
+
+`rewritePathPrefix` (`photos_repository.ts:634-649`) does the two halves the
+opposite way round: `file_path` for `is_deleted = 0` rows and `deleted_from_path`
+for `is_deleted = 1`. That is right for a shoot and wrong for the bin, so this needs
+its own statement rather than that function. Naming why, because the two are one
+edit apart and a future reader will reach for it.
+
+**When the identity cannot answer, the bin channel is skipped for that run** and the
+reason logged: no identity recorded yet, no candidate, more than one, disagreeing
+birthtimes, a nested candidate, or a filesystem reporting `ino` 0. The rows are left
+exactly as they are. A bin folder whose fate is unclear is not evidence that five
+hundred photographs were restored, and the next sync gets another chance.
+
+### 6.3 A crossing is structural, not a rule
 
 A file that entered or left the bin appears as a **removal in one channel and an
 addition in the other**. `detectMoves` pairs them by hash exactly as it pairs a
@@ -492,7 +550,7 @@ a cross-device move, a copy-and-delete, a restore from backup - and it then filt
 those moves out, so nothing downstream would notice a whole shoot living inside the
 bin with `is_deleted = 0`.
 
-### 6.3 An unclaimed file under the bin is imported as already-binned
+### 6.4 An unclaimed file under the bin is imported as already-binned
 
 The bin channel's `added` branch. `is_deleted = 1`, and `deleted_from_path` derived
 by stripping the bin segment: DESIGN §12.3's layout mirrors the folder a photo came
@@ -505,7 +563,7 @@ dropped into the bin folder themselves becomes a row they can see and restore.
 
 Before importing, the bin layout gives a cheaper answer than a hash: if
 `<bin>/A/c.arw` is unclaimed and `A/c.arw` is an unpaired **removal** in the live
-channel, that is the crossing, and §6.2's first case applies to the existing row.
+channel, that is the crossing, and §6.3's first case applies to the existing row.
 A path test rather than a hash test, so it survives the case a hash cannot see - the
 file was copied into the bin and the original deleted, or touched on the way, so the
 mtime changed and the hashes do not match. Without it that crossing produces a
@@ -516,7 +574,7 @@ Such a row has no renditions and, because `PENDING_PROCESSING` excludes
 shows a hole until the photograph is opened. Accepted: building renditions for
 something the photographer has already thrown away is work nobody asked for.
 
-### 6.4 Where it runs, and what it counts
+### 6.5 Where it runs, and what it counts
 
 The bin channel's walk and diff run alongside the live channel's, before
 `detectMoves`, which then sees both. **Every row write it produces is applied inside
@@ -536,28 +594,13 @@ An in-place binned row is in neither walk - the bin channel does not reach it an
 step 3 partitions it out of the live channel - so nothing in §6 has an opinion about
 it. That is what makes the flip in §2.2 safe.
 
-Counts: §6.1's `is_missing` transitions and re-hashes are `photosModified`, §6.2's
-pairs are `photosMoved`, §6.3's imports are `photosAdded`. The bin channel's paths
+Counts: §6.1's `is_missing` transitions and re-hashes are `photosModified`, §6.3's
+pairs are `photosMoved`, §6.4's imports are `photosAdded`, and a followed bin rename
+(§6.2) is none of them - it renames a folder, it does not change what the catalogue
+holds. The bin channel's paths
 are part of the sync's progress total, in the same phase as the walk - they are work
 the sync is doing, and hiding them makes the bar lie. `photo_count` needs nothing:
 it is a subquery over `is_deleted = 0` (`libraries_repository.ts:23-28`).
-
-### 6.5 The bin's spelling is resolved once per run
-
-On a case-insensitive filesystem `<root>/Bin` and `<root>/bin` are one directory, and
-the scan's skip is a string comparison (`scope.ts:59`). If the folder ends up spelled
-differently from `bin_name` - a case-only rename, an rsync from a case-sensitive
-volume, a restore from backup - the live channel walks the bin as ordinary
-photographs while the bin channel walks it too, and every binned file is imported as
-a live duplicate beside its binned row, every sync.
-
-So the bin folder's actual on-disk spelling is resolved once per run by matching the
-root's directory entries case-insensitively, and stored in `LibraryScope`. The
-comparison stays `===` against what is really there. `isPathAllowed`'s bin test also
-stays **segment-anchored at the root**, which is what keeps `<root>/Bin2/` from
-matching and a folder of the photographer's own called `Bin` at depth from being
-swallowed - reasoning that currently lives in the comment at `scope.ts:56-59` and
-must survive any edit to that function.
 
 ## 7. Shoots
 
@@ -883,7 +926,7 @@ that is the word for it - but the Bin page's line about the files
 is false for a read-only library and must read off the library: moved into
 `<bin_name>` when there is one, left exactly where they were when there is not. A
 binned photograph whose file has moved carries the `missing` badge until a full
-sync pairs it (§6.2).
+sync pairs it (§6.3).
 
 **Restore** stays visible but disabled for a binned photograph whose file is inside
 a read-only library's bin, with the reason and "clear the flag first" in the
@@ -899,9 +942,10 @@ catalogue, which gets recreated - so every change here is an edit to `SCHEMA` in
 `db/migrations.ts`: no `ensureColumn` step, no table rebuild, and no data move
 anywhere in this document.
 
-In `libraries`: add `read_only INTEGER NOT NULL DEFAULT 0`, make `bin_name TEXT`
-nullable (drop `NOT NULL DEFAULT 'Bin'`), delete `data_path`. Plus `sync_locks`
-(§8) as a new table.
+In `libraries`: add `read_only INTEGER NOT NULL DEFAULT 0`, add `bin_dev INTEGER`,
+`bin_ino INTEGER` and `bin_birthtime REAL` (§6.2), make `bin_name TEXT` nullable
+(drop `NOT NULL DEFAULT 'Bin'`), delete `data_path`. Plus `sync_locks` (§8) as a new
+table.
 
 A `sync_locks` row present at startup means "stale within 30 seconds", not
 "syncing": a crashed process leaves its row, and expiry is what clears it. Startup
@@ -940,14 +984,22 @@ Unit, against the existing service tests:
 - A crossing each way: a live file moved into the bin becomes binned and **keeps its
   `shoot_id`**; a binned file moved out becomes live and **gains the `shoot_id` of
   where it landed**.
-- A crossing whose `mtime` changed is still recognised, via §6.3's path test, and
+- A crossing whose `mtime` changed is still recognised, via §6.4's path test, and
   produces one row rather than a missing live row plus a new binned one.
 - Pairing happens before the apply: a hand-moved binned file leaves **one** row.
 - **An in-place binned photo whose folder is renamed stays binned**, keeps
   `deleted_from_path`, and stays resolvable by its batch.
-- A renamed bin folder skips the bin channel entirely and restores nothing.
+- A renamed bin folder is **followed**: `bin_name` and every binned row's
+  `file_path` prefix move to the new name, `deleted_from_path` does not, and nothing
+  is restored, imported or marked missing. This is the test that matters most in
+  §6 - undetected it silently restores the whole bin.
+- A bin folder renamed *and* moved into a subfolder is not followed (it cannot be
+  expressed), and the bin channel is skipped rather than guessing. Same for two
+  candidate folders sharing an inode, and for a library with no recorded bin
+  identity yet.
 - A bin spelled `bin` against a `bin_name` of `Bin` on a case-insensitive
-  filesystem imports no duplicates.
+  filesystem is followed by the same rule, in one sync, and imports no duplicates.
+- A renamed bin folder is not claimed as a shoot relocation.
 - A scoped sync does not touch `is_missing` on any binned row.
 - A library with `bin_name = null` runs no bin channel at all.
 - `create`, `addPhotos` and `removePhotos` on a read-only library's shoots throw
@@ -998,11 +1050,16 @@ Stated so they are choices rather than surprises:
 - Crossings pair on `file_hash`, which is a digest of extension, dimensions, mtime,
   colour space, size and orientation rather than of pixels (`hash.ts:7-21`), so two
   byte-identical copies of one RAW collide by construction. Not new - the live
-  `detectMoves` has always had it - but §6.2 extends it to binned rows. §6.3's path
+  `detectMoves` has always had it - but §6.3 extends it to binned rows. §6.4's path
   test covers the common false negative; the false positive remains.
 - Hand-managed bin changes are noticed by the nightly full sync, not within a
   watcher debounce (§6.1).
-- A file imported already-binned (§6.3) has no renditions and nothing will queue
+- A bin folder rename the inode cannot identify - moved into a subfolder, two
+  candidates sharing an inode, a filesystem reporting `ino` 0, or no identity
+  recorded yet - is not followed. The bin channel skips that run and the rows are
+  left alone (§6.2), so the bin is simply not reconciled until the folder is put
+  back or the name is fixed by hand.
+- A file imported already-binned (§6.4) has no renditions and nothing will queue
   any; the Bin page shows a hole until it is opened.
 - Two instances with separate databases no longer exclude each other's syncs (§8).
   Two sharing `/config` must share `/data`, and only one of them may bin or move
