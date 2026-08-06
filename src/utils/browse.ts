@@ -51,9 +51,7 @@ async function directoryNames(dir: string): Promise<string[]> {
   const names: string[] = [];
   for (const entry of entries) {
     // Hidden directories are configuration and caches rather than photographs,
-    // and they are most of what a home directory holds. It also keeps a
-    // library's own `.bowerbird` out of the shoot picker, where choosing it
-    // would put photographs inside the disposable tree (§6).
+    // and they are most of what a home directory holds.
     if (entry.name.startsWith('.')) continue;
     if (!(await isDirectory(dir, entry))) continue;
     names.push(entry.name);

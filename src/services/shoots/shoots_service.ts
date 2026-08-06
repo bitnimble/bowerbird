@@ -6,7 +6,7 @@ import { isUniqueViolation } from '../../db/constraints';
 import type { CreateShootRequest, Shoot, UpdateShootRequest } from '../../schemas/shoots';
 import type { Library } from '../../schemas/libraries';
 import { ensureDir, moveIntoDir } from '../../utils/files';
-import { containsPath, getDataPath, toLibraryRelative } from '../../utils/paths';
+import { containsPath, toLibraryRelative } from '../../utils/paths';
 import { isDirInScope, libraryScope, type LibraryScope } from '../../utils/scope';
 import { mostSpecificShoot } from '../../utils/shoots';
 import type { LibrariesRepository } from '../libraries/libraries_repository';
@@ -37,12 +37,6 @@ export class ShootsService {
     // matches the folder actually created, leaving a shoot no photo can join.
     const folderPath = toLibraryRelative(library.root_path, absFolder);
 
-    // Everything under the data directory is disposable and goes with the
-    // library when it is removed (§6), so a shoot there would be photographs
-    // queued for deletion.
-    if (containsPath(getDataPath(library), absFolder)) {
-      throw new AppError('VALIDATION_ERROR', `shoot folder is inside the library's data directory: ${folderPath}`);
-    }
     // A folder the scan will never look at cannot hold a shoot: the bin, a
     // dotfolder or one the user has excluded. Its photos would be moved in and
     // then never seen again.
@@ -266,7 +260,7 @@ export class ShootsService {
   }
 
   private scopeFor(library: Library): LibraryScope {
-    return libraryScope(library, getDataPath(library), this.folderRules.pathsWithRule(library.id, 'excluded'));
+    return libraryScope(library, this.folderRules.pathsWithRule(library.id, 'excluded'));
   }
 
   private requireLibrary(libraryId: string): Library {

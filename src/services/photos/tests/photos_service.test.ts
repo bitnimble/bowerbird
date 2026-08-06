@@ -11,6 +11,7 @@ import type { AlbumsRepository } from '../../albums/albums_repository';
 import type { LibrariesRepository } from '../../libraries/libraries_repository';
 import type { ProcessingService } from '../../processing/processing_service';
 import type { ShootsRepository } from '../../shoots/shoots_repository';
+import { getDataPath } from '../../../utils/paths';
 import { PhotosService } from '../photos_service';
 import type { PhotoListResult, PhotosRepository } from '../photos_repository';
 
@@ -46,7 +47,7 @@ function build(over: {
   return { service: new PhotosService(photos, albums, shoots, libraries, processing), photos, libraries, shoots, albums, processing };
 }
 
-const library: Library = { id: 'lib', root_path: '/r', data_path: null, bin_name: 'Bin', name: 'lib', ordering: 'added_asc',
+const library: Library = { id: 'lib', root_path: '/r', bin_name: 'Bin', name: 'lib', ordering: 'added_asc',
   rendition_source: 'embedded' as const,
   rendition_hdr: false,
   include_subfolders: true, mirror_shoots: true, auto_stack: true, auto_stack_similarity: 0.78, auto_stack_window_seconds: 60, last_synced_at: null, photo_count: 0 };
@@ -210,7 +211,7 @@ describe('PhotosService.delete', () => {
       writeFileSync(path.join(dataDir, 'renditions', 'small', 'p1.webp'), '');
       writeFileSync(path.join(dataDir, 'renditions', 'full', 'p1.webp'), '');
 
-      const lib: Library = { id: 'lib', root_path: root, data_path: null, bin_name: 'Bin', name: 'lib', ordering: 'added_asc',
+      const lib: Library = { id: 'lib', root_path: root, bin_name: 'Bin', name: 'lib', ordering: 'added_asc',
   rendition_source: 'embedded' as const,
   rendition_hdr: false,
   include_subfolders: true, mirror_shoots: true, auto_stack: true, auto_stack_similarity: 0.78, auto_stack_window_seconds: 60, last_synced_at: null, photo_count: 0 };
@@ -251,7 +252,7 @@ describe('PhotosService.delete', () => {
       writeFileSync(path.join(root, 'D', 'foo.arw'), 'shallow');
       writeFileSync(path.join(root, 'foo.arw'), 'root');
 
-      const lib: Library = { id: 'lib', root_path: root, data_path: null, bin_name: 'Bin', name: 'lib', ordering: 'added_asc',
+      const lib: Library = { id: 'lib', root_path: root, bin_name: 'Bin', name: 'lib', ordering: 'added_asc',
   rendition_source: 'embedded' as const,
   rendition_hdr: false,
   include_subfolders: true, mirror_shoots: true, auto_stack: true, auto_stack_similarity: 0.78, auto_stack_window_seconds: 60, last_synced_at: null, photo_count: 0 };
@@ -286,7 +287,7 @@ describe('PhotosService.delete', () => {
     const root = mkdtempSync(path.join(tmpdir(), 'bb-del-'));
     try {
       writeFileSync(path.join(root, 'a.arw'), 'raw');
-      const lib: Library = { id: 'lib', root_path: root, data_path: null, bin_name: 'Bin', name: 'lib', ordering: 'added_asc',
+      const lib: Library = { id: 'lib', root_path: root, bin_name: 'Bin', name: 'lib', ordering: 'added_asc',
   rendition_source: 'embedded' as const,
   rendition_hdr: false,
   include_subfolders: true, mirror_shoots: true, auto_stack: true, auto_stack_similarity: 0.78, auto_stack_window_seconds: 60, last_synced_at: null, photo_count: 0 };
@@ -331,7 +332,6 @@ describe('PhotosService.delete', () => {
       const lib: Library = {
         id: 'lib',
         root_path: root,
-        data_path: null,
         bin_name: 'Bin',
         name: 'lib',
         ordering: 'added_asc',
@@ -418,17 +418,18 @@ describe('PhotosService renditions', () => {
   // read this off the response the way it used to; it comes off the same stat
   // that answers `built`.
   it('reports what a stored rendition weighs, and nothing for one that is not built', () => {
-    const root = mkdtempSync(path.join(tmpdir(), 'bb-bytes-'));
+    const lib = { ...library, id: 'photos-bytes' };
+    const data = getDataPath(lib);
     try {
-      const dir = path.join(root, '.bowerbird', 'renditions', 'full');
+      const dir = path.join(data, 'renditions', 'full');
       mkdirSync(dir, { recursive: true });
       writeFileSync(path.join(dir, 'p1.avif'), 'x'.repeat(17));
 
-      const renditions = detailFor({ ...library, root_path: root }).renditions;
+      const renditions = detailFor(lib).renditions;
       expect(renditions?.full.bytes).toBe(17);
       expect(renditions?.max.bytes).toBeNull();
     } finally {
-      rmSync(root, { recursive: true, force: true });
+      rmSync(data, { recursive: true, force: true });
     }
   });
 });

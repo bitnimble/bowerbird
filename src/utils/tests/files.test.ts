@@ -41,13 +41,9 @@ describe('rawMediaType', () => {
   });
 });
 
-function scope(
-  root: string,
-  over: { dataPath?: string; includeSubfolders?: boolean; excluded?: Set<string> } = {},
-): LibraryScope {
+function scope(root: string, over: { includeSubfolders?: boolean; excluded?: Set<string> } = {}): LibraryScope {
   return libraryScope(
     { root_path: root, include_subfolders: over.includeSubfolders ?? true, bin_name: 'Bin' },
-    over.dataPath ?? path.join(root, '.bowerbird'),
     over.excluded ?? new Set<string>(),
   );
 }
@@ -68,16 +64,14 @@ describe('scanLibraryTree', () => {
     expect(dirs[0]?.ino).toBeGreaterThan(0);
   }));
 
-  it('skips excluded dirs (dotfolders, Bin) and the data dir', withRoot(async (root) => {
+  it('skips excluded dirs (dotfolders, Bin)', withRoot(async (root) => {
     mkdirSync(path.join(root, '.bowerbird'));
     writeFileSync(path.join(root, '.bowerbird', 'hidden.arw'), '');
     mkdirSync(path.join(root, 'Bin'));
     writeFileSync(path.join(root, 'Bin', 'deleted.arw'), '');
-    mkdirSync(path.join(root, 'data'));
-    writeFileSync(path.join(root, 'data', 'inside.arw'), '');
     writeFileSync(path.join(root, 'keep.arw'), '');
 
-    const { files } = await scanLibraryTree(scope(root, { dataPath: path.join(root, 'data') }));
+    const { files } = await scanLibraryTree(scope(root));
     expect(files.map((f) => f.relPath)).toEqual(['keep.arw']);
   }));
 

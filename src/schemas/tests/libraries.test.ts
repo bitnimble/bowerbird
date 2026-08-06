@@ -26,7 +26,6 @@ describe('LibrarySchema.name', () => {
     const library = {
       id: '00000000-0000-4000-8000-000000000001',
       root_path: '/photos',
-      data_path: null,
       bin_name: 'Bin',
       name: 'Trip',
       ordering: 'taken_asc' as const,

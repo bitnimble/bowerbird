@@ -33,7 +33,6 @@ beforeEach(async () => {
   const library = {
     id: LIB,
     root_path: root,
-    data_path: null,
     bin_name: 'Bin',
     ordering: 'taken_desc',
     include_subfolders: true,
@@ -50,8 +49,7 @@ beforeEach(async () => {
       }
       return {};
     },
-    scopeFor: (lib: Library): LibraryScope =>
-      libraryScope(lib, path.join(lib.root_path, '.bowerbird'), new Set<string>()),
+    scopeFor: (lib: Library): LibraryScope => libraryScope(lib, new Set<string>()),
   } as unknown as SyncService;
   watcher = new LibraryWatcher(libraries, sync, DEBOUNCE);
   watcher.start();

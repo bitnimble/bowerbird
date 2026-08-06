@@ -8,7 +8,6 @@ import type { Library, LibrarySyncStatus } from '../../schemas/libraries';
 import { isSupportedFile, scanLibraryTree, type ScannedDir, type ScannedFile } from '../../utils/scan';
 import { isDirInScope, isFileInScope, libraryScope, type LibraryScope } from '../../utils/scope';
 import { computeFileHash } from '../../utils/hash';
-import { getDataPath } from '../../utils/paths';
 import { shootContains } from '../../utils/shoots';
 import type { AlbumsRepository } from '../albums/albums_repository';
 import type { LibrariesRepository } from '../libraries/libraries_repository';
@@ -146,7 +145,7 @@ export class SyncService implements LibraryLifecycleListener {
   // (§9.1). Built per run: a folder rule set between two syncs takes effect on
   // the next one without anything having to invalidate a cache.
   scopeFor(library: Library): LibraryScope {
-    return libraryScope(library, getDataPath(library), this.folderRules.pathsWithRule(library.id, 'excluded'));
+    return libraryScope(library, this.folderRules.pathsWithRule(library.id, 'excluded'));
   }
 
   onLibraryCreated(_library: Library): void {

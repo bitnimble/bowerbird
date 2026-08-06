@@ -117,7 +117,7 @@ export interface PendingPhoto {
   photo_id: string;
   file_path: string;
   root_path: string;
-  data_path: string | null;
+  library_id: string;
   // Which passes this photo still owes. A run interrupted between them comes back
   // needing only the second, and staging reads these rather than rebuilding both.
   needs_tile: number;
@@ -919,7 +919,7 @@ export class PhotosRepository {
     const order = libraryId == null ? '' : `ORDER BY ${orderByClause(this.libraryOrdering(libraryId), 'p.')}`;
     const query = (idClause: string): string =>
       `SELECT p.id AS photo_id, p.file_path, p.rendition_source, p.needs_tile, p.needs_renditions,
-              l.root_path, l.data_path, l.rendition_source AS library_rendition_source, l.rendition_hdr
+              l.root_path, l.id AS library_id, l.rendition_source AS library_rendition_source, l.rendition_hdr
        FROM photos p JOIN libraries l ON l.id = p.library_id
        WHERE ${PENDING_PROCESSING('p.')} ${where} ${idClause} ${order}`;
 

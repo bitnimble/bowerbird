@@ -42,10 +42,9 @@ export async function deleteGeneratedDirectory(dataPath: string, target: string)
 }
 
 // The whole data directory, when its library is removed. Refuses while any
-// original is still inside it: the caller is expected to have moved those
-// somewhere permanent first (the library's Bin). A data directory holding
-// originals is either a pre-Bin-move layout or a `data_path` aimed at the user's
-// photographs, and neither is a tree to delete.
+// original is still inside it: nothing under `DATA_DIR` is written by anyone but
+// this app (§3), so an original there means the directory is not what it is
+// believed to be, and this is the one call here that cannot be undone.
 export async function deleteDataDirectory(dataPath: string): Promise<void> {
   const strays = await findOriginalsAnywhere(dataPath);
   if (strays.length > 0) {

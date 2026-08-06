@@ -13,7 +13,6 @@ export const BinNameSchema = z
 
 export const CreateLibraryRequestSchema = z.object({
   root_path: z.string().min(1),
-  data_path: z.string().optional(),
   // Asked at creation and never after: the name is what the scan skips, so
   // changing it later would strand every already-binned RAW in a folder the scan
   // would then walk back in (§12.3). A root that already holds this folder is
@@ -34,7 +33,6 @@ export type CreateLibraryRequest = z.infer<typeof CreateLibraryRequestSchema>;
 export const LibrarySchema = z.object({
   id: UuidSchema,
   root_path: z.string(),
-  data_path: z.string().nullable(),
   bin_name: z.string(),
   name: z.string().min(1),
   ordering: OrderingSchema,

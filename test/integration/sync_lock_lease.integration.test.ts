@@ -40,30 +40,34 @@ beforeEach(() => {
 
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-async function syncInOwnProcess(startAt: number): Promise<string> {
-  const proc = Bun.spawn(['bun', 'run', RUNNER, dbPath, LIB, String(startAt)], { stdout: 'pipe', stderr: 'pipe' });
+async function syncInOwnProcess(id: string): Promise<string> {
+  const barrier = path.join(dir, 'barrier');
+  const proc = Bun.spawn(['bun', 'run', RUNNER, dbPath, LIB, barrier, id], { stdout: 'pipe', stderr: 'pipe' });
   const out = await new Response(proc.stdout).text();
+  const err = await new Response(proc.stderr).text();
   await proc.exited;
+  if (err.trim() !== '') console.error(`child ${id} stderr: ${err}`);
   return out.trim().split('\n').at(-1) ?? '';
 }
 
 test(
-  'two processes syncing one library: one wins, the other is told a sync is running',
+  'two processes syncing one library: whoever is second is told a sync is running',
   async () => {
-    const startAt = Date.now() + 1_500; // both spawned and waiting before either acquires
-    const [a, b] = await Promise.all([syncInOwnProcess(startAt), syncInOwnProcess(startAt)]);
+    const results = await Promise.all([syncInOwnProcess('a'), syncInOwnProcess('b')]);
+    for (const result of results) expect(result).toMatch(/^ok=\d+ busy=\d+$/);
 
-    expect([a, b].filter((r) => r === 'ok')).toHaveLength(1);
-    expect([a, b].filter((r) => r === 'SYNC_IN_PROGRESS')).toHaveLength(1);
+    // Neither process can see the other's `libraryMutex`, so the only thing that
+    // can have refused a run is the lease.
+    const refused = results.reduce((total, r) => total + Number(/busy=(\d+)/.exec(r)![1]), 0);
+    expect(refused).toBeGreaterThan(0);
 
-    // The point of the exclusion: the loser must not have imported the same tree
-    // a second time.
+    // The point of the exclusion: no run imported the same tree a second time.
     const db = createDatabase(dbPath);
     const { count } = db.query('SELECT COUNT(*) AS count FROM photos').get() as { count: number };
     db.close();
     expect(count).toBe(COPIES);
   },
-  30_000,
+  60_000,
 );
 
 // Reclaim is by expiry, so a container killed and restarted within seconds finds

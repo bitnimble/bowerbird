@@ -14,15 +14,22 @@ services:
     environment:
       HOST: 0.0.0.0
       PORT: 3000
-      # SQLite DB persists on the named volume below (not in the image).
-      DB_PATH: /data/bowerbird.db
+      # The catalogue and the generated files, on the two volumes below.
+      DB_PATH: /config/bowerbird.db
+      # Container-side and fixed. What varies is which host directory or volume
+      # is mounted here, which is DATA_VOLUME below: one name for both would have
+      # a reader setting DATA_VOLUME=/mnt/bulk believe they had set the app's.
+      DATA_DIR: /data
     volumes:
       # Your photo library. Create libraries via the API with a root_path under
       # /photos (e.g. {"root_path": "/photos"}). Mounted read-write: sync moves
-      # files, renditions live in <root>/.bowerbird and the Bin in <root>/Bin. The host directory
-      # must be writable by the container user (uid 1000).
+      # files and the Bin lives in <root>/Bin. Add `:ro` for a read-only library.
+      # The host directory must be writable by the container user (uid 1000).
       - "${PHOTOS_DIR:-./photos}:/photos"
-      - bowerbird-db:/data
+      - bowerbird-config:/config
+      # A named volume inherits /data's ownership from the image; a host path
+      # does not, and must be chowned to uid 1000 by whoever mounts it.
+      - "${DATA_VOLUME:-bowerbird-data}:/data"
     healthcheck:
       test:
         - CMD
@@ -35,4 +42,5 @@ services:
       start_period: 5s
 
 volumes:
-  bowerbird-db:
+  bowerbird-config:
+  bowerbird-data:

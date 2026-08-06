@@ -8,7 +8,6 @@ const SCHEMA = `
 CREATE TABLE IF NOT EXISTS libraries (
   id          TEXT PRIMARY KEY,
   root_path   TEXT NOT NULL UNIQUE,
-  data_path   TEXT,
   -- What the library is called in the UI. Always set: create stores the folder
   -- name (or parent + year) when none is given, rather than leaving a placeholder.
   name        TEXT NOT NULL,

@@ -6,7 +6,7 @@ import { Logger } from '../../logger';
 import type { Library } from '../../schemas/libraries';
 import { isSupportedFile } from '../../utils/scan';
 import { isPathAllowed, type LibraryScope } from '../../utils/scope';
-import { getBinPath, getDataPath } from '../../utils/paths';
+import { getBinPath } from '../../utils/paths';
 import type { LibrariesRepository } from '../libraries/libraries_repository';
 import type { LibraryLifecycleListener } from '../libraries/libraries_service';
 import type { SyncService } from './sync_service';
@@ -207,7 +207,7 @@ export class LibraryWatcher implements LibraryLifecycleListener {
     // so: it is one known path (§12.3) that only ever grows, mirroring the whole
     // folder tree as photographs are binned, and nothing inside it is ever the
     // library's to look at.
-    const ignored = [getDataPath(library), path.join(library.root_path, '.bowerbird'), getBinPath(library)];
+    const ignored = [path.join(library.root_path, '.bowerbird'), getBinPath(library)];
     for (const folder of scope.excluded) ignored.push(path.join(library.root_path, folder));
     return ignored;
   }
@@ -338,5 +338,5 @@ function describe(events: readonly { type: string; path: string }[], rootPath: s
 // What the watch was established with, so a settings change can be compared
 // against it. Only the parts that decide which paths are watched.
 function scopeKey(scope: LibraryScope): string {
-  return `${scope.includeSubfolders ? 1 : 0}|${scope.dataPath}|${[...scope.excluded].sort().join(',')}`;
+  return `${scope.includeSubfolders ? 1 : 0}|${scope.binName}|${[...scope.excluded].sort().join(',')}`;
 }

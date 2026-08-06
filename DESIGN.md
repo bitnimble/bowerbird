@@ -179,7 +179,6 @@ Foreign keys are enforced. `bun:sqlite` does not enable this by default, so `mig
 CREATE TABLE libraries (
   id          TEXT PRIMARY KEY,
   root_path   TEXT NOT NULL UNIQUE,
-  data_path   TEXT,  -- path to .bowerbird/ data folder; NULL means default (<root_path>/.bowerbird/)
   name        TEXT NOT NULL,  -- display name; create stores the folder name (or parent + year) when none is given
   ordering    TEXT NOT NULL DEFAULT 'taken_asc'
     CHECK (ordering IN ('taken_asc', 'taken_desc', 'added_asc', 'added_desc')),
@@ -192,7 +191,6 @@ CREATE TABLE libraries (
 ```
 
 - `root_path`, absolute path to the library root folder on disk.
-- `data_path`, absolute path to the data directory for generated files. If NULL, defaults to `<root_path>/.bowerbird/`.
 - `name`, what the library is called in the rail and in Settings. Required. On create, an omitted or blank name is filled from the root folder and stored: the last path segment, or when that segment is a four-digit year, `"<parent> <year>"` so date-sorted trees do not all show as `"2025"`. Renaming the folder on disk afterwards does not change the stored name.
 - `ordering`, default ordering for photo listings in this library.
 - `include_subfolders`, whether the scan descends past the root at all (§9.1). A standing rule rather than a decision taken once at import: a folder created next month is out of scope for the same reason today's are, so turning it off writes no `folder_rules` rows and never needs revisiting. Off makes shoots meaningless for the library - a shoot *is* a subfolder, and its photos would never be scanned - so the UI disables the Shoots section and forces `mirror_shoots` off with that as the reason.
@@ -408,7 +406,6 @@ export const PhotoIdListSchema = z.object({
 ```typescript
 export const CreateLibraryRequestSchema = z.object({
   root_path: z.string().min(1),
-  data_path: z.string().optional(),
   name: z.string().trim().optional(),          // blank: store the inferred folder name (§4.1)
   ordering: OrderingSchema.default('taken_asc'),
   include_subfolders: z.boolean().default(true),  // §4.1
@@ -419,7 +416,6 @@ export const CreateLibraryRequestSchema = z.object({
 export const LibrarySchema = z.object({
   id: UuidSchema,
   root_path: z.string(),
-  data_path: z.string().nullable(),
   bin_name: z.string(),
   name: z.string().min(1),
   ordering: OrderingSchema,
@@ -596,14 +592,16 @@ export const AlbumSchema = z.object({
 
 ## 6. Library Data Directory
 
-Each library has a **data directory** for generated files. By default, this is `<library_root>/.bowerbird/`. It can be overridden per-library via the `data_path` column.
+Generated files live **outside every library root**, under `DATA_DIR` (§15), one subdirectory per library keyed by its id. Nothing the app generates is written among the photographs, which is what lets a library be read-only (`docs/superpowers/specs/2026-08-06-readonly-library-design.md` §3) and what makes bulk storage a mount rather than a per-library setting.
 
-**Everything under it is disposable, and nothing under it is an original.** Removing a library removes the whole tree (§10.6), and a user is free to delete `.bowerbird/` by hand to reclaim the space; both must cost only renders. That is why the Bin lives at the library root rather than in here (§12.3), why `POST /api/libraries` refuses a `root_path` inside an existing library's data directory (and a `data_path` that would contain an existing root), and why the removal itself refuses to run while any RAW is still inside.
+**Everything under it is disposable, and nothing under it is an original.** Removing a library removes its whole subtree (§10.6), and a user is free to delete it by hand to reclaim the space; both must cost only renders. That is why the Bin lives at the library root rather than in here (§12.3), why a `root_path` inside `DATA_DIR` (and a `DATA_DIR` inside a root) is refused in both directions at creation *and* at startup - `DATA_DIR` is an environment variable, so a catalogue that was valid yesterday can be started against one that now swallows a root - and why the removal itself refuses to run while any RAW is still inside.
+
+`DATA_DIR` is created and tested for writability at startup, before the database is opened; each library's subtree and every rendition directory in it are created when the library is, so nothing is made lazily by a writer.
 
 ### Structure
 
 ```
-<data_path>/
+<DATA_DIR>/<library id>/
 ├── renditions/         # Derived copies of a photo (§10.1)
 │   ├── grid/           # 800px AVIF, the library grid; always SDR
 │   ├── full/           # 3840px AVIF, the photo view
@@ -617,7 +615,7 @@ Each library has a **data directory** for generated files. By default, this is `
 
 ```typescript
 function getDataPath(library: Library): string {
-  return library.data_path ?? path.join(library.root_path, '.bowerbird');
+  return path.join(config.dataDir, library.id);
 }
 
 // Originals, so outside the data directory (§12.3). One bin at the library root,
@@ -631,9 +629,9 @@ function getBinPath(library: Library, relFolder = ''): string {
 
 ### Sync Exclusion
 
-The scanner must skip the data directory (`.bowerbird/` or whatever `data_path` points to if it is a subdirectory of the library root) when recursively listing files. It should also skip any directory named `.bowerbird` to avoid picking up nested data directories.
+The data directory needs no rule of its own any more: it is not under the root. A `<root>/.bowerbird` left by the layout that predates this is skipped by the hidden-directory rule and by nothing else, and is abandoned rather than swept - the sweep can no longer reach it.
 
-This is one of five rules that together answer "is this path part of this library", alongside hidden directories, the library's bin (§12.3), its `include_subfolders` setting (§4.1) and its `excluded` folders (§4.7). They live together in `isInScope` (§9.1) rather than being restated by each caller, because the scan and the watcher answering it differently is not a visible failure - it is a folder that quietly still wakes syncs, or a sync queued for paths the scan will discard.
+This leaves four rules that together answer "is this path part of this library": hidden directories, the library's bin (§12.3), its `include_subfolders` setting (§4.1) and its `excluded` folders (§4.7). They live together in `isInScope` (§9.1) rather than being restated by each caller, because the scan and the watcher answering it differently is not a visible failure - it is a folder that quietly still wakes syncs, or a sync queued for paths the scan will discard.
 
 ---
 
@@ -771,14 +769,13 @@ The sync algorithm is the most complex component. It is a stateless comparison b
 
 For each library:
 
-1. Resolve the library's `root_path` and `data_path`.
+1. Resolve the library's `root_path`.
 2. List all files under `root_path`, descending into subfolders only when the library's `include_subfolders` is set (§4.1), and skipping:
-   - The data directory (`.bowerbird/` or custom `data_path` if it's under `root_path`).
-   - Any hidden directories (starting with `.`).
+   - Any hidden directories (starting with `.`), which is what a legacy `<root>/.bowerbird` falls under (§6).
    - The library's bin, `<root>/<bin_name>` and everything under it (§12.3), so soft-deleted files are never re-imported. Anchored at the root, unlike the rules above it: that is the only place a bin is ever made, and matching the name at every depth would take a folder of the user's own called `Bin` out of the library in silence.
    - Any directory carrying an `excluded` rule (§4.7), and therefore everything beneath it.
 
-   These five questions live together in `src/utils/scope.ts`, and the **watcher asks them too** (§9.8). It had its own copy of the first three rules, which is two lists to keep in agreement about what the library contains; with the last two added the cost of them drifting is a folder the user excluded still waking a sync on every change, and scoped syncs queued for paths the scan will then ignore.
+   These four questions live together in `src/utils/scope.ts`, and the **watcher asks them too** (§9.8). It had its own copy of the first two rules, which is two lists to keep in agreement about what the library contains; with the last two added the cost of them drifting is a folder the user excluded still waking a sync on every change, and scoped syncs queued for paths the scan will then ignore.
 
    They split in two, and the split is not cosmetic. Four of them read the path alone and answer the same whether what sits there is a file or a folder, since each is about a *segment*: that is `isPathAllowed`. Only `include_subfolders` needs to know which it is looking at, because a root-only library keeps the files in its root and discards the folders beside them - the same string answers differently depending on what it names. The scan always knows what it is looking at, so `isDirInScope` is the two halves together. A watcher event names a path and not what kind of thing is at it, so the watcher asks `isPathAllowed` and settles the remaining question for files alone; a stray folder path costs nothing downstream, because the scoped sync tests it with `isDirInScope` before reading it.
 3. Filter to supported extensions only (`.arw`, `.cr3`). This yields the set of **present** file paths.
@@ -1041,9 +1038,9 @@ Processing converts RAW files into **renditions**: derived copies of one photo, 
 
 | Rendition | Constraint | Why it exists | Output path |
 |---|---|---|---|
-| `grid` | Longest edge = `GRID_RENDITION_SIZE` (default 800px) | The library grid. Always SDR | `<data_path>/renditions/grid/<photo_uuid>.avif` |
-| `full` | Longest edge = `FULL_RENDITION_SIZE` (default 3840px) | The photo view | `<data_path>/renditions/full[-hdr]/<photo_uuid>.avif` |
-| `max` | Native resolution, never fitted | Pixel-peeping (§10.5) | `<data_path>/renditions/max[-hdr]/<photo_uuid>.avif` |
+| `grid` | Longest edge = `GRID_RENDITION_SIZE` (default 800px) | The library grid. Always SDR | `<DATA_DIR>/<library id>/renditions/grid/<photo_uuid>.avif` |
+| `full` | Longest edge = `FULL_RENDITION_SIZE` (default 3840px) | The photo view | `<DATA_DIR>/<library id>/renditions/full[-hdr]/<photo_uuid>.avif` |
+| `max` | Native resolution, never fitted | Pixel-peeping (§10.5) | `<DATA_DIR>/<library id>/renditions/max[-hdr]/<photo_uuid>.avif` |
 
 Sizes and quality come from configuration (§15). Nothing in the pipeline hardcodes them.
 
@@ -1487,8 +1484,8 @@ Generated files are named `<photoId>.<ext>`, and photo ids are minted per insert
 
 Two things close that off:
 
-- **Removing a library removes its data directory.** Re-adding the same folder can never reuse the renditions (new ids), so keeping them is dead weight. The RAW files are not ours and are left alone: the Bin is outside the data directory (§12.3), and `data_path` is user-supplied, so a library configured to keep its data alongside or above the photographs is skipped with a warning rather than having that directory removed. Anything that still looks like an original under there - a `<data_path>/bin` from the layout that predates the Bin's move - is carried out into the library's Bin first, and the removal refuses outright if any is left behind. Losing renditions is recoverable; losing originals is not.
-- **A scheduled sweep** (`PRUNE_EVERY_DAYS`, default 7, 0 disables) walks each generated directory and deletes any file whose id has no row. The directories and the extension each is supposed to hold both come from the path helpers that write the files, so changing an output format cannot leave the sweep looking in the wrong place. A file whose extension no longer matches goes too, even when its photo is alive: a format change writes the new render beside the old one rather than over it, which the PNG-to-JXL switch made real at ~100 MB per photo ever opened. That rule is also what empties a **retired directory** - one nothing writes to any more, listed by `retiredRenditionDirs()` and swept alongside the live ones, where every file is by definition the wrong extension. `<rendition>-hdr-video` is the one there is: an MP4 per HDR photo for Firefox, which the browser now makes for itself (§10.7). The directory is `rmdir`'d once it comes up empty, and a file that would not go keeps it until a later sweep. Only `renditions/` and `hdr/` are swept, so a stray the user left is untouched (and the Bin is not in the data directory at all). Ids are checked against the whole `photos` table, not one library's, because the id space is global and two libraries may share a data directory. Soft-deleted rows count as live, since their renditions are what make the Bin browsable (§12.1).
+- **Removing a library removes its data directory**, `<DATA_DIR>/<library id>` (§6). Re-adding the same folder can never reuse the renditions (new ids), so keeping them is dead weight. The RAW files are not ours and are left alone: the directory is outside every library root, and the Bin is beside the photographs (§12.3). The removal still refuses outright while anything under there looks like an original - not as a trigger for a rescue, but because `rm -rf` is the one call here that cannot be undone and an original under there means the directory is not what it is believed to be.
+- **A scheduled sweep** (`PRUNE_EVERY_DAYS`, default 7, 0 disables) walks each generated directory and deletes any file whose id has no row. The directories and the extension each is supposed to hold both come from the path helpers that write the files, so changing an output format cannot leave the sweep looking in the wrong place. A file whose extension no longer matches goes too, even when its photo is alive: a format change writes the new render beside the old one rather than over it, which the PNG-to-JXL switch made real at ~100 MB per photo ever opened. That rule is also what empties a **retired directory** - one nothing writes to any more, listed by `retiredRenditionDirs()` and swept alongside the live ones, where every file is by definition the wrong extension. `<rendition>-hdr-video` is the one there is: an MP4 per HDR photo for Firefox, which the browser now makes for itself (§10.7). The directory is `rmdir`'d once it comes up empty, and a file that would not go keeps it until a later sweep. Only `renditions/` and `hdr/` are swept, so a stray the user left is untouched (and the Bin is not in the data directory at all). Ids are checked against the whole `photos` table, not one library's, because the id space is global. Soft-deleted rows count as live, since their renditions are what make the Bin browsable (§12.1).
 
 ### 10.6.1 One place that deletes
 
@@ -2234,7 +2231,7 @@ The chunk is what bounds the exposure the per-photo commit used to bound: the fi
 
 The mirror is what makes one bin possible. Flat, a bin is a heap in which `IMG_0001.ARW` from three shoots are three files distinguished only by the numeric suffix the collision handling adds - fine for the catalogue, which knows, and useless to anyone reading the folder. Mirrored, the bin is browsable on its own terms: where a file came from is written in the path, so it can be recovered by hand if the catalogue is ever lost. Bins inside each shoot folder bought the same legibility, but scattered: one library's deleted photographs in as many places as it has folders, each needing its own skip rule, and none of it visible in one place.
 
-**Never under `data_path`.** A Bin holds originals, and the data directory is the one tree the system deletes wholesale (§6, §10.6); a bin inside it would mean removing a library, or clearing `.bowerbird/` by hand, silently destroying every photograph the user had binned. The bin therefore sits beside the photographs it came from, where the only thing that can remove it is the user.
+**Never under the data directory.** A Bin holds originals, and the data directory is the one tree the system deletes wholesale (§6, §10.6); a bin inside it would mean removing a library, or clearing `DATA_DIR` by hand, silently destroying every photograph the user had binned. The bin therefore sits beside the photographs it came from, where the only thing that can remove it is the user.
 
 The scanner skips `<root>/<bin_name>` and everything under it, so soft-deleted files are never re-imported. That is a rule about the root, not about the name: see §9.1.
 
@@ -2463,7 +2460,7 @@ A scan reports progress every 500 files, because a 300k-frame import is hours of
 
 ## 15. Configuration
 
-Three environment variables, and only three: what has to be known before the
+Four environment variables, and only four: what has to be known before the
 catalogue can be opened.
 
 | Variable | Default | Description |
@@ -2471,6 +2468,7 @@ catalogue can be opened.
 | `HOST` | `0.0.0.0` | HTTP server bind address |
 | `PORT` | random | HTTP server port, printed on startup; `-p <port>` overrides it |
 | `DB_PATH` | `./bowerbird.db` | SQLite database file path |
+| `DATA_DIR` | `./data` | Where every generated file lives, one subdirectory per library (§6). Resolved absolute at load, created and tested for writability at startup |
 
 Everything else is a **setting**, stored in the `settings` table (§13.6) and
 edited from the app's Settings page. Deployment config that can only be changed
@@ -2552,7 +2550,7 @@ The sync-service, photo-deletion, and image-streaming cases below run in the int
 - Duplicate handling: 3 copies → 2 removed + 1 added = 1 move + 1 removal
 - Album membership bias: prefer removing photos not in albums
 - Modified + added with original hash (special case from §9.3)
-- Files in `.bowerbird/` directory are excluded
+- Files in a hidden directory are excluded, which covers a legacy `.bowerbird/` (§6)
 - Files in the library's bin are excluded, and a folder of the user's own further down sharing its name is not (§12.3)
 - Non-ARW files are ignored
 - Reappearance: a previously-missing file back at its original path clears `is_missing` (§9.4 step 4)

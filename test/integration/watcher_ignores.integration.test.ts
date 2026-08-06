@@ -27,8 +27,8 @@ async function quiet(): Promise<void> {
   await sleep(DEBOUNCE * 6 + 100);
 }
 
-async function start(over: Partial<LibraryScope>): Promise<void> {
-  const library = { id: LIB, root_path: root, data_path: null, bin_name: 'Bin', ordering: 'taken_desc' } as Library;
+async function start(over: Partial<Pick<LibraryScope, 'includeSubfolders' | 'binName' | 'excluded'>>): Promise<void> {
+  const library = { id: LIB, root_path: root, bin_name: 'Bin', ordering: 'taken_desc' } as Library;
   const libraries = { list: () => [library], getById: () => library } as unknown as LibrariesRepository;
   const sync = {
     syncLibrary: async (_id: string, scope?: readonly string[]) => {
@@ -38,7 +38,6 @@ async function start(over: Partial<LibraryScope>): Promise<void> {
     scopeFor: (): LibraryScope =>
       libraryScope(
         { root_path: root, include_subfolders: over.includeSubfolders ?? true, bin_name: over.binName ?? 'Bin' },
-        over.dataPath ?? path.join(root, '.bowerbird'),
         over.excluded ?? new Set<string>(),
       ),
   } as unknown as SyncService;

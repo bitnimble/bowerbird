@@ -1,15 +1,13 @@
 import { describe, it, expect } from 'bun:test';
-import path from 'node:path';
 import { isDirInScope, isFileInScope, isPathAllowed, libraryScope, type LibraryScope } from '../scope';
 
 const ROOT = '/lib';
 
 // Built through the real constructor rather than as a literal, so the tests
 // cannot drift from how a scope is actually assembled.
-function scope(over: { dataPath?: string; includeSubfolders?: boolean; excluded?: Set<string>; binName?: string } = {}): LibraryScope {
+function scope(over: { includeSubfolders?: boolean; excluded?: Set<string>; binName?: string } = {}): LibraryScope {
   return libraryScope(
     { root_path: ROOT, include_subfolders: over.includeSubfolders ?? true, bin_name: over.binName ?? 'Bin' },
-    over.dataPath ?? path.join(ROOT, '.bowerbird'),
     over.excluded ?? new Set<string>(),
   );
 }
@@ -43,10 +41,11 @@ describe('isDirInScope', () => {
     expect(isDirInScope(renamed, 'Bin')).toBe(true);
   });
 
-  it('skips the data directory, wherever it is configured', () => {
+  // Generated files live outside the root now (§3), so a legacy `.bowerbird`
+  // tree is skipped by the dotfolder rule and by nothing else.
+  it('skips a legacy .bowerbird tree', () => {
     expect(isDirInScope(scope(), '.bowerbird')).toBe(false);
-    expect(isDirInScope(scope({ dataPath: path.join(ROOT, 'data') }), 'data')).toBe(false);
-    expect(isDirInScope(scope({ dataPath: path.join(ROOT, 'data') }), 'data/renditions')).toBe(false);
+    expect(isDirInScope(scope(), '.bowerbird/renditions')).toBe(false);
   });
 
   it('refuses every subfolder when the library is root-only', () => {
@@ -84,7 +83,7 @@ describe('isPathAllowed', () => {
     expect(isPathAllowed(s, 'Trip/a.arw')).toBe(true);
   });
 
-  it('still refuses the Bin, dotfolders and the data directory', () => {
+  it('still refuses the Bin and dotfolders', () => {
     const s = scope();
     expect(isPathAllowed(s, 'Bin')).toBe(false);
     expect(isPathAllowed(s, 'Bin/Trip/a.arw')).toBe(false);

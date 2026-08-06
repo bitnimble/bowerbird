@@ -1,9 +1,10 @@
 import { Hono, type Context } from 'hono';
 import { cors } from 'hono/cors';
+import { accessSync, constants, mkdirSync } from 'node:fs';
 import { createDatabase } from './db/connection';
 import { applyErrorHandler } from './api/error_handler';
 import { LibrariesApi } from './api/libraries/libraries_api';
-import { LibrariesService } from './services/libraries/libraries_service';
+import { assertNoDataDirectoryOverlap, LibrariesService } from './services/libraries/libraries_service';
 import { LibrariesRepository } from './services/libraries/libraries_repository';
 import { PhotosApi } from './api/photos/photos_api';
 import { PhotosService } from './services/photos/photos_service';
@@ -37,10 +38,25 @@ import type { Settings } from './schemas/settings';
 const log = new Logger('server');
 const requestLog = new Logger('http');
 
+// Before the database is opened, because it needs nothing but `config`: every
+// generated file in the install lands under here (§3), so a directory that
+// cannot be made or written is a deployment that will 404 every rendition it
+// ever builds.
+mkdirSync(config.dataDir, { recursive: true });
+try {
+  accessSync(config.dataDir, constants.W_OK);
+} catch {
+  throw new Error(`DATA_DIR is not writable: ${config.dataDir}`);
+}
+
 const db = createDatabase(config.dbPath);
 
 const settingsRepo = new SettingsRepository(db);
 const librariesRepo = new LibrariesRepository(db);
+// After the repository exists, because it reads every library's root. `DATA_DIR`
+// is an environment variable, so a catalogue that was valid yesterday can be
+// started against a data directory that now swallows one of its roots (§3.1).
+for (const library of librariesRepo.list()) assertNoDataDirectoryOverlap(library.root_path);
 const photosRepo = new PhotosRepository(db);
 const shootsRepo = new ShootsRepository(db);
 const folderRulesRepo = new FolderRulesRepository(db);
