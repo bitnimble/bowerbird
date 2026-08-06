@@ -1,7 +1,7 @@
 // Putting a snapshot back (§4.9). Offline, from `scripts/restore-backup.ts`,
 // because the running server holds the file this replaces.
 import { Database } from 'bun:sqlite';
-import { existsSync, lstatSync, readlinkSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, readlinkSync } from 'node:fs';
 import { rename } from 'node:fs/promises';
 import path from 'node:path';
 import { LATEST_USER_VERSION } from '../../db/migrations';
@@ -76,32 +76,42 @@ function checkVersion(db: Database, backupPath: string): number {
 // unwritable, which is precisely why somebody is restoring. Refusing on those
 // leaves them no way through at all, told to stop a server that is not running,
 // with the only remaining move being to delete their catalogue by hand.
-function refuseIfInUse(dbPath: string): void {
-  if (!existsSync(dbPath)) return;
+// **The lock is held, not sampled.** Everything after this - vacuuming the snapshot
+// out, four renames - takes as long as the catalogue is big, measured at 3.7s for
+// 244MB and minutes on a slow volume. Releasing the lock on the way out leaves that
+// entire window open for a server to start in, and one that does writes through its
+// handle to the inode about to be moved aside: its reads stay right, its shutdown is
+// clean, and the work is discarded at the next start with nothing reported anywhere.
+// `restart: unless-stopped` makes that window a likely place for a server to appear,
+// not a theoretical one. The returned connection is closed by the caller, once the
+// swap is done.
+function holdAgainstUse(dbPath: string): Database | null {
+  if (!existsSync(dbPath)) return null;
   let probe: Database;
   try {
     probe = new Database(dbPath);
   } catch {
-    return; // nothing can be serving from a file that will not open
+    return null; // nothing can be serving from a file that will not open
   }
   try {
     probe.exec('PRAGMA busy_timeout = 0;');
     // Exclusive locking mode rather than the write lock alone: an *idle* server
-    // holds no write lock, and it is still a server.
+    // holds no write lock, and it is still a server. It also keeps the lock until
+    // this connection closes, which is what makes holding it possible at all.
     probe.exec('PRAGMA locking_mode = EXCLUSIVE;');
     probe.exec('BEGIN IMMEDIATE');
     probe.exec('COMMIT');
+    return probe;
   } catch (err) {
+    probe.close();
     // `startsWith`, because bun reports SQLite's *extended* result codes. A lock
     // refusal can arrive as `SQLITE_BUSY_RECOVERY` - another process recovering this
     // WAL after a crash, which with `restart: unless-stopped` is the exact shape of
     // "the server died and came back while I was restoring" - or as
     // `SQLITE_BUSY_SNAPSHOT`. Matching the primary code alone lets those through as
     // "not a lock", and a restore under a live server loses everything since.
-    if ((err as { code?: string }).code?.startsWith('SQLITE_BUSY') !== true) return;
+    if ((err as { code?: string }).code?.startsWith('SQLITE_BUSY') !== true) return null;
     throw new Error(`${dbPath} is open in another process. Stop Bowerbird first, or the work it is holding will be lost.`);
-  } finally {
-    probe.close();
   }
 }
 
@@ -127,20 +137,32 @@ function resolveCatalogue(dbPath: string): string {
   throw new Error(`${dbPath} is a symlink loop`);
 }
 
+// A restore killed between its vacuum and its rename leaves a catalogue-sized file
+// beside the catalogue that nothing else names - the same litter the backup side
+// sweeps, and there is no reason for this side to be the one that hoards it.
+async function sweepAbandonedStaging(dbPath: string): Promise<void> {
+  const dir = path.dirname(dbPath);
+  const prefix = `${path.basename(dbPath)}.restoring-`;
+  const names = readdirSync(dir).filter((name) => name.startsWith(prefix));
+  for (const name of names) await deleteRestoreStaging(dbPath, path.join(dir, name)).catch(() => {});
+}
+
 export async function restoreBackup(rawDbPath: string, backupPath: string): Promise<RestoreResult> {
   if (!existsSync(backupPath)) throw new Error(`no such backup: ${backupPath}`);
   const dbPath = resolveCatalogue(rawDbPath);
   if (path.resolve(backupPath) === dbPath) throw new Error('the backup and the catalogue are the same file');
+  await sweepAbandonedStaging(dbPath);
 
   const staged = `${dbPath}.restoring-${new Date().toISOString().replace(/[:.]/g, '-')}`;
   const source = openBackup(backupPath);
   let version: number;
+  let held: Database | null = null;
   try {
-    // Before the in-use probe, which opens the catalogue read-write and so may
+    // Before taking the lock, which opens the catalogue read-write and so may
     // checkpoint a stale `-wal` into it. Harmless in itself, but a restore that is
     // then refused for a bad backup must not have touched the live catalogue at all.
     version = checkVersion(source, backupPath);
-    refuseIfInUse(dbPath);
+    held = holdAgainstUse(dbPath);
     // `VACUUM INTO` rather than a file copy, for the same reason the backup uses it:
     // a copy takes the main file alone, and a catalogue's committed work can be
     // almost entirely in its `-wal`. Copying one of those restores an empty
@@ -152,6 +174,7 @@ export async function restoreBackup(rawDbPath: string, backupPath: string): Prom
     source.run('VACUUM INTO ?', [staged]);
   } catch (err) {
     source.close();
+    held?.close();
     await deleteRestoreStaging(dbPath, staged).catch(() => {});
     throw err;
   }
@@ -180,16 +203,20 @@ export async function restoreBackup(rawDbPath: string, backupPath: string): Prom
       await rename(`${aside}${suffix}`, `${dbPath}${suffix}`).catch(() => stranded.push(`${aside}${suffix}`));
     }
     await deleteRestoreStaging(dbPath, staged).catch(() => {});
+    held?.close();
     // Saying "undone" when it could not be undone is the one thing worse than the
-    // failure: the catalogue would be sitting at a path nobody has been shown, and
-    // the next start would make a fresh empty one on top of the gap.
+    // failure: the files would be sitting at a path nobody has been shown, and the
+    // next start would make a fresh empty catalogue on top of the gap.
     if (stranded.length > 0) {
       throw new Error(
-        `the restore failed and could not be undone: ${reason(err)}. Your catalogue is at ${stranded.join(', ')} - move it back by hand.`,
+        `the restore failed and could not be undone: ${reason(err)}. Your files are at ${stranded.join(', ')} - move them back by hand.`,
       );
     }
     throw new Error(`the restore was undone: ${reason(err)}`);
   }
+  // Only now: everything above happened while the catalogue was locked against any
+  // other process opening it.
+  held?.close();
 
   // Only when the catalogue itself was parked. A lone `-wal` moved out of the way is
   // not something to point anyone at as "the catalogue that was there".

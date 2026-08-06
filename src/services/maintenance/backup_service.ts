@@ -31,6 +31,7 @@ function snapshotPattern(base: string): RegExp {
 // `2026-08-06T15-04-35-704Z`, which is `toISOString()` with its colons and dot
 // swapped for dashes so it can be a filename.
 const STAMP = /(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z/;
+const TAIL = new RegExp(`${STAMP.source}\\.db$`);
 
 /**
  * When a snapshot says it was taken, from its name, or null if the name does not
@@ -44,7 +45,14 @@ const STAMP = /(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z/;
  * a dead machine, which is the disaster-recovery path itself.
  */
 function snapshotTime(file: string): number | null {
-  const match = STAMP.exec(path.basename(file));
+  // Anchored to the tail, because the stamp is only ever the *last* thing in the
+  // name. Matching anywhere takes the leftmost hit, so a catalogue whose own
+  // filename carries a stamp-shaped run - `bowerbird.db.pre-restore-<stamp>`, which
+  // this very module's restore writes, and a plausible thing to point DB_PATH at -
+  // dates every one of its snapshots to that fixed instant instead. Measured: the
+  // schedule then finds itself overdue on every hourly check and `backup_keep: 7`
+  // collapses to seven consecutive hourly snapshots, all logging success.
+  const match = TAIL.exec(path.basename(file));
   if (match == null) return null;
   const [, date, hh, mm, ss, ms] = match;
   const at = Date.parse(`${date}T${hh}:${mm}:${ss}.${ms}Z`);
@@ -172,14 +180,13 @@ export class BackupService {
     // in the same millisecond do not vacuum into one file.
     const temp = path.join(dir, `.${base}-${stamp}-${nextAttempt()}.part`);
 
-    let written: { bytes: number; libraries: number };
+    let bytes: number;
     try {
-      written = await this.write(temp);
+      bytes = await this.write(temp);
     } catch (err) {
       await deleteBackupFile(dir, temp).catch(() => {});
       throw err;
     }
-    const { bytes } = written;
     await rename(temp, target);
 
     // After the snapshot is safely in place, and never fatal to it: a snapshot that
@@ -187,7 +194,7 @@ export class BackupService {
     // delete. The operator needs to hear about it, which is what the log is for.
     let removed = 0;
     try {
-      removed = await this.rotate(dir, keep, target, written);
+      removed = await this.rotate(dir, keep, target);
     } catch (err) {
       log.error('the backup was taken, but rotating older ones failed', { err });
     }
@@ -217,7 +224,7 @@ export class BackupService {
     }
   }
 
-  private write(outPath: string): Promise<{ bytes: number; libraries: number }> {
+  private write(outPath: string): Promise<number> {
     return new Promise((resolve, reject) => {
       const worker = new Worker(this.workerUrl);
       let settled = false;
@@ -242,7 +249,7 @@ export class BackupService {
 
       worker.onmessage = (event: MessageEvent<BackupOutcome>) => {
         const outcome = event.data;
-        finish(() => ('error' in outcome ? reject(new Error(outcome.error)) : resolve(outcome)));
+        finish(() => ('error' in outcome ? reject(new Error(outcome.error)) : resolve(outcome.bytes)));
       };
       // Bun kills the thread after this fires, so there is no worker left to report
       // through the message channel.
@@ -257,58 +264,39 @@ export class BackupService {
     });
   }
 
-  private async rotate(dir: string, keep: number, taken: string, snapshot: { bytes: number; libraries: number }): Promise<number> {
+  private async rotate(dir: string, keep: number, taken: string): Promise<number> {
     // A nonsense retention must not be read as "keep none": deleting every snapshot
     // is the one outcome this whole feature exists to prevent.
     if (!(keep >= 1)) return 0;
-    const others = (await listBackups(this.dbPath)).filter((file) => file !== taken);
-
     // The snapshot just taken is never a rotation candidate, whatever it sorts as.
     // A clock stepped backwards gives it an older name than the history it joins,
     // and deleting the backup this run just made is not a thing to leave to the
     // wall clock.
+    const others = (await listBackups(this.dbPath)).filter((file) => file !== taken);
     const excess = others.length + 1 - keep;
     if (excess <= 0) return 0;
 
-    // A catalogue with no libraries at all, displacing history that is larger, is
-    // not a catalogue that shrank - it is a *replacement* for one. `createDatabase`
-    // creates on open, so anything leaving DB_PATH absent (a volume that failed to
-    // mount, a restore killed mid-rename) gets a fresh empty catalogue on the next
-    // start, and rotating on its snapshots destroys the real one's entire history
-    // within `keep` runs: at the defaults, a week, every run logging success.
-    //
-    // Emptiness rather than a size ratio, because size cannot tell them apart: an
-    // empty migrated catalogue is already 225KB of schema, and a real but modest one
-    // is only a few times that. Both conditions together, so a genuinely new install
-    // - empty, with no larger history to lose - still rotates normally.
-    const sizes = new Map<string, number>();
-    for (const file of others) sizes.set(file, await stat(file).then((s) => s.size, () => 0));
-    const largest = Math.max(0, ...sizes.values());
+    // Oldest first, by the date each snapshot claims, with a date that cannot be
+    // read or is in the future counting as oldest. Ordering by name instead leaves
+    // a future-stamped snapshot at the end of the list for ever, so rotation never
+    // reaches it while it still counts against `keep`: measured, seven of those
+    // collapse `backup_keep: 7` to one snapshot at most one interval old, every run
+    // reporting a successful backup and a rotation. A bogus date is what should go
+    // first. Keyed rather than compared, so two undatable snapshots do not hand the
+    // sort a NaN.
+    const now = Date.now();
+    const oldestFirst = others
+      .map((file) => ({ file, age: age(file, now) }))
+      .sort((a, b) => (a.age === b.age ? 0 : b.age - a.age));
+    const stale = oldestFirst.slice(0, Math.min(excess, oldestFirst.length)).map((entry) => entry.file);
 
-    // Only the snapshots that are no bigger than this one, which is what makes the
-    // refusal safe to leave in place indefinitely: removing the last library is a
-    // thing people legitimately do, and refusing outright would then accumulate
-    // snapshots for ever. The larger history is preserved, the equally-empty ones
-    // still rotate among themselves.
-    let candidates = others;
-    if (snapshot.libraries === 0 && snapshot.bytes < largest) {
-      candidates = others.filter((file) => (sizes.get(file) ?? 0) <= snapshot.bytes);
-      log.error('this snapshot has no libraries and is smaller than the history it would replace; that history is being kept', {
-        bytes: snapshot.bytes,
-        largest,
-        db: this.dbPath,
-      });
+    const undatable = oldestFirst.slice(0, stale.length).filter((entry) => entry.age === Number.POSITIVE_INFINITY);
+    if (undatable.length > 0) {
+      // Otherwise the one case where rotation drops the *newest* work - a clock that
+      // ran forward and was corrected - is completely invisible.
+      log.warn('dropping snapshots whose own date cannot be believed', { files: undatable.map((e) => path.basename(e.file)) });
     }
 
-    // Least trustworthy first. A snapshot stamped in the future sorts last by name
-    // for ever, so ordering deletion by name makes it immortal - and it still counts
-    // against `keep`, so it permanently burns a retention slot. Measured: seven of
-    // them collapse `backup_keep: 7` to "one snapshot, at most one interval old",
-    // with every run reporting a successful backup and a rotation. A bogus date is
-    // exactly what should go first.
-    const now = Date.now();
-    const oldestFirst = [...candidates].sort((a, b) => age(b, now) - age(a, now));
-    const stale = oldestFirst.slice(0, Math.min(excess, oldestFirst.length));
     for (const file of stale) await deleteBackupFile(dir, file);
     return stale.length;
   }

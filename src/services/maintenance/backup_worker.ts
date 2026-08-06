@@ -13,12 +13,7 @@ export interface BackupJob {
   /** Where to write. Must not exist: `VACUUM INTO` refuses an existing file. */
   outPath: string;
 }
-/**
- * `libraries` is how many the snapshot holds, read back out of the finished file.
- * Rotation needs it to tell a snapshot of the catalogue from a snapshot of a
- * *replacement* for it (§4.9).
- */
-export type BackupOutcome = { bytes: number; libraries: number } | { error: string };
+export type BackupOutcome = { bytes: number } | { error: string };
 
 declare const self: {
   onmessage: ((event: MessageEvent<BackupJob>) => void) | null;
@@ -64,34 +59,32 @@ async function requireSpaceFor(job: BackupJob): Promise<void> {
 // produced the file. It is kept because `VACUUM INTO` silently preserving
 // `user_version` is the property the restore-side version refusal rests on, and a
 // SQLite that stopped doing that should be loud here rather than at a restore.
-function verify(outPath: string, expectedVersion: number): number {
+function verify(outPath: string, expectedVersion: number): void {
   const copy = new Database(outPath, { readonly: true });
   try {
     const { quick_check: result } = copy.query('PRAGMA quick_check').get() as { quick_check: string };
     if (result !== 'ok') throw new Error(`quick_check says ${result}`);
     const version = userVersion(copy);
     if (version !== expectedVersion) throw new Error(`user_version is ${version}, expected ${expectedVersion}`);
-    return (copy.query('SELECT count(*) AS n FROM libraries').get() as { n: number }).n;
   } finally {
     copy.close();
   }
 }
 
-async function run(job: BackupJob): Promise<{ bytes: number; libraries: number }> {
+async function run(job: BackupJob): Promise<{ bytes: number }> {
   await requireSpaceFor(job);
   // `VACUUM INTO` rather than a file copy: it reads a consistent snapshot inside a
   // read transaction, and produces one self-contained file with no -wal beside it
   // that a restore would have to remember to bring along.
   const source = new Database(job.dbPath, { readonly: true });
-  let libraries: number;
   try {
     source.exec('PRAGMA busy_timeout = 5000;');
     source.run('VACUUM INTO ?', [job.outPath]);
-    libraries = verify(job.outPath, userVersion(source));
+    verify(job.outPath, userVersion(source));
   } finally {
     source.close();
   }
-  return { bytes: (await stat(job.outPath)).size, libraries };
+  return { bytes: (await stat(job.outPath)).size };
 }
 
 // A part-written file is left for the caller to remove: it has to handle the case

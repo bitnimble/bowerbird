@@ -503,8 +503,9 @@ test('a symlinked catalogue whose volume is missing is not replaced by a plain f
   expect(lstatSync(dbPath).isSymbolicLink()).toBe(true);
   expect(existsSync(real)).toBe(true);
 
-  rmSync(dbPath);
+  // Opened through the link, which now resolves, so the catalogue is on its volume.
   db = createDatabase(dbPath);
+  expect(libraryNames(real)).toEqual([]);
 });
 
 test('a catalogue too corrupt to open can still be restored over', async () => {
@@ -647,6 +648,28 @@ test('a snapshot with a bogus date is rotated out rather than made immortal', as
   expect(kept).not.toContain(stuck);
 });
 
+test('a catalogue whose own filename carries a date does not date every snapshot to it', async () => {
+  // `<db>.pre-restore-<stamp>` is a name this module's own restore writes, and a
+  // plausible thing to point DB_PATH at to inspect a parked catalogue. Matching the
+  // stamp anywhere in the name takes the leftmost hit, so every snapshot dates to
+  // that fixed instant - the schedule then finds itself overdue on every check and
+  // the retention window collapses to consecutive minutes.
+  const awkward = path.join(dir, 'bowerbird.db.pre-restore-2026-01-02T03-04-05-678Z');
+  db.close();
+  renameSync(dbPath, awkward);
+  dbPath = awkward;
+  db = createDatabase(dbPath);
+  addLibrary(LIB, 'holiday');
+  backups = new BackupService(dbPath);
+
+  await backups.backup(7);
+
+  // Dated now, not in January.
+  const age = await backups.ageOfNewest();
+  expect(age).not.toBeNull();
+  expect(age!).toBeLessThan(60_000);
+});
+
 test('rotation never deletes the snapshot it just took', async () => {
   addLibrary(LIB, 'holiday');
   // The future-stamped one sorts last, so the snapshot taken now sorts *first* -
@@ -658,41 +681,52 @@ test('rotation never deletes the snapshot it just took', async () => {
   expect(existsSync(taken)).toBe(true);
 });
 
-test('history is not rotated away for a snapshot of a suddenly-empty catalogue', async () => {
+test('a catalogue that has gone missing is refused rather than silently replaced', async () => {
   addLibrary(LIB, 'holiday');
-  for (let i = 0; i < 200; i++) addLibrary(`00000000-0000-4000-8000-${String(i).padStart(12, '0')}`, `lib-${i}`);
-  const real = await backups.backup(2);
+  await backups.backup(7);
   db.close();
 
-  // Anything that leaves DB_PATH absent gets a fresh 225KB catalogue on the next
-  // start, because the server creates on open. Rotating on those wipes the real
-  // catalogue's entire history within `keep` runs - at the defaults, a week - with
-  // every run logging a successful backup.
+  // Opening creates, so anything leaving DB_PATH absent - a volume that failed to
+  // mount, a restore killed between its renames - otherwise gets a silent empty
+  // replacement. Everything after that is invisible: the user sees an empty library
+  // and re-adds their folder, and the rolling backup starts snapshotting the
+  // replacement, rotating the real catalogue's history away within `keep` runs.
+  //
+  // Guarded here rather than in rotation, which is where it was first caught and
+  // first patched: refusing to rotate on a snapshot with no libraries is defeated by
+  // the very next thing the user does, which is re-add their library.
   rmSync(dbPath);
-  db = createDatabase(dbPath);
-  await backups.backup(2);
-  await backups.backup(2);
 
-  expect(await listBackups(dbPath)).toContain(real.path);
-  expect(libraryNames(real.path).length).toBeGreaterThan(200);
+  expect(() => createDatabase(dbPath)).toThrow(/backup\(s\) of it sit in/);
+
+  // And says what to do about it, rather than just refusing.
+  expect(() => createDatabase(dbPath)).toThrow(/bun run restore latest/);
+  db = new Database(dbPath, { create: true });
 });
 
-test('a catalogue emptied on purpose still rotates, without eating the history', async () => {
-  addLibrary(LIB, 'holiday');
-  for (let i = 0; i < 200; i++) addLibrary(`00000000-0000-4000-8000-${String(i).padStart(12, '0')}`, `lib-${i}`);
-  const real = await backups.backup(3);
+test('a first run with no backups beside it still creates a catalogue', async () => {
+  db.close();
+  rmSync(dbPath);
+  rmSync(backupsDir(dbPath), { recursive: true, force: true });
 
-  // Removing the last library is a thing people do. Refusing to rotate outright
-  // once that happens would keep every empty snapshot for ever, on the volume
-  // holding the catalogue, with an error logged each time.
+  db = createDatabase(dbPath);
+
+  expect(libraryNames(dbPath)).toEqual([]);
+});
+
+test('a catalogue emptied on purpose rotates normally', async () => {
+  addLibrary(LIB, 'holiday');
+  const first = await backups.backup(3);
+
+  // Removing the last library is a thing people do, and it must not look like a
+  // catalogue that vanished. The old rotation-side guard could not tell them apart
+  // and refused for ever once it fired.
   db.query('DELETE FROM libraries').run();
-  for (let i = 0; i < 6; i++) await backups.backup(3);
+  for (let i = 0; i < 5; i++) await backups.backup(3);
 
   const kept = await listBackups(dbPath);
-  expect(kept).toContain(real.path);
-  // The history is safe and the empty ones rotate among themselves rather than
-  // accumulating one per run for ever.
-  expect(kept.length).toBeLessThanOrEqual(4);
+  expect(kept.length).toBe(3);
+  expect(kept).not.toContain(first.path);
 });
 
 test('a working file from a run that is still going is left alone', async () => {
