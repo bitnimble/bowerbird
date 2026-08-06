@@ -182,27 +182,7 @@ One guard replaces all of it: `DATA_DIR` inside any library's root is refused at
 library creation, since the scan would otherwise walk the app's own renditions.
 One check against one path, not a pairwise comparison across every library.
 
-### 3.2 Migrating existing installs
-
-Existing libraries have their generated files at `<root>/.bowerbird`, or at
-whatever `data_path` they were given. Dropping the column means moving them once,
-at the migration:
-
-1. `rename()` the old directory to `<DATA_DIR>/<library id>`. Free when the two
-   are on one filesystem.
-2. On `EXDEV`, **drop it** rather than copying. Renditions are a cache - the file
-   *is* the cache (§10.2), `buildRendition` rebuilds on demand and
-   `processUnprocessed` refills tiles on the next sync - so the cost is a
-   re-render pass, not lost work. A cross-device copy of every AVIF in a
-   catalogue, with the progress reporting and resumability that a long copy needs
-   to be honest, is a great deal of machinery to avoid re-running a decode the app
-   is already built to re-run.
-
-The `EXDEV` case is the common one under Docker (`/photos` and `/data` are
-separate mounts), so most installs re-render. That is the trade being made
-deliberately: one throwaway migration instead of a copy engine.
-
-### 3.3 Docker
+### 3.2 Docker
 
 ```yaml
 volumes:
@@ -284,16 +264,17 @@ folder. Two things improve for writable libraries as a side effect:
   photographer and quietly missing photographs.
 - The bin's contents become observable, which is what §6 is built on.
 
-Costs, both real and both accepted:
+Two things this costs:
 
-- **The first full sync after this ships hashes every already-binned file once.**
-  A file with no row is always "changed", so it is opened, hashed and has its
-  metadata read. From the second sync on they are claimed and subtracted at step
-  2, so they are never opened again. One-off, proportional to the bin.
 - **`reconcileShootFolders` must exclude bin paths from `withPhotos`**
   (`sync_service.ts:753-759`), or mirroring makes a shoot for every folder inside
   the bin - which, since the bin mirrors the library's whole folder tree, is a
   duplicate of the entire shoots tree.
+- **An unclaimed file in the bin is opened, hashed and has its metadata read**,
+  because a file with no row is always "changed". Only hand-binned files are ever
+  unclaimed, and only once each: from the next sync on they are claimed and
+  subtracted at step 2. A catalogue that binned everything through the app never
+  pays this at all.
 
 The watcher keeps ignoring the bin (`library_watcher.ts:217`). Its reasoning
 holds: the bin only grows, and watching it costs an inotify handle per directory
@@ -575,28 +556,33 @@ a statement about where to find the RAW, which is the question that line answers
 **Photo actions** hide *Add to shoot* and *Remove from shoot* for a read-only
 library. *Add to album* is unaffected and is the thing to reach for.
 
-## 14. Migration
+## 14. Schema, not migration
 
-In `db/migrations.ts`, one table rebuild of `libraries` (SQLite cannot drop a
-`NOT NULL` or a column in place, and the file already does rebuilds elsewhere):
+**Nothing migrates.** There are no installs to carry forward - only a dev
+catalogue, which gets recreated - so every change here is an edit to `SCHEMA` in
+`db/migrations.ts` and there is no `ensureColumn` step, no table rebuild, and no
+data move anywhere in this document.
+
+In the `libraries` table:
 
 - add `read_only INTEGER NOT NULL DEFAULT 0`
-- `bin_name` to nullable; existing rows keep their names, so no existing library
-  ever sees `NULL`
-- drop `data_path`, after §3.2 has moved what it pointed at
+- `bin_name TEXT` - drop the `NOT NULL DEFAULT 'Bin'`
+- delete `data_path`
 
-Plus `CREATE TABLE sync_locks` (§8). Nothing seeds it: an empty lock table is a
+Plus `sync_locks` (§8) as a new table. Nothing seeds it: an empty lock table is a
 library nobody is syncing, which is true at startup.
 
-Two behaviour changes for existing libraries that no schema step can express:
+Not doing this the migration way is the point. A relocation of every rendition
+in the catalogue, a rebuild of `libraries` to drop a column SQLite will not drop
+in place, and the tests to prove both - all of it exists only to spare a database
+that can simply be deleted instead.
 
-**§3.2's data move**, which runs once. A `rename()` where the old and new
-directories share a filesystem, and a drop-and-rebuild where they do not.
-
-**§5's walk of the bin**, on the next full sync. Its files are matched against the
-rows already claiming them, and only genuinely unclaimed ones - hand-binned files -
-are imported. A library whose bin the photographer has never touched sees no row
-change at all, at the cost of one pass of hashing.
+The same argument reaches further than this document: the incremental migrations
+already in `db/migrations.ts` (`renamePreviewColumnsToRenditions` and the
+`ensureColumn` run at the bottom of the file) are carrying a schema history that no
+live catalogue is standing on either. Folding them into `SCHEMA` and deleting them
+is a bigger and separate change, and it is a call worth making deliberately rather
+than as a side effect of this one.
 
 ## 15. Testing
 
@@ -627,9 +613,8 @@ Unit, against the existing service tests:
 - Two concurrent `syncLibrary` calls: the second throws `SYNC_IN_PROGRESS`, and
   the row is gone afterwards on both the success and the throw path.
 - Deleting a library mid-sync leaves no `sync_locks` row (the cascade).
-- The §3.2 migration renames the old data directory when it can and drops it on
-  `EXDEV`; either way `getDataPath` resolves under `DATA_DIR` afterwards and a
-  rendition builds.
+- `getDataPath` resolves under `DATA_DIR` and nowhere near the library root, for a
+  writable library as much as a read-only one.
 - `DATA_DIR` inside a library root is refused at library creation.
 - Clearing `read_only` without a bin name is refused; with one, it sticks.
 
@@ -655,10 +640,9 @@ Stated so they are choices rather than surprises:
   instant, which is the price of not asking about PIDs (§8.1).
 - Hand-managed bin changes are noticed by the daily full sync, not within a
   watcher debounce (§5).
-- The first full sync after this ships hashes every already-binned file once
-  (§5).
-- Most installs re-render their renditions once, because `/photos` and `/data` are
-  usually separate mounts (§3.2).
+- Any catalogue that predates this is not carried forward. It is recreated (§14),
+  which is only free while there is one dev instance and stops being free the
+  moment there is a user.
 - A photographer who moves a binned file *out* of a read-only library's tree
   entirely leaves a binned row marked `is_missing`, with no way for the app to
   know it was deliberate.
