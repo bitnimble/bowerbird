@@ -1,13 +1,13 @@
-import { Database } from 'bun:sqlite';
-import { stat, statfs } from 'node:fs/promises';
-import path from 'node:path';
-
 // Takes one snapshot of the catalogue and verifies it (§4.9).
 //
 // On a thread of its own because bun:sqlite is synchronous: `VACUUM INTO` on the
 // server's connection would hold the event loop for the whole copy, which on a
 // large catalogue is seconds of a server that answers nothing. It only needs a
 // read transaction, so it blocks no writer.
+import { Database } from 'bun:sqlite';
+import { stat, statfs } from 'node:fs/promises';
+import path from 'node:path';
+
 export interface BackupJob {
   dbPath: string;
   /** Where to write. Must not exist: `VACUUM INTO` refuses an existing file. */
@@ -65,10 +65,9 @@ async function run(job: BackupJob): Promise<number> {
   return (await stat(job.outPath)).size;
 }
 
-// A part-written file is left for the caller to remove rather than cleaned up
-// here: it has to do that anyway for the case where this thread dies without
-// reporting, and a copy the size of the catalogue is not something to leave to
-// whichever of the two remembered.
+// A part-written file is left for the caller to remove: it has to handle the case
+// where this thread dies without reporting anyway, so cleaning up here as well
+// would be two owners for one file.
 self.onmessage = async (event) => {
   try {
     self.postMessage({ bytes: await run(event.data) });

@@ -998,7 +998,7 @@ const AdvancedSettings = observer(function AdvancedSettings(): JSX.Element | nul
         <NumberSetting
           field="backup_every_days"
           label="Back up the catalogue every (days)"
-          hint="Copies the catalogue into a backups folder beside it. Your photo files are not touched: what this protects is everything about them that only exists here - ratings, notes, picks, albums, shoots and edits. 0 turns it off."
+          hint="Copies the catalogue into a backups folder beside it. Your photo files are not touched: what this protects is everything about them that only exists here - ratings, notes, picks, album memberships and shoot assignments, none of which a rescan can bring back. 0 turns it off."
         />
         <NumberSetting
           field="backup_keep"

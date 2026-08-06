@@ -11,8 +11,9 @@
 // restore chosen in a panic can itself be undone.
 import path from 'node:path';
 import { config } from '../src/config';
-import { backupsDir, findBackup, listBackups } from '../src/services/maintenance/backup_service';
+import { findBackup, listBackups } from '../src/services/maintenance/backup_service';
 import { restoreBackup } from '../src/services/maintenance/restore';
+import { backupsDir } from '../src/utils/paths';
 
 const [, , requested] = process.argv;
 const dir = backupsDir(config.dbPath);
@@ -32,6 +33,13 @@ if (chosen == null) {
   process.exit(1);
 }
 
-const { movedAside, version } = await restoreBackup(config.dbPath, chosen);
-console.log(`Restored ${chosen} to ${config.dbPath} (schema ${version}).`);
-if (movedAside != null) console.log(`The catalogue that was there is at ${movedAside}; delete it once you are happy.`);
+// Every refusal here is one somebody is meant to read and act on - a backup from a
+// newer build, a file that is not intact - and a stack trace is not that.
+try {
+  const { movedAside, version } = await restoreBackup(config.dbPath, chosen);
+  console.log(`Restored ${chosen} to ${config.dbPath} (schema ${version}).`);
+  if (movedAside != null) console.log(`The catalogue that was there is at ${movedAside}; delete it once you are happy.`);
+} catch (err) {
+  console.error(err instanceof Error ? err.message : String(err));
+  process.exit(1);
+}

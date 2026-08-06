@@ -57,6 +57,15 @@ export function getBinPath(library: Pick<Library, 'root_path' | 'bin_name'>, rel
   return library.bin_name == null ? null : path.join(library.root_path, library.bin_name, relFolder);
 }
 
+// Rolling catalogue snapshots (§4.9), beside the database rather than under
+// `DATA_DIR` where everything else this app generates lives: that directory is
+// disposable by design (§6), removed whole with its library and safe for a user to
+// clear by hand to reclaim space. A backup is the one generated file for which
+// that is false.
+export function backupsDir(dbPath: string): string {
+  return path.join(path.dirname(path.resolve(dbPath)), 'backups');
+}
+
 // Absolute path to a photo's original RAW, given its root-relative file_path.
 export function getOriginalPath(library: Library, filePath: string): string {
   return path.join(library.root_path, filePath);

@@ -3,51 +3,51 @@ import { mkdir, readdir, rename, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { Logger } from '../../logger';
 import { deleteBackupFile } from '../../utils/deletions';
+import { backupsDir } from '../../utils/paths';
 import type { BackupJob, BackupOutcome } from './backup_worker';
 
 const WORKER_URL = new URL('./backup_worker.ts', import.meta.url).href;
 
 const log = new Logger('backup');
 
-// Beside the database rather than under `DATA_DIR`, where the rest of what this
-// app generates lives: that directory is disposable by design (§6), deleted whole
-// when a library goes and safe for a user to clear by hand to reclaim space. A
-// backup is the one generated file for which that is false (§4.9).
-export function backupsDir(dbPath: string): string {
-  return path.join(path.dirname(path.resolve(dbPath)), 'backups');
-}
-
-// What every snapshot of this database is named after, so two catalogues sharing
-// a directory rotate their own files - and offer their own files to a restore -
-// and not each other's.
+// The whole filename, extension included, so `photos.db` and `photos.sqlite` are
+// told apart rather than both answering to `photos`.
 function backupBase(dbPath: string): string {
-  return path.basename(dbPath).replace(/\.[^.]*$/, '');
+  return path.basename(dbPath);
 }
 
-// This catalogue's snapshots, oldest first: the stamp in each name is ISO, so
-// sorting by name is chronological and needs no `stat`. Both readers of this are
-// selective for the same reason - rotation must not delete another database's
-// backups, and a restore must not offer one.
+// Snapshots of this catalogue and no other. A prefix test is not enough: it would
+// make `photos.db` claim `photos-archive.db`'s files, and since `a` sorts after a
+// digit those are the newest ones - so rotation would delete every snapshot of the
+// catalogue it was protecting and `latest` would restore the wrong database. The
+// stamp's shape is what separates them.
+function snapshotPattern(base: string): RegExp {
+  const literal = base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`^${literal}-\\d{4}-\\d{2}-\\d{2}T[\\d-]+Z\\.db$`);
+}
+
+// Oldest first: the stamp is ISO, so sorting by name is chronological.
 export async function listBackups(dbPath: string): Promise<string[]> {
   const dir = backupsDir(dbPath);
-  const prefix = `${backupBase(dbPath)}-`;
+  const pattern = snapshotPattern(backupBase(dbPath));
   const names = await readdir(dir).catch(() => [] as string[]);
   return names
-    .filter((name) => name.startsWith(prefix) && name.endsWith('.db'))
+    .filter((name) => pattern.test(name))
     .sort()
     .map((name) => path.join(dir, name));
 }
 
 // Which snapshot a person meant, from `latest` or from a name as `listBackups`
-// prints it. A bare name is resolved against the backup directory rather than
-// against the shell's working directory, or following the restore tool's own
-// output would fail with "no such backup". A path is still taken as one, for
-// restoring from somewhere else entirely - but a bare name is only ever matched
-// within this catalogue's own snapshots.
+// prints it. A bare name resolves against the backup directory, not the shell's
+// working directory, or typing back what the restore tool just printed would fail
+// with "no such backup". An explicit path is taken as one, for a copy kept
+// elsewhere.
 export async function findBackup(dbPath: string, requested: string): Promise<string | undefined> {
   const backups = await listBackups(dbPath);
   if (requested === 'latest') return backups.at(-1);
-  return backups.find((file) => path.basename(file) === requested) ?? (existsSync(requested) ? requested : undefined);
+  const listed = backups.find((file) => path.basename(file) === requested);
+  if (listed != null) return listed;
+  return existsSync(requested) ? requested : undefined;
 }
 
 export interface BackupResult {
@@ -57,11 +57,7 @@ export interface BackupResult {
   removed: number;
 }
 
-// Rolling snapshots of the catalogue (§4.9). The catalogue is the only copy of
-// everything about the photographs that is not in the photographs - ratings,
-// notes, verdicts, albums, shoots, and edits, which are stored here with no
-// sidecar file to fall back on - so losing it loses work that no rescan brings
-// back.
+// Rolling snapshots of the catalogue (§4.9).
 export class BackupService {
   constructor(private readonly dbPath: string) {}
 
@@ -71,24 +67,21 @@ export class BackupService {
     await mkdir(dir, { recursive: true });
 
     const base = backupBase(this.dbPath);
-    // ISO, so the directory sorts chronologically by name and the rotation below
-    // needs no stat of anything.
+    await this.sweepAbandoned(dir, base);
+
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
     const target = path.join(dir, `${base}-${stamp}.db`);
-    // Written under a name of its own and renamed into place once it has been
-    // verified. Rename is atomic, so nothing that appears under the real name is
-    // ever a partial file - and a partial backup that looks whole is worse than
-    // no backup at all. Dot-prefixed, which is also what keeps it out of the
-    // rotation's sight while it is being written.
-    const temp = path.join(dir, `.${base}-${stamp}.db.part`);
+    // Written aside and renamed into place only once it has been verified. Rename
+    // is atomic, so nothing appearing under a real name is ever a partial file, and
+    // a partial backup that looks whole is worse than no backup at all. Dot-prefixed
+    // to stay out of the rotation's sight, and counter-suffixed because two runs
+    // starting in the same millisecond would otherwise vacuum into one file.
+    const temp = path.join(dir, `.${base}-${stamp}-${nextAttempt()}.part`);
 
     let bytes: number;
     try {
       bytes = await this.write(temp);
     } catch (err) {
-      // However the run ended - a refusal, a crashed thread, a full disk partway
-      // through - the part-written file is the size of the catalogue and nothing
-      // else will ever come looking for it.
       await deleteBackupFile(dir, temp).catch(() => {});
       throw err;
     }
@@ -97,7 +90,6 @@ export class BackupService {
     return { path: target, bytes, removed: await this.rotate(dir, keep) };
   }
 
-  /** How long ago the newest snapshot was taken, or null if there is none. */
   async ageOfNewest(): Promise<number | null> {
     const newest = (await listBackups(this.dbPath)).at(-1);
     if (newest == null) return null;
@@ -106,26 +98,50 @@ export class BackupService {
     return Date.now() - (await stat(newest)).mtimeMs;
   }
 
+  // What a killed process leaves behind. The cleanup on the failure path below only
+  // runs if this one lived to reach it, and an abandoned file is the size of the
+  // catalogue - nothing else names it, and rotation cannot see it.
+  private async sweepAbandoned(dir: string, base: string): Promise<void> {
+    const names = await readdir(dir).catch(() => [] as string[]);
+    for (const name of names.filter((n) => n.startsWith(`.${base}-`) && n.endsWith('.part'))) {
+      await deleteBackupFile(dir, path.join(dir, name)).catch(() => {});
+    }
+  }
+
   private write(outPath: string): Promise<number> {
     return new Promise((resolve, reject) => {
       const worker = new Worker(WORKER_URL);
+      let settled = false;
+      const finish = (outcome: () => void): void => {
+        if (settled) return;
+        settled = true;
+        worker.terminate();
+        outcome();
+      };
+
       worker.onmessage = (event: MessageEvent<BackupOutcome>) => {
-        worker.terminate();
         const outcome = event.data;
-        if ('error' in outcome) reject(new Error(outcome.error));
-        else resolve(outcome.bytes);
+        finish(() => ('error' in outcome ? reject(new Error(outcome.error)) : resolve(outcome.bytes)));
       };
-      // Bun kills the thread after this fires, so there is no worker left to
-      // report through the message channel.
+      // Bun kills the thread after this fires, so there is no worker left to report
+      // through the message channel.
       worker.onerror = (event: ErrorEvent) => {
-        worker.terminate();
-        reject(new Error(`backup worker crashed: ${event.message}`));
+        finish(() => reject(new Error(`backup worker crashed: ${event.message}`)));
       };
+      // A thread that ends without answering either way. Without this the promise
+      // never settles, which latches `running` and silently stops every future
+      // backup - the failure that looks exactly like a working schedule.
+      worker.addEventListener('close', () => {
+        finish(() => reject(new Error('the backup worker exited without reporting')));
+      });
       worker.postMessage({ dbPath: this.dbPath, outPath } satisfies BackupJob);
     });
   }
 
   private async rotate(dir: string, keep: number): Promise<number> {
+    // A nonsense retention must not be read as "keep none": deleting every snapshot
+    // is the one outcome this whole feature exists to prevent.
+    if (!(keep >= 1)) return 0;
     const existing = await listBackups(this.dbPath);
     const stale = existing.slice(0, Math.max(0, existing.length - keep));
     for (const file of stale) await deleteBackupFile(dir, file);
@@ -133,10 +149,22 @@ export class BackupService {
   }
 }
 
-const DAY_MS = 24 * 60 * 60 * 1000;
+// Distinguishes two runs that start inside one millisecond. A counter rather than
+// a random suffix so a leftover is still recognisably this process's.
+let attempt = 0;
+function nextAttempt(): number {
+  return ++attempt;
+}
 
-// Runs the snapshot on a fixed interval, the same shape as the orphan sweep.
-// Disabled when `everyDays` is 0.
+const DAY_MS = 24 * 60 * 60 * 1000;
+// How often the schedule asks whether a backup is due, which is not how often one
+// is taken. Deliberately short and fixed: `setInterval` truncates its delay to a
+// signed 32-bit integer, so an interval of 25 days or more wraps to milliseconds
+// and fires continuously - which would quietly rotate a week of history down to a
+// few seconds of it, the exact opposite of what the setting asks for.
+const DUE_CHECK_MS = 60 * 60 * 1000;
+
+// Takes a snapshot when one is due. Disabled when `everyDays` is 0.
 export class ScheduledBackup {
   private timer: ReturnType<typeof setInterval> | null = null;
   private running = false;
@@ -144,19 +172,26 @@ export class ScheduledBackup {
   constructor(
     private readonly backups: BackupService,
     private everyDays = 0,
-    private keep = 7,
+    // Not the shipped default repeated: `configure` always supplies one, and
+    // rotation refuses to act on a value below 1, so this cannot delete anything.
+    private keep = 0,
   ) {}
 
   start(): void {
     if (!(this.everyDays > 0) || this.timer != null) return;
-    this.timer = setInterval(() => void this.fire(), this.everyDays * DAY_MS);
+    this.timer = setInterval(() => void this.takeIfDue(), DUE_CHECK_MS);
     log.info('catalogue backup scheduled', { everyDays: this.everyDays, keep: this.keep });
-    void this.catchUp();
+    void this.takeIfDue();
   }
 
-  /** Applies a changed setting (§15) without a restart. */
+  /**
+   * Applies a changed setting (§15) without a restart.
+   *
+   * Restarts unconditionally, where the orphan sweep skips an unchanged value: that
+   * shortcut leaves a scheduler constructed with its final settings never starting
+   * at all, and re-arming an hourly check costs nothing.
+   */
   configure(everyDays: number, keep: number): void {
-    if (everyDays === this.everyDays && keep === this.keep) return;
     this.stop();
     this.everyDays = everyDays;
     this.keep = keep;
@@ -170,19 +205,23 @@ export class ScheduledBackup {
     }
   }
 
-  // The orphan sweep can wait for its interval to come round, because a restart
-  // is not evidence that anything was orphaned. A backup cannot: a timer alone
-  // means a laptop shut each night, or a server restarted more often than the
-  // interval, reaches its first backup never. So the age of the newest snapshot
-  // decides rather than this process's uptime - which also keeps a development
-  // reload from taking one every time.
-  private async catchUp(): Promise<void> {
-    const age = await this.backups.ageOfNewest();
-    if (age == null || age >= this.everyDays * DAY_MS) await this.fire();
+  // The age of the newest snapshot decides, not this process's uptime. The orphan
+  // sweep can wait for its interval to come round, because a restart is not evidence
+  // that anything was orphaned; a backup cannot, or a laptop shut each night and a
+  // server restarted more often than the interval reach their first backup never.
+  // Age is also what keeps a development reload from taking one every time.
+  private async takeIfDue(): Promise<void> {
+    if (this.running) return;
+    const due = this.everyDays * DAY_MS;
+    const age = await this.backups.ageOfNewest().catch(() => null);
+    // Re-read after the await: the setting can have been turned off while it ran.
+    if (!(this.everyDays > 0)) return;
+    if (age != null && age < due) return;
+    await this.take();
   }
 
-  private async fire(): Promise<void> {
-    if (this.running) return; // a snapshot of a huge catalogue on a slow disk could outlast the interval
+  private async take(): Promise<void> {
+    if (this.running) return; // a snapshot of a huge catalogue on a slow disk could outlast the check
     this.running = true;
     const startedAt = Date.now();
     try {

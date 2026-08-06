@@ -53,12 +53,9 @@ export const SettingsSchema = z.object({
   // because it only has anything to do after a library is removed or a
   // catalogue is rebuilt, and it reads every rendition directory. 0 disables.
   prune_every_days: z.number().int().min(0).default(7),
-  // Rolling snapshot of the catalogue into `backups/` beside the database file
-  // (§4.9). Daily, seven kept, so a week is recoverable: the catalogue is the
-  // only copy of everything that is not a pixel - ratings, notes, verdicts,
-  // albums, shoots, and edits, which are stored here with no sidecar on disk to
-  // fall back on. 0 disables; `backup_keep` is a count of files, not days, so
-  // lengthening the interval does not silently shorten the window.
+  // Rolling snapshot of the catalogue (§4.9). 0 disables; `backup_keep` is a
+  // count of files rather than of days, so lengthening the interval does not
+  // silently shorten the window it covers.
   backup_every_days: z.number().int().min(0).default(1),
   backup_keep: z.number().int().min(1).default(7),
 
