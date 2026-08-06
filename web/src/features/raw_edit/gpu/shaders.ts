@@ -15,8 +15,9 @@
 //   peak      prelude, tick, colour; declares bindings 5-6 and 8
 //   reduce    tick; declares bindings 1-3, on a layout of its own
 //
-// Numbers that both sides need are pipeline-overridable constants rather than string
-// substitutions, so the `.wgsl` files stay valid WGSL on their own.
+// Numbers that both sides need are declared in the `.wgsl` and pinned to the host's copy by a
+// test, rather than substituted into the source, so the files stay valid WGSL on their own. A
+// pipeline-overridable constant only where the value actually differs between pipelines.
 
 import colour from './wgsl/colour.wgsl?raw';
 import frame from './wgsl/frame.wgsl?raw';
@@ -104,8 +105,8 @@ export const TICK_UNIFORM_FLOATS = tickOffsets().floats;
 /**
  * Bins in the peak's histogram, and the buffer that holds them.
  *
- * Passed to the peak pipelines as an override, so the shader and the buffer cannot
- * disagree about the length.
+ * `peak.wgsl` declares the same number, and `tests/peak_constants.test.ts` holds the two
+ * together - the shader cannot take it as a pipeline constant (see the `const` there).
  */
 export const PEAK_BINS = 8192;
 
@@ -121,6 +122,3 @@ export const PEAK_SAMPLES = 1 << 20;
  * against a full sample across ±5 EV, and none at 512 either.
  */
 export const PEAK_CANDIDATES = 16384;
-
-/** What `peak.wgsl` declares as overridable, so its two lengths match the buffers. */
-export const PEAK_CONSTANTS = { BINS: PEAK_BINS, CANDIDATES: PEAK_CANDIDATES };
