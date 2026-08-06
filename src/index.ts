@@ -209,6 +209,9 @@ folderRulesRepo.onChange((libraryId) => {
   const library = librariesRepo.getById(libraryId);
   if (library != null) watcher.onLibraryUpdated(library);
 });
+// The other half of what the watcher watches: a sync that followed a renamed bin
+// folder wrote `bin_name` itself, and the ignore list is built from it.
+syncService.onLibraryChanged((library) => watcher.onLibraryUpdated(library));
 const dailySync = new DailySync(syncService);
 const scheduledPrune = new ScheduledPrune(new PruneService(librariesRepo, photosRepo));
 

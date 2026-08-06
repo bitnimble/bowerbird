@@ -127,6 +127,7 @@ export class SyncService implements LibraryLifecycleListener {
   // background bookkeeping: the live pending count comes from the DB on read.
   private readonly processingBatch = new Map<string, ProcessingBatch>();
   private readonly settledListeners = new Set<(libraryId: string, changed: boolean) => void>();
+  private readonly libraryChangedListeners = new Set<(library: Library) => void>();
   // Identity token per in-flight sync generation, and the handle that stops it.
   // The lease is released before the detached processing runs, so a newer sync can
   // start while the old one's processing tail is still going; the token lets a
@@ -175,6 +176,17 @@ export class SyncService implements LibraryLifecycleListener {
    */
   onSettled(listener: (libraryId: string, changed: boolean) => void): void {
     this.settledListeners.add(listener);
+  }
+
+  /**
+   * Called when a sync wrote a library's own row, which today means following a
+   * renamed bin folder (§6.3). The watcher builds its ignore list from
+   * `bin_name`, so without this it goes on ignoring a folder that is not there
+   * and watching the one that is - after which every binning wakes a sync, and a
+   * scoped sync over bin paths reads them as unclaimed live additions.
+   */
+  onLibraryChanged(listener: (library: Library) => void): void {
+    this.libraryChangedListeners.add(listener);
   }
 
   async syncAll(): Promise<void> {
@@ -607,6 +619,22 @@ export class SyncService implements LibraryLifecycleListener {
           else removed++;
         }
       });
+
+      // Outside the transaction, so a listener cannot hold the write lock, and
+      // only once it has committed: the watcher would otherwise re-arm against a
+      // name this run may still roll back.
+      if (followed.rename != null) {
+        const renamed = this.libraries.getById(libraryId);
+        if (renamed != null) {
+          for (const listener of this.libraryChangedListeners) {
+            try {
+              listener(renamed);
+            } catch (err) {
+              log.error('a library-changed listener failed', { library: libraryId, err });
+            }
+          }
+        }
+      }
 
       // After the photos are written, so the folders' contents are settled: which
       // folders hold photographs is the whole question mirroring answers. The
