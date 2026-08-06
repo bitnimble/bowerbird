@@ -710,6 +710,62 @@ test('a staging file left by a killed restore is swept by the next one', async (
   db = createDatabase(dbPath);
 });
 
+test('a restore holds the catalogue’s path even when there is no catalogue there', async () => {
+  addLibrary(LIB, 'holiday');
+  const { path: file } = await backups.backup(7);
+  db.close();
+  // Disaster recovery onto a host with nothing at DB_PATH - one of the two ways
+  // anyone gets here. With no file to lock, a server starting during the vacuum
+  // creates its own catalogue at that path, takes writes, and has them discarded by
+  // the final rename: measured at 60 committed rows gone, both processes exiting 0.
+  rmSync(dbPath);
+  rmSync(`${dbPath}-wal`, { force: true });
+  rmSync(`${dbPath}-shm`, { force: true });
+
+  const held = holdAgainstUse(dbPath);
+  try {
+    expect(held).not.toBeNull();
+    expect(held!.placeholder).toBe(true);
+    const other = new Database(dbPath, { create: true });
+    try {
+      other.exec('PRAGMA busy_timeout = 0;');
+      expect(() => other.exec('BEGIN IMMEDIATE')).toThrow();
+    } finally {
+      other.close();
+    }
+  } finally {
+    held?.lock.close();
+  }
+
+  // And the placeholder is never offered as "the catalogue that was there".
+  const { movedAside } = await restoreBackup(dbPath, file);
+  expect(movedAside).toBeNull();
+  db = createDatabase(dbPath);
+  expect(libraryNames(dbPath)).toEqual(['holiday']);
+});
+
+test('an empty database where the catalogue was counts as missing, not as a catalogue', async () => {
+  addLibrary(LIB, 'holiday');
+  await backups.backup(7);
+  db.close();
+  rmSync(dbPath);
+
+  // Zero bytes is what a truncating filesystem failure leaves; a valid but empty
+  // 4096-byte database is what a killed restore's own lock placeholder leaves.
+  // SQLite reads both as a database and the next start builds the schema straight
+  // into them, so neither `existsSync` nor a size test sees the hazard.
+  writeFileSync(dbPath, '');
+  expect(() => createDatabase(dbPath)).toThrow(/backup\(s\) of it sit in/);
+
+  // The real article, made the way a killed restore makes it.
+  rmSync(dbPath);
+  holdAgainstUse(dbPath)?.lock.close();
+  expect(statSync(dbPath).size).toBeGreaterThan(0);
+  expect(() => createDatabase(dbPath)).toThrow(/backup\(s\) of it sit in/);
+
+  db = new Database(dbPath, { create: true });
+});
+
 test('the in-use lock is still held when the check that took it returns', () => {
   db.close(); // nothing else holding it, so the lock is this check's to take
   // The check is worth nothing sampled. Everything after it - vacuuming the
@@ -728,7 +784,7 @@ test('the in-use lock is still held when the check that took it returns', () => 
       other.close();
     }
   } finally {
-    held?.close();
+    held?.lock.close();
     db = createDatabase(dbPath);
   }
 });

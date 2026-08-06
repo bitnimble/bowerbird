@@ -4,6 +4,7 @@ import { Database } from 'bun:sqlite';
 import { existsSync, lstatSync, readdirSync, readlinkSync } from 'node:fs';
 import { rename } from 'node:fs/promises';
 import path from 'node:path';
+import { isMissingCatalogue } from '../../db/connection';
 import { LATEST_USER_VERSION } from '../../db/migrations';
 import { deleteRestoreStaging } from '../../utils/deletions';
 
@@ -85,11 +86,25 @@ function checkVersion(db: Database, backupPath: string): number {
 // `restart: unless-stopped` makes that window a likely place for a server to appear,
 // not a theoretical one. The returned connection is closed by the caller, once the
 // swap is done.
-export function holdAgainstUse(dbPath: string): Database | null {
-  if (!existsSync(dbPath)) return null;
+export function holdAgainstUse(dbPath: string): { lock: Database; placeholder: boolean } | null {
+  // A missing catalogue is not a reason to skip the lock - it is the *likeliest*
+  // reason to be here, since one of the two arrival routes is somebody deleting the
+  // catalogue that looked broken. With nothing at the path there is nothing to lock,
+  // so a server starting during the vacuum creates its own catalogue there, takes
+  // writes into it, and has them discarded by the final rename. Measured: 60
+  // committed rows gone, both processes exiting 0, nothing logged. So an empty file
+  // is put there purely to be locked.
+  // An empty database counts as nothing there, on the same reading the server uses
+  // to decide whether it is being asked to replace a catalogue: that is what an
+  // earlier killed restore's own placeholder is, and parking one would offer an
+  // empty file as "the catalogue that was there".
+  const placeholder = isMissingCatalogue(dbPath);
   let probe: Database;
   try {
-    probe = new Database(dbPath);
+    // Options only when creating: `{ create: false }` is not "open the existing
+    // one", it drops the connection to read-only, which cannot take a write lock
+    // and so reports every catalogue as free.
+    probe = placeholder ? new Database(dbPath, { create: true }) : new Database(dbPath);
   } catch {
     return null; // nothing can be serving from a file that will not open
   }
@@ -101,7 +116,7 @@ export function holdAgainstUse(dbPath: string): Database | null {
     probe.exec('PRAGMA locking_mode = EXCLUSIVE;');
     probe.exec('BEGIN IMMEDIATE');
     probe.exec('COMMIT');
-    return probe;
+    return { lock: probe, placeholder };
   } catch (err) {
     probe.close();
     // `startsWith`, because bun reports SQLite's *extended* result codes. A lock
@@ -156,7 +171,7 @@ export async function restoreBackup(rawDbPath: string, backupPath: string): Prom
   const staged = `${dbPath}.restoring-${new Date().toISOString().replace(/[:.]/g, '-')}`;
   const source = openBackup(backupPath);
   let version: number;
-  let held: Database | null = null;
+  let held: { lock: Database; placeholder: boolean } | null = null;
   try {
     // Before taking the lock, which opens the catalogue read-write and so may
     // checkpoint a stale `-wal` into it. Harmless in itself, but a restore that is
@@ -174,7 +189,7 @@ export async function restoreBackup(rawDbPath: string, backupPath: string): Prom
     source.run('VACUUM INTO ?', [staged]);
   } catch (err) {
     source.close();
-    held?.close();
+    held?.lock.close();
     await deleteRestoreStaging(dbPath, staged).catch(() => {});
     throw err;
   }
@@ -186,9 +201,13 @@ export async function restoreBackup(rawDbPath: string, backupPath: string): Prom
   // catalogue looks broken deletes it and restores, and a `-wal` left behind then
   // replays the broken catalogue straight back over the restore, with nothing about
   // the result looking wrong.
+  // The empty file put there to be locked is this function's own, not a catalogue:
+  // parking it would leave an empty "the catalogue that was there" for somebody to
+  // be pointed at. The final rename replaces it in place.
+  const parkable = held?.placeholder === true ? SIDECARS : ['', ...SIDECARS];
   const moved: string[] = [];
   try {
-    for (const suffix of ['', ...SIDECARS]) {
+    for (const suffix of parkable) {
       if (!existsSync(`${dbPath}${suffix}`)) continue;
       await rename(`${dbPath}${suffix}`, `${aside}${suffix}`);
       moved.push(suffix);
@@ -203,7 +222,7 @@ export async function restoreBackup(rawDbPath: string, backupPath: string): Prom
       await rename(`${aside}${suffix}`, `${dbPath}${suffix}`).catch(() => stranded.push(`${aside}${suffix}`));
     }
     await deleteRestoreStaging(dbPath, staged).catch(() => {});
-    held?.close();
+    held?.lock.close();
     // Saying "undone" when it could not be undone is the one thing worse than the
     // failure: the files would be sitting at a path nobody has been shown, and the
     // next start would make a fresh empty catalogue on top of the gap.
@@ -216,7 +235,7 @@ export async function restoreBackup(rawDbPath: string, backupPath: string): Prom
   }
   // Only now: everything above happened while the catalogue was locked against any
   // other process opening it.
-  held?.close();
+  held?.lock.close();
 
   // Only when the catalogue itself was parked. A lone `-wal` moved out of the way is
   // not something to point anyone at as "the catalogue that was there".

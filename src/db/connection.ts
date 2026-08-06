@@ -1,5 +1,5 @@
 import { Database } from 'bun:sqlite';
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { backupsDir } from '../utils/paths';
 import { runMigrations } from './migrations';
@@ -20,8 +20,37 @@ import { runMigrations } from './migrations';
 // bandage. Rotation was where this was caught, so rotation is where it was first
 // patched - by refusing to act on a snapshot with no libraries - and that guard is
 // defeated by the very next thing a user does, which is re-add their library.
+/**
+ * Whether there is no catalogue at this path - counting an *empty* database as
+ * none.
+ *
+ * A file with no tables in it is the same hazard as no file at all, and neither
+ * `existsSync` nor a size test sees it: SQLite reads a zero-byte file as an empty
+ * database, and the placeholder a killed restore leaves behind to hold its lock is
+ * a perfectly valid 4096-byte one. Either way the next start builds the schema
+ * straight into it and calls it a catalogue.
+ *
+ * Unreadable or locked counts as present, deliberately: this decides whether to
+ * refuse, and something we cannot open is not something to refuse over.
+ */
+export function isMissingCatalogue(dbPath: string): boolean {
+  const stats = statSync(dbPath, { throwIfNoEntry: false });
+  if (stats == null || stats.size === 0) return true;
+  try {
+    const db = new Database(dbPath, { readonly: true });
+    try {
+      const { n } = db.query("SELECT count(*) AS n FROM sqlite_master WHERE type = 'table'").get() as { n: number };
+      return n === 0;
+    } finally {
+      db.close();
+    }
+  } catch {
+    return false;
+  }
+}
+
 function refuseToReplaceAMissingCatalogue(dbPath: string): void {
-  if (dbPath === ':memory:' || existsSync(dbPath)) return;
+  if (dbPath === ':memory:' || !isMissingCatalogue(dbPath)) return;
   const dir = backupsDir(dbPath);
   const prefix = `${path.basename(dbPath)}-`;
   const snapshots = existsSync(dir) ? readdirSync(dir).filter((name) => name.startsWith(prefix) && name.endsWith('.db')) : [];
