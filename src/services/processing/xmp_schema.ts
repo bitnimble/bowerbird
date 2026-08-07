@@ -47,9 +47,11 @@ export const ProcessVersionSchema = z.union([
 export type ProcessVersion = z.infer<typeof ProcessVersionSchema>;
 
 export const WhiteBalanceSchema = z.object({
-  // Open enum: `As Shot`, `Auto`, `Daylight`, `Cloudy`, `Shade`, `Tungsten`,
-  // `Fluorescent`, `Flash`, `Custom`.
-  whiteBalance: z.string(),
+  // `crs:WhiteBalance`, named against the rule above because the rule gives
+  // `whiteBalance.whiteBalance` and the tag is the preset selector, not the
+  // white balance itself. Open enum: `As Shot`, `Auto`, `Daylight`, `Cloudy`,
+  // `Shade`, `Tungsten`, `Fluorescent`, `Flash`, `Custom`.
+  mode: z.string(),
   // The only two parameters whose absence is null rather than a number. "As
   // shot" means the correct value is the camera's own recorded neutral, which
   // this layer cannot see; a fixed number here would white-balance every

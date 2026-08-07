@@ -122,8 +122,12 @@ So `crs:Exposure2012` becomes `tone.exposure`, `crs:Clarity2012` becomes
 struct. It is deleted rather than stripped from the end because it is not always at
 the end: `crs:ToneCurvePV2012Red` carries it in the middle.
 
-Three exceptions, each because the mechanical result would be worse than the name
+Four exceptions, each because the mechanical result would be worse than the name
 it replaces:
+
+- **`crs:WhiteBalance` is `whiteBalance.mode`.** The rule gives
+  `whiteBalance.whiteBalance`, and the tag is the preset selector (`As Shot`,
+  `Daylight`, `Custom`), not the white balance itself.
 
 - **The tone curves**, whose local names all begin with `ToneCurve` while already
   living under `tone`. Spelled out rather than derived, since the rule alone gives

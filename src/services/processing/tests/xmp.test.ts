@@ -41,13 +41,25 @@ function parseAttrs(attrs: string, children = ''): XmpSettings {
 const CURRENT = 'crs:ProcessVersion="6.7" crs:Version="13.2"';
 
 describe('parseXmp: container and namespaces', () => {
-  it('reads a scalar written as an attribute and as an element identically', () => {
-    const asAttribute = parseAttrs(`${CURRENT} crs:Exposure2012="+0.35" crs:Contrast2012="12"`);
-    const asElement = parse(
-      description(CURRENT, '<crs:Exposure2012>+0.35</crs:Exposure2012><crs:Contrast2012>12</crs:Contrast2012>'),
-    );
-    expect(asAttribute.tone.exposure).toBe(0.35);
-    expect(asAttribute.tone).toEqual(asElement.tone);
+  it('reads scalars written as attributes and as elements identically', () => {
+    // One document written both ways, across every block that holds a scalar,
+    // compared whole: a form handled for one type and not another is the way
+    // this fails in the wild.
+    const scalars: [string, string][] = [
+      ['crs:ProcessVersion', '6.7'], ['crs:Version', '13.2'], ['crs:HasSettings', 'True'],
+      ['crs:Exposure2012', '+0.35'], ['crs:Contrast2012', '12'], ['crs:ToneCurveName2012', 'Medium Contrast'],
+      ['crs:WhiteBalance', 'Cloudy'], ['crs:Temperature', '6500'], ['crs:Dehaze', '+7.5'],
+      ['crs:ConvertToGrayscale', 'True'], ['crs:GrayMixerAqua', '-14'], ['crs:Sharpness', '55'],
+      ['crs:SplitToningShadowHue', '215'], ['crs:LensProfileName', 'Canon EF 35mm'], ['crs:GrainAmount', '12'],
+      ['crs:BlueHue', '-6'], ['tiff:Orientation', '6'], ['crs:HasCrop', 'True'], ['crs:CropRight', '0.8'],
+      ['crs:PerspectiveUpright', '3'], ['crs:CameraProfile', 'Adobe Color'], ['xmp:Rating', '4'],
+      ['xmp:CreateDate', '2025-11-02T17:41:09+11:00'], ['crs:RawFileName', 'IMG_1234.CR2'],
+    ];
+    const asAttributes = parseAttrs(scalars.map(([tag, value]) => `${tag}="${value}"`).join(' '));
+    const asElements = parseAttrs('', scalars.map(([tag, value]) => `<${tag}>${value}</${tag}>`).join(''));
+    expect(asAttributes.tone.exposure).toBe(0.35);
+    expect(asAttributes.metadata.rating).toBe(4);
+    expect(asElements).toEqual(asAttributes);
   });
 
   it('reads a structure as a nested rdf:Description and as parseType="Resource" identically', () => {
@@ -100,7 +112,7 @@ describe('parseXmp: container and namespaces', () => {
     );
     expect(settings.tone.exposure).toBe(0.75);
     expect(settings.tone.contrast).toBe(30);
-    expect(settings.issues).toContainEqual({ tag: 'crs:Exposure2012', reason: 'duplicate', value: '+0.25' });
+    expect(settings.issues).toEqual([{ tag: 'crs:Exposure2012', reason: 'duplicate', value: '+0.25' }]);
   });
 
   it('parses a leading BOM and hundreds of bytes of xpacket padding', () => {
@@ -123,11 +135,81 @@ describe('parseXmp: container and namespaces', () => {
     expect(settings.metadata.title).toBe('Owl');
   });
 
+  it('matches x-default whatever case it is written in, and falls back to the first', () => {
+    const cased = parseAttrs('', '<dc:title><rdf:Alt><rdf:li xml:lang="fr">Hibou</rdf:li><rdf:li xml:lang="X-Default">Owl</rdf:li></rdf:Alt></dc:title>');
+    expect(cased.metadata.title).toBe('Owl');
+    const unmarked = parseAttrs('', '<dc:title><rdf:Alt><rdf:li xml:lang="fr">Hibou</rdf:li><rdf:li xml:lang="de">Eule</rdf:li></rdf:Alt></dc:title>');
+    expect(unmarked.metadata.title).toBe('Hibou');
+  });
+
+  it('tolerates a doubled trailing slash on a namespace URI', () => {
+    const settings = parse(
+      '<rdf:Description rdf:about="" xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0//" crs:ProcessVersion="6.7" crs:Whites2012="7"/>',
+    );
+    expect(settings.tone.whites).toBe(7);
+  });
+
+  it('finds an rdf:RDF nested below the depth a packet usually puts it', () => {
+    const nested = parseXmp(
+      `<wrapper xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><outer><inner><x:xmpmeta xmlns:x="adobe:ns:meta/">`
+        + `<rdf:RDF>${description(`${CURRENT} crs:Whites2012="3"`)}</rdf:RDF></x:xmpmeta></inner></outer></wrapper>`,
+    );
+    expect(nested?.tone.whites).toBe(3);
+  });
+
   it('returns null rather than a struct of defaults for input that is not XMP', () => {
     expect(parseXmp('<x:xmpmeta><rdf:RDF><rdf:Description crs:Exposure2012="1"')).toBeNull();
     expect(parseXmp('not xml at all')).toBeNull();
     expect(parseXmp('')).toBeNull();
     expect(parseXmp('<html><body>hello</body></html>')).toBeNull();
+  });
+
+  it('decodes numeric character references, not just named entities', () => {
+    const settings = parseAttrs(
+      `${CURRENT} crs:LensProfileName="Sigma 50mm f/1.4 &#188; stop"`,
+      '<dc:subject><rdf:Bag><rdf:li>Bj&#246;rk</rdf:li><rdf:li>caf&#xE9;</rdf:li></rdf:Bag></dc:subject>'
+        + '<dc:title><rdf:Alt><rdf:li xml:lang="x-default">Salt &amp; Pepper</rdf:li></rdf:Alt></dc:title>',
+    );
+    expect(settings.metadata.subject).toEqual(['Björk', 'café']);
+    expect(settings.metadata.title).toBe('Salt & Pepper');
+    expect(settings.lens.lensProfileName).toBe('Sigma 50mm f/1.4 ¼ stop');
+  });
+
+  it('keeps the space between text runs split by a CDATA section', () => {
+    const settings = parseAttrs('', '<dc:title><rdf:Alt><rdf:li xml:lang="x-default">Hello <![CDATA[World]]></rdf:li></rdf:Alt></dc:title>');
+    expect(settings.metadata.title).toBe('Hello World');
+  });
+
+  it('reports a collision between two structured values, not just two scalars', () => {
+    const settings = parse(
+      `${description(CURRENT, '<dc:subject><rdf:Bag><rdf:li>owl</rdf:li></rdf:Bag></dc:subject>')}\n`
+        + `${description('', '<dc:subject><rdf:Bag><rdf:li>heron</rdf:li></rdf:Bag></dc:subject>')}`,
+    );
+    expect(settings.metadata.subject).toEqual(['heron']);
+    expect(settings.issues).toEqual([{ tag: 'dc:subject', reason: 'duplicate', value: '' }]);
+  });
+
+  it('does not report the same value written twice', () => {
+    const settings = parse(
+      `${description(`${CURRENT} crs:Texture="20"`)}\n${description('crs:Texture="20"')}`,
+    );
+    expect(settings.presence.texture).toBe(20);
+    expect(settings.issues).toEqual([]);
+  });
+
+  it('resolves a prefix that collides with an Object property name', () => {
+    const settings = parse(
+      '<rdf:Description rdf:about="" xmlns:__proto__="http://ns.adobe.com/camera-raw-settings/1.0/"'
+        + ' __proto__:ProcessVersion="6.7" __proto__:Whites2012="9"/>',
+    );
+    expect(settings.tone.whites).toBe(9);
+    expect(settings.processVersion).toEqual({ generation: 3, raw: '6.7' });
+  });
+
+  it('drops a property whose prefix was never declared', () => {
+    const settings = parse(`<rdf:Description rdf:about="" ${NS} nope:Exposure2012="+2.0" crs:ProcessVersion="6.7"/>`);
+    expect(settings.tone.exposure).toBe(0);
+    expect(settings.unsupported).toEqual([]);
   });
 
   it('returns null for well-formed XML carrying no rdf:RDF', () => {
@@ -144,7 +226,17 @@ describe('parseXmp: container and namespaces', () => {
 
   it('reads a structure whose nested rdf:Description holds its fields as elements', () => {
     const settings = parseAttrs(CURRENT, '<crs:Look><rdf:Description><crs:Name>Adobe Vivid</crs:Name><crs:Amount>0.5</crs:Amount></rdf:Description></crs:Look>');
-    expect(settings.look).toMatchObject({ name: 'Adobe Vivid', amount: 0.5 });
+    expect(settings.look).toEqual({
+      name: 'Adobe Vivid',
+      amount: 0.5,
+      uuid: null,
+      group: null,
+      cluster: null,
+      copyright: null,
+      supportsAmount: null,
+      supportsMonochrome: null,
+      supportsOutputReferred: null,
+    });
   });
 });
 
@@ -166,6 +258,27 @@ describe('parseXmp: versions', () => {
     expect(parseAttrs('crs:ProcessVersion="6.6"').processVersion.generation).toBe(3);
     expect(parseAttrs('crs:ProcessVersion="5.7"').processVersion.generation).toBeNull();
     expect(parseAttrs('').processVersion).toEqual({ generation: null, raw: null });
+  });
+
+  it('reports a version it cannot parse instead of reading it as absent', () => {
+    const settings = parseAttrs('crs:ProcessVersion="banana" crs:Version="17.x" crs:Exposure2012="+1.0"');
+    expect(settings.processVersion).toEqual({ generation: null, raw: 'banana' });
+    expect(settings.issues).toEqual([
+      { tag: 'crs:ProcessVersion', reason: 'unparseable', value: 'banana' },
+      { tag: 'crs:Version', reason: 'unparseable', value: '17.x' },
+    ]);
+    // The tonal edit cannot be read at an unknown generation, but the fact that
+    // it was in the file survives.
+    expect(settings.tone.exposure).toBe(0);
+    expect(settings.unsupported).toEqual(['crs:Exposure2012']);
+  });
+
+  it('treats an absent process version as legacy and says what it set aside', () => {
+    const settings = parseAttrs('crs:Exposure2012="+1.0" crs:Contrast2012="20"');
+    expect(settings.legacy).toBe(true);
+    expect(settings.tone.exposure).toBe(0);
+    expect(settings.legacyTone).not.toBeNull();
+    expect(settings.unsupported).toEqual(['crs:Contrast2012', 'crs:Exposure2012']);
   });
 
   it('reads a pre-2012 file into legacyTone and leaves tone at its defaults', () => {
@@ -233,10 +346,52 @@ describe('parseXmp: values and defaults', () => {
     expect(settings.effects.grainSize).toBe(25);
     expect(settings.effects.grainFrequency).toBe(50);
     expect(settings.geometry.perspectiveScale).toBe(100);
-    expect(settings.lens.lensProfileDistortionScale).toBe(100);
+    // Exhaustively, like the detail block: the defringe hue bounds and the two
+    // other profile scales are the values most likely to be edited by someone
+    // confirming them against real files, and a spot check would not notice.
+    expect(settings.lens).toEqual({
+      lensProfileEnable: false,
+      lensProfileSetup: 'LensDefaults',
+      lensProfileName: null,
+      lensProfileFilename: null,
+      lensProfileDigest: null,
+      lensProfileIsEmbedded: false,
+      lensProfileDistortionScale: 100,
+      lensProfileChromaticAberrationScale: 100,
+      lensProfileVignettingScale: 100,
+      lensManualDistortionAmount: 0,
+      autoLateralCA: false,
+      chromaticAberrationR: 0,
+      chromaticAberrationB: 0,
+      defringePurpleAmount: 0,
+      defringePurpleHueLo: 30,
+      defringePurpleHueHi: 70,
+      defringeGreenAmount: 0,
+      defringeGreenHueLo: 40,
+      defringeGreenHueHi: 60,
+    });
     expect(settings.colorGrading.colorGradeBlending).toBe(50);
-    expect(settings.whiteBalance.whiteBalance).toBe('As Shot');
+    expect(settings.whiteBalance.mode).toBe('As Shot');
     expect(settings.tone.curveName).toBe('Linear');
+    // And the blocks whose defaults are all zero are still fully populated:
+    // absence of a tag is that tag's default, never a missing block.
+    expect(settings.presence).toEqual({ texture: 0, clarity: 0, dehaze: 0, vibrance: 0, saturation: 0 });
+    expect(settings.calibration).toEqual({
+      shadowTint: 0,
+      redHue: 0,
+      redSaturation: 0,
+      greenHue: 0,
+      greenSaturation: 0,
+      blueHue: 0,
+      blueSaturation: 0,
+    });
+    expect(settings.hsl.hue).toEqual({ red: 0, orange: 0, yellow: 0, green: 0, aqua: 0, blue: 0, purple: 0, magenta: 0 });
+    expect(settings.hsl.gray).toEqual(settings.hsl.hue);
+    expect(settings.profile).toEqual({ cameraProfile: null, cameraProfileDigest: null });
+    expect(settings.metadata.subject).toEqual([]);
+    expect(settings.metadata.rating).toBeNull();
+    expect(settings.look).toBeNull();
+    expect(settings.issues).toEqual([]);
   });
 
   it('takes the sharpening default from the writer build', () => {
@@ -277,13 +432,13 @@ describe('parseXmp: values and defaults', () => {
     expect(asShot.whiteBalance.tint).toBeNull();
 
     const preset = parseAttrs(`${CURRENT} crs:WhiteBalance="Cloudy" crs:Temperature="6500" crs:Tint="-4"`);
-    expect(preset.whiteBalance).toMatchObject({ whiteBalance: 'Cloudy', temperature: 6500, tint: -4 });
+    expect(preset.whiteBalance).toMatchObject({ mode: 'Cloudy', temperature: 6500, tint: -4 });
   });
 
   it('keeps the incremental white balance apart from the Kelvin pair', () => {
     const settings = parseAttrs(`${CURRENT} crs:IncrementalTemperature="-30" crs:IncrementalTint="+15"`);
     expect(settings.whiteBalance).toEqual({
-      whiteBalance: 'As Shot',
+      mode: 'As Shot',
       temperature: null,
       tint: null,
       incrementalTemperature: -30,
@@ -295,6 +450,7 @@ describe('parseXmp: values and defaults', () => {
     const settings = parseAttrs(`${CURRENT} crs:Contrast2012="240" crs:Exposure2012="-9.5"`);
     expect(settings.tone.contrast).toBe(100);
     expect(settings.tone.exposure).toBe(-5);
+    expect(settings.issues).toHaveLength(2);
     expect(settings.issues).toContainEqual({ tag: 'crs:Contrast2012', reason: 'clamped', value: '240' });
     expect(settings.issues).toContainEqual({ tag: 'crs:Exposure2012', reason: 'clamped', value: '-9.5' });
   });
@@ -304,7 +460,7 @@ describe('parseXmp: values and defaults', () => {
     expect(settings.tone.contrast).toBe(0);
     expect(settings.tone.whites).toBe(15);
     expect(settings.presence.texture).toBe(20);
-    expect(settings.issues).toContainEqual({ tag: 'crs:Contrast2012', reason: 'unparseable', value: 'banana' });
+    expect(settings.issues).toEqual([{ tag: 'crs:Contrast2012', reason: 'unparseable', value: 'banana' }]);
   });
 
   it('rounds a real written into an integer tag without complaint', () => {
@@ -316,9 +472,12 @@ describe('parseXmp: values and defaults', () => {
 
   it('keeps an unrecognised enum value verbatim', () => {
     const settings = parseAttrs(`${CURRENT} crs:WhiteBalance="Underwater" crs:ToneCurveName2012="My Preset"`);
-    expect(settings.whiteBalance.whiteBalance).toBe('Underwater');
+    expect(settings.whiteBalance.mode).toBe('Underwater');
     expect(settings.tone.curveName).toBe('My Preset');
-    expect(settings.issues).toContainEqual({ tag: 'crs:WhiteBalance', reason: 'unconvertible', value: 'Underwater' });
+    expect(settings.issues).toEqual([
+      { tag: 'crs:WhiteBalance', reason: 'unconvertible', value: 'Underwater' },
+      { tag: 'crs:ToneCurveName2012', reason: 'unconvertible', value: 'My Preset' },
+    ]);
   });
 });
 
@@ -332,13 +491,46 @@ describe('parseXmp: geometry', () => {
     const settings = parseAttrs(`${CURRENT} crs:HasCrop="True" crs:CropTop="0.9" crs:CropBottom="0.4"`);
     expect(settings.geometry.hasCrop).toBe(false);
     expect(settings.geometry.cropBottom).toBe(1);
-    expect(settings.issues).toContainEqual({ tag: 'crs:CropBottom', reason: 'malformed', value: '0.4' });
+    expect(settings.issues).toEqual([{ tag: 'crs:CropTop', reason: 'malformed', value: '0.9' }]);
+  });
+
+  it('refuses a horizontally degenerate rectangle too', () => {
+    const settings = parseAttrs(`${CURRENT} crs:HasCrop="True" crs:CropLeft="0.8" crs:CropRight="0.3"`);
+    expect(settings.geometry).toMatchObject({ hasCrop: false, cropLeft: 0, cropRight: 1 });
+    expect(settings.issues).toEqual([{ tag: 'crs:CropLeft', reason: 'malformed', value: '0.8' }]);
+  });
+
+  it('names an edge the file actually wrote rather than one sitting on its default', () => {
+    const settings = parseAttrs(`${CURRENT} crs:HasCrop="True" crs:CropBottom="0"`);
+    expect(settings.geometry.hasCrop).toBe(false);
+    expect(settings.issues).toEqual([{ tag: 'crs:CropBottom', reason: 'malformed', value: '0' }]);
+  });
+
+  it('drops the straighten angle along with the crop it belonged to', () => {
+    const undone = parseAttrs(`${CURRENT} crs:HasCrop="False" crs:CropAngle="-12.5"`);
+    expect(undone.geometry.cropAngle).toBe(0);
+    const kept = parseAttrs(`${CURRENT} crs:HasCrop="True" crs:CropAngle="-12.5" crs:CropRight="0.9"`);
+    expect(kept.geometry.cropAngle).toBe(-12.5);
+  });
+
+  it('falls back rather than clamping an unknown enumerated code', () => {
+    const style = parseAttrs(`${CURRENT} crs:PostCropVignetteStyle="9"`);
+    expect(style.effects.postCropVignetteStyle).toBe(1);
+    expect(style.issues).toEqual([{ tag: 'crs:PostCropVignetteStyle', reason: 'unconvertible', value: '9' }]);
+
+    const orientation = parseAttrs(`${CURRENT} tiff:Orientation="9"`);
+    expect(orientation.geometry.orientation).toBeNull();
+    expect(orientation.issues).toEqual([{ tag: 'tiff:Orientation', reason: 'unconvertible', value: '9' }]);
+
+    const upright = parseAttrs(`${CURRENT} crs:PerspectiveUpright="7"`);
+    expect(upright.geometry.perspectiveUpright).toBe(0);
+    expect(upright.issues).toEqual([{ tag: 'crs:PerspectiveUpright', reason: 'unconvertible', value: '7' }]);
   });
 
   it('carries an absolute-unit crop through and says it cannot be read as fractions', () => {
     const settings = parseAttrs(`${CURRENT} crs:HasCrop="True" crs:CropUnits="1" crs:CropWidth="8" crs:CropHeight="10" crs:CropRight="0.6" crs:CropBottom="0.9"`);
     expect(settings.geometry).toMatchObject({ cropUnits: 1, cropWidth: 8, cropHeight: 10, cropRight: 0.6 });
-    expect(settings.issues).toContainEqual({ tag: 'crs:CropUnits', reason: 'unconvertible', value: '1' });
+    expect(settings.issues).toEqual([{ tag: 'crs:CropUnits', reason: 'unconvertible', value: '1' }]);
   });
 
   it('distinguishes an automatic upright correction from none', () => {
@@ -358,7 +550,7 @@ describe('parseXmp: geometry', () => {
     expect(settings.unsupported).toContain('crs:UprightTransform_0');
     expect(settings.unsupported).toContain('crs:UprightFourSegments_0');
     expect(settings.unsupported).toContain('crs:UprightPreview');
-    expect(JSON.stringify(settings)).not.toContain('151388160.0');
+    expect(JSON.stringify(settings)).not.toContain('1.0 0.0');
   });
 });
 
@@ -380,7 +572,7 @@ describe('parseXmp: curves, flags and metadata', () => {
       '<crs:ToneCurvePV2012><rdf:Seq><rdf:li>0, 0</rdf:li><rdf:li>oops</rdf:li><rdf:li>128, 150</rdf:li><rdf:li>255, 255</rdf:li></rdf:Seq></crs:ToneCurvePV2012>',
     );
     expect(settings.tone.curve).toEqual([{ x: 0, y: 0 }, { x: 128, y: 150 }, { x: 255, y: 255 }]);
-    expect(settings.issues).toContainEqual({ tag: 'crs:ToneCurvePV2012', reason: 'malformed', value: 'oops' });
+    expect(settings.issues).toEqual([{ tag: 'crs:ToneCurvePV2012', reason: 'malformed', value: 'oops' }]);
   });
 
   it('treats a half-written point as malformed rather than as zero', () => {
@@ -389,7 +581,7 @@ describe('parseXmp: curves, flags and metadata', () => {
       '<crs:ToneCurvePV2012Red><rdf:Seq><rdf:li>0,</rdf:li><rdf:li>64, 70</rdf:li><rdf:li>255, 255</rdf:li></rdf:Seq></crs:ToneCurvePV2012Red>',
     );
     expect(settings.tone.curveRed).toEqual([{ x: 64, y: 70 }, { x: 255, y: 255 }]);
-    expect(settings.issues).toContainEqual({ tag: 'crs:ToneCurvePV2012Red', reason: 'malformed', value: '0,' });
+    expect(settings.issues).toEqual([{ tag: 'crs:ToneCurvePV2012Red', reason: 'malformed', value: '0,' }]);
   });
 
   it('falls back to identity when too few points survive', () => {
@@ -418,15 +610,20 @@ describe('parseXmp: curves, flags and metadata', () => {
     expect(parseAttrs(`${CURRENT} crs:ConvertToGrayscale="0"`).hsl.convertToGrayscale).toBe(false);
     const bad = parseAttrs(`${CURRENT} crs:ConvertToGrayscale="maybe"`);
     expect(bad.hsl.convertToGrayscale).toBe(false);
-    expect(bad.issues).toContainEqual({ tag: 'crs:ConvertToGrayscale', reason: 'unparseable', value: 'maybe' });
+    expect(bad.issues).toEqual([{ tag: 'crs:ConvertToGrayscale', reason: 'unparseable', value: 'maybe' }]);
   });
 
-  it('imports the settings of an already-applied file and flags it', () => {
-    const settings = parseAttrs(`${CURRENT} crs:HasSettings="True" crs:AlreadyApplied="True" crs:Exposure2012="+1.00" crs:Texture="30"`);
-    expect(settings.alreadyApplied).toBe(true);
-    expect(settings.hasSettings).toBe(true);
-    expect(settings.tone.exposure).toBe(1);
-    expect(settings.presence.texture).toBe(30);
+  it('imports every setting of an already-applied file and flags it', () => {
+    const edit = 'crs:Exposure2012="+1.00" crs:Texture="30" crs:Temperature="5200" crs:GrainAmount="8"'
+      + ' crs:HueAdjustmentRed="12" crs:Sharpness="60" crs:HasCrop="True" crs:CropRight="0.7" crs:ShadowTint="4"';
+    const applied = parseAttrs(`${CURRENT} crs:HasSettings="True" crs:AlreadyApplied="True" ${edit}`);
+    const pending = parseAttrs(`${CURRENT} crs:HasSettings="True" ${edit}`);
+    expect(applied.alreadyApplied).toBe(true);
+    expect(pending.alreadyApplied).toBe(false);
+    // The flag is the only difference: the values still describe the file, and
+    // dropping them would lose the description of how it was produced.
+    expect({ ...applied, alreadyApplied: false }).toEqual(pending);
+    expect(applied.tone.exposure).toBe(1);
   });
 
   it('keeps the wall clock of a zoneless date and normalises Z', () => {
@@ -439,7 +636,14 @@ describe('parseXmp: curves, flags and metadata', () => {
   it('reports an unparseable date as null', () => {
     const settings = parseAttrs(`${CURRENT} xmp:CreateDate="last tuesday"`);
     expect(settings.metadata.createDate).toBeNull();
-    expect(settings.issues).toContainEqual({ tag: 'xmp:CreateDate', reason: 'unparseable', value: 'last tuesday' });
+    expect(settings.issues).toEqual([{ tag: 'xmp:CreateDate', reason: 'unparseable', value: 'last tuesday' }]);
+  });
+
+  it('refuses a date whose digits are in range only as digits', () => {
+    const settings = parseAttrs(`${CURRENT} xmp:CreateDate="2024-13-45T99:99" xmp:ModifyDate="2024-02"`);
+    expect(settings.metadata.createDate).toBeNull();
+    expect(settings.issues).toEqual([{ tag: 'xmp:CreateDate', reason: 'unparseable', value: '2024-13-45T99:99' }]);
+    expect(settings.metadata.modifyDate).toEqual({ value: '2024-02', offset: null });
   });
 
   it('reads both keyword tags, the rating and the sidecar filenames', () => {
@@ -512,6 +716,19 @@ describe('parseXmp: unsupported tags', () => {
   it('has no look at all when the structure is absent', () => {
     expect(parseAttrs(CURRENT).look).toBeNull();
   });
+
+  it('reports a Look written in a serialisation it cannot read rather than losing it', () => {
+    // Neither `rdf:parseType="Resource"` nor a nested `rdf:Description`, so the
+    // fields are unreachable - but the file still carries a look, and saying so
+    // is the difference between an incomplete import and a silently wrong one.
+    const loose = parseAttrs(CURRENT, '<crs:Look><crs:Name>Adobe Color</crs:Name></crs:Look>');
+    expect(loose.look).toBeNull();
+    expect(loose.unsupported).toEqual(['crs:Look']);
+
+    const scalar = parseAttrs(`${CURRENT} crs:Look="Adobe Color"`);
+    expect(scalar.look).toBeNull();
+    expect(scalar.unsupported).toEqual(['crs:Look']);
+  });
 });
 
 // A whole sidecar rather than one tag at a time: scalars as attributes, curves
@@ -555,7 +772,7 @@ ${description(
   });
 
   it('reads the develop settings', () => {
-    expect(settings.whiteBalance).toEqual({ whiteBalance: 'Custom', temperature: 5850, tint: 12, incrementalTemperature: 0, incrementalTint: 0 });
+    expect(settings.whiteBalance).toEqual({ mode: 'Custom', temperature: 5850, tint: 12, incrementalTemperature: 0, incrementalTint: 0 });
     expect(settings.tone).toMatchObject({ exposure: 0.45, contrast: 8, highlights: -40, shadows: 35, whites: 10, blacks: -15 });
     expect(settings.tone.curve).toEqual([{ x: 0, y: 0 }, { x: 64, y: 56 }, { x: 192, y: 200 }, { x: 255, y: 255 }]);
     expect(settings.tone.parametricHighlightSplit).toBe(80);

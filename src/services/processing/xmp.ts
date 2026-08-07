@@ -18,18 +18,21 @@ const XML = 'http://www.w3.org/XML/1998/namespace';
 // in an issue means the property in the crs URI however the file spelled it.
 // Keys have any trailing `/` stripped, because some writers emit the crs URI
 // without one.
-const CANONICAL_PREFIX: Record<string, string> = {
-  [RDF]: 'rdf',
-  [XML]: 'xml',
-  'adobe:ns:meta': 'x',
-  'http://ns.adobe.com/camera-raw-settings/1.0': 'crs',
-  'http://ns.adobe.com/xap/1.0': 'xmp',
-  'http://purl.org/dc/elements/1.1': 'dc',
-  'http://ns.adobe.com/tiff/1.0': 'tiff',
-  'http://ns.adobe.com/exif/1.0': 'exif',
-  'http://ns.adobe.com/photoshop/1.0': 'photoshop',
-  'http://ns.adobe.com/lightroom/1.0': 'lr',
-};
+// A Map rather than an object literal because the lookup key comes out of the
+// document: `xmlns:constructor="..."` against a plain object would resolve to
+// something off Object.prototype instead of missing.
+const CANONICAL_PREFIX = new Map<string, string>([
+  [RDF, 'rdf'],
+  [XML, 'xml'],
+  ['adobe:ns:meta', 'x'],
+  ['http://ns.adobe.com/camera-raw-settings/1.0', 'crs'],
+  ['http://ns.adobe.com/xap/1.0', 'xmp'],
+  ['http://purl.org/dc/elements/1.1', 'dc'],
+  ['http://ns.adobe.com/tiff/1.0', 'tiff'],
+  ['http://ns.adobe.com/exif/1.0', 'exif'],
+  ['http://ns.adobe.com/photoshop/1.0', 'photoshop'],
+  ['http://ns.adobe.com/lightroom/1.0', 'lr'],
+]);
 
 // Shipped as tabulated but never confirmed against a corpus of real sidecars,
 // and still to be: the temperature and tint ranges, the luminance noise
@@ -57,20 +60,31 @@ const LENS_PROFILE_SETUPS = ['LensDefaults', 'Auto', 'Custom'];
 // Values are left as strings - a blanket numeric coercion turns
 // `crs:WhiteBalance="Auto"` into NaN and `crs:CameraProfile="2"` into a number -
 // and coerced per tag against the type each one is documented with.
+//
+// htmlEntities is what decodes `&#246;` and `&#xE9;`; without it the named
+// entities decode and the numeric ones survive as literal text, so a keyword
+// written by a writer that escapes non-ASCII imports as `Bj&#246;rk`.
+// trimValues is off because it trims each text run separately, and an element
+// whose text is split by CDATA or a child then loses the space between the
+// runs; the whole value is trimmed once instead, where it is read.
 const PARSER = new XMLParser({
   preserveOrder: true,
   ignoreAttributes: false,
   attributeNamePrefix: '@_',
   parseTagValue: false,
   parseAttributeValue: false,
-  trimValues: true,
+  trimValues: false,
+  htmlEntities: true,
   ignoreDeclaration: true,
   ignorePiTags: true,
 });
 
 type Attrs = Record<string, string>;
 type XmlNode = Record<string, XmlNode[] | Attrs | string>;
-type NsMap = Readonly<Record<string, string>>;
+// Prefix to URI. A Map, not an object, for the reason CANONICAL_PREFIX is one:
+// `xmlns:__proto__="..."` on a plain object writes nothing and reads back the
+// prototype, which would make every property in that namespace disappear.
+type NsMap = ReadonlyMap<string, string>;
 
 interface Element {
   node: XmlNode;
@@ -108,32 +122,32 @@ function textOf(node: XmlNode): string {
 }
 
 function normaliseUri(uri: string): string {
-  return uri.endsWith('/') ? uri.slice(0, -1) : uri;
+  return uri.replace(/\/+$/, '');
 }
 
 function qualify(name: string, ns: NsMap, isAttribute: boolean): string | null {
   const colon = name.indexOf(':');
   // An unprefixed attribute is in no namespace at all, unlike an unprefixed
   // element, which takes the default one.
-  if (colon < 0) return isAttribute ? null : qualified(ns[''] ?? '', name);
-  const uri = ns[name.slice(0, colon)];
+  if (colon < 0) return isAttribute ? null : qualified(ns.get('') ?? '', name);
+  const uri = ns.get(name.slice(0, colon));
   return uri == null ? null : qualified(uri, name.slice(colon + 1));
 }
 
 function qualified(uri: string, local: string): string {
   if (uri === '') return local;
-  const prefix = CANONICAL_PREFIX[uri];
+  const prefix = CANONICAL_PREFIX.get(uri);
   return prefix == null ? `{${uri}}${local}` : `${prefix}:${local}`;
 }
 
 // Declarations are commonly written on `rdf:Description` rather than the root,
 // so every element inherits its ancestors' and may add its own.
 function withNamespaces(ns: NsMap, attrs: Attrs): NsMap {
-  let extended: Record<string, string> | null = null;
+  let extended: Map<string, string> | null = null;
   for (const [name, value] of Object.entries(attrs)) {
     if (!isNamespaceDeclaration(name)) continue;
-    extended ??= { ...ns };
-    extended[name === '@_xmlns' ? '' : name.slice('@_xmlns:'.length)] = normaliseUri(String(value));
+    extended ??= new Map(ns);
+    extended.set(name === '@_xmlns' ? '' : name.slice('@_xmlns:'.length), normaliseUri(String(value)));
   }
   return extended ?? ns;
 }
@@ -175,6 +189,24 @@ interface Item {
 
 function rawText(prop: Prop): string {
   return 'text' in prop ? prop.text : textOf(prop.node);
+}
+
+// Every text run and attribute value below a property, for comparing two
+// spellings of the same property against each other. A container's own text is
+// empty - its content is one level down, in the `rdf:li` elements - so
+// comparing on `rawText` alone calls two different keyword bags identical.
+function collisionKey(prop: Prop): string {
+  return 'text' in prop ? prop.text : deepText(prop.node);
+}
+
+function deepText(node: XmlNode): string {
+  let out = '';
+  for (const value of Object.values(attrsOf(node))) out += String(value) + ' ';
+  for (const child of childrenOf(node)) {
+    const text = child[TEXT];
+    out += typeof text === 'string' ? text : tagOf(child) + '(' + deepText(child) + ')';
+  }
+  return out;
 }
 
 function identityCurve(): { x: number; y: number }[] {
@@ -234,10 +266,35 @@ class Properties {
    * because user preset names are legal in several of them.
    */
   enumeration(tag: string, known: readonly string[], fallback: string): string {
+    return this.enumerationOrNull(tag, known) ?? fallback;
+  }
+
+  enumerationOrNull(tag: string, known: readonly string[]): string | null {
     const value = this.text(tag);
-    if (value == null) return fallback;
+    if (value == null) return null;
     if (!known.includes(value)) this.record(tag, 'unconvertible', value);
     return value;
+  }
+
+  /**
+   * A code standing for an operator or a mode rather than for a magnitude.
+   * Unlike a slider it is not clamped: 9 is not "the strongest vignette style",
+   * and rounding it down to 3 would assert an operator the file never named, so
+   * an unknown code falls back to the default and is reported.
+   */
+  enumInt(tag: string, known: readonly number[], fallback: number): number {
+    const value = this.number(tag, -ANY, ANY, true);
+    if (value == null) return fallback;
+    if (known.includes(value)) return value;
+    this.record(tag, 'unconvertible', this.verbatim(tag));
+    return fallback;
+  }
+
+  enumIntOrNull(tag: string, known: readonly number[]): number | null {
+    const value = this.number(tag, -ANY, ANY, true);
+    if (value == null || known.includes(value)) return value;
+    this.record(tag, 'unconvertible', this.verbatim(tag));
+    return null;
   }
 
   int(tag: string, min: number, max: number, fallback: number): number {
@@ -279,7 +336,8 @@ class Properties {
   langAlt(tag: string): string | null {
     const items = this.items(tag);
     if (items == null || items.length === 0) return null;
-    const chosen = items.find((item) => item.lang === 'x-default') ?? items[0]!;
+    // Language tags are case-insensitive, so `X-Default` selects too.
+    const chosen = items.find((item) => item.lang?.toLowerCase() === 'x-default') ?? items[0]!;
     return chosen.text === '' ? null : chosen.text;
   }
 
@@ -316,17 +374,21 @@ class Properties {
     return parsed;
   }
 
-  /** A structure in either serialisation, as its own property set. */
+  /**
+   * A structure in either serialisation, as its own property set. A property
+   * written as neither is left unconsumed rather than dropped, so it surfaces in
+   * `unsupported`: a Look we could not read must not produce the same struct as
+   * a file that carries no Look at all.
+   */
   struct(tag: string): Properties | null {
-    const prop = this.take(tag);
+    const prop = this.props.get(tag);
     if (prop == null || 'text' in prop) return null;
-    const fields = new Properties(this.issues, `${this.prefix}${tag}/`);
-    if (attributes(prop.node, prop.ns).get('rdf:parseType') === 'Resource') {
-      fields.collect(prop.node, prop.ns);
-      return fields;
-    }
-    const nested = elements(childrenOf(prop.node), prop.ns).find((child) => child.name === 'rdf:Description');
+    const nested = attributes(prop.node, prop.ns).get('rdf:parseType') === 'Resource'
+      ? prop
+      : elements(childrenOf(prop.node), prop.ns).find((child) => child.name === 'rdf:Description');
     if (nested == null) return null;
+    this.consumed.add(tag);
+    const fields = new Properties(this.issues, `${this.prefix}${tag}/`);
     fields.collect(nested.node, nested.ns);
     return fields;
   }
@@ -340,10 +402,10 @@ class Properties {
 
   private add(tag: string, prop: Prop): void {
     const existing = this.props.get(tag);
-    // Last wins, whichever `rdf:Description` it came from. Structured values
-    // compare by their text, which is enough to tell a genuine collision from
-    // the same value written twice.
-    if (existing != null && rawText(existing) !== rawText(prop)) {
+    // Last wins, whichever `rdf:Description` it came from. The comparison goes
+    // all the way down, so a collision between two containers or two structures
+    // is reported rather than passing as the same value written twice.
+    if (existing != null && collisionKey(existing) !== collisionKey(prop)) {
       this.record(tag, 'duplicate', rawText(existing));
     }
     this.props.set(tag, prop);
@@ -428,13 +490,24 @@ function generationOf(raw: string | null): number | null {
   return 3;
 }
 
-const DATE = /^(\d{4}(?:-\d{2}(?:-\d{2})?)?(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)?)(Z|[+-]\d{2}:\d{2})?$/;
+const DATE = /^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?(?:T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?)?(Z|[+-]\d{2}:\d{2})?$/;
+
+// Digit counts alone would accept 2024-13-45T99:99, which is not a date any
+// consumer can use and is better reported than passed on typed as one.
+const DATE_BOUNDS: [number, number][] = [[1, 12], [1, 31], [0, 23], [0, 59], [0, 60]];
 
 function parseDate(value: string): XmpDate | null {
-  const match = DATE.exec(value);
+  const match = DATE.exec(value.trim());
   if (match == null) return null;
-  const offset = match[2] == null ? null : match[2] === 'Z' ? '+00:00' : match[2];
-  return { value: match[1]!, offset };
+  for (const [index, [min, max]] of DATE_BOUNDS.entries()) {
+    const part = match[index + 2];
+    if (part != null && (Number(part) < min || Number(part) > max)) return null;
+  }
+  const zone = match[7];
+  return {
+    value: value.trim().slice(0, zone == null ? undefined : -zone.length),
+    offset: zone == null ? null : zone === 'Z' ? '+00:00' : zone,
+  };
 }
 
 function bands(read: (band: string) => number): Record<(typeof BANDS)[number], number> {
@@ -443,11 +516,10 @@ function bands(read: (band: string) => number): Record<(typeof BANDS)[number], n
   return out;
 }
 
-function findRdf(children: XmlNode[], ns: NsMap, depth: number): Element | null {
-  if (depth > 4) return null;
+function findRdf(children: XmlNode[], ns: NsMap): Element | null {
   for (const element of elements(children, ns)) {
     if (element.name === 'rdf:RDF') return element;
-    const found = findRdf(childrenOf(element.node), element.ns, depth + 1);
+    const found = findRdf(childrenOf(element.node), element.ns);
     if (found != null) return found;
   }
   return null;
@@ -474,7 +546,9 @@ export function parseXmp(xml: string): XmpSettings | null {
     // silently as a neutral edit is the worst outcome available here.
     if (XMLValidator.validate(text) !== true) return null;
     const root = PARSER.parse(text) as XmlNode[];
-    const rdf = findRdf(root, { xml: XML }, 0);
+    // The xml prefix is bound by the XML specification itself, not by the
+    // document, so it is the one declaration that is always in scope.
+    const rdf = findRdf(root, new Map([['xml', XML]]));
     if (rdf == null) return null;
 
     // Writers split properties across several `rdf:Description` elements grouped
@@ -482,11 +556,13 @@ export function parseXmp(xml: string): XmpSettings | null {
     for (const description of elements(childrenOf(rdf.node), rdf.ns)) {
       if (description.name === 'rdf:Description') properties.collect(description.node, description.ns);
     }
+    // Inside the try with the parse: the promise this makes the library scan is
+    // that no file fails it, and a struct that cannot be built is as unusable as
+    // a document that cannot be parsed.
+    return read(properties, issues);
   } catch {
     return null;
   }
-
-  return read(properties, issues);
 }
 
 function read(p: Properties, issues: Issue[]): XmpSettings {
@@ -494,6 +570,14 @@ function read(p: Properties, issues: Issue[]): XmpSettings {
   const generation = generationOf(processVersion);
   const legacy = generation == null;
   const crsVersion = p.text('crs:Version');
+
+  // A version that is present but not a dotted number is reported rather than
+  // read as absent. This is the most consequential unparseable value in the
+  // format - it diverts the whole current-generation parameter set - so it is
+  // the last one that should degrade in silence.
+  for (const [tag, value] of [['crs:ProcessVersion', processVersion], ['crs:Version', crsVersion]] as const) {
+    if (value != null && !VERSION.test(value.trim())) p.record(tag, 'unparseable', value);
+  }
 
   // On a legacy file the current-generation tags are read from an empty set, so
   // every one of them lands on its documented default rather than on a value
@@ -512,16 +596,24 @@ function read(p: Properties, issues: Issue[]): XmpSettings {
   const cropLeft = p.real('crs:CropLeft', 0, 1, 0);
   const cropBottom = p.real('crs:CropBottom', 0, 1, 1);
   const cropRight = p.real('crs:CropRight', 0, 1, 1);
+  const cropAngle = p.real('crs:CropAngle', -45, 45, 0);
   const degenerate = cropTop >= cropBottom || cropLeft >= cropRight;
   if (hasCrop && degenerate) {
-    const tag = cropTop >= cropBottom ? 'crs:CropBottom' : 'crs:CropRight';
+    // Whichever edge of the inverted pair the file actually wrote: the other one
+    // is sitting on its default, and naming a tag that is not in the file with
+    // an empty value says nothing a consumer can act on.
+    const pair = cropTop >= cropBottom ? ['crs:CropTop', 'crs:CropBottom'] : ['crs:CropLeft', 'crs:CropRight'];
+    const tag = pair.find((edge) => p.verbatim(edge) !== '') ?? pair[1]!;
     p.record(tag, 'malformed', p.verbatim(tag));
   }
   // `crs:HasCrop` is authoritative: stale edges from a crop the user undid are
   // routinely left behind non-default, so with no crop the edges read as the
-  // whole frame rather than as whatever the file still holds.
+  // whole frame rather than as whatever the file still holds. The straighten
+  // angle goes with them - it is the same undone edit, and it is its own step of
+  // the geometry, so a consumer keying off it would rotate a frame it is not
+  // cropping.
   const cropped = hasCrop && !degenerate;
-  const cropUnits = p.int('crs:CropUnits', 0, 2, 0);
+  const cropUnits = p.enumInt('crs:CropUnits', [0, 1, 2], 0);
   // Absolute units mean the fractions are not the whole story, and converting
   // needs frame dimensions this layer does not have.
   if (cropUnits !== 0) p.record('crs:CropUnits', 'unconvertible', p.verbatim('crs:CropUnits'));
@@ -538,7 +630,7 @@ function read(p: Properties, issues: Issue[]): XmpSettings {
     alreadyApplied: p.flag('crs:AlreadyApplied', false),
 
     whiteBalance: {
-      whiteBalance: p.enumeration('crs:WhiteBalance', WHITE_BALANCES, 'As Shot'),
+      mode: p.enumeration('crs:WhiteBalance', WHITE_BALANCES, 'As Shot'),
       // Kept whatever the mode says, and null only on genuine absence: a named
       // preset with the pair omitted is not an error, and null is what tells the
       // mapping layer to resolve against the camera's own neutral.
@@ -646,7 +738,7 @@ function read(p: Properties, issues: Issue[]): XmpSettings {
       postCropVignetteMidpoint: p.int('crs:PostCropVignetteMidpoint', 0, 100, 50),
       postCropVignetteFeather: p.int('crs:PostCropVignetteFeather', 0, 100, 50),
       postCropVignetteRoundness: p.int('crs:PostCropVignetteRoundness', -100, 100, 0),
-      postCropVignetteStyle: p.int('crs:PostCropVignetteStyle', 1, 3, 1),
+      postCropVignetteStyle: p.enumInt('crs:PostCropVignetteStyle', [1, 2, 3], 1),
       postCropVignetteHighlightContrast: p.int('crs:PostCropVignetteHighlightContrast', 0, 100, 0),
       grainAmount: p.int('crs:GrainAmount', 0, 100, 0),
       grainSize: p.int('crs:GrainSize', 0, 100, 25),
@@ -665,13 +757,13 @@ function read(p: Properties, issues: Issue[]): XmpSettings {
     },
 
     geometry: {
-      orientation: p.intOrNull('tiff:Orientation', 1, 8),
+      orientation: p.enumIntOrNull('tiff:Orientation', [1, 2, 3, 4, 5, 6, 7, 8]),
       hasCrop: cropped,
       cropTop: cropped ? cropTop : 0,
       cropLeft: cropped ? cropLeft : 0,
       cropBottom: cropped ? cropBottom : 1,
       cropRight: cropped ? cropRight : 1,
-      cropAngle: p.real('crs:CropAngle', -45, 45, 0),
+      cropAngle: cropped ? cropAngle : 0,
       cropWidth: p.realOrNull('crs:CropWidth', -ANY, ANY),
       cropHeight: p.realOrNull('crs:CropHeight', -ANY, ANY),
       cropUnits,
@@ -683,7 +775,7 @@ function read(p: Properties, issues: Issue[]): XmpSettings {
       perspectiveAspect: p.int('crs:PerspectiveAspect', -100, 100, 0),
       perspectiveX: p.real('crs:PerspectiveX', -100, 100, 0),
       perspectiveY: p.real('crs:PerspectiveY', -100, 100, 0),
-      perspectiveUpright: p.int('crs:PerspectiveUpright', 0, 5, 0),
+      perspectiveUpright: p.enumInt('crs:PerspectiveUpright', [0, 1, 2, 3, 4, 5], 0),
       uprightVersion: p.intOrNull('crs:UprightVersion', -ANY, ANY),
       uprightCenterMode: p.intOrNull('crs:UprightCenterMode', -ANY, ANY),
       uprightCenterNormX: p.realOrNull('crs:UprightCenterNormX', 0, 1),
@@ -746,7 +838,7 @@ function read(p: Properties, issues: Issue[]): XmpSettings {
       fillLight: p.int('crs:FillLight', 0, 100, 0),
       clarity: p.int('crs:Clarity', -100, 100, 0),
       curve: p.curve('crs:ToneCurve'),
-      curveName: p.text('crs:ToneCurveName'),
+      curveName: p.enumerationOrNull('crs:ToneCurveName', TONE_CURVE_NAMES),
       curveRed: p.curve('crs:ToneCurveRed'),
       curveGreen: p.curve('crs:ToneCurveGreen'),
       curveBlue: p.curve('crs:ToneCurveBlue'),
