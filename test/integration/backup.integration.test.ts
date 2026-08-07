@@ -703,10 +703,28 @@ test('a staging file left by a killed restore is swept by the next one', async (
   // else names it - the same litter the backup side sweeps for itself.
   const abandoned = `${dbPath}.restoring-2020-01-01T00-00-00-000Z`;
   writeFileSync(abandoned, 'half a catalogue');
+  // Old enough that no live run could still be writing it. A second restore started
+  // by an impatient user is still going, and deleting its staging file mid-vacuum
+  // fails that run for no reason.
+  const longAgo = new Date(Date.now() - 25 * 60 * 60 * 1000);
+  utimesSync(abandoned, longAgo, longAgo);
 
   await restoreBackup(dbPath, file);
 
   expect(existsSync(abandoned)).toBe(false);
+  db = createDatabase(dbPath);
+});
+
+test('a staging file a running restore is still writing is left alone', async () => {
+  addLibrary(LIB, 'holiday');
+  const { path: file } = await backups.backup(7);
+  db.close();
+  const inFlight = `${dbPath}.restoring-2026-01-01T00-00-00-000Z`;
+  writeFileSync(inFlight, 'someone else is vacuuming into this');
+
+  await restoreBackup(dbPath, file);
+
+  expect(existsSync(inFlight)).toBe(true);
   db = createDatabase(dbPath);
 });
 
@@ -725,7 +743,7 @@ test('a restore holds the catalogue’s path even when there is no catalogue the
   const held = holdAgainstUse(dbPath);
   try {
     expect(held).not.toBeNull();
-    expect(held!.placeholder).toBe(true);
+    expect(existsSync(dbPath)).toBe(true); // an empty file, created purely to be locked
     const other = new Database(dbPath, { create: true });
     try {
       other.exec('PRAGMA busy_timeout = 0;');
@@ -734,7 +752,7 @@ test('a restore holds the catalogue’s path even when there is no catalogue the
       other.close();
     }
   } finally {
-    held?.lock.close();
+    held?.close();
   }
 
   // And the placeholder is never offered as "the catalogue that was there".
@@ -759,7 +777,7 @@ test('an empty database where the catalogue was counts as missing, not as a cata
 
   // The real article, made the way a killed restore makes it.
   rmSync(dbPath);
-  holdAgainstUse(dbPath)?.lock.close();
+  holdAgainstUse(dbPath)?.close();
   expect(statSync(dbPath).size).toBeGreaterThan(0);
   expect(() => createDatabase(dbPath)).toThrow(/backup\(s\) of it sit in/);
 
@@ -784,7 +802,7 @@ test('the in-use lock is still held when the check that took it returns', () => 
       other.close();
     }
   } finally {
-    held?.lock.close();
+    held?.close();
     db = createDatabase(dbPath);
   }
 });
