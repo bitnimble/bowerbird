@@ -443,6 +443,23 @@ bun run restore latest         # or a name exactly as that listing prints it
 
 `scripts/restore-backup.ts` is copied into the runtime image for this reason alone. Left out, the only supported deployment is the one deployment that cannot restore its own backups - and the backups are on a named volume inside that image's world, so the discovery happens during the outage that needs them.
 
+#### Restoring by hand, and the one trap in it
+
+A snapshot is a plain self-contained SQLite file, so stopping the server and copying one into place obviously works, and people will do it that way. It does work - **as long as the sidecars go too**:
+
+```bash
+docker compose stop bowerbird
+rm bowerbird.db bowerbird.db-wal bowerbird.db-shm      # all three
+cp backups/bowerbird.db-<stamp>.db bowerbird.db
+docker compose start bowerbird
+```
+
+Deleting only the `.db` silently restores the wrong catalogue. Measured, with a killed server's 12KB `-wal` left beside a deleted 225KB catalogue: after copying the snapshot in, the server reads back **both** the snapshot's contents and the dead server's. The WAL header carries salts and a checksum but **no database identity**, so SQLite cannot tell that WAL belongs to a different file - it just replays it. The result opens, passes `quick_check`, is the right size, and is a mix of two catalogues, with nothing reported anywhere. This is the same hazard the tool's own sidecar move exists for, met from the other direction.
+
+What the tool does that a copy does not, worth knowing before choosing: it parks the old catalogue instead of deleting it, so a restore of the wrong snapshot is itself undoable; it runs `quick_check` and the version refusal *before* touching anything; and it refuses outright if the server is still running, which a copy will happily land underneath. Two things still protect a manual restore: the filename has to be right or the startup refusal fires (naming `bun run restore latest`), and the snapshot really is complete on its own, having no sidecars of its own to forget.
+
+In the container the file is owned by uid 1000; a `cp` run as root on the host leaves a catalogue the server cannot write.
+
 A bare name is resolved against the backup directory rather than the shell's working directory, since following the tool's own output would otherwise fail with "no such backup" - and **only** there. It is deliberately not offered to the filesystem as a fallback: `photos.db-<stamp>.db` typed while standing in the backup directory would then resolve against the cwd and restore a *different* catalogue's snapshot over this one, which nothing downstream can catch, the file being intact with a matching `user_version`. A path (anything containing a separator) is still taken as a path, which is how a copy kept elsewhere is restored.
 
 The snapshot is put back with **`VACUUM INTO`, not a file copy** - the same reasoning as the backup side, and here it is load-bearing rather than tidy. A copy takes the main file alone, and a catalogue's committed work can be almost all of it in the `-wal`: measured, a 4KB main file beside a 1.8MB WAL holding all 300 rows, where the copy did not contain even the table. Both sources this is ever pointed at normally have a WAL beside them - a catalogue parked by an earlier restore, which keeps its sidecars by design, and a copy rescued from another machine - so copying would have made "undo the restore" and "restore from elsewhere" silently restore nothing.
