@@ -1,8 +1,65 @@
 import { Database } from 'bun:sqlite';
-import { existsSync, readdirSync, statSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { backupsDir } from '../utils/paths';
 import { runMigrations } from './migrations';
+
+// Byte 19 of the SQLite header: the file format *read* version. 1 is a legacy
+// rollback journal, 2 is WAL. A database that has never been in WAL mode has no
+// business having a `-wal` beside it, and `VACUUM INTO` always writes 1 - so every
+// snapshot this app takes is one, which is what makes the pairing checkable.
+const HEADER_READ_VERSION_OFFSET = 19;
+const WAL_FORMAT = 2;
+
+function readVersionByte(dbPath: string): number | null {
+  let fd: number;
+  try {
+    fd = openSync(dbPath, 'r');
+  } catch {
+    return null;
+  }
+  try {
+    const header = Buffer.alloc(HEADER_READ_VERSION_OFFSET + 1);
+    const read = readSync(fd, header, 0, header.length, 0);
+    return read === header.length ? (header[HEADER_READ_VERSION_OFFSET] ?? null) : null;
+  } catch {
+    return null;
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/**
+ * Refuses a `-wal` that cannot belong to the database it is sitting next to.
+ *
+ * SQLite offers no way to bind the two: the WAL header carries a magic number, a
+ * page size, a checkpoint sequence and two salts, and *nothing* identifying a
+ * database - so a stale WAL is replayed over whatever file it is found beside.
+ * Measured: copying a snapshot over a catalogue while leaving the dead server's
+ * `-wal` gives a file that opens, passes `quick_check`, is the right size, and
+ * holds a mix of two catalogues, with nothing reported anywhere. Read-only opens
+ * replay it too, so nothing about how it is opened avoids this.
+ *
+ * What *is* checkable is the pairing. `VACUUM INTO` writes a rollback-mode file, so
+ * every snapshot this app takes says read-version 1, and a database in that mode
+ * has never had a WAL. Rollback-mode header plus a non-empty `-wal` therefore means
+ * the two came from different databases - which is exactly the shape of a
+ * hand-rolled restore that copied the snapshot in and forgot the sidecars (§4.9).
+ * It cannot false-positive: SQLite removes the `-wal` when a database leaves WAL
+ * mode, so the combination is never legitimate.
+ */
+function refuseAMismatchedWal(dbPath: string): void {
+  const wal = `${dbPath}-wal`;
+  const walSize = statSync(wal, { throwIfNoEntry: false })?.size ?? 0;
+  if (walSize === 0) return; // absent, or present and holding nothing to replay
+  if (readVersionByte(dbPath) === WAL_FORMAT) return; // a WAL-mode database; the pair is its own
+  throw new Error(
+    `${wal} cannot belong to ${dbPath}: the catalogue has never been in WAL mode, so that file is left over from a different one. ` +
+      'Starting would replay it over this catalogue and silently mix the two. ' +
+      'It is what a restore done by hand leaves when the snapshot is copied in without deleting the sidecars - ' +
+      `delete ${wal} and ${dbPath}-shm, or use \`bun run restore\`, which handles them.`,
+  );
+}
 
 // Opening creates, which is right for a first run and dangerous for every run
 // after it: anything that leaves `DB_PATH` absent - a volume that failed to mount,
@@ -68,6 +125,7 @@ function refuseToReplaceAMissingCatalogue(dbPath: string): void {
 // concurrent per-library syncs read while writes serialize.
 export function createDatabase(dbPath: string): Database {
   refuseToReplaceAMissingCatalogue(dbPath);
+  if (dbPath !== ':memory:') refuseAMismatchedWal(dbPath);
   const db = new Database(dbPath, { create: true });
   db.exec('PRAGMA journal_mode = WAL;');
   db.exec('PRAGMA foreign_keys = ON;');

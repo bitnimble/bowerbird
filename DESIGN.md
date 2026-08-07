@@ -454,7 +454,11 @@ cp backups/bowerbird.db-<stamp>.db bowerbird.db
 docker compose start bowerbird
 ```
 
-Deleting only the `.db` silently restores the wrong catalogue. Measured, with a killed server's 12KB `-wal` left beside a deleted 225KB catalogue: after copying the snapshot in, the server reads back **both** the snapshot's contents and the dead server's. The WAL header carries salts and a checksum but **no database identity**, so SQLite cannot tell that WAL belongs to a different file - it just replays it. The result opens, passes `quick_check`, is the right size, and is a mix of two catalogues, with nothing reported anywhere. This is the same hazard the tool's own sidecar move exists for, met from the other direction.
+Deleting only the `.db` restores the wrong catalogue. Measured, with a killed server's 12KB `-wal` left beside a deleted 225KB catalogue: after copying the snapshot in, the server reads back **both** the snapshot's contents and the dead server's. The WAL header carries a magic number, a page size, a checkpoint sequence, two salts and two checksums - and **nothing identifying a database** - so SQLite cannot tell that WAL belongs to a different file and simply replays it over whatever it is found beside. Read-only opens replay it too, so nothing about how it is opened avoids this. The result opens, passes `quick_check`, is the right size, and is a mix of two catalogues.
+
+**This is now caught rather than silent.** SQLite offers no way to bind a WAL to a database, but the *pairing* is checkable: `VACUUM INTO` writes a rollback-journal file - every snapshot this app takes has read-version 1 in its header, where a live catalogue has 2 - and a database that has never been in WAL mode has never legitimately had a `-wal`. So a rollback-mode header beside a non-empty `-wal` means the two came from different databases, which is exactly the shape of this mistake. `createDatabase` refuses to start on it and names the two files to delete. It cannot false-positive: SQLite removes the `-wal` when a database leaves WAL mode, so the combination never arises legitimately.
+
+The refusal is a backstop, not a licence - it catches this particular pairing, not every way a hand-rolled restore can go wrong, and the tool remains the path that handles the sidecars for you.
 
 What the tool does that a copy does not, worth knowing before choosing: it parks the old catalogue instead of deleting it, so a restore of the wrong snapshot is itself undoable; it runs `quick_check` and the version refusal *before* touching anything; and it refuses outright if the server is still running, which a copy will happily land underneath. Two things still protect a manual restore: the filename has to be right or the startup refusal fires (naming `bun run restore latest`), and the snapshot really is complete on its own, having no sidecars of its own to forget.
 
@@ -2765,6 +2769,7 @@ The sync-service, photo-deletion, and image-streaming cases below run in the int
 - A working file abandoned by a killed run is swept by the next one
 - Rotation keeps the newest N and reports how many it dropped; a retention below 1 deletes nothing; a catalogue emptied on purpose rotates normally
 - A catalogue that has gone missing with backups beside it is refused at startup, naming the command that fixes it; so is an empty database left where one was, whether zero bytes or a valid empty one; a first run with no backups still creates one
+- A `-wal` that cannot belong to the catalogue beside it (rollback-mode header, non-empty WAL) is refused, naming the files to delete; a catalogue and its own WAL are left alone
 - A restore takes its lock even when there is no catalogue at the path, which is the disaster-recovery case, and the empty file it locks is never reported as the catalogue that was displaced
 - A catalogue whose own filename carries a date does not date every snapshot to it
 - A working file from a run that is still going is left alone; one old enough to be abandoned is swept

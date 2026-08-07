@@ -3,7 +3,7 @@
 //   docker exec bowerbird-dev bun test test/integration
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createDatabase } from '../../src/db/connection';
@@ -759,6 +759,42 @@ test('a restore holds the catalogue’s path even when there is no catalogue the
   const { movedAside } = await restoreBackup(dbPath, file);
   expect(movedAside).toBeNull();
   db = createDatabase(dbPath);
+  expect(libraryNames(dbPath)).toEqual(['holiday']);
+});
+
+test('a WAL that cannot belong to the catalogue beside it is refused', async () => {
+  addLibrary(LIB, 'holiday');
+  const { path: file } = await backups.backup(7);
+  db.close();
+  await killedWriterLeavingWal(LATER, 'later');
+  expect(existsSync(`${dbPath}-wal`)).toBe(true);
+
+  // A restore done by hand: snapshot copied in, sidecars forgotten. SQLite binds a
+  // WAL to nothing - its header identifies no database - so it replays over
+  // whatever it is found beside, giving a catalogue that opens, passes quick_check,
+  // is the right size, and holds a mix of two. What is checkable is the pairing:
+  // `VACUUM INTO` writes a rollback-mode file, and such a file has never had a WAL.
+  copyFileSync(file, dbPath);
+
+  expect(() => createDatabase(dbPath)).toThrow(/cannot belong to/);
+  expect(() => createDatabase(dbPath)).toThrow(/delete/);
+
+  // And once the sidecars go, exactly as the message says, it opens clean.
+  rmSync(`${dbPath}-wal`);
+  rmSync(`${dbPath}-shm`, { force: true });
+  db = createDatabase(dbPath);
+  expect(libraryNames(dbPath)).toEqual(['holiday']);
+});
+
+test('a catalogue and its own WAL are left alone', async () => {
+  addLibrary(LIB, 'holiday');
+  // The ordinary case, and the one a careless check would break: a live WAL-mode
+  // catalogue always has a `-wal`, and it is its own.
+  expect(existsSync(`${dbPath}-wal`)).toBe(true);
+  db.close();
+
+  db = createDatabase(dbPath);
+
   expect(libraryNames(dbPath)).toEqual(['holiday']);
 });
 
