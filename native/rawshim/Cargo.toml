@@ -39,6 +39,21 @@ required-features = ["renditions"]
 name = "lensfun_vs_fitted"
 required-features = ["renditions"]
 
+# Which domain `image::finish` belongs in, measured in ΔE ITP rather than argued.
+[[example]]
+name = "filter_domain_delta"
+required-features = ["renditions"]
+
+# What an SDR rendition costs against an HDR one, whole-job rather than encode-only.
+[[example]]
+name = "sdr_vs_hdr"
+required-features = ["renditions"]
+
+# Whether denoising before the geometric warp leaves noise more uniform than after it.
+[[example]]
+name = "denoise_before_warp"
+required-features = ["renditions"]
+
 [dependencies]
 fast_image_resize = "6.1.0"
 # libjpeg's DCT scaling is what makes a bounded decode cheap, and `Decoder::scale` is the
