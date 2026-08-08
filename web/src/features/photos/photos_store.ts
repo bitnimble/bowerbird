@@ -278,7 +278,23 @@ export class PhotosStore {
   // (§10.2). Null until something is picked, which is the usual state - the
   // setting answers for the rest, and `showing` is what is actually on screen.
   @observable accessor rendition: ViewerRendition | null = null;
-  @observable accessor buildingRendition = false;
+  // The renditions being built right now, as `photoId:rendition`. One set for
+  // both ways a build starts - the reader choosing one that is not on disk, and
+  // the stage meeting a 404 on the one the photo opened at - because the stage
+  // is covered while either runs and a single flag let whichever finished first
+  // uncover a build the other still had going.
+  //
+  // It is also what stops a stage that fails, remounts and fails again from
+  // queueing the same job on every report.
+  @observable accessor building: ReadonlySet<string> = new Set();
+
+  /** Whether a build is running for the photo the viewer is on, which is what covers its stage. */
+  @computed get buildingRendition(): boolean {
+    const photoId = this.open?.id;
+    if (photoId == null) return false;
+    for (const key of this.building) if (key.startsWith(`${photoId}:`)) return true;
+    return false;
+  }
 
   // Rebuild a rendition even when one is already on disk. Session-scoped and off
   // by default: it is for working on the pipeline, where the cached copy is the

@@ -587,8 +587,11 @@ export function PhotoStage({
         {/* A frame that failed replaces the incoming one, not the picture already
             on screen: switching to a rendition that 404s should leave the one
             being compared against up, not blank the stage. Nothing to hold means
-            there is nothing to say but this. */}
-        {allFailed && painted == null ? (
+            there is nothing to say but this - unless the 404 is what started a
+            build, which is the usual way a photo with no rendition is opened, and
+            "no rendition yet" over a spinner already saying one is being made
+            reads as the opposite of what is happening. */}
+        {allFailed && painted == null && !busy ? (
           <span className="tile__pending">no rendition yet</span>
         ) : (
           mounted.map((source) => (

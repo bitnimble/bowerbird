@@ -530,8 +530,16 @@ test('opening a photo whose rendition is gone builds that rendition back', async
   rmSync(full, { force: true });
 
   await page.reload();
+  // The 404 is what starts the build, so while it runs the stage says a rendition is being
+  // made. It used to say "no rendition yet" for the whole render - the flag that covers the
+  // stage was raised only by a rendition the reader had chosen, and never by the one the
+  // photo opened at, which is the common way to meet a photo that has none.
+  await expect(page.locator('.stage__busy')).toContainText('Rendering');
+  await expect(page.locator('.stage__viewport .tile__pending')).toHaveCount(0);
+
   await expect.poll(() => existsSync(full), { timeout: 90_000 }).toBe(true);
   await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
+  await expect(page.locator('.stage__busy')).toBeHidden();
 });
 
 // The point of caching the renditions is that switching back to one already seen
