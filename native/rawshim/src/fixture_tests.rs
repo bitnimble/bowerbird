@@ -1421,7 +1421,6 @@ mod hdr_grade {
 /// machine is.
 mod one_open_at_a_time {
     use super::*;
-    use std::time::Instant;
 
     fn request(path: &PathBuf) -> crate::edit::EditRequest {
         crate::edit::EditRequest {
