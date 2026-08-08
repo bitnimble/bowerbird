@@ -112,6 +112,12 @@ function noop(): void {
   /* a frame on its way off the stage reports to nobody */
 }
 
+// Two URLs for one photo's one rendition: the version is what a rebuild moves,
+// and everything before it is which file is being asked for.
+function sameFile(source: string): string {
+  return source.replace(/\?.*$/, '');
+}
+
 // One mounted frame, owning its own decode.
 //
 // A component per source rather than one effect over a list, because a decode is
@@ -382,7 +388,12 @@ export function PhotoStage({
     if (!ready || warming === '') return;
     setWarmed((previous) => {
       const added = warming.split(' ').filter((source) => !previous.includes(source));
-      return added.length === 0 ? previous : [...previous, ...added];
+      if (added.length === 0) return previous;
+      // A neighbour rebuilt while it was warmed moves its URL (§13.5), so the
+      // element at the old one holds a file nothing will ask for again. Left in,
+      // sitting on one photo through an import collects one of those per rebuild.
+      const superseded = new Set(added.map(sameFile));
+      return [...previous.filter((source) => !superseded.has(sameFile(source))), ...added];
     });
   }, [ready, warming]);
 
