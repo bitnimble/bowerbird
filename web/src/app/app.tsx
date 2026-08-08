@@ -1,9 +1,10 @@
 import { observer } from 'mobx-react-lite';
 import { Fragment, useEffect, useState } from 'react';
 import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom';
-import { Image, Images, Keyboard, Layers, Library, PanelLeftClose, PanelLeftOpen, Settings, Trash2 } from 'lucide-react';
+import { Image, Images, Keyboard, Layers, Library, PanelLeftClose, PanelLeftOpen, Settings, Sun, Trash2 } from 'lucide-react';
 import { AlbumPhotosPage } from '../features/albums/album_photos_page';
 import { AlbumsPage } from '../features/albums/albums_page';
+import { HdrPage } from '../features/hdr/hdr_page';
 import { libraryLabel } from '../features/libraries/library_label';
 import { BinPage } from '../features/photos/bin_page';
 import { LibraryPhotosPage } from '../features/photos/library_photos_page';
@@ -151,6 +152,12 @@ const Rail = observer(function Rail({ onCollapse }: { onCollapse: () => void }):
         <NavLink to="/settings" className={railClass}>
           <Settings size={ICON} />
           Settings
+        </NavLink>
+        {/* Beside Settings because it is what the HDR setting there is asking about:
+            the case for turning it on, made in pictures. */}
+        <NavLink to="/hdr" className={railClass}>
+          <Sun size={ICON} />
+          What HDR is for
         </NavLink>
         <ShortcutHelp />
       </div>
@@ -302,6 +309,7 @@ export function App(): JSX.Element {
           <Routes>
             <Route path="/" element={<Home />} />
             <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/hdr" element={<HdrPage />} />
             <Route path="/libraries/:libraryId" element={<LibraryPhotosPage />} />
             <Route path="/libraries/:libraryId/shoots" element={<ShootsPage />} />
             <Route path="/libraries/:libraryId/bin" element={<BinPage />} />
