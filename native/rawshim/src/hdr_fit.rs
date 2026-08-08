@@ -22,6 +22,16 @@ use crate::parallel::*;
 const FIT_LONG_EDGE: usize = 640;
 
 /// Curve resolution over the fit domain.
+///
+/// Spaced evenly in scene light, which under-describes the shadows: both sides of this fit are
+/// linear, so the stop below diffuse white takes 128 of these and five stops down there are 8.
+/// **Measured, respacing them does not help.** On the square root of the level - 19 bins five
+/// stops down instead of 8 - the 32-frame library came out at a mean deltaE of 3.063 against
+/// 3.059, six frames better and ten worse, and it cost the identity transform its exactness
+/// (a quadratic through linearly interpolated bins lands 3e-6 out). What limits the shadows is
+/// not how many bins they get but how few pairs land in them: `MIN_BIN_SAMPLES` already drops
+/// the sparse ones, so finer spacing buys more empty bins. `pool_violators` is the fix that
+/// worked.
 const BINS: usize = 256;
 
 /// How far above diffuse white the JPEG is still believed, as a fraction of it.
@@ -93,6 +103,15 @@ fn apply3(m: &[[f64; 3]; 3], r: f64, g: f64, b: f64) -> [f64; 3] {
         m[1][0] * r + m[1][1] * g + m[1][2] * b,
         m[2][0] * r + m[2][1] * g + m[2][2] * b,
     ]
+}
+
+/// The sRGB transfer's inverse, for a value already in 0..1.
+fn srgb_eotf_f(coded: f64) -> f64 {
+    let c = coded.clamp(0.0, 1.0);
+    match c <= 0.04045 {
+        true => c / 12.92,
+        false => ((c + 0.055) / 1.055).powf(2.4),
+    }
 }
 
 fn srgb_eotf(level: u8) -> f64 {
@@ -738,7 +757,11 @@ fn fit_curve(xs: &[f64], ys: &[f64], ws: &[f64], n: usize) -> (Vec<f64>, isize) 
     for i in 0..n {
         let bin = (((xs[i] / TRUST_CEILING) * (BINS - 1) as f64).round() as isize)
             .clamp(0, BINS as isize - 1) as usize;
-        sum[bin] += ys[i] * ws[i];
+        // Averaged through the transfer a viewer sees, not in light. Within a bin every pair
+        // sits at nearly the same input, so the spread is all in the camera's answer - and a
+        // mean in light is pulled by the brightest members of it, which is not where the middle
+        // of what a reader sees lies.
+        sum[bin] += srgb_oetf(ys[i].clamp(0.0, 1.0)) * ws[i];
         weight[bin] += ws[i];
         count[bin] += 1;
     }
@@ -747,7 +770,7 @@ fn fit_curve(xs: &[f64], ys: &[f64], ws: &[f64], n: usize) -> (Vec<f64>, isize) 
     // to the running maximum in `make_monotone` further down.
     let mut measured: Vec<(usize, f64, f64)> = (0..BINS)
         .filter(|b| count[*b] >= MIN_BIN_SAMPLES && weight[*b] > 0.0)
-        .map(|b| (b, sum[b] / weight[b], weight[b]))
+        .map(|b| (b, srgb_eotf_f(sum[b] / weight[b]), weight[b]))
         .collect();
     pool_violators(&mut measured);
 
