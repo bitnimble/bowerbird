@@ -11,6 +11,8 @@ import type { AlbumsRepository } from '../../albums/albums_repository';
 import type { LibrariesRepository } from '../../libraries/libraries_repository';
 import type { ProcessingService } from '../../processing/processing_service';
 import type { ShootsRepository } from '../../shoots/shoots_repository';
+import { config } from '../../../config';
+import { getDataPath } from '../../../utils/paths';
 import { PhotosService } from '../photos_service';
 import type { PhotoListResult, PhotosRepository } from '../photos_repository';
 
@@ -34,7 +36,7 @@ function build(over: {
     transaction: (fn: () => unknown) => fn(),
     ...over.photos,
   } as unknown as PhotosRepository;
-  const libraries = { getById: jest.fn(() => null), ...over.libraries } as unknown as LibrariesRepository;
+  const libraries = { getById: jest.fn(() => null), setBinIdentity: jest.fn(), ...over.libraries } as unknown as LibrariesRepository;
   const shoots = { getById: jest.fn(() => null), ...over.shoots } as unknown as ShootsRepository;
   const albums = { getById: jest.fn(() => null), getAlbumIdsForPhoto: jest.fn(() => []), ...over.albums } as unknown as AlbumsRepository;
   // These tests never render, so a stub keeps LibRaw and worker threads out.
@@ -46,7 +48,7 @@ function build(over: {
   return { service: new PhotosService(photos, albums, shoots, libraries, processing), photos, libraries, shoots, albums, processing };
 }
 
-const library: Library = { id: 'lib', root_path: '/r', data_path: null, bin_name: 'Bin', name: 'lib', ordering: 'added_asc',
+const library: Library = { id: 'lib', root_path: '/r', bin_name: 'Bin', read_only: false, name: 'lib', ordering: 'added_asc',
   rendition_source: 'embedded' as const,
   rendition_hdr: false,
   include_subfolders: true, mirror_shoots: true, auto_stack: true, auto_stack_similarity: 0.78, auto_stack_window_seconds: 60, last_synced_at: null, photo_count: 0 };
@@ -70,10 +72,13 @@ describe('PhotosService.get', () => {
   // only visits photos flagged for processing. Opening one is when it is noticed.
   it('rebuilds a missing grid tile in the background, from the source the import used', async () => {
     const root = mkdtempSync(path.join(tmpdir(), 'bb-tile-'));
+    // Its own id, because the tile the third assertion puts on disk has to land
+    // where the service looks for it - under DATA_DIR, keyed by library id (§6).
+    const lib = { ...library, id: 'photos-tile', root_path: root, rendition_source: 'render' as const };
+    const data = getDataPath(lib);
     try {
       writeFileSync(path.join(root, 'a.arw'), 'raw');
       const photo = { ...detail, rendition_source: 'embedded' } as PhotoDetail;
-      const lib = { ...library, root_path: root, rendition_source: 'render' as const };
       const { service, processing } = build({
         photos: { getById: jest.fn(() => photo) },
         libraries: { getById: jest.fn(() => lib) },
@@ -87,13 +92,19 @@ describe('PhotosService.get', () => {
       // Only once while the first is still in flight, and never once it is there.
       service.get('p1');
       expect(processing.renderOne).toHaveBeenCalledTimes(1);
-      await Promise.resolve();
-      mkdirSync(path.join(root, '.bowerbird', 'renditions', 'grid'), { recursive: true });
-      writeFileSync(path.join(root, '.bowerbird', 'renditions', 'grid', 'p1.avif'), 'tile');
+      // A macrotask, not one microtask: the in-flight set is cleared in the
+      // `.finally()` of a chain three ticks long, so yielding once leaves the
+      // guard still holding and the tile-exists check below unexercised.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      mkdirSync(path.join(data, 'renditions', 'grid'), { recursive: true });
+      writeFileSync(path.join(data, 'renditions', 'grid', 'p1.avif'), 'tile');
+      // The in-flight guard has cleared by now, so a third `get` would ask again
+      // if the tile on disk were not what stops it.
       service.get('p1');
       expect(processing.renderOne).toHaveBeenCalledTimes(1);
     } finally {
       rmSync(root, { recursive: true, force: true });
+      rmSync(data, { recursive: true, force: true });
     }
   });
 });
@@ -202,22 +213,22 @@ describe('PhotosService scoped listing uses the owner ordering', () => {
 describe('PhotosService.delete', () => {
   it('moves the RAW into the library Bin, flags is_deleted, and keeps the renditions', async () => {
     const root = mkdtempSync(path.join(tmpdir(), 'bb-'));
+    const dataDir = path.join(config.dataDir, 'photos-delete');
     try {
-      const dataDir = path.join(root, '.bowerbird');
-      mkdirSync(path.join(dataDir, 'renditions', 'small'), { recursive: true });
+      mkdirSync(path.join(dataDir, 'renditions', 'grid'), { recursive: true });
       mkdirSync(path.join(dataDir, 'renditions', 'full'), { recursive: true });
       writeFileSync(path.join(root, 'a.arw'), '');
-      writeFileSync(path.join(dataDir, 'renditions', 'small', 'p1.webp'), '');
-      writeFileSync(path.join(dataDir, 'renditions', 'full', 'p1.webp'), '');
+      writeFileSync(path.join(dataDir, 'renditions', 'grid', 'p1.avif'), '');
+      writeFileSync(path.join(dataDir, 'renditions', 'full', 'p1.avif'), '');
 
-      const lib: Library = { id: 'lib', root_path: root, data_path: null, bin_name: 'Bin', name: 'lib', ordering: 'added_asc',
+      const lib: Library = { id: 'photos-delete', root_path: root, bin_name: 'Bin', read_only: false, name: 'lib', ordering: 'added_asc',
   rendition_source: 'embedded' as const,
   rendition_hdr: false,
   include_subfolders: true, mirror_shoots: true, auto_stack: true, auto_stack_similarity: 0.78, auto_stack_window_seconds: 60, last_synced_at: null, photo_count: 0 };
       const markDeleted = jest.fn();
       // getBasicByIds, not getById: the delete reads the four columns it needs
       // for a whole batch rather than a detail payload per photo (§12.1).
-      const photo = { id: 'p1', library_id: 'lib', shoot_id: null, file_path: 'a.arw' };
+      const photo = { id: 'p1', library_id: 'photos-delete', shoot_id: null, file_path: 'a.arw' };
       const { service } = build({
         photos: { getBasicByIds: jest.fn(() => [photo]), markDeleted },
         libraries: { getById: jest.fn(() => lib) },
@@ -228,14 +239,17 @@ describe('PhotosService.delete', () => {
       expect(existsSync(path.join(root, 'a.arw'))).toBe(false);
       expect(existsSync(path.join(root, 'Bin', 'a.arw'))).toBe(true);
       // Kept, not deleted: the Bin is browsable and restorable only if the
-      // binned photos can still be seen.
-      expect(existsSync(path.join(dataDir, 'renditions', 'small', 'p1.webp'))).toBe(true);
-      expect(existsSync(path.join(dataDir, 'renditions', 'full', 'p1.webp'))).toBe(true);
+      // binned photos can still be seen. Under the library's real data directory,
+      // or this asserts that a path nothing writes to still holds what the test
+      // put there (§6).
+      expect(existsSync(path.join(dataDir, 'renditions', 'grid', 'p1.avif'))).toBe(true);
+      expect(existsSync(path.join(dataDir, 'renditions', 'full', 'p1.avif'))).toBe(true);
       // The pre-delete path is recorded so restore can put the file back there,
       // and the batch so an undo can name this one bin rather than every id.
       expect(markDeleted).toHaveBeenCalledWith('p1', 'a.arw', 'batch-1');
     } finally {
       rmSync(root, { recursive: true, force: true });
+      rmSync(dataDir, { recursive: true, force: true });
     }
   });
 
@@ -251,7 +265,7 @@ describe('PhotosService.delete', () => {
       writeFileSync(path.join(root, 'D', 'foo.arw'), 'shallow');
       writeFileSync(path.join(root, 'foo.arw'), 'root');
 
-      const lib: Library = { id: 'lib', root_path: root, data_path: null, bin_name: 'Bin', name: 'lib', ordering: 'added_asc',
+      const lib: Library = { id: 'lib', root_path: root, bin_name: 'Bin', read_only: false, name: 'lib', ordering: 'added_asc',
   rendition_source: 'embedded' as const,
   rendition_hdr: false,
   include_subfolders: true, mirror_shoots: true, auto_stack: true, auto_stack_similarity: 0.78, auto_stack_window_seconds: 60, last_synced_at: null, photo_count: 0 };
@@ -286,7 +300,7 @@ describe('PhotosService.delete', () => {
     const root = mkdtempSync(path.join(tmpdir(), 'bb-del-'));
     try {
       writeFileSync(path.join(root, 'a.arw'), 'raw');
-      const lib: Library = { id: 'lib', root_path: root, data_path: null, bin_name: 'Bin', name: 'lib', ordering: 'added_asc',
+      const lib: Library = { id: 'lib', root_path: root, bin_name: 'Bin', read_only: false, name: 'lib', ordering: 'added_asc',
   rendition_source: 'embedded' as const,
   rendition_hdr: false,
   include_subfolders: true, mirror_shoots: true, auto_stack: true, auto_stack_similarity: 0.78, auto_stack_window_seconds: 60, last_synced_at: null, photo_count: 0 };
@@ -331,8 +345,8 @@ describe('PhotosService.delete', () => {
       const lib: Library = {
         id: 'lib',
         root_path: root,
-        data_path: null,
         bin_name: 'Bin',
+        read_only: false,
         name: 'lib',
         ordering: 'added_asc',
         rendition_source: 'embedded' as const,
@@ -418,17 +432,18 @@ describe('PhotosService renditions', () => {
   // read this off the response the way it used to; it comes off the same stat
   // that answers `built`.
   it('reports what a stored rendition weighs, and nothing for one that is not built', () => {
-    const root = mkdtempSync(path.join(tmpdir(), 'bb-bytes-'));
+    const lib = { ...library, id: 'photos-bytes' };
+    const data = getDataPath(lib);
     try {
-      const dir = path.join(root, '.bowerbird', 'renditions', 'full');
+      const dir = path.join(data, 'renditions', 'full');
       mkdirSync(dir, { recursive: true });
       writeFileSync(path.join(dir, 'p1.avif'), 'x'.repeat(17));
 
-      const renditions = detailFor({ ...library, root_path: root }).renditions;
+      const renditions = detailFor(lib).renditions;
       expect(renditions?.full.bytes).toBe(17);
       expect(renditions?.max.bytes).toBeNull();
     } finally {
-      rmSync(root, { recursive: true, force: true });
+      rmSync(data, { recursive: true, force: true });
     }
   });
 });

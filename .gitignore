@@ -143,6 +143,13 @@ vite.config.ts.timestamp-*
 /.photos/
 bowerbird.db
 bowerbird.db-*
+# The catalogue a restore moves aside (§4.9), which is `.db.` rather than `.db-`.
+bowerbird.db.*
+# DATA_DIR's default, i.e. every generated file when the app runs from a checkout.
+/data/
+# Backups are taken beside the catalogue (§4.9), so running from a checkout puts
+# them here - and the first one lands on the first start, not a week later.
+/backups/
 
 # Playwright / E2E
 web/test-results/

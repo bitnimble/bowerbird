@@ -6,7 +6,11 @@ export function libraryRow(page: Page, rootPath: string) {
   return page.locator('.list__row', { hasText: rootPath });
 }
 
-export async function addLibrary(page: Page, rootPath: string, options: { autoStack?: boolean } = {}): Promise<void> {
+export async function addLibrary(
+  page: Page,
+  rootPath: string,
+  options: { autoStack?: boolean; readOnly?: boolean } = {},
+): Promise<void> {
   await page.goto('/settings');
   await page.getByRole('button', { name: 'Add library' }).click();
   // The picker writes the folder it opened at into this box, so a path typed
@@ -14,6 +18,9 @@ export async function addLibrary(page: Page, rootPath: string, options: { autoSt
   const path = page.getByLabel('Library root path');
   await expect(path).not.toHaveValue('');
   await path.fill(rootPath);
+  if (options.readOnly === true) {
+    await page.locator('.ui-modal').getByRole('checkbox', { name: "Don't change anything in this folder" }).check();
+  }
   // The dialog's own button carries the same name as the one that opened it, so
   // the confirm has to be scoped to the dialog.
   await page.locator('.ui-modal').getByRole('button', { name: 'Add library' }).click();

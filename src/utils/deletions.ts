@@ -1,8 +1,9 @@
-import { existsSync, unlinkSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { rm, rmdir, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { AppError } from '../errors';
-import { containsPath } from './paths';
+import type { Library } from '../schemas/libraries';
+import { containsPath, getBinPath } from './paths';
 import { findOriginalsAnywhere, isSupportedFile } from './scan';
 
 // The only module allowed to remove anything from disk: the `no-restricted-imports`
@@ -11,13 +12,9 @@ import { findOriginalsAnywhere, isSupportedFile } from './scan';
 // guard that proves its target is not one before the call is made.
 
 // The subdirectories of a data directory that hold generated files, and so the
-// only ones a file may be deleted from one at a time. Everything else under there
-// - the sync lock, a stray the user left - is not ours to remove.
+// only ones a file may be deleted from one at a time. Everything else under
+// there - a stray the user left - is not ours to remove.
 const GENERATED_DIRS = ['renditions', 'hdr'];
-
-// Lives here rather than beside the lock's own code so the guard below and the
-// name it guards cannot drift apart.
-export const SYNC_LOCK_NAME = '.bowerbird-sync.lock';
 
 // A generated rendition or HDR check file. `dataPath` is passed rather than
 // derived from `target` so the guard is checked against the caller's own library
@@ -46,10 +43,9 @@ export async function deleteGeneratedDirectory(dataPath: string, target: string)
 }
 
 // The whole data directory, when its library is removed. Refuses while any
-// original is still inside it: the caller is expected to have moved those
-// somewhere permanent first (the library's Bin). A data directory holding
-// originals is either a pre-Bin-move layout or a `data_path` aimed at the user's
-// photographs, and neither is a tree to delete.
+// original is still inside it: nothing under `DATA_DIR` is written by anyone but
+// this app (§6), so an original there means the directory is not what it is
+// believed to be, and this is the one call here that cannot be undone.
 export async function deleteDataDirectory(dataPath: string): Promise<void> {
   const strays = await findOriginalsAnywhere(dataPath);
   if (strays.length > 0) {
@@ -58,14 +54,46 @@ export async function deleteDataDirectory(dataPath: string): Promise<void> {
   await rm(dataPath, { recursive: true, force: true });
 }
 
-// Synchronous to match the lock itself: acquiring one has to be a single
-// uninterrupted step, or two syncs of the same library can both pass the
-// staleness check before either creates the file.
-export function deleteSyncLockSync(lockPath: string): void {
-  if (path.basename(lockPath) !== SYNC_LOCK_NAME) {
-    throw new AppError('IO_ERROR', `refusing to delete ${lockPath}: not a sync lock`);
+// The bin folder a failed library create (or a failed flag clear) left behind,
+// which the "a folder of that name already exists" refusal would otherwise make
+// permanent: the library could never be created with that bin name again.
+//
+// Both guards matter, because this runs on an error path where the thing it is
+// about to delete is a directory the app believes it just created and might be
+// wrong about: it must be exactly this library's bin, and `rmdir` fails while
+// anything at all is inside it.
+export async function deleteEmptyBinFolder(library: Pick<Library, 'root_path' | 'bin_name'>, target: string): Promise<void> {
+  const bin = getBinPath(library);
+  if (bin == null || path.resolve(target) !== path.resolve(bin)) {
+    throw new AppError('IO_ERROR', `refusing to remove ${target}: not this library's bin folder`);
   }
-  unlinkSync(lockPath);
+  await rmdir(target);
+}
+
+// The copy a restore stages beside the catalogue before renaming it into place
+// (§4.9), when the restore does not get that far. Named from the catalogue it is
+// destined for, which is the whole guard: nothing else can be spelled that way.
+export async function deleteRestoreStaging(dbPath: string, target: string): Promise<void> {
+  if (!path.resolve(target).startsWith(`${path.resolve(dbPath)}.restoring-`)) {
+    throw new AppError('IO_ERROR', `refusing to delete ${target}: not a restore staging file for ${dbPath}`);
+  }
+  await rm(target, { force: true });
+}
+
+// A snapshot of the catalogue, rotated out or abandoned part-written (§4.9).
+// Directly inside the backup directory rather than anywhere beneath it: that
+// directory holds nothing but flat files this app wrote, and a subtree under it
+// is something somebody else put there.
+export async function deleteBackupFile(backupsDir: string, target: string): Promise<void> {
+  if (path.dirname(path.resolve(target)) !== path.resolve(backupsDir)) {
+    throw new AppError('IO_ERROR', `refusing to delete ${target}: not a file in ${backupsDir}`);
+  }
+  // The same last word as everywhere else: whatever a directory is supposed to
+  // hold, a RAW in it is an original.
+  if (isSupportedFile(target)) {
+    throw new AppError('IO_ERROR', `refusing to delete ${target}: it is an original`);
+  }
+  await rm(target, { force: true });
 }
 
 // The source half of a move: `movedTo` already holds the bytes (a hard link to

@@ -11,7 +11,6 @@ import {
   PEAK,
   PEAK_BINS,
   PEAK_CANDIDATES,
-  PEAK_CONSTANTS,
   PEAK_SAMPLES,
   REDUCE,
   TICK_UNIFORM_FLOATS,
@@ -375,21 +374,13 @@ export class TickPipeline {
       entries: [...f.colour, f.readOnly(5), f.pyramid],
     });
 
-    const compute = (
-      module: GPUShaderModule,
-      entryPoint: string,
-      layout: GPUBindGroupLayout,
-      constants?: Record<string, number>,
-    ) =>
+    const compute = (module: GPUShaderModule, entryPoint: string, layout: GPUBindGroupLayout) =>
       device.createComputePipeline({
         layout: device.createPipelineLayout({ bindGroupLayouts: [layout] }),
-        compute: { module, entryPoint, ...(constants != null && { constants }) },
+        compute: { module, entryPoint },
       });
 
-    // The peak's two lengths are its shader's overrides, so the buffers below and the
-    // loops above cannot come to disagree about them.
-    const onPeak = (entryPoint: string) =>
-      compute(peak, entryPoint, this.peakLayout, PEAK_CONSTANTS);
+    const onPeak = (entryPoint: string) => compute(peak, entryPoint, this.peakLayout);
     this.peakMeasure = onPeak('measure');
     this.peakCollect = onPeak('collect');
     this.peakRemeasure = onPeak('remeasure');

@@ -19,8 +19,8 @@ services:
     container_name: bowerbird-dev
     # Set here rather than inherited: this service builds a stage shared with the
     # native build, which cannot carry a USER of its own. Without it
-    # a dev container writes root-owned renditions into the live-mounted repo and
-    # photo library, same as production did.
+    # a dev container writes root-owned files into the live-mounted repo and photo
+    # library, same as production did.
     user: "1000:1000"
     working_dir: /app
     command: sh -c "bun install --frozen-lockfile && bun run dev"
@@ -36,7 +36,8 @@ services:
       # outside, including the host.
       HOST: 127.0.0.1
       PORT: 3000
-      DB_PATH: /data/bowerbird.db
+      DB_PATH: /config/bowerbird.db
+      DATA_DIR: /data
     volumes:
       # This repo, live-mounted for hot reload. REPO_DIR must be set in .env to the
       # repo's path ON THE DOCKER HOST (it differs from the path in this container).
@@ -48,7 +49,8 @@ services:
       - bowerbird-node-modules:/app/node_modules
       - bowerbird-web-node-modules:/app/web/node_modules
       - "${PHOTOS_DIR:-./photos}:/photos"
-      - bowerbird-db-dev:/data
+      - bowerbird-config-dev:/config
+      - bowerbird-data-dev:/data
 
   # Vite dev server for web/. Same image - it needs bun and nothing else, and
   # reusing it means no second build.
@@ -75,6 +77,7 @@ services:
       - bowerbird-web-node-modules:/app/web/node_modules
 
 volumes:
-  bowerbird-db-dev:
+  bowerbird-config-dev:
+  bowerbird-data-dev:
   bowerbird-node-modules:
   bowerbird-web-node-modules:

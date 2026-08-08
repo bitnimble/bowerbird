@@ -1,7 +1,7 @@
 import { existsSync, rmSync, statSync } from 'node:fs';
 import path from 'node:path';
-import { expect, test } from '@playwright/test';
-import { API_URL, CULL_PHOTOS_DIR, PHOTO_NAMES } from './fixture_library';
+import { expect, test, type APIRequestContext } from '@playwright/test';
+import { API_URL, CULL_PHOTOS_DIR, PHOTO_NAMES, libraryDataDir } from './fixture_library';
 import {
   addLibrary,
   bulkAction,
@@ -19,6 +19,16 @@ import {
 // This spec has its own library root, so binning and rejecting here cannot
 // disturb the counts the other spec asserts.
 test.describe.configure({ mode: 'serial' });
+
+// Where this library's renditions land. Generated files live outside every
+// library root now (§3) and the directory is keyed by the library's id, so the
+// path is asked for rather than built from the root the spec already holds.
+async function renditionPath(request: APIRequestContext, rendition: string, photoId: string): Promise<string> {
+  const libraries = (await (await request.get(`${API_URL}/api/libraries`)).json()) as { id: string; root_path: string }[];
+  const library = libraries.find((l) => l.root_path === CULL_PHOTOS_DIR);
+  expect(library, 'the cull library is registered').toBeDefined();
+  return path.join(libraryDataDir(library!.id), 'renditions', rendition, `${photoId}.avif`);
+}
 
 test('sync indexes the cull library', async ({ page }) => {
   await addLibrary(page, CULL_PHOTOS_DIR);
@@ -513,15 +523,23 @@ test('opening a photo whose rendition is gone builds that rendition back', async
   // rendition rather than at the JPEG.
   await page.goto('/settings');
   await setRenditionSource(page, CULL_PHOTOS_DIR, 'Rendered RAW');
-  const full = path.join(CULL_PHOTOS_DIR, '.bowerbird', 'renditions', 'full', `${photoId}.avif`);
+  const full = await renditionPath(page.request, 'full', photoId);
 
   await page.goto(`/photos/${photoId}`);
   await expect.poll(() => existsSync(full), { timeout: 90_000 }).toBe(true);
   rmSync(full, { force: true });
 
   await page.reload();
+  // The 404 is what starts the build, so while it runs the stage says a rendition is being
+  // made. It used to say "no rendition yet" for the whole render - the flag that covers the
+  // stage was raised only by a rendition the reader had chosen, and never by the one the
+  // photo opened at, which is the common way to meet a photo that has none.
+  await expect(page.locator('.stage__busy')).toContainText('Rendering');
+  await expect(page.locator('.stage__viewport .tile__pending')).toHaveCount(0);
+
   await expect.poll(() => existsSync(full), { timeout: 90_000 }).toBe(true);
   await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
+  await expect(page.locator('.stage__busy')).toBeHidden();
 });
 
 // The point of caching the renditions is that switching back to one already seen
@@ -547,7 +565,7 @@ test('a chosen rendition is cached on disk, and survives a tile rebuild', async 
 
   // The photo's own renditions are the embedded rendition, so only the render had
   // to be built and stored; the embedded one is served from what already existed.
-  const cached = path.join(CULL_PHOTOS_DIR, '.bowerbird', 'renditions', 'full', `${photoId}.avif`);
+  const cached = await renditionPath(page.request, 'full', photoId);
   expect(existsSync(cached)).toBe(true);
 
   // Every rendition stays on offer whichever one is showing, the camera's JPEG
@@ -573,6 +591,49 @@ test('a chosen rendition is cached on disk, and survives a tile rebuild', async 
   // Nothing at all: not the build, and not the detail fetch that used to be awaited before
   // the swap was allowed to happen even when there was no build to learn anything about.
   expect(asked, 'a swap between two renditions already built asks the server for nothing').toEqual([]);
+
+  // And not the frames either. Both renditions have now decoded, and both stay mounted, so
+  // going back to one is an opacity change on an element that never left the page. Marked
+  // rather than counted or timed: an <img> replaced by an identical <img> passes every
+  // assertion about the src, and is exactly the fetch and the decode this avoids. The
+  // warmed neighbours are aria-hidden and are not frames of this photo.
+  const frames = page.locator('.stage__viewport img:not([aria-hidden])');
+  await expect(frames).toHaveCount(2);
+  await frames.evaluateAll((imgs) => imgs.forEach((img) => img.setAttribute('data-held', '1')));
+
+  // The warmed neighbours are held the same way, and marked for the same reason. Kept only
+  // for the rendition on screen they were unmounted and re-mounted on every swap - the
+  // frames' own bug, one photo over - so stepping on after a comparison paid again for a
+  // file the page had already fetched.
+  const warm = page.locator('.stage__viewport img[aria-hidden]');
+  const warmed = await warm.count();
+  expect(warmed, 'a neighbour is being warmed at all').toBeGreaterThan(0);
+  await warm.evaluateAll((imgs) => imgs.forEach((img) => img.setAttribute('data-held', '1')));
+
+  // Requests as well, for whatever the marks cannot see. Chromium answers a hit in its own
+  // renderer's memory cache without reporting a request at all, so this can only
+  // under-count - which is why the marks above are what the swap is actually pinned on.
+  const fetched: string[] = [];
+  page.on('request', (request) => {
+    const { pathname } = new URL(request.url());
+    if (pathname.startsWith('/image/')) fetched.push(pathname);
+  });
+
+  await showRendition('Embedded JPEG');
+  await expect(renditionPanel.getByText('Embedded JPEG')).toBeVisible({ timeout: 60_000 });
+  await showRendition('Rendered RAW');
+  await expect(renditionPanel.getByText('Rendered RAW')).toBeVisible({ timeout: 60_000 });
+
+  await expect(page.locator('.stage__viewport img.is-ready')).toHaveAttribute('data-held', '1');
+  await expect(page.locator('.stage__viewport img[data-held]'), 'every frame and every warmed neighbour survives the swaps').toHaveCount(
+    2 + warmed,
+  );
+  expect(fetched, 'and nothing asks for image bytes again').toEqual([]);
+
+  // Both are up, so the panel can still say what the one on screen measured. A flip decodes
+  // nothing, so nothing reports a size on it: the dimensions have to come from what that
+  // frame measured when it first arrived.
+  await expect(renditionPanel).not.toContainText('loading');
 
   // The grid's rebuild is the grid tile and nothing else. It used to queue both
   // stages, which had the run sweep every rendition it did not itself write - so
@@ -607,7 +668,7 @@ test('i and o switch between the camera JPEG and the render, and the cache can b
   // The file is the cache, so nothing rebuilds a rendition once it exists. This
   // is the escape hatch for working on the pipeline: the same choice, but the
   // stored copy is dropped first.
-  const cached = path.join(CULL_PHOTOS_DIR, '.bowerbird', 'renditions', 'full', `${photoId}.avif`);
+  const cached = await renditionPath(page.request, 'full', photoId);
   const before = statSync(cached).mtimeMs;
   await page.getByRole('button', { name: 'Rendition' }).click();
   await page.getByRole('menuitemcheckbox', { name: 'Disable cache when changing rendition' }).click();

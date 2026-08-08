@@ -1,4 +1,3 @@
-import path from 'node:path';
 import type { Library } from '../schemas/libraries';
 
 // What a library contains, as one question asked in one place (DESIGN §9.1).
@@ -10,34 +9,29 @@ import type { Library } from '../schemas/libraries';
 // having once rather than watching for it.
 export interface LibraryScope {
   rootPath: string;
-  dataPath: string;
   includeSubfolders: boolean;
-  /** The library's bin folder, skipped along with everything under it (§12.3). */
-  binName: string;
+  /** The library's bin folder, skipped along with everything under it (§12.3). Null when it has none (§4.1). */
+  binName: string | null;
   /** Root-relative folder paths carrying an `excluded` rule (§4.7). */
   excluded: ReadonlySet<string>;
-  /** `dataPath` already resolved, since every path test compares against it. */
-  readonly resolvedDataPath: string;
 }
 
 /** The one place a scope is assembled, so every caller asks the same question. */
 export function libraryScope(
   library: Pick<Library, 'root_path' | 'include_subfolders' | 'bin_name'>,
-  dataPath: string,
   excluded: ReadonlySet<string>,
 ): LibraryScope {
   return {
     rootPath: library.root_path,
-    dataPath,
     includeSubfolders: library.include_subfolders,
     binName: library.bin_name,
     excluded,
-    resolvedDataPath: path.resolve(dataPath),
   };
 }
 
-// Hidden dirs (leading '.') at any depth: `.bowerbird` and other dotfolders.
-// See DESIGN §6.
+// Hidden dirs (leading '.') at any depth: configuration and caches rather than
+// photographs, including a legacy `<root>/.bowerbird` from before generated files
+// left the library root. See DESIGN §6.
 function isHidden(name: string): boolean {
   return name.startsWith('.');
 }
@@ -56,7 +50,7 @@ export function isPathAllowed(scope: LibraryScope, relPath: string): boolean {
   // than matched at every depth because that is the only place a bin is ever made
   // (§12.3): a folder of the user's own called `Bin` further down is theirs, and
   // excluding it by name would drop its photographs from the import in silence.
-  if (segments[0] === scope.binName) return false;
+  if (scope.binName != null && segments[0] === scope.binName) return false;
 
   // Excluded is subtree-wide: a folder that is never walked has no children to
   // consider, so an ancestor's rule answers for everything beneath it.
@@ -65,10 +59,7 @@ export function isPathAllowed(scope: LibraryScope, relPath: string): boolean {
     prefix = prefix === '' ? segment : `${prefix}/${segment}`;
     if (scope.excluded.has(prefix)) return false;
   }
-
-  const abs = path.resolve(scope.rootPath, relPath);
-  const data = scope.resolvedDataPath;
-  return abs !== data && !abs.startsWith(`${data}${path.sep}`);
+  return true;
 }
 
 /** `relDir` is root-relative with forward slashes; `''` is the library root. */

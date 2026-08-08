@@ -79,6 +79,8 @@
     ],
     "deny": [
       "Bash(git push:*)",
+      "Bash(python3:*"),
+      "Bash(python:*"),
       "Bash(git -C */.paseo/worktrees/* push:*)",
       "Write(tmp_*)",
       "Edit(tmp_*)",

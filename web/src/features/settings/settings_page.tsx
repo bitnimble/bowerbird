@@ -195,6 +195,9 @@ function hdrCapability(): string {
 const FolderSettings = observer(function FolderSettings({ library }: { library: Library }): JSX.Element {
   const { libraries } = usePresenters();
   const defaults = useLibrariesStore().defaults;
+  // Held here rather than in the field, because the checkbox above sends it too.
+  const [binDraft, setBinDraft] = useState(library.bin_name ?? 'Bin');
+  useEffect(() => setBinDraft(library.bin_name ?? 'Bin'), [library.bin_name]);
 
   return (
     <div className="panel">
@@ -238,8 +241,78 @@ const FolderSettings = observer(function FolderSettings({ library }: { library: 
         />
       </SettingRow>
 
+      <SettingRow
+        label="Don't change anything in this folder"
+        hint="The app writes nothing under the library root: no bin folder, no shoot folders, and a binned photograph stays exactly where it is. Ratings, albums and stacks are unaffected."
+      >
+        <input
+          type="checkbox"
+          aria-label="Don't change anything in this folder"
+          checked={library.read_only}
+          // Letting the app write again means making a bin, so the name goes with
+          // the request - whatever is in the field below, which is where the
+          // reader picks another when the root already holds one of that name.
+          onChange={(e) => void libraries.setReadOnly(library.id, e.currentTarget.checked, binDraft.trim() || 'Bin')}
+        />
+      </SettingRow>
+
+      <BinNameField library={library} draft={binDraft} onDraft={setBinDraft} />
       <FolderRuleList library={library} />
     </div>
+  );
+});
+
+// Renaming the bin moves the folder, which is why this can exist at all: the
+// setting on its own would strand every already-binned RAW in a folder the scan
+// walks straight back in.
+const BinNameField = observer(function BinNameField({
+  library,
+  draft,
+  onDraft,
+}: {
+  library: Library;
+  draft: string;
+  onDraft: (value: string) => void;
+}): JSX.Element {
+  const { libraries } = usePresenters();
+
+  // Editable for a library that has no bin, even while it is read-only: clearing
+  // that flag has to name the folder it is about to make, and the root may
+  // already hold one called `Bin` - which is refused. Left disabled, the only way
+  // out of that would be to remove the library and add it again.
+  const noBinYet = library.bin_name == null;
+  const locked = library.read_only && !noBinYet;
+
+  function commit(): void {
+    const next = draft.trim();
+    // Nothing to rename while there is no folder: the name is only a choice for
+    // the checkbox above to send when it makes one.
+    if (next === '' || next === library.bin_name || noBinYet) {
+      if (next === '') onDraft(library.bin_name ?? 'Bin');
+      return;
+    }
+    void libraries.setBinName(library.id, next);
+  }
+
+  return (
+    <SettingRow
+      label="Bin folder name"
+      hint={
+        noBinYet
+          ? 'This library has no bin folder. Name the one to make when you let the app write here again; deleted photographs move into it.'
+          : 'Deleted photographs are moved into a folder of this name, beside the photographs they came from. Renaming it here moves the folder on disk.'
+      }
+      disabledReason={locked ? 'This library is read-only, so its bin folder cannot be moved.' : undefined}
+    >
+      <TextField
+        label="Bin folder name"
+        value={draft}
+        disabled={locked}
+        onChange={onDraft}
+        onBlur={commit}
+        onKeyDown={(e) => e.key === 'Enter' && commit()}
+      />
+    </SettingRow>
   );
 });
 
@@ -778,7 +851,7 @@ const AppSettings = observer(function AppSettings(): JSX.Element | null {
           field="full_sync_at"
           label="Daily full scan at"
           placeholder="03:00"
-          hint="Local time as HH:MM, or empty to turn it off. A full scan catches anything the watcher missed, and it locks the library while it runs, so pick a quiet hour."
+          hint="Local time as HH:MM, or empty to turn it off. A full scan catches anything the watcher missed, and it is the only thing that reconciles the Bin folder against the catalogue. It locks the library while it runs, so pick a quiet hour."
         />
       </div>
 
@@ -921,6 +994,19 @@ const AdvancedSettings = observer(function AdvancedSettings(): JSX.Element | nul
           field="prune_every_days"
           label="Orphan sweep every (days)"
           hint="Deletes generated files whose photo no longer exists. 0 turns it off, and it only has work to do after a library is removed or a catalogue is rebuilt."
+        />
+        <NumberSetting
+          field="backup_every_days"
+          label="Back up the catalogue every (days)"
+          hint="Copies the catalogue into a backups folder beside it. Your photo files are not touched: what this protects is everything about them that only exists here - ratings, notes, picks, album memberships and shoot assignments, none of which a rescan can bring back. 0 turns it off."
+        />
+        <NumberSetting
+          field="backup_keep"
+          label="Backups to keep"
+          hint="The oldest is deleted once there are more than this. At one a day, seven is a week to notice something went wrong in."
+          disabledReason={
+            store.settings.backup_every_days > 0 ? undefined : 'Backups are turned off, so there is nothing to keep.'
+          }
         />
       </div>
 

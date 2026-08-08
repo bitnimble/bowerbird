@@ -120,10 +120,6 @@ export class PhotosPresenter {
   // The photo the run in hand was asked for. Observable, because the reaction
   // above compares against it.
   @observable private accessor neighboursFor: string | null = null;
-  // Photos already asked for on-demand build. A stage that fails, is re-mounted
-  // and fails again reports missing each time: without this every one of them
-  // would queue the same job again.
-  private readonly renditionBuilds = new Set<string>();
   // Stacks whose members are on the wire, so a second click on the same badge
   // cannot open one band and correct the scroll for two.
   private readonly opening = new Set<string>();
@@ -692,7 +688,7 @@ export class PhotosPresenter {
     // `embedded` is never built at all: it is the RAW's own bytes (§10.2).
     if (rendition === 'embedded' || !(force || !built)) return true;
 
-    runInAction(() => (this.store.buildingRendition = true));
+    this.buildStarted(photoId, rendition);
     try {
       await api.buildRendition(photoId, rendition, force);
       // The build may have written an HDR video beside the still, and only the
@@ -705,8 +701,24 @@ export class PhotosPresenter {
       this.fail(err);
       return false;
     } finally {
-      runInAction(() => (this.store.buildingRendition = false));
+      this.buildFinished(photoId, rendition);
     }
+  }
+
+  @action.bound
+  private buildStarted(photoId: string, rendition: Rendition | ViewerRendition): void {
+    this.store.building = new Set(this.store.building).add(`${photoId}:${rendition}`);
+  }
+
+  // Only for as long as the build is running. Held past that, a build that failed
+  // - a RAW that was briefly unreadable, a worker that could not spawn - was never
+  // attempted again for the life of the tab, and the set grew with every photo
+  // that ever asked.
+  @action.bound
+  private buildFinished(photoId: string, rendition: Rendition | ViewerRendition): void {
+    const next = new Set(this.store.building);
+    next.delete(`${photoId}:${rendition}`);
+    this.store.building = next;
   }
 
   // The server has rewritten one of this photo's derived files. Written into the
@@ -736,7 +748,16 @@ export class PhotosPresenter {
   // on every render after it.
   @action.bound
   imageShown(photoId: string, rendition: ViewerRendition, width: number, height: number): void {
-    this.store.shownImage = { photoId, rendition, width, height };
+    // Anything measured for another photo goes: that is the step, and this is the
+    // first frame of the photo stepped to.
+    const kept = this.store.shownImages.filter((shown) => shown.photoId === photoId);
+    const shown = { photoId, rendition, width, height };
+    // In place when this rendition has decoded before - a rebuild moves its URL, so
+    // it decodes again - because the order here is the order the stage mounts its
+    // frames in, and a slot moving reinserts a DOM node mid-swap.
+    this.store.shownImages = kept.some((held) => held.rendition === rendition)
+      ? kept.map((held) => (held.rendition === rendition ? shown : held))
+      : [...kept, shown];
   }
 
   // Whether a photo is still the one the view is on. Every write that lands after
@@ -1072,20 +1093,15 @@ export class PhotosPresenter {
   // is not what the viewer is asking for, so a library that renders would ask
   // again on the next paint and never stop.
   async buildMissingRendition(photoId: string, rendition: Rendition): Promise<void> {
-    const key = `${photoId}:${rendition}`;
-    if (this.renditionBuilds.has(key)) return;
-    this.renditionBuilds.add(key);
+    if (this.store.building.has(`${photoId}:${rendition}`)) return;
+    this.buildStarted(photoId, rendition);
     try {
       await api.buildRendition(photoId, rendition);
       await this.refreshDetail();
     } catch (err) {
       this.fail(err);
     } finally {
-      // Only for as long as the build is running. Held past that, a build that
-      // failed - a RAW that was briefly unreadable, a worker that could not spawn
-      // - was never attempted again for the life of the tab, and the set grew
-      // with every photo that ever asked.
-      this.renditionBuilds.delete(key);
+      this.buildFinished(photoId, rendition);
     }
   }
 

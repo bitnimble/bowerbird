@@ -13,7 +13,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import { useAlbumsStore, usePhotosStore, usePresenters, useShootsStore } from '../../app/stores_context';
+import { useAlbumsStore, useLibrariesStore, usePhotosStore, usePresenters, useShootsStore } from '../../app/stores_context';
 import { ActionMenu } from '../../ui/action_menu';
 import { Button } from '../../ui/button';
 import { CheckMenu } from '../../ui/check_menu';
@@ -52,6 +52,7 @@ export const BulkBar = observer(function BulkBar({ removeFrom }: Props): JSX.Ele
   const store = usePhotosStore();
   const shoots = useShootsStore();
   const albums = useAlbumsStore();
+  const libraries = useLibrariesStore();
   const { photos } = usePresenters();
 
   // Binned photos are excluded from the shoot/album membership queries, so
@@ -70,6 +71,26 @@ export const BulkBar = observer(function BulkBar({ removeFrom }: Props): JSX.Ele
   // own count carries none there: the stacks in the rows this client never held
   // stand for a number only the server knows.
   const binLabel = count < 2 ? 'Move to Bin' : store.allSelected ? 'Move all to Bin' : `Move ${count} to Bin`;
+  // Which library this collection belongs to, read off the collection rather
+  // than off a row: rows are a sparse, evictable window, so a guard keyed on one
+  // lapses when the reader scrolls past the block holding it. An album names no
+  // library at all, spanning as many as its members do, so it answers `undefined`
+  // and the server is what refuses.
+  const source = store.source;
+  const libraryId =
+    source == null ? undefined
+    : 'libraryId' in source ? source.libraryId
+    : source.kind === 'shoot' ? shoots.byId.get(source.shootId)?.library_id
+    : undefined;
+  const library = libraryId == null ? undefined : libraries.byId.get(libraryId);
+  const readOnly = library?.read_only === true;
+  // Per photograph, not per library: a library flipped to read-only keeps the bin
+  // it had, and everything binned *since* the flip is in place and restores
+  // without a move. Only the rows this client holds can be tested, so a selection
+  // reaching further is left enabled for the server to refuse - blocking an
+  // action that would have worked is worse than a clear 403.
+  const restoreRefused =
+    readOnly && library?.bin_name != null && store.selectedLoadedPaths.some((p) => p.startsWith(`${library.bin_name}/`));
 
   return (
     <div className="bulkbar">
@@ -145,13 +166,24 @@ export const BulkBar = observer(function BulkBar({ removeFrom }: Props): JSX.Ele
       )}
 
       {inBin ? (
-        <Button variant="primary" disabled={none} onClick={() => void photos.restoreSelected()}>
+        <Button
+          variant="primary"
+          // Still visible rather than hidden: the reader is looking at the Bin,
+          // and an action that is simply absent there reads as a page that has
+          // lost its point.
+          disabled={none || restoreRefused}
+          title={restoreRefused ? 'These are in a read-only library’s bin folder; clear that setting before restoring them.' : undefined}
+          onClick={() => void photos.restoreSelected()}
+        >
           <RotateCcw size={ICON} />
           Restore to original location
         </Button>
       ) : (
         <>
-          {shoots.shoots.length > 0 && (
+          {/* A shoot is a folder, so putting a photograph in one is a file move -
+              which a read-only library does not do. An album is the grouping that
+              needs no write. */}
+          {shoots.shoots.length > 0 && !readOnly && (
             <CheckMenu
               disabled={none}
               // One action, not a set of boxes to tick, so the menu closes behind
@@ -186,7 +218,10 @@ export const BulkBar = observer(function BulkBar({ removeFrom }: Props): JSX.Ele
             />
           )}
 
-          {removeFrom != null && (
+          {/* Taking a photograph *out* of a shoot moves its file back to the
+              library root, so it is the same write "Add to shoot" is, and is
+              hidden for the same reason. Leaving an album is rows only. */}
+          {removeFrom != null && !(removeFrom.kind === 'shoot' && readOnly) && (
             <Button
               disabled={none}
               onClick={() =>

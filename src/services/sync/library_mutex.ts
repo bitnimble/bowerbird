@@ -7,7 +7,7 @@
 // ponytail: one process-global instance. The coordination is inherently
 // process-wide, and threading it through three service constructors (plus every
 // test that builds them) buys nothing. Cross-process would instead need the sync
-// lock file to wait rather than fail.
+// lease to wait rather than fail.
 class LibraryMutex {
   private readonly tails = new Map<string, Promise<void>>();
 

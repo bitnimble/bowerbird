@@ -16,11 +16,14 @@ import type { BasicPhoto } from '../../src/services/photos/photos_repository';
 import type { PhotosService } from '../../src/services/photos/photos_service';
 import type { SettingsRepository } from '../../src/services/settings/settings_repository';
 import { DEFAULT_SETTINGS } from '../../src/schemas/settings';
+import { dataPathForLibraryId } from '../../src/utils/paths';
 
 // Only `get` is reached from these routes, and only by the editor's open.
 const settingsForTest = () => ({ get: () => DEFAULT_SETTINGS }) as unknown as SettingsRepository;
 
 const BODY = '0123456789ABCDEF'; // 16 bytes, so byte offsets are readable
+// Its own id, because the data directory is keyed by one now (§6).
+const LIB = 'image-range';
 
 let root: string;
 let server: ReturnType<typeof Bun.serve>;
@@ -28,15 +31,16 @@ let origin: string;
 
 beforeAll(() => {
   root = mkdtempSync(path.join(tmpdir(), 'bb-range-'));
-  mkdirSync(path.join(root, '.bowerbird', 'renditions', 'grid'), { recursive: true });
-  writeFileSync(path.join(root, '.bowerbird', 'renditions', 'grid', 'p1.avif'), BODY);
+  const grid = path.join(dataPathForLibraryId(LIB), 'renditions', 'grid');
+  mkdirSync(grid, { recursive: true });
+  writeFileSync(path.join(grid, 'p1.avif'), BODY);
   writeFileSync(path.join(root, 'a.arw'), BODY);
 
   const library: Library = {
-    id: 'lib',
+    id: LIB,
     root_path: root,
-    data_path: null,
     bin_name: 'Bin',
+    read_only: false,
     name: 'lib',
     ordering: 'taken_desc',
     rendition_source: 'render',
@@ -49,7 +53,7 @@ beforeAll(() => {
     last_synced_at: null,
     photo_count: 1,
   };
-  const basic: BasicPhoto = { id: 'p1', library_id: 'lib', file_path: 'a.arw', shoot_id: null };
+  const basic: BasicPhoto = { id: 'p1', library_id: LIB, file_path: 'a.arw', shoot_id: null };
   // `locate`, not `get`: serving bytes wants three columns, not the detail payload
   // and a stat per rendition (§8.2).
   const photos = {
@@ -70,6 +74,7 @@ beforeAll(() => {
 afterAll(() => {
   server.stop(true);
   rmSync(root, { recursive: true, force: true });
+  rmSync(dataPathForLibraryId(LIB), { recursive: true, force: true });
 });
 
 test('a full rendition response carries Content-Length and advertises range support', async () => {

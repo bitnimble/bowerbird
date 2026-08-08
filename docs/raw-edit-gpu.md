@@ -314,6 +314,20 @@ of the tone curve does not: it changes the step between neighbouring levels by
 eleven times the step itself, which is a contour, and is why `sample_curve`
 interpolates by hand.
 
+**A pipeline-overridable constant is per entry point, and WebKit enforces it the
+hard way.** The spec says an override the entry point does not statically use is
+accepted and ignored; shipping WebKit refuses the pipeline instead, and for a
+compute pipeline the whole diagnosis is `Compute library failed creation` - no
+constant named, no line number, because nothing on that path sets an `NSError`
+(`Pipeline.mm`; fixed in trunk June 2026, so it will be a Safari floor for a
+while). `peak.wgsl` has four entry points and two overrides, and neither
+`measure` nor `collect` reads both, so passing both to all four refused every
+RAW on iOS at the open. They are `const` in the shader now, pinned to the host's
+copy by `gpu/tests/peak_constants.test.ts`. The rule that falls out is worth
+keeping: a value is an `override` only where it genuinely differs between
+pipelines built from one entry point - `FROM_FRAME` is the only one left - since
+that is the only kind an entry point cannot stop using.
+
 ### 6.2 wgpu in Rust, not a device in JS
 
 A device in JS with shaders beside it is a second implementation of `finish` in

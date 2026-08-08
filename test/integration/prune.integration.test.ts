@@ -10,6 +10,7 @@ import { LibrariesRepository } from '../../src/services/libraries/libraries_repo
 import { LibrariesService } from '../../src/services/libraries/libraries_service';
 import { PhotosRepository } from '../../src/services/photos/photos_repository';
 import { PruneService } from '../../src/services/maintenance/prune_service';
+import { dataPathForLibraryId } from '../../src/utils/paths';
 
 const LIB = '00000000-0000-4000-8000-00000000ab01';
 const LIVE = '11111111-1111-4111-8111-111111111111';
@@ -22,7 +23,7 @@ let libraries: LibrariesRepository;
 let photos: PhotosRepository;
 
 function dataDir(): string {
-  return path.join(root, '.bowerbird');
+  return dataPathForLibraryId(LIB);
 }
 
 function seedFile(dir: string, name: string): string {
@@ -51,6 +52,7 @@ beforeEach(() => {
 afterEach(() => {
   db.close();
   rmSync(root, { recursive: true, force: true });
+  rmSync(dataDir(), { recursive: true, force: true });
 });
 
 test('prune removes generated files whose photo is gone and keeps the rest', async () => {
@@ -103,7 +105,7 @@ test('prune is a no-op when nothing is orphaned', async () => {
 });
 
 test('removing a library takes its data directory but not the photographs', async () => {
-  const service = new LibrariesService(libraries);
+  const service = new LibrariesService(libraries, photos);
   seedFile('renditions/grid', `${LIVE}.avif`);
   const rawPhoto = path.join(root, 'DSC00001.ARW');
   writeFileSync(rawPhoto, 'raw');
@@ -116,17 +118,13 @@ test('removing a library takes its data directory but not the photographs', asyn
   expect(existsSync(rawPhoto)).toBe(true);
 });
 
-test('a data directory that contains the library root is left alone', async () => {
-  // A library configured this way keeps its generated files among the
-  // photographs; removing that directory would take the originals with it.
-  const nested = path.join(root, 'photos');
-  mkdirSync(nested, { recursive: true });
-  const rawPhoto = path.join(nested, 'DSC00001.ARW');
-  writeFileSync(rawPhoto, 'raw');
-  db.query('UPDATE libraries SET root_path = ?, data_path = ? WHERE id = ?').run(nested, root, LIB);
+// The data directory holds nothing but generated files (§6), so an original
+// inside it means the directory is not what it is believed to be - and this is
+// the one call here that cannot be undone.
+test('a data directory holding an original is left alone', async () => {
+  const stray = seedFile('renditions/grid', 'DSC00001.ARW');
 
-  await new LibrariesService(libraries).delete(LIB);
+  await new LibrariesService(libraries, photos).delete(LIB);
 
-  expect(existsSync(rawPhoto)).toBe(true);
-  expect(existsSync(root)).toBe(true);
+  expect(existsSync(stray)).toBe(true);
 });

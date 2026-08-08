@@ -10,7 +10,6 @@ import type { Library } from '../../src/schemas/libraries';
 import type { LibrariesRepository } from '../../src/services/libraries/libraries_repository';
 import { LibraryWatcher } from '../../src/services/sync/library_watcher';
 import type { SyncService } from '../../src/services/sync/sync_service';
-import { SYNC_LOCK_NAME } from '../../src/utils/deletions';
 import { libraryScope, type LibraryScope } from '../../src/utils/scope';
 
 const LIB = 'lib-ignores';
@@ -28,8 +27,8 @@ async function quiet(): Promise<void> {
   await sleep(DEBOUNCE * 6 + 100);
 }
 
-async function start(over: Partial<LibraryScope>): Promise<void> {
-  const library = { id: LIB, root_path: root, data_path: null, bin_name: 'Bin', ordering: 'taken_desc' } as Library;
+async function start(over: Partial<Pick<LibraryScope, 'includeSubfolders' | 'binName' | 'excluded'>>): Promise<void> {
+  const library = { id: LIB, root_path: root, bin_name: 'Bin', ordering: 'taken_desc' } as Library;
   const libraries = { list: () => [library], getById: () => library } as unknown as LibrariesRepository;
   const sync = {
     syncLibrary: async (_id: string, scope?: readonly string[]) => {
@@ -39,7 +38,6 @@ async function start(over: Partial<LibraryScope>): Promise<void> {
     scopeFor: (): LibraryScope =>
       libraryScope(
         { root_path: root, include_subfolders: over.includeSubfolders ?? true, bin_name: over.binName ?? 'Bin' },
-        over.dataPath ?? path.join(root, '.bowerbird'),
         over.excluded ?? new Set<string>(),
       ),
   } as unknown as SyncService;
@@ -85,29 +83,16 @@ test('a root-only library is woken by its root and not by its subfolders', async
   expect(calls.flatMap((c) => c ?? [])).toContain('top.arw');
 });
 
-test('the Bin and the data directory never wake a sync', async () => {
+// The data directory is not under the root at all any more (§6), so what is left
+// to prove here is the Bin - and a legacy `.bowerbird` tree, which is skipped as
+// a dotfolder like any other.
+test('the Bin and a legacy .bowerbird tree never wake a sync', async () => {
   mkdirSync(path.join(root, 'Bin', 'Trip'), { recursive: true });
   mkdirSync(path.join(root, '.bowerbird'), { recursive: true });
   await start({});
 
   writeFileSync(path.join(root, 'Bin', 'Trip', 'binned.arw'), '');
   writeFileSync(path.join(root, '.bowerbird', 'stray.arw'), '');
-  await quiet();
-  expect(calls).toHaveLength(0);
-});
-
-// A sync writes its lock at the root, so a watcher that wakes for it starts the
-// next sync, which writes it again: a library nobody is touching syncs forever,
-// once per debounce window. Out of scope on its own (it is hidden), which is
-// exactly the case that used to schedule a *full* sync with nothing to reconcile.
-test('a sync lock file at the root never wakes a sync', async () => {
-  await start({});
-
-  // Taken and released a window apart, as a real sync holds it: created and
-  // removed inside one window the watcher coalesces them away and proves nothing.
-  writeFileSync(path.join(root, SYNC_LOCK_NAME), '{}');
-  await quiet();
-  rmSync(path.join(root, SYNC_LOCK_NAME));
   await quiet();
   expect(calls).toHaveLength(0);
 });

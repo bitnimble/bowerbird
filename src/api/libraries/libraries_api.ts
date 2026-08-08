@@ -89,7 +89,7 @@ export class LibrariesApi {
 
     app.patch('/:id', async (c) => {
       const body = UpdateLibraryRequestSchema.parse(await c.req.json());
-      return c.json(this.service.update(c.req.param('id'), body));
+      return c.json(await this.service.update(c.req.param('id'), body));
     });
 
     app.delete('/:id', async (c) => {

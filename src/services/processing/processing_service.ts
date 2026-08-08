@@ -4,7 +4,7 @@ import { AppError } from '../../errors';
 import { Logger } from '../../logger';
 import type { Library } from '../../schemas/libraries';
 import { deleteGeneratedFile } from '../../utils/deletions';
-import { dataPathFor, getDataPath, renditionPathFor } from '../../utils/paths';
+import { dataPathForLibraryId, getDataPath, renditionPathFor } from '../../utils/paths';
 import type { PendingPhoto, PhotosRepository } from '../photos/photos_repository';
 import type { SettingsRepository } from '../settings/settings_repository';
 import type {
@@ -483,7 +483,7 @@ export class ProcessingService {
   // for it: a library set to the camera's JPEG serves that JPEG directly, so there
   // is nothing to build (§10.2).
   private toStages(pending: PendingPhoto): StagedPhoto {
-    const dataPath = dataPathFor(pending.root_path, pending.data_path);
+    const dataPath = dataPathForLibraryId(pending.library_id);
     // NULL for rows queued before the setting existed, and for anything the sync
     // inserted without naming one; the library's default answers both.
     const source = pending.rendition_source ?? pending.library_rendition_source;

@@ -19,7 +19,7 @@ mock.module('@parcel/watcher', () => ({
 
 const { LibraryWatcher } = await import('../library_watcher');
 
-const library: Library = { id: 'lib', root_path: '/definitely/not/a/real/root', data_path: null, bin_name: 'Bin', name: 'lib', ordering: 'taken_desc',
+const library: Library = { id: 'lib', root_path: '/definitely/not/a/real/root', bin_name: 'Bin', read_only: false, name: 'lib', ordering: 'taken_desc',
   rendition_source: 'embedded' as const,
   rendition_hdr: false,
   include_subfolders: true, mirror_shoots: true, auto_stack: true, auto_stack_similarity: 0.78, auto_stack_window_seconds: 60, last_synced_at: null, photo_count: 0 };
@@ -43,11 +43,9 @@ function build(): InstanceType<typeof LibraryWatcher> {
     syncLibrary: () => Promise.resolve(),
     scopeFor: (): LibraryScope => ({
       rootPath: library.root_path,
-      dataPath: '/x',
       includeSubfolders: true,
       binName: 'Bin',
       excluded: new Set<string>(),
-      resolvedDataPath: '/x',
     }),
   } as unknown as SyncService;
   return new LibraryWatcher(libraries, sync, DEBOUNCE);

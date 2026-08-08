@@ -4,10 +4,9 @@ import path from 'node:path';
 import { AppError } from '../../errors';
 import { Logger } from '../../logger';
 import type { Library } from '../../schemas/libraries';
-import { SYNC_LOCK_NAME } from '../../utils/deletions';
 import { isSupportedFile } from '../../utils/scan';
 import { isPathAllowed, type LibraryScope } from '../../utils/scope';
-import { getBinPath, getDataPath } from '../../utils/paths';
+import { getBinPath } from '../../utils/paths';
 import type { LibrariesRepository } from '../libraries/libraries_repository';
 import type { LibraryLifecycleListener } from '../libraries/libraries_service';
 import type { SyncService } from './sync_service';
@@ -205,17 +204,20 @@ export class LibraryWatcher implements LibraryLifecycleListener {
   // what makes the rules hold; this is what makes them cheap.
   private ignoredPaths(library: Library, scope: LibraryScope): string[] {
     // The bin belongs here for the same reason an excluded folder does, and more
-    // so: it is one known path (§12.3) that only ever grows, mirroring the whole
-    // folder tree as photographs are binned, and nothing inside it is ever the
-    // library's to look at.
-    // The lock is written by sync itself at the root, so watching it is a loop:
-    // every sync wakes the watcher that starts the next one.
-    const ignored = [
-      getDataPath(library),
-      path.join(library.root_path, '.bowerbird'),
-      path.join(library.root_path, SYNC_LOCK_NAME),
-      getBinPath(library),
-    ];
+    // so: it is one known path (DESIGN §12.3) that only ever grows, mirroring the
+    // whole folder tree as photographs are binned. Not because nothing in it
+    // matters - the nightly full sync walks it (DESIGN §9.1.1) - but because
+    // watching a tree that only grows costs an inotify handle per directory to
+    // learn what that walk is going to read anyway.
+    // A library with no bin has nothing to ignore there (§4.1).
+    //
+    // `.bowerbird` is a *legacy* tree, not the data directory: generated files
+    // live outside the root now (§6). The per-event check skips it as a dotfolder
+    // either way, so this only keeps an old rendition tree - as many directories
+    // as the library has folders - from costing an inotify handle apiece to watch
+    // and then discard.
+    const bin = getBinPath(library);
+    const ignored = [path.join(library.root_path, '.bowerbird'), ...(bin == null ? [] : [bin])];
     for (const folder of scope.excluded) ignored.push(path.join(library.root_path, folder));
     return ignored;
   }
@@ -346,5 +348,5 @@ function describe(events: readonly { type: string; path: string }[], rootPath: s
 // What the watch was established with, so a settings change can be compared
 // against it. Only the parts that decide which paths are watched.
 function scopeKey(scope: LibraryScope): string {
-  return `${scope.includeSubfolders ? 1 : 0}|${scope.dataPath}|${[...scope.excluded].sort().join(',')}`;
+  return `${scope.includeSubfolders ? 1 : 0}|${scope.binName}|${[...scope.excluded].sort().join(',')}`;
 }

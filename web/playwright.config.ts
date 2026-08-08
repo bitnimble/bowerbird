@@ -1,5 +1,5 @@
 import { defineConfig } from '@playwright/test';
-import { API_PORT, API_URL, DB_PATH, WEB_PORT, prepareFixture } from './e2e/fixture_library';
+import { API_PORT, API_URL, DATA_DIR, DB_PATH, WEB_PORT, prepareFixture } from './e2e/fixture_library';
 
 prepareFixture();
 
@@ -55,7 +55,7 @@ export default defineConfig({
       reuseExistingServer: false,
       // The three that are still environment (§15); the run's DB starts empty, so
       // every setting is its default.
-      env: { DB_PATH, PORT: String(API_PORT), HOST: '127.0.0.1' },
+      env: { DB_PATH, DATA_DIR, PORT: String(API_PORT), HOST: '127.0.0.1' },
     },
     {
       command: `./node_modules/.bin/vite --port ${WEB_PORT} --strictPort`,

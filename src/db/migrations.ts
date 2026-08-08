@@ -8,7 +8,6 @@ const SCHEMA = `
 CREATE TABLE IF NOT EXISTS libraries (
   id          TEXT PRIMARY KEY,
   root_path   TEXT NOT NULL UNIQUE,
-  data_path   TEXT,
   -- What the library is called in the UI. Always set: create stores the folder
   -- name (or parent + year) when none is given, rather than leaving a placeholder.
   name        TEXT NOT NULL,
@@ -33,7 +32,33 @@ CREATE TABLE IF NOT EXISTS libraries (
   -- skips everywhere (§12.3). Per library because it is chosen against the root's
   -- existing contents: a root already holding a 'Bin' of the user's own gets a
   -- different name rather than having that folder quietly excluded.
-  bin_name    TEXT NOT NULL DEFAULT 'Bin'
+  --
+  -- NULL means this library has no bin: nothing on disk records a binning, so
+  -- is_deleted is the only truth. Nullable rather than '' because joining '' onto
+  -- the root gives the root, which would point the bin channel at the whole
+  -- library.
+  bin_name    TEXT,
+  -- The app writes nothing under root_path. read_only = 0 with a NULL bin_name
+  -- never persists.
+  read_only   INTEGER NOT NULL DEFAULT 0,
+  -- The bin folder's identity, recorded when the folder is made, so a hand-rename
+  -- of it is followed rather than read as the whole bin being restored.
+  bin_dev       INTEGER,
+  bin_ino       INTEGER,
+  bin_birthtime REAL
+);
+
+-- "This library is syncing", as a leased row rather than a file at the library
+-- root (§9.7). It guards the catalogue rather than the tree, so it belongs in the
+-- catalogue, and a timestamp means the same thing in every PID namespace where
+-- the file lock's owner PID did not (§9.7). A row present at startup means
+-- "stale within the lease", not "syncing": a crashed process leaves its row and
+-- expiry clears it, so nothing deletes these on the way up.
+CREATE TABLE IF NOT EXISTS sync_locks (
+  library_id    TEXT PRIMARY KEY REFERENCES libraries(id) ON DELETE CASCADE,
+  owner         TEXT NOT NULL,   -- UUID, one per acquire rather than per process
+  started_at    TEXT NOT NULL,   -- toISOString(), UTC, which is what makes the comparison valid
+  refreshed_at  TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS shoots (
@@ -415,6 +440,11 @@ function migrateShootsToFolderUniqueness(db: Database): void {
 // database that predates this and leaves no row for anything else to trip over.
 const QUANTIZER_RESCALE = 1;
 
+// The highest `user_version` this build stamps. A backup carrying more than this
+// was taken by a newer Bowerbird, and restoring it would hand this one a
+// catalogue whose migrations it has never heard of (§4.9).
+export const LATEST_USER_VERSION = QUANTIZER_RESCALE;
+
 function halveQuantizersLibavifWasAlreadyHalving(db: Database): void {
   const { user_version: stamped } = db.query('PRAGMA user_version').get() as { user_version: number };
   if (stamped >= QUANTIZER_RESCALE) return;
@@ -482,8 +512,6 @@ export function runMigrations(db: Database): void {
   // What the library contains, and whether its folders are shoots (§4.1).
   ensureColumn(db, 'libraries', 'include_subfolders', 'INTEGER NOT NULL DEFAULT 1');
   ensureColumn(db, 'libraries', 'mirror_shoots', 'INTEGER NOT NULL DEFAULT 1');
-  // The default is what every library predating the column already has on disk.
-  ensureColumn(db, 'libraries', 'bin_name', "TEXT NOT NULL DEFAULT 'Bin'");
   ensureColumn(db, 'shoots', 'folder_dev', 'INTEGER'); // folder identity across a rename (§9.4.1)
   ensureColumn(db, 'shoots', 'folder_ino', 'INTEGER');
   ensureColumn(db, 'shoots', 'folder_birthtime', 'REAL');

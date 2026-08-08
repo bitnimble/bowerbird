@@ -1,9 +1,10 @@
 import { Hono, type Context } from 'hono';
 import { cors } from 'hono/cors';
+import { accessSync, constants, mkdirSync } from 'node:fs';
 import { createDatabase } from './db/connection';
 import { applyErrorHandler } from './api/error_handler';
 import { LibrariesApi } from './api/libraries/libraries_api';
-import { LibrariesService } from './services/libraries/libraries_service';
+import { assertNoDataDirectoryOverlap, LibrariesService } from './services/libraries/libraries_service';
 import { LibrariesRepository } from './services/libraries/libraries_repository';
 import { PhotosApi } from './api/photos/photos_api';
 import { PhotosService } from './services/photos/photos_service';
@@ -25,9 +26,11 @@ import { SettingsApi } from './api/settings/settings_api';
 import { BrowseApi } from './api/browse/browse_api';
 import { SettingsRepository } from './services/settings/settings_repository';
 import { SyncService } from './services/sync/sync_service';
+import { SyncLocksRepository } from './services/sync/sync_locks_repository';
 import { LibraryWatcher } from './services/sync/library_watcher';
 import { DailySync } from './services/sync/daily_sync';
 import { PruneService, ScheduledPrune } from './services/maintenance/prune_service';
+import { BackupService, ScheduledBackup } from './services/maintenance/backup_service';
 import { ProcessingService } from './services/processing/processing_service';
 import { config } from './config';
 import { Logger, setLogLevel } from './logger';
@@ -36,23 +39,47 @@ import type { Settings } from './schemas/settings';
 const log = new Logger('server');
 const requestLog = new Logger('http');
 
+// Before the database is opened, because it needs nothing but `config`: every
+// generated file in the install lands under here (§6), so a directory that
+// cannot be made or written is a deployment that will 404 every rendition it
+// ever builds.
+mkdirSync(config.dataDir, { recursive: true });
+try {
+  accessSync(config.dataDir, constants.W_OK);
+} catch {
+  throw new Error(`DATA_DIR is not writable: ${config.dataDir}`);
+}
+
 const db = createDatabase(config.dbPath);
 
 const settingsRepo = new SettingsRepository(db);
 const librariesRepo = new LibrariesRepository(db);
+// After the repository exists, because it reads every library's root. `DATA_DIR`
+// is an environment variable, so a catalogue that was valid yesterday can be
+// started against a data directory that now swallows one of its roots (§6).
+for (const library of librariesRepo.list()) assertNoDataDirectoryOverlap(library.root_path);
 const photosRepo = new PhotosRepository(db);
 const shootsRepo = new ShootsRepository(db);
 const folderRulesRepo = new FolderRulesRepository(db);
 const albumsRepo = new AlbumsRepository(db);
 const stacksRepo = new StacksRepository(db);
+const syncLocksRepo = new SyncLocksRepository(db);
 
 const processingService = new ProcessingService(photosRepo, settingsRepo);
 
-const librariesService = new LibrariesService(librariesRepo);
+const librariesService = new LibrariesService(librariesRepo, photosRepo);
 const photosService = new PhotosService(photosRepo, albumsRepo, shootsRepo, librariesRepo, processingService);
 const albumsService = new AlbumsService(albumsRepo, photosRepo);
 const shootsService = new ShootsService(shootsRepo, photosRepo, librariesRepo, folderRulesRepo);
-const syncService = new SyncService(photosRepo, librariesRepo, albumsRepo, shootsRepo, folderRulesRepo, processingService);
+const syncService = new SyncService(
+  photosRepo,
+  librariesRepo,
+  albumsRepo,
+  shootsRepo,
+  folderRulesRepo,
+  syncLocksRepo,
+  processingService,
+);
 const stacksService = new StacksService(stacksRepo, photosRepo, librariesRepo);
 // Prune sync's per-library in-memory state when a library is deleted (unbounded otherwise).
 librariesService.addLifecycleListener(syncService);
@@ -183,14 +210,19 @@ folderRulesRepo.onChange((libraryId) => {
   const library = librariesRepo.getById(libraryId);
   if (library != null) watcher.onLibraryUpdated(library);
 });
+// The other half of what the watcher watches: a sync that followed a renamed bin
+// folder wrote `bin_name` itself, and the ignore list is built from it.
+syncService.onLibraryChanged((library) => watcher.onLibraryUpdated(library));
 const dailySync = new DailySync(syncService);
 const scheduledPrune = new ScheduledPrune(new PruneService(librariesRepo, photosRepo));
+const scheduledBackup = new ScheduledBackup(new BackupService(config.dbPath));
 
 function applySettings(settings: Settings): void {
   setLogLevel(settings.log_level);
   watcher.configure(settings.watch_enabled, settings.watch_debounce_ms);
   dailySync.configure(settings.full_sync_at);
   scheduledPrune.configure(settings.prune_every_days);
+  scheduledBackup.configure(settings.backup_every_days, settings.backup_keep);
 }
 settingsRepo.onChange(applySettings);
 applySettings(settingsRepo.get());

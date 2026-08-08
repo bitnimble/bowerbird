@@ -25,10 +25,18 @@
 // levels follow from 4, four to a candidate.
 @group(0) @binding(8) var<storage, read_write> candidates: array<atomic<u32>>;
 
-// Overridden at pipeline creation from `shaders.ts`, which is where the host needs the
-// same two numbers to size the buffers. The defaults here are what it passes.
-override BINS: u32 = 8192u;
-override CANDIDATES: u32 = 16384u;
+// The host needs the same two numbers to size the buffers; `tests/peak_constants.test.ts`
+// holds `shaders.ts` to these.
+//
+// `const` rather than `override`, and load-bearing: WebKit refuses a pipeline handed a constant
+// its entry point does not statically reference, and of the four here `measure` never reads
+// CANDIDATES while `collect` never reads BINS. Passing both to all four was every RAW refusing
+// to open on Safari with "Compute library failed creation" and nothing else said. Only a value
+// that genuinely differs between pipelines built from one entry point may be an `override`
+// - `FROM_FRAME` in `frame.wgsl` is the one - since that is the only kind an entry point
+// cannot stop using.
+const BINS: u32 = 8192u;
+const CANDIDATES: u32 = 16384u;
 
 // The histogram is logarithmic, in stops either side of reference white.
 //

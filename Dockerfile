@@ -69,10 +69,10 @@ ENV BUN_RUNTIME_TRANSPILER_CACHE_PATH=0
 
 # Owned by `bun` (uid 1000) here, in the stage every other one inherits, because a
 # fresh Docker volume takes its ownership from the image directory it shadows. The
-# dev compose file mounts named volumes over node_modules, and a named one over
-# /data in both; created against a root-owned path they arrive root-owned and
-# the app cannot write its own database.
-RUN mkdir -p /app/node_modules /app/web/node_modules /data && chown -R bun:bun /app /data
+# dev compose file mounts named volumes over node_modules, and named ones over
+# /config and /data in both; created against a root-owned path they arrive
+# root-owned and the app can write neither its database nor a rendition.
+RUN mkdir -p /app/node_modules /app/web/node_modules /config /data && chown -R bun:bun /app /config /data
 
 # What the tests need and the app does not (`docker-compose.dev.yml`). ffprobe reads
 # back what an encode produced, and avifenc is the reference the linked libavif path
@@ -156,6 +156,11 @@ COPY --chown=bun:bun native/entrypoint.sh native/verify_shim.ts ./native/
 RUN chmod +x ./native/entrypoint.sh
 COPY --chown=bun:bun package.json bun.lock tsconfig.json ./
 COPY --chown=bun:bun src ./src
+# `bun run restore` is the documented way back from a bad catalogue (§4.9), and the
+# backups it reads are on a named volume inside this image's world. Left out, the
+# only supported deployment is the one deployment that cannot restore its own
+# backups, discovered during the outage that needs it.
+COPY --chown=bun:bun scripts/restore-backup.ts ./scripts/
 EXPOSE 3000
 
 # Everything the app writes lands on a bind mount - the photo library, its

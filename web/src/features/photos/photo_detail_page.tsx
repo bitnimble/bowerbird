@@ -392,6 +392,22 @@ const DetailFrame = observer(function DetailFrame({ photoId, toolsInto }: { phot
   // headroom to carry, so its still is already right.
   const hdrVideo = useHdrVideo(stillSrc, shownFile?.hdr === true && showing !== 'embedded');
 
+  // Every rendition this photo has already decoded stays mounted, with the one
+  // being asked for on the end. Comparing the camera's JPEG against a render is
+  // what the picker is for, and going back to one the reader has already seen is
+  // then an opacity change: no request for bytes the page is holding, and no
+  // decode of them. One element per source, so what each decoded is what gets
+  // painted - a single element re-pointed is a fetch and a decode every time.
+  //
+  // A video twin is the exception: its blob is built from the still and revoked
+  // as soon as anything else is asked for, so there is nothing to keep mounted
+  // and Firefox pays for the swap as it always did.
+  const decoded = store.renditionsShownOf(photoId);
+  const held = hdrVideo != null ? [showing] : decoded.includes(showing) ? decoded : [...decoded, showing];
+  const sources =
+    hdrVideo != null ? [hdrVideo] : held.map((each) => viewerUrl(photoId, each, store.renditionVersionOf(photoId, each)));
+  const renditionOf = (source: string): ViewerRendition | undefined => held[sources.indexOf(source)];
+
   // Stepping through frames is the whole job, so both neighbours are fetched and
   // decoded while this one is being looked at and paint on arrival - backwards
   // through a cull is as common as forwards. The rendition on screen is the one
@@ -417,7 +433,8 @@ const DetailFrame = observer(function DetailFrame({ photoId, toolsInto }: { phot
       hold={store.photoFor(photoId) == null}
       busy={store.buildingRendition}
       retryEpoch={store.serverEpoch}
-      sources={[hdrVideo ?? stillSrc]}
+      sources={sources}
+      showing={held.indexOf(showing)}
       video={hdrVideo != null}
       alt={filename}
       filename={filename}
@@ -428,14 +445,27 @@ const DetailFrame = observer(function DetailFrame({ photoId, toolsInto }: { phot
       // No arrow keys on a phone, so the frame itself is the control: the same
       // step the bar's buttons take, taken by dragging the picture aside.
       onSwipe={step}
-      onImageLoad={(_source, width, height) => photos.imageShown(photoId, showing, width, height)}
+      // Which frame decoded, not which one is being asked for: several are
+      // mounted, and switching away while one is still in flight would otherwise
+      // file its size under the rendition that replaced it - and leave the one
+      // that actually arrived unrecorded, so it would be dropped and fetched
+      // again on the way back.
+      onImageLoad={(source, width, height) => {
+        const arrived = renditionOf(source);
+        if (arrived != null) photos.imageShown(photoId, arrived, width, height);
+      }}
       // Only the library's default is built on sight, and only when it is a
       // stored rendition: the camera's JPEG comes out of the RAW, so a 404 there
       // means the RAW is gone, which building cannot fix. A chosen rendition was
       // built before it was shown, so a 404 there is a real fault rather than a
       // gap.
       onImageMissing={
-        rendition != null || showing === 'embedded' ? undefined : () => void photos.buildMissingRendition(photoId, showing)
+        rendition != null
+          ? undefined
+          : (source) => {
+              const gone = renditionOf(source);
+              if (gone != null && gone !== 'embedded') void photos.buildMissingRendition(photoId, gone);
+            }
       }
     />
   );

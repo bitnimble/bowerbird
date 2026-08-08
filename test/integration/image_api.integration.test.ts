@@ -13,6 +13,7 @@ import type { BasicPhoto } from '../../src/services/photos/photos_repository';
 import type { PhotosService } from '../../src/services/photos/photos_service';
 import type { SettingsRepository } from '../../src/services/settings/settings_repository';
 import { DEFAULT_SETTINGS } from '../../src/schemas/settings';
+import { dataPathForLibraryId } from '../../src/utils/paths';
 
 // Only `get` is reached from these routes, and only by the editor's open.
 const settingsForTest = () => ({ get: () => DEFAULT_SETTINGS }) as unknown as SettingsRepository;
@@ -22,10 +23,12 @@ const settingsForTest = () => ({ get: () => DEFAULT_SETTINGS }) as unknown as Se
 // instead left every one of these tests failing with a 500.
 function buildApp(root: string, photo: BasicPhoto | null, renditionHdr = false) {
   const library: Library = {
-    id: 'lib',
+    // Per root, because the data directory is keyed by library id now (§6) and
+    // these tests clean up after themselves.
+    id: path.basename(root),
     root_path: root,
-    data_path: null,
     bin_name: 'Bin',
+    read_only: false,
     name: 'lib',
     ordering: 'taken_desc',
     rendition_source: 'render',
@@ -54,6 +57,12 @@ function photo(over: Partial<BasicPhoto>): BasicPhoto {
   return { id: 'p1', library_id: 'lib', file_path: 'a.arw', shoot_id: null, ...over };
 }
 
+// Where this root's library keeps its generated files, which is outside the root
+// (§6): the tests write renditions the same way the server reads them.
+function renditions(root: string, dir: string): string {
+  return path.join(dataPathForLibraryId(path.basename(root)), 'renditions', dir);
+}
+
 function withRoot(run: (root: string) => Promise<void>) {
   return async () => {
     const root = mkdtempSync(path.join(tmpdir(), 'bb-img-'));
@@ -61,13 +70,14 @@ function withRoot(run: (root: string) => Promise<void>) {
       await run(root);
     } finally {
       rmSync(root, { recursive: true, force: true });
+      rmSync(dataPathForLibraryId(path.basename(root)), { recursive: true, force: true });
     }
   };
 }
 
 test('serves a rendition with the avif content-type', withRoot(async (root) => {
-  mkdirSync(path.join(root, '.bowerbird', 'renditions', 'grid'), { recursive: true });
-  writeFileSync(path.join(root, '.bowerbird', 'renditions', 'grid', 'p1.avif'), 'AVIFDATA');
+  mkdirSync(renditions(root, 'grid'), { recursive: true });
+  writeFileSync(path.join(renditions(root, 'grid'), 'p1.avif'), 'AVIFDATA');
   const res = await buildApp(root, photo({})).request('/image/p1/renditions/grid');
   expect(res.status).toBe(200);
   expect(res.headers.get('content-type')).toBe('image/avif');
@@ -78,8 +88,8 @@ test('serves a rendition with the avif content-type', withRoot(async (root) => {
 // at the library's dynamic range looked for `renditions/grid-hdr/`, which nothing
 // writes - and every tile in an HDR library 404'd.
 test('serves the grid tile of an HDR library from the SDR directory', withRoot(async (root) => {
-  mkdirSync(path.join(root, '.bowerbird', 'renditions', 'grid'), { recursive: true });
-  writeFileSync(path.join(root, '.bowerbird', 'renditions', 'grid', 'p1.avif'), 'AVIFDATA');
+  mkdirSync(renditions(root, 'grid'), { recursive: true });
+  writeFileSync(path.join(renditions(root, 'grid'), 'p1.avif'), 'AVIFDATA');
   const res = await buildApp(root, photo({}), true).request('/image/p1/renditions/grid');
   expect(res.status).toBe(200);
   expect(await res.text()).toBe('AVIFDATA');
@@ -107,8 +117,8 @@ test('serves a Canon original under its own format and filename', withRoot(async
 // JPEG cannot carry PQ, so transcoding an HDR rendition would hand back an SDR
 // tone-map of the picture that was on screen and name it the same render.
 test('downloads an HDR render as the AVIF the viewer showed', withRoot(async (root) => {
-  mkdirSync(path.join(root, '.bowerbird', 'renditions', 'full-hdr'), { recursive: true });
-  writeFileSync(path.join(root, '.bowerbird', 'renditions', 'full-hdr', 'p1.avif'), 'AVIFDATA');
+  mkdirSync(renditions(root, 'full-hdr'), { recursive: true });
+  writeFileSync(path.join(renditions(root, 'full-hdr'), 'p1.avif'), 'AVIFDATA');
   const res = await buildApp(root, photo({}), true).request('/image/p1/download/full');
   expect(res.status).toBe(200);
   expect(res.headers.get('content-type')).toBe('image/avif');
@@ -117,8 +127,8 @@ test('downloads an HDR render as the AVIF the viewer showed', withRoot(async (ro
 }));
 
 test('downloads an HDR max render under its own name', withRoot(async (root) => {
-  mkdirSync(path.join(root, '.bowerbird', 'renditions', 'max-hdr'), { recursive: true });
-  writeFileSync(path.join(root, '.bowerbird', 'renditions', 'max-hdr', 'p1.avif'), 'AVIFDATA');
+  mkdirSync(renditions(root, 'max-hdr'), { recursive: true });
+  writeFileSync(path.join(renditions(root, 'max-hdr'), 'p1.avif'), 'AVIFDATA');
   const res = await buildApp(root, photo({}), true).request('/image/p1/download/max');
   expect(res.status).toBe(200);
   expect(res.headers.get('content-disposition')).toBe('attachment; filename="a-rendered-max.avif"');
@@ -131,8 +141,8 @@ test('returns a 404 envelope for an unknown photo', withRoot(async (root) => {
 }));
 
 test('still serves a soft-deleted photo, so the Bin can be browsed', withRoot(async (root) => {
-  mkdirSync(path.join(root, '.bowerbird', 'renditions', 'grid'), { recursive: true });
-  writeFileSync(path.join(root, '.bowerbird', 'renditions', 'grid', 'p1.avif'), 'AVIFDATA');
+  mkdirSync(renditions(root, 'grid'), { recursive: true });
+  writeFileSync(path.join(renditions(root, 'grid'), 'p1.avif'), 'AVIFDATA');
   // Deletion is not something this path can filter on even by accident: `locate`
   // returns a BasicPhoto, which carries no deletion flag, so the Bin's renditions
   // keep working by construction (§12.1).

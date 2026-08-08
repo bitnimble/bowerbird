@@ -278,7 +278,23 @@ export class PhotosStore {
   // (§10.2). Null until something is picked, which is the usual state - the
   // setting answers for the rest, and `showing` is what is actually on screen.
   @observable accessor rendition: ViewerRendition | null = null;
-  @observable accessor buildingRendition = false;
+  // The renditions being built right now, as `photoId:rendition`. One set for
+  // both ways a build starts - the reader choosing one that is not on disk, and
+  // the stage meeting a 404 on the one the photo opened at - because the stage
+  // is covered while either runs and a single flag let whichever finished first
+  // uncover a build the other still had going.
+  //
+  // It is also what stops a stage that fails, remounts and fails again from
+  // queueing the same job on every report.
+  @observable accessor building: ReadonlySet<string> = new Set();
+
+  /** Whether a build is running for the photo the viewer is on, which is what covers its stage. */
+  @computed get buildingRendition(): boolean {
+    const photoId = this.open?.id;
+    if (photoId == null) return false;
+    for (const key of this.building) if (key.startsWith(`${photoId}:`)) return true;
+    return false;
+  }
 
   // Rebuild a rendition even when one is already on disk. Session-scoped and off
   // by default: it is for working on the pipeline, where the cached copy is the
@@ -307,14 +323,22 @@ export class PhotosStore {
   // keeps its row objects rather than remapping them (`reconcile`).
   @observable accessor loadedDetail: PhotoDetail | null = null;
   @observable accessor notesSavedAt: number | null = null;
-  // What the viewer actually has on screen, measured off the decoded image
-  // rather than taken from a column, which is the question a reader judging
-  // sharpness is asking. Null until something decodes, and replaced rather than
-  // cleared: it names the frame it measured, so `shownImageOf` can drop it for a
-  // photo it is not about without anything having to remember to clear it - a
+  // Every frame the viewer has decoded for the photo it is on, measured off the
+  // image rather than taken from a column, which is the question a reader judging
+  // sharpness is asking. In the order they first arrived, which is also the order
+  // the stage mounts them in.
+  //
+  // All of them rather than the last one: the renditions a photo has shown stay
+  // mounted, so going back to one is an opacity change with no decode - and with
+  // nothing decoding there is nothing to report a size, so the last-one-wins slot
+  // this used to be left the panel reading "loading" for as long as the reader
+  // stayed on the frame they had returned to.
+  //
+  // Replaced rather than cleared: each entry names the photo it measured, so a
+  // step drops the previous photo's without anything having to remember to - a
   // clear on the step reads as "loading" for good on any re-open that does not
   // decode a fresh frame.
-  @observable.ref accessor shownImage: ShownImage | null = null;
+  @observable.ref accessor shownImages: readonly ShownImage[] = [];
 
   // The run of photographs around the open one, in the collection's order and
   // **uncollapsed** (§19.5.3). Rows rather than ids: a warmed neighbour is asked
@@ -331,11 +355,17 @@ export class PhotosStore {
   // restart mid-request left the stage blank for the life of the page.
   @observable accessor serverEpoch = 0;
 
-  // The decoded size of the frame this view is asking about, or null when what
-  // decoded last was some other photo or rendition.
+  // The decoded size of the frame this view is asking about, or null when that
+  // frame has not decoded for this photo.
   shownImageOf(photoId: string, rendition: ViewerRendition): ShownImage | null {
-    const shown = this.shownImage;
-    return shown?.photoId === photoId && shown.rendition === rendition ? shown : null;
+    return this.shownImages.find((shown) => shown.photoId === photoId && shown.rendition === rendition) ?? null;
+  }
+
+  // The renditions of this photo that are decoded and mounted, in the order they
+  // arrived. The stage keeps every one of them, so the picker is a choice between
+  // frames the page already holds rather than a reason to fetch one again.
+  renditionsShownOf(photoId: string): ViewerRendition[] {
+    return this.shownImages.filter((shown) => shown.photoId === photoId).map((shown) => shown.rendition);
   }
 
   // This photo's detail, or null while it is still the one before it. Every
@@ -490,6 +520,23 @@ export class PhotosStore {
 
   @computed get isBin(): boolean {
     return this.source?.kind === 'bin';
+  }
+
+  /**
+   * The file paths of the selected rows this client is actually holding.
+   *
+   * A **sample**, not the answer: a selection reaches rows that were never
+   * loaded or have since been evicted, so absence from here means "not seen"
+   * rather than "not selected". Only good for a guard that must not block what
+   * it cannot see - the server is what refuses.
+   */
+  @computed get selectedLoadedPaths(): string[] {
+    const paths: string[] = [];
+    for (const [index, row] of this.rows) if (this.selection.has(index)) paths.push(row.file_path);
+    for (const open of this.expansions.values()) {
+      for (const photo of open.photos) if (this.selectedMembers.has(photo.id)) paths.push(photo.file_path);
+    }
+    return paths;
   }
 
   // The shell reads this rather than detail?.library_id. As a computed it only
