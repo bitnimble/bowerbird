@@ -743,13 +743,17 @@ fn fit_curve(xs: &[f64], ys: &[f64], ws: &[f64], n: usize) -> (Vec<f64>, isize) 
         count[bin] += 1;
     }
 
+    // Made monotone here, where the bins still carry the weight behind them, rather than left
+    // to the running maximum in `make_monotone` further down.
+    let mut measured: Vec<(usize, f64, f64)> = (0..BINS)
+        .filter(|b| count[*b] >= MIN_BIN_SAMPLES && weight[*b] > 0.0)
+        .map(|b| (b, sum[b] / weight[b], weight[b]))
+        .collect();
+    pool_violators(&mut measured);
+
     let mut curve = vec![0.0f64; BINS];
     let mut last: isize = -1;
-    for b in 0..BINS {
-        if count[b] < MIN_BIN_SAMPLES || !(weight[b] > 0.0) {
-            continue;
-        }
-        let value = sum[b] / weight[b];
+    for &(b, value, _) in &measured {
         if last < 0 {
             for k in 0..=b {
                 curve[k] = value * (k as f64 / (b.max(1)) as f64);
@@ -764,6 +768,48 @@ fn fit_curve(xs: &[f64], ys: &[f64], ws: &[f64], n: usize) -> (Vec<f64>, isize) 
         last = b as isize;
     }
     (curve, last)
+}
+
+/// Makes a set of measured bins non-decreasing by averaging the runs that are not, weighted by
+/// what each bin measured over. Isotonic regression, pool-adjacent-violators.
+///
+/// **A running maximum was doing this and it floored the shadows.** Clamping each bin up to the
+/// highest one before it propagates a single over-estimate forward over every bin after it,
+/// until the real curve climbs past it - so one noisy low bin becomes a flat band, and every
+/// tone under it renders as one value. On IMG_9887 that band covered the whole bottom of the
+/// range: every input from 0.001 to 0.05 came out at 0.0554, and three unrelated dark objects
+/// rendered 67/66/67 where the camera had 23/20/18, 33/26/20 and 31/25/32.
+///
+/// Averaging instead moves the outlier *down* toward its neighbours in proportion to how little
+/// it saw, which is what the data supports: a bin holding forty pixels has no business setting
+/// the floor for a bin holding forty thousand. Monotonicity is still absolute - a curve that
+/// dips posterises a gradient - it is just no longer bought by lifting everything to the worst
+/// estimate in the run.
+fn pool_violators(points: &mut [(usize, f64, f64)]) {
+    // Each block is a run already pooled: its mean, the weight behind it, and how many bins it
+    // covers. A new bin below the block before it merges the two and re-checks, because the
+    // merged mean can now dip under the block before *that*.
+    let mut blocks: Vec<(f64, f64, usize)> = Vec::with_capacity(points.len());
+    for &(_, value, weight) in points.iter() {
+        let mut block = (value, weight, 1usize);
+        while let Some(&(mean, held, span)) = blocks.last() {
+            if mean <= block.0 {
+                break;
+            }
+            blocks.pop();
+            let total = held + block.1;
+            block = ((mean * held + block.0 * block.1) / total, total, span + block.2);
+        }
+        blocks.push(block);
+    }
+
+    let mut at = 0usize;
+    for (mean, _, span) in blocks {
+        for _ in 0..span {
+            points[at].1 = mean;
+            at += 1;
+        }
+    }
 }
 
 fn make_monotone(curve: &mut [f64]) {
@@ -3236,6 +3282,55 @@ mod tests {
             })
             .unzip();
         fit_curve(&xs, &ys, &vec![1.0; xs.len()], xs.len())
+    }
+
+    /// The failure that rendered a frame washed out: one over-estimated bin low in the range
+    /// used to floor every bin after it, so all shadow detail came out as a single value. On
+    /// IMG_9887 the band covered 0.001 to 0.05 and three unrelated dark objects rendered
+    /// 67/66/67 against the camera's 23/20/18, 33/26/20 and 31/25/32.
+    ///
+    /// The outlier has to sit in a bin of its own for this to be the real case. Mixed in with
+    /// the dense pairs the binning averages it away before anything else sees it, which is why
+    /// the first version of this test passed against the very code it was written to catch.
+    #[test]
+    fn one_bad_dark_bin_does_not_flatten_the_shadows() {
+        let bin_of = |x: f64| ((x / TRUST_CEILING) * (BINS - 1) as f64).round() as usize;
+        let bad = TRUST_CEILING * 0.02;
+        let (mut xs, mut ys, mut ws) = (Vec::new(), Vec::new(), Vec::new());
+        for i in 0..40_000 {
+            let x = (i as f64 / 40_000.0) * TRUST_CEILING;
+            // Everything but the outlier's own bin, so nothing dilutes it.
+            if bin_of(x) == bin_of(bad) {
+                continue;
+            }
+            xs.push(x);
+            ys.push(x * 0.8);
+            ws.push(1.0);
+        }
+        // Just enough pairs to be believed at all, claiming a value the honest curve does not
+        // reach until six times the level.
+        for _ in 0..MIN_BIN_SAMPLES + 2 {
+            xs.push(bad);
+            ys.push(TRUST_CEILING * 0.12 * 0.8);
+            ws.push(1.0);
+        }
+        let (curve, _) = fit_curve(&xs, &ys, &ws, xs.len());
+
+        // The bins above it have to keep climbing. Clamped to a running maximum they all sat at
+        // its value until the honest curve caught up, and a band of one value is what
+        // posterises a shadow.
+        let at = |x: f64| curve[bin_of(x)];
+        let (low, high) = (at(bad * 1.5), at(bad * 3.0));
+        assert!(high > low + 1e-4, "the shadows flattened: {low} then {high}");
+
+        // And the outlier is pulled down toward its neighbours rather than dragging them up: it
+        // saw ten pairs against the thousands around it, so it has no business setting a floor.
+        let honest = bad * 0.8;
+        assert!(
+            at(bad) < honest * 3.0,
+            "one thin bin moved the curve to {} where the data says {honest}",
+            at(bad),
+        );
     }
 
     #[test]
