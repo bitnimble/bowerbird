@@ -104,18 +104,11 @@ const SCENES: Scene[] = [
     topic: 44432,
   },
   {
-    slug: 'moon',
-    title: 'A moon over the roofs',
-    body: 'Almost the whole frame is dark, so it looks as though there is nothing here to lose. In eight bits, though, the moon is a flat white disc, and switching over puts the cloud back across its face.',
-    by: 'Popanz',
-    topic: 44647,
-  },
-  {
-    slug: 'neon',
-    title: 'A neon sign',
-    body: 'The tubes are the brightest thing for a street around, but in eight bits they come out white with a coloured edge. That is the same white as the lamp in the doorway, and the same white as a sheet of paper would be, so nothing left in the file tells you which of them was actually a light.',
-    by: 'thumper',
-    topic: 55901,
+    slug: 'drinks',
+    title: 'Drinks against a window',
+    body: 'You know what a beer looks like held up to the light, which is what makes this one easy to check. The window behind the glasses is gone in eight bits, and so is most of what was coming through the lager: the yellow goes pale where it should be getting deeper and brighter at the same time.',
+    by: 'ilia3101',
+    topic: 27308,
   },
   {
     slug: 'sign',
@@ -125,11 +118,11 @@ const SCENES: Scene[] = [
     topic: 33920,
   },
   {
-    slug: 'leds',
-    title: 'Coloured light on things',
-    body: 'This is the same problem as above, one step removed. Nothing in the frame is a light source, but the highlights on the metal are coloured light rather than white, and in eight bits the brightest of them wash out while the rest of the picture keeps its blue and red.',
+    slug: 'traffic',
+    title: 'A red light that goes white',
+    body: 'The same thing again, on something you can check against memory. Traffic lights are red, and this one has a white hole punched through the middle of it because that is where the red ran out of room. Switch over and the hole fills back in.',
     by: 'ilia3101',
-    topic: 28404,
+    topic: 26816,
   },
 ];
 
@@ -140,7 +133,9 @@ const SCENES: Scene[] = [
  * the difference gets argued about; in one place it is simply visible.
  */
 function Comparison({ scene }: { scene: Scene }): JSX.Element {
-  const [hdr, setHdr] = useState(true);
+  // Eight bits first, because that is the picture the reader already has and the page is
+  // about what it costs them. Opening on the HDR one asks them to notice an absence.
+  const [hdr, setHdr] = useState(false);
   const hdrSrc = `/hdr/${scene.slug}-hdr.avif`;
   // Firefox composites HDR for video and only video, so the still is rewrapped there
   // (DESIGN §10.7.2). Null everywhere else, where the `<img>` is the better element.
@@ -215,8 +210,8 @@ export function HdrPage(): JSX.Element {
 
       <Text variant="muted" as="p">
         Your camera keeps far more of a scene than a JPEG can hold, and nearly all of what gets thrown away is at the bright end,
-        where a picture stops being a lit surface and starts being a light. Below are five photographs where that costs something.
-        Each one is shown twice, and you can click it to switch between the two.
+        where a picture stops being a lit surface and starts being a light. Below are some photographs where that costs something.
+        Each one starts as an eight-bit file holds it, and clicking it shows you what was there.
       </Text>
 
       {!high && (
@@ -256,9 +251,9 @@ export function HdrPage(): JSX.Element {
 
       <Heading>About these pictures</Heading>
       <Text variant="muted" as="p">
-        Each pair is a single raw file developed twice with the same settings both times: the same exposure, the same colour, the
-        same everything. The only difference between them is what the result was saved as, either eight bits or HDR with room left
-        above white.
+        Each pair is a single raw file developed once and then saved twice. The eight-bit version is the same picture with its
+        ceiling brought down to white, so nothing below white differs between the two and everything you can see changing is
+        something the smaller file had nowhere to put.
       </Text>
     </div>
   );
