@@ -231,7 +231,7 @@ export function HdrPage(): JSX.Element {
 
       <Heading>How much of a scene fits</Heading>
       <Text variant="muted" as="p">
-        The scale below is in stops, measured either side of white - the white of a shirt, a sheet of paper, or a sunlit cloud.
+        The scale below is in stops, measured either side of white: the white of a shirt, a sheet of paper, or a sunlit cloud.
         Anything to the right of that line was a light source rather than something lit by one, and a JPEG holds none of it.
       </Text>
       <RangeChart />
