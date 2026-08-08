@@ -225,6 +225,7 @@ export class TickPipeline {
   private readonly chroma: GPUTexture;
   /** The lattice's luma gain, which does not fit beside the 2x2 in one texel. */
   private readonly chromaLuma: GPUTexture;
+  private readonly chromaTint: GPUTexture;
   private readonly lerp: GPUSampler;
 
   private readonly peakMeasure: GPUComputePipeline;
@@ -353,6 +354,7 @@ export class TickPipeline {
     }
     const pairs = new Float16Array(count * 4);
     const gains = new Float16Array(count * 4);
+    const tints = new Float16Array(count * 4);
     for (let node = 0; node < count; node++) {
       const at = node * NODE_VALUES;
       for (let k = 0; k < 4; k++) pairs[node * 4 + k] = chroma ? chroma.nodes[at + k] : 0;
@@ -365,17 +367,21 @@ export class TickPipeline {
       //
       // 0 rather than 1 where there is no map, for the same reason: an absent correction
       // is no deviation, and it has to leave lightness alone rather than take it to black.
-      // The rest of the node: the two luma-to-chroma terms, then the gain's deviation.
-      // Seven values fit these two texels with one slot spare.
+      // The rest of the node: the two luma-to-chroma terms, the lightness gain's deviation,
+      // then the first of the two chroma-to-lightness terms. Nine values do not fit two
+      // texels, so the ninth takes a third volume of its own.
       gains[node * 4] = chroma ? chroma.nodes[at + 4] : 0;
       gains[node * 4 + 1] = chroma ? chroma.nodes[at + 5] : 0;
       gains[node * 4 + 2] = chroma ? chroma.nodes[at + 6] - 1 : 0;
+      gains[node * 4 + 3] = chroma ? chroma.nodes[at + 7] : 0;
+      tints[node * 4] = chroma ? chroma.nodes[at + 8] : 0;
     }
     this.chroma = this.lookup(size, '3d', 'rgba16float', 8, pairs);
+    this.chromaLuma = this.lookup(size, '3d', 'rgba16float', 8, gains);
     // One value in a four-component texture. `r16float` would be a quarter of it, and the
     // whole volume is 5x5x4, so the three wasted channels cost 600 bytes and buy the same
-    // filtering path the texture beside it is already proven on.
-    this.chromaLuma = this.lookup(size, '3d', 'rgba16float', 8, gains);
+    // filtering path the textures beside it are already proven on.
+    this.chromaTint = this.lookup(size, '3d', 'rgba16float', 8, tints);
     this.lerp = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
     this.matrix = this.upload(
       new Float32Array(colour ? colour.matrix.flat() : [1, 0, 0, 0, 1, 0, 0, 0, 1]),
@@ -403,6 +409,7 @@ export class TickPipeline {
         { binding: 4, visibility, buffer: { type: 'read-only-storage' as const } },
         { binding: 7, visibility, sampler: {} },
         { binding: 10, visibility, texture: { viewDimension: '3d' as const } },
+        { binding: 11, visibility, texture: { viewDimension: '3d' as const } },
       ],
       pyramid: { binding: 9, visibility, texture: { sampleType: 'uint' as const } },
       readOnly: (binding: number) => ({
@@ -466,6 +473,7 @@ export class TickPipeline {
       { binding: 4, resource: { buffer: this.matrix } },
       { binding: 7, resource: this.lerp },
       { binding: 10, resource: this.chromaLuma.createView() },
+      { binding: 11, resource: this.chromaTint.createView() },
     ];
     this.displayEntries = [
       ...this.colourEntries,
@@ -700,7 +708,7 @@ export class TickPipeline {
 
   destroy(): void {
     this.timer?.destroy();
-    for (const texture of [this.pyramid, this.curves, this.chroma, this.chromaLuma]) {
+    for (const texture of [this.pyramid, this.curves, this.chroma, this.chromaLuma, this.chromaTint]) {
       texture.destroy();
     }
     for (const buffer of [
