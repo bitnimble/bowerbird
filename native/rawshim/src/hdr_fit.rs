@@ -290,21 +290,30 @@ pub struct ChromaMap {
     scale: [f64; 2],
 }
 
-/// The 2x2 on chroma, the two luma-to-chroma terms, then the gain on luma.
+/// Three rows over `(d0, d2, l)`, so every output depends on chroma *and* lightness.
 ///
-/// `[a, b, c, d, e, f, g]`, where the chroma out is `(a.d0 + b.d2 + e.l, c.d0 + d.d2 + f.l)`
-/// and the luma out is `g.l`.
+/// `[a, b, c, d, e, f, g, h, i]`:
+///
+/// ```text
+/// d0' = a.d0 + b.d2 + e.l
+/// d2' = c.d0 + d.d2 + f.l
+/// l'  = h.d0 + i.d2 + g.l
+/// ```
 ///
 /// **`e` and `f` are what lets a node tint a neutral.** With only the 2x2 a colour at
 /// `d = 0` comes out at `d = 0` however the node is set, so the lattice could not express a
-/// cast on near-neutral surfaces at all - the defect a bird bath and a stone wall have been
-/// showing. Proportional to `l` rather than a constant, which is what keeps the properties
-/// the 2x2 has: black stays black, the term is a *relative* tint so it stays near identity
-/// where the data runs out, and it is stored as a deviation from zero so f16 spends its
-/// precision on the correction rather than on the 1 it sits beside.
+/// cast on near-neutral surfaces at all - the defect a bird bath and a stone wall were
+/// showing. Proportional to `l` rather than a constant, which keeps the properties the 2x2
+/// has: black stays black, and the term stays near identity where the data runs out. They
+/// also subsume `grey_balance`, which is two chroma degrees of freedom held constant across
+/// level where these are two per level node.
 ///
-/// It also subsumes `grey_balance`, which is two chroma degrees of freedom held constant
-/// across level; this is two per level node.
+/// **`h` and `i` are what lets a node's *lightness* correction depend on the colour.**
+/// Without them the output lightness is exactly `g.l` for one `g` per node, so a small
+/// saturated object needing 1.43x and the surroundings it shares a node with needing 1.0 can
+/// only be given their average - the blue pot's node solved to 1.006 with the pot inside it.
+/// The chroma rows could always separate two colours in one node, being linear in `d`; this
+/// gives lightness the same freedom.
 pub const NODE_VALUES: usize = 9;
 
 impl ChromaMap {
@@ -1880,12 +1889,19 @@ fn fitted_saturation(colour: &HdrColour, render: &Plane, pairs: &Pairs) -> f64 {
     }
 }
 
-/// Pairs a node needs before it is trusted on its own rather than on the frame's.
+/// Weight a node needs before it is trusted on its own rather than on the frame's.
 ///
-/// Not a threshold but a half-way point: a node with this many pairs keeps half of what
-/// it measured and takes half of the global answer, and one with none keeps none. So a
-/// frame with colour everywhere gets a map that follows it, and a frame of snow and sky
-/// gets back the single scalar this generalises, without a cliff between them.
+/// Not a threshold but a half-way point: a node carrying this much keeps half of what it
+/// measured and takes half of the global answer, and one with none keeps none. So a frame
+/// with colour everywhere gets a map that follows it, and a frame of snow and sky gets back
+/// the single scalar this generalises, without a cliff between them.
+///
+/// Low, and it has to be read against the weights rather than as a pair count. It was 400
+/// when the wide pass contributed a flat 0.25 per sample and the pairs carried a hue
+/// balance, so the two were on different scales and a small saturated object arrived at its
+/// node with a weight in the tens - it kept a few percent of its own answer and the node
+/// solved to the surroundings. With both sides weighted alike, the same object arrives with
+/// enough to be believed, and this is what "enough" now means.
 const MAP_CONFIDENCE: f64 = 2.0;
 
 /// How far the lattice's chroma-to-lightness terms may reach, in lightness per unit chroma.
@@ -1915,19 +1931,12 @@ const MAP_MAX_GAIN: f64 = 2.0;
 /// It also bounds what the term can do above the fit domain, where a node is read by
 /// extrapolation and there are no pairs to object.
 ///
-/// **It does not bind, and that is the finding rather than a reassurance.** On IMG_8789
-/// the solve asks for 0.9685 to 1.0123 across the nodes and raising this to 1.40 changes
-/// not one of them. The blue pot needs about 1.31 to land on the camera's lightness and
-/// gets 1.03.
-///
-/// Not because the grid is too coarse, which is what this note first said. Measured: at
-/// 5x5x32 the pot reads -3.96 L* and at 7x7x16 it reads -3.85, against -4.07 here, while
-/// its *chroma* error grows from -0.08 to +2.18 as the grid refines. Resolution moves it
-/// almost not at all and costs elsewhere (`MAP_CHROMA`).
-///
-/// What limits it is how few pairs the object puts into the fit - nine of 189,330 at the
-/// fit grid, which is what the supplementary wide pass exists for and evidently not enough
-/// of. That is a sampling problem, so the lever is that pass rather than this model.
+/// Wide, because a small saturated object genuinely asks for a lot: the blue pot needs
+/// about 1.4x to land on the camera's lightness. It used to sit at 1.08 and not bind at
+/// all - the solve asked for 0.97 to 1.01 across every node, and raising it changed nothing
+/// - because the object was reaching its node with a weight of 15 against a `MAP_CONFIDENCE`
+/// of 400 and keeping 4% of its own answer. Fixing the weighting is what made this the
+/// binding bound it reads as.
 const MAP_MAX_LUMA: f64 = 1.60;
 
 /// Damping on each node's own least squares, relative to its own scale.
@@ -2315,7 +2324,6 @@ fn fitted_chroma(
         ChromaMoments::default();
 
     let span = chroma_span(colour, render, pairs);
-    let reach = [1.0 / span[0][1] * (MAP_CHROMA - 1) as f64 / 2.0, 1.0 / span[1][1] * (MAP_CHROMA - 1) as f64 / 2.0];
 
     for (k, p) in pairs.at.iter().enumerate() {
         let i = p * 3;
@@ -2382,8 +2390,6 @@ fn fitted_chroma(
             seen[node] += sw;
         }
     }
-
-    let from_pairs = seen.clone();
 
     // And the same again over the wide planes, for the colours the fit grid cannot hold.
     // A small saturated object is mostly edge at 640 and mostly interior at 1280, and the
@@ -2704,124 +2710,6 @@ fn fitted_chroma(
     }
     if fitted == 0 {
         return None;
-    }
-
-    // What each node actually saw, which is the thing every guess about this model needs
-    // and none of them can infer. `keep` is the share of its own measurement a node holds
-    // against `MAP_CONFIDENCE`, so a node reading near zero is taking the frame's average
-    // however much freedom the bounds allow it.
-    // What the frame's most saturated blues would ask for if nothing else shared their
-    // node. The gap between this and the node's solved gain is how much the grid is
-    // averaging a small object into its surroundings.
-    if std::env::var("BOWERBIRD_MAP_STATS").is_ok() {
-        let (mut n, mut a, mut b, mut d0s, mut d2s) = (0usize, 0.0f64, 0.0f64, 0.0f64, 0.0f64);
-        for (k, p) in pairs.at.iter().enumerate() {
-            let i = p * 3;
-            let source = [render.data[i], render.data[i + 1], render.data[i + 2]];
-            let toned = tone(colour, source[0], source[1], source[2]);
-            let m = apply3(&colour.matrix, toned[0], toned[1], toned[2]);
-            let t = [jpeg.data[i], jpeg.data[i + 1], jpeg.data[i + 2]];
-            let ours = LUMA[0] * m[0] + LUMA[1] * m[1] + LUMA[2] * m[2];
-            let theirs = LUMA[0] * t[0] + LUMA[1] * t[1] + LUMA[2] * t[2];
-            if m[2] - ours < 0.6 * reach[1] {
-                continue;
-            }
-            let w = pairs.balance[k];
-            n += 1;
-            a += w * ours * ours;
-            b += w * ours * theirs;
-            d0s += m[0] - ours;
-            d2s += m[2] - ours;
-        }
-        // The distribution, not just the tail: if an object covers hundreds of pixels and
-        // only a handful arrive carrying its colour, the loss happened before this stage.
-        let mut hist = [[0usize; 6]; 3];
-        for p in pairs.at.iter() {
-            let i = p * 3;
-            let raw = [render.data[i], render.data[i + 1], render.data[i + 2]];
-            let toned = tone(colour, raw[0], raw[1], raw[2]);
-            let m = apply3(&colour.matrix, toned[0], toned[1], toned[2]);
-            let cam = [jpeg.data[i], jpeg.data[i + 1], jpeg.data[i + 2]];
-            for (which, v) in [raw, m, cam].into_iter().enumerate() {
-                let l = LUMA[0] * v[0] + LUMA[1] * v[1] + LUMA[2] * v[2];
-                for (k, edge) in [0.05, 0.10, 0.15, 0.20, 0.25, 0.30].into_iter().enumerate() {
-                    if v[2] - l >= edge {
-                        hist[which][k] += 1;
-                    }
-                }
-            }
-        }
-        eprintln!("d2 over .05/.10/.15/.20/.25/.30 of {}", pairs.at.len());
-        for (name, counts) in [("raw", hist[0]), ("modelled", hist[1]), ("camera", hist[2])] {
-            eprintln!("  {name:<9} {counts:?}");
-        }
-        // The blue corner specifically: what each source puts into the nodes the pot lands
-        // in, and what gain those nodes ended up carrying. A node whose weight comes almost
-        // entirely from the pairs loop never saw the object the wide pass exists for.
-        for node in 0..NODES {
-            let (level, rest) = (node / (MAP_CHROMA * MAP_CHROMA), node % (MAP_CHROMA * MAP_CHROMA));
-            let (y, x) = (rest / MAP_CHROMA, rest % MAP_CHROMA);
-            if y < MAP_CHROMA - 2 || seen[node] <= 0.0 {
-                continue;
-            }
-            eprintln!(
-                "  blue node l{level} d0 {x} d2 {y}: seen {:.0} (pairs {:.0}, wide {:.0}) gain {:.3}",
-                seen[node],
-                from_pairs[node],
-                seen[node] - from_pairs[node],
-                map.nodes[node][6],
-            );
-        }
-        // The fit's own residual on the bluest pairs, through the finished model. If this is
-        // small while the render is dark, the model is right and the grade is not.
-        {
-            let trial = HdrColour { chroma: Some(map.clone()), ..colour.clone() };
-            let (mut count, mut got, mut want) = (0usize, [0.0f64; 3], [0.0f64; 3]);
-            for p in pairs.at.iter() {
-                let i = p * 3;
-                let m = apply_hdr_colour(&trial, render.data[i], render.data[i + 1], render.data[i + 2]);
-                let bare = tone(colour, render.data[i], render.data[i + 1], render.data[i + 2]);
-                let flat = apply3(&colour.matrix, bare[0], bare[1], bare[2]);
-                let l = LUMA[0] * flat[0] + LUMA[1] * flat[1] + LUMA[2] * flat[2];
-                if flat[2] - l < 0.25 {
-                    continue;
-                }
-                count += 1;
-                for c in 0..3 {
-                    got[c] += m[c];
-                    want[c] += jpeg.data[i + c];
-                }
-            }
-            if count > 0 {
-                let n = count as f64;
-                eprintln!(
-                    "  bluest {count} in the fit's own domain: model {:.4}/{:.4}/{:.4} camera {:.4}/{:.4}/{:.4}",
-                    got[0] / n, got[1] / n, got[2] / n,
-                    want[0] / n, want[1] / n, want[2] / n,
-                );
-            }
-        }
-        eprintln!(
-            "deep blues: {n} pairs, want luma gain {:.3}, mean d0 {:.3} d2 {:.3}, reach {:.3}/{:.3}",
-            b / a.max(1e-9),
-            d0s / n.max(1) as f64,
-            d2s / n.max(1) as f64,
-            reach[0],
-            reach[1],
-        );
-    }
-    if std::env::var("BOWERBIRD_MAP_STATS").is_ok() {
-        for level in 0..MAP_LEVEL {
-            for y in 0..MAP_CHROMA {
-                let row: Vec<String> = (0..MAP_CHROMA)
-                    .map(|x| {
-                        let node = (level * MAP_CHROMA + y) * MAP_CHROMA + x;
-                        format!("{:>9.0}({:.2})", seen[node], seen[node] / (seen[node] + MAP_CONFIDENCE))
-                    })
-                    .collect();
-                eprintln!("level {level} d2 {y}: {}", row.join(" "));
-            }
-        }
     }
 
     Some(map)

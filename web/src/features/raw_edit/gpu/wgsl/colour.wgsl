@@ -33,11 +33,10 @@
 @group(0) @binding(3) var chroma: texture_3d<f32>;
 @group(0) @binding(4) var<storage, read> matrix: array<f32>;
 @group(0) @binding(7) var lerp: sampler;
-// The lattice's fifth value, in its own volume. Four is one `rgba16float` texel and five
-// is not, and the alternatives to a second texture all cost the hardware trilinear: packing
-// two nodes per texel breaks filtering on whichever axis is doubled, and widening the
-// volume means interpolating in the shader. `r16float` filters everywhere `rgba16float`
-// does, so this is one more fetch and nothing else.
+// The rest of the node, past the four a single `rgba16float` texel holds. The alternatives
+// to more textures all cost the hardware trilinear: packing two nodes per texel breaks
+// filtering on whichever axis is doubled, and widening the volume means interpolating in the
+// shader. Another volume is one more fetch and nothing else.
 @group(0) @binding(10) var chroma_luma: texture_3d<f32>;
 // The ninth value, in a volume of its own. Eight fill two `rgba16float` texels exactly, so
 // the chroma-to-lightness pair costs one more fetch and three spare slots per node.
@@ -110,8 +109,8 @@ fn axis(value: f32, nodes: u32, low: f32, scale: f32) -> f32 {
   return (t + 0.5) / f32(nodes);
 }
 
-/// `ChromaMap::correct`, trilinear over the same eight corners: the corrected chroma
-/// pair, then the gain on the level it was read at.
+/// `ChromaMap::correct`, trilinear over the same eight corners: the corrected chroma pair,
+/// then the corrected lightness.
 ///
 /// Two fetches at the same coordinate, one per volume, so both halves of a node are
 /// blended over the same eight corners with the same weights - which is what keeps this

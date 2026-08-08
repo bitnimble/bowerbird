@@ -56,19 +56,6 @@ fn main() {
              without the lattice g-r {bg:+.1} b-r {bb:+.1}",
         );
     }
-    // The model's answer for a deep blue, at several lightnesses. If the lattice's node for
-    // this colour carries a gain and the answer here does not show it, the colour is not
-    // landing on that node at grade time.
-    for level in [0.03, 0.06, 0.12, 0.25] {
-        let v = [level * 0.35, level * 0.30, level];
-        let out = rawshim::hdr_fit::apply_hdr_colour(&matched.colour, v[0], v[1], v[2]);
-        let luma = |c: [f64; 3]| 0.2627 * c[0] + 0.678 * c[1] + 0.0593 * c[2];
-        eprintln!(
-            "blue {level:.2} in {:.4}/{:.4}/{:.4} out {:.4}/{:.4}/{:.4} luma x{:.3}",
-            v[0], v[1], v[2], out[0], out[1], out[2],
-            luma(out) / luma(v).max(1e-9),
-        );
-    }
     let (rolled, width, height) = hdr::graded(&source, &options, Some(&matched));
     let data = rawshim::tone::encode_srgb8(&rolled);
     eprintln!("graded {width}x{height}");
@@ -89,37 +76,27 @@ fn main() {
     for spec in crops {
         let n: Vec<usize> = spec.split(',').map(|v| v.parse().expect("a number")).collect();
         let (x, y, w, h) = (n[0], n[1], n[2], n[3]);
-        let ours = rawshim::rgb::RgbRef { width, height, data: &data };
-        write(&format!("{out}/crop-{x}-{y}.jpg"), cut(ours, x, y, w, h).as_ref());
+        // The camera's preview and the graded frame need not share a size, so the region is
+        // scaled into the camera's coordinates rather than assumed to land in the same place.
+        let scale = camera.width as f64 / width as f64;
+        let at = |v: usize| (v as f64 * scale).round() as usize;
+        let mine = cut(rawshim::rgb::RgbRef { width, height, data: &data }, x, y, w, h);
+        let theirs = cut(camera.as_ref(), at(x), at(y), at(w), at(h));
 
-        // Ours on the left, the camera's own rendering on the right, one image so the two
-        // are looked at under the same exposure and the same JPEG.
-        let scale_side = camera.width as f64 / width as f64;
-        let s = |v: usize| (v as f64 * scale_side).round() as usize;
-        let pair = beside(
-            cut(ours, x, y, w, h).as_ref(),
-            cut(camera.as_ref(), s(x), s(y), s(w), s(h)).as_ref(),
-        );
-        write(&format!("{out}/pair-{x}-{y}.jpg"), pair.as_ref());
+        write(&format!("{out}/crop-{x}-{y}.jpg"), mine.as_ref());
+        write(&format!("{out}/camera-{x}-{y}.jpg"), theirs.as_ref());
+        // And the two in one image, so they are judged under the same exposure and the same
+        // JPEG rather than by flicking between files.
+        write(&format!("{out}/pair-{x}-{y}.jpg"), beside(mine.as_ref(), theirs.as_ref()).as_ref());
 
-        let mine = mean(cut(ours, x, y, w, h).as_ref());
-        let scale_to_camera = camera.width as f64 / width as f64;
-        let c = |v: usize| (v as f64 * scale_to_camera).round() as usize;
-        let theirs = mean(cut(camera.as_ref(), c(x), c(y), c(w), c(h)).as_ref());
+        let (a, b) = (mean(mine.as_ref()), mean(theirs.as_ref()));
         eprintln!(
             "  ours {:.0}/{:.0}/{:.0}  camera {:.0}/{:.0}/{:.0}  \
              ours b-r {:+.0} g-r {:+.0}, camera b-r {:+.0} g-r {:+.0}",
-            mine[0], mine[1], mine[2],
-            theirs[0], theirs[1], theirs[2],
-            mine[2] - mine[0], mine[1] - mine[0],
-            theirs[2] - theirs[0], theirs[1] - theirs[0],
-        );
-
-        let scale = camera.width as f64 / width as f64;
-        let at = |v: usize| (v as f64 * scale).round() as usize;
-        write(
-            &format!("{out}/camera-{x}-{y}.jpg"),
-            cut(camera.as_ref(), at(x), at(y), at(w), at(h)).as_ref(),
+            a[0], a[1], a[2],
+            b[0], b[1], b[2],
+            a[2] - a[0], a[1] - a[0],
+            b[2] - b[0], b[1] - b[0],
         );
     }
 }

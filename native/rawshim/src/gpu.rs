@@ -405,10 +405,8 @@ impl Gpu {
             for k in 0..4 {
                 pairs.extend_from_slice(&half(nodes[at + k] as f32));
             }
-            // The second volume carries the rest of the node, not just the gain: the two
-            // luma-to-chroma terms and then the gain's deviation from 1. Seven values fit
-            // two `rgba16float` texels with one slot spare, so the fifth value did not need
-            // a third texture.
+            // The second volume carries the two luma-to-chroma terms, the lightness gain's
+            // deviation from 1, and the first of the two chroma-to-lightness terms.
             gains.extend_from_slice(&half(nodes[at + 4] as f32));
             gains.extend_from_slice(&half(nodes[at + 5] as f32));
             gains.extend_from_slice(&half(nodes[at + 6] as f32 - 1.0));
