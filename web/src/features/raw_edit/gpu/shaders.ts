@@ -10,7 +10,7 @@
 //
 //   prelude   nothing
 //   tick      nothing; declares `tick` at binding 0
-//   colour    prelude and tick; declares bindings 1-4 and 7
+//   colour    prelude and tick; declares bindings 1-4, 7 and 10
 //   frame     all three; declares bindings 5-6 and 9
 //   peak      prelude, tick, colour; declares bindings 5-6 and 8
 //   reduce    tick; declares bindings 1-3, on a layout of its own
@@ -58,7 +58,7 @@ export const TICK_LAYOUT = [
   ['reference', 'f32'],
   ['peak', 'f32'],
   ['exposure', 'f32'],
-  ['pad0', 'u32'],
+  ['output', 'u32'],
   ['matched', 'u32'],
   ['saturation', 'f32'],
   ['has_chroma', 'u32'],
@@ -68,6 +68,8 @@ export const TICK_LAYOUT = [
   ['level_count', 'u32'],
   ['chroma_low', 'f32'],
   ['chroma_scale', 'f32'],
+  ['chroma_low_by', 'f32'],
+  ['chroma_scale_by', 'f32'],
   ['level_scale', 'f32'],
   ['sdr_white', 'f32'],
   ['row_stride', 'u32'],

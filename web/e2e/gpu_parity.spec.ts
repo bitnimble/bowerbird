@@ -19,6 +19,17 @@ import { expect, test } from '@playwright/test';
 // exactly, where `finish` is a denoise and a sharpen whose GPU order of accumulation
 // cannot match the CPU's and does not need to.
 //
+// **What this is still for, now `native/rawshim/tests/gpu_shader.rs` exists.** That test
+// compiles the same WGSL against a Vulkan adapter and checks its arithmetic against
+// `hdr_fit` in 40ms of `cargo test`, so the shader maths no longer needs a browser to ask
+// about - and should be asked there, on every edit. What only this can say is whether the
+// *TypeScript* wires it up correctly: the payload deinterleave, the texture formats, the
+// bind groups, the passes and their order. Both bugs have happened, and the second one is
+// invisible to a shader that is perfectly correct about the data it is handed.
+//
+// So: run `gpu_shader` constantly and this before merging. It costs two cold servers and a
+// Vite build, which is why it is not the loop to develop against.
+//
 // Chromium only. Firefox has WebGPU on Windows first and this box is Linux; the parity is
 // a property of the shaders rather than of the engine, so one runtime proves it.
 test.describe('GPU tick parity', () => {
@@ -62,11 +73,18 @@ test.describe('GPU tick parity', () => {
       // fixtures were still an identity transform this read 0.1; the wrong luma weights they
       // were hiding read 11.9.
       expect(result.mean as number, `${name} mean`).toBeLessThanOrEqual(0.5);
-      // The worst is a handful of pixels rather than a picture, so it is bounded loosely and
-      // by count as well as by size. PQ is steep enough in the shadows that a last-bit f32
-      // difference against the CPU's f64 is hundreds of counts, and a real transform reaches
-      // that where the identity one it replaced did no arithmetic to round.
-      expect(result.worst as number, `${name} worst`).toBeLessThanOrEqual(320);
+      // The worst is a handful of pixels rather than a picture, so it is bounded by count as
+      // well as by size - and by band, because one number over the whole range is not a
+      // bound on anything. PQ keeps most of its code space in the deep shadows: a sample at
+      // 0.015 nits against a 1000-nit peak encodes near level 1735 and one at 0.04 near
+      // 2413, so a disagreement of hundredths of a nit - which is what a last-bit f32
+      // difference against the CPU's f64 amounts to there - reads as hundreds of counts and
+      // is invisible. Above that band the same difference is a handful of counts, so that is
+      // where the tolerance is worth spending.
+      const bands = result.byBand as Record<string, { worst: number }>;
+      expect(bands.shadow!.worst, `${name} worst in shadow`).toBeLessThanOrEqual(1024);
+      expect(bands.mid!.worst, `${name} worst in mid`).toBeLessThanOrEqual(128);
+      expect(bands.highlight!.worst, `${name} worst in highlight`).toBeLessThanOrEqual(128);
       expect(
         (result.over16 as number) / (result.samples as number),
         `${name} fraction past 16`,
@@ -111,10 +129,19 @@ test.describe('GPU tick parity', () => {
       // compresses, so below neutral the peak sits above the gain by a few percent. Above
       // neutral is where the highlights are and where saturating the histogram would show.
       if (ev < 0) continue;
+      // The tolerance is loose because the model is allowed to break this proxy and the
+      // failure it stands in for is not subtle. A chroma lattice that corrects lightness
+      // per node means the peak cannot track the exposure exactly: the slider moves a
+      // pixel's chroma, that lands it on different nodes, and it picks up a different
+      // gain on the way. The 2x2 beside it has no such effect - it scales `d`, and `d`
+      // scales with the exposure, so the ratio survives. Measured, this fixture sits at
+      // 4.9% and a fitted frame's gains span 0.9685 to 1.0123, so a few percent is the
+      // model working. A saturating histogram reads 6594 nits against 4872 at +5 EV,
+      // which is 35% and nowhere near this line.
       expect(
         Math.abs(full / neutral - 2 ** ev) / 2 ** ev,
         `peak at ${ev} EV is ${full / neutral}x neutral, against 2^${ev}`,
-      ).toBeLessThanOrEqual(0.02);
+      ).toBeLessThanOrEqual(0.1);
     }
 
     // And strictly rising across the whole slider, which is the shape both ways of getting

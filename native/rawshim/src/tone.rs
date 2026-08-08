@@ -62,6 +62,152 @@ pub fn encode_pq(frame: &mut [u16], peak_nits: f64) {
     frame.par_iter_mut().for_each(|s| *s = lut[*s as usize]);
 }
 
+/// The SDR counterpart of [`encode_pq`]: a graded frame to 8-bit sRGB.
+///
+/// There is no second rendering path for SDR. Everything upstream is scene-linear at 16
+/// bits and the grade is already parameterised by the display it targets, so an SDR
+/// rendition is the same grade with `peak_nits` at diffuse white - which leaves full scale
+/// meaning sRGB 1.0 and nothing here to tone map. What is left is the primaries, since the
+/// grade works in Rec.2020 and the file is tagged sRGB (`avif::encode_rendition`), and the
+/// transfer.
+///
+/// `srgb_oetf` rather than `bt709_oetf`: the file claims transfer 13, and matching the tag
+/// is the point now that the pixels are this side's rather than LibRaw's 8-bit output.
+pub fn encode_srgb8(frame: &[u16]) -> Vec<u8> {
+    let to_srgb = hdr_fit::rec2020_to_srgb();
+    let full = f64::from(u16::MAX);
+    // The transfer as a table. The primaries mix the channels, so its input is not on the
+    // input's lattice - but the *output* is 8 bits, so quantising that input to 16 first
+    // costs nothing a byte can hold: the steepest part of the curve is the toe, where one
+    // step of 1/65535 moves the answer by 0.025 of a count. Left as a `powf` it was one per
+    // channel per sample, ~30M on a 3840px rendition.
+    let oetf: Vec<u8> = (0..=u16::MAX)
+        .map(|code| (255.0 * hdr_fit::srgb_oetf(f64::from(code) / full)).round() as u8)
+        .collect();
+    let mut out = vec![0u8; frame.len()];
+    out.par_chunks_exact_mut(3)
+        .zip(frame.par_chunks_exact(3))
+        .for_each(|(pixel, graded)| {
+            let v = [0, 1, 2].map(|c| f64::from(graded[c]) / full);
+            for c in 0..3 {
+                let m = to_srgb[c];
+                let linear = m[0] * v[0] + m[1] * v[1] + m[2] * v[2];
+                // Out of gamut clamps, which is what `srgb_oetf` did with it too.
+                pixel[c] = oetf[(linear.clamp(0.0, 1.0) * full).round() as usize];
+            }
+        });
+    out
+}
+
+/// PQ over a buffer holding absolute nits, for the filters to read it perceptually.
+///
+/// What the sharpen runs through: it works on the frame between the colour transform and the
+/// roll-off, which is display-referred nits and so linear. PQ is *absolute*, so this coding
+/// says nothing about which display the frame is bound for - one sharpen serves every
+/// rendition cut from that frame.
+/// The way in is a table, and it can be because **an `f16` has only 65536 values**: `pq` of
+/// one is a pure function of its bit pattern, so this is 65536 evaluations against one per
+/// sample. A 61MP frame is 180M samples and `pq` is two `powf`. The way back cannot be -
+/// it reads the filter's f32 output, which is not on any lattice.
+#[derive(Clone, Copy)]
+pub struct NitsPq<'a> {
+    forward: &'a [f32],
+}
+
+impl<'a> NitsPq<'a> {
+    /// The table [`NitsPq`] reads, indexed by an `f16`'s bits.
+    pub fn table() -> Vec<f32> {
+        (0..=u16::MAX)
+            .map(|bits| pq(f64::from(half::f16::from_bits(bits).to_f32())) as f32)
+            .collect()
+    }
+
+    pub fn new(forward: &'a [f32]) -> NitsPq<'a> {
+        NitsPq { forward }
+    }
+}
+
+/// PQ of every `f16` of nits, as a `u16` code: what a frame of nits becomes when stored
+/// coded.
+///
+/// The same 65536-value argument as [`NitsPq::table`] - the input has a finite domain, so
+/// the transfer is a lookup rather than two `powf`.
+///
+/// **`u16` out, not `f16`.** PQ already normalises to 0..1, so a float's exponent buys
+/// nothing there and what is left is 11 bits of mantissa across the whole range - an ULP of
+/// ~0.001 near white, which is ~87 output levels. Measured, storing the coded frame at half
+/// precision cost the shared route mean 5.04 counts of 65535 against the nits it replaced.
+/// A `u16` is the same width, uniform over exactly the range PQ occupies, and is what the
+/// HDR encode wants anyway. `f16` earns its exponent on *nits*, which span decades; it has
+/// nothing to earn it on here.
+pub fn pq_of_f16() -> Vec<u16> {
+    (0..=u16::MAX)
+        .map(|bits| {
+            let nits = f64::from(half::f16::from_bits(bits).to_f32());
+            match nits.is_finite() && nits > 0.0 {
+                true => (pq(nits) * MAX as f64).round() as u16,
+                false => 0,
+            }
+        })
+        .collect()
+}
+
+impl crate::image::Coding for NitsPq<'_> {
+    #[inline]
+    fn to_filter(&self, nits: f32) -> f32 {
+        // Back to the `f16` this widened from, which is exact, and then to its index.
+        self.forward[half::f16::from_f32(nits).to_bits() as usize]
+    }
+    #[inline]
+    fn from_filter(&self, signal: f32) -> f32 {
+        pq_inv(f64::from(signal)) as f32
+    }
+}
+
+/// PQ over a buffer holding scene-linear levels, anchored by the frame's own diffuse white.
+///
+/// What the denoise and the defringe run through, on the decode, before the warp. Linear is
+/// the wrong domain for a difference against a blur and the grade's output is not available
+/// yet - what is left is a perceptual coding that has nothing to do with the exposure, which
+/// is PQ against a fixed anchor.
+///
+/// The way in is a table because the input is an integer level: 65536 evaluations against one
+/// per sample, and a 61MP frame is 180M of them. The way back cannot be, reading the filter's
+/// f32 output rather than a level.
+#[derive(Clone, Copy)]
+pub struct ScenePq<'a> {
+    /// `pq(level * scale)` for every level a `u16` can hold.
+    forward: &'a [f32],
+    /// Levels per nit: the way back, as a multiply rather than the division by nits-per-level
+    /// it would otherwise be, once per sample.
+    inv_scale: f64,
+}
+
+impl<'a> ScenePq<'a> {
+    /// The table [`ScenePq`] reads, for a frame whose diffuse white sits at `white`.
+    pub fn table(white: f64, reference_white_nits: f64) -> (Vec<f32>, f64) {
+        let scale = reference_white_nits / white.max(1.0);
+        let forward =
+            (0..=u16::MAX).map(|level| pq(f64::from(level) * scale) as f32).collect();
+        (forward, scale)
+    }
+
+    pub fn new(forward: &'a [f32], scale: f64) -> ScenePq<'a> {
+        ScenePq { forward, inv_scale: 1.0 / scale }
+    }
+}
+
+impl crate::image::Coding for ScenePq<'_> {
+    #[inline]
+    fn to_filter(&self, level: f32) -> f32 {
+        self.forward[(level as usize).min(self.forward.len() - 1)]
+    }
+    #[inline]
+    fn from_filter(&self, signal: f32) -> f32 {
+        (pq_inv(f64::from(signal)) * self.inv_scale) as f32
+    }
+}
+
 /// ST 2084 the other way: a signal back to the nits it was coded from.
 ///
 /// Public because the open goes through it: `edit::filter_once` puts the frame into PQ to
@@ -70,6 +216,38 @@ pub fn encode_pq(frame: &mut [u16], peak_nits: f64) {
 pub fn pq_inv(signal: f64) -> f64 {
     let e = signal.clamp(0.0, 1.0).powf(1.0 / M2);
     PQ_MAX_NITS * ((e - C1).max(0.0) / (C2 - C3 * e)).powf(1.0 / M1)
+}
+
+/// A gain in linear light, applied to a PQ signal without leaving PQ.
+///
+/// **The correction is still a multiplication of light** - vignetting is an optical
+/// attenuation and its inverse is multiplicative in nits, which is not a convention to be
+/// relabelled. What this exploits is that PQ's own intermediate already carries it:
+///
+/// ```text
+/// s = ((c1 + c2·y) / (1 + c3·y))^m2      where  y = (Y/10000)^m1
+/// Y' = g·Y   =>   y' = (g·Y/10000)^m1 = g^m1 · y
+/// ```
+///
+/// So a gain in light is a plain multiply in `y`, and the `^m1` / `^(1/m1)` pair that
+/// `pq_inv` and `pq` would evaluate cancels outright. The round trip is four `powf`; this is
+/// one, and `gain_in_y` folds `g^m1` into a constant the caller precomputes per radius.
+///
+/// `signal` and the result are 0..1. Exact, not an approximation - the same arithmetic with
+/// two of its steps cancelled.
+pub fn lift_in_pq(signal: f64, gain_in_y: f64) -> f64 {
+    let u = signal.clamp(0.0, 1.0).powf(1.0 / M2);
+    // Bounded at 1 because `pq` bounds what it takes the exponent of - `(Y/10000).clamp()`.
+    // Without it a gain pushes past 10000 nits and the curve keeps climbing where the
+    // transfer saturates: at a gain of 2.8 near white the fold reads 1.108 against the round
+    // trip's 1.0.
+    let y = (((u - C1).max(0.0) / (C2 - C3 * u)) * gain_in_y).min(1.0);
+    ((C1 + C2 * y) / (1.0 + C3 * y)).powf(M2)
+}
+
+/// `g^m1`, the constant [`lift_in_pq`] multiplies by, for a gain of `g` in light.
+pub fn gain_in_y(gain: f64) -> f64 {
+    gain.max(0.0).powf(M1)
 }
 
 /// ITU-R BT.2390-8 5.4.1, with the black level at zero so the lift term drops out.
@@ -237,128 +415,198 @@ pub struct GradeOptions<'a> {
 /// The roll-off is a function of nits alone, so it is a lookup whichever path produced
 /// them. Resolution is in nits rather than input level because the matched path has no
 /// single input level to key on.
-const ROLL_BINS: usize = 4096;
 
-/// Grades a frame that may still need its lens.
+
+
+/// Everything the grade settles for one photo, before any rendition's size or display.
 ///
-/// Peak is measured on the *unwarped* source (cheap `u16` reads), then gather and colour
-/// share one sweep. Falloff can move that peak versus the warped frame; we take the
-/// cheap measurement anyway.
-pub fn grade_owned(frame: &mut Vec<u16>, options: &GradeOptions<'_>) -> bool {
-    let Some(lens) = options.lens else {
-        return grade(frame, options);
-    };
-    let Levels { white, peak: source_level } = options.levels;
-    if white == 0.0 {
-        return false;
-    }
-    let reference = options.reference_white_nits;
-    let peak = options.peak_nits;
-    let exposure = match options.exposure > 0.0 {
-        true => options.exposure,
-        false => return false,
-    };
-    let src = std::mem::take(frame);
-
-    let Some(colour) = options.match_colour else {
-        let (white, source_level) = (white / exposure, source_level / exposure);
-        let source_peak_nits = (source_level / white) * reference;
-        let mut lut = vec![0u16; MAX + 1];
-        for level in 0..=MAX {
-            let nits = eetf((level as f64 / white) * reference, source_peak_nits, peak);
-            lut[level] = ((nits / peak).min(1.0) * MAX as f64).round() as u16;
-        }
-        *frame = lens.map_u16(&src, |r, g, b| [lut[r as usize], lut[g as usize], lut[b as usize]]);
-        return true;
-    };
-
-    let matched = MatchedGrade::new(colour, white, exposure, reference, peak);
-    let Some(scene_peak) = matched.scene_peak_nits(&src) else {
-        *frame = src;
-        return false;
-    };
-    let roll = matched.roll_table(scene_peak);
-    *frame = lens.map_u16(&src, |r, g, b| matched.pixel(scene_peak, &roll, r, g, b));
-    true
+/// The matched arm's three curve tables are 65536 entries each, built by evaluating
+/// `hdr_fit::tone_channel`, and the scene peak is a quantile taken through the whole colour
+/// transform over a million pixels. Neither depends on the size a rendition is cut at or on
+/// the peak it targets, and both used to be redone per rendition for the same answer.
+///
+/// Sharing the scene peak is a correctness fix as much as a saving: it is what every pixel
+/// is rolled off against, and two renditions of one photo measuring it off two differently
+/// sized frames were compressing their highlights by different amounts. This is the same
+/// argument [`levels`] already makes about the anchor, and it is settled the same way - once,
+/// on the photo.
+///
+/// None where there is no exposure to read: `white` at zero, or a non-positive exposure, or
+/// a matched frame whose peak comes back zero. The caller ships the frame as it arrived,
+/// which beats dividing by zero.
+pub struct SceneGrade<'a> {
+    levels: Levels,
+    reference: f64,
+    exposure: f64,
+    /// The matched arm's tables and the scene peak they were measured through, or None for
+    /// the neutral arm.
+    matched: Option<(MatchedGrade<'a>, f64)>,
 }
 
-/// Grades scene-linear 16-bit samples to display-referred linear in place, where full
-/// range is `peak_nits` - which is what zscale's `npl` then ties to absolute brightness.
-///
-/// In place because the caller owns the frame by the time it gets here - it is the
-/// warp's output, or the resize's - and every stage is sample-for-sample at the same
-/// index, so there is nothing a second buffer would protect. It was allocating one the
-/// size of the frame, 366MB on a 61MP export.
-///
-/// False when the frame has no exposure to read, leaving it untouched: shipping it as it
-/// arrived beats dividing by zero.
-pub fn grade(frame: &mut [u16], options: &GradeOptions<'_>) -> bool {
-    let Levels { white, peak: source_level } = options.levels;
-    if white == 0.0 {
-        return false;
-    }
-    let reference = options.reference_white_nits;
-    let peak = options.peak_nits;
-    let exposure = match options.exposure > 0.0 {
-        true => options.exposure,
-        false => return false,
-    };
-
-    let Some(colour) = options.match_colour else {
-        // One shared curve, so the channel ratios survive it whatever the input: the
-        // neutral arm is hue-preserving already and exposure is just where the anchor
-        // sits. Both levels move together - the roll-off reads the scene out of their
-        // ratio, and scaling one alone rewrites how hard the highlights compress.
-        let (white, source_level) = (white / exposure, source_level / exposure);
-        let source_peak_nits = (source_level / white) * reference;
-        // One curve covers all 65536 possible inputs, so the per-sample work is a
-        // lookup. A 60MP frame is 180M samples, and pow() that many times is not free.
-        let mut lut = vec![0u16; MAX + 1];
-        for level in 0..=MAX {
-            let nits = eetf((level as f64 / white) * reference, source_peak_nits, peak);
-            lut[level] = ((nits / peak).min(1.0) * MAX as f64).round() as u16;
+impl<'a> SceneGrade<'a> {
+    /// `frame` is the photo's own scene-linear samples, at whatever size they arrived.
+    pub fn new(
+        frame: &[u16],
+        colour: Option<&'a HdrColour>,
+        levels: Levels,
+        reference: f64,
+        exposure: f64,
+    ) -> Option<Self> {
+        if levels.white == 0.0 || !(exposure > 0.0) {
+            return None;
         }
-        frame.par_iter_mut().for_each(|s| *s = lut[*s as usize]);
-        return true;
-    };
+        let matched = match colour {
+            None => None,
+            Some(colour) => {
+                let grade = MatchedGrade::new(colour, levels.white, exposure, reference);
+                let scene_peak = grade.scene_peak_nits(frame)?;
+                Some((grade, scene_peak))
+            }
+        };
+        Some(SceneGrade { levels, reference, exposure, matched })
+    }
 
-    // Matched: the transform is cross-channel, so there is no per-input-level table to
-    // build and the scene peak has to be measured after it rather than read off the
-    // input's histogram. The editor path peaks the (already warped) frame in place;
-    // the encode peaks the unwarped source inside [`grade_owned`] and gathers+colours
-    // in one sweep.
-    let matched = MatchedGrade::new(colour, white, exposure, reference, peak);
-    let Some(scene_peak) = matched.scene_peak_nits(frame) else {
-        return false;
-    };
-    let roll = matched.roll_table(scene_peak);
-    frame.par_chunks_exact_mut(3).for_each(|px| {
-        let graded = matched.pixel(scene_peak, &roll, px[0], px[1], px[2]);
-        px.copy_from_slice(&graded);
-    });
-    true
+    /// This scene as the shader's uniform wants it.
+    ///
+    /// Assembled here so the fields stay private and so the one place that knows what a
+    /// scene *is* is the one place that describes it to the GPU. `colour` reaches through
+    /// `MatchedGrade` rather than being stored twice.
+    pub fn gpu_grade(
+        &'a self,
+        width: usize,
+        height: usize,
+        peak_nits: f64,
+        output: crate::gpu::Output,
+    ) -> crate::gpu::Grade<'a> {
+        crate::gpu::Grade {
+            width,
+            height,
+            colour: self.matched.as_ref().map(|(grade, _)| grade.colour),
+            white: self.levels.white,
+            source_level: self.levels.peak,
+            reference_nits: self.reference,
+            peak_nits,
+            exposure: self.exposure,
+            scene_peak: self.scene_peak_nits(),
+            output,
+        }
+    }
+
+
+
+    /// The scene's own top end, in nits, which every rendition rolls off against.
+    ///
+    /// Measured for the matched arm and read off the levels for the neutral one, but a
+    /// property of the photograph either way - which is what makes two sizes of it compress
+    /// their highlights by the same amount.
+    pub fn scene_peak_nits(&self) -> f64 {
+        match &self.matched {
+            Some((_, peak)) => *peak,
+            None => (self.levels.peak / self.levels.white) * self.reference,
+        }
+    }
+
+    /// The colour transform alone, stopping short of any display - everything a rendition's
+    /// peak does not change (`tone::MatchedGrade::pixel_nits`).
+    ///
+    /// **Stored as PQ of those nits rather than the nits**, which is what leaves the shared
+    /// path with no transcendental in it at all: the sharpen then reads the frame in the
+    /// domain it filters in, so its coding is the identity, and the roll-off reads a table
+    /// indexed by the same signal. Storing nits instead cost a `pq` and a `pq_inv` per sample
+    /// between the two.
+    ///
+    /// Coded rather than linear so the sharpen reads it in the domain it filters in, and
+    /// `u16` rather than `f16` for the reason [`pq_of_f16`] records: a float's exponent earns
+    /// nothing on a signal that is already 0..1.
+    pub fn to_signal(&self, frame: &[u16], lens: Option<&PlanarWarp>) -> Vec<u16> {
+        let coded = pq_of_f16();
+        let signal = |r: u16, g: u16, b: u16| -> [u16; 3] {
+            let nits = match &self.matched {
+                Some((matched, _)) => matched.pixel_nits(r, g, b),
+                None => {
+                    let white = self.levels.white / self.exposure;
+                    [r, g, b].map(|v| (f64::from(v) / white) * self.reference)
+                }
+            };
+            // Through `f16` because that is what makes the transfer a lookup: nits span
+            // decades, so half precision holds them to ~0.05% wherever they sit.
+            nits.map(|v| coded[half::f16::from_f64(v).to_bits() as usize])
+        };
+        match lens {
+            Some(lens) => lens.map_u16(frame, |r, g, b| signal(r, g, b)),
+            None => {
+                let mut out = vec![0u16; frame.len()];
+                out.par_chunks_exact_mut(3).zip(frame.par_chunks_exact(3)).for_each(
+                    |(slot, px)| slot.copy_from_slice(&signal(px[0], px[1], px[2])),
+                );
+                out
+            }
+        }
+    }
+
+    /// One rendition, off a frame [`Self::to_signal`] produced: the roll-off into this
+    /// display's peak, and nothing else.
+    ///
+    /// Indexed by the signal the frame is stored in, so nothing here converts. The curve is
+    /// the same BT.2390 one either way; binning it over PQ rather than over nits also puts
+    /// its resolution where a photograph keeps its codes, which is the shadows.
+    ///
+    /// **Each arm rolls over the range it rolls over when it grades directly**, and they
+    /// differ. The matched arm stops at the scene peak, that being a quantile of the
+    /// post-colour subsample and the top of the domain `eetf` was given. The neutral arm's
+    /// curve is defined above its own peak and its speculars depend on that, so its table
+    /// spans every nit an input level can reach. Giving both the matched arm's range looked
+    /// tidier and quietly clipped the neutral arm's speculars flat - 10985 counts of 65535
+    /// on the Sony fixture.
+    pub fn roll(&self, signal: &[u16], peak_nits: f64) -> Vec<u16> {
+        let scene_peak = self.scene_peak_nits();
+        // The matched arm stops at the scene peak; the neutral arm's curve carries above it.
+        let ceiling = match &self.matched {
+            Some(_) => scene_peak,
+            None => f64::INFINITY,
+        };
+        // **Every value the input can take, tabulated.** The frame is `u16`, so its domain is
+        // 65536 wide and the whole function fits - no interpolation, no error, one lookup a
+        // sample, and no transfer evaluated per pixel anywhere on this path.
+        let full = MAX as f64;
+        let table: Vec<u16> = (0..=u16::MAX)
+            .map(|code| {
+                let nits = pq_inv(f64::from(code) / full).min(ceiling);
+                let rolled = eetf(nits, scene_peak, peak_nits);
+                ((rolled / peak_nits).min(1.0) * full).round() as u16
+            })
+            .collect();
+
+        let mut out = vec![0u16; signal.len()];
+        out.par_iter_mut()
+            .zip(signal.par_iter())
+            .for_each(|(slot, code)| *slot = table[*code as usize]);
+        out
+    }
+
 }
+
+
+
 
 /// Matched colour + roll-off, shared by the in-place editor path and the fused encode.
+///
+/// **The display's peak is not in here**, and that is what makes one of these serve every
+/// rendition of a photo: the curves, the matrix and the chroma lattice are the camera's, and
+/// only the final roll-off knows what it is rolling into. It is a parameter of
+/// [`MatchedGrade::roll_table`] and [`MatchedGrade::pixel`] instead.
 struct MatchedGrade<'a> {
     colour: &'a HdrColour,
     white: f64,
     exposure: f64,
     reference: f64,
-    peak: f64,
     ceiling: f64,
     curve_lut: [Vec<f32>; 3],
     exposed_lut: Option<[Vec<f32>; 3]>,
 }
 
 impl<'a> MatchedGrade<'a> {
-    fn new(
-        colour: &'a HdrColour,
-        white: f64,
-        exposure: f64,
-        reference: f64,
-        peak: f64,
-    ) -> Self {
+    fn new(colour: &'a HdrColour, white: f64, exposure: f64, reference: f64) -> Self {
         // Below the ceiling the shared gain is 1 and the tone stage is separable, so it
         // is a lookup on the input level. That is nearly every pixel of a photograph;
         // only the highlights take the general path, where the gain depends on all three
@@ -385,7 +633,6 @@ impl<'a> MatchedGrade<'a> {
             white,
             exposure,
             reference,
-            peak,
             ceiling: hdr_fit::TRUST_CEILING * white,
             curve_lut,
             exposed_lut,
@@ -414,20 +661,15 @@ impl<'a> MatchedGrade<'a> {
         (scene_peak > 0.0).then_some(scene_peak)
     }
 
-    fn roll_table(&self, scene_peak: f64) -> Vec<f64> {
-        let mut table = vec![0.0f64; ROLL_BINS];
-        for (i, slot) in table.iter_mut().enumerate() {
-            *slot = eetf(
-                (i as f64 / (ROLL_BINS - 1) as f64) * scene_peak,
-                scene_peak,
-                self.peak,
-            );
-        }
-        table
-    }
 
+    /// The camera's colour at this pixel, in nits, before any display is chosen.
+    ///
+    /// **Everything here is a property of the photograph rather than of the rendition**, which
+    /// is what lets several renditions of one photo share the sweep that produces it: the
+    /// fitted curves, the matrix, and the chroma lattice or the saturation scalar. Only
+    /// [`Self::roll_pixel`] below knows what it is rolling into.
     #[inline]
-    fn pixel(&self, scene_peak: f64, table: &[f64], r: u16, g: u16, b: u16) -> [u16; 3] {
+    fn pixel_nits(&self, r: u16, g: u16, b: u16) -> [f64; 3] {
         let [tr, tg, tb] = self.toned(Some(&self.curve_lut), self.exposed_lut.as_ref(), r, g, b);
         let m = &self.colour.matrix;
         let sat = self.colour.saturation;
@@ -449,18 +691,9 @@ impl<'a> MatchedGrade<'a> {
             }
             None => {}
         }
-
-        let scale = (ROLL_BINS - 1) as f64 / scene_peak;
-        let mut out = [0u16; 3];
-        for (c, raw) in [or, og, ob].into_iter().enumerate() {
-            let nits = scene_peak.min(if raw > 0.0 { raw * self.reference } else { 0.0 });
-            let t = nits * scale;
-            let lo = (t.floor() as usize).min(ROLL_BINS - 2);
-            let rolled = table[lo] + (table[lo + 1] - table[lo]) * (t - lo as f64);
-            out[c] = ((rolled / self.peak).min(1.0) * MAX as f64).round() as u16;
-        }
-        out
+        [or, og, ob].map(|raw| if raw > 0.0 { raw * self.reference } else { 0.0 })
     }
+
 
     /// `lut` absent means read the curve itself. The peak subsample does, because it is
     /// 65536 reads against a table built for millions and because rounding the curve to
@@ -560,6 +793,41 @@ mod tests {
         }
     }
 
+    /// The falloff's whole reason for needing linear light, cancelled.
+    ///
+    /// A lens correction is a multiply in nits, so applying it to a PQ frame reads as
+    /// `pq(pq_inv(s) * g)` - four `powf` per sample, in the warp, which is the hottest loop
+    /// in the pipeline. [`lift_in_pq`] is the same arithmetic with the `^m1` pair cancelled,
+    /// so it has to agree with the round trip to the last bit that matters, and it is only
+    /// worth having if it does.
+    #[test]
+    fn a_gain_in_light_is_a_multiply_inside_pq() {
+        let mut worst = 0.0f64;
+        // Past both ends of what a lens asks for: a corner needing a stop and a half back,
+        // and a correction the other way.
+        for gain in [0.5f64, 0.8, 1.0, 1.25, 1.5, 2.0, 2.8] {
+            let k = gain_in_y(gain);
+            for step in 0..=1000 {
+                let signal = f64::from(step) / 1000.0;
+                let direct = pq(pq_inv(signal) * gain).clamp(0.0, 1.0);
+                let folded = lift_in_pq(signal, k);
+                worst = worst.max((direct - folded).abs());
+            }
+        }
+        // Of a 0..1 signal, so under a thousandth of a 16-bit code.
+        assert!(worst < 1e-8, "the folded gain drifts from the round trip by {worst:e}");
+    }
+
+    /// And that it is not accidentally the identity, which would pass the test above if
+    /// `pq_inv` and `pq` were both returning their input.
+    #[test]
+    fn the_folded_gain_actually_moves_the_signal() {
+        let lit = lift_in_pq(0.5, gain_in_y(1.5));
+        assert!(lit > 0.5 + 0.01, "a gain above one must raise the signal, got {lit}");
+        let cut = lift_in_pq(0.5, gain_in_y(0.5));
+        assert!(cut < 0.5 - 0.01, "a gain below one must lower it, got {cut}");
+    }
+
     #[test]
     fn pq_round_trips_through_its_inverse() {
         for nits in [0.0, 1.0, 100.0, 203.0, 1000.0, 4000.0, 10000.0] {
@@ -601,36 +869,6 @@ mod tests {
         assert!(out.white > 0.0);
     }
 
-    /// The input `grade` refuses on, and `edit::prepare_bytes` now refuses on too.
-    ///
-    /// A frame whose white quantile lands on level 0 has no exposure to read, and every
-    /// consumer divides by it. The rendition path ships such a frame ungraded; the editor
-    /// cannot, because `white` crosses to a shader that divides by it in both arms.
-    #[test]
-    fn a_frame_that_is_almost_all_black_reads_no_white_at_all() {
-        // 95% black, above the 0.9 quantile, with a few bright pixels at the end.
-        let mut samples: Vec<u16> = vec![0; 2850 * 3];
-        samples.extend((0..150).flat_map(|_| [40000u16, 40000, 40000]));
-
-        let out = levels(&samples, 0.9);
-        assert_eq!(out.white, 0.0, "nothing to anchor the grade to");
-        assert!(out.peak > 0.0, "and a peak that would divide by it");
-
-        let mut frame = samples.clone();
-        let graded = grade(
-            &mut frame,
-            &GradeOptions {
-                levels: out,
-                reference_white_nits: 203.0,
-                peak_nits: 1000.0,
-                lens: None,
-                match_colour: None,
-                exposure: 1.0,
-            },
-        );
-        assert!(!graded, "the CPU refuses rather than dividing by zero");
-        assert_eq!(frame, samples, "and leaves the frame as it arrived");
-    }
 
     #[test]
     fn sample_positions_survive_a_thirty_two_bit_index() {
@@ -645,117 +883,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_frame_with_no_exposure_is_left_alone_rather_than_divided_by() {
-        let mut flat = vec![0u16; 300];
-        let options = GradeOptions {
-            reference_white_nits: 203.0,
-            peak_nits: 1000.0,
-            match_colour: None,
-            lens: None,
-            levels: levels(&flat, 0.9),
-            exposure: 1.0,
-        };
-        assert!(!grade(&mut flat, &options));
-        // Left as it arrived, which is the half an in-place grade could get wrong: a
-        // declined grade that had already written some of the frame would ship a
-        // half-transformed picture rather than the untouched one.
-        assert!(flat.iter().all(|s| *s == 0));
-    }
 
-    /// The matched arm's three curves have three different shapes, so a pixel slid along
-    /// them by exposure lands each channel somewhere its neighbours did not go and the
-    /// colour comes out different. Measured on a real frame before this held: half a stop
-    /// moved chromaticity by 14/1000 mean and 59/1000 at p99, where the neutral arm - one
-    /// shared curve, so hue-preserving by construction - moved 0.27.
-    #[test]
-    fn exposure_moves_brightness_without_moving_colour() {
-        let mut colour = crate::hdr_fit::HdrColour::identity();
-        let bins = colour.curves[0].len();
-        // Deliberately three shapes rather than one. With identical curves this passes
-        // however exposure is applied, and tests nothing.
-        for (channel, gamma) in [0.75f64, 1.0, 1.4].into_iter().enumerate() {
-            colour.curves[channel] = (0..bins)
-                .map(|i| {
-                    let u = i as f64 / (bins - 1) as f64;
-                    u.powf(gamma) * crate::hdr_fit::TRUST_CEILING
-                })
-                .collect();
-        }
 
-        // Spread across hue and across level, the last of them above the trust ceiling
-        // once exposed, so the cross-channel arm is covered as well as the lookup.
-        let white = 20000.0;
-        let base: Vec<u16> = [
-            [6000u16, 3000, 1500],
-            [3000, 6000, 2000],
-            [1500, 2500, 7000],
-            [4000, 4000, 4000],
-            [12000, 8000, 9000],
-        ]
-        .concat();
-
-        let graded = |levels: Levels, exposure: f64| {
-            let mut frame = base.clone();
-            let options = GradeOptions {
-                reference_white_nits: 203.0,
-                peak_nits: 1000.0,
-                match_colour: Some(&colour),
-                lens: None,
-                levels,
-                exposure,
-            };
-            assert!(grade(&mut frame, &options));
-            frame
-        };
-        let own = Levels { white, peak: white * 4.0 };
-        let dim = graded(own, 1.0);
-        let bright = graded(own, 2.0);
-        // The same stop taken by moving the anchor instead, which is what this used to
-        // do. Asserted against below, so the tolerance cannot quietly become vacuous.
-        let by_levels = graded(Levels { white: white / 2.0, peak: white * 2.0 }, 1.0);
-
-        let luma = |p: &[u16]| LUMA[0] * f64::from(p[0]) + LUMA[1] * f64::from(p[1]) + LUMA[2] * f64::from(p[2]);
-        let chromaticity = |p: &[u16]| {
-            let sum = f64::from(p[0]) + f64::from(p[1]) + f64::from(p[2]);
-            (f64::from(p[0]) / sum, f64::from(p[2]) / sum)
-        };
-        let shift = |a: &[u16], b: &[u16]| {
-            let ((ar, ab), (br, bb)) = (chromaticity(a), chromaticity(b));
-            ((ar - br).powi(2) + (ab - bb).powi(2)).sqrt()
-        };
-
-        let mut worst_by_levels = 0.0f64;
-        for (i, (a, b)) in dim.chunks_exact(3).zip(bright.chunks_exact(3)).enumerate() {
-            assert!(luma(b) > luma(a), "pixel {i} did not brighten: {a:?} -> {b:?}");
-            let moved = shift(a, b);
-            assert!(moved < 0.005, "pixel {i} changed colour by {moved:.4}: {a:?} -> {b:?}");
-        }
-        for (a, c) in dim.chunks_exact(3).zip(by_levels.chunks_exact(3)) {
-            worst_by_levels = worst_by_levels.max(shift(a, c));
-        }
-        assert!(
-            worst_by_levels > 0.02,
-            "moving the anchor should visibly rotate hue, or this frame proves nothing: {worst_by_levels:.4}",
-        );
-    }
-
-    #[test]
-    fn the_neutral_grade_is_monotone_in_its_input() {
-        let mut out: Vec<u16> = (0..900u16).flat_map(|i| [i * 70, i * 70, i * 70]).collect();
-        let options = GradeOptions {
-            reference_white_nits: 203.0,
-            peak_nits: 1000.0,
-            match_colour: None,
-            lens: None,
-            levels: levels(&out, 0.9),
-            exposure: 1.0,
-        };
-        assert!(grade(&mut out, &options));
-        for i in 3..out.len() {
-            if i % 3 == 0 {
-                assert!(out[i] >= out[i - 3], "not monotone at {i}");
-            }
-        }
-    }
 }

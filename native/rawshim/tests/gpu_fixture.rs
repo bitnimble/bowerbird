@@ -9,7 +9,7 @@
 //! otherwise.** `web/e2e/gpu_parity.spec.ts` asserts the shaders reproduce
 //! `web/e2e/fixtures/gpu/*.expected.bin`, which are committed bytes; it does not assert those
 //! bytes are what the CPU produces *now*. Written as an example run by hand, nothing did.
-//! Change `tone::eetf`'s knee or anything in `hdr::grade_prepared`, update the Rust pins that
+//! Change `tone::eetf`'s knee or anything the grade shaders do, update the Rust pins that
 //! move with it, forget to regenerate, and every suite stays green while the two
 //! implementations quietly disagree - the pin the whole conversion rests on comparing the
 //! shaders against a CPU that no longer exists.
@@ -24,7 +24,7 @@
 
 use rawshim::hdr::{self, Prepared};
 use rawshim::hdr_fit::{ChromaMap, HdrColour, TRUST_CEILING};
-use rawshim::image::{self, Strengths};
+use rawshim::image::Strengths;
 use rawshim::tone;
 
 const WIDTH: usize = 96;
@@ -98,17 +98,42 @@ fn matched() -> HdrColour {
     colour.chroma = Some(ChromaMap::from_nodes(|x, y, z| {
         let scale = 1.04 + 0.03 * x as f64 - 0.02 * y as f64 + 0.05 * z as f64;
         let skew = 0.02 * (x as f64 - y as f64);
-        [scale, skew, -skew, scale * 0.98]
+        // The lightness gain, off 1 at every node and varying on every axis, so a reader
+        // that dropped it or packed it in the wrong slot cannot answer correctly.
+        //
+        // Weakly on the level axis, unlike the 2x2 above. A gain that varies with level
+        // makes the measured peak stop tracking the exposure - the pixel lands on a
+        // different node as the slider moves - and the sweep below bounds that at 2%. The
+        // level axis is pinned by the 2x2 regardless, both volumes being read at one
+        // shared coordinate, so what this one is here to pin is the chroma axes. At 0.02
+        // a level the peak came out 4.6% off its gain, which is the model behaving as
+        // asked rather than a fault, on a variation no fit produces: measured, the gains
+        // run 0.9685 to 1.0123 across a whole frame and mostly across chroma.
+        let lift = 1.0 + 0.015 * (x as f64 - 2.0) - 0.01 * (y as f64 - 2.0) + 0.004 * z as f64;
+        // The two luma-to-chroma terms, small and of both signs, so a reader that dropped
+        // them or packed them in the wrong slot renders a tint on the neutrals rather than
+        // matching. They are the only part of a node that acts at `d = 0`.
+        let tint = 0.004 * (x as f64 - 2.0);
+        [scale, skew, -skew, scale * 0.98, tint, -0.003 * (y as f64 - 2.0), lift,
+         // The chroma-to-lightness pair, off zero at every node so a reader that dropped
+         // either or packed them in the wrong slot cannot answer correctly.
+         0.05 * (x as f64 - 2.0), -0.04 * (y as f64 - 2.0)]
     }));
     colour
 }
 
-/// One case, as the three files the harness fetches for it.
+/// One case, as the files the harness fetches for it.
+///
+/// `expected` and its two siblings are **the CPU implementation, frozen**. There is no
+/// per-pixel Rust grade any more - the shader is the only one - so these are what stands
+/// in for it: generated from that implementation on the day it was deleted, and compared
+/// against ever since. Data rather than code on purpose, because a second implementation
+/// sitting in the source is one a future change will edit, and then the two agree because
+/// somebody made them agree rather than because they were derived the same way.
 struct Case {
     stem: String,
     header: String,
     input: Vec<u8>,
-    expected: Vec<u8>,
 }
 
 fn cases() -> Vec<Case> {
@@ -131,7 +156,6 @@ fn cases() -> Vec<Case> {
             // Filtered once, in the perceptual domain the open uses, so the fixture's
             // input is the frame the client is actually handed.
             filter_once(&mut prepared, &grade, strengths);
-            let expected = run(&prepared, colour.as_ref(), &grade, ev);
 
             let header = serde_json::json!({
                 "width": WIDTH,
@@ -149,34 +173,47 @@ fn cases() -> Vec<Case> {
                 stem: format!("tick-{name}-ev{ev}"),
                 header: header.to_string(),
                 input: le(&prepared.samples),
-                expected: le(&expected),
             });
         }
     }
     out
 }
 
-/// One tick on the CPU: the grade and the PQ encode, and nothing else. This is the answer
-/// the shaders owe, which is what makes it the fixture.
-fn run(prepared: &Prepared, colour: Option<&HdrColour>, grade: &hdr::Grade, ev: f32) -> Vec<u16> {
-    let mut working = prepared.samples.clone();
-    hdr::grade_prepared(&mut working, grade, colour, prepared.levels, 2f64.powf(f64::from(ev)));
-    tone::encode_pq(&mut working, grade.peak_nits);
-    working
+/// A committed answer, as `u16`.
+///
+/// These files are the CPU implementation. It was deleted once the shader reproduced it,
+/// so there is nothing left to regenerate them from and that is deliberate: a second
+/// implementation living in the source is one a later change edits, and then the two agree
+/// because somebody made them agree. Frozen, they cannot drift and nobody has to maintain
+/// them. Replacing one is a claim that the grade should have changed.
+fn committed(stem: &str, suffix: &str) -> Vec<u16> {
+    let path = fixture_dir().join(format!("{stem}.{suffix}"));
+    let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    bytes.chunks_exact(2).map(|b| u16::from_le_bytes([b[0], b[1]])).collect()
 }
 
-/// `edit::filter_once`, which is private to that module: the frame into PQ against its own
-/// diffuse white, filtered, and back to scene-linear.
+/// The same, for the sRGB arm, which is bytes rather than `u16`.
+fn committed_bytes(stem: &str, suffix: &str) -> Vec<u8> {
+    let path = fixture_dir().join(format!("{stem}.{suffix}"));
+    std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+}
+
+/// What `edit::open` filters with, in the same two halves and the same order: everything but
+/// the sharpen ahead of the warp, then the sharpen after it.
+///
+/// This scene has no lens to warp through, so the two land back to back - which is exactly
+/// what the editor does for a file whose fit found no geometry, and the frame the client is
+/// handed either way.
 fn filter_once(prepared: &mut Prepared, grade: &hdr::Grade, strengths: Strengths) {
-    let scale = grade.reference_white_nits / prepared.levels.white.max(1.0);
-    let mut perceptual: Vec<f32> =
-        prepared.samples.iter().map(|s| tone::pq(f64::from(*s) * scale) as f32).collect();
-    let (sigma, defocus) =
-        image::measurements(&perceptual, prepared.width, prepared.height, strengths);
-    image::finish_with(&mut perceptual, prepared.width, prepared.height, strengths, sigma, defocus);
-    for (sample, filtered) in prepared.samples.iter_mut().zip(perceptual.iter()) {
-        let nits = tone::pq_inv(f64::from(*filtered));
-        *sample = (nits / scale).clamp(0.0, 65535.0).round() as u16;
+    for half in [strengths.before_the_fit(), Strengths { sharpen: strengths.sharpen, ..Default::default() }] {
+        hdr::filter_scene_linear(
+            &mut prepared.samples,
+            prepared.width,
+            prepared.height,
+            prepared.levels.white,
+            grade.reference_white_nits,
+            half,
+        );
     }
 }
 
@@ -192,8 +229,10 @@ fn describe(colour: &HdrColour) -> serde_json::Value {
             "nodes": map.nodes_flat(),
             "chromaCount": shape.chroma_count,
             "levelCount": shape.level_count,
-            "chromaLow": shape.chroma_low,
-            "chromaScale": shape.chroma_scale,
+            "chromaLow": shape.chroma_low[0],
+            "chromaLowBy": shape.chroma_low[1],
+            "chromaScaleBy": shape.chroma_scale[1],
+            "chromaScale": shape.chroma_scale[0],
             "levelScale": shape.level_scale,
         })),
     })
@@ -216,11 +255,11 @@ fn the_committed_fixture_is_what_the_cpu_produces_now() {
     }
 
     for case in cases() {
-        let files: [(&str, Vec<u8>); 3] = [
-            ("json", case.header.into_bytes()),
-            ("input.bin", case.input),
-            ("expected.bin", case.expected),
-        ];
+        // The inputs only. The three answers beside them are the CPU implementation,
+        // frozen at the point it was deleted, and nothing here can rebuild them - which is
+        // the property that makes them worth having.
+        let files: [(&str, Vec<u8>); 2] =
+            [("json", case.header.into_bytes()), ("input.bin", case.input)];
         for (suffix, built) in files {
             let path = dir.join(format!("{}.{suffix}", case.stem));
             if rewrite {
@@ -253,5 +292,228 @@ fn the_committed_fixture_is_what_the_cpu_produces_now() {
                 first,
             );
         }
+    }
+}
+
+/// The editor's `encode` pass against the frame the CPU grades, on a real GPU.
+///
+/// The same comparison `web/e2e/gpu_parity.spec.ts` makes, without the browser: it runs
+/// here in milliseconds where that costs a server, a Vite build and a Chromium, which is
+/// the difference between a loop you can work in and one you run before merging. That
+/// suite stays - it drives the real `TickPipeline` and gets its payload from the running
+/// server, so it is the only thing that can catch the native library and the client
+/// disagreeing about the model. This links the crate directly and never would.
+///
+/// The peak is supplied rather than measured. `peak_out[0]` is an *input* to the grade, and
+/// the four passes that fill it are a histogram over the frame - a different claim, bounded
+/// by the sweep in the browser suite. Reproducing them here would be a second
+/// implementation of the measurement, to check an implementation of the grade.
+#[test]
+fn the_encode_pass_reproduces_the_cpu_frame() {
+    let Some(gpu) = rawshim::gpu::device() else {
+        eprintln!("SKIPPED: no adapter answered, so `encode` was not run against the CPU.");
+        return;
+    };
+
+    let grade =
+        hdr::Grade { peak_nits: 1000.0, reference_white_nits: 203.0, white_quantile: 0.995 };
+    let strengths = Strengths { luma: 1.0, chroma: 1.0, sharpen: 1.0, defringe: 1.0 };
+    let samples = scene();
+    let levels = tone::levels(&samples, grade.white_quantile);
+
+    for (name, colour) in [("neutral", None), ("matched", Some(matched()))] {
+        for ev in [0.0f32, 1.0, -1.5] {
+            let exposure = 2f64.powf(f64::from(ev));
+            let mut prepared =
+                Prepared { samples: samples.clone(), width: WIDTH, height: HEIGHT, levels };
+            filter_once(&mut prepared, &grade, strengths);
+            let want = committed(&format!("tick-{name}-ev{ev}"), "expected.bin");
+
+            // The peak the grade runs through, off the frame as it stands here - which is
+            // what `tone::SceneGrade::new` measures, and so what `peak_out[0]` stands in for.
+            let scene = tone::SceneGrade::new(
+                &prepared.samples,
+                colour.as_ref(),
+                levels,
+                grade.reference_white_nits,
+                exposure,
+            )
+            .expect("the fixture grades");
+            let got = gpu.encode(
+                &prepared.samples,
+                &rawshim::gpu::Grade {
+                    width: prepared.width,
+                    height: prepared.height,
+                    colour: colour.as_ref(),
+                    white: levels.white,
+                    source_level: levels.peak,
+                    reference_nits: grade.reference_white_nits,
+                    peak_nits: grade.peak_nits,
+                    exposure,
+                    scene_peak: scene.scene_peak_nits(),
+                    // The fixture is the HDR still, which is what `run` above encodes.
+                    output: rawshim::gpu::Output::Pq,
+                },
+            );
+
+            let mut worst = 0i64;
+            let mut total = 0i64;
+            for (a, b) in got.iter().zip(want.iter()) {
+                let error = i64::from(*a) - i64::from(*b);
+                total += error.abs();
+                worst = worst.max(error.abs());
+            }
+            let mean = total as f64 / want.len() as f64;
+            // In `u16` counts of PQ, which is what both sides write, and the browser
+            // suite's bound for the same stage: the grade must land, where `finish` is a
+            // denoise the two accumulate differently and this fixture is already past it.
+            assert!(
+                mean <= 0.5,
+                "tick-{name}-ev{ev}: the shader's frame is {mean:.4} counts from the CPU's on \
+                 average, worst {worst}",
+            );
+        }
+    }
+}
+
+/// The rolled arm, against the frame `hdr::graded_with` leaves behind.
+///
+/// This is the one that lets the CPU grade go. Every rendition path passes the rolled
+/// frame around and encodes it itself, so a GPU output that stops in the same place is a
+/// drop-in for `SceneGrade::apply` - no caller has to learn about transfers, and the two
+/// encoders stay where they are until fusing them is worth doing on its own merits.
+#[test]
+fn the_rolled_arm_reproduces_the_cpu_grade() {
+    let Some(gpu) = rawshim::gpu::device() else {
+        eprintln!("SKIPPED: no adapter answered, so the rolled arm was not run against the CPU.");
+        return;
+    };
+
+    let grade =
+        hdr::Grade { peak_nits: 1000.0, reference_white_nits: 203.0, white_quantile: 0.995 };
+    let strengths = Strengths { luma: 1.0, chroma: 1.0, sharpen: 1.0, defringe: 1.0 };
+    let samples = scene();
+    let levels = tone::levels(&samples, grade.white_quantile);
+
+    for (name, colour) in [("neutral", None), ("matched", Some(matched()))] {
+        for ev in [0.0f32, 1.0, -1.5] {
+            let exposure = 2f64.powf(f64::from(ev));
+            let mut prepared =
+                Prepared { samples: samples.clone(), width: WIDTH, height: HEIGHT, levels };
+            filter_once(&mut prepared, &grade, strengths);
+
+            let want = committed(&format!("tick-{name}-ev{ev}"), "rolled.bin");
+
+            let scene = tone::SceneGrade::new(
+                &prepared.samples,
+                colour.as_ref(),
+                levels,
+                grade.reference_white_nits,
+                exposure,
+            )
+            .expect("the fixture grades");
+            let got = gpu.encode(
+                &prepared.samples,
+                &rawshim::gpu::Grade {
+                    width: prepared.width,
+                    height: prepared.height,
+                    colour: colour.as_ref(),
+                    white: levels.white,
+                    source_level: levels.peak,
+                    reference_nits: grade.reference_white_nits,
+                    peak_nits: grade.peak_nits,
+                    exposure,
+                    scene_peak: scene.scene_peak_nits(),
+                    output: rawshim::gpu::Output::Rolled,
+                },
+            );
+
+            let mut worst = 0i64;
+            let mut total = 0i64;
+            for (a, b) in got.iter().zip(want.iter()) {
+                let error = i64::from(*a) - i64::from(*b);
+                total += error.abs();
+                worst = worst.max(error.abs());
+            }
+            let mean = total as f64 / want.len() as f64;
+            // In the `u16` both sides write, before any transfer. Tighter than the PQ arm's
+            // bound because PQ compresses: an error here is worth less afterwards, not more.
+            assert!(
+                mean <= 0.5,
+                "rolled-{name}-ev{ev}: the shader's frame is {mean:.4} counts from the CPU's \
+                 on average, worst {worst}",
+            );
+        }
+    }
+}
+
+/// The same dispatch's SDR arm, against `tone::encode_srgb8`.
+///
+/// An SDR rendition is not a second pipeline - `job::peak_nits` puts its peak at diffuse
+/// white and the same grade rolls the highlights into it - so what needs checking is only
+/// the end: the sRGB primaries and transfer at 8 bits, where the still writes PQ at 16.
+/// Its own test because the peak differs, and with it every value in the frame.
+#[test]
+fn the_encode_pass_reproduces_the_cpu_sdr_frame() {
+    let Some(gpu) = rawshim::gpu::device() else {
+        eprintln!("SKIPPED: no adapter answered, so the sRGB arm was not run against the CPU.");
+        return;
+    };
+
+    // `peak_nits` at the reference white, which is the whole of what `job::peak_nits` does
+    // for an SDR target.
+    let grade =
+        hdr::Grade { peak_nits: 203.0, reference_white_nits: 203.0, white_quantile: 0.995 };
+    let strengths = Strengths { luma: 1.0, chroma: 1.0, sharpen: 1.0, defringe: 1.0 };
+    let samples = scene();
+    let levels = tone::levels(&samples, grade.white_quantile);
+
+    for (name, colour) in [("neutral", None), ("matched", Some(matched()))] {
+        let mut prepared =
+            Prepared { samples: samples.clone(), width: WIDTH, height: HEIGHT, levels };
+        filter_once(&mut prepared, &grade, strengths);
+
+        let want = committed_bytes(&format!("tick-{name}-ev0"), "srgb.bin");
+
+        let scene = tone::SceneGrade::new(
+            &prepared.samples,
+            colour.as_ref(),
+            levels,
+            grade.reference_white_nits,
+            1.0,
+        )
+        .expect("the fixture grades");
+        let got = gpu.encode(
+            &prepared.samples,
+            &rawshim::gpu::Grade {
+                width: prepared.width,
+                height: prepared.height,
+                colour: colour.as_ref(),
+                white: levels.white,
+                source_level: levels.peak,
+                reference_nits: grade.reference_white_nits,
+                peak_nits: grade.peak_nits,
+                exposure: 1.0,
+                scene_peak: scene.scene_peak_nits(),
+                output: rawshim::gpu::Output::Srgb,
+            },
+        );
+
+        let mut worst = 0i64;
+        let mut total = 0i64;
+        for (a, b) in got.iter().zip(want.iter()) {
+            let error = i64::from(*a) - i64::from(*b);
+            total += error.abs();
+            worst = worst.max(error.abs());
+        }
+        let mean = total as f64 / want.len() as f64;
+        // In 8-bit counts, so a tenth of one is far tighter than the PQ arm's half of a
+        // 16-bit count - which is what it should be: this is the output a viewer looks at
+        // directly, and one count is visible on a gradient.
+        assert!(
+            mean <= 0.1 && worst <= 2,
+            "sdr-{name}: the shader's frame is {mean:.4} counts from the CPU's on average, \
+             worst {worst}",
+        );
     }
 }

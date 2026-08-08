@@ -36,6 +36,14 @@ name = "bench_graded"
 required-features = ["renditions"]
 
 [[example]]
+name = "crops"
+required-features = ["renditions"]
+
+[[example]]
+name = "matches"
+required-features = ["renditions"]
+
+[[example]]
 name = "lensfun_vs_fitted"
 required-features = ["renditions"]
 
@@ -56,12 +64,21 @@ required-features = ["renditions"]
 
 [dependencies]
 fast_image_resize = "6.1.0"
+# The intermediate a photo's renditions share: nits between the colour transform and the
+# roll-off (`image::Sample for f16`). Conversion only - no feature of it is wanted.
+half = { version = "2.7.1", default-features = false }
 # libjpeg's DCT scaling is what makes a bounded decode cheap, and `Decoder::scale` is the
 # pure-Rust decoder that exposes it. zune-jpeg is faster at a whole frame and cannot do it,
 # which is the wrong way round here: every decode is bounded to the fit grid or a tile.
 jpeg-decoder = { version = "0.3.2", default-features = false }
 jpeg-encoder = { version = "0.7.1", features = ["simd"] }
 libblur = "0.24"
+# The grade runs here, on the same WGSL the editor runs, so there is one implementation of
+# it rather than two that must be held in agreement (DESIGN 21.1). That costs the server an
+# adapter; where there is no hardware one, `gpu::device` falls back to whatever software
+# Vulkan is installed - very slow, and a path a machine with an iGPU never takes.
+wgpu = "30.0"
+pollster = "0.4"
 rayon = "1.10"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"

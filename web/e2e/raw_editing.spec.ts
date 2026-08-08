@@ -5,6 +5,24 @@ import { addLibrary, openLibrary, openPhoto, openPhotoId, syncLibrary, waitForSy
 // Every test here opens a RAW for real: the server decodes it, fits the camera match and
 // warps it, and the browser grades it on a GPU. The open is seconds of native work behind
 // however many cores the rest of the suite has left.
+//
+// **This is the only test that spans the whole path, and that is what it is for.** Four
+// things check the GPU and they fail at different places:
+//
+//   gpu_shader.rs      the WGSL arithmetic against `hdr_fit`, in `cargo test`, ~40ms
+//   gpu_fixture.rs     that `fixtures/gpu/*.expected.bin` is still what the CPU produces
+//   gpu_parity.spec    that the shaders reproduce those bytes, from a fixture payload
+//   this file          that a real photo reaches a real device and comes back `live`
+//
+// The first three all build their payload in-process. This one gets it from the running
+// server, which `dlopen`s `librawshim.so` - so it is the only one that can see the native
+// library and the client disagreeing. That has happened: the lattice grew a fifth value
+// per node, `cargo test` rebuilt the test binaries but not the cdylib, and the server
+// served four-value nodes to a client reading five. Every other suite stayed green; this
+// one reported `failed` instead of `live`. `test:e2e` now builds the native library first,
+// and the client checks the node count rather than trusting a field, but the reason this
+// test cannot move into `cargo test` is that a Rust harness links the crate directly and
+// would have been green through all of it.
 test.describe.configure({ timeout: 180_000 });
 
 // The editor opens a photo by id, so a spec needs a synced library before it can open

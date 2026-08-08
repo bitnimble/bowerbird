@@ -547,16 +547,15 @@ pub fn run(command: &Command) -> Result<Reply, String> {
                 true => hdr_match(path, &linear, grade)?,
             };
             let samples = linear.samples16().ok_or("the encode needs a 16-bit decode")?;
-            let source = crate::hdr::Source {
-                samples,
-                width: linear.width,
-                height: linear.height,
-            };
+            // Copied, because the shared decode is cached for the pins that reuse it and
+            // the encode filters the frame it is handed. A debug command can afford it.
             // The route the encode reports having taken, not a second reading of the
             // environment variable that selected it: the differential asserts on this to
             // prove its two arms really ran different code.
             let used_avifenc = crate::hdr::encode_still(
-                crate::hdr::Decode::Borrowed(source),
+                samples.to_vec(),
+                linear.width,
+                linear.height,
                 &grade.options(),
                 matched.as_ref(),
             )?;

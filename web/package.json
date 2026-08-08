@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "bun test src",
-    "test:e2e": "playwright test"
+    "test:e2e": "cd .. && bun run build:native && cd web && playwright test"
   },
   "dependencies": {
     "@base-ui-components/react": "^1.0.0-rc.0",

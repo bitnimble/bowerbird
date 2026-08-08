@@ -54,7 +54,11 @@ function toCommand(job: RenditionJob): Parameters<typeof runJob>[0] {
     },
     targets: job.targets.map((target) => ({
       rendition: target.rendition,
-      hdr: target.hdr,
+      // The two vocabularies for one decision. `hdr` is the library's - where the rendition
+      // is stored and what the viewer asks for - and the render only wants to know which
+      // transfer to leave the pixels in, since that is the whole of what its dynamic range
+      // reaches (§10.3).
+      output: target.hdr ? ('pq' as const) : ('srgb' as const),
       outputPath: target.outputPath,
       size: target.size,
       source: target.source,

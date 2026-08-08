@@ -15,11 +15,16 @@ struct Tick {
   reference: f32,
   peak: f32,
   exposure: f32,
-  // A spare word, written down rather than left implicit. WGSL would insert the same padding
-  // here anyway to put `region_origin` on the multiple of eight a `vec2f` needs, so this
-  // changes no offset - it is a slot with a name, to be taken by the next scalar rather than
-  // growing the struct.
-  pad0: u32,
+  /// Which transfer `encode` writes: 0 is PQ at 16 bits, 1 is sRGB at 8.
+  ///
+  /// This is the whole of what SDR means to the pipeline. The grade is the same either way
+  /// - `job::peak_nits` puts an SDR target's peak at diffuse white, so its highlights roll
+  /// into white through the same BT.2390 curve rather than clipping - and the two diverge
+  /// only here, at the primaries and the transfer. A second entry point would have been a
+  /// second copy of the grade to keep in step.
+  ///
+  /// It took the spare word this struct already carried, so no offset moved.
+  output: u32,
   matched: u32,
   saturation: f32,
   has_chroma: u32,
@@ -29,6 +34,8 @@ struct Tick {
   level_count: u32,
   chroma_low: f32,
   chroma_scale: f32,
+  chroma_low_by: f32,
+  chroma_scale_by: f32,
   level_scale: f32,
   sdr_white: f32,
   /// Rows apart the peak's quantile samples, so it reads about a million pixels.

@@ -23,12 +23,22 @@ const AT = tickOffsets().at;
 /** `Sample::from_f32` for `u16`: rounded, and held inside the range it has to fit. */
 const clamp16 = (v: number): number => Math.max(0, Math.min(65535, Math.round(v)));
 
+/**
+ * Values per lattice node: a 2x2 on chroma, then a gain on luma.
+ *
+ * `hdr_fit::NODE_VALUES`. Held here rather than read off the payload so a server built
+ * against a different model is a thrown error rather than a silent reinterpretation.
+ */
+const NODE_VALUES = 9;
+
 export interface ChromaPayload {
   nodes: number[];
   chromaCount: number;
   levelCount: number;
   chromaLow: number;
   chromaScale: number;
+  chromaLowBy: number;
+  chromaScaleBy: number;
   levelScale: number;
 }
 
@@ -213,6 +223,8 @@ export class TickPipeline {
   private readonly levels: number;
   private readonly curves: GPUTexture;
   private readonly chroma: GPUTexture;
+  /** The lattice's luma gain, which does not fit beside the 2x2 in one texel. */
+  private readonly chromaLuma: GPUTexture;
   private readonly lerp: GPUSampler;
 
   private readonly peakMeasure: GPUComputePipeline;
@@ -305,8 +317,13 @@ export class TickPipeline {
       4,
       new Float32Array(colour?.curves.flat() ?? [0, 0, 0]),
     );
-    // A 2x2 per node is exactly four components, and a node lattice is exactly a volume,
-    // so `ChromaMap`'s trilinear is what a 3D texture does for free.
+    // A node lattice is exactly a volume, so `ChromaMap`'s trilinear is what a 3D texture
+    // does for free. It takes two of them: the 2x2 on chroma fills an `rgba16float` texel
+    // exactly, and the luma gain that follows it does not fit beside them. Splitting is
+    // what keeps both halves hardware-filtered - packing two nodes to a texel would lose
+    // the filter on whichever axis was doubled, and widening the volume would mean
+    // interpolating in the shader. Same coordinate for both, so the eight corners and the
+    // weights are shared and the result equals the CPU's one interpolation.
     //
     // Half floats because `f32` is not filterable on any Apple GPU (`tickFeatures`), and the
     // 2^-11 that costs is measured rather than assumed: over the parity fixtures and over
@@ -315,13 +332,50 @@ export class TickPipeline {
     // vanishes on the grey axis where the eye is least forgiving, and quantising nodes before
     // interpolating them leaves the surface continuous - no contour to see.
     const chroma = colour?.chroma;
-    this.chroma = this.lookup(
-      [chroma?.chromaCount ?? 1, chroma?.chromaCount ?? 1, chroma?.levelCount ?? 1],
-      '3d',
-      'rgba16float',
-      8,
-      new Float16Array(chroma?.nodes ?? [0, 0, 0, 0]),
-    );
+    const size: [number, number, number] = [
+      chroma?.chromaCount ?? 1,
+      chroma?.chromaCount ?? 1,
+      chroma?.levelCount ?? 1,
+    ];
+    // Derived rather than carried. The grid's own dimensions have to be right for the
+    // texture to exist at all, so the values per node follow from them exactly - where a
+    // field stating it is one more thing that can disagree with the array beside it, and
+    // disagree silently: a client reading five values as four lands every node after the
+    // first one slot out, which renders as plausible colour rather than as an error. A
+    // server built before the lattice grew its lightness term sends four, and this is
+    // where that has to be loud.
+    const count = chroma ? chroma.chromaCount * chroma.chromaCount * chroma.levelCount : 1;
+    if (chroma && chroma.nodes.length !== count * NODE_VALUES) {
+      throw new Error(
+        `the chroma lattice has ${chroma.nodes.length} values for ${count} nodes, where this ` +
+          `reader expects ${NODE_VALUES} each - the payload was built by a different model`,
+      );
+    }
+    const pairs = new Float16Array(count * 4);
+    const gains = new Float16Array(count * 4);
+    for (let node = 0; node < count; node++) {
+      const at = node * NODE_VALUES;
+      for (let k = 0; k < 4; k++) pairs[node * 4 + k] = chroma ? chroma.nodes[at + k] : 0;
+      // The *deviation* from 1, which `correct` adds back. Half floats spend a fixed
+      // relative precision wherever the value sits, so storing 1.02 puts 2^-11 of full
+      // scale on the gain and storing 0.02 puts it on the deviation - worth 16x, and
+      // needed because this multiplies luma where the 2x2 above multiplies chroma
+      // differences. Stored as a gain the parity fixtures miss by 1.33 against a 0.5
+      // bound, and every count of that is f16.
+      //
+      // 0 rather than 1 where there is no map, for the same reason: an absent correction
+      // is no deviation, and it has to leave lightness alone rather than take it to black.
+      // The rest of the node: the two luma-to-chroma terms, then the gain's deviation.
+      // Seven values fit these two texels with one slot spare.
+      gains[node * 4] = chroma ? chroma.nodes[at + 4] : 0;
+      gains[node * 4 + 1] = chroma ? chroma.nodes[at + 5] : 0;
+      gains[node * 4 + 2] = chroma ? chroma.nodes[at + 6] - 1 : 0;
+    }
+    this.chroma = this.lookup(size, '3d', 'rgba16float', 8, pairs);
+    // One value in a four-component texture. `r16float` would be a quarter of it, and the
+    // whole volume is 5x5x4, so the three wasted channels cost 600 bytes and buy the same
+    // filtering path the texture beside it is already proven on.
+    this.chromaLuma = this.lookup(size, '3d', 'rgba16float', 8, gains);
     this.lerp = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
     this.matrix = this.upload(
       new Float32Array(colour ? colour.matrix.flat() : [1, 0, 0, 0, 1, 0, 0, 0, 1]),
@@ -348,6 +402,7 @@ export class TickPipeline {
         { binding: 3, visibility, texture: { viewDimension: '3d' as const } },
         { binding: 4, visibility, buffer: { type: 'read-only-storage' as const } },
         { binding: 7, visibility, sampler: {} },
+        { binding: 10, visibility, texture: { viewDimension: '3d' as const } },
       ],
       pyramid: { binding: 9, visibility, texture: { sampleType: 'uint' as const } },
       readOnly: (binding: number) => ({
@@ -410,6 +465,7 @@ export class TickPipeline {
       { binding: 3, resource: this.chroma.createView() },
       { binding: 4, resource: { buffer: this.matrix } },
       { binding: 7, resource: this.lerp },
+      { binding: 10, resource: this.chromaLuma.createView() },
     ];
     this.displayEntries = [
       ...this.colourEntries,
@@ -644,7 +700,9 @@ export class TickPipeline {
 
   destroy(): void {
     this.timer?.destroy();
-    for (const texture of [this.pyramid, this.curves, this.chroma]) texture.destroy();
+    for (const texture of [this.pyramid, this.curves, this.chroma, this.chromaLuma]) {
+      texture.destroy();
+    }
     for (const buffer of [
       this.uniform,
       this.frame,
@@ -702,7 +760,9 @@ export class TickPipeline {
     values[AT.reference] = header.grade.referenceWhiteNits;
     values[AT.peak] = header.grade.peakNits;
     values[AT.exposure] = this.exposure;
-    // `pad0` is a named spare word, read by nothing and written by nothing.
+    // `output` stays 0, which is PQ. The editor's `readFrame` wants the same 16-bit PQ a
+    // still rendition does; the sRGB arm exists for the server, whose SDR renditions are
+    // this grade with the peak at diffuse white and this transfer instead.
     ints[AT.matched] = header.matched ? 1 : 0;
     values[AT.saturation] = colour?.saturation ?? 1;
     ints[AT.has_chroma] = colour?.chroma == null ? 0 : 1;
@@ -712,6 +772,8 @@ export class TickPipeline {
     ints[AT.level_count] = colour?.chroma?.levelCount ?? 2;
     values[AT.chroma_low] = colour?.chroma?.chromaLow ?? 0;
     values[AT.chroma_scale] = colour?.chroma?.chromaScale ?? 1;
+    values[AT.chroma_low_by] = colour?.chroma?.chromaLowBy ?? 0;
+    values[AT.chroma_scale_by] = colour?.chroma?.chromaScaleBy ?? 1;
     values[AT.level_scale] = colour?.chroma?.levelScale ?? 1;
     values[AT.sdr_white] = SDR_WHITE_NITS;
     ints[AT.row_stride] = this.rowStride;

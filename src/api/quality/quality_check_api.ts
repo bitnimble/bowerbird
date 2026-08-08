@@ -85,7 +85,7 @@ export class QualityCheckApi {
           targets: [
             {
               rendition: 'full',
-              hdr: false,
+              output: 'srgb',
               outputPath: file,
               size: settings.full_rendition_size,
               source: 'render',

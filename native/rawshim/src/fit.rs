@@ -10,6 +10,12 @@
 // distortion-corrected, fitting colour first plateaus at deltaE 16 however much
 // capacity the colour model is given - a 33^3 LUT included - because no tone curve
 // can map a pixel onto a different pixel's colour.
+//
+// That conclusion stands on its effect size rather than on its metric: 16 against
+// 1.51 is an order of magnitude, and it is an argument about correspondence rather
+// than about colour accuracy. The sub-claim it is usually quoted with - that the
+// capacities "all land within 1.5 of each other" - does not stand, being a small
+// difference read off the blind measure described at the `deltaE` section below.
 
 use crate::image::{polynomial_knots, resize, resize_to_fit, warp};
 use crate::parallel::*;
@@ -535,6 +541,41 @@ fn fit_gain(pairs: &Pairs, phase: Phase) -> Option<Gain> {
 }
 
 // ------------------------------------------------------------------------ deltaE
+//
+// **This measure cannot see the errors that ruin a picture, and every comparative
+// claim in this crate settled by it is therefore unsafe.** Three separate blind
+// spots, all measured:
+//
+// - It is ΔE76, Euclidean in Lab, so a unit of error counts the same on a grey wall
+//   as on a saturated glaze. Perceptually it is worth several times more on the
+//   wall. Every failure this crate has been burned by is near-neutral - speckle on
+//   fur, a blotchy wall, a mint-green bird bath, a magenta sky - so the metric
+//   discounts exactly the damage and inflates exactly what does not matter. ΔE2000
+//   against the same fits moves the score by 0.78x to 1.10x depending on the frame,
+//   so it is not even a rescale: it reorders how bad two frames are relative to
+//   each other.
+// - It is a *magnitude*, so it cannot tell a hundred pixels each 1.5 off in the
+//   same direction from a hundred each 1.5 off in random ones. The first is a cast
+//   you see across a wall; the second is invisible. Measured on IMG_8789, the light
+//   low-chroma content - a bird bath, a stone wall - sits at da* -2.0 against a
+//   control frame's +0.2, and the aggregate signed cast still reads 0.35 because it
+//   flips sign with level and cancels.
+// - It is a *mean*. IMG_8789 reads 1.99 mean ΔE2000 and p99 7.2, max 16.2.
+//
+// So a number here going down is not evidence a render got better. It was reported
+// as such throughout this crate's history, including for the choice of model: what
+// is written up as "777 coefficients beat a 17^3 LUT and tie a 33^3" and as the
+// chroma map's win over the shape constraint were both decided on this. **Treat
+// those as unrun, not as settled.**
+//
+// What survives, being metric-independent: anything measured against an injected
+// ground truth (the falloff alternation), anything read off a parameter directly
+// (the magenta sky's end slopes), anything signed on neutrals (grey_balance's +2.3%
+// green), a named object's hue angle (the blue pot), and every timing.
+//
+// Rebuilding this properly means ΔE2000, reported as a distribution, beside a
+// *signed* per-hue statistic that can see a cast - and judged on the wide planes,
+// not here, because a small object is nine pairs at this grid.
 
 fn to_linear(value: f64) -> f64 {
     let s = value / 255.0;
@@ -555,7 +596,7 @@ pub(crate) fn linear_table() -> [f64; 256] {
 ///
 /// The one place the matrix and the cube root live. Both callers below used to carry
 /// their own copy of it, differing only in where the linear values came from.
-fn lab_from_linear(rr: f64, gg: f64, bb: f64) -> [f64; 3] {
+pub(crate) fn lab_from_linear(rr: f64, gg: f64, bb: f64) -> [f64; 3] {
     let x = (0.4124 * rr + 0.3576 * gg + 0.1805 * bb) / 0.95047;
     let y = 0.2126 * rr + 0.7152 * gg + 0.0722 * bb;
     let z = (0.0193 * rr + 0.1192 * gg + 0.9505 * bb) / 1.08883;
@@ -572,7 +613,8 @@ fn clamp8(value: f64) -> f64 {
     value.clamp(0.0, 255.0)
 }
 
-/// Lab distance between two 8-bit sRGB triples.
+/// Lab distance between two 8-bit sRGB triples. See the section header for what this
+/// cannot see; it is not a measure to judge a render by.
 ///
 /// The HDR fit reports in this same measure, so the two are comparable - 8-bit sRGB is
 /// the only space they both land in - but it reaches it through `lab_from_levels`
@@ -588,6 +630,85 @@ pub fn delta_e76(a: &[f64; 3], b: &[f64; 3]) -> f64 {
     let (p, q) = (lab(a), lab(b));
     ((p[0] - q[0]).powi(2) + (p[1] - q[1]).powi(2) + (p[2] - q[2]).powi(2)).sqrt()
 }
+
+/// CIEDE2000 between two CIELab triples, `kL = kC = kH = 1`.
+///
+/// What the weighting functions buy over ΔE76, and the reason the fit scores in this:
+/// `SC` and `SH` grow with chroma, so at `C* ~ 60` the divisor reaches ~3.7 where a
+/// neutral's is 1. The same Lab error therefore counts several times more on a grey wall
+/// than on a saturated glaze - which is the right way round, and the opposite of what
+/// ΔE76 says. Every failure this crate has been burned by is near-neutral.
+///
+/// Still a magnitude, so it cannot see a systematic cast. That needs a signed statistic
+/// and is a separate measurement, not a better distance.
+pub fn delta_e2000(p: &[f64; 3], q: &[f64; 3]) -> f64 {
+    let (l1, a1, b1) = (p[0], p[1], p[2]);
+    let (l2, a2, b2) = (q[0], q[1], q[2]);
+    let deg = |r: f64| r.to_degrees().rem_euclid(360.0);
+
+    let (c1, c2) = (a1.hypot(b1), a2.hypot(b2));
+    let cbar7 = ((c1 + c2) / 2.0).powi(7);
+    let g = 0.5 * (1.0 - (cbar7 / (cbar7 + POW25_7)).sqrt());
+
+    let (a1p, a2p) = ((1.0 + g) * a1, (1.0 + g) * a2);
+    let (c1p, c2p) = (a1p.hypot(b1), a2p.hypot(b2));
+    let h1p = if a1p == 0.0 && b1 == 0.0 { 0.0 } else { deg(b1.atan2(a1p)) };
+    let h2p = if a2p == 0.0 && b2 == 0.0 { 0.0 } else { deg(b2.atan2(a2p)) };
+
+    let (dlp, dcp) = (l2 - l1, c2p - c1p);
+    // Zero where either colour is neutral: an undefined hue has no difference to take,
+    // and `atan2` on a zero vector would otherwise put one there.
+    let dhp = match c1p * c2p == 0.0 {
+        true => 0.0,
+        false => {
+            let d = h2p - h1p;
+            if d > 180.0 {
+                d - 360.0
+            } else if d < -180.0 {
+                d + 360.0
+            } else {
+                d
+            }
+        }
+    };
+    let dbig_hp = 2.0 * (c1p * c2p).sqrt() * (dhp.to_radians() / 2.0).sin();
+
+    let lbarp = (l1 + l2) / 2.0;
+    let cbarp = (c1p + c2p) / 2.0;
+    let hbarp = match c1p * c2p == 0.0 {
+        true => h1p + h2p,
+        false => {
+            let sum = h1p + h2p;
+            if (h1p - h2p).abs() <= 180.0 {
+                sum / 2.0
+            } else if sum < 360.0 {
+                (sum + 360.0) / 2.0
+            } else {
+                (sum - 360.0) / 2.0
+            }
+        }
+    };
+
+    let t = 1.0 - 0.17 * (hbarp - 30.0).to_radians().cos()
+        + 0.24 * (2.0 * hbarp).to_radians().cos()
+        + 0.32 * (3.0 * hbarp + 6.0).to_radians().cos()
+        - 0.20 * (4.0 * hbarp - 63.0).to_radians().cos();
+    let cbarp7 = cbarp.powi(7);
+    let rt = -(2.0 * (30.0 * (-(((hbarp - 275.0) / 25.0).powi(2))).exp())).to_radians().sin()
+        * 2.0
+        * (cbarp7 / (cbarp7 + POW25_7)).sqrt();
+
+    let sl = 1.0 + (0.015 * (lbarp - 50.0).powi(2)) / (20.0 + (lbarp - 50.0).powi(2)).sqrt();
+    let sc = 1.0 + 0.045 * cbarp;
+    let sh = 1.0 + 0.015 * cbarp * t;
+
+    let (tl, tc, th) = (dlp / sl, dcp / sc, dbig_hp / sh);
+    (tl * tl + tc * tc + th * th + rt * tc * th).sqrt()
+}
+
+/// `25^7`, which appears twice above and is the one constant worth naming - written out
+/// it reads as a typo.
+const POW25_7: f64 = 6_103_515_625.0;
 
 // ------------------------------------------------------------------------ fitting
 
@@ -606,6 +727,10 @@ pub fn delta_e76(a: &[f64; 3], b: &[f64; 3]) -> f64 {
 /// and none of them needs to know what colour the pixels are. Measured over 204 frames
 /// the two rank candidates equally well: recovering an injected distortion, luma is out
 /// by a mean 0.0119 and deltaE by 0.0134, on an identical median. Luma is ~45% faster.
+///
+/// That comparison is against an *injected* distortion whose answer is known, so it does
+/// not rest on deltaE being a good measure of a picture - which it is not, per the
+/// `deltaE` section. Both scorers are being asked to find the same known warp.
 fn residual_for(grid: &Grid, knots: &[f64], crop: f64) -> Option<f64> {
     let all = corresponding(grid, knots, crop)?;
     let curve = fit_luma_curve(&all, Phase::Train, None);
@@ -1132,6 +1257,50 @@ fn fold(colour: &crate::hdr_fit::HdrColour) -> [[f64; 256]; 9] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Sharma's reference pairs, which is the only way to know this is CIEDE2000 rather
+    /// than something that looks like it. The formula has a degrees/radians switch in
+    /// four places and a hue term that wraps; every one of those is silent when wrong.
+    ///
+    /// The last two are the cases the wrap and the neutral guard exist for: hues either
+    /// side of 0/360, and a colour with no hue at all.
+    #[test]
+    fn delta_e2000_matches_the_reference_pairs() {
+        let cases: [([f64; 3], [f64; 3], f64); 6] = [
+            ([50.0, 2.6772, -79.7751], [50.0, 0.0, -82.7485], 2.0425),
+            ([50.0, 3.1571, -77.2803], [50.0, 0.0, -82.7485], 2.8615),
+            ([50.0, -1.3802, -84.2814], [50.0, 0.0, -82.7485], 1.0000),
+            ([50.0, 0.0, 0.0], [50.0, -1.0, 2.0], 2.3669),
+            ([50.0, -1.0, 2.0], [50.0, 0.0, 0.0], 2.3669),
+            ([50.0, 2.5, 0.0], [50.0, 2.5, 0.0], 0.0),
+        ];
+        for (p, q, want) in cases {
+            let got = delta_e2000(&p, &q);
+            assert!((got - want).abs() < 1e-3, "dE00 {p:?} vs {q:?} = {got}, want {want}");
+        }
+    }
+
+    /// The property the switch away from ΔE76 was made for: the same Lab error counts
+    /// for more on a neutral than on a saturated colour, where ΔE76 rates them equally.
+    #[test]
+    fn delta_e2000_weighs_a_neutral_error_above_a_saturated_one() {
+        let offset = [0.0, 3.0, 0.0];
+        let shift = |base: [f64; 3]| {
+            let moved = [base[0], base[1] + offset[1], base[2]];
+            (delta_e2000(&base, &moved), {
+                let d = [base[0] - moved[0], base[1] - moved[1], base[2] - moved[2]];
+                (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt()
+            })
+        };
+        let (neutral00, neutral76) = shift([50.0, 0.0, 0.0]);
+        let (saturated00, saturated76) = shift([50.0, 60.0, 0.0]);
+
+        assert!((neutral76 - saturated76).abs() < 1e-9, "ΔE76 rates the two the same");
+        assert!(
+            neutral00 > saturated00 * 2.0,
+            "ΔE2000 should weigh the neutral far heavier: {neutral00} vs {saturated00}",
+        );
+    }
 
     fn scene(width: usize, height: usize) -> Rgb {
         // Smooth, low-gradient content: the pair gate rejects steep edges, so a

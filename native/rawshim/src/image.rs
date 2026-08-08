@@ -784,10 +784,6 @@ impl Sample for u16 {
 }
 
 /// Samples that are already the 0..1 the filters work in.
-///
-/// For a caller that has to convert into a perceptual domain anyway (`edit::filter_once`):
-/// going through `u16` there would quantise on the way in, again between the stages, and
-/// again on the way out, for a frame whose whole point is that it is filtered once.
 impl Sample for f32 {
     const FULL: f32 = 1.0;
     fn to_f32(self) -> f32 {
@@ -796,6 +792,66 @@ impl Sample for f32 {
     fn from_f32(value: f32) -> f32 {
         value
     }
+}
+
+/// How a buffer's samples relate to the 0..1 perceptual domain the filters work in.
+///
+/// Every stage here reads a *difference against a blur*, and a difference taken in linear
+/// light follows absolute luminance rather than what the eye reads (§10.9). So a caller
+/// holding linear samples has to get them into a perceptual coding first - and doing that as
+/// its own pass costs a whole second frame. At 61MP an f32 copy of a scene-linear decode is
+/// 722MB on top of the 361MB decode, and peak memory is what `processing_concurrency`
+/// multiplies.
+///
+/// Handed over instead, the transfer rides on the reads and writes `deinterleave` and
+/// `recombine` were already making, and the second frame never exists. The stages in between
+/// are untouched: they only ever saw 0..1 planes and still do.
+pub trait Coding: Copy + Send + Sync {
+    /// One raw sample, as the buffer holds it, to the 0..1 the filters work in.
+    fn to_filter(&self, raw: f32) -> f32;
+    /// And back to whatever the buffer holds.
+    fn from_filter(&self, value: f32) -> f32;
+}
+
+/// Samples already perceptual, scaled to their type's full range.
+///
+/// sRGB at 8 bits, a graded frame in PQ at 16, the f32 planes a fixture drives. What every
+/// caller did before there was anything to choose.
+/// The reciprocal is carried rather than the scale, and that is not a micro-optimisation:
+/// `T::FULL` is an associated *const*, so dividing by it compiled to a multiply, and moving
+/// it into a runtime field turned three divisions per pixel back into real ones - in
+/// `deinterleave`, on every frame, for every caller.
+#[derive(Clone, Copy)]
+pub struct Perceptual {
+    full: f32,
+    inv_full: f32,
+}
+
+impl Perceptual {
+    pub fn of<T: Sample>() -> Perceptual {
+        Perceptual { full: T::FULL, inv_full: 1.0 / T::FULL }
+    }
+}
+
+impl Coding for Perceptual {
+    #[inline]
+    fn to_filter(&self, raw: f32) -> f32 {
+        raw * self.inv_full
+    }
+    #[inline]
+    fn from_filter(&self, value: f32) -> f32 {
+        value * self.full
+    }
+}
+
+/// One interleaved pixel's three channels, in the 0..1 the filters work in.
+#[inline]
+fn coded<T: Sample, C: Coding>(p: &[T], coding: C) -> [f32; 3] {
+    [
+        coding.to_filter(p[0].to_f32()),
+        coding.to_filter(p[1].to_f32()),
+        coding.to_filter(p[2].to_f32()),
+    ]
 }
 
 /// The blur the sharpen deconvolves, as a Gaussian sigma in output pixels.
@@ -1257,7 +1313,7 @@ pub fn _for_testing_noise_ceiling() -> f32 {
 pub fn _for_testing_measure_noise<T: Sample>(frame: &[T], width: usize, height: usize) -> f32 {
     // The strip height production would use, so this measures what production measures.
     let halo = Radii::for_strength(1.0).halo(true, true, true, true);
-    measure_noise(frame, width, height, strip_interior(width, halo))
+    measure_noise(frame, width, height, strip_interior(width, halo), Perceptual::of::<T>())
 }
 
 /// The estimate, off a histogram of high-pass magnitudes.
@@ -1292,9 +1348,10 @@ fn sigma_from(bins: &[u32]) -> f32 {
     (median * 1.4826 / 0.83).min(NOISE_CEILING)
 }
 
-/// The luma of one interleaved RGB pixel, in 0..1.
-fn luma_of<T: Sample>(p: &[T]) -> f32 {
-    (LUMA[0] * p[0].to_f32() + LUMA[1] * p[1].to_f32() + LUMA[2] * p[2].to_f32()) / T::FULL
+/// The luma of one pixel's three coded channels.
+#[inline]
+fn luma_of(c: [f32; 3]) -> f32 {
+    LUMA[0] * c[0] + LUMA[1] * c[1] + LUMA[2] * c[2]
 }
 
 /// The radii every stage works over, which between them decide how far a strip has to
@@ -1440,8 +1497,22 @@ fn strip_interior(width: usize, halo: usize) -> usize {
 /// hand over display-referred samples - sRGB for a rendition, PQ for the HDR pair - which
 /// is where a difference means what the eye reads.
 pub fn finish<T: Sample>(frame: &mut [T], width: usize, height: usize, strengths: Strengths) {
+    finish_coded(frame, width, height, strengths, Perceptual::of::<T>());
+}
+
+/// [`finish`] over a buffer that is not already in a perceptual coding.
+///
+/// The transfer rides on the reads and writes this was making anyway, so a scene-linear
+/// caller pays no second frame for it - see [`Coding`].
+pub fn finish_coded<T: Sample, C: Coding>(
+    frame: &mut [T],
+    width: usize,
+    height: usize,
+    strengths: Strengths,
+    coding: C,
+) {
     let interior = strip_interior(width, strengths.halo());
-    finish_in_strips(frame, width, height, strengths, interior);
+    finish_in_strips(frame, width, height, strengths, interior, coding);
 }
 
 /// The two whole-frame measurements `finish` makes before it filters anything.
@@ -1457,6 +1528,21 @@ pub fn measurements<T: Sample>(
     height: usize,
     strengths: Strengths,
 ) -> (f32, (f32, f32)) {
+    measurements_coded(frame, width, height, strengths, Perceptual::of::<T>())
+}
+
+/// [`measurements`] over a buffer that is not already in a perceptual coding.
+///
+/// Both numbers have to be taken in the domain the filters run in or they are denominated in
+/// the wrong currency: `sigma` is the luma filter's regularisation, and the defocus
+/// coefficient is colour per unit of curvature.
+pub fn measurements_coded<T: Sample, C: Coding>(
+    frame: &[T],
+    width: usize,
+    height: usize,
+    strengths: Strengths,
+    coding: C,
+) -> (f32, (f32, f32)) {
     if !strengths.does_anything() || width < 3 || height < 3 || frame.len() < width * height * 3 {
         return (0.0, (0.0, 0.0));
     }
@@ -1464,11 +1550,11 @@ pub fn measurements<T: Sample>(
     let interior = strip_interior(width, strengths.halo()).max(strengths.halo()).max(1);
 
     let sigma = match strengths.luma > 0.0 {
-        true => measure_noise(frame, width, height, interior) * strengths.luma as f32,
+        true => measure_noise(frame, width, height, interior, coding) * strengths.luma as f32,
         false => 0.0,
     };
     let defocus = match strengths.defringe > 0.0 {
-        true => measure_defocus(frame, width, height)
+        true => measure_defocus_coded(frame, width, height, coding)
             .map(|(r, b)| {
                 let scale = strengths.defringe.clamp(0.0, 1.0) as f32;
                 (r * scale, b * scale)
@@ -1485,12 +1571,13 @@ pub fn measurements<T: Sample>(
 /// and through several and require the same answer - which is the property the halo
 /// exists for, and cannot be checked by shrinking the frame instead, because the noise
 /// estimate is global and a shorter frame is a different measurement.
-fn finish_in_strips<T: Sample>(
+fn finish_in_strips<T: Sample, C: Coding>(
     frame: &mut [T],
     width: usize,
     height: usize,
     strengths: Strengths,
     interior: usize,
+    coding: C,
 ) {
     let Strengths { luma, .. } = strengths;
     if !strengths.does_anything() || width < 3 || height < 3 || frame.len() < width * height * 3 {
@@ -1513,7 +1600,7 @@ fn finish_in_strips<T: Sample>(
     // Scaled by the luma strength, since it is the luma filter's regularisation and
     // nothing else reads it.
     let sigma = match luma > 0.0 {
-        true => measure_noise(frame, width, height, interior) * luma as f32,
+        true => measure_noise(frame, width, height, interior, coding) * luma as f32,
         false => 0.0,
     };
 
@@ -1522,7 +1609,7 @@ fn finish_in_strips<T: Sample>(
     // different amount and leave a seam at every boundary. Scaled by the setting, which is
     // now a ceiling on a measurement rather than the amount itself.
     let defocus = match strengths.defringe > 0.0 {
-        true => measure_defocus(frame, width, height)
+        true => measure_defocus_coded(frame, width, height, coding)
             .map(|(r, b)| {
                 let scale = strengths.defringe.clamp(0.0, 1.0) as f32;
                 (r * scale, b * scale)
@@ -1531,7 +1618,7 @@ fn finish_in_strips<T: Sample>(
         false => (0.0, 0.0),
     };
 
-    filter_in_strips(frame, width, height, strengths, interior, sigma, defocus);
+    filter_in_strips(frame, width, height, strengths, interior, sigma, defocus, coding);
 }
 
 /// `finish`, against measurements the caller already has.
@@ -1550,16 +1637,30 @@ pub fn finish_with<T: Sample>(
     sigma: f32,
     defocus: (f32, f32),
 ) {
+    finish_with_coded(frame, width, height, strengths, sigma, defocus, Perceptual::of::<T>());
+}
+
+/// [`finish_with`] over a buffer that is not already in a perceptual coding.
+pub fn finish_with_coded<T: Sample, C: Coding>(
+    frame: &mut [T],
+    width: usize,
+    height: usize,
+    strengths: Strengths,
+    sigma: f32,
+    defocus: (f32, f32),
+    coding: C,
+) {
     if !strengths.does_anything() || width < 3 || height < 3 || frame.len() < width * height * 3 {
         return;
     }
     let frame = &mut frame[..width * height * 3];
     let interior = strip_interior(width, strengths.halo()).max(strengths.halo()).max(1);
-    filter_in_strips(frame, width, height, strengths, interior, sigma, defocus);
+    filter_in_strips(frame, width, height, strengths, interior, sigma, defocus, coding);
 }
 
 /// The strip loop itself, once the two whole-frame measurements are settled.
-fn filter_in_strips<T: Sample>(
+#[allow(clippy::too_many_arguments)]
+fn filter_in_strips<T: Sample, C: Coding>(
     frame: &mut [T],
     width: usize,
     height: usize,
@@ -1567,6 +1668,7 @@ fn filter_in_strips<T: Sample>(
     interior: usize,
     sigma: f32,
     defocus: (f32, f32),
+    coding: C,
 ) {
     let radii = Radii::for_strength(strengths.chroma);
     let halo = strengths.halo();
@@ -1582,25 +1684,28 @@ fn filter_in_strips<T: Sample>(
         let bottom = (end + halo).min(height);
         let rows = bottom - top;
 
-        let (mut plane, mut red, mut blue) = deinterleave(frame, &carry, width, top, start, bottom);
+        let (mut plane, mut red, mut blue) =
+            deinterleave(frame, &carry, width, top, start, bottom, coding);
         finish_strip(&mut plane, &mut red, &mut blue, width, rows, &radii, sigma, defocus, &strengths);
 
         // Before the write, since the write is what destroys them.
         carry = keep_back(frame, width, end.saturating_sub(halo), end);
-        recombine(frame, &plane, &red, &blue, width, top, start, end);
+        recombine(frame, &plane, &red, &blue, width, top, start, end, coding);
         start = end;
     }
 }
 
 /// The three planes for one strip, in 0..1, with rows above `start` taken from `carry`
 /// where a previous strip has already overwritten them.
-fn deinterleave<T: Sample>(
+#[allow(clippy::too_many_arguments)]
+fn deinterleave<T: Sample, C: Coding>(
     frame: &[T],
     carry: &[T],
     width: usize,
     top: usize,
     start: usize,
     bottom: usize,
+    coding: C,
 ) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
     let rows = bottom - top;
     let mut luma: Vec<f32> = vec![0.0; width * rows];
@@ -1620,10 +1725,11 @@ fn deinterleave<T: Sample>(
                     true => &carry[((y - (start - carried)) * width + x) * 3..],
                     false => &frame[(y * width + x) * 3..],
                 };
-                let l = luma_of(p);
+                let c = coded(p, coding);
+                let l = luma_of(c);
                 luma_row[x] = l;
-                red_row[x] = p[0].to_f32() / T::FULL - l;
-                blue_row[x] = p[2].to_f32() / T::FULL - l;
+                red_row[x] = c[0] - l;
+                blue_row[x] = c[2] - l;
             }
         });
     (luma, red, blue)
@@ -1636,7 +1742,8 @@ fn keep_back<T: Sample>(frame: &[T], width: usize, from: usize, to: usize) -> Ve
 }
 
 /// Writes rows `[start, end)` of a processed strip back into the frame.
-fn recombine<T: Sample>(
+#[allow(clippy::too_many_arguments)]
+fn recombine<T: Sample, C: Coding>(
     frame: &mut [T],
     luma: &[f32],
     red: &[f32],
@@ -1645,6 +1752,7 @@ fn recombine<T: Sample>(
     top: usize,
     start: usize,
     end: usize,
+    coding: C,
 ) {
     frame[start * width * 3..end * width * 3]
         .par_chunks_mut(width * 3)
@@ -1656,9 +1764,9 @@ fn recombine<T: Sample>(
                 // Solving the luma equation for green with the other two differences
                 // known is what makes the recombination exactly luma-preserving.
                 let dg = -(LUMA[0] * dr + LUMA[2] * db) / LUMA[1];
-                out[x * 3] = T::from_f32((l + dr) * T::FULL);
-                out[x * 3 + 1] = T::from_f32((l + dg) * T::FULL);
-                out[x * 3 + 2] = T::from_f32((l + db) * T::FULL);
+                out[x * 3] = T::from_f32(coding.from_filter(l + dr));
+                out[x * 3 + 1] = T::from_f32(coding.from_filter(l + dg));
+                out[x * 3 + 2] = T::from_f32(coding.from_filter(l + db));
             }
         });
 }
@@ -1667,7 +1775,13 @@ fn recombine<T: Sample>(
 /// than one per frame.
 ///
 /// The histogram is the whole state carried between strips, and it is 4kB.
-fn measure_noise<T: Sample>(frame: &[T], width: usize, height: usize, interior: usize) -> f32 {
+fn measure_noise<T: Sample, C: Coding>(
+    frame: &[T],
+    width: usize,
+    height: usize,
+    interior: usize,
+    coding: C,
+) -> f32 {
     let mut bins = vec![0u32; NOISE_BINS];
     let mut start = 0;
     while start < height {
@@ -1679,7 +1793,7 @@ fn measure_noise<T: Sample>(frame: &[T], width: usize, height: usize, interior: 
         let mut luma: Vec<f32> = vec![0.0; width * rows];
         luma.par_chunks_mut(width).enumerate().for_each(|(row, out)| {
             for x in 0..width {
-                out[x] = luma_of(&frame[((top + row) * width + x) * 3..]);
+                out[x] = luma_of(coded(&frame[((top + row) * width + x) * 3..], coding));
             }
         });
         let smooth = box_mean(&luma, width, rows, 1);
@@ -1819,15 +1933,29 @@ fn channel_sigmas<T: Sample>(frame: &[T], width: usize, height: usize) -> [f64; 
 ///
 /// None where the frame offers too little curvature to read, or where what it reads is not
 /// a focus difference.
+/// [`measure_defocus_coded`] for a buffer already in a perceptual coding.
+///
+/// Gated because the filters themselves always name a coding now: what is left reaching this
+/// is the defringe sweep's report and the tests, neither of which a shell links.
+#[cfg(any(test, feature = "renditions"))]
 pub(crate) fn measure_defocus<T: Sample>(
     frame: &[T],
     width: usize,
     height: usize,
 ) -> Option<(f32, f32)> {
+    measure_defocus_coded(frame, width, height, Perceptual::of::<T>())
+}
+
+pub(crate) fn measure_defocus_coded<T: Sample, C: Coding>(
+    frame: &[T],
+    width: usize,
+    height: usize,
+    coding: C,
+) -> Option<(f32, f32)> {
     if width < 3 || height < 3 {
         return None;
     }
-    let luma_at = |x: usize, y: usize| -> f32 { luma_of(&frame[(y * width + x) * 3..]) };
+    let luma_at = |x: usize, y: usize| -> f32 { luma_of(coded(&frame[(y * width + x) * 3..], coding)) };
     let (cx, cy) = (width as f64 / 2.0, height as f64 / 2.0);
     let half_squared = cx * cx + cy * cy;
 
@@ -1845,12 +1973,12 @@ pub(crate) fn measure_defocus<T: Sample>(
                 let curvature =
                     luma_at(x - 1, y) + luma_at(x + 1, y) + luma_at(x, y - 1) + luma_at(x, y + 1)
                         - 4.0 * here;
-                let p = &frame[(y * width + x) * 3..];
+                let c = coded(&frame[(y * width + x) * 3..], coding);
                 // Against luma rather than against green, because these are the planes the
                 // correction is applied to (`deinterleave`). Both are linear in `R - G`, so
                 // the model holds either way.
-                let red = p[0].to_f32() / T::FULL - here;
-                let blue = p[2].to_f32() / T::FULL - here;
+                let red = c[0] - here;
+                let blue = c[2] - here;
                 let dx = x as f64 - cx;
                 // Uniform in r^2, which is both the natural axis for the split below and one
                 // multiply cheaper than a radius.
@@ -2029,9 +2157,9 @@ impl Strengths {
     /// What runs on the frame before the camera match is fitted against it.
     ///
     /// Everything but the sharpen, which is a deconvolution of the *resample's* blur and
-    /// so has to wait until after the warp that does the resampling (`job::render_base`).
-    /// A fit calibrated against a sharpened render is calibrated against a frame that
-    /// will not exist by the time the transform is applied.
+    /// so has to wait until after the warp that does the resampling
+    /// (`hdr::filter_scene_linear`). A fit calibrated against a sharpened render is
+    /// calibrated against a frame that will not exist by the time the transform is applied.
     pub fn before_the_fit(self) -> Strengths {
         Strengths {
             sharpen: 0.0,
@@ -2746,7 +2874,7 @@ mod tests {
         let source = busy(width, height);
         let run = |interior: usize| {
             let mut frame = source.clone();
-            finish_in_strips(&mut frame, width, height, EVERY_STAGE, interior);
+            finish_in_strips(&mut frame, width, height, EVERY_STAGE, interior, Perceptual::of::<u16>());
             frame
         };
         // Compared against the halo they are widened *to*, which makes this exact: every
@@ -2775,7 +2903,7 @@ mod tests {
 
         let run = |rows: usize| {
             let mut frame = source.clone();
-            finish_in_strips(&mut frame, width, height, EVERY_STAGE, rows);
+            finish_in_strips(&mut frame, width, height, EVERY_STAGE, rows, Perceptual::of::<u16>());
             frame
         };
         let whole = run(height);
@@ -3103,7 +3231,7 @@ mod tests {
             })
         });
 
-        let (luma, red, blue) = deinterleave(&frame, &[], w, 0, 0, h);
+        let (luma, red, blue) = deinterleave(&frame, &[], w, 0, 0, h, Perceptual::of::<u16>());
         time("laplacian", 5, {
             let luma = luma.clone();
             Box::new(move || {
@@ -3163,7 +3291,7 @@ mod tests {
 
         let mut frame = busy(w, h);
         let start = std::time::Instant::now();
-        finish_in_strips(&mut frame, w, h, strengths, interior);
+        finish_in_strips(&mut frame, w, h, strengths, interior, Perceptual::of::<u16>());
         let elapsed = start.elapsed().as_secs_f64() * 1000.0;
 
         let peak = std::fs::read_to_string("/proc/self/status")

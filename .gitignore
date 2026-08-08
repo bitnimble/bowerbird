@@ -152,6 +152,7 @@ bowerbird.db.*
 /backups/
 
 # Playwright / E2E
+test-results/
 web/test-results/
 web/playwright-report/
 .playwright-mcp/

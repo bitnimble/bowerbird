@@ -9,7 +9,7 @@ import { DEFAULT_SETTINGS, type Settings } from '../../src/schemas/settings';
 import { ProcessingService } from '../../src/services/processing/processing_service';
 import type { SettingsRepository } from '../../src/services/settings/settings_repository';
 import { readRawHeader } from '../../src/services/processing/raw_decoder';
-import { _for_testing_comparePsnr, _for_testing_decodeSummary } from '../../src/services/processing/rawshim_for_testing';
+import { _for_testing_decodeSummary, _for_testing_deltaEToPreview } from '../../src/services/processing/rawshim_for_testing';
 import { getDataPath, getRenditionPath } from '../../src/utils/paths';
 
 // The output path is the library's business now, so the test asks for it the
@@ -42,10 +42,14 @@ const FIXTURE = `${import.meta.dir}/../fixtures/DSC02981.ARW`;
 // service needs a repository even here, where the subject is the pixels.
 const stamps = { markTileBuilt: () => {}, markRenditionsBuilt: () => {} } as never;
 
+// Matching on, because the camera's own JPEG is the only oracle a render has. There is
+// one rendering pipeline now and SDR is its output stage, so an SDR rendition is a
+// scene-referred grade - diffuse white at the BT.2408 anchor, highlights rolled off by
+// BT.2390 - rather than LibRaw's 8-bit output with its own auto-brightness. Held against
+// a plain `decodeRaw` the two differ by a whole tone curve, which says nothing about
+// whether the pixels are right.
 function service(): ProcessingService {
-  // Matching off: the assertion below is against a plain `decodeRaw`, and the
-  // camera's own colour treatment is exactly what would make the two differ.
-  const settings: Settings = { ...DEFAULT_SETTINGS, processing_concurrency: 1, match_embedded_jpeg: false };
+  const settings: Settings = { ...DEFAULT_SETTINGS, processing_concurrency: 1, match_embedded_jpeg: true };
   return new ProcessingService(stamps, { get: () => settings } as SettingsRepository);
 }
 
@@ -86,11 +90,12 @@ test('the SDR render the service produces decodes back to the image that went in
     // the comparison is made where both images already are, and what comes back is
     // the number this was going to reduce them to.
     const expected = _for_testing_decodeSummary(FIXTURE, { depth: 8 });
-    const written = _for_testing_comparePsnr(output, FIXTURE);
+    const against = _for_testing_deltaEToPreview([output], FIXTURE);
     // Full resolution: this is the view that gets pixel-peeped, so unlike every
     // other rendition it is never fitted to a maximum edge.
-    expect(written.width).toBe(expected.width);
-    expect(written.height).toBe(expected.height);
+    const [width, height] = against.sizes[0]!;
+    expect(width).toBe(expected.width);
+    expect(height).toBe(expected.height);
     // Comfortably inside the size budget the quality was chosen against.
     expect(statSync(output).size).toBeLessThan(20_000_000);
 
@@ -104,11 +109,12 @@ test('the SDR render the service produces decodes back to the image that went in
     ]);
     expect(probe.stdout.toString()).toContain('pix_fmt=yuv420p');
 
-    // Sensor noise is what a lossy encoder discards first, so PSNR runs low on
-    // RAW-derived pixels even when the result is perceptually identical. The
-    // bound is set to catch a wrong-pixels bug, which lands far below this.
-    expect(written.psnr).not.toBeNull();
-    expect(written.psnr!).toBeGreaterThan(30);
+    // Against the camera's own JPEG, which is what the fit is trying to reproduce
+    // (DESIGN 10.8.1) and the only claim about these pixels that survives the grade.
+    // Measured at 1.02 on this fixture and 2.12 on the Canon one; the same render with
+    // the match declined lands at 31, and garbage is an order past that - so the bound
+    // catches a wrong-pixels bug and a match that never reached the encoder both.
+    expect(against.meanDeltaE[0]!).toBeLessThan(4);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

@@ -27,6 +27,32 @@ const R2020_TO_P3 = mat3x3f(
   vec3f(-0.061397, -0.010491,  1.016761),
 );
 
+// `tick.output`'s values. Named here so the host and the shader cannot disagree by a
+// literal, in the pattern `PEAK_BINS` and its neighbours use.
+//
+// `ROLLED` stops where the CPU's grade stopped: the frame after the roll-off and before
+// any transfer, which is what every rendition path already passes around and encodes for
+// itself. It exists so the grade can move here without moving the two encoders with it -
+// the transfers above are the same arithmetic either way, and fusing them is an
+// optimisation to take later rather than a prerequisite.
+const OUTPUT_PQ: u32 = 0u;
+const OUTPUT_SRGB: u32 = 1u;
+const OUTPUT_ROLLED: u32 = 2u;
+
+// Rec.2020 to sRGB, for an SDR *rendition* rather than for the canvas. The draw targets
+// P3 because that is what a display is; a file targets sRGB because that is what everything
+// reads it as. `hdr_fit::rec2020_to_srgb` derives the same matrix at runtime and
+// `the_srgb_primaries_match_the_host` pins these against it, in the pattern the rest of the
+// shared constants use - written out here so the file stays valid WGSL on its own.
+//
+// Column-major, as `mat3x3f` takes it: each `vec3f` is a column, so this transposes the
+// row-major form the Rust side holds.
+const R2020_TO_SRGB = mat3x3f(
+  vec3f(  1.663467,  -0.125523,  -0.018099),
+  vec3f( -0.587548,   1.132926,  -0.100603),
+  vec3f( -0.072838,  -0.008350,   1.118998),
+);
+
 fn display_nits(level: vec3f) -> vec3f {
   return min(max(rolled_off(level), vec3f(0.0)), vec3f(tick.peak));
 }
@@ -135,15 +161,33 @@ fn covered(pos: vec2f) -> vec3f {
 fn encode(@builtin(global_invocation_id) id: vec3u) {
   if (!in_frame(id)) { return; }
   let nits = display_nits(level_at(id.x, id.y));
-  // Through the `u16` the CPU writes between the grade and the PQ. Not incidental: its PQ
-  // stage is a 65536-entry table keyed by that integer, so a frame that skipped the
-  // quantisation would not be the frame the fixture pins.
+  // Through the `u16` the CPU writes between the grade and the transfer. Not incidental:
+  // both of its output stages read that integer - the PQ one as a 65536-entry table keyed
+  // by it, the sRGB one as the value it takes the primaries of - so a frame that skipped
+  // the quantisation would not be the frame the fixture pins.
   let quantised = round(min(nits / tick.peak, vec3f(1.0)) * 65535.0) / 65535.0;
-  let coded = round(vec3f(
-    pq(quantised.r * tick.peak),
-    pq(quantised.g * tick.peak),
-    pq(quantised.b * tick.peak),
-  ) * 65535.0);
+
+  var coded: vec3f;
+  if (tick.output == OUTPUT_ROLLED) {
+    coded = quantised * 65535.0;
+  } else if (tick.output == OUTPUT_SRGB) {
+    // `tone::encode_srgb8`: the primaries first, in the normalised graded domain, then the
+    // transfer at 8 bits. Clamped rather than sign-carried - `transfer` keeps the sign for
+    // the *draw*, where an out-of-P3 component is better seen than folded, but a file has
+    // nowhere to put a negative.
+    let linear = R2020_TO_SRGB * quantised;
+    coded = round(vec3f(
+      transfer(clamp(linear.r, 0.0, 1.0)),
+      transfer(clamp(linear.g, 0.0, 1.0)),
+      transfer(clamp(linear.b, 0.0, 1.0)),
+    ) * 255.0);
+  } else {
+    coded = round(vec3f(
+      pq(quantised.r * tick.peak),
+      pq(quantised.g * tick.peak),
+      pq(quantised.b * tick.peak),
+    ) * 65535.0);
+  }
 
   let base = at(id.x, id.y) * 3u;
   counts[base] = u32(coded.r);

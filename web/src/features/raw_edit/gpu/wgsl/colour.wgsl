@@ -1,8 +1,8 @@
 // Scene-linear `u16` RGB to display-referred nits.
 //
-// `hdr::grade_prepared`, as a function rather than a pass: the CPU keeps its stages apart
-// because each is a loop over 30M samples, where here the pixel is already in a register
-// when the next stage wants it.
+// The whole grade as a function rather than a pass. The CPU implementation this replaced
+// kept its stages apart because each was a loop over 30M samples, where here the pixel is
+// already in a register when the next stage wants it.
 //
 // The neutral and matched arms are both here rather than specialised into two pipelines,
 // because a frame whose fit declined and one whose fit landed differ by a branch on a
@@ -33,6 +33,15 @@
 @group(0) @binding(3) var chroma: texture_3d<f32>;
 @group(0) @binding(4) var<storage, read> matrix: array<f32>;
 @group(0) @binding(7) var lerp: sampler;
+// The lattice's fifth value, in its own volume. Four is one `rgba16float` texel and five
+// is not, and the alternatives to a second texture all cost the hardware trilinear: packing
+// two nodes per texel breaks filtering on whichever axis is doubled, and widening the
+// volume means interpolating in the shader. `r16float` filters everywhere `rgba16float`
+// does, so this is one more fetch and nothing else.
+@group(0) @binding(10) var chroma_luma: texture_3d<f32>;
+// The ninth value, in a volume of its own. Eight fill two `rgba16float` texels exactly, so
+// the chroma-to-lightness pair costs one more fetch and three spare slots per node.
+@group(0) @binding(11) var chroma_tint: texture_3d<f32>;
 
 /// One `u16` of the stream, which is half of a word. Three samples to a pixel means no
 /// pixel is word-aligned, so there is no reading one as a struct.
@@ -101,15 +110,42 @@ fn axis(value: f32, nodes: u32, low: f32, scale: f32) -> f32 {
   return (t + 0.5) / f32(nodes);
 }
 
-/// `ChromaMap::correct`, trilinear over the same eight corners - in one fetch, since a
-/// 2x2 per node is four components and a node lattice is a volume.
-fn correct(level: f32, d0: f32, d2: f32) -> vec2f {
-  let cell = textureSampleLevel(chroma, lerp, vec3f(
+/// `ChromaMap::correct`, trilinear over the same eight corners: the corrected chroma
+/// pair, then the gain on the level it was read at.
+///
+/// Two fetches at the same coordinate, one per volume, so both halves of a node are
+/// blended over the same eight corners with the same weights - which is what keeps this
+/// equal to the CPU's single interpolation rather than merely close to it.
+fn correct(level: f32, d0: f32, d2: f32) -> vec3f {
+  let at = vec3f(
+    // A span per axis. Red-green and blue-yellow are not distributed alike in a frame, and
+    // one span for both leaves the narrower axis' outer nodes permanently empty.
     axis(d0, tick.chroma_count, tick.chroma_low, tick.chroma_scale),
-    axis(d2, tick.chroma_count, tick.chroma_low, tick.chroma_scale),
+    axis(d2, tick.chroma_count, tick.chroma_low_by, tick.chroma_scale_by),
     axis(sqrt(max(level, 0.0)), tick.level_count, 0.0, tick.level_scale),
-  ), 0.0);
-  return vec2f(cell.x * d0 + cell.y * d2, cell.z * d0 + cell.w * d2);
+  );
+  let cell = textureSampleLevel(chroma, lerp, at, 0.0);
+  // The volume holds the gain's *deviation* from 1, and the 1 is added here. Half floats
+  // carry a fixed relative precision, so storing 1.02 spends it all on the 1 and leaves
+  // 2^-11 of full scale on the part that matters; storing 0.02 spends it on the 0.02.
+  // It is worth 16x here, and it has to be: the 2x2 above multiplies chroma differences,
+  // which are small, where this multiplies luma itself. Stored as a gain the parity
+  // fixtures miss by 1.33 against a bound of 0.5, all of it f16.
+  // `.r` and `.g` are the luma-to-chroma pair and carry `level`, which is what lets a node
+  // move a colour that arrived with no chroma at all - the only part of this that acts on a
+  // neutral, and so the only part that can express a cast. They need no deviation trick:
+  // zero already means no tint.
+  let rest = textureSampleLevel(chroma_luma, lerp, at, 0.0);
+  let tint = textureSampleLevel(chroma_tint, lerp, at, 0.0);
+  // The third component is the corrected lightness outright, not a gain: it depends on
+  // chroma as well as level, so there is no single factor to multiply by. That is what lets
+  // a small saturated object take a different lightness correction from the surroundings it
+  // shares a node with, where one gain per node could only give them the average.
+  return vec3f(
+    cell.x * d0 + cell.y * d2 + rest.r * level,
+    cell.z * d0 + cell.w * d2 + rest.g * level,
+    (1.0 + rest.b) * level + rest.a * d0 + tint.r * d2,
+  );
 }
 
 /// `hdr_fit::finish_chroma`, given a colour the matrix has already been through.
@@ -123,7 +159,12 @@ fn finish_chroma(m: vec3f) -> vec3f {
   // The middle channel is not free: LUMA . d is zero by construction, so the two
   // coordinates carried through the map determine the third.
   let dg = -(LUMA.r * d.x + LUMA.b * d.y) / LUMA.g;
-  return vec3f(l + d.x, l + dg, l + d.y);
+  // The map is read at the level the colour arrived with, so the lookup cannot depend on
+  // its own output. `d.z` is the corrected lightness outright rather than a gain on `l`,
+  // and is floored at zero: a chroma term large enough to go negative is a node the fit had
+  // no business trusting, and black is the honest answer there rather than a wrapped colour.
+  let lit = max(d.z, 0.0);
+  return vec3f(lit + d.x, lit + dg, lit + d.y);
 }
 
 fn apply_matrix(t: vec3f) -> vec3f {

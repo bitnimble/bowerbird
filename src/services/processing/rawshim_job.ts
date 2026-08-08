@@ -18,9 +18,20 @@ export interface JobGrade {
   whiteQuantile: number;
 }
 
+/**
+ * Where a rendition's highlights roll into, and what codes the result.
+ *
+ * The only thing a rendition's dynamic range reaches inside the pipeline: everything
+ * upstream is one 16-bit scene-linear render, and this picks the peak the BT.2390 roll-off
+ * targets and the transfer and depth of the buffer that leaves. A job is therefore one
+ * render with a list of outputs, which is what lets several renditions of a photo share
+ * the decode, the fit, the filter and the colour transform (§10.3).
+ */
+export type JobOutput = 'pq' | 'srgb';
+
 export interface JobTarget {
   rendition: Rendition;
-  hdr: boolean;
+  output: JobOutput;
   outputPath: string;
   /** Longest edge, or 0 for native resolution. */
   size: number;

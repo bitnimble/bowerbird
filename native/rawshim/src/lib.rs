@@ -62,6 +62,7 @@ pub mod edit;
 pub mod ffi;
 pub mod fit;
 pub mod frame;
+pub mod gpu;
 pub mod hdr;
 pub mod hdr_args;
 pub mod hdr_fit;

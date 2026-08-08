@@ -16,7 +16,7 @@
 use crate::hdr_args::{self, EncodeOptions};
 use crate::hdr_fit::{self, HdrMatch};
 use crate::image;
-use crate::tone::{self, GradeOptions};
+use crate::tone;
 use serde::{Deserialize, Serialize};
 // The `avifenc` fallback's, which only a rendition build has.
 #[cfg(feature = "renditions")]
@@ -48,48 +48,52 @@ pub struct Source<'a> {
     pub height: usize,
 }
 
-/// The decode an encode reads, either borrowed or handed over outright.
+/// Denoises and defringes scene-linear samples in place, in the perceptual domain.
 ///
-/// This is what replaced a `release_source` flag on the old boundary. The problem it
-/// existed for is real - the decode is 366MB at 61MP and holding it across the
-/// encode, the longest stage of the job, is the peak - but the flag solved it by
-/// freeing a buffer the caller still held a pointer to, and could only be made safe
-/// by nulling that pointer and re-checking it at every accessor.
+/// **In PQ against the scene's own diffuse white, not in linear and not in the grade's
+/// output.** Linear is the wrong domain and `image.rs` says why: a difference taken there is
+/// proportional to absolute luminance, so a filter calibrated on the bright end of a frame
+/// reads the whole shadow region as flat. Measured, it flattens shadow texture by a factor of
+/// forty. But the filter never needed the *grade's* output either - it needed a perceptual
+/// domain, and PQ against a fixed anchor is one that has nothing to do with the exposure.
 ///
-/// Owning it says the same thing to the compiler. `Owned` is dropped the moment the
-/// grade has copied out, and anything that tried to read it afterwards would not
-/// build. `Borrowed` is for a caller with another rendition still to write off the
-/// same frame; it keeps its decode and pays for it.
-pub enum Decode<'a> {
-    /// For a caller with another rendition still to write off the same frame. It
-    /// keeps its decode and pays for it.
-    Borrowed(Source<'a>),
-    /// For the last reader. Dropped once the grade has copied out, which is what
-    /// hands 366MB back before the encode allocates anything.
-    Owned(crate::frame::Frame),
-}
-
-impl Decode<'_> {
-    #[cfg(feature = "renditions")]
-    fn source(&self) -> Result<Source<'_>, String> {
-        match self {
-            Decode::Borrowed(source) => Ok(Source {
-                samples: source.samples,
-                width: source.width,
-                height: source.height,
-            }),
-            Decode::Owned(frame) => {
-                let samples = frame
-                    .samples16()
-                    .ok_or("the HDR encode needs a 16-bit decode")?;
-                Ok(Source {
-                    samples,
-                    width: frame.width,
-                    height: frame.height,
-                })
-            }
-        }
+/// **Ahead of the geometric warp, which is what the sharpen is not.** Noise is generated at
+/// the sensor and so is spatially uniform in sensor space; the lens warp resamples
+/// non-uniformly by radius and breaks that, and `image::measure_noise` takes one global
+/// median and applies one sigma everywhere - an estimator for a uniform field. Measured on a
+/// synthetic flat field, the warp alone takes corner-to-centre noise from 1.00x to 0.76x;
+/// denoising after it compounds that to 0.59x, where denoising first adds nothing to the
+/// warp's own 0.75x and removes ~35% more noise besides.
+///
+/// Which stages run is the caller's, and the split is always the same one: everything but
+/// the sharpen ahead of the warp, and the sharpen after it. A rendition takes the second half
+/// on the coded frame its renditions share (`Cut::sharpen`), where nothing has to convert;
+/// the editor comes back here for it, because what it hands the shader is scene-linear.
+///
+/// **The transfer rides on the filter's own reads and writes** rather than converting the
+/// frame and converting it back. Done as its own pass this cost a whole second frame in f32 -
+/// 722MB at 61MP, on top of the 361MB decode - which is what `processing_concurrency`
+/// multiplies. `image::Coding` puts it inside `deinterleave` and `recombine`, so the buffer
+/// never exists and the per-sample count is unchanged.
+pub fn filter_scene_linear(
+    samples: &mut [u16],
+    width: usize,
+    height: usize,
+    white: f64,
+    reference_white_nits: f64,
+    strengths: image::Strengths,
+) {
+    if !strengths.does_anything() {
+        return;
     }
+    let (forward, scale) = tone::ScenePq::table(white, reference_white_nits);
+    image::finish_coded(
+        samples,
+        width,
+        height,
+        strengths,
+        tone::ScenePq::new(&forward, scale),
+    );
 }
 
 /// Fits the camera's colour for the HDR grade, reusing geometry the SDR fit resolved.
@@ -220,41 +224,6 @@ pub struct Prepared {
     pub levels: tone::Levels,
 }
 
-impl Prepared {
-    /// A smaller copy carrying the same levels, for the frames a drag throws away.
-    ///
-    /// Resolution is the disposable part while the slider moves; tone and colour are
-    /// not, so this grades through the identical curve at fewer pixels rather than
-    /// approximating it at more.
-    pub fn shrunk_to(&self, long_edge: usize) -> Prepared {
-        let longest = self.width.max(self.height);
-        if longest <= long_edge {
-            return Prepared {
-                samples: self.samples.clone(),
-                width: self.width,
-                height: self.height,
-                levels: self.levels,
-            };
-        }
-        let scaled = |dimension: usize| {
-            let value = dimension as u64 * long_edge as u64 / longest as u64;
-            usize::try_from(value)
-                .expect("a preview dimension must fit the address space")
-                .max(1)
-        };
-        let (width, height) = (scaled(self.width), scaled(self.height));
-        let samples =
-            image::box_resize_u16(&self.samples, self.width, self.height, width, height)
-                .expect("an interactive frame only shrinks");
-        Prepared {
-            samples,
-            width,
-            height,
-            levels: self.levels,
-        }
-    }
-}
-
 /// Everything a grade needs that the exposure does not change.
 ///
 /// `fit_to` is the size to resample to, or `None` for a decode that already arrived at
@@ -268,8 +237,19 @@ pub fn prepare(source: &Source<'_>, fit_to: Option<(usize, usize)>, grade: &Grad
     // Measured wherever the decode happens to be, which is safe now that both ends are
     // quantiles over a fixed sample count: the anchor no longer moves with the frame's
     // resolution, so the decode is free to arrive already fitted (`copy_processed`).
-    let levels = tone::levels(source.samples, grade.white_quantile);
+    prepare_with(source, fit_to, tone::levels(source.samples, grade.white_quantile))
+}
 
+/// [`prepare`] against levels the caller has already read.
+///
+/// The levels are the photo's, not the target's: `tone::levels` reads the *unresized* decode
+/// and a job cutting several sizes off one photo would otherwise measure the same frame once
+/// per rendition for the same answer.
+pub fn prepare_with(
+    source: &Source<'_>,
+    fit_to: Option<(usize, usize)>,
+    levels: tone::Levels,
+) -> Prepared {
     // Fit before grading, not after. zscale would have done the same resize in the
     // same linear light, but only once the whole frame had been graded - so a 61MP
     // decode was tone-mapped in full to produce a 3840px rendition and 15/16 of that
@@ -304,83 +284,161 @@ pub fn graded(
     options: &EncodeOptions,
     matched: Option<&HdrMatch>,
 ) -> (Vec<u16>, usize, usize) {
-    let size = hdr_args::target_size(source.width as u32, source.height as u32, options);
-    let mut prepared = prepare(
-        source,
-        Some((size.width as usize, size.height as usize)),
-        &options.grade,
+    let levels = tone::levels(source.samples, options.grade.white_quantile);
+    let scene = tone::SceneGrade::new(
+        source.samples,
+        matched.map(|m| &m.colour),
+        levels,
+        options.grade.reference_white_nits,
+        1.0,
     );
-    // Lens owned by the grade: peak the unwarped source, then gather+colour in one sweep.
-    let lens = matched.and_then(|m| {
+    let size = hdr_args::target_size(source.width as u32, source.height as u32, options);
+    graded_with(source, levels, scene.as_ref(), matched.map(|m| &m.lens), size, options.grade.peak_nits)
+}
+
+/// One photo's renditions, carried to the point where only the display still differs.
+///
+/// Nits per channel: the fit-to-size, the warp, the camera's colour transform and the
+/// sharpen have all run, and none of them knows or cares what peak a rendition targets. What
+/// is left is the roll-off, the transfer and the encode.
+///
+/// This is the whole reason a job can name several outputs cheaply. The colour transform is
+/// resolution-independent - it is a per-pixel lookup - so a smaller rendition is a
+/// [`Cut::downscale`] of a larger one's frame rather than its own resize, its own warp table
+/// and its own sweep. That is not free: the transform is non-linear, so `mean(f(x))` is not
+/// `f(mean(x))` and grading then downscaling is not the same picture as downscaling then
+/// grading. It is close - `fixture_tests` pins the two within mean deltaE76 1.0 - and the
+/// smaller cut is a grid tile, where the difference is not what anyone is looking at.
+pub struct Cut {
+    /// PQ of the scene-referred nits, as `u16` codes. Coded rather than linear so the sharpen
+    /// reads it in the domain it filters in, and `u16` rather than `f16` because PQ is
+    /// already 0..1 and a float's exponent earns nothing there (`tone::pq_of_f16`). Nothing
+    /// on this path evaluates a transfer per sample.
+    pub signal: Vec<u16>,
+    pub width: usize,
+    pub height: usize,
+}
+
+impl Cut {
+    /// The largest rendition's frame, off the shared base.
+    ///
+    /// Where the base is already at `size` nothing is copied: the resize is skipped and the
+    /// colour sweep reads the base where it lies. That matters at native resolution, where a
+    /// copy is 361MB on a 61MP frame.
+    pub fn from_base(
+        source: &Source<'_>,
+        scene: &tone::SceneGrade<'_>,
+        lens: Option<&crate::fit::Lens>,
+        size: hdr_args::Size,
+    ) -> Cut {
+        let (width, height) = (size.width as usize, size.height as usize);
+        let fitted = image::box_resize_u16(source.samples, source.width, source.height, width, height);
+        let (frame, width, height) = match fitted.as_deref() {
+            Some(fitted) => (fitted, width, height),
+            None => (source.samples, source.width, source.height),
+        };
+        let warp = lens.and_then(|lens| {
+            image::PlanarWarp::for_lens(width, height, width, height, lens, image::Sampling::Bicubic)
+        });
+        Cut { signal: scene.to_signal(frame, warp.as_ref()), width, height }
+    }
+
+    /// The sharpen, once, on the frame every rendition is cut from.
+    ///
+    /// The frame is already PQ, so nothing converts - and PQ being *absolute*, that coding
+    /// says nothing about which display the frame is bound for, which is what lets one
+    /// sharpen serve every rendition.
+    pub fn sharpen(&mut self, amount: f64) {
+        image::finish(
+            &mut self.signal,
+            self.width,
+            self.height,
+            image::Strengths { sharpen: amount, ..Default::default() },
+        );
+    }
+
+    /// A smaller rendition's frame, averaged out of this one.
+    ///
+    /// In PQ rather than in linear light, that being what the frame is stored in. The
+    /// physical argument for a linear average - it is what a larger sensor pixel would have
+    /// integrated - belongs to the resize ahead of the grade (`hdr::prepare`), which is
+    /// still linear. This one averages an already-rendered picture, where a perceptual
+    /// domain is the ordinary choice.
+    ///
+    /// Measured against averaging the same frame in linear nits, on the 800px tile of a
+    /// grid+full job: mean 0.39 counts of 255, worst 13, and 4.7% of samples differing by
+    /// more than one - concentrated on high-contrast edges, which is where the two domains
+    /// disagree at all. Indistinguishable side by side at tile size.
+    pub fn downscale(&self, size: hdr_args::Size) -> Cut {
+        let (width, height) = (size.width as usize, size.height as usize);
+        match image::box_resize_u16(&self.signal, self.width, self.height, width, height) {
+            Some(signal) => Cut { signal, width, height },
+            None => Cut { signal: self.signal.clone(), width: self.width, height: self.height },
+        }
+    }
+}
+
+/// One rendition's display-referred pixels, off a base the caller shares across targets.
+///
+/// The size and the display peak are the only things a rendition brings: the levels and the
+/// whole colour transform belong to the photo and arrive settled. `scene` at None is a frame
+/// with no exposure to read, which grades to itself and ships as it arrived.
+///
+/// Lens owned by the grade: the scene peak was taken off the unwarped base, then the gather
+/// and the colour share one sweep.
+pub fn graded_with(
+    source: &Source<'_>,
+    levels: tone::Levels,
+    scene: Option<&tone::SceneGrade<'_>>,
+    lens: Option<&crate::fit::Lens>,
+    size: hdr_args::Size,
+    peak_nits: f64,
+) -> (Vec<u16>, usize, usize) {
+    let mut prepared =
+        prepare_with(source, Some((size.width as usize, size.height as usize)), levels);
+    let warp = lens.and_then(|lens| {
         image::PlanarWarp::for_lens(
             prepared.width,
             prepared.height,
             prepared.width,
             prepared.height,
-            &m.lens,
+            lens,
             image::Sampling::Bicubic,
         )
     });
-    // A frame with no exposure to read grades to itself, and is left as it arrived.
-    grade_prepared_owned(
-        &mut prepared.samples,
-        &options.grade,
-        matched.map(|m| &m.colour),
-        lens.as_ref(),
-        prepared.levels,
-        1.0,
-    );
+    if let Some(scene) = scene {
+        // The gather and the grade were one sweep while the grade was per-pixel Rust. It
+        // runs on the GPU now, from the same WGSL the editor runs, so the warp is its own
+        // pass again - one gather over the frame against holding two implementations of
+        // the colour in agreement, which is the trade DESIGN 21.1 exists to make.
+        if let Some(lens) = warp.as_ref() {
+            let src = std::mem::take(&mut prepared.samples);
+            prepared.samples = lens.map_u16(&src, |r, g, b| [r, g, b]);
+        }
+        let gpu = crate::gpu::device().expect(
+            "no Vulkan adapter answered, not even a software one. The grade runs on the GPU \
+             so that the editor and a rendition cannot drift apart, and the CPU copy it \
+             used to fall back to is gone. Installing mesa's lavapipe ICD is enough - it is \
+             very slow and it works.",
+        );
+        prepared.samples = gpu.encode(
+            &prepared.samples,
+            &scene.gpu_grade(
+                prepared.width,
+                prepared.height,
+                peak_nits,
+                crate::gpu::Output::Rolled,
+            ),
+        );
+    }
     (prepared.samples, prepared.width, prepared.height)
 }
 
 /// `levels` are the frame's own, unexposed; `exposure` is the slider. Keeping them apart
-/// is what holds the colour still as it moves - see `tone::GradeOptions::exposure`.
+/// is what holds the colour still as it moves - see the `exposure` uniform in `tick.wgsl`.
 ///
 /// The frame must already be through the lens: the editor materialises that once into
-/// `Prepared`, and re-grades here on every slider tick. For a one-shot encode that still
-/// owns the unwarped buffer, use [`grade_prepared_owned`].
-pub fn grade_prepared(
-    frame: &mut [u16],
-    grade: &Grade,
-    colour: Option<&hdr_fit::HdrColour>,
-    levels: tone::Levels,
-    exposure: f64,
-) {
-    tone::grade(
-        frame,
-        &GradeOptions {
-            reference_white_nits: grade.reference_white_nits,
-            peak_nits: grade.peak_nits,
-            match_colour: colour,
-            lens: None,
-            levels,
-            exposure,
-        },
-    );
-}
-
-/// [`grade_prepared`] for a caller that owns the unwarped buffer and may gather through
-/// a lens - the source is replaced rather than copied over.
-pub fn grade_prepared_owned(
-    frame: &mut Vec<u16>,
-    grade: &Grade,
-    colour: Option<&hdr_fit::HdrColour>,
-    lens: Option<&image::PlanarWarp>,
-    levels: tone::Levels,
-    exposure: f64,
-) {
-    tone::grade_owned(
-        frame,
-        &GradeOptions {
-            reference_white_nits: grade.reference_white_nits,
-            peak_nits: grade.peak_nits,
-            match_colour: colour,
-            lens,
-            levels,
-            exposure,
-        },
-    );
-}
+/// `Prepared`, and re-grades here on every slider tick.
 
 /// The graded frame as the bytes a child process reads.
 ///
@@ -408,7 +466,7 @@ fn as_bytes(graded: &[u16]) -> &[u8] {
 /// any further condition added below would leave the test comparing one route with
 /// itself and passing.
 #[cfg(feature = "renditions")]
-fn encode_frame(
+pub fn encode_frame(
     frame: std::borrow::Cow<'_, [u16]>,
     width: usize,
     height: usize,
@@ -551,43 +609,83 @@ fn failure(command: &str, output: &std::process::Output) -> String {
     )
 }
 
-/// Grades and encodes one HDR rendition.
+/// The whole of one HDR still, from a scene-linear decode this takes ownership of.
 ///
-/// This used to write a second file beside it, a one-frame AV1 video for Firefox, and
-/// the two shared everything: the same resize, warp and tone map, then libaom at the
-/// same settings. So the twin was a re-encode of a bitstream the still already held. It
-/// is a rewrap of these very bytes now, done in the browser that needs it - no second
-/// encode, no second file, and nothing to leave stale when a setting changes.
+/// For a caller with one frame and one rendition to make of it - the debug commands and the
+/// pins. `job::run` does not go through here: it shares the decode, the levels, the camera
+/// match and the filter across every rendition of a photo, and calls the same three stages
+/// below with those already settled.
 ///
-/// Reports whether the still went out through `avifenc` rather than through libavif
-/// here, which is the only thing the differential between the two routes can assert on
-/// now that they produce the same bytes at 4:4:4.
+/// This used to write a second file beside it, a one-frame AV1 video for Firefox, and the
+/// two shared everything: the same resize, warp and tone map, then libaom at the same
+/// settings. So the twin was a re-encode of a bitstream the still already held. It is a
+/// rewrap of these very bytes now, done in the browser that needs it.
+///
+/// Reports whether the still went out through `avifenc` rather than through libavif here,
+/// which is the only thing the differential between the two routes can assert on now that
+/// they produce the same bytes at 4:4:4.
 #[cfg(feature = "renditions")]
 pub fn encode_still(
-    decode: Decode<'_>,
+    mut samples: Vec<u16>,
+    width: usize,
+    height: usize,
     options: &EncodeOptions,
     matched: Option<&HdrMatch>,
 ) -> Result<bool, String> {
-    let (mut frame, width, height) = {
-        let source = decode.source()?;
-        graded(&source, options, matched)
+    let levels = tone::levels(&samples, options.grade.white_quantile);
+    filter_scene_linear(
+        &mut samples,
+        width,
+        height,
+        levels.white,
+        options.grade.reference_white_nits,
+        options.strengths.before_the_fit(),
+    );
+    let scene = tone::SceneGrade::new(
+        &samples,
+        matched.map(|m| &m.colour),
+        levels,
+        options.grade.reference_white_nits,
+        1.0,
+    );
+    let size = hdr_args::target_size(width as u32, height as u32, options);
+    let Some(scene) = scene else {
+        // No exposure to read, so the grade declines and the frame ships as it arrived.
+        let source = Source { samples: &samples, width, height };
+        let (frame, width, height) =
+            graded_with(&source, levels, None, None, size, options.grade.peak_nits);
+        return encode_pq_frame(frame, width, height, options);
     };
 
-    // Dropped here, before the encode allocates anything: everything below reads the
-    // graded frame, and where the caller handed its decode over outright this is where
-    // 366MB of scene-linear samples go back. The compiler holds that rather than a
-    // comment - `decode` cannot be named again after this line.
-    drop(decode);
+    let mut cut = {
+        let source = Source { samples: &samples, width, height };
+        let mut built = Cut::from_base(&source, &scene, matched.map(|m| &m.lens), size);
+        built.sharpen(options.strengths.sharpen);
+        built
+    };
+    // Handed back before the encode allocates anything, which at 61MP is 361MB of
+    // scene-linear samples held across the longest stage of the job.
+    drop(samples);
 
-    // The transfer used to be applied twice, in two domains: libavif's for the still, in
-    // this process, and a `zscale` in ffmpeg for the video. That left nowhere for
-    // anything belonging between the grade and the encode to run once. The denoise and
-    // the sharpen are exactly that: both read a difference against a blur, and a
-    // difference taken in linear light follows absolute luminance rather than what the
-    // eye reads.
+    let frame = scene.roll(&cut.signal, options.grade.peak_nits);
+    cut.signal = Vec::new();
+    encode_pq_frame(frame, cut.width, cut.height, options)
+}
+
+/// The transfer and the encode: everything a rolled HDR frame has left.
+///
+/// **Nothing filters here.** The denoise and the defringe ran on the scene-linear frame ahead
+/// of the warp, and the sharpen ran on the frame of nits every rendition is cut from
+/// (`Cut::sharpen`) - which is after the warp and the fit-to-size that apply the blur it
+/// deconvolves, and in a perceptual coding that does not depend on which display this is for.
+#[cfg(feature = "renditions")]
+pub fn encode_pq_frame(
+    mut frame: Vec<u16>,
+    width: usize,
+    height: usize,
+    options: &EncodeOptions,
+) -> Result<bool, String> {
     tone::encode_pq(&mut frame, options.grade.peak_nits);
-    crate::image::finish(&mut frame, width, height, options.strengths);
-
     // Handed over rather than lent, so libavif takes the frame rather than a copy of it.
     encode_frame(std::borrow::Cow::Owned(frame), width, height, options)
 }

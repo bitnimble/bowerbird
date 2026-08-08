@@ -11,17 +11,24 @@
 // What crosses the boundary is a command and a result, both JSON: no addresses, no
 // handles, nothing for the other side to free, and no way to ask for pixels.
 //
-// The ordering is the worker's and the reasons come with it: one decode shared by
-// the fit and every rendition of its dynamic range, one grade per photo rather than
-// one per rendition, and the largest size built first so smaller ones are a resize
-// of it rather than their own warp of the same picture.
+// **There is one rendering pipeline, and SDR is an output stage of it.** Everything
+// internal is 16-bit scene-linear through one grade; a rendition's dynamic range reaches
+// only the peak that grade rolls into and the transfer and depth of the buffer that leaves.
+// There used to be a second path - an 8-bit sRGB decode, `fit::apply`, and no tone map at
+// all - and it was slower and larger both: measured on a 3840px Sony rendition, 1805ms and
+// 376MB against 1722ms and 341MB, because the linear path already fits during the decode
+// where the 8-bit one resized afterwards.
+//
+// The ordering is the worker's and the reasons come with it: one decode shared by the fit
+// and every rendition, one camera match and one filter pass per photo rather than one per
+// rendition, and everything that does not depend on a target's size or its display settled
+// before the loop over them.
 
-use crate::fit;
-use crate::frame::Frame;
 use crate::hdr;
-use crate::hdr_args::{Chroma, EncodeOptions};
+use crate::hdr_args::{self, Chroma, EncodeOptions};
 use crate::image::Strengths;
 use crate::stacks;
+use crate::tone;
 use serde::{Deserialize, Serialize};
 
 /// Where a rendition's pixels come from.
@@ -42,11 +49,26 @@ pub enum Rendition {
     Max,
 }
 
+/// Where a rendition's highlights roll into, and what codes the result.
+///
+/// **The only thing a rendition's dynamic range reaches inside the pipeline.** Everything
+/// upstream is one 16-bit scene-linear render; this says which peak the BT.2390 roll-off
+/// targets and what the buffer is coded as on the way out. Named rather than a `hdr: bool`
+/// so a job reads as one render with a list of outputs, and so a third coding is additive.
+#[derive(Deserialize, PartialEq, Eq, Clone, Copy)]
+#[serde(rename_all = "lowercase")]
+pub enum Output {
+    /// The grade's `peak_nits`, PQ, 10-bit.
+    Pq,
+    /// Diffuse white, sRGB primaries and transfer, 8-bit.
+    Srgb,
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Target {
     pub rendition: Rendition,
-    pub hdr: bool,
+    pub output: Output,
     pub output_path: String,
     /// Longest edge, or 0 for native resolution.
     pub size: u32,
@@ -108,23 +130,30 @@ pub struct Outcome {
 /// libvips' AVIF effort, inverted into libavif's speed at the encode (10.1).
 const AVIF_EFFORT: i32 = 0;
 
-/// The largest SDR or HDR size this job asks for, or None when it asks for neither.
+/// The largest size any of these targets asks for.
 ///
-/// 0 (native) beats any bounded size, being the whole frame.
-fn largest_size(targets: &[Target], hdr: bool) -> Option<u32> {
-    let wanted: Vec<&Target> = targets.iter().filter(|target| target.hdr == hdr).collect();
-    if wanted.is_empty() {
-        return None;
-    }
-    match wanted.iter().any(|target| target.size == 0) {
-        true => Some(0),
-        false => wanted.iter().map(|target| target.size).max(),
+/// 0 (native) beats any bounded size, being the whole frame. One number rather than one per
+/// dynamic range, now that one decode serves both.
+fn largest_size(targets: &[&Target]) -> u32 {
+    match targets.iter().any(|target| target.size == 0) {
+        true => 0,
+        false => targets.iter().map(|target| target.size).max().unwrap_or(0),
     }
 }
 
+/// What this target is encoded as, and at what size.
+///
+/// `still_chroma` reads whichever setting covers this rendition, because the sizing depends
+/// on it: 4:2:0 has no odd dimensions. It is one rule for both ranges rather than the two
+/// the split pipeline had - the SDR path used to size with `resize_to_fit`, which rounds
+/// down without regard to what the encoder can carry.
 fn encode_options(job: &Job, target: &Target, output_path: &str) -> EncodeOptions {
+    let full_chroma = match target.output {
+        Output::Pq => target.still_full_chroma,
+        Output::Srgb => target.sdr_full_chroma,
+    };
     EncodeOptions {
-        still_chroma: match target.still_full_chroma {
+        still_chroma: match full_chroma {
             true => Chroma::Yuv444,
             false => Chroma::Yuv420,
         },
@@ -140,123 +169,97 @@ fn encode_options(job: &Job, target: &Target, output_path: &str) -> EncodeOption
     }
 }
 
-/// The SDR base every render-sourced rendition is written from.
+/// Where the grade rolls this target's highlights into.
 ///
-/// Built at the largest SDR size the job asks for, with the camera match applied, so
-/// a smaller rendition is a resize of this rather than its own warp and re-grade of
-/// the same picture. Legitimate because the order does not change the result: the
-/// colour transform is a per-pixel lookup, and the distortion and the falloff are
-/// both in radii normalised to the half-diagonal, so none of the three depends on
-/// resolution.
-///
-/// Takes the decode by value and returns the base, so the decode is dropped here the
-/// moment it is no longer the thing being read. That is what the worker's explicit
-/// `release` call did, and it is now what ownership does on its own.
-///
-/// The sharpen is last, on the frame at the size it will be encoded at. Output
-/// sharpening puts back acutance the resample took off, so it belongs after the
-/// resample rather than before it, and after the warp for the same reason.
-///
-/// "The size it will be encoded at" holds because the base is built at the *largest*
-/// SDR size the job asks for and every job the service builds names one target. A job
-/// naming two would write the smaller one at the larger one's size: `save_avif_frame`
-/// encodes what it is handed. So a second SDR target wants a copy of the base per
-/// target, each resized before this sharpen rather than after it.
-///
-/// **Only the sharpen runs here.** The denoise and the defringe already ran, on the decode
-/// and before the fit, for the reasons recorded at that call site: the fit has to be
-/// calibrated against the frame it will be applied to, or it restores none of the colour
-/// the denoise removed and the lateral tier corrects a fringe the defringe removes as well.
-///
-/// The sharpen stays on this side of the warp because it is a Richardson-Lucy
-/// deconvolution *of the resample's own blur*. Ahead of the warp it inverts a point spread
-/// that has not been applied yet and is then softened by the warp applying it - measured
-/// at 17.68 acutance here against 16.38 there, on a frame whose untouched acutance is
-/// 17.98.
-///
-/// **The defringe and the lateral warp remove the same error**, which is why the order of
-/// those two is not free either. Measured on IMG_8408, in fringe around point sources: the
-/// raw render carries 98.48, the defringe alone takes it to 4.22, the warp alone to 20.55.
-/// Whichever runs second has to be cleaning up a residual - and it is the *fit* that makes
-/// that true, by measuring the finished frame and declining a correction that is no longer
-/// needed. Apply a curve fitted against the raw render to a defringed frame and it
-/// overshoots to 84.44. That the warp is the whole of that was checked rather than
-/// assumed: with the lateral half of the match switched off the same arrangement lands at
-/// 6.66, so the colour transform accounts for 4.22 to 6.66 and the warp for the rest.
-fn render_base(
-    mut decoded: Frame,
-    profile: Option<&fit::Profile>,
-    sharpen: f64,
-) -> Result<Frame, String> {
-    // A frame with no match asks for no new frame at all, and allocating one to answer
-    // that would be a 190MB no-op - so the sharpen runs where the frame already lies.
-    let Some(profile) = profile else {
-        let (width, height) = (decoded.width, decoded.height);
-        let data = decoded.rgb8_mut().ok_or("the SDR base needs an 8-bit decode")?;
-        crate::image::finish(data, width, height, Strengths { sharpen, ..Default::default() });
-        return Ok(decoded);
-    };
-
-    let source = decoded.rgb8().ok_or("the SDR base needs an 8-bit decode")?;
-    let mut built = fit::apply(source, profile);
-    let strengths = Strengths { sharpen, ..Default::default() };
-    crate::image::finish(&mut built.data, built.width, built.height, strengths);
-    Ok(Frame::new(built.width, built.height, crate::frame::Pixels::Eight(built.data)))
-}
-
-/// Writes one SDR rendition, and describes it for stacking where it is the tile.
-///
-/// Every grid tile arrives with `Source::Embedded` whatever the library is set to -
-/// the service decides that, not the library's `rendition_source`, which governs the
-/// photo viewer alone (10.1). So the embedded branch is the grid's normal path and
-/// the base is its fallback, reached only by a file with no usable JPEG preview.
-fn write_sdr(
-    job: &Job,
-    target: &Target,
-    base: &mut Option<Frame>,
-    make_base: &mut dyn FnMut() -> Result<Frame, String>,
-    outcome: &mut Outcome,
-) -> Result<(), String> {
-    let describe = target.rendition == Rendition::Grid;
-
-    if target.source == Source::Embedded {
-        // Extracted, decoded and shrunk inside one call, so the preview - which is
-        // full resolution on a 61MP body, 5-14MB of JPEG - is never held whole.
-        if let Some(preview) = crate::decode_embedded_frame(&job.raw_file_path, target.size) {
-            save_avif(&preview, target)?;
-            if describe {
-                outcome.descriptor = describe_for_stacking(&preview);
-            }
-            return Ok(());
-        }
+/// The only thing a rendition's dynamic range reaches inside the pipeline. An SDR render is
+/// the same grade with the peak at diffuse white, so everything above it rolls off into
+/// white through the same BT.2390 curve instead of clipping there.
+fn peak_nits(job: &Job, target: &Target) -> f64 {
+    match target.output {
+        Output::Pq => job.grade.peak_nits,
+        Output::Srgb => job.grade.reference_white_nits,
     }
-
-    if base.is_none() {
-        *base = Some(make_base()?);
-    }
-    let built = base.as_ref().expect("just built");
-    save_avif(built, target)?;
-    if describe {
-        outcome.descriptor = describe_for_stacking(built);
-    }
-    Ok(())
 }
 
 /// Never fatal. A descriptor is what stacking would like, not what the import owes,
 /// and a photo without one is simply not a candidate.
-fn describe_for_stacking(image: &Frame) -> Option<Vec<u8>> {
-    image.rgb8().map(stacks::describe)
+fn describe_if_grid(image: crate::rgb::RgbRef<'_>, target: &Target, outcome: &mut Outcome) {
+    if target.rendition == Rendition::Grid {
+        outcome.descriptor = Some(stacks::describe(image));
+    }
 }
 
-fn save_avif(image: &Frame, target: &Target) -> Result<(), String> {
-    let source = image.rgb8().ok_or("an SDR rendition needs an 8-bit frame")?;
+fn save_avif(image: crate::rgb::RgbRef<'_>, target: &Target) -> Result<(), String> {
     crate::save_avif_frame(
-        source,
+        image,
         target.sdr_quantizer,
         AVIF_EFFORT,
         target.sdr_full_chroma,
         &target.output_path,
     )
+}
+
+/// The photo, carried as far as no rendition's size or display can take it.
+///
+/// Everything here is measured or fitted against the whole frame and would be the same
+/// answer for every target, so it is settled once: the decode, the levels the grade anchors
+/// to, the camera match, and the denoise. What is left per target is the resize, the warp,
+/// the roll-off into that display's peak, the transfer and the encode.
+struct Base {
+    /// Scene-linear Rec.2020, denoised and defringed, at the largest size any target wants.
+    samples: Vec<u16>,
+    width: usize,
+    height: usize,
+    /// The frame's own diffuse white and scene peak, off the *unresized* decode.
+    levels: tone::Levels,
+    matched: Option<crate::hdr_fit::HdrMatch>,
+}
+
+impl Base {
+    fn build(job: &Job, size: u32) -> Result<Base, String> {
+        let frame = crate::decode_frame(&job.raw_file_path, 16, true, size)
+            .ok_or("could not decode the RAW scene-linear")?;
+        let (width, height) = (frame.width, frame.height);
+
+        // Fitted once, before anything is written: every rendition of one photo has to get
+        // the same transform, and the render has to match the camera's JPEG the grid tile is
+        // made of, or a photo changes appearance when it is opened.
+        //
+        // Off the linear decode alone, with no geometry handed in: `fit_all` resolves both
+        // halves in one pass over it, which is what an SDR fit's 431ms bought separately
+        // when there was an 8-bit render to fit against. It reads the frame *before* the
+        // filter below, because the geometry search runs `image::finish` on its own
+        // downscaled render - calibrated at that scale, which this frame is not at.
+        let matched = match job.match_embedded_jpeg {
+            true => crate::fit_hdr_for(
+                &frame,
+                &job.raw_file_path,
+                job.grade.white_quantile,
+                None,
+                job.strengths().before_the_fit(),
+            ),
+            false => None,
+        };
+
+        let mut samples = frame
+            .into_samples16()
+            .ok_or("the render needs a 16-bit scene-linear decode")?;
+        let levels = tone::levels(&samples, job.grade.white_quantile);
+        // Ahead of every warp and every resize, which is where the denoise belongs and the
+        // sharpen does not (`hdr::filter_scene_linear`). At the decode's size, which is the
+        // largest any target asked for: the chroma denoise's radii and the defringe's
+        // constants are in pixels of the frame they read, so this is the one size at which
+        // they mean what they were tuned to mean.
+        hdr::filter_scene_linear(
+            &mut samples,
+            width,
+            height,
+            levels.white,
+            job.grade.reference_white_nits,
+            job.strengths().before_the_fit(),
+        );
+        Ok(Base { samples, width, height, levels, matched })
+    }
 }
 
 /// Everything one photo owes, in the order that shares the most work.
@@ -268,119 +271,148 @@ fn save_avif(image: &Frame, target: &Target) -> Result<(), String> {
 pub fn run(job: &Job) -> Result<Outcome, String> {
     let mut outcome = Outcome::default();
 
-    let renders_sdr = job.targets.iter().any(|t| !t.hdr && t.source == Source::Render);
-    let renders_hdr = job.targets.iter().any(|t| t.hdr);
-    let sdr_size = largest_size(&job.targets, false).unwrap_or(0);
-    let hdr_size = largest_size(&job.targets, true).unwrap_or(0);
-
-    // Fitted once, before anything is written: every rendition of one photo has to
-    // get the same transform, and the render has to match the camera's JPEG the grid
-    // tile is made of, or a photo changes appearance when it is opened.
+    // The camera's own JPEG, where a target asks for it. No decode, no fit and no grade,
+    // which is where the real speed of a grid tile lives - 124ms against a render's 1.7s.
+    // That is a different *source*, not a different pipeline, and it is the only thing the
+    // unification left alone.
     //
-    // Gated on a target that actually demosaics: an embedded-source grid already has
-    // the camera's look, so fitting for it would decode a 60MP frame to transform
-    // nothing.
-    let mut profile: Option<fit::Profile> = None;
-    let mut decoded: Option<Frame> = None;
-    if renders_sdr {
-        let decoded_frame = crate::decode_frame(&job.raw_file_path, 8, false, sdr_size)
-            .ok_or("could not decode the RAW")?;
-        // **Resized here, not in `render_base`, and that is load-bearing.**
-        // `at_least_long_edge` only gates a single halving, so an 8-bit decode comes back
-        // at whatever LibRaw produced - 6000px for a 24MP body asked for 3840. Every knob
-        // below is in pixels of the frame it reads: the chroma denoise's radii of 4 and
-        // 32, `DEFRINGE_RADIUS`, `DEFRINGE_SPREAD`, and `DEFRINGE_EDGE`, which is a
-        // per-pixel gradient. Run them on the decode and a 24MP frame puts 2.4x the pixels
-        // through both guided filters *and* rescales what every one of those constants
-        // means - the coarse chroma radius exists to reach a 40-pixel blotch, and at 2.4x
-        // the linear scale that blotch is 98 pixels and out of its reach again.
-        let mut frame = match sdr_size > 0
-            && decoded_frame.width.max(decoded_frame.height) > sdr_size as usize
-        {
-            false => decoded_frame,
-            true => {
-                let source = decoded_frame.rgb8().ok_or("the SDR base needs an 8-bit decode")?;
-                let resized = crate::image::resize_to_fit(source, sdr_size as usize);
-                Frame::new(resized.width, resized.height, crate::frame::Pixels::Eight(resized.data))
+    // Every grid tile arrives with `Source::Embedded` whatever the library is set to: the
+    // service decides that, not the library's `rendition_source`, which governs the photo
+    // viewer alone (10.1). A file with no usable preview falls through to the render below,
+    // which it could not do while the decode was gated on some *other* target wanting one.
+    let mut rendered: Vec<&Target> = Vec::new();
+    for target in &job.targets {
+        if target.source == Source::Embedded && target.output == Output::Srgb {
+            // Extracted, decoded and shrunk inside one call, so the preview - which is
+            // full resolution on a 61MP body, 5-14MB of JPEG - is never held whole.
+            if let Some(preview) = crate::decode_embedded_frame(&job.raw_file_path, target.size) {
+                let image = preview.rgb8().ok_or("an embedded preview decodes to 8-bit")?;
+                save_avif(image, target)?;
+                describe_if_grid(image, target, &mut outcome);
+                continue;
             }
-        };
-        // **The denoise and the defringe run before the fit, so the fit sees the frame it
-        // will actually be applied to.** Fitted against the raw render instead, the colour
-        // transform is calibrated on colour the denoise then removes and nothing puts back
-        // - measured at 22% of mean chroma - and the lateral tier measures a fringe the
-        // defringe then removes as well, so the two correct it twice and overshoot. Fitted
-        // here, the transform is asked to restore what the denoise took, and the lateral
-        // tier finds nothing left and declines on its own (§10.9).
-        //
-        // The sharpen is not in this pass. It is a deconvolution of the resample's own
-        // blur, so it belongs after the warp that does the resampling, and it runs at the
-        // end of `render_base` instead. Splitting the two is also *cheaper* than one pass:
-        // run together, the sharpen has to carry the chroma denoise's radius-32 halo
-        // through `strip_interior`, which cuts the strips far shorter than the
-        // deconvolution alone needs. Measured on a 24MP frame, 4.99s wall and 32.4s CPU
-        // together against 4.43s and 26.9s split, at the same peak memory.
-        let (width, height) = (frame.width, frame.height);
-        let data = frame.rgb8_mut().ok_or("the SDR base needs an 8-bit decode")?;
-        crate::image::finish(data, width, height, job.strengths().before_the_fit());
-        if job.match_embedded_jpeg {
-            profile = crate::fit_profile_for(&frame, &job.raw_file_path);
         }
-        decoded = Some(frame);
+        rendered.push(target);
+    }
+    if rendered.is_empty() {
+        return Ok(outcome);
     }
 
-    // The scene-linear decode, shared the same way: an HDR job builds a still and its
-    // video twin from one of these, and the colour fit reads the same samples again.
-    let mut linear: Option<Frame> = None;
-    let mut matched: Option<crate::hdr_fit::HdrMatch> = None;
-    if renders_hdr {
-        let frame = crate::decode_frame(&job.raw_file_path, 16, true, hdr_size)
-            .ok_or("could not decode the RAW scene-linear")?;
-        if job.match_embedded_jpeg {
-            matched = crate::fit_hdr_for(
-                &frame,
-                &job.raw_file_path,
-                job.grade.white_quantile,
-                profile.as_ref(),
-                job.strengths().before_the_fit(),
-            );
-        }
-        linear = Some(frame);
-    }
+    let Base { samples, width, height, levels, matched } =
+        Base::build(job, largest_size(&rendered))?;
+    // The whole colour transform, settled once. Its curve tables are 65536 entries a
+    // channel and its scene peak is a quantile taken through the transform over a million
+    // pixels - none of which a rendition's size or display changes, and both of which were
+    // being redone per rendition. Sharing the peak is also what makes two sizes of one
+    // photo roll their highlights by the same amount rather than by two measurements.
+    let scene = tone::SceneGrade::new(
+        &samples,
+        matched.as_ref().map(|m| &m.colour),
+        levels,
+        job.grade.reference_white_nits,
+        1.0,
+    );
+    let lens = matched.as_ref().map(|m| &m.lens);
 
-    // Which rendition is each decode's last reader, so it can hand the pixels back
-    // before the encode rather than after the job.
-    let last_hdr = job.targets.iter().rposition(|target| target.hdr);
-    let mut base: Option<Frame> = None;
-
-    for (index, target) in job.targets.iter().enumerate() {
-        if target.hdr {
+    // Largest first, so every smaller rendition is a downscale of one already cut rather
+    // than its own resize, its own warp table and its own sweep over the colour transform.
+    let mut order: Vec<(&Target, hdr_args::Size)> = rendered
+        .iter()
+        .map(|target| {
             let options = encode_options(job, target, &target.output_path);
-            // The last HDR rendition hands its decode over rather than lending it, so
-            // 366MB of scene-linear samples go back before the encode allocates
-            // anything. Anything earlier keeps it, having another rendition to write.
-            let decode = match Some(index) == last_hdr {
-                true => hdr::Decode::Owned(linear.take().ok_or("an HDR target with no decode")?),
-                false => {
-                    let frame = linear.as_ref().ok_or("an HDR target with no decode")?;
-                    let samples = frame.samples16().ok_or("the HDR encode needs a 16-bit decode")?;
-                    hdr::Decode::Borrowed(hdr::Source {
-                        samples,
-                        width: frame.width,
-                        height: frame.height,
-                    })
-                }
-            };
-            hdr::encode_still(decode, &options, matched.as_ref())?;
-            continue;
-        }
+            (*target, hdr_args::target_size(width as u32, height as u32, &options))
+        })
+        .collect();
+    order.sort_by_key(|(_, size)| {
+        std::cmp::Reverse(u64::from(size.width) * u64::from(size.height))
+    });
 
-        let mut make_base = || {
-            let frame = decoded.take().ok_or("an SDR render target with no decode")?;
-            // The denoise and the defringe already ran, on the decode and before the fit.
-            render_base(frame, profile.as_ref(), job.sharpen)
-        };
-        write_sdr(job, target, &mut base, &mut make_base, &mut outcome)?;
+    let Some(scene) = scene else {
+        // A frame with no exposure to read - `tone::levels` found diffuse white at zero, so
+        // every consumer would divide by it. The grade declines rather than dividing, and
+        // each rendition ships the frame as it arrived.
+        return ungraded(job, &samples, width, height, levels, &order, outcome);
+    };
+
+    // Cut once off the base, sharpened once, and the base handed back before anything is
+    // encoded - 361MB of scene-linear samples at 61MP, released across the longest stage of
+    // the job. Nothing below reads it: a smaller rendition comes out of the cut.
+    let mut cut = {
+        let source = hdr::Source { samples: &samples, width, height };
+        let mut built = hdr::Cut::from_base(&source, &scene, lens, order[0].1);
+        built.sharpen(job.sharpen);
+        built
+    };
+    drop(samples);
+
+    let last = order.len() - 1;
+    for (index, (target, size)) in order.into_iter().enumerate() {
+        let want = (size.width as usize, size.height as usize);
+        if (cut.width, cut.height) != want {
+            cut = cut.downscale(size);
+        }
+        let options = encode_options(job, target, &target.output_path);
+        // The one stage that knows what display this rendition is for.
+        let frame = scene.roll(&cut.signal, peak_nits(job, target));
+        // The last rendition hands the shared frame back rather than holding it across its
+        // encode, which is the longest stage of the job.
+        if index == last {
+            cut.signal = Vec::new();
+        }
+        write(frame, cut.width, cut.height, target, &options, &mut outcome)?;
     }
 
+    Ok(outcome)
+}
+
+/// The transfer and the encode: all a rolled rendition has left.
+fn write(
+    frame: Vec<u16>,
+    width: usize,
+    height: usize,
+    target: &Target,
+    options: &EncodeOptions,
+    outcome: &mut Outcome,
+) -> Result<(), String> {
+    match target.output {
+        Output::Pq => {
+            hdr::encode_pq_frame(frame, width, height, options)?;
+        }
+        Output::Srgb => {
+            // The SDR output stage, and the whole of what SDR means here: the same rolled
+            // frame through the sRGB primaries and transfer at 8 bits instead of through PQ
+            // at 16.
+            let data = tone::encode_srgb8(&frame);
+            drop(frame);
+            let image = crate::rgb::RgbRef { width, height, data: &data };
+            save_avif(image, target)?;
+            describe_if_grid(image, target, outcome);
+        }
+    }
+    Ok(())
+}
+
+/// Every rendition of a frame the grade declined, shipped as it arrived.
+///
+/// A frame whose white quantile lands on level 0 is a lens cap or a failed exposure. It has
+/// no exposure to read and every consumer divides by it, so the grade refuses; what it does
+/// not do is fail the import, and this keeps that true without the graded path having to
+/// carry a "no scene" case through the cut.
+fn ungraded(
+    job: &Job,
+    samples: &[u16],
+    width: usize,
+    height: usize,
+    levels: tone::Levels,
+    order: &[(&Target, hdr_args::Size)],
+    mut outcome: Outcome,
+) -> Result<Outcome, String> {
+    for (target, size) in order {
+        let options = encode_options(job, target, &target.output_path);
+        let source = hdr::Source { samples, width, height };
+        let (frame, out_width, out_height) =
+            hdr::graded_with(&source, levels, None, None, *size, peak_nits(job, target));
+        write(frame, out_width, out_height, target, &options, &mut outcome)?;
+    }
     Ok(outcome)
 }

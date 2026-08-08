@@ -57,6 +57,40 @@ fn big() -> Option<PathBuf> {
 /// it asserts against.
 const INJECTED_CORNER: f64 = 0.65;
 
+/// How far a held-out fit may sit from the camera's own rendering, in CIEDE2000, measured
+/// on the fit's own pairs.
+///
+/// **A sanity bound, not a quality one**, because the units move when the fit does. It has
+/// been re-derived twice for reasons that had nothing to do with the fit getting worse:
+///
+/// - It was 2.5 in deltaE76, unnamed and written out at each use. When the metric became
+///   CIEDE2000 the number stayed, and nothing said what it was denominated in - so the
+///   plain fit passed at 2.460 on 1.6% of headroom it had not earned, and the
+///   injected-falloff fit read 2.806 and looked like a regression that never happened
+///   (the same fit scores 1.844 under the old metric). CIEDE2000 is not a rescaling of
+///   deltaE76: `S_H` drops below one wherever `T` does and `R_T` rotates blue error into
+///   chroma, so a chromatic frame can read higher while being no worse.
+/// - Then the planes stopped being blurred (`hdr_fit::registered`). Scoring against sharp
+///   corresponded samples is a harder test than scoring against smeared ones, so the same
+///   quality of fit reads 4.315 and 4.551 where it read 2.460 and 2.806.
+///
+/// The lesson both times is that this number cannot be compared across a change to what
+/// it measures against. `MAX_INDEPENDENT_DELTA_E` is the one that can.
+const MAX_HELD_OUT_DELTA_E: f64 = 6.0;
+
+/// How far the fitted colour may sit from the camera's rendering, judged outside the fit.
+///
+/// The bound that actually means something. It is measured on a fresh decode of the frame
+/// and its own embedded preview, at a size the fit never used, over pixels the fit never
+/// selected - so unlike `MAX_HELD_OUT_DELTA_E` it does not move when the fit's internals
+/// do, and the same number before and after a change is a real comparison.
+///
+/// That is how correspondence was judged: 1.371 blurred against 1.262 registered, on a
+/// held-out score that rose from 2.460 to 4.315 over the same change. Only one of those
+/// two numbers was answering the question - and it is also what sized `SAMPLE_RANGE`, where
+/// the intuitive setting turned out to cost 4%.
+const MAX_INDEPENDENT_DELTA_E: f64 = 1.5;
+
 /// A profile carrying a real falloff, for the tests that need the radial branch to do
 /// something.
 ///
@@ -493,7 +527,11 @@ mod camera_match {
         let profile = fit(&sony());
         // Held out inside the fit, so this is not a training score.
         let fitted_colour = profile.colour.as_ref().expect("a fitted colour");
-        assert!(fitted_colour.delta_e < 2.5, "held-out deltaE {}", fitted_colour.delta_e);
+        assert!(
+            fitted_colour.delta_e < MAX_HELD_OUT_DELTA_E,
+            "held-out deltaE {}",
+            fitted_colour.delta_e,
+        );
 
         // What the render looks like before any transform, on the same pixels, to show
         // the fit is doing the work rather than the metric being generous.
@@ -529,7 +567,12 @@ mod camera_match {
             counted += 1;
         }
         assert!(counted > 100);
-        assert!(after / (counted as f64) < before / (counted as f64));
+        let (before, after) = (before / (counted as f64), after / (counted as f64));
+        assert!(after < before, "independent before {before} after {after}");
+        // Bounded absolutely as well as relatively. Beating an untransformed raw render
+        // is a low bar - it is 19 deltaE away - so "better than before" alone would sit
+        // still through a fit going several times worse and never say so.
+        assert!(after < MAX_INDEPENDENT_DELTA_E, "independent deltaE {after}");
     }
 
     /// The colour half of a profile, for one pixel.
@@ -560,7 +603,11 @@ mod camera_match {
         // Recovering the coefficient is not the same as matching the frame, and the
         // fit is free to report either. This is the one that decides the picture.
         let fitted_colour = fitted.colour.as_ref().expect("a fitted colour");
-        assert!(fitted_colour.delta_e < 2.5, "held-out deltaE {}", fitted_colour.delta_e);
+        assert!(
+            fitted_colour.delta_e < MAX_HELD_OUT_DELTA_E,
+            "held-out deltaE {}",
+            fitted_colour.delta_e,
+        );
     }
 
     /// A gain the profile carries and `apply` ignores would pass every assertion
@@ -1150,7 +1197,9 @@ mod hdr_grade {
         let fitted = matched(&frame);
         for (path, m) in [(&plain, None), (&with_match, fitted.as_ref())] {
             crate::hdr::encode_still(
-                crate::hdr::Decode::Borrowed(source(&frame)),
+                source(&frame).samples.to_vec(),
+                frame.width,
+                frame.height,
                 &options(PEAK, 640.0, path.to_str().unwrap()),
                 m,
             )
@@ -1188,8 +1237,14 @@ mod hdr_grade {
         let frame = linear();
         let options = options(PEAK, 640.0, path.to_str().unwrap());
         let (graded, _, _) = crate::hdr::graded(&source(&frame), &options, None);
-        crate::hdr::encode_still(crate::hdr::Decode::Borrowed(source(&frame)), &options, None)
-            .expect("the encode");
+        crate::hdr::encode_still(
+            source(&frame).samples.to_vec(),
+            frame.width,
+            frame.height,
+            &options,
+            None,
+        )
+        .expect("the encode");
 
         // What the file would average at if the samples went out linear, and what it
         // averages at with the transfer applied. Both off the very frame that was
@@ -1212,6 +1267,80 @@ mod hdr_grade {
             (mean - pq_mean).abs() < (mean - linear_mean).abs(),
             "the still averages {mean:.3}; PQ predicts {pq_mean:.3} and untransformed {linear_mean:.3}",
         );
+    }
+
+    /// A rendition cut from the shared frame of nits is the picture a direct grade makes.
+    ///
+    /// **The two are different schedulings of one transform and nothing else enforces that.**
+    /// A job cutting several renditions off one photo stops at nits, shares that frame, and
+    /// rolls each rendition into its own peak; a job with one target grades straight through.
+    /// The halves are the same code - `pixel_nits` and `roll_pixel` - but the shared route
+    /// carries the intermediate at half precision and rolls both arms through the same
+    /// 4096-bin table where the direct neutral arm has an exact per-level curve. Neither is
+    /// visible in a pin of `graded()`, which only the direct route takes.
+    ///
+    /// Both peaks, because they exercise different parts of the roll-off: at 1000 nits this
+    /// fixture never reaches the BT.2390 knee, and at 203 the whole curve is in play.
+    #[test]
+    fn a_cut_rendition_is_the_picture_a_direct_grade_makes() {
+        let frame = linear();
+        let fitted = matched(&frame);
+        let mut rows: Vec<String> = Vec::new();
+        for with_match in [false, true] {
+            let m = match with_match {
+                true => fitted.as_ref(),
+                false => None,
+            };
+            for peak in [PEAK, REFERENCE] {
+                let options = options(peak, 800.0, "/dev/null");
+                let (direct, width, height) =
+                    crate::hdr::graded(&source(&frame), &options, m);
+
+                let levels = crate::tone::levels(source(&frame).samples, QUANTILE);
+                let scene = crate::tone::SceneGrade::new(
+                    source(&frame).samples,
+                    m.map(|m| &m.colour),
+                    levels,
+                    REFERENCE,
+                    1.0,
+                )
+                .expect("a frame with an exposure to read");
+                let size = crate::hdr_args::target_size(
+                    frame.width as u32,
+                    frame.height as u32,
+                    &options,
+                );
+                let mut cut =
+                    crate::hdr::Cut::from_base(&source(&frame), &scene, m.map(|m| &m.lens), size);
+                // The sharpen is off in `options`, so the cut is the grade alone either way.
+                cut.sharpen(0.0);
+                let shared = scene.roll(&cut.signal, peak);
+
+                assert_eq!((cut.width, cut.height), (width, height));
+                assert_eq!(shared.len(), direct.len());
+                let worst = shared
+                    .iter()
+                    .zip(direct.iter())
+                    .map(|(a, b)| i32::from(*a) - i32::from(*b))
+                    .map(i32::abs)
+                    .max()
+                    .unwrap_or(0);
+                let total: u64 =
+                    shared.iter().zip(direct.iter()).map(|(a, b)| u64::from(a.abs_diff(*b))).sum();
+                let mean = total as f64 / shared.len() as f64;
+                rows.push(format!("match={with_match} peak={peak}: mean {mean:.2} worst {worst}"));
+                // Of 65535. Measured: matched, which is what a library with the fit on
+                // renders, at mean 0.21 / worst 3 into a 1000-nit peak and mean 1.02 / worst
+                // 12 into 203; the neutral fallback at 0.86 / 10 and 3.47 / 24. What is left
+                // is the `f16` the nits pass through on their way to a code, which holds them
+                // to ~0.05% wherever they sit. Neutral is the looser because its nits are a
+                // fixed multiple of an input level, so that rounding is a rounding of the
+                // level itself.
+                assert!(mean < 4.0 && worst < 32, "{}", rows.join("; "));
+            }
+        }
+        // Reported whether or not it failed, so a run that tightens shows what it had.
+        eprintln!("cut against direct: {}", rows.join("; "));
     }
 
     /// The graded samples, held to what the TypeScript produced before this subsystem
@@ -1245,7 +1374,9 @@ mod hdr_grade {
 
             let pixels = crate::frame::Pixels::Sixteen(graded);
             rows.push(format!("{label}\tsize\t{width}x{height}"));
-            rows.push(format!("{label}\tsha256\t{}", crate::debug::sha256_hex(&crate::debug::to_bytes(&pixels))));
+            // No hash. The grade runs on a GPU, and a hash of GPU output pins the adapter
+            // that produced it - see `pin::check_within`. What is left characterises the
+            // frame numerically instead, which is what can be held to a tolerance.
             // Per channel, because a shift in one is what a wrong matrix row looks like
             // and a whole-frame mean would hide it.
             let stats: Vec<String> = crate::debug::channels(&pixels)
@@ -1261,7 +1392,11 @@ mod hdr_grade {
             rows.push(format!("{label}\tsamples\t{}", picked.join(",")));
         }
 
-        crate::pin::check("hdr_grade.pin.txt", &format!("{}\n", rows.join("\n")));
+        // 16 counts of 65535, which is 0.02% of range and below a bit of an 8-bit
+        // rendition. Wide enough for the arithmetic to differ by adapter and by driver,
+        // narrow enough that a wrong matrix row - the thing the per-channel stats are here
+        // to catch - moves a channel far past it.
+        crate::pin::check_within("hdr_grade.pin.txt", &format!("{}\n", rows.join("\n")), 16.0);
     }
 
 }

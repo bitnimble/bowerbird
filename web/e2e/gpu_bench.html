@@ -55,7 +55,8 @@ function chromaMap() {
   const nodes = [];
   for (let i = 0; i < count * count * levels; i++) {
     // Near-identity with a little hue dependence, so the fetch is not reading one value.
-    nodes.push(1.02, 0.01 * ((i % 3) - 1), -0.01 * ((i % 5) - 2), 0.98);
+    // Five values a node: the 2x2, then the luma gain, which lands in its own volume.
+    nodes.push(1.02, 0.01 * ((i % 3) - 1), -0.01 * ((i % 5) - 2), 0.98, 1.0 + 0.004 * ((i % 7) - 3));
   }
   return {
     nodes,
