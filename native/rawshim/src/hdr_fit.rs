@@ -141,12 +141,16 @@ pub struct HdrColour {
     /// None is not a failure - it is the model this had before there was a chroma axis,
     /// and a frame with too little colour to fit one is better served by it.
     pub chroma: Option<ChromaMap>,
-    /// Held-out mean deltaE76 over the fit pairs, for reporting.
+    /// The hue-balanced CIEDE2000 the fit scores itself by, on pairs it was not fitted from,
+    /// with the cast term of `score_many` in it.
     ///
-    /// **Not a measure of whether the render looks right**, and it has been read as one.
-    /// A mean ΔE76 is blind to a cast, discounts near-neutral error and hides its own
-    /// tail - `fit.rs`'s `deltaE` section has the measurements. IMG_8789 reports 2.47
-    /// here while rendering its bird bath and stone wall visibly green.
+    /// **Still not a measure of whether the render looks right**, and it has been read as one.
+    /// It was a bare mean ΔE76 when IMG_8789 reported 2.47 here and rendered its bird bath
+    /// and stone wall visibly green; it now carries a distance function that does not discount
+    /// near-neutral error, a signed term that a cast cannot hide from, and a holdout that
+    /// memorising cannot flatter. What it still cannot see is anything the fit solves rather
+    /// than chooses, and it remains one number over a whole frame - so a render is what says
+    /// a render is right.
     pub delta_e: f64,
 }
 
@@ -2799,10 +2803,17 @@ fn fit_colour(render: &Plane, jpeg: &Plane, sharp: &Sharp) -> Option<HdrColour> 
     // them better, and it took a render to look at to notice that the extra capacity was
     // going into a cast.
     //
-    // The gate still measures with a mean, which is blind to a cast however good the distance
-    // function is - so this says the map lowered the average error on data it had not seen,
-    // not that it left the neutrals alone. A signed statistic pooled within a content class
-    // is what would say that, and there is not one in the fit yet.
+    // What it measures with is not a bare mean: `score_many` adds `BIAS_WEIGHT` times the
+    // signed residual pooled inside each of `BIAS_BUCKETS`, so a correction that tints one
+    // class of content costs more here than the same error scattered. So this asks two things
+    // of the map - that it lowered the error on data it had not seen, and that it did not do
+    // so by casting.
+    //
+    // What that does not reach is anything the fit *solves* rather than *chooses*. The tone
+    // curves are a least squares, not a candidate, so no score gated them and three of them
+    // free to diverge tinted every neutral at a level by up to 27 counts with this term
+    // running the whole time. That one needed the model constrained (`fit_curves`), not
+    // measured better.
     let flat = measure(&colour, render, &held).1;
     if let Some(map) = fitted_chroma(&colour, render, jpeg, sharp, &train, &map_balance, colour.saturation) {
         let trial = HdrColour { chroma: Some(map), ..colour.clone() };
