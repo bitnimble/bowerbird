@@ -736,7 +736,16 @@ export class PhotosPresenter {
   // on every render after it.
   @action.bound
   imageShown(photoId: string, rendition: ViewerRendition, width: number, height: number): void {
-    this.store.shownImage = { photoId, rendition, width, height };
+    // Anything measured for another photo goes: that is the step, and this is the
+    // first frame of the photo stepped to.
+    const kept = this.store.shownImages.filter((shown) => shown.photoId === photoId);
+    const shown = { photoId, rendition, width, height };
+    // In place when this rendition has decoded before - a rebuild moves its URL, so
+    // it decodes again - because the order here is the order the stage mounts its
+    // frames in, and a slot moving reinserts a DOM node mid-swap.
+    this.store.shownImages = kept.some((held) => held.rendition === rendition)
+      ? kept.map((held) => (held.rendition === rendition ? shown : held))
+      : [...kept, shown];
   }
 
   // Whether a photo is still the one the view is on. Every write that lands after
