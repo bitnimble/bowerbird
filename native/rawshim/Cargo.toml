@@ -40,6 +40,10 @@ name = "crops"
 required-features = ["renditions"]
 
 [[example]]
+name = "sweep"
+required-features = ["renditions"]
+
+[[example]]
 name = "matches"
 required-features = ["renditions"]
 
