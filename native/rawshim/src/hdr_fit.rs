@@ -2480,17 +2480,6 @@ fn fitted_chroma(
                     let (d0, d2) = (m[0] - ours, m[2] - ours);
                     let (e0, e2) = (t[0] - theirs, t[2] - theirs);
 
-                    // A quarter each, there being four of these pixels for every one of
-                    // the pairs above, describing the same surface.
-                    //
-                    // Flat, where the pairs above carry `balance` - the hue weighting,
-                    // which runs to 4 on a rare hue and 0.25 on a dominant one. So a wide
-                    // pixel of a rare saturated hue counts a sixteenth of the pair it
-                    // supplements, not a quarter, and the nodes this pass exists to feed
-                    // are the ones it under-feeds. Left as it measures rather than as it
-                    // reads: the map's shrinkage and its margin were tuned against this
-                    // pass at this weight, so correcting the scale is a re-tuning of
-                    // `MAP_CONFIDENCE` and `MAP_MARGIN` with it, not a one-line fix.
                     // Carrying the same hue weight the pairs do, looked up on the fit-grid
                     // pixel this one sits inside. A quarter each because there are four of
                     // these per pair, but a *flat* quarter meant a rare saturated hue - the
