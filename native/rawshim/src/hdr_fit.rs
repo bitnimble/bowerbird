@@ -1159,7 +1159,47 @@ struct Pairs {
     grey_target: [f64; 3],
 }
 
+/// One pair in every this many is held back from the fit and used to judge it.
+///
+/// A fifth, which is enough to score on and cheap to give up: the stages that read these
+/// have tens of thousands and none of them is short of data.
+///
+/// Strided rather than blocked, so both halves see the whole frame. A contiguous split would
+/// hand the fit one part of the picture and judge it on another, which measures how alike
+/// two regions are as much as it measures the model.
+const HOLDOUT_EVERY: usize = 5;
+
 impl Pairs {
+    /// The pairs a stage may fit from, and the ones it is judged on.
+    ///
+    /// **A model is only as trustworthy as the data it was not shown.** Every gate in this
+    /// file used to score on the pairs the thing it was gating had just been fitted from,
+    /// which measures how well a stage memorised its own inputs. That is why capacity always
+    /// looked free: a finer lattice fitted its own pairs 15% better, moved the render 2%, and
+    /// made the bird bath's cast 35% worse, and the number the gate read went *down* through
+    /// all of it. `DESIGN`'s falloff has kept its term on held-out pairs for exactly this
+    /// reason; the colour model never did.
+    fn split(&self) -> (Pairs, Pairs) {
+        let held = |k: usize| k % HOLDOUT_EVERY == 0;
+        let take = |want_held: bool| Pairs {
+            at: self.at.iter().enumerate().filter(|(k, _)| held(*k) == want_held)
+                .map(|(_, v)| *v).collect(),
+            target: self.target.iter().enumerate().filter(|(k, _)| held(*k) == want_held)
+                .map(|(_, v)| *v).collect(),
+            balance: self.balance.iter().enumerate().filter(|(k, _)| held(*k) == want_held)
+                .map(|(_, v)| *v).collect(),
+            bias_bucket: self.bias_bucket.iter().enumerate()
+                .filter(|(k, _)| held(*k) == want_held).map(|(_, v)| *v).collect(),
+            to_srgb: self.to_srgb,
+            // Both halves keep the whole grey set. `grey_balance` is not gated on anything,
+            // so there is nothing to hold out from, and halving it would only make the
+            // neutral axis noisier on the frames that have fewest greys to begin with.
+            greys: self.greys.clone(),
+            grey_target: self.grey_target,
+        };
+        (take(false), take(true))
+    }
+
     fn new(render: &Plane, jpeg: &Plane, bits: &[u8], balance: &[f64]) -> Pairs {
         let to_srgb = rec2020_to_srgb();
         let at: Vec<usize> = (0..bits.len()).filter(|p| bits[*p] & COLOUR != 0).collect();
@@ -2303,6 +2343,14 @@ fn chroma_span(colour: &HdrColour, render: &Plane, pairs: &Pairs) -> [[f64; 2]; 
             values.select_nth_unstable_by(at, f64::total_cmp);
             values[at]
         };
+        // Symmetric about zero, and sized to the *narrower* half. Scaling the halves
+        // independently and pinning zero to the centre node was measured and is not kept:
+        // it was worth a lot when the lattice could only give a node one lightness gain,
+        // because it let a small saturated object reach a node of its own - and once the
+        // node could vary lightness with chroma (`NODE_VALUES`) that benefit was already
+        // paid for. Measured after: the blue pot's lightness went 59.4 to 58.3 against the
+        // camera's 62.4 and the held-out score 1.211 to 1.229. Geometry the model no longer
+        // needs.
         let high = pick(&mut values, 0.999).abs();
         let low = pick(&mut values, 0.001).abs();
         let reach = high.min(low).clamp(CHROMA_REACH / 8.0, CHROMA_REACH);
@@ -2729,12 +2777,15 @@ fn fit_colour(render: &Plane, jpeg: &Plane, sharp: &Sharp) -> Option<HdrColour> 
     let map_balance = hue_balance(jpeg, &bits, MAP_BALANCE_LIMIT);
 
     let pairs = Pairs::new(render, jpeg, &bits, &balance);
-    let mut colour = fit_model(render, jpeg, &bits, &balance, &pairs);
+    // Fitted on one half, judged on the other. `Pairs::split` has why every gate below now
+    // reads `held` and every fit reads `train`.
+    let (train, held) = pairs.split();
+    let mut colour = fit_model(render, jpeg, &bits, &balance, &train);
 
     // One scalar on top, because a 3x3 cannot express a saturation that varies with
     // level and the camera's does. It stays one number for the reason on the field
     // itself.
-    colour.saturation = fitted_saturation(&colour, render, &pairs);
+    colour.saturation = fitted_saturation(&colour, render, &train);
 
     // Then the hue-dependent part, kept only if it earns its place. Least squares on
     // chroma minimises chroma error, and this fit is judged on deltaE - the same gap
@@ -2742,19 +2793,25 @@ fn fit_colour(render: &Plane, jpeg: &Plane, sharp: &Sharp) -> Option<HdrColour> 
     // better constrained than one number was, but "better constrained" is not "always an
     // improvement", so it is measured rather than assumed.
     //
-    // The gate is only as good as what it measures with. It measures with a mean, which
-    // is blind to a cast however good the distance function is, so the map being taken
-    // here says it lowered the average error - not that it left the neutrals alone.
-    // A signed statistic is what would say that, and there is not one in the fit yet.
-    let flat = measure(&colour, render, &pairs).1;
-    if let Some(map) = fitted_chroma(&colour, render, jpeg, sharp, &pairs, &map_balance, colour.saturation) {
+    // Gated on pairs the map was not fitted from, which is what makes this a question about
+    // the model rather than about how well it memorised its inputs. Scored on its own pairs
+    // the map could not lose: it contains the scalar exactly, so more capacity always fitted
+    // them better, and it took a render to look at to notice that the extra capacity was
+    // going into a cast.
+    //
+    // The gate still measures with a mean, which is blind to a cast however good the distance
+    // function is - so this says the map lowered the average error on data it had not seen,
+    // not that it left the neutrals alone. A signed statistic pooled within a content class
+    // is what would say that, and there is not one in the fit yet.
+    let flat = measure(&colour, render, &held).1;
+    if let Some(map) = fitted_chroma(&colour, render, jpeg, sharp, &train, &map_balance, colour.saturation) {
         let trial = HdrColour { chroma: Some(map), ..colour.clone() };
-        if measure(&trial, render, &pairs).1 + MAP_MARGIN < flat {
+        if measure(&trial, render, &held).1 + MAP_MARGIN < flat {
             colour = trial;
         }
     }
 
-    colour.delta_e = measure(&colour, render, &pairs).0;
+    colour.delta_e = measure(&colour, render, &held).0;
     Some(colour)
 }
 
