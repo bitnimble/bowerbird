@@ -1443,34 +1443,47 @@ mod one_open_at_a_time {
         }
     }
 
-    /// One open, and how long the caller spent inside it - the wait included, since waiting is
-    /// the thing being looked for.
-    fn open(path: &PathBuf) -> f64 {
-        let started = Instant::now();
+    fn open(path: &PathBuf) {
         crate::edit::prepare(&request(path)).expect("the fixture opens");
-        started.elapsed().as_secs_f64()
     }
 
+    /// **Asked as overlap, not as duration.** This compared how long the two opens took and
+    /// wanted the slower to be 1.5x the faster, which is the right shape of answer but a guess
+    /// at it: the ratio only separates the two outcomes while the machine is otherwise idle.
+    /// Run beside the rest of the suite the first open slows down too, the ratio collapses, and
+    /// the test failed on a lock that was working perfectly - reliably enough that it was
+    /// dismissed as a flake for the whole of this branch.
+    ///
+    /// Two opens either overlapped or they did not, and `edit::served` says which, so this
+    /// asks that instead. Exact, and it cannot care how loaded the machine is.
     #[test]
     fn a_second_open_waits_for_the_first() {
         let path = sony();
-        // Warmed, so neither timing carries a cold page cache for a 24MP file.
+        // Warmed, so neither open pays for a cold page cache on a 24MP file.
         open(&path);
+        let before = crate::edit::served().len();
 
-        let mut spent = std::thread::scope(|scope| {
+        std::thread::scope(|scope| {
             let threads: Vec<_> = (0..2).map(|_| scope.spawn(|| open(&path))).collect();
-            threads.into_iter().map(|t| t.join().expect("the open finished")).collect::<Vec<_>>()
+            for thread in threads {
+                thread.join().expect("the open finished");
+            }
         });
-        spent.sort_by(f64::total_cmp);
-        let (first, second) = (spent[0], spent[1]);
 
-        // Half way between the two outcomes. One that waited out the other took about twice as
-        // long as it; two that ran side by side took about the same as each other. Anything
-        // above 1.5 is the queue, which leaves room for the threads not starting at quite the
-        // same moment without leaving room for the lock being gone.
+        let served = crate::edit::served();
+        let turns = &served[before..];
+        assert_eq!(turns.len(), 2, "two opens should have taken two turns");
+        // Sorted, because which thread got its turn first is the scheduler's business.
+        let (mut a, mut b) = (turns[0], turns[1]);
+        if b.0 < a.0 {
+            std::mem::swap(&mut a, &mut b);
+        }
         assert!(
-            second > first * 1.5,
-            "two opens took {second:.3}s and {first:.3}s, so neither waited for the other",
+            b.0 >= a.1,
+            "the second open began at {}us while the first was still running until {}us, so \
+             neither waited for the other",
+            b.0,
+            a.1,
         );
     }
 }

@@ -172,12 +172,59 @@ pub fn prepare_bytes(bytes: &[u8], request: &EditRequest) -> Result<Prepared, St
 ///
 /// ponytail: a whole-process lock, so two libraries on one server queue behind each other
 /// too. A permit count would let that through; nothing today has two.
-fn admit() -> std::sync::MutexGuard<'static, ()> {
+fn admit() -> Turn {
     static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let asked = std::time::Instant::now();
     // A poisoned lock means a previous open panicked. That was reported to its own caller and
     // left nothing shared behind - the guard owns no data - so refusing every open after it
     // would turn one failure into a permanent one.
-    ONE_AT_A_TIME.lock().unwrap_or_else(|held| held.into_inner())
+    let guard = ONE_AT_A_TIME.lock().unwrap_or_else(|held| held.into_inner());
+    let waited = asked.elapsed();
+    // Reported, because an open that queues is indistinguishable from an open that is merely
+    // slow from the outside, and the two want different answers: a reader waiting behind
+    // somebody else's decode is the queue working, where a reader waiting alone is the decode
+    // being slow. Only mentioned when it actually waited, so an idle server stays quiet.
+    if waited > std::time::Duration::from_millis(50) {
+        eprintln!("rawshim: an open waited {}ms for the one before it", waited.as_millis());
+    }
+    Turn { _guard: guard, began: elapsed_micros() }
+}
+
+/// Microseconds since the first turn was asked for, which is a clock two threads can compare.
+///
+/// `Instant` cannot be shared as a number, and a wall clock can step backwards. This only has
+/// to order events inside one process.
+fn elapsed_micros() -> u64 {
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    START.get_or_init(std::time::Instant::now).elapsed().as_micros() as u64
+}
+
+/// A turn at opening, held for as long as the open runs.
+///
+/// Records the interval it covered on the way out. That is what makes "one at a time" testable
+/// without timing: two opens either overlap or they do not, and asking that is exact where
+/// comparing their durations is a guess that gets worse the busier the machine is.
+pub struct Turn {
+    /// Held, not read: dropping it is what releases the next open.
+    _guard: std::sync::MutexGuard<'static, ()>,
+    began: u64,
+}
+
+impl Drop for Turn {
+    fn drop(&mut self) {
+        SERVED.lock().unwrap_or_else(|h| h.into_inner()).push((self.began, elapsed_micros()));
+    }
+}
+
+static SERVED: std::sync::Mutex<Vec<(u64, u64)>> = std::sync::Mutex::new(Vec::new());
+
+/// Every turn taken so far, as the microsecond interval it covered.
+///
+/// For the test that asks whether two opens ran side by side. Kept behind the fixtures feature
+/// so it is not a production surface: nothing outside a test has any business reading it.
+#[cfg(feature = "fixtures")]
+pub fn served() -> Vec<(u64, u64)> {
+    SERVED.lock().unwrap_or_else(|h| h.into_inner()).clone()
 }
 
 /// The open itself, with the turn already taken.
