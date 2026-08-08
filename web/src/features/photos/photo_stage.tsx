@@ -257,6 +257,9 @@ export function PhotoStage({
   // RETIRED_FRAMES. Their rasters are the ones the browser already has, so they
   // are what shows through while the replacements' are being built.
   const [retiring, setRetiring] = useState<{ sources: readonly string[]; step: Step }>({ sources: [], step: null });
+  // The neighbours warmed so far for this photo, across every rendition it has
+  // been asked for at.
+  const [warmed, setWarmed] = useState<readonly string[]>([]);
   // The photo last promoted, which is what tells a step from a rendition swap or
   // a flip between a round's two frames. Not `painted`: that is dropped once it
   // goes stale, and a photo whose rendition had to be built is still a step from
@@ -366,6 +369,22 @@ export function PhotoStage({
   // is gone. Left to accumulate, a viewer session that steps through a few hundred
   // photographs keeps every one of their sizes for the life of the page.
   useEffect(() => setNaturals((previous) => (previous.size === 0 ? previous : new Map())), [photoKey]);
+
+  // Every neighbour this photo has asked to warm, not just the ones for the
+  // rendition on screen. Which URLs those are moves with the rendition, and one
+  // dropped on a swap is fetched again on the way back - the same trap the frames
+  // themselves were in, one photo over, and it bit hardest exactly where the
+  // warming is for: stepping on after a comparison. Cleared on the photo, where
+  // these are different photographs and what is held is next to nothing.
+  const warming = preloadSrcs?.join(' ') ?? '';
+  useEffect(() => setWarmed((previous) => (previous.length === 0 ? previous : [])), [photoKey]);
+  useEffect(() => {
+    if (!ready || warming === '') return;
+    setWarmed((previous) => {
+      const added = warming.split(' ').filter((source) => !previous.includes(source));
+      return added.length === 0 ? previous : [...previous, ...added];
+    });
+  }, [ready, warming]);
 
   const onLoaded = useRef(onImageLoad);
   onLoaded.current = onImageLoad;
@@ -584,8 +603,12 @@ export function PhotoStage({
             earlier they compete for the connection with the one being waited on.
             Mounted rather than fetched into a detached Image for the same reason
             the swap above is - a decode is for the size an element is drawn at,
-            and these elements are the size those photos will be. */}
-        {ready && preloadSrcs?.map((source) => <img key={source} src={source} alt="" aria-hidden className="stage__content" />)}
+            and these elements are the size those photos will be. And every one
+            this photo has asked for, not only the rendition on screen: warming a
+            file and then dropping the element holding it is warming nothing. */}
+        {warmed.map((source) => (
+          <img key={source} src={source} alt="" aria-hidden className="stage__content" />
+        ))}
       </div>
 
       {busy && (

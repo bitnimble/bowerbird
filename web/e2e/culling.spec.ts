@@ -593,13 +593,34 @@ test('a chosen rendition is cached on disk, and survives a tile rebuild', async 
   await expect(frames).toHaveCount(2);
   await frames.evaluateAll((imgs) => imgs.forEach((img) => img.setAttribute('data-held', '1')));
 
+  // The warmed neighbours are held the same way, and marked for the same reason. Kept only
+  // for the rendition on screen they were unmounted and re-mounted on every swap - the
+  // frames' own bug, one photo over - so stepping on after a comparison paid again for a
+  // file the page had already fetched.
+  const warm = page.locator('.stage__viewport img[aria-hidden]');
+  const warmed = await warm.count();
+  expect(warmed, 'a neighbour is being warmed at all').toBeGreaterThan(0);
+  await warm.evaluateAll((imgs) => imgs.forEach((img) => img.setAttribute('data-held', '1')));
+
+  // Requests as well, for whatever the marks cannot see. Chromium answers a hit in its own
+  // renderer's memory cache without reporting a request at all, so this can only
+  // under-count - which is why the marks above are what the swap is actually pinned on.
+  const fetched: string[] = [];
+  page.on('request', (request) => {
+    const { pathname } = new URL(request.url());
+    if (pathname.startsWith('/image/')) fetched.push(pathname);
+  });
+
   await showRendition('Embedded JPEG');
   await expect(renditionPanel.getByText('Embedded JPEG')).toBeVisible({ timeout: 60_000 });
   await showRendition('Rendered RAW');
   await expect(renditionPanel.getByText('Rendered RAW')).toBeVisible({ timeout: 60_000 });
 
-  await expect(page.locator('.stage__viewport img[data-held]'), 'both frames survive the swaps').toHaveCount(2);
   await expect(page.locator('.stage__viewport img.is-ready')).toHaveAttribute('data-held', '1');
+  await expect(page.locator('.stage__viewport img[data-held]'), 'every frame and every warmed neighbour survives the swaps').toHaveCount(
+    2 + warmed,
+  );
+  expect(fetched, 'and nothing asks for image bytes again').toEqual([]);
 
   // Both are up, so the panel can still say what the one on screen measured. A flip decodes
   // nothing, so nothing reports a size on it: the dimensions have to come from what that
