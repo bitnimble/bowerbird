@@ -26,9 +26,9 @@ import { useHdrVideo } from '../photos/hdr_video';
  */
 const RANGES = [
   { label: 'Your eyes', low: -14, high: 6, tone: 'eye' },
-  { label: 'A camera, one exposure', low: -11, high: 3, tone: 'sensor' },
-  { label: 'An HDR file, 10-bit', low: -13, high: 2.3, tone: 'hdr' },
-  { label: 'A JPEG, 8-bit', low: -8, high: 0, tone: 'sdr' },
+  { label: 'A camera at one exposure', low: -11, high: 3, tone: 'sensor' },
+  { label: 'A 10-bit HDR file', low: -13, high: 2.3, tone: 'hdr' },
+  { label: 'An 8-bit JPEG', low: -8, high: 0, tone: 'sdr' },
 ];
 
 const AXIS_LOW = -15;
@@ -99,35 +99,35 @@ const SCENES: Scene[] = [
   {
     slug: 'beach',
     title: 'The sun in the frame',
-    body: 'The obvious one. Sun, cloud and every glint off the water are all brighter than the chalk, and the JPEG has one value for the lot of them. Switch, and the sea goes back to sparkling.',
+    body: 'This is the obvious case. The sun, the cloud around it and every glint off the water are all brighter than the chalk cliff, and the JPEG has only one value to give all of them. Switch it over and the sea goes back to sparkling.',
     by: 'Popanz',
     topic: 44432,
   },
   {
     slug: 'moon',
     title: 'A moon over the roofs',
-    body: 'Almost the whole frame is dark, so it looks like there is nothing here to lose. But in eight bits the moon is a flat white disc, and switching puts the cloud back across its face.',
+    body: 'Almost the whole frame is dark, so it looks as though there is nothing here to lose. In eight bits, though, the moon is a flat white disc, and switching over puts the cloud back across its face.',
     by: 'Popanz',
     topic: 44647,
   },
   {
     slug: 'neon',
     title: 'A neon sign',
-    body: 'The tubes are the brightest thing for a street around. In eight bits they come out white with a coloured edge - the same white as the lamp in the doorway, and the same white as a sheet of paper. Nothing in the file says which of them was a light.',
+    body: 'The tubes are the brightest thing for a street around, but in eight bits they come out white with a coloured edge. That is the same white as the lamp in the doorway, and the same white as a sheet of paper would be, so nothing left in the file tells you which of them was actually a light.',
     by: 'thumper',
     topic: 55901,
   },
   {
     slug: 'sign',
-    title: 'Bright and saturated',
-    body: 'The one that catches people out. A red tube is not a dim red, it is red several stops above white - and every channel shares one ceiling, so red hits it first, then blue, then green. The core of the tube ends up pure white with its colour squeezed into a ring around it. The highlight is not too bright to keep. The channels just clip one at a time, and the ratio between them is what colour is.',
+    title: 'A colour that is also a light',
+    body: 'This is the case that catches people out. A red neon tube is not a dim red; it is red at several stops above white. All three channels share the same ceiling, so red reaches it first, then blue, then green, and the core of the tube ends up pure white with its colour squeezed into a ring around it. The problem is not that the highlight is too bright to keep. It is that the channels clip one at a time, and the ratio between them is what colour actually is.',
     by: 'sushey',
     topic: 33920,
   },
   {
     slug: 'leds',
     title: 'Coloured light on things',
-    body: 'Same thing, one step removed. Nothing here is a light source, but the highlights on the metal are coloured light rather than white, and in eight bits the brightest of them wash out while the rest of the frame keeps its blue and red.',
+    body: 'This is the same problem as above, one step removed. Nothing in the frame is a light source, but the highlights on the metal are coloured light rather than white, and in eight bits the brightest of them wash out while the rest of the picture keeps its blue and red.',
     by: 'ilia3101',
     topic: 28404,
   },
@@ -152,12 +152,12 @@ function Comparison({ scene }: { scene: Scene }): JSX.Element {
         type="button"
         className="compare__frame"
         aria-pressed={hdr}
-        aria-label={`${scene.title}: showing the ${hdr ? 'HDR' : '8-bit'} version. Activate to switch.`}
+        aria-label={`${scene.title}. This is the ${hdr ? 'HDR' : 'eight-bit'} version; activate to see the other one.`}
         onClick={() => setHdr((was) => !was)}
       >
         <img
           src={`/hdr/${scene.slug}-sdr.avif`}
-          alt={`${scene.title}, as an 8-bit JPEG can hold it`}
+          alt={`${scene.title}, as an eight-bit JPEG holds it`}
           className={`compare__layer compare__layer--base${hdr ? '' : ' is-up'}`}
         />
         {hdrVideo == null ? (
@@ -214,32 +214,34 @@ export function HdrPage(): JSX.Element {
       <Heading level={1}>What HDR is for</Heading>
 
       <Text variant="muted" as="p">
-        Your camera keeps far more of a scene than a JPEG can hold, and nearly all of what gets thrown away is at the top - where a
-        picture stops being a lit surface and starts being a light. Five photographs where that costs something, each shown twice.
+        Your camera keeps far more of a scene than a JPEG can hold, and nearly all of what gets thrown away is at the bright end,
+        where a picture stops being a lit surface and starts being a light. Below are five photographs where that costs something.
+        Each one is shown twice, and you can click it to switch between the two.
       </Text>
 
       {!high && (
         <div className="notice">
           <Text as="p">
-            Your display is reporting SDR, so the two versions will look much closer than they really are. The colour differences
-            still show; the brightness ones will not. Firefox says this even on an HDR screen.
+            Your display is reporting standard dynamic range, so the two versions of each photograph will look much closer than they
+            really are. You will still see the differences in colour, but not the ones in brightness. Firefox reports this even when
+            the screen is an HDR one.
           </Text>
         </div>
       )}
 
-      <Heading>What fits where</Heading>
+      <Heading>How much of a scene fits</Heading>
       <Text variant="muted" as="p">
-        Stops of light either side of white - a white shirt, a sheet of paper, a sunlit cloud. Anything right of that line was a
-        light source rather than something lit by one, and a JPEG has none of it.
+        The scale below is in stops, measured either side of white - the white of a shirt, a sheet of paper, or a sunlit cloud.
+        Anything to the right of that line was a light source rather than something lit by one, and a JPEG holds none of it.
       </Text>
       <RangeChart />
       <Text variant="mono" as="p" className="prose__note">
-        Rough figures: everyone draws the line somewhere slightly different. Your eyes are taken glancing around one scene - give
-        them a few minutes in the dark and the range is far wider. The camera is a modern full-frame body at base ISO. The HDR file
-        assumes a 1000-nit screen.
+        These are rough figures, because everyone draws the line somewhere slightly different. The figure for your eyes assumes you
+        are glancing around a single scene; give them a few minutes to adjust in the dark and the range gets much wider. The camera
+        is a modern full-frame body at its base ISO, and the HDR file assumes you are looking at a 1000-nit screen.
       </Text>
 
-      <Heading>Where it shows</Heading>
+      <Heading>Where you notice it</Heading>
       {SCENES.map((scene) => (
         <section key={scene.slug} className="prose__section">
           <Text variant="label" as="div">
@@ -252,10 +254,11 @@ export function HdrPage(): JSX.Element {
         </section>
       ))}
 
-      <Heading>About the pictures</Heading>
+      <Heading>About these pictures</Heading>
       <Text variant="muted" as="p">
-        Each pair is one raw file developed twice, same settings both times - same exposure, same colour, same everything. The only
-        difference is what it was saved as: eight bits, or HDR with room left above white.
+        Each pair is a single raw file developed twice with the same settings both times: the same exposure, the same colour, the
+        same everything. The only difference between them is what the result was saved as, either eight bits or HDR with room left
+        above white.
       </Text>
     </div>
   );
