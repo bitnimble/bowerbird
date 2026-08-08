@@ -145,15 +145,25 @@ async function clipToWhite(slug: string): Promise<void> {
 // anything was desaturated, but because raising a channel that is already at its
 // ceiling is the one thing eight bits cannot do, so the other two rise instead.
 const SWATCHES: [number, number, number][] = [
-  [1, 0.12, 0.1], // red
-  [1, 0.45, 0.05], // orange
-  [0.15, 0.6, 1], // blue
-  [0.2, 1, 0.35], // green
+  [1, 0.06, 0.05], // red
+  [1, 0.42, 0.03], // orange
+  [0.06, 0.5, 1], // blue
+  [0.1, 1, 0.25], // green
   [1, 1, 1], // white, so the strip says the effect is not about colour
 ];
 
-/** Multiples of diffuse white across the strip, ending on the 1000-nit ceiling. */
-const SWATCH_STEPS = [0.35, 0.7, 1.4, 2.8, PEAK_OVER_WHITE];
+/**
+ * Multiples of diffuse white across the strip, ending on the 1000-nit ceiling.
+ *
+ * The strip used to start at 0.35, and the two dark columns were doing it harm: a dark
+ * saturated colour reads as muddy rather than as saturated, so the HDR row appeared to
+ * lighten across the strip when what it was really doing was leaving the mud behind.
+ * Every column is a bright colour now, and the only thing changing along the row is how
+ * much light is behind it. The first step is just under white so the white row still has
+ * one step to take before it runs out - at 1.0 it would be five identical patches, which
+ * reads as a broken image rather than as the point.
+ */
+const SWATCH_STEPS = [0.8, 1.25, 1.95, 3.05, PEAK_OVER_WHITE];
 
 const SWATCH_CELL = 96;
 

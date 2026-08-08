@@ -245,8 +245,10 @@ export function HdrPage(): JSX.Element {
       </Text>
       <Text variant="muted" as="p">
         Both strips below are the same five colours, stepped up by the same amount from left to right. The eight-bit one has to
-        spend lightness to do it. The HDR one does not, and the bottom row is the giveaway: once white has reached the top of the
-        eight-bit file, the last three steps are the same white and the strip simply stops.
+        spend lightness to do it, and the HDR one does not: measured off the file, every patch in a row of the HDR strip has exactly
+        the same saturation as the one before it while carrying six times the light by the end. The bottom row is the giveaway.
+        Once plain white has reached the top of the eight-bit file it cannot go any further, so the last four patches are the same
+        white and the strip simply stops.
       </Text>
       <div className="swatches">
         <figure>
