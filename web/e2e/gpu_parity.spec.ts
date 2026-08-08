@@ -1,18 +1,18 @@
 import { expect, test } from '@playwright/test';
 
-// The GPU tick against the CPU it replaces (`docs/raw-edit-gpu.md` §6.3).
+// The browser's grade against the graded answer the server produces (`docs/raw-edit-gpu.md`
+// §6.3).
 //
-// This is the pin the whole conversion rests on: the shaders are a second implementation
-// of one picture, and DESIGN §21.1 records what happens when two implementations of one
-// picture are allowed to drift - the editor lost the camera match, twice, silently.
+// This is the pin the whole conversion rests on: the client runs a second implementation of
+// one picture, and DESIGN §21.1 records what happens when two implementations of one picture
+// are allowed to drift - the editor lost the camera match, twice, silently.
 //
-// Half the pin, and the half that needs a GPU. It asserts the shaders reproduce the bytes in
-// `fixtures/gpu/`, which is only worth anything while those bytes are still what the CPU
-// produces - and that is the other half, `native/rawshim/tests/gpu_fixture.rs`, which rebuilds
-// and compares them inside `cargo test`. It has to be checked rather than remembered: the
-// fixtures were written by hand for a while, and a change to the grade that updated the Rust
-// pins and not the fixtures would have left this comparing the shaders against a CPU that no
-// longer existed, green.
+// Half the pin, and the half that runs the *client's* upload path. It asserts the browser
+// reproduces the bytes in `fixtures/gpu/`; the other half,
+// `native/rawshim/tests/gpu_fixture.rs`, keeps those bytes current inside `cargo test`. Both
+// halves are needed and neither subsumes the other: the Rust side builds its own bindings, so
+// only this one can catch the client packing a lattice differently - which it did, silently
+// dropping the ninth value of every node until this spec failed.
 //
 // Split by stage rather than pooled into one number, because the two halves promise
 // different things: tone and colour are the editor's whole reason to exist and must land
@@ -37,7 +37,7 @@ test.describe('GPU tick parity', () => {
   // Six fixtures, each a whole `finish` at 96x64, and a cold pipeline creation per case.
   test.setTimeout(180_000);
 
-  test('the shaders reproduce the CPU frame', async ({ page }) => {
+  test('the browser reproduces the graded frame', async ({ page }) => {
     const failures: string[] = [];
     page.on('pageerror', (error) => failures.push(String(error)));
 

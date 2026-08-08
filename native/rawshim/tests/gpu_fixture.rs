@@ -5,14 +5,12 @@
 //! prevent. So the shaders are held to this: the same prepared samples, the same settings,
 //! and the frame the CPU produces from them, stage by stage.
 //!
-//! **This is a test rather than an example because of what the arrangement leaves unchecked
-//! otherwise.** `web/e2e/gpu_parity.spec.ts` asserts the shaders reproduce
+//! **This is a test rather than an example so that the browser's fixtures cannot go stale.**
+//! `web/e2e/gpu_parity.spec.ts` asserts the shaders reproduce
 //! `web/e2e/fixtures/gpu/*.expected.bin`, which are committed bytes; it does not assert those
-//! bytes are what the CPU produces *now*. Written as an example run by hand, nothing did.
-//! Change `tone::eetf`'s knee or anything the grade shaders do, update the Rust pins that
-//! move with it, forget to regenerate, and every suite stays green while the two
-//! implementations quietly disagree - the pin the whole conversion rests on comparing the
-//! shaders against a CPU that no longer exists.
+//! bytes are still what the grade produces. Written as an example run by hand, nothing did:
+//! change `tone::eetf`'s knee or anything the grade shaders do, forget to regenerate, and
+//! every suite stays green against an answer nothing produces any more.
 //!
 //! So the bytes are rebuilt here and compared, in the suite that already runs on every edit.
 //! Regenerate deliberately, after reading why they moved:
@@ -124,12 +122,10 @@ fn matched() -> HdrColour {
 
 /// One case, as the files the harness fetches for it.
 ///
-/// `expected` and its two siblings are **the CPU implementation, frozen**. There is no
-/// per-pixel Rust grade any more - the shader is the only one - so these are what stands
-/// in for it: generated from that implementation on the day it was deleted, and compared
-/// against ever since. Data rather than code on purpose, because a second implementation
-/// sitting in the source is one a future change will edit, and then the two agree because
-/// somebody made them agree rather than because they were derived the same way.
+/// `expected` and its two siblings are the graded answer, held as data rather than as a
+/// second implementation - one sitting in the source is one a future change edits, and then
+/// the two agree because somebody made them agree. `baseline` has what they check and what
+/// they no longer do.
 struct Case {
     stem: String,
     header: String,
@@ -181,21 +177,29 @@ fn cases() -> Vec<Case> {
 
 /// A committed answer, as `u16`.
 ///
-/// These files are the CPU implementation. It was deleted once the shader reproduced it,
-/// so there is nothing left to regenerate them from and that is deliberate: a second
-/// implementation living in the source is one a later change edits, and then the two agree
-/// because somebody made them agree. Frozen, they cannot drift and nobody has to maintain
-/// them. Replacing one is a claim that the grade should have changed.
-fn committed(stem: &str, suffix: &str) -> Vec<u16> {
+/// **These began as the CPU implementation and are now a regression baseline.** The CPU
+/// grade was deleted once the shader reproduced it, which left these unregenerable by
+/// design: a second implementation living in the source is one a later change edits, and
+/// then the two agree because somebody made them agree.
+///
+/// That cost more than it bought. Every deliberate model change needed a copy of the
+/// deleted implementation resurrected to re-freeze against, and that copy lived outside the
+/// repository - one `/tmp` clear from these fixtures becoming unmaintainable. They are
+/// regenerated from the shader now, and what they check is narrower and honest: that the
+/// grade has not moved since somebody last said it should.
+///
+/// The bytes carry their provenance. They were captured while the shader still agreed with
+/// the CPU, at 0.25 counts of `u16` PQ on the matched arm against a bound of 0.5, 0.0002 on
+/// the rolled arm, and 0.001 of an 8-bit count on sRGB. Regenerating does not re-establish
+/// that agreement, so `BOWERBIRD_WRITE_FIXTURES=1` is a claim the grade should have changed
+/// and the new bytes want looking at rather than trusting.
+fn baseline(stem: &str, suffix: &str, got: &[u8]) -> Option<Vec<u8>> {
     let path = fixture_dir().join(format!("{stem}.{suffix}"));
-    let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-    bytes.chunks_exact(2).map(|b| u16::from_le_bytes([b[0], b[1]])).collect()
-}
-
-/// The same, for the sRGB arm, which is bytes rather than `u16`.
-fn committed_bytes(stem: &str, suffix: &str) -> Vec<u8> {
-    let path = fixture_dir().join(format!("{stem}.{suffix}"));
-    std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+    if std::env::var("BOWERBIRD_WRITE_FIXTURES").is_ok_and(|v| v == "1") {
+        std::fs::write(&path, got).expect("writing the answer");
+        return None;
+    }
+    Some(std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display())))
 }
 
 /// What `edit::open` filters with, in the same two halves and the same order: everything but
@@ -327,7 +331,6 @@ fn the_encode_pass_reproduces_the_cpu_frame() {
             let mut prepared =
                 Prepared { samples: samples.clone(), width: WIDTH, height: HEIGHT, levels };
             filter_once(&mut prepared, &grade, strengths);
-            let want = committed(&format!("tick-{name}-ev{ev}"), "expected.bin");
 
             // The peak the grade runs through, off the frame as it stands here - which is
             // what `tone::SceneGrade::new` measures, and so what `peak_out[0]` stands in for.
@@ -356,6 +359,12 @@ fn the_encode_pass_reproduces_the_cpu_frame() {
                 },
             );
 
+            let Some(want) = baseline(&format!("tick-{name}-ev{ev}"), "expected.bin", &le(&got))
+            else {
+                continue;
+            };
+            let want: Vec<u16> =
+                want.chunks_exact(2).map(|b| u16::from_le_bytes([b[0], b[1]])).collect();
             let mut worst = 0i64;
             let mut total = 0i64;
             for (a, b) in got.iter().zip(want.iter()) {
@@ -402,8 +411,6 @@ fn the_rolled_arm_reproduces_the_cpu_grade() {
                 Prepared { samples: samples.clone(), width: WIDTH, height: HEIGHT, levels };
             filter_once(&mut prepared, &grade, strengths);
 
-            let want = committed(&format!("tick-{name}-ev{ev}"), "rolled.bin");
-
             let scene = tone::SceneGrade::new(
                 &prepared.samples,
                 colour.as_ref(),
@@ -428,6 +435,12 @@ fn the_rolled_arm_reproduces_the_cpu_grade() {
                 },
             );
 
+            let Some(want) = baseline(&format!("tick-{name}-ev{ev}"), "rolled.bin", &le(&got))
+            else {
+                continue;
+            };
+            let want: Vec<u16> =
+                want.chunks_exact(2).map(|b| u16::from_le_bytes([b[0], b[1]])).collect();
             let mut worst = 0i64;
             let mut total = 0i64;
             for (a, b) in got.iter().zip(want.iter()) {
@@ -473,7 +486,6 @@ fn the_encode_pass_reproduces_the_cpu_sdr_frame() {
             Prepared { samples: samples.clone(), width: WIDTH, height: HEIGHT, levels };
         filter_once(&mut prepared, &grade, strengths);
 
-        let want = committed_bytes(&format!("tick-{name}-ev0"), "srgb.bin");
 
         let scene = tone::SceneGrade::new(
             &prepared.samples,
@@ -499,6 +511,12 @@ fn the_encode_pass_reproduces_the_cpu_sdr_frame() {
             },
         );
 
+        // The sRGB arm writes 8-bit in the low byte of each `u16`, so the committed answer is
+        // bytes and this is the one place the two differ in width.
+        let got: Vec<u8> = got.iter().map(|v| *v as u8).collect();
+        let Some(want) = baseline(&format!("tick-{name}-ev0"), "srgb.bin", &got) else {
+            continue;
+        };
         let mut worst = 0i64;
         let mut total = 0i64;
         for (a, b) in got.iter().zip(want.iter()) {
