@@ -2166,6 +2166,29 @@ But it is a claim about the camera, and not every frame supports it. IMG_9808 do
 
 > ⚠️ **This paragraph diagnosed the metric problem correctly and the fix was thrown away with the constraint.** "A mean ΔE averages exactly that away" is the same blindness described at `fit.rs`'s `deltaE` section, and drift - a per-hue spread across brightness levels - was the right instrument for it. When the chroma map replaced the shape constraint, `hold_one_shape`, the arm choice **and the drift metric** were all removed together, leaving nothing that can see level-dependent hue error. It has since come back: on IMG_8789 today the signed cast on light low-chroma content reads da\* −2.0 while the aggregate reads 0.35, because it flips sign between shadows and mids and cancels - exactly the failure drift was built to catch. Any replacement needs a signed, level-resolved statistic; a better magnitude (ΔE2000) is necessary but not sufficient.
 
+> ✅ **The constraint is back and unconditional, and the arm choice above is not needed.** The
+> shape is shared by every frame (`hdr_fit::fit_curves`), because the reason it used to cost
+> IMG_9808 is gone: the per-channel behaviour it gives up now has somewhere else to live. The
+> lattice gained luma-to-chroma and chroma-to-lightness terms, so it is indexed by chroma *and*
+> level and can hold a blue lift where it belongs instead of pushing it into the matrix, which
+> is what applied it to the hillside.
+>
+> Measured over all 32 frames in the Nick library (`cargo run --example sweep`), on the pixels
+> the camera renders near-neutral rather than on a synthetic grey: **mean signed neutral drift
+> 2.81 counts, 30 of 32 under 5**. The two outliers are not this constraint. IMG_1144 reads 26.6
+> counts on 789 "neutrals" in a night frame of projected light that contains none. IMG_9887 -
+> heavy magenta LED, the mixed-lighting case this paragraph feared - reports ΔE 23.6 with the
+> shared shape and **46.2 with per-channel curves**, so the constraint halves the error on the
+> hardest frame in the set. Its neutrals drift −2.5/−3.0; what it actually gets wrong is a
+> narrow-band magenta, where the camera crushes green to 42 and we render 69.
+>
+> The drift instrument this paragraph asks for also exists again: `score_many` pools the signed
+> a\*/b\* residual inside nine buckets of camera chroma against lightness and weights it at
+> `BIAS_WEIGHT`, so a correction that tints one class of content costs more than the same error
+> scattered. What it does not reach is anything the fit *solves* rather than *chooses* - which is
+> why divergent tone curves tinted neutrals by 27 counts with that term running the whole time,
+> and why this constraint is the fix rather than a better score.
+
  Drift is measured per hue as the spread, across brightness levels, of the transform's log ratio to the camera against green - per hue so that a frame merely containing dark blue and bright yellow does not read as drift, against green so that a difference in exposure drops out, and over every pixel the camera did not clip rather than over the fitted pairs, since the fit's mask also drops everything above `TRUST_CEILING` and that is where free curves go furthest wrong.
 
 **Whichever measures less, with no margin favouring the constraint** - and the margin that was there is worth recording, because the reasoning for it was sound and the answer was still wrong. The constraint describes something this camera really does, so it looked like it should survive a near-tie, and IMG_8789 is a near-tie at 0.130 free against 0.134 held. But held, that frame renders a deep blue pot violet: green cut to a 0.151 share of the pixel against the camera's 0.284, a 36° hue error on a saturated object, by the same mechanism that costs IMG_9808 its hillside. Measured region by region against the camera - bird bath, brick, pale fur, pot - the free fit is closer on three and level on the fourth, the fur the margin was protecting differing by 0.0008 either way. The whole-frame drift the margin was justified by is dominated by lawn. Across 35 frames the mean ΔE against the unmatched-curve baseline goes 2.03 → 1.60.
