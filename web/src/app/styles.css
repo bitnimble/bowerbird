@@ -2770,6 +2770,33 @@ p.ui-text--mono {
   transform: translateX(-50%);
 }
 
+/* The swatch strips, which are the one thing on the page that is better side by side
+   than swapped in place: they are abstract, so there is nothing to lose track of while
+   the eye travels, and the point is the two of them ending up different shapes. */
+.swatches {
+  display: flex;
+  gap: 12px;
+  margin: 12px 0 0;
+}
+
+.swatches figure {
+  flex: 1;
+  margin: 0;
+  min-width: 0;
+}
+
+.swatches img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--slate);
+  border-radius: var(--radius);
+}
+
+.swatches figcaption {
+  margin-top: 4px;
+}
+
 /* One photograph in two dynamic ranges, in one place. Side by side, the eye has to
    travel and the difference gets argued about; in one place it is simply visible. */
 .compare {

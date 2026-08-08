@@ -31,6 +31,7 @@
 import { existsSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
+import { Readable } from 'node:stream';
 import { SettingsSchema } from '../src/schemas/settings';
 import { runJob, type JobTarget } from '../src/services/processing/rawshim_job';
 
@@ -52,9 +53,9 @@ interface Scene {
 // at 0.0% of its pixels and a pizzeria sign at 0.1%.
 const SCENES: Scene[] = [
   { slug: 'beach', topic: 44432, url: 'https://discuss.pixls.us/uploads/short-url/zivNIARFeoOziUpK6ySmY3mmc6w.CR3' },
-  { slug: 'drinks', topic: 27308, url: 'https://discuss.pixls.us/uploads/short-url/iTUsp7S7Z7XIDvqizEjQclxrlXl.ARW' },
+  { slug: 'snow', topic: 55869, url: 'https://discuss.pixls.us/uploads/short-url/4FBdaMDjyms79BbSplKr0yJcohg.ARW' },
+  { slug: 'sunset', topic: 39131, url: 'https://discuss.pixls.us/uploads/short-url/fdehULtllGigrUp3tWRKRUvK6zk.CR2' },
   { slug: 'sign', topic: 33920, url: 'https://discuss.pixls.us/uploads/short-url/rjK5CIORCZhxCSdO2OunEJvnb91.ARW' },
-  { slug: 'traffic', topic: 26816, url: 'https://discuss.pixls.us/uploads/short-url/uCR13F7sgAg3GORl3nN2Uhig1sD.CR2' },
 ];
 
 /**
@@ -69,6 +70,9 @@ const CACHE = join(process.env.TMPDIR ?? '/tmp', 'bowerbird-hdr-raws');
 
 /** Every rendition setting at its shipped default, so the page shows the shipped look. */
 const SETTINGS = SettingsSchema.parse({});
+
+/** How far above diffuse white the mastering peak sits: 1000 nits over 203, 2.3 stops. */
+const PEAK_OVER_WHITE = SETTINGS.hdr_peak_nits / SETTINGS.hdr_reference_white_nits;
 
 async function original(scene: Scene): Promise<string> {
   mkdirSync(CACHE, { recursive: true });
@@ -132,6 +136,70 @@ async function clipToWhite(slug: string): Promise<void> {
   await run('avifenc', ['--stdin', '--cicp', '1/13/1', '--min', quantizer, '--max', quantizer, '-s', '4', outputPath(slug, false)], ffmpeg.stdout);
 }
 
+// The swatch strip that opens the page, which is not a photograph and not a scene.
+//
+// It answers the question every other picture on the page assumes an answer to: what
+// does "brighter" mean once white is not the top. Each column is one colour at a fixed
+// hue and saturation, stepped up in light alone, and the reader is meant to notice that
+// the HDR strip stays that colour while the 8-bit one walks to white - not because
+// anything was desaturated, but because raising a channel that is already at its
+// ceiling is the one thing eight bits cannot do, so the other two rise instead.
+const SWATCHES: [number, number, number][] = [
+  [1, 0.12, 0.1], // red
+  [1, 0.45, 0.05], // orange
+  [0.15, 0.6, 1], // blue
+  [0.2, 1, 0.35], // green
+  [1, 1, 1], // white, so the strip says the effect is not about colour
+];
+
+/** Multiples of diffuse white across the strip, ending on the 1000-nit ceiling. */
+const SWATCH_STEPS = [0.35, 0.7, 1.4, 2.8, PEAK_OVER_WHITE];
+
+const SWATCH_CELL = 96;
+
+/**
+ * The strip, as scene-linear samples where 1.0 is diffuse white.
+ *
+ * Planar GBR because that is the one float layout that reaches zimg without swscale in
+ * the way, which clamps to [0,1] and would flatten every step above white into one.
+ */
+function swatchFrame(): Float32Array {
+  const [width, height] = [SWATCH_STEPS.length * SWATCH_CELL, SWATCHES.length * SWATCH_CELL];
+  const pixels = width * height;
+  const out = new Float32Array(pixels * 3);
+  for (let y = 0; y < height; y++) {
+    const colour = SWATCHES[Math.floor(y / SWATCH_CELL)]!;
+    for (let x = 0; x < width; x++) {
+      const step = SWATCH_STEPS[Math.floor(x / SWATCH_CELL)]!;
+      const at = y * width + x;
+      for (const [channel, plane] of [[0, 2], [1, 0], [2, 1]] as const) {
+        out[plane * pixels + at] = colour[channel]! * step;
+      }
+    }
+  }
+  return out;
+}
+
+async function buildSwatches(): Promise<void> {
+  const [width, height] = [SWATCH_STEPS.length * SWATCH_CELL, SWATCHES.length * SWATCH_CELL];
+  const ffmpeg = spawn('ffmpeg', [
+    '-y', '-hide_banner', '-loglevel', 'error',
+    '-f', 'rawvideo', '-pix_fmt', 'gbrpf32le', '-s', `${width}x${height}`, '-i', '-',
+    '-vf',
+    `zscale=pin=bt709:tin=linear:min=bt709:p=bt2020:t=smpte2084:m=bt2020nc:r=limited:npl=${SETTINGS.hdr_reference_white_nits}`,
+    '-pix_fmt', 'yuv444p10le',
+    '-f', 'yuv4mpegpipe', '-strict', '-1', '-',
+  ], { stdio: ['pipe', 'pipe', 'inherit'] });
+  const samples = swatchFrame();
+  Readable.from([Buffer.from(samples.buffer, samples.byteOffset, samples.byteLength)]).pipe(ffmpeg.stdin!);
+  // 4:4:4 and lossless: flat colour has no detail to trade away, and a quantiser on a
+  // hard edge between two saturated patches is visible where it is invisible on a
+  // photograph. Also why the swatches skip the Firefox rewrap on the page - that path
+  // needs 4:2:0 (§10.7).
+  await run('avifenc', ['--stdin', '--cicp', '9/16/9', '--min', '0', '--max', '0', '-s', '4', outputPath('swatches', true)], ffmpeg.stdout!);
+  await clipToWhite('swatches');
+}
+
 async function build(scene: Scene): Promise<void> {
   const rawFilePath = await original(scene);
   try {
@@ -165,6 +233,8 @@ async function build(scene: Scene): Promise<void> {
 
 const asked = process.argv.slice(2);
 const wanted = asked.length === 0 ? SCENES : SCENES.filter((scene) => asked.includes(scene.slug));
-if (wanted.length === 0) throw new Error(`no such scene: ${asked.join(', ')}`);
+const swatches = asked.length === 0 || asked.includes('swatches');
+if (wanted.length === 0 && !swatches) throw new Error(`no such scene: ${asked.join(', ')}`);
 mkdirSync(OUT, { recursive: true });
+if (swatches) await buildSwatches();
 for (const scene of wanted) await build(scene);

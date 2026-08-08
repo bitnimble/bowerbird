@@ -104,25 +104,25 @@ const SCENES: Scene[] = [
     topic: 44432,
   },
   {
-    slug: 'drinks',
-    title: 'Drinks against a window',
-    body: 'You know what a beer looks like held up to the light, which is what makes this one easy to check. The window behind the glasses is gone in eight bits, and so is most of what was coming through the lager: the yellow goes pale where it should be getting deeper and brighter at the same time.',
-    by: 'ilia3101',
-    topic: 27308,
+    slug: 'snow',
+    title: 'Two very different lights, one white',
+    body: 'The sun setting over snow. In eight bits the disc is the same white as the brightest part of the cloud beside it, because that is the only white there is. Switch over and it goes back to being about five times brighter than everything around it, which is roughly what you would have seen standing there.',
+    by: 'Sean_Liu',
+    topic: 55869,
+  },
+  {
+    slug: 'sunset',
+    title: 'Where the colour goes',
+    body: 'This is the case that catches people out, and it is the strip above happening to a photograph. The sky nearest the sun was the most saturated thing in the scene and it is the palest thing in the eight-bit file, because the only way that file had to say "brighter" was to move it towards white. Switch over and the colour comes back, in the same place, at the same brightness.',
+    by: 'fales',
+    topic: 39131,
   },
   {
     slug: 'sign',
-    title: 'A colour that is also a light',
-    body: 'This is the case that catches people out. A red neon tube is not a dim red; it is red at several stops above white. All three channels share the same ceiling, so red reaches it first, then blue, then green, and the core of the tube ends up pure white with its colour squeezed into a ring around it. The problem is not that the highlight is too bright to keep. It is that the channels clip one at a time, and the ratio between them is what colour actually is.',
+    title: 'Something that was actually a light',
+    body: 'These tubes are about twenty-five times brighter than a sheet of white paper would be in the same street. Eight bits has one white for both of them, so the sign ends up looking painted on. Nothing about the shape of it changes when you switch; what changes is that it starts behaving like a light source, which is the whole of what the extra room buys here.',
     by: 'sushey',
     topic: 33920,
-  },
-  {
-    slug: 'traffic',
-    title: 'A red light that goes white',
-    body: 'The same thing again, on something you can check against memory. Traffic lights are red, and this one has a white hole punched through the middle of it because that is where the red ran out of room. Switch over and the hole fills back in.',
-    by: 'ilia3101',
-    topic: 26816,
   },
 ];
 
@@ -235,6 +235,33 @@ export function HdrPage(): JSX.Element {
         are glancing around a single scene; give them a few minutes to adjust in the dark and the range gets much wider. The camera
         is a modern full-frame body at its base ISO, and the HDR file assumes you are looking at a 1000-nit screen.
       </Text>
+
+      <Heading>Brighter is not the same as lighter</Heading>
+      <Text variant="muted" as="p">
+        This is the part that trips people up. In an eight-bit file the only way to make something brighter is to move it closer to
+        white, and a colour on its way to white loses its colour as it goes: the channel that was already full cannot rise any
+        further, so the other two catch up with it instead. HDR can leave the colour exactly where it is and put more light behind
+        it.
+      </Text>
+      <Text variant="muted" as="p">
+        Both strips below are the same five colours, stepped up by the same amount from left to right. The eight-bit one has to
+        spend lightness to do it. The HDR one does not, and the bottom row is the giveaway: once white has reached the top of the
+        eight-bit file, the last three steps are the same white and the strip simply stops.
+      </Text>
+      <div className="swatches">
+        <figure>
+          <img src="/hdr/swatches-sdr.avif" alt="Five colours stepped brighter in eight bits, each one paling towards white" />
+          <figcaption>
+            <Text variant="mono">Eight bits</Text>
+          </figcaption>
+        </figure>
+        <figure>
+          <img src="/hdr/swatches-hdr.avif" alt="The same five colours stepped brighter in HDR, each one holding its colour" />
+          <figcaption>
+            <Text variant="mono">HDR</Text>
+          </figcaption>
+        </figure>
+      </div>
 
       <Heading>Where you notice it</Heading>
       {SCENES.map((scene) => (
