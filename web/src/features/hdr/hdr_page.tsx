@@ -54,15 +54,21 @@ import { useHdrVideo } from '../photos/hdr_video';
  * zero would - a JPEG does reserve room for highlights, and there is almost none of it.
  */
 /**
- * The screens. Both HDR ones peak around 1600 nits on the small bright areas a
- * photograph actually puts there, so what separates them is the bottom and not the top.
+ * The screens. These rows are what a reader can *see* of a file on that panel, so
+ * **none of them may run past the eye row**, whatever the panel is physically capable of.
+ * A bar claiming 25 stops of visible range under a 20-stop pair of eyes is nonsense, and
+ * two earlier versions of these rows did exactly that.
  *
- * **An OLED switches its pixels off and a mini-LED cannot.** The XDR's zones bloom, which
- * is what its 1,000,000:1 describes: 1600 nits over a floor of 0.0016. An OLED in a dark
- * room has no floor worth the name, so the thing that runs out first is the file - PQ's
- * lowest non-zero code at 10 bits is 0.00004 nits - and the row is nearly the format bar
- * above it. An earlier version gave both screens the same 0.005 black, which handed away
- * the one thing an OLED is for.
+ * Both HDR panels peak around 1600 nits on the small bright areas a photograph actually
+ * puts there, so what separates them is the bottom.
+ *
+ * - **OLED**: pixels switch off, so nothing about the panel stops you. The eye does, at
+ *   -14, and that is where the row ends.
+ * - **XDR**: zone-dimmed, so it blooms. Its 1,000,000:1 is a full-field-black figure and
+ *   describes nothing you will ever look at; with bright content on screen the local
+ *   floor is nearer 0.05 nits, which is -12. Believing the spec sheet puts it at -14 and
+ *   draws it identical to the OLED, which was the previous mistake.
+ * - **LCD in a lit room**: ambient reflected off the glass, ~0.5 nits, which is -8.7.
  */
 const XDR = 'on a MacBook Pro XDR display';
 const OLED = 'on an OLED in a dark room';
@@ -77,8 +83,8 @@ const RANGES: { label: string; low: number; high: number; tone: string; under?: 
     high: 5.6,
     tone: 'hdr',
     under: [
-      { label: OLED, low: -22.3, high: 3 },
-      { label: XDR, low: -17, high: 3 },
+      { label: OLED, low: -14, high: 3 },
+      { label: XDR, low: -12, high: 3 },
       { label: LCD, low: -8.7, high: 1.6 },
     ],
   },
@@ -89,8 +95,8 @@ const RANGES: { label: string; low: number; high: number; tone: string; under?: 
     tone: 'sdr',
     under: [
       // Both identical to the format bar above them, and that is the finding rather than
-      // a mistake: either screen outruns sRGB by several stops, so what limits a JPEG
-      // there is the JPEG. The HDR file is the other way round on the same two.
+      // a mistake: either screen reaches past sRGB's own floor at -11.5, so what limits a
+      // JPEG there is the JPEG. The HDR file is the other way round on the same two.
       { label: OLED, low: -11.5, high: 0.2 },
       { label: XDR, low: -11.5, high: 0.2 },
       { label: LCD, low: -8.5, high: 0.2 },
@@ -315,8 +321,8 @@ export function HdrPage(): JSX.Element {
       <RangeChart />
       <Text variant="mono" as="p" className="prose__note">
         Rough figures. The 2 file bars are what the format can encode, and the indented ones below them are what they are reduced to
-        after you view them on a screen. A JPEG on a good screen is limited by the JPEG, not the screen, and there's nowhere left
-        for it to go above white either way.
+        after you view them on a screen, which is why none of those reach past your own eyes. A JPEG on a good screen is limited by
+        the JPEG, not the screen, and there's nowhere left for it to go above white either way.
       </Text>
 
       <Heading>It's not about brightness, it's about colour</Heading>
