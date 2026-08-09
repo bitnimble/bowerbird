@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { Heading } from '../../ui/heading';
 import { Text } from '../../ui/text';
 import { useHdrVideo } from '../photos/hdr_video';
@@ -53,51 +53,83 @@ import { useHdrVideo } from '../photos/hdr_video';
  * stopping dead on it, and 0.2 against the HDR file's 2.3 makes the point better than
  * zero would - a JPEG does reserve room for highlights, and there is almost none of it.
  */
-const RANGES = [
+const OLED = 'on an HDR OLED in a dark room';
+const LCD = 'on an LCD in a lit room';
+
+const RANGES: { label: string; low: number; high: number; tone: string; under?: { label: string; low: number; high: number }[] }[] = [
   { label: 'Your eyes', low: -14, high: 6, tone: 'eye' },
   { label: 'A camera at one exposure', low: -11, high: 3, tone: 'sensor' },
-  { label: 'A 10-bit HDR file', low: -12, high: 2.3, tone: 'hdr' },
-  { label: 'An 8-bit JPEG', low: -9.8, high: 0.2, tone: 'sdr' },
+  {
+    label: 'A 10-bit HDR file',
+    low: -22.3,
+    high: 5.6,
+    tone: 'hdr',
+    under: [
+      { label: OLED, low: -15.3, high: 2.3 },
+      { label: LCD, low: -8.7, high: 1.6 },
+    ],
+  },
+  {
+    label: 'An 8-bit JPEG',
+    low: -11.5,
+    high: 0.2,
+    tone: 'sdr',
+    under: [
+      // Identical to the format bar above it, and that is the finding rather than a
+      // mistake: an OLED in the dark outruns sRGB, so what limits a JPEG there is the
+      // JPEG. The HDR file's own row is the other way round on the same screen.
+      { label: OLED, low: -11.5, high: 0.2 },
+      { label: LCD, low: -8.5, high: 0.2 },
+    ],
+  },
 ];
 
-const AXIS_LOW = -15;
-const AXIS_HIGH = 7;
-const TICKS = [-15, -10, -5, 0, 5];
+const AXIS_LOW = -23;
+const AXIS_HIGH = 6.5;
+const TICKS = [-20, -15, -10, -5, 0, 5];
 
 function across(stops: number): number {
   return ((stops - AXIS_LOW) / (AXIS_HIGH - AXIS_LOW)) * 100;
+}
+
+/** One labelled bar, with the stretch above white hatched over it. */
+function Bar({ label, low, high, tone, under = false }: { label: string; low: number; high: number; tone?: string; under?: boolean }): JSX.Element {
+  return (
+    <div className={`stops__row${under ? ' stops__row--under' : ''}`}>
+      <Text as="div" className="stops__label">
+        {label}
+      </Text>
+      <div className="stops__track">
+        {TICKS.map((tick) => (
+          <span key={tick} className={`stops__tick${tick === 0 ? ' stops__tick--white' : ''}`} style={{ left: `${across(tick)}%` }} />
+        ))}
+        <span
+          className={`stops__bar${tone == null ? '' : ` stops__bar--${tone}`}`}
+          style={{ left: `${across(low)}%`, width: `${across(high) - across(low)}%` }}
+        />
+        {/* The part above white, hatched. It is the whole argument of the page and on a
+            plain bar it is just more bar. */}
+        {high > 0 && <span className="stops__over" style={{ left: `${across(0)}%`, width: `${across(high) - across(0)}%` }} />}
+      </div>
+      <Text variant="mono" as="div" className="stops__count">
+        {Math.round(high - low)} stops
+      </Text>
+    </div>
+  );
 }
 
 function RangeChart(): JSX.Element {
   return (
     <div className="stops">
       {RANGES.map((range) => (
-        <div key={range.label} className="stops__row">
-          <Text as="div" className="stops__label">
-            {range.label}
-          </Text>
-          <div className="stops__track">
-            {TICKS.map((tick) => (
-              <span
-                key={tick}
-                className={`stops__tick${tick === 0 ? ' stops__tick--white' : ''}`}
-                style={{ left: `${across(tick)}%` }}
-              />
-            ))}
-            <span
-              className={`stops__bar stops__bar--${range.tone}`}
-              style={{ left: `${across(range.low)}%`, width: `${across(range.high) - across(range.low)}%` }}
-            />
-            {/* The part above white, hatched. It is the whole argument of the page and on
-                a plain bar it is just more bar. */}
-            {range.high > 0 && (
-              <span className="stops__over" style={{ left: `${across(0)}%`, width: `${across(range.high) - across(0)}%` }} />
-            )}
-          </div>
-          <Text variant="mono" as="div" className="stops__count">
-            {Math.round(range.high - range.low)} stops
-          </Text>
-        </div>
+        <Fragment key={range.label}>
+          <Bar label={range.label} low={range.low} high={range.high} tone={range.tone} />
+          {/* What that format is cut down to by the screen it lands on. Indented, because
+              each one is a subset of the bar above rather than a fifth thing. */}
+          {range.under?.map((screen) => (
+            <Bar key={screen.label} label={screen.label} low={screen.low} high={screen.high} tone={range.tone} under />
+          ))}
+        </Fragment>
       ))}
       {/* A row like the others, so the labels stay under their ticks without a second
           copy of the grid's column widths to keep in step with it. */}
@@ -268,8 +300,9 @@ export function HdrPage(): JSX.Element {
       </Text>
       <RangeChart />
       <Text variant="mono" as="p" className="prose__note">
-        Rough figures, and the file bars are what a screen can really show rather than what the format could encode. Notice they
-        aren't far apart. What changes is where they sit.
+        Rough figures. The 2 file bars are what the format can encode, and the indented ones under them are what's left of that on a
+        screen. A JPEG on a good screen is limited by the JPEG, not the screen, and there's nowhere left for it to go above white
+        either way.
       </Text>
 
       <Heading>Where the extra light goes</Heading>
