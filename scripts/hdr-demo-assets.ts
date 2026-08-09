@@ -1,6 +1,6 @@
 // The picture pairs on `/hdr`, built by the app's own pipeline.
 //
-//   bun run scripts/hdr-demo-assets.ts [slug...]
+//   BOWERBIRD_HDR_RAWS=<the directory holding the raws> bun run scripts/hdr-demo-assets.ts [slug...]
 //
 // One `runJob` per photograph produces the HDR rendition, at the shipped defaults and
 // at 1200px rather than 3840. **The 8-bit arm is then derived from that file** rather
@@ -21,10 +21,10 @@
 // the result written as 8-bit sRGB. No tone mapping, no second grade - a clamp and a
 // colour conversion, which is exactly what the page says it is showing.
 //
-// The raw files are Play Raw submissions from discuss.pixls.us, each licensed CC
-// BY-SA by its photographer. They are cached outside the repository, and only the
-// renditions are committed, so a checkout needs neither 25MB per photograph nor a
-// built `librawshim.so` to show the page.
+// The raw files are the maintainer's own, named by filename and found under
+// `BOWERBIRD_HDR_RAWS`, so this does not run on a fresh checkout and does not need to:
+// the renditions are committed and the page serves those. The originals stay in the
+// library they came from - three raws are 44MB - and the path to it stays out of here.
 //
 // `bun run build:native` first: this goes through the same FFI the server does.
 // `ffmpeg` and `avifenc` are needed too, as dev-stage tools (DESIGN §10.7).
@@ -38,24 +38,26 @@ import { runJob, type JobTarget } from '../src/services/processing/rawshim_job';
 interface Scene {
   /** Names the two files, and the page's entry for this picture. */
   slug: string;
-  /** The Play Raw thread, which is where the credit and the licence live. */
-  topic: number;
-  /** The raw file itself, whose extension decides what LibRaw is handed. */
-  url: string;
+  /** The raw, inside `BOWERBIRD_HDR_RAWS`. Owned rather than licensed, so nobody is credited. */
+  file: string;
 }
 
+/**
+ * Where the originals are, passed in rather than written down.
+ *
+ * They are 11-17MB each and live in a photo library, not in this repository - and the
+ * path to somebody's library is theirs, not something a public repository should carry.
+ * Only this file's author can rebuild these renditions, which is fine: they are
+ * committed, and the page serves those.
+ */
+const LIBRARY = process.env.BOWERBIRD_HDR_RAWS;
+
 // The pictures on the page, in its order. Each is a case the page makes in words
-// beside it, so a change here wants a look at `web/src/features/hdr/hdr_page.tsx`,
-// which carries the photographer's name against the same slug.
-// Chosen by measuring what each one actually keeps above white, not by subject: a
-// photograph that loses nothing to the ceiling shows the reader nothing, however good
-// the story beside it. Two earlier picks went for that reason, a moon over some roofs
-// at 0.0% of its pixels and a pizzeria sign at 0.1%.
+// beside it, so a change here wants a look at `web/src/features/hdr/hdr_page.tsx`.
 const SCENES: Scene[] = [
-  { slug: 'beach', topic: 44432, url: 'https://discuss.pixls.us/uploads/short-url/zivNIARFeoOziUpK6ySmY3mmc6w.CR3' },
-  { slug: 'snow', topic: 55869, url: 'https://discuss.pixls.us/uploads/short-url/4FBdaMDjyms79BbSplKr0yJcohg.ARW' },
-  { slug: 'sunset', topic: 39131, url: 'https://discuss.pixls.us/uploads/short-url/fdehULtllGigrUp3tWRKRUvK6zk.CR2' },
-  { slug: 'sign', topic: 33920, url: 'https://discuss.pixls.us/uploads/short-url/rjK5CIORCZhxCSdO2OunEJvnb91.ARW' },
+  { slug: 'rapids', file: 'IMG_8659.CR3' },
+  { slug: 'sunset', file: 'IMG_8584.CR3' },
+  { slug: 'arches', file: 'IMG_0844.CR3' },
 ];
 
 /**
@@ -66,24 +68,12 @@ const LONG_EDGE = 1200;
 
 const ROOT = resolve(import.meta.dir, '..');
 const OUT = join(ROOT, 'web', 'public', 'hdr');
-const CACHE = join(process.env.TMPDIR ?? '/tmp', 'bowerbird-hdr-raws');
 
 /** Every rendition setting at its shipped default, so the page shows the shipped look. */
 const SETTINGS = SettingsSchema.parse({});
 
 /** How far above diffuse white the mastering peak sits: 1000 nits over 203, 2.3 stops. */
 const PEAK_OVER_WHITE = SETTINGS.hdr_peak_nits / SETTINGS.hdr_reference_white_nits;
-
-async function original(scene: Scene): Promise<string> {
-  mkdirSync(CACHE, { recursive: true });
-  const path = join(CACHE, `${scene.slug}${scene.url.slice(scene.url.lastIndexOf('.'))}`);
-  if (existsSync(path)) return path;
-  console.error(`[hdr-assets] fetching ${scene.slug}`);
-  const res = await fetch(scene.url, { headers: { 'user-agent': 'bowerbird/hdr-demo-assets' } });
-  if (!res.ok) throw new Error(`${scene.url}: HTTP ${res.status}`);
-  await Bun.write(path, await res.arrayBuffer());
-  return path;
-}
 
 function outputPath(slug: string, hdr: boolean): string {
   return join(OUT, `${slug}-${hdr ? 'hdr' : 'sdr'}.avif`);
@@ -310,10 +300,11 @@ async function buildSwatches(): Promise<void> {
 }
 
 async function build(scene: Scene): Promise<void> {
-  const rawFilePath = await original(scene);
+  const raw = join(LIBRARY!, scene.file);
+  if (!existsSync(raw)) throw new Error(`${scene.file} is not in BOWERBIRD_HDR_RAWS`);
   try {
     runJob({
-      rawFilePath,
+      rawFilePath: raw,
       matchEmbeddedJpeg: SETTINGS.match_embedded_jpeg,
       denoiseLuma: SETTINGS.raw_denoise_luma,
       denoiseChroma: SETTINGS.raw_denoise_chroma,
@@ -344,6 +335,8 @@ const asked = process.argv.slice(2);
 const wanted = asked.length === 0 ? SCENES : SCENES.filter((scene) => asked.includes(scene.slug));
 const swatches = asked.length === 0 || asked.includes('swatches');
 if (wanted.length === 0 && !swatches) throw new Error(`no such scene: ${asked.join(', ')}`);
+// The swatches are drawn rather than photographed, so they rebuild without the library.
+if (wanted.length > 0 && LIBRARY == null) throw new Error('BOWERBIRD_HDR_RAWS must name the directory holding the raw files');
 mkdirSync(OUT, { recursive: true });
 if (swatches) await buildSwatches();
 for (const scene of wanted) await build(scene);

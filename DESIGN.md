@@ -4190,7 +4190,7 @@ This spec is the second one to run under Gecko as well as Chromium, and the only
 
 ## 22. What HDR is for (`/hdr`)
 
-The HDR setting asks the reader to believe something they cannot check from the settings page, so `/hdr` makes the case in photographs: four raw files, each shown twice, with a control that swaps the two **in place**. Side by side, the eye travels between the frames and the difference becomes a matter of opinion; in one place it is simply visible, which is why the page is a toggle rather than a pair.
+The HDR setting asks the reader to believe something they cannot check from the settings page, so `/hdr` makes the case in photographs: three raw files, each shown twice, with a control that swaps the two **in place**. Side by side, the eye travels between the frames and the difference becomes a matter of opinion; in one place it is simply visible, which is why the page is a toggle rather than a pair.
 
 **It opens on the 8-bit version**, not the HDR one. That is the picture the reader already has, and the page is about what it costs them; opening on the other one asks them to notice an absence, which is the harder direction.
 
@@ -4204,18 +4204,17 @@ So the 8-bit arm is now the HDR arm with its ceiling brought down to white: the 
 
 The cost of the fix is that the page can no longer borrow a difference from the two arms disagreeing. Only content genuinely above white differs now, and three of the original five scenes did not survive it. A moon over some roofs lost **0.0%** of its pixels to the ceiling and a pizzeria sign **0.1%**: they had been showing a difference that was entirely the two grades disagreeing, and with that gone they show nothing at all. A third, an LED-lit still life, kept 6.7% but was replaced for a different reason - a reader with no idea what the room actually looked like cannot tell which of the two versions is the better one, which is a fair complaint about any picture whose subject they cannot check against memory.
 
-**The raw files are Play Raw submissions from discuss.pixls.us**, each licensed CC BY-SA by its photographer and credited under the picture it produced. They are cached outside the repository and only the renditions are committed - about 1.2MB for the ten, the swatch strips included - so a checkout needs neither 25MB per photograph nor a built `librawshim.so` to serve the page.
+**The raw files are the maintainer's own**, read from a path only their machine has, which is why the script does not run on a fresh checkout and does not need to: the renditions are committed - about 845kB for the six, the swatch strip included - and the page serves those. They were CC BY-SA submissions from discuss.pixls.us for as long as the page was illustrated by strangers, which is where the credit line under each picture went when the photographs became the maintainer's.
 
 **The scenes are chosen by measurement, and then by whether the reader can check them.** What most raw files hold above diffuse white is a stop or two, because the photographer metered for the subject and the sensor saturated a little above it, so the frames worth showing are the ones with a light source *in* them. Measured on the encoded renditions:
 
 | | above white | peak | colour recovered |
 |---|---|---|---|
-| the beach into the sun | 5.6% | 420 nits | 0.00% |
-| a sunset over snow | 4.4% | 1002 nits | 0.09% |
-| a sunset over water | 7.5% | 634 nits | **2.95%** |
-| the WC sign | 2.7% | 4833 nits | 0.02% |
+| rapids under an overcast sky | 2.4% | 587 nits | 0.00% |
+| a sunset over railway tracks | 2.5% | 656 nits | 0.00% |
+| lit arches at night | 2.6% | 1460 nits | **1.28%** |
 
-**"Above white" turned out to be the wrong number to choose on, and the third column is the right one.** It counts pixels that are bright and *neutral* in the 8-bit arm while still being a colour in the HDR one - which is the thing the page claims in words and the thing a reader checks by eye. Two pictures chosen on headroom alone were rejected on sight for showing "not much" and "still blown-out red", and they score 0.24% and 0.04% here: the metric agrees with the reader, where the headroom figure did not.
+**"Above white" turned out to be the wrong number to choose on, and the third column is the right one.** It counts pixels that are bright and *neutral* in the 8-bit arm while still being a colour in the HDR one - which is the thing the page claims in words and the thing a reader checks by eye. Two pictures chosen on headroom alone were rejected on sight for showing "not much" and "still blown-out red", and they score 0.24% and 0.04% here: the metric agrees with the reader, where the headroom figure did not. The arches score 1.28%, an order of magnitude past anything the licensed candidates managed.
 
 **What it exposes is a property of the grade, not of the photographs.** Screened across eight night, neon and traffic-light frames, *none* recovers more than 0.04%. The BT.2390 roll-off is applied per channel against a shared curve (§10.7.1), so a light source twenty stops above white arrives with all three channels pressed against the ceiling - near-white in the HDR rendition too, just very much brighter. Saturated colour survives where it sits one to three stops above white, which is a sunset sky and is not a neon tube. So the page argues colour with a sunset, and argues the neon sign as what it measurably is: something twenty-five times brighter than paper that eight bits has to call white. Making a neon tube come back *red* needs a hue-preserving roll-off in `tone.rs`, which is a change to what every HDR rendition in the app looks like and not something a page about the app gets to decide.
 
@@ -4225,7 +4224,7 @@ The second test is the one measurement cannot make. A picture only argues if the
 
 **The swap is an opacity change on two mounted, decoded frames**, which is the stack triage flip (§20.4) and works for the same reason: `will-change: opacity` keeps the hidden one rasterised, so a press costs no repaint. Nothing on that subtree or above it may carry a filter, a transform or a partial opacity - any of those rasterises into an SDR intermediate and loses the PQ tagging silently (§10.7). That constraint is also why the reading column is left-aligned rather than centred, in passing: `.pad`'s first child reserves an inline gap for the collapsed rail's floating button, and a centred column would carry that indent on the heading and nowhere else.
 
-The Firefox rewrap is the photo view's, through `useHdrVideo`. Four of them mount at once here, so that engine holds four MP4s resident where the photo view holds one - a few hundred kilobytes, and the alternative is rewrapping on every press. The swatch strips do not take that path at all, being 4:4:4.
+The Firefox rewrap is the photo view's, through `useHdrVideo`. Three of them mount at once here, so that engine holds three MP4s resident where the photo view holds one - a few hundred kilobytes, and the alternative is rewrapping on every press. The swatch strip does not take that path at all, being 4:4:4.
 
 **The swatch strips are the only synthetic thing on the page**, and they exist because every photograph below them assumes an answer to a question the reader has not been given: what "brighter" means once white is no longer the top. Five colours, each starting as bright as 8 bits can render it, each row then going as bright as its own format can manage. They are 4:4:4 and lossless, since flat colour has no detail to trade and a quantiser on a hard edge between two saturated patches is visible where it is invisible on a photograph - which also means they skip the Firefox rewrap, which needs 4:2:0.
 
@@ -4245,6 +4244,6 @@ The photographs never showed any of this, because a swap never puts two pictures
 
 **The stops chart above them is the one thing on the page with no measurement behind it**, and it says so in its own caption: the four ranges are approximations whose figures move with where you decide the useful range ends. It is drawn from one axis anchored at diffuse white rather than from four bars of independent length, because what matters is not that a JPEG holds fewer stops than a sensor but *which* stops it is missing - it simply stops at white, and everything to the right of that mark is a light source.
 
-**It costs 1.2MB in every desktop and Android build**, since `public/` is copied into `web/dist` and that is `frontendDist`. Accepted rather than overlooked: the renditions are the page, halving them would show as encoder artefacts in exactly the highlights being argued about, and lazy-loading buys nothing for a reader who scrolls to the bottom.
+**It costs 845kB in every desktop and Android build**, since `public/` is copied into `web/dist` and that is `frontendDist`. Accepted rather than overlooked: the renditions are the page, halving them would show as encoder artefacts in exactly the highlights being argued about, and lazy-loading buys nothing for a reader who scrolls to the bottom.
 
 `(dynamic-range: high)` decides whether to say the display is SDR, and the copy hedges rather than hiding anything: Firefox answers `standard` on an HDR display. On an SDR one the colour losses still show - a clipped neon tube is white there too - and only the brightness ones are lost, which is what the notice says.

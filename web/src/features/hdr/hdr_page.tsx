@@ -88,41 +88,25 @@ interface Scene {
   title: string;
   /** What to look at, and what the 8-bit frame had to do to it. */
   body: string;
-  /** The photographer, and the Play Raw thread their raw file came from. */
-  by: string;
-  topic: number;
 }
 
 // From the losses every photographer has seen to the one nobody thinks about. The
 // slugs are `scripts/hdr-demo-assets.ts`'s, which is where the raw files are named.
 const SCENES: Scene[] = [
   {
-    slug: 'beach',
-    title: 'The sun in the frame',
-    body: 'The obvious case. Sun, cloud and every glint off the water are all brighter than the chalk, and the JPEG has one value for the lot of them.',
-    by: 'Popanz',
-    topic: 44432,
-  },
-  {
-    slug: 'snow',
-    title: 'Two lights, one white',
-    body: 'In eight bits the sun is the same white as the cloud beside it, because that is the only white there is. Switch, and it goes back to being five times brighter than everything around it.',
-    by: 'Sean_Liu',
-    topic: 55869,
+    slug: 'rapids',
+    title: 'The obvious case',
+    body: 'The foam and the brightest part of the cloud are the same white in eight bits, because that is the only white there is. Switch, and the water goes back to being lit.',
   },
   {
     slug: 'sunset',
     title: 'Where the colour goes',
-    body: 'The strip above, happening to a photograph. The sky nearest the sun was the most saturated thing in the scene and it is the palest thing in the eight-bit file.',
-    by: 'fales',
-    topic: 39131,
+    body: 'The strip above, happening to a photograph. The band of sky over the horizon was the most saturated thing here and it is the palest thing in the eight-bit file, because moving it towards white was the only way that file had to say it was bright.',
   },
   {
-    slug: 'sign',
+    slug: 'arches',
     title: 'Something that was a light',
-    body: 'These tubes are twenty-five times brighter than paper would be in the same street, and eight bits has one white for both. The sign ends up looking painted on. Switch, and it starts behaving like a light.',
-    by: 'sushey',
-    topic: 33920,
+    body: 'These arches are light sources, seven times brighter than anything eight bits is able to call white, so in the smaller file they are just pink shapes on some grass. Switch, and they start behaving like lights.',
   },
 ];
 
@@ -174,19 +158,13 @@ function Swap({ slug, label, alt }: { slug: string; label: string; alt: string }
   );
 }
 
-/** One photograph, in both ranges, with the credit its licence asks for. */
+/** One photograph, in both ranges. */
 function Comparison({ scene }: { scene: Scene }): JSX.Element {
   return (
     <figure className="compare">
       <Swap slug={scene.slug} label={scene.title} alt={scene.title} />
       <figcaption className="compare__caption">
         <Text variant="mono">Click or tap to switch.</Text>
-        <Text variant="mono">
-          <a href={`https://discuss.pixls.us/t/${scene.topic}`} target="_blank" rel="noreferrer">
-            Raw file
-          </a>{' '}
-          by {scene.by}, CC BY-SA
-        </Text>
       </figcaption>
     </figure>
   );
