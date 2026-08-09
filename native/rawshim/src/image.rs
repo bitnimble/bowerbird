@@ -566,7 +566,19 @@ impl PlanarWarp {
         // cancel. The remaining constant `g^m1` depends only on the radius bucket, which is a
         // `u8`, so it is resolved here rather than per pixel.
         let lifts: Option<Vec<f64>> = self.falloff.map(|(a, b)| {
-            (0..256).map(|r| crate::tone::gain_in_y(crate::fit::Gain::at(a, b, r as u8))).collect()
+            (0..256)
+                .map(|r| {
+                    let gain = crate::fit::Gain::at(a, b, r as u8);
+                    // Pinned to exactly 1 where the correction cannot move a 16-bit code, so
+                    // the shortcut below takes it. Without the tolerance the innermost bucket
+                    // is an identity and the next one is a round trip that can land a count
+                    // low, which is a visible ring at a fixed radius for a gain of 1.000004.
+                    match (gain - 1.0).abs() < 1e-5 {
+                        true => 1.0,
+                        false => crate::tone::gain_in_y(gain),
+                    }
+                })
+                .collect()
         });
         let half = self.half;
         let (step_x, step_y) = self.step;
@@ -588,9 +600,10 @@ impl PlanarWarp {
                     let at = (((dx * dx + dy2).sqrt()) * 255.0).min(255.0) as usize;
                     lifts[at.min(255)]
                 });
-                // A gain of exactly 1 returns the tap rather than the round trip's answer to
-                // it: `lift_in_pq` is `pq(pq_inv(u))` there, which is a count out on some
-                // codes, and a correction of nothing has to change nothing.
+                // A gain of 1 returns the tap rather than the round trip's answer to it:
+                // `lift_in_pq` is `pq(pq_inv(u))` there, which is a count out on some codes,
+                // and a correction of nothing has to change nothing. The table above decides
+                // what counts as nothing.
                 let lifted = |tap: f64| match lift {
                     Some(gain) if gain != 1.0 => {
                         crate::tone::lift_in_pq(tap / 65535.0, gain) * 65535.0

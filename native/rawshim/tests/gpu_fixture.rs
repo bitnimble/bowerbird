@@ -14,6 +14,12 @@
 //! every suite stays green against an answer nothing produces any more.
 //!
 //! So the bytes are rebuilt here and compared, in the suite that already runs on every edit.
+//!
+//! **On a machine with an adapter.** The three tests that check the graded answers return
+//! silently where no Vulkan of any kind answers, so on such a machine the `.expected`,
+//! `.rolled` and `.srgb` files are unchecked and the guarantee above is only as good as CI
+//! having a GPU. The inputs and the header are CPU work and are checked everywhere.
+//!
 //! Regenerate deliberately, after reading why they moved:
 //!
 //!   BOWERBIRD_WRITE_FIXTURES=1 cargo test --release --manifest-path native/rawshim/Cargo.toml --test gpu_fixture
@@ -254,9 +260,10 @@ fn the_committed_fixture_is_what_the_cpu_produces_now() {
     }
 
     for case in cases() {
-        // The inputs only. The three answers beside them are the CPU implementation,
-        // frozen at the point it was deleted, and nothing here can rebuild them - which is
-        // the property that makes them worth having.
+        // The inputs only. The three answers beside them are `baseline()`'s, and this is
+        // not the test that guards them - it guards that the *frame the client is handed*
+        // is still what the prepare and the filters produce, which is CPU work either way
+        // and so is checked on every machine.
         let files: [(&str, Vec<u8>); 2] =
             [("json", case.header.into_bytes()), ("input.bin", case.input)];
         for (suffix, built) in files {
