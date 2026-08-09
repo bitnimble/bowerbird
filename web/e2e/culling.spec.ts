@@ -707,7 +707,10 @@ test('the previous photo is held for a beat and then dropped, however slow the n
   await page.goto('/settings');
   await openLibrary(page, CULL_PHOTOS_DIR);
   await openPhoto(page);
-  await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible();
+  // The same allowance every other open in this file takes: the first decode of a
+  // photo is a rendition read off disk, and this suite shares a machine with the
+  // rest of the run.
+  await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
   const openId = openPhotoId(page);
 
   // Held open, so the hold is observable at all: warmed, the next frame decodes

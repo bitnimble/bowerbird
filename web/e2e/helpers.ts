@@ -104,8 +104,16 @@ export async function addShoot(page: Page, name: string): Promise<void> {
 
 // The rail lists every library by its folder name, with the full path as the
 // title, which is the only unambiguous handle when two share a basename.
+//
+// Waited for before it is clicked, so a rail that never fills says which library
+// was missing and how many were there instead. A bare click reports only that a
+// locator was still being waited on, which is the same message whether the page
+// was slow, the library was never created, or an earlier test removed it - and
+// under load this is where the suite lands when it lands anywhere.
 export async function openLibrary(page: Page, rootPath: string): Promise<void> {
-  await page.locator(`.rail__link[title="${rootPath}"]`).click();
+  const link = page.locator(`.rail__link[title="${rootPath}"]`);
+  await expect(link, `the rail should list ${rootPath}`).toBeVisible({ timeout: 30_000 });
+  await link.click();
 }
 
 // Maintenance actions on the selection live behind the bulk bar's overflow, so

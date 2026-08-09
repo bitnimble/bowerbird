@@ -21,8 +21,10 @@ Where the code went:
 
 Four things this note got wrong or did not foresee, each fixed by measurement:
 
-- **`image::finish` is not a per-tick stage.** It runs once, at the open, in the
-  PQ domain (`edit::filter_once`). A tick is the grade alone.
+- **`image::finish` is not a per-tick stage.** It runs once, at the open
+  (`edit::open`), on a base already coded into normalised PQ
+  (`tone::encode_base`), which is why it converts nothing. A tick is the grade
+  alone.
 - **The graded frame does not need to exist.** §6 assumed a chain of resident
   textures; the colour transform is one fragment shader straight to the canvas,
   and materialising nits between passes cost 5.2ms of a 15ms tick.
@@ -30,13 +32,15 @@ Four things this note got wrong or did not foresee, each fixed by measurement:
   choosing a pixel count is moot: the draw runs once per canvas pixel over a crop,
   so `EDIT_LONG_EDGE` is gone and the open decodes the sensor. A 61MP frame ticks
   in 8ms at a 2560x1707 stage.
-- **wgpu in Rust (§6.2) was not taken.** The shaders are WGSL in the page, which
-  is where the canvas is. §6.3's parity pin is what makes that safe: against the
-  CPU it holds the mean within 0.5 counts of 65535, with the worst pixel bounded
-  at 320 and under 0.5% of samples past 16. The mean is the assertion that
-  matters; the worst is loose because f32 against f64 either side of PQ separates
-  a handful of pixels, and it only reaches hundreds at all because the fixtures
-  carry a real camera fit rather than the identity they started as.
+- **wgpu in Rust (§6.2) was taken after all, on the *server*.** The shaders are
+  still WGSL in the page, which is where the canvas is; `native/rawshim/src/gpu.rs`
+  runs the same files through wgpu so a rendition and a tick are one
+  implementation rather than two held in agreement. §6.3's parity pin is what
+  makes that safe: against the fixtures it holds the mean within 0.5 counts of
+  65535, with the worst bounded per band - 1024 in the shadows, 128 in the mid
+  and the highlights. Per band because one number over the whole range bounds
+  nothing: PQ keeps most of its code space in the deep shadows, where a f32
+  against f64 difference reads as hundreds of counts and is invisible.
 
 What §7 concluded; the extended-range canvas, 203 nits, no bespoke gamut mapping; was measured against a real PQ AVIF on both engines and is what ships.
 
