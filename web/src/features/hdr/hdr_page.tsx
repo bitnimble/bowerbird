@@ -53,7 +53,19 @@ import { useHdrVideo } from '../photos/hdr_video';
  * stopping dead on it, and 0.2 against the HDR file's 2.3 makes the point better than
  * zero would - a JPEG does reserve room for highlights, and there is almost none of it.
  */
-const OLED = 'on an HDR OLED in a dark room';
+/**
+ * The screens. Both HDR ones peak around 1600 nits on the small bright areas a
+ * photograph actually puts there, so what separates them is the bottom and not the top.
+ *
+ * **An OLED switches its pixels off and a mini-LED cannot.** The XDR's zones bloom, which
+ * is what its 1,000,000:1 describes: 1600 nits over a floor of 0.0016. An OLED in a dark
+ * room has no floor worth the name, so the thing that runs out first is the file - PQ's
+ * lowest non-zero code at 10 bits is 0.00004 nits - and the row is nearly the format bar
+ * above it. An earlier version gave both screens the same 0.005 black, which handed away
+ * the one thing an OLED is for.
+ */
+const XDR = 'on a MacBook Pro XDR display';
+const OLED = 'on an OLED in a dark room';
 const LCD = 'on an LCD in a lit room';
 
 const RANGES: { label: string; low: number; high: number; tone: string; under?: { label: string; low: number; high: number }[] }[] = [
@@ -65,7 +77,8 @@ const RANGES: { label: string; low: number; high: number; tone: string; under?: 
     high: 5.6,
     tone: 'hdr',
     under: [
-      { label: OLED, low: -15.3, high: 2.3 },
+      { label: OLED, low: -22.3, high: 3 },
+      { label: XDR, low: -17, high: 3 },
       { label: LCD, low: -8.7, high: 1.6 },
     ],
   },
@@ -75,10 +88,11 @@ const RANGES: { label: string; low: number; high: number; tone: string; under?: 
     high: 0.2,
     tone: 'sdr',
     under: [
-      // Identical to the format bar above it, and that is the finding rather than a
-      // mistake: an OLED in the dark outruns sRGB, so what limits a JPEG there is the
-      // JPEG. The HDR file's own row is the other way round on the same screen.
+      // Both identical to the format bar above them, and that is the finding rather than
+      // a mistake: either screen outruns sRGB by several stops, so what limits a JPEG
+      // there is the JPEG. The HDR file is the other way round on the same two.
       { label: OLED, low: -11.5, high: 0.2 },
+      { label: XDR, low: -11.5, high: 0.2 },
       { label: LCD, low: -8.5, high: 0.2 },
     ],
   },
@@ -265,7 +279,7 @@ export function HdrPage(): JSX.Element {
         by JPEG, and could just see all that detail RAW has been hiding?
       </Text>
       <Text variant="muted" as="p">
-        Each photo below starts out the way 8 bits holds it. Click one to see what was really there.
+        Each photo on this page starts out the way 8 bits holds it. Click one to see what was really there.
       </Text>
 
       {!high && (
@@ -286,11 +300,11 @@ export function HdrPage(): JSX.Element {
         It helps to put white in the middle instead. Not the brightest thing imaginable, just the white of a sheet of paper in the
         same light as your subject. Almost everything you photograph is lit that way rather than lighting itself, so it lands at or
         below that mark, and that's the half we all think in. The other half is the things that make their own light: the sun, a
-        lamp, a neon tube, the glint off a wave. They can be hundreds of times brighter than the paper and nothing much caps them.
+        lamp, a neon tube, the glint off a wave. They can be hundreds of times brighter than the paper.
       </Text>
       <Text variant="muted" as="p">
-        A JPEG puts that white near the very top of what it can store and keeps about a fifth of a stop above it for the glints.
-        That's its entire half.
+        A JPEG puts that white near the very top of what it can store and only has a very small amount of headroom at the top for
+        specular and emissive highlights.
       </Text>
 
       <Heading>How much of a scene fits</Heading>
@@ -300,19 +314,23 @@ export function HdrPage(): JSX.Element {
       </Text>
       <RangeChart />
       <Text variant="mono" as="p" className="prose__note">
-        Rough figures. The 2 file bars are what the format can encode, and the indented ones under them are what's left of that on a
-        screen. A JPEG on a good screen is limited by the JPEG, not the screen, and there's nowhere left for it to go above white
-        either way.
+        Rough figures. The 2 file bars are what the format can encode, and the indented ones below them are what they are reduced to
+        after you view them on a screen. A JPEG on a good screen is limited by the JPEG, not the screen, and there's nowhere left
+        for it to go above white either way.
       </Text>
 
-      <Heading>Where the extra light goes</Heading>
+      <Heading>It's not about brightness, it's about colour</Heading>
+      <Text variant="muted" as="p">
+        It's a common misconception that HDR is all about being able to go much brighter than SDR. That's true, but the real benefit
+        is colour volume: being able to show a colour accurately even when it gets bright.
+      </Text>
       <Text variant="muted" as="p">
         An 8-bit file has only one way to say that something is brighter, which is to move it towards white. So a colour gives up
         its colour on the way there: the channel that's already full can't rise any further, so the other 2 climb up to meet it. HDR
         can put the light behind the colour and leave the colour alone.
       </Text>
       <Text variant="muted" as="p">
-        Both halves below hold the same 5 colours and the same climb to the right, but the left one has a ceiling at white and the
+        Both swatches below hold the same 5 colours and the same climb to the right, but the left one has a ceiling at white and the
         right one doesn't. The left goes pale and stops, while the right keeps its hue and saturation exactly as the light behind it
         goes up 5 times. Watch the grey row at the bottom: it has no colour to spend, so it just runs out.
       </Text>
@@ -327,7 +345,7 @@ export function HdrPage(): JSX.Element {
         </figcaption>
       </figure>
 
-      <Heading>Where you notice it</Heading>
+      <Heading>Example photos</Heading>
       {/* No heading per photograph: with three of them the labels were repeating what the
           sentence under them already said. `title` survives for the alt and aria text. */}
       {SCENES.map((scene) => (
@@ -342,8 +360,8 @@ export function HdrPage(): JSX.Element {
       <Heading>About these pictures</Heading>
       <Text variant="muted" as="p">
         Each pair is one RAW file developed once and saved twice, where the 8-bit version is the same picture with its ceiling
-        brought down to white. Nothing below white differs, so everything you see change is something the smaller file had nowhere
-        to put.
+        brought down to white. Nothing below white differs, so anything that changes when swapping to HDR is simply something that
+        the SDR file could not express.
       </Text>
     </div>
   );
