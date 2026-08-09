@@ -1,0 +1,155 @@
+import { z } from 'zod';
+
+// One photo's develop settings: what the editor shows, what a rendition is built
+// from, and what an undo steps through.
+//
+// **Flat, and named as Camera Raw names things.** Both choices are load-bearing.
+// Flat because a delta is a `Partial<EditDoc>` (§5 of the design doc) and a nested
+// shape would make a partial of one field mean the whole block. Camera Raw's names
+// and Camera Raw's ranges because importing a Lightroom sidecar is a stated
+// requirement, and `xmp_schema.ts` already models the file's own vocabulary - so
+// `fromXmp` below is a pick rather than a table of conversions. Choosing our own
+// units would have put a fudge factor on every line of it.
+//
+// Ranges are `xmp.ts`'s, exactly: `crs:Exposure2012` is -5..5 real, the rest of
+// the tone and presence sliders are -100..100, `crs:Temperature` is 2000..50000
+// and `crs:Tint` is -150..150.
+
+// The Kelvin pair is null when the white balance is the camera's own, which is
+// what "As Shot" means and what no number can say. `xmp_schema.ts` states the
+// reason: a fixed value here would white-balance every as-shot import identically
+// and wrongly, because the correct answer is the neutral the body recorded and
+// this layer cannot see it.
+//
+// Both move together or neither does. Temperature without tint is not a white
+// balance, it is half of one, and the half that is missing reads as a colour cast.
+export const WhiteBalanceModeSchema = z.string().default('As Shot');
+
+export const EditDocSchema = z
+  .object({
+    // A number with a default, not `z.literal(1)`. A literal rejects a document
+    // written by a newer build *before* anything can read its version and pick a
+    // migration, which is the whole of what migrating on read needs. Defaults only
+    // rescue a missing field, i.e. the case where the version would not have moved.
+    version: z.number().int().default(1),
+
+    // Tone. `exposure` is EV and is the only one here with a physical unit; the
+    // rest are slider positions whose mapping to anything is ours to decide.
+    exposure: z.number().min(-5).max(5).default(0),
+    contrast: z.number().int().min(-100).max(100).default(0),
+    highlights: z.number().int().min(-100).max(100).default(0),
+    shadows: z.number().int().min(-100).max(100).default(0),
+    whites: z.number().int().min(-100).max(100).default(0),
+    blacks: z.number().int().min(-100).max(100).default(0),
+
+    // Presence. `dehaze` is a real where its neighbours are integers, which is
+    // Camera Raw's own inconsistency and not worth correcting away from.
+    texture: z.number().int().min(-100).max(100).default(0),
+    clarity: z.number().int().min(-100).max(100).default(0),
+    dehaze: z.number().min(-100).max(100).default(0),
+    vibrance: z.number().int().min(-100).max(100).default(0),
+    // Named as Camera Raw names it. The tick's uniform already has a `saturation`
+    // that is the camera match's own fit multiplier around 1.0 and not a slider
+    // (`colour.wgsl`), so the shader has to give this one a distinct uniform name -
+    // renaming it *here* would cost the import its identity mapping instead.
+    saturation: z.number().int().min(-100).max(100).default(0),
+
+    // White balance. The mode is an open enum in the file - `As Shot`, `Auto`,
+    // `Daylight`, `Custom` and a user preset name are all legal - so it is a string.
+    whiteBalanceMode: WhiteBalanceModeSchema,
+    temperature: z.number().int().min(2000).max(50000).nullable().default(null),
+    tint: z.number().int().min(-150).max(150).nullable().default(null),
+  })
+  // Unknown keys are kept, not stripped. A document written by a newer build and
+  // round-tripped through an older one would otherwise come back with its new
+  // parameters silently deleted - data loss with nothing raised, on the one path
+  // (open an older client against a newer catalogue) most likely to hit it.
+  .loose();
+
+export type EditDoc = z.infer<typeof EditDocSchema>;
+
+/** The document an unedited photo has. Every field at the value that changes nothing. */
+export function neutralEdits(): EditDoc {
+  return EditDocSchema.parse({});
+}
+
+// The fields a delta names, on each side of it. A commit routinely moves several
+// at once - an import writes ten, a crop drag four - and a delta that could hold
+// only one would turn each of those into several undos through states the picture
+// was never in.
+//
+// **The sides are opaque records, not `EditDocSchema.partial()`.** `.partial()`
+// makes a field optional and does *not* remove its `.default()`, so a schema whose
+// every field has one refills each absent key on the way back in: a delta written
+// as `{contrast: 0}` reads as a whole neutral document, and undoing it resets every
+// field the edit never touched. A test caught it; the values here are server-derived
+// from an already-validated document, so re-checking their ranges bought nothing
+// and cost that.
+export const EditDeltaSchema = z.object({
+  from: z.record(z.string(), z.unknown()),
+  to: z.record(z.string(), z.unknown()),
+});
+export type EditDelta = z.infer<typeof EditDeltaSchema>;
+
+// The undo stack as it is stored: one row per photo holding the whole array
+// (§2). Parsed defensively - nothing renders a picture from this, so a corrupt
+// history degrades to "no undo available" rather than failing the editor's open.
+export const EditHistorySchema = z.array(EditDeltaSchema);
+export type EditHistory = z.infer<typeof EditHistorySchema>;
+
+/** What every edits endpoint answers with. `rev` is required on the next write. */
+export const EditStateSchema = z.object({
+  doc: EditDocSchema,
+  rev: z.number().int().min(0),
+  canUndo: z.boolean(),
+  canRedo: z.boolean(),
+});
+export type EditState = z.infer<typeof EditStateSchema>;
+
+export const SaveEditsRequestSchema = z.object({
+  doc: EditDocSchema,
+  // The revision the client read. A mismatch is a 409 rather than a silent
+  // overwrite: without it two tabs do not merely lose an edit, the server's diff
+  // invents a delta for a change nobody made and undo walks back through it.
+  rev: z.number().int().min(0),
+});
+export type SaveEditsRequest = z.infer<typeof SaveEditsRequestSchema>;
+
+export const StepEditsRequestSchema = z.object({ rev: z.number().int().min(0) });
+export type StepEditsRequest = z.infer<typeof StepEditsRequestSchema>;
+
+/**
+ * Every field where `to` differs from `from`, on both sides.
+ *
+ * Returns null when nothing moved, which is what keeps a retried save from
+ * appending a delta that undoes to the same picture it redoes to.
+ */
+export function diffEdits(from: EditDoc, to: EditDoc): EditDelta | null {
+  const before: Record<string, unknown> = {};
+  const after: Record<string, unknown> = {};
+  let moved = false;
+  for (const key of Object.keys(EditDocSchema.shape)) {
+    if (key === 'version') continue;
+    const was = (from as Record<string, unknown>)[key];
+    const now = (to as Record<string, unknown>)[key];
+    if (was === now) continue;
+    before[key] = was;
+    after[key] = now;
+    moved = true;
+  }
+  return moved ? { from: before, to: after } : null;
+}
+
+/**
+ * One side of a delta laid over a document, which is what undo and redo both do.
+ *
+ * Re-parsed rather than merged and stored, because the patch's values are opaque
+ * (see `EditDeltaSchema`) and a history that has been tampered with or written by
+ * a build that meant something different must not put an out-of-range value into
+ * the document a render then reads. A patch that will not parse leaves the
+ * document where it was, which costs that one step and nothing else.
+ */
+export function applyEdits(doc: EditDoc, patch: Record<string, unknown>): EditDoc {
+  const parsed = EditDocSchema.safeParse({ ...doc, ...patch });
+  return parsed.success ? parsed.data : doc;
+}

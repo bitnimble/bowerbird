@@ -207,6 +207,43 @@ test('a slider move redraws the canvas', async ({ page }) => {
 });
 
 /**
+ * An edit has to survive the page, which is the whole point of storing one.
+ *
+ * End to end rather than in a unit test: the value crosses the presenter, the client, four
+ * routes, two tables and back, and every one of those has already been the thing that was
+ * wrong. What a repository test cannot see is whether the reload asks for the edits at all.
+ *
+ * The revision is asserted alongside the value because they fail differently: a save that
+ * never happened leaves the exposure at zero, and a save the server refused leaves the
+ * exposure right and the revision at nothing.
+ */
+test('an exposure survives a reload, and the undo that follows it', async ({ page }) => {
+  await open(page);
+
+  const thumb = page.locator('.raw-edit-panel__exposure input[type="range"]');
+  await thumb.focus();
+  await page.keyboard.press('PageUp');
+  await page.keyboard.press('PageUp');
+
+  const exposure = page.locator('.raw-edit-panel__exposure');
+  const moved = await exposure.textContent();
+  expect(moved).not.toContain('0.00 EV');
+  // The commit is on release, so the revision moving is what says the drag reached the
+  // server rather than only the shader.
+  await expect.poll(async () => page.getByTestId('raw-edit-rev').textContent(), { timeout: 30_000 }).not.toBe('0');
+
+  await open(page);
+  await expect(exposure).toHaveText(moved ?? '');
+  await expect(page.getByTestId('raw-edit-undo')).toBeEnabled();
+
+  // And the history came back with it: undo is what proves the deltas were stored, not
+  // just the document.
+  await page.getByTestId('raw-edit-undo').click();
+  await expect(exposure).toContainText('0.00 EV');
+  await expect(page.getByTestId('raw-edit-redo')).toBeEnabled();
+});
+
+/**
  * Leaving the editor has to mean leaving it, including on the way back.
  *
  * Editing was remembered as the photo it had been opened for. Stepping to the next

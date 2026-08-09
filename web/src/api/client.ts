@@ -20,6 +20,7 @@ import type {
   Triage,
   UpdatePhotoRequest,
 } from '../../../src/schemas/photos';
+import type { EditDoc, EditState } from '../../../src/schemas/photo_edits';
 import type { Stack } from '../../../src/schemas/stacks';
 import type { ViewerRendition, ViewerRenditionMode, Settings, UpdateSettingsRequest } from '../../../src/schemas/settings';
 import type { CreateShootRequest, Shoot, ShootRemoval, UpdateShootRequest } from '../../../src/schemas/shoots';
@@ -49,6 +50,8 @@ export type {
   Shoot,
   Triage,
   UpdateLibraryRequest,
+  EditDoc,
+  EditState,
 };
 export type PhotoSummary = PhotoListResponse['photos'][number];
 export type { Rendition, ProcessingStage };
@@ -229,6 +232,16 @@ export const api = {
     request('POST', '/api/photos/refresh-metadata', target),
   buildRendition: (photoId: string, rendition: Rendition, force = false): Promise<void> =>
     request('POST', `/api/photos/${photoId}/renditions/${rendition}${force ? '?force=true' : ''}`),
+  // Develop settings. Every one of these answers with the same state, including
+  // the revision the next write has to carry: a client that saved without it
+  // would have the server diff a stale document and record a change nobody made.
+  getEdits: (photoId: string): Promise<EditState> => request('GET', `/api/photos/${photoId}/edits`),
+  saveEdits: (photoId: string, doc: EditDoc, rev: number): Promise<EditState> =>
+    request('PUT', `/api/photos/${photoId}/edits`, { doc, rev }),
+  undoEdits: (photoId: string, rev: number): Promise<EditState> =>
+    request('POST', `/api/photos/${photoId}/edits/undo`, { rev }),
+  redoEdits: (photoId: string, rev: number): Promise<EditState> =>
+    request('POST', `/api/photos/${photoId}/edits/redo`, { rev }),
 
   listShoots: (libraryId: string): Promise<Shoot[]> => request('GET', `/api/libraries/${libraryId}/shoots`),
   getShoot: (id: string): Promise<Shoot> => request('GET', `/api/shoots/${id}`),

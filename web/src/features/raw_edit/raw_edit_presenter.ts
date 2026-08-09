@@ -1,5 +1,5 @@
 import { action } from 'mobx';
-import { preparedPath } from '../../api/client';
+import { ApiError, api, preparedPath, type EditDoc, type EditState } from '../../api/client';
 import { send } from '../../api/transport';
 import { describe } from '../../errors';
 import {
@@ -10,7 +10,19 @@ import {
   tickFeatures,
   tickLimits,
 } from './gpu/tick_pipeline';
-import type { RawEditStore } from './raw_edit_store';
+import type { RawEditStore, SaveStatus } from './raw_edit_store';
+
+/**
+ * Whether the server refused a write because these edits moved under it.
+ *
+ * Asked of the status rather than of the message. `describe` returns the server's
+ * prose, which says what happened and never says `409`, so matching on the text was
+ * reporting every conflict as a generic failure - and telling the reader to retry
+ * the one thing that cannot work.
+ */
+function conflicted(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 409;
+}
 
 /**
  * Drives one RAW through the open-once, grade-per-tick loop.
@@ -37,6 +49,20 @@ export class RawEditPresenter {
   private pending: number | null = null;
   private frame = 0;
   private closed = false;
+
+  /** Which photo's edits are being written, kept because `open` is the only caller told. */
+  private photoId: string | null = null;
+  private saving = false;
+  /** A settle that arrived while a save was in flight. Only the latest is ever kept. */
+  private pendingSave = false;
+  /**
+   * Whether the document moved locally since the save in flight was sent.
+   *
+   * Set by `preview`, so a drag counts and not only a release: without it the
+   * server's answer to the *previous* value would overwrite what the reader is
+   * currently looking at, and the picture would jump backwards mid-gesture.
+   */
+  private locallyEdited = false;
 
   constructor(private readonly store: RawEditStore) {}
 
@@ -166,6 +192,10 @@ export class RawEditPresenter {
    */
   async open(photoId: string, longEdge: number): Promise<void> {
     this.begin();
+    this.photoId = photoId;
+    // Started here and awaited below, so the decode and the settings load overlap:
+    // the open is seconds of LibRaw and this is one small row.
+    const edits = api.getEdits(photoId).catch(() => null);
     try {
       const adapter = await navigator.gpu?.requestAdapter();
       if (adapter == null) {
@@ -241,22 +271,153 @@ export class RawEditPresenter {
       // Re-attached rather than left as it was: the observer needs a region and a device
       // to size against, and neither existed when React handed the element over.
       this.attach(canvas);
+
+      // After `opened`, which sets the neutral state, so a saved exposure lands on
+      // top of a live pipeline and draws. A read that failed leaves the editor
+      // usable at neutral rather than refusing to open: the frame is the expensive
+      // part and it is already here.
+      const saved = await edits;
+      if (saved != null && !this.closed) {
+        this.applyState(saved);
+        this.request(this.store.exposureEv);
+      }
     } catch (error) {
       if (!this.closed) this.fail(describe(error));
     }
   }
 
-  /** The exposure the slider is at, while it moves. */
+  /**
+   * The exposure the slider is at, while it moves.
+   *
+   * Local only. A pointer emits far more positions than anything should be asked to
+   * store, and the undo stack would be four hundred entries for one drag.
+   */
   @action.bound
   previewExposure(ev: number): void {
-    this.store.exposureEv = ev;
-    this.request(ev);
+    this.preview({ exposure: ev });
   }
 
-  /** The frame that gets judged. The same one, because the tick is full resolution. */
+  /** Any parameter, while its control moves. The exposure is the one with a shader behind it today. */
+  @action.bound
+  preview(patch: Partial<EditDoc>): void {
+    const doc = this.store.doc;
+    if (doc == null) return;
+    this.store.doc = { ...doc, ...patch };
+    this.locallyEdited = true;
+    this.request(this.store.exposureEv);
+  }
+
+  /**
+   * The control was released: the frame that gets judged, and the one worth storing.
+   *
+   * This is the commit seam. A drag is one history entry because only this end of it
+   * reaches the server.
+   */
   @action.bound
   settleExposure(ev: number): void {
-    this.previewExposure(ev);
+    this.preview({ exposure: ev });
+    void this.commit();
+  }
+
+  /** As above, for a control that is not the exposure slider. */
+  @action.bound
+  settle(patch: Partial<EditDoc>): void {
+    this.preview(patch);
+    void this.commit();
+  }
+
+  /**
+   * Sends the document, one save at a time, coalescing whatever arrived meanwhile.
+   *
+   * Serialised rather than fired per settle, because two saves in flight can land
+   * out of order: the server diffs against whatever arrived last, so the stored
+   * document would be the *earlier* value and the history would record a step in
+   * the wrong direction. Same shape as `request`'s frame coalescing, and for the
+   * same reason - only the latest is ever outstanding.
+   */
+  private async commit(): Promise<void> {
+    if (this.saving) {
+      this.pendingSave = true;
+      return;
+    }
+    const photoId = this.photoId;
+    const doc = this.store.doc;
+    if (photoId == null || doc == null) return;
+
+    this.saving = true;
+    this.locallyEdited = false;
+    this.saveStatus('saving');
+    try {
+      const state = await api.saveEdits(photoId, doc, this.store.rev);
+      // The bookkeeping always, the document only if nothing moved while this was
+      // in flight. Taking it unconditionally would overwrite a slider the reader
+      // moved during the round trip with the value that round trip was about.
+      this.applyState(state, this.locallyEdited);
+    } catch (error) {
+      // A refused revision is not a failure to retry as-is: something else moved
+      // these edits, so the client has to take what is there now. Reported rather
+      // than resolved - silently reloading would discard what the reader just did.
+      this.saveStatus(conflicted(error) ? 'conflict' : 'failed');
+    } finally {
+      this.saving = false;
+      if (this.pendingSave && !this.closed) {
+        this.pendingSave = false;
+        void this.commit();
+      }
+    }
+  }
+
+  @action.bound
+  async undo(): Promise<void> {
+    await this.step((photoId, rev) => api.undoEdits(photoId, rev), this.store.canUndo);
+  }
+
+  @action.bound
+  async redo(): Promise<void> {
+    await this.step((photoId, rev) => api.redoEdits(photoId, rev), this.store.canRedo);
+  }
+
+  private async step(
+    call: (photoId: string, rev: number) => Promise<EditState>,
+    allowed: boolean,
+  ): Promise<void> {
+    const photoId = this.photoId;
+    // Waiting rather than racing: a step taken while a save is in flight would be
+    // built on a revision the save is about to move.
+    if (!allowed || photoId == null || this.saving) return;
+    this.saving = true;
+    try {
+      // A step replaces the document by definition, so it takes the whole answer.
+      this.applyState(await call(photoId, this.store.rev));
+      this.locallyEdited = false;
+      this.request(this.store.exposureEv);
+    } catch (error) {
+      this.saveStatus(conflicted(error) ? 'conflict' : 'failed');
+    } finally {
+      this.saving = false;
+    }
+  }
+
+  /**
+   * The server's answer, which is authoritative for the revision and both flags.
+   *
+   * `keepDoc` leaves the document alone, for the one case where the server's copy
+   * is already out of date on arrival: a save that the reader edited on top of
+   * while it was in flight.
+   */
+  @action.bound
+  private applyState(state: EditState, keepDoc = false): void {
+    if (this.closed) return;
+    if (!keepDoc) this.store.doc = state.doc;
+    this.store.rev = state.rev;
+    this.store.canUndo = state.canUndo;
+    this.store.canRedo = state.canRedo;
+    this.store.saveStatus = 'clean';
+  }
+
+  @action.bound
+  private saveStatus(status: SaveStatus): void {
+    if (!this.closed) this.store.saveStatus = status;
   }
 
   close(): void {
@@ -306,7 +467,14 @@ export class RawEditPresenter {
     this.store.message = 'asking the server for the frame';
     this.store.width = 0;
     this.store.height = 0;
-    this.store.exposureEv = 0;
+    // The exposure is derived from the document now, so clearing it is clearing
+    // that: a stale one would draw the previous photo's grade over this one's
+    // frame for as long as the read takes.
+    this.store.doc = null;
+    this.store.rev = 0;
+    this.store.canUndo = false;
+    this.store.canRedo = false;
+    this.store.saveStatus = 'clean';
     this.store.matched = false;
   }
 

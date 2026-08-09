@@ -226,6 +226,50 @@ CREATE TABLE IF NOT EXISTS settings (
   key    TEXT PRIMARY KEY,
   value  TEXT NOT NULL
 );
+
+-- One photo's develop settings as they stand, plus the two small values that move
+-- on every undo. Read by the editor's open, and never by way of the history: that
+-- split is the whole reason there are two tables.
+--
+-- Nothing on the render side reads this yet. Applying an edit to a rendition waits
+-- on the render pipeline's own rework, which changes where it would be applied;
+-- until then an edit is stored and reloaded and changes no pixels.
+--
+-- Editing is non-destructive: the RAW is never written, and deleting these rows
+-- restores the photo to what the camera recorded. The cascade is a *hard* delete
+-- only, which is deliberate - a photo restored from the Bin comes back edited, and
+-- one whose file moved keeps its edits, because move detection preserves the id.
+--
+-- No row until the first edit, so an untouched library pays nothing for this.
+CREATE TABLE IF NOT EXISTS photo_edits (
+  photo_id   TEXT PRIMARY KEY REFERENCES photos(id) ON DELETE CASCADE,
+  doc        TEXT NOT NULL,      -- EditDocSchema, JSON
+  -- How far into photo_edit_history.deltas the undo cursor stands. Entries beyond
+  -- it are the redo tail, dropped only when a new edit lands. Here rather than
+  -- beside the deltas because an undo moves this and the doc and touches neither
+  -- the array nor its overflow pages; welded to that blob, stepping one integer
+  -- would rewrite tens of kilobytes.
+  cursor     INTEGER NOT NULL,
+  -- Bumped by every write, and required by the next one. Without it two tabs do
+  -- not merely lose an edit: the server diffs a stale document against the stored
+  -- one and invents a delta for a change nobody made, which undo then walks back
+  -- through.
+  rev        INTEGER NOT NULL,
+  updated_at TEXT NOT NULL
+) WITHOUT ROWID;
+
+-- The undo stack, as one JSON array per photo rather than a row per step. A row
+-- per delta would be ~72 bytes of repeated UUID each, in the table and again in
+-- the index, for a key nothing ever queries by: a single step is never read
+-- without the rest of its history, because undo walks the array.
+--
+-- WITHOUT ROWID on both, because a TEXT primary key is not the rowid - SQLite
+-- aliases only INTEGER PRIMARY KEY - so an ordinary table would make every read
+-- an index descent plus a rowid-tree descent.
+CREATE TABLE IF NOT EXISTS photo_edit_history (
+  photo_id TEXT PRIMARY KEY REFERENCES photos(id) ON DELETE CASCADE,
+  deltas   TEXT NOT NULL       -- [{ from: Partial<EditDoc>, to: Partial<EditDoc> }, ...]
+) WITHOUT ROWID;
 `;
 
 function columnNames(db: Database, table: string): Set<string> {

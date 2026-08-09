@@ -19,6 +19,9 @@ import { AlbumsRepository } from './services/albums/albums_repository';
 import { StacksApi } from './api/stacks/stacks_api';
 import { StacksService } from './services/stacks/stacks_service';
 import { StacksRepository } from './services/stacks/stacks_repository';
+import { PhotoEditsService } from './services/photo_edits/photo_edits_service';
+import { PhotoEditsRepository } from './services/photo_edits/photo_edits_repository';
+import { PhotoEditsApi } from './api/photo_edits/photo_edits_api';
 import { EventsApi } from './api/events/events_api';
 import { ImageApi } from './api/image/image_api';
 import { QualityCheckApi } from './api/quality/quality_check_api';
@@ -64,12 +67,14 @@ const folderRulesRepo = new FolderRulesRepository(db);
 const albumsRepo = new AlbumsRepository(db);
 const stacksRepo = new StacksRepository(db);
 const syncLocksRepo = new SyncLocksRepository(db);
+const photoEditsRepo = new PhotoEditsRepository(db);
 
 const processingService = new ProcessingService(photosRepo, settingsRepo);
 
 const librariesService = new LibrariesService(librariesRepo, photosRepo);
 const photosService = new PhotosService(photosRepo, albumsRepo, shootsRepo, librariesRepo, processingService);
 const albumsService = new AlbumsService(albumsRepo, photosRepo);
+const photoEditsService = new PhotoEditsService(photoEditsRepo, photosRepo);
 const shootsService = new ShootsService(shootsRepo, photosRepo, librariesRepo, folderRulesRepo);
 const syncService = new SyncService(
   photosRepo,
@@ -189,6 +194,7 @@ app.route('/api/settings', new SettingsApi(settingsRepo).routes);
 app.route('/api/browse', new BrowseApi().routes);
 app.route('/api/libraries', librariesApi.routes);
 app.route('/api', photosApi.routes);
+app.route('/api', new PhotoEditsApi(photoEditsService).routes);
 app.route('/api', shootsApi.routes);
 app.route('/api/albums', albumsApi.routes);
 app.route('/api/stacks', stacksApi.routes);
