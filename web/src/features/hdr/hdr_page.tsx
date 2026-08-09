@@ -236,19 +236,20 @@ export function HdrPage(): JSX.Element {
         is a modern full-frame body at its base ISO, and the HDR file assumes you are looking at a 1000-nit screen.
       </Text>
 
-      <Heading>Brighter is not the same as lighter</Heading>
+      <Heading>What brighter costs</Heading>
       <Text variant="muted" as="p">
-        This is the part that trips people up. In an eight-bit file the only way to make something brighter is to move it closer to
-        white, and a colour on its way to white loses its colour as it goes: the channel that was already full cannot rise any
-        further, so the other two catch up with it instead. HDR can leave the colour exactly where it is and put more light behind
-        it.
+        This is the part that trips people up. In an eight-bit file the only way to say that something is brighter is to move it
+        closer to white, and a colour on its way to white gives up its colour as it goes: the channel that was already full cannot
+        rise any further, so the other two catch up with it instead. HDR can put more light behind a colour and leave the colour
+        alone.
       </Text>
       <Text variant="muted" as="p">
-        Both strips below hold the same five colours, stepped up by the same amount from left to right, each one starting as bright
-        as eight bits can render that colour at all. The eight-bit strip has to spend lightness to go any further and the HDR one
-        does not: measured off the files, every patch in a row of the HDR strip carries exactly the saturation of the one before it
-        while ending on five times the light. The bottom row is the giveaway. It is a plain grey with no colour to lose, and it runs
-        out anyway - four of its five patches are the same white.
+        Both strips below hold the same five colours, stepped up by the same amount from left to right, each starting as bright as
+        eight bits can render that colour at all. Both get brighter along the row; that much is what brighter means. What separates
+        them is the price. Measured off the files, every patch in a row of the HDR strip carries exactly the saturation of the one
+        before it while ending on five times the light, where the eight-bit row buys the same climb by going pale. The bottom row is
+        the giveaway: it is a plain grey with no colour left to spend, so it just runs out, and four of its five patches are the
+        same white.
       </Text>
       <div className="swatches">
         <figure>
@@ -265,9 +266,9 @@ export function HdrPage(): JSX.Element {
         </figure>
       </div>
       <Text variant="mono" as="p" className="prose__note">
-        On a standard-range screen the HDR strip gets squeezed down to fit and will look darker overall, its first patch included.
-        That is the screen, not the file: measured, that patch is sitting exactly on white. What to watch is the direction each row
-        travels, not how bright it starts.
+        Watch the colour rather than the brightness: both strips brighten, and only one of them stays a colour while it does. On a
+        standard-range screen the HDR strip is also squeezed down to fit and will look darker overall, its first patch included -
+        that is the screen and not the file, where the patch sits exactly on white.
       </Text>
 
       <Heading>Where you notice it</Heading>

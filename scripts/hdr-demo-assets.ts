@@ -175,6 +175,19 @@ const SWATCH_CELL = 96;
 /**
  * The strip, as scene-linear samples where 1.0 is diffuse white.
  *
+ * **All three channels scale together, and they have to.** The HDR row does read as
+ * getting somewhat lighter along its length, and holding the two minor channels while
+ * only the dominant one climbs does cancel that - a row then deepens in colour as it
+ * brightens. It was tried. It also flattens the 8-bit strip to nothing: that strip goes
+ * pale *because* the minor channels are rising underneath a dominant one that has
+ * already stopped, so holding them leaves five identical patches and there is no
+ * comparison left to make.
+ *
+ * The two are one fact seen twice, and it cannot be had both ways. Light going up at a
+ * fixed colour looks lighter, because that is what more light is; what the strip can
+ * show is that the 8-bit row pays for it in colour and the HDR row does not. The copy
+ * beside it claims that and not the stronger thing.
+ *
  * Planar GBR because that is the one float layout that reaches zimg without swscale in
  * the way, which clamps to [0,1] and would flatten every step above white into one.
  */
