@@ -74,8 +74,22 @@ export interface Job {
    * they need the pixel's neighbourhood and so are a pass rather than a term.
    */
   adjust: JobAdjust;
+  /**
+   * The reader's crop, straighten and quarter turn.
+   *
+   * `crop` is left, top, right, bottom as fractions of the *straightened* frame, which is
+   * Camera Raw's definition and what `EditDocSchema` stores. Applied inside the cut's own
+   * gather, so a crop costs a smaller output rather than a second copy of the frame.
+   */
+  geometry: JobGeometry;
   grade: JobGrade;
   targets: JobTarget[];
+}
+
+export interface JobGeometry {
+  crop: [number, number, number, number];
+  angleDegrees: number;
+  rotate: number;
 }
 
 export interface JobAdjust {

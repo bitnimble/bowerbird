@@ -457,6 +457,31 @@ fn tap_u16(src: &[u16], sw: usize, sh: usize, px: f64, py: f64, channel: usize, 
 /// HDR path carries - 16-bit scene-linear and the f64 planes derived from it - and it
 /// folds the falloff in because that correction is indexed by the same output radius
 /// the gather already has.
+/// The reader's own geometry, as a gather reads it.
+///
+/// Crop edges are fractions of the frame **after** the straighten, which is Camera Raw's
+/// definition and the one `EditDocSchema` stores. `rotate` is quarter turns clockwise, applied
+/// last - it only permutes the output grid, so it costs nothing and resamples nothing.
+#[derive(Clone, Copy, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Geometry {
+    /// Left, top, right, bottom, as fractions of the straightened frame.
+    pub crop: [f64; 4],
+    pub angle_degrees: f64,
+    pub rotate: u16,
+}
+
+impl Geometry {
+    /// The whole frame, upright: what a photo nobody has cropped asks for.
+    pub fn none() -> Self {
+        Geometry { crop: [0.0, 0.0, 1.0, 1.0], angle_degrees: 0.0, rotate: 0 }
+    }
+
+    pub fn is_identity(&self) -> bool {
+        self.crop == [0.0, 0.0, 1.0, 1.0] && self.angle_degrees == 0.0 && self.rotate % 360 == 0
+    }
+}
+
 pub struct PlanarWarp {
     /// Empty when every channel shares [`Self::shared`]; otherwise one table per channel.
     per_channel: Vec<Vec<f64>>,
@@ -470,6 +495,74 @@ pub struct PlanarWarp {
     source_width: usize,
     source_height: usize,
     sampling: Sampling,
+    /// How an output pixel lands in the *corrected, unrotated* frame the lens is defined over.
+    ///
+    /// The identity - origin at zero, one step per pixel, no rotation - is the uncropped case
+    /// and reproduces the gather exactly as it was before geometry existed. Everything else is
+    /// this: the crop moves the origin and the stride, the straighten rotates about the frame's
+    /// own centre, and the quarter turn permutes which output axis drives which.
+    plan: Plan,
+}
+
+/// Output pixel to a position in the corrected frame, before the lens ratio is applied.
+#[derive(Clone, Copy)]
+struct Plan {
+    /// Half-diagonal of the *whole* corrected frame. The lens ratio is a function of radius
+    /// there, so a crop must not shrink it - a cropped frame is a window on the same optics,
+    /// not a smaller lens.
+    half_full: f64,
+    full: (f64, f64),
+    origin: (f64, f64),
+    stride: (f64, f64),
+    cos: f64,
+    sin: f64,
+    rotate: u16,
+}
+
+impl Plan {
+    fn identity(width: usize, height: usize, half: f64) -> Plan {
+        Plan {
+            half_full: half,
+            full: (width as f64, height as f64),
+            origin: (0.0, 0.0),
+            stride: (1.0, 1.0),
+            cos: 1.0,
+            sin: 0.0,
+            rotate: 0,
+        }
+    }
+
+    /// Where output pixel `(x, y)` sits in the corrected frame, as an offset from its centre
+    /// normalised by the full frame's half-diagonal - which is what the ratio table indexes.
+    fn at(&self, x: usize, y: usize, out: (usize, usize)) -> (f64, f64) {
+        // The quarter turn first, because it is a relabelling of the output grid rather than
+        // a transform of the picture: undoing it here means everything below works in the
+        // straightened frame's own axes.
+        let (u, v) = match self.rotate % 360 {
+            90 => (y as f64, (out.0 - 1) as f64 - x as f64),
+            180 => ((out.0 - 1) as f64 - x as f64, (out.1 - 1) as f64 - y as f64),
+            270 => ((out.1 - 1) as f64 - y as f64, x as f64),
+            _ => (x as f64, y as f64),
+        };
+
+        // Into the straightened frame, then back through the straighten to the corrected one.
+        // Rotating about the straightened frame's centre rather than the corrected frame's is
+        // what makes the crop fractions mean what Camera Raw says they mean.
+        let sx = self.origin.0 + u * self.stride.0;
+        let sy = self.origin.1 + v * self.stride.1;
+        let (cx, cy) = (self.straightened().0 / 2.0, self.straightened().1 / 2.0);
+        let (rx, ry) = (sx - cx, sy - cy);
+        let fx = rx * self.cos + ry * self.sin;
+        let fy = -rx * self.sin + ry * self.cos;
+
+        (fx / self.half_full, fy / self.half_full)
+    }
+
+    /// The bounding box the straighten needs, which is the frame the crop is a fraction of.
+    fn straightened(&self) -> (f64, f64) {
+        let (w, h) = self.full;
+        (w * self.cos.abs() + h * self.sin.abs(), w * self.sin.abs() + h * self.cos.abs())
+    }
 }
 
 impl PlanarWarp {
@@ -502,7 +595,97 @@ impl PlanarWarp {
             source_width,
             source_height,
             sampling,
+            plan: Plan::identity(width, height, half),
         }
+    }
+
+    /// A gather that corrects the lens *and* applies the reader's crop, straighten and turn.
+    ///
+    /// One pass rather than a warp followed by a crop, because the alternative materialises
+    /// the whole corrected frame to throw most of it away - 366MB at 61MP, on the path this
+    /// pipeline already went to some trouble to keep clear (`hdr.rs`'s note on fitting before
+    /// grading). The lens ratio is still measured against the whole frame: a crop is a window
+    /// on the same optics, so shrinking the radius with it would bend the correction.
+    ///
+    /// `full` is the size the rendition would have been uncropped; `out` is what it is. Both
+    /// are the caller's to compute, because only it knows the target size the crop is of.
+    ///
+    /// Returns None only when there is nothing to do at all - no lens and no geometry - so a
+    /// crop on a lens-free photo still gets its gather.
+    pub fn for_lens_and_geometry(
+        source_width: usize,
+        source_height: usize,
+        full: (usize, usize),
+        out: (usize, usize),
+        lens: Option<&crate::fit::Lens>,
+        geometry: Geometry,
+        sampling: Sampling,
+    ) -> Option<PlanarWarp> {
+        let lens = lens.filter(|lens| !lens.is_identity());
+        if lens.is_none() && geometry.is_identity() {
+            return None;
+        }
+
+        let (full_w, full_h) = (full.0 as f64, full.1 as f64);
+        let half_full = ((full_w / 2.0).powi(2) + (full_h / 2.0).powi(2)).sqrt();
+        let radians = geometry.angle_degrees.to_radians();
+        let mut plan = Plan {
+            half_full,
+            full: (full_w, full_h),
+            origin: (0.0, 0.0),
+            stride: (1.0, 1.0),
+            cos: radians.cos(),
+            sin: radians.sin(),
+            rotate: geometry.rotate,
+        };
+
+        // The crop, in the straightened frame the fractions are defined against. The output
+        // grid spans exactly that rectangle, so its own size decides the stride.
+        let (sw, sh) = plan.straightened();
+        let [left, top, right, bottom] = geometry.crop;
+        // The turn permutes which output axis spans which, so the stride is computed against
+        // the grid before it - `Plan::at` undoes the turn first for the same reason.
+        let (span_x, span_y) = match geometry.rotate % 360 {
+            90 | 270 => (out.1, out.0),
+            _ => (out.0, out.1),
+        };
+        plan.origin = (left * sw, top * sh);
+        plan.stride = (
+            (right - left) * sw / span_x.max(1) as f64,
+            (bottom - top) * sh / span_y.max(1) as f64,
+        );
+
+        let (knots, crop, falloff, channels) = match lens {
+            Some(lens) => (
+                lens.distortion.as_deref().unwrap_or_default(),
+                lens.crop,
+                lens.falloff,
+                lens.channels(),
+            ),
+            // No optics to correct, so the ratio table has to be unity and the gather is the
+            // geometry alone. **`crop` is 1.0, not 0.0**: it is a radial multiplier, so a
+            // zero reads every output pixel from the centre of the frame and returns a flat
+            // field - which looks like a broken decode rather than a broken identity.
+            None => (&[][..], 1.0, None, registered()),
+        };
+
+        let mut warp = PlanarWarp::new(
+            source_width,
+            source_height,
+            out.0,
+            out.1,
+            knots,
+            crop,
+            falloff,
+            &channels,
+            sampling,
+        );
+        // `new` sized its step and half against the output grid, which is the crop rather than
+        // the frame. The lens is defined over the frame, so both come from `full`.
+        warp.half = half_full;
+        warp.step = (half_full * (source_width as f64 / full_w), half_full * (source_height as f64 / full_h));
+        warp.plan = plan;
+        Some(warp)
     }
 
     /// A warp for a lens that moves pixels or lifts corners, or None when it would be
@@ -580,7 +763,8 @@ impl PlanarWarp {
                 })
                 .collect()
         });
-        let half = self.half;
+        // `half` is not read here any more: the plan normalises by the *full* frame's
+        // half-diagonal, which for a crop is not this grid's.
         let (step_x, step_y) = self.step;
         let (centre_x, centre_y) = self.centre;
         let (edge_x, edge_y) = self.edge;
@@ -589,11 +773,14 @@ impl PlanarWarp {
         let ratios = &self.shared;
         let per_channel = &self.per_channel;
 
+        let plan = self.plan;
         out.par_chunks_mut(width * 3).enumerate().for_each(|(y, row)| {
-            let dy = (y as f64 - height as f64 / 2.0) / half;
-            let dy2 = dy * dy;
             for x in 0..width {
-                let dx = (x as f64 - width as f64 / 2.0) / half;
+                // Where this output pixel sits in the corrected frame, as an offset from its
+                // centre over the frame's half-diagonal. The identity plan reduces to the
+                // `(x - width/2) / half` this replaced, so an uncropped gather is unchanged.
+                let (dx, dy) = plan.at(x, y, (width, height));
+                let dy2 = dy * dy;
                 let t = (dx * dx + dy2) * RATIO_TABLE_LAST as f64;
                 let slot = if t < RATIO_TABLE_LAST as f64 { t as usize } else { RATIO_TABLE_LAST - 1 };
                 let lift = lifts.map(|lifts| {
@@ -2168,6 +2355,91 @@ pub fn polynomial_knots(k1: f64, k2: f64, count: usize) -> Vec<f64> {
             ((k1 * r2 + k2 * r2 * r2) * SPLINE_UNIT).round()
         })
         .collect()
+}
+
+#[cfg(test)]
+mod geometry_tests {
+    use super::*;
+
+    /// A frame whose every pixel says where it is, so a gather can be read back exactly.
+    fn ramp(width: usize, height: usize) -> Vec<u16> {
+        let mut out = vec![0u16; width * height * 3];
+        for y in 0..height {
+            for x in 0..width {
+                let at = (y * width + x) * 3;
+                out[at] = x as u16;
+                out[at + 1] = y as u16;
+                out[at + 2] = 0;
+            }
+        }
+        out
+    }
+
+    fn gathered(width: usize, height: usize, geometry: Geometry, out: (usize, usize)) -> Vec<u16> {
+        let warp = PlanarWarp::for_lens_and_geometry(
+            width,
+            height,
+            (width, height),
+            out,
+            None,
+            geometry,
+            Sampling::Bicubic,
+        )
+        .expect("a geometry that is not the identity gathers");
+        warp.apply_u16(&ramp(width, height))
+    }
+
+    #[test]
+    fn no_lens_and_no_geometry_needs_no_gather() {
+        // The uncropped case has to stay a `None`, or every rendition in the library pays a
+        // full-frame resample for a correction of nothing.
+        assert!(PlanarWarp::for_lens_and_geometry(
+            64,
+            64,
+            (64, 64),
+            (64, 64),
+            None,
+            Geometry::none(),
+            Sampling::Bicubic
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn a_crop_reads_the_rectangle_it_names() {
+        // The right half, so the output's first column is the source's middle one.
+        let geometry = Geometry { crop: [0.5, 0.0, 1.0, 1.0], ..Geometry::none() };
+        let out = gathered(64, 64, geometry, (32, 64));
+
+        // Sampled at the same scale, so this is a window rather than a resize: output x maps
+        // to source x + 32. Bicubic taps land on the sample exactly at integer positions.
+        assert_eq!(out[0], 32, "the first column is the middle of the source");
+        let last = (63 * 32 + 31) * 3;
+        assert_eq!(out[last], 63, "the last column is the source's last");
+        assert_eq!(out[last + 1], 63, "and the last row is still the last row");
+    }
+
+    #[test]
+    fn a_quarter_turn_permutes_the_axes_without_resampling() {
+        let geometry = Geometry { rotate: 90, ..Geometry::none() };
+        let out = gathered(64, 64, geometry, (64, 64));
+
+        // Clockwise: the output's top-left comes from the source's bottom-left, so the
+        // column it reports is 0 and the row it reports is the last.
+        assert_eq!(out[0], 0);
+        assert_eq!(out[1], 63);
+    }
+
+    #[test]
+    fn the_crop_is_a_fraction_of_the_straightened_frame() {
+        // A 45-degree straighten on a square needs a box sqrt(2) wider, so a half-width crop
+        // of *that* is wider than half the original. The alternative reading - fractions of
+        // the frame before the straighten - would give 32 here and be wrong in the direction
+        // nobody notices until a straightened crop comes out framed differently from the
+        // editor's preview.
+        let geometry = Geometry { crop: [0.0, 0.0, 0.5, 1.0], angle_degrees: 45.0, rotate: 0 };
+        assert_eq!(super::super::hdr::cropped_size(64, 64, geometry), (45, 91));
+    }
 }
 
 #[cfg(test)]

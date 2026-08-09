@@ -17,15 +17,16 @@ import type {
   RenditionWritten,
   RenditionSource,
 } from './processing_types';
-import type { JobAdjust } from './rawshim_job';
+import type { JobAdjust, JobGeometry } from './rawshim_job';
 import { RENDITION_EXTENSION, renditionDirs, type Rendition } from './renditions';
 
 const WORKER_URL = new URL('./processing_worker.ts', import.meta.url).href;
 
-/** No gain and no adjustment: the picture as the camera rendered it. */
+/** No gain, no adjustment, whole frame: the picture as the camera made it. */
 const AS_METERED = {
   exposure: 1,
   adjust: { contrast: 0, highlights: 0, shadows: 0, whites: 0, blacks: 0, vibrance: 0, saturation: 0 },
+  geometry: { crop: [0, 0, 1, 1] as [number, number, number, number], angleDegrees: 0, rotate: 0 },
 } as const;
 
 /**
@@ -42,7 +43,7 @@ const AS_METERED = {
  * rendition of the picture as the camera metered it is a worse rendition than the reader
  * asked for and a far better outcome than a photo that never builds one.
  */
-function developed(edits: string | null): { exposure: number; adjust: JobAdjust } {
+function developed(edits: string | null): { exposure: number; adjust: JobAdjust; geometry: JobGeometry } {
   if (edits == null) return AS_METERED;
   try {
     const parsed = EditDocSchema.safeParse(JSON.parse(edits));
@@ -58,6 +59,11 @@ function developed(edits: string | null): { exposure: number; adjust: JobAdjust 
         blacks: doc.blacks,
         vibrance: doc.vibrance,
         saturation: doc.saturation,
+      },
+      geometry: {
+        crop: [doc.cropLeft, doc.cropTop, doc.cropRight, doc.cropBottom],
+        angleDegrees: doc.cropAngle,
+        rotate: doc.rotate,
       },
     };
   } catch {

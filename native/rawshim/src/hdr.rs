@@ -342,6 +342,28 @@ pub struct Cut {
     pub height: usize,
 }
 
+/// What a frame measures once the reader's geometry is applied to it.
+///
+/// The Rust twin of `displaySize` in `schemas/photo_edits.ts`, and the same three steps in the
+/// same order: straighten to the bounding box, crop as fractions of *that*, then the quarter
+/// turn. The two have to agree, because the catalogue lays a grid tile out on one and the
+/// encoder writes a file at the other - a disagreement is a tile that is the wrong shape for
+/// the picture inside it.
+///
+/// Floored at one: the fractions are free to describe a rectangle narrower than a pixel at
+/// tile size, and a rendition of no pixels is a failed encode rather than a small picture.
+pub fn cropped_size(width: usize, height: usize, geometry: image::Geometry) -> (usize, usize) {
+    let radians = geometry.angle_degrees.to_radians();
+    let (cos, sin) = (radians.cos().abs(), radians.sin().abs());
+    let (sw, sh) = (width as f64 * cos + height as f64 * sin, width as f64 * sin + height as f64 * cos);
+    let [left, top, right, bottom] = geometry.crop;
+    let w = sw * (right - left).max(0.0);
+    let h = sh * (bottom - top).max(0.0);
+    let turned = matches!(geometry.rotate % 360, 90 | 270);
+    let (w, h) = if turned { (h, w) } else { (w, h) };
+    ((w.round() as usize).max(1), (h.round() as usize).max(1))
+}
+
 impl Cut {
     /// The largest rendition's frame, off the shared base.
     ///
@@ -357,6 +379,7 @@ impl Cut {
         source: &Source<'_>,
         lens: Option<&crate::fit::Lens>,
         size: hdr_args::Size,
+        geometry: image::Geometry,
     ) -> Cut {
         let (width, height) = (size.width as usize, size.height as usize);
         let fitted = image::box_resize_u16(source.samples, source.width, source.height, width, height);
@@ -364,17 +387,27 @@ impl Cut {
             true => (width, height),
             false => (source.width, source.height),
         };
-        let warp = lens.and_then(|lens| {
-            image::PlanarWarp::for_lens(width, height, width, height, lens, image::Sampling::Bicubic)
-        });
+        // What the reader's crop leaves of that. The gather reads the whole frame and writes
+        // only this, so a crop costs a smaller output rather than a second buffer - the frame
+        // is never materialised corrected-and-uncropped just to have most of it thrown away.
+        let (out_width, out_height) = cropped_size(width, height, geometry);
+        let warp = image::PlanarWarp::for_lens_and_geometry(
+            width,
+            height,
+            (width, height),
+            (out_width, out_height),
+            lens,
+            geometry,
+            image::Sampling::Bicubic,
+        );
         let samples = match warp {
             Some(warp) => warp.apply_u16(fitted.as_deref().unwrap_or(source.samples)),
-            // Nothing to warp through, so a resize that happened is already the frame and one
-            // that did not leaves the caller's decode to be copied - the native-resolution
-            // case, and the only copy on this path.
+            // Nothing to warp through and nothing to crop, so a resize that happened is
+            // already the frame and one that did not leaves the caller's decode to be copied -
+            // the native-resolution case, and the only copy on this path.
             None => fitted.unwrap_or_else(|| source.samples.to_vec()),
         };
-        Cut { samples, width, height }
+        Cut { samples, width: out_width, height: out_height }
     }
 
     /// The sharpen, once, on the frame every rendition is cut from.
@@ -662,7 +695,9 @@ pub fn encode_still(
 
     let mut cut = {
         let source = Source { samples: &samples, width, height };
-        let mut built = Cut::from_base(&source, matched.map(|m| &m.lens), size);
+        // Upright and uncropped: this path serves the pins and the debug renders, which
+        // measure the pipeline rather than anybody's edit of it.
+        let mut built = Cut::from_base(&source, matched.map(|m| &m.lens), size, image::Geometry::none());
         built.sharpen(options.strengths.sharpen);
         built
     };

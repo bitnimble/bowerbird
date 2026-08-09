@@ -116,6 +116,12 @@ pub struct Job {
     /// the picture as the camera rendered it.
     #[serde(default)]
     pub adjust: crate::gpu::Adjust,
+    /// The reader's crop, straighten and quarter turn.
+    ///
+    /// Applied in the cut's own gather rather than as a pass of its own, so a crop costs a
+    /// smaller output instead of a second copy of the frame.
+    #[serde(default = "upright")]
+    pub geometry: crate::image::Geometry,
     pub grade: hdr::Grade,
     pub targets: Vec<Target>,
 }
@@ -123,6 +129,11 @@ pub struct Job {
 /// Serde's default for [`Job::exposure`]. A gain of one is the scene as it was metered.
 fn unit_gain() -> f64 {
     1.0
+}
+
+/// Serde's default for [`Job::geometry`]: the whole frame, as the camera framed it.
+fn upright() -> crate::image::Geometry {
+    crate::image::Geometry::none()
 }
 
 impl Job {
@@ -379,7 +390,7 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
     // Nothing below reads it: a smaller rendition comes out of the cut.
     let mut cut = {
         let source = hdr::Source { samples: &samples, width, height };
-        let mut built = hdr::Cut::from_base(&source, lens, order[0].1);
+        let mut built = hdr::Cut::from_base(&source, lens, order[0].1, job.geometry);
         built.sharpen(job.sharpen);
         built
     };

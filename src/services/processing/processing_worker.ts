@@ -49,6 +49,7 @@ function toCommand(job: RenditionJob): Parameters<typeof runJob>[0] {
     defringe: job.defringe,
     exposure: job.exposure,
     adjust: job.adjust,
+    geometry: job.geometry,
     grade: {
       peakNits: job.grade.peakNits,
       referenceWhiteNits: job.grade.referenceWhiteNits,

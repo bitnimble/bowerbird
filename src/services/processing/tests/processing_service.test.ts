@@ -150,6 +150,35 @@ describe('ProcessingService.processUnprocessed', () => {
     expect(posted[1]?.adjust).toEqual(posted[0]?.adjust);
   });
 
+  it('carries the crop as fractions, with the edges in the order the gather reads them', async () => {
+    const repo = {
+      listPendingProcessing: jest.fn(() => [
+        {
+          ...pending('a'),
+          edits: JSON.stringify({
+            version: 1,
+            cropLeft: 0.2,
+            cropTop: 0.1,
+            cropRight: 0.9,
+            cropBottom: 0.8,
+            cropAngle: 3,
+            rotate: 90,
+          }),
+        },
+      ]),
+      markTileBuilt: jest.fn(),
+      markRenditionsBuilt: jest.fn(),
+      markProcessingFailed: jest.fn(),
+    } as unknown as PhotosRepository;
+
+    await new ProcessingService(repo, settingsWith({})).processUnprocessed({ libraryId: 'lib' });
+
+    // Left, top, right, bottom - the order `image::Geometry` destructures. A transposed
+    // pair here is a crop of the wrong rectangle, which no type on either side would catch
+    // because all four are the same shape.
+    expect(posted[0]?.geometry).toEqual({ crop: [0.2, 0.1, 0.9, 0.8], angleDegrees: 3, rotate: 90 });
+  });
+
   it('renders as metered where the photo has no edits, or a document it cannot read', async () => {
     const repo = {
       listPendingProcessing: jest.fn(() => [

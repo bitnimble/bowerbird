@@ -1,5 +1,5 @@
 import { RENDITION_SOURCES, type RenditionSource } from '../../schemas/common';
-import type { JobAdjust } from './rawshim_job';
+import type { JobAdjust, JobGeometry } from './rawshim_job';
 import type { Rendition } from './renditions';
 
 export type { RenditionSource };
@@ -102,6 +102,8 @@ export interface RenditionJob {
    * photo renders to, so the grid tile and the full view cannot disagree about it.
    */
   adjust: JobAdjust;
+  /** The reader's crop, straighten and quarter turn. On the job for the same reason. */
+  geometry: JobGeometry;
 }
 
 export type WorkerJob = RenditionJob;
