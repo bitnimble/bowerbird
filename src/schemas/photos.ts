@@ -94,6 +94,16 @@ export const PhotoDetailSchema = PhotoSummarySchema.extend({
   // above; a client can also use it to say so, since "edited" is not otherwise
   // visible from a picture that has been edited well.
   is_edited: z.boolean(),
+  // What the photo *looks* like once its crop, straighten and rotation are applied.
+  // Equal to `width`/`height` for anything uncropped, which is almost everything.
+  //
+  // Separate from those rather than replacing them, because they answer different
+  // questions: `width` is the file, and a caller that wants to know what the camera
+  // recorded still needs it. The grid lays out on the pair below - a cropped photo
+  // occupies a different shape on the wall, and a tile at the file's aspect would be
+  // letterboxed for the life of the library.
+  display_width: z.number().int().positive(),
+  display_height: z.number().int().positive(),
   // One entry per rendition the viewer can show rather than one for whichever is
   // on screen, because the server does not know which that is and each is a
   // different file. Every field is answered from disk rather than from a column:

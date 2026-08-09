@@ -131,6 +131,36 @@ describe('editsFromXmp', () => {
     expect(unsupported.join(' ')).toMatch(/crs:ToneCurveName/);
   });
 
+  it('takes the crop only where the file says it has one', () => {
+    const edges = 'crs:CropTop="0.1" crs:CropLeft="0.2" crs:CropBottom="0.8" crs:CropRight="0.9" crs:CropAngle="3"';
+
+    const cropped = editsFromXmp(parse(`${CURRENT} crs:Exposure2012="0.5" crs:HasCrop="True" ${edges}`));
+    expect(cropped.doc).toMatchObject({
+      cropTop: 0.1,
+      cropLeft: 0.2,
+      cropBottom: 0.8,
+      cropRight: 0.9,
+      cropAngle: 3,
+    });
+
+    // `crs:HasCrop` is authoritative and the edges are stale without it: a crop the reader
+    // undid routinely leaves non-default values behind, so importing them would re-crop a
+    // photo they had uncropped. The straighten goes with them for the same reason.
+    const undone = editsFromXmp(parse(`${CURRENT} crs:Exposure2012="0.5" ${edges}`));
+    expect(undone.doc).toMatchObject({ cropTop: 0, cropLeft: 0, cropBottom: 1, cropRight: 1, cropAngle: 0 });
+  });
+
+  it('declines a crop stated in absolute units rather than guessing at the frame', () => {
+    const { doc, reasons } = editsFromXmp(
+      parse(`${CURRENT} crs:Exposure2012="0.5" crs:HasCrop="True" crs:CropRight="0.5" crs:CropUnits="1"`),
+    );
+
+    // Inches or centimetres mean the fractions are not the whole story, and converting
+    // needs dimensions neither this layer nor the parser has.
+    expect(doc?.cropRight).toBe(1);
+    expect(reasons.join(' ')).toMatch(/absolute units/);
+  });
+
   it('leaves everything it does not set at neutral', () => {
     const { doc } = editsFromXmp(parse(`${CURRENT} crs:Exposure2012="2.0"`));
 

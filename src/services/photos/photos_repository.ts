@@ -1,5 +1,6 @@
 import type { Database } from 'bun:sqlite';
 import { OrderingSchema, type Ordering } from '../../schemas/common';
+import { EditDocSchema, displaySize } from '../../schemas/photo_edits';
 import type { PhotoDetail, PhotoSummary, Triage } from '../../schemas/photos';
 import type { ViewerRendition } from '../../schemas/settings';
 import type { RenditionSource } from '../processing/processing_types';
@@ -321,11 +322,12 @@ interface SummaryRow {
 
 interface DetailRow extends SummaryRow {
   orientation: number;
-  // 1 where this photo has develop settings stored, absent where it does not. A
-  // subquery rather than a join so the column is a plain flag: what the detail needs
-  // to know is whether the camera's own JPEG can still stand in for the picture, and
-  // it cannot once someone has edited it.
-  edited?: number | null;
+  // The stored develop settings as JSON, or absent where the photo has none. A
+  // subquery rather than a join because the detail read is one row and this is one
+  // optional value on it. Two things are read out of it: whether the photo is edited
+  // at all - the camera's own JPEG cannot stand in for the picture once it is - and
+  // the geometry, which decides the shape the grid lays the tile out at.
+  edited?: string | null;
   file_path: string;
   file_hash: string | null;
   // Detail only: a grid tile is labelled with a wall clock, and a zone per tile
@@ -406,6 +408,27 @@ function toSummary(row: SummaryRow, ordering: Ordering): PhotoSummary {
   };
 }
 
+/**
+ * The shape this photo shows at, once its geometry is applied.
+ *
+ * The file's own dimensions for anything uncropped, which is almost everything - including
+ * every photo whose document this build cannot read. A grid tile at the wrong aspect is a
+ * worse failure than a grid tile at the file's aspect, and the second is what an unedited
+ * photo gets anyway.
+ */
+function displayed(row: DetailRow): { display_width: number; display_height: number } {
+  const same = { display_width: row.width, display_height: row.height };
+  if (row.edited == null) return same;
+  try {
+    const parsed = EditDocSchema.safeParse(JSON.parse(row.edited));
+    if (!parsed.success) return same;
+    const size = displaySize(row.width, row.height, parsed.data);
+    return { display_width: size.width, display_height: size.height };
+  } catch {
+    return same;
+  }
+}
+
 function toDetail(row: DetailRow, albumIds: string[]): PhotoDetail {
   return {
     id: row.id,
@@ -453,9 +476,10 @@ function toDetail(row: DetailRow, albumIds: string[]): PhotoDetail {
     // repository has no business doing either.
     original_path: null,
     default_rendition: 'embedded',
-    // Known here, unlike the three around it: it is a column of this catalogue rather
-    // than a question about the library's settings or about a file on disk.
+    // Known here, unlike the three around it: these are columns of this catalogue rather
+    // than questions about the library's settings or about a file on disk.
     is_edited: row.edited != null,
+    ...displayed(row),
     renditions: null,
     album_ids: albumIds,
   };
@@ -480,7 +504,7 @@ export class PhotosRepository {
     const row = this.db
       .query(
         `SELECT ${DETAIL_COLS}, l.ordering AS lib_ordering,
-                (SELECT 1 FROM photo_edits e WHERE e.photo_id = photos.id) AS edited
+                (SELECT e.doc FROM photo_edits e WHERE e.photo_id = photos.id) AS edited
            FROM photos JOIN libraries l ON l.id = photos.library_id WHERE photos.id = ?`,
       )
       .get(id) as DetailRow | null;

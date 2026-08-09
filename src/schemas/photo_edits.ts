@@ -59,6 +59,34 @@ export const EditDocSchema = z
     whiteBalanceMode: WhiteBalanceModeSchema,
     temperature: z.number().int().min(2000).max(50000).nullable().default(null),
     tint: z.number().int().min(-150).max(150).nullable().default(null),
+
+    // Geometry. Fractions of the frame rather than pixels, because one document grades an
+    // 800px tile, a 3840px `full` and a native-resolution `max`, and a pixel rectangle
+    // would be right for exactly one of them.
+    //
+    // **The frame they are fractions of is the one after the photo's own orientation and
+    // after `cropAngle`**, which is Camera Raw's definition (`xmp_schema.ts` states it) and
+    // so the one an import maps onto without a conversion. Getting this wrong is not
+    // visible in a square test image, which is why it is written down rather than implied.
+    //
+    // No `hasCrop` flag. The sidecar needs one because a crop the user undid leaves stale
+    // edges behind, but this document is ours and the full-frame rect *is* no crop - a flag
+    // beside it would be a second answer to the same question, free to disagree.
+    cropLeft: z.number().min(0).max(1).default(0),
+    cropTop: z.number().min(0).max(1).default(0),
+    cropRight: z.number().min(0).max(1).default(1),
+    cropBottom: z.number().min(0).max(1).default(1),
+    /** Straighten, in degrees. Camera Raw's range, and its sign. */
+    cropAngle: z.number().min(-45).max(45).default(0),
+    /**
+     * Quarter turns clockwise, on top of the photo's own EXIF orientation.
+     *
+     * On top of rather than replacing it: `photos.orientation` is what the camera recorded
+     * and is already applied to the pixels the editor opens, so a document that restated it
+     * would be a second copy of the same fact - and the two would disagree the first time a
+     * re-read of the header corrected one of them.
+     */
+    rotate: z.union([z.literal(0), z.literal(90), z.literal(180), z.literal(270)]).default(0),
   })
   // Unknown keys are kept, not stripped. A document written by a newer build and
   // round-tripped through an older one would otherwise come back with its new
@@ -71,6 +99,44 @@ export type EditDoc = z.infer<typeof EditDocSchema>;
 /** The document an unedited photo has. Every field at the value that changes nothing. */
 export function neutralEdits(): EditDoc {
   return EditDocSchema.parse({});
+}
+
+/**
+ * What a photo *looks* like once its geometry is applied, given the file's own dimensions.
+ *
+ * The grid lays out on this rather than on `photos.width`/`height`, which stay the file's:
+ * a cropped photo occupies a different shape on the wall, and a tile laid out at the file's
+ * aspect would be letterboxed or stretched for the life of the library.
+ *
+ * Three steps, in the order the fractions are defined against (`EditDocSchema`):
+ *
+ *  1. the straighten, which grows the frame to the bounding box of the rotated rectangle -
+ *     this is why a 1-degree straighten on a wide frame is not a no-op even uncropped;
+ *  2. the crop, as fractions of *that*;
+ *  3. the quarter turn, which swaps the pair.
+ *
+ * Rounded, and floored at one: a rendition of zero pixels is not a picture, and the crop
+ * fractions are free to describe a rectangle narrower than a pixel at tile size.
+ */
+export function displaySize(width: number, height: number, doc: EditDoc): { width: number; height: number } {
+  const radians = (Math.abs(doc.cropAngle) * Math.PI) / 180;
+  const cos = Math.cos(radians);
+  const sin = Math.sin(radians);
+  const straightened = {
+    width: width * cos + height * sin,
+    height: width * sin + height * cos,
+  };
+
+  const cropped = {
+    width: straightened.width * Math.max(doc.cropRight - doc.cropLeft, 0),
+    height: straightened.height * Math.max(doc.cropBottom - doc.cropTop, 0),
+  };
+
+  const turned = doc.rotate === 90 || doc.rotate === 270;
+  return {
+    width: Math.max(1, Math.round(turned ? cropped.height : cropped.width)),
+    height: Math.max(1, Math.round(turned ? cropped.width : cropped.height)),
+  };
 }
 
 // The fields a delta names, on each side of it. A commit routinely moves several

@@ -65,8 +65,32 @@ export function editsFromXmp(settings: XmpSettings): XmpImport {
     reasons.push('the white balance is the relative kind written for non-raw sources, and was not carried');
   }
 
+  // `hasCrop` is authoritative and the edges are stale without it: a crop the reader undid
+  // routinely leaves non-default values behind, so a file that says it is not cropped is
+  // not cropped whatever its edges read. The straighten goes with them - it is the same
+  // undone edit, and carrying it alone would rotate a frame we are not cropping.
+  const geometry = settings.geometry;
+  const crop = geometry.hasCrop
+    ? {
+        cropLeft: geometry.cropLeft,
+        cropTop: geometry.cropTop,
+        cropRight: geometry.cropRight,
+        cropBottom: geometry.cropBottom,
+        cropAngle: geometry.cropAngle,
+      }
+    : {};
+  // Absolute units mean the fractions are not the whole story and converting needs the
+  // frame's dimensions, which the parser says it does not have either.
+  if (geometry.hasCrop && geometry.cropUnits !== 0) {
+    reasons.push('the crop is stated in absolute units, which this import cannot convert, so it was left uncropped');
+  }
+  if (geometry.perspectiveVertical !== 0 || geometry.perspectiveHorizontal !== 0 || geometry.perspectiveRotate !== 0) {
+    unsupported.push('the perspective corrections');
+  }
+
   const doc: EditDoc = {
     ...neutralEdits(),
+    ...(geometry.hasCrop && geometry.cropUnits === 0 ? crop : {}),
     exposure: tone.exposure,
     contrast: tone.contrast,
     highlights: tone.highlights,
