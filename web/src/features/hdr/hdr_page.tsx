@@ -244,11 +244,11 @@ export function HdrPage(): JSX.Element {
         it.
       </Text>
       <Text variant="muted" as="p">
-        Both strips below are the same five colours, stepped up by the same amount from left to right. The eight-bit one has to
-        spend lightness to do it, and the HDR one does not: measured off the file, every patch in a row of the HDR strip has exactly
-        the same saturation as the one before it while carrying six times the light by the end. The bottom row is the giveaway.
-        Once plain white has reached the top of the eight-bit file it cannot go any further, so the last four patches are the same
-        white and the strip simply stops.
+        Both strips below hold the same five colours, stepped up by the same amount from left to right, each one starting as bright
+        as eight bits can render that colour at all. The eight-bit strip has to spend lightness to go any further and the HDR one
+        does not: measured off the files, every patch in a row of the HDR strip carries exactly the saturation of the one before it
+        while ending on five times the light. The bottom row is the giveaway. It is a plain grey with no colour to lose, and it runs
+        out anyway - four of its five patches are the same white.
       </Text>
       <div className="swatches">
         <figure>
@@ -264,6 +264,11 @@ export function HdrPage(): JSX.Element {
           </figcaption>
         </figure>
       </div>
+      <Text variant="mono" as="p" className="prose__note">
+        On a standard-range screen the HDR strip gets squeezed down to fit and will look darker overall, its first patch included.
+        That is the screen, not the file: measured, that patch is sitting exactly on white. What to watch is the direction each row
+        travels, not how bright it starts.
+      </Text>
 
       <Heading>Where you notice it</Heading>
       {SCENES.map((scene) => (

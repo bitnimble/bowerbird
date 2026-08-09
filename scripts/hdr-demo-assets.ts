@@ -123,12 +123,13 @@ function run(command: string, args: string[], stdin?: NodeJS.ReadableStream): Pr
  * file because ffmpeg's muxer does not write the nclx `colr` box (§10.7), and the
  * quantizer is the one a stored SDR rendition would have been encoded at.
  */
-async function clipToWhite(slug: string): Promise<void> {
+async function clipToWhite(slug: string, wide = true): Promise<void> {
+  const input = wide ? 'pin=bt2020:min=bt2020nc' : 'pin=bt709:min=bt709';
   const ffmpeg = spawn('ffmpeg', [
     '-y', '-hide_banner', '-loglevel', 'error',
     '-i', outputPath(slug, true),
     '-vf',
-    `zscale=tin=smpte2084:pin=bt2020:min=bt2020nc:npl=${SETTINGS.hdr_reference_white_nits}:t=iec61966-2-1:p=bt709:m=bt709:r=limited`,
+    `zscale=tin=smpte2084:${input}:npl=${SETTINGS.hdr_reference_white_nits}:t=iec61966-2-1:p=bt709:m=bt709:r=limited`,
     '-pix_fmt', SETTINGS.sdr_full_chroma ? 'yuv444p' : 'yuv420p',
     '-f', 'yuv4mpegpipe', '-strict', '-1', '-',
   ], { stdio: ['ignore', 'pipe', 'inherit'] });
@@ -149,21 +150,25 @@ const SWATCHES: [number, number, number][] = [
   [1, 0.42, 0.03], // orange
   [0.06, 0.5, 1], // blue
   [0.1, 1, 0.25], // green
-  [1, 1, 1], // white, so the strip says the effect is not about colour
+  // A light neutral rather than white, so this row still has one step to take before it
+  // runs out. At white it would be five identical patches from the first column, which
+  // reads as a broken image rather than as the point it is making - that the effect is
+  // about the ceiling and not about colour.
+  [0.72, 0.72, 0.72],
 ];
 
 /**
  * Multiples of diffuse white across the strip, ending on the 1000-nit ceiling.
  *
- * The strip used to start at 0.35, and the two dark columns were doing it harm: a dark
- * saturated colour reads as muddy rather than as saturated, so the HDR row appeared to
- * lighten across the strip when what it was really doing was leaving the mud behind.
- * Every column is a bright colour now, and the only thing changing along the row is how
- * much light is behind it. The first step is just under white so the white row still has
- * one step to take before it runs out - at 1.0 it would be five identical patches, which
- * reads as a broken image rather than as the point.
+ * **The first step is 1.0 and that is the whole trick.** At that step a colour's brightest
+ * channel sits exactly on white, which is the brightest eight bits can render that hue
+ * at all - so the strip opens on each colour at its best rather than working up to it.
+ * Earlier versions started at 0.35 and then 0.8, and both read as dark on the left: a
+ * saturated colour below white is dark by construction, since red carries a fifth of
+ * white's luminance and blue a fourteenth. What the eye then read as the HDR row
+ * lightening was really the row climbing out of that.
  */
-const SWATCH_STEPS = [0.8, 1.25, 1.95, 3.05, PEAK_OVER_WHITE];
+const SWATCH_STEPS = [1, 1.5, 2.2, 3.3, PEAK_OVER_WHITE];
 
 const SWATCH_CELL = 96;
 
@@ -195,8 +200,15 @@ async function buildSwatches(): Promise<void> {
   const ffmpeg = spawn('ffmpeg', [
     '-y', '-hide_banner', '-loglevel', 'error',
     '-f', 'rawvideo', '-pix_fmt', 'gbrpf32le', '-s', `${width}x${height}`, '-i', '-',
+    // **Rec.709 primaries, not Rec.2020**, which is the one place these files differ from
+    // every rendition the app writes. Converting the gamut first would take a saturated
+    // Rec.709 red down to 0.65 of full scale before the transfer ever saw it, so the
+    // first patch of the row would land at 130 nits where the strip says 203 - the HDR
+    // strip would open dimmer than the 8-bit one and the whole comparison would read
+    // backwards. Skipping the conversion makes 1.0 mean diffuse white exactly, and it
+    // costs nothing here: these are flat sRGB colours with nothing outside 709 to carry.
     '-vf',
-    `zscale=pin=bt709:tin=linear:min=bt709:p=bt2020:t=smpte2084:m=bt2020nc:r=limited:npl=${SETTINGS.hdr_reference_white_nits}`,
+    `zscale=pin=bt709:tin=linear:min=bt709:p=bt709:t=smpte2084:m=bt709:r=limited:npl=${SETTINGS.hdr_reference_white_nits}`,
     '-pix_fmt', 'yuv444p10le',
     '-f', 'yuv4mpegpipe', '-strict', '-1', '-',
   ], { stdio: ['pipe', 'pipe', 'inherit'] });
@@ -206,8 +218,8 @@ async function buildSwatches(): Promise<void> {
   // hard edge between two saturated patches is visible where it is invisible on a
   // photograph. Also why the swatches skip the Firefox rewrap on the page - that path
   // needs 4:2:0 (§10.7).
-  await run('avifenc', ['--stdin', '--cicp', '9/16/9', '--min', '0', '--max', '0', '-s', '4', outputPath('swatches', true)], ffmpeg.stdout!);
-  await clipToWhite('swatches');
+  await run('avifenc', ['--stdin', '--cicp', '1/16/1', '--min', '0', '--max', '0', '-s', '4', outputPath('swatches', true)], ffmpeg.stdout!);
+  await clipToWhite('swatches', false);
 }
 
 async function build(scene: Scene): Promise<void> {
