@@ -10,6 +10,12 @@ tiles)** → ~~§10 (crate extraction)~~. Nothing below is waiting on GPU work a
 Everything from §0 to §0.3 is kept as the record of how phase 0 was argued and priced. It is
 written in the present tense about a tree that no longer exists; §0.4 is the correction.
 
+The three probes it cites - `filter_domain_delta`, `sdr_vs_hdr`, `denoise_before_warp` - were
+deleted with phase 0 rather than carried. Each asked something this now answers, and each was
+written against the pipeline that had two of everything: there is no CPU grade to compare
+against, no separate SDR path to price, and the filters no longer convert a domain at all.
+Their numbers are quoted below and their code is at `ef8dade`.
+
 ## 0. Review outcome, 2026-08-06
 
 Reviewed by four independent passes: citation fact-check, storage/undo design, GPU architecture,
@@ -37,7 +43,7 @@ and implementation gaps. §1-§6 survived with corrections, applied below. §7/�
    edits, so there is one grade and it is on every rendered path. What remains of this finding is
    only the embedded-source case, priced above at 124ms to ~1.7s.
 
-**Priced, since finding 2's fix turns on it.** `native/rawshim/examples/sdr_vs_hdr.rs` runs a whole
+**Priced, since finding 2's fix turns on it.** `sdr_vs_hdr` (deleted with phase 0; at `ef8dade`) runs a whole
 `job::run` both ways at the shipped settings (`full_rendition_quantizer` 13, `hdr_crf` 10, and
 `hdr_preset` 8, which `processing_service.target` hands to *both* paths), 3840px on the Sony
 fixture, medians of three:
@@ -124,7 +130,7 @@ per-tick win (`0ef4487`). So the job moves, not the editor.
 
 ### 0.2 Measured: the divergence is visible, and it is not recoverable after the fact
 
-`native/rawshim/examples/filter_domain_delta.rs` runs one decode and one camera match through all
+`filter_domain_delta` (deleted with phase 0; at `ef8dade`) runs one decode and one camera match through all
 three candidate domains - linear, the editor's exposure-normalised PQ, the job's graded PQ -
 with the lens warp left out so the only variable is where `finish` ran, and compares the resulting
 PQ frames in ΔE ITP (BT.2124, where 1.0 is nominally the threshold of visibility). Both LFS
@@ -283,7 +289,7 @@ uniform field, applied to one the warp has made non-uniform. Both current paths 
 warp: the job fuses it into `grade_owned` and filters after `encode_pq`, and the editor
 materialises it in `edit::prepare` and then runs `filter_once`.
 
-`native/rawshim/examples/denoise_before_warp.rs` tests it on a synthetic flat field carrying
+`denoise_before_warp` (deleted with phase 0; at `ef8dade`) tests it on a synthetic flat field carrying
 spatially uniform noise, because on a real frame the radial profile is mostly *scene* - a subject
 in the middle reads as "noise" to any high-pass, and a first attempt at this measured the
 composition rather than the grain. With no content there is nothing to confound it, so any radial

@@ -51,20 +51,13 @@ required-features = ["renditions"]
 name = "lensfun_vs_fitted"
 required-features = ["renditions"]
 
-# Which domain `image::finish` belongs in, measured in ΔE ITP rather than argued.
-[[example]]
-name = "filter_domain_delta"
-required-features = ["renditions"]
-
-# What an SDR rendition costs against an HDR one, whole-job rather than encode-only.
-[[example]]
-name = "sdr_vs_hdr"
-required-features = ["renditions"]
-
-# Whether denoising before the geometric warp leaves noise more uniform than after it.
-[[example]]
-name = "denoise_before_warp"
-required-features = ["renditions"]
+# `filter_domain_delta`, `sdr_vs_hdr` and `denoise_before_warp` stood here. Each asked a
+# question phase 0 has since decided and implemented - which domain the filters run in,
+# what an SDR rendition costs against an HDR one, and which side of the warp the denoise
+# belongs on - and each was written against the pipeline that had two of everything. There
+# is no CPU grade to compare against now, no separate SDR path to price, and the filters do
+# not convert a domain at all. Their findings are in the design doc they were written for
+# (§0.2, §0.2.1, §0.2.3) and in DESIGN §10.3 and §10.9; the code is at `ef8dade`.
 
 [dependencies]
 fast_image_resize = "6.1.0"
