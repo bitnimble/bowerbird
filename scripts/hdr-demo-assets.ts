@@ -175,64 +175,85 @@ const SWATCH_CELL = 96;
 /**
  * The strip, as scene-linear samples where 1.0 is diffuse white.
  *
- * **All three channels scale together, and they have to.** The HDR row does read as
- * getting somewhat lighter along its length, and holding the two minor channels while
- * only the dominant one climbs does cancel that - a row then deepens in colour as it
- * brightens. It was tried. It also flattens the 8-bit strip to nothing: that strip goes
- * pale *because* the minor channels are rising underneath a dominant one that has
- * already stopped, so holding them leaves five identical patches and there is no
- * comparison left to make.
+ * **The two arms are authored separately, and each one is given the brightest thing its
+ * format can say.** Everywhere else on the page a pair is one render encoded twice,
+ * because the argument there is what a photograph loses. The argument here is narrower -
+ * that one format can express something the other cannot at all - so the two strips are
+ * allowed to hold different numbers.
  *
- * The two are one fact seen twice, and it cannot be had both ways. Light going up at a
- * fixed colour looks lighter, because that is what more light is; what the strip can
- * show is that the 8-bit row pays for it in colour and the HDR row does not. The copy
- * beside it claims that and not the stronger thing.
+ * Eight bits has exactly one move for "brighter": push the whole triple towards white.
+ * The dominant channel stops at the ceiling and the other two keep climbing into it, so
+ * the row goes pale. That is not a choice, it is the only direction available.
+ *
+ * The HDR arm keeps the two minor channels where they started and raises the dominant
+ * one alone, which puts all of the extra light into the colour rather than into white.
+ * A row deepens as it brightens instead of lightening. Scaling all three in step -
+ * which is what this used to do, so the two arms could be one set of samples - meant the
+ * HDR row climbing towards white as well, only slower, and a reader looking at the two
+ * side by side read them as the same move at different speeds rather than as different
+ * moves.
  *
  * Planar GBR because that is the one float layout that reaches zimg without swscale in
  * the way, which clamps to [0,1] and would flatten every step above white into one.
  */
-function swatchFrame(): Float32Array {
+function swatchFrame(arm: 'sdr' | 'hdr'): Float32Array {
   const [width, height] = [SWATCH_STEPS.length * SWATCH_CELL, SWATCHES.length * SWATCH_CELL];
   const pixels = width * height;
   const out = new Float32Array(pixels * 3);
   for (let y = 0; y < height; y++) {
     const colour = SWATCHES[Math.floor(y / SWATCH_CELL)]!;
+    const top = Math.max(...colour);
     for (let x = 0; x < width; x++) {
       const step = SWATCH_STEPS[Math.floor(x / SWATCH_CELL)]!;
       const at = y * width + x;
       for (const [channel, plane] of [[0, 2], [1, 0], [2, 1]] as const) {
-        out[plane * pixels + at] = colour[channel]! * step;
+        const level = colour[channel]!;
+        // A neutral has no minor channel to hold, so it climbs either way. It is the one
+        // row that can only get lighter, which is the point it is there to make.
+        const held = arm === 'hdr' && level !== top && Math.min(...colour) !== top;
+        out[plane * pixels + at] = held ? level : level * step;
       }
     }
   }
   return out;
 }
 
-async function buildSwatches(): Promise<void> {
+/**
+ * One strip, from linear samples straight to a file.
+ *
+ * **Rec.709 primaries on both arms**, which is the one place these files differ from
+ * every rendition the app writes. Converting the gamut first would take a saturated
+ * Rec.709 red down to 0.65 of full scale before the transfer ever saw it, so the first
+ * patch of the row would land at 130 nits where the strip says 203 - the HDR strip would
+ * open dimmer than the 8-bit one and the whole comparison would read backwards. Skipping
+ * the conversion makes 1.0 mean diffuse white exactly, and it costs nothing here: these
+ * are flat sRGB colours with nothing outside 709 to carry.
+ *
+ * Lossless and 4:4:4 on both, because flat colour has no detail to trade away and a
+ * quantiser on a hard edge between two saturated patches is visible where it is
+ * invisible on a photograph. It is also why the swatches skip the Firefox rewrap on the
+ * page, which needs 4:2:0 (§10.7).
+ */
+async function encodeSwatches(arm: 'sdr' | 'hdr'): Promise<void> {
   const [width, height] = [SWATCH_STEPS.length * SWATCH_CELL, SWATCHES.length * SWATCH_CELL];
+  const hdr = arm === 'hdr';
+  const transfer = hdr ? `t=smpte2084:npl=${SETTINGS.hdr_reference_white_nits}` : 't=iec61966-2-1';
   const ffmpeg = spawn('ffmpeg', [
     '-y', '-hide_banner', '-loglevel', 'error',
     '-f', 'rawvideo', '-pix_fmt', 'gbrpf32le', '-s', `${width}x${height}`, '-i', '-',
-    // **Rec.709 primaries, not Rec.2020**, which is the one place these files differ from
-    // every rendition the app writes. Converting the gamut first would take a saturated
-    // Rec.709 red down to 0.65 of full scale before the transfer ever saw it, so the
-    // first patch of the row would land at 130 nits where the strip says 203 - the HDR
-    // strip would open dimmer than the 8-bit one and the whole comparison would read
-    // backwards. Skipping the conversion makes 1.0 mean diffuse white exactly, and it
-    // costs nothing here: these are flat sRGB colours with nothing outside 709 to carry.
-    '-vf',
-    `zscale=pin=bt709:tin=linear:min=bt709:p=bt709:t=smpte2084:m=bt709:r=limited:npl=${SETTINGS.hdr_reference_white_nits}`,
-    '-pix_fmt', 'yuv444p10le',
+    '-vf', `zscale=pin=bt709:tin=linear:min=bt709:p=bt709:m=bt709:r=limited:${transfer}`,
+    '-pix_fmt', hdr ? 'yuv444p10le' : 'yuv444p',
     '-f', 'yuv4mpegpipe', '-strict', '-1', '-',
   ], { stdio: ['pipe', 'pipe', 'inherit'] });
-  const samples = swatchFrame();
+  const samples = swatchFrame(arm);
   Readable.from([Buffer.from(samples.buffer, samples.byteOffset, samples.byteLength)]).pipe(ffmpeg.stdin!);
-  // 4:4:4 and lossless: flat colour has no detail to trade away, and a quantiser on a
-  // hard edge between two saturated patches is visible where it is invisible on a
-  // photograph. Also why the swatches skip the Firefox rewrap on the page - that path
-  // needs 4:2:0 (§10.7).
-  await run('avifenc', ['--stdin', '--cicp', '1/16/1', '--min', '0', '--max', '0', '-s', '4', outputPath('swatches', true)], ffmpeg.stdout!);
-  await clipToWhite('swatches', false);
+  const cicp = hdr ? '1/16/1' : '1/13/1';
+  await run('avifenc', ['--stdin', '--cicp', cicp, '--min', '0', '--max', '0', '-s', '4', outputPath('swatches', hdr)], ffmpeg.stdout!);
+}
+
+async function buildSwatches(): Promise<void> {
+  await encodeSwatches('hdr');
+  await encodeSwatches('sdr');
 }
 
 async function build(scene: Scene): Promise<void> {
