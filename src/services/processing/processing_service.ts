@@ -571,7 +571,18 @@ export class ProcessingService {
     const dataPath = dataPathForLibraryId(pending.library_id);
     // NULL for rows queued before the setting existed, and for anything the sync
     // inserted without naming one; the library's default answers both.
-    const source = pending.rendition_source ?? pending.library_rendition_source;
+    //
+    // An edited photo renders whatever the library says. A library set to `embedded`
+    // serves the camera's own JPEG and builds nothing, which is the right default - it
+    // needs no demosaic and it is the camera's rendering that a scanned catalogue is
+    // for. But the camera's JPEG cannot carry an edit, so a photo edited there would
+    // show the change in the editor and nowhere else, permanently and with nothing
+    // saying why. Editing one is the reader asking to see it.
+    //
+    // Only the photos actually edited: a library of ten thousand keeps its 125ms tiles,
+    // and the handful someone worked on cost ~1.7s each.
+    const edited = pending.edits != null;
+    const source = edited ? 'render' : (pending.rendition_source ?? pending.library_rendition_source);
     const photoId = pending.photo_id;
     const rawFilePath = path.join(pending.root_path, pending.file_path);
     const common = {

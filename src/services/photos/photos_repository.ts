@@ -321,6 +321,11 @@ interface SummaryRow {
 
 interface DetailRow extends SummaryRow {
   orientation: number;
+  // 1 where this photo has develop settings stored, absent where it does not. A
+  // subquery rather than a join so the column is a plain flag: what the detail needs
+  // to know is whether the camera's own JPEG can still stand in for the picture, and
+  // it cannot once someone has edited it.
+  edited?: number | null;
   file_path: string;
   file_hash: string | null;
   // Detail only: a grid tile is labelled with a wall clock, and a zone per tile
@@ -448,6 +453,9 @@ function toDetail(row: DetailRow, albumIds: string[]): PhotoDetail {
     // repository has no business doing either.
     original_path: null,
     default_rendition: 'embedded',
+    // Known here, unlike the three around it: it is a column of this catalogue rather
+    // than a question about the library's settings or about a file on disk.
+    is_edited: row.edited != null,
     renditions: null,
     album_ids: albumIds,
   };
@@ -470,7 +478,11 @@ export class PhotosRepository {
 
   getById(id: string): PhotoDetail | null {
     const row = this.db
-      .query(`SELECT ${DETAIL_COLS}, l.ordering AS lib_ordering FROM photos JOIN libraries l ON l.id = photos.library_id WHERE photos.id = ?`)
+      .query(
+        `SELECT ${DETAIL_COLS}, l.ordering AS lib_ordering,
+                (SELECT 1 FROM photo_edits e WHERE e.photo_id = photos.id) AS edited
+           FROM photos JOIN libraries l ON l.id = photos.library_id WHERE photos.id = ?`,
+      )
       .get(id) as DetailRow | null;
     if (row == null) return null;
     const albums = this.db.query('SELECT album_id FROM album_photos WHERE photo_id = ?').all(id) as { album_id: string }[];

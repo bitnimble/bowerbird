@@ -130,6 +130,36 @@ describe('ProcessingService.processUnprocessed', () => {
     expect(posted.map((job) => job.exposure)).toEqual([1, 1, 1, 1, 1, 1]);
   });
 
+  it('renders an edited photo even where the library serves the camera JPEG', async () => {
+    // The default library builds no renditions at all and serves the embedded JPEG. That
+    // JPEG cannot carry an edit, so without this the reader sees their change in the
+    // editor and nowhere else - permanently, and with nothing saying why.
+    const repo = {
+      listPendingProcessing: jest.fn(() => [
+        { ...pending('plain'), rendition_source: null, library_rendition_source: 'embedded' },
+        {
+          ...pending('edited'),
+          rendition_source: null,
+          library_rendition_source: 'embedded',
+          edits: JSON.stringify({ version: 1, exposure: 1 }),
+        },
+      ]),
+      markTileBuilt: jest.fn(),
+      markRenditionsBuilt: jest.fn(),
+      markProcessingFailed: jest.fn(),
+    } as unknown as PhotosRepository;
+
+    await new ProcessingService(repo, settingsWith({})).processUnprocessed({ libraryId: 'lib' });
+
+    // The untouched photo keeps its 125ms tile and builds nothing else; only the one
+    // somebody worked on pays for a render.
+    expect(posted.map((job) => photoStage(job))).toEqual([
+      'plain:grid',
+      'edited:grid',
+      'edited:full',
+    ]);
+  });
+
   it('passes the embedded-JPEG matching setting through to the worker', async () => {
     // The worker cannot read config, so a job that does not carry the flag leaves
     // the feature permanently off however the server is configured.

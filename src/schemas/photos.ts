@@ -86,8 +86,14 @@ export const PhotoDetailSchema = PhotoSummarySchema.extend({
   // the repository's own read, and for a photo whose library has gone.
   original_path: z.string().nullable(),
   // What the viewer opens this photo at when nothing has been picked: the camera's
-  // JPEG for a library that serves it directly, the full-size rendition otherwise.
+  // JPEG for a library that serves it directly, the full-size rendition otherwise -
+  // and always the rendition once the photo has been edited, because the camera's
+  // own JPEG cannot carry an edit.
   default_rendition: ViewerRenditionSchema,
+  // Whether this photo has develop settings stored. What it decides here is the line
+  // above; a client can also use it to say so, since "edited" is not otherwise
+  // visible from a picture that has been edited well.
+  is_edited: z.boolean(),
   // One entry per rendition the viewer can show rather than one for whichever is
   // on screen, because the server does not know which that is and each is a
   // different file. Every field is answered from disk rather than from a column:

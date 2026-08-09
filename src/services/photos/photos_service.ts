@@ -105,7 +105,13 @@ export class PhotosService {
       original_path: library == null ? null : getOriginalPath(library, photo.file_path),
       // A library that serves the camera's JPEG has no full-size rendition built,
       // so opening at one would mean waiting for a render nobody asked for.
-      default_rendition: library?.rendition_source === 'embedded' ? 'embedded' : 'full',
+      //
+      // Unless the photo has been edited. The camera's JPEG cannot carry an edit, so
+      // opening at it would show the reader the picture they just changed, unchanged,
+      // with nothing saying why - and `toStages` renders an edited photo whatever the
+      // library says, so there is a rendition to open at.
+      default_rendition:
+        library?.rendition_source === 'embedded' && !photo.is_edited ? 'embedded' : 'full',
       renditions: library == null ? null : this.renditionsOf(library, photo.id, photo.file_path),
     };
   }

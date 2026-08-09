@@ -3,7 +3,7 @@ import { Database } from 'bun:sqlite';
 import { runMigrations } from '../../../db/migrations';
 import { AppError } from '../../../errors';
 import { neutralEdits } from '../../../schemas/photo_edits';
-import type { PhotosRepository } from '../../photos/photos_repository';
+import { PhotosRepository } from '../../photos/photos_repository';
 import { PhotoEditsRepository } from '../photo_edits_repository';
 import { PhotoEditsService } from '../photo_edits_service';
 
@@ -65,6 +65,19 @@ describe('PhotoEditsService', () => {
     service.undo(PHOTO, 0);
 
     expect(queueRebuild).not.toHaveBeenCalled();
+  });
+
+  it('marks the photo as edited, which is what stops the viewer opening at the camera JPEG', () => {
+    const repo = new PhotoEditsRepository(db);
+    const photos = new PhotosRepository(db);
+    expect(photos.getById(PHOTO)?.is_edited).toBe(false);
+
+    repo.save(PHOTO, { ...neutralEdits(), exposure: 1.5 }, 0);
+
+    // `photos_service` reads this to pick `default_rendition`: an embedded library
+    // serves the camera's own JPEG, which cannot carry an edit, so a photo that has one
+    // has to open at the rendition instead.
+    expect(photos.getById(PHOTO)?.is_edited).toBe(true);
   });
 
   it('refuses a photo that does not exist before touching the edits at all', () => {
