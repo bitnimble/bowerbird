@@ -175,43 +175,35 @@ const SWATCH_CELL = 96;
 /**
  * The strip, as scene-linear samples where 1.0 is diffuse white.
  *
- * **The two arms are authored separately, and each one is given the brightest thing its
- * format can say.** Everywhere else on the page a pair is one render encoded twice,
- * because the argument there is what a photograph loses. The argument here is narrower -
- * that one format can express something the other cannot at all - so the two strips are
- * allowed to hold different numbers.
+ * **All three channels scale together, which is the only construction that means "the
+ * same colour with more light on it".** Scaling a triple leaves its chromaticity where
+ * it was, so hue and saturation are both held exactly and only the light changes.
  *
- * Eight bits has exactly one move for "brighter": push the whole triple towards white.
- * The dominant channel stops at the ceiling and the other two keep climbing into it, so
- * the row goes pale. That is not a choice, it is the only direction available.
+ * The tempting alternative is to raise the dominant channel alone and hold the other
+ * two. It does stop the HDR row reading as lighter, and it is wrong: measured across the
+ * row it walked the orange from hue 24 degrees to 5 - orange into red - and the blue from
+ * 212 to 235. A strip whose caption says the colour is unchanged cannot be quietly
+ * turning one colour into another, and swapping a lightness error for a hue error is not
+ * a fix.
  *
- * The HDR arm keeps the two minor channels where they started and raises the dominant
- * one alone, which puts all of the extra light into the colour rather than into white.
- * A row deepens as it brightens instead of lightening. Scaling all three in step -
- * which is what this used to do, so the two arms could be one set of samples - meant the
- * HDR row climbing towards white as well, only slower, and a reader looking at the two
- * side by side read them as the same move at different speeds rather than as different
- * moves.
+ * So the row does get lighter along its length, because more light is what it has. What
+ * the strip shows is where that light goes: into the colour here, and into white in the
+ * 8-bit arm beside it, which has nowhere else to put it.
  *
  * Planar GBR because that is the one float layout that reaches zimg without swscale in
  * the way, which clamps to [0,1] and would flatten every step above white into one.
  */
-function swatchFrame(arm: 'sdr' | 'hdr'): Float32Array {
+function swatchFrame(): Float32Array {
   const [width, height] = [SWATCH_STEPS.length * SWATCH_CELL, SWATCHES.length * SWATCH_CELL];
   const pixels = width * height;
   const out = new Float32Array(pixels * 3);
   for (let y = 0; y < height; y++) {
     const colour = SWATCHES[Math.floor(y / SWATCH_CELL)]!;
-    const top = Math.max(...colour);
     for (let x = 0; x < width; x++) {
       const step = SWATCH_STEPS[Math.floor(x / SWATCH_CELL)]!;
       const at = y * width + x;
       for (const [channel, plane] of [[0, 2], [1, 0], [2, 1]] as const) {
-        const level = colour[channel]!;
-        // A neutral has no minor channel to hold, so it climbs either way. It is the one
-        // row that can only get lighter, which is the point it is there to make.
-        const held = arm === 'hdr' && level !== top && Math.min(...colour) !== top;
-        out[plane * pixels + at] = held ? level : level * step;
+        out[plane * pixels + at] = colour[channel]! * step;
       }
     }
   }
@@ -245,7 +237,7 @@ async function encodeSwatches(arm: 'sdr' | 'hdr'): Promise<void> {
     '-pix_fmt', hdr ? 'yuv444p10le' : 'yuv444p',
     '-f', 'yuv4mpegpipe', '-strict', '-1', '-',
   ], { stdio: ['pipe', 'pipe', 'inherit'] });
-  const samples = swatchFrame(arm);
+  const samples = swatchFrame();
   Readable.from([Buffer.from(samples.buffer, samples.byteOffset, samples.byteLength)]).pipe(ffmpeg.stdin!);
   const cicp = hdr ? '1/16/1' : '1/13/1';
   await run('avifenc', ['--stdin', '--cicp', cicp, '--min', '0', '--max', '0', '-s', '4', outputPath('swatches', hdr)], ffmpeg.stdout!);
