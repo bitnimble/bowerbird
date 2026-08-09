@@ -3,6 +3,7 @@ import path from 'node:path';
 import { AppError } from '../../errors';
 import { Logger } from '../../logger';
 import type { Library } from '../../schemas/libraries';
+import { EditDocSchema } from '../../schemas/photo_edits';
 import { deleteGeneratedFile } from '../../utils/deletions';
 import { dataPathForLibraryId, getDataPath, renditionPathFor } from '../../utils/paths';
 import type { PendingPhoto, PhotosRepository } from '../photos/photos_repository';
@@ -19,6 +20,28 @@ import type {
 import { RENDITION_EXTENSION, renditionDirs, type Rendition } from './renditions';
 
 const WORKER_URL = new URL('./processing_worker.ts', import.meta.url).href;
+
+/**
+ * The stored develop settings as the gain the job wants, `2^EV`.
+ *
+ * Converted here, once, on the way into the job: the shader's uniform carries a multiplier
+ * and the document carries stops, and doing it in two places is how the two come to disagree
+ * about the base.
+ *
+ * An unedited photo has no row, which is the common case and reads as no gain. A document
+ * this build cannot parse reads the same way rather than failing the batch: a rendition of
+ * the picture as the camera metered it is a worse rendition than the reader asked for and a
+ * far better outcome than a photo that never builds one.
+ */
+function exposureGain(edits: string | null): number {
+  if (edits == null) return 1;
+  try {
+    const parsed = EditDocSchema.safeParse(JSON.parse(edits));
+    return parsed.success ? 2 ** parsed.data.exposure : 1;
+  } catch {
+    return 1;
+  }
+}
 
 const log = new Logger('processing');
 
@@ -64,6 +87,16 @@ export class ProcessingService {
   constructor(
     private readonly photos: PhotosRepository,
     private readonly settings: SettingsRepository,
+    /**
+     * One photo's stored develop settings, as JSON, or null where it has none.
+     *
+     * A function rather than the repository, and defaulted rather than required, matching the
+     * seam `PhotosService.extract` uses: the batch path reads these off the pending query's
+     * own join, so this exists only for the one-off renditions a viewer asks for. A test that
+     * is not about edits gets the default and renders the photo as the camera metered it,
+     * which is what every one of them was already asserting.
+     */
+    private readonly editsFor: (photoId: string) => string | null = () => null,
   ) {}
 
   /** Called with each derived file written: which photo, which stage, and when. */
@@ -103,6 +136,31 @@ export class ProcessingService {
     return queued;
   }
 
+  /**
+   * Both derived stages of photos whose develop settings changed, and a drain to follow.
+   *
+   * Not awaited, unlike `rebuildTiles`: the caller is a slider release, and a 61MP render
+   * is seconds of work that a save has no business holding a response open for. The
+   * rebuild is bookkeeping plus a nudge - what makes it correct rather than fire-and-hope
+   * is that the flags are already on the row, so a drain that never ran, or a process that
+   * died mid-render, leaves the work queued for the next one.
+   *
+   * Repeated calls are free. `processUnprocessed` keys its in-flight runs and *widens* an
+   * existing one rather than starting a second, so a reader dragging through twenty
+   * releases gets one batch that grows, not twenty batches.
+   */
+  rebuildEdited(photoIds: string[]): number {
+    const queued = this.photos.queueRebuild(photoIds);
+    // Reported rather than thrown past: nothing is awaiting this, so an unhandled
+    // rejection is all a failure would otherwise produce.
+    if (queued > 0) {
+      void this.processUnprocessed({ photoIds }).catch((err: unknown) => {
+        log.warn('could not rebuild after an edit', { photos: photoIds.length, err });
+      });
+    }
+    return queued;
+  }
+
   // One rendition, on demand: the detail view asking for a size or a range it
   // does not have yet. The photo view's own renditions are always renders, never
   // the embedded JPEG, which is served as itself rather than built (§10.2); a grid
@@ -132,6 +190,10 @@ export class ProcessingService {
       // obeys the same settings. The fit is deterministic, so refitting here lands
       // on the same transform rather than a second opinion.
       matchEmbeddedJpeg: this.settings.get().match_embedded_jpeg,
+      // And the same edits, for the same reason. This is the path a `max` export takes,
+      // so without it the one rendition a reader asks for by name is the one that ignores
+      // what they did to the picture.
+      exposure: exposureGain(this.editsFor(photoId)),
       ...this.render(),
     });
   }
@@ -393,6 +455,13 @@ export class ProcessingService {
           return;
         }
         this.stageDone(photo, result.photoId, 'renditions');
+        // And the tile, where this job rewrote it from the render. Asked of the targets
+        // rather than assumed from the pool, for the reason `runOneOff` gives: a job that
+        // wrote a grid file and stamped only the renditions leaves `tile_built_at` where
+        // it was, so the better tile lands on disk and no client ever asks for it.
+        if (job.targets.some((target) => target.rendition === 'grid')) {
+          this.stageDone(photo, result.photoId, 'tile', result.descriptor);
+        }
       },
       stopped,
     );
@@ -512,6 +581,7 @@ export class ProcessingService {
       dataPath,
       grade: this.grade(),
       matchEmbeddedJpeg: this.settings.get().match_embedded_jpeg,
+      exposure: exposureGain(pending.edits),
       ...this.render(),
     } as const;
 
@@ -523,11 +593,27 @@ export class ProcessingService {
       pending.needs_tile === 1
         ? { ...common, targets: [this.target(dataPath, photoId, 'grid', false, 'embedded')] }
         : null;
+    // The renditions job writes the grid tile a second time, from the render.
+    //
+    // The first pass takes the tile off the camera's embedded JPEG because that is
+    // ~125ms against ~1.5s, and it is what fills a 2000-frame shoot's grid in a minute
+    // rather than eleven. But a library set to `render` then showed a gallery of the
+    // camera's rendering beside a viewer showing ours, and once a photo can be *edited*
+    // the two disagree about the picture itself rather than only its treatment.
+    //
+    // Free, within noise: the base is decoded, fitted, filtered and cut once for the
+    // whole job, so the tile is a downscale of pixels already in hand and an 800px
+    // encode - measured at 3940ms for grid+full against 4139ms for the full alone on a
+    // 61MP body. The grid upgrades in place as the queue reaches each photo, and
+    // `tile_built_at` moving is what makes a client re-fetch it.
     const renditions: RenditionJob | null =
       source === 'render' && owesRenditions
         ? {
             ...common,
-            targets: [this.target(dataPath, photoId, 'full', pending.rendition_hdr === 1, 'render')],
+            targets: [
+              this.target(dataPath, photoId, 'full', pending.rendition_hdr === 1, 'render'),
+              this.target(dataPath, photoId, 'grid', false, 'render'),
+            ],
           }
         : null;
 

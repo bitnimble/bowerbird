@@ -82,6 +82,17 @@ export interface RenditionJob {
   denoiseChroma: number;
   sharpen: number;
   defringe: number;
+  /**
+   * The photographer's own exposure, as a gain on the scene rather than in stops.
+   *
+   * A gain because that is what the shader's uniform carries, and the conversion from the
+   * stored document's EV happens once on the way in rather than in two places that could
+   * disagree about the base. 1 is the scene as metered, which is what an unedited photo gets.
+   *
+   * On the job for the same reason as the strengths above: it describes the picture this
+   * photo renders to, so the grid tile and the full view cannot disagree about it.
+   */
+  exposure: number;
 }
 
 export type WorkerJob = RenditionJob;

@@ -99,8 +99,24 @@ pub struct Job {
     /// aberration is a focus difference rather than a magnification one, so the warp cannot
     /// reach it and this is the only stage that does.
     pub defringe: f64,
+    /// The photographer's own exposure, as a gain on the scene rather than in stops.
+    ///
+    /// A gain because that is what the uniform carries and what `SceneGrade` asserts is
+    /// positive: the client sends `2^EV` for the same reason (`writeUniform`), so the stored
+    /// document's EV is converted once, on the way in, rather than in two places that could
+    /// disagree about the base.
+    ///
+    /// Defaults to 1 - no gain - so a photo nobody has edited grades exactly as it did, and a
+    /// caller that knows nothing about edits can leave the field out entirely.
+    #[serde(default = "unit_gain")]
+    pub exposure: f64,
     pub grade: hdr::Grade,
     pub targets: Vec<Target>,
+}
+
+/// Serde's default for [`Job::exposure`]. A gain of one is the scene as it was metered.
+fn unit_gain() -> f64 {
+    1.0
 }
 
 impl Job {
@@ -329,10 +345,27 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
          implementation. Install a Vulkan driver; lavapipe will do, slowly",
     )?;
 
-    // The scene, settled once: the camera's colour and the levels every rendition grades
-    // against, which are the ones `Base::build` coded the frame with.
-    let scene =
-        tone::SceneGrade::new(matched.as_ref().map(|m| &m.colour), levels, job.grade.reference_white_nits, 1.0);
+    // The scene, settled once: the camera's colour, the levels every rendition grades against
+    // - which are the ones `Base::build` coded the frame with - and the photographer's
+    // exposure. The levels stay unexposed and the gain moves against them, which is what
+    // holds the colour still as it changes (`tone::SceneGrade`), and is why the exposure
+    // belongs here rather than folded into the anchor the base was coded with.
+    //
+    // Refused rather than clamped where it is not positive: a gain of zero or less is not a
+    // dark picture, it is a caller that sent stops where a multiplier belongs, and grading
+    // every photo in the library black is a worse answer than saying so.
+    if !(job.exposure > 0.0) {
+        return Err(format!(
+            "an exposure is a gain on the scene, so it has to be positive: {}",
+            job.exposure
+        ));
+    }
+    let scene = tone::SceneGrade::new(
+        matched.as_ref().map(|m| &m.colour),
+        levels,
+        job.grade.reference_white_nits,
+        job.exposure,
+    );
 
     // Cut once off the base, sharpened once, and the base handed back before anything is
     // encoded - 366MB of samples at 61MP, released across the longest stage of the job.

@@ -77,6 +77,11 @@ export class QualityCheckApi {
           denoiseChroma: settings.raw_denoise_chroma,
           sharpen: settings.raw_sharpen,
           defringe: settings.raw_defringe,
+          // The scene as metered, deliberately. This page compares encoder settings
+          // against each other, so a photographer's own exposure on whichever photo
+          // happens to be chosen would be a variable in a measurement that is about
+          // quantizers.
+          exposure: 1,
           grade: {
             peakNits: settings.hdr_peak_nits,
             referenceWhiteNits: settings.hdr_reference_white_nits,

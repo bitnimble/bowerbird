@@ -69,12 +69,14 @@ const stacksRepo = new StacksRepository(db);
 const syncLocksRepo = new SyncLocksRepository(db);
 const photoEditsRepo = new PhotoEditsRepository(db);
 
-const processingService = new ProcessingService(photosRepo, settingsRepo);
+const processingService = new ProcessingService(photosRepo, settingsRepo, (id) => photoEditsRepo.docFor(id));
 
 const librariesService = new LibrariesService(librariesRepo, photosRepo);
 const photosService = new PhotosService(photosRepo, albumsRepo, shootsRepo, librariesRepo, processingService);
 const albumsService = new AlbumsService(albumsRepo, photosRepo);
-const photoEditsService = new PhotoEditsService(photoEditsRepo, photosRepo);
+const photoEditsService = new PhotoEditsService(photoEditsRepo, photosRepo, (ids) =>
+  processingService.rebuildEdited(ids),
+);
 const shootsService = new ShootsService(shootsRepo, photosRepo, librariesRepo, folderRulesRepo);
 const syncService = new SyncService(
   photosRepo,

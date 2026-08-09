@@ -137,6 +137,11 @@ export interface PendingPhoto {
   // column of the same name: what it was built with, against what to build next.
   library_rendition_source: RenditionSource;
   rendition_hdr: number;
+  // The photographer's develop settings as stored JSON, or NULL where they have
+  // none. Carried on the row rather than read per photo for the reason the join
+  // gives; the service parses it, because what a document means is the schema's
+  // business and not this layer's.
+  edits: string | null;
 }
 
 // Minimal shape for file/shoot bookkeeping (moves, adoption, reconciliation).
@@ -1006,8 +1011,13 @@ export class PhotosRepository {
     const order = libraryId == null ? '' : `ORDER BY ${orderByClause(this.libraryOrdering(libraryId), 'p.')}`;
     const query = (idClause: string): string =>
       `SELECT p.id AS photo_id, p.file_path, p.rendition_source, p.needs_tile, p.needs_renditions,
-              l.root_path, l.id AS library_id, l.rendition_source AS library_rendition_source, l.rendition_hdr
+              l.root_path, l.id AS library_id, l.rendition_source AS library_rendition_source, l.rendition_hdr,
+              e.doc AS edits
        FROM photos p JOIN libraries l ON l.id = p.library_id
+       -- LEFT, and joined here rather than read per photo: a batch is thousands of rows and
+       -- most of them have no edits at all, so a query each would be thousands of round trips
+       -- to learn that. NULL means unedited, which is the common case and the cheap one.
+       LEFT JOIN photo_edits e ON e.photo_id = p.id
        WHERE ${PENDING_PROCESSING('p.')} ${where} ${idClause} ${order}`;
 
     if (photoIds == null) return this.db.query(query('')).all(...params) as PendingPhoto[];
@@ -1062,6 +1072,30 @@ export class PhotosRepository {
     return this.db
       .query(
         `UPDATE photos SET needs_tile = 1, processing_error = NULL
+         WHERE id IN (${placeholders}) AND is_missing = 0 AND is_deleted = 0`,
+      )
+      .run(...photoIds).changes;
+  }
+
+  // Both stages of specific photos, for a change to the picture itself rather than
+  // to one derived copy of it. An edit invalidates the grid tile and the viewer's
+  // renditions alike, and requeuing only the second leaves the gallery showing the
+  // frame as it was.
+  //
+  // `rendition_source` is left alone, unlike the whole-library form below: that one
+  // clears it so a library switched to `render` stops being told there is nothing to
+  // build, and here the library's setting has not moved - only the photo has.
+  //
+  // ponytail: the flags are idempotent, so a reader dragging a slider through twenty
+  // releases queues one rebuild if the worker has not started and one more if it has.
+  // That self-coalesces well enough to leave alone; an idle timer is the upgrade if a
+  // long editing session proves to spend real time rebuilding frames nobody saw.
+  queueRebuild(photoIds: string[]): number {
+    if (photoIds.length === 0) return 0;
+    const placeholders = photoIds.map(() => '?').join(', ');
+    return this.db
+      .query(
+        `UPDATE photos SET needs_tile = 1, needs_renditions = 1, processing_error = NULL
          WHERE id IN (${placeholders}) AND is_missing = 0 AND is_deleted = 0`,
       )
       .run(...photoIds).changes;

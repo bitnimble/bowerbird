@@ -45,9 +45,10 @@ const GROUPS: ReadonlyArray<{
   },
 ];
 
-// Only the exposure reaches the shader today. The rest are stored and reloaded
-// but change no pixels yet, which a reader has to be told rather than left to
-// discover by dragging one and watching nothing happen.
+// Only the exposure reaches the shader today - in the editor *and* in a rendition,
+// which is the same WGSL either way. The rest are stored and reloaded but change no
+// pixels yet, which a reader has to be told rather than left to discover by dragging
+// one and watching nothing happen.
 const RENDERED = new Set<string>(['exposure']);
 
 const EditSlider = observer(function EditSlider({

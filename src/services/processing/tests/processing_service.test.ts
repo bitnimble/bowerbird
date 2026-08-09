@@ -84,8 +84,51 @@ describe('ProcessingService.processUnprocessed', () => {
       needs_renditions: 1,
       library_rendition_source: 'render',
       rendition_hdr: 0,
+      // Unedited, which is what every test in this file is about: the photo grades as the
+      // camera metered it. `edits` is exercised in `exposure` below.
+      edits: null,
     };
   }
+
+  it('carries a saved exposure to every job as a gain, not as stops', async () => {
+    // The shader's uniform is a multiplier and the document holds EV, so the conversion
+    // has to happen somewhere. Pinned because sending stops would not fail: `2` is a legal
+    // gain, so a photo edited to +2 EV would render four stops up and nothing would say so.
+    const repo = {
+      listPendingProcessing: jest.fn(() => [
+        { ...pending('a'), edits: JSON.stringify({ version: 1, exposure: 2 }) },
+      ]),
+      markTileBuilt: jest.fn(),
+      markRenditionsBuilt: jest.fn(),
+      markProcessingFailed: jest.fn(),
+    } as unknown as PhotosRepository;
+
+    await new ProcessingService(repo, settingsWith({})).processUnprocessed({ libraryId: 'lib' });
+
+    // Both jobs: the tile and the renditions are the same picture, so they cannot
+    // disagree about the exposure it was taken at.
+    expect(posted.map((job) => job.exposure)).toEqual([4, 4]);
+  });
+
+  it('renders as metered where the photo has no edits, or a document it cannot read', async () => {
+    const repo = {
+      listPendingProcessing: jest.fn(() => [
+        pending('a'),
+        { ...pending('b'), edits: 'not json' },
+        { ...pending('c'), edits: JSON.stringify({ version: 1, exposure: 99 }) },
+      ]),
+      markTileBuilt: jest.fn(),
+      markRenditionsBuilt: jest.fn(),
+      markProcessingFailed: jest.fn(),
+    } as unknown as PhotosRepository;
+
+    await new ProcessingService(repo, settingsWith({})).processUnprocessed({ libraryId: 'lib' });
+
+    // A rendition of the picture as the camera metered it is a worse rendition than the
+    // reader asked for, and a far better outcome than a photo that never builds one. The
+    // out-of-range document is the same case: the schema refuses it, so it reads as absent.
+    expect(posted.map((job) => job.exposure)).toEqual([1, 1, 1, 1, 1, 1]);
+  });
 
   it('passes the embedded-JPEG matching setting through to the worker', async () => {
     // The worker cannot read config, so a job that does not carry the flag leaves
@@ -258,7 +301,12 @@ describe('ProcessingService.processUnprocessed', () => {
     expect(order).toEqual(['a:grid', 'b:grid', 'a:full', 'b:full']);
     // Each stage clears its own, so a run interrupted between the passes comes back
     // owing only the second.
-    expect(markTileBuilt.mock.calls.map((c) => c[0])).toEqual(['a', 'b']);
+    //
+    // The tile is stamped twice per photo, which is the point rather than a slip: the
+    // first pass writes it from the camera's JPEG so the grid fills at ~125ms a photo,
+    // and the render pass overwrites it from the same pixels the viewer gets. The stamp
+    // has to move both times or a client keeps asking for the first one.
+    expect(markTileBuilt.mock.calls.map((c) => c[0])).toEqual(['a', 'b', 'a', 'b']);
     expect(markRenditionsBuilt.mock.calls.map((c) => c[0])).toEqual(['a', 'b']);
   });
 
@@ -347,13 +395,18 @@ describe('ProcessingService.processUnprocessed', () => {
     service.onProcessed((photoId, written) => announced.push({ photoId, ...written }));
     await service.processUnprocessed({ libraryId: 'lib' });
 
-    expect(announced.map((a) => a.stage)).toEqual(['tile', 'renditions']);
+    // The tile twice: once from the camera's JPEG at the tile's pace, then again from
+    // the render, because the second one is a different picture and not a re-encode of
+    // the first. A client hears about both, which is what makes the grid sharpen in
+    // place as the queue reaches each photo.
+    expect(announced.map((a) => a.stage)).toEqual(['tile', 'renditions', 'tile']);
     // Each carries the stamp its own write put on the row, and only that one moves:
     // a client builds the URL out of that column, so an announcement ahead of the row
     // would be walked back by the next list read - and a tile whose stamp moved for
     // a rendition rebuild would be re-fetched for bytes that had not changed.
     expect(markTileBuilt).toHaveBeenCalledWith('a', announced[0]?.version);
     expect(markRenditionsBuilt).toHaveBeenCalledWith('a', announced[1]?.version, 'render');
+    expect(markTileBuilt).toHaveBeenCalledWith('a', announced[2]?.version);
   });
 
   it('records what the viewer gets, so a second import still rebuilds the renditions', async () => {

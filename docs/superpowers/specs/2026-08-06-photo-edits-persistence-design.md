@@ -1,11 +1,40 @@
 # Persisted photo edits, cross-session undo, and edited renditions
 
-Status: **phase 0 is done and shipped; §10 is superseded; §2-§8 are unstarted and unblocked.**
+Status: **phase 0, §2-§6 and §7/§8 are done and shipped; §10 is superseded.** What is left is
+§9 (geometry, designed for and not built), XMP import as an endpoint - `editsFromXmp` exists and
+nothing calls it - batch edits, and the nine sliders that store but do not yet render. Plus one
+thing outside this document: §10.2's deployment, which is a blocker for the *render* half and is
+unstarted.
+
 Read §0.4 before anything else - it says what phase 0 became, which is more than it was scoped as,
 and why the crate extraction §10 designs is no longer the way to get what §10 wanted.
 
-Build order, revised: ~~phase 0~~ → **§2-§6 (persistence and undo)** → **§7/§8 (requeue and grid
-tiles)** → ~~§10 (crate extraction)~~. Nothing below is waiting on GPU work any more.
+Build order, revised: ~~phase 0~~ → ~~§2-§6 (persistence and undo)~~ → ~~§7/§8 (requeue and grid
+tiles)~~ → ~~§10 (crate extraction)~~.
+
+**What §7 and §8 became, in the tree.** Both were smaller than written, because the render rework
+had already done their hard halves:
+
+- A job carries `exposure` as a *gain* (`2^EV`), converted once in `processing_service` on the way
+  in - the uniform is a multiplier and the document is stops, and converting in two places is how
+  they come to disagree. `job.rs` refuses a non-positive gain rather than clamping, because that
+  can only arrive by a caller sending stops where a multiplier belongs and grading the library
+  black is a worse answer than saying so.
+- The batch path reads the document off a `LEFT JOIN` on the pending query, so a thousand-photo
+  batch is one query and not a thousand. The one-off path - which is what a `max` export takes -
+  reads it through a defaulted seam, so the rendition a reader asks for by name is not the one
+  that ignores their edits.
+- A write requeues both stages and kicks a drain, fire-and-forget, but only when the revision
+  moved: a no-op save or an undo at the start of the history rebuilds nothing. `processUnprocessed`
+  widens an in-flight run rather than starting a second, so twenty slider releases are one batch.
+- The renditions job now carries a `grid` target beside `full`, so the tile is rebuilt from the
+  render rather than staying the camera's JPEG. The tile is stamped *twice* per photo by design -
+  once at the JPEG's pace so the grid fills, once from the render - and the second stamp is what
+  makes a client re-fetch it.
+
+`libraries.grid_hdr` from §8 is deliberately not built: it is a toggle that defaults off, and the
+SDR/HDR merge means an HDR tile is now an output-stage argument rather than a pipeline. Add it
+when someone wants it.
 
 Everything from §0 to §0.3 is kept as the record of how phase 0 was argued and priced. It is
 written in the present tense about a tree that no longer exists; §0.4 is the correction.

@@ -57,6 +57,14 @@ export interface Job {
   denoiseChroma: number;
   sharpen: number;
   defringe: number;
+  /**
+   * The photographer's exposure as a gain on the scene, `2^EV`. 1 leaves it as metered.
+   *
+   * `job.rs` refuses anything not positive rather than clamping it: a zero would grade the
+   * whole library black, and it can only arrive by a caller sending stops where a multiplier
+   * belongs.
+   */
+  exposure: number;
   grade: JobGrade;
   targets: JobTarget[];
 }

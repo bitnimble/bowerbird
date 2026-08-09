@@ -93,6 +93,17 @@ export class PhotoEditsRepository {
     });
   }
 
+  /**
+   * One photo's document as it is stored, or null where it has none.
+   *
+   * Raw JSON rather than a parsed document: the caller is the rendition path, which parses
+   * it with the same function the batch path uses on a column it read through a join. One
+   * parse, one fallback, one place that decides what an unreadable document means.
+   */
+  docFor(photoId: string): string | null {
+    return this.row(photoId)?.doc ?? null;
+  }
+
   // The one place either table is written, so the pair cannot be updated apart
   // and the revision cannot be bumped without both moving.
   private write(
