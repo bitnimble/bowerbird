@@ -221,6 +221,43 @@ function inRounded(x: number, y: number, left: number, right: number, radius: nu
   return dx * dx + dy * dy <= radius * radius;
 }
 
+/** Linear Rec.709 to linear Rec.2020, the published 3x3. */
+const TO_2020 = [
+  [0.627404, 0.329283, 0.043313],
+  [0.069097, 0.91954, 0.011362],
+  [0.016391, 0.088013, 0.895595],
+];
+
+/**
+ * How much to scale a colour by after moving it to Rec.2020 so its brightest channel
+ * lands exactly on diffuse white.
+ *
+ * **The conversion happens here rather than in zimg so the file can be tagged 9/16/9**,
+ * which is what every HDR rendition this app writes and what every engine has a path
+ * for. Tagging it 1/16/1 dodged the conversion, worked in Chromium, and is a combination
+ * nothing else has reason to expect.
+ *
+ * The scale is what makes dodging it unnecessary. The conversion pulls a saturated
+ * Rec.709 red down to 0.65 of full scale, so multiplying the triple back up by 1/max puts
+ * the brightest channel on 1.0 again - and scaling all three preserves chromaticity, so
+ * it is the same colour stated in the wider space.
+ */
+function whitePoint(colour: [number, number, number]): number {
+  return 1 / Math.max(...TO_2020.map((row) => row[0]! * colour[0]! + row[1]! * colour[1]! + row[2]! * colour[2]!));
+}
+
+/**
+ * One sRGB triple in Rec.2020, at `scale`.
+ *
+ * **The 8-bit half is clipped before this runs and not after**, because the clip is the
+ * thing being demonstrated and it is an sRGB clip: a JPEG's channels stop at sRGB's
+ * ceiling, not at Rec.2020's. Clipping in the wide space instead walks the reds to a
+ * khaki and the blues to a grey-green, which is not what any JPEG has ever done.
+ */
+function toRec2020(colour: number[], scale: number): number[] {
+  return TO_2020.map((row) => (row[0]! * colour[0]! + row[1]! * colour[1]! + row[2]! * colour[2]!) * scale);
+}
+
 function swatchFrame(): Float32Array {
   const pixels = SWATCH_WIDTH * SWATCH_HEIGHT;
   const out = new Float32Array(pixels * 3);
@@ -229,6 +266,7 @@ function swatchFrame(): Float32Array {
 
   for (let y = 0; y < SWATCH_HEIGHT; y++) {
     const colour = SWATCHES[Math.floor(y / SWATCH_CELL)]!;
+    const scale = whitePoint(colour);
     for (let x = 0; x < SWATCH_WIDTH; x++) {
       // The gap between the halves, and the eight rounded corners, stay black.
       const eightBit = x < half;
@@ -236,10 +274,12 @@ function swatchFrame(): Float32Array {
       const [from, to] = eightBit ? [0, half] : [right, SWATCH_WIDTH];
       if (!inRounded(x + 0.5, y + 0.5, from, to, SWATCH_RADIUS)) continue;
       const step = SWATCH_STEPS[Math.floor((eightBit ? x : x - right) / SWATCH_CELL)]!;
+      // Still sRGB here, which is where the 8-bit ceiling belongs.
+      const srgb = colour.map((level) => (eightBit ? Math.min(level * step, 1) : level * step));
+      const wide = toRec2020(srgb, scale);
       const at = y * SWATCH_WIDTH + x;
       for (const [channel, plane] of [[0, 2], [1, 0], [2, 1]] as const) {
-        const level = colour[channel]! * step;
-        out[plane * pixels + at] = eightBit ? Math.min(level, 1) : level;
+        out[plane * pixels + at] = wide[channel]!;
       }
     }
   }
@@ -271,31 +311,34 @@ function contentLight(samples: Float32Array): string {
 /**
  * The strip, from linear samples straight to one PQ file.
  *
- * **Rec.709 primaries**, which is the one place this file differs from every rendition
- * the app writes. Converting the gamut first would take a saturated Rec.709 red down to
- * 0.65 of full scale before the transfer ever saw it, so a patch meant to sit on diffuse
- * white would land at 130 nits instead of 203. Skipping the conversion makes 1.0 mean
- * white exactly, and it costs nothing: these are flat sRGB colours with nothing outside
- * 709 to carry.
+ * **Tagged and subsampled exactly like a rendition**: Rec.2020 primaries, PQ, 4:2:0,
+ * 9/16/9. The samples arrive already in Rec.2020 (`inRec2020`) so zimg has no gamut work
+ * to do and 1.0 still means diffuse white.
  *
- * Lossless and 4:4:4, because flat colour has no detail to trade away and a quantiser on
- * a hard edge between two saturated patches is visible where it is invisible on a
- * photograph. 4:4:4 also means Firefox will not composite it in HDR (§10.7); it degrades
- * to the same picture flattened, which still shows the left half stopping.
+ * It was 4:4:4 at 1/16/1 - Rec.709 primaries with a PQ transfer - which dodged the gamut
+ * conversion and rendered correctly in Chromium. Neither half of that is a combination
+ * another engine has any reason to expect: 4:4:4 is the one thing Firefox will not
+ * composite in HDR (§10.7), and 709-with-PQ is not a colour space anything ships a path
+ * for. Every photograph on the page is 9/16/9 4:2:0 and behaves, so the strip is now the
+ * same shape of file and stops being the odd one out.
+ *
+ * Losslessly quantised, since flat colour has no detail to trade away. 4:2:0 softens the
+ * hard edge between two patches by a pixel or so, which is invisible at 96px cells and
+ * cheaper than being the only file here that no other browser has seen before.
  */
 async function buildSwatches(): Promise<void> {
   const ffmpeg = spawn('ffmpeg', [
     '-y', '-hide_banner', '-loglevel', 'error',
     '-f', 'rawvideo', '-pix_fmt', 'gbrpf32le', '-s', `${SWATCH_WIDTH}x${SWATCH_HEIGHT}`, '-i', '-',
     '-vf',
-    `zscale=pin=bt709:tin=linear:min=bt709:p=bt709:m=bt709:r=limited:t=smpte2084:npl=${SETTINGS.hdr_reference_white_nits}`,
-    '-pix_fmt', 'yuv444p10le',
+    `zscale=pin=bt2020:tin=linear:min=bt2020nc:p=bt2020:m=bt2020nc:r=limited:t=smpte2084:npl=${SETTINGS.hdr_reference_white_nits}`,
+    '-pix_fmt', 'yuv420p10le',
     '-f', 'yuv4mpegpipe', '-strict', '-1', '-',
   ], { stdio: ['pipe', 'pipe', 'inherit'] });
   const samples = swatchFrame();
   Readable.from([Buffer.from(samples.buffer, samples.byteOffset, samples.byteLength)]).pipe(ffmpeg.stdin!);
   const out = join(OUT, 'swatches.avif');
-  await run('avifenc', ['--stdin', '--cicp', '1/16/1', '--clli', contentLight(samples), '--min', '0', '--max', '0', '-s', '4', out], ffmpeg.stdout!);
+  await run('avifenc', ['--stdin', '--cicp', '9/16/9', '--clli', contentLight(samples), '--min', '0', '--max', '0', '-s', '4', out], ffmpeg.stdout!);
   console.error(`[hdr-assets] swatches: ${(Bun.file(out).size / 1024).toFixed(0)}kB`);
 }
 
