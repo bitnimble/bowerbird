@@ -17,10 +17,11 @@ const NS = [
 // realistic fixture states it.
 const CURRENT = 'crs:ProcessVersion="6.7" crs:Version="13.2" crs:HasSettings="True"';
 
-function parse(attrs: string): XmpSettings {
+/** `children` for the properties Camera Raw writes as elements rather than attributes. */
+function parse(attrs: string, children = ''): XmpSettings {
   const settings = parseXmp(`<x:xmpmeta xmlns:x="adobe:ns:meta/">
  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
-  <rdf:Description rdf:about="" ${NS} ${attrs}></rdf:Description>
+  <rdf:Description rdf:about="" ${NS} ${attrs}>${children}</rdf:Description>
  </rdf:RDF>
 </x:xmpmeta>`);
   if (settings == null) throw new Error('fixture did not parse');
@@ -148,6 +149,37 @@ describe('editsFromXmp', () => {
     // photo they had uncropped. The straighten goes with them for the same reason.
     const undone = editsFromXmp(parse(`${CURRENT} crs:Exposure2012="0.5" ${edges}`));
     expect(undone.doc).toMatchObject({ cropTop: 0, cropLeft: 0, cropBottom: 1, cropRight: 1, cropAngle: 0 });
+  });
+
+  it('takes the era-independent half of a pre-2012 file whose tone was never touched', () => {
+    // What every legacy sidecar in a 470-file library actually looked like: an old
+    // catalogue, a crop, and tone controls nobody moved. Refusing the lot threw away a
+    // crop that means the same fractions in 2010 as now, and explained itself by naming
+    // a process version the reader never chose.
+    const { doc, reasons } = editsFromXmp(
+      parse('crs:HasCrop="True" crs:CropTop="0.1" crs:CropLeft="0.2" crs:CropBottom="0.9" crs:CropRight="0.8"'),
+    );
+
+    expect(doc).toMatchObject({ cropTop: 0.1, cropLeft: 0.2, cropBottom: 0.9, cropRight: 0.8 });
+    // Said rather than done silently: the file is still old, and the reader should know
+    // which half of it arrived.
+    expect(reasons.join(' ')).toMatch(/tone controls are untouched/);
+  });
+
+  it('still declines a pre-2012 file that curved its tone, whatever else it holds', () => {
+    // A custom curve leaves `crs:ToneCurveName` behind - it reads "Custom" or stays
+    // "Linear" depending on the writer - so the points are what says it moved. Without
+    // that, a curved legacy file would import as a crop and lose its whole grade.
+    const { doc, reasons } = editsFromXmp(
+      parse(
+        'crs:HasCrop="True" crs:CropRight="0.8"',
+        '<crs:ToneCurve><rdf:Seq><rdf:li>0, 0</rdf:li><rdf:li>128, 200</rdf:li>' +
+          '<rdf:li>255, 255</rdf:li></rdf:Seq></crs:ToneCurve>',
+      ),
+    );
+
+    expect(doc).toBeNull();
+    expect(reasons.join(' ')).toMatch(/predates process version 2012/);
   });
 
   it('declines a crop stated in absolute units rather than guessing at the frame', () => {

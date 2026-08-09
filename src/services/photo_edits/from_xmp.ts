@@ -39,6 +39,33 @@ export interface XmpImport {
  *   approximate import is worse than a refused one, because nothing downstream
  *   could tell it had happened.
  */
+/**
+ * Whether a pre-2012 file's tone controls hold anything, which is what makes its era
+ * matter.
+ *
+ * The scalars first, then the curves. A curve is the one that would otherwise slip
+ * through: `crs:ToneCurveName` reads "Linear" or is absent on a file nobody curved, but
+ * a *custom* curve leaves the name behind while the points carry the edit - so the
+ * points are checked rather than the name, and a straight line through the corners is
+ * what "untouched" looks like whatever it is called.
+ */
+function legacyToneMoved(legacy: XmpSettings['legacyTone']): boolean {
+  if (legacy == null) return false;
+  const scalars = [
+    legacy.exposure,
+    legacy.brightness,
+    legacy.contrast,
+    legacy.shadows,
+    legacy.highlightRecovery,
+    legacy.fillLight,
+    legacy.clarity,
+  ];
+  if (scalars.some((value) => value != null && value !== 0)) return true;
+  const bent = (curve: { x: number; y: number }[]): boolean =>
+    curve.length !== 2 || curve.some((point) => point.x !== point.y);
+  return [legacy.curve, legacy.curveRed, legacy.curveGreen, legacy.curveBlue].some(bent);
+}
+
 export function editsFromXmp(settings: XmpSettings): XmpImport {
   const reasons: string[] = [];
   const unsupported = [...settings.unsupported];
@@ -145,13 +172,27 @@ export function editsFromXmp(settings: XmpSettings): XmpImport {
   // cost this layer the ability to tell a real value from an approximation. So it
   // declines rather than guessing: an approximate import is worse than a refused
   // one, because nothing downstream could tell it had happened.
+  //
+  // **Only where there is something to guess at.** An old sidecar whose tone
+  // controls are all where Camera Raw left them has nothing this layer would have
+  // to approximate, and refusing it throws away the parts that never had an era:
+  // a crop is the same fractions in 2010 and now, and Kelvin is Kelvin. Measured
+  // over a library of 470 real sidecars, every legacy file in it was exactly that
+  // - a crop and nothing else - so the blanket refusal cost eleven importable
+  // crops and explained itself by naming a process version the reader never chose.
   if (settings.legacy || settings.legacyTone != null) {
     const version = settings.processVersion.raw ?? 'an unstated version';
-    return {
-      doc: null,
-      reasons: [`${version} predates process version 2012, whose controls these are; no mapping is calibrated`],
-      unsupported,
-    };
+    if (legacyToneMoved(settings.legacyTone)) {
+      return {
+        doc: null,
+        reasons: [`${version} predates process version 2012, whose controls these are; no mapping is calibrated`],
+        unsupported,
+      };
+    }
+    reasons.push(
+      `${version} predates process version 2012, but its tone controls are untouched, ` +
+        'so only the parts that do not depend on an era were taken',
+    );
   }
 
   if (!settings.hasSettings) {
