@@ -2728,9 +2728,31 @@ p.ui-text--mono {
 }
 
 /* Diffuse white, which is the only tick that means anything on its own: everything
-   right of it was a light rather than a lit surface. */
+   right of it was a light rather than a lit surface. Drawn heavier than the rest
+   because the chart is really a statement about which side of this line things fall. */
 .stops__tick--white {
-  background: var(--bone-dim);
+  width: 2px;
+  margin-left: -1px;
+  background: var(--bone);
+  /* Over the bars rather than under them. It is an axis, and every bar crosses it. */
+  z-index: 1;
+  top: -3px;
+  bottom: -3px;
+}
+
+/* The part of a bar that sits above white, hatched over whatever colour the bar is.
+   Same argument as the tick: on a plain bar this stretch is just more bar, when it is
+   the only stretch the page is about. */
+.stops__over {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  border-radius: 0 2px 2px 0;
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(11, 13, 17, 0.55) 0 2px,
+    transparent 2px 5px
+  );
 }
 
 .stops__bar {

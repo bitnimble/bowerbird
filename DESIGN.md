@@ -4252,6 +4252,10 @@ The photographs never showed any of this, because a swap never puts two pictures
 
 *What the hardware can actually show* is the third and what ships. A typical SDR monitor is around 1000:1, so a JPEG gets **10 stops**. A good HDR display does 1000 nits over a black near 0.05, so **14.3**, with an OLED in the dark reaching towards 17.6 and an LCD in a bright room falling short.
 
+**A JPEG's headroom is 0.2 stops rather than none**, which the bar now shows as a sliver past the line rather than stopping dead on it. A camera puts diffuse white around code 240 and not 255, leaving the last 15 codes for specular glints: `log2(linear(255)/linear(240))` is 0.20, and placing white at 235 or 245 gives 0.27 or 0.13. The page kept saying a JPEG has *nothing* above white and it nearly does, but 0.2 against the HDR file's 2.3 makes the point better than a wrong zero would.
+
+**The stretch above white is hatched, and the white tick is drawn heavy and over the bars.** Without it that stretch is just more bar, when it is the only stretch any of this is about; the chart is a statement about which side of one line things fall on, so that line is the thing to draw.
+
 **The honest version is a weaker-looking chart and a better one.** At 6.3 against 17.6 the formats looked an order apart; at 10 against 14.3 they are close in total range, and what separates them is that every one of the JPEG's stops sits underneath white. That is what the rest of the page argues, so the chart may as well argue it too. The other two bars stay approximations: a full-frame sensor's engineering dynamic range at base ISO, and the eye across one scene with the gaze moving.
 
 **It costs 845kB in every desktop and Android build**, since `public/` is copied into `web/dist` and that is `frontendDist`. Accepted rather than overlooked: the renditions are the page, halving them would show as encoder artefacts in exactly the highlights being argued about, and lazy-loading buys nothing for a reader who scrolls to the bottom.

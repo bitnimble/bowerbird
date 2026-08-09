@@ -44,12 +44,20 @@ import { useHdrVideo } from '../photos/hdr_video';
  * The other two bars are approximations: a full-frame sensor measures around 14 stops of
  * engineering dynamic range at base ISO, placed as though the exposure left 3 stops above
  * diffuse white, and the eye manages about 20 across one scene as the gaze moves.
+ *
+ * **The JPEG's headroom is 0.2 stops rather than none**, which is worth being right about
+ * because the page keeps saying a JPEG has nothing above white. It nearly does. A camera
+ * puts diffuse white around code 240 and not 255, so a specular glint has the last 15
+ * codes to live in: `log2(linear(255) / linear(240))` is 0.20. Place white at 235 and it
+ * is 0.27, at 245 and it is 0.13. So the bar goes a whisker past the line rather than
+ * stopping dead on it, and 0.2 against the HDR file's 2.3 makes the point better than
+ * zero would - a JPEG does reserve room for highlights, and there is almost none of it.
  */
 const RANGES = [
   { label: 'Your eyes', low: -14, high: 6, tone: 'eye' },
   { label: 'A camera at one exposure', low: -11, high: 3, tone: 'sensor' },
   { label: 'A 10-bit HDR file', low: -12, high: 2.3, tone: 'hdr' },
-  { label: 'An 8-bit JPEG', low: -10, high: 0, tone: 'sdr' },
+  { label: 'An 8-bit JPEG', low: -9.8, high: 0.2, tone: 'sdr' },
 ];
 
 const AXIS_LOW = -15;
@@ -80,6 +88,11 @@ function RangeChart(): JSX.Element {
               className={`stops__bar stops__bar--${range.tone}`}
               style={{ left: `${across(range.low)}%`, width: `${across(range.high) - across(range.low)}%` }}
             />
+            {/* The part above white, hatched. It is the whole argument of the page and on
+                a plain bar it is just more bar. */}
+            {range.high > 0 && (
+              <span className="stops__over" style={{ left: `${across(0)}%`, width: `${across(range.high) - across(0)}%` }} />
+            )}
           </div>
           <Text variant="mono" as="div" className="stops__count">
             {Math.round(range.high - range.low)} stops
@@ -232,10 +245,26 @@ export function HdrPage(): JSX.Element {
         </div>
       )}
 
+      <Heading>White isn't the top</Heading>
+      <Text variant="muted" as="p">
+        You probably picture a photo as running from 0 to 255, with black at one end and white at the other and everything sitting
+        somewhere in between. That's how the file works, but it isn't how light works.
+      </Text>
+      <Text variant="muted" as="p">
+        It helps to put white in the middle instead. Not the brightest thing imaginable, just the white of a sheet of paper in the
+        same light as your subject. Almost everything you photograph is lit that way rather than lighting itself, so it lands at or
+        below that mark, and that's the half we all think in. The other half is the things that make their own light: the sun, a
+        lamp, a neon tube, the glint off a wave. They can be hundreds of times brighter than the paper and nothing much caps them.
+      </Text>
+      <Text variant="muted" as="p">
+        A JPEG puts that white near the very top of what it can store and keeps about a fifth of a stop above it for the glints.
+        That's its entire half.
+      </Text>
+
       <Heading>How much of a scene fits</Heading>
       <Text variant="muted" as="p">
-        Stops of light either side of white: the white of a shirt, a sheet of paper, a sunlit cloud. Anything to the right of that
-        line was a light source rather than something lit by one, and a JPEG holds none of it.
+        Stops of light either side of white. Everything to the right of the line made its own light, and the hatched part is how
+        much of it each one holds.
       </Text>
       <RangeChart />
       <Text variant="mono" as="p" className="prose__note">
