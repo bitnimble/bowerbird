@@ -1352,6 +1352,12 @@ What is left is that this pipeline denoises ahead of the warp and sharpens after
 
 So the cut is handed back as soon as it is on the GPU, which is where nothing reads it again (`job::run`). That took the same case to 1381MB, level with the two-pipeline version's 1375.
 
+**What is left is the decode, and it is LibRaw's rather than ours.** Sampled through `decode_with_libraw` on the 61MP body: 36MB before `unpack`, 160 after it, **654 after `dcraw_process`**, 1000 once the interleaved copy is built, and 382 once `recycle` runs. So the decode's own peak is 964MB of live buffers - `imgdata.image` at 494MB, the unpacked raw at 124MB, and the 346MB being copied into.
+
+`imgdata.image` is four `ushort` per pixel because it is the Bayer working buffer - R, G, B and the second G, not an alpha - so it is a third larger than the three channels that come out of it. The unpacked raw beside it is *not* freed by `dcraw_process`, and the C API offers no way to hand it back on its own: `libraw_free_image` frees `image` only, and there is no `LIBRAW_RAWOPTIONS` for the raw. `recycle` frees both and already runs as early as the copy allows.
+
+So this number does not come down by releasing things sooner; it comes down by never holding the whole frame, which is banding the decode - a real change with a real blocker, since `tone::levels` wants a whole-frame quantile before anything is coded and the lens warp gathers across rows.
+
 The output is packed to two `u16` components a word regardless, and it is worth having for a reason RSS cannot show: every value `encode` writes is already a `round` into 0..65535 or 0..255, so a word per component spent half of the job's largest *device* allocation on leading zeroes, and device memory is the scarcer of the two on an iGPU sharing it with the system. Three `u16` a pixel do not divide a word, so an invocation covers two pixels and writes three whole words rather than read-modify-writing a half its neighbour owns.
 
 **The check that the colour still lands is against the camera's own JPEG**, since an SDR rendition now takes it from the HDR fit graded down rather than from `fit::Profile` (§10.8.1 exists to make those agree). Mean ΔE76 to the embedded preview, before against after: 1.038 → 1.020 on the Sony fixture, 1.898 → 2.122 on the Canon one.

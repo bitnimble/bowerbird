@@ -777,6 +777,14 @@ fn decode_with_libraw(
         })()
     });
 
+    // Both, and as early as the copy allows. `recycle` frees `imgdata.image` *and*
+    // `imgdata.rawdata`, which `dcraw_process` does not: measured on a 61MP frame, the
+    // unpacked raw is 124MB and stays resident through the process and the copy, so what is
+    // live at the peak is 494MB of `image` plus that plus the 366MB being copied into. The C
+    // API has no way to hand back the raw alone - `libraw_free_image` is `image` only and
+    // there is no `LIBRAW_RAWOPTIONS` for it - so the only lever here is *when*, and this is
+    // as early as it goes. Reducing the sum itself means banding the decode, which is a
+    // different change (DESIGN 10.3).
     #[expect(unsafe_code)]
     unsafe {
         raw::libraw_recycle(r);
