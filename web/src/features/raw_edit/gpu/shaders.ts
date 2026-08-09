@@ -59,26 +59,18 @@ export const DETAIL = compose(prelude, tick, detailSource);
 /** The reader's temperature and tint, solved into one matrix. One invocation, per tick. */
 export const BALANCE = compose(prelude, tick, whiteBalance);
 
+// The detail blur's working size used to be a rule here too, alongside `gpu::detail_size`, and
+// pinned to it by `DETAIL_LONG`. It arrives on `PreparedHeader.detail` now: how large a share of
+// the picture each blur covers follows from it, and two hosts rounding it differently would
+// apply two different clarities to one photograph with nothing to say which was meant.
+
 /** Floats the balance pass writes: three rows of four, the fourth of each unread. */
 export const BALANCE_FLOATS = 12;
 
-/**
- * The long edge of that blur's working texture, which both hosts allocate for themselves.
- *
- * `DETAIL_LONG` in `detail.wgsl` is the declaration; this is the copy the allocation needs,
- * held to it by `tests/peak_constants.test.ts`. A host that sized the texture differently
- * would blur at a different fraction of the picture, so the editor and the rendition would
- * not agree about what clarity means.
- */
-export const DETAIL_LONG = 512;
-
-/** The working texture for a frame of this size: the long edge capped, never scaled up. */
-export function detailSize(width: number, height: number): { width: number; height: number } {
-  const scale = Math.min(1, DETAIL_LONG / Math.max(width, height, 1));
-  return {
-    width: Math.max(1, Math.round(width * scale)),
-    height: Math.max(1, Math.round(height * scale)),
-  };
+/** The blur's working texture, as the native side sized it. */
+export interface DetailSize {
+  width: number;
+  height: number;
 }
 
 /** Entries in that table, which is every `u16` a sample can hold. */
@@ -144,6 +136,8 @@ export const TICK_LAYOUT = [
   ['as_shot_tint', 'f32'],
   ['temperature', 'f32'],
   ['tint', 'f32'],
+  // Which halves of the pair the document actually held. The shader resolves the rest.
+  ['balance_set', 'u32'],
 ] as const;
 
 export type TickField = (typeof TICK_LAYOUT)[number][0];
@@ -177,9 +171,6 @@ export const TICK_UNIFORM_FLOATS = tickOffsets().floats;
  */
 export const PEAK_BINS = 8192;
 
-/** `tone::QUANTILE_SAMPLES`, which is what the quantile is taken over. */
-export const PEAK_SAMPLES = 1 << 20;
-
 /**
  * How many of the brightest sampled pixels the tick re-measures.
  *
@@ -190,23 +181,11 @@ export const PEAK_SAMPLES = 1 << 20;
  */
 export const PEAK_CANDIDATES = 16384;
 
-/**
- * Which pixels the peak reads: every nth row, for about `PEAK_SAMPLES` of them.
- *
- * **Named because the other host has to agree with it.** `gpu::sampled_rows` is the same rule
- * in Rust, and the two measuring different pixels is a divergence nothing could see - the
- * parity fixtures are 6144 pixels, where this returns a stride of 1 and both degenerate to
- * reading every pixel. `e2e/fixtures/gpu/peak-sampling.txt` is the table they are held to,
- * written by the Rust side and asserted by both.
- *
- * A fixed sample *count* rather than a fixed stride: `tone::levels` records why, which is that
- * a peak is the maximum over whatever was sampled, so reading four times as many pixels finds
- * a brighter one and the same photo at two sizes anchors differently.
- */
-export function peakSampling(
-  width: number,
-  height: number,
-): { rowStride: number; peakSamples: number } {
-  const rowStride = Math.max(1, Math.round((width * height) / PEAK_SAMPLES));
-  return { rowStride, peakSamples: width * Math.ceil(height / rowStride) };
-}
+// Which pixels the peak reads used to be a rule here as well as in `gpu::sampled_rows`, held
+// together by `e2e/fixtures/gpu/peak-sampling.txt` because two hosts measuring different pixels
+// is a divergence nothing could see - the parity fixtures are 6144 pixels, where both return a
+// stride of 1 and degenerate to reading every pixel.
+//
+// There is one rule now. The stride arrives in `PreparedHeader.tick`, where the shader also
+// reads it, and `TickPipeline` sizes its dispatch off that word. Nothing on this side computes
+// it, so nothing on this side can disagree about it.

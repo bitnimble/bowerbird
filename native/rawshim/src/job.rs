@@ -99,16 +99,16 @@ pub struct Job {
     /// aberration is a focus difference rather than a magnification one, so the warp cannot
     /// reach it and this is the only stage that does.
     pub defringe: f64,
-    /// The photographer's own exposure, as a gain on the scene rather than in stops.
+    /// The photographer's own exposure, **in stops**, exactly as `EditDoc` stores it.
     ///
-    /// A gain because that is what the uniform carries and what `SceneGrade` asserts is
-    /// positive: the client sends `2^EV` for the same reason (`writeUniform`), so the stored
-    /// document's EV is converted once, on the way in, rather than in two places that could
-    /// disagree about the base.
+    /// The document's own unit, carried to the shader untouched. It used to be the `2^EV` gain,
+    /// converted on the way in here and again in the editor's `writeUniform` - one rule with an
+    /// implementation on each path, and the kind that fails silently because both answers are
+    /// plausible exposures. `colour.wgsl` raises it now, once, for both.
     ///
-    /// Defaults to 1 - no gain - so a photo nobody has edited grades exactly as it did, and a
+    /// Defaults to 0 - no change - so a photo nobody has edited grades exactly as it did, and a
     /// caller that knows nothing about edits can leave the field out entirely.
-    #[serde(default = "unit_gain")]
+    #[serde(default)]
     pub exposure: f64,
     /// The reader's tonal and colour sliders, on Camera Raw's -100..100 scales.
     ///
@@ -126,10 +126,6 @@ pub struct Job {
     pub targets: Vec<Target>,
 }
 
-/// Serde's default for [`Job::exposure`]. A gain of one is the scene as it was metered.
-fn unit_gain() -> f64 {
-    1.0
-}
 
 /// Serde's default for [`Job::geometry`]: the whole frame, as the camera framed it.
 fn upright() -> crate::image::Geometry {
@@ -376,11 +372,8 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
     // Refused rather than clamped where it is not positive: a gain of zero or less is not a
     // dark picture, it is a caller that sent stops where a multiplier belongs, and grading
     // every photo in the library black is a worse answer than saying so.
-    if !(job.exposure > 0.0) {
-        return Err(format!(
-            "an exposure is a gain on the scene, so it has to be positive: {}",
-            job.exposure
-        ));
+    if !job.exposure.is_finite() {
+        return Err(format!("an exposure is a number of stops: {}", job.exposure));
     }
     let scene = tone::SceneGrade::new(
         matched.as_ref().map(|m| &m.colour),

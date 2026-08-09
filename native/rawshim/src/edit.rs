@@ -89,7 +89,26 @@ pub struct PreparedHeader {
     /// The illuminant the decode balanced against, which is the baseline the reader's
     /// temperature and tint move away from. None where the camera recorded no usable
     /// multipliers, and then the pair has nothing to mean and the panel says so.
+    ///
+    /// For the *panel*, which shows the reader where the sliders start. The grade reads it out
+    /// of `tick` below rather than from here, so no arithmetic depends on this field.
     pub as_shot: Option<crate::white_balance::AsShot>,
+    /// `struct Tick`, built by [`crate::gpu::uniform_words`], with everything a tick owns left
+    /// at rest.
+    ///
+    /// **What makes the two hosts one implementation rather than two that agree.** The editor
+    /// copies these words and overwrites only the exposure, the sliders, the region on screen
+    /// and the canvas showing it; every other word - the levels, the camera match's shape, the
+    /// peak's sampling stride - is this side's, byte for byte. It used to rebuild them from
+    /// `colour` below, which is one frame described twice in two languages.
+    pub tick: Vec<u32>,
+    /// The working texture `detail.wgsl` blurs on, as `gpu::detail_size` sized it.
+    ///
+    /// Sent rather than recomputed for the same reason as `tick`: how large a share of the
+    /// picture each blur covers follows from this, so a client that rounded it differently
+    /// would apply a different clarity from the rendition and both would look like
+    /// photographs.
+    pub detail: crate::gpu::DetailSize,
     pub colour: Option<ColourPayload>,
     /// Bytes of `u16` little-endian RGB following the header.
     pub samples_len: usize,
@@ -355,6 +374,28 @@ fn payload(
     as_shot: Option<crate::white_balance::AsShot>,
     request: &EditRequest,
 ) -> Prepared {
+    // The frame's own half of the uniform, in the units and the order the shader reads. At rest
+    // on everything a tick moves: no gain, no adjustment, and the region and canvas the editor
+    // fills in once it knows how big a stage it has.
+    let identity = crate::hdr_fit::HdrColour::identity();
+    let colour = matched.map(|m| &m.colour);
+    let tick = crate::gpu::uniform_words(
+        &crate::gpu::Grade {
+            width: prepared.width,
+            height: prepared.height,
+            colour,
+            white: prepared.levels.white,
+            source_level: prepared.levels.peak,
+            reference_nits: request.grade.reference_white_nits,
+            peak_nits: request.grade.peak_nits,
+            exposure: 0.0,
+            adjust: crate::gpu::Adjust::none(),
+            as_shot,
+            output: crate::gpu::Output::Pq,
+        },
+        colour.unwrap_or(&identity),
+    );
+
     let header = PreparedHeader {
         ok: true,
         width: prepared.width,
@@ -365,6 +406,8 @@ fn payload(
         strengths: request.strengths,
         matched: matched.is_some(),
         as_shot,
+        tick,
+        detail: crate::gpu::detail_size(prepared.width, prepared.height),
         colour: matched.map(|m| ColourPayload::from(&m.colour)),
         samples_len: prepared.samples.len() * 2,
     };
@@ -438,6 +481,10 @@ mod tests {
             strengths: Strengths { luma: 1.0, chroma: 1.0, sharpen: 1.0, defringe: 1.0 },
             matched,
             as_shot: Some(crate::white_balance::AsShot { temperature: 5200.0, tint: 4.0 }),
+            // Long enough to weigh on the framing this test is about, and otherwise arbitrary:
+            // what the words *are* is `gpu::uniform_words`' business.
+            tick: vec![0; 48],
+            detail: crate::gpu::detail_size(pixels, 1),
             colour: None,
             samples_len: samples.len() * 2,
         };

@@ -81,7 +81,7 @@ export class QualityCheckApi {
           // against each other, so a photographer's own exposure on whichever photo
           // happens to be chosen would be a variable in a measurement that is about
           // quantizers.
-          exposure: 1,
+          exposure: 0,
           adjust: {
             contrast: 0,
             highlights: 0,

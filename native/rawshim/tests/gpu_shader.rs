@@ -135,7 +135,7 @@ fn uniform(colour: &HdrColour) -> Vec<u8> {
     f_push(&mut words, 1.0); // source_level
     f_push(&mut words, 1.0); // reference: nits per unit, so the compare is in the CPU's units
     f_push(&mut words, 1.0); // peak
-    f_push(&mut words, 1.0); // exposure
+    f_push(&mut words, 0.0); // exposure, in stops: none of it, so the probe sees the base curve
     words.push(0); // pad0
     words.push(1); // matched
     f_push(&mut words, colour.saturation as f32);
@@ -168,6 +168,10 @@ fn uniform(colour: &HdrColour) -> Vec<u8> {
     for _ in 0..14 {
         f_push(&mut words, 0.0);
     }
+    // `balance_set`: neither half of the pair is set, so the shader reads the frame's own
+    // illuminant - which is zero here, and it leaves the balance alone. Written rather than
+    // left to the padding below, which happens to be zero today and is not a promise.
+    words.push(0);
     // WGSL binds a uniform struct at its size rounded up to 16 bytes, so a buffer holding
     // exactly the fields is rejected as too small. Same rule as `gpu::uniform`.
     while words.len() % 4 != 0 {

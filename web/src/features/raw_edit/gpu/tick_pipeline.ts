@@ -18,10 +18,9 @@ import {
   PQ_CODES,
   REDUCE,
   TICK_UNIFORM_FLOATS,
-  detailSize,
-  peakSampling,
   tickOffsets,
 } from './shaders';
+import type { DetailSize } from './shaders';
 
 /** Where each `Tick` field lives, by name. Computed once from the layout the shader declares. */
 const AT = tickOffsets().at;
@@ -63,6 +62,16 @@ export interface PreparedHeader {
   width: number;
   height: number;
   asShot: AsShot | null;
+  /**
+   * `struct Tick` as `gpu::uniform_words` built it, with everything a tick owns left at rest.
+   *
+   * Copied into the uniform rather than rebuilt from the fields below. The shaders were always
+   * one implementation; what was two was the code that filled them, and this is what makes
+   * that one as well.
+   */
+  tick: number[];
+  /** The blur's working texture, sized by `gpu::detail_size` rather than by this side. */
+  detail: DetailSize;
   white: number;
   peak: number;
   grade: { peakNits: number; referenceWhiteNits: number; whiteQuantile: number };
@@ -70,15 +79,6 @@ export interface PreparedHeader {
   matched: boolean;
   colour: ColourPayload | null;
 }
-
-/**
- * BT.2408 reference white, and the divisor an extended-range canvas needs.
- *
- * Measured rather than assumed (`docs/raw-edit-gpu.md` §7.1): sweeping this against a real
- * PQ AVIF of the same pixels, Chrome and Safari both match at 203. It is the browser's
- * constant, not `Grade::reference_white_nits`, which a library is free to move.
- */
-const SDR_WHITE_NITS = 203;
 
 /** The part of the frame on screen, in source pixels. Zoom and pan move this and nothing else. */
 export interface Region {
@@ -276,7 +276,13 @@ export class TickPipeline {
 
   private readonly width: number;
   private readonly height: number;
-  /** Rows apart the peak samples, so it reads about `PEAK_SAMPLES` of them. */
+  /**
+   * Rows apart the peak samples, so it reads about `PEAK_SAMPLES` of them.
+   *
+   * Read out of the shipped uniform rather than recomputed. The dispatch has to cover exactly
+   * the rows the shader steps over, and the shader is told the stride by the same word - so
+   * taking it from anywhere else is a second rule that has to keep agreeing with this one.
+   */
   private readonly rowStride: number;
   private readonly timer: PassTimer | null;
 
@@ -289,7 +295,7 @@ export class TickPipeline {
     this.timer = PassTimer.supported(device) ? new PassTimer(device) : null;
     this.width = header.width;
     this.height = header.height;
-    this.rowStride = peakSampling(this.width, this.height).rowStride;
+    this.rowStride = header.tick[AT.row_stride] ?? 1;
 
     const tooBig = frameTooBig(this.width, this.height, device.limits);
     if (tooBig != null) throw new Error(tooBig);
@@ -442,7 +448,7 @@ export class TickPipeline {
     // whole volume is 5x5x4, so the three wasted channels cost 600 bytes and buy the same
     // filtering path the textures beside it are already proven on.
     this.chromaTint = this.lookup(size, '3d', 'rgba16float', 8, tints);
-    const working = detailSize(this.width, this.height);
+    const working = this.header.detail;
     const detailTexture = (label: string) =>
       device.createTexture({
         label,
@@ -653,7 +659,7 @@ export class TickPipeline {
     const blurX = pipelineFor('blur_x', blurLayout);
     const blurY = pipelineFor('blur_y', blurLayout);
 
-    const working = detailSize(this.width, this.height);
+    const working = this.header.detail;
     const [x, y] = this.groups(working.width, working.height);
     const encoder = this.device.createCommandEncoder();
     const run = (
@@ -770,7 +776,7 @@ export class TickPipeline {
   render(ev: number, region: Region = this.wholeFrame): void {
     const encoder = this.device.createCommandEncoder();
     this.timer?.begin();
-    this.writeUniform({ exposure: 2 ** ev, region });
+    this.writeUniform({ exposure: ev, region });
 
     this.writeBalance(encoder);
     if (this.header.matched) this.measurePeak(encoder);
@@ -838,7 +844,7 @@ export class TickPipeline {
     const run = async (ev: number, fromCandidates: boolean): Promise<number> => {
       const encoder = this.device.createCommandEncoder();
       this.timer?.begin();
-      this.writeUniform({ exposure: 2 ** ev });
+      this.writeUniform({ exposure: ev });
       this.writeBalance(encoder);
       encoder.clearBuffer(this.histogram);
       this.peakPass(
@@ -973,37 +979,31 @@ export class TickPipeline {
     return buffer;
   }
 
+  /**
+   * The uniform for this tick: the frame's own words as the native side built them, plus what a
+   * tick owns.
+   *
+   * **Nothing here describes the frame.** The levels, the camera match's shape, the peak's
+   * sampling stride, the reference white - all of it arrives in `header.tick`, built by
+   * `gpu::uniform_words`, and is copied rather than re-derived. That is what makes a rendition
+   * and a tick one implementation rather than two that happen to agree: this used to rebuild
+   * twenty-two words from `header.colour`, in a second language, with nothing comparing the
+   * two, and a photograph graded with one number where another belongs looks like a
+   * photograph.
+   *
+   * What is left below is exactly the set the server cannot know: how far the reader has
+   * pushed each slider, and what part of the frame is on screen at what size.
+   */
   private writeUniform(over: { exposure?: number; region?: Region } = {}): void {
     const header = this.header;
-    const colour = header.colour;
     if (over.exposure != null) this.exposure = over.exposure;
     const values = new Float32Array(TICK_UNIFORM_FLOATS);
     const ints = new Uint32Array(values.buffer);
-    ints[AT.width] = this.width;
-    ints[AT.height] = this.height;
-    values[AT.white] = header.white;
-    values[AT.source_level] = header.peak;
-    values[AT.reference] = header.grade.referenceWhiteNits;
-    values[AT.peak] = header.grade.peakNits;
+    ints.set(header.tick);
     values[AT.exposure] = this.exposure;
-    // `output` stays 0, which is PQ. The editor's `readFrame` wants the same 16-bit PQ a
-    // still rendition does; the sRGB arm exists for the server, whose SDR renditions are
+    // `output` stays as it arrived, which is PQ. The editor's `readFrame` wants the same 16-bit
+    // PQ a still rendition does; the sRGB arm exists for the server, whose SDR renditions are
     // this grade with the peak at diffuse white and this transfer instead.
-    ints[AT.matched] = header.matched ? 1 : 0;
-    values[AT.saturation] = colour?.saturation ?? 1;
-    ints[AT.has_chroma] = colour?.chroma == null ? 0 : 1;
-    ints[AT.curve_bins] = colour ? colour.curves[0].length : 2;
-    values[AT.trust_ceiling] = colour?.trustCeiling ?? 1;
-    ints[AT.chroma_count] = colour?.chroma?.chromaCount ?? 2;
-    ints[AT.level_count] = colour?.chroma?.levelCount ?? 2;
-    values[AT.chroma_low] = colour?.chroma?.chromaLow ?? 0;
-    values[AT.chroma_scale] = colour?.chroma?.chromaScale ?? 1;
-    values[AT.chroma_low_by] = colour?.chroma?.chromaLowBy ?? 0;
-    values[AT.chroma_scale_by] = colour?.chroma?.chromaScaleBy ?? 1;
-    values[AT.level_scale] = colour?.chroma?.levelScale ?? 1;
-    values[AT.sdr_white] = SDR_WHITE_NITS;
-    ints[AT.row_stride] = this.rowStride;
-    ints[AT.peak_samples] = peakSampling(this.width, this.height).peakSamples;
 
     const region = over.region ?? this.wholeFrame;
     const canvas = this.context.canvas;
@@ -1029,21 +1029,19 @@ export class TickPipeline {
     values[AT.clarity] = this.adjust.clarity;
     values[AT.dehaze] = this.adjust.dehaze;
 
-    // Zero where the frame has no as-shot illuminant at all, which the shader reads as "leave
-    // the balance alone" - the only honest answer with no baseline to move away from.
-    // Otherwise the frame's own pair stands in for whichever half the document leaves null, so
-    // an unedited photo asks for exactly the illuminant it was shot under and the shader's
-    // identity arm takes it.
-    const asShot = header.asShot;
-    values[AT.as_shot_temperature] = asShot?.temperature ?? 0;
-    values[AT.as_shot_tint] = asShot?.tint ?? 0;
-    values[AT.temperature] = asShot == null ? 0 : (this.adjust.temperature ?? asShot.temperature);
-    values[AT.tint] = asShot == null ? 0 : (this.adjust.tint ?? asShot.tint);
+    // The document verbatim, nulls and all. What a null half means is the shader's to say
+    // (`white_balance.wgsl`), and the frame's own illuminant is already in the words copied
+    // above - so there is nothing to resolve here and no second opinion to have.
+    values[AT.temperature] = this.adjust.temperature ?? 0;
+    values[AT.tint] = this.adjust.tint ?? 0;
+    ints[AT.balance_set] =
+      (this.adjust.temperature == null ? 0 : 1) | (this.adjust.tint == null ? 0 : 2);
 
     this.device.queue.writeBuffer(this.uniform, 0, values);
   }
 
-  private exposure = 1;
+  /** In stops, which is the document's unit and now the uniform's. `colour.wgsl` raises it. */
+  private exposure = 0;
 
   /**
    * The tonal, presence and colour sliders, on Camera Raw's -100..100 scales.

@@ -304,7 +304,7 @@ impl<'a> SceneGrade<'a> {
         adjust: crate::gpu::Adjust,
         as_shot: Option<crate::white_balance::AsShot>,
     ) -> Self {
-        assert!(exposure > 0.0, "an exposure is a gain on the scene, so it has to be positive");
+        assert!(exposure.is_finite(), "an exposure is a number of stops: {exposure}");
         SceneGrade { levels: *levels, reference, exposure, adjust, as_shot, matched: colour }
     }
 

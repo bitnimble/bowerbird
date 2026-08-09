@@ -90,10 +90,11 @@ describe('ProcessingService.processUnprocessed', () => {
     };
   }
 
-  it('carries a saved exposure to every job as a gain, not as stops', async () => {
-    // The shader's uniform is a multiplier and the document holds EV, so the conversion
-    // has to happen somewhere. Pinned because sending stops would not fail: `2` is a legal
-    // gain, so a photo edited to +2 EV would render four stops up and nothing would say so.
+  it('carries a saved exposure to every job in the stops the document holds', async () => {
+    // Stops all the way to the shader, which raises them once for both hosts. Pinned because
+    // converting here would not fail: `4` is a legal exposure, so a photo edited to +2 EV
+    // would render four stops up and nothing would say so - which is what happened while the
+    // editor and this path each did the raising, and is why neither does now.
     const repo = {
       listPendingProcessing: jest.fn(() => [
         { ...pending('a'), edits: JSON.stringify({ version: 1, exposure: 2 }) },
@@ -107,7 +108,7 @@ describe('ProcessingService.processUnprocessed', () => {
 
     // Both jobs: the tile and the renditions are the same picture, so they cannot
     // disagree about the exposure it was taken at.
-    expect(posted.map((job) => job.exposure)).toEqual([4, 4]);
+    expect(posted.map((job) => job.exposure)).toEqual([2, 2]);
   });
 
   it('passes the tonal and colour sliders through on their own scales', async () => {
@@ -210,7 +211,7 @@ describe('ProcessingService.processUnprocessed', () => {
     // A rendition of the picture as the camera metered it is a worse rendition than the
     // reader asked for, and a far better outcome than a photo that never builds one. The
     // out-of-range document is the same case: the schema refuses it, so it reads as absent.
-    expect(posted.map((job) => job.exposure)).toEqual([1, 1, 1, 1, 1, 1]);
+    expect(posted.map((job) => job.exposure)).toEqual([0, 0, 0, 0, 0, 0]);
   });
 
   it('renders an edited photo even where the library serves the camera JPEG', async () => {

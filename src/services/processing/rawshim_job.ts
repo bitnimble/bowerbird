@@ -58,11 +58,12 @@ export interface Job {
   sharpen: number;
   defringe: number;
   /**
-   * The photographer's exposure as a gain on the scene, `2^EV`. 1 leaves it as metered.
+   * The photographer's exposure **in stops**, exactly as `EditDoc` stores it. 0 is as metered.
    *
-   * `job.rs` refuses anything not positive rather than clamping it: a zero would grade the
-   * whole library black, and it can only arrive by a caller sending stops where a multiplier
-   * belongs.
+   * The document's own unit, carried to the shader untouched: `colour.wgsl` raises it. It was
+   * the `2^EV` gain, converted here and again in the editor, which is one rule with an
+   * implementation on each path - and the kind that fails quietly, both answers being plausible
+   * exposures.
    */
   exposure: number;
   /**

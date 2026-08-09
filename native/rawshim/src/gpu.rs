@@ -51,21 +51,29 @@ fn detail_source() -> String {
 /// `DETAIL_LONG` in `detail.wgsl`, which is the long edge of that blur's working texture.
 ///
 /// The shader declares it and this allocates for it, so the two are pinned together by
-/// `the_shader_sizes_match_the_buffers_allocated_for_them` - a host that sized the texture
-/// differently would blur at a different fraction of the picture, and the editor's clarity and
-/// the rendition's would stop being the same picture.
+/// `the_shader_sizes_match_the_buffers_allocated_for_them`.
 const DETAIL_LONG: u32 = 512;
 
 /// The working texture for a frame of this size: the long edge capped, never scaled up.
 ///
-/// `detailSize` in `shaders.ts`, arrived at the same way and for the same reason.
-fn detail_size(width: usize, height: usize) -> (u32, u32) {
+/// The only place this is decided. The editor is told the answer on `PreparedHeader`, because
+/// how large a share of the picture each blur covers follows from it - two hosts rounding it
+/// differently would apply two different clarities and both would look like photographs.
+pub fn detail_size(width: usize, height: usize) -> DetailSize {
     let long = width.max(height).max(1) as f64;
     let scale = (f64::from(DETAIL_LONG) / long).min(1.0);
-    (
-        ((width as f64 * scale).round() as u32).max(1),
-        ((height as f64 * scale).round() as u32).max(1),
-    )
+    DetailSize {
+        width: ((width as f64 * scale).round() as u32).max(1),
+        height: ((height as f64 * scale).round() as u32).max(1),
+    }
+}
+
+/// The blur's working texture, named so it can travel to the editor as one.
+#[derive(Clone, Copy, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DetailSize {
+    pub width: u32,
+    pub height: u32,
 }
 
 /// `DECODE` in `shaders.ts`: the frame's coding undone, and nothing of `colour.wgsl` because
@@ -911,14 +919,19 @@ impl Gpu {
     ///
     /// Three passes rather than one with three dispatches: the middle two read the texture the
     /// one before them wrote, and a pass is where wgpu puts the barrier for that.
-    fn build_detail(&self, samples: &wgpu::Buffer, tick: &[u8], size: (u32, u32)) -> wgpu::TextureView {
+    fn build_detail(
+        &self,
+        samples: &wgpu::Buffer,
+        tick: &[u8],
+        size: DetailSize,
+    ) -> wgpu::TextureView {
         let device = &self.device;
         let texture = |label: &str| {
             device.create_texture(&wgpu::TextureDescriptor {
                 label: Some(label),
                 size: wgpu::Extent3d {
-                    width: size.0,
-                    height: size.1,
+                    width: size.width,
+                    height: size.height,
                     depth_or_array_layers: 1,
                 },
                 mip_level_count: 1,
@@ -982,7 +995,7 @@ impl Gpu {
             let mut pass = encoder.begin_compute_pass(&Default::default());
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, group, &[]);
-            pass.dispatch_workgroups(size.0.div_ceil(8), size.1.div_ceil(8), 1);
+            pass.dispatch_workgroups(size.width.div_ceil(8), size.height.div_ceil(8), 1);
         }
         self.queue.submit([encoder.finish()]);
         detail
@@ -1243,6 +1256,7 @@ const TICK_FIELDS: &[&str] = &[
     "as_shot_tint",
     "temperature",
     "tint",
+    "balance_set",
 ];
 
 /// `TICK_UNIFORM_FLOATS` in `shaders.ts`, field for field in `struct Tick`'s order.
@@ -1252,6 +1266,22 @@ const TICK_FIELDS: &[&str] = &[
 /// the scalars end on 92, so without it every field after lands short and the binding is
 /// rejected four bytes small.
 fn uniform(grade: &Grade<'_>, colour: &HdrColour) -> Vec<u8> {
+    uniform_words(grade, colour).iter().flat_map(|v| v.to_le_bytes()).collect()
+}
+
+/// The same words, before they are bytes, so the editor can be handed them.
+///
+/// **This is the only thing that builds a `Tick`.** The client used to build its own from the
+/// payload - re-deriving `curve_bins` from the curve it was sent, the seven lattice shape
+/// fields from the chroma map, `trust_ceiling`, `sdr_white`, and the peak's sampling stride -
+/// which is twenty-two words of one frame described twice in two languages. The shaders were
+/// always one implementation; what was two was the thing that filled them, and a mismatch there
+/// is a photograph graded with one number where another belongs, on a path no test crossed.
+///
+/// So the frame's own words are built here, once, and travel on `edit::PreparedHeader`. What
+/// the editor still writes is only what a *tick* owns and this side cannot know: the exposure,
+/// the sliders, the region on screen and the canvas showing it.
+pub fn uniform_words(grade: &Grade<'_>, colour: &HdrColour) -> Vec<u32> {
     let shape = colour.chroma.as_ref().map(|m| m.shape());
     let shape = shape.as_ref();
     let mut w: Vec<u32> = Vec::new();
@@ -1280,7 +1310,14 @@ fn uniform(grade: &Grade<'_>, colour: &HdrColour) -> Vec<u8> {
     f(&mut w, shape.map_or(0.0, |s| s.chroma_low[1]));
     f(&mut w, shape.map_or(1.0, |s| s.chroma_scale[1]));
     f(&mut w, shape.map_or(1.0, |s| s.level_scale));
-    f(&mut w, 203.0); // sdr_white
+    // sdr_white: BT.2408 reference white, and the divisor an extended-range canvas needs.
+    //
+    // Measured rather than assumed (`docs/raw-edit-gpu.md` §7.1): swept against a real PQ AVIF
+    // of the same pixels, Chrome and Safari both match at 203. It is the *browser's* constant
+    // rather than `reference_nits`, which a library is free to move - which is why it is a
+    // literal here and not read off the grade, and why it lived on the client until the client
+    // stopped building its own uniform.
+    f(&mut w, 203.0);
     let (stride, rows) = sampled_rows(grade.width, grade.height);
     w.push(stride); // row_stride
     w.push(grade.width as u32 * rows); // peak_samples
@@ -1302,23 +1339,18 @@ fn uniform(grade: &Grade<'_>, colour: &HdrColour) -> Vec<u8> {
     f(&mut w, grade.adjust.texture);
     f(&mut w, grade.adjust.clarity);
     f(&mut w, grade.adjust.dehaze);
-    // Zero throughout where the frame has no as-shot illuminant at all, which the shader reads
-    // as "leave the balance alone" - the only honest answer with no baseline to move away
-    // from. Otherwise the frame's own pair stands in for whichever half the document leaves
-    // null, and `writeUniform` in `tick_pipeline.ts` fills them the same way.
-    //
-    // Both halves, not just the temperature. A document may carry one without the other - the
-    // schema allows it, and a sidecar can state a Kelvin and no tint - and standing a missing
-    // tint up as zero would put the illuminant on the Planckian locus, which is not where any
-    // camera's neutral sits. The editor would show the frame's tint and the rendition a
-    // different picture.
-    let temperature =
-        grade.as_shot.map_or(0.0, |s| grade.adjust.temperature.unwrap_or(s.temperature));
-    let tint = grade.as_shot.map_or(0.0, |s| grade.adjust.tint.unwrap_or(s.tint));
+    // The frame's illuminant, then the document's, copied rather than resolved against each
+    // other: `white_balance.wgsl` is where a null half becomes the frame's own, so that rule
+    // has one implementation instead of one per host. Zero as-shot means the camera recorded
+    // no usable multipliers, and the shader leaves the balance alone.
     f(&mut w, grade.as_shot.map_or(0.0, |s| s.temperature));
     f(&mut w, grade.as_shot.map_or(0.0, |s| s.tint));
-    f(&mut w, temperature);
-    f(&mut w, tint);
+    f(&mut w, grade.adjust.temperature.unwrap_or(0.0));
+    f(&mut w, grade.adjust.tint.unwrap_or(0.0));
+    w.push(
+        u32::from(grade.adjust.temperature.is_some())
+            | (u32::from(grade.adjust.tint.is_some()) << 1),
+    );
     // WGSL rounds a uniform struct's size up to a multiple of 16 bytes, and binds it at that
     // size - so a buffer holding exactly the fields is rejected as too small, by however much
     // the last few fields left over. `shaders.ts` does this in `tickOffsets`; here it was
@@ -1327,7 +1359,7 @@ fn uniform(grade: &Grade<'_>, colour: &HdrColour) -> Vec<u8> {
     while w.len() % 4 != 0 {
         w.push(0);
     }
-    w.iter().flat_map(|v| v.to_le_bytes()).collect()
+    w
 }
 
 /// An `f32` as the `f16` bits a texture holds.
@@ -1440,7 +1472,7 @@ mod tests {
             source_level: 1.0,
             reference_nits: 203.0,
             peak_nits: 1000.0,
-            exposure: 1.0,
+            exposure: 0.0,
             adjust: super::Adjust::none(),
             as_shot: None,
             output: super::Output::Pq,
@@ -1532,7 +1564,7 @@ fn probe_xy() {
                     source_level: 1.0,
                     reference_nits: 203.0,
                     peak_nits: 1000.0,
-                    exposure: 1.0,
+                    exposure: 0.0,
                     adjust: super::Adjust {
                         temperature: Some(temperature),
                         tint: Some(tint),

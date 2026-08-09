@@ -69,7 +69,7 @@ async function render(
     matchEmbeddedJpeg,
     // As metered: this measures what the camera match does, so a gain would be a second
     // variable in it.
-    exposure: 1,
+    exposure: 0,
     adjust: {
       contrast: 0,
       highlights: 0,

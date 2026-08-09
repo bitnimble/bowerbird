@@ -160,6 +160,30 @@ fn cases() -> Vec<Case> {
             // input is the frame the client is actually handed.
             filter_once(&mut prepared, &grade, strengths);
 
+            // The frame's own half of the uniform, from the one thing that builds a `Tick`. The
+            // browser harness drives a real `TickPipeline` off this header, so these words are
+            // what it grades with - which is the whole of why parity means anything: a client
+            // that rebuilt them from `colour` below could reproduce these bytes while
+            // describing a different frame to itself on a photograph with a wider lattice.
+            let identity = rawshim::hdr_fit::HdrColour::identity();
+            let described = colour.as_ref();
+            let tick = rawshim::gpu::uniform_words(
+                &rawshim::gpu::Grade {
+                    width: WIDTH,
+                    height: HEIGHT,
+                    colour: described,
+                    white: levels.white,
+                    source_level: levels.peak,
+                    reference_nits: grade.reference_white_nits,
+                    peak_nits: grade.peak_nits,
+                    exposure: 0.0,
+                    adjust: rawshim::gpu::Adjust::none(),
+                    as_shot: None,
+                    output: rawshim::gpu::Output::Pq,
+                },
+                described.unwrap_or(&identity),
+            );
+
             let header = serde_json::json!({
                 "width": WIDTH,
                 "height": HEIGHT,
@@ -169,6 +193,9 @@ fn cases() -> Vec<Case> {
                 "grade": grade,
                 "strengths": strengths,
                 "matched": colour.is_some(),
+                "asShot": serde_json::Value::Null,
+                "tick": tick,
+                "detail": rawshim::gpu::detail_size(WIDTH, HEIGHT),
                 "colour": colour.as_ref().map(describe),
             });
 
@@ -253,17 +280,19 @@ fn le(samples: &[u16]) -> Vec<u8> {
 
 /// Which pixels the peak reads, over sizes the pinned frames cannot reach.
 ///
-/// **The one thing the graded fixtures are structurally unable to check.** Both hosts run
-/// `peak.wgsl` over the frame the shader grades, every nth row - but the stride is the *host's*
-/// to compute, and at this fixture's 6144 pixels both return 1 and read every pixel. So a host
-/// that changed how it sampled would agree on every committed byte here and still measure a
-/// different peak on any real photograph, which moves where the roll-off knee lands.
+/// **The one thing the graded fixtures are structurally unable to check.** `peak.wgsl` reads
+/// every nth row of the frame it grades, and at this fixture's 6144 pixels the stride is 1 and
+/// it reads every pixel - so a change to how it samples would agree on every committed byte
+/// here and still measure a different peak on any real photograph, which moves where the
+/// roll-off knee lands.
 ///
-/// The table is this side's answer, and `gpu/tests/peak_sampling.test.ts` holds the client to
-/// the same file. Sizes chosen for the boundaries: under the sample count, either side of it,
-/// odd dimensions, and the two sensors this is actually run on.
+/// The client used to hold a second copy of this rule and be held to the same table. It no
+/// longer has one: the stride travels in `PreparedHeader.tick`, where the shader also reads it,
+/// and `TickPipeline` sizes its dispatch off that word. What is left to guard is that *this*
+/// rule has not moved. Sizes chosen for the boundaries: under the sample count, either side of
+/// it, odd dimensions, and the two sensors this is actually run on.
 #[test]
-fn both_hosts_read_the_same_pixels_for_the_peak() {
+fn the_peak_reads_the_pixels_it_always_did() {
     let sizes: [(usize, usize); 8] = [
         (1, 1),
         (96, 64),
@@ -371,7 +400,9 @@ fn the_encode_pass_reproduces_the_cpu_frame() {
 
     for (name, colour) in [("neutral", None), ("matched", Some(matched()))] {
         for ev in [0.0f32, 1.0, -1.5] {
-            let exposure = 2f64.powf(f64::from(ev));
+            // Stops, which is what the uniform carries now: `colour.wgsl` raises them, so a
+            // gain here would be a second conversion on top of the shader's.
+            let exposure = f64::from(ev);
             let mut prepared =
                 Prepared { samples: samples.clone(), width: WIDTH, height: HEIGHT, levels };
             filter_once(&mut prepared, &grade, strengths);
@@ -446,7 +477,9 @@ fn the_rolled_arm_reproduces_the_cpu_grade() {
 
     for (name, colour) in [("neutral", None), ("matched", Some(matched()))] {
         for ev in [0.0f32, 1.0, -1.5] {
-            let exposure = 2f64.powf(f64::from(ev));
+            // Stops, which is what the uniform carries now: `colour.wgsl` raises them, so a
+            // gain here would be a second conversion on top of the shader's.
+            let exposure = f64::from(ev);
             let mut prepared =
                 Prepared { samples: samples.clone(), width: WIDTH, height: HEIGHT, levels };
             filter_once(&mut prepared, &grade, strengths);
@@ -565,7 +598,7 @@ fn graded_banded(
             source_level: levels.peak,
             reference_nits: grade.reference_white_nits,
             peak_nits: grade.peak_nits,
-            exposure: 1.0,
+            exposure: 0.0,
             adjust,
             // A daylight baseline, so the balance test has something to move away from. The
             // presence test leaves the pair unset, where this is not read at all.
@@ -765,7 +798,7 @@ fn the_encode_pass_reproduces_the_cpu_sdr_frame() {
                 source_level: levels.peak,
                 reference_nits: grade.reference_white_nits,
                 peak_nits: grade.peak_nits,
-                exposure: 1.0,
+                exposure: 0.0,
                 adjust: rawshim::gpu::Adjust::none(),
                 as_shot: None,
                 output: rawshim::gpu::Output::Srgb,

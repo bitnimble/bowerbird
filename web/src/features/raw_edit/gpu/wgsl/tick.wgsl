@@ -14,6 +14,13 @@ struct Tick {
   source_level: f32,
   reference: f32,
   peak: f32,
+  /// The photographer's exposure **in stops**, which is the unit `EditDoc` stores.
+  ///
+  /// Stops rather than the `2^EV` gain the two hosts used to convert it into. That conversion
+  /// is a rule, and a rule each host applies is a rule each host can get wrong - `job.rs`
+  /// carried a guard refusing a non-positive gain precisely because "a caller sent stops where
+  /// a multiplier belongs" was a reachable mistake. Carrying the document's own unit and
+  /// raising it here makes both the conversion and the guard unnecessary.
   exposure: f32,
   /// Which transfer `encode` writes: 0 is PQ at 16 bits, 1 is sRGB at 8.
   ///
@@ -81,11 +88,19 @@ struct Tick {
   /// pair moves away from (`white_balance.wgsl`).
   as_shot_temperature: f32,
   as_shot_tint: f32,
-  /// And what the reader asked for. **Zero means as shot**, which is what an unedited photo
-  /// carries and what a file whose camera recorded no usable multipliers carries permanently -
-  /// there being no baseline, a number here would be a balance away from nothing.
+  /// And what the reader asked for, straight off the document.
+  ///
+  /// **Neither host resolves these; the shader does.** The document holds null for a half the
+  /// reader has not moved, and what null means - the frame's own illuminant - is a rule, so
+  /// having each host apply it is two implementations of one rule. They were not the same rule:
+  /// one stood a missing tint up as the frame's and the other as zero, which is the Planckian
+  /// locus, and the rendition came out a different colour from the picture the reader approved.
+  /// So the hosts copy the document and `balance_set` says which halves it actually held.
   temperature: f32,
   tint: f32,
+  /// Bit 0 for the temperature, bit 1 for the tint. Zero is "as shot", which is what an
+  /// unedited photo carries.
+  balance_set: u32,
 };
 
 @group(0) @binding(0) var<uniform> tick: Tick;

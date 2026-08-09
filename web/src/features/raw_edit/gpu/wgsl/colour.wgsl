@@ -124,8 +124,8 @@ fn curves_at(nits: vec3f, scale: f32) -> vec3f {
 /// depends on the pixel's own luma, not as a global one.
 fn toned(nits: vec3f) -> vec3f {
   let base = curves_at(nits, 1.0);
-  if (tick.exposure == 1.0) { return base; }
-  let lit = curves_at(nits, tick.exposure);
+  if (tick.exposure == 0.0) { return base; }
+  let lit = curves_at(nits, exp2(tick.exposure));
   let base_luma = dot(LUMA, base);
   let lit_luma = dot(LUMA, lit);
   // Black has no ratios to hold and the two lumas vanish together, so the quotient there
@@ -246,6 +246,7 @@ fn neutral_nits(nits: vec3f, uv: vec2f) -> vec3f {
   // `source_level` rather than being measured, so a highlight lift can push past it. What
   // catches that is `display_nits`' clamp - the top of the range rather than a curve into
   // it. Worth knowing before reaching for a big lift on a frame whose fit declined.
-  let scene = adjusted(nits * tick.exposure / tick.reference, base_luma(nits), uv) * tick.reference;
+  let scene =
+    adjusted(nits * exp2(tick.exposure) / tick.reference, base_luma(nits), uv) * tick.reference;
   return rolled(scene, rolloff(source_peak, tick.peak));
 }

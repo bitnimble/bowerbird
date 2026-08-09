@@ -22,9 +22,9 @@ import { RENDITION_EXTENSION, renditionDirs, type Rendition } from './renditions
 
 const WORKER_URL = new URL('./processing_worker.ts', import.meta.url).href;
 
-/** No gain, no adjustment, whole frame: the picture as the camera made it. */
+/** No exposure, no adjustment, whole frame: the picture as the camera made it. */
 const AS_METERED = {
-  exposure: 1,
+  exposure: 0,
   adjust: {
     contrast: 0,
     highlights: 0,
@@ -45,11 +45,11 @@ const AS_METERED = {
 /**
  * The stored develop settings as the job wants them.
  *
- * The exposure becomes a *gain*, `2^EV`: the shader's uniform carries a multiplier and the
- * document carries stops, and converting in two places is how the two come to disagree about
- * the base. The rest pass through unchanged, because `EditDoc` deliberately holds Camera
- * Raw's own scales and `adjust.wgsl` is written against them - so there is no constant here
- * to get wrong.
+ * **Every field passes through unchanged, and that is the point.** `EditDoc` holds Camera Raw's
+ * own scales and the shaders are written against them, so there is no constant here to get
+ * wrong - not even the exposure, which used to become a `2^EV` gain on the way past. Converting
+ * it here meant converting it again in the editor, which is one rule with an implementation on
+ * each path; `colour.wgsl` raises the stops now, once, for both.
  *
  * An unedited photo has no row, which is the common case and reads as no adjustment. A
  * document this build cannot parse reads the same way rather than failing the batch: a
@@ -63,7 +63,7 @@ function developed(edits: string | null): { exposure: number; adjust: JobAdjust;
     if (!parsed.success) return AS_METERED;
     const doc = parsed.data;
     return {
-      exposure: 2 ** doc.exposure,
+      exposure: doc.exposure,
       adjust: {
         contrast: doc.contrast,
         highlights: doc.highlights,

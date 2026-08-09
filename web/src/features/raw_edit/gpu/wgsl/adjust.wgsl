@@ -221,7 +221,11 @@ fn dehazed(colour: vec3f, dark_stops: f32) -> vec3f {
 /// photo, and every photo in a library nobody has opened the editor on.
 fn adjusted(colour: vec3f, base_luma: f32, uv: vec2f) -> vec3f {
   let local = tick.texture_adjust != 0.0 || tick.clarity != 0.0 || tick.dehaze != 0.0;
-  let rebalanced = tick.temperature > 0.0;
+  // Off the frame rather than off the document: a photograph whose camera recorded no neutral
+  // has nothing to balance against however the sliders are set, and one that does pays nine
+  // multiplies through a matrix `white_balance.wgsl` has already made the identity where the
+  // pair has not moved.
+  let rebalanced = tick.as_shot_temperature > 0.0;
   if (!local && !rebalanced && tick.contrast == 0.0 && tick.highlights == 0.0
       && tick.shadows == 0.0 && tick.whites == 0.0 && tick.blacks == 0.0
       && tick.vibrance == 0.0 && tick.sat_adjust == 0.0) {
