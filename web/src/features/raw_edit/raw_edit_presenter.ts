@@ -318,6 +318,9 @@ export class RawEditPresenter {
       blacks: next.blacks,
       vibrance: next.vibrance,
       saturation: next.saturation,
+      texture: next.texture,
+      clarity: next.clarity,
+      dehaze: next.dehaze,
     });
     this.request(this.store.exposureEv);
   }

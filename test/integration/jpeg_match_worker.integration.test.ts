@@ -70,7 +70,18 @@ async function render(
     // As metered: this measures what the camera match does, so a gain would be a second
     // variable in it.
     exposure: 1,
-    adjust: { contrast: 0, highlights: 0, shadows: 0, whites: 0, blacks: 0, vibrance: 0, saturation: 0 },
+    adjust: {
+      contrast: 0,
+      highlights: 0,
+      shadows: 0,
+      whites: 0,
+      blacks: 0,
+      vibrance: 0,
+      saturation: 0,
+      texture: 0,
+      clarity: 0,
+      dehaze: 0,
+    },
     geometry: { crop: [0, 0, 1, 1], angleDegrees: 0, rotate: 0 },
     ...render,
   });

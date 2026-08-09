@@ -25,7 +25,18 @@ const WORKER_URL = new URL('./processing_worker.ts', import.meta.url).href;
 /** No gain, no adjustment, whole frame: the picture as the camera made it. */
 const AS_METERED = {
   exposure: 1,
-  adjust: { contrast: 0, highlights: 0, shadows: 0, whites: 0, blacks: 0, vibrance: 0, saturation: 0 },
+  adjust: {
+    contrast: 0,
+    highlights: 0,
+    shadows: 0,
+    whites: 0,
+    blacks: 0,
+    vibrance: 0,
+    saturation: 0,
+    texture: 0,
+    clarity: 0,
+    dehaze: 0,
+  },
   geometry: { crop: [0, 0, 1, 1] as [number, number, number, number], angleDegrees: 0, rotate: 0 },
 } as const;
 
@@ -59,6 +70,9 @@ function developed(edits: string | null): { exposure: number; adjust: JobAdjust;
         blacks: doc.blacks,
         vibrance: doc.vibrance,
         saturation: doc.saturation,
+        texture: doc.texture,
+        clarity: doc.clarity,
+        dehaze: doc.dehaze,
       },
       geometry: {
         crop: [doc.cropLeft, doc.cropTop, doc.cropRight, doc.cropBottom],

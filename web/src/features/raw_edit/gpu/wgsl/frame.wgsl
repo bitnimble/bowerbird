@@ -55,19 +55,19 @@ const R2020_TO_SRGB = mat3x3f(
   vec3f( -0.072838,  -0.008350,   1.118998),
 );
 
-fn display_nits(nits: vec3f) -> vec3f {
-  return min(max(rolled_off(nits), vec3f(0.0)), vec3f(tick.peak));
+fn display_nits(nits: vec3f, uv: vec2f) -> vec3f {
+  return min(max(rolled_off(nits, uv), vec3f(0.0)), vec3f(tick.peak));
 }
 
 /// The roll-off leaves the display's peak alone when the scene already fits inside it, so
 /// the clamp above is not redundant: a level past `source_level` comes back untouched.
-fn rolled_off(nits: vec3f) -> vec3f {
-  if (tick.matched == 0u) { return neutral_nits(nits); }
+fn rolled_off(nits: vec3f, uv: vec2f) -> vec3f {
+  if (tick.matched == 0u) { return neutral_nits(nits, uv); }
   let scene_peak = peak_out[0];
   // Clamped to the scene peak before the roll-off, because the CPU's roll table spans
   // 0..scene_peak and reads the top bin for anything past it. Without the clamp the
   // brightest pixels get a curve the CPU never evaluates.
-  let coloured = min(max(matched_nits(nits), vec3f(0.0)), vec3f(scene_peak));
+  let coloured = min(max(matched_nits(nits, uv), vec3f(0.0)), vec3f(scene_peak));
   return rolled(coloured, rolloff(scene_peak, tick.peak));
 }
 
@@ -147,6 +147,17 @@ fn covered(pos: vec2f) -> vec3f {
   return sum * 0.25;
 }
 
+/// Where in the frame a canvas pixel is looking, normalised.
+///
+/// The centre of what `covered` averages, not one of its taps: the presence sliders read a
+/// blur whose finest band is a 512th of the frame, so a canvas pixel's own footprint is
+/// inside one texel of it at any zoom the reader can reach.
+fn frame_uv(pos: vec2f) -> vec2f {
+  let scale = tick.region_size / tick.canvas_size;
+  return (tick.region_origin + (pos - vec2f(0.5)) * scale + 0.5 * scale)
+    / vec2f(f32(tick.width), f32(tick.height));
+}
+
 @vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
   var corners = array<vec2f, 3>(vec2f(-1.0, -1.0), vec2f(3.0, -1.0), vec2f(-1.0, 3.0));
   return vec4f(corners[i], 0.0, 1.0);
@@ -156,14 +167,16 @@ fn covered(pos: vec2f) -> vec3f {
 /// Rec.2020 PQ and handed to a compositor, where a canvas has neither Rec.2020 nor
 /// absolute luminance, so what the media path declares this has to compute (§7.1, §7.2).
 @fragment fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
-  let p3 = (R2020_TO_P3 * display_nits(covered(pos.xy))) / tick.sdr_white;
+  let p3 = (R2020_TO_P3 * display_nits(covered(pos.xy), frame_uv(pos.xy))) / tick.sdr_white;
   return vec4f(transfer(p3.r), transfer(p3.g), transfer(p3.b), 1.0);
 }
 
 /// One pixel of the frame as a rendition would hold it, in the `u16` counts every output
 /// stage of this shader ends in.
 fn coded_at(pixel: u32) -> vec3f {
-  let nits = display_nits(nits_of_index(pixel));
+  let uv = (vec2f(f32(pixel % tick.width), f32(pixel / tick.width)) + vec2f(0.5))
+    / vec2f(f32(tick.width), f32(tick.height));
+  let nits = display_nits(nits_of_index(pixel), uv);
   // Through the `u16` the CPU writes between the grade and the transfer. Not incidental:
   // both of its output stages read that integer - the PQ one as a 65536-entry table keyed
   // by it, the sRGB one as the value it takes the primaries of - so a frame that skipped

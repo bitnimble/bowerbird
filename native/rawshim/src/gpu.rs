@@ -37,6 +37,36 @@ fn source(last: &str) -> String {
 
 const FRAME_WGSL: &str = include_str!("../../../web/src/features/raw_edit/gpu/wgsl/frame.wgsl");
 const PEAK_WGSL: &str = include_str!("../../../web/src/features/raw_edit/gpu/wgsl/peak.wgsl");
+const DETAIL_WGSL: &str = include_str!("../../../web/src/features/raw_edit/gpu/wgsl/detail.wgsl");
+
+/// `DETAIL` in `shaders.ts`: the blur the presence sliders read, on layouts of its own.
+fn detail_source() -> String {
+    format!(
+        "{}\n{}\n{DETAIL_WGSL}",
+        include_str!("../../../web/src/features/raw_edit/gpu/wgsl/prelude.wgsl"),
+        include_str!("../../../web/src/features/raw_edit/gpu/wgsl/tick.wgsl"),
+    )
+}
+
+/// `DETAIL_LONG` in `detail.wgsl`, which is the long edge of that blur's working texture.
+///
+/// The shader declares it and this allocates for it, so the two are pinned together by
+/// `the_shader_sizes_match_the_buffers_allocated_for_them` - a host that sized the texture
+/// differently would blur at a different fraction of the picture, and the editor's clarity and
+/// the rendition's would stop being the same picture.
+const DETAIL_LONG: u32 = 512;
+
+/// The working texture for a frame of this size: the long edge capped, never scaled up.
+///
+/// `detailSize` in `shaders.ts`, arrived at the same way and for the same reason.
+fn detail_size(width: usize, height: usize) -> (u32, u32) {
+    let long = width.max(height).max(1) as f64;
+    let scale = (f64::from(DETAIL_LONG) / long).min(1.0);
+    (
+        ((width as f64 * scale).round() as u32).max(1),
+        ((height as f64 * scale).round() as u32).max(1),
+    )
+}
 
 /// `DECODE` in `shaders.ts`: the frame's coding undone, and nothing of `colour.wgsl` because
 /// it binds the same table read-only.
@@ -95,6 +125,11 @@ pub struct Gpu {
     peak_layout: wgpu::BindGroupLayout,
     peak_measure: wgpu::ComputePipeline,
     peak_quantile: wgpu::ComputePipeline,
+    detail_shrink_layout: wgpu::BindGroupLayout,
+    detail_blur_layout: wgpu::BindGroupLayout,
+    detail_shrink: wgpu::ComputePipeline,
+    detail_blur_x: wgpu::ComputePipeline,
+    detail_blur_y: wgpu::ComputePipeline,
     sampler: wgpu::Sampler,
     /// The frame's coding undone. Filled once with the device, since `tone::encode_base`
     /// anchors every frame to the reference white before coding it and what comes back out
@@ -193,6 +228,16 @@ impl Gpu {
                 cache: None,
             })
         };
+        let detail_shrink_layout = group_layout("detail shrink", &DETAIL_SHRINK_BINDINGS);
+        let detail_blur_layout = group_layout("detail blur", &DETAIL_BLUR_BINDINGS);
+        let detail_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("detail"),
+            source: wgpu::ShaderSource::Wgsl(detail_source().into()),
+        });
+        let detail_shrink = compute("shrink", &detail_module, &detail_shrink_layout, "shrink");
+        let detail_blur_x = compute("blur_x", &detail_module, &detail_blur_layout, "blur_x");
+        let detail_blur_y = compute("blur_y", &detail_module, &detail_blur_layout, "blur_y");
+
         let pipeline = compute("encode", &module, &layout, "encode");
         // `measure` and `quantile` only. `collect` and `remeasure` exist so the editor's
         // slider does not re-sweep the frame at every position; a rendition is graded at one
@@ -242,6 +287,11 @@ impl Gpu {
             peak_layout,
             peak_measure,
             peak_quantile,
+            detail_shrink_layout,
+            detail_blur_layout,
+            detail_shrink,
+            detail_blur_x,
+            detail_blur_y,
             sampler,
             nits_of_code,
         })
@@ -293,7 +343,7 @@ impl Gpu {
 
 /// What `encodeLayout` names on the client, in one list so the layout and the bind group
 /// cannot drift apart.
-const ENCODE_BINDINGS: [(u32, Binding); 12] = [
+const ENCODE_BINDINGS: [(u32, Binding); 13] = [
     (0, Binding::Uniform),
     (1, Binding::Storage { read_only: true }),
     (2, Binding::Curves),
@@ -306,11 +356,23 @@ const ENCODE_BINDINGS: [(u32, Binding); 12] = [
     (10, Binding::Volume),
     (11, Binding::Volume),
     (12, Binding::Storage { read_only: true }),
+    (13, Binding::Detail),
 ];
+
+/// `detail.wgsl`'s two entry-point shapes, on layouts of their own: the downscale reads the
+/// frame and the decode table, and the separable pair reads only the texture before it.
+const DETAIL_SHRINK_BINDINGS: [(u32, Binding); 4] = [
+    (0, Binding::Uniform),
+    (1, Binding::Storage { read_only: true }),
+    (3, Binding::Written),
+    (12, Binding::Storage { read_only: true }),
+];
+
+const DETAIL_BLUR_BINDINGS: [(u32, Binding); 2] = [(2, Binding::Detail), (3, Binding::Written)];
 
 /// `peakLayout` on the client: the same colour bindings, and the histogram, the peak and the
 /// candidates all writable where the encode reads the peak and writes only the frame.
-const PEAK_BINDINGS: [(u32, Binding); 12] = [
+const PEAK_BINDINGS: [(u32, Binding); 13] = [
     (0, Binding::Uniform),
     (1, Binding::Storage { read_only: true }),
     (2, Binding::Curves),
@@ -323,6 +385,7 @@ const PEAK_BINDINGS: [(u32, Binding); 12] = [
     (10, Binding::Volume),
     (11, Binding::Volume),
     (12, Binding::Storage { read_only: true }),
+    (13, Binding::Detail),
 ];
 
 /// `PEAK_BINS` in `shaders.ts`, and `BINS` in the shader that both stand for.
@@ -340,6 +403,12 @@ enum Binding {
     /// Declared by `frame.wgsl` and unread at `lod` 0, but an explicit layout has to supply
     /// everything the module declares.
     Pyramid,
+    /// `detail.wgsl`'s output: the fine blur, the coarse blur and the dark channel, all in
+    /// stops. Filterable, because the grade samples it at a frame coordinate rather than a
+    /// texel of it.
+    Detail,
+    /// The same texture where a pass is writing it.
+    Written,
 }
 
 impl Binding {
@@ -372,6 +441,16 @@ impl Binding {
                 view_dimension: wgpu::TextureViewDimension::D2,
                 multisampled: false,
             },
+            Binding::Detail => wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            Binding::Written => wgpu::BindingType::StorageTexture {
+                access: wgpu::StorageTextureAccess::WriteOnly,
+                format: wgpu::TextureFormat::Rgba16Float,
+                view_dimension: wgpu::TextureViewDimension::D2,
+            },
         };
         wgpu::BindGroupLayoutEntry { binding, visibility, ty, count: None }
     }
@@ -395,15 +474,15 @@ pub struct Grade<'a> {
     pub output: Output,
 }
 
-/// The tonal and colour sliders, as `adjust.wgsl` reads them.
+/// Every slider but the exposure, as `adjust.wgsl` reads them.
 ///
-/// Its own type rather than seven fields on [`Grade`] because they travel together from the
+/// Its own type rather than ten fields on [`Grade`] because they travel together from the
 /// stored document all the way to the uniform, and a caller that has none of them says so
-/// once with [`Adjust::none`] rather than seven times.
+/// once with [`Adjust::none`] rather than ten times.
 ///
-/// Not here: texture, clarity and dehaze. Those need the pixel's neighbourhood rather than
-/// the pixel, so they are a pass rather than a term - see the note at the top of
-/// `adjust.wgsl`.
+/// The last three are the presence group, which read the blur `detail.wgsl` builds rather
+/// than the pixel alone. They are terms in the same function as the rest - what the blur
+/// costs is a pass at upload, not a second grade.
 #[derive(Clone, Copy, Default, serde::Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Adjust {
@@ -415,6 +494,10 @@ pub struct Adjust {
     pub vibrance: f64,
     /// `sat_adjust` in the shader: `saturation` there is the camera match's own multiplier.
     pub saturation: f64,
+    /// `texture_adjust` in the shader, where a member called `texture` would read as a type.
+    pub texture: f64,
+    pub clarity: f64,
+    pub dehaze: f64,
 }
 
 impl Adjust {
@@ -458,6 +541,8 @@ pub struct Uploaded<'a> {
     chroma_luma: wgpu::TextureView,
     chroma_tint: wgpu::TextureView,
     pyramid: wgpu::TextureView,
+    /// The blur the presence sliders read, built off this frame at this size.
+    detail: wgpu::TextureView,
     counts: wgpu::Buffer,
     readback: wgpu::Buffer,
     /// The identity the uniform describes where a frame has no camera match, kept alive
@@ -598,6 +683,12 @@ impl Gpu {
             mapped_at_creation: false,
         });
 
+        let detail = self.build_detail(
+            &samples,
+            &uniform(grade, described),
+            detail_size(grade.width, grade.height),
+        );
+
         let view = |t: &wgpu::Texture| t.create_view(&wgpu::TextureViewDescriptor::default());
         let uploaded = Uploaded {
             gpu: self,
@@ -613,6 +704,7 @@ impl Gpu {
             chroma_luma: view(&chroma_luma),
             chroma_tint: view(&chroma_tint),
             pyramid: view(&pyramid),
+            detail,
             counts,
             readback,
             identity,
@@ -719,6 +811,94 @@ impl Gpu {
         )
     }
 
+    /// The blur the presence sliders read, off the frame that is already up (`detail.wgsl`).
+    ///
+    /// Once per uploaded frame, like the scene peak beside it and for the same reason: it
+    /// describes the photograph rather than the rendition, so every output off this frame has
+    /// to read the same one. Unconditional, rather than skipped when the three sliders are
+    /// zero - it is one read of the frame and two Gaussians over a 512px texture against a job
+    /// that spends seconds in the decode and the encoder, and a resource that sometimes exists
+    /// is a bind group that sometimes does.
+    ///
+    /// Three passes rather than one with three dispatches: the middle two read the texture the
+    /// one before them wrote, and a pass is where wgpu puts the barrier for that.
+    fn build_detail(&self, samples: &wgpu::Buffer, tick: &[u8], size: (u32, u32)) -> wgpu::TextureView {
+        let device = &self.device;
+        let texture = |label: &str| {
+            device.create_texture(&wgpu::TextureDescriptor {
+                label: Some(label),
+                size: wgpu::Extent3d {
+                    width: size.0,
+                    height: size.1,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba16Float,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::STORAGE_BINDING,
+                view_formats: &[],
+            })
+        };
+        let view = |t: &wgpu::Texture| t.create_view(&wgpu::TextureViewDescriptor::default());
+        // Ping-ponged, and the pass count is odd, so the result lands back in `detail`.
+        let detail = view(&texture("detail"));
+        let scratch = view(&texture("detail scratch"));
+
+        let tick = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("detail"),
+            contents: tick,
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        let shrink = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("detail shrink"),
+            layout: &self.detail_shrink_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: tick.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: samples.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(&detail),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 12,
+                    resource: self.nits_of_code.as_entire_binding(),
+                },
+            ],
+        });
+        let blur = |from: &wgpu::TextureView, to: &wgpu::TextureView| {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("detail blur"),
+                layout: &self.detail_blur_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::TextureView(from),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: wgpu::BindingResource::TextureView(to),
+                    },
+                ],
+            })
+        };
+
+        let mut encoder = device.create_command_encoder(&Default::default());
+        for (pipeline, group) in [
+            (&self.detail_shrink, &shrink),
+            (&self.detail_blur_x, &blur(&detail, &scratch)),
+            (&self.detail_blur_y, &blur(&scratch, &detail)),
+        ] {
+            let mut pass = encoder.begin_compute_pass(&Default::default());
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, group, &[]);
+            pass.dispatch_workgroups(size.0.div_ceil(8), size.1.div_ceil(8), 1);
+        }
+        self.queue.submit([encoder.finish()]);
+        detail
+    }
+
     pub fn sampler(&self) -> &wgpu::Sampler {
         &self.sampler
     }
@@ -787,6 +967,10 @@ impl Uploaded<'_> {
                 wgpu::BindGroupEntry {
                     binding: 12,
                     resource: self.gpu.nits_of_code.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 13,
+                    resource: wgpu::BindingResource::TextureView(&self.detail),
                 },
             ],
         });
@@ -874,6 +1058,10 @@ impl Uploaded<'_> {
                     binding: 12,
                     resource: self.gpu.nits_of_code.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 13,
+                    resource: wgpu::BindingResource::TextureView(&self.detail),
+                },
             ],
         });
 
@@ -957,6 +1145,9 @@ const TICK_FIELDS: &[&str] = &[
     "blacks",
     "vibrance",
     "sat_adjust",
+    "texture_adjust",
+    "clarity",
+    "dehaze",
 ];
 
 /// `TICK_UNIFORM_FLOATS` in `shaders.ts`, field for field in `struct Tick`'s order.
@@ -1013,6 +1204,9 @@ fn uniform(grade: &Grade<'_>, colour: &HdrColour) -> Vec<u8> {
     f(&mut w, grade.adjust.blacks);
     f(&mut w, grade.adjust.vibrance);
     f(&mut w, grade.adjust.saturation);
+    f(&mut w, grade.adjust.texture);
+    f(&mut w, grade.adjust.clarity);
+    f(&mut w, grade.adjust.dehaze);
     // WGSL rounds a uniform struct's size up to a multiple of 16 bytes, and binds it at that
     // size - so a buffer holding exactly the fields is rejected as too small, by however much
     // the last few fields left over. `shaders.ts` does this in `tickOffsets`; here it was
@@ -1055,6 +1249,15 @@ mod tests {
             declared(super::PEAK_WGSL, "BINS: u32"),
             super::PEAK_BINS,
             "peak.wgsl's BINS and gpu.rs's PEAK_BINS have drifted",
+        );
+        // Not a buffer size but the same failure: this one sets how large a share of the
+        // picture a blur covers, so a host allocating a different texture blurs at a different
+        // scale and the rendition stops matching the editor. Silent - both pictures look like
+        // pictures.
+        assert_eq!(
+            declared(super::DETAIL_WGSL, "DETAIL_LONG: u32"),
+            u64::from(super::DETAIL_LONG),
+            "detail.wgsl's DETAIL_LONG and gpu.rs's have drifted",
         );
         // `decode.wgsl` writes one entry per code and guards on the last one, so it carries the
         // count as `65535` - the top code rather than the length.

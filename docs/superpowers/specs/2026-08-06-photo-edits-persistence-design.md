@@ -1,10 +1,15 @@
 # Persisted photo edits, cross-session undo, and edited renditions
 
-Status: **phase 0, §2-§6 and §7/§8 are done and shipped; §10 is superseded.** What is left is
-§9 (geometry, designed for and not built), XMP import as an endpoint - `editsFromXmp` exists and
-nothing calls it - batch edits, and the nine sliders that store but do not yet render. Plus one
-thing outside this document: §10.2's deployment, which is a blocker for the *render* half and is
-unstarted.
+Status: **phase 0, §2-§6, §7/§8 and §9 are done and shipped; §10 is superseded.** Every slider in
+the panel now renders, in the editor and in a rendition: the tonal five and the colour two as
+terms in `adjust.wgsl`, the presence three off a blur `detail.wgsl` builds once per frame, and the
+crop, straighten and turn inside the cut's own gather.
+
+What is left is the interactive crop tool (the render side is built; nothing draws a handle yet),
+XMP import as an endpoint - `editsFromXmp` exists and nothing calls it - batch edits, and the
+white balance pair, which stores and reloads but has no baseline to move against until the
+prepared header carries the shot Kelvin. Plus one thing outside this document: §10.2's deployment,
+which is a blocker for the *render* half and is unstarted.
 
 Read §0.4 before anything else - it says what phase 0 became, which is more than it was scoped as,
 and why the crate extraction §10 designs is no longer the way to get what §10 wanted.

@@ -67,6 +67,15 @@ struct Tick {
   blacks: f32,
   vibrance: f32,
   sat_adjust: f32,
+
+  /// The presence three, which read `detail.wgsl`'s blur rather than the pixel alone.
+  ///
+  /// `texture_adjust` rather than `texture`, in the same spirit as `sat_adjust` above: a
+  /// member called `texture` beside a file full of `texture_2d` and `textureSampleLevel`
+  /// reads as a type wherever it appears.
+  texture_adjust: f32,
+  clarity: f32,
+  dehaze: f32,
 };
 
 @group(0) @binding(0) var<uniform> tick: Tick;

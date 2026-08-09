@@ -49,7 +49,9 @@ fn probe(@builtin(global_invocation_id) id: vec3u) {
   let i = id.x;
   if (i * 3u + 2u >= arrayLength(&probe_in)) { return; }
   let level = vec3f(probe_in[i * 3u], probe_in[i * 3u + 1u], probe_in[i * 3u + 2u]);
-  let out = matched_nits(level);
+  // The middle of the frame, and it does not matter which: the presence sliders are the only
+  // reader of this and the probe leaves all three at zero, so nothing samples the blur.
+  let out = matched_nits(level, vec2f(0.5));
   probe_out[i * 3u] = out.r;
   probe_out[i * 3u + 1u] = out.g;
   probe_out[i * 3u + 2u] = out.b;
@@ -161,7 +163,7 @@ fn uniform(colour: &HdrColour) -> Vec<u8> {
     words.push(0); // pad
     // The reader's sliders, all zero: this probe compares the *colour transform* against the
     // model it mirrors, and any of these set would be comparing an edit of it instead.
-    for _ in 0..7 {
+    for _ in 0..10 {
         f_push(&mut words, 0.0);
     }
     // WGSL binds a uniform struct at its size rounded up to 16 bytes, so a buffer holding
@@ -280,6 +282,18 @@ fn the_colour_shader_agrees_with_the_model_it_mirrors() {
         },
         texture3d_entry(10),
         texture3d_entry(11),
+        // `adjust.wgsl`'s blur. Statically referenced by `adjusted` whatever the sliders say,
+        // so the layout has to carry it even though this probe never reads a texel of it.
+        wgpu::BindGroupLayoutEntry {
+            binding: 13,
+            visibility: stage,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        },
     ];
     let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("colour"),
@@ -289,6 +303,17 @@ fn the_colour_shader_agrees_with_the_model_it_mirrors() {
     let luma_view = chroma_luma.create_view(&wgpu::TextureViewDescriptor::default());
     let tint_view = chroma_tint.create_view(&wgpu::TextureViewDescriptor::default());
     let curves_view = curves.create_view(&wgpu::TextureViewDescriptor::default());
+    let detail = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("detail"),
+        size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba16Float,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+    });
+    let detail_view = detail.create_view(&wgpu::TextureViewDescriptor::default());
     let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("colour"),
         layout: &layout,
@@ -317,6 +342,10 @@ fn the_colour_shader_agrees_with_the_model_it_mirrors() {
             wgpu::BindGroupEntry {
                 binding: 10,
                 resource: wgpu::BindingResource::TextureView(&luma_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 13,
+                resource: wgpu::BindingResource::TextureView(&detail_view),
             },
         ],
     });

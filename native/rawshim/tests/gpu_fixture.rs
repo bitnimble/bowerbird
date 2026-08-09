@@ -491,6 +491,145 @@ fn the_rolled_arm_reproduces_the_cpu_grade() {
     }
 }
 
+const BANDED: usize = 256;
+
+/// A frame built from three separable scales, so each presence slider has something of its
+/// own to act on: a ramp far coarser than either blur, a sixteen-pixel wave in clarity's band,
+/// and a two-pixel checker in texture's.
+///
+/// `haze` lifts the whole thing towards white and compresses it, which is what haze physically
+/// does - the airlight adds to every pixel and the scene's own contrast survives only in what
+/// is left of the range.
+///
+/// Neutral grey throughout, the three channels equal, so nothing measured off it depends on
+/// the colour model. That is what the fixtures above are for.
+fn banded(haze: f64) -> Vec<u16> {
+    let mut samples = vec![0u16; BANDED * BANDED * 3];
+    for y in 0..BANDED {
+        for x in 0..BANDED {
+            let ramp = 12000.0 + 6000.0 * (x as f64 / BANDED as f64);
+            let wave = 2500.0 * (x as f64 * std::f64::consts::TAU / 16.0).sin();
+            let checker = 1500.0 * (((x + y) % 2) as f64 * 2.0 - 1.0);
+            let scene = (ramp + wave + checker) * (1.0 - haze) + 45000.0 * haze;
+            let level = scene.clamp(0.0, 65535.0) as u16;
+            let at = (y * BANDED + x) * 3;
+            samples[at] = level;
+            samples[at + 1] = level;
+            samples[at + 2] = level;
+        }
+    }
+    samples
+}
+
+/// How much of the frame sits at a given spacing: the mean absolute difference between two
+/// pixels that many columns apart, on the red channel.
+///
+/// A band-pass by the crudest means there is, and enough for this. At one column the checker
+/// dominates and the wave barely moves; at eight the checker cancels exactly - the two pixels
+/// share its parity - leaving the wave in antiphase with itself, which is twice its amplitude.
+fn band(frame: &[u16], apart: usize) -> f64 {
+    let mut total = 0.0;
+    let mut count = 0.0;
+    for y in 0..BANDED {
+        for x in 0..BANDED - apart {
+            let at = |x: usize| f64::from(frame[(y * BANDED + x) * 3]);
+            total += (at(x) - at(x + apart)).abs();
+            count += 1.0;
+        }
+    }
+    total / count
+}
+
+/// Texture, clarity and dehaze, each against what it claims to do.
+///
+/// These three read `detail.wgsl`'s blur rather than the pixel, and nothing above can say
+/// anything about them: the fixtures are pinned at `Adjust::none`, so a blur that came back
+/// empty, a coordinate that pointed at the wrong texel, or a pass that never ran would leave
+/// every one of them green. What is asserted is the *direction and the band*, not a value -
+/// the constants in `adjust.wgsl` are taste and should be free to move.
+///
+/// The cross-band claim is one-sided on purpose. Texture is above the fine blur and the wave
+/// is nowhere near it, so lifting texture must leave the coarse band alone; clarity's band is
+/// the gap between the two blurs and the checker has a real share of it, so the mirror claim
+/// is not true and is not made.
+#[test]
+fn the_presence_sliders_act_on_the_bands_they_name() {
+    let Some(gpu) = rawshim::gpu::device() else {
+        eprintln!("SKIPPED: no adapter answered, so the presence sliders were not run.");
+        return;
+    };
+    let grade =
+        hdr::Grade { peak_nits: 1000.0, reference_white_nits: 203.0, white_quantile: 0.995 };
+
+    let graded = |haze: f64, adjust: rawshim::gpu::Adjust| -> Vec<u16> {
+        let mut samples = banded(haze);
+        let levels = tone::levels(&samples, grade.white_quantile);
+        tone::encode_base(&mut samples, levels.anchored(), grade.reference_white_nits);
+        gpu.encode(
+            &samples,
+            &rawshim::gpu::Grade {
+                width: BANDED,
+                height: BANDED,
+                colour: None,
+                white: levels.white,
+                source_level: levels.peak,
+                reference_nits: grade.reference_white_nits,
+                peak_nits: grade.peak_nits,
+                exposure: 1.0,
+                adjust,
+                // Before any transfer, so a difference in counts is a difference in light:
+                // PQ would compress the shadows and flatter every claim made here.
+                output: rawshim::gpu::Output::Rolled,
+            },
+        )
+    };
+
+    let none = rawshim::gpu::Adjust::none();
+    let flat = graded(0.0, none);
+
+    for (name, apart, up, down) in [
+        ("texture", 1usize, rawshim::gpu::Adjust { texture: 100.0, ..none },
+         rawshim::gpu::Adjust { texture: -100.0, ..none }),
+        ("clarity", 8, rawshim::gpu::Adjust { clarity: 100.0, ..none },
+         rawshim::gpu::Adjust { clarity: -100.0, ..none }),
+    ] {
+        let (was, lifted, lowered) =
+            (band(&flat, apart), band(&graded(0.0, up), apart), band(&graded(0.0, down), apart));
+        assert!(
+            lifted > was * 1.1,
+            "{name} at +100 took the {apart}-column band from {was:.1} to {lifted:.1}",
+        );
+        assert!(
+            lowered < was * 0.9,
+            "{name} at -100 took the {apart}-column band from {was:.1} to {lowered:.1}",
+        );
+    }
+
+    let coarse = band(&graded(0.0, rawshim::gpu::Adjust { texture: 100.0, ..none }), 8);
+    let was = band(&flat, 8);
+    assert!(
+        coarse < was * 1.05,
+        "texture at +100 moved the coarse band from {was:.1} to {coarse:.1}, which is \
+         clarity's to move",
+    );
+
+    // Dehaze on a frame that has some: the model subtracts a neutral airlight and divides by
+    // what is left, so the floor drops and everything above it spreads out.
+    let hazy = graded(0.45, none);
+    let cleared = graded(0.45, rawshim::gpu::Adjust { dehaze: 100.0, ..none });
+    let floor = |frame: &[u16]| *frame.iter().step_by(3).min().expect("a frame with pixels");
+    let (before, after) = (f64::from(floor(&hazy)), f64::from(floor(&cleared)));
+    assert!(
+        after < before * 0.75,
+        "dehaze at +100 left the frame's floor at {after:.0} of {before:.0}",
+    );
+    let (dull, cleared) = (band(&hazy, 8), band(&cleared, 8));
+    assert!(
+        cleared > dull * 1.25,
+        "dehaze at +100 took the coarse band from {dull:.1} to {cleared:.1}",
+    );
+}
+
 /// The same dispatch's SDR arm, against its committed answer.
 ///
 /// An SDR rendition is not a second pipeline - `job::peak_nits` puts its peak at diffuse

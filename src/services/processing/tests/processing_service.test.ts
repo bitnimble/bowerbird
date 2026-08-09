@@ -127,6 +127,9 @@ describe('ProcessingService.processUnprocessed', () => {
             blacks: -12,
             vibrance: 30,
             saturation: -5,
+            texture: 25,
+            clarity: -18,
+            dehaze: 7.5,
           }),
         },
       ]),
@@ -145,6 +148,11 @@ describe('ProcessingService.processUnprocessed', () => {
       blacks: -12,
       vibrance: 30,
       saturation: -5,
+      texture: 25,
+      clarity: -18,
+      // A real where its neighbours are integers, which is `crs:Dehaze`'s own oddity and
+      // has to survive the trip rather than being rounded on the way.
+      dehaze: 7.5,
     });
     // And on both jobs, so the tile and the full view cannot disagree about the picture.
     expect(posted[1]?.adjust).toEqual(posted[0]?.adjust);

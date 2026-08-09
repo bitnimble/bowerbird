@@ -10,12 +10,18 @@
 //
 //   prelude   nothing
 //   tick      nothing; declares `tick` at binding 0
-//   adjust    prelude and tick; declares no bindings, reads the reader's own sliders
+//   adjust    prelude and tick; declares binding 13, and reads `lerp` from colour
 //   colour    prelude, tick and adjust; declares bindings 1-4, 7, 10-12
 //   frame     all three; declares bindings 5-6 and 9
 //   peak      prelude, tick, colour; declares bindings 5-6 and 8
 //   reduce    tick; declares bindings 1-3, on a layout of its own
 //   decode    prelude; declares binding 12 writable, on a layout of its own
+//   detail    prelude and tick; declares bindings 1-3 and 12, on layouts of its own
+//
+// `adjust` naming `lerp` before `colour` declares it is legal and deliberate: a WGSL
+// module-scope declaration is in scope for the whole program, so the order here is a
+// dependency order for readers rather than for the compiler. Moving the sampler earlier would
+// put a binding `reduce` never uses into the module it shares `tick` with.
 //
 // Numbers that both sides need are declared in the `.wgsl` and pinned to the host's copy by a
 // test, rather than substituted into the source, so the files stay valid WGSL on their own. A
@@ -24,6 +30,7 @@
 import adjust from './wgsl/adjust.wgsl?raw';
 import colour from './wgsl/colour.wgsl?raw';
 import decodeSource from './wgsl/decode.wgsl?raw';
+import detailSource from './wgsl/detail.wgsl?raw';
 import frame from './wgsl/frame.wgsl?raw';
 import peak from './wgsl/peak.wgsl?raw';
 import prelude from './wgsl/prelude.wgsl?raw';
@@ -43,6 +50,28 @@ export const REDUCE = compose(tick, reduceSource);
 
 /** The frame's coding undone, one entry per code. The same table for every photo. */
 export const DECODE = compose(prelude, decodeSource);
+
+/** The blur the presence sliders read, built once at the open. */
+export const DETAIL = compose(prelude, tick, detailSource);
+
+/**
+ * The long edge of that blur's working texture, which both hosts allocate for themselves.
+ *
+ * `DETAIL_LONG` in `detail.wgsl` is the declaration; this is the copy the allocation needs,
+ * held to it by `tests/peak_constants.test.ts`. A host that sized the texture differently
+ * would blur at a different fraction of the picture, so the editor and the rendition would
+ * not agree about what clarity means.
+ */
+export const DETAIL_LONG = 512;
+
+/** The working texture for a frame of this size: the long edge capped, never scaled up. */
+export function detailSize(width: number, height: number): { width: number; height: number } {
+  const scale = Math.min(1, DETAIL_LONG / Math.max(width, height, 1));
+  return {
+    width: Math.max(1, Math.round(width * scale)),
+    height: Math.max(1, Math.round(height * scale)),
+  };
+}
 
 /** Entries in that table, which is every `u16` a sample can hold. */
 export const PQ_CODES = 65536;
@@ -98,6 +127,10 @@ export const TICK_LAYOUT = [
   ['blacks', 'f32'],
   ['vibrance', 'f32'],
   ['sat_adjust', 'f32'],
+  // The presence three, which read `detail.wgsl`'s blur rather than the pixel alone.
+  ['texture_adjust', 'f32'],
+  ['clarity', 'f32'],
+  ['dehaze', 'f32'],
 ] as const;
 
 export type TickField = (typeof TICK_LAYOUT)[number][0];

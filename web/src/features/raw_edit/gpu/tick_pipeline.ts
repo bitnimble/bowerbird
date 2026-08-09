@@ -8,6 +8,7 @@
 import { type PassMs, PassTimer } from './pass_timer';
 import {
   DECODE,
+  DETAIL,
   FRAME,
   PEAK,
   PEAK_BINS,
@@ -15,6 +16,7 @@ import {
   PQ_CODES,
   REDUCE,
   TICK_UNIFORM_FLOATS,
+  detailSize,
   peakSampling,
   tickOffsets,
 } from './shaders';
@@ -226,6 +228,12 @@ export class TickPipeline {
   private readonly chromaLuma: GPUTexture;
   private readonly chromaTint: GPUTexture;
   /**
+   * The blur the presence sliders read, and the scratch the separable pair ping-pongs
+   * through. Three passes, so the result lands back in `detail` and only that one is bound.
+   */
+  private readonly detail: GPUTexture;
+  private readonly detailScratch: GPUTexture;
+  /**
    * The frame's coding undone, one entry per `u16` code.
    *
    * The samples arrive in normalised PQ (`tone::encode_base`) rather than as sensor levels,
@@ -400,6 +408,16 @@ export class TickPipeline {
     // whole volume is 5x5x4, so the three wasted channels cost 600 bytes and buy the same
     // filtering path the textures beside it are already proven on.
     this.chromaTint = this.lookup(size, '3d', 'rgba16float', 8, tints);
+    const working = detailSize(this.width, this.height);
+    const detailTexture = (label: string) =>
+      device.createTexture({
+        label,
+        size: [working.width, working.height],
+        format: 'rgba16float',
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING,
+      });
+    this.detail = detailTexture('detail');
+    this.detailScratch = detailTexture('detail scratch');
     this.lerp = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
     this.matrix = this.upload(
       new Float32Array(colour ? colour.matrix.flat() : [1, 0, 0, 0, 1, 0, 0, 0, 1]),
@@ -429,6 +447,7 @@ export class TickPipeline {
         { binding: 10, visibility, texture: { viewDimension: '3d' as const } },
         { binding: 11, visibility, texture: { viewDimension: '3d' as const } },
         { binding: 12, visibility, buffer: { type: 'read-only-storage' as const } },
+        { binding: 13, visibility, texture: {} },
       ],
       pyramid: { binding: 9, visibility, texture: { sampleType: 'uint' as const } },
       readOnly: (binding: number) => ({
@@ -494,6 +513,7 @@ export class TickPipeline {
       { binding: 10, resource: this.chromaLuma.createView() },
       { binding: 11, resource: this.chromaTint.createView() },
       { binding: 12, resource: { buffer: this.nitsOfCode } },
+      { binding: 13, resource: this.detail.createView() },
     ];
     this.displayEntries = [
       ...this.colourEntries,
@@ -517,6 +537,7 @@ export class TickPipeline {
 
     this.decode();
     this.reduce();
+    this.buildDetail();
     if (header.matched) this.chooseCandidates();
   }
 
@@ -550,6 +571,81 @@ export class TickPipeline {
     );
     pass.dispatchWorkgroups(PQ_CODES / 64);
     pass.end();
+    this.device.queue.submit([encoder.finish()]);
+  }
+
+  /**
+   * The blur the presence sliders read, built once at the open (`detail.wgsl`).
+   *
+   * Unconditional, rather than deferred until a reader touches one of the three. The frame is
+   * read once and the two Gaussians run over a 512px texture, which is a fraction of what
+   * `reduce` above already costs - against which the alternative is a lazily built resource
+   * whose absence a slider would have to notice mid-drag.
+   *
+   * Ping-ponged so the result lands in `detail`: shrink writes it, the horizontal pass reads
+   * it into the scratch, and the vertical pass reads the scratch back into it. Three passes
+   * is odd, which is what makes that work.
+   */
+  private buildDetail(): void {
+    const COMPUTE = GPUShaderStage.COMPUTE;
+    const written = {
+      binding: 3,
+      visibility: COMPUTE,
+      storageTexture: { access: 'write-only' as const, format: 'rgba16float' as const },
+    };
+    const shrinkLayout = this.device.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: COMPUTE, buffer: { type: 'uniform' } },
+        { binding: 1, visibility: COMPUTE, buffer: { type: 'read-only-storage' } },
+        written,
+        { binding: 12, visibility: COMPUTE, buffer: { type: 'read-only-storage' } },
+      ],
+    });
+    // Loaded rather than sampled, so the view is declared for what an `rgba16float` texture is
+    // to `textureLoad` and no sampler enters this pass at all.
+    const blurLayout = this.device.createBindGroupLayout({
+      entries: [{ binding: 2, visibility: COMPUTE, texture: {} }, written],
+    });
+
+    const module = this.device.createShaderModule({ code: DETAIL, label: 'detail' });
+    const pipelineFor = (entryPoint: string, layout: GPUBindGroupLayout) =>
+      this.device.createComputePipeline({
+        layout: this.device.createPipelineLayout({ bindGroupLayouts: [layout] }),
+        compute: { module, entryPoint },
+      });
+    const shrink = pipelineFor('shrink', shrinkLayout);
+    const blurX = pipelineFor('blur_x', blurLayout);
+    const blurY = pipelineFor('blur_y', blurLayout);
+
+    const working = detailSize(this.width, this.height);
+    const [x, y] = this.groups(working.width, working.height);
+    const encoder = this.device.createCommandEncoder();
+    const run = (
+      pipeline: GPUComputePipeline,
+      layout: GPUBindGroupLayout,
+      entries: GPUBindGroupEntry[],
+    ): void => {
+      const pass = encoder.beginComputePass();
+      pass.setPipeline(pipeline);
+      pass.setBindGroup(0, this.device.createBindGroup({ layout, entries }));
+      pass.dispatchWorkgroups(x, y);
+      pass.end();
+    };
+
+    run(shrink, shrinkLayout, [
+      { binding: 0, resource: { buffer: this.uniform } },
+      { binding: 1, resource: { buffer: this.frame } },
+      { binding: 3, resource: this.detail.createView() },
+      { binding: 12, resource: { buffer: this.nitsOfCode } },
+    ]);
+    run(blurX, blurLayout, [
+      { binding: 2, resource: this.detail.createView() },
+      { binding: 3, resource: this.detailScratch.createView() },
+    ]);
+    run(blurY, blurLayout, [
+      { binding: 2, resource: this.detailScratch.createView() },
+      { binding: 3, resource: this.detail.createView() },
+    ]);
     this.device.queue.submit([encoder.finish()]);
   }
 
@@ -765,7 +861,15 @@ export class TickPipeline {
 
   destroy(): void {
     this.timer?.destroy();
-    for (const texture of [this.pyramid, this.curves, this.chroma, this.chromaLuma, this.chromaTint]) {
+    for (const texture of [
+      this.pyramid,
+      this.curves,
+      this.chroma,
+      this.chromaLuma,
+      this.chromaTint,
+      this.detail,
+      this.detailScratch,
+    ]) {
       texture.destroy();
     }
     for (const buffer of [
@@ -865,6 +969,9 @@ export class TickPipeline {
     values[AT.blacks] = this.adjust.blacks;
     values[AT.vibrance] = this.adjust.vibrance;
     values[AT.sat_adjust] = this.adjust.saturation;
+    values[AT.texture_adjust] = this.adjust.texture;
+    values[AT.clarity] = this.adjust.clarity;
+    values[AT.dehaze] = this.adjust.dehaze;
 
     this.device.queue.writeBuffer(this.uniform, 0, values);
   }
@@ -872,7 +979,7 @@ export class TickPipeline {
   private exposure = 1;
 
   /**
-   * The tonal and colour sliders, on Camera Raw's -100..100 scales.
+   * The tonal, presence and colour sliders, on Camera Raw's -100..100 scales.
    *
    * Held here rather than passed per tick because they change on a slider release and a
    * tick happens per pointer move; `render` writes whatever is current. Zeroes mean the
@@ -886,6 +993,9 @@ export class TickPipeline {
     blacks: 0,
     vibrance: 0,
     saturation: 0,
+    texture: 0,
+    clarity: 0,
+    dehaze: 0,
   };
 
   /** Everything but the exposure, which is a gain and travels with the tick. */

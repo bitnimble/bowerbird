@@ -84,9 +84,14 @@ fn bin_floor(bin: u32) -> f32 {
 const QUANTILE: f32 = 0.9999;
 
 /// What the quantile is taken of: the post-colour peak channel, in units of reference.
-fn measured(nits: vec3f) -> f32 {
-  let coloured = matched_nits(nits) / tick.reference;
+fn measured(nits: vec3f, uv: vec2f) -> f32 {
+  let coloured = matched_nits(nits, uv) / tick.reference;
   return max(coloured.r, max(coloured.g, coloured.b));
+}
+
+/// A pixel's own place in the frame, normalised, which the presence sliders read the blur at.
+fn uv_of(x: u32, y: u32) -> vec2f {
+  return (vec2f(f32(x), f32(y)) + vec2f(0.5)) / vec2f(f32(tick.width), f32(tick.height));
 }
 
 fn count_in(v: f32) {
@@ -117,7 +122,7 @@ fn sampled(id: vec3u) -> vec2u {
 fn measure(@builtin(global_invocation_id) id: vec3u) {
   let at = sampled(id);
   if (at.y == 0xffffffffu) { return; }
-  count_in(measured(nits_at(at.x, at.y)));
+  count_in(measured(nits_at(at.x, at.y), uv_of(at.x, at.y)));
 }
 
 /// The brightest of those million, kept so the tick does not have to find them again.
@@ -130,6 +135,12 @@ fn measure(@builtin(global_invocation_id) id: vec3u) {
 /// same compressed stretch of the curve, hardly at all. Where it does not hold, it does
 /// not matter: ranks shuffle freely only when the values are close together, and then any
 /// of them is the same answer.
+///
+/// The presence sliders are the one gain that is *not* smooth in the pixel's own value - a
+/// clarity lift is worth more at an edge than a stop away from one - so a frame graded with
+/// them measures its peak off pixels chosen without them. What that costs is a knee placed
+/// against a slightly different set of highlights, which moves the roll-off rather than
+/// clipping anything: `display_nits` clamps whatever the curve leaves above the display.
 @compute @workgroup_size(64)
 fn collect(@builtin(global_invocation_id) id: vec3u) {
   let at = sampled(id);
@@ -137,7 +148,7 @@ fn collect(@builtin(global_invocation_id) id: vec3u) {
   // The codes rather than the nits, because that is what a candidate is kept as: `remeasure`
   // decodes them again at the tick's own exposure.
   let level = level_at(at.x, at.y);
-  if (measured(nits_of(level)) < peak_out[1]) { return; }
+  if (measured(nits_of(level), uv_of(at.x, at.y)) < peak_out[1]) { return; }
 
   // Counted past the cap rather than clamped, so the caller can tell that more qualified
   // than were kept and stop reading them. A blown sky puts far more than `CANDIDATES` in one
@@ -148,6 +159,12 @@ fn collect(@builtin(global_invocation_id) id: vec3u) {
   atomicStore(&candidates[base], u32(level.r));
   atomicStore(&candidates[base + 1u], u32(level.g));
   atomicStore(&candidates[base + 2u], u32(level.b));
+  // The fourth word was padding, keeping the stride a power of two. It carries the raster
+  // index now, because `remeasure` grades these pixels again and the presence sliders need
+  // to know where each one was - a candidate with no position would be graded against the
+  // blur at the frame's top-left corner, so a strong clarity would move the roll-off knee
+  // by however hazy that corner happened to be.
+  atomicStore(&candidates[base + 3u], at.y * tick.width + at.x);
 }
 
 /// The tick's whole measurement: the kept candidates, at this exposure.
@@ -155,11 +172,15 @@ fn collect(@builtin(global_invocation_id) id: vec3u) {
 fn remeasure(@builtin(global_invocation_id) id: vec3u) {
   if (id.x >= min(atomicLoad(&candidates[0]), CANDIDATES)) { return; }
   let base = 4u + id.x * 4u;
-  count_in(measured(nits_of(vec3f(
-    f32(atomicLoad(&candidates[base])),
-    f32(atomicLoad(&candidates[base + 1u])),
-    f32(atomicLoad(&candidates[base + 2u])),
-  ))));
+  let pixel = atomicLoad(&candidates[base + 3u]);
+  count_in(measured(
+    nits_of(vec3f(
+      f32(atomicLoad(&candidates[base])),
+      f32(atomicLoad(&candidates[base + 1u])),
+      f32(atomicLoad(&candidates[base + 2u])),
+    )),
+    uv_of(pixel % tick.width, pixel / tick.width),
+  ));
 }
 
 /// The quantile off the cumulative count, searched from the bright end.

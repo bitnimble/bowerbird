@@ -66,12 +66,12 @@ export interface Job {
    */
   exposure: number;
   /**
-   * The tonal and colour sliders, on Camera Raw's -100..100 scales, as `adjust.wgsl` reads
+   * Every slider but the exposure, on Camera Raw's -100..100 scales, as `adjust.wgsl` reads
    * them. All zero is the picture as the camera rendered it.
    *
-   * Separate from `exposure` because that one is a gain the tone anchor moves against,
-   * where these are terms in the grade itself. Texture, clarity and dehaze are not here:
-   * they need the pixel's neighbourhood and so are a pass rather than a term.
+   * Separate from `exposure` because that one is a gain the tone anchor moves against, where
+   * these are terms in the grade itself - including the presence three, whose neighbourhood
+   * arrives as a blur built once per frame rather than as a second grade.
    */
   adjust: JobAdjust;
   /**
@@ -100,6 +100,9 @@ export interface JobAdjust {
   blacks: number;
   vibrance: number;
   saturation: number;
+  texture: number;
+  clarity: number;
+  dehaze: number;
 }
 
 export interface JobOutcome {

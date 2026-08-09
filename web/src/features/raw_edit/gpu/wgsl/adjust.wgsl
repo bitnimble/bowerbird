@@ -17,9 +17,18 @@
 // channel turns a saturated red into a different hue as it brightens. One curve, evaluated
 // on luma, applied as a ratio, holds hue exactly.
 //
-// Not here: texture, clarity and dehaze. Those are local-contrast operators - they need the
-// pixel's neighbourhood, not just the pixel - and a per-pixel function is the wrong shape
-// for them. They want a blur pass of their own.
+// **The three presence sliders read a neighbourhood, and it arrives as a texture.** Texture,
+// clarity and dehaze cannot be functions of the pixel, so `detail.wgsl` blurs the frame once
+// and this samples it. What that costs here is a coordinate: every caller has to say *where*
+// in the frame the colour it is handing over came from, which is why `adjusted` takes a `uv`
+// and the two arms thread it down from their own callers.
+//
+// The blur is of the frame as it arrived - before the match, the exposure and every slider -
+// so the difference this reads is in the base's own stops rather than the graded pixel's.
+// That is deliberate and it is what makes the pass a one-off: an exposure is an additive
+// constant in stops and cancels out of a difference, where a blur of the graded frame would
+// have to be rebuilt on every pointer move.
+@group(0) @binding(13) var detail: texture_2d<f32>;
 
 /// Stops relative to diffuse white. 0 is white, -3 is three stops under it.
 ///
@@ -109,23 +118,106 @@ fn chroma_adjusted(colour: vec3f, luma: f32) -> vec3f {
   return out;
 }
 
+/// What a presence slider at 100 is worth, in stops of its own band added back.
+const DETAIL_STOPS: f32 = 0.6;
+
+/// How far local contrast may move one pixel, in stops.
+///
+/// A blurred neighbourhood is a poor predictor of the pixel exactly at a hard edge, where the
+/// difference between the two is the whole step rather than the texture in it. Unbounded, a
+/// specular highlight against a dark ground takes several stops of lift and solarises; the
+/// clamp turns that into a wide soft halo, which is what every unsharp mask trades for.
+const DETAIL_LIMIT: f32 = 2.0;
+
+/// Texture and clarity, as one gain in stops on the pixel's own band of detail.
+///
+/// **Two disjoint bands, not two radii of the same operator.** Texture takes what is finer
+/// than the fine blur and clarity what sits between the two blurs, so a photograph with both
+/// raised is not lifted twice through the frequencies they share - which is what a pair of
+/// plain unsharp masks against the same pixel would do.
+///
+/// `blur` is what `detail.wgsl` wrote: fine luma, coarse luma, coarse dark channel, all in
+/// stops relative to diffuse white.
+fn local_contrast(base_stops: f32, blur: vec3f) -> f32 {
+  let fine = clamp(base_stops - blur.r, -DETAIL_LIMIT, DETAIL_LIMIT);
+  let coarse = clamp(blur.r - blur.g, -DETAIL_LIMIT, DETAIL_LIMIT);
+  // Held off the ends of the range. Local contrast that pushes a highlight past white or a
+  // shadow under black is clipping rather than contrast, and a clipped edge is exactly what
+  // the eye reads as a halo. Broad enough to leave the midtones at full strength.
+  let room = zone(base_stops, -2.5, 3.5);
+  return room * DETAIL_STOPS * (tick.texture_adjust * fine + tick.clarity * coarse) / 100.0;
+}
+
+/// The airlight dehaze subtracts, in the scene-relative units this file works in.
+///
+/// Diffuse white, rather than a brightest pixel measured off the frame. Haze *is* the scene's
+/// black point lifted towards the sky's own brightness, so white is where it sits by
+/// definition - and a measured airlight would need a reduction over the frame that nothing
+/// else in this pipeline wants, for a number that would then move as the reader cropped.
+const AIRLIGHT: f32 = 1.0;
+
+/// The most of the airlight a slider at 100 may take out.
+///
+/// Short of all of it: transmission approaches zero as this approaches 1, and the division
+/// below amplifies whatever the sensor left in the shadows faster than it removes any haze.
+const DEHAZE_STRENGTH: f32 = 0.9;
+
+/// The atmospheric scattering model, inverted: `I = J*t + A*(1 - t)` solved for `J`.
+///
+/// `t` is the transmission, estimated from the dark channel in the way the prior prescribes -
+/// a patch whose darkest channel is bright is a patch full of airlight, so `t` falls as the
+/// dark channel rises. Per channel rather than on luma, and that is not an oversight: the
+/// airlight subtracted is neutral, so removing it moves a colour away from grey. Dehaze
+/// looking like a saturation control is the model's own behaviour rather than a term anyone
+/// added.
+///
+/// The negative half adds haze instead, through the same expression: a slider below zero
+/// makes `t` greater than 1, and the result is a blend towards the airlight.
+fn dehazed(colour: vec3f, dark_stops: f32) -> vec3f {
+  let omega = tick.dehaze / 100.0 * DEHAZE_STRENGTH;
+  let dark = clamp(exp2(dark_stops) / AIRLIGHT, 0.0, 1.0);
+  // Floored well off zero: the model divides by this, and the estimate is a blurred prior
+  // rather than a measurement, so the last stretch towards zero is noise gain.
+  let transmission = clamp(1.0 - omega * dark, 0.15, 3.0);
+  return max((colour - vec3f(AIRLIGHT * (1.0 - transmission))) / transmission, vec3f(0.0));
+}
+
 /// Every adjustment, on a scene-relative colour where 1.0 is diffuse white.
+///
+/// `base_luma` is the *frame's* own luma at this pixel, in the same units, before the match
+/// and before the exposure - which is the domain `detail.wgsl` blurred, and so the only one a
+/// difference against that blur means anything in. `uv` is where in the frame the colour came
+/// from, normalised.
 ///
 /// Returns the colour untouched where nothing is set, which is the common case: an unedited
 /// photo, and every photo in a library nobody has opened the editor on.
-fn adjusted(colour: vec3f) -> vec3f {
-  if (tick.contrast == 0.0 && tick.highlights == 0.0 && tick.shadows == 0.0
+fn adjusted(colour: vec3f, base_luma: f32, uv: vec2f) -> vec3f {
+  let local = tick.texture_adjust != 0.0 || tick.clarity != 0.0 || tick.dehaze != 0.0;
+  if (!local && tick.contrast == 0.0 && tick.highlights == 0.0 && tick.shadows == 0.0
       && tick.whites == 0.0 && tick.blacks == 0.0
       && tick.vibrance == 0.0 && tick.sat_adjust == 0.0) {
     return colour;
   }
 
-  let luma = dot(LUMA, colour);
-  // Black has no ratios to carry and no luma to divide by. Nothing here can lift it off
-  // zero either - every control above is a gain - so it is already the answer.
-  if (luma <= 0.0) { return colour; }
+  // Fetched once for all three, and only where one of them is set: the tonal sliders are far
+  // commoner and have no business paying for a texture read.
+  var blur = vec3f(0.0);
+  if (local) { blur = textureSampleLevel(detail, lerp, uv, 0.0).rgb; }
 
-  let toned_luma = tone_adjusted(luma);
-  let held = colour * (toned_luma / luma);
+  // Dehaze first, because it is a claim about what the scene was before the air got in the
+  // way; everything below is then grading the recovered scene rather than the veil.
+  var out = colour;
+  if (tick.dehaze != 0.0) { out = dehazed(out, blur.b); }
+
+  let luma = dot(LUMA, out);
+  // Black has no ratios to carry and no luma to divide by. Nothing left can lift it off zero
+  // either - every control below is a gain - so it is already the answer.
+  if (luma <= 0.0) { return out; }
+
+  var toned_luma = tone_adjusted(luma);
+  if (tick.texture_adjust != 0.0 || tick.clarity != 0.0) {
+    toned_luma = toned_luma * exp2(local_contrast(stops_below_white(base_luma), blur));
+  }
+  let held = out * (toned_luma / luma);
   return chroma_adjusted(held, toned_luma);
 }

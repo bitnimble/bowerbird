@@ -225,6 +225,29 @@ test('a slider move redraws the canvas', async ({ page }) => {
 });
 
 /**
+ * And a presence slider, which is the one group the parity fixtures are structurally blind to.
+ *
+ * Those pin the grade at every slider zero, and `adjusted` returns early there without ever
+ * sampling `detail.wgsl`'s blur - so a texture that was never allocated, never dispatched into,
+ * or bound at the wrong entry would leave every fixture green and every parity byte identical.
+ * The band arithmetic is measured in `gpu_fixture.rs` against a constructed frame; what only
+ * the browser can say is whether the three passes ran here at all.
+ */
+test('a presence slider redraws the canvas, which is what says the blur was built', async ({ page }) => {
+  await open(page);
+
+  const canvas = page.locator('canvas.raw-edit__stage');
+  const before = await canvas.screenshot();
+
+  const thumb = page.locator('[data-testid="raw-edit-clarity"] input[type="range"]');
+  await thumb.focus();
+  await page.keyboard.press('End');
+
+  await expect(page.locator('[data-testid="raw-edit-clarity"]')).toContainText('Clarity +100');
+  await expect.poll(async () => (await canvas.screenshot()).equals(before), { timeout: 30_000 }).toBe(false);
+});
+
+/**
  * An edit has to survive the page, which is the whole point of storing one.
  *
  * End to end rather than in a unit test: the value crosses the presenter, the client, four

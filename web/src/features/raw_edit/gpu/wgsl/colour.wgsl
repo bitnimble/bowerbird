@@ -205,6 +205,15 @@ fn apply_matrix(t: vec3f) -> vec3f {
   );
 }
 
+/// The frame's own luma at a pixel, scene-relative, before the match and before the exposure.
+///
+/// What `detail.wgsl` blurred, and so the only value a difference against that blur is
+/// meaningful in. Both arms hand it to `adjusted` beside the graded colour, because the
+/// presence sliders act on the base's detail while everything else acts on the graded pixel.
+fn base_luma(nits: vec3f) -> f32 {
+  return dot(LUMA, nits) / tick.reference;
+}
+
 /// The matched colour in nits, before any roll-off. Shared with the peak pass so the two
 /// cannot measure one thing and grade another.
 ///
@@ -213,8 +222,12 @@ fn apply_matrix(t: vec3f) -> vec3f {
 /// against. Inside this function rather than at its callers precisely because the peak pass
 /// calls it too: a highlight lift has to move the knee it will be rolled against, or the
 /// roll-off would clip exactly what the slider just raised.
-fn matched_nits(nits: vec3f) -> vec3f {
-  return adjusted(finish_chroma(apply_matrix(toned(nits)))) * tick.reference;
+///
+/// `uv` is where in the frame `nits` was read, which the presence sliders need and nothing
+/// else does. Threaded rather than derived, because the three callers know it in three
+/// different ways - a raster index, a canvas position, a kept candidate.
+fn matched_nits(nits: vec3f, uv: vec2f) -> vec3f {
+  return adjusted(finish_chroma(apply_matrix(toned(nits))), base_luma(nits), uv) * tick.reference;
 }
 
 /// The neutral arm: one shared curve, so channel ratios survive whatever the input.
@@ -224,7 +237,7 @@ fn matched_nits(nits: vec3f) -> vec3f {
 /// done, and the exposure is what is left. It cancelled out of `source_peak` there and does
 /// here too: the ratio of the frame's peak to its own white is what the roll-off is against,
 /// and a gain moves both.
-fn neutral_nits(nits: vec3f) -> vec3f {
+fn neutral_nits(nits: vec3f, uv: vec2f) -> vec3f {
   let source_peak = (tick.source_level / tick.white) * tick.reference;
   // Adjusted in the same scene-relative space the matched arm uses, so one set of sliders
   // means one thing whether or not the fit landed.
@@ -233,6 +246,6 @@ fn neutral_nits(nits: vec3f) -> vec3f {
   // `source_level` rather than being measured, so a highlight lift can push past it. What
   // catches that is `display_nits`' clamp - the top of the range rather than a curve into
   // it. Worth knowing before reaching for a big lift on a frame whose fit declined.
-  let scene = adjusted(nits * tick.exposure / tick.reference) * tick.reference;
+  let scene = adjusted(nits * tick.exposure / tick.reference, base_luma(nits), uv) * tick.reference;
   return rolled(scene, rolloff(source_peak, tick.peak));
 }

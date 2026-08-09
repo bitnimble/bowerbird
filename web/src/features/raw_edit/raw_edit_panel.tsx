@@ -46,13 +46,9 @@ const GROUPS: ReadonlyArray<{
 ];
 
 // What reaches the shader, in the editor *and* in a rendition, which is the same WGSL
-// either way.
-//
-// Texture, clarity and dehaze are the three that do not. They are local-contrast
-// operators - they need the pixel's neighbourhood rather than the pixel - so they want a
-// blur pass rather than a term in `adjust.wgsl`, which is a different shape of change.
-// Stored and reloaded meanwhile, and labelled, because a reader dragging one and watching
-// nothing happen deserves to be told rather than left to work it out.
+// either way. Everything in the two groups above does, so nothing here is labelled - the set
+// stays because white balance still does not, and the next slider to be added will not
+// either until it is wired up.
 const RENDERED = new Set<string>([
   'exposure',
   'contrast',
@@ -60,6 +56,9 @@ const RENDERED = new Set<string>([
   'shadows',
   'whites',
   'blacks',
+  'texture',
+  'clarity',
+  'dehaze',
   'vibrance',
   'saturation',
 ]);
