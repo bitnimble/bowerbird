@@ -110,6 +110,13 @@ export class PhotosService {
       // opening at it would show the reader the picture they just changed, unchanged,
       // with nothing saying why - and `toStages` renders an edited photo whatever the
       // library says, so there is a rendition to open at.
+      //
+      // **This is the fallback, not the answer.** `photos_store.showing` prefers the
+      // reader's own setting wherever that setting names something always built, and
+      // `embedded` always is - so somebody who has explicitly chosen the camera's JPEG
+      // keeps getting it, edited photo or not. That is their choice and it stands; what
+      // this fixes is the reader who never chose, who would otherwise have had the
+      // library's default silently hide every edit they made.
       default_rendition:
         library?.rendition_source === 'embedded' && !photo.is_edited ? 'embedded' : 'full',
       renditions: library == null ? null : this.renditionsOf(library, photo.id, photo.file_path),
