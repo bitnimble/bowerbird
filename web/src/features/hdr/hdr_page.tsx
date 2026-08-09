@@ -117,17 +117,17 @@ const SCENES: Scene[] = [
   {
     slug: 'rapids',
     title: 'Whitewater under an overcast sky',
-    body: "The foam and the brightest part of the cloud come out as the same white in 8 bits because that's the only white there is. Switch it over and the water goes back to being lit.",
+    body: "The foam and the brightest part of the cloud come out as the same white in 8 bits, because that's the only white there is. Switch it over and the water goes back to being lit.",
   },
   {
     slug: 'sunset',
     title: 'A sunset over railway tracks',
-    body: 'The band of sky over the horizon is brighter than anything else here. 8 bits has to fold it into the top of its range. Switch it over and it just keeps getting brighter.',
+    body: 'The band of sky over the horizon is brighter than anything else here, so 8 bits has to fold it into the top of its range. Switch it over and it just keeps going.',
   },
   {
     slug: 'arches',
     title: 'Lit arches at night',
-    body: "Here's that strip again as a photograph. Where the arches are brightest 8 bits gives up on the colour completely. 51% of those pixels come out white instead of pink because red hit the ceiling first and the other 2 channels climbed up to meet it. In HDR they stay pink the whole way through.",
+    body: "Here's that strip again, as a photograph. Where the arches are brightest, 8 bits gives up on the colour completely: 51% of those pixels come out white instead of pink, because red hit the ceiling first and the other 2 climbed up to meet it. In HDR they stay pink the whole way through.",
   },
 ];
 
@@ -216,8 +216,8 @@ export function HdrPage(): JSX.Element {
 
       <Text variant="muted" as="p">
         The RAW photos your camera takes have more dynamic range than an 8-bit JPEG can show. That's why you can pull detail out of
-        the highlights and shadows of a RAW but not of a JPEG. It's the reason we shoot RAW at all. So what if you weren't limited
-        by JPEG and could just see all that detail RAW has been hiding?
+        the highlights and shadows of a RAW but not a JPEG, and it's the reason we shoot RAW at all. So what if you weren't limited
+        by JPEG, and could just see all that detail RAW has been hiding?
       </Text>
       <Text variant="muted" as="p">
         Each photo below starts out the way 8 bits holds it. Click one to see what was really there.
@@ -226,36 +226,33 @@ export function HdrPage(): JSX.Element {
       {!high && (
         <div className="notice">
           <Text as="p">
-            Your display says it's standard dynamic range. Both versions will look closer than they really are. Firefox says this
-            even on an HDR screen.
+            Your display is reporting standard dynamic range, so both versions will look closer than they really are. Firefox
+            reports this even on an HDR screen.
           </Text>
         </div>
       )}
 
       <Heading>How much of a scene fits</Heading>
       <Text variant="muted" as="p">
-        Stops of light either side of white. That's the white of a shirt, a sheet of paper, a sunlit cloud. Anything to the right of
-        that line was a light source rather than something lit by one. A JPEG holds none of it.
+        Stops of light either side of white: the white of a shirt, a sheet of paper, a sunlit cloud. Anything to the right of that
+        line was a light source rather than something lit by one, and a JPEG holds none of it.
       </Text>
       <RangeChart />
       <Text variant="mono" as="p" className="prose__note">
-        Both file bars are what real hardware can show you rather than what the format could encode. A typical SDR monitor does
-        about 1000:1 so a JPEG gets 10 stops. A good HDR display does 1000 nits over a black near 0.05 so it gets 14. An OLED in a
-        dark room stretches that towards 18. Notice the two aren't far apart. What changes is where they sit. The other 2 bars are
-        rough. A full-frame sensor measures about 14 stops at base ISO and your eyes manage about 20 across a scene as they move
-        over it.
+        Rough figures, and the file bars are what a screen can really show rather than what the format could encode. Notice they
+        aren't far apart. What changes is where they sit.
       </Text>
 
       <Heading>Where the extra light goes</Heading>
       <Text variant="muted" as="p">
-        An 8-bit file has only one way to say something is brighter. It moves it towards white. So a colour on its way to white
-        gives up its colour as it goes. The channel that's already full can't rise any further and the other 2 climb up to meet it.
-        HDR puts the light behind the colour instead.
+        An 8-bit file has only one way to say that something is brighter, which is to move it towards white. So a colour gives up
+        its colour on the way there: the channel that's already full can't rise any further, so the other 2 climb up to meet it. HDR
+        can put the light behind the colour and leave the colour alone.
       </Text>
       <Text variant="muted" as="p">
-        Both halves below hold the same 5 colours and the same climb to the right. The left one has a ceiling at white. The right
-        one doesn't. The left goes pale and stops. The right keeps its hue and saturation exactly while the light behind it goes up
-        5 times. Watch the grey row at the bottom. It has no colour to spend so it just runs out.
+        Both halves below hold the same 5 colours and the same climb to the right, but the left one has a ceiling at white and the
+        right one doesn't. The left goes pale and stops, while the right keeps its hue and saturation exactly as the light behind it
+        goes up 5 times. Watch the grey row at the bottom: it has no colour to spend, so it just runs out.
       </Text>
       <figure className="swatches">
         <img
@@ -282,9 +279,9 @@ export function HdrPage(): JSX.Element {
 
       <Heading>About these pictures</Heading>
       <Text variant="muted" as="p">
-        Each pair is one RAW file developed once and then saved twice. The 8-bit version is the same picture with its ceiling
-        brought down to white. Nothing below white differs between them so everything you see change is something the smaller file
-        had nowhere to put.
+        Each pair is one RAW file developed once and saved twice, where the 8-bit version is the same picture with its ceiling
+        brought down to white. Nothing below white differs, so everything you see change is something the smaller file had nowhere
+        to put.
       </Text>
     </div>
   );
