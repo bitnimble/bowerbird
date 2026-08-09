@@ -177,6 +177,15 @@ describe('ProcessingService.processUnprocessed', () => {
     await service.renderOne('/lib/a.arw', 'p1', library, 'full', false);
     expect(markRenditionsBuilt).toHaveBeenCalledTimes(1);
     expect(markTileBuilt).not.toHaveBeenCalled();
+
+    // A max export moves neither. It is discovered by stat'ing the file, so no column
+    // records it - and counted as the viewer's renditions it would stamp
+    // `rendition_source` 'render' on a library serving the camera's JPEG, and clear
+    // `needs_renditions` while a full rendition was still owed.
+    markRenditionsBuilt.mockClear();
+    await service.renderOne('/lib/a.arw', 'p1', library, 'max', false);
+    expect(markRenditionsBuilt).not.toHaveBeenCalled();
+    expect(markTileBuilt).not.toHaveBeenCalled();
   });
 
   it('refuses an HDR grid tile rather than quietly building an SDR one', async () => {

@@ -896,7 +896,13 @@ export class PhotosRepository {
         `UPDATE photos SET file_hash = ?, width = ?, height = ?, orientation = ?, date_taken = ?, date_taken_offset = ?,
           date_updated = ?, file_size = ?, latitude = ?, longitude = ?, iso = ?, shutter_speed = ?,
           aperture = ?, focal_length = ?, camera_make = ?, camera_model = ?, lens_model = ?,
-          needs_tile = 1, needs_renditions = 1, is_missing = 0 WHERE id = ?`,
+          -- rendition_source cleared with the flag that re-queues them, for the same reason
+          -- queueRenditionRebuildForLibrary clears it: the column says what the *last* build
+          -- used, and toStages reads it to decide whether a viewer rendition is owed at all.
+          -- Left standing, a photo imported under an 'embedded' library and edited after the
+          -- library moved to 'render' keeps resolving 'embedded', so no full rendition is
+          -- ever built and the viewer asks for a file nothing writes.
+          needs_tile = 1, needs_renditions = 1, rendition_source = NULL, is_missing = 0 WHERE id = ?`,
       )
       .run(
         fields.file_hash,

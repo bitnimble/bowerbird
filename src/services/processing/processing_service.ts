@@ -248,10 +248,18 @@ export class ProcessingService {
       // splits a photo into a tile job and a renditions job and this does not - and
       // asked as "are they all tiles", a grid-and-full job would read as renditions
       // alone and leave `tile_built_at` unset on a tile already on disk.
+      //
+      // `max` moves nothing. It is an export rather than a rendition the viewer is
+      // served: `renditionsOf` finds it by stat'ing the file, no column records it, and
+      // nothing queues it. Counted as the renditions stage it wrote `rendition_source`
+      // and cleared `needs_renditions` - so a max export off an 'embedded' library
+      // stamped the photo 'render' while the viewer was still being served the camera's
+      // JPEG, and told the next sync the viewer's side was finished when a full
+      // rendition might still be queued for it.
       {
         const stages: ProcessingStage[] = [];
         if (job.targets.some((t) => t.rendition === 'grid')) stages.push('tile');
-        if (job.targets.some((t) => t.rendition !== 'grid')) stages.push('renditions');
+        if (job.targets.some((t) => t.rendition === 'full')) stages.push('renditions');
         const version = new Date().toISOString();
         for (const stage of stages) {
           if (stage === 'tile') this.photos.markTileBuilt(job.photoId, version);
