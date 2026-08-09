@@ -99,28 +99,28 @@ const SCENES: Scene[] = [
   {
     slug: 'beach',
     title: 'The sun in the frame',
-    body: 'This is the obvious case. The sun, the cloud around it and every glint off the water are all brighter than the chalk cliff, and the JPEG has only one value to give all of them. Switch it over and the sea goes back to sparkling.',
+    body: 'The obvious case. Sun, cloud and every glint off the water are all brighter than the chalk, and the JPEG has one value for the lot of them.',
     by: 'Popanz',
     topic: 44432,
   },
   {
     slug: 'snow',
-    title: 'Two very different lights, one white',
-    body: 'The sun setting over snow. In eight bits the disc is the same white as the brightest part of the cloud beside it, because that is the only white there is. Switch over and it goes back to being about five times brighter than everything around it, which is roughly what you would have seen standing there.',
+    title: 'Two lights, one white',
+    body: 'In eight bits the sun is the same white as the cloud beside it, because that is the only white there is. Switch, and it goes back to being five times brighter than everything around it.',
     by: 'Sean_Liu',
     topic: 55869,
   },
   {
     slug: 'sunset',
     title: 'Where the colour goes',
-    body: 'This is the case that catches people out, and it is the strip above happening to a photograph. The sky nearest the sun was the most saturated thing in the scene and it is the palest thing in the eight-bit file, because the only way that file had to say "brighter" was to move it towards white. Switch over and the colour comes back, in the same place, at the same brightness.',
+    body: 'The strip above, happening to a photograph. The sky nearest the sun was the most saturated thing in the scene and it is the palest thing in the eight-bit file.',
     by: 'fales',
     topic: 39131,
   },
   {
     slug: 'sign',
-    title: 'Something that was actually a light',
-    body: 'These tubes are about twenty-five times brighter than a sheet of white paper would be in the same street. Eight bits has one white for both of them, so the sign ends up looking painted on. Nothing about the shape of it changes when you switch; what changes is that it starts behaving like a light source, which is the whole of what the extra room buys here.',
+    title: 'Something that was a light',
+    body: 'These tubes are twenty-five times brighter than paper would be in the same street, and eight bits has one white for both. The sign ends up looking painted on. Switch, and it starts behaving like a light.',
     by: 'sushey',
     topic: 33920,
   },
@@ -216,47 +216,41 @@ export function HdrPage(): JSX.Element {
       <Heading level={1}>What HDR is for</Heading>
 
       <Text variant="muted" as="p">
-        Your camera keeps far more of a scene than a JPEG can hold, and nearly all of what gets thrown away is at the bright end,
-        where a picture stops being a lit surface and starts being a light. Below are some photographs where that costs something.
-        Each one starts as an eight-bit file holds it, and clicking it shows you what was there.
+        Your camera keeps more of a scene than a JPEG can hold, and nearly all of what it throws away is at the bright end, where a
+        picture stops being a lit surface and starts being a light. Each photograph below starts as eight bits holds it. Click one to
+        see what was there.
       </Text>
 
       {!high && (
         <div className="notice">
           <Text as="p">
-            Your display is reporting standard dynamic range, so the two versions of each photograph will look much closer than they
-            really are. You will still see the differences in colour, but not the ones in brightness. Firefox reports this even when
-            the screen is an HDR one.
+            Your display is reporting standard dynamic range, so the two versions will look closer than they are. Firefox reports
+            this even on an HDR screen.
           </Text>
         </div>
       )}
 
       <Heading>How much of a scene fits</Heading>
       <Text variant="muted" as="p">
-        The scale below is in stops, measured either side of white: the white of a shirt, a sheet of paper, or a sunlit cloud.
-        Anything to the right of that line was a light source rather than something lit by one, and a JPEG holds none of it.
+        Stops of light either side of white - a shirt, a sheet of paper, a sunlit cloud. Anything right of that line was a light
+        source rather than something lit by one, and a JPEG holds none of it.
       </Text>
       <RangeChart />
       <Text variant="mono" as="p" className="prose__note">
-        These are rough figures, because everyone draws the line somewhere slightly different. The figure for your eyes assumes you
-        are glancing around a single scene; give them a few minutes to adjust in the dark and the range gets much wider. The camera
-        is a modern full-frame body at its base ISO, and the HDR file assumes you are looking at a 1000-nit screen.
+        Rough figures; everyone draws the line somewhere different. Your eyes are taken glancing around one scene, the camera is a
+        full-frame body at base ISO, and the HDR file assumes a 1000-nit screen.
       </Text>
 
       <Heading>Where the extra light goes</Heading>
       <Text variant="muted" as="p">
-        This is the part that trips people up. In an eight-bit file the only way to say that something is brighter is to move it
-        closer to white, and a colour on its way to white gives up its colour as it goes: the channel that was already full cannot
-        rise any further, so the other two catch up with it instead. HDR can put the light behind the colour and leave the colour
-        alone.
+        The only way an eight-bit file can say something is brighter is to move it towards white, and a colour on its way to white
+        gives up its colour: the channel that was already full cannot rise, so the other two catch up with it. HDR puts the light
+        behind the colour instead.
       </Text>
       <Text variant="muted" as="p">
-        Below are five colours, each starting as bright as eight bits can render it and climbing by the same amount to the right.
-        The two halves are the same five climbs: on the left with a ceiling at white, on the right without one. The left half goes
-        pale and then stops. The right half keeps its colour - measured off the file, every patch holds the hue and the saturation
-        of the one before it, 24 degrees and 0.97 across the whole of the orange - while the light behind it goes up five times. The
-        bottom row is the giveaway: a plain grey has no colour to spend, so it just runs out, and four of its five left-hand patches
-        are the same white.
+        Five colours, climbing by the same amount to the right. Same climb both sides: with a ceiling at white on the left, without
+        one on the right. The left goes pale and stops. The right holds its hue and saturation exactly while the light goes up five
+        times. The grey row has no colour to spend, so it just runs out.
       </Text>
       <figure className="swatches">
         <img
@@ -284,9 +278,9 @@ export function HdrPage(): JSX.Element {
 
       <Heading>About these pictures</Heading>
       <Text variant="muted" as="p">
-        Each pair is a single raw file developed once and then saved twice. The eight-bit version is the same picture with its
-        ceiling brought down to white, so nothing below white differs between the two and everything you can see changing is
-        something the smaller file had nowhere to put.
+        Each pair is one raw file developed once and saved twice, the eight-bit version being the same picture with its ceiling
+        brought down to white. Nothing below white differs, so everything you see change is something the smaller file had nowhere
+        to put.
       </Text>
     </div>
   );

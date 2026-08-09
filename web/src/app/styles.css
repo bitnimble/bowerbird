@@ -2778,11 +2778,12 @@ p.ui-text--mono {
   margin: 12px 0 0;
 }
 
+/* No radius here: the corners are drawn into the frame, so both halves get all four of
+   theirs rather than the pair getting the outer four. */
 .swatches img {
   display: block;
   width: 100%;
   height: auto;
-  border-radius: var(--radius);
 }
 
 /* One label under each half, which is why they are spread rather than centred: the two

@@ -185,6 +185,16 @@ const SWATCH_CELL = 96;
 /** Between the two halves, in cells. Black, so neither half bleeds into the other. */
 const SWATCH_GAP = 0.25;
 
+/**
+ * Corner rounding, in samples, drawn into the frame rather than left to CSS.
+ *
+ * A radius on the `<img>` rounds the outside of the pair and leaves the two inner
+ * corners square, which is what a single image gets you. The alternative - masking the
+ * two halves in CSS - is out: a mask forces the subtree to rasterise into an SDR
+ * intermediate and the PQ tagging goes with it (§10.7).
+ */
+const SWATCH_RADIUS = 6;
+
 const SWATCH_WIDTH = Math.round((SWATCH_STEPS.length * 2 + SWATCH_GAP) * SWATCH_CELL);
 const SWATCH_HEIGHT = SWATCHES.length * SWATCH_CELL;
 
@@ -214,6 +224,13 @@ const SWATCH_HEIGHT = SWATCHES.length * SWATCH_CELL;
  * Planar GBR because that is the one float layout that reaches zimg without swscale in
  * the way, which clamps to [0,1] and would flatten every step above white into one.
  */
+/** Whether a sample is inside a rectangle whose corners are rounded off. */
+function inRounded(x: number, y: number, left: number, right: number, radius: number): boolean {
+  const dx = Math.max(left + radius - x, x - (right - radius), 0);
+  const dy = Math.max(radius - y, y - (SWATCH_HEIGHT - radius), 0);
+  return dx * dx + dy * dy <= radius * radius;
+}
+
 function swatchFrame(): Float32Array {
   const pixels = SWATCH_WIDTH * SWATCH_HEIGHT;
   const out = new Float32Array(pixels * 3);
@@ -223,11 +240,12 @@ function swatchFrame(): Float32Array {
   for (let y = 0; y < SWATCH_HEIGHT; y++) {
     const colour = SWATCHES[Math.floor(y / SWATCH_CELL)]!;
     for (let x = 0; x < SWATCH_WIDTH; x++) {
-      // The gap between them stays black.
+      // The gap between the halves, and the eight rounded corners, stay black.
       const eightBit = x < half;
-      const column = eightBit ? x : x - right;
       if (!eightBit && x < right) continue;
-      const step = SWATCH_STEPS[Math.floor(column / SWATCH_CELL)]!;
+      const [from, to] = eightBit ? [0, half] : [right, SWATCH_WIDTH];
+      if (!inRounded(x + 0.5, y + 0.5, from, to, SWATCH_RADIUS)) continue;
+      const step = SWATCH_STEPS[Math.floor((eightBit ? x : x - right) / SWATCH_CELL)]!;
       const at = y * SWATCH_WIDTH + x;
       for (const [channel, plane] of [[0, 2], [1, 0], [2, 1]] as const) {
         const level = colour[channel]! * step;
