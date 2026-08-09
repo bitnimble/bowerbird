@@ -36,6 +36,16 @@ export interface ProcessingTrigger {
   processUnprocessed(scope?: ProcessingScope, stopped?: () => boolean): void | Promise<void>;
 }
 
+/**
+ * Lightroom's develop settings for the photos a run just inserted.
+ *
+ * A seam rather than the service, defaulted to nothing, so a sync test is not also a
+ * test about XMP - the same shape `ProcessingTrigger` above uses.
+ */
+export interface SidecarImporter {
+  importFor(rootPath: string, photos: readonly { id: string; filePath: string }[]): number;
+}
+
 // Unwinds a stopped scan whose partial result cannot be applied, which is any
 // run that had rows to reconcile against (§9.10). Never leaves this module:
 // syncLibrary turns it back into an idle status, because that run applied nothing.
@@ -144,6 +154,7 @@ export class SyncService implements LibraryLifecycleListener {
     private readonly syncLocks: SyncLocksRepository,
     private readonly processing: ProcessingTrigger,
     private readonly extract: MetadataExtractor = extractMetadata,
+    private readonly sidecars: SidecarImporter = { importFor: () => 0 },
   ) {}
 
   // What this library contains, in the form the scan and the watcher both read
@@ -365,9 +376,30 @@ export class SyncService implements LibraryLifecycleListener {
       // rather than a list, and a 300k-frame import has no reason to hold every
       // id it created.
       const touched: string[] | null = scopePaths != null ? [] : null;
+      // The rows this run inserted, waiting for their sidecars. Held rather than
+      // imported on the spot because the insert is inside a transaction and reading a
+      // sidecar is file I/O: doing it there would hold the write lock across a parse
+      // per photo, which on a first scan is the whole library.
+      const awaitingSidecars: { id: string; filePath: string }[] = [];
+      let importedEdits = 0;
       const insertPhoto = (entry: AddedEntry, addedAt: string): void => {
         const id = this.insertAdded(libraryId, entry, shootFor(entry.filePath), addedAt);
         touched?.push(id);
+        awaitingSidecars.push({ id, filePath: entry.filePath });
+      };
+
+      // Lightroom's edits for what was just written down, and only ever for that:
+      // handing this rows an earlier sync inserted is what would let a re-sync
+      // overwrite edits the reader has since made here.
+      //
+      // After the commit and before the processing queue is counted, which is the
+      // window that matters - the edits are in the row by the time the first rendition
+      // of the photo is queued, so it renders as the photographer left it rather than
+      // rendering neutral and being rebuilt.
+      const importSidecars = (): void => {
+        if (awaitingSidecars.length === 0) return;
+        importedEdits += this.sidecars.importFor(library.root_path, awaitingSidecars);
+        awaitingSidecars.length = 0;
       };
       let added = 0;
       // A first scan writes its photos down in batches instead of holding the lot
@@ -392,6 +424,10 @@ export class SyncService implements LibraryLifecycleListener {
             insertPhoto({ filePath: file.filePath, fileHash: file.hash, metadata: file.metadata, channel: 'live' }, batchAt);
           }
         });
+        // Per batch, like the insert itself: a killed first scan keeps the edits it
+        // imported alongside the rows it wrote, rather than losing every one of them
+        // because the run never reached its end.
+        importSidecars();
         added += batch.length;
       };
 
@@ -697,6 +733,8 @@ export class SyncService implements LibraryLifecycleListener {
         }
       });
 
+      importSidecars();
+
       // Outside the transaction, so a listener cannot hold the write lock, and
       // only once it has committed: the watcher would otherwise re-arm against a
       // name this run may still roll back.
@@ -757,6 +795,7 @@ export class SyncService implements LibraryLifecycleListener {
         mirroredShoots: mirrored,
         modified,
         reappeared: diff.reappeared.length,
+        sidecarsImported: importedEdits,
         queuedForProcessing: queued,
         ms: Date.now() - startedAt,
       });

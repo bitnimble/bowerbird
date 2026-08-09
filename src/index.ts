@@ -21,6 +21,7 @@ import { StacksService } from './services/stacks/stacks_service';
 import { StacksRepository } from './services/stacks/stacks_repository';
 import { PhotoEditsService } from './services/photo_edits/photo_edits_service';
 import { PhotoEditsRepository } from './services/photo_edits/photo_edits_repository';
+import { SidecarImportService } from './services/photo_edits/sidecar_import';
 import { PhotoEditsApi } from './api/photo_edits/photo_edits_api';
 import { EventsApi } from './api/events/events_api';
 import { ImageApi } from './api/image/image_api';
@@ -86,6 +87,8 @@ const syncService = new SyncService(
   folderRulesRepo,
   syncLocksRepo,
   processingService,
+  undefined,
+  new SidecarImportService(photoEditsRepo),
 );
 const stacksService = new StacksService(stacksRepo, photosRepo, librariesRepo);
 // Prune sync's per-library in-memory state when a library is deleted (unbounded otherwise).

@@ -283,7 +283,7 @@ export class TickPipeline {
   private readonly width: number;
   private readonly height: number;
   /**
-   * Rows apart the peak samples, so it reads about `PEAK_SAMPLES` of them.
+   * Rows apart the peak samples, so it reads about `tone::QUANTILE_SAMPLES` of them.
    *
    * Read out of the shipped uniform rather than recomputed. The dispatch has to cover exactly
    * the rows the shader steps over, and the shader is told the stride by the same word - so
@@ -1090,7 +1090,7 @@ export class TickPipeline {
   private readonly drawGroup: GPUBindGroup;
   private readonly peakGroup: GPUBindGroup;
 
-  /** The rows the peak samples, as a dispatch over about `PEAK_SAMPLES` pixels. */
+  /** The rows the peak samples, off the stride the frame arrived with. */
   private get sampledGroups(): [number, number] {
     return [Math.ceil(this.width / 64), Math.ceil(this.height / this.rowStride)];
   }

@@ -24,22 +24,15 @@ function only(path: string, pattern: RegExp): string {
   return found?.[1] ?? '';
 }
 
-describe('the peak quantile', () => {
-  // `tone::QUANTILE_SAMPLES` is the population the CPU takes its rank over, and the shader
-  // takes the same rank over the same population. Disagree and the editor's peak is measured
-  // at a different quantile from the rendition's, which is a different picture at the top end
-  // of every frame bright enough to roll off.
-  test('is taken over the same population on both sides', () => {
-    const rust = only('native/rawshim/src/tone.rs', /const QUANTILE_SAMPLES: usize = ([^;]+);/);
-    const web = only(
-      'web/src/features/raw_edit/gpu/shaders.ts',
-      /export const PEAK_SAMPLES = ([^;]+);/,
-    );
-    // Compared as the expressions they are written as, so `1 << 20` against `1048576` reads
-    // as a difference worth looking at rather than a failure.
-    expect(web.trim()).toBe(rust.trim());
-  });
-});
+// The peak quantile's population used to be pinned here: `tone::QUANTILE_SAMPLES` against a
+// `PEAK_SAMPLES` the client kept, because the two taking their rank over different populations
+// is a different picture at the top of every frame bright enough to roll off.
+//
+// There is one copy now. The client stopped computing the peak's sampling at all - the stride
+// and the population arrive in `PreparedHeader.tick`, built by `gpu::uniform_words`, which is
+// also where the shader reads them - so `PEAK_SAMPLES` is gone and there is no second value to
+// hold this one to. Recorded rather than silently dropped, because "this pin disappeared" and
+// "this pin was deleted because the duplication it guarded went away" look identical in a diff.
 
 describe('the library event channel', () => {
   // The shell emits on a Tauri channel and the page listens on one, by name, in two files.
