@@ -365,12 +365,21 @@ export const XmpSettingsSchema = z.object({
   metadata: MetadataSchema,
 
   legacyTone: LegacyToneSchema.nullable(),
-  // The names, never the values, of every `crs:` property present that this
-  // parser does not consume: masks, retouching, HDR, the opaque upright
-  // payloads. Sorted and deduplicated. They let a caller disclose that an edit
-  // was imported incompletely, and aggregated across a library they say which
-  // tag is worth supporting next. The values would buy only a re-parse we can
-  // do anyway, since the sidecar stays on disk.
+  // The names, never the values, of every `crs:` property this parser does not
+  // consume: masks, retouching, HDR, the opaque upright payloads. Sorted and
+  // deduplicated. They let a caller disclose that an edit was imported
+  // incompletely, and aggregated across a library they say which tag is worth
+  // supporting next. The values would buy only a re-parse we can do anyway,
+  // since the sidecar stays on disk.
+  //
+  // **The properties, not every name in the file.** A structure arrives as one
+  // entry - `crs:FilterList`, `crs:MaskGroupBasedCorrections` - and the hundreds
+  // of names inside it do not, which is deliberate: the parent says the whole
+  // subtree was skipped, and listing its leaves would bury that under the mask
+  // dabs and blend parameters they mostly are. Measured over 470 real sidecars,
+  // reporting leaves would have turned 37 names into 243. A `crs:Look`'s own
+  // fields are the exception, prefixed rather than merged, because a look is
+  // read in part.
   unsupported: z.array(z.string()),
   issues: z.array(IssueSchema),
 });
