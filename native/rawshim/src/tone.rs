@@ -135,7 +135,7 @@ pub fn gain_in_y(gain: f64) -> f64 {
 /// halved one 379K, and the halved frame's peak came back 0.76% higher for no reason
 /// but the count. Roughly what the old stride read at 24MP, so the sampling density is
 /// unchanged on a typical frame.
-const QUANTILE_SAMPLES: usize = 1 << 20;
+pub const QUANTILE_SAMPLES: usize = 1 << 20;
 
 fn sample_at(k: usize, pixels: usize, counted: usize) -> usize {
     let at = (k as u64 * pixels as u64 / counted as u64) * 3;
@@ -243,16 +243,17 @@ pub struct SceneGrade<'a> {
     levels: Levels,
     reference: f64,
     exposure: f64,
-    /// The matched arm's colour and the scene peak measured through it, or None for the
-    /// neutral arm.
-    matched: Option<(&'a HdrColour, f64)>,
+    /// The camera's colour, or None for the neutral arm.
+    matched: Option<&'a HdrColour>,
 }
 
 impl<'a> SceneGrade<'a> {
-    /// `frame` is the photo's own coded base, at whatever size it arrived.
+    /// None where there is no exposure to read: `white` at zero, or a non-positive exposure.
+    ///
+    /// No frame and no GPU. The matched arm's peak is measured off the frame that is already
+    /// uploaded, by the shader, in `gpu::Uploaded::measure_peak` - so what is left here is
+    /// what the uniform carries.
     pub fn new(
-        gpu: &crate::gpu::Gpu,
-        frame: &[u16],
         colour: Option<&'a HdrColour>,
         levels: Levels,
         reference: f64,
@@ -261,34 +262,17 @@ impl<'a> SceneGrade<'a> {
         if levels.white == 0.0 || !(exposure > 0.0) {
             return None;
         }
-        let matched = colour.map(|colour| {
-            let sample = sampled(frame);
-            let peak = gpu.scene_peak(
-                &sample,
-                &crate::gpu::Grade {
-                    width: sample.len() / 3,
-                    height: 1,
-                    colour: Some(colour),
-                    white: levels.white,
-                    source_level: levels.peak,
-                    reference_nits: reference,
-                    // Unread: the roll-off is downstream of what this measures.
-                    peak_nits: reference,
-                    exposure,
-                    scene_peak: 0.0,
-                    output: crate::gpu::Output::Pq,
-                },
-            );
-            (colour, peak)
-        });
-        Some(SceneGrade { levels, reference, exposure, matched })
+        Some(SceneGrade { levels, reference, exposure, matched: colour })
     }
 
     /// This scene as the shader's uniform wants it.
     ///
     /// Assembled here so the fields stay private and so the one place that knows what a
-    /// scene *is* is the one place that describes it to the GPU. `colour` is borrowed from
-    /// the matched arm rather than stored twice.
+    /// scene *is* is the one place that describes it to the GPU.
+    ///
+    /// No scene peak: the matched arm's is measured on the GPU off the uploaded frame, and
+    /// the neutral arm's is `source_level / white` scaled by the reference, which the shader
+    /// does for itself from the two fields below.
     pub fn gpu_grade(
         &'a self,
         width: usize,
@@ -299,54 +283,15 @@ impl<'a> SceneGrade<'a> {
         crate::gpu::Grade {
             width,
             height,
-            colour: self.matched.map(|(colour, _)| colour),
+            colour: self.matched,
             white: self.levels.white,
             source_level: self.levels.peak,
             reference_nits: self.reference,
             peak_nits,
             exposure: self.exposure,
-            scene_peak: self.scene_peak_nits(),
             output,
         }
     }
-
-    /// The scene's own top end, in nits, which every rendition rolls off against.
-    ///
-    /// Measured for the matched arm and read off the levels for the neutral one, but a
-    /// property of the photograph either way - which is what makes two sizes of it compress
-    /// their highlights by the same amount.
-    pub fn scene_peak_nits(&self) -> f64 {
-        match self.matched {
-            Some((_, peak)) => peak,
-            None => (self.levels.peak / self.levels.white) * self.reference,
-        }
-    }
-}
-
-/// The pixels the matched arm's quantile is taken over, gathered dense.
-///
-/// The same positions [`levels`] reads and in the same order, so both anchors come off one
-/// sample of the frame. Dense because what measures them is a shader that reads a frame:
-/// `peak.wgsl` records that applying the stride on that side has consecutive lanes ten pixels
-/// apart, so every one of them takes its own cache line and the pass fetches the whole frame
-/// to read a tenth of it. Gathered here it is a `1 x n` strip of adjacent loads, and 6MB
-/// crosses to the GPU rather than 361.
-fn sampled(frame: &[u16]) -> Vec<u16> {
-    let pixels = frame.len() / 3;
-    // At least one, because what reads this builds a `wgpu` buffer of it and a zero-sized
-    // binding is a validation error - fatal, under `on_uncaptured_error`. The caller's own
-    // guard is on `white`, which a floored `Levels` can no longer report as zero, so an empty
-    // frame reaches here rather than being turned away first.
-    let counted = pixels.min(QUANTILE_SAMPLES).max(1);
-    if pixels == 0 {
-        return vec![0; 3];
-    }
-    let mut out = Vec::with_capacity(counted * 3);
-    for k in 0..counted {
-        let i = sample_at(k, pixels, counted);
-        out.extend_from_slice(&frame[i..i + 3]);
-    }
-    out
 }
 
 #[cfg(test)]

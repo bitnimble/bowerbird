@@ -337,8 +337,6 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
     // renders all but black, where refusing would fail a photograph that imported before.
     let anchored = tone::Levels { white: levels.white.max(1.0), peak: levels.peak.max(1.0) };
     let scene = tone::SceneGrade::new(
-        gpu,
-        &samples,
         matched.as_ref().map(|m| &m.colour),
         anchored,
         job.grade.reference_white_nits,
@@ -361,6 +359,9 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
     // differ by two words of a uniform; uploading 59MB at 3840 - 366MB at native - and
     // rebuilding the lattice, the curves and the output pair for each of them was most of
     // what a second target cost.
+    // Measured on the first frame that goes up, which is the largest, and read by every
+    // rendition after it. See `gpu::ScenePeak`.
+    let scene_peak = gpu.scene_peak();
     let mut uploaded: Option<crate::gpu::Uploaded<'_>> = None;
     for (index, (target, size)) in order.iter().enumerate() {
         let want = (size.width as usize, size.height as usize);
@@ -376,7 +377,7 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
         let grade = scene.gpu_grade(cut.width, cut.height, peak_nits(job, target), output);
         let up = match &uploaded {
             Some(up) => up,
-            None => uploaded.insert(gpu.upload(&cut.samples, &grade)),
+            None => uploaded.insert(gpu.upload(&cut.samples, &grade, &scene_peak)),
         };
         // **The cut is handed back once it is on the GPU**, which is 366MB at native
         // resolution released across the longest stage of the job. Only two things ever read

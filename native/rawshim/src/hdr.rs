@@ -281,9 +281,15 @@ pub fn graded(
 /// The transfer is the shader's, in the same dispatch as the grade, so asking for sRGB here
 /// is one argument rather than a second implementation of the primaries and the curve.
 ///
-/// `source` is a scene-linear decode and everything below the levels wants the coded base, so
-/// this codes it - once, into a buffer of its own, since the caller's decode is borrowed. The
-/// job does not come through here: it codes in place at `Base::build` and never holds both.
+/// `source` is a scene-linear decode. **The fit-to-size happens here, before the coding, so
+/// that this agrees with the job.** A rendition's decode arrives already fitted
+/// (`decode_frame` bounds it to the largest target), so the only box average production takes
+/// in light is that one; coding first and resizing after would put this path's average in PQ
+/// and quietly make it a different picture from the one the renditions produce - which
+/// matters, because what comes through here is what the pins and the examples measure.
+///
+/// The coded frame is a buffer of its own, the caller's decode being borrowed. The job does
+/// not come through here: it codes in place at `Base::build` and never holds both.
 pub fn graded_as(
     source: &Source<'_>,
     options: &EncodeOptions,
@@ -296,18 +302,19 @@ pub fn graded_as(
     // from came back *coded* rather than as it arrived, since the grade declines and the coding
     // does not - which is a silently different picture rather than an ungraded one.
     let levels = tone::Levels { white: levels.white.max(1.0), peak: levels.peak.max(1.0) };
-    let mut coded = source.samples.to_vec();
-    tone::encode_base(&mut coded, levels.white, options.grade.reference_white_nits);
-    let source = Source { samples: &coded, width: source.width, height: source.height };
+    let size = hdr_args::target_size(source.width as u32, source.height as u32, options);
+    let fit_to = (size.width as usize, size.height as usize);
+    let mut fitted = prepare_with(source, Some(fit_to), levels);
+    tone::encode_base(&mut fitted.samples, levels.white, options.grade.reference_white_nits);
+    let source =
+        Source { samples: &fitted.samples, width: fitted.width, height: fitted.height };
     let scene = tone::SceneGrade::new(
-        crate::gpu::device().expect("the grade needs an adapter, and so does the peak it rolls to"),
-        source.samples,
         matched.map(|m| &m.colour),
         levels,
         options.grade.reference_white_nits,
         1.0,
     );
-    let size = hdr_args::target_size(source.width as u32, source.height as u32, options);
+    let size = hdr_args::Size { width: fitted.width as u32, height: fitted.height as u32 };
     graded_with(&source, levels, scene.as_ref(), matched.map(|m| &m.lens), size, options.grade.peak_nits, output)
 }
 
@@ -662,15 +669,9 @@ pub fn encode_still(
     // level 0 still renders, all but black, where declining would fail the photograph.
     let anchored = tone::Levels { white: levels.white.max(1.0), peak: levels.peak.max(1.0) };
     let gpu = crate::gpu::device().ok_or("no GPU adapter, and the shaders are the grade")?;
-    let scene = tone::SceneGrade::new(
-        gpu,
-        &samples,
-        matched.map(|m| &m.colour),
-        anchored,
-        options.grade.reference_white_nits,
-        1.0,
-    )
-    .ok_or("the frame has no exposure to grade against")?;
+    let scene =
+        tone::SceneGrade::new(matched.map(|m| &m.colour), anchored, options.grade.reference_white_nits, 1.0)
+            .ok_or("the frame has no exposure to grade against")?;
     let size = hdr_args::target_size(width as u32, height as u32, options);
 
     let mut cut = {

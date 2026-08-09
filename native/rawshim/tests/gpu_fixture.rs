@@ -251,6 +251,49 @@ fn le(samples: &[u16]) -> Vec<u8> {
     out
 }
 
+/// Which pixels the peak reads, over sizes the pinned frames cannot reach.
+///
+/// **The one thing the graded fixtures are structurally unable to check.** Both hosts run
+/// `peak.wgsl` over the frame the shader grades, every nth row - but the stride is the *host's*
+/// to compute, and at this fixture's 6144 pixels both return 1 and read every pixel. So a host
+/// that changed how it sampled would agree on every committed byte here and still measure a
+/// different peak on any real photograph, which moves where the roll-off knee lands.
+///
+/// The table is this side's answer, and `gpu/tests/peak_sampling.test.ts` holds the client to
+/// the same file. Sizes chosen for the boundaries: under the sample count, either side of it,
+/// odd dimensions, and the two sensors this is actually run on.
+#[test]
+fn both_hosts_read_the_same_pixels_for_the_peak() {
+    let sizes: [(usize, usize); 8] = [
+        (1, 1),
+        (96, 64),
+        (1024, 1024),
+        (1449, 724),
+        (3840, 2560),
+        (3841, 2561),
+        (6000, 4000),
+        (9504, 6336),
+    ];
+    let rows: Vec<String> = sizes
+        .iter()
+        .map(|(width, height)| {
+            let (stride, rows) = rawshim::gpu::sampled_rows(*width, *height);
+            format!("{width}x{height} stride {stride} samples {}", *width as u32 * rows)
+        })
+        .collect();
+    let built = format!("{}\n", rows.join("\n"));
+    let path = fixture_dir().join("peak-sampling.txt");
+    if std::env::var("BOWERBIRD_WRITE_FIXTURES").is_ok_and(|v| v == "1") {
+        std::fs::create_dir_all(fixture_dir()).expect("the fixture directory");
+        std::fs::write(&path, &built).expect("writing the sampling table");
+        return;
+    }
+    let committed = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+        panic!("{}: {e}. BOWERBIRD_WRITE_FIXTURES=1 writes it", path.display())
+    });
+    assert_eq!(committed, built, "how this host samples the peak has moved");
+}
+
 #[test]
 fn the_committed_fixture_is_what_the_cpu_produces_now() {
     let dir = fixture_dir();
@@ -333,17 +376,9 @@ fn the_encode_pass_reproduces_the_cpu_frame() {
                 Prepared { samples: samples.clone(), width: WIDTH, height: HEIGHT, levels };
             filter_once(&mut prepared, &grade, strengths);
 
-            // The peak the grade runs through, off the frame as it stands here - which is
-            // what `tone::SceneGrade::new` measures, and so what `peak_out[0]` stands in for.
-            let scene = tone::SceneGrade::new(
-                gpu,
-                &prepared.samples,
-                colour.as_ref(),
-                levels,
-                grade.reference_white_nits,
-                exposure,
-            )
-            .expect("the fixture grades");
+            // No peak is supplied. `upload` measures it off this very frame, through the two
+            // passes the editor's open runs, so what the fixture pins is the whole of what the
+            // shaders do with the samples beside it.
             let got = gpu.encode(
                 &prepared.samples,
                 &rawshim::gpu::Grade {
@@ -355,7 +390,6 @@ fn the_encode_pass_reproduces_the_cpu_frame() {
                     reference_nits: grade.reference_white_nits,
                     peak_nits: grade.peak_nits,
                     exposure,
-                    scene_peak: scene.scene_peak_nits(),
                     // The fixture is the HDR still, which is what `run` above encodes.
                     output: rawshim::gpu::Output::Pq,
                 },
@@ -413,15 +447,6 @@ fn the_rolled_arm_reproduces_the_cpu_grade() {
                 Prepared { samples: samples.clone(), width: WIDTH, height: HEIGHT, levels };
             filter_once(&mut prepared, &grade, strengths);
 
-            let scene = tone::SceneGrade::new(
-                gpu,
-                &prepared.samples,
-                colour.as_ref(),
-                levels,
-                grade.reference_white_nits,
-                exposure,
-            )
-            .expect("the fixture grades");
             let got = gpu.encode(
                 &prepared.samples,
                 &rawshim::gpu::Grade {
@@ -433,7 +458,6 @@ fn the_rolled_arm_reproduces_the_cpu_grade() {
                     reference_nits: grade.reference_white_nits,
                     peak_nits: grade.peak_nits,
                     exposure,
-                    scene_peak: scene.scene_peak_nits(),
                     output: rawshim::gpu::Output::Rolled,
                 },
             );
@@ -489,15 +513,6 @@ fn the_encode_pass_reproduces_the_cpu_sdr_frame() {
             Prepared { samples: samples.clone(), width: WIDTH, height: HEIGHT, levels };
         filter_once(&mut prepared, &grade, strengths);
 
-        let scene = tone::SceneGrade::new(
-            gpu,
-            &prepared.samples,
-            colour.as_ref(),
-            levels,
-            grade.reference_white_nits,
-            1.0,
-        )
-        .expect("the fixture grades");
         let got = gpu.encode(
             &prepared.samples,
             &rawshim::gpu::Grade {
@@ -509,7 +524,6 @@ fn the_encode_pass_reproduces_the_cpu_sdr_frame() {
                 reference_nits: grade.reference_white_nits,
                 peak_nits: grade.peak_nits,
                 exposure: 1.0,
-                scene_peak: scene.scene_peak_nits(),
                 output: rawshim::gpu::Output::Srgb,
             },
         );

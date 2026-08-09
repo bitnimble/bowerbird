@@ -132,3 +132,24 @@ export const PEAK_SAMPLES = 1 << 20;
  * against a full sample across ±5 EV, and none at 512 either.
  */
 export const PEAK_CANDIDATES = 16384;
+
+/**
+ * Which pixels the peak reads: every nth row, for about `PEAK_SAMPLES` of them.
+ *
+ * **Named because the other host has to agree with it.** `gpu::sampled_rows` is the same rule
+ * in Rust, and the two measuring different pixels is a divergence nothing could see - the
+ * parity fixtures are 6144 pixels, where this returns a stride of 1 and both degenerate to
+ * reading every pixel. `e2e/fixtures/gpu/peak-sampling.txt` is the table they are held to,
+ * written by the Rust side and asserted by both.
+ *
+ * A fixed sample *count* rather than a fixed stride: `tone::levels` records why, which is that
+ * a peak is the maximum over whatever was sampled, so reading four times as many pixels finds
+ * a brighter one and the same photo at two sizes anchors differently.
+ */
+export function peakSampling(
+  width: number,
+  height: number,
+): { rowStride: number; peakSamples: number } {
+  const rowStride = Math.max(1, Math.round((width * height) / PEAK_SAMPLES));
+  return { rowStride, peakSamples: width * Math.ceil(height / rowStride) };
+}

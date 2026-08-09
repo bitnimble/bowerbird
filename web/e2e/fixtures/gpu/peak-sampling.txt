@@ -1,0 +1,8 @@
+1x1 stride 1 samples 1
+96x64 stride 1 samples 6144
+1024x1024 stride 1 samples 1048576
+1449x724 stride 1 samples 1049076
+3840x2560 stride 9 samples 1094400
+3841x2561 stride 9 samples 1094685
+6000x4000 stride 23 samples 1044000
+9504x6336 stride 57 samples 1064448

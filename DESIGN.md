@@ -1332,17 +1332,17 @@ Memory was the one with a stated reason - a 16-bit decode is twice the samples f
 
 | 24MP fixture | time | peak RSS |
 | --- | --- | --- |
-| one SDR at 3840 | 1767 → 2083ms | 600 → **504MB** |
-| one HDR at 3840 | 1692 → 2303ms | 529 → 532MB |
-| **SDR + HDR at 3840** | 3424 → **2236ms** | 634 → **550MB** |
-| HDR at native | 3463 → 4344ms | 714 → 734MB |
+| one SDR at 3840 | 1767 → 2048ms | 600 → **486MB** |
+| one HDR at 3840 | 1692 → 2144ms | 529 → 558MB |
+| **SDR + HDR at 3840** | 3424 → **2222ms** | 634 → **487MB** |
+| HDR at native | 3463 → 4100ms | 714 → **707MB** |
 
 | 61MP body | time | peak RSS |
 | --- | --- | --- |
-| **grid + full** | 3722 → 3860ms | 567 → **546MB** |
-| HDR at native | 10297 → 11690ms | 1375 → 1383MB |
+| **grid + full** | 3722 → 3940ms | 567 → **546MB** |
+| HDR at native | 10297 → 12108ms | 1375 → 1377MB |
 
-Memory is at or below the two-pipeline version on three rows and within 3% on the other three. Time splits by shape, and the shape is the point: a job with more than one output pays for its second one in a dispatch, where the two-pipeline version paid for it in a second decode, a second fit and a second filter - so the 24MP SDR+HDR row absorbs a whole second output while coming in *under* a single HDR one, against the 94% the old arrangement charged for the same pair. A job with one output is 13-36% slower than the pipeline that was specialised for it.
+Memory is at or below the two-pipeline version on five of six rows and 5% over on the other. Time splits by shape, and the shape is the point: a job with more than one output pays for its second one in a dispatch, where the two-pipeline version paid for it in a second decode, a second fit and a second filter - so the 24MP SDR+HDR row absorbs a whole second output while coming in *under* a single HDR one, against the 94% the old arrangement charged for the same pair. A job with one output is 16-27% slower than the pipeline that was specialised for it.
 
 **Where the remaining single-output cost is, and where it is not.** It was the perceptual round trips, and it was the larger half: every filter pass converted a buffer it was not in and converted it back, at two `powf` a sample on the way back, and a `powf` in the loop is also what stops it vectorising. Isolated by running the job with that conversion replaced by an identity, it measured 400ms of 2650 on the 24MP fixture and it scales with the sensor. §10.9 removes it: the base is *coded once*, into normalised PQ, and every stage below the decode is pointwise on what the buffer holds.
 
@@ -1364,7 +1364,11 @@ Read that as bounding *gross* change and nothing more. A mean ΔE76 is the one m
 
 **Everything that does not depend on a target is settled before the loop over them**, and the list is most of the job's cost. The decode is shared, bounded to the largest size any target wants. The levels the grade anchors to are `tone::levels` over that *unresized* decode. The camera match is fitted once, the coding and the denoise and defringe run once, and what the grade needs is settled once as a `tone::SceneGrade`: the fitted curves, and a scene peak taken through the whole colour transform over a million pixels, neither of which a target's size or display changes. That quantile runs on the GPU, through `peak.wgsl`'s `measure` and `quantile` - the same two passes the editor's open runs, and the last evaluation of the camera's colour that was not the shader's. What the CPU hands it is the sample and nothing else: `tone::sampled` gathers the million pixels dense, at the positions `tone::levels` reads, so 6MB crosses rather than the frame.
 
-The two hosts run those passes over *different samples*, and that is worth stating rather than leaving to be discovered. A rendition measures a proportional scatter of the base before the warp and the sharpen; the editor measures whole rows of the frame it hands the shader, after both. Same estimator, same shader, same rank - a different million pixels. The parity fixtures cannot see it: at 6144 pixels both degenerate to the maximum over every pixel. What could differ is a thin specular one sampling catches and the other steps over, which moves `scene_peak` and with it where the roll-off knee lands.
+**Over the same pixels on both hosts**, which they were not. A rendition used to gather a proportional scatter of the base *before* the warp and the sharpen, on the CPU, and upload it as a strip; the editor read whole rows of the frame it hands the shader, after both. Same estimator, same shader, same rank, a different million pixels - so a thin specular one sampling caught and the other stepped over moved `scene_peak`, and with it where the roll-off knee landed. Nothing could see it: at the parity fixture's 6144 pixels both degenerate to the maximum over every pixel.
+
+Converged onto the editor's, because the editor's is the one that cannot be changed - it has to measure what it draws. So `gpu::Uploaded::measure_peak` reads the frame that is already up, every nth row, and `encode` reads the answer out of a buffer instead of being handed a number. Measured, that is *cheaper* on a 24MP frame than the gather-and-upload it replaced and 3% dearer on a 61MP one at native resolution, where a strided read of 366MB costs more than a compact 6MB strip did.
+
+Once per photograph, not once per size (`gpu::ScenePeak`): a job uploads once per size group, so a grid-and-full job measured it twice - two frames, two peaks, two different knees, and 12% of the job spent doing it.
 
 **The frame goes up once per size, not once per rendition.** Two outputs of one size differ by two words of a uniform, so `gpu::Uploaded` holds the frame, the matrix, the lattice, the curves and the output pair, and a second target costs a bind group and a dispatch. Measured while the grade was moving onto the GPU and before the base was coded, that alone took the 24MP two-output job from 3084ms to 2510; the table above is the finished pipeline and its rows are not comparable with those two numbers.
 
@@ -2301,8 +2305,10 @@ The arrangement before this handed each pass an `image::Coding` that converted i
 Three consequences worth stating rather than discovering:
 
 - **The falloff is no longer a multiply.** It is still a multiplication of *light* - vignetting is an optical attenuation - so `PlanarWarp::map_u16` applies it with `tone::lift_in_pq`, which is that multiplication folded into PQ's own intermediate: `y' = g^m1 · y` cancels the `^m1`/`^(1/m1)` pair, leaving two `powf` where a round trip would take four. The `g^m1` depends only on the radius bucket, which is a `u8`, so it is tabulated per warp rather than per pixel. A gain of exactly 1 returns the sample untouched, because the fold is `pq(pq_inv(u))` there and that is a count out on some codes.
-- **The box averages are in the coding, not in light.** `Cut::downscale` and the editor's pyramid both average codes. A mean of linear levels is what a lower-resolution sensor would have integrated and a mean of PQ codes is not; it is taken anyway because the alternative is the two whole-frame sweeps this exists to remove, and because the downscale is a grid tile in 99 cases of 100. The draw's own taps *do* decode first, so a 1:1 view is exact. Measured against the committed pins, the largest shift is the 800px cut's blue mean, at 0.66%.
-- **The `u16` lands better than it did.** Linear spends its codes where the eye cannot see them: a frame whose diffuse white sits near level 6000 of 65535 has almost none left below it. Normalised PQ is near-uniform in what a reader can distinguish, and the pins show it - the graded black floor drops from 69 counts to 17.
+- **The box averages that remain are in the coding, not in light.** `Cut::downscale` and the editor's pyramid both average codes. A mean of linear levels is what a lower-resolution sensor would have integrated and a mean of PQ codes is not; it is taken there because the alternative is the two whole-frame sweeps this exists to remove, and because the downscale is a grid tile in 99 cases of 100. The draw's own taps *do* decode first, so a 1:1 view is exact.
+
+  **The fit-to-size is not one of them, and finding that out cost a wrong claim.** It happens inside the decode, in linear, before the coding - and `hdr::graded_as`, the entry the pins and the examples grade through, was coding first and resizing after. So the pin was measuring a PQ box average production never performs. Reordered to match, every row of `hdr_grade.pin.txt` returns to within 0.08% of what it read before any of this branch: the largest is the matched 3840 blue mean at 0.075%, and the neutral rows are identical to three decimal places. What that says is that the *coding* moves the picture by nothing measurable, and everything the pin had recorded as movement was the resample being done in the wrong domain.
+- **The `u16` lands better than it did** in principle - linear spends its codes where the eye cannot see them, and a frame whose diffuse white sits near level 6000 of 65535 has almost none left below it, where normalised PQ is near-uniform in what a reader can distinguish. The pins do *not* demonstrate it: the graded black floor appeared to drop from 69 counts to 17, which looked like the argument and was the PQ resample above. Reordered, it reads 69 again.
 
 PQ's range ends at 10000 nits, so a level past 49x the frame's own diffuse white saturates in the coding. That ceiling is not new: the `Coding` the filters borrowed clamped at exactly the same place, so any frame reaching it was already losing those levels in the denoise. It is BT.2408's own headroom above a 203-nit white.
 

@@ -1325,7 +1325,7 @@ mod hdr_grade {
             let source =
                 crate::hdr::Source { samples: &coded, width: decoded.width, height: decoded.height };
             let scene =
-                crate::tone::SceneGrade::new(gpu, source.samples, m.map(|m| &m.colour), levels, REFERENCE, 1.0)
+                crate::tone::SceneGrade::new(m.map(|m| &m.colour), levels, REFERENCE, 1.0)
                     .expect("a frame with an exposure to read");
             let sized = |edge: f64| {
                 crate::hdr_args::target_size(

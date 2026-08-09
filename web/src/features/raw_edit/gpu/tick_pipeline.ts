@@ -12,10 +12,10 @@ import {
   PEAK,
   PEAK_BINS,
   PEAK_CANDIDATES,
-  PEAK_SAMPLES,
   PQ_CODES,
   REDUCE,
   TICK_UNIFORM_FLOATS,
+  peakSampling,
   tickOffsets,
 } from './shaders';
 
@@ -268,8 +268,7 @@ export class TickPipeline {
     this.timer = PassTimer.supported(device) ? new PassTimer(device) : null;
     this.width = header.width;
     this.height = header.height;
-    const pixels = this.width * this.height;
-    this.rowStride = Math.max(1, Math.round(pixels / PEAK_SAMPLES));
+    this.rowStride = peakSampling(this.width, this.height).rowStride;
 
     const tooBig = frameTooBig(this.width, this.height, device.limits);
     if (tooBig != null) throw new Error(tooBig);
@@ -844,7 +843,7 @@ export class TickPipeline {
     values[AT.level_scale] = colour?.chroma?.levelScale ?? 1;
     values[AT.sdr_white] = SDR_WHITE_NITS;
     ints[AT.row_stride] = this.rowStride;
-    ints[AT.peak_samples] = this.width * Math.ceil(this.height / this.rowStride);
+    ints[AT.peak_samples] = peakSampling(this.width, this.height).peakSamples;
 
     const region = over.region ?? this.wholeFrame;
     const canvas = this.context.canvas;
