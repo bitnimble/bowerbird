@@ -39,6 +39,18 @@ export class PhotoEditsApi {
       return c.json(this.service.redo(this.id(c.req.param('id')), rev));
     });
 
+    // The editor has closed. Queues the rebuild none of the writes above do, because a
+    // slider release says nothing about whether the reader is finished and rebuilding
+    // on one spends seconds of GPU on a frame they are about to change again.
+    //
+    // No body and no revision: this is not a write, it asks for the picture the stored
+    // document already describes. 204 for the same reason - there is no new state to
+    // report, and the client is navigating away as it calls this.
+    app.post('/photos/:id/edits/done', (c) => {
+      this.service.finish(this.id(c.req.param('id')));
+      return c.body(null, 204);
+    });
+
     this.routes = app;
   }
 

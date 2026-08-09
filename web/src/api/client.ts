@@ -242,6 +242,10 @@ export const api = {
     request('POST', `/api/photos/${photoId}/edits/undo`, { rev }),
   redoEdits: (photoId: string, rev: number): Promise<EditState> =>
     request('POST', `/api/photos/${photoId}/edits/redo`, { rev }),
+  // The editor has closed: build the picture the reader ended up with. None of the
+  // writes above rebuild anything, because a slider release says nothing about whether
+  // they are finished - so this is the one moment worth spending a render on.
+  finishEdits: (photoId: string): Promise<void> => request('POST', `/api/photos/${photoId}/edits/done`),
 
   listShoots: (libraryId: string): Promise<Shoot[]> => request('GET', `/api/libraries/${libraryId}/shoots`),
   getShoot: (id: string): Promise<Shoot> => request('GET', `/api/shoots/${id}`),

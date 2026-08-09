@@ -1098,26 +1098,31 @@ export class PhotosRepository {
   // clears it so a library switched to `render` stops being told there is nothing to
   // build, and here the library's setting has not moved - only the photo has.
   //
-  // ponytail: no debounce, and the reason it is affordable is `ProcessingService`'s
-  // own coalescing rather than anything here. A burst of releases costs two renders,
-  // not one per release: the first starts a batch, the rest are absorbed into
-  // `queued` as a *set* by `widen` and return the running promise, and `drain` loops
-  // once more at the end to pick up whatever landed while it worked.
+  // Photos whose develop settings are newer than the files built from them, narrowed
+  // to `photoIds` where the caller has some in mind.
   //
-  // What that leaves is sustained editing - one render per render-duration, ~1.7s at
-  // 61MP, for frames the reader is about to change again. Bounded and wasteful rather
-  // than unbounded and wasteful. A per-photo idle timer re-armed on each write is the
-  // upgrade, and it needs a boot sweep so a timer lost to a restart does not strand
-  // the work.
-  queueRebuild(photoIds: string[]): number {
-    if (photoIds.length === 0) return 0;
-    const placeholders = photoIds.map(() => '?').join(', ');
+  // **The predicate is the mechanism, not a filter on one.** Asking "are the edits
+  // newer than the render" is true however the photo got that way - a save, an undo,
+  // a tab closed mid-edit, a process killed between the two - so the same query
+  // serves the editor saying it is done and the sweep at startup that catches
+  // everything which never got to say so. Nothing has to be remembered between
+  // requests for it to be correct.
+  //
+  // Self-clearing: a rebuild stamps `renditions_built_at` later than the
+  // `updated_at` that queued it, so a photo stops matching as soon as it is done.
+  queueEditedSince(photoIds?: readonly string[]): number {
+    const narrowed = photoIds == null ? '' : `AND p.id IN (${photoIds.map(() => '?').join(', ')})`;
+    if (photoIds != null && photoIds.length === 0) return 0;
     return this.db
       .query(
         `UPDATE photos SET needs_tile = 1, needs_renditions = 1, processing_error = NULL
-         WHERE id IN (${placeholders}) AND is_missing = 0 AND is_deleted = 0`,
+          WHERE id IN (
+            SELECT p.id FROM photos p JOIN photo_edits e ON e.photo_id = p.id
+             WHERE p.is_missing = 0 AND p.is_deleted = 0 ${narrowed}
+               AND (p.renditions_built_at IS NULL OR e.updated_at > p.renditions_built_at)
+          )`,
       )
-      .run(...photoIds).changes;
+      .run(...(photoIds ?? [])).changes;
   }
 
   // Whole library, same tile-only rule as `queueTileRebuild`. One statement rather

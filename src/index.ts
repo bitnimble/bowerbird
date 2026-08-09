@@ -235,6 +235,16 @@ function applySettings(settings: Settings): void {
 settingsRepo.onChange(applySettings);
 applySettings(settingsRepo.get());
 
+// Photos edited by a session that never got to say it had finished: a tab closed, a
+// navigation the client did not handle, a process killed between the save and the
+// render. The editor asks for its rebuild when it closes, and this is what makes that
+// an optimisation rather than the only chance - the queue is keyed on the edits being
+// newer than the render, which is true however the photo came to be that way.
+{
+  const stale = processingService.rebuildEdited();
+  if (stale > 0) log.info('queued edited photos whose renders were never rebuilt', { photos: stale });
+}
+
 applyErrorHandler(app);
 
 // Bun.serve idles a request out after 10s by default, which is shorter than the

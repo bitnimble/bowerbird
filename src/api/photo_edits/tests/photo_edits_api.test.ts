@@ -14,6 +14,7 @@ function buildApp(over: Partial<PhotoEditsService> = {}) {
     save: jest.fn(() => state),
     undo: jest.fn(() => state),
     redo: jest.fn(() => state),
+    finish: jest.fn(),
     ...over,
   } as unknown as PhotoEditsService;
   const app = new Hono();
@@ -90,6 +91,17 @@ describe('PhotoEditsApi', () => {
 
     expect(service.undo).toHaveBeenCalledWith('p1', 2);
     expect(service.redo).toHaveBeenCalledWith('p1', 2);
+  });
+
+  it('takes the editor closing as the moment to build, with no body and no revision', async () => {
+    const { app, service } = buildApp();
+
+    const response = await post(app, '/api/photos/p1/edits/done', {});
+
+    // 204: this is not a write and there is no new state to report - the client is
+    // navigating away as it calls it.
+    expect(response.status).toBe(204);
+    expect(service.finish).toHaveBeenCalledWith('p1');
   });
 
   it('reports a revision that has moved on as a conflict rather than a failure', async () => {

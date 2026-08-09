@@ -11,16 +11,16 @@ import type { PhotoEditsRepository } from './photo_edits_repository';
  * naming a photo that never did would create edits attached to nothing, and the
  * foreign key would only say so on the way in - as a 500 for what is a 404.
  *
- * **Every write requeues both derived stages.** The grid tile and the viewer's
- * renditions are separate artefacts of the same pixels, so an edit invalidates
- * both, and requeuing only the renditions leaves the gallery showing the frame as
- * it was. Undo and redo requeue for the same reason: stepping back changes the
- * picture as surely as stepping forward did.
+ * **Writing is not rendering.** A save happens on every slider release, and one of
+ * those says nothing about whether the reader is finished: rebuilding then spends
+ * seconds of GPU on a frame they are about to change again, throws it away, and does
+ * it once more on the next release. So nothing here renders. `finish` does, and the
+ * editor calls it when it closes - the one moment the reader has said they are done.
  *
- * Only when something actually moved. Every one of these answers with the state
- * whether or not it changed anything - a no-op save, an undo at the start of the
- * history - and requeuing on those would rebuild a frame that is already correct.
- * The revision is what says: it moves if and only if the document did.
+ * A tab closed, a crash, a navigation the client did not get to handle: none of those
+ * reach `finish`, which is why the rebuild is queued off a *state* rather than an
+ * event. "The edits are newer than the render" is true however the photo got that
+ * way, so the sweep at startup catches every one that never got to say so.
  */
 export class PhotoEditsService {
   constructor(
@@ -44,24 +44,30 @@ export class PhotoEditsService {
 
   save(photoId: string, doc: EditDoc, rev: number): EditState {
     this.require(photoId);
-    return this.rebuilt(photoId, rev, this.edits.save(photoId, doc, rev));
+    return this.edits.save(photoId, doc, rev);
   }
 
   undo(photoId: string, rev: number): EditState {
     this.require(photoId);
-    return this.rebuilt(photoId, rev, this.edits.undo(photoId, rev));
+    return this.edits.undo(photoId, rev);
   }
 
   redo(photoId: string, rev: number): EditState {
     this.require(photoId);
-    return this.rebuilt(photoId, rev, this.edits.redo(photoId, rev));
+    return this.edits.redo(photoId, rev);
   }
 
-  // The picture changed exactly when the revision did, so that is what this asks
-  // rather than diffing two documents a second time.
-  private rebuilt(photoId: string, was: number, state: EditState): EditState {
-    if (state.rev !== was) this.rebuild([photoId]);
-    return state;
+  /**
+   * The editor has closed: build what the reader ended up with.
+   *
+   * Idempotent and cheap when there is nothing to do. The queue is keyed on the edits
+   * being newer than the render, so a reader who opened the editor and changed
+   * nothing, or who closes it twice, queues nothing - and a photo already rebuilt
+   * since its last edit stops matching on its own.
+   */
+  finish(photoId: string): void {
+    this.require(photoId);
+    this.rebuild([photoId]);
   }
 
   private require(photoId: string): void {

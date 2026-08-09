@@ -31,40 +31,52 @@ beforeEach(() => {
 });
 
 describe('PhotoEditsService', () => {
-  it('requeues both derived stages when a save moves the picture', () => {
+  it('renders nothing while the reader is still editing', () => {
+    const saved = service.save(PHOTO, { ...neutralEdits(), exposure: 1.5 }, 0);
+    const back = service.undo(PHOTO, saved.rev);
+    service.redo(PHOTO, back.rev);
+
+    // A slider release says nothing about whether they are finished. Rebuilding on one
+    // spends seconds of GPU on a frame they are about to change again, and does it once
+    // more on the next release - all of it thrown away.
+    expect(queueRebuild).not.toHaveBeenCalled();
+  });
+
+  it('renders when the editor says it has closed', () => {
     service.save(PHOTO, { ...neutralEdits(), exposure: 1.5 }, 0);
 
-    // Both, not just the renditions: the grid tile is the same pixels, and requeuing
-    // one leaves the gallery showing the frame as it was.
+    service.finish(PHOTO);
+
+    // The one moment the reader has said they are done with the picture.
     expect(queueRebuild).toHaveBeenCalledWith([PHOTO]);
   });
 
-  it('requeues nothing when a save changes nothing', () => {
-    const saved = service.save(PHOTO, { ...neutralEdits(), exposure: 1.5 }, 0);
-    queueRebuild.mockClear();
+  it('queues exactly the photos whose edits are newer than their renders', () => {
+    const repo = new PhotoEditsRepository(db);
+    const photos = new PhotosRepository(db);
+    // A second photo, already rendered *after* its last edit, and a third with no edits.
+    for (const id of ['rendered', 'untouched']) {
+      db.query(
+        `INSERT INTO photos (id, library_id, file_path, width, height, date_added, needs_tile, needs_renditions)
+           VALUES (?, 'lib', ?, 100, 100, '2026-01-01T00:00:00.000Z', 0, 0)`,
+      ).run(id, `${id}.arw`);
+    }
+    repo.save('rendered', { ...neutralEdits(), exposure: 1 }, 0);
+    db.query(`UPDATE photos SET renditions_built_at = '2099-01-01T00:00:00.000Z' WHERE id = 'rendered'`).run();
 
-    service.save(PHOTO, saved.doc, saved.rev);
+    repo.save(PHOTO, { ...neutralEdits(), exposure: 1.5 }, 0);
+    db.query('UPDATE photos SET needs_tile = 0, needs_renditions = 0 WHERE id = ?').run(PHOTO);
 
-    // A retried request rebuilds a frame that is already correct, which at 61MP is
-    // seconds of GPU work for a picture nobody changed.
-    expect(queueRebuild).not.toHaveBeenCalled();
-  });
+    expect(photos.queueEditedSince()).toBe(1);
 
-  it('requeues on undo and redo, which change the picture as surely as a save', () => {
-    const saved = service.save(PHOTO, { ...neutralEdits(), exposure: 1.5 }, 0);
-    queueRebuild.mockClear();
-
-    const back = service.undo(PHOTO, saved.rev);
-    expect(queueRebuild).toHaveBeenCalledTimes(1);
-
-    service.redo(PHOTO, back.rev);
-    expect(queueRebuild).toHaveBeenCalledTimes(2);
-  });
-
-  it('requeues nothing for a step that had nowhere to go', () => {
-    service.undo(PHOTO, 0);
-
-    expect(queueRebuild).not.toHaveBeenCalled();
+    // The predicate is the mechanism rather than a filter on one: it is true however
+    // the photo got that way, which is what lets the sweep at startup catch an editor
+    // that never got to say it had closed. And it clears itself - `rendered` was built
+    // after its edit, so it does not match.
+    const queued = db
+      .query('SELECT id FROM photos WHERE needs_renditions = 1')
+      .all() as { id: string }[];
+    expect(queued.map((r) => r.id)).toEqual([PHOTO]);
   });
 
   it('marks the photo as edited, which is what stops the viewer opening at the camera JPEG', () => {
@@ -84,6 +96,7 @@ describe('PhotoEditsService', () => {
     expect(() => service.get('nope')).toThrow(AppError);
     // Otherwise the foreign key reports it, on the way in, as a 500 for what is a 404.
     expect(() => service.save('nope', neutralEdits(), 0)).toThrow(AppError);
+    expect(() => service.finish('nope')).toThrow(AppError);
     expect(queueRebuild).not.toHaveBeenCalled();
   });
 });

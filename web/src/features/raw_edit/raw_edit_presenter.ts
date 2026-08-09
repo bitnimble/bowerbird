@@ -422,6 +422,19 @@ export class RawEditPresenter {
 
   close(): void {
     if (this.closed) return;
+    // Before the flag, and only where something was actually stored: this is what asks
+    // the server to build the picture the reader ended up with. No write above rebuilds
+    // anything, because a slider release says nothing about whether they are finished -
+    // so leaving without this is leaving the rendition at the last render.
+    //
+    // Fire-and-forget, and the server does not depend on it arriving: the rebuild is
+    // queued off the edits being newer than the render, so a tab closed before this
+    // lands is caught by the sweep at startup instead.
+    const photoId = this.photoId;
+    if (photoId != null && this.store.rev > 0) {
+      void api.finishEdits(photoId).catch(() => {});
+    }
+
     this.closed = true;
     this.viewport?.disconnect();
     this.viewport = null;

@@ -137,26 +137,29 @@ export class ProcessingService {
   }
 
   /**
-   * Both derived stages of photos whose develop settings changed, and a drain to follow.
+   * Both derived stages of photos whose develop settings are newer than their renders,
+   * and a drain to follow. Every photo that qualifies where `photoIds` is omitted.
    *
-   * Not awaited, unlike `rebuildTiles`: the caller is a slider release, and a 61MP render
-   * is seconds of work that a save has no business holding a response open for. The
-   * rebuild is bookkeeping plus a nudge - what makes it correct rather than fire-and-hope
-   * is that the flags are already on the row, so a drain that never ran, or a process that
-   * died mid-render, leaves the work queued for the next one.
+   * **Called when an editor closes, not when it saves.** A save happens on every slider
+   * release, and there is no way to know from one whether the reader is finished or two
+   * seconds into an hour: rendering then spends ~1.7s of GPU at 61MP on a frame they are
+   * about to change again, over and over, and throws all of it away. Nothing about the
+   * intermediate states is worth building.
    *
-   * Repeated calls are free. `processUnprocessed` keys its in-flight runs and *widens* an
-   * existing one rather than starting a second, so a reader dragging through twenty
-   * releases gets one batch that grows, not twenty batches.
+   * Not awaited: a 61MP render is seconds of work and the caller is a page navigation.
+   * What makes that correct rather than fire-and-hope is that the flags are on the row
+   * first, so a drain that never ran - or a process that died mid-render - leaves the
+   * work queued for the next one. And the predicate is a *state*, not an event, so the
+   * sweep at startup finds anything whose editor never got to say it had closed.
    */
-  rebuildEdited(photoIds: string[]): number {
-    const queued = this.photos.queueRebuild(photoIds);
+  rebuildEdited(photoIds?: readonly string[]): number {
+    const queued = this.photos.queueEditedSince(photoIds);
     // Reported rather than thrown past: nothing is awaiting this, so an unhandled
     // rejection is all a failure would otherwise produce.
     if (queued > 0) {
-      void this.processUnprocessed({ photoIds }).catch((err: unknown) => {
-        log.warn('could not rebuild after an edit', { photos: photoIds.length, err });
-      });
+      void this.processUnprocessed({ photoIds: photoIds == null ? undefined : [...photoIds] }).catch(
+        (err: unknown) => log.warn('could not rebuild after an edit', { photos: queued, err }),
+      );
     }
     return queued;
   }
