@@ -22,33 +22,37 @@ import { useHdrVideo } from '../photos/hdr_video';
  * White is the anchor rather than black because it is what the four disagree about, and
  * because it is where photographs are lost: the JPEG's range simply stops there.
  *
- * **The two file figures are each format's own reference range**, which is the only
- * source for them that is neither folklore nor an invented threshold. sRGB (IEC
- * 61966-2-1) is specified against a display of 80 cd/m² over a 1.0 cd/m² black, so 80:1,
- * so 6.3 stops. HDR10 (ITU-R BT.2100, PQ) is mastered for 1000 nits over 0.005, so 17.6.
+ * **The two file bars are what the hardware in front of you can show**, because that and
+ * not the encoding is what limits either of them. A typical SDR monitor is about 1000:1,
+ * so a JPEG gets 10 stops. A good HDR display does 1000 nits over a black near 0.05, so
+ * 14.3 - an OLED in a dark room stretches that towards 17.6, and an LCD in a bright one
+ * falls well short of it.
  *
- * An earlier version measured them instead, by how far down the range you get before the
- * gap between adjacent code values passes some percentage - and the percentage decided
- * the answer, which is what made it the wrong tool. At 5% it said 6.0 and 14.6, close
- * enough to these to look like agreement. At 2% it said 2.8 and 10.3. At 1%, which is
- * about the Weber limit and roughly what PQ was designed against, it says **0.4 and 3.9**
- * - true, and useless on a chart, because a photograph is not a smooth gradient and its
- * own grain dithers away the banding this criterion is looking for. The quantisation
- * story belongs in a sentence, not in the length of a bar.
+ * Two earlier sourcings were wrong in opposite directions and are worth not repeating.
+ * Quoting each format's own specification gave 6.3 stops for sRGB (its reference *viewing
+ * environment*, 80 cd/m² over 1.0) and 17.6 for HDR10 (its mastering reference): the first
+ * describes a 1999 CRT in a lit office and no panel anyone owns, and the second is a
+ * dark-room best case. Measuring the code values instead made the threshold the author's
+ * choice - 5% gives 6.0 and 14.6, 2% gives 2.8 and 10.3, and 1%, about the Weber limit,
+ * gives 0.4 and 3.9. That last pair is true and useless on a chart, since a photograph is
+ * not a smooth gradient and its own grain dithers away the banding being hunted.
  *
- * The other two bars cannot be sourced to a specification and are approximations: a
- * full-frame sensor measures around 14 stops of engineering dynamic range at base ISO,
- * placed as though the exposure left 3 stops above diffuse white, and the eye manages
- * about 20 across one scene as the gaze moves and adapts locally.
+ * What the numbers keep saying through all of that is worth reading off the chart rather
+ * than out of the totals: the two formats are not far apart in *how many* stops they
+ * carry. The JPEG's are all underneath white and the HDR file's are not.
+ *
+ * The other two bars are approximations: a full-frame sensor measures around 14 stops of
+ * engineering dynamic range at base ISO, placed as though the exposure left 3 stops above
+ * diffuse white, and the eye manages about 20 across one scene as the gaze moves.
  */
 const RANGES = [
   { label: 'Your eyes', low: -14, high: 6, tone: 'eye' },
   { label: 'A camera at one exposure', low: -11, high: 3, tone: 'sensor' },
-  { label: 'A 10-bit HDR file', low: -15.3, high: 2.3, tone: 'hdr' },
-  { label: 'An 8-bit JPEG', low: -6.3, high: 0, tone: 'sdr' },
+  { label: 'A 10-bit HDR file', low: -12, high: 2.3, tone: 'hdr' },
+  { label: 'An 8-bit JPEG', low: -10, high: 0, tone: 'sdr' },
 ];
 
-const AXIS_LOW = -16;
+const AXIS_LOW = -15;
 const AXIS_HIGH = 7;
 const TICKS = [-15, -10, -5, 0, 5];
 
@@ -235,10 +239,11 @@ export function HdrPage(): JSX.Element {
       </Text>
       <RangeChart />
       <Text variant="mono" as="p" className="prose__note">
-        Both file figures come from the specs rather than from folklore. sRGB is designed for a display with 80:1 contrast and that
-        works out at 6.3 stops. HDR10 is mastered for 1000 nits over a black of 0.005 and that's 17.6. The other 2 bars are
-        approximate. A full-frame sensor measures about 14 stops at base ISO and your eyes manage about 20 across a scene as they
-        move over it.
+        Both file bars are what real hardware can show you rather than what the format could encode. A typical SDR monitor does
+        about 1000:1 so a JPEG gets 10 stops. A good HDR display does 1000 nits over a black near 0.05 so it gets 14. An OLED in a
+        dark room stretches that towards 18. Notice the two aren't far apart. What changes is where they sit. The other 2 bars are
+        rough. A full-frame sensor measures about 14 stops at base ISO and your eyes manage about 20 across a scene as they move
+        over it.
       </Text>
 
       <Heading>Where the extra light goes</Heading>
