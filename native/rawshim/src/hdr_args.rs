@@ -178,8 +178,8 @@ fn pixel_format(options: &EncodeOptions) -> &'static str {
 /// It used to arrive linear and `zscale` applied the transfer, which is what `npl` was
 /// there for. That put the still and the video in different domains between the grade
 /// and the encode - the still's transfer being libavif's, in this process - so anything
-/// belonging in between had to be written twice or not at all. `tone::encode_pq` does
-/// it once for both now, and with `tin` matching `t` zimg does no transfer work at all:
+/// belonging in between had to be written twice or not at all. The grade's own dispatch
+/// does it once for both now, and with `tin` matching `t` zimg does no transfer work at all:
 /// what is left here is the matrix, the range and the depth.
 fn filter_chain(options: &EncodeOptions, resize: Option<Size>) -> String {
     let target = target_for();
@@ -430,7 +430,7 @@ mod tests {
 
     #[test]
     fn the_frame_reaches_zscale_already_in_its_output_transfer() {
-        // The frame is PQ-encoded on this side now (`tone::encode_pq`), so the one
+        // The frame arrives PQ-encoded from the grade's dispatch, so the one
         // thing zscale must not be told is that its input is linear: it would apply the
         // curve a second time and hand the encoder a frame several stops dark.
         let args = ffmpeg_args(4024, 6024, &options(3840.0));

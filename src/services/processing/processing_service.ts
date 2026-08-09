@@ -242,11 +242,12 @@ export class ProcessingService {
       });
       // The HDR diagnostics write their own files under their own names and no
       // view reads them off a rendition URL, so only a rendition is worth saying.
-      // Which stamps move follows which files were written, and a one-off job can
-      // carry both: the queue splits them into two jobs and this does not. Asked as
-      // "are they all tiles", a grid-and-full job read as renditions alone, so its
-      // tile landed on disk with `tile_built_at` still unset - and nothing revisits
-      // a tile that is already there.
+      // Which stamps move follows which files were written. `renderOne` builds one
+      // target today, so this is a list of one either way; it is written per target
+      // because a one-off job is the only shape that *could* carry both - the queue
+      // splits a photo into a tile job and a renditions job and this does not - and
+      // asked as "are they all tiles", a grid-and-full job would read as renditions
+      // alone and leave `tile_built_at` unset on a tile already on disk.
       {
         const stages: ProcessingStage[] = [];
         if (job.targets.some((t) => t.rendition === 'grid')) stages.push('tile');

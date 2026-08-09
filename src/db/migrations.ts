@@ -128,10 +128,11 @@ CREATE TABLE IF NOT EXISTS photos (
   -- judged" is what a photographer filters on, and a boolean cannot say it.
   triage            TEXT CHECK (triage IN ('picked', 'rejected')),
   notes             TEXT,
-  -- Which pixels the *viewer's* renditions were built from (§10.2), written when
-  -- they land and cleared when they are invalidated. Not the grid tile's: that is
-  -- always the embedded JPEG whatever the library says, and recording it here
-  -- would tell the next import there are no renditions to build.
+  -- Which pixels the *viewer's* renditions were built from (§10.2), written when they
+  -- land. Not the grid tile's: a tile is requested as the embedded JPEG whatever the
+  -- library says, and recording that here would tell the next import there are no
+  -- renditions to build. Only a whole-library rebuild clears it; a file changing on
+  -- disk re-queues the renditions and leaves this reading what the last build used.
   rendition_source  TEXT CHECK (rendition_source IN ('embedded', 'render'))
 );
 CREATE INDEX IF NOT EXISTS idx_photos_library ON photos(library_id);

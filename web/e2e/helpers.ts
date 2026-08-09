@@ -105,14 +105,18 @@ export async function addShoot(page: Page, name: string): Promise<void> {
 // The rail lists every library by its folder name, with the full path as the
 // title, which is the only unambiguous handle when two share a basename.
 //
-// Waited for before it is clicked, so a rail that never fills says which library
-// was missing and how many were there instead. A bare click reports only that a
-// locator was still being waited on, which is the same message whether the page
-// was slow, the library was never created, or an earlier test removed it - and
-// under load this is where the suite lands when it lands anywhere.
+// Waited for before it is clicked, so a rail that never fills names the library it was
+// waiting for. A bare click reports only that a locator was still being waited on, which is
+// the same message whether the page was slow, the library was never created, or an earlier
+// test removed it - and under load this is where the suite lands when it lands anywhere.
+//
+// `timeout: 0` so the budget is the test's, which is what it already was. `use.actionTimeout`
+// is unset, so the click this replaced waited the whole test timeout; `expect` would otherwise
+// cap it at the config's 15s and make a slow rail fail *earlier* than it used to. The change
+// is meant to be the message and nothing else.
 export async function openLibrary(page: Page, rootPath: string): Promise<void> {
   const link = page.locator(`.rail__link[title="${rootPath}"]`);
-  await expect(link, `the rail should list ${rootPath}`).toBeVisible({ timeout: 30_000 });
+  await expect(link, `the rail should list ${rootPath}`).toBeVisible({ timeout: 0 });
   await link.click();
 }
 

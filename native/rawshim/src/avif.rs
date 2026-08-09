@@ -113,7 +113,7 @@ pub fn decode(bytes: &[u8]) -> Result<Rgb, String> {
 
 /// Encodes one frame as an AVIF still and hands back the file.
 ///
-/// `pq` is interleaved 16-bit Rec.2020 RGB in the PQ transfer, as `tone::encode_pq`
+/// `pq` is interleaved 16-bit Rec.2020 RGB in the PQ transfer, as `frame.wgsl`'s `encode`
 /// leaves it. What comes out of that is what libavif's own converter takes to YCbCr, so
 /// the matrix and the limited-range quantisation stay libavif's rather than being
 /// written a second time here.

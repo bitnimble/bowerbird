@@ -174,8 +174,8 @@ fn coded_at(pixel: u32) -> vec3f {
     return quantised * 65535.0;
   }
   if (tick.output == OUTPUT_SRGB) {
-    // `tone::encode_srgb8`: the primaries first, in the normalised graded domain, then the
-    // transfer at 8 bits. Clamped rather than sign-carried - `transfer` keeps the sign for
+    // The primaries first, in the normalised graded domain, then the transfer at 8 bits.
+    // Clamped rather than sign-carried - `transfer` keeps the sign for
     // the *draw*, where an out-of-P3 component is better seen than folded, but a file has
     // nowhere to put a negative.
     let linear = R2020_TO_SRGB * quantised;

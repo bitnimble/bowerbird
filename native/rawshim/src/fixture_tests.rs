@@ -1235,8 +1235,8 @@ mod hdr_grade {
     ///
     /// **Nothing else checks this, and the failure is silent and total.** The transfer
     /// used to live in the argv - `tin=linear:t=smpte2084:npl=1000` across 48 pinned rows
-    /// - so deleting it broke the pin. It is one call in `encode_still` now
-    /// (`tone::encode_pq`), and with it removed the argv pin is unchanged, the grade pin
+    /// - so deleting it broke the pin. The grade's own dispatch applies it now
+    /// (`frame.wgsl`), and with it removed the argv pin is unchanged, the grade pin
     /// is unchanged because it pins `graded()` from *before* the transfer, the match test
     /// above still differs because both its arms are equally wrong, and `ffprobe` still
     /// reports `smpte2084` because that is the CICP tag rather than the pixels. Every HDR
@@ -1337,10 +1337,10 @@ mod hdr_grade {
             let (large, small) = (sized(1600.0), sized(800.0));
 
             // Cut at 1600 and taken down, against cut at 800 outright.
-            let mut shared = crate::hdr::Cut::from_base(&source, levels, m.map(|m| &m.lens), large);
+            let mut shared = crate::hdr::Cut::from_base(&source, m.map(|m| &m.lens), large);
             shared.sharpen(0.0);
             let shared = shared.downscale(small);
-            let mut own = crate::hdr::Cut::from_base(&source, levels, m.map(|m| &m.lens), small);
+            let mut own = crate::hdr::Cut::from_base(&source, m.map(|m| &m.lens), small);
             own.sharpen(0.0);
 
             assert_eq!((shared.width, shared.height), (own.width, own.height));

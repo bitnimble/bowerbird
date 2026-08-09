@@ -12,7 +12,7 @@
 // The pixels are compared rather than hashed, and at 4:4:4 they now come out identical.
 // They did not always: the linked path used to apply the PQ transfer itself where
 // zscale applied the spawned one's, and that intermediate quantisation cost about a code
-// value. Both media take the transfer on this side now (`tone::encode_pq`), so the two
+// value. Both media take the transfer from the grade's own dispatch now (`frame.wgsl`), so the two
 // arms are handed the same PQ samples and differ only in who converts them to YCbCr -
 // which at 4:4:4 is the same matrix on the same numbers. 4:2:0 still parts company,
 // zscale and libavif subsampling chroma their own ways.

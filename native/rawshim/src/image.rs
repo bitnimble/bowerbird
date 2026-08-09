@@ -541,8 +541,12 @@ impl PlanarWarp {
         self.map_u16(src, |r, g, b| [r, g, b])
     }
 
-    /// Gather each output pixel, quantise to `u16`, then map - one sweep for a caller
-    /// that has more to do than materialise the warp (the HDR grade's colour transform).
+    /// Gather each output pixel, quantise to `u16`, then map - one sweep for a caller that
+    /// has more to do than materialise the warp.
+    ///
+    /// Both callers pass the identity today: the colour transform this was fused with is the
+    /// shader's now, so the warp is its own pass again. The hook stays because the fusing
+    /// argument still holds for anything pointwise the CPU ends up owing.
     pub fn map_u16(
         &self,
         src: &[u16],
@@ -720,13 +724,14 @@ pub fn warp_planar<T: Copy + Default + Send + Sync>(
     out
 }
 
-/// Box-average downscale of 16-bit interleaved RGB, in whatever light the samples
-/// are already in.
+/// Box-average downscale of 16-bit interleaved RGB, in whatever the samples are already in.
 ///
-/// On a scene-linear decode that means averaging light, which is the only correct way
-/// to shrink one: averaging after a transfer curve has been applied averages code
-/// values instead, and darkens. Every source pixel contributes exactly once, so there
-/// is no ringing either.
+/// **Which is no longer light, and the caller owns that trade.** Averaging light is what a
+/// lower-resolution sensor would have integrated; averaging after a transfer curve averages
+/// code values instead, and darkens. The decode is still shrunk in linear (`decode_frame`
+/// fits during the decode), but everything below `tone::encode_base` is coded, so
+/// `Cut::downscale` averages PQ - see its doc for why that is worth it there. Every source
+/// pixel contributes exactly once, so there is no ringing either way.
 ///
 /// Only downscales; asking for a larger size returns None, since this exists to avoid
 /// work rather than to invent detail.
@@ -800,9 +805,9 @@ impl Sample for u16 {
 
 /// Samples that are already the 0..1 the filters work in.
 ///
-/// For a caller that has to convert into a perceptual domain anyway (`edit::filter_once`):
-/// going through `u16` there would quantise on the way in, again between the stages, and
-/// again on the way out, for a frame whose whole point is that it is filtered once.
+/// Nothing on the rendering path is in this any more - the base is `u16` from the decode to
+/// the shader (`tone::encode_base`) - so what is left reaching it is the fit's own planes and
+/// the tests that drive a stage directly.
 impl Sample for f32 {
     const FULL: f32 = 1.0;
     fn to_f32(self) -> f32 {
@@ -1452,8 +1457,9 @@ fn strip_interior(width: usize, halo: usize) -> usize {
 /// Whatever transfer the samples are already in, and that is a constraint on the caller
 /// rather than a detail: differences taken in linear light are proportional to absolute
 /// luminance, so they treat a highlight and a shadow completely differently. Both callers
-/// hand over display-referred samples - sRGB for a rendition, PQ for the HDR pair - which
-/// is where a difference means what the eye reads.
+/// hand over a perceptual coding - `hdr::filter_base` the normalised PQ base every rendition
+/// is cut from, and the geometry fit its own 8-bit sRGB render - which is where a difference
+/// means what the eye reads.
 pub fn finish<T: Sample>(frame: &mut [T], width: usize, height: usize, strengths: Strengths) {
     let interior = strip_interior(width, strengths.halo());
     finish_in_strips(frame, width, height, strengths, interior);
@@ -1551,9 +1557,10 @@ fn finish_in_strips<T: Sample>(
 
 /// `finish`, against measurements the caller already has.
 ///
-/// Which is what lets `edit::filter_once` take them once and the parity fixture reuse the
-/// same two numbers: the harness would otherwise be measuring whether the two agreed on a
-/// measurement rather than whether the shaders reproduce the frame.
+/// Which is what lets a caller filtering one frame in two halves take them once, and the
+/// parity fixture reuse the same two numbers: the harness would otherwise be measuring
+/// whether the two agreed on a measurement rather than whether the shaders reproduce the
+/// frame.
 ///
 /// Not carried to the client - `edit::PreparedHeader` has held no `sigma` or `defocus` since
 /// the filter moved inside the open, because nothing on the far side filters any more.

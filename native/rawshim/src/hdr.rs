@@ -291,6 +291,11 @@ pub fn graded_as(
     output: crate::gpu::Output,
 ) -> (Vec<u16>, usize, usize) {
     let levels = tone::levels(source.samples, options.grade.white_quantile);
+    // Floored as `job::run` and `encode_still` floor it, and for the same reason: the coding
+    // divides by this and so does the grade. Unfloored, a frame too dark to read an exposure
+    // from came back *coded* rather than as it arrived, since the grade declines and the coding
+    // does not - which is a silently different picture rather than an ungraded one.
+    let levels = tone::Levels { white: levels.white.max(1.0), peak: levels.peak.max(1.0) };
     let mut coded = source.samples.to_vec();
     tone::encode_base(&mut coded, levels.white, options.grade.reference_white_nits);
     let source = Source { samples: &coded, width: source.width, height: source.height };
@@ -329,19 +334,21 @@ pub struct Cut {
     pub samples: Vec<u16>,
     pub width: usize,
     pub height: usize,
-    /// The frame's own levels, carried because the grade's neutral arm still reads where its
-    /// peak sits against its white.
-    pub levels: tone::Levels,
 }
 
 impl Cut {
     /// The largest rendition's frame, off the shared base.
     ///
-    /// Where the base is already at `size` and there is no lens, nothing is copied. That
-    /// matters at native resolution, where a copy is 361MB on a 61MP frame.
+    /// A resize or a warp writes its own output, so the base is only copied when neither
+    /// runs - the native-resolution, no-lens case, and 366MB of it on a 61MP frame. Worth
+    /// knowing rather than worth avoiding: the caller's decode is borrowed and a `Cut` owns
+    /// its samples, so the alternative is a lifetime on every rendition.
+    ///
+    /// No levels travel with it. They used to, for a sharpen that anchored its own perceptual
+    /// domain to diffuse white; the base carries that anchor now, and the grade reads the
+    /// levels off `tone::SceneGrade` rather than off the frame.
     pub fn from_base(
         source: &Source<'_>,
-        levels: tone::Levels,
         lens: Option<&crate::fit::Lens>,
         size: hdr_args::Size,
     ) -> Cut {
@@ -361,7 +368,7 @@ impl Cut {
             // case, and the only copy on this path.
             None => fitted.unwrap_or_else(|| source.samples.to_vec()),
         };
-        Cut { samples, width, height, levels }
+        Cut { samples, width, height }
     }
 
     /// The sharpen, once, on the frame every rendition is cut from.
@@ -391,13 +398,8 @@ impl Cut {
     pub fn downscale(&self, size: hdr_args::Size) -> Cut {
         let (width, height) = (size.width as usize, size.height as usize);
         match image::box_resize_u16(&self.samples, self.width, self.height, width, height) {
-            Some(samples) => Cut { samples, width, height, levels: self.levels },
-            None => Cut {
-                samples: self.samples.clone(),
-                width: self.width,
-                height: self.height,
-                levels: self.levels,
-            },
+            Some(samples) => Cut { samples, width, height },
+            None => Cut { samples: self.samples.clone(), width: self.width, height: self.height },
         }
     }
 }
@@ -673,7 +675,7 @@ pub fn encode_still(
 
     let mut cut = {
         let source = Source { samples: &samples, width, height };
-        let mut built = Cut::from_base(&source, anchored, matched.map(|m| &m.lens), size);
+        let mut built = Cut::from_base(&source, matched.map(|m| &m.lens), size);
         built.sharpen(options.strengths.sharpen);
         built
     };

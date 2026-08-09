@@ -69,9 +69,10 @@ static GPU: OnceLock<Option<Gpu>> = OnceLock::new();
 
 /// The device, or None where no adapter of any kind answered.
 ///
-/// None is a real outcome rather than a panic: a caller grades on the CPU-shaped path it
-/// already has for a frame with no camera match, and a machine with no Vulkan at all gets
-/// a degraded import rather than a crash loop.
+/// None is a refusal, not a fallback. There is no CPU grade to drop to any more - that was
+/// the second implementation DESIGN 21.1 records the cost of - so `job::run` returns an error
+/// naming the missing driver and the photo goes unrendered rather than rendered differently.
+/// An `Option` rather than a panic so the refusal is the caller's to word.
 pub fn device() -> Option<&'static Gpu> {
     GPU.get_or_init(Gpu::new).as_ref()
 }
@@ -103,10 +104,10 @@ impl Gpu {
 
         // The adapter's own limits, not `downlevel_defaults`. Those are WebGPU's portable
         // floor and cap a storage binding at 128MB, which a real frame is nowhere near
-        // fitting: `counts` is `pixels * 3 * 4`, so 288MB at 24MP and 732MB at 61MP. The
-        // browser lives with that floor because it has to; a native process has no reason
-        // to ask for less than the hardware offers, and asking for less turns every
-        // full-size rendition into a validation failure.
+        // fitting: the frame and `counts` are six bytes a pixel each, so 144MB at 24MP and
+        // 366MB at 61MP. The browser lives with that floor because it has to; a native
+        // process has no reason to ask for less than the hardware offers, and asking for
+        // less turns every full-size rendition into a validation failure.
         let (device, queue) =
             pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
                 label: Some("rawshim"),
@@ -231,11 +232,14 @@ impl Gpu {
     /// Whether a frame of this many pixels fits the adapter in one dispatch.
     ///
     /// Asked rather than assumed because the answer is a hardware limit and the frames are
-    /// large: 274MiB of output at 24MP, 698MiB at 61MP.
+    /// large: 137MiB of output at 24MP, 349MiB at 61MP. One question covers both bindings now
+    /// that the output is packed - six bytes a pixel is exactly what the frame takes - where a
+    /// `u32` per component made the output the larger of the two and this the only one asked
+    /// about.
     ///
     /// **Measured, it does not bite on real hardware.** RADV on an integrated Radeon
     /// reports 2047MiB for both `max_storage_buffer_binding_size` and `max_buffer_size`,
-    /// which is three times what the largest sensor here needs. So the banding this would
+    /// which is six times what the largest sensor here needs. So the banding this would
     /// otherwise force is unwritten on purpose - it would be complexity for a case no
     /// machine with a GPU reaches. Where it could bite is the software adapter, which is
     /// already the path that is very slow and not expected to be hit.
@@ -370,7 +374,7 @@ pub enum Output {
 /// One frame, uploaded once, ready for as many dispatches as a job has outputs.
 ///
 /// **Everything here is per photo-and-size; only the uniform is per rendition.** The frame
-/// itself is the expensive part - 59MB at 3840 and 361MB at native resolution - and a job
+/// itself is the expensive part - 59MB at 3840 and 366MB at native resolution - and a job
 /// naming an SDR and an HDR target of one size was uploading it, the lattice, the curves and
 /// the matrix once each, then allocating a fresh output and readback pair, for every one of
 /// them. What actually differs between two outputs of the same frame is `peak_nits` and
@@ -392,6 +396,10 @@ pub struct Uploaded<'a> {
     /// The identity the uniform describes where a frame has no camera match, kept alive
     /// because `Grade::colour` borrows one or the other.
     identity: HdrColour,
+    /// What the resources above were built from, so [`Uploaded::encode`] can refuse a grade
+    /// that disagrees with them rather than dispatching against the wrong lattice.
+    colour: Option<&'a HdrColour>,
+    scene_peak: f64,
 }
 
 impl Gpu {
@@ -433,7 +441,7 @@ impl Gpu {
     }
 
     /// The frame and everything else a dispatch reads, uploaded once.
-    pub fn upload<'a>(&'a self, frame: &[u16], grade: &Grade<'_>) -> Uploaded<'a> {
+    pub fn upload<'a>(&'a self, frame: &[u16], grade: &Grade<'a>) -> Uploaded<'a> {
         let device = &self.device;
         let pixels = grade.width * grade.height;
         assert!(
@@ -507,6 +515,8 @@ impl Gpu {
             counts,
             readback,
             identity,
+            colour: grade.colour,
+            scene_peak: grade.scene_peak,
         }
     }
 
@@ -726,11 +736,31 @@ impl Gpu {
 impl Uploaded<'_> {
     /// One rendition: a new uniform, a dispatch, a readback. Everything else was paid for
     /// when the frame went up.
+    ///
+    /// Only `peak_nits` and `output` may differ from the upload's grade. The rest of it was
+    /// baked into resources at that point - the frame, the matrix, the lattice, the curves and
+    /// `peak_out` - while the *uniform* is rebuilt here from whatever arrives, so a `grade`
+    /// disagreeing about any of them would describe textures that are not bound and roll off
+    /// against a peak that is not the one in the buffer. Asserted rather than trusted: both
+    /// are silent, and one of them shifts every highlight.
     pub fn encode(&self, grade: &Grade<'_>) -> Vec<u16> {
         assert_eq!(
             (grade.width, grade.height),
             (self.width, self.height),
             "the uniform describes a different frame than the one uploaded",
+        );
+        assert_eq!(
+            grade.scene_peak.to_bits(),
+            self.scene_peak.to_bits(),
+            "the roll-off would use the peak the frame went up with, not this one",
+        );
+        assert!(
+            match (grade.colour, self.colour) {
+                (None, None) => true,
+                (Some(a), Some(b)) => std::ptr::eq(a, b),
+                _ => false,
+            },
+            "the lattice and the curves bound here are the ones this frame went up with",
         );
         let device = &self.gpu.device;
         let described = grade.colour.unwrap_or(&self.identity);
@@ -818,7 +848,7 @@ impl Uploaded<'_> {
 ///
 /// Flat rather than a builder so it can be read against the struct. The one subtlety is
 /// the unnamed word before `region_origin`: WGSL puts a `vec2f` on a multiple of eight and
-/// the scalars end on 84, so without it every field after lands short and the binding is
+/// the scalars end on 92, so without it every field after lands short and the binding is
 /// rejected four bytes small.
 fn uniform(grade: &Grade<'_>, colour: &HdrColour) -> Vec<u8> {
     let shape = colour.chroma.as_ref().map(|m| m.shape());
@@ -868,6 +898,49 @@ fn half(v: f32) -> [u8; 2] {
 
 #[cfg(test)]
 mod tests {
+    /// The shader's own sizes, against the buffers this host allocates for them.
+    ///
+    /// **A histogram longer than its buffer is a dropped dispatch, not an error.** WGSL bounds
+    /// an out-of-range store rather than failing it, so raising `BINS` in `peak.wgsl` without
+    /// raising [`super::PEAK_BINS`] would silently discard every sample past the eighth
+    /// thousand bin while `quantile` still divides by the full count - every rendition's scene
+    /// peak low, the roll-off knee in the wrong place, and nothing said anywhere. The client
+    /// pins its own copy in `gpu/tests/peak_constants.test.ts`; this is the same guard for the
+    /// host that got a second copy when the grade moved here.
+    #[test]
+    fn the_shader_sizes_match_the_buffers_allocated_for_them() {
+        let declared = |source: &str, name: &str| -> u64 {
+            let at = source
+                .find(&format!("const {name}"))
+                .unwrap_or_else(|| panic!("{name} is declared"));
+            let line = &source[at..][..source[at..].find(';').expect("it is terminated")];
+            let digits: String =
+                line.rsplit('=').next().expect("it is assigned").matches(char::is_numeric).collect();
+            digits.parse().unwrap_or_else(|_| panic!("{name} reads `{line}`"))
+        };
+        assert_eq!(
+            declared(super::PEAK_WGSL, "BINS: u32"),
+            super::PEAK_BINS,
+            "peak.wgsl's BINS and gpu.rs's PEAK_BINS have drifted",
+        );
+        // `decode.wgsl` writes one entry per code and guards on the last one, so it carries the
+        // count as `65535` - the top code rather than the length.
+        let source = include_str!("../../../web/src/features/raw_edit/gpu/wgsl/decode.wgsl");
+        let top: u64 = source
+            .split("id.x > ")
+            .nth(1)
+            .and_then(|rest| rest.split('u').next())
+            .and_then(|digits| digits.parse().ok())
+            .expect("decode.wgsl bounds its entry point");
+        assert_eq!(
+            top + 1,
+            super::PQ_CODES,
+            "decode.wgsl fills {} entries and gpu.rs allocates {}",
+            top + 1,
+            super::PQ_CODES,
+        );
+    }
+
     /// `R2020_TO_SRGB` in `frame.wgsl` against the matrix this crate derives.
     ///
     /// The shader has to carry it as a literal - it must stay valid WGSL on its own - and a

@@ -17,6 +17,7 @@
 // tuning if a library renders consistently dark or hot.
 
 use crate::hdr_fit::HdrColour;
+use crate::parallel::*;
 
 const MAX: usize = 65535;
 
@@ -28,9 +29,8 @@ const C2: f64 = (2413.0 / 4096.0) * 32.0;
 const C3: f64 = (2392.0 / 4096.0) * 32.0;
 const PQ_MAX_NITS: f64 = 10000.0;
 
-/// SMPTE ST 2084, forward. Public because the encoders apply the same transfer the
-/// roll-off is computed in, rather than handing the frame to `zscale` to do it in
-/// another process (`encode_pq`).
+/// SMPTE ST 2084, forward. Public because [`encode_base`] codes the frame with it and
+/// [`lift_in_pq`] folds it; the *grade's* transfer is `frame.wgsl`'s, not this one.
 pub fn pq(nits: f64) -> f64 {
     let y = (nits / PQ_MAX_NITS).clamp(0.0, 1.0).powf(M1);
     ((C1 + C2 * y) / (1.0 + C3 * y)).powf(M2)
@@ -48,7 +48,7 @@ pub fn pq(nits: f64) -> f64 {
 /// frame with two passes, that was 400ms of a 2650ms job, and it scales with the sensor.
 ///
 /// Coded once here instead, the filters are pointwise on what the buffer already holds and
-/// the shader decodes with a table (`colour.wgsl`'s `scene`). The `u16` also lands better:
+/// the shader decodes with a table (`colour.wgsl`'s `nits_of`). The `u16` also lands better:
 /// linear spends its codes where the eye cannot see them, and a frame whose diffuse white
 /// sits near level 6000 of 65535 has almost none left for the shadows, where normalised PQ is
 /// near-uniform in what a reader can distinguish.
@@ -57,26 +57,31 @@ pub fn pq(nits: f64) -> f64 {
 /// and a 61MP frame is 180M of them.
 ///
 /// PQ's range ends at 10000 nits, so a level past 49x the frame's own diffuse white saturates
-/// here rather than being carried. That ceiling is not new - `ScenePq`, the coding the filters
-/// borrowed and gave back, clamped at exactly the same place, so any frame that reached it was
+/// here rather than being carried. That ceiling is almost not new - the coding the filters
+/// borrowed and gave back clamped at exactly the same place, so any frame that reached it was
 /// already losing those levels in the denoise. It is BT.2408's own headroom above a 203-nit
 /// white, and five and a half stops above diffuse white is far past where the roll-off has
-/// compressed everything into the display's peak anyway.
+/// compressed everything into the display's peak anyway. What is new is that this runs whether
+/// or not a filter does, where that coding was inside a pass that returned early with every
+/// strength at zero - so a very dark frame rendered with the filters off keeps its speculars
+/// today and would not have before.
+///
+/// Across cores, because it is a whole-frame sweep: 180M gathers at 61MP, on the one path every
+/// rendition takes.
 pub fn encode_base(samples: &mut [u16], white: f64, reference_white_nits: f64) {
     let scale = reference_white_nits / white.max(1.0);
     let forward: Vec<u16> = (0..=u16::MAX)
         .map(|level| (pq(f64::from(level) * scale) * f64::from(u16::MAX)).round() as u16)
         .collect();
-    for sample in samples.iter_mut() {
-        *sample = forward[*sample as usize];
-    }
+    samples.par_iter_mut().for_each(|sample| *sample = forward[*sample as usize]);
 }
 
 /// ST 2084 the other way: a signal back to the nits it was coded from.
 ///
-/// Public because the open goes through it: `edit::filter_once` puts the frame into PQ to
-/// filter it in a perceptual domain and brings it back. That began as an experiment, and
-/// this was called `pq_inv_for_testing` long after the experiment became the shipped path.
+/// **Nothing on the rendering path calls this.** The frame goes into PQ once
+/// ([`encode_base`]) and comes back out on the GPU, through a table `decode.wgsl` fills with
+/// the WGSL `pq_inv` - so this is the CPU's copy of a curve the grade does not ask it for,
+/// kept for the tests that have to read a coded sample back in the units it was coded from.
 pub fn pq_inv(signal: f64) -> f64 {
     let e = signal.clamp(0.0, 1.0).powf(1.0 / M2);
     PQ_MAX_NITS * ((e - C1).max(0.0) / (C2 - C3 * e)).powf(1.0 / M1)
@@ -95,7 +100,7 @@ pub fn pq_inv(signal: f64) -> f64 {
 ///
 /// So a gain in light is a plain multiply in `y`, and the `^m1` / `^(1/m1)` pair that
 /// `pq_inv` and `pq` would evaluate cancels outright. The round trip is four `powf`; this is
-/// one, and `gain_in_y` folds `g^m1` into a constant the caller precomputes per radius.
+/// two, and `gain_in_y` folds `g^m1` into a constant the caller precomputes per radius.
 ///
 /// `signal` and the result are 0..1. Exact, not an approximation - the same arithmetic with
 /// two of its steps cancelled.
@@ -282,8 +287,8 @@ impl<'a> SceneGrade<'a> {
     /// This scene as the shader's uniform wants it.
     ///
     /// Assembled here so the fields stay private and so the one place that knows what a
-    /// scene *is* is the one place that describes it to the GPU. `colour` reaches through
-    /// `MatchedGrade` rather than being stored twice.
+    /// scene *is* is the one place that describes it to the GPU. `colour` is borrowed from
+    /// the matched arm rather than stored twice.
     pub fn gpu_grade(
         &'a self,
         width: usize,
@@ -328,7 +333,14 @@ impl<'a> SceneGrade<'a> {
 /// crosses to the GPU rather than 361.
 fn sampled(frame: &[u16]) -> Vec<u16> {
     let pixels = frame.len() / 3;
-    let counted = pixels.min(QUANTILE_SAMPLES);
+    // At least one, because what reads this builds a `wgpu` buffer of it and a zero-sized
+    // binding is a validation error - fatal, under `on_uncaptured_error`. The caller's own
+    // guard is on `white`, which a floored `Levels` can no longer report as zero, so an empty
+    // frame reaches here rather than being turned away first.
+    let counted = pixels.min(QUANTILE_SAMPLES).max(1);
+    if pixels == 0 {
+        return vec![0; 3];
+    }
     let mut out = Vec::with_capacity(counted * 3);
     for k in 0..counted {
         let i = sample_at(k, pixels, counted);
@@ -347,7 +359,7 @@ mod tests {
     ///
     /// The transfer itself is `frame.wgsl`'s now, applied in the same dispatch as the grade
     /// and pinned by the GPU fixtures. What is left here is the curve those two share: this
-    /// `pq` is what the shader's `pq` has to agree with, and what `lift_in_pq` below folds.
+    /// `pq` is what the shader's `pq` has to agree with, and what `lift_in_pq` folds.
     #[test]
     fn the_display_peak_lands_where_pq_puts_it_rather_than_at_full_scale() {
         // At the code the shader writes, not on the raw curve: `pq(0)` is `C1^m2`, about

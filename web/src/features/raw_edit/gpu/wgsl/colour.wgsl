@@ -100,13 +100,13 @@ fn sample_curve(channel: u32, x: f32) -> f32 {
   return mix(lo, hi, t - f32(below));
 }
 
-/// `MatchedGrade::curves`, which is the per-channel tone at a given exposure scale.
+/// `hdr_fit::tone`, which is the per-channel tone at a given exposure scale.
 ///
 /// The shared gain matters: below the ceiling it is 1 and the stage is separable, which is
-/// almost every pixel and what the CPU's lookup table is for. Above it, `hdr_fit::tone`
-/// divides the pixel down into the curve's domain and multiplies the result back out, so
-/// the three channels move together. Skipping that leaves highlights wrong by hundreds of
-/// counts, which is exactly where a grade is judged.
+/// almost every pixel. Above it, `hdr_fit::tone` divides the pixel down into the curve's
+/// domain and multiplies the result back out, so the three channels move together. Skipping
+/// that leaves highlights wrong by hundreds of counts, which is exactly where a grade is
+/// judged.
 fn curves_at(nits: vec3f, scale: f32) -> vec3f {
   let scene = nits * scale / tick.reference;
   let s = max(max(scene.r, max(scene.g, scene.b)) / tick.trust_ceiling, 1.0);
@@ -117,8 +117,8 @@ fn curves_at(nits: vec3f, scale: f32) -> vec3f {
   ) * s;
 }
 
-/// `MatchedGrade::toned`: the exposed colour's luma, carried onto the base colour's
-/// ratios, which is what keeps hue still as the slider moves.
+/// The exposed colour's luma, carried onto the base colour's ratios, which is what keeps hue
+/// still as the slider moves.
 ///
 /// Also why the peak cannot be precomputed as a curve: the exposure arrives as a gain that
 /// depends on the pixel's own luma, not as a global one.

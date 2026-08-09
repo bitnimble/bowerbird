@@ -30,14 +30,15 @@ fn pq_inv(signal: f32) -> f32 {
   return 10000.0 * pow(max(e - PQ_C1, 0.0) / (PQ_C2 - PQ_C3 * e), 1.0 / PQ_M1);
 }
 
-/// ITU-R BT.2390-8 5.4.1 with black at zero, which is `tone::eetf`.
+/// ITU-R BT.2390-8 5.4.1 with black at zero. **The only implementation of the roll-off.**
 ///
-/// Evaluated rather than tabulated: the CPU builds 4096 bins because it pays per sample in
-/// scalar code, and a shader does not.
+/// There was a second one in Rust, tabulated over 4096 bins because it paid per sample in
+/// scalar code. A shader does not, so this is evaluated - and that one is deleted, which is
+/// what makes a rendition and a tick the same picture rather than two kept in agreement.
 ///
-/// Split so the knee is found once and applied three times. Where the CPU calls `eetf` per
-/// channel and eats `pq(source_peak)` and `pq(peak)` each time, both are constant over the
-/// whole dispatch - they come from the frame and the display, not the pixel.
+/// Split so the knee is found once and applied three times: `pq(source_peak)` and `pq(peak)`
+/// are constant over the whole dispatch, coming from the frame and the display rather than
+/// from the pixel.
 struct Rolloff {
   lw: f32,
   max_lum: f32,

@@ -14,7 +14,7 @@
 // The shaders are a second implementation of the grade, so they are held to the first:
 // same prepared samples, same settings, same exposure, and the CPU's output to compare
 // against (`docs/raw-edit-gpu.md` §6.3). The tick is the grade and the PQ encode alone now -
-// the filters run once at open, in `edit::filter_once` - so this is owed exactness rather
+// the filters run once at open, in `edit::open` - so this is owed exactness rather
 // than a tolerance, and the fixture's input is the already-filtered frame.
 import { TickPipeline, tickFeatures, tickLimits } from '/src/features/raw_edit/gpu/tick_pipeline.ts';
 

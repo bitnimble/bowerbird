@@ -371,7 +371,7 @@ fn payload(
 /// on: it leaves the samples on an offset a `Uint16Array` can be mapped over rather than
 /// copied to. Padded here rather than by whoever serves it, because the alternative is what
 /// the server used to do - take this apart and put it back together with the padding in,
-/// which at 61MP is two 361MB copies and three of them alive at once for a reply that is one
+/// which at 61MP is two 366MB copies and three of them alive at once for a reply that is one
 /// buffer already. `src-tauri/src/edit.rs` pads the same way for the same reader.
 ///
 /// Spaces, not NULs: the reader hands the whole padded span to `JSON.parse` rather than

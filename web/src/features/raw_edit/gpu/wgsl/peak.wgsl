@@ -1,8 +1,9 @@
-// `MatchedGrade::scene_peak_nits`, as a histogram and a scan.
+// The scene's own top end, as a histogram and a scan. **The only implementation of it.**
 //
-// The CPU takes a quantile of a million sampled pixels by partial sort. A shader cannot
-// sort a million values cheaply, so this bins them and reads the quantile off the
-// cumulative count, which is the same statistic at the bin's resolution. No readback: the
+// The CPU took a quantile of a million sampled pixels by partial sort, through its own copy
+// of the colour transform; that copy is gone and both hosts run this. A shader cannot sort a
+// million values cheaply, so this bins them and reads the quantile off the cumulative count,
+// which is the same statistic at the bin's resolution. No readback on the editor's path: the
 // scan writes the peak into a buffer the draw reads next.
 //
 // Per tick rather than at open because it is not a property of the sensor: it measures

@@ -776,6 +776,7 @@ export class TickPipeline {
       this.peak,
       this.candidates,
       this.matrix,
+      this.nitsOfCode,
     ]) {
       buffer.destroy();
     }
@@ -938,7 +939,7 @@ export class TickPipeline {
    * blown sky can put hundreds of thousands over the threshold. The peak measured off that
    * prefix is the sky's, and `rolled_off` clamps every pixel to it, so genuine highlights
    * lower down the frame flatten onto the sky and the roll-off knee lands in the wrong place.
-   * The renditions, which take the same quantile over a full partial sort, would not agree.
+   * The renditions, which run these same two passes over a full sample, would not agree.
    *
    * So the shortcut is used only where it is exact: nothing overflowed, and the kept set is
    * every qualifying pixel rather than a sample of them. Otherwise every tick reads the frame,

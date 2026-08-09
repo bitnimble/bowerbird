@@ -158,6 +158,27 @@ describe('ProcessingService.processUnprocessed', () => {
     expect(seen).toEqual([]);
   });
 
+  it('moves the stamp belonging to what a one-off job actually wrote', async () => {
+    // The queue splits a photo into a tile job and a renditions job, so which stamp to
+    // move is never in question there. A one-off job carries its own targets, and
+    // deriving the stage from them wrongly is silent: a tile that lands with
+    // `tile_built_at` unset is never revisited, because it is now on disk.
+    const markTileBuilt = jest.fn();
+    const markRenditionsBuilt = jest.fn();
+    const repo = { markTileBuilt, markRenditionsBuilt } as unknown as PhotosRepository;
+    const service = new ProcessingService(repo, settingsWith({}));
+    const library = { id: 'lib', root_path: root, data_path: null } as never;
+
+    await service.renderOne('/lib/a.arw', 'p1', library, 'grid', false, 'embedded');
+    expect(markTileBuilt).toHaveBeenCalledTimes(1);
+    expect(markRenditionsBuilt).not.toHaveBeenCalled();
+
+    markTileBuilt.mockClear();
+    await service.renderOne('/lib/a.arw', 'p1', library, 'full', false);
+    expect(markRenditionsBuilt).toHaveBeenCalledTimes(1);
+    expect(markTileBuilt).not.toHaveBeenCalled();
+  });
+
   it('refuses an HDR grid tile rather than quietly building an SDR one', async () => {
     // `hdr` is the caller's, unlike the chroma setting above, so a caller that asks
     // for something that cannot exist is told. Coercing instead put the mistake

@@ -30,6 +30,13 @@ async function renditionPath(request: APIRequestContext, rendition: string, phot
   return path.join(libraryDataDir(library!.id), 'renditions', rendition, `${photoId}.avif`);
 }
 
+// The first frame a stage shows is a rendition read off disk and decoded, on a machine
+// running the rest of the suite beside it. The configured `expect` default is 15s, which is
+// what this suite flakes against; the tests that had already been bitten carried their own
+// number, which left the rest waiting to be. One name, so raising it raises all of them.
+const FIRST_FRAME = { timeout: 45_000 };
+
+
 test('sync indexes the cull library', async ({ page }) => {
   await addLibrary(page, CULL_PHOTOS_DIR);
   await syncLibrary(page, CULL_PHOTOS_DIR);
@@ -707,10 +714,7 @@ test('the previous photo is held for a beat and then dropped, however slow the n
   await page.goto('/settings');
   await openLibrary(page, CULL_PHOTOS_DIR);
   await openPhoto(page);
-  // The same allowance every other open in this file takes: the first decode of a
-  // photo is a rendition read off disk, and this suite shares a machine with the
-  // rest of the run.
-  await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
+  await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible(FIRST_FRAME);
   const openId = openPhotoId(page);
 
   // Held open, so the hold is observable at all: warmed, the next frame decodes
@@ -795,7 +799,7 @@ test('the next photo is fetched while the current one is on screen', async ({ pa
   await setViewerRendition(page, 'Rendered RAW');
   await openLibrary(page, CULL_PHOTOS_DIR);
   await openPhoto(page);
-  await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible();
+  await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible(FIRST_FRAME);
 
   // The neighbour is warmed only after this frame decodes, so it never competes
   // for the connection with the one being waited on.
@@ -935,7 +939,7 @@ test('the photo fits the stage instead of overflowing it', async ({ page }) => {
   await page.goto('/settings');
   await openLibrary(page, CULL_PHOTOS_DIR);
   await openPhoto(page);
-  await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible();
+  await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible(FIRST_FRAME);
 
   // Regression: as a grid item the image grew the row to its own height, so
   // `height: 100%` resolved against that and tall frames were cropped.
@@ -951,7 +955,7 @@ test('clicking zooms into the point clicked, not the centre', async ({ page }) =
   await page.goto('/settings');
   await openLibrary(page, CULL_PHOTOS_DIR);
   await openPhoto(page);
-  await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible();
+  await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible(FIRST_FRAME);
 
   // Regression: the zoom-about-point maths ran inside a setScale updater and
   // called setOffset from within it. React re-invokes updaters, so the offset was
@@ -994,7 +998,7 @@ test('panning a zoomed photo cannot drag it off the stage', async ({ page }) => 
   await page.goto('/settings');
   await openLibrary(page, CULL_PHOTOS_DIR);
   await openPhoto(page);
-  await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible();
+  await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible(FIRST_FRAME);
 
   await page.getByRole('button', { name: 'Zoom in' }).click();
   const viewport = page.locator('.stage__viewport');

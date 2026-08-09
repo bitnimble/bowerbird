@@ -203,10 +203,12 @@ fn save_avif(image: crate::rgb::RgbRef<'_>, target: &Target) -> Result<(), Strin
 ///
 /// Everything here is measured or fitted against the whole frame and would be the same
 /// answer for every target, so it is settled once: the decode, the levels the grade anchors
-/// to, the camera match, and the denoise. What is left per target is the resize, the warp,
-/// the roll-off into that display's peak, the transfer and the encode.
+/// to, the coding, the camera match, and the denoise. What is left per target is the resize,
+/// the warp, and then one dispatch carrying the colour transform, the roll-off into that
+/// display's peak and the transfer - followed by the encode.
 struct Base {
-    /// Scene-linear Rec.2020, denoised and defringed, at the largest size any target wants.
+    /// Normalised PQ Rec.2020 (`tone::encode_base`), denoised and defringed, at the largest
+    /// size any target wants.
     samples: Vec<u16>,
     width: usize,
     height: usize,
@@ -345,18 +347,18 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
     .ok_or("the frame has no exposure to grade against")?;
 
     // Cut once off the base, sharpened once, and the base handed back before anything is
-    // encoded - 361MB of samples at 61MP, released across the longest stage of the job.
+    // encoded - 366MB of samples at 61MP, released across the longest stage of the job.
     // Nothing below reads it: a smaller rendition comes out of the cut.
     let mut cut = {
         let source = hdr::Source { samples: &samples, width, height };
-        let mut built = hdr::Cut::from_base(&source, anchored, lens, order[0].1);
+        let mut built = hdr::Cut::from_base(&source, lens, order[0].1);
         built.sharpen(job.sharpen);
         built
     };
     drop(samples);
 
     // **The frame goes up once per size, not once per rendition.** Two outputs of one size
-    // differ by two words of a uniform; uploading 59MB at 3840 - 361MB at native - and
+    // differ by two words of a uniform; uploading 59MB at 3840 - 366MB at native - and
     // rebuilding the lattice, the curves and the output pair for each of them was most of
     // what a second target cost.
     let mut uploaded: Option<crate::gpu::Uploaded<'_>> = None;

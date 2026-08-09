@@ -5,12 +5,15 @@
 // not "this is correct". Correctness is what the other tests and a real HDR display
 // are for.
 //
-// `hdr_grade.pin.txt` is the exception and is worth more than it looks. It was regenerated
-// from the per-pixel Rust grade at the moment that implementation was removed, so it is a
-// frozen record of what the CPU produced - and the GPU has had to match it ever since,
-// within `check_within`'s tolerance, on a real 3840px photo. That is a better oracle than
-// a second live implementation was: it cannot drift, and nobody has to keep it in step.
-// Regenerating it is therefore a bigger claim than regenerating the others.
+// `hdr_grade.pin.txt` was that, and is not any more. It began as a frozen record of what the
+// per-pixel Rust grade produced, held against the shader ever since; the base's coding changed
+// underneath it (`tone::encode_base`), so it was regenerated and now records what the *shader*
+// produces on a real 3840px photo. It is a regression net like the others - it says the grade
+// has not moved since somebody last said it should, not that it is right.
+//
+// What it is still good for is that it is the only pin taken through the whole job on a real
+// RAW, so it catches a change nothing else sees. What it can no longer do is arbitrate between
+// the two implementations, because there is only one.
 //
 // Regenerate deliberately, never to make a red test green:
 //

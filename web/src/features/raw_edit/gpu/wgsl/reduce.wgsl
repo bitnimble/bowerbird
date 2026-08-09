@@ -13,8 +13,9 @@
 //
 // Averaged in the frame's own coding rather than in light, and that is a deliberate
 // approximation rather than the property the draw's own taps hold. Decoding here would mean
-// an `rgba32float` pyramid - four times the 160MB, at 61MP - to average a level the reader
-// only ever sees zoomed far enough out that four source pixels are inside one canvas one.
+// an `rgba32float` pyramid - twice the 160MB this one takes at 61MP - to average a level the
+// reader only ever sees zoomed far enough out that four source pixels are inside one canvas
+// one.
 // Measured against a decoded reduce over the parity fixtures, the worst canvas pixel moves
 // under a count of 255. `covered`'s own taps do decode first, so a 1:1 view is exact.
 //
