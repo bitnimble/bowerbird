@@ -961,8 +961,8 @@ mod hdr_grade {
         // ratio has to be read in light rather than in codes, which is the claim anyway: a
         // falloff correction is a multiplication of light whatever the buffer holds.
         let mut samples = frame.samples16().expect("a 16-bit decode").to_vec();
-        let levels = crate::tone::levels(&samples, QUANTILE);
-        crate::tone::encode_base(&mut samples, levels.white, REFERENCE);
+        let levels = crate::tone::levels(&samples, QUANTILE).anchored();
+        crate::tone::encode_base(&mut samples, levels, REFERENCE);
         let lit = crate::hdr_fit::apply_lens(&samples, width, height, &fitted).expect("the lens stage runs");
 
         let at = |data: &[u16], x: usize, y: usize| {
@@ -1318,15 +1318,13 @@ mod hdr_grade {
                 false => None,
             };
             let decoded = source(&frame);
-            let levels = crate::tone::levels(decoded.samples, QUANTILE);
+            let levels = crate::tone::levels(decoded.samples, QUANTILE).anchored();
             // Coded as both hosts code it, since what a `Cut` carries is the coded base.
             let mut coded = decoded.samples.to_vec();
-            crate::tone::encode_base(&mut coded, levels.white, REFERENCE);
+            crate::tone::encode_base(&mut coded, levels, REFERENCE);
             let source =
                 crate::hdr::Source { samples: &coded, width: decoded.width, height: decoded.height };
-            let scene =
-                crate::tone::SceneGrade::new(m.map(|m| &m.colour), levels, REFERENCE, 1.0)
-                    .expect("a frame with an exposure to read");
+            let scene = crate::tone::SceneGrade::new(m.map(|m| &m.colour), levels, REFERENCE, 1.0);
             let sized = |edge: f64| {
                 crate::hdr_args::target_size(
                     frame.width as u32,

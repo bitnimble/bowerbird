@@ -1,12 +1,14 @@
 # Persisted photo edits, cross-session undo, and edited renditions
 
-Status: **§1-§6 proposed and reviewed.** §7, §8 and §10 were reopened by a four-way review and now
-depend on a **phase 0** that was not previously in the plan: reconciling `edit::prepare` and the
-rendition job onto one pipeline order, which turns out to be one real change (the filter) rather
-than four (§0.1). The wgpu canvas question is settled and confirmed on hardware (§10.0).
+Status: **phase 0 is done and shipped; §10 is superseded; §2-§8 are unstarted and unblocked.**
+Read §0.4 before anything else - it says what phase 0 became, which is more than it was scoped as,
+and why the crate extraction §10 designs is no longer the way to get what §10 wanted.
 
-Build order: **phase 0** (reconcile the filter, §0.1) → §2-§6 (persistence and undo, which need no
-GPU work and can proceed in parallel) → §7/§8 (requeue and grid tiles) → §10 (crate extraction).
+Build order, revised: ~~phase 0~~ → **§2-§6 (persistence and undo)** → **§7/§8 (requeue and grid
+tiles)** → ~~§10 (crate extraction)~~. Nothing below is waiting on GPU work any more.
+
+Everything from §0 to §0.3 is kept as the record of how phase 0 was argued and priced. It is
+written in the present tense about a tree that no longer exists; §0.4 is the correction.
 
 ## 0. Review outcome, 2026-08-06
 
@@ -375,6 +377,68 @@ measured whether they are the right ones" in PQ), so moving domains is the momen
 rather than carry them across untested. And `gpu_fixture.rs` pins `grade_prepared` alone, so the
 fixtures have to grow to cover the new order before the move, not after.
 
+### 0.4 What phase 0 became, and what it does to §10
+
+Phase 0 landed, and went past its brief. §0.1 through §0.3 scoped it as "move `encode_still`'s
+`finish` to pre-grade normalised PQ". What shipped is that plus three things that were listed as
+open questions or as later phases:
+
+- **One pipeline, SDR an output stage** (§0.2.2 as written). `job::Target::output` is `pq` or
+  `srgb`; there is one decode, one fit, one filter, one grade, and the two differ by the peak the
+  roll-off targets and the transfer at the end. `render_base`, the 8-bit decode arm and
+  `fit::apply` as a rendering path are gone.
+- **The §10.9 split adopted** (§0.2.2 left this "on the table"; §0.2.3 measured it). Denoise and
+  defringe before the geometric warp, sharpen after it.
+- **The domain question dissolved rather than answered.** §0.1's "which host moves" assumed a
+  buffer that stages convert into and out of. The base is now *coded once* into normalised PQ
+  immediately after `tone::levels` reads the anchor (`tone::encode_base`), and every stage from
+  there to the shader is pointwise on what the buffer holds - both filter passes, the fit-to-size,
+  the warp, the downscale. There is no per-stage domain left to disagree about. `image::Coding`,
+  the trait that carried the conversion, is deleted.
+
+**And the grade is one implementation, not two.** §10.0 closes by saying the crate "does not reduce
+this to one implementation... two implementations before, two after", citing `prelude.wgsl:3-5` and
+§7's test-only twin. That is no longer true, and it is the single most important correction on this
+page. `tone.rs`'s grade - `grade_owned`, `MatchedGrade::pixel`, `roll`, `eetf`, `encode_pq`,
+`encode_srgb8` - is deleted. The WGSL is the only one there is.
+
+**Which was §10's whole purpose, reached by a route §10 did not consider.** §10 designs a
+`native/tick/` crate compiled twice, wgpu-on-wasm holding the canvas, `draw_to_surface` and
+`encode_to_buffer`, a reversal of `559fe88`, and ~189KB of wasm in the page. None of that was
+built and none of it is needed:
+
+> The `.wgsl` files stay in `web/src/features/raw_edit/gpu/wgsl/`. The page imports them as it
+> always did. `native/rawshim/src/gpu.rs` `include_str!`s **the same files** and runs them through
+> wgpu natively. Two thin hosts over one source, rather than one host compiled twice.
+
+The page keeps its TypeScript host; Rust has its own, ~900 lines. What §10.1 lists as "moves into
+the crate" stays where it is on both sides, and what §10.1.1 lists as "things the port must
+preserve" became a *parity* checklist between two hosts rather than a porting one - which is what
+`fixtures/gpu/` and `peak-sampling.txt` exist to hold.
+
+So **§10, §10.0 and §10.1 are superseded**: read them for the reasoning, not the plan. §10.1.1 is
+still live and still correct. §10.2 is not superseded and has become *harder*: see below.
+
+**§10.2 is now a deployment blocker rather than a preparation.** `job::run` returns an error naming
+the missing driver where no adapter of any kind answers - there is no CPU grade to fall back to,
+by design. So the container needs `/dev/dri` passed through, `mesa-vulkan-drivers` installed, and
+the `dev` stage's Mesa purge undone, or **renditions do not build at all**. That is the one item
+from §10 that must land before this feature ships, and it is unstarted.
+
+**What a reader picking up §2-§8 needs to know about the tree:**
+
+- The job runs the editor's shaders already. §7's "the job has to know" is a `Job` field and a
+  worker read; the hard half it was waiting on is done.
+- `job::Target` already carries `grid` alongside `full`/`max` and one job can hold both, which is
+  most of §8's "the render job gains a `grid` target". `runOneOff` stamps per target.
+- §7's note that `tone.rs`'s grade "must not be deleted along with its caller, it becomes a
+  test-only twin" is void - it was deleted, and `gpu_fixture.rs` now rebuilds its baselines from
+  the shader under `BOWERBIRD_WRITE_FIXTURES`. `pin.rs` says what that costs.
+- The prepared frame that crosses to the client is normalised PQ, not scene-linear levels.
+  `PreparedHeader` is otherwise unchanged.
+- §7's readback figure is now half: `encode` packs two `u16` components to a word, so 61MP is
+  ~366MB rather than ~732MB.
+
 ## 1. What exists today
 
 The editor is `web/src/features/raw_edit/`. `RawEditPresenter.open` fetches a prepared frame
@@ -662,10 +726,9 @@ uniform's linear gain on the way in (§4).
 **The job has to know.** `Job` in `rawshim_job.ts` gains an `edits` field carrying the doc; the
 worker reads it from `photo_edits` when it assembles the job.
 
-**This section assumes phase 0 has landed** (§0.1). Before it, the editor and the job filter
-different signals, so a job running the editor's chain would produce a picture neither host
-currently makes. After it, both are decode → `prepare` → grade → PQ → finish, and there is one
-pipeline to run.
+**Phase 0 has landed** (§0.4). Both hosts are decode → levels → code → denoise → warp → sharpen →
+one dispatch carrying the colour transform, the roll-off and the transfer. There is one pipeline to
+run, and the job already runs the editor's shaders.
 
 **Where the GPU sits in the job.** The job runs the shared crate (§10) over its prepared frame and
 takes `encode_to_buffer`'s counts back. Either side of that stays where it is: LibRaw's decode,
@@ -674,17 +737,17 @@ parameter - fused into the grade for the job, materialised at open for the edito
 establishes are the same pixels. The denoise and sharpen move *inside* the shared chain as of
 phase 0, rather than staying either side of it.
 
-Note the transfer figure an earlier draft gave was wrong: `encode` writes `array<u32>`, one word
-per component, so at 61MP the readback is ~732MB and a staging copy of the same, not ~360MB. It
-must also clear `maxStorageBufferBindingSize`, which `frameTooBig` checks only for the frame.
+The transfer figure an earlier draft gave was wrong twice over. `encode` packed `array<u32>`, one
+word per component, so at 61MP the readback was ~732MB and a staging copy of the same, not ~360MB.
+It packs two `u16` to a word now, so it is ~366MB each. Both clear
+`maxStorageBufferBindingSize`, which `Gpu::fits` checks - and since the output is now the same six
+bytes a pixel as the frame, one question covers both bindings.
 
-**This collapses a duplication rather than leaving one.** With phase 0 done, a job that runs the
-crate grades *and filters* on the GPU, so `tone.rs`'s grade and `image::finish`'s CPU path both
-leave the rendition path. That is the simplification, and also the sharpest edge in the plan: the
-CPU grade is what `native/rawshim/tests/gpu_fixture.rs` rebuilds the parity fixtures from, so it
-must not be deleted along with its caller. It becomes a test-only twin, and the pin it anchors is
-the reason to keep it. Say so where it lives, or the next reader deletes dead code and takes the
-harness with it.
+**The duplication is already collapsed.** `tone.rs`'s grade has left the rendition path and been
+deleted, not kept as a test-only twin: `gpu_fixture.rs` rebuilds its baselines from the shader
+under `BOWERBIRD_WRITE_FIXTURES`, and `pin.rs` records what that costs - the pin is a regression net
+now rather than an independent oracle. `image::finish` stays on the CPU, at the open, on the coded
+base; it is not a per-tick stage and §0.2.1 has the 645ms-to-15ms reason.
 
 **Both stages are requeued.** The grid tile and the viewer renditions are separate artefacts with
 separate flags, and an edit invalidates both. `queueTileRebuild` exists;
@@ -702,11 +765,14 @@ Today `toStages` builds the tile from `'embedded'` - the camera's JPEG, ~125ms a
 a render - and that split is what fills a 2000-frame shoot's grid in a minute instead of eleven.
 That stays. What changes is that a library which renders no longer *stops* at the JPEG tile.
 
-**The render job gains a `grid` target.** `job.rs` already shares one lazy base decode across a
-job's targets, so the tile costs a downscale and an 800px AVIF encode on pixels that are already
-decoded - a few percent on top of a render that was happening anyway, not a second decode. The
-same change covers both cases the user asked for, because they are one case: after an edit save,
-and on first import wherever the library renders automatically.
+**The render job already takes a `grid` target.** `job::Rendition` is `grid | full | max` and one
+job can carry several, sharing one decode, one fit, one filter and one cut - the tile is a
+`Cut::downscale` and an AVIF encode on pixels already decoded. Measured on the 61MP body, a
+grid+full job is 3940ms against 4139ms for the full alone, so the tile is *free* to within noise.
+What is left for this section is the *queueing*: `toStages` still stops at the embedded JPEG for a
+library that renders, and that is the decision to change. The same change covers both cases the
+user asked for, because they are one case: after an edit save, and on first import wherever the
+library renders automatically.
 
 This composes with §10 rather than fighting it: the edit passes run once over the shared base,
 and both the `grid` and `full` targets downscale from the frame that comes back. One GPU round
@@ -777,6 +843,13 @@ file.
 **Undo needs no special case:** a crop is a delta over four numbers like any other.
 
 ## 10. One pipeline, compiled twice: a shared wgpu crate
+
+> **Superseded - see §0.4.** What this section wants was reached without the crate: the `.wgsl`
+> files stay in the page, `native/rawshim/src/gpu.rs` `include_str!`s the same files, and two thin
+> hosts run one source. No new crate, no wasm, no bundle cost, no reversal of `559fe88`, and no
+> dependence on `ExtendedDisplayP3`. Kept for the reasoning, the canvas probe in §10.0 and the
+> silent-failure checklist in §10.1.1, which is still live. **§10.2 is not superseded and is now a
+> blocker.**
 
 Edits live in `tick.wgsl`. Renditions are built by Rust. Implementing the edits a second time in
 Rust would mean the same arithmetic in two places, and if the two drift the editor lies about

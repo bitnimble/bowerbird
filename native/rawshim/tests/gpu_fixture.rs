@@ -216,7 +216,7 @@ fn baseline(stem: &str, suffix: &str, got: &[u8]) -> Option<Vec<u8>> {
 /// exactly what the editor does for a file whose fit found no geometry, and the frame the
 /// client is handed either way.
 fn filter_once(prepared: &mut Prepared, grade: &hdr::Grade, strengths: Strengths) {
-    tone::encode_base(&mut prepared.samples, prepared.levels.white, grade.reference_white_nits);
+    tone::encode_base(&mut prepared.samples, prepared.levels.anchored(), grade.reference_white_nits);
     for half in [strengths.before_the_fit(), Strengths { sharpen: strengths.sharpen, ..Default::default() }] {
         hdr::filter_base(&mut prepared.samples, prepared.width, prepared.height, half);
     }

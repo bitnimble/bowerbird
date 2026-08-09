@@ -68,8 +68,8 @@ pub fn pq(nits: f64) -> f64 {
 ///
 /// Across cores, because it is a whole-frame sweep: 180M gathers at 61MP, on the one path every
 /// rendition takes.
-pub fn encode_base(samples: &mut [u16], white: f64, reference_white_nits: f64) {
-    let scale = reference_white_nits / white.max(1.0);
+pub fn encode_base(samples: &mut [u16], levels: Anchored, reference_white_nits: f64) {
+    let scale = reference_white_nits / levels.white;
     let forward: Vec<u16> = (0..=u16::MAX)
         .map(|level| (pq(f64::from(level) * scale) * f64::from(u16::MAX)).round() as u16)
         .collect();
@@ -167,6 +167,39 @@ pub struct Levels {
     pub peak: f64,
 }
 
+impl Levels {
+    /// The same levels with a white the pipeline can divide by.
+    ///
+    /// **One floor, in one place.** Both the coding and the grade divide by diffuse white, and
+    /// [`levels`] reports zero for a frame whose quantile lands on level 0 - a lens cap, a
+    /// failed exposure. A rendition floors rather than refusing: at a white of 1 it still
+    /// renders, all but black, where declining would fail a photograph that imported before.
+    ///
+    /// It used to be floored at each of the three places that grade, in two spellings, with
+    /// `encode_base` flooring again internally in case one of them forgot - so the invariant
+    /// that `tick.white` is the white the frame was *coded* against spanned four sites and was
+    /// checked at none. The type carries it now: [`encode_base`] and [`SceneGrade::new`] take
+    /// only this, so a caller cannot reach either with a raw quantile.
+    ///
+    /// The editor does not come through here. It refuses a frame this dark outright, because
+    /// `white` crosses to the client and a reader would get a flat white canvas reporting
+    /// itself live rather than a picture (`edit::open`).
+    pub fn anchored(self) -> Anchored {
+        Anchored(Levels { white: self.white.max(1.0), peak: self.peak.max(1.0) })
+    }
+}
+
+/// [`Levels`] whose white is at least 1, so dividing by it is defined.
+#[derive(Clone, Copy)]
+pub struct Anchored(Levels);
+
+impl std::ops::Deref for Anchored {
+    type Target = Levels;
+    fn deref(&self) -> &Levels {
+        &self.0
+    }
+}
+
 /// The brightest component of a pixel rather than its luminance, because that is what
 /// clips first: anchoring on luminance lets a saturated channel run past the top of
 /// the range while the pixel still reads as mid-toned.
@@ -248,21 +281,22 @@ pub struct SceneGrade<'a> {
 }
 
 impl<'a> SceneGrade<'a> {
-    /// None where there is no exposure to read: `white` at zero, or a non-positive exposure.
-    ///
     /// No frame and no GPU. The matched arm's peak is measured off the frame that is already
     /// uploaded, by the shader, in `gpu::Uploaded::measure_peak` - so what is left here is
     /// what the uniform carries.
+    ///
+    /// Infallible, where this used to return None for a white of zero. [`Anchored`] is what
+    /// makes that true rather than assumed: every caller had to floor the white before coding
+    /// the frame with it anyway, so the arm that handled the unfloored case was unreachable
+    /// from all four of them - an error string that read as a live outcome and was not.
     pub fn new(
         colour: Option<&'a HdrColour>,
-        levels: Levels,
+        levels: Anchored,
         reference: f64,
         exposure: f64,
-    ) -> Option<Self> {
-        if levels.white == 0.0 || !(exposure > 0.0) {
-            return None;
-        }
-        Some(SceneGrade { levels, reference, exposure, matched: colour })
+    ) -> Self {
+        assert!(exposure > 0.0, "an exposure is a gain on the scene, so it has to be positive");
+        SceneGrade { levels: *levels, reference, exposure, matched: colour }
     }
 
     /// This scene as the shader's uniform wants it.

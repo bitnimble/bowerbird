@@ -296,26 +296,17 @@ pub fn graded_as(
     matched: Option<&HdrMatch>,
     output: crate::gpu::Output,
 ) -> (Vec<u16>, usize, usize) {
-    let levels = tone::levels(source.samples, options.grade.white_quantile);
-    // Floored as `job::run` and `encode_still` floor it, and for the same reason: the coding
-    // divides by this and so does the grade. Unfloored, a frame too dark to read an exposure
-    // from came back *coded* rather than as it arrived, since the grade declines and the coding
-    // does not - which is a silently different picture rather than an ungraded one.
-    let levels = tone::Levels { white: levels.white.max(1.0), peak: levels.peak.max(1.0) };
+    let levels = tone::levels(source.samples, options.grade.white_quantile).anchored();
     let size = hdr_args::target_size(source.width as u32, source.height as u32, options);
     let fit_to = (size.width as usize, size.height as usize);
-    let mut fitted = prepare_with(source, Some(fit_to), levels);
-    tone::encode_base(&mut fitted.samples, levels.white, options.grade.reference_white_nits);
+    let mut fitted = prepare_with(source, Some(fit_to), *levels);
+    tone::encode_base(&mut fitted.samples, levels, options.grade.reference_white_nits);
     let source =
         Source { samples: &fitted.samples, width: fitted.width, height: fitted.height };
-    let scene = tone::SceneGrade::new(
-        matched.map(|m| &m.colour),
-        levels,
-        options.grade.reference_white_nits,
-        1.0,
-    );
+    let scene =
+        tone::SceneGrade::new(matched.map(|m| &m.colour), levels, options.grade.reference_white_nits, 1.0);
     let size = hdr_args::Size { width: fitted.width as u32, height: fitted.height as u32 };
-    graded_with(&source, levels, scene.as_ref(), matched.map(|m| &m.lens), size, options.grade.peak_nits, output)
+    graded_with(&source, &scene, matched.map(|m| &m.lens), size, options.grade.peak_nits, output)
 }
 
 /// One photo's renditions, carried to the point where only the display still differs.
@@ -414,54 +405,37 @@ impl Cut {
 /// One rendition's display-referred pixels, off a base the caller shares across targets.
 ///
 /// The size and the display peak are the only things a rendition brings: the levels and the
-/// whole colour transform belong to the photo and arrive settled. `scene` at None is a frame
-/// with no exposure to read, which grades to itself and ships as it arrived.
+/// whole colour transform belong to the photo and arrive settled.
 ///
-/// Lens owned by the grade: the scene peak was taken off the unwarped base, then the gather
-/// and the colour share one sweep.
-#[allow(clippy::too_many_arguments)]
+/// `source` is already coded and already at `size` on the only path that reaches this, so the
+/// warp is the one thing left before the dispatch.
 pub fn graded_with(
     source: &Source<'_>,
-    levels: tone::Levels,
-    scene: Option<&tone::SceneGrade<'_>>,
+    scene: &tone::SceneGrade<'_>,
     lens: Option<&crate::fit::Lens>,
     size: hdr_args::Size,
     peak_nits: f64,
     output: crate::gpu::Output,
 ) -> (Vec<u16>, usize, usize) {
-    let mut prepared =
-        prepare_with(source, Some((size.width as usize, size.height as usize)), levels);
-    let warp = lens.and_then(|lens| {
-        image::PlanarWarp::for_lens(
-            prepared.width,
-            prepared.height,
-            prepared.width,
-            prepared.height,
-            lens,
-            image::Sampling::Bicubic,
-        )
-    });
-    if let Some(scene) = scene {
-        // The gather and the grade were one sweep while the grade was per-pixel Rust. It
-        // runs on the GPU now, from the same WGSL the editor runs, so the warp is its own
-        // pass again - one gather over the frame against holding two implementations of
-        // the colour in agreement, which is the trade DESIGN 21.1 exists to make.
-        if let Some(lens) = warp.as_ref() {
-            let src = std::mem::take(&mut prepared.samples);
-            prepared.samples = lens.map_u16(&src, |r, g, b| [r, g, b]);
-        }
-        let gpu = crate::gpu::device().expect(
-            "no Vulkan adapter answered, not even a software one. The grade runs on the GPU \
-             so that the editor and a rendition cannot drift apart, and the CPU copy it \
-             used to fall back to is gone. Installing mesa's lavapipe ICD is enough - it is \
-             very slow and it works.",
-        );
-        prepared.samples = gpu.encode(
-            &prepared.samples,
-            &scene.gpu_grade(prepared.width, prepared.height, peak_nits, output),
-        );
-    }
-    (prepared.samples, prepared.width, prepared.height)
+    let (width, height) = (size.width as usize, size.height as usize);
+    let mut samples = match lens
+        .and_then(|lens| image::PlanarWarp::for_lens(width, height, width, height, lens, image::Sampling::Bicubic))
+    {
+        // The gather and the grade were one sweep while the grade was per-pixel Rust. It runs
+        // on the GPU now, from the same WGSL the editor runs, so the warp is its own pass
+        // again - one gather over the frame against holding two implementations of the colour
+        // in agreement, which is the trade DESIGN 21.1 exists to make.
+        Some(warp) => warp.apply_u16(source.samples),
+        None => source.samples.to_vec(),
+    };
+    let gpu = crate::gpu::device().expect(
+        "no Vulkan adapter answered, not even a software one. The grade runs on the GPU \
+         so that the editor and a rendition cannot drift apart, and the CPU copy it \
+         used to fall back to is gone. Installing mesa's lavapipe ICD is enough - it is \
+         very slow and it works.",
+    );
+    samples = gpu.encode(&samples, &scene.gpu_grade(width, height, peak_nits, output));
+    (samples, width, height)
 }
 
 /// `levels` are the frame's own, unexposed; `exposure` is the slider. Keeping them apart
@@ -662,16 +636,12 @@ pub fn encode_still(
     options: &EncodeOptions,
     matched: Option<&HdrMatch>,
 ) -> Result<bool, String> {
-    let levels = tone::levels(&samples, options.grade.white_quantile);
-    tone::encode_base(&mut samples, levels.white, options.grade.reference_white_nits);
+    let levels = tone::levels(&samples, options.grade.white_quantile).anchored();
+    tone::encode_base(&mut samples, levels, options.grade.reference_white_nits);
     filter_base(&mut samples, width, height, options.strengths.before_the_fit());
-    // Floored rather than refused, as `job::run` floors it: a frame whose quantile lands on
-    // level 0 still renders, all but black, where declining would fail the photograph.
-    let anchored = tone::Levels { white: levels.white.max(1.0), peak: levels.peak.max(1.0) };
     let gpu = crate::gpu::device().ok_or("no GPU adapter, and the shaders are the grade")?;
     let scene =
-        tone::SceneGrade::new(matched.map(|m| &m.colour), anchored, options.grade.reference_white_nits, 1.0)
-            .ok_or("the frame has no exposure to grade against")?;
+        tone::SceneGrade::new(matched.map(|m| &m.colour), levels, options.grade.reference_white_nits, 1.0);
     let size = hdr_args::target_size(width as u32, height as u32, options);
 
     let mut cut = {

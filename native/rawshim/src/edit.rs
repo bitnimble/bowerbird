@@ -253,9 +253,14 @@ fn open(bytes: &[u8], request: &EditRequest) -> Result<Prepared, String> {
         // Coded before anything reads it, exactly as `job::Base::build` codes it: what crosses
         // to the client is normalised PQ, and the shader's `nits_of_code` is the only thing
         // that undoes it. One coding on both hosts is the same argument as one grade.
+        //
+        // `anchored` is a formality here - the refusal above already turned away every white a
+        // rendition would have had to floor - but it is what `encode_base` takes, and the
+        // client is sent `prepared.levels` unfloored, so the two agree by that check rather
+        // than by the floor.
         crate::tone::encode_base(
             &mut prepared.samples,
-            prepared.levels.white,
+            prepared.levels.anchored(),
             request.grade.reference_white_nits,
         );
         // Filtered here, so a tick is the grade alone - and split around the warp, which is

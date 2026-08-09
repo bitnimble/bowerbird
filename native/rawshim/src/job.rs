@@ -212,8 +212,9 @@ struct Base {
     samples: Vec<u16>,
     width: usize,
     height: usize,
-    /// The frame's own diffuse white and scene peak, off the *unresized* decode.
-    levels: tone::Levels,
+    /// The frame's own diffuse white and scene peak, off the *unresized* decode, and the pair
+    /// the samples above were coded against.
+    levels: tone::Anchored,
     matched: Option<crate::hdr_fit::HdrMatch>,
 }
 
@@ -246,11 +247,13 @@ impl Base {
         let mut samples = frame
             .into_samples16()
             .ok_or("the render needs a 16-bit scene-linear decode")?;
-        let levels = tone::levels(&samples, job.grade.white_quantile);
+        // Floored here and carried, so the white the frame is *coded* against and the white
+        // the shader is told about are one number rather than two computed alike.
+        let levels = tone::levels(&samples, job.grade.white_quantile).anchored();
         // Read off the levels and coded against them, once, here. Everything below this line
         // - the filters, the resize, the warp, the shader - reads normalised PQ rather than
         // sensor levels, and `tone::encode_base` says what that buys.
-        tone::encode_base(&mut samples, levels.white, job.grade.reference_white_nits);
+        tone::encode_base(&mut samples, levels, job.grade.reference_white_nits);
         // Ahead of every warp and every resize, which is where the denoise belongs and the
         // sharpen does not (`hdr::filter_base`). At the decode's size, which is the largest
         // any target asked for: the chroma denoise's radii and the defringe's constants are in
@@ -326,23 +329,10 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
          implementation. Install a Vulkan driver; lavapipe will do, slowly",
     )?;
 
-    // The scene, settled once: the camera's colour and the top end every rendition rolls off
-    // against. An input to the grade rather than part of it, which is why the peak is
-    // measured here and handed to the shader - two renditions of one photo measuring it
-    // separately would compress their highlights by different amounts, the same drift
-    // `tone::levels` exists to prevent at the other end of the range.
-    //
-    // White is floored rather than refused. A frame whose quantile lands on level 0 is a lens
-    // cap or a failed exposure, and the grade divides by this; at a white of 1 it still
-    // renders all but black, where refusing would fail a photograph that imported before.
-    let anchored = tone::Levels { white: levels.white.max(1.0), peak: levels.peak.max(1.0) };
-    let scene = tone::SceneGrade::new(
-        matched.as_ref().map(|m| &m.colour),
-        anchored,
-        job.grade.reference_white_nits,
-        1.0,
-    )
-    .ok_or("the frame has no exposure to grade against")?;
+    // The scene, settled once: the camera's colour and the levels every rendition grades
+    // against, which are the ones `Base::build` coded the frame with.
+    let scene =
+        tone::SceneGrade::new(matched.as_ref().map(|m| &m.colour), levels, job.grade.reference_white_nits, 1.0);
 
     // Cut once off the base, sharpened once, and the base handed back before anything is
     // encoded - 366MB of samples at 61MP, released across the longest stage of the job.
