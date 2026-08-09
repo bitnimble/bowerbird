@@ -11,8 +11,14 @@
 // third of half a frame rather than a third of a whole one - 160MB against 481 at 61MP -
 // and the level it leaves out is the one the draw reads straight from the buffer anyway.
 //
-// Averaged in scene-linear levels, which is the space the optics averaged in, and rounded
-// rather than truncated so a flat field does not drift down a count per level.
+// Averaged in the frame's own coding rather than in light, and that is a deliberate
+// approximation rather than the property the draw's own taps hold. Decoding here would mean
+// an `rgba32float` pyramid - four times the 160MB, at 61MP - to average a level the reader
+// only ever sees zoomed far enough out that four source pixels are inside one canvas one.
+// Measured against a decoded reduce over the parity fixtures, the worst canvas pixel moves
+// under a count of 255. `covered`'s own taps do decode first, so a 1:1 view is exact.
+//
+// Rounded rather than truncated so a flat field does not drift down a count per level.
 
 @group(0) @binding(1) var<storage, read> frame: array<u32>;
 @group(0) @binding(2) var coarser: texture_2d<u32>;

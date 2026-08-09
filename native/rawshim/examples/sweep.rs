@@ -100,8 +100,11 @@ fn measure(path: &str) -> Option<Report> {
         strengths: Strengths::default(),
         max_edge: 100_000.0,
     };
-    let (rolled, width, height) = hdr::graded(&source, &options, Some(&matched));
-    let ours = rawshim::tone::encode_srgb8(&rolled);
+    // sRGB out of the same dispatch that grades, rather than a second implementation of the
+    // primaries and the transfer on this side.
+    let (coded, width, height) =
+        hdr::graded_as(&source, &options, Some(&matched), rawshim::gpu::Output::Srgb);
+    let ours: Vec<u8> = coded.iter().map(|v| *v as u8).collect();
     let camera = rawshim::decode_embedded_rgb(path, 0)?;
 
     // Sampled on a stride rather than every pixel: a 24MP frame has millions of neutrals and

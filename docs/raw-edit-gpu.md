@@ -130,7 +130,7 @@ forever, and nothing on screen agrees with it. There is no zoom in the editor
 anything is the stage's own physical pixels.
 
 Everything in §3 is linear in pixels above a fixed floor (the 65536-entry LUTs,
-and `scene_peak_nits`'s 1M-sample quantile), so sizing to the stage moves every
+and the peak's 1M-sample quantile), so sizing to the stage moves every
 row of that table together. **The size of the win is not fixed, and it is not
 always a win:**
 

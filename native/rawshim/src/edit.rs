@@ -3,8 +3,8 @@
 // Everything before the first slider tick - decode, prepare, fit the camera match,
 // materialise the lens warp, denoise and sharpen - with none of the per-tick half, which
 // runs as shader dispatches on the client (`docs/raw-edit-gpu.md` §6). What crosses is
-// this module's `Prepared`: the scene-linear frame the grade reads, plus the numbers the
-// grade needs and cannot re-derive from pixels.
+// this module's `Prepared`: the coded frame the grade reads (`tone::encode_base`), plus the
+// numbers the grade needs and cannot re-derive from pixels.
 //
 // This half is where the threads are worth having - measured at 3.2x between one and
 // twelve - against a tick that is entirely the GPU's.
@@ -250,18 +250,24 @@ fn open(bytes: &[u8], request: &EditRequest) -> Result<Prepared, String> {
         if prepared.levels.white <= 0.0 {
             return Err("this frame is too dark to read an exposure from".to_string());
         }
+        // Coded before anything reads it, exactly as `job::Base::build` codes it: what crosses
+        // to the client is normalised PQ, and the shader's `nits_of_code` is the only thing
+        // that undoes it. One coding on both hosts is the same argument as one grade.
+        crate::tone::encode_base(
+            &mut prepared.samples,
+            prepared.levels.white,
+            request.grade.reference_white_nits,
+        );
         // Filtered here, so a tick is the grade alone - and split around the warp, which is
         // where the two halves belong for reasons that have nothing to do with the editor
-        // (`hdr::filter_scene_linear`). The denoise and the defringe read a frame whose noise
-        // is still the sensor's, uniform across the field; the sharpen deconvolves the blur
-        // the warp's own resample puts in, so it has to see that blur applied.
+        // (`hdr::filter_base`). The denoise and the defringe read a frame whose noise is still
+        // the sensor's, uniform across the field; the sharpen deconvolves the blur the warp's
+        // own resample puts in, so it has to see that blur applied.
         let filter = |prepared: &mut HdrPrepared, strengths: Strengths| {
-            crate::hdr::filter_scene_linear(
+            crate::hdr::filter_base(
                 &mut prepared.samples,
                 prepared.width,
                 prepared.height,
-                prepared.levels.white,
-                request.grade.reference_white_nits,
                 strengths,
             )
         };

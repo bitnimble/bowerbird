@@ -23,11 +23,11 @@
 // parity went from 6 counts to 1735 in the shadows. What saves the chroma map is that its
 // corrections multiply chroma differences, which vanish exactly where PQ gets steep.
 
-// The frame stays as it arrived: interleaved RGB `u16`, three to a pixel, in the buffer it
-// was uploaded into. Not a texture, and not padded to four components - that padding is a
-// constant 65535 costing a quarter of 481MB at 61MP, plus a second copy of the whole frame
-// to write it. Nothing samples this level bilinearly, so a texture bought only the 2D cache
-// and a raster scan does not need it.
+// The frame stays as it arrived: interleaved RGB `u16` of normalised PQ, three to a pixel, in
+// the buffer it was uploaded into. Not a texture, and not padded to four components - that
+// padding is a constant 65535 costing a quarter of 481MB at 61MP, plus a second copy of the
+// whole frame to write it. Nothing samples this level bilinearly, so a texture bought only
+// the 2D cache and a raster scan does not need it.
 @group(0) @binding(1) var<storage, read> frame: array<u32>;
 @group(0) @binding(2) var curves: texture_2d<f32>;
 @group(0) @binding(3) var chroma: texture_3d<f32>;
@@ -41,6 +41,8 @@
 // The ninth value, in a volume of its own. Eight fill two `rgba16float` texels exactly, so
 // the chroma-to-lightness pair costs one more fetch and three spare slots per node.
 @group(0) @binding(11) var chroma_tint: texture_3d<f32>;
+// `decode.wgsl` fills it, once per device. Read-only here, which is why it is filled there.
+@group(0) @binding(12) var<storage, read> nits_of_code: array<f32>;
 
 /// One `u16` of the stream, which is half of a word. Three samples to a pixel means no
 /// pixel is word-aligned, so there is no reading one as a struct.
@@ -49,10 +51,39 @@ fn sample_at(index: u32) -> u32 {
   return select(word & 0xffffu, word >> 16u, (index & 1u) == 1u);
 }
 
-/// The frame's levels at a pixel, full resolution.
-fn level_at(x: u32, y: u32) -> vec3f {
-  let base = at(x, y) * 3u;
+/// The frame's codes at a pixel, by its index in the raster. The buffer is linear, so a
+/// caller walking it in one dimension needs no `x` and `y` to get back.
+fn level_of(pixel: u32) -> vec3f {
+  let base = pixel * 3u;
   return vec3f(f32(sample_at(base)), f32(sample_at(base + 1u)), f32(sample_at(base + 2u)));
+}
+
+/// The frame's codes at a pixel, full resolution, as the buffer holds them.
+fn level_at(x: u32, y: u32) -> vec3f {
+  return level_of(at(x, y));
+}
+
+/// A code back to the nits `tone::encode_base` coded, which is `level * reference / white`.
+///
+/// So dividing by `tick.reference` gives the `level / white` every stage below wants, and the
+/// frame's own diffuse white lands at 1.0 exactly as it did when the buffer held levels.
+///
+/// Rounded rather than interpolated between entries: a code is what the buffer holds, and the
+/// only callers with a fractional one are averaging codes they already read through here.
+fn nits_of(code: vec3f) -> vec3f {
+  return vec3f(
+    nits_of_code[u32(code.r)],
+    nits_of_code[u32(code.g)],
+    nits_of_code[u32(code.b)],
+  );
+}
+
+fn nits_at(x: u32, y: u32) -> vec3f {
+  return nits_of(level_at(x, y));
+}
+
+fn nits_of_index(pixel: u32) -> vec3f {
+  return nits_of(level_of(pixel));
 }
 
 /// `hdr_fit::sample_curve`: linear interpolation over BINS samples spanning 0..ceiling.
@@ -76,8 +107,8 @@ fn sample_curve(channel: u32, x: f32) -> f32 {
 /// divides the pixel down into the curve's domain and multiplies the result back out, so
 /// the three channels move together. Skipping that leaves highlights wrong by hundreds of
 /// counts, which is exactly where a grade is judged.
-fn curves_at(level: vec3f, scale: f32) -> vec3f {
-  let scene = level * scale / tick.white;
+fn curves_at(nits: vec3f, scale: f32) -> vec3f {
+  let scene = nits * scale / tick.reference;
   let s = max(max(scene.r, max(scene.g, scene.b)) / tick.trust_ceiling, 1.0);
   return vec3f(
     sample_curve(0u, scene.r / s),
@@ -91,10 +122,10 @@ fn curves_at(level: vec3f, scale: f32) -> vec3f {
 ///
 /// Also why the peak cannot be precomputed as a curve: the exposure arrives as a gain that
 /// depends on the pixel's own luma, not as a global one.
-fn toned(level: vec3f) -> vec3f {
-  let base = curves_at(level, 1.0);
+fn toned(nits: vec3f) -> vec3f {
+  let base = curves_at(nits, 1.0);
   if (tick.exposure == 1.0) { return base; }
-  let lit = curves_at(level, tick.exposure);
+  let lit = curves_at(nits, tick.exposure);
   let base_luma = dot(LUMA, base);
   let lit_luma = dot(LUMA, lit);
   // Black has no ratios to hold and the two lumas vanish together, so the quotient there
@@ -176,14 +207,18 @@ fn apply_matrix(t: vec3f) -> vec3f {
 
 /// The matched colour in nits, before any roll-off. Shared with the peak pass so the two
 /// cannot measure one thing and grade another.
-fn matched_nits(level: vec3f) -> vec3f {
-  return finish_chroma(apply_matrix(toned(level))) * tick.reference;
+fn matched_nits(nits: vec3f) -> vec3f {
+  return finish_chroma(apply_matrix(toned(nits))) * tick.reference;
 }
 
 /// The neutral arm: one shared curve, so channel ratios survive whatever the input.
-fn neutral_nits(level: vec3f) -> vec3f {
-  let white = tick.white / tick.exposure;
-  let source_level = tick.source_level / tick.exposure;
-  let source_peak = (source_level / white) * tick.reference;
-  return rolled((level / white) * tick.reference, rolloff(source_peak, tick.peak));
+///
+/// The frame arrives anchored - `tone::encode_base` divided by diffuse white and multiplied
+/// by the reference before coding - so what the levels form of this divided out is already
+/// done, and the exposure is what is left. It cancelled out of `source_peak` there and does
+/// here too: the ratio of the frame's peak to its own white is what the roll-off is against,
+/// and a gain moves both.
+fn neutral_nits(nits: vec3f) -> vec3f {
+  let source_peak = (tick.source_level / tick.white) * tick.reference;
+  return rolled(nits * tick.exposure, rolloff(source_peak, tick.peak));
 }

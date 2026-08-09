@@ -1319,7 +1319,7 @@ Each worker:
 
 **The decode never enters the JS heap, and never leaves Rust at all.** Steps 2-4 happen inside one `bb_run_job` call: TypeScript sends the job as JSON and gets JSON back, so a 60MP frame is decoded, fitted, graded and encoded without its pixels - or an address to them - crossing the FFI boundary. Nothing is freed by hand. The base is an owned `Vec<u16>` in a local, and the last rendition to read it hands it back before its encode allocates anything - 366MB at 61MP, released across the longest stage of the job (§10.7).
 
-**There is one rendering pipeline, and SDR is an output stage of it.** Everything internal is 16-bit scene-linear through one grade; what a rendition's dynamic range reaches is the peak that grade rolls into and the transfer and depth of the buffer that leaves - PQ at 16 bits, or the sRGB primaries and transfer at 8. There used to be a second path: an 8-bit sRGB decode, `fit::apply`, and no tone map at all. It was slower and larger both. Measured on a 3840px Sony rendition:
+**There is one rendering pipeline, and SDR is an output stage of it.** Everything internal is one 16-bit base through one grade; what a rendition's dynamic range reaches is the peak that grade rolls into and the transfer and depth of the buffer that leaves - PQ at 16 bits, or the sRGB primaries and transfer at 8. There used to be a second path: an 8-bit sRGB decode, `fit::apply`, and no tone map at all. It was slower and larger both. Measured on a 3840px Sony rendition:
 
 | | second path | one pipeline |
 |---|---|---|
@@ -1332,21 +1332,27 @@ Memory was the one with a stated reason - a 16-bit decode is twice the samples f
 
 | 24MP fixture | time | peak RSS |
 | --- | --- | --- |
-| one SDR at 3840 | 1767 → 2011ms | 600 → **449MB** |
-| one HDR at 3840 | 1692 → 2098ms | 529 → 535MB |
-| **SDR + HDR at 3840** | 3424 → **2190ms** | 634 → **462MB** |
-| HDR at native | 3463 → 4241ms | 714 → **681MB** |
+| one SDR at 3840 | 1767 → 2355ms | 600 → **534MB** |
+| one HDR at 3840 | 1692 → 2471ms | 529 → 558MB |
+| **SDR + HDR at 3840** | 3424 → **2536ms** | 634 → **508MB** |
+| HDR at native | 3463 → 4774ms | 714 → **733MB** |
 
 | 61MP body | time | peak RSS |
 | --- | --- | --- |
-| **grid + full** | 3722 → **2903ms** | 567 → **525MB** |
-| HDR at native | 10297 → 12628ms | 1375 → 1373MB |
+| **grid + full** | 3722 → 4009ms | 567 → **542MB** |
+| HDR at native | 10297 → 12978ms | 1375 → **1381MB** |
 
-Memory is at or below the old pipeline everywhere. Time splits by shape: a job with more than one output is 22-28% faster, because that is what the sharing is for, and a job with one is 17-30% slower.
+Memory is at or below the two-pipeline version everywhere. Time splits by shape, and the shape is the point: a job with more than one output pays for its second one in a dispatch, where the two-pipeline version paid for it in a second decode, a second fit and a second filter. A job with one output is 25-33% slower than the pipeline that was specialised for it.
 
-**The cost is the perceptual round trips, which the old arrangement did not make at all.** Isolated by running with the denoise and defringe off, where the branch lands within 5-9% of the old pipeline - so it is not the shared cut and not the half-precision intermediate. The old HDR path was `grade`, `encode_pq`, then `finish` on a frame *already in PQ*: its filter converted nothing. This one filters twice in domains the buffer is not in - the denoise on scene-linear samples, the sharpen on nits - and each pass costs a `pq_inv` per sample on the way back, two `powf` apiece. At 3840 that is ~59M calls the old path never made.
+**Where the remaining single-output cost is, and where it is not.** It was the perceptual round trips, and it was the larger half: every filter pass converted a buffer it was not in and converted it back, at two `powf` a sample on the way back, and a `powf` in the loop is also what stops it vectorising. Isolated by running the job with that conversion replaced by an identity, it measured 400ms of 2650 on the 24MP fixture and it scales with the sensor. §10.9 removes it: the base is *coded once*, into normalised PQ, and every stage below the decode is pointwise on what the buffer holds.
 
-Two of the three directions are tables and cost nothing: the denoise's way in is keyed on an input level, and the sharpen's is keyed on an `f16`'s bit pattern, an `f16` having only 65536 values. The way back cannot be, reading the filter's f32 output. That is the price of denoising ahead of the warp and sharpening after it, which is the ordering §10.9 argues for on its own grounds.
+What is left is that this pipeline denoises ahead of the warp and sharpens after it - two `image::finish` passes where the specialised path made one - which is the ordering §10.9 argues for on its own grounds and is not being paid back.
+
+**Where the memory is, measured rather than assumed.** Peak RSS at native on a 61MP body read 1730MB before this was looked at, and the guess was the GPU - the dispatch wrote a `u32` per component and read it back through a second buffer of the same size, 732MB each. That guess was wrong twice over. Sampling `VmRSS` through the job showed *no* rise at all across the upload: a `wgpu` buffer lives in device memory, and on this adapter none of it is resident. What the peak actually held was two 366MB CPU buffers alive at once - the cut and the graded frame the AVIF encode was working from - on top of the decode's own transient.
+
+So the cut is handed back as soon as it is on the GPU, which is where nothing reads it again (`job::run`). That took the same case to 1381MB, level with the two-pipeline version's 1375.
+
+The output is packed to two `u16` components a word regardless, and it is worth having for a reason RSS cannot show: every value `encode` writes is already a `round` into 0..65535 or 0..255, so a word per component spent half of the job's largest *device* allocation on leading zeroes, and device memory is the scarcer of the two on an iGPU sharing it with the system. Three `u16` a pixel do not divide a word, so an invocation covers two pixels and writes three whole words rather than read-modify-writing a half its neighbour owns.
 
 **The check that the colour still lands is against the camera's own JPEG**, since an SDR rendition now takes it from the HDR fit graded down rather than from `fit::Profile` (§10.8.1 exists to make those agree). Mean ΔE76 to the embedded preview, before against after: 1.038 → 1.020 on the Sony fixture, 1.898 → 2.122 on the Canon one.
 
@@ -1356,7 +1362,9 @@ Read that as bounding *gross* change and nothing more. A mean ΔE76 is the one m
 
 **A job is one render with a list of outputs.** `Target.output` names what a rendition is coded as - `pq` at the grade's peak, or `srgb` at diffuse white - rather than carrying a `hdr` boolean for the render to interpret, so the sharing below is what the input describes rather than something the implementation happens to do. The library's `hdr` still says where a rendition is *stored*; `processing_worker` maps the one to the other, which is the only place the two vocabularies meet.
 
-**Everything that does not depend on a target is settled before the loop over them**, and the list is most of the job's cost. The decode is shared, bounded to the largest size any target wants. The levels the grade anchors to are `tone::levels` over that *unresized* decode. The camera match is fitted once, the denoise and defringe run once, and the colour transform is settled once as a `tone::SceneGrade` - its three curve tables are 65536 entries a channel, and its scene peak is a quantile taken through the whole transform over a million pixels, neither of which a target's size or display changes.
+**Everything that does not depend on a target is settled before the loop over them**, and the list is most of the job's cost. The decode is shared, bounded to the largest size any target wants. The levels the grade anchors to are `tone::levels` over that *unresized* decode. The camera match is fitted once, the denoise and defringe run once, and the colour transform is settled once as a `tone::SceneGrade` - its three curve tables are 65536 entries a channel, and its scene peak is a quantile taken through the whole transform over a million pixels, neither of which a target's size or display changes. That quantile runs on the GPU, through `peak.wgsl`'s `measure` and `quantile`: it is the same statistic the editor's open takes and it was the last evaluation of the camera's colour that was not the shader's. What the CPU hands it is the sample and nothing else - `tone::sampled` gathers the million pixels dense, at the positions `tone::levels` reads, so 6MB crosses rather than the frame.
+
+**The frame goes up once per size, not once per rendition.** Two outputs of one size differ by two words of a uniform, so `gpu::Uploaded` holds the frame, the matrix, the lattice, the curves and the output pair, and a second target costs a bind group and a dispatch. On the 24MP fixture that took the two-output job from 3084ms to 2510.
 
 Sharing the scene peak is a **correctness** fix as much as a saving, and it is the same argument the levels already made: it is what every pixel's roll-off is measured against, so two sizes of one photo were compressing their highlights by different amounts. Visible in the grade pin - the 3840px and 800px matched renditions now report the same peak sample where they reported 6585 and 6477.
 
@@ -2284,9 +2292,19 @@ The sharpen goes last because it is a Richardson-Lucy deconvolution *of the resa
 | one pass, all three | 4.99s | 32.4s | 316.3MB |
 | **split** | **4.43s** | **26.9s** | **316.5MB** |
 
-**The slot ahead of the warp is perceptual without being the grade's output**, which is what makes one arrangement serve both the renditions and the editor. Every stage here reads a *difference* against a blur, and a difference taken in linear light follows absolute luminance rather than what the eye reads (below) - measured, linear flattens shadow texture by a factor of forty. But the filter never needed the *grade's* output either. It needed a perceptual domain, and PQ against the frame's own diffuse white is one that has nothing to do with the exposure: `hdr::filter_scene_linear` filters the scene-linear frame in PQ against that anchor. Held against filtering the graded frame, the mid-tones - 29.5M of a 29.6M-sample frame - land within 20 counts of 65535 and the surviving grain matches within a few percent.
+**The slot ahead of the warp is perceptual without being the grade's output**, which is what makes one arrangement serve both the renditions and the editor. Every stage here reads a *difference* against a blur, and a difference taken in linear light follows absolute luminance rather than what the eye reads (below) - measured, linear flattens shadow texture by a factor of forty. But the filter never needed the *grade's* output either. It needed a perceptual domain, and PQ against the frame's own diffuse white is one that has nothing to do with the exposure. Held against filtering the graded frame, the mid-tones - 29.5M of a 29.6M-sample frame - land within 20 counts of 65535 and the surviving grain matches within a few percent.
 
-**The transfer rides on the filter's own reads and writes**, rather than converting the frame and converting it back. `image::Coding` is handed to `finish` and applied inside `deinterleave` and `recombine` - and inside `measure_noise` and `measure_defocus`, which have to see the same domain or `sigma` is denominated in the wrong currency. Done as its own pass it cost a whole second frame in f32: 722MB at 61MP, on top of the 361MB decode, which is what `processing_concurrency` multiplies. The per-sample count is unchanged; the buffer simply never exists. The sharpen takes the same route on the frame of nits, through `tone::NitsPq` - PQ being absolute, that coding says nothing about which display the rendition is for, so one sharpen serves them all.
+**So the base is coded into that domain once, and nothing below it converts.** `tone::encode_base` puts the decode into normalised PQ - `pq(level * reference / white)` at 16 bits - immediately after `tone::levels` reads the anchor off it, and every stage from there to the shader is pointwise on what the buffer holds: both filter passes, the fit-to-size, the warp, the downscale. The shader undoes it with a 65536-entry table (`decode.wgsl`), which is the same table for every photograph because the coding anchored the frame before applying the curve.
+
+The arrangement before this handed each pass an `image::Coding` that converted inside `deinterleave` and `recombine`, so no second frame was ever materialised - but the *arithmetic* still ran per sample, at two `powf` on the way back, and it ran once per pass. Two passes on a 24MP frame measured 400ms of a 2650ms job (§10.3). Coding once is one table lookup per sample, total.
+
+Three consequences worth stating rather than discovering:
+
+- **The falloff is no longer a multiply.** It is still a multiplication of *light* - vignetting is an optical attenuation - so `PlanarWarp::map_u16` applies it with `tone::lift_in_pq`, which is that multiplication folded into PQ's own intermediate: `y' = g^m1 · y` cancels the `^m1`/`^(1/m1)` pair, leaving one `powf` where a round trip would take four. The `g^m1` depends only on the radius bucket, which is a `u8`, so it is tabulated per warp rather than per pixel. A gain of exactly 1 returns the sample untouched, because the fold is `pq(pq_inv(u))` there and that is a count out on some codes.
+- **The box averages are in the coding, not in light.** `Cut::downscale` and the editor's pyramid both average codes. A mean of linear levels is what a lower-resolution sensor would have integrated and a mean of PQ codes is not; it is taken anyway because the alternative is the two whole-frame sweeps this exists to remove, and because the downscale is a grid tile in 99 cases of 100. The draw's own taps *do* decode first, so a 1:1 view is exact. Measured against the committed pins, the largest shift is the 800px cut's mean, at 0.33%.
+- **The `u16` lands better than it did.** Linear spends its codes where the eye cannot see them: a frame whose diffuse white sits near level 6000 of 65535 has almost none left below it. Normalised PQ is near-uniform in what a reader can distinguish, and the pins show it - the graded black floor drops from 69 counts to 17.
+
+PQ's range ends at 10000 nits, so a level past 49x the frame's own diffuse white saturates in the coding. That ceiling is not new: the `Coding` the filters borrowed clamped at exactly the same place, so any frame reaching it was already losing those levels in the denoise. It is BT.2408's own headroom above a 203-nit white.
 
 That is also what lets the editor's tick be the grade alone, 16ms against 645ms: the filter runs once at open rather than per slider position, and a rendition cuts every size it needs from one filtered base.
 

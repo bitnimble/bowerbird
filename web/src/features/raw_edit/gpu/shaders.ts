@@ -10,16 +10,18 @@
 //
 //   prelude   nothing
 //   tick      nothing; declares `tick` at binding 0
-//   colour    prelude and tick; declares bindings 1-4, 7 and 10
+//   colour    prelude and tick; declares bindings 1-4, 7, 10-12
 //   frame     all three; declares bindings 5-6 and 9
 //   peak      prelude, tick, colour; declares bindings 5-6 and 8
 //   reduce    tick; declares bindings 1-3, on a layout of its own
+//   decode    prelude; declares binding 12 writable, on a layout of its own
 //
 // Numbers that both sides need are declared in the `.wgsl` and pinned to the host's copy by a
 // test, rather than substituted into the source, so the files stay valid WGSL on their own. A
 // pipeline-overridable constant only where the value actually differs between pipelines.
 
 import colour from './wgsl/colour.wgsl?raw';
+import decodeSource from './wgsl/decode.wgsl?raw';
 import frame from './wgsl/frame.wgsl?raw';
 import peak from './wgsl/peak.wgsl?raw';
 import prelude from './wgsl/prelude.wgsl?raw';
@@ -36,6 +38,12 @@ export const PEAK = compose(prelude, tick, colour, peak);
 
 /** The pyramid the draw averages with, built once at the open. */
 export const REDUCE = compose(tick, reduceSource);
+
+/** The frame's coding undone, one entry per code. The same table for every photo. */
+export const DECODE = compose(prelude, decodeSource);
+
+/** Entries in that table, which is every `u16` a sample can hold. */
+export const PQ_CODES = 65536;
 
 /**
  * `struct Tick` in `wgsl/tick.wgsl`, field for field and in its order.

@@ -56,8 +56,11 @@ fn main() {
              without the lattice g-r {bg:+.1} b-r {bb:+.1}",
         );
     }
-    let (rolled, width, height) = hdr::graded(&source, &options, Some(&matched));
-    let data = rawshim::tone::encode_srgb8(&rolled);
+    // sRGB out of the same dispatch that grades, rather than a second implementation of the
+    // primaries and the transfer on this side.
+    let (coded, width, height) =
+        hdr::graded_as(&source, &options, Some(&matched), rawshim::gpu::Output::Srgb);
+    let data: Vec<u8> = coded.iter().map(|v| *v as u8).collect();
     eprintln!("graded {width}x{height}");
 
     let crops: Vec<String> = args.collect();

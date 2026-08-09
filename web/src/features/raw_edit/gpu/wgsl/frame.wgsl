@@ -16,6 +16,8 @@
 // rather than 60, which is 7ms rather than 100.
 
 @group(0) @binding(5) var<storage, read> peak_out: array<f32>;
+// Two `u16` components to a word, which is what `encode` below says. `ceil(pixels * 3 / 2)`
+// words, rounded up to a whole invocation's three.
 @group(0) @binding(6) var<storage, read_write> counts: array<u32>;
 // Half resolution and down, so `lod` 0 is the frame and this holds every level above it.
 @group(0) @binding(9) var pyramid: texture_2d<u32>;
@@ -53,19 +55,19 @@ const R2020_TO_SRGB = mat3x3f(
   vec3f( -0.072838,  -0.008350,   1.118998),
 );
 
-fn display_nits(level: vec3f) -> vec3f {
-  return min(max(rolled_off(level), vec3f(0.0)), vec3f(tick.peak));
+fn display_nits(nits: vec3f) -> vec3f {
+  return min(max(rolled_off(nits), vec3f(0.0)), vec3f(tick.peak));
 }
 
 /// The roll-off leaves the display's peak alone when the scene already fits inside it, so
 /// the clamp above is not redundant: a level past `source_level` comes back untouched.
-fn rolled_off(level: vec3f) -> vec3f {
-  if (tick.matched == 0u) { return neutral_nits(level); }
+fn rolled_off(nits: vec3f) -> vec3f {
+  if (tick.matched == 0u) { return neutral_nits(nits); }
   let scene_peak = peak_out[0];
   // Clamped to the scene peak before the roll-off, because the CPU's roll table spans
   // 0..scene_peak and reads the top bin for anything past it. Without the clamp the
   // brightest pixels get a curve the CPU never evaluates.
-  let coloured = min(max(matched_nits(level), vec3f(0.0)), vec3f(scene_peak));
+  let coloured = min(max(matched_nits(nits), vec3f(0.0)), vec3f(scene_peak));
   return rolled(coloured, rolloff(scene_peak, tick.peak));
 }
 
@@ -77,12 +79,13 @@ fn transfer(v: f32) -> f32 {
   return sign(v) * e;
 }
 
-/// The source levels one canvas pixel covers, averaged.
+/// The source nits one canvas pixel covers, averaged.
 ///
 /// Fit-to-window on a 61MP frame is about eight source pixels to one along each axis, and
 /// point-sampling that is aliasing rather than a picture. Averaged before the grade, not
-/// after: the levels are scene-linear, which is the space the optics did their own
-/// averaging in, where display-referred nits are past a tone curve and would not add up.
+/// after: these are scene-referred, which is the space the optics did their own averaging in,
+/// where display-referred nits are past a tone curve and would not add up. Decoded before the
+/// average and not after, for the same reason - the buffer's coding is not linear in light.
 ///
 /// Most of that averaging already happened, at the open, in `reduce.wgsl`. All that is
 /// left here is the residual below the level the pyramid is read at, which is why four
@@ -118,7 +121,7 @@ fn covered(pos: vec2f) -> vec3f {
       for (var tx = 0u; tx < 2u; tx = tx + 1u) {
         let sample = start + (vec2f(f32(tx), f32(ty)) + 0.5) * 0.5 * step;
         let coord = vec2u(clamp(floor(sample), vec2f(0.0), last));
-        sum = sum + level_at(coord.x, coord.y);
+        sum = sum + nits_at(coord.x, coord.y);
       }
     }
   } else {
@@ -130,8 +133,14 @@ fn covered(pos: vec2f) -> vec3f {
       for (var tx = 0u; tx < 2u; tx = tx + 1u) {
         let sample = start + (vec2f(f32(tx), f32(ty)) + 0.5) * 0.5 * step;
         let coord = vec2u(clamp(floor(sample), vec2f(0.0), last));
+        // The pyramid holds the frame's own coding, so this is decoded per tap too - the
+        // levels it averaged are not linear in light and neither is a mean of them.
         let code = textureLoad(pyramid, coord, level);
-        sum = sum + vec3f(f32(code.r), f32(code.g), f32(code.b));
+        sum = sum + vec3f(
+          nits_of_code[code.r],
+          nits_of_code[code.g],
+          nits_of_code[code.b],
+        );
       }
     }
   }
@@ -151,46 +160,74 @@ fn covered(pos: vec2f) -> vec3f {
   return vec4f(transfer(p3.r), transfer(p3.g), transfer(p3.b), 1.0);
 }
 
-/// The same frame as a rendition would hold it: `u16` counts of PQ, at full resolution
-/// whatever the canvas is showing.
-///
-/// Off the tick's path entirely - the display never wants this - and here rather than in
-/// the harness that reads it so that ST 2084 keeps one implementation in this repo, and
-/// so that what parity compares is the pixel `fs` draws rather than a cousin of it.
-@compute @workgroup_size(8, 8)
-fn encode(@builtin(global_invocation_id) id: vec3u) {
-  if (!in_frame(id)) { return; }
-  let nits = display_nits(level_at(id.x, id.y));
+/// One pixel of the frame as a rendition would hold it, in the `u16` counts every output
+/// stage of this shader ends in.
+fn coded_at(pixel: u32) -> vec3f {
+  let nits = display_nits(nits_of_index(pixel));
   // Through the `u16` the CPU writes between the grade and the transfer. Not incidental:
   // both of its output stages read that integer - the PQ one as a 65536-entry table keyed
   // by it, the sRGB one as the value it takes the primaries of - so a frame that skipped
   // the quantisation would not be the frame the fixture pins.
   let quantised = round(min(nits / tick.peak, vec3f(1.0)) * 65535.0) / 65535.0;
 
-  var coded: vec3f;
   if (tick.output == OUTPUT_ROLLED) {
-    coded = quantised * 65535.0;
-  } else if (tick.output == OUTPUT_SRGB) {
+    return quantised * 65535.0;
+  }
+  if (tick.output == OUTPUT_SRGB) {
     // `tone::encode_srgb8`: the primaries first, in the normalised graded domain, then the
     // transfer at 8 bits. Clamped rather than sign-carried - `transfer` keeps the sign for
     // the *draw*, where an out-of-P3 component is better seen than folded, but a file has
     // nowhere to put a negative.
     let linear = R2020_TO_SRGB * quantised;
-    coded = round(vec3f(
+    return round(vec3f(
       transfer(clamp(linear.r, 0.0, 1.0)),
       transfer(clamp(linear.g, 0.0, 1.0)),
       transfer(clamp(linear.b, 0.0, 1.0)),
     ) * 255.0);
-  } else {
-    coded = round(vec3f(
-      pq(quantised.r * tick.peak),
-      pq(quantised.g * tick.peak),
-      pq(quantised.b * tick.peak),
-    ) * 65535.0);
   }
+  return round(vec3f(
+    pq(quantised.r * tick.peak),
+    pq(quantised.g * tick.peak),
+    pq(quantised.b * tick.peak),
+  ) * 65535.0);
+}
 
-  let base = at(id.x, id.y) * 3u;
-  counts[base] = u32(coded.r);
-  counts[base + 1u] = u32(coded.g);
-  counts[base + 2u] = u32(coded.b);
+/// The same frame as a rendition would hold it, at full resolution whatever the canvas is
+/// showing, **two pixels to an invocation and packed two components to a word**.
+///
+/// Off the tick's path entirely - the display never wants this - and here rather than in
+/// the harness that reads it so that ST 2084 keeps one implementation in this repo, and
+/// so that what parity compares is the pixel `fs` draws rather than a cousin of it.
+///
+/// Every value this writes fits a `u16` - both output stages above end in a `round` into
+/// 0..65535 or 0..255 - so a word per component spent half of the largest allocation in the
+/// job on leading zeroes. It is the largest: `pixels * 3 * 4` for the output and the same
+/// again for the buffer it is read back through, which is 732MB *each* at 61MP and is held
+/// across the AVIF encode. Packed, that is 366MB each.
+///
+/// **Two pixels because three `u16` do not divide a word.** Per pixel, an invocation would
+/// own one and a half words and have to read-modify-write the half its neighbour owns the
+/// other half of, which is a race. Six halves is three whole words, owned outright, and no
+/// atomics.
+///
+/// Dispatched over a linear index rather than over `x` and `y`: two adjacent pixels straddle
+/// a row end freely, since the frame's buffer has no rows, and a 61MP frame needs 476k
+/// workgroups where one dimension allows 65535. `num_workgroups` carries the width the host
+/// chose so nothing has to travel in the uniform.
+@compute @workgroup_size(64)
+fn encode(@builtin(global_invocation_id) id: vec3u, @builtin(num_workgroups) groups: vec3u) {
+  let first = (id.y * groups.x * 64u + id.x) * 2u;
+  let pixels = tick.width * tick.height;
+  if (first >= pixels) { return; }
+
+  let a = coded_at(first);
+  // The odd pixel out of an odd frame writes zeroes into a half-word nothing reads. The
+  // buffer is sized for it, so this is padding rather than an overrun.
+  var b = vec3f(0.0);
+  if (first + 1u < pixels) { b = coded_at(first + 1u); }
+
+  let base = first + first / 2u;
+  counts[base] = u32(a.r) | (u32(a.g) << 16u);
+  counts[base + 1u] = u32(a.b) | (u32(b.r) << 16u);
+  counts[base + 2u] = u32(b.g) | (u32(b.b) << 16u);
 }

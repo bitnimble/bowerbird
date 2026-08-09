@@ -957,17 +957,24 @@ mod hdr_grade {
             crate::fit::Lens { distortion: None, crop: 1.0, falloff: Some((0.25, 0.0)), tca: None };
 
         let (width, height) = (frame.width, frame.height);
-        let samples = frame.samples16().expect("a 16-bit decode");
-        let lit = crate::hdr_fit::apply_lens(samples, width, height, &fitted).expect("the lens stage runs");
+        // Coded, because that is what the lens stage is handed on both hosts - and so the
+        // ratio has to be read in light rather than in codes, which is the claim anyway: a
+        // falloff correction is a multiplication of light whatever the buffer holds.
+        let mut samples = frame.samples16().expect("a 16-bit decode").to_vec();
+        let levels = crate::tone::levels(&samples, QUANTILE);
+        crate::tone::encode_base(&mut samples, levels.white, REFERENCE);
+        let lit = crate::hdr_fit::apply_lens(&samples, width, height, &fitted).expect("the lens stage runs");
 
-        let at = |data: &[u16], x: usize, y: usize| f64::from(data[(y * width + x) * 3 + 1]);
+        let at = |data: &[u16], x: usize, y: usize| {
+            crate::tone::pq_inv(f64::from(data[(y * width + x) * 3 + 1]) / 65535.0)
+        };
         let (corner_x, corner_y) = (width - 1, height - 1);
         // The corner sits at r = 1, so it takes the whole of the coefficient.
-        let ratio = at(&lit, corner_x, corner_y) / at(samples, corner_x, corner_y).max(1.0);
+        let ratio = at(&lit, corner_x, corner_y) / at(&samples, corner_x, corner_y).max(1e-9);
         assert!((ratio - 1.25).abs() < 0.02, "corner scaled by {ratio}, wanted 1.25");
         assert_eq!(
             at(&lit, width / 2, height / 2),
-            at(samples, width / 2, height / 2),
+            at(&samples, width / 2, height / 2),
             "the centre must not move",
         );
     }
@@ -1095,6 +1102,16 @@ mod hdr_grade {
         assert_ne!(curves(Some((0.6, 0.0))), curves(None));
     }
 
+    /// `hdr::graded`, which is already the shader - these tests only ever wanted the rolled
+    /// frame it returns.
+    fn graded(
+        frame: &crate::frame::Frame,
+        options: &EncodeOptions,
+        m: Option<&crate::hdr_fit::HdrMatch>,
+    ) -> (Vec<u16>, usize, usize) {
+        crate::hdr::graded(&source(frame), options, m)
+    }
+
     #[test]
     fn the_fit_reproduces_the_camera_rendering() {
         let frame = linear();
@@ -1133,7 +1150,7 @@ mod hdr_grade {
         let frame = linear();
         let fitted = matched(&frame);
         let (graded, _, _) =
-            crate::hdr::graded(&source(&frame), &options(PEAK, f64::INFINITY, "/dev/null"), fitted.as_ref());
+            graded(&frame,&options(PEAK, f64::INFINITY, "/dev/null"), fitted.as_ref());
         let at = crate::debug::luma_quantiles(&graded, PEAK, &[QUANTILE, 1.0]);
 
         // The anchor is measured on the brightest component and this is luma, so the
@@ -1151,7 +1168,7 @@ mod hdr_grade {
         // grades agree, which no amount of resolution makes truer.
         let frame = linear();
         let digest = |m: Option<&crate::hdr_fit::HdrMatch>| {
-            let (graded, _, _) = crate::hdr::graded(&source(&frame), &options(PEAK, 800.0, "/dev/null"), m);
+            let (graded, _, _) = graded(&frame,&options(PEAK, 800.0, "/dev/null"), m);
             crate::debug::sha256_hex(&crate::debug::to_bytes(&crate::frame::Pixels::Sixteen(graded)))
         };
         let first = digest(None);
@@ -1172,7 +1189,7 @@ mod hdr_grade {
         let fitted = matched(&frame);
         let median = |max_edge: f64| {
             let (graded, _, _) =
-                crate::hdr::graded(&source(&frame), &options(PEAK, max_edge, "/dev/null"), fitted.as_ref());
+                graded(&frame,&options(PEAK, max_edge, "/dev/null"), fitted.as_ref());
             crate::debug::luma_quantiles(&graded, PEAK, &[0.5])[0]
         };
         let native = median(f64::INFINITY);
@@ -1236,7 +1253,7 @@ mod hdr_grade {
 
         let frame = linear();
         let options = options(PEAK, 640.0, path.to_str().unwrap());
-        let (graded, _, _) = crate::hdr::graded(&source(&frame), &options, None);
+        let (graded, _, _) = graded(&frame,&options, None);
         crate::hdr::encode_still(
             source(&frame).samples.to_vec(),
             frame.width,
@@ -1269,20 +1286,29 @@ mod hdr_grade {
         );
     }
 
-    /// A rendition cut from the shared frame of nits is the picture a direct grade makes.
+    /// A rendition cut from a larger one's frame is the picture it would have been prepared
+    /// on its own.
     ///
-    /// **The two are different schedulings of one transform and nothing else enforces that.**
-    /// A job cutting several renditions off one photo stops at nits, shares that frame, and
-    /// rolls each rendition into its own peak; a job with one target grades straight through.
-    /// The halves are the same code - `pixel_nits` and `roll_pixel` - but the shared route
-    /// carries the intermediate at half precision and rolls both arms through the same
-    /// 4096-bin table where the direct neutral arm has an exact per-level curve. Neither is
-    /// visible in a pin of `graded()`, which only the direct route takes.
+    /// **This is what makes a job with several outputs cheap, and nothing else enforces it.**
+    /// The largest target is resized, warped and sharpened, and every smaller one is a
+    /// downscale of *that* rather than its own resize and its own warp. The claim is that the
+    /// two land in the same place, and it is not free: the sharpen ran at the larger size, so
+    /// the smaller frame carries a deconvolution calibrated for a resample it did not have,
+    /// softened by the downscale that followed.
     ///
-    /// Both peaks, because they exercise different parts of the roll-off: at 1000 nits this
-    /// fixture never reaches the BT.2390 knee, and at 203 the whole curve is in play.
+    /// Cutting before the colour transform rather than after is what keeps this honest:
+    /// averaging a *rendered* picture runs into `mean(f(x))` not being `f(mean(x))` across a
+    /// whole tone curve and a chroma lattice, where the base is one transfer. Not the sensor's
+    /// own integration either - `Cut::downscale` says why the coding is averaged rather than
+    /// the light - which is part of what this measures.
+    ///
+    /// Graded through the shader both ways, since that is the only grade there is.
     #[test]
-    fn a_cut_rendition_is_the_picture_a_direct_grade_makes() {
+    fn a_rendition_cut_from_a_larger_frame_is_the_picture_it_would_have_been() {
+        let Some(gpu) = crate::gpu::device() else {
+            eprintln!("SKIPPED: no GPU adapter, so the grade could not run");
+            return;
+        };
         let frame = linear();
         let fitted = matched(&frame);
         let mut rows: Vec<String> = Vec::new();
@@ -1291,56 +1317,51 @@ mod hdr_grade {
                 true => fitted.as_ref(),
                 false => None,
             };
-            for peak in [PEAK, REFERENCE] {
-                let options = options(peak, 800.0, "/dev/null");
-                let (direct, width, height) =
-                    crate::hdr::graded(&source(&frame), &options, m);
-
-                let levels = crate::tone::levels(source(&frame).samples, QUANTILE);
-                let scene = crate::tone::SceneGrade::new(
-                    source(&frame).samples,
-                    m.map(|m| &m.colour),
-                    levels,
-                    REFERENCE,
-                    1.0,
-                )
-                .expect("a frame with an exposure to read");
-                let size = crate::hdr_args::target_size(
+            let decoded = source(&frame);
+            let levels = crate::tone::levels(decoded.samples, QUANTILE);
+            // Coded as both hosts code it, since what a `Cut` carries is the coded base.
+            let mut coded = decoded.samples.to_vec();
+            crate::tone::encode_base(&mut coded, levels.white, REFERENCE);
+            let source =
+                crate::hdr::Source { samples: &coded, width: decoded.width, height: decoded.height };
+            let scene =
+                crate::tone::SceneGrade::new(gpu, source.samples, m.map(|m| &m.colour), levels, REFERENCE, 1.0)
+                    .expect("a frame with an exposure to read");
+            let sized = |edge: f64| {
+                crate::hdr_args::target_size(
                     frame.width as u32,
                     frame.height as u32,
-                    &options,
-                );
-                let mut cut =
-                    crate::hdr::Cut::from_base(&source(&frame), &scene, m.map(|m| &m.lens), size);
-                // The sharpen is off in `options`, so the cut is the grade alone either way.
-                cut.sharpen(0.0);
-                let shared = scene.roll(&cut.signal, peak);
+                    &options(PEAK, edge, "/dev/null"),
+                )
+            };
+            let (large, small) = (sized(1600.0), sized(800.0));
 
-                assert_eq!((cut.width, cut.height), (width, height));
-                assert_eq!(shared.len(), direct.len());
-                let worst = shared
-                    .iter()
-                    .zip(direct.iter())
-                    .map(|(a, b)| i32::from(*a) - i32::from(*b))
-                    .map(i32::abs)
-                    .max()
-                    .unwrap_or(0);
-                let total: u64 =
-                    shared.iter().zip(direct.iter()).map(|(a, b)| u64::from(a.abs_diff(*b))).sum();
-                let mean = total as f64 / shared.len() as f64;
-                rows.push(format!("match={with_match} peak={peak}: mean {mean:.2} worst {worst}"));
-                // Of 65535. Measured: matched, which is what a library with the fit on
-                // renders, at mean 0.21 / worst 3 into a 1000-nit peak and mean 1.02 / worst
-                // 12 into 203; the neutral fallback at 0.86 / 10 and 3.47 / 24. What is left
-                // is the `f16` the nits pass through on their way to a code, which holds them
-                // to ~0.05% wherever they sit. Neutral is the looser because its nits are a
-                // fixed multiple of an input level, so that rounding is a rounding of the
-                // level itself.
-                assert!(mean < 4.0 && worst < 32, "{}", rows.join("; "));
-            }
+            // Cut at 1600 and taken down, against cut at 800 outright.
+            let mut shared = crate::hdr::Cut::from_base(&source, levels, m.map(|m| &m.lens), large);
+            shared.sharpen(0.0);
+            let shared = shared.downscale(small);
+            let mut own = crate::hdr::Cut::from_base(&source, levels, m.map(|m| &m.lens), small);
+            own.sharpen(0.0);
+
+            assert_eq!((shared.width, shared.height), (own.width, own.height));
+            let grade = |cut: &crate::hdr::Cut| {
+                gpu.encode(
+                    &cut.samples,
+                    &scene.gpu_grade(cut.width, cut.height, PEAK, crate::gpu::Output::Pq),
+                )
+            };
+            let (a, b) = (grade(&shared), grade(&own));
+            let worst = a.iter().zip(&b).map(|(x, y)| x.abs_diff(*y)).max().unwrap_or(0);
+            let mean =
+                a.iter().zip(&b).map(|(x, y)| u64::from(x.abs_diff(*y))).sum::<u64>() as f64
+                    / a.len() as f64;
+            rows.push(format!("match={with_match}: mean {mean:.1} worst {worst}"));
+            // Of 65535. A box mean of a box mean is not the box mean the one-step resize
+            // takes, so this is a resampling difference rather than a grading one - the two
+            // are the same picture, not the same bytes.
+            assert!(mean < 200.0, "{}", rows.join("; "));
         }
-        // Reported whether or not it failed, so a run that tightens shows what it had.
-        eprintln!("cut against direct: {}", rows.join("; "));
+        eprintln!("cut from larger against cut outright: {}", rows.join("; "));
     }
 
     /// The graded samples, held to what the TypeScript produced before this subsystem
@@ -1370,7 +1391,7 @@ mod hdr_grade {
                 false => None,
             };
             let (graded, width, height) =
-                crate::hdr::graded(&source(&frame), &options(peak_nits, max_edge, "/dev/null"), m);
+                graded(&frame,&options(peak_nits, max_edge, "/dev/null"), m);
 
             let pixels = crate::frame::Pixels::Sixteen(graded);
             rows.push(format!("{label}\tsize\t{width}x{height}"));

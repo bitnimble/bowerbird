@@ -7,11 +7,13 @@
 
 import { type PassMs, PassTimer } from './pass_timer';
 import {
+  DECODE,
   FRAME,
   PEAK,
   PEAK_BINS,
   PEAK_CANDIDATES,
   PEAK_SAMPLES,
+  PQ_CODES,
   REDUCE,
   TICK_UNIFORM_FLOATS,
   tickOffsets,
@@ -19,9 +21,6 @@ import {
 
 /** Where each `Tick` field lives, by name. Computed once from the layout the shader declares. */
 const AT = tickOffsets().at;
-
-/** `Sample::from_f32` for `u16`: rounded, and held inside the range it has to fit. */
-const clamp16 = (v: number): number => Math.max(0, Math.min(65535, Math.round(v)));
 
 /**
  * Values per lattice node: a 2x2 on chroma, then a gain on luma.
@@ -226,6 +225,20 @@ export class TickPipeline {
   /** The lattice's luma gain, which does not fit beside the 2x2 in one texel. */
   private readonly chromaLuma: GPUTexture;
   private readonly chromaTint: GPUTexture;
+  /**
+   * The frame's coding undone, one entry per `u16` code.
+   *
+   * The samples arrive in normalised PQ (`tone::encode_base`) rather than as sensor levels,
+   * because every stage between the decode and here reads a difference against a blur and so
+   * needed a perceptual domain; coded once on the way out, none of them has to convert. This
+   * is what the grade reads them back through, and it is filled by the shader rather than
+   * computed here so that `pq_inv` stays the one in `prelude.wgsl`.
+   *
+   * The same table for every photograph - `encode_base` anchors the frame to the reference
+   * white before coding it - so it could outlive one open. It does not, only because a
+   * pipeline owns its own buffers and 256kB is not worth a second lifetime to reason about.
+   */
+  private readonly nitsOfCode: GPUBuffer;
   private readonly lerp: GPUSampler;
 
   private readonly peakMeasure: GPUComputePipeline;
@@ -306,6 +319,7 @@ export class TickPipeline {
     this.peak = storage(4);
     // A count, three words of padding to keep the levels aligned, and four per candidate.
     this.candidates = storage(4 + PEAK_CANDIDATES * 4);
+    this.nitsOfCode = storage(PQ_CODES);
 
     const colour = header.colour;
     // A row per channel, which is how the shader picks one: `sample_curve` loads the two
@@ -357,7 +371,12 @@ export class TickPipeline {
     const tints = new Float16Array(count * 4);
     for (let node = 0; node < count; node++) {
       const at = node * NODE_VALUES;
-      for (let k = 0; k < 4; k++) pairs[node * 4 + k] = chroma ? chroma.nodes[at + k] : 0;
+      // The length was checked against `count * NODE_VALUES` above, so every offset below is
+      // in range and the fallback never fires. It is written because `web/tsconfig.json` sets
+      // `noUncheckedIndexedAccess`, which the root one does not - so this file typechecks at
+      // the root and failed `bun run build` here.
+      const value = (offset: number): number => (chroma ? (chroma.nodes[at + offset] ?? 0) : 0);
+      for (let k = 0; k < 4; k++) pairs[node * 4 + k] = value(k);
       // The *deviation* from 1, which `correct` adds back. Half floats spend a fixed
       // relative precision wherever the value sits, so storing 1.02 puts 2^-11 of full
       // scale on the gain and storing 0.02 puts it on the deviation - worth 16x, and
@@ -370,11 +389,11 @@ export class TickPipeline {
       // The rest of the node: the two luma-to-chroma terms, the lightness gain's deviation,
       // then the first of the two chroma-to-lightness terms. Nine values do not fit two
       // texels, so the ninth takes a third volume of its own.
-      gains[node * 4] = chroma ? chroma.nodes[at + 4] : 0;
-      gains[node * 4 + 1] = chroma ? chroma.nodes[at + 5] : 0;
-      gains[node * 4 + 2] = chroma ? chroma.nodes[at + 6] - 1 : 0;
-      gains[node * 4 + 3] = chroma ? chroma.nodes[at + 7] : 0;
-      tints[node * 4] = chroma ? chroma.nodes[at + 8] : 0;
+      gains[node * 4] = value(4);
+      gains[node * 4 + 1] = value(5);
+      gains[node * 4 + 2] = chroma ? value(6) - 1 : 0;
+      gains[node * 4 + 3] = value(7);
+      tints[node * 4] = value(8);
     }
     this.chroma = this.lookup(size, '3d', 'rgba16float', 8, pairs);
     this.chromaLuma = this.lookup(size, '3d', 'rgba16float', 8, gains);
@@ -410,6 +429,7 @@ export class TickPipeline {
         { binding: 7, visibility, sampler: {} },
         { binding: 10, visibility, texture: { viewDimension: '3d' as const } },
         { binding: 11, visibility, texture: { viewDimension: '3d' as const } },
+        { binding: 12, visibility, buffer: { type: 'read-only-storage' as const } },
       ],
       pyramid: { binding: 9, visibility, texture: { sampleType: 'uint' as const } },
       readOnly: (binding: number) => ({
@@ -474,6 +494,7 @@ export class TickPipeline {
       { binding: 7, resource: this.lerp },
       { binding: 10, resource: this.chromaLuma.createView() },
       { binding: 11, resource: this.chromaTint.createView() },
+      { binding: 12, resource: { buffer: this.nitsOfCode } },
     ];
     this.displayEntries = [
       ...this.colourEntries,
@@ -495,8 +516,42 @@ export class TickPipeline {
       entries: this.peakEntries,
     });
 
+    this.decode();
     this.reduce();
     if (header.matched) this.chooseCandidates();
+  }
+
+  /**
+   * The frame's coding undone, filled once before anything reads the frame.
+   *
+   * Its own module and its own layout because `colour.wgsl` binds the same table read-only,
+   * and a module cannot declare one binding twice with two access modes.
+   */
+  private decode(): void {
+    const layout = this.device.createBindGroupLayout({
+      entries: [{ binding: 12, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } }],
+    });
+    const encoder = this.device.createCommandEncoder();
+    const pass = encoder.beginComputePass();
+    pass.setPipeline(
+      this.device.createComputePipeline({
+        layout: this.device.createPipelineLayout({ bindGroupLayouts: [layout] }),
+        compute: {
+          module: this.device.createShaderModule({ code: DECODE, label: 'decode' }),
+          entryPoint: 'pq_table',
+        },
+      }),
+    );
+    pass.setBindGroup(
+      0,
+      this.device.createBindGroup({
+        layout,
+        entries: [{ binding: 12, resource: { buffer: this.nitsOfCode } }],
+      }),
+    );
+    pass.dispatchWorkgroups(PQ_CODES / 64);
+    pass.end();
+    this.device.queue.submit([encoder.finish()]);
   }
 
   /**
@@ -673,12 +728,13 @@ export class TickPipeline {
    */
   async readFrame(): Promise<Uint16Array> {
     const pixels = this.width * this.height;
+    const bytes = this.encodeWords * 4;
     const counts = this.device.createBuffer({
-      size: pixels * 3 * 4,
+      size: bytes,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
     });
     const staging = this.device.createBuffer({
-      size: pixels * 3 * 4,
+      size: bytes,
       usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
     });
 
@@ -692,14 +748,16 @@ export class TickPipeline {
         entries: [...this.displayEntries, { binding: 6, resource: { buffer: counts } }],
       }),
     );
-    const [x, y] = this.groups(this.width, this.height);
+    const [x, y] = this.encodeGroups();
     pass.dispatchWorkgroups(x, y);
     pass.end();
     encoder.copyBufferToBuffer(counts, 0, staging, 0, staging.size);
     this.device.queue.submit([encoder.finish()]);
     await staging.mapAsync(GPUMapMode.READ);
 
-    const frame = Uint16Array.from(new Uint32Array(staging.getMappedRange()), clamp16);
+    // Already `u16` in the words, so this reads them rather than converting: two components
+    // to a word, and the odd pixel's padding word dropped by taking only what the frame has.
+    const frame = new Uint16Array(staging.getMappedRange().slice(0)).subarray(0, pixels * 3);
     staging.unmap();
     staging.destroy();
     counts.destroy();
@@ -804,6 +862,25 @@ export class TickPipeline {
 
   private groups(x: number, y = 1): [number, number] {
     return [Math.ceil(x / 8), Math.ceil(y / 8)];
+  }
+
+  /**
+   * `encode`'s dispatch: an invocation covers two pixels and a workgroup 64 of them.
+   *
+   * Two dimensions because one is not enough - a 61MP frame wants 476k workgroups against
+   * the 65535 a single dimension allows. The shader folds `y` back in through
+   * `num_workgroups`, so how it is split is entirely this side's choice.
+   */
+  private encodeGroups(): [number, number] {
+    const wanted = Math.ceil(Math.ceil((this.width * this.height) / 2) / 64);
+    const wide = Math.max(1, this.device.limits.maxComputeWorkgroupsPerDimension);
+    const x = Math.max(1, Math.min(wanted, wide));
+    return [x, Math.max(1, Math.ceil(wanted / x))];
+  }
+
+  /** Words `encode` writes: two `u16` components each, rounded to an invocation's three. */
+  private get encodeWords(): number {
+    return Math.ceil((this.width * this.height) / 2) * 3;
   }
 
   /**

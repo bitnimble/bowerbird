@@ -22,26 +22,47 @@ use wgpu::util::DeviceExt;
 
 /// The same composition `shaders.ts` performs, from the same files.
 ///
-/// `prelude` and `tick` declare what `colour` and `frame` assume; the order is the one
-/// `FRAME` uses on the client. Concatenated rather than `#import`ed because WGSL has no
-/// include and the client's bundler does the same join.
-fn source() -> String {
+/// `prelude` and `tick` declare what `colour` and the last file assume; the order is the one
+/// `FRAME` and `PEAK` use on the client. Concatenated rather than `#import`ed because WGSL
+/// has no include and the client's bundler does the same join.
+fn source(last: &str) -> String {
     format!(
-        "{}\n{}\n{}\n{}",
+        "{}\n{}\n{}\n{last}",
         include_str!("../../../web/src/features/raw_edit/gpu/wgsl/prelude.wgsl"),
         include_str!("../../../web/src/features/raw_edit/gpu/wgsl/tick.wgsl"),
         include_str!("../../../web/src/features/raw_edit/gpu/wgsl/colour.wgsl"),
-        include_str!("../../../web/src/features/raw_edit/gpu/wgsl/frame.wgsl"),
     )
 }
+
+const FRAME_WGSL: &str = include_str!("../../../web/src/features/raw_edit/gpu/wgsl/frame.wgsl");
+const PEAK_WGSL: &str = include_str!("../../../web/src/features/raw_edit/gpu/wgsl/peak.wgsl");
+
+/// `DECODE` in `shaders.ts`: the frame's coding undone, and nothing of `colour.wgsl` because
+/// it binds the same table read-only.
+fn decode_source() -> String {
+    format!(
+        "{}\n{}",
+        include_str!("../../../web/src/features/raw_edit/gpu/wgsl/prelude.wgsl"),
+        include_str!("../../../web/src/features/raw_edit/gpu/wgsl/decode.wgsl"),
+    )
+}
+
+/// Entries in that table, which is every `u16` a sample can hold. `PQ_CODES` on the client.
+const PQ_CODES: u64 = 65536;
 
 pub struct Gpu {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
-    module: wgpu::ShaderModule,
     layout: wgpu::BindGroupLayout,
     pipeline: wgpu::ComputePipeline,
+    peak_layout: wgpu::BindGroupLayout,
+    peak_measure: wgpu::ComputePipeline,
+    peak_quantile: wgpu::ComputePipeline,
     sampler: wgpu::Sampler,
+    /// The frame's coding undone. Filled once with the device, since `tone::encode_base`
+    /// anchors every frame to the reference white before coding it and what comes back out
+    /// is nits - nothing here depends on the photograph.
+    nits_of_code: wgpu::Buffer,
 }
 
 static GPU: OnceLock<Option<Gpu>> = OnceLock::new();
@@ -100,42 +121,111 @@ impl Gpu {
 
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("tick"),
-            source: wgpu::ShaderSource::Wgsl(source().into()),
+            source: wgpu::ShaderSource::Wgsl(source(FRAME_WGSL).into()),
         });
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("encode"),
-            entries: &ENCODE_BINDINGS.map(|(binding, kind)| kind.entry(binding)),
+        let peak_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("peak"),
+            source: wgpu::ShaderSource::Wgsl(source(PEAK_WGSL).into()),
         });
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("encode"),
-            bind_group_layouts: &[Some(&layout)],
-            ..Default::default()
-        });
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("encode"),
-            layout: Some(&pipeline_layout),
-            module: &module,
-            entry_point: Some("encode"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
+        let group_layout = |label: &str, bindings: &[(u32, Binding)]| {
+            let entries: Vec<_> =
+                bindings.iter().map(|(binding, kind)| kind.entry(*binding)).collect();
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some(label),
+                entries: &entries,
+            })
+        };
+        let layout = group_layout("encode", &ENCODE_BINDINGS);
+        let peak_layout = group_layout("peak", &PEAK_BINDINGS);
+        let compute = |label: &str,
+                       module: &wgpu::ShaderModule,
+                       group: &wgpu::BindGroupLayout,
+                       entry_point: &str| {
+            let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some(label),
+                bind_group_layouts: &[Some(group)],
+                ..Default::default()
+            });
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some(label),
+                layout: Some(&pipeline_layout),
+                module,
+                entry_point: Some(entry_point),
+                compilation_options: Default::default(),
+                cache: None,
+            })
+        };
+        let pipeline = compute("encode", &module, &layout, "encode");
+        // `measure` and `quantile` only. `collect` and `remeasure` exist so the editor's
+        // slider does not re-sweep the frame at every position; a rendition is graded at one
+        // exposure and never asks twice.
+        let peak_measure = compute("measure", &peak_module, &peak_layout, "measure");
+        let peak_quantile = compute("quantile", &peak_module, &peak_layout, "quantile");
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
-        Some(Gpu { device, queue, module, layout, pipeline, sampler })
+
+        // Filled by the shader rather than by `tone::pq_inv` and uploaded, so that the coding
+        // the frame arrives in is undone by the same source the client undoes it with. There
+        // is a Rust `pq_inv` and it is not this one's twin: this table is what the *grade*
+        // reads, and the grade has one implementation on purpose (21.1).
+        let nits_of_code = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("nits_of_code"),
+            size: PQ_CODES * 4,
+            usage: wgpu::BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
+        let decode_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("decode"),
+            source: wgpu::ShaderSource::Wgsl(decode_source().into()),
+        });
+        let decode_layout = group_layout("decode", &[(12, Binding::Storage { read_only: false })]);
+        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("decode"),
+            layout: &decode_layout,
+            entries: &[wgpu::BindGroupEntry { binding: 12, resource: nits_of_code.as_entire_binding() }],
+        });
+        let mut encoder = device.create_command_encoder(&Default::default());
+        {
+            let mut pass = encoder.begin_compute_pass(&Default::default());
+            pass.set_pipeline(&compute("pq_table", &decode_module, &decode_layout, "pq_table"));
+            pass.set_bind_group(0, &group, &[]);
+            pass.dispatch_workgroups((PQ_CODES / 64) as u32, 1, 1);
+        }
+        queue.submit([encoder.finish()]);
+
+        Some(Gpu {
+            device,
+            queue,
+            layout,
+            pipeline,
+            peak_layout,
+            peak_measure,
+            peak_quantile,
+            sampler,
+            nits_of_code,
+        })
     }
 
-    /// The shader module, for tests that want a second entry point over the same source.
-    pub fn module(&self) -> &wgpu::ShaderModule {
-        &self.module
-    }
-
-    /// The largest binding one frame needs, which is the `u32` per component `encode`
-    /// writes - four bytes where the input is two.
+    /// The largest binding one frame needs: `encode`'s output, two `u16` components to a
+    /// word, rounded up to the three whole words an invocation writes for its two pixels.
     fn binding_bytes(pixels: usize) -> u64 {
-        (pixels * 3 * 4) as u64
+        (pixels.div_ceil(2) * 3 * 4) as u64
+    }
+
+    /// The workgroups `encode` wants for a frame of this many pixels, as a 2D grid.
+    ///
+    /// Two dimensions because one is not enough: an invocation covers two pixels and a
+    /// workgroup 64 of them, so a 61MP frame wants 476k of them against the 65535 a single
+    /// dimension allows. The shader folds `y` back in through `num_workgroups`, so the split
+    /// is the host's to choose and nothing has to agree about it in the uniform.
+    fn encode_groups(&self, pixels: usize) -> (u32, u32) {
+        let wanted = pixels.div_ceil(2).div_ceil(64) as u32;
+        let wide = self.device.limits().max_compute_workgroups_per_dimension.max(1);
+        let x = wanted.min(wide).max(1);
+        (x, wanted.div_ceil(x).max(1))
     }
 
     /// Whether a frame of this many pixels fits the adapter in one dispatch.
@@ -162,7 +252,7 @@ impl Gpu {
 
 /// What `encodeLayout` names on the client, in one list so the layout and the bind group
 /// cannot drift apart.
-const ENCODE_BINDINGS: [(u32, Binding); 11] = [
+const ENCODE_BINDINGS: [(u32, Binding); 12] = [
     (0, Binding::Uniform),
     (1, Binding::Storage { read_only: true }),
     (2, Binding::Curves),
@@ -174,7 +264,28 @@ const ENCODE_BINDINGS: [(u32, Binding); 11] = [
     (9, Binding::Pyramid),
     (10, Binding::Volume),
     (11, Binding::Volume),
+    (12, Binding::Storage { read_only: true }),
 ];
+
+/// `peakLayout` on the client: the same colour bindings, and the histogram, the peak and the
+/// candidates all writable where the encode reads the peak and writes only the frame.
+const PEAK_BINDINGS: [(u32, Binding); 12] = [
+    (0, Binding::Uniform),
+    (1, Binding::Storage { read_only: true }),
+    (2, Binding::Curves),
+    (3, Binding::Volume),
+    (4, Binding::Storage { read_only: true }),
+    (5, Binding::Storage { read_only: false }),
+    (6, Binding::Storage { read_only: false }),
+    (7, Binding::Sampler),
+    (8, Binding::Storage { read_only: false }),
+    (10, Binding::Volume),
+    (11, Binding::Volume),
+    (12, Binding::Storage { read_only: true }),
+];
+
+/// `PEAK_BINS` in `shaders.ts`, and `BINS` in the shader that both stand for.
+const PEAK_BINS: u64 = 8192;
 
 #[derive(Clone, Copy)]
 enum Binding {
@@ -256,12 +367,73 @@ pub enum Output {
     Rolled,
 }
 
+/// One frame, uploaded once, ready for as many dispatches as a job has outputs.
+///
+/// **Everything here is per photo-and-size; only the uniform is per rendition.** The frame
+/// itself is the expensive part - 59MB at 3840 and 361MB at native resolution - and a job
+/// naming an SDR and an HDR target of one size was uploading it, the lattice, the curves and
+/// the matrix once each, then allocating a fresh output and readback pair, for every one of
+/// them. What actually differs between two outputs of the same frame is `peak_nits` and
+/// `output`, which are two words of a uniform.
+pub struct Uploaded<'a> {
+    gpu: &'a Gpu,
+    width: usize,
+    height: usize,
+    samples: wgpu::Buffer,
+    matrix: wgpu::Buffer,
+    peak_out: wgpu::Buffer,
+    curves: wgpu::TextureView,
+    chroma: wgpu::TextureView,
+    chroma_luma: wgpu::TextureView,
+    chroma_tint: wgpu::TextureView,
+    pyramid: wgpu::TextureView,
+    counts: wgpu::Buffer,
+    readback: wgpu::Buffer,
+    /// The identity the uniform describes where a frame has no camera match, kept alive
+    /// because `Grade::colour` borrows one or the other.
+    identity: HdrColour,
+}
+
 impl Gpu {
     /// One `encode` dispatch: the graded frame as `u16` counts of PQ.
     ///
     /// The same entry point the editor's readback uses, so a rendition and a tick of the
     /// same photo are the same pixels by construction.
+    ///
+    /// For one output. A caller with several off one frame wants [`Gpu::upload`], which pays
+    /// for the frame once.
     pub fn encode(&self, frame: &[u16], grade: &Grade<'_>) -> Vec<u16> {
+        self.upload(frame, grade).encode(grade)
+    }
+
+    /// The frame itself, written straight into the buffer the GPU will read.
+    ///
+    /// **Mapped at creation rather than through `create_buffer_init`**, which takes `&[u8]` and
+    /// so needed the whole frame re-materialised as bytes first - a second 366MB at 61MP, live
+    /// alongside the decode it was copied from and the buffer it was copied into. This writes
+    /// the little-endian pairs into the mapping directly, so there is one copy and no Vec.
+    ///
+    /// Padded to a whole number of words, since the shader indexes `array<u32>`: three `u16` a
+    /// pixel means an odd sample count whenever both dimensions are odd. `mapped_at_creation`
+    /// hands back zeroed memory, so the tail the `zip` does not reach is already zero.
+    fn frame_buffer(&self, frame: &[u16]) -> wgpu::Buffer {
+        let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("frame"),
+            size: ((frame.len() as u64 * 2) + 3) & !3,
+            usage: wgpu::BufferUsages::STORAGE,
+            mapped_at_creation: true,
+        });
+        {
+            let mut view =
+                buffer.slice(..).get_mapped_range_mut().expect("a buffer mapped at creation");
+            view.slice(..frame.len() * 2).write_iter(frame.iter().flat_map(|v| v.to_le_bytes()));
+        }
+        buffer.unmap();
+        buffer
+    }
+
+    /// The frame and everything else a dispatch reads, uploaded once.
+    pub fn upload<'a>(&'a self, frame: &[u16], grade: &Grade<'_>) -> Uploaded<'a> {
         let device = &self.device;
         let pixels = grade.width * grade.height;
         assert!(
@@ -275,11 +447,6 @@ impl Gpu {
             self.device.limits().max_storage_buffer_binding_size / (1 << 20),
         );
 
-        let mut bytes: Vec<u8> = frame.iter().flat_map(|v| v.to_le_bytes()).collect();
-        // A whole number of words, since the shader indexes `array<u32>`.
-        while bytes.len() % 4 != 0 {
-            bytes.push(0);
-        }
         let buffer = |contents: &[u8], usage: wgpu::BufferUsages| {
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: None,
@@ -287,7 +454,7 @@ impl Gpu {
                 usage,
             })
         };
-        let samples = buffer(&bytes, wgpu::BufferUsages::STORAGE);
+        let samples = self.frame_buffer(frame);
         let peak_out =
             buffer(&(grade.scene_peak as f32).to_le_bytes().repeat(4), wgpu::BufferUsages::STORAGE);
 
@@ -296,7 +463,6 @@ impl Gpu {
         let matrix: Vec<u8> =
             described.matrix.iter().flatten().flat_map(|v| (*v as f32).to_le_bytes()).collect();
         let matrix = buffer(&matrix, wgpu::BufferUsages::STORAGE);
-        let tick = buffer(&uniform(grade, described), wgpu::BufferUsages::UNIFORM);
 
         let (chroma, chroma_luma, chroma_tint) = self.lattice(described);
         let curves = self.curves(described);
@@ -311,7 +477,7 @@ impl Gpu {
             view_formats: &[],
         });
 
-        let out_bytes = (pixels * 3 * 4) as u64;
+        let out_bytes = Self::binding_bytes(pixels);
         let counts = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("counts"),
             size: out_bytes,
@@ -326,41 +492,109 @@ impl Gpu {
         });
 
         let view = |t: &wgpu::Texture| t.create_view(&wgpu::TextureViewDescriptor::default());
-        let (chroma_view, luma_view, curves_view, pyramid_view) =
-            (view(&chroma), view(&chroma_luma), view(&curves), view(&pyramid));
-        let tint_view = view(&chroma_tint);
+        Uploaded {
+            gpu: self,
+            width: grade.width,
+            height: grade.height,
+            samples,
+            matrix,
+            peak_out,
+            curves: view(&curves),
+            chroma: view(&chroma),
+            chroma_luma: view(&chroma_luma),
+            chroma_tint: view(&chroma_tint),
+            pyramid: view(&pyramid),
+            counts,
+            readback,
+            identity,
+        }
+    }
+
+    /// The scene's own top end, in nits, off the same two passes the editor measures it with.
+    ///
+    /// **The last colour evaluation that was not the shader's.** It ran `hdr_fit::tone` and
+    /// `finish_colour` over a million pixels on the CPU - a second implementation of the
+    /// transform, kept only to produce one number the grade then takes as an input, and
+    /// exactly the drift DESIGN 21.1 records the cost of.
+    ///
+    /// `frame` is already the sample the quantile is over and nothing but it (`tone::sampled`),
+    /// so it arrives as a strip one pixel high and the shader's `row_stride` is 1. The
+    /// uniform's `scene_peak` is unread: these passes are what produces it.
+    pub fn scene_peak(&self, frame: &[u16], grade: &Grade<'_>) -> f64 {
+        let device = &self.device;
+        let identity = HdrColour::identity();
+        let described = grade.colour.unwrap_or(&identity);
+        let (chroma, chroma_luma, chroma_tint) = self.lattice(described);
+        let curves = self.curves(described);
+        let view = |t: &wgpu::Texture| t.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let init = |contents: &[u8], usage: wgpu::BufferUsages| {
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: None,
+                contents,
+                usage,
+            })
+        };
+        let samples = self.frame_buffer(frame);
+        let matrix: Vec<u8> =
+            described.matrix.iter().flatten().flat_map(|v| (*v as f32).to_le_bytes()).collect();
+        let matrix = init(&matrix, wgpu::BufferUsages::STORAGE);
+        let tick = init(&uniform(grade, described), wgpu::BufferUsages::UNIFORM);
+
+        // Created zeroed, which wgpu guarantees, so there is nothing to clear: the histogram
+        // starts empty and `candidates[0]` at zero is what tells `quantile` that no candidate
+        // has been kept - the branch the editor's open takes too.
+        let zeroed = |words: u64, usage: wgpu::BufferUsages| {
+            device.create_buffer(&wgpu::BufferDescriptor {
+                label: None,
+                size: words * 4,
+                usage: wgpu::BufferUsages::STORAGE | usage,
+                mapped_at_creation: false,
+            })
+        };
+        let histogram = zeroed(PEAK_BINS, wgpu::BufferUsages::empty());
+        let peak_out = zeroed(4, wgpu::BufferUsages::COPY_SRC);
+        let candidates = zeroed(4, wgpu::BufferUsages::empty());
+        let readback = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("peak"),
+            size: 16,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
         let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("encode"),
-            layout: &self.layout,
+            label: Some("peak"),
+            layout: &self.peak_layout,
             entries: &[
                 wgpu::BindGroupEntry { binding: 0, resource: tick.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 1, resource: samples.as_entire_binding() },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&curves_view),
+                    resource: wgpu::BindingResource::TextureView(&view(&curves)),
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,
-                    resource: wgpu::BindingResource::TextureView(&chroma_view),
+                    resource: wgpu::BindingResource::TextureView(&view(&chroma)),
                 },
                 wgpu::BindGroupEntry { binding: 4, resource: matrix.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 5, resource: peak_out.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 6, resource: counts.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 5, resource: histogram.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 6, resource: peak_out.as_entire_binding() },
                 wgpu::BindGroupEntry {
                     binding: 7,
                     resource: wgpu::BindingResource::Sampler(&self.sampler),
                 },
-                wgpu::BindGroupEntry {
-                    binding: 9,
-                    resource: wgpu::BindingResource::TextureView(&pyramid_view),
-                },
+                wgpu::BindGroupEntry { binding: 8, resource: candidates.as_entire_binding() },
                 wgpu::BindGroupEntry {
                     binding: 10,
-                    resource: wgpu::BindingResource::TextureView(&luma_view),
+                    resource: wgpu::BindingResource::TextureView(&view(&chroma_luma)),
                 },
                 wgpu::BindGroupEntry {
                     binding: 11,
-                    resource: wgpu::BindingResource::TextureView(&tint_view),
+                    resource: wgpu::BindingResource::TextureView(&view(&chroma_tint)),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 12,
+                    resource: self.nits_of_code.as_entire_binding(),
                 },
             ],
         });
@@ -368,22 +602,25 @@ impl Gpu {
         let mut encoder = device.create_command_encoder(&Default::default());
         {
             let mut pass = encoder.begin_compute_pass(&Default::default());
-            pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &group, &[]);
-            pass.dispatch_workgroups(
-                (grade.width as u32).div_ceil(8),
-                (grade.height as u32).div_ceil(8),
-                1,
-            );
+            pass.set_pipeline(&self.peak_measure);
+            pass.dispatch_workgroups((grade.width as u32).div_ceil(64), grade.height as u32, 1);
+            // One workgroup: the search is over bins, not pixels.
+            pass.set_pipeline(&self.peak_quantile);
+            pass.dispatch_workgroups(1, 1, 1);
         }
-        encoder.copy_buffer_to_buffer(&counts, 0, &readback, 0, out_bytes);
+        encoder.copy_buffer_to_buffer(&peak_out, 0, &readback, 0, 16);
         self.queue.submit([encoder.finish()]);
 
         let slice = readback.slice(..);
         slice.map_async(wgpu::MapMode::Read, |_| {});
-        self.device.poll(wgpu::PollType::wait_indefinitely()).expect("the dispatch finished");
-        let mapped = slice.get_mapped_range().expect("the readback mapped");
-        mapped.chunks_exact(4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as u16).collect()
+        self.device.poll(wgpu::PollType::wait_indefinitely()).expect("the peak finished");
+        let peak = {
+            let mapped = slice.get_mapped_range().expect("the readback mapped");
+            f32::from_le_bytes([mapped[0], mapped[1], mapped[2], mapped[3]])
+        };
+        readback.unmap();
+        f64::from(peak)
     }
 
     /// The lattice, split the way `tick_pipeline.ts` splits it: the 2x2 in one volume, and
@@ -483,6 +720,97 @@ impl Gpu {
 
     pub fn layout(&self) -> &wgpu::BindGroupLayout {
         &self.layout
+    }
+}
+
+impl Uploaded<'_> {
+    /// One rendition: a new uniform, a dispatch, a readback. Everything else was paid for
+    /// when the frame went up.
+    pub fn encode(&self, grade: &Grade<'_>) -> Vec<u16> {
+        assert_eq!(
+            (grade.width, grade.height),
+            (self.width, self.height),
+            "the uniform describes a different frame than the one uploaded",
+        );
+        let device = &self.gpu.device;
+        let described = grade.colour.unwrap_or(&self.identity);
+        let tick = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("tick"),
+            contents: &uniform(grade, described),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("encode"),
+            layout: &self.gpu.layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: tick.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: self.samples.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&self.curves),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(&self.chroma),
+                },
+                wgpu::BindGroupEntry { binding: 4, resource: self.matrix.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 5, resource: self.peak_out.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 6, resource: self.counts.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: wgpu::BindingResource::Sampler(&self.gpu.sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 9,
+                    resource: wgpu::BindingResource::TextureView(&self.pyramid),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 10,
+                    resource: wgpu::BindingResource::TextureView(&self.chroma_luma),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 11,
+                    resource: wgpu::BindingResource::TextureView(&self.chroma_tint),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 12,
+                    resource: self.gpu.nits_of_code.as_entire_binding(),
+                },
+            ],
+        });
+
+        let out_bytes = Gpu::binding_bytes(self.width * self.height);
+        let pixels = self.width * self.height;
+        let mut encoder = device.create_command_encoder(&Default::default());
+        {
+            let (x, y) = self.gpu.encode_groups(pixels);
+            let mut pass = encoder.begin_compute_pass(&Default::default());
+            pass.set_pipeline(&self.gpu.pipeline);
+            pass.set_bind_group(0, &group, &[]);
+            pass.dispatch_workgroups(x, y, 1);
+        }
+        encoder.copy_buffer_to_buffer(&self.counts, 0, &self.readback, 0, out_bytes);
+        self.gpu.queue.submit([encoder.finish()]);
+
+        let slice = self.readback.slice(..);
+        slice.map_async(wgpu::MapMode::Read, |_| {});
+        self.gpu.device.poll(wgpu::PollType::wait_indefinitely()).expect("the dispatch finished");
+        let out: Vec<u16> = {
+            let mapped = slice.get_mapped_range().expect("the readback mapped");
+            // Two components a word, and the odd pixel's padding dropped by taking only what
+            // the frame has.
+            let mut out = Vec::with_capacity(pixels * 3);
+            for word in mapped.chunks_exact(4) {
+                out.push(u16::from_le_bytes([word[0], word[1]]));
+                out.push(u16::from_le_bytes([word[2], word[3]]));
+            }
+            out.truncate(pixels * 3);
+            out
+        };
+        // Unmapped before the next rendition maps it again; a second `map_async` on a buffer
+        // still mapped is a validation error, and `on_uncaptured_error` makes those fatal.
+        self.readback.unmap();
+        out
     }
 }
 

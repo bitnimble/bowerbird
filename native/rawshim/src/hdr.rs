@@ -41,14 +41,15 @@ pub struct Grade {
     pub white_quantile: f64,
 }
 
-/// The scene-linear decode, its dimensions, and where its levels sit.
+/// A frame and its dimensions: the scene-linear decode where a caller has just decoded, and
+/// the coded base everywhere below `tone::encode_base`.
 pub struct Source<'a> {
     pub samples: &'a [u16],
     pub width: usize,
     pub height: usize,
 }
 
-/// Denoises and defringes scene-linear samples in place, in the perceptual domain.
+/// Denoises and defringes the coded base in place.
 ///
 /// **In PQ against the scene's own diffuse white, not in linear and not in the grade's
 /// output.** Linear is the wrong domain and `image.rs` says why: a difference taken there is
@@ -56,6 +57,10 @@ pub struct Source<'a> {
 /// reads the whole shadow region as flat. Measured, it flattens shadow texture by a factor of
 /// forty. But the filter never needed the *grade's* output either - it needed a perceptual
 /// domain, and PQ against a fixed anchor is one that has nothing to do with the exposure.
+///
+/// That domain is the buffer's own now (`tone::encode_base`), so this is pointwise on what it
+/// holds. It used to borrow the domain and give it back, through an `image::Coding` that put a
+/// table on the way in and a `pq_inv` on the way out of each pass - and there are two passes.
 ///
 /// **Ahead of the geometric warp, which is what the sharpen is not.** Noise is generated at
 /// the sensor and so is spatially uniform in sensor space; the lens warp resamples
@@ -66,34 +71,18 @@ pub struct Source<'a> {
 /// warp's own 0.75x and removes ~35% more noise besides.
 ///
 /// Which stages run is the caller's, and the split is always the same one: everything but
-/// the sharpen ahead of the warp, and the sharpen after it. A rendition takes the second half
-/// on the coded frame its renditions share (`Cut::sharpen`), where nothing has to convert;
-/// the editor comes back here for it, because what it hands the shader is scene-linear.
-///
-/// **The transfer rides on the filter's own reads and writes** rather than converting the
-/// frame and converting it back. Done as its own pass this cost a whole second frame in f32 -
-/// 722MB at 61MP, on top of the 361MB decode - which is what `processing_concurrency`
-/// multiplies. `image::Coding` puts it inside `deinterleave` and `recombine`, so the buffer
-/// never exists and the per-sample count is unchanged.
-pub fn filter_scene_linear(
+/// the sharpen ahead of the warp, and the sharpen after it. Both hosts take it in those two
+/// halves - a rendition through `Cut::sharpen`, the editor through its own second call.
+pub fn filter_base(
     samples: &mut [u16],
     width: usize,
     height: usize,
-    white: f64,
-    reference_white_nits: f64,
     strengths: image::Strengths,
 ) {
     if !strengths.does_anything() {
         return;
     }
-    let (forward, scale) = tone::ScenePq::table(white, reference_white_nits);
-    image::finish_coded(
-        samples,
-        width,
-        height,
-        strengths,
-        tone::ScenePq::new(&forward, scale),
-    );
+    image::finish(samples, width, height, strengths);
 }
 
 /// Fits the camera's colour for the HDR grade, reusing geometry the SDR fit resolved.
@@ -220,7 +209,7 @@ pub struct Prepared {
     pub width: usize,
     pub height: usize,
     /// The frame's own, read before the grade so exposure can move against them instead
-    /// of being folded into them (`tone::GradeOptions::exposure`).
+    /// of being folded into them (the `exposure` uniform in `tick.wgsl`).
     pub levels: tone::Levels,
 }
 
@@ -284,8 +273,29 @@ pub fn graded(
     options: &EncodeOptions,
     matched: Option<&HdrMatch>,
 ) -> (Vec<u16>, usize, usize) {
+    graded_as(source, options, matched, crate::gpu::Output::Rolled)
+}
+
+/// [`graded`] in whichever coding the caller wants out.
+///
+/// The transfer is the shader's, in the same dispatch as the grade, so asking for sRGB here
+/// is one argument rather than a second implementation of the primaries and the curve.
+///
+/// `source` is a scene-linear decode and everything below the levels wants the coded base, so
+/// this codes it - once, into a buffer of its own, since the caller's decode is borrowed. The
+/// job does not come through here: it codes in place at `Base::build` and never holds both.
+pub fn graded_as(
+    source: &Source<'_>,
+    options: &EncodeOptions,
+    matched: Option<&HdrMatch>,
+    output: crate::gpu::Output,
+) -> (Vec<u16>, usize, usize) {
     let levels = tone::levels(source.samples, options.grade.white_quantile);
+    let mut coded = source.samples.to_vec();
+    tone::encode_base(&mut coded, levels.white, options.grade.reference_white_nits);
+    let source = Source { samples: &coded, width: source.width, height: source.height };
     let scene = tone::SceneGrade::new(
+        crate::gpu::device().expect("the grade needs an adapter, and so does the peak it rolls to"),
         source.samples,
         matched.map(|m| &m.colour),
         levels,
@@ -293,64 +303,77 @@ pub fn graded(
         1.0,
     );
     let size = hdr_args::target_size(source.width as u32, source.height as u32, options);
-    graded_with(source, levels, scene.as_ref(), matched.map(|m| &m.lens), size, options.grade.peak_nits)
+    graded_with(&source, levels, scene.as_ref(), matched.map(|m| &m.lens), size, options.grade.peak_nits, output)
 }
 
 /// One photo's renditions, carried to the point where only the display still differs.
 ///
-/// Nits per channel: the fit-to-size, the warp, the camera's colour transform and the
-/// sharpen have all run, and none of them knows or cares what peak a rendition targets. What
-/// is left is the roll-off, the transfer and the encode.
+/// Coded, fitted to size, warped and sharpened - **exactly what `edit::open` hands the
+/// shader**, and for the same reason: the grade itself is one WGSL implementation now
+/// (`gpu::encode`), so whatever reaches it has to be the same thing on both hosts.
 ///
-/// This is the whole reason a job can name several outputs cheaply. The colour transform is
-/// resolution-independent - it is a per-pixel lookup - so a smaller rendition is a
-/// [`Cut::downscale`] of a larger one's frame rather than its own resize, its own warp table
-/// and its own sweep. That is not free: the transform is non-linear, so `mean(f(x))` is not
-/// `f(mean(x))` and grading then downscaling is not the same picture as downscaling then
-/// grading. It is close - `fixture_tests` pins the two within mean deltaE76 1.0 - and the
-/// smaller cut is a grid tile, where the difference is not what anyone is looking at.
+/// Nothing here knows what display a rendition targets. The colour transform, the roll-off
+/// and the transfer are all downstream of this and all run in one dispatch, so a job naming
+/// several outputs shares everything up to here and pays only a dispatch each.
+///
+/// The colour transform is resolution-independent - a per-pixel lookup - so a smaller
+/// rendition is a [`Cut::downscale`] of a larger one's frame rather than its own resize, its
+/// own warp table and its own sweep. That it is cut before the transform is still what makes
+/// the average an honest one: a box mean of the *rendered* picture runs into `mean(f(x))` not
+/// being `f(mean(x))` across a whole tone curve and a chroma lattice, where this is one
+/// transfer. Not the sensor's own integration either, which linear levels were - see
+/// [`Cut::downscale`].
 pub struct Cut {
-    /// PQ of the scene-referred nits, as `u16` codes. Coded rather than linear so the sharpen
-    /// reads it in the domain it filters in, and `u16` rather than `f16` because PQ is
-    /// already 0..1 and a float's exponent earns nothing there (`tone::pq_of_f16`). Nothing
-    /// on this path evaluates a transfer per sample.
-    pub signal: Vec<u16>,
+    /// Normalised PQ Rec.2020 `u16`, as `tone::encode_base` coded it and as the shader reads
+    /// it back through `nits_of_code`.
+    pub samples: Vec<u16>,
     pub width: usize,
     pub height: usize,
+    /// The frame's own levels, carried because the grade's neutral arm still reads where its
+    /// peak sits against its white.
+    pub levels: tone::Levels,
 }
 
 impl Cut {
     /// The largest rendition's frame, off the shared base.
     ///
-    /// Where the base is already at `size` nothing is copied: the resize is skipped and the
-    /// colour sweep reads the base where it lies. That matters at native resolution, where a
-    /// copy is 361MB on a 61MP frame.
+    /// Where the base is already at `size` and there is no lens, nothing is copied. That
+    /// matters at native resolution, where a copy is 361MB on a 61MP frame.
     pub fn from_base(
         source: &Source<'_>,
-        scene: &tone::SceneGrade<'_>,
+        levels: tone::Levels,
         lens: Option<&crate::fit::Lens>,
         size: hdr_args::Size,
     ) -> Cut {
         let (width, height) = (size.width as usize, size.height as usize);
         let fitted = image::box_resize_u16(source.samples, source.width, source.height, width, height);
-        let (frame, width, height) = match fitted.as_deref() {
-            Some(fitted) => (fitted, width, height),
-            None => (source.samples, source.width, source.height),
+        let (width, height) = match fitted.is_some() {
+            true => (width, height),
+            false => (source.width, source.height),
         };
         let warp = lens.and_then(|lens| {
             image::PlanarWarp::for_lens(width, height, width, height, lens, image::Sampling::Bicubic)
         });
-        Cut { signal: scene.to_signal(frame, warp.as_ref()), width, height }
+        let samples = match warp {
+            Some(warp) => warp.apply_u16(fitted.as_deref().unwrap_or(source.samples)),
+            // Nothing to warp through, so a resize that happened is already the frame and one
+            // that did not leaves the caller's decode to be copied - the native-resolution
+            // case, and the only copy on this path.
+            None => fitted.unwrap_or_else(|| source.samples.to_vec()),
+        };
+        Cut { samples, width, height, levels }
     }
 
     /// The sharpen, once, on the frame every rendition is cut from.
     ///
-    /// The frame is already PQ, so nothing converts - and PQ being *absolute*, that coding
-    /// says nothing about which display the frame is bound for, which is what lets one
-    /// sharpen serve every rendition.
+    /// After the warp, which is the resample whose blur it deconvolves, and *before* the
+    /// colour transform - which is where the editor has always had it, because the shader
+    /// does the colour per tick and cannot be asked for it at open. Deconvolving before a
+    /// per-pixel non-linearity is also the better-posed inversion: the blur was applied in
+    /// this domain, not in the graded one.
     pub fn sharpen(&mut self, amount: f64) {
-        image::finish(
-            &mut self.signal,
+        filter_base(
+            &mut self.samples,
             self.width,
             self.height,
             image::Strengths { sharpen: amount, ..Default::default() },
@@ -359,21 +382,22 @@ impl Cut {
 
     /// A smaller rendition's frame, averaged out of this one.
     ///
-    /// In PQ rather than in linear light, that being what the frame is stored in. The
-    /// physical argument for a linear average - it is what a larger sensor pixel would have
-    /// integrated - belongs to the resize ahead of the grade (`hdr::prepare`), which is
-    /// still linear. This one averages an already-rendered picture, where a perceptual
-    /// domain is the ordinary choice.
-    ///
-    /// Measured against averaging the same frame in linear nits, on the 800px tile of a
-    /// grid+full job: mean 0.39 counts of 255, worst 13, and 4.7% of samples differing by
-    /// more than one - concentrated on high-contrast edges, which is where the two domains
-    /// disagree at all. Indistinguishable side by side at tile size.
+    /// In the frame's own coding rather than in light, which is a genuine approximation: a box
+    /// mean of linear levels is what a lower-resolution sensor would have integrated, and a
+    /// mean of PQ codes is not. It is taken because the alternative is decoding a whole frame
+    /// to average it and coding it back - the two sweeps the coding exists to remove - and
+    /// because of what this is for: a grid tile, 99 times in 100, at a size where the
+    /// difference is under a count.
     pub fn downscale(&self, size: hdr_args::Size) -> Cut {
         let (width, height) = (size.width as usize, size.height as usize);
-        match image::box_resize_u16(&self.signal, self.width, self.height, width, height) {
-            Some(signal) => Cut { signal, width, height },
-            None => Cut { signal: self.signal.clone(), width: self.width, height: self.height },
+        match image::box_resize_u16(&self.samples, self.width, self.height, width, height) {
+            Some(samples) => Cut { samples, width, height, levels: self.levels },
+            None => Cut {
+                samples: self.samples.clone(),
+                width: self.width,
+                height: self.height,
+                levels: self.levels,
+            },
         }
     }
 }
@@ -386,6 +410,7 @@ impl Cut {
 ///
 /// Lens owned by the grade: the scene peak was taken off the unwarped base, then the gather
 /// and the colour share one sweep.
+#[allow(clippy::too_many_arguments)]
 pub fn graded_with(
     source: &Source<'_>,
     levels: tone::Levels,
@@ -393,6 +418,7 @@ pub fn graded_with(
     lens: Option<&crate::fit::Lens>,
     size: hdr_args::Size,
     peak_nits: f64,
+    output: crate::gpu::Output,
 ) -> (Vec<u16>, usize, usize) {
     let mut prepared =
         prepare_with(source, Some((size.width as usize, size.height as usize)), levels);
@@ -423,12 +449,7 @@ pub fn graded_with(
         );
         prepared.samples = gpu.encode(
             &prepared.samples,
-            &scene.gpu_grade(
-                prepared.width,
-                prepared.height,
-                peak_nits,
-                crate::gpu::Output::Rolled,
-            ),
+            &scene.gpu_grade(prepared.width, prepared.height, peak_nits, output),
         );
     }
     (prepared.samples, prepared.width, prepared.height)
@@ -633,33 +654,26 @@ pub fn encode_still(
     matched: Option<&HdrMatch>,
 ) -> Result<bool, String> {
     let levels = tone::levels(&samples, options.grade.white_quantile);
-    filter_scene_linear(
-        &mut samples,
-        width,
-        height,
-        levels.white,
-        options.grade.reference_white_nits,
-        options.strengths.before_the_fit(),
-    );
+    tone::encode_base(&mut samples, levels.white, options.grade.reference_white_nits);
+    filter_base(&mut samples, width, height, options.strengths.before_the_fit());
+    // Floored rather than refused, as `job::run` floors it: a frame whose quantile lands on
+    // level 0 still renders, all but black, where declining would fail the photograph.
+    let anchored = tone::Levels { white: levels.white.max(1.0), peak: levels.peak.max(1.0) };
+    let gpu = crate::gpu::device().ok_or("no GPU adapter, and the shaders are the grade")?;
     let scene = tone::SceneGrade::new(
+        gpu,
         &samples,
         matched.map(|m| &m.colour),
-        levels,
+        anchored,
         options.grade.reference_white_nits,
         1.0,
-    );
+    )
+    .ok_or("the frame has no exposure to grade against")?;
     let size = hdr_args::target_size(width as u32, height as u32, options);
-    let Some(scene) = scene else {
-        // No exposure to read, so the grade declines and the frame ships as it arrived.
-        let source = Source { samples: &samples, width, height };
-        let (frame, width, height) =
-            graded_with(&source, levels, None, None, size, options.grade.peak_nits);
-        return encode_pq_frame(frame, width, height, options);
-    };
 
     let mut cut = {
         let source = Source { samples: &samples, width, height };
-        let mut built = Cut::from_base(&source, &scene, matched.map(|m| &m.lens), size);
+        let mut built = Cut::from_base(&source, anchored, matched.map(|m| &m.lens), size);
         built.sharpen(options.strengths.sharpen);
         built
     };
@@ -667,25 +681,27 @@ pub fn encode_still(
     // scene-linear samples held across the longest stage of the job.
     drop(samples);
 
-    let frame = scene.roll(&cut.signal, options.grade.peak_nits);
-    cut.signal = Vec::new();
+    let frame = gpu.encode(
+        &cut.samples,
+        &scene.gpu_grade(cut.width, cut.height, options.grade.peak_nits, crate::gpu::Output::Pq),
+    );
+    cut.samples = Vec::new();
     encode_pq_frame(frame, cut.width, cut.height, options)
 }
 
 /// The transfer and the encode: everything a rolled HDR frame has left.
 ///
-/// **Nothing filters here.** The denoise and the defringe ran on the scene-linear frame ahead
-/// of the warp, and the sharpen ran on the frame of nits every rendition is cut from
-/// (`Cut::sharpen`) - which is after the warp and the fit-to-size that apply the blur it
-/// deconvolves, and in a perceptual coding that does not depend on which display this is for.
+/// **Nothing filters here.** The denoise and the defringe ran on the coded base ahead of the
+/// warp, and the sharpen ran on the frame every rendition is cut from (`Cut::sharpen`) - which
+/// is after the warp and the fit-to-size that apply the blur it deconvolves, and in a coding
+/// that does not depend on which display this is for.
 #[cfg(feature = "renditions")]
 pub fn encode_pq_frame(
-    mut frame: Vec<u16>,
+    frame: Vec<u16>,
     width: usize,
     height: usize,
     options: &EncodeOptions,
 ) -> Result<bool, String> {
-    tone::encode_pq(&mut frame, options.grade.peak_nits);
     // Handed over rather than lent, so libavif takes the frame rather than a copy of it.
     encode_frame(std::borrow::Cow::Owned(frame), width, height, options)
 }

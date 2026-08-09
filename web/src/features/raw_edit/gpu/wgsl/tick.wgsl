@@ -54,4 +54,3 @@ struct Tick {
 @group(0) @binding(0) var<uniform> tick: Tick;
 
 fn at(x: u32, y: u32) -> u32 { return y * tick.width + x; }
-fn in_frame(id: vec3u) -> bool { return id.x < tick.width && id.y < tick.height; }

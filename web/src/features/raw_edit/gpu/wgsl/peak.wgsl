@@ -83,8 +83,8 @@ fn bin_floor(bin: u32) -> f32 {
 const QUANTILE: f32 = 0.9999;
 
 /// What the quantile is taken of: the post-colour peak channel, in units of reference.
-fn measured(level: vec3f) -> f32 {
-  let coloured = matched_nits(level) / tick.reference;
+fn measured(nits: vec3f) -> f32 {
+  let coloured = matched_nits(nits) / tick.reference;
   return max(coloured.r, max(coloured.g, coloured.b));
 }
 
@@ -116,7 +116,7 @@ fn sampled(id: vec3u) -> vec2u {
 fn measure(@builtin(global_invocation_id) id: vec3u) {
   let at = sampled(id);
   if (at.y == 0xffffffffu) { return; }
-  count_in(measured(level_at(at.x, at.y)));
+  count_in(measured(nits_at(at.x, at.y)));
 }
 
 /// The brightest of those million, kept so the tick does not have to find them again.
@@ -133,8 +133,10 @@ fn measure(@builtin(global_invocation_id) id: vec3u) {
 fn collect(@builtin(global_invocation_id) id: vec3u) {
   let at = sampled(id);
   if (at.y == 0xffffffffu) { return; }
+  // The codes rather than the nits, because that is what a candidate is kept as: `remeasure`
+  // decodes them again at the tick's own exposure.
   let level = level_at(at.x, at.y);
-  if (measured(level) < peak_out[1]) { return; }
+  if (measured(nits_of(level)) < peak_out[1]) { return; }
 
   // Counted past the cap rather than clamped, so the caller can tell that more qualified
   // than were kept and stop reading them. A blown sky puts far more than `CANDIDATES` in one
@@ -152,11 +154,11 @@ fn collect(@builtin(global_invocation_id) id: vec3u) {
 fn remeasure(@builtin(global_invocation_id) id: vec3u) {
   if (id.x >= min(atomicLoad(&candidates[0]), CANDIDATES)) { return; }
   let base = 4u + id.x * 4u;
-  count_in(measured(vec3f(
+  count_in(measured(nits_of(vec3f(
     f32(atomicLoad(&candidates[base])),
     f32(atomicLoad(&candidates[base + 1u])),
     f32(atomicLoad(&candidates[base + 2u])),
-  )));
+  ))));
 }
 
 /// The quantile off the cumulative count, searched from the bright end.

@@ -9,7 +9,8 @@
 //! `web/e2e/gpu_parity.spec.ts` asserts the shaders reproduce
 //! `web/e2e/fixtures/gpu/*.expected.bin`, which are committed bytes; it does not assert those
 //! bytes are still what the grade produces. Written as an example run by hand, nothing did:
-//! change `tone::eetf`'s knee or anything the grade shaders do, forget to regenerate, and
+//! change the BT.2390 knee in `colour.wgsl` or anything else the grade shaders do, forget to
+//! regenerate, and
 //! every suite stays green against an answer nothing produces any more.
 //!
 //! So the bytes are rebuilt here and compared, in the suite that already runs on every edit.
@@ -202,22 +203,16 @@ fn baseline(stem: &str, suffix: &str, got: &[u8]) -> Option<Vec<u8>> {
     Some(std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display())))
 }
 
-/// What `edit::open` filters with, in the same two halves and the same order: everything but
-/// the sharpen ahead of the warp, then the sharpen after it.
+/// What `edit::open` codes and filters with, in the same order: the base coded once, then
+/// everything but the sharpen ahead of the warp, then the sharpen after it.
 ///
-/// This scene has no lens to warp through, so the two land back to back - which is exactly
-/// what the editor does for a file whose fit found no geometry, and the frame the client is
-/// handed either way.
+/// This scene has no lens to warp through, so the two halves land back to back - which is
+/// exactly what the editor does for a file whose fit found no geometry, and the frame the
+/// client is handed either way.
 fn filter_once(prepared: &mut Prepared, grade: &hdr::Grade, strengths: Strengths) {
+    tone::encode_base(&mut prepared.samples, prepared.levels.white, grade.reference_white_nits);
     for half in [strengths.before_the_fit(), Strengths { sharpen: strengths.sharpen, ..Default::default() }] {
-        hdr::filter_scene_linear(
-            &mut prepared.samples,
-            prepared.width,
-            prepared.height,
-            prepared.levels.white,
-            grade.reference_white_nits,
-            half,
-        );
+        hdr::filter_base(&mut prepared.samples, prepared.width, prepared.height, half);
     }
 }
 
@@ -308,10 +303,9 @@ fn the_committed_fixture_is_what_the_cpu_produces_now() {
 /// server, so it is the only thing that can catch the native library and the client
 /// disagreeing about the model. This links the crate directly and never would.
 ///
-/// The peak is supplied rather than measured. `peak_out[0]` is an *input* to the grade, and
-/// the four passes that fill it are a histogram over the frame - a different claim, bounded
-/// by the sweep in the browser suite. Reproducing them here would be a second
-/// implementation of the measurement, to check an implementation of the grade.
+/// `peak_out[0]` is an *input* to the grade, and `SceneGrade::new` fills it from `measure`
+/// and `quantile` - the same two passes the editor's open runs. What this pins is the grade;
+/// that the peak tracks the exposure across the slider's range is the browser suite's sweep.
 #[test]
 fn the_encode_pass_reproduces_the_cpu_frame() {
     let Some(gpu) = rawshim::gpu::device() else {
@@ -335,6 +329,7 @@ fn the_encode_pass_reproduces_the_cpu_frame() {
             // The peak the grade runs through, off the frame as it stands here - which is
             // what `tone::SceneGrade::new` measures, and so what `peak_out[0]` stands in for.
             let scene = tone::SceneGrade::new(
+                gpu,
                 &prepared.samples,
                 colour.as_ref(),
                 levels,
@@ -412,6 +407,7 @@ fn the_rolled_arm_reproduces_the_cpu_grade() {
             filter_once(&mut prepared, &grade, strengths);
 
             let scene = tone::SceneGrade::new(
+                gpu,
                 &prepared.samples,
                 colour.as_ref(),
                 levels,
@@ -460,7 +456,7 @@ fn the_rolled_arm_reproduces_the_cpu_grade() {
     }
 }
 
-/// The same dispatch's SDR arm, against `tone::encode_srgb8`.
+/// The same dispatch's SDR arm, against its committed answer.
 ///
 /// An SDR rendition is not a second pipeline - `job::peak_nits` puts its peak at diffuse
 /// white and the same grade rolls the highlights into it - so what needs checking is only
@@ -486,8 +482,8 @@ fn the_encode_pass_reproduces_the_cpu_sdr_frame() {
             Prepared { samples: samples.clone(), width: WIDTH, height: HEIGHT, levels };
         filter_once(&mut prepared, &grade, strengths);
 
-
         let scene = tone::SceneGrade::new(
+            gpu,
             &prepared.samples,
             colour.as_ref(),
             levels,

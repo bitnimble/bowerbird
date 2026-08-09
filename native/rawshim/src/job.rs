@@ -12,7 +12,7 @@
 // handles, nothing for the other side to free, and no way to ask for pixels.
 //
 // **There is one rendering pipeline, and SDR is an output stage of it.** Everything
-// internal is 16-bit scene-linear through one grade; a rendition's dynamic range reaches
+// internal is one 16-bit base through one grade; a rendition's dynamic range reaches
 // only the peak that grade rolls into and the transfer and depth of the buffer that leaves.
 // There used to be a second path - an 8-bit sRGB decode, `fit::apply`, and no tone map at
 // all - and it was slower and larger both: measured on a 3840px Sony rendition, 1805ms and
@@ -52,7 +52,7 @@ pub enum Rendition {
 /// Where a rendition's highlights roll into, and what codes the result.
 ///
 /// **The only thing a rendition's dynamic range reaches inside the pipeline.** Everything
-/// upstream is one 16-bit scene-linear render; this says which peak the BT.2390 roll-off
+/// upstream is one 16-bit render; this says which peak the BT.2390 roll-off
 /// targets and what the buffer is coded as on the way out. Named rather than a `hdr: bool`
 /// so a job reads as one render with a list of outputs, and so a third coding is additive.
 #[derive(Deserialize, PartialEq, Eq, Clone, Copy)]
@@ -245,19 +245,16 @@ impl Base {
             .into_samples16()
             .ok_or("the render needs a 16-bit scene-linear decode")?;
         let levels = tone::levels(&samples, job.grade.white_quantile);
+        // Read off the levels and coded against them, once, here. Everything below this line
+        // - the filters, the resize, the warp, the shader - reads normalised PQ rather than
+        // sensor levels, and `tone::encode_base` says what that buys.
+        tone::encode_base(&mut samples, levels.white, job.grade.reference_white_nits);
         // Ahead of every warp and every resize, which is where the denoise belongs and the
-        // sharpen does not (`hdr::filter_scene_linear`). At the decode's size, which is the
-        // largest any target asked for: the chroma denoise's radii and the defringe's
-        // constants are in pixels of the frame they read, so this is the one size at which
-        // they mean what they were tuned to mean.
-        hdr::filter_scene_linear(
-            &mut samples,
-            width,
-            height,
-            levels.white,
-            job.grade.reference_white_nits,
-            job.strengths().before_the_fit(),
-        );
+        // sharpen does not (`hdr::filter_base`). At the decode's size, which is the largest
+        // any target asked for: the chroma denoise's radii and the defringe's constants are in
+        // pixels of the frame they read, so this is the one size at which they mean what they
+        // were tuned to mean.
+        hdr::filter_base(&mut samples, width, height, job.strengths().before_the_fit());
         Ok(Base { samples, width, height, levels, matched })
     }
 }
@@ -300,22 +297,10 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
 
     let Base { samples, width, height, levels, matched } =
         Base::build(job, largest_size(&rendered))?;
-    // The whole colour transform, settled once. Its curve tables are 65536 entries a
-    // channel and its scene peak is a quantile taken through the transform over a million
-    // pixels - none of which a rendition's size or display changes, and both of which were
-    // being redone per rendition. Sharing the peak is also what makes two sizes of one
-    // photo roll their highlights by the same amount rather than by two measurements.
-    let scene = tone::SceneGrade::new(
-        &samples,
-        matched.as_ref().map(|m| &m.colour),
-        levels,
-        job.grade.reference_white_nits,
-        1.0,
-    );
     let lens = matched.as_ref().map(|m| &m.lens);
 
     // Largest first, so every smaller rendition is a downscale of one already cut rather
-    // than its own resize, its own warp table and its own sweep over the colour transform.
+    // than its own resize, its own warp table and its own dispatch over the colour transform.
     let mut order: Vec<(&Target, hdr_args::Size)> = rendered
         .iter()
         .map(|target| {
@@ -327,38 +312,82 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
         std::cmp::Reverse(u64::from(size.width) * u64::from(size.height))
     });
 
-    let Some(scene) = scene else {
-        // A frame with no exposure to read - `tone::levels` found diffuse white at zero, so
-        // every consumer would divide by it. The grade declines rather than dividing, and
-        // each rendition ships the frame as it arrived.
-        return ungraded(job, &samples, width, height, levels, &order, outcome);
-    };
+    // **The grade is the shaders the editor runs, and there is nothing to fall back to.** The
+    // tick has to be WGSL because it runs in a browser, so the choice was ever a second
+    // implementation in Rust or this - and DESIGN 21.1 records what the second one cost: the
+    // editor lost the camera match twice, silently, to two implementations drifting. A
+    // machine with no adapter at all therefore builds no renditions rather than building
+    // different ones. `gpu::device` asks for a software adapter where there is no hardware,
+    // so that means no Vulkan whatsoever rather than merely no GPU.
+    let gpu = crate::gpu::device().ok_or(
+        "no GPU adapter of any kind, so the grade cannot run - the shaders are its only \
+         implementation. Install a Vulkan driver; lavapipe will do, slowly",
+    )?;
+
+    // The scene, settled once: the camera's colour and the top end every rendition rolls off
+    // against. An input to the grade rather than part of it, which is why the peak is
+    // measured here and handed to the shader - two renditions of one photo measuring it
+    // separately would compress their highlights by different amounts, the same drift
+    // `tone::levels` exists to prevent at the other end of the range.
+    //
+    // White is floored rather than refused. A frame whose quantile lands on level 0 is a lens
+    // cap or a failed exposure, and the grade divides by this; at a white of 1 it still
+    // renders all but black, where refusing would fail a photograph that imported before.
+    let anchored = tone::Levels { white: levels.white.max(1.0), peak: levels.peak.max(1.0) };
+    let scene = tone::SceneGrade::new(
+        gpu,
+        &samples,
+        matched.as_ref().map(|m| &m.colour),
+        anchored,
+        job.grade.reference_white_nits,
+        1.0,
+    )
+    .ok_or("the frame has no exposure to grade against")?;
 
     // Cut once off the base, sharpened once, and the base handed back before anything is
-    // encoded - 361MB of scene-linear samples at 61MP, released across the longest stage of
-    // the job. Nothing below reads it: a smaller rendition comes out of the cut.
+    // encoded - 361MB of samples at 61MP, released across the longest stage of the job.
+    // Nothing below reads it: a smaller rendition comes out of the cut.
     let mut cut = {
         let source = hdr::Source { samples: &samples, width, height };
-        let mut built = hdr::Cut::from_base(&source, &scene, lens, order[0].1);
+        let mut built = hdr::Cut::from_base(&source, anchored, lens, order[0].1);
         built.sharpen(job.sharpen);
         built
     };
     drop(samples);
 
-    let last = order.len() - 1;
-    for (index, (target, size)) in order.into_iter().enumerate() {
+    // **The frame goes up once per size, not once per rendition.** Two outputs of one size
+    // differ by two words of a uniform; uploading 59MB at 3840 - 361MB at native - and
+    // rebuilding the lattice, the curves and the output pair for each of them was most of
+    // what a second target cost.
+    let mut uploaded: Option<crate::gpu::Uploaded<'_>> = None;
+    for (index, (target, size)) in order.iter().enumerate() {
         let want = (size.width as usize, size.height as usize);
         if (cut.width, cut.height) != want {
-            cut = cut.downscale(size);
+            cut = cut.downscale(*size);
+            uploaded = None;
         }
         let options = encode_options(job, target, &target.output_path);
-        // The one stage that knows what display this rendition is for.
-        let frame = scene.roll(&cut.signal, peak_nits(job, target));
-        // The last rendition hands the shared frame back rather than holding it across its
-        // encode, which is the longest stage of the job.
-        if index == last {
-            cut.signal = Vec::new();
+        let output = match target.output {
+            Output::Pq => crate::gpu::Output::Pq,
+            Output::Srgb => crate::gpu::Output::Srgb,
+        };
+        let grade = scene.gpu_grade(cut.width, cut.height, peak_nits(job, target), output);
+        let up = match &uploaded {
+            Some(up) => up,
+            None => uploaded.insert(gpu.upload(&cut.samples, &grade)),
+        };
+        // **The cut is handed back once it is on the GPU**, which is 366MB at native
+        // resolution released across the longest stage of the job. Only two things ever read
+        // it - the upload above and a smaller rendition's `downscale` - so once every target
+        // left wants this same size, and the upload it is already in, nothing does. At native
+        // that is one target and the whole of the cut, and it is the difference between
+        // holding it beside the graded frame through the AVIF encode and not.
+        if order[index + 1..].iter().all(|(_, later)| later == size) {
+            cut.samples = Vec::new();
         }
+        // Colour, roll-off and transfer, in one dispatch, from the frame the editor would
+        // have handed the same shader.
+        let frame = up.encode(&grade);
         write(frame, cut.width, cut.height, target, &options, &mut outcome)?;
     }
 
@@ -374,15 +403,16 @@ fn write(
     options: &EncodeOptions,
     outcome: &mut Outcome,
 ) -> Result<(), String> {
+    // The transfer already ran, in the same dispatch as the grade (`frame.wgsl::encode`), so
+    // there is nothing left here but handing the bytes to an encoder.
     match target.output {
         Output::Pq => {
             hdr::encode_pq_frame(frame, width, height, options)?;
         }
         Output::Srgb => {
-            // The SDR output stage, and the whole of what SDR means here: the same rolled
-            // frame through the sRGB primaries and transfer at 8 bits instead of through PQ
-            // at 16.
-            let data = tone::encode_srgb8(&frame);
+            // Eight bits, delivered in the low byte of each count because the shader writes
+            // one buffer whatever the output is.
+            let data: Vec<u8> = frame.iter().map(|v| *v as u8).collect();
             drop(frame);
             let image = crate::rgb::RgbRef { width, height, data: &data };
             save_avif(image, target)?;
@@ -392,27 +422,3 @@ fn write(
     Ok(())
 }
 
-/// Every rendition of a frame the grade declined, shipped as it arrived.
-///
-/// A frame whose white quantile lands on level 0 is a lens cap or a failed exposure. It has
-/// no exposure to read and every consumer divides by it, so the grade refuses; what it does
-/// not do is fail the import, and this keeps that true without the graded path having to
-/// carry a "no scene" case through the cut.
-fn ungraded(
-    job: &Job,
-    samples: &[u16],
-    width: usize,
-    height: usize,
-    levels: tone::Levels,
-    order: &[(&Target, hdr_args::Size)],
-    mut outcome: Outcome,
-) -> Result<Outcome, String> {
-    for (target, size) in order {
-        let options = encode_options(job, target, &target.output_path);
-        let source = hdr::Source { samples, width, height };
-        let (frame, out_width, out_height) =
-            hdr::graded_with(&source, levels, None, None, *size, peak_nits(job, target));
-        write(frame, out_width, out_height, target, &options, &mut outcome)?;
-    }
-    Ok(outcome)
-}
