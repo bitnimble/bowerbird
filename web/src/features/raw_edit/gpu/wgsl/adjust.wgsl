@@ -30,8 +30,8 @@
 // have to be rebuilt on every pointer move.
 @group(0) @binding(13) var detail: texture_2d<f32>;
 // The reader's temperature and tint, already solved into one matrix by `white_balance.wgsl`.
-// Rows of four. Identity where the pair is at the frame's own as-shot illuminant, so nothing
-// here has to ask whether a balance was set - only whether it is worth the nine multiplies.
+// Rows of four, and the identity where the pair is at the frame's own illuminant - so the
+// check below is about skipping nine multiplies rather than about correctness.
 @group(0) @binding(14) var<storage, read> balance: array<f32>;
 
 /// Stops relative to diffuse white. 0 is white, -3 is three stops under it.
@@ -190,6 +190,17 @@ const DEHAZE_STRENGTH: f32 = 0.9;
 ///
 /// The negative half adds haze instead, through the same expression: a slider below zero
 /// makes `t` greater than 1, and the result is a blend towards the airlight.
+///
+/// **The airlight is a fixed point, and everything above it is expanded rather than bounded.**
+/// `I = A` comes back as `A` whatever `t` is, so the operator pulls the shadows down and
+/// leaves white where it was - which is the shape haze removal should have. Above white it
+/// multiplies the excess by `1/t`, and that is left unbounded: haze cannot lift a scene *past*
+/// the airlight, so a pixel up there is a specular the prior does not describe, and the strong
+/// end of the slider is reached only where the neighbourhood is already near white and has
+/// little excess to multiply. Where the two do coincide - sun on water under a white sky - a
+/// full-strength dehaze does lift the specular by a couple of stops, and what catches it is the
+/// roll-off, which is the same thing that catches a bright scene. Worth knowing before reading
+/// a blown highlight there as a bug in the estimate.
 fn dehazed(colour: vec3f, dark_stops: f32) -> vec3f {
   let omega = tick.dehaze / 100.0 * DEHAZE_STRENGTH;
   let dark = clamp(exp2(dark_stops) / AIRLIGHT, 0.0, 1.0);

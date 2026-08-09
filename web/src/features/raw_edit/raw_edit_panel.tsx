@@ -45,24 +45,6 @@ const GROUPS: ReadonlyArray<{
   },
 ];
 
-// What reaches the shader, in the editor *and* in a rendition, which is the same WGSL
-// either way. Everything in the two groups above does, so nothing here is labelled - the set
-// stays because white balance still does not, and the next slider to be added will not
-// either until it is wired up.
-const RENDERED = new Set<string>([
-  'exposure',
-  'contrast',
-  'highlights',
-  'shadows',
-  'whites',
-  'blacks',
-  'texture',
-  'clarity',
-  'dehaze',
-  'vibrance',
-  'saturation',
-]);
-
 const EditSlider = observer(function EditSlider({
   store,
   presenter,
@@ -73,14 +55,12 @@ const EditSlider = observer(function EditSlider({
   slider: { key: keyof EditDoc & string; label: string; min: number; max: number; step: number };
 }): JSX.Element {
   const value = Number(store.doc?.[slider.key] ?? 0);
-  const rendered = RENDERED.has(slider.key);
 
   return (
     <div className="raw-edit-panel__slider" data-testid={`raw-edit-${slider.key}`}>
       <Text variant="label" as="span">
         {slider.label} {value > 0 ? '+' : ''}
         {slider.step < 1 ? value.toFixed(2) : value}
-        {rendered ? '' : ' (saved, not yet rendered)'}
       </Text>
       <Slider
         value={value}

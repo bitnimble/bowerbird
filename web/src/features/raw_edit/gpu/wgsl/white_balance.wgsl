@@ -143,10 +143,10 @@ fn xyz_of(xy: vec2f) -> vec3f {
 
 /// The whole balance as one matrix on a Rec.2020 linear colour, written for the grade to read.
 ///
-/// One invocation: this depends on two uniforms and nothing else, so it is the same answer for
-/// every pixel in the dispatch and there is no reason for a pixel to compute it. Which is the
-/// point of the pass - the search below is thirty iterations and three matrix products, and
-/// per pixel it would cost about what the rest of the grade does.
+/// One invocation: this reads four uniforms and nothing else, so it is the same answer for
+/// every pixel in the dispatch and no pixel has any business computing it. Which is the point
+/// of the pass - two locus searches of up to thirty steps each, then two matrix products - and
+/// per pixel that costs about what the rest of the grade does.
 @compute @workgroup_size(1)
 fn balance() {
   var m = mat3x3f(vec3f(1.0, 0.0, 0.0), vec3f(0.0, 1.0, 0.0), vec3f(0.0, 0.0, 1.0));

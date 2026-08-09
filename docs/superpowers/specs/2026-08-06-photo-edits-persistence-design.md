@@ -656,6 +656,14 @@ through a chroma lattice and matrix already fitted at the shot white balance (`f
 edit-independent". Each new parameter needs its own note saying what it does to a pixel and where
 it composes in `colour.wgsl`'s chain; none of that is written yet.
 
+> **Superseded.** All ten now render, and neither of the two this paragraph set aside needed
+> what it predicted. Texture, clarity and dehaze are terms in `adjust.wgsl` reading a blur
+> `detail.wgsl` builds once per frame, not a stage of their own. And white balance is not
+> prepare-time: the decode already neutralised the as-shot illuminant, so asking for another is
+> the *ratio* of the two, which is one matrix per tick (`white_balance.wgsl`). Sitting behind
+> the fit is what makes that sound rather than what prevents it - the match keeps answering the
+> question it was fitted on. The prepare stayed edit-independent throughout.
+
 One correction an implementer would otherwise hit immediately: the doc's `exposure` is EV, the
 uniform is **not**. `writeUniform({ exposure: 2 ** ev })` (`tick_pipeline.ts:523`), and
 `colour.wgsl:88` branches on `== 1.0`. The doc value is converted, not copied.

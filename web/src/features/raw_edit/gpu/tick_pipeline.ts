@@ -244,7 +244,6 @@ export class TickPipeline {
   private readonly detailScratch: GPUTexture;
   /** The reader's temperature and tint as one matrix, rewritten by the pass below per tick. */
   private readonly balance: GPUBuffer;
-  private readonly balanceLayout: GPUBindGroupLayout;
   private readonly balancePipeline: GPUComputePipeline;
   private readonly balanceGroup: GPUBindGroup;
   /**
@@ -342,21 +341,21 @@ export class TickPipeline {
     this.candidates = storage(4 + PEAK_CANDIDATES * 4);
     this.nitsOfCode = storage(PQ_CODES);
     this.balance = storage(BALANCE_FLOATS);
-    this.balanceLayout = device.createBindGroupLayout({
+    const balanceLayout = device.createBindGroupLayout({
       entries: [
         { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
         { binding: 14, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
       ],
     });
     this.balancePipeline = device.createComputePipeline({
-      layout: device.createPipelineLayout({ bindGroupLayouts: [this.balanceLayout] }),
+      layout: device.createPipelineLayout({ bindGroupLayouts: [balanceLayout] }),
       compute: {
         module: device.createShaderModule({ code: BALANCE, label: 'balance' }),
         entryPoint: 'balance',
       },
     });
     this.balanceGroup = device.createBindGroup({
-      layout: this.balanceLayout,
+      layout: balanceLayout,
       entries: [
         { binding: 0, resource: { buffer: this.uniform } },
         { binding: 14, resource: { buffer: this.balance } },

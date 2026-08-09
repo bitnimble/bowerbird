@@ -1302,13 +1302,23 @@ fn uniform(grade: &Grade<'_>, colour: &HdrColour) -> Vec<u8> {
     f(&mut w, grade.adjust.texture);
     f(&mut w, grade.adjust.clarity);
     f(&mut w, grade.adjust.dehaze);
-    // Zero for both where the frame has no as-shot illuminant, or where the reader has not
-    // moved off it. The shader reads that as "leave the balance alone", which is the only
-    // honest answer with no baseline to move away from.
+    // Zero throughout where the frame has no as-shot illuminant at all, which the shader reads
+    // as "leave the balance alone" - the only honest answer with no baseline to move away
+    // from. Otherwise the frame's own pair stands in for whichever half the document leaves
+    // null, and `writeUniform` in `tick_pipeline.ts` fills them the same way.
+    //
+    // Both halves, not just the temperature. A document may carry one without the other - the
+    // schema allows it, and a sidecar can state a Kelvin and no tint - and standing a missing
+    // tint up as zero would put the illuminant on the Planckian locus, which is not where any
+    // camera's neutral sits. The editor would show the frame's tint and the rendition a
+    // different picture.
+    let temperature =
+        grade.as_shot.map_or(0.0, |s| grade.adjust.temperature.unwrap_or(s.temperature));
+    let tint = grade.as_shot.map_or(0.0, |s| grade.adjust.tint.unwrap_or(s.tint));
     f(&mut w, grade.as_shot.map_or(0.0, |s| s.temperature));
     f(&mut w, grade.as_shot.map_or(0.0, |s| s.tint));
-    f(&mut w, grade.as_shot.and(grade.adjust.temperature).unwrap_or(0.0));
-    f(&mut w, grade.adjust.tint.unwrap_or(0.0));
+    f(&mut w, temperature);
+    f(&mut w, tint);
     // WGSL rounds a uniform struct's size up to a multiple of 16 bytes, and binds it at that
     // size - so a buffer holding exactly the fields is rejected as too small, by however much
     // the last few fields left over. `shaders.ts` does this in `tickOffsets`; here it was
@@ -1327,6 +1337,8 @@ fn half(v: f32) -> [u8; 2] {
 
 #[cfg(test)]
 mod tests {
+    use wgpu::util::DeviceExt;
+
     /// The shader's own sizes, against the buffers this host allocates for them.
     ///
     /// **A histogram longer than its buffer is a dropped dispatch, not an error.** WGSL bounds
@@ -1434,6 +1446,165 @@ mod tests {
             output: super::Output::Pq,
         };
         assert_eq!(super::uniform(&grade, &colour).len(), expected);
+    }
+
+    /// The shader's forward map against this crate's inverse, over the slider's whole range.
+    ///
+    /// **The one property neither side can check alone.** `white_balance.rs` turns a
+    /// chromaticity into a temperature and a tint, `white_balance.wgsl` turns them back into a
+    /// chromaticity, and nothing else compares the two: the standard-illuminant tests pin only
+    /// the inverse, and the shader's identity arm makes "as shot" the same picture whether or
+    /// not the maps agree. What would break is quieter than either - a Lightroom sidecar's
+    /// 5000K would land on an illuminant that is not Lightroom's 5000K, and the photograph
+    /// would simply be the wrong colour.
+    ///
+    /// Run through a probe entry point rather than through a rendition, because a matrix that
+    /// happens to look plausible is exactly what this is trying not to accept.
+    #[test]
+    fn the_shader_solves_the_illuminant_this_crate_reads_back() {
+        const PROBE: &str = r#"
+@compute @workgroup_size(1)
+fn probe_xy() {
+  let xy = xy_of(tick.temperature, tick.tint);
+  balance_out[0] = xy.x;
+  balance_out[1] = xy.y;
+}
+"#;
+        let Some(gpu) = super::device() else {
+            eprintln!(
+                "SKIPPED: no adapter answered, so the white balance maps were not compared. \
+                 Nothing else checks that the shader and this crate agree about an illuminant.",
+            );
+            return;
+        };
+        let device = &gpu.device;
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("probe_xy"),
+            source: wgpu::ShaderSource::Wgsl(
+                format!("{}\n{PROBE}", super::balance_source()).into(),
+            ),
+        });
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("probe_xy"),
+            entries: &[
+                super::Binding::Uniform.entry(0),
+                super::Binding::Storage { read_only: false }.entry(14),
+            ],
+        });
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("probe_xy"),
+            layout: Some(&device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("probe_xy"),
+                bind_group_layouts: &[Some(&layout)],
+                ..Default::default()
+            })),
+            module: &module,
+            entry_point: Some("probe_xy"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+        let out = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("probe_xy"),
+            size: super::BALANCE_FLOATS * 4,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        let readback = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("probe_xy"),
+            size: 8,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let colour = crate::hdr_fit::HdrColour::identity();
+        let mut worst_temperature = 0.0f64;
+        let mut worst_tint = 0.0f64;
+        // The document's whole range, and the tint's, including the ends where the locus table
+        // is coarsest and a transcription slip would show first.
+        for temperature in [2000.0, 2700.0, 3200.0, 5000.0, 5500.0, 6500.0, 10000.0, 20000.0, 50000.0] {
+            for tint in [-150.0, -50.0, 0.0, 25.0, 150.0] {
+                let asked = crate::white_balance::AsShot { temperature, tint };
+                let grade = super::Grade {
+                    width: 1,
+                    height: 1,
+                    colour: None,
+                    white: 1.0,
+                    source_level: 1.0,
+                    reference_nits: 203.0,
+                    peak_nits: 1000.0,
+                    exposure: 1.0,
+                    adjust: super::Adjust {
+                        temperature: Some(temperature),
+                        tint: Some(tint),
+                        ..super::Adjust::none()
+                    },
+                    as_shot: Some(asked),
+                    output: super::Output::Pq,
+                };
+                let tick = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("probe_xy"),
+                    contents: &super::uniform(&grade, &colour),
+                    usage: wgpu::BufferUsages::UNIFORM,
+                });
+                let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("probe_xy"),
+                    layout: &layout,
+                    entries: &[
+                        wgpu::BindGroupEntry { binding: 0, resource: tick.as_entire_binding() },
+                        wgpu::BindGroupEntry { binding: 14, resource: out.as_entire_binding() },
+                    ],
+                });
+                let mut encoder = device.create_command_encoder(&Default::default());
+                {
+                    let mut pass = encoder.begin_compute_pass(&Default::default());
+                    pass.set_pipeline(&pipeline);
+                    pass.set_bind_group(0, &group, &[]);
+                    pass.dispatch_workgroups(1, 1, 1);
+                }
+                encoder.copy_buffer_to_buffer(&out, 0, &readback, 0, 8);
+                gpu.queue.submit([encoder.finish()]);
+                let slice = readback.slice(..);
+                slice.map_async(wgpu::MapMode::Read, |_| {});
+                device.poll(wgpu::PollType::wait_indefinitely()).expect("the probe finished");
+                let (x, y) = {
+                    let mapped = slice.get_mapped_range().expect("the readback mapped");
+                    let read = |at: usize| {
+                        f64::from(f32::from_le_bytes([
+                            mapped[at],
+                            mapped[at + 1],
+                            mapped[at + 2],
+                            mapped[at + 3],
+                        ]))
+                    };
+                    (read(0), read(4))
+                };
+                readback.unmap();
+
+                let back = crate::white_balance::from_xy(x, y);
+                worst_temperature = worst_temperature
+                    .max((back.temperature - temperature).abs() / temperature);
+                worst_tint = worst_tint.max((back.tint - tint).abs());
+                // Measured at 0.011% and 0.00, which is `f32` in the shader against `f64`
+                // here rather than any disagreement about the locus. Bounded well inside what
+                // a transcription slip costs - one wrong digit moves a temperature by percent
+                // - and well outside what another GPU's rounding can.
+                assert!(
+                    (back.temperature - temperature).abs() < temperature * 0.005
+                        && (back.tint - tint).abs() < 0.5,
+                    "the shader put {temperature}K tint {tint} at ({x:.5}, {y:.5}), which this \
+                     crate reads back as {:.0}K tint {:.1}",
+                    back.temperature,
+                    back.tint,
+                );
+            }
+        }
+        // Reported even on success: the two maps interpolate the same table differently, so
+        // the round trip is close rather than exact, and how close is worth knowing before
+        // anybody tightens the bound above.
+        eprintln!(
+            "white balance round trip: worst {:.3}% on temperature, {worst_tint:.2} on tint",
+            worst_temperature * 100.0,
+        );
     }
 
     /// `R2020_TO_SRGB` in `frame.wgsl` against the matrix this crate derives.

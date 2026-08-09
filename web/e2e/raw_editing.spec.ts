@@ -286,23 +286,37 @@ test('the white balance pair starts where the camera metered and moves from ther
  * wrong. What a repository test cannot see is whether the reload asks for the edits at all.
  *
  * The revision is asserted alongside the value because they fail differently: a save that
- * never happened leaves the exposure at zero, and a save the server refused leaves the
- * exposure right and the revision at nothing.
+ * never happened leaves the exposure where it was, and a save the server refused leaves the
+ * exposure right and the revision unmoved.
+ *
+ * **Everything here is relative to where this test found the photograph, and none of it may
+ * be an absolute.** The specs above share one photo and one server, and they edit it: by the
+ * time this runs the exposure has already been dragged to the top of its range and the history
+ * has entries nobody here wrote. Asserting "undo returns to 0.00 EV" passed only while this
+ * happened to be the first spec whose saves landed - and then failed by *popping somebody
+ * else's delta*, which is a specification of the suite's running order rather than of undo.
+ * Downwards for the same reason: a press against the end of the range moves nothing, writes no
+ * delta, and would leave every assertion below quietly measuring a photograph this test never
+ * touched.
  */
 test('an exposure survives a reload, and the undo that follows it', async ({ page }) => {
   await open(page);
 
+  const exposure = page.locator('.raw-edit-panel__exposure');
+  const revision = page.getByTestId('raw-edit-rev');
+  const started = await exposure.textContent();
+  const wasAt = await revision.textContent();
+
   const thumb = page.locator('.raw-edit-panel__exposure input[type="range"]');
   await thumb.focus();
-  await page.keyboard.press('PageUp');
-  await page.keyboard.press('PageUp');
+  // One press, because one settle is one history entry and the undo below steps once.
+  await page.keyboard.press('PageDown');
 
-  const exposure = page.locator('.raw-edit-panel__exposure');
   const moved = await exposure.textContent();
-  expect(moved).not.toContain('0.00 EV');
+  expect(moved).not.toBe(started);
   // The commit is on release, so the revision moving is what says the drag reached the
   // server rather than only the shader.
-  await expect.poll(async () => page.getByTestId('raw-edit-rev').textContent(), { timeout: 30_000 }).not.toBe('0');
+  await expect.poll(async () => revision.textContent(), { timeout: 30_000 }).not.toBe(wasAt);
 
   await open(page);
   await expect(exposure).toHaveText(moved ?? '');
@@ -311,7 +325,7 @@ test('an exposure survives a reload, and the undo that follows it', async ({ pag
   // And the history came back with it: undo is what proves the deltas were stored, not
   // just the document.
   await page.getByTestId('raw-edit-undo').click();
-  await expect(exposure).toContainText('0.00 EV');
+  await expect(exposure).toHaveText(started ?? '');
   await expect(page.getByTestId('raw-edit-redo')).toBeEnabled();
 });
 

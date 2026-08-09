@@ -30,9 +30,10 @@
 /// the same picture, which is the divergence DESIGN 21.1 is about. Declared here and pinned
 /// on both sides (`gpu.rs`'s shader-size test, `tests/peak_constants.test.ts`).
 ///
-/// 512 rather than something nearer a sensor: the coarse blur is quadratic in this through
-/// the tap count, and nothing below is a detail operator - the finest band this can express is
-/// a 512th of the frame, which is already finer than a reader can see a texture slider act on.
+/// 512 rather than something nearer a sensor: the coarse blur costs the *cube* of this - the
+/// texels grow as the square and the radius with it, the radius being a fixed fraction - and
+/// nothing below is a detail operator anyway. The finest band this can express is a 512th of
+/// the frame, already finer than a reader can see a texture slider act on.
 const DETAIL_LONG: u32 = 512u;
 
 /// The two radii, as sigmas in fractions of the working texture's long edge.

@@ -569,7 +569,11 @@ fn graded_banded(
             adjust,
             // A daylight baseline, so the balance test has something to move away from. The
             // presence test leaves the pair unset, where this is not read at all.
-            as_shot: Some(rawshim::white_balance::AsShot { temperature: 5500.0, tint: 0.0 }),
+            //
+            // The tint is off zero on purpose: a camera's neutral is never exactly on the
+            // Planckian locus, and a baseline that was would let a host standing a missing
+            // tint up as zero pass by coincidence.
+            as_shot: Some(rawshim::white_balance::AsShot { temperature: 5500.0, tint: 12.0 }),
             output: rawshim::gpu::Output::Rolled,
         },
     )
@@ -598,11 +602,20 @@ fn the_balance_moves_colour_in_the_named_direction_and_leaves_brightness_alone()
     // The baseline `graded_banded` declares. Asking for it by name has to be the same picture
     // as not asking at all, to the byte: the shader solves both illuminants through the same
     // search, so anything else means the pair is not a pure ratio.
-    assert_eq!(at(Some(5500.0), Some(0.0)), at(None, None), "as shot is not identity");
+    assert_eq!(at(Some(5500.0), Some(12.0)), at(None, None), "as shot is not identity");
+
+    // And half a pair is the frame's own other half, not zero. The document allows one without
+    // the other - a sidecar can state a Kelvin and no tint - and a host that read the gap as
+    // "on the Planckian locus" would render a photograph the editor never showed.
+    assert_eq!(
+        at(Some(6500.0), None),
+        at(Some(6500.0), Some(12.0)),
+        "a temperature with no tint did not fall back to the frame's own",
+    );
 
     let neutral = at(None, None);
-    let warm = at(Some(8000.0), Some(0.0));
-    let cool = at(Some(3500.0), Some(0.0));
+    let warm = at(Some(8000.0), Some(12.0));
+    let cool = at(Some(3500.0), Some(12.0));
     // Red against blue, averaged over the frame, which is what "warm" means in one number.
     let warmth = |frame: &[u16]| {
         let red: f64 = frame.iter().step_by(3).map(|v| f64::from(*v)).sum();
@@ -628,7 +641,7 @@ fn the_balance_moves_colour_in_the_named_direction_and_leaves_brightness_alone()
             .sum();
         g / rb.max(1.0)
     };
-    let magenta = at(Some(5500.0), Some(60.0));
+    let magenta = at(Some(5500.0), Some(72.0));
     assert!(
         green(&magenta) < green(&neutral),
         "a positive tint went green rather than magenta: {:.4} against {:.4}",
