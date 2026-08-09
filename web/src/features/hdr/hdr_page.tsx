@@ -100,13 +100,13 @@ const SCENES: Scene[] = [
   },
   {
     slug: 'sunset',
-    title: 'Where the colour goes',
-    body: 'The strip above, happening to a photograph. The band of sky over the horizon was the most saturated thing here and it is the palest thing in the eight-bit file, because moving it towards white was the only way that file had to say it was bright.',
+    title: 'The brightest thing in the frame',
+    body: 'The band of sky over the horizon is brighter than anything else here, and eight bits has to fold it into the top of its range. Switch, and it goes on getting brighter instead.',
   },
   {
     slug: 'arches',
-    title: 'Something that was a light',
-    body: 'These arches are light sources, seven times brighter than anything eight bits is able to call white, so in the smaller file they are just pink shapes on some grass. Switch, and they start behaving like lights.',
+    title: 'Where the colour goes',
+    body: 'The strip above, happening to a photograph. Where the arches are brightest, eight bits gives up on the colour completely: half of those pixels come out white rather than pale pink, because red reached the ceiling first and the other two channels climbed up to meet it. In HDR they stay pink the whole way through.',
   },
 ];
 
