@@ -139,6 +139,16 @@ pub fn sampled_rows(width: usize, height: usize) -> (u32, u32) {
 }
 
 pub struct Gpu {
+    /// What answered, for the one line the entrypoint prints at boot.
+    ///
+    /// Kept because *which* adapter answered is a deployment fault nothing else reports. The
+    /// image carries lavapipe, so a container that cannot reach the host's card does not fail
+    /// - it renders on a CPU rasteriser, correctly, at a fraction of the speed, and the only
+    /// evidence is that everything is slow. Measured in a container: with `devices:` and
+    /// `group_add:` this reads `RADV RAPHAEL_MENDOCINO`, and dropping `group_add` alone makes
+    /// the same container read `llvmpipe`. Naming it at boot is what tells a misconfigured
+    /// deployment from a machine that genuinely has no GPU.
+    pub adapter: String,
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     layout: wgpu::BindGroupLayout,
@@ -311,6 +321,10 @@ impl Gpu {
         queue.submit([encoder.finish()]);
 
         Some(Gpu {
+            adapter: {
+                let info = adapter.get_info();
+                format!("{} ({:?}, {:?})", info.name, info.backend, info.device_type)
+            },
             device,
             queue,
             layout,

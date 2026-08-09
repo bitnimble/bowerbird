@@ -28,6 +28,14 @@ services:
     # here too.
     ports:
       - "${WEB_PORT:-5173}:${WEB_PORT:-5173}"
+    # As production, and for the same reason: without these the container falls back to
+    # lavapipe and everything merely gets slow. `docker-compose.yml` says what RENDER_GID
+    # is and how to find it. `bun test test/integration` wants it too - those decode real
+    # files, and on the CPU rasteriser they crawl rather than fail.
+    devices:
+      - /dev/dri:/dev/dri
+    group_add:
+      - "${RENDER_GID:-106}"
     # Only what has to be known before the catalogue can be opened. Everything
     # else is a setting on the app's Settings page, stored in the DB (§15).
     environment:

@@ -6,10 +6,12 @@ terms in `adjust.wgsl`, the presence three off a blur `detail.wgsl` builds once 
 white balance pair off the camera's own illuminant through `white_balance.wgsl`, and the crop,
 straighten and turn inside the cut's own gather.
 
+§10.2's deployment has landed too, so the render half ships: the image carries a Vulkan driver,
+the compose files pass the card through, and the entrypoint names the adapter it found - see the
+note under §10.2 for what that last part is really for.
+
 What is left is the interactive crop tool (the render side is built; nothing draws a handle yet),
-XMP import as an endpoint - `editsFromXmp` exists and nothing calls it - and batch edits. Plus one
-thing outside this document: §10.2's deployment, which is a blocker for the *render* half and is
-unstarted.
+XMP import as an endpoint - `editsFromXmp` exists and nothing calls it - and batch edits.
 
 Read §0.4 before anything else - it says what phase 0 became, which is more than it was scoped as,
 and why the crate extraction §10 designs is no longer the way to get what §10 wanted.
@@ -464,6 +466,28 @@ the missing driver where no adapter of any kind answers - there is no CPU grade 
 by design. So the container needs `/dev/dri` passed through, `mesa-vulkan-drivers` installed, and
 the `dev` stage's Mesa purge undone, or **renditions do not build at all**. That is the one item
 from §10 that must land before this feature ships, and it is unstarted.
+
+> **Done, and it corrects itself.** All three landed, and the picture of the failure above is
+> wrong in the way that matters. `mesa-vulkan-drivers` carries lavapipe, so an image with the
+> driver and *no* access to the card does not fail - it renders on a CPU rasteriser, correctly and
+> slowly, saying nothing. Measured in a container here: with `devices:` and `group_add:` the app
+> reports `RADV RAPHAEL_MENDOCINO`; drop `group_add` alone and the same container reports
+> `llvmpipe`, silently. So the entrypoint now names the adapter at boot (`native/report_gpu.ts`),
+> which is the only thing that tells a misconfigured deployment from a machine with no GPU. Only
+> a build with no Vulkan driver at all reaches the refusal this paragraph describes.
+>
+> The purge is narrowed rather than removed: `libgl1-mesa-dri` and `libglx-mesa0` are GL and go,
+> `mesa-libgallium` and `libllvm19` are what lavapipe is built on and stay. Vulkan costs ~235MB
+> installed, most of it LLVM.
+>
+> **Two older breaks surfaced on the way, and neither had anything to do with the GPU: the image
+> had not built at all for some time.** `deps` copied `package.json` without `patches/`, so
+> `bun install` failed from the commit that added the Tauri shell's `patchedDependencies` entry.
+> And `native` copied `native/` alone, while `gpu.rs` `include_str!`s the shaders out of `web/` -
+> so the crate could not compile from the commit that moved the grade to the GPU. That second one
+> is the cost of "two thin hosts over one source" landing in a place the Dockerfile did not know
+> about: the sharing that makes a rendition and a tick one picture also makes the Rust build
+> depend on a path under `web/`. Nothing noticed because nothing had built the image since.
 
 **What a reader picking up §2-§8 needs to know about the tree:**
 

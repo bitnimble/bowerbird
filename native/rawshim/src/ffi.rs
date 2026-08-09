@@ -264,6 +264,37 @@ pub unsafe extern "C" fn bb_transcode_jpeg(
     encoded.len() as isize
 }
 
+/// Names the adapter the grade will run on, or reports that there is none.
+///
+/// **For the one line the entrypoint prints at boot**, and it earns its place because the
+/// interesting failure here is silent. The image carries lavapipe, so a container that
+/// cannot reach the host's card does not fail - it renders on a CPU rasteriser, correctly,
+/// at a fraction of the speed, and the only evidence is that everything is slow. Naming
+/// what answered turns a missing `devices:` or `group_add:` into something a reader sees
+/// before importing a library.
+///
+/// Writes the adapter's name into `out` and returns its length, `bb_transcode_jpeg`'s
+/// protocol: a length longer than `out_cap` means nothing was written and the buffer wants
+/// to be that big. -1 means no adapter of any kind answered, which is a build with no
+/// Vulkan driver at all and the one case that does fail every job.
+///
+/// # Safety
+/// `out` must be writable for `out_cap` bytes, or null to ask for the length.
+#[expect(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn bb_gpu_adapter(out: *mut u8, out_cap: usize) -> isize {
+    let Some(gpu) = crate::guard("bb_gpu_adapter", None, crate::gpu::device) else {
+        return -1;
+    };
+    let name = gpu.adapter.as_bytes();
+    if name.len() > out_cap || out.is_null() {
+        return name.len() as isize;
+    }
+    let destination = unsafe { std::slice::from_raw_parts_mut(out, name.len()) };
+    destination.copy_from_slice(name);
+    name.len() as isize
+}
+
 /// Answers a question about pixels, for the tests and pins.
 ///
 /// Same shape as `bb_run_job` and the same rule: JSON in, JSON out, into a buffer

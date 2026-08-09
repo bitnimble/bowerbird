@@ -9,6 +9,30 @@ services:
     # user: "1000:1000"
     ports:
       - "${HOST_PORT:-3000}:3000"
+    # The GPU. The grade is a shader and the shaders are its only implementation, so
+    # every rendition runs through Vulkan - the image carries the drivers, and these two
+    # lines are what put the host's card behind them.
+    #
+    # **Getting this wrong is slow rather than broken, which is why it is worth getting
+    # right.** The image ships lavapipe, so a container that cannot reach the card still
+    # renders - on a CPU rasteriser, at a fraction of the speed, saying nothing. Measured
+    # here: with both lines the container sees `AMD Radeon Graphics (RADV)`; drop
+    # `group_add` and the same container sees only `llvmpipe`. The app names the adapter
+    # it found at startup for exactly this reason - a boot log saying `llvmpipe` on a
+    # machine with a GPU means these lines, not the driver.
+    #
+    # `devices` puts the host's render node in the container. `group_add` is what lets
+    # uid 1000 open it: `/dev/dri/renderD128` is `crw-rw---- root render`, and the
+    # container user is in no group of the host's. RENDER_GID is that group -
+    #   getent group render | cut -d: -f3
+    # 106 on Debian and Ubuntu, 44 or 104 elsewhere. It has to be the number; the name
+    # means nothing in the container, which has its own /etc/group.
+    #
+    # A host with no GPU deletes both lines and still works, on lavapipe.
+    devices:
+      - /dev/dri:/dev/dri
+    group_add:
+      - "${RENDER_GID:-106}"
     # Only what has to be known before the catalogue can be opened. Everything
     # else is a setting on the app's Settings page, stored in the DB (§15).
     environment:

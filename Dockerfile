@@ -47,9 +47,27 @@ RUN printf '%s\n' \
 # where every lens profile lives. Without the data the database loads empty and
 # every Canon frame silently falls back to fitting its own geometry - twice the
 # time for a slightly worse grade, with nothing in the logs to say why.
+#
+# **mesa-vulkan-drivers is not optional, and this image did not need it until the
+# grade moved to the GPU.** The shaders are the only implementation of the grade -
+# `tone.rs`'s was deleted, deliberately - so `job::run` refuses rather than falling
+# back, and a container with no Vulkan driver builds no renditions at all. The
+# package covers AMD (RADV), Intel (ANV) and lavapipe in one, so a box with no GPU
+# still renders, slowly, off the CPU rasteriser. NVIDIA is its own arrangement -
+# the proprietary driver plus nvidia-container-toolkit - and is not something an
+# image can carry.
+#
+# It is the largest thing here by far. Measured in the built image: libllvm19 at
+# 127MB, mesa-vulkan-drivers at 81MB and libz3-4 at 27MB, so ~235MB installed, most
+# of it the LLVM that lavapipe is a JIT on top of. Dropping lavapipe would reclaim
+# nearly all of it and leave a machine with no GPU unable to render anything, which
+# is the trade this does not take.
+#
+# The driver alone is not enough: the host's render node has to reach the container
+# too, which is `devices:` and `group_add:` in the compose files.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
-     libraw23t64 liblensfun1 libavif16 \
+     libraw23t64 liblensfun1 libavif16 mesa-vulkan-drivers \
   && rm -rf /var/lib/apt/lists/*
 
 # Bun's own image is Debian too, so the binary runs here unchanged and needs nothing
@@ -79,21 +97,35 @@ RUN mkdir -p /app/node_modules /app/web/node_modules /config /data && chown -R b
 # is pinned against - 300KB of binary behind ~200MB of ffmpeg, which is exactly why
 # neither is in `base`.
 #
-# The purge is 192MB of Mesa and LLVM, reached only through ffmpeg -> libsdl2 ->
-# libgl1. SDL2 is ffplay's video output and dlopen's libGL when it opens a window,
-# which a headless encode never does. libgbm1 stays: libsdl2 has it as a real
-# DT_NEEDED and ffmpeg will not start without it. Forcing past the dependency leaves
-# apt unable to resolve anything in this stage until `--fix-broken` repairs it, so
-# nothing may install after this line.
+# The purge used to take 192MB of Mesa and LLVM reached through ffmpeg -> libsdl2 ->
+# libgl1, on the grounds that SDL2 only dlopen's libGL to open a window and a headless
+# encode never does. **Most of that has to stay now.** `base` installs
+# mesa-vulkan-drivers, lavapipe is an LLVM JIT built on mesa-libgallium, and the tests
+# in this stage decode real RAWs - which is a grade, which is a shader, which needs an
+# adapter. Purging libllvm19 or mesa-libgallium here removes exactly what the no-GPU
+# runner falls back to.
+#
+# What is still GL and only GL goes: `libgl1-mesa-dri` and `libglx-mesa0` are the
+# desktop GL and GLX paths, which no Vulkan ICD loads. libgbm1 stays for the same
+# reason as before: libsdl2 has it as a real DT_NEEDED and ffmpeg will not start
+# without it. Forcing past the dependency leaves apt unable to resolve anything in
+# this stage until `--fix-broken` repairs it, so nothing may install after this line.
 FROM base AS dev
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ffmpeg libavif-bin \
-  && dpkg --force-depends --purge libllvm19 libz3-4 mesa-libgallium libgl1-mesa-dri libglx-mesa0 \
+  && dpkg --force-depends --purge libgl1-mesa-dri libglx-mesa0 \
   && rm -rf /var/lib/apt/lists/*
 
 # Dependencies as a cacheable layer.
+#
+# `patches/` comes too, and has to: `package.json` names a `patchedDependencies` entry, and
+# bun resolves that path at install time whether or not the package it patches is in the
+# production tree. Without it every build of this image fails at this line with "Couldn't find
+# patch file" - which is what it did from the commit that added the Tauri shell until the
+# deployment was next built, this being the only stage that installs from a bare manifest.
 FROM base AS deps
 COPY package.json bun.lock ./
+COPY patches ./patches
 RUN bun install --frozen-lockfile --production
 
 # The pixel library (native/rawshim, DESIGN 10.4), built once per instruction set.
@@ -130,6 +162,15 @@ RUN curl --proto '=https' --tlsv1.2 -sSfo /tmp/rustup.sh https://sh.rustup.rs \
   && rm /tmp/rustup.sh
 ENV PATH="/root/.cargo/bin:${PATH}"
 COPY native ./native
+# The shaders, which live in the page and are `include_str!`d by `gpu.rs`. **The crate does
+# not compile without them** - not "renders differently", does not build - because the grade
+# has one implementation and it is these files: the browser imports them and the native host
+# compiles the same bytes (§0.4). So this stage needs a slice of `web/`, and the build failed
+# here from the commit that moved the grade to the GPU until the image was next built.
+#
+# The directory rather than the tree: nothing else under `web/` is read at compile time, and
+# copying more would rebuild this stage on every change to the page.
+COPY web/src/features/raw_edit/gpu/wgsl ./web/src/features/raw_edit/gpu/wgsl
 # Separate target dirs: changing target-cpu invalidates every artefact anyway, so
 # sharing one would rebuild the dependencies three times over rather than caching.
 RUN set -eu; \
@@ -152,7 +193,7 @@ COPY --from=native --chown=bun:bun /build/x86-64-v3/release/librawshim.so ./nati
 COPY --from=native --chown=bun:bun /build/x86-64-v4/release/librawshim.so ./native/librawshim.v4.so
 # native/ stays writable rather than read-only: the entrypoint symlinks the variant
 # it picked into it on every start.
-COPY --chown=bun:bun native/entrypoint.sh native/verify_shim.ts ./native/
+COPY --chown=bun:bun native/entrypoint.sh native/verify_shim.ts native/report_gpu.ts ./native/
 RUN chmod +x ./native/entrypoint.sh
 COPY --chown=bun:bun package.json bun.lock tsconfig.json ./
 COPY --chown=bun:bun src ./src

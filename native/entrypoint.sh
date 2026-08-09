@@ -50,4 +50,13 @@ done
 # neither can Bun.
 [ -e "$SELECTED" ] || echo "rawshim: using the portable baseline"
 
+# Which GPU the grade will run on. Reported rather than checked: the image carries a CPU
+# fallback, so the failure worth naming is not "cannot render" but "renders on the wrong
+# thing and only looks slow". Never fatal, and never blocks the exec below.
+if [ -e "$SELECTED" ]; then
+  bun "$NATIVE_DIR/report_gpu.ts" "$SELECTED" || true
+else
+  bun "$NATIVE_DIR/report_gpu.ts" "$NATIVE_DIR/librawshim.so" || true
+fi
+
 exec "$@"
