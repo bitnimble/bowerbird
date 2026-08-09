@@ -2819,6 +2819,12 @@ p.ui-text--mono {
   background: #000;
   overflow: hidden;
   cursor: pointer;
+  /* A tap on a phone otherwise flashes the browser's blue wash across the whole
+     picture, which lands on the frame the reader is in the middle of comparing. It is
+     the only touch feedback the browser gives and it is not needed here: the picture
+     changing under the finger, and the pill moving with it, say the press landed.
+     Left alone everywhere else in the app, where nothing else answers a tap. */
+  -webkit-tap-highlight-color: transparent;
 }
 
 .compare__frame:focus-visible {
