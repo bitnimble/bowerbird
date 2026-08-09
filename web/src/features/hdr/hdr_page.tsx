@@ -127,51 +127,72 @@ const SCENES: Scene[] = [
 ];
 
 /**
- * One photograph, in both ranges, in the same place on the page.
+ * Two versions of one thing, in the same place, swapped by pressing it.
  *
- * Both are mounted and both decode up front. Side by side, the eye has to travel and
- * the difference gets argued about; in one place it is simply visible.
+ * **Everything on this page is compared this way, including the swatches, and that is
+ * not only about the eye having to travel.** A standard-range browser renders a PQ file
+ * by fixing its own white at about 406 nits, measured: a patch sitting exactly on
+ * diffuse white paints at 187 where an sRGB white paints 255, and it does so whatever
+ * the file declares - a flat 203-nit image with nothing above white at all still comes
+ * out at 187, and `clli` does not move it. So any SDR picture shown *beside* a PQ one is
+ * going to make the PQ one look dim on the majority of screens, for reasons that have
+ * nothing to do with what the page is arguing. In the same place, one after the other,
+ * there is nothing to hold it against.
  */
-function Comparison({ scene }: { scene: Scene }): JSX.Element {
+function Swap({
+  slug,
+  label,
+  alt,
+  rewrap = true,
+}: {
+  slug: string;
+  label: string;
+  alt: string;
+  /**
+   * Off for the swatches. Firefox's rewrap needs 4:2:0 and they are 4:4:4 (§10.7), so
+   * there is nothing to be gained by fetching and remuxing them.
+   */
+  rewrap?: boolean;
+}): JSX.Element {
   // Eight bits first, because that is the picture the reader already has and the page is
   // about what it costs them. Opening on the HDR one asks them to notice an absence.
   const [hdr, setHdr] = useState(false);
-  const hdrSrc = `/hdr/${scene.slug}-hdr.avif`;
+  const hdrSrc = `/hdr/${slug}-hdr.avif`;
   // Firefox composites HDR for video and only video, so the still is rewrapped there
   // (DESIGN §10.7.2). Null everywhere else, where the `<img>` is the better element.
-  const hdrVideo = useHdrVideo(hdrSrc, true);
+  const hdrVideo = useHdrVideo(hdrSrc, rewrap);
 
   return (
+    <button
+      type="button"
+      className="compare__frame"
+      aria-pressed={hdr}
+      aria-label={`${label}. This is the ${hdr ? 'HDR' : 'eight-bit'} version; activate to see the other one.`}
+      onClick={() => setHdr((was) => !was)}
+    >
+      <img
+        src={`/hdr/${slug}-sdr.avif`}
+        alt={`${alt}, as eight bits holds it`}
+        className={`compare__layer compare__layer--base${hdr ? '' : ' is-up'}`}
+      />
+      {hdrVideo == null ? (
+        <img src={hdrSrc} alt={`${alt}, in HDR`} className={`compare__layer compare__layer--over${hdr ? ' is-up' : ''}`} />
+      ) : (
+        <video src={hdrVideo} autoPlay loop muted playsInline className={`compare__layer compare__layer--over${hdr ? ' is-up' : ''}`} />
+      )}
+      <span className="compare__pill" aria-hidden>
+        <span className={hdr ? '' : 'is-on'}>8-bit</span>
+        <span className={hdr ? 'is-on' : ''}>HDR</span>
+      </span>
+    </button>
+  );
+}
+
+/** One photograph, in both ranges, with the credit its licence asks for. */
+function Comparison({ scene }: { scene: Scene }): JSX.Element {
+  return (
     <figure className="compare">
-      <button
-        type="button"
-        className="compare__frame"
-        aria-pressed={hdr}
-        aria-label={`${scene.title}. This is the ${hdr ? 'HDR' : 'eight-bit'} version; activate to see the other one.`}
-        onClick={() => setHdr((was) => !was)}
-      >
-        <img
-          src={`/hdr/${scene.slug}-sdr.avif`}
-          alt={`${scene.title}, as an eight-bit JPEG holds it`}
-          className={`compare__layer compare__layer--base${hdr ? '' : ' is-up'}`}
-        />
-        {hdrVideo == null ? (
-          <img src={hdrSrc} alt={`${scene.title}, in HDR`} className={`compare__layer compare__layer--over${hdr ? ' is-up' : ''}`} />
-        ) : (
-          <video
-            src={hdrVideo}
-            autoPlay
-            loop
-            muted
-            playsInline
-            className={`compare__layer compare__layer--over${hdr ? ' is-up' : ''}`}
-          />
-        )}
-        <span className="compare__pill" aria-hidden>
-          <span className={hdr ? '' : 'is-on'}>8-bit</span>
-          <span className={hdr ? 'is-on' : ''}>HDR</span>
-        </span>
-      </button>
+      <Swap slug={scene.slug} label={scene.title} alt={scene.title} />
       <figcaption className="compare__caption">
         <Text variant="mono">Click or tap to switch.</Text>
         <Text variant="mono">
@@ -244,31 +265,24 @@ export function HdrPage(): JSX.Element {
         alone.
       </Text>
       <Text variant="muted" as="p">
-        Both strips below start on the same five colours, as bright as eight bits can render them, and climb by the same amount.
-        Measured off the file, every patch in an HDR row holds the hue and the saturation of the one before it - 24 degrees and 0.97
-        across the whole of the orange - while the light behind it goes up five times. The eight-bit row has no way to do that, so
-        the colour drains out of it as it brightens. The bottom row is the giveaway: a plain grey has no colour to spend, so it just
-        runs out, and four of its five eight-bit patches are the same white.
+        The strip below is five colours, each starting as bright as eight bits can render it and climbing by the same amount to the
+        right. Switch it over and watch what happens to the colour rather than to the brightness. Both versions get brighter; only
+        one of them still has its colour by the end, and measured off the file every patch in an HDR row holds the hue and the
+        saturation of the one before it - 24 degrees and 0.97 across the whole of the orange - while the light behind it goes up
+        five times. The bottom row is the giveaway: a plain grey has no colour to spend, so it just runs out, and four of its five
+        eight-bit patches are the same white.
       </Text>
-      <div className="swatches">
-        <figure>
-          <img src="/hdr/swatches-sdr.avif" alt="Five colours stepped brighter in eight bits, each one paling towards white" />
-          <figcaption>
-            <Text variant="mono">Eight bits</Text>
-          </figcaption>
-        </figure>
-        <figure>
-          <img src="/hdr/swatches-hdr.avif" alt="The same five colours stepped brighter in HDR, each one holding its colour" />
-          <figcaption>
-            <Text variant="mono">HDR</Text>
-          </figcaption>
-        </figure>
-      </div>
-      <Text variant="mono" as="p" className="prose__note">
-        The HDR row does look lighter as it goes, and it is: more light is the whole of what it has been given. What it does not do
-        is go pale. On a standard-range screen it is squeezed down to fit as well and will look darker overall, its first patch
-        included - that is the screen and not the file, where the patch sits exactly on white.
-      </Text>
+      <figure className="compare">
+        <Swap
+          slug="swatches"
+          label="Five colours stepped brighter"
+          alt="Five colours stepped brighter from left to right"
+          rewrap={false}
+        />
+        <figcaption className="compare__caption">
+          <Text variant="mono">Click or tap to switch.</Text>
+        </figcaption>
+      </figure>
 
       <Heading>Where you notice it</Heading>
       {SCENES.map((scene) => (

@@ -226,6 +226,34 @@ function swatchFrame(): Float32Array {
  * invisible on a photograph. It is also why the swatches skip the Firefox rewrap on the
  * page, which needs 4:2:0 (§10.7).
  */
+/**
+ * What the file has to declare about its own brightness, in nits.
+ *
+ * **Without this a browser has to guess, and it guesses the format's ceiling.** PQ can
+ * carry 10,000 nits, so an untagged strip peaking at 1000 was being tone-mapped as if it
+ * peaked at ten times that: measured off the canvas, the first patch - which is sitting
+ * exactly on diffuse white - painted at 187 where the 8-bit strip beside it painted 255.
+ * The reader sees an HDR strip that opens dimmer than the SDR one, which is the opposite
+ * of the point.
+ *
+ * `MaxCLL` is the brightest single sample and `MaxPALL` the frame's average of the
+ * per-pixel maximum, both computed off the samples rather than asserted, so they cannot
+ * drift from what the strip actually holds.
+ */
+function contentLight(): string {
+  const samples = swatchFrame();
+  const pixels = samples.length / 3;
+  let peak = 0;
+  let total = 0;
+  for (let at = 0; at < pixels; at++) {
+    const top = Math.max(samples[at]!, samples[pixels + at]!, samples[2 * pixels + at]!);
+    if (top > peak) peak = top;
+    total += top;
+  }
+  const nits = (level: number): number => Math.round(level * SETTINGS.hdr_reference_white_nits);
+  return `${nits(peak)},${nits(total / pixels)}`;
+}
+
 async function encodeSwatches(arm: 'sdr' | 'hdr'): Promise<void> {
   const [width, height] = [SWATCH_STEPS.length * SWATCH_CELL, SWATCHES.length * SWATCH_CELL];
   const hdr = arm === 'hdr';
@@ -240,7 +268,8 @@ async function encodeSwatches(arm: 'sdr' | 'hdr'): Promise<void> {
   const samples = swatchFrame();
   Readable.from([Buffer.from(samples.buffer, samples.byteOffset, samples.byteLength)]).pipe(ffmpeg.stdin!);
   const cicp = hdr ? '1/16/1' : '1/13/1';
-  await run('avifenc', ['--stdin', '--cicp', cicp, '--min', '0', '--max', '0', '-s', '4', outputPath('swatches', hdr)], ffmpeg.stdout!);
+  const light = hdr ? ['--clli', contentLight()] : [];
+  await run('avifenc', ['--stdin', '--cicp', cicp, ...light, '--min', '0', '--max', '0', '-s', '4', outputPath('swatches', hdr)], ffmpeg.stdout!);
 }
 
 async function buildSwatches(): Promise<void> {
