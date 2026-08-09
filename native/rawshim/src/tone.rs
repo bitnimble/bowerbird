@@ -279,6 +279,10 @@ pub struct SceneGrade<'a> {
     /// The reader's own sliders. Settled on the photo like the levels and the colour, and
     /// for the same reason: two sizes of one photograph must not be adjusted differently.
     adjust: crate::gpu::Adjust,
+    /// The illuminant the decode balanced against, which the pair in `adjust` moves away from.
+    /// Settled on the photo like everything else here: two sizes of it must not be balanced
+    /// against two different baselines.
+    as_shot: Option<crate::white_balance::AsShot>,
     /// The camera's colour, or None for the neutral arm.
     matched: Option<&'a HdrColour>,
 }
@@ -298,9 +302,10 @@ impl<'a> SceneGrade<'a> {
         reference: f64,
         exposure: f64,
         adjust: crate::gpu::Adjust,
+        as_shot: Option<crate::white_balance::AsShot>,
     ) -> Self {
         assert!(exposure > 0.0, "an exposure is a gain on the scene, so it has to be positive");
-        SceneGrade { levels: *levels, reference, exposure, adjust, matched: colour }
+        SceneGrade { levels: *levels, reference, exposure, adjust, as_shot, matched: colour }
     }
 
     /// This scene as the shader's uniform wants it.
@@ -328,6 +333,7 @@ impl<'a> SceneGrade<'a> {
             peak_nits,
             exposure: self.exposure,
             adjust: self.adjust,
+            as_shot: self.as_shot,
             output,
         }
     }

@@ -97,17 +97,20 @@ const EditSlider = observer(function EditSlider({
 });
 
 /**
- * White balance, which cannot be a pair of plain sliders yet and should not pretend to be.
+ * White balance, as the pair of sliders it is - seeded from what the camera metered.
  *
- * "As shot" means the neutral the camera recorded, and **this side does not know what that
- * is**: the document stores null for it precisely because no number here would be right, and
- * the prepared frame's header does not carry the shot Kelvin either. A slider offered against
- * that would have to start somewhere - 5500K, say - and dragging it would silently rebalance
- * every as-shot photo from a value the camera never chose.
+ * **The slider position and the stored value are deliberately different things.** The document
+ * holds null for "as shot" and has to: the same settings pasted onto a photo taken under
+ * tungsten must mean *that* photo's neutral, where a stored 5500 would mean a rebalance nobody
+ * asked for. A slider cannot show null, so it shows the frame's own illuminant until the
+ * reader moves it, and the first move is what turns the pair into numbers (`store.balance`).
  *
- * So the pair is editable only once it holds real numbers, which today means a document
- * imported from a sidecar that stated them. Offering the control for a photo whose baseline is
- * unknown waits on the header carrying it, which is render-side work.
+ * Closed only where the file recorded no usable multipliers, which leaves nothing to be
+ * relative to. The mode - "As Shot", "Daylight", a name from a sidecar - is shown beside them
+ * because it is what the document still says until something moves.
+ *
+ * The range is Camera Raw's own and so is unbounded by the frame: a 2000K photo can be dragged
+ * to 50000 and back, and the picture at rest is the one the camera made.
  */
 const WhiteBalance = observer(function WhiteBalance({
   store,
@@ -117,7 +120,7 @@ const WhiteBalance = observer(function WhiteBalance({
   presenter: RawEditPresenter;
 }): JSX.Element {
   const doc = store.doc;
-  const custom = doc?.temperature != null && doc.tint != null;
+  const balance = store.balance;
 
   return (
     <div className="raw-edit-panel__group" data-testid="raw-edit-white-balance">
@@ -125,36 +128,43 @@ const WhiteBalance = observer(function WhiteBalance({
         White balance
       </Text>
       <Text variant="muted" as="div">
-        {doc == null ? '-' : custom ? `${doc.temperature} K, tint ${doc.tint}` : doc.whiteBalanceMode}
+        {doc == null
+          ? '-'
+          : balance == null
+            ? 'this file records no camera neutral, so there is nothing to balance against'
+            : doc.whiteBalanceMode}
       </Text>
-      {custom && (
+      {balance != null && (
         <>
           <div className="raw-edit-panel__slider" data-testid="raw-edit-temperature">
             <Text variant="label" as="span">
-              Temperature {doc.temperature} K
+              Temperature {balance.temperature} K
             </Text>
             <Slider
-              value={doc.temperature ?? 0}
-              onChange={(next) => presenter.preview({ temperature: Math.round(next) })}
-              onCommit={(next) => presenter.settle({ temperature: Math.round(next) })}
+              value={balance.temperature}
+              onChange={(temperature) => presenter.previewBalance({ temperature })}
+              onCommit={(temperature) => presenter.settleBalance({ temperature })}
               min={2000}
               max={50000}
               step={50}
               label="Temperature"
+              disabled={doc == null}
             />
           </div>
           <div className="raw-edit-panel__slider" data-testid="raw-edit-tint">
             <Text variant="label" as="span">
-              Tint {doc.tint}
+              Tint {balance.tint > 0 ? '+' : ''}
+              {balance.tint}
             </Text>
             <Slider
-              value={doc.tint ?? 0}
-              onChange={(next) => presenter.preview({ tint: Math.round(next) })}
-              onCommit={(next) => presenter.settle({ tint: Math.round(next) })}
+              value={balance.tint}
+              onChange={(tint) => presenter.previewBalance({ tint })}
+              onCommit={(tint) => presenter.settleBalance({ tint })}
               min={-150}
               max={150}
               step={1}
               label="Tint"
+              disabled={doc == null}
             />
           </div>
         </>

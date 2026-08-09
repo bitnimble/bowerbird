@@ -321,8 +321,39 @@ export class RawEditPresenter {
       texture: next.texture,
       clarity: next.clarity,
       dehaze: next.dehaze,
+      temperature: next.temperature,
+      tint: next.tint,
     });
     this.request(this.store.exposureEv);
+  }
+
+  /**
+   * The white balance pair, which moves as a pair whichever slider the reader has hold of.
+   *
+   * Both halves are written even when one moved, and that is the point. The document stores
+   * null for "as shot" and the shader reads a missing half as the frame's own - so a
+   * temperature written beside a null tint would say "this Kelvin, and whatever tint the
+   * camera chose", which is not a rebalance anyone asked for and would drift again on the next
+   * photo the settings were pasted onto.
+   */
+  @action.bound
+  previewBalance(patch: { temperature?: number; tint?: number }): void {
+    const balance = this.store.balance;
+    if (balance == null) return;
+    this.preview({
+      // Camera Raw's own name for a pair somebody moved, and the document's rather than the
+      // panel's to hold: an XMP written from this later has to say what the mode *is*, and a
+      // mode derived at the point of display would not be in it.
+      whiteBalanceMode: 'Custom',
+      temperature: Math.round(patch.temperature ?? balance.temperature),
+      tint: Math.round(patch.tint ?? balance.tint),
+    });
+  }
+
+  @action.bound
+  settleBalance(patch: { temperature?: number; tint?: number }): void {
+    this.previewBalance(patch);
+    void this.commit();
   }
 
   /**
@@ -507,6 +538,7 @@ export class RawEditPresenter {
     this.store.canRedo = false;
     this.store.saveStatus = 'clean';
     this.store.matched = false;
+    this.store.asShot = null;
   }
 
   @action.bound
@@ -522,6 +554,7 @@ export class RawEditPresenter {
     this.store.width = header.width;
     this.store.height = header.height;
     this.store.matched = header.matched;
+    this.store.asShot = header.asShot;
     this.store.region = { x: 0, y: 0, width: header.width, height: header.height };
   }
 

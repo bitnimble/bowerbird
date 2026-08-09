@@ -162,8 +162,10 @@ fn uniform(colour: &HdrColour) -> Vec<u8> {
     words.push(0); // max_lod
     words.push(0); // pad
     // The reader's sliders, all zero: this probe compares the *colour transform* against the
-    // model it mirrors, and any of these set would be comparing an edit of it instead.
-    for _ in 0..10 {
+    // model it mirrors, and any of these set would be comparing an edit of it instead. The
+    // last four are the white balance pair and the illuminant it moves from; zero there is
+    // "as shot", which is the same statement.
+    for _ in 0..14 {
         f_push(&mut words, 0.0);
     }
     // WGSL binds a uniform struct at its size rounded up to 16 bytes, so a buffer holding
@@ -225,6 +227,7 @@ fn the_colour_shader_agrees_with_the_model_it_mirrors() {
     // Declared by `colour.wgsl` and never read by the probe, but an explicit layout has to
     // supply everything the module declares.
     let frame = buffer(&[0u8; 16], wgpu::BufferUsages::STORAGE);
+    let balance = buffer(&[0u8; 48], wgpu::BufferUsages::STORAGE);
     let tick = buffer(&uniform(&colour), wgpu::BufferUsages::UNIFORM);
     let probe_in = buffer(
         &flat.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<u8>>(),
@@ -294,6 +297,8 @@ fn the_colour_shader_agrees_with_the_model_it_mirrors() {
             },
             count: None,
         },
+        // `adjust.wgsl`'s balance matrix, likewise referenced whatever the pair says.
+        storage_entry(14, true),
     ];
     let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("colour"),
@@ -347,6 +352,7 @@ fn the_colour_shader_agrees_with_the_model_it_mirrors() {
                 binding: 13,
                 resource: wgpu::BindingResource::TextureView(&detail_view),
             },
+            wgpu::BindGroupEntry { binding: 14, resource: balance.as_entire_binding() },
         ],
     });
 

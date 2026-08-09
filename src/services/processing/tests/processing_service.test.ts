@@ -130,6 +130,8 @@ describe('ProcessingService.processUnprocessed', () => {
             texture: 25,
             clarity: -18,
             dehaze: 7.5,
+            temperature: 4800,
+            tint: -6,
           }),
         },
       ]),
@@ -153,6 +155,10 @@ describe('ProcessingService.processUnprocessed', () => {
       // A real where its neighbours are integers, which is `crs:Dehaze`'s own oddity and
       // has to survive the trip rather than being rounded on the way.
       dehaze: 7.5,
+      // Absolute Kelvin, not an offset from what the camera metered. What it is *relative to*
+      // is the decode's own illuminant, which the job never sees and could not carry.
+      temperature: 4800,
+      tint: -6,
     });
     // And on both jobs, so the tile and the full view cannot disagree about the picture.
     expect(posted[1]?.adjust).toEqual(posted[0]?.adjust);

@@ -394,6 +394,7 @@ fn the_encode_pass_reproduces_the_cpu_frame() {
                     // The camera's rendering, unadjusted: these fixtures pin the grade, and
                     // a slider set here would be pinning one reader's taste instead.
                     adjust: rawshim::gpu::Adjust::none(),
+                    as_shot: None,
                     output: rawshim::gpu::Output::Pq,
                 },
             );
@@ -462,6 +463,7 @@ fn the_rolled_arm_reproduces_the_cpu_grade() {
                     peak_nits: grade.peak_nits,
                     exposure,
                     adjust: rawshim::gpu::Adjust::none(),
+                    as_shot: None,
                     output: rawshim::gpu::Output::Rolled,
                 },
             );
@@ -540,6 +542,115 @@ fn band(frame: &[u16], apart: usize) -> f64 {
     total / count
 }
 
+/// The banded frame graded, which is what both of the tests below measure off.
+///
+/// `Rolled` rather than PQ, so a difference in counts is a difference in light: the transfer
+/// would compress the shadows and flatter every claim either of them makes.
+fn graded_banded(
+    gpu: &rawshim::gpu::Gpu,
+    haze: f64,
+    adjust: rawshim::gpu::Adjust,
+) -> Vec<u16> {
+    let grade = hdr::Grade { peak_nits: 1000.0, reference_white_nits: 203.0, white_quantile: 0.995 };
+    let mut samples = banded(haze);
+    let levels = tone::levels(&samples, grade.white_quantile);
+    tone::encode_base(&mut samples, levels.anchored(), grade.reference_white_nits);
+    gpu.encode(
+        &samples,
+        &rawshim::gpu::Grade {
+            width: BANDED,
+            height: BANDED,
+            colour: None,
+            white: levels.white,
+            source_level: levels.peak,
+            reference_nits: grade.reference_white_nits,
+            peak_nits: grade.peak_nits,
+            exposure: 1.0,
+            adjust,
+            // A daylight baseline, so the balance test has something to move away from. The
+            // presence test leaves the pair unset, where this is not read at all.
+            as_shot: Some(rawshim::white_balance::AsShot { temperature: 5500.0, tint: 0.0 }),
+            output: rawshim::gpu::Output::Rolled,
+        },
+    )
+}
+
+/// The temperature and tint pair, against the direction and the anchor they promise.
+///
+/// Three claims, and each has been a bug in some editor. **Warmer means warmer**: raising the
+/// slider says the light was bluer than the camera assumed, so more blue is divided out and
+/// the picture goes yellow - the sign is a coin flip in the arithmetic and inverting it looks
+/// entirely plausible until you drag it. **The as-shot value is exactly identity**, which is
+/// what makes "As Shot" a position on the slider rather than a fourth mode. And **the balance
+/// does not move the exposure**, or every tonal slider below it would be grading against a
+/// diffuse white the reader had just shifted.
+#[test]
+fn the_balance_moves_colour_in_the_named_direction_and_leaves_brightness_alone() {
+    let Some(gpu) = rawshim::gpu::device() else {
+        eprintln!("SKIPPED: no adapter answered, so the white balance was not run.");
+        return;
+    };
+    let none = rawshim::gpu::Adjust::none();
+    let at = |temperature: Option<f64>, tint: Option<f64>| {
+        graded_banded(gpu, 0.0, rawshim::gpu::Adjust { temperature, tint, ..none })
+    };
+
+    // The baseline `graded_banded` declares. Asking for it by name has to be the same picture
+    // as not asking at all, to the byte: the shader solves both illuminants through the same
+    // search, so anything else means the pair is not a pure ratio.
+    assert_eq!(at(Some(5500.0), Some(0.0)), at(None, None), "as shot is not identity");
+
+    let neutral = at(None, None);
+    let warm = at(Some(8000.0), Some(0.0));
+    let cool = at(Some(3500.0), Some(0.0));
+    // Red against blue, averaged over the frame, which is what "warm" means in one number.
+    let warmth = |frame: &[u16]| {
+        let red: f64 = frame.iter().step_by(3).map(|v| f64::from(*v)).sum();
+        let blue: f64 = frame.iter().skip(2).step_by(3).map(|v| f64::from(*v)).sum();
+        red / blue.max(1.0)
+    };
+    assert!(
+        warmth(&warm) > warmth(&neutral) && warmth(&neutral) > warmth(&cool),
+        "8000K {:.3}, as shot {:.3}, 3500K {:.3} - the slider is inverted",
+        warmth(&warm),
+        warmth(&neutral),
+        warmth(&cool),
+    );
+
+    // Green against magenta for the tint, on the same frame.
+    let green = |frame: &[u16]| {
+        let g: f64 = frame.iter().skip(1).step_by(3).map(|v| f64::from(*v)).sum();
+        let rb: f64 = frame
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| i % 3 != 1)
+            .map(|(_, v)| f64::from(*v))
+            .sum();
+        g / rb.max(1.0)
+    };
+    let magenta = at(Some(5500.0), Some(60.0));
+    assert!(
+        green(&magenta) < green(&neutral),
+        "a positive tint went green rather than magenta: {:.4} against {:.4}",
+        green(&magenta),
+        green(&neutral),
+    );
+
+    // And the brightness, which the renormalisation in `white_balance.wgsl` exists to hold.
+    let luma = |frame: &[u16]| {
+        frame
+            .chunks_exact(3)
+            .map(|p| 0.2627 * f64::from(p[0]) + 0.678 * f64::from(p[1]) + 0.0593 * f64::from(p[2]))
+            .sum::<f64>()
+            / (frame.len() / 3) as f64
+    };
+    let (was, warmed) = (luma(&neutral), luma(&warm));
+    assert!(
+        (warmed - was).abs() < was * 0.06,
+        "a 2500K move took the mean luma from {was:.0} to {warmed:.0}, which is an exposure",
+    );
+}
+
 /// Texture, clarity and dehaze, each against what it claims to do.
 ///
 /// These three read `detail.wgsl`'s blur rather than the pixel, and nothing above can say
@@ -558,32 +669,7 @@ fn the_presence_sliders_act_on_the_bands_they_name() {
         eprintln!("SKIPPED: no adapter answered, so the presence sliders were not run.");
         return;
     };
-    let grade =
-        hdr::Grade { peak_nits: 1000.0, reference_white_nits: 203.0, white_quantile: 0.995 };
-
-    let graded = |haze: f64, adjust: rawshim::gpu::Adjust| -> Vec<u16> {
-        let mut samples = banded(haze);
-        let levels = tone::levels(&samples, grade.white_quantile);
-        tone::encode_base(&mut samples, levels.anchored(), grade.reference_white_nits);
-        gpu.encode(
-            &samples,
-            &rawshim::gpu::Grade {
-                width: BANDED,
-                height: BANDED,
-                colour: None,
-                white: levels.white,
-                source_level: levels.peak,
-                reference_nits: grade.reference_white_nits,
-                peak_nits: grade.peak_nits,
-                exposure: 1.0,
-                adjust,
-                // Before any transfer, so a difference in counts is a difference in light:
-                // PQ would compress the shadows and flatter every claim made here.
-                output: rawshim::gpu::Output::Rolled,
-            },
-        )
-    };
-
+    let graded = |haze: f64, adjust: rawshim::gpu::Adjust| graded_banded(gpu, haze, adjust);
     let none = rawshim::gpu::Adjust::none();
     let flat = graded(0.0, none);
 
@@ -668,6 +754,7 @@ fn the_encode_pass_reproduces_the_cpu_sdr_frame() {
                 peak_nits: grade.peak_nits,
                 exposure: 1.0,
                 adjust: rawshim::gpu::Adjust::none(),
+                as_shot: None,
                 output: rawshim::gpu::Output::Srgb,
             },
         );

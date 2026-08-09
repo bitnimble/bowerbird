@@ -93,6 +93,8 @@ export class QualityCheckApi {
             texture: 0,
             clarity: 0,
             dehaze: 0,
+            temperature: null,
+            tint: null,
           },
           geometry: { crop: [0, 0, 1, 1], angleDegrees: 0, rotate: 0 },
           grade: {

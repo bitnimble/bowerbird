@@ -78,6 +78,19 @@ fn decode_source() -> String {
     )
 }
 
+/// `BALANCE` in `shaders.ts`: the reader's temperature and tint solved into one matrix.
+fn balance_source() -> String {
+    format!(
+        "{}\n{}\n{}",
+        include_str!("../../../web/src/features/raw_edit/gpu/wgsl/prelude.wgsl"),
+        include_str!("../../../web/src/features/raw_edit/gpu/wgsl/tick.wgsl"),
+        include_str!("../../../web/src/features/raw_edit/gpu/wgsl/white_balance.wgsl"),
+    )
+}
+
+/// Floats that pass writes: three rows of four, the fourth of each unread.
+const BALANCE_FLOATS: u64 = 12;
+
 /// Entries in that table, which is every `u16` a sample can hold. `PQ_CODES` on the client.
 const PQ_CODES: u64 = 65536;
 
@@ -130,6 +143,8 @@ pub struct Gpu {
     detail_shrink: wgpu::ComputePipeline,
     detail_blur_x: wgpu::ComputePipeline,
     detail_blur_y: wgpu::ComputePipeline,
+    balance_layout: wgpu::BindGroupLayout,
+    balance_pipeline: wgpu::ComputePipeline,
     sampler: wgpu::Sampler,
     /// The frame's coding undone. Filled once with the device, since `tone::encode_base`
     /// anchors every frame to the reference white before coding it and what comes back out
@@ -238,6 +253,14 @@ impl Gpu {
         let detail_blur_x = compute("blur_x", &detail_module, &detail_blur_layout, "blur_x");
         let detail_blur_y = compute("blur_y", &detail_module, &detail_blur_layout, "blur_y");
 
+        let balance_layout = group_layout("balance", &BALANCE_BINDINGS);
+        let balance_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("balance"),
+            source: wgpu::ShaderSource::Wgsl(balance_source().into()),
+        });
+        let balance_pipeline =
+            compute("balance", &balance_module, &balance_layout, "balance");
+
         let pipeline = compute("encode", &module, &layout, "encode");
         // `measure` and `quantile` only. `collect` and `remeasure` exist so the editor's
         // slider does not re-sweep the frame at every position; a rendition is graded at one
@@ -292,6 +315,8 @@ impl Gpu {
             detail_shrink,
             detail_blur_x,
             detail_blur_y,
+            balance_layout,
+            balance_pipeline,
             sampler,
             nits_of_code,
         })
@@ -343,7 +368,7 @@ impl Gpu {
 
 /// What `encodeLayout` names on the client, in one list so the layout and the bind group
 /// cannot drift apart.
-const ENCODE_BINDINGS: [(u32, Binding); 13] = [
+const ENCODE_BINDINGS: [(u32, Binding); 14] = [
     (0, Binding::Uniform),
     (1, Binding::Storage { read_only: true }),
     (2, Binding::Curves),
@@ -357,7 +382,12 @@ const ENCODE_BINDINGS: [(u32, Binding); 13] = [
     (11, Binding::Volume),
     (12, Binding::Storage { read_only: true }),
     (13, Binding::Detail),
+    (14, Binding::Storage { read_only: true }),
 ];
+
+/// `white_balance.wgsl`, which writes the matrix everything above reads.
+const BALANCE_BINDINGS: [(u32, Binding); 2] =
+    [(0, Binding::Uniform), (14, Binding::Storage { read_only: false })];
 
 /// `detail.wgsl`'s two entry-point shapes, on layouts of their own: the downscale reads the
 /// frame and the decode table, and the separable pair reads only the texture before it.
@@ -372,7 +402,7 @@ const DETAIL_BLUR_BINDINGS: [(u32, Binding); 2] = [(2, Binding::Detail), (3, Bin
 
 /// `peakLayout` on the client: the same colour bindings, and the histogram, the peak and the
 /// candidates all writable where the encode reads the peak and writes only the frame.
-const PEAK_BINDINGS: [(u32, Binding); 13] = [
+const PEAK_BINDINGS: [(u32, Binding); 14] = [
     (0, Binding::Uniform),
     (1, Binding::Storage { read_only: true }),
     (2, Binding::Curves),
@@ -386,6 +416,7 @@ const PEAK_BINDINGS: [(u32, Binding); 13] = [
     (11, Binding::Volume),
     (12, Binding::Storage { read_only: true }),
     (13, Binding::Detail),
+    (14, Binding::Storage { read_only: true }),
 ];
 
 /// `PEAK_BINS` in `shaders.ts`, and `BINS` in the shader that both stand for.
@@ -469,6 +500,10 @@ pub struct Grade<'a> {
     pub exposure: f64,
     /// The reader's own sliders, on Camera Raw's -100..100 scales. All zero is unedited.
     pub adjust: Adjust,
+    /// The illuminant the camera balanced this frame for, which is the baseline the reader's
+    /// temperature and tint move away from. None where the file recorded no usable
+    /// multipliers, in which case there is nothing to move relative to and the pair is ignored.
+    pub as_shot: Option<crate::white_balance::AsShot>,
     /// Which transfer to write. The grade is the same either way; an SDR target differs by
     /// having its `peak_nits` at diffuse white (`job::peak_nits`) and by ending here.
     pub output: Output,
@@ -498,6 +533,13 @@ pub struct Adjust {
     pub texture: f64,
     pub clarity: f64,
     pub dehaze: f64,
+    /// The illuminant the reader asked for, or None for the one the camera chose.
+    ///
+    /// None rather than the as-shot numbers because the *document* stores null there, and it
+    /// has to: an edit that recorded 5500K would mean a different picture on a frame whose
+    /// camera metered 3200, where "as shot" means the same thing on every one.
+    pub temperature: Option<f64>,
+    pub tint: Option<f64>,
 }
 
 impl Adjust {
@@ -543,6 +585,8 @@ pub struct Uploaded<'a> {
     pyramid: wgpu::TextureView,
     /// The blur the presence sliders read, built off this frame at this size.
     detail: wgpu::TextureView,
+    /// The reader's temperature and tint, solved once for this photograph.
+    balance: wgpu::Buffer,
     counts: wgpu::Buffer,
     readback: wgpu::Buffer,
     /// The identity the uniform describes where a frame has no camera match, kept alive
@@ -683,6 +727,9 @@ impl Gpu {
             mapped_at_creation: false,
         });
 
+        // Before the peak is measured, which grades through the whole colour transform: a
+        // balance written after it would place the roll-off knee for a colour nobody sees.
+        let balance = self.build_balance(&uniform(grade, described));
         let detail = self.build_detail(
             &samples,
             &uniform(grade, described),
@@ -705,6 +752,7 @@ impl Gpu {
             chroma_tint: view(&chroma_tint),
             pyramid: view(&pyramid),
             detail,
+            balance,
             counts,
             readback,
             identity,
@@ -809,6 +857,47 @@ impl Gpu {
             wgpu::util::TextureDataOrder::LayerMajor,
             &data,
         )
+    }
+
+    /// The reader's temperature and tint, solved into the matrix the grade reads.
+    ///
+    /// Once per uploaded frame, where the editor does it per tick: a rendition's pair comes off
+    /// a stored document and cannot move between the outputs of one photograph.
+    ///
+    /// The search itself is `white_balance.wgsl` rather than this file, and that is the point
+    /// of the pass - both hosts need the same answer on every frame they grade, and two
+    /// Robertson searches disagreeing by a few Kelvin would render as a picture rather than as
+    /// an error.
+    fn build_balance(&self, tick: &[u8]) -> wgpu::Buffer {
+        let device = &self.device;
+        let balance = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("balance"),
+            size: BALANCE_FLOATS * 4,
+            usage: wgpu::BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
+        let tick = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("balance"),
+            contents: tick,
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("balance"),
+            layout: &self.balance_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: tick.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 14, resource: balance.as_entire_binding() },
+            ],
+        });
+        let mut encoder = device.create_command_encoder(&Default::default());
+        {
+            let mut pass = encoder.begin_compute_pass(&Default::default());
+            pass.set_pipeline(&self.balance_pipeline);
+            pass.set_bind_group(0, &group, &[]);
+            pass.dispatch_workgroups(1, 1, 1);
+        }
+        self.queue.submit([encoder.finish()]);
+        balance
     }
 
     /// The blur the presence sliders read, off the frame that is already up (`detail.wgsl`).
@@ -972,6 +1061,7 @@ impl Uploaded<'_> {
                     binding: 13,
                     resource: wgpu::BindingResource::TextureView(&self.detail),
                 },
+                wgpu::BindGroupEntry { binding: 14, resource: self.balance.as_entire_binding() },
             ],
         });
 
@@ -1062,6 +1152,7 @@ impl Uploaded<'_> {
                     binding: 13,
                     resource: wgpu::BindingResource::TextureView(&self.detail),
                 },
+                wgpu::BindGroupEntry { binding: 14, resource: self.balance.as_entire_binding() },
             ],
         });
 
@@ -1148,6 +1239,10 @@ const TICK_FIELDS: &[&str] = &[
     "texture_adjust",
     "clarity",
     "dehaze",
+    "as_shot_temperature",
+    "as_shot_tint",
+    "temperature",
+    "tint",
 ];
 
 /// `TICK_UNIFORM_FLOATS` in `shaders.ts`, field for field in `struct Tick`'s order.
@@ -1207,6 +1302,13 @@ fn uniform(grade: &Grade<'_>, colour: &HdrColour) -> Vec<u8> {
     f(&mut w, grade.adjust.texture);
     f(&mut w, grade.adjust.clarity);
     f(&mut w, grade.adjust.dehaze);
+    // Zero for both where the frame has no as-shot illuminant, or where the reader has not
+    // moved off it. The shader reads that as "leave the balance alone", which is the only
+    // honest answer with no baseline to move away from.
+    f(&mut w, grade.as_shot.map_or(0.0, |s| s.temperature));
+    f(&mut w, grade.as_shot.map_or(0.0, |s| s.tint));
+    f(&mut w, grade.as_shot.and(grade.adjust.temperature).unwrap_or(0.0));
+    f(&mut w, grade.adjust.tint.unwrap_or(0.0));
     // WGSL rounds a uniform struct's size up to a multiple of 16 bytes, and binds it at that
     // size - so a buffer holding exactly the fields is rejected as too small, by however much
     // the last few fields left over. `shaders.ts` does this in `tickOffsets`; here it was
@@ -1328,6 +1430,7 @@ mod tests {
             peak_nits: 1000.0,
             exposure: 1.0,
             adjust: super::Adjust::none(),
+            as_shot: None,
             output: super::Output::Pq,
         };
         assert_eq!(super::uniform(&grade, &colour).len(), expected);

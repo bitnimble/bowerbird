@@ -10,13 +10,14 @@
 //
 //   prelude   nothing
 //   tick      nothing; declares `tick` at binding 0
-//   adjust    prelude and tick; declares binding 13, and reads `lerp` from colour
+//   adjust    prelude and tick; declares bindings 13-14, and reads `lerp` from colour
 //   colour    prelude, tick and adjust; declares bindings 1-4, 7, 10-12
 //   frame     all three; declares bindings 5-6 and 9
 //   peak      prelude, tick, colour; declares bindings 5-6 and 8
 //   reduce    tick; declares bindings 1-3, on a layout of its own
 //   decode    prelude; declares binding 12 writable, on a layout of its own
 //   detail    prelude and tick; declares bindings 1-3 and 12, on layouts of its own
+//   balance   prelude and tick; declares binding 14 writable, on a layout of its own
 //
 // `adjust` naming `lerp` before `colour` declares it is legal and deliberate: a WGSL
 // module-scope declaration is in scope for the whole program, so the order here is a
@@ -36,6 +37,7 @@ import peak from './wgsl/peak.wgsl?raw';
 import prelude from './wgsl/prelude.wgsl?raw';
 import reduceSource from './wgsl/reduce.wgsl?raw';
 import tick from './wgsl/tick.wgsl?raw';
+import whiteBalance from './wgsl/white_balance.wgsl?raw';
 
 const compose = (...parts: string[]): string => parts.join('\n');
 
@@ -53,6 +55,12 @@ export const DECODE = compose(prelude, decodeSource);
 
 /** The blur the presence sliders read, built once at the open. */
 export const DETAIL = compose(prelude, tick, detailSource);
+
+/** The reader's temperature and tint, solved into one matrix. One invocation, per tick. */
+export const BALANCE = compose(prelude, tick, whiteBalance);
+
+/** Floats the balance pass writes: three rows of four, the fourth of each unread. */
+export const BALANCE_FLOATS = 12;
 
 /**
  * The long edge of that blur's working texture, which both hosts allocate for themselves.
@@ -131,6 +139,11 @@ export const TICK_LAYOUT = [
   ['texture_adjust', 'f32'],
   ['clarity', 'f32'],
   ['dehaze', 'f32'],
+  // The illuminant the frame was balanced for, and the one asked for. Zero is as shot.
+  ['as_shot_temperature', 'f32'],
+  ['as_shot_tint', 'f32'],
+  ['temperature', 'f32'],
+  ['tint', 'f32'],
 ] as const;
 
 export type TickField = (typeof TICK_LAYOUT)[number][0];

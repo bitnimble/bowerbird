@@ -36,6 +36,8 @@ const AS_METERED = {
     texture: 0,
     clarity: 0,
     dehaze: 0,
+    temperature: null,
+    tint: null,
   },
   geometry: { crop: [0, 0, 1, 1] as [number, number, number, number], angleDegrees: 0, rotate: 0 },
 } as const;
@@ -73,6 +75,8 @@ function developed(edits: string | null): { exposure: number; adjust: JobAdjust;
         texture: doc.texture,
         clarity: doc.clarity,
         dehaze: doc.dehaze,
+        temperature: doc.temperature,
+        tint: doc.tint,
       },
       geometry: {
         crop: [doc.cropLeft, doc.cropTop, doc.cropRight, doc.cropBottom],

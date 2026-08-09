@@ -1,6 +1,6 @@
 import { computed, observable } from 'mobx';
 import type { EditDoc } from '../../api/client';
-import type { Region } from './gpu/tick_pipeline';
+import type { AsShot, Region } from './gpu/tick_pipeline';
 
 export type EditStatus = 'idle' | 'fetching' | 'preparing' | 'live' | 'failed';
 
@@ -50,6 +50,15 @@ export class RawEditStore {
   /** Whether the camera's own colour is in play, or the grade fell back to neutral. */
   @observable accessor matched = false;
 
+  /**
+   * The illuminant the camera balanced this frame for, off the prepared header.
+   *
+   * Null until the frame is open, and null after it for a file whose camera recorded no
+   * usable multipliers - there being no baseline, a temperature would be a balance away from
+   * nothing, and the pair stays closed.
+   */
+  @observable accessor asShot: AsShot | null = null;
+
   /** The adapter behind the tick, for the readout: this is a GPU pipeline now. */
   @observable accessor adapter = '';
 
@@ -66,5 +75,26 @@ export class RawEditStore {
    */
   @computed get exposureEv(): number {
     return this.doc?.exposure ?? 0;
+  }
+
+  /**
+   * Where the two white balance sliders sit, which is not the same as what the document holds.
+   *
+   * The document stores null for "as shot" and has to - the same edit pasted onto a photo
+   * metered under tungsten must mean that photo's own neutral, not this one's. A slider cannot
+   * show null, so it shows the frame's own illuminant until the reader moves it, and the first
+   * move is what turns the pair into stored numbers.
+   */
+  @computed get balance(): AsShot | null {
+    const asShot = this.asShot;
+    if (asShot == null) return null;
+    // Rounded, because the camera's illuminant is solved rather than chosen and comes back at
+    // 5487.3K. Only for the panel and for what a first move stores: the *tick* is told the
+    // header's own unrounded pair, so a photo nobody has balanced is graded at exactly the
+    // illuminant it was shot under rather than a fifth of a Kelvin off it.
+    return {
+      temperature: this.doc?.temperature ?? Math.round(asShot.temperature),
+      tint: this.doc?.tint ?? Math.round(asShot.tint),
+    };
   }
 }

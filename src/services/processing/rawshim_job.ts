@@ -103,6 +103,16 @@ export interface JobAdjust {
   texture: number;
   clarity: number;
   dehaze: number;
+  /**
+   * The illuminant the reader asked for, or null for the one the camera chose.
+   *
+   * Null rather than the as-shot numbers, because that is what the document stores and it has
+   * to: an edit recording 5500K would mean a different picture on a frame the camera metered
+   * at 3200, where "as shot" means the same thing on every one. What it is resolved against
+   * comes off the decode, not off the job.
+   */
+  temperature: number | null;
+  tint: number | null;
 }
 
 export interface JobOutcome {

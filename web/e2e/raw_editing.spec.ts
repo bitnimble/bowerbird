@@ -248,6 +248,37 @@ test('a presence slider redraws the canvas, which is what says the blur was buil
 });
 
 /**
+ * The white balance pair, which is the one control whose slider position is not what the
+ * document holds.
+ *
+ * At rest it shows the frame's own illuminant and the document says nothing, so what this
+ * checks is the seam between the two: the header carried a camera neutral at all, the slider
+ * took its position from it, and the first move turned that position into a stored number and
+ * a redrawn frame. A header without `asShot` leaves the sliders absent entirely, so the
+ * locator failing is itself the report.
+ */
+test('the white balance pair starts where the camera metered and moves from there', async ({ page }) => {
+  await open(page);
+
+  const temperature = page.locator('[data-testid="raw-edit-temperature"]');
+  await expect(temperature).toContainText('K');
+  const before = await temperature.textContent();
+
+  const canvas = page.locator('canvas.raw-edit__stage');
+  const drawn = await canvas.screenshot();
+
+  await temperature.locator('input[type="range"]').focus();
+  await page.keyboard.press('PageUp');
+  await page.keyboard.press('PageUp');
+
+  await expect(temperature).not.toHaveText(before ?? '');
+  // "Custom" rather than the mode the document arrived with, which is what says the pair is
+  // now stored rather than still standing in for the camera's.
+  await expect(page.locator('[data-testid="raw-edit-white-balance"]')).toContainText('Custom');
+  await expect.poll(async () => (await canvas.screenshot()).equals(drawn), { timeout: 30_000 }).toBe(false);
+});
+
+/**
  * An edit has to survive the page, which is the whole point of storing one.
  *
  * End to end rather than in a unit test: the value crosses the presenter, the client, four

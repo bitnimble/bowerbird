@@ -86,6 +86,10 @@ pub struct PreparedHeader {
     /// False where the file embeds no preview or the fit found too few pairs, in which
     /// case the client grades the neutral arm exactly as a rendition does.
     pub matched: bool,
+    /// The illuminant the decode balanced against, which is the baseline the reader's
+    /// temperature and tint move away from. None where the camera recorded no usable
+    /// multipliers, and then the pair has nothing to mean and the panel says so.
+    pub as_shot: Option<crate::white_balance::AsShot>,
     pub colour: Option<ColourPayload>,
     /// Bytes of `u16` little-endian RGB following the header.
     pub samples_len: usize,
@@ -288,7 +292,7 @@ fn open(bytes: &[u8], request: &EditRequest) -> Result<Prepared, String> {
             }
         }
         filter(&mut prepared, Strengths { sharpen: request.strengths.sharpen, ..Default::default() });
-        Ok(payload(prepared, matched.as_ref(), request))
+        Ok(payload(prepared, matched.as_ref(), frame.as_shot, request))
     }
 }
 
@@ -348,6 +352,7 @@ fn fit(
 fn payload(
     prepared: HdrPrepared,
     matched: Option<&crate::hdr_fit::HdrMatch>,
+    as_shot: Option<crate::white_balance::AsShot>,
     request: &EditRequest,
 ) -> Prepared {
     let header = PreparedHeader {
@@ -359,6 +364,7 @@ fn payload(
         grade: request.grade,
         strengths: request.strengths,
         matched: matched.is_some(),
+        as_shot,
         colour: matched.map(|m| ColourPayload::from(&m.colour)),
         samples_len: prepared.samples.len() * 2,
     };
@@ -431,6 +437,7 @@ mod tests {
             },
             strengths: Strengths { luma: 1.0, chroma: 1.0, sharpen: 1.0, defringe: 1.0 },
             matched,
+            as_shot: Some(crate::white_balance::AsShot { temperature: 5200.0, tint: 4.0 }),
             colour: None,
             samples_len: samples.len() * 2,
         };

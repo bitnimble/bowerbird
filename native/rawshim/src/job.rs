@@ -249,6 +249,10 @@ struct Base {
     /// the samples above were coded against.
     levels: tone::Anchored,
     matched: Option<crate::hdr_fit::HdrMatch>,
+    /// The illuminant the decode balanced against, which the stored temperature and tint move
+    /// away from. Read off the processor and carried, because the decode is the only place it
+    /// exists.
+    as_shot: Option<crate::white_balance::AsShot>,
 }
 
 impl Base {
@@ -277,6 +281,7 @@ impl Base {
             false => None,
         };
 
+        let as_shot = frame.as_shot;
         let mut samples = frame
             .into_samples16()
             .ok_or("the render needs a 16-bit scene-linear decode")?;
@@ -293,7 +298,7 @@ impl Base {
         // pixels of the frame they read, so this is the one size at which they mean what they
         // were tuned to mean.
         hdr::filter_base(&mut samples, width, height, job.strengths().before_the_fit());
-        Ok(Base { samples, width, height, levels, matched })
+        Ok(Base { samples, width, height, levels, matched, as_shot })
     }
 }
 
@@ -333,7 +338,7 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
         return Ok(outcome);
     }
 
-    let Base { samples, width, height, levels, matched } =
+    let Base { samples, width, height, levels, matched, as_shot } =
         Base::build(job, largest_size(&rendered))?;
     let lens = matched.as_ref().map(|m| &m.lens);
 
@@ -383,6 +388,7 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
         job.grade.reference_white_nits,
         job.exposure,
         job.adjust,
+        as_shot,
     );
 
     // Cut once off the base, sharpened once, and the base handed back before anything is

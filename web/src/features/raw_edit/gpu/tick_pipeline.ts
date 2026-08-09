@@ -7,6 +7,8 @@
 
 import { type PassMs, PassTimer } from './pass_timer';
 import {
+  BALANCE,
+  BALANCE_FLOATS,
   DECODE,
   DETAIL,
   FRAME,
@@ -51,9 +53,16 @@ export interface ColourPayload {
   chroma: ChromaPayload | null;
 }
 
+/** The illuminant the camera balanced a frame for, or null where it recorded none. */
+export interface AsShot {
+  temperature: number;
+  tint: number;
+}
+
 export interface PreparedHeader {
   width: number;
   height: number;
+  asShot: AsShot | null;
   white: number;
   peak: number;
   grade: { peakNits: number; referenceWhiteNits: number; whiteQuantile: number };
@@ -233,6 +242,11 @@ export class TickPipeline {
    */
   private readonly detail: GPUTexture;
   private readonly detailScratch: GPUTexture;
+  /** The reader's temperature and tint as one matrix, rewritten by the pass below per tick. */
+  private readonly balance: GPUBuffer;
+  private readonly balanceLayout: GPUBindGroupLayout;
+  private readonly balancePipeline: GPUComputePipeline;
+  private readonly balanceGroup: GPUBindGroup;
   /**
    * The frame's coding undone, one entry per `u16` code.
    *
@@ -327,6 +341,27 @@ export class TickPipeline {
     // A count, three words of padding to keep the levels aligned, and four per candidate.
     this.candidates = storage(4 + PEAK_CANDIDATES * 4);
     this.nitsOfCode = storage(PQ_CODES);
+    this.balance = storage(BALANCE_FLOATS);
+    this.balanceLayout = device.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
+        { binding: 14, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
+      ],
+    });
+    this.balancePipeline = device.createComputePipeline({
+      layout: device.createPipelineLayout({ bindGroupLayouts: [this.balanceLayout] }),
+      compute: {
+        module: device.createShaderModule({ code: BALANCE, label: 'balance' }),
+        entryPoint: 'balance',
+      },
+    });
+    this.balanceGroup = device.createBindGroup({
+      layout: this.balanceLayout,
+      entries: [
+        { binding: 0, resource: { buffer: this.uniform } },
+        { binding: 14, resource: { buffer: this.balance } },
+      ],
+    });
 
     const colour = header.colour;
     // A row per channel, which is how the shader picks one: `sample_curve` loads the two
@@ -448,6 +483,7 @@ export class TickPipeline {
         { binding: 11, visibility, texture: { viewDimension: '3d' as const } },
         { binding: 12, visibility, buffer: { type: 'read-only-storage' as const } },
         { binding: 13, visibility, texture: {} },
+        { binding: 14, visibility, buffer: { type: 'read-only-storage' as const } },
       ],
       pyramid: { binding: 9, visibility, texture: { sampleType: 'uint' as const } },
       readOnly: (binding: number) => ({
@@ -514,6 +550,7 @@ export class TickPipeline {
       { binding: 11, resource: this.chromaTint.createView() },
       { binding: 12, resource: { buffer: this.nitsOfCode } },
       { binding: 13, resource: this.detail.createView() },
+      { binding: 14, resource: { buffer: this.balance } },
     ];
     this.displayEntries = [
       ...this.colourEntries,
@@ -736,11 +773,28 @@ export class TickPipeline {
     this.timer?.begin();
     this.writeUniform({ exposure: 2 ** ev, region });
 
+    this.writeBalance(encoder);
     if (this.header.matched) this.measurePeak(encoder);
     this.draw(encoder, region);
 
     this.timer?.resolve(encoder);
     this.device.queue.submit([encoder.finish()]);
+  }
+
+  /**
+   * The reader's temperature and tint, solved into the matrix the grade reads.
+   *
+   * In every submit that grades rather than once, because the pair moves with a slider and one
+   * invocation costs nothing. What it must never be is *after* the passes that read it: the
+   * peak measures through the whole colour transform, so a balance written later would leave
+   * the roll-off knee placed for the previous frame's colour.
+   */
+  private writeBalance(encoder: GPUCommandEncoder): void {
+    const pass = encoder.beginComputePass();
+    pass.setPipeline(this.balancePipeline);
+    pass.setBindGroup(0, this.balanceGroup);
+    pass.dispatchWorkgroups(1);
+    pass.end();
   }
 
   /** The whole frame, which is what a fresh open shows. */
@@ -786,6 +840,7 @@ export class TickPipeline {
       const encoder = this.device.createCommandEncoder();
       this.timer?.begin();
       this.writeUniform({ exposure: 2 ** ev });
+      this.writeBalance(encoder);
       encoder.clearBuffer(this.histogram);
       this.peakPass(
         encoder,
@@ -834,6 +889,7 @@ export class TickPipeline {
     });
 
     const encoder = this.device.createCommandEncoder();
+    this.writeBalance(encoder);
     const pass = encoder.beginComputePass();
     pass.setPipeline(this.encodePipeline);
     pass.setBindGroup(
@@ -880,6 +936,7 @@ export class TickPipeline {
       this.candidates,
       this.matrix,
       this.nitsOfCode,
+      this.balance,
     ]) {
       buffer.destroy();
     }
@@ -973,6 +1030,17 @@ export class TickPipeline {
     values[AT.clarity] = this.adjust.clarity;
     values[AT.dehaze] = this.adjust.dehaze;
 
+    // Zero where the frame has no as-shot illuminant at all, which the shader reads as "leave
+    // the balance alone" - the only honest answer with no baseline to move away from.
+    // Otherwise the frame's own pair stands in for whichever half the document leaves null, so
+    // an unedited photo asks for exactly the illuminant it was shot under and the shader's
+    // identity arm takes it.
+    const asShot = header.asShot;
+    values[AT.as_shot_temperature] = asShot?.temperature ?? 0;
+    values[AT.as_shot_tint] = asShot?.tint ?? 0;
+    values[AT.temperature] = asShot == null ? 0 : (this.adjust.temperature ?? asShot.temperature);
+    values[AT.tint] = asShot == null ? 0 : (this.adjust.tint ?? asShot.tint);
+
     this.device.queue.writeBuffer(this.uniform, 0, values);
   }
 
@@ -996,6 +1064,9 @@ export class TickPipeline {
     texture: 0,
     clarity: 0,
     dehaze: 0,
+    /** Null is "as shot", which is what `EditDoc` stores until the reader moves the pair. */
+    temperature: null as number | null,
+    tint: null as number | null,
   };
 
   /** Everything but the exposure, which is a gain and travels with the tick. */
@@ -1090,6 +1161,7 @@ export class TickPipeline {
   private chooseCandidates(): void {
     const encoder = this.device.createCommandEncoder();
     this.writeUniform({ exposure: 1 });
+    this.writeBalance(encoder);
     encoder.clearBuffer(this.histogram);
     encoder.clearBuffer(this.candidates, 0, 16);
     const [x, y] = this.sampledGroups;

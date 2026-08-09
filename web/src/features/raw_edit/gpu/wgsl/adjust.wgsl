@@ -29,6 +29,10 @@
 // constant in stops and cancels out of a difference, where a blur of the graded frame would
 // have to be rebuilt on every pointer move.
 @group(0) @binding(13) var detail: texture_2d<f32>;
+// The reader's temperature and tint, already solved into one matrix by `white_balance.wgsl`.
+// Rows of four. Identity where the pair is at the frame's own as-shot illuminant, so nothing
+// here has to ask whether a balance was set - only whether it is worth the nine multiplies.
+@group(0) @binding(14) var<storage, read> balance: array<f32>;
 
 /// Stops relative to diffuse white. 0 is white, -3 is three stops under it.
 ///
@@ -118,6 +122,19 @@ fn chroma_adjusted(colour: vec3f, luma: f32) -> vec3f {
   return out;
 }
 
+/// The frame rebalanced to the illuminant the reader asked for.
+///
+/// A matrix rather than three gains, because the diagonal that a balance really is lives in
+/// cone space and this colour is in Rec.2020 - the two conversions either side of it are
+/// constant, so they are folded in once per dispatch rather than per pixel.
+fn balanced(colour: vec3f) -> vec3f {
+  return vec3f(
+    balance[0] * colour.r + balance[1] * colour.g + balance[2] * colour.b,
+    balance[4] * colour.r + balance[5] * colour.g + balance[6] * colour.b,
+    balance[8] * colour.r + balance[9] * colour.g + balance[10] * colour.b,
+  );
+}
+
 /// What a presence slider at 100 is worth, in stops of its own band added back.
 const DETAIL_STOPS: f32 = 0.6;
 
@@ -193,8 +210,9 @@ fn dehazed(colour: vec3f, dark_stops: f32) -> vec3f {
 /// photo, and every photo in a library nobody has opened the editor on.
 fn adjusted(colour: vec3f, base_luma: f32, uv: vec2f) -> vec3f {
   let local = tick.texture_adjust != 0.0 || tick.clarity != 0.0 || tick.dehaze != 0.0;
-  if (!local && tick.contrast == 0.0 && tick.highlights == 0.0 && tick.shadows == 0.0
-      && tick.whites == 0.0 && tick.blacks == 0.0
+  let rebalanced = tick.temperature > 0.0;
+  if (!local && !rebalanced && tick.contrast == 0.0 && tick.highlights == 0.0
+      && tick.shadows == 0.0 && tick.whites == 0.0 && tick.blacks == 0.0
       && tick.vibrance == 0.0 && tick.sat_adjust == 0.0) {
     return colour;
   }
@@ -204,9 +222,21 @@ fn adjusted(colour: vec3f, base_luma: f32, uv: vec2f) -> vec3f {
   var blur = vec3f(0.0);
   if (local) { blur = textureSampleLevel(detail, lerp, uv, 0.0).rgb; }
 
-  // Dehaze first, because it is a claim about what the scene was before the air got in the
-  // way; everything below is then grading the recovered scene rather than the veil.
+  // White balance first, and everything below is then grading the frame the reader says the
+  // light actually was. It is also the only stage here that changes what a *neutral* is, so
+  // running it after the tone curve would mean the zones had been measured against a grey the
+  // reader has since moved.
+  //
+  // First among *these*, which still puts it after the camera match - and that is a choice
+  // rather than an accident of where this function sits. The match was fitted against the
+  // body's own JPEG of this frame, at the illuminant the body chose, so feeding it a rebalanced
+  // colour asks it about a picture it never saw. Both orders are an approximation of a
+  // re-decode; this one keeps the match answering the question it was fitted on.
   var out = colour;
+  if (rebalanced) { out = max(balanced(out), vec3f(0.0)); }
+
+  // Dehaze next, because it is a claim about what the scene was before the air got in the
+  // way; everything below is then grading the recovered scene rather than the veil.
   if (tick.dehaze != 0.0) { out = dehazed(out, blur.b); }
 
   let luma = dot(LUMA, out);

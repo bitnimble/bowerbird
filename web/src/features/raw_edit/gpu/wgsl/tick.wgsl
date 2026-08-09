@@ -76,6 +76,16 @@ struct Tick {
   texture_adjust: f32,
   clarity: f32,
   dehaze: f32,
+
+  /// The illuminant the camera balanced this frame for, which is the baseline the reader's
+  /// pair moves away from (`white_balance.wgsl`).
+  as_shot_temperature: f32,
+  as_shot_tint: f32,
+  /// And what the reader asked for. **Zero means as shot**, which is what an unedited photo
+  /// carries and what a file whose camera recorded no usable multipliers carries permanently -
+  /// there being no baseline, a number here would be a balance away from nothing.
+  temperature: f32,
+  tint: f32,
 };
 
 @group(0) @binding(0) var<uniform> tick: Tick;

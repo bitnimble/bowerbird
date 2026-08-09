@@ -310,8 +310,11 @@ pub fn graded_as(
             options.grade.reference_white_nits,
             1.0,
             // As the camera rendered it: these entry points serve the pins and the debug
-            // paths, which measure the grade itself rather than anybody's edit of it.
+            // paths, which measure the grade itself rather than anybody's edit of it. No
+            // as-shot illuminant for the same reason - with the pair unset there is nothing
+            // to balance away from.
             crate::gpu::Adjust::none(),
+            None,
         );
     let size = hdr_args::Size { width: fitted.width as u32, height: fitted.height as u32 };
     graded_with(&source, &scene, matched.map(|m| &m.lens), size, options.grade.peak_nits, output)
@@ -688,8 +691,11 @@ pub fn encode_still(
             options.grade.reference_white_nits,
             1.0,
             // As the camera rendered it: these entry points serve the pins and the debug
-            // paths, which measure the grade itself rather than anybody's edit of it.
+            // paths, which measure the grade itself rather than anybody's edit of it. No
+            // as-shot illuminant for the same reason - with the pair unset there is nothing
+            // to balance away from.
             crate::gpu::Adjust::none(),
+            None,
         );
     let size = hdr_args::target_size(width as u32, height as u32, options);
 

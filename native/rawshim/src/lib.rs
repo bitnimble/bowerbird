@@ -80,6 +80,7 @@ pub mod rgb;
 pub mod stacks;
 pub mod tca;
 pub mod tone;
+pub mod white_balance;
 
 mod raw {
     #![allow(
@@ -772,6 +773,11 @@ fn decode_with_libraw(
                 let mut built = frame::Frame::new(width, height, data);
                 built.halved = halved;
                 built.direct = direct;
+                // The last thing read off the processor, and the only place it can be read:
+                // `libraw_close` below takes the matrix with it, and the balanced samples
+                // carry no trace of what was divided out of them.
+                built.as_shot =
+                    white_balance::as_shot(&(*r).color.cam_mul, &(*r).color.cam_xyz);
                 Some(built)
             }
         })()
