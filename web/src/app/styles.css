@@ -2642,7 +2642,13 @@ p.ui-text--mono {
    surrounds it, and a light surround is what makes a correctly graded one look dim.
    No filter, opacity, transform or blend mode anywhere on this subtree or its ancestors
    either - any of them forces the compositor to rasterise into an SDR intermediate, which
-   defeats the PQ tagging silently and leaves the picture merely looking washed out. */
+   defeats the PQ tagging silently and leaves the picture merely looking washed out.
+
+   The other half of that rule, found on `/hdr` and true everywhere: in Safari an HDR
+   image inside a scrolling element needs a layer of its own, or WebKit draws it into the
+   scroller's one shared SDR backing store and composites it flat. `will-change: opacity`
+   is enough. Both halves fail the same way - the picture renders, nothing errors, and it
+   simply is not HDR - so neither is catchable by anything but looking. */
 .raw-edit-stage {
   height: 100%;
   background: #000;
@@ -2828,11 +2834,21 @@ p.ui-text--mono {
 }
 
 /* No radius here: the corners are drawn into the frame, so both halves get all four of
-   theirs rather than the pair getting the outer four. */
+   theirs rather than the pair getting the outer four.
+
+   `will-change` is not a performance hint here, it is what makes the picture HDR at all
+   in Safari. `.content` scrolls, and WebKit gives a scroller one shared backing store
+   that is SDR, so a PQ image drawn into it is composited flat - bright in Chromium,
+   flat in Safari, and correct in Reader mode, which has no such scroller. Promoting the
+   image to a layer of its own takes it out of that store. The photographs never showed
+   this because `.compare__layer` is promoted already, for the unrelated reason that the
+   swap has to be repaint-free. Anything HDR added to a scrolling view needs the same
+   (DESIGN §10.7). */
 .swatches img {
   display: block;
   width: 100%;
   height: auto;
+  will-change: opacity;
 }
 
 /* One label under each half, which is why they are spread rather than centred: the two
