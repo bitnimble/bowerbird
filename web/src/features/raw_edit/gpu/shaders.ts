@@ -10,7 +10,8 @@
 //
 //   prelude   nothing
 //   tick      nothing; declares `tick` at binding 0
-//   colour    prelude and tick; declares bindings 1-4, 7, 10-12
+//   adjust    prelude and tick; declares no bindings, reads the reader's own sliders
+//   colour    prelude, tick and adjust; declares bindings 1-4, 7, 10-12
 //   frame     all three; declares bindings 5-6 and 9
 //   peak      prelude, tick, colour; declares bindings 5-6 and 8
 //   reduce    tick; declares bindings 1-3, on a layout of its own
@@ -20,6 +21,7 @@
 // test, rather than substituted into the source, so the files stay valid WGSL on their own. A
 // pipeline-overridable constant only where the value actually differs between pipelines.
 
+import adjust from './wgsl/adjust.wgsl?raw';
 import colour from './wgsl/colour.wgsl?raw';
 import decodeSource from './wgsl/decode.wgsl?raw';
 import frame from './wgsl/frame.wgsl?raw';
@@ -31,10 +33,10 @@ import tick from './wgsl/tick.wgsl?raw';
 const compose = (...parts: string[]): string => parts.join('\n');
 
 /** Sensor levels to a canvas, and the same frame as a rendition would hold it. */
-export const FRAME = compose(prelude, tick, colour, frame);
+export const FRAME = compose(prelude, tick, adjust, colour, frame);
 
 /** The scene peak: a histogram over the whole frame, and the scan that reads it. */
-export const PEAK = compose(prelude, tick, colour, peak);
+export const PEAK = compose(prelude, tick, adjust, colour, peak);
 
 /** The pyramid the draw averages with, built once at the open. */
 export const REDUCE = compose(tick, reduceSource);
@@ -87,6 +89,15 @@ export const TICK_LAYOUT = [
   ['canvas_size', 'vec2f'],
   ['max_lod', 'u32'],
   ['pad', 'u32'],
+  // The reader's own sliders, appended rather than placed among the scalars above: the
+  // `vec2f` members need 8-byte alignment, so inserting earlier moves every field after it.
+  ['contrast', 'f32'],
+  ['highlights', 'f32'],
+  ['shadows', 'f32'],
+  ['whites', 'f32'],
+  ['blacks', 'f32'],
+  ['vibrance', 'f32'],
+  ['sat_adjust', 'f32'],
 ] as const;
 
 export type TickField = (typeof TICK_LAYOUT)[number][0];

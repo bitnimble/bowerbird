@@ -65,8 +65,27 @@ export interface Job {
    * belongs.
    */
   exposure: number;
+  /**
+   * The tonal and colour sliders, on Camera Raw's -100..100 scales, as `adjust.wgsl` reads
+   * them. All zero is the picture as the camera rendered it.
+   *
+   * Separate from `exposure` because that one is a gain the tone anchor moves against,
+   * where these are terms in the grade itself. Texture, clarity and dehaze are not here:
+   * they need the pixel's neighbourhood and so are a pass rather than a term.
+   */
+  adjust: JobAdjust;
   grade: JobGrade;
   targets: JobTarget[];
+}
+
+export interface JobAdjust {
+  contrast: number;
+  highlights: number;
+  shadows: number;
+  whites: number;
+  blacks: number;
+  vibrance: number;
+  saturation: number;
 }
 
 export interface JobOutcome {

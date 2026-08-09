@@ -110,6 +110,46 @@ describe('ProcessingService.processUnprocessed', () => {
     expect(posted.map((job) => job.exposure)).toEqual([4, 4]);
   });
 
+  it('passes the tonal and colour sliders through on their own scales', async () => {
+    // Unlike the exposure, these are *not* converted: `EditDoc` holds Camera Raw's own
+    // -100..100 and `adjust.wgsl` is written against it, which is the whole reason the
+    // schema borrowed those ranges. A conversion appearing here would be the bug.
+    const repo = {
+      listPendingProcessing: jest.fn(() => [
+        {
+          ...pending('a'),
+          edits: JSON.stringify({
+            version: 1,
+            contrast: 20,
+            highlights: -40,
+            shadows: 15,
+            whites: 8,
+            blacks: -12,
+            vibrance: 30,
+            saturation: -5,
+          }),
+        },
+      ]),
+      markTileBuilt: jest.fn(),
+      markRenditionsBuilt: jest.fn(),
+      markProcessingFailed: jest.fn(),
+    } as unknown as PhotosRepository;
+
+    await new ProcessingService(repo, settingsWith({})).processUnprocessed({ libraryId: 'lib' });
+
+    expect(posted[0]?.adjust).toEqual({
+      contrast: 20,
+      highlights: -40,
+      shadows: 15,
+      whites: 8,
+      blacks: -12,
+      vibrance: 30,
+      saturation: -5,
+    });
+    // And on both jobs, so the tile and the full view cannot disagree about the picture.
+    expect(posted[1]?.adjust).toEqual(posted[0]?.adjust);
+  });
+
   it('renders as metered where the photo has no edits, or a document it cannot read', async () => {
     const repo = {
       listPendingProcessing: jest.fn(() => [

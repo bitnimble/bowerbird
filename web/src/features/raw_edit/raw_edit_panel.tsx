@@ -45,11 +45,24 @@ const GROUPS: ReadonlyArray<{
   },
 ];
 
-// Only the exposure reaches the shader today - in the editor *and* in a rendition,
-// which is the same WGSL either way. The rest are stored and reloaded but change no
-// pixels yet, which a reader has to be told rather than left to discover by dragging
-// one and watching nothing happen.
-const RENDERED = new Set<string>(['exposure']);
+// What reaches the shader, in the editor *and* in a rendition, which is the same WGSL
+// either way.
+//
+// Texture, clarity and dehaze are the three that do not. They are local-contrast
+// operators - they need the pixel's neighbourhood rather than the pixel - so they want a
+// blur pass rather than a term in `adjust.wgsl`, which is a different shape of change.
+// Stored and reloaded meanwhile, and labelled, because a reader dragging one and watching
+// nothing happen deserves to be told rather than left to work it out.
+const RENDERED = new Set<string>([
+  'exposure',
+  'contrast',
+  'highlights',
+  'shadows',
+  'whites',
+  'blacks',
+  'vibrance',
+  'saturation',
+]);
 
 const EditSlider = observer(function EditSlider({
   store,

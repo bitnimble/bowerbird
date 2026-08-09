@@ -82,6 +82,7 @@ export class QualityCheckApi {
           // happens to be chosen would be a variable in a measurement that is about
           // quantizers.
           exposure: 1,
+          adjust: { contrast: 0, highlights: 0, shadows: 0, whites: 0, blacks: 0, vibrance: 0, saturation: 0 },
           grade: {
             peakNits: settings.hdr_peak_nits,
             referenceWhiteNits: settings.hdr_reference_white_nits,

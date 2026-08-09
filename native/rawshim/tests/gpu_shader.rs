@@ -28,9 +28,16 @@ fn source() -> String {
         std::fs::read_to_string(dir.join(name))
             .unwrap_or_else(|e| panic!("{}: {e}", dir.join(name).display()))
     };
-    // `prelude`, `tick`, `colour` - the order `FRAME` and `PEAK` use. The entry point
-    // takes bindings 5 and 6, which `colour` does not declare and only `peak` would.
-    format!("{}\n{}\n{}\n{}", read("prelude.wgsl"), read("tick.wgsl"), read("colour.wgsl"), PROBE)
+    // `prelude`, `tick`, `adjust`, `colour` - the order `FRAME` and `PEAK` use. The entry
+    // point takes bindings 5 and 6, which `colour` does not declare and only `peak` would.
+    format!(
+        "{}\n{}\n{}\n{}\n{}",
+        read("prelude.wgsl"),
+        read("tick.wgsl"),
+        read("adjust.wgsl"),
+        read("colour.wgsl"),
+        PROBE,
+    )
 }
 
 const PROBE: &str = r#"
@@ -152,6 +159,16 @@ fn uniform(colour: &HdrColour) -> Vec<u8> {
     }
     words.push(0); // max_lod
     words.push(0); // pad
+    // The reader's sliders, all zero: this probe compares the *colour transform* against the
+    // model it mirrors, and any of these set would be comparing an edit of it instead.
+    for _ in 0..7 {
+        f_push(&mut words, 0.0);
+    }
+    // WGSL binds a uniform struct at its size rounded up to 16 bytes, so a buffer holding
+    // exactly the fields is rejected as too small. Same rule as `gpu::uniform`.
+    while words.len() % 4 != 0 {
+        words.push(0);
+    }
     words.iter().flat_map(|w| w.to_le_bytes()).collect()
 }
 

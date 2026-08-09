@@ -1,4 +1,5 @@
 import { RENDITION_SOURCES, type RenditionSource } from '../../schemas/common';
+import type { JobAdjust } from './rawshim_job';
 import type { Rendition } from './renditions';
 
 export type { RenditionSource };
@@ -93,6 +94,14 @@ export interface RenditionJob {
    * photo renders to, so the grid tile and the full view cannot disagree about it.
    */
   exposure: number;
+  /**
+   * The rest of the reader's sliders, on Camera Raw's -100..100 scales. All zero is the
+   * picture as the camera rendered it.
+   *
+   * On the job beside `exposure` and for the same reason: they describe the picture this
+   * photo renders to, so the grid tile and the full view cannot disagree about it.
+   */
+  adjust: JobAdjust;
 }
 
 export type WorkerJob = RenditionJob;

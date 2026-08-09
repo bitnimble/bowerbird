@@ -855,10 +855,43 @@ export class TickPipeline {
     values[AT.canvas_size + 1] = canvas.height;
     // `lod` 0 is the frame itself, so the pyramid's levels are 1..levels.
     ints[AT.max_lod] = this.levels;
+
+    // The reader's own sliders. All zero until something sets them, which is what an
+    // unedited photo carries and what makes `adjusted` a no-op on it.
+    values[AT.contrast] = this.adjust.contrast;
+    values[AT.highlights] = this.adjust.highlights;
+    values[AT.shadows] = this.adjust.shadows;
+    values[AT.whites] = this.adjust.whites;
+    values[AT.blacks] = this.adjust.blacks;
+    values[AT.vibrance] = this.adjust.vibrance;
+    values[AT.sat_adjust] = this.adjust.saturation;
+
     this.device.queue.writeBuffer(this.uniform, 0, values);
   }
 
   private exposure = 1;
+
+  /**
+   * The tonal and colour sliders, on Camera Raw's -100..100 scales.
+   *
+   * Held here rather than passed per tick because they change on a slider release and a
+   * tick happens per pointer move; `render` writes whatever is current. Zeroes mean the
+   * camera's own rendering, which is what a photo nobody has edited grades to.
+   */
+  private adjust = {
+    contrast: 0,
+    highlights: 0,
+    shadows: 0,
+    whites: 0,
+    blacks: 0,
+    vibrance: 0,
+    saturation: 0,
+  };
+
+  /** Everything but the exposure, which is a gain and travels with the tick. */
+  setAdjust(next: Partial<typeof this.adjust>): void {
+    this.adjust = { ...this.adjust, ...next };
+  }
 
   private groups(x: number, y = 1): [number, number] {
     return [Math.ceil(x / 8), Math.ceil(y / 8)];

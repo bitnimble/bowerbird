@@ -110,6 +110,12 @@ pub struct Job {
     /// caller that knows nothing about edits can leave the field out entirely.
     #[serde(default = "unit_gain")]
     pub exposure: f64,
+    /// The reader's tonal and colour sliders, on Camera Raw's -100..100 scales.
+    ///
+    /// Defaulted whole, so a caller that knows nothing about edits sends no field and gets
+    /// the picture as the camera rendered it.
+    #[serde(default)]
+    pub adjust: crate::gpu::Adjust,
     pub grade: hdr::Grade,
     pub targets: Vec<Target>,
 }
@@ -365,6 +371,7 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
         levels,
         job.grade.reference_white_nits,
         job.exposure,
+        job.adjust,
     );
 
     // Cut once off the base, sharpened once, and the base handed back before anything is

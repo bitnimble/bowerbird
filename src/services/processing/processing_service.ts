@@ -17,29 +17,51 @@ import type {
   RenditionWritten,
   RenditionSource,
 } from './processing_types';
+import type { JobAdjust } from './rawshim_job';
 import { RENDITION_EXTENSION, renditionDirs, type Rendition } from './renditions';
 
 const WORKER_URL = new URL('./processing_worker.ts', import.meta.url).href;
 
+/** No gain and no adjustment: the picture as the camera rendered it. */
+const AS_METERED = {
+  exposure: 1,
+  adjust: { contrast: 0, highlights: 0, shadows: 0, whites: 0, blacks: 0, vibrance: 0, saturation: 0 },
+} as const;
+
 /**
- * The stored develop settings as the gain the job wants, `2^EV`.
+ * The stored develop settings as the job wants them.
  *
- * Converted here, once, on the way into the job: the shader's uniform carries a multiplier
- * and the document carries stops, and doing it in two places is how the two come to disagree
- * about the base.
+ * The exposure becomes a *gain*, `2^EV`: the shader's uniform carries a multiplier and the
+ * document carries stops, and converting in two places is how the two come to disagree about
+ * the base. The rest pass through unchanged, because `EditDoc` deliberately holds Camera
+ * Raw's own scales and `adjust.wgsl` is written against them - so there is no constant here
+ * to get wrong.
  *
- * An unedited photo has no row, which is the common case and reads as no gain. A document
- * this build cannot parse reads the same way rather than failing the batch: a rendition of
- * the picture as the camera metered it is a worse rendition than the reader asked for and a
- * far better outcome than a photo that never builds one.
+ * An unedited photo has no row, which is the common case and reads as no adjustment. A
+ * document this build cannot parse reads the same way rather than failing the batch: a
+ * rendition of the picture as the camera metered it is a worse rendition than the reader
+ * asked for and a far better outcome than a photo that never builds one.
  */
-function exposureGain(edits: string | null): number {
-  if (edits == null) return 1;
+function developed(edits: string | null): { exposure: number; adjust: JobAdjust } {
+  if (edits == null) return AS_METERED;
   try {
     const parsed = EditDocSchema.safeParse(JSON.parse(edits));
-    return parsed.success ? 2 ** parsed.data.exposure : 1;
+    if (!parsed.success) return AS_METERED;
+    const doc = parsed.data;
+    return {
+      exposure: 2 ** doc.exposure,
+      adjust: {
+        contrast: doc.contrast,
+        highlights: doc.highlights,
+        shadows: doc.shadows,
+        whites: doc.whites,
+        blacks: doc.blacks,
+        vibrance: doc.vibrance,
+        saturation: doc.saturation,
+      },
+    };
   } catch {
-    return 1;
+    return AS_METERED;
   }
 }
 
@@ -196,7 +218,7 @@ export class ProcessingService {
       // And the same edits, for the same reason. This is the path a `max` export takes,
       // so without it the one rendition a reader asks for by name is the one that ignores
       // what they did to the picture.
-      exposure: exposureGain(this.editsFor(photoId)),
+      ...developed(this.editsFor(photoId)),
       ...this.render(),
     });
   }
@@ -595,7 +617,7 @@ export class ProcessingService {
       dataPath,
       grade: this.grade(),
       matchEmbeddedJpeg: this.settings.get().match_embedded_jpeg,
-      exposure: exposureGain(pending.edits),
+      ...developed(pending.edits),
       ...this.render(),
     } as const;
 

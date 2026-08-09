@@ -391,6 +391,9 @@ fn the_encode_pass_reproduces_the_cpu_frame() {
                     peak_nits: grade.peak_nits,
                     exposure,
                     // The fixture is the HDR still, which is what `run` above encodes.
+                    // The camera's rendering, unadjusted: these fixtures pin the grade, and
+                    // a slider set here would be pinning one reader's taste instead.
+                    adjust: rawshim::gpu::Adjust::none(),
                     output: rawshim::gpu::Output::Pq,
                 },
             );
@@ -458,6 +461,7 @@ fn the_rolled_arm_reproduces_the_cpu_grade() {
                     reference_nits: grade.reference_white_nits,
                     peak_nits: grade.peak_nits,
                     exposure,
+                    adjust: rawshim::gpu::Adjust::none(),
                     output: rawshim::gpu::Output::Rolled,
                 },
             );
@@ -524,6 +528,7 @@ fn the_encode_pass_reproduces_the_cpu_sdr_frame() {
                 reference_nits: grade.reference_white_nits,
                 peak_nits: grade.peak_nits,
                 exposure: 1.0,
+                adjust: rawshim::gpu::Adjust::none(),
                 output: rawshim::gpu::Output::Srgb,
             },
         );

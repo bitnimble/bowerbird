@@ -49,6 +49,24 @@ struct Tick {
   /// The coarsest mip the frame has, which is how far out the draw can average.
   max_lod: u32,
   pad: u32,
+
+  /// The photographer's own adjustments, on Camera Raw's -100..100 scales
+  /// (`EditDocSchema`). Zero is no change, which is what an unedited photo carries.
+  ///
+  /// Appended after `pad` rather than placed among the scalars above: everything from
+  /// `region_origin` on is `vec2f`, and WGSL puts those on a multiple of eight, so
+  /// inserting a scalar earlier moves every field after it and the binding comes back
+  /// rejected. Growing the tail moves nothing.
+  ///
+  /// `sat_adjust` rather than `saturation`, which is taken - that one is the camera
+  /// match's own fit multiplier around 1.0 and not a slider anybody moves.
+  contrast: f32,
+  highlights: f32,
+  shadows: f32,
+  whites: f32,
+  blacks: f32,
+  vibrance: f32,
+  sat_adjust: f32,
 };
 
 @group(0) @binding(0) var<uniform> tick: Tick;

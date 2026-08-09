@@ -304,7 +304,15 @@ pub fn graded_as(
     let source =
         Source { samples: &fitted.samples, width: fitted.width, height: fitted.height };
     let scene =
-        tone::SceneGrade::new(matched.map(|m| &m.colour), levels, options.grade.reference_white_nits, 1.0);
+        tone::SceneGrade::new(
+            matched.map(|m| &m.colour),
+            levels,
+            options.grade.reference_white_nits,
+            1.0,
+            // As the camera rendered it: these entry points serve the pins and the debug
+            // paths, which measure the grade itself rather than anybody's edit of it.
+            crate::gpu::Adjust::none(),
+        );
     let size = hdr_args::Size { width: fitted.width as u32, height: fitted.height as u32 };
     graded_with(&source, &scene, matched.map(|m| &m.lens), size, options.grade.peak_nits, output)
 }
@@ -641,7 +649,15 @@ pub fn encode_still(
     filter_base(&mut samples, width, height, options.strengths.before_the_fit());
     let gpu = crate::gpu::device().ok_or("no GPU adapter, and the shaders are the grade")?;
     let scene =
-        tone::SceneGrade::new(matched.map(|m| &m.colour), levels, options.grade.reference_white_nits, 1.0);
+        tone::SceneGrade::new(
+            matched.map(|m| &m.colour),
+            levels,
+            options.grade.reference_white_nits,
+            1.0,
+            // As the camera rendered it: these entry points serve the pins and the debug
+            // paths, which measure the grade itself rather than anybody's edit of it.
+            crate::gpu::Adjust::none(),
+        );
     let size = hdr_args::target_size(width as u32, height as u32, options);
 
     let mut cut = {

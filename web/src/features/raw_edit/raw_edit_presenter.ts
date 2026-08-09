@@ -279,7 +279,10 @@ export class RawEditPresenter {
       const saved = await edits;
       if (saved != null && !this.closed) {
         this.applyState(saved);
-        this.request(this.store.exposureEv);
+        // Through `preview` rather than `request` alone: the pipeline holds the sliders
+        // separately from the tick's exposure, and a saved document has to reach both or
+        // the frame opens graded by the exposure and nothing else.
+        this.preview({});
       }
     } catch (error) {
       if (!this.closed) this.fail(describe(error));
@@ -302,8 +305,20 @@ export class RawEditPresenter {
   preview(patch: Partial<EditDoc>): void {
     const doc = this.store.doc;
     if (doc == null) return;
-    this.store.doc = { ...doc, ...patch };
+    const next = { ...doc, ...patch };
+    this.store.doc = next;
     this.locallyEdited = true;
+    // Everything but the exposure, which the tick carries as a gain. Pushed on every
+    // move rather than on release so a drag shows what it is doing.
+    this.pipeline?.setAdjust({
+      contrast: next.contrast,
+      highlights: next.highlights,
+      shadows: next.shadows,
+      whites: next.whites,
+      blacks: next.blacks,
+      vibrance: next.vibrance,
+      saturation: next.saturation,
+    });
     this.request(this.store.exposureEv);
   }
 

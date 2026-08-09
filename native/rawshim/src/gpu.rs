@@ -27,9 +27,10 @@ use wgpu::util::DeviceExt;
 /// has no include and the client's bundler does the same join.
 fn source(last: &str) -> String {
     format!(
-        "{}\n{}\n{}\n{last}",
+        "{}\n{}\n{}\n{}\n{last}",
         include_str!("../../../web/src/features/raw_edit/gpu/wgsl/prelude.wgsl"),
         include_str!("../../../web/src/features/raw_edit/gpu/wgsl/tick.wgsl"),
+        include_str!("../../../web/src/features/raw_edit/gpu/wgsl/adjust.wgsl"),
         include_str!("../../../web/src/features/raw_edit/gpu/wgsl/colour.wgsl"),
     )
 }
@@ -387,9 +388,40 @@ pub struct Grade<'a> {
     pub reference_nits: f64,
     pub peak_nits: f64,
     pub exposure: f64,
+    /// The reader's own sliders, on Camera Raw's -100..100 scales. All zero is unedited.
+    pub adjust: Adjust,
     /// Which transfer to write. The grade is the same either way; an SDR target differs by
     /// having its `peak_nits` at diffuse white (`job::peak_nits`) and by ending here.
     pub output: Output,
+}
+
+/// The tonal and colour sliders, as `adjust.wgsl` reads them.
+///
+/// Its own type rather than seven fields on [`Grade`] because they travel together from the
+/// stored document all the way to the uniform, and a caller that has none of them says so
+/// once with [`Adjust::none`] rather than seven times.
+///
+/// Not here: texture, clarity and dehaze. Those need the pixel's neighbourhood rather than
+/// the pixel, so they are a pass rather than a term - see the note at the top of
+/// `adjust.wgsl`.
+#[derive(Clone, Copy, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Adjust {
+    pub contrast: f64,
+    pub highlights: f64,
+    pub shadows: f64,
+    pub whites: f64,
+    pub blacks: f64,
+    pub vibrance: f64,
+    /// `sat_adjust` in the shader: `saturation` there is the camera match's own multiplier.
+    pub saturation: f64,
+}
+
+impl Adjust {
+    /// The picture as the camera rendered it, which is what an unedited photo asks for.
+    pub fn none() -> Self {
+        Self::default()
+    }
 }
 
 /// `tick.output` in the shader, whose values these must match.
@@ -880,6 +912,53 @@ impl Uploaded<'_> {
     }
 }
 
+/// `struct Tick`'s fields, in the order [`uniform`] writes them.
+///
+/// The Rust twin of `TICK_LAYOUT` in `shaders.ts`, and here for the same reason that one
+/// exists: the writer below is two dozen pushes into a flat buffer, and nothing about a
+/// push says which field it is. Swapping two of them leaves every suite green and grades
+/// the picture with one number where another belongs.
+///
+/// `the_uniform_matches_the_shader_struct` parses the struct out of the `.wgsl` and holds
+/// this against it, so the shader stays the source of truth and this stays honest about it.
+const TICK_FIELDS: &[&str] = &[
+    "width",
+    "height",
+    "white",
+    "source_level",
+    "reference",
+    "peak",
+    "exposure",
+    "output",
+    "matched",
+    "saturation",
+    "has_chroma",
+    "curve_bins",
+    "trust_ceiling",
+    "chroma_count",
+    "level_count",
+    "chroma_low",
+    "chroma_scale",
+    "chroma_low_by",
+    "chroma_scale_by",
+    "level_scale",
+    "sdr_white",
+    "row_stride",
+    "peak_samples",
+    "region_origin",
+    "region_size",
+    "canvas_size",
+    "max_lod",
+    "pad",
+    "contrast",
+    "highlights",
+    "shadows",
+    "whites",
+    "blacks",
+    "vibrance",
+    "sat_adjust",
+];
+
 /// `TICK_UNIFORM_FLOATS` in `shaders.ts`, field for field in `struct Tick`'s order.
 ///
 /// Flat rather than a builder so it can be read against the struct. The one subtlety is
@@ -925,6 +1004,23 @@ fn uniform(grade: &Grade<'_>, colour: &HdrColour) -> Vec<u8> {
     }
     w.push(0); // max_lod
     w.push(0); // pad
+    // The reader's sliders, in `struct Tick`'s order. Appended after `pad` there, so nothing
+    // above this line moved when they were added.
+    f(&mut w, grade.adjust.contrast);
+    f(&mut w, grade.adjust.highlights);
+    f(&mut w, grade.adjust.shadows);
+    f(&mut w, grade.adjust.whites);
+    f(&mut w, grade.adjust.blacks);
+    f(&mut w, grade.adjust.vibrance);
+    f(&mut w, grade.adjust.saturation);
+    // WGSL rounds a uniform struct's size up to a multiple of 16 bytes, and binds it at that
+    // size - so a buffer holding exactly the fields is rejected as too small, by however much
+    // the last few fields left over. `shaders.ts` does this in `tickOffsets`; here it was
+    // implicit in the field count until a field was added, and then it was four bytes short.
+    // Stated as the rule rather than as a spare word, so the next field cannot break it.
+    while w.len() % 4 != 0 {
+        w.push(0);
+    }
     w.iter().flat_map(|v| v.to_le_bytes()).collect()
 }
 
@@ -976,6 +1072,62 @@ mod tests {
             top + 1,
             super::PQ_CODES,
         );
+    }
+
+    /// `struct Tick` in the shader against the order and the size this host writes.
+    ///
+    /// Two failures, both silent without this. A field inserted anywhere but the tail
+    /// shifts every field after it, so the grade reads the exposure out of `peak` and the
+    /// picture is wrong in a way no validation catches. And a field *appended* leaves the
+    /// buffer short of the 16-byte multiple WGSL binds the struct at, which wgpu does
+    /// catch - but as "bound with size 156 where the shader expects 160", at the dispatch,
+    /// which is a long way from the line that added the field.
+    ///
+    /// The client pins the same thing in `gpu/tests/tick_uniform.test.ts`. Two hosts, two
+    /// pins, one shader that is the source of truth for both.
+    #[test]
+    fn the_uniform_matches_the_shader_struct() {
+        let source = include_str!("../../../web/src/features/raw_edit/gpu/wgsl/tick.wgsl");
+        let body = source
+            .split_once("struct Tick {")
+            .and_then(|(_, rest)| rest.split_once("};"))
+            .map(|(body, _)| body)
+            .expect("tick.wgsl declares struct Tick");
+
+        let declared: Vec<&str> = body
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty() && !line.starts_with("//"))
+            .filter_map(|line| line.split_once(':'))
+            .map(|(name, _)| name.trim())
+            .collect();
+
+        assert_eq!(
+            declared, super::TICK_FIELDS,
+            "struct Tick and gpu.rs's TICK_FIELDS have drifted",
+        );
+
+        // And the buffer the writer produces is the size the binding wants: every field a
+        // word, `vec2f` two, rounded up to four.
+        let words: usize = super::TICK_FIELDS
+            .iter()
+            .map(|name| if name.starts_with("region_") || *name == "canvas_size" { 2 } else { 1 })
+            .sum();
+        let expected = words.div_ceil(4) * 4 * 4;
+        let colour = crate::hdr_fit::HdrColour::identity();
+        let grade = super::Grade {
+            width: 1,
+            height: 1,
+            colour: None,
+            white: 1.0,
+            source_level: 1.0,
+            reference_nits: 203.0,
+            peak_nits: 1000.0,
+            exposure: 1.0,
+            adjust: super::Adjust::none(),
+            output: super::Output::Pq,
+        };
+        assert_eq!(super::uniform(&grade, &colour).len(), expected);
     }
 
     /// `R2020_TO_SRGB` in `frame.wgsl` against the matrix this crate derives.
