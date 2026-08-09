@@ -79,7 +79,7 @@ export const PhotoDetailSchema = PhotoSummarySchema.extend({
   camera_make: z.string().nullable(),
   camera_model: z.string().nullable(),
   lens_model: z.string().nullable(),
-  // Which pixels the grid tile was built from; NULL before first processing.
+  // Which pixels the viewer's renditions were built from; NULL until they land.
   rendition_source: RenditionSourceSchema.nullable(),
   // Where the bytes actually live on the server, so the detail panel can name the
   // file it is showing. Resolved by the service, which holds the library: null on

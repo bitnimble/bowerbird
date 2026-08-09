@@ -242,14 +242,21 @@ export class ProcessingService {
       });
       // The HDR diagnostics write their own files under their own names and no
       // view reads them off a rendition URL, so only a rendition is worth saying.
-      // Which stamp it moves follows which file it wrote: a repaired grid tile is
-      // the gallery's, anything else is the viewer's.
+      // Which stamps move follows which files were written, and a one-off job can
+      // carry both: the queue splits them into two jobs and this does not. Asked as
+      // "are they all tiles", a grid-and-full job read as renditions alone, so its
+      // tile landed on disk with `tile_built_at` still unset - and nothing revisits
+      // a tile that is already there.
       {
-        const stage: ProcessingStage = job.targets.every((t) => t.rendition === 'grid') ? 'tile' : 'renditions';
+        const stages: ProcessingStage[] = [];
+        if (job.targets.some((t) => t.rendition === 'grid')) stages.push('tile');
+        if (job.targets.some((t) => t.rendition !== 'grid')) stages.push('renditions');
         const version = new Date().toISOString();
-        if (stage === 'tile') this.photos.markTileBuilt(job.photoId, version);
-        else this.photos.markRenditionsBuilt(job.photoId, version, 'render');
-        this.announce(job.photoId, { stage, version });
+        for (const stage of stages) {
+          if (stage === 'tile') this.photos.markTileBuilt(job.photoId, version);
+          else this.photos.markRenditionsBuilt(job.photoId, version, 'render');
+          this.announce(job.photoId, { stage, version });
+        }
         // After the writes, and best-effort, for the reasons `stageDone` gives.
         if (descriptor != null) for (const listener of this.described) listener(job.photoId, descriptor);
       }
