@@ -19,10 +19,16 @@ import {
   REDUCE,
   TICK_UNIFORM_FLOATS,
   tickOffsets,
+  tickWords,
 } from './shaders';
-import type { DetailSize } from './shaders';
+import type { DetailSize, TickAdjust } from './shaders';
 
-/** Where each `Tick` field lives, by name. Computed once from the layout the shader declares. */
+/**
+ * Where each `Tick` field lives, by name. Computed once from the layout the shader declares.
+ *
+ * One field's worth now: `tickWords` fills the uniform, and the only word this file reads for
+ * itself is the peak's stride, which sizes a dispatch rather than describing a picture.
+ */
 const AT = tickOffsets().at;
 
 /**
@@ -991,53 +997,21 @@ export class TickPipeline {
    * two, and a photograph graded with one number where another belongs looks like a
    * photograph.
    *
-   * What is left below is exactly the set the server cannot know: how far the reader has
-   * pushed each slider, and what part of the frame is on screen at what size.
+   * What `tickWords` fills in is exactly the set the server cannot know: how far the reader has
+   * pushed each slider, and what part of the frame is on screen at what size. It is a pure
+   * function so that `tests/tick_words.test.ts` can hold it against the native writer without a
+   * GPU - `output` among the rest, which stays as it arrived and is PQ.
    */
   private writeUniform(over: { exposure?: number; region?: Region } = {}): void {
-    const header = this.header;
     if (over.exposure != null) this.exposure = over.exposure;
-    const values = new Float32Array(TICK_UNIFORM_FLOATS);
-    const ints = new Uint32Array(values.buffer);
-    ints.set(header.tick);
-    values[AT.exposure] = this.exposure;
-    // `output` stays as it arrived, which is PQ. The editor's `readFrame` wants the same 16-bit
-    // PQ a still rendition does; the sRGB arm exists for the server, whose SDR renditions are
-    // this grade with the peak at diffuse white and this transfer instead.
-
-    const region = over.region ?? this.wholeFrame;
     const canvas = this.context.canvas;
-    values[AT.region_origin] = region.x;
-    values[AT.region_origin + 1] = region.y;
-    values[AT.region_size] = region.width;
-    values[AT.region_size + 1] = region.height;
-    values[AT.canvas_size] = canvas.width;
-    values[AT.canvas_size + 1] = canvas.height;
-    // `lod` 0 is the frame itself, so the pyramid's levels are 1..levels.
-    ints[AT.max_lod] = this.levels;
-
-    // The reader's own sliders. All zero until something sets them, which is what an
-    // unedited photo carries and what makes `adjusted` a no-op on it.
-    values[AT.contrast] = this.adjust.contrast;
-    values[AT.highlights] = this.adjust.highlights;
-    values[AT.shadows] = this.adjust.shadows;
-    values[AT.whites] = this.adjust.whites;
-    values[AT.blacks] = this.adjust.blacks;
-    values[AT.vibrance] = this.adjust.vibrance;
-    values[AT.sat_adjust] = this.adjust.saturation;
-    values[AT.texture_adjust] = this.adjust.texture;
-    values[AT.clarity] = this.adjust.clarity;
-    values[AT.dehaze] = this.adjust.dehaze;
-
-    // The document verbatim, nulls and all. What a null half means is the shader's to say
-    // (`white_balance.wgsl`), and the frame's own illuminant is already in the words copied
-    // above - so there is nothing to resolve here and no second opinion to have.
-    values[AT.temperature] = this.adjust.temperature ?? 0;
-    values[AT.tint] = this.adjust.tint ?? 0;
-    ints[AT.balance_set] =
-      (this.adjust.temperature == null ? 0 : 1) | (this.adjust.tint == null ? 0 : 2);
-
-    this.device.queue.writeBuffer(this.uniform, 0, values);
+    const words = tickWords(this.header.tick, this.adjust, this.exposure, {
+      region: over.region ?? this.wholeFrame,
+      canvas: { width: canvas.width, height: canvas.height },
+      // `lod` 0 is the frame itself, so the pyramid's levels are 1..levels.
+      maxLod: this.levels,
+    });
+    this.device.queue.writeBuffer(this.uniform, 0, words);
   }
 
   /** In stops, which is the document's unit and now the uniform's. `colour.wgsl` raises it. */
@@ -1050,7 +1024,7 @@ export class TickPipeline {
    * tick happens per pointer move; `render` writes whatever is current. Zeroes mean the
    * camera's own rendering, which is what a photo nobody has edited grades to.
    */
-  private adjust = {
+  private adjust: TickAdjust = {
     contrast: 0,
     highlights: 0,
     shadows: 0,

@@ -291,6 +291,113 @@ fn le(samples: &[u16]) -> Vec<u8> {
 /// and `TickPipeline` sizes its dispatch off that word. What is left to guard is that *this*
 /// rule has not moved. Sizes chosen for the boundaries: under the sample count, either side of
 /// it, odd dimensions, and the two sensors this is actually run on.
+/// The document's own words, slot for slot, against what the editor puts there.
+///
+/// **The last thing about a `Tick` that is still written out twice.** Every *rule* has one
+/// implementation now - the frame's half of the uniform is built here and copied there, and
+/// what a null or a stop means is the shader's - but which slot each slider lands in is a list
+/// of assignments in `gpu::uniform_words` and another in `tickWords`. Transposing a pair there
+/// is a photograph graded with the clarity somebody asked for as texture, on a path no parity
+/// fixture crosses: those are pinned at every slider zero, where a transposition is invisible.
+///
+/// So every field is off zero and off every other field, which is what makes a swap fail. The
+/// view is left at rest because that half is the editor's alone and this side never fills it.
+///
+/// `gpu/tests/tick_words.test.ts` reads the same file.
+#[test]
+fn the_editor_puts_each_slider_where_this_host_does() {
+    let colour = HdrColour::identity();
+    let at = |exposure: f64, adjust: rawshim::gpu::Adjust| {
+        rawshim::gpu::uniform_words(
+            &rawshim::gpu::Grade {
+                width: WIDTH,
+                height: HEIGHT,
+                colour: None,
+                white: 1234.0,
+                source_level: 5678.0,
+                reference_nits: 203.0,
+                peak_nits: 1000.0,
+                exposure,
+                adjust,
+                as_shot: Some(rawshim::white_balance::AsShot {
+                    temperature: 5500.0,
+                    tint: 12.0,
+                }),
+                output: rawshim::gpu::Output::Pq,
+            },
+            &colour,
+        )
+    };
+
+    // Distinct and non-zero throughout, so no two fields can be exchanged unnoticed.
+    let moved = rawshim::gpu::Adjust {
+        contrast: 11.0,
+        highlights: -22.0,
+        shadows: 33.0,
+        whites: -44.0,
+        blacks: 55.0,
+        vibrance: -66.0,
+        saturation: 77.0,
+        texture: -88.0,
+        clarity: 99.0,
+        dehaze: -12.5,
+        temperature: Some(4800.0),
+        tint: Some(-6.0),
+    };
+    let cases = [
+        // As it arrives on a photo nobody has edited, which is also the state the frame's own
+        // words are shipped in.
+        ("rest", 0.0, rawshim::gpu::Adjust::none()),
+        ("moved", 1.75, moved),
+        // Half a white balance pair, which is the case the two hosts disagreed about.
+        (
+            "half-balance",
+            -2.5,
+            rawshim::gpu::Adjust { tint: None, ..moved },
+        ),
+    ];
+
+    let rows: Vec<String> = cases
+        .iter()
+        .map(|(name, exposure, adjust)| {
+            let words: Vec<String> =
+                at(*exposure, *adjust).iter().map(u32::to_string).collect();
+            let balance = |v: Option<f64>| match v {
+                Some(v) => v.to_string(),
+                None => "null".to_string(),
+            };
+            format!(
+                "{name} {exposure} {} {} {} {} {} {} {} {} {} {} {} {} {}",
+                adjust.contrast,
+                adjust.highlights,
+                adjust.shadows,
+                adjust.whites,
+                adjust.blacks,
+                adjust.vibrance,
+                adjust.saturation,
+                adjust.texture,
+                adjust.clarity,
+                adjust.dehaze,
+                balance(adjust.temperature),
+                balance(adjust.tint),
+                words.join(","),
+            )
+        })
+        .collect();
+
+    let built = format!("{}\n", rows.join("\n"));
+    let path = fixture_dir().join("tick-words.txt");
+    if std::env::var("BOWERBIRD_WRITE_FIXTURES").is_ok_and(|v| v == "1") {
+        std::fs::create_dir_all(fixture_dir()).expect("the fixture directory");
+        std::fs::write(&path, &built).expect("writing the words");
+        return;
+    }
+    let committed = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+        panic!("{}: {e}. BOWERBIRD_WRITE_FIXTURES=1 writes it", path.display())
+    });
+    assert_eq!(committed, built, "how this host fills a Tick has moved");
+}
+
 #[test]
 fn the_peak_reads_the_pixels_it_always_did() {
     let sizes: [(usize, usize); 8] = [

@@ -164,6 +164,89 @@ export function tickOffsets(): { at: Record<TickField, number>; floats: number }
 export const TICK_UNIFORM_FLOATS = tickOffsets().floats;
 
 /**
+ * Every slider, on Camera Raw's own scales, as the document holds them.
+ *
+ * Nulls included: what a missing half of the white balance pair means is
+ * `white_balance.wgsl`'s to say, so this carries the absence rather than a stand-in.
+ */
+export interface TickAdjust {
+  contrast: number;
+  highlights: number;
+  shadows: number;
+  whites: number;
+  blacks: number;
+  vibrance: number;
+  saturation: number;
+  texture: number;
+  clarity: number;
+  dehaze: number;
+  temperature: number | null;
+  tint: number | null;
+}
+
+/** What only the editor knows: the part of the frame on screen and the canvas showing it. */
+export interface TickView {
+  region: { x: number; y: number; width: number; height: number };
+  canvas: { width: number; height: number };
+  /** The coarsest mip the frame has, which is how far out the draw can average. */
+  maxLod: number;
+}
+
+/**
+ * The uniform for one tick: the frame's own words, then what a tick owns.
+ *
+ * **A pure function so it can be compared against the native writer without a GPU.** Every
+ * *rule* about a document is one implementation now - the shader's - but which slot each field
+ * goes in is still written out twice, once here and once in `gpu::uniform_words`, and a
+ * transposed pair there is a photograph graded with the clarity somebody asked for as texture.
+ * `tests/tick_words.test.ts` holds this against a table the native side emits, which is the
+ * only thing that can see that.
+ *
+ * `frame` is `PreparedHeader.tick`, already carrying everything about the photograph.
+ */
+export function tickWords(
+  frame: readonly number[],
+  adjust: TickAdjust,
+  exposure: number,
+  view: TickView,
+): Float32Array<ArrayBuffer> {
+  const at = tickOffsets().at;
+  const values = new Float32Array(new ArrayBuffer(TICK_UNIFORM_FLOATS * 4));
+  const ints = new Uint32Array(values.buffer);
+  ints.set(frame);
+
+  // In stops, which is the document's unit: `colour.wgsl` raises it.
+  values[at.exposure] = exposure;
+
+  values[at.region_origin] = view.region.x;
+  values[at.region_origin + 1] = view.region.y;
+  values[at.region_size] = view.region.width;
+  values[at.region_size + 1] = view.region.height;
+  values[at.canvas_size] = view.canvas.width;
+  values[at.canvas_size + 1] = view.canvas.height;
+  ints[at.max_lod] = view.maxLod;
+
+  values[at.contrast] = adjust.contrast;
+  values[at.highlights] = adjust.highlights;
+  values[at.shadows] = adjust.shadows;
+  values[at.whites] = adjust.whites;
+  values[at.blacks] = adjust.blacks;
+  values[at.vibrance] = adjust.vibrance;
+  values[at.sat_adjust] = adjust.saturation;
+  values[at.texture_adjust] = adjust.texture;
+  values[at.clarity] = adjust.clarity;
+  values[at.dehaze] = adjust.dehaze;
+
+  // The document verbatim, nulls and all. The frame's own illuminant is already in the words
+  // copied above, and `white_balance.wgsl` is what puts one in for a half this does not hold.
+  values[at.temperature] = adjust.temperature ?? 0;
+  values[at.tint] = adjust.tint ?? 0;
+  ints[at.balance_set] = (adjust.temperature == null ? 0 : 1) | (adjust.tint == null ? 0 : 2);
+
+  return values;
+}
+
+/**
  * Bins in the peak's histogram, and the buffer that holds them.
  *
  * `peak.wgsl` declares the same number, and `tests/peak_constants.test.ts` holds the two
