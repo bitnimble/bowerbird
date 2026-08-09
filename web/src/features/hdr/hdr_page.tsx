@@ -21,17 +21,34 @@ import { useHdrVideo } from '../photos/hdr_video';
  *
  * White is the anchor rather than black because it is what the four disagree about, and
  * because it is where photographs are lost: the JPEG's range simply stops there.
- * Approximate by nature - every figure depends on where you decide the useful range ends
- * - which the note under the chart says rather than the numbers pretending otherwise.
+ *
+ * **The two file figures are each format's own reference range**, which is the only
+ * source for them that is neither folklore nor an invented threshold. sRGB (IEC
+ * 61966-2-1) is specified against a display of 80 cd/m² over a 1.0 cd/m² black, so 80:1,
+ * so 6.3 stops. HDR10 (ITU-R BT.2100, PQ) is mastered for 1000 nits over 0.005, so 17.6.
+ *
+ * An earlier version measured them instead, by how far down the range you get before the
+ * gap between adjacent code values passes some percentage - and the percentage decided
+ * the answer, which is what made it the wrong tool. At 5% it said 6.0 and 14.6, close
+ * enough to these to look like agreement. At 2% it said 2.8 and 10.3. At 1%, which is
+ * about the Weber limit and roughly what PQ was designed against, it says **0.4 and 3.9**
+ * - true, and useless on a chart, because a photograph is not a smooth gradient and its
+ * own grain dithers away the banding this criterion is looking for. The quantisation
+ * story belongs in a sentence, not in the length of a bar.
+ *
+ * The other two bars cannot be sourced to a specification and are approximations: a
+ * full-frame sensor measures around 14 stops of engineering dynamic range at base ISO,
+ * placed as though the exposure left 3 stops above diffuse white, and the eye manages
+ * about 20 across one scene as the gaze moves and adapts locally.
  */
 const RANGES = [
   { label: 'Your eyes', low: -14, high: 6, tone: 'eye' },
   { label: 'A camera at one exposure', low: -11, high: 3, tone: 'sensor' },
-  { label: 'A 10-bit HDR file', low: -13, high: 2.3, tone: 'hdr' },
-  { label: 'An 8-bit JPEG', low: -8, high: 0, tone: 'sdr' },
+  { label: 'A 10-bit HDR file', low: -15.3, high: 2.3, tone: 'hdr' },
+  { label: 'An 8-bit JPEG', low: -6.3, high: 0, tone: 'sdr' },
 ];
 
-const AXIS_LOW = -15;
+const AXIS_LOW = -16;
 const AXIS_HIGH = 7;
 const TICKS = [-15, -10, -5, 0, 5];
 
@@ -95,18 +112,18 @@ interface Scene {
 const SCENES: Scene[] = [
   {
     slug: 'rapids',
-    title: 'The obvious case',
-    body: 'The foam and the brightest part of the cloud are the same white in eight bits, because that is the only white there is. Switch, and the water goes back to being lit.',
+    title: 'Whitewater under an overcast sky',
+    body: "The foam and the brightest part of the cloud come out as the same white in 8 bits because that's the only white there is. Switch it over and the water goes back to being lit.",
   },
   {
     slug: 'sunset',
-    title: 'The brightest thing in the frame',
-    body: 'The band of sky over the horizon is brighter than anything else here, and eight bits has to fold it into the top of its range. Switch, and it goes on getting brighter instead.',
+    title: 'A sunset over railway tracks',
+    body: 'The band of sky over the horizon is brighter than anything else here. 8 bits has to fold it into the top of its range. Switch it over and it just keeps getting brighter.',
   },
   {
     slug: 'arches',
-    title: 'Where the colour goes',
-    body: 'The strip above, happening to a photograph. Where the arches are brightest, eight bits gives up on the colour completely: half of those pixels come out white rather than pale pink, because red reached the ceiling first and the other two channels climbed up to meet it. In HDR they stay pink the whole way through.',
+    title: 'Lit arches at night',
+    body: "Here's that strip again as a photograph. Where the arches are brightest 8 bits gives up on the colour completely. 51% of those pixels come out white instead of pink because red hit the ceiling first and the other 2 channels climbed up to meet it. In HDR they stay pink the whole way through.",
   },
 ];
 
@@ -137,12 +154,12 @@ function Swap({ slug, label, alt }: { slug: string; label: string; alt: string }
       type="button"
       className="compare__frame"
       aria-pressed={hdr}
-      aria-label={`${label}. This is the ${hdr ? 'HDR' : 'eight-bit'} version; activate to see the other one.`}
+      aria-label={`${label}. Showing the ${hdr ? 'HDR' : '8-bit'} version. Activate to see the other one.`}
       onClick={() => setHdr((was) => !was)}
     >
       <img
         src={`/hdr/${slug}-sdr.avif`}
-        alt={`${alt}, as eight bits holds it`}
+        alt={`${alt}, as 8 bits holds it`}
         className={`compare__layer compare__layer--base${hdr ? '' : ' is-up'}`}
       />
       {hdrVideo == null ? (
@@ -194,59 +211,63 @@ export function HdrPage(): JSX.Element {
       <Heading level={1}>What HDR is for</Heading>
 
       <Text variant="muted" as="p">
-        Your camera keeps more of a scene than a JPEG can hold, and nearly all of what it throws away is at the bright end, where a
-        picture stops being a lit surface and starts being a light. Each photograph below starts as eight bits holds it. Click one to
-        see what was there.
+        The RAW photos your camera takes have more dynamic range than an 8-bit JPEG can show. That's why you can pull detail out of
+        the highlights and shadows of a RAW but not of a JPEG. It's the reason we shoot RAW at all. So what if you weren't limited
+        by JPEG and could just see all that detail RAW has been hiding?
+      </Text>
+      <Text variant="muted" as="p">
+        Each photo below starts out the way 8 bits holds it. Click one to see what was really there.
       </Text>
 
       {!high && (
         <div className="notice">
           <Text as="p">
-            Your display is reporting standard dynamic range, so the two versions will look closer than they are. Firefox reports
-            this even on an HDR screen.
+            Your display says it's standard dynamic range. Both versions will look closer than they really are. Firefox says this
+            even on an HDR screen.
           </Text>
         </div>
       )}
 
       <Heading>How much of a scene fits</Heading>
       <Text variant="muted" as="p">
-        Stops of light either side of white - a shirt, a sheet of paper, a sunlit cloud. Anything right of that line was a light
-        source rather than something lit by one, and a JPEG holds none of it.
+        Stops of light either side of white. That's the white of a shirt, a sheet of paper, a sunlit cloud. Anything to the right of
+        that line was a light source rather than something lit by one. A JPEG holds none of it.
       </Text>
       <RangeChart />
       <Text variant="mono" as="p" className="prose__note">
-        Rough figures; everyone draws the line somewhere different. Your eyes are taken glancing around one scene, the camera is a
-        full-frame body at base ISO, and the HDR file assumes a 1000-nit screen.
+        Both file figures come from the specs rather than from folklore. sRGB is designed for a display with 80:1 contrast and that
+        works out at 6.3 stops. HDR10 is mastered for 1000 nits over a black of 0.005 and that's 17.6. The other 2 bars are
+        approximate. A full-frame sensor measures about 14 stops at base ISO and your eyes manage about 20 across a scene as they
+        move over it.
       </Text>
 
       <Heading>Where the extra light goes</Heading>
       <Text variant="muted" as="p">
-        The only way an eight-bit file can say something is brighter is to move it towards white, and a colour on its way to white
-        gives up its colour: the channel that was already full cannot rise, so the other two catch up with it. HDR puts the light
-        behind the colour instead.
+        An 8-bit file has only one way to say something is brighter. It moves it towards white. So a colour on its way to white
+        gives up its colour as it goes. The channel that's already full can't rise any further and the other 2 climb up to meet it.
+        HDR puts the light behind the colour instead.
       </Text>
       <Text variant="muted" as="p">
-        Five colours, climbing by the same amount to the right. Same climb both sides: with a ceiling at white on the left, without
-        one on the right. The left goes pale and stops. The right holds its hue and saturation exactly while the light goes up five
-        times. The grey row has no colour to spend, so it just runs out.
+        Both halves below hold the same 5 colours and the same climb to the right. The left one has a ceiling at white. The right
+        one doesn't. The left goes pale and stops. The right keeps its hue and saturation exactly while the light behind it goes up
+        5 times. Watch the grey row at the bottom. It has no colour to spend so it just runs out.
       </Text>
       <figure className="swatches">
         <img
           src="/hdr/swatches.avif"
-          alt="Five colours stepped brighter from left to right, twice: with a ceiling at white, where they pale out and stop, and without one, where they keep their colour and go on brightening"
+          alt="The same 5 colours stepped brighter twice. On the left they pale out and stop at white. On the right they keep their colour and go on brightening."
         />
         <figcaption>
-          <Text variant="mono">Eight bits</Text>
+          <Text variant="mono">8-bit</Text>
           <Text variant="mono">HDR</Text>
         </figcaption>
       </figure>
 
       <Heading>Where you notice it</Heading>
+      {/* No heading per photograph: with three of them the labels were repeating what the
+          sentence under them already said. `title` survives for the alt and aria text. */}
       {SCENES.map((scene) => (
         <section key={scene.slug} className="prose__section">
-          <Text variant="label" as="div">
-            {scene.title}
-          </Text>
           <Text variant="muted" as="p">
             {scene.body}
           </Text>
@@ -256,9 +277,9 @@ export function HdrPage(): JSX.Element {
 
       <Heading>About these pictures</Heading>
       <Text variant="muted" as="p">
-        Each pair is one raw file developed once and saved twice, the eight-bit version being the same picture with its ceiling
-        brought down to white. Nothing below white differs, so everything you see change is something the smaller file had nowhere
-        to put.
+        Each pair is one RAW file developed once and then saved twice. The 8-bit version is the same picture with its ceiling
+        brought down to white. Nothing below white differs between them so everything you see change is something the smaller file
+        had nowhere to put.
       </Text>
     </div>
   );
