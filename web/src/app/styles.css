@@ -2770,6 +2770,36 @@ p.ui-text--mono {
   transform: translateX(-50%);
 }
 
+/* The swatch strip. Both halves are inside one PQ file rather than two images side by
+   side, because a standard-range browser paints a PQ file about a quarter dim against an
+   sRGB one whatever either of them holds - so a pair of files could not be compared at
+   all on most screens. In one file the tone map lands on both halves equally. */
+.swatches {
+  margin: 12px 0 0;
+}
+
+.swatches img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: var(--radius);
+}
+
+/* One label under each half, which is why they are spread rather than centred: the two
+   halves meet in the middle of the picture. */
+.swatches figcaption {
+  display: flex;
+  margin-top: 4px;
+}
+
+.swatches figcaption > * {
+  flex: 1;
+}
+
+.swatches figcaption > :last-child {
+  text-align: right;
+}
+
 /* One picture in two dynamic ranges, in one place. Side by side, the eye has to travel
    and the difference gets argued about; worse, a standard-range browser paints a PQ file
    about a quarter dim against an sRGB one whatever either of them holds, so anything

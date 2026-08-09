@@ -139,28 +139,14 @@ const SCENES: Scene[] = [
  * nothing to do with what the page is arguing. In the same place, one after the other,
  * there is nothing to hold it against.
  */
-function Swap({
-  slug,
-  label,
-  alt,
-  rewrap = true,
-}: {
-  slug: string;
-  label: string;
-  alt: string;
-  /**
-   * Off for the swatches. Firefox's rewrap needs 4:2:0 and they are 4:4:4 (§10.7), so
-   * there is nothing to be gained by fetching and remuxing them.
-   */
-  rewrap?: boolean;
-}): JSX.Element {
+function Swap({ slug, label, alt }: { slug: string; label: string; alt: string }): JSX.Element {
   // Eight bits first, because that is the picture the reader already has and the page is
   // about what it costs them. Opening on the HDR one asks them to notice an absence.
   const [hdr, setHdr] = useState(false);
   const hdrSrc = `/hdr/${slug}-hdr.avif`;
   // Firefox composites HDR for video and only video, so the still is rewrapped there
   // (DESIGN §10.7.2). Null everywhere else, where the `<img>` is the better element.
-  const hdrVideo = useHdrVideo(hdrSrc, rewrap);
+  const hdrVideo = useHdrVideo(hdrSrc, true);
 
   return (
     <button
@@ -265,22 +251,21 @@ export function HdrPage(): JSX.Element {
         alone.
       </Text>
       <Text variant="muted" as="p">
-        The strip below is five colours, each starting as bright as eight bits can render it and climbing by the same amount to the
-        right. Switch it over and watch what happens to the colour rather than to the brightness. Both versions get brighter; only
-        one of them still has its colour by the end, and measured off the file every patch in an HDR row holds the hue and the
-        saturation of the one before it - 24 degrees and 0.97 across the whole of the orange - while the light behind it goes up
-        five times. The bottom row is the giveaway: a plain grey has no colour to spend, so it just runs out, and four of its five
-        eight-bit patches are the same white.
+        Below are five colours, each starting as bright as eight bits can render it and climbing by the same amount to the right.
+        The two halves are the same five climbs: on the left with a ceiling at white, on the right without one. The left half goes
+        pale and then stops. The right half keeps its colour - measured off the file, every patch holds the hue and the saturation
+        of the one before it, 24 degrees and 0.97 across the whole of the orange - while the light behind it goes up five times. The
+        bottom row is the giveaway: a plain grey has no colour to spend, so it just runs out, and four of its five left-hand patches
+        are the same white.
       </Text>
-      <figure className="compare">
-        <Swap
-          slug="swatches"
-          label="Five colours stepped brighter"
-          alt="Five colours stepped brighter from left to right"
-          rewrap={false}
+      <figure className="swatches">
+        <img
+          src="/hdr/swatches.avif"
+          alt="Five colours stepped brighter from left to right, twice: with a ceiling at white, where they pale out and stop, and without one, where they keep their colour and go on brightening"
         />
-        <figcaption className="compare__caption">
-          <Text variant="mono">Click or tap to switch.</Text>
+        <figcaption>
+          <Text variant="mono">Eight bits</Text>
+          <Text variant="mono">HDR</Text>
         </figcaption>
       </figure>
 

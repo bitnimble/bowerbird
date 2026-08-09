@@ -142,9 +142,19 @@ async function clipToWhite(slug: string, wide = true): Promise<void> {
 // It answers the question every other picture on the page assumes an answer to: what
 // does "brighter" mean once white is not the top. Each column is one colour at a fixed
 // hue and saturation, stepped up in light alone, and the reader is meant to notice that
-// the HDR strip stays that colour while the 8-bit one walks to white - not because
+// the HDR half stays that colour while the 8-bit half walks to white - not because
 // anything was desaturated, but because raising a channel that is already at its
 // ceiling is the one thing eight bits cannot do, so the other two rise instead.
+//
+// **Both halves live in one PQ file**, which is what makes it work on an ordinary
+// screen. A standard-range browser renders PQ by fixing its own white at about 406 nits,
+// measured, so an sRGB image shown beside a PQ one is painted about a quarter brighter
+// than it for reasons that have nothing to do with the argument - which is what two
+// files, side by side or swapped, kept showing. Inside a single file that tone map
+// applies to every patch equally, so whatever the screen does to one half it does to
+// the other, and what is left is the comparison. On a real HDR screen the left half
+// simply cannot exceed diffuse white, which is the point stated as a brightness rather
+// than as a caption.
 const SWATCHES: [number, number, number][] = [
   [1, 0.06, 0.05], // red
   [1, 0.42, 0.03], // orange
@@ -172,8 +182,19 @@ const SWATCH_STEPS = [1, 1.5, 2.2, 3.3, PEAK_OVER_WHITE];
 
 const SWATCH_CELL = 96;
 
+/** Between the two halves, in cells. Black, so neither half bleeds into the other. */
+const SWATCH_GAP = 0.25;
+
+const SWATCH_WIDTH = Math.round((SWATCH_STEPS.length * 2 + SWATCH_GAP) * SWATCH_CELL);
+const SWATCH_HEIGHT = SWATCHES.length * SWATCH_CELL;
+
 /**
- * The strip, as scene-linear samples where 1.0 is diffuse white.
+ * Both halves in one frame, as scene-linear samples where 1.0 is diffuse white.
+ *
+ * The left half is the same colours with every channel clamped at white, which is the
+ * whole of what eight bits can hold: the dominant channel stops there and the other two
+ * climb into it, so the row goes pale and its brightness stops dead. The right half is
+ * the same numbers left alone, up to the 1000-nit ceiling.
  *
  * **All three channels scale together, which is the only construction that means "the
  * same colour with more light on it".** Scaling a triple leaves its chromaticity where
@@ -187,23 +208,30 @@ const SWATCH_CELL = 96;
  * a fix.
  *
  * So the row does get lighter along its length, because more light is what it has. What
- * the strip shows is where that light goes: into the colour here, and into white in the
- * 8-bit arm beside it, which has nowhere else to put it.
+ * the strip shows is where that light goes: into the colour on the right, and into white
+ * on the left, which has nowhere else to put it.
  *
  * Planar GBR because that is the one float layout that reaches zimg without swscale in
  * the way, which clamps to [0,1] and would flatten every step above white into one.
  */
 function swatchFrame(): Float32Array {
-  const [width, height] = [SWATCH_STEPS.length * SWATCH_CELL, SWATCHES.length * SWATCH_CELL];
-  const pixels = width * height;
+  const pixels = SWATCH_WIDTH * SWATCH_HEIGHT;
   const out = new Float32Array(pixels * 3);
-  for (let y = 0; y < height; y++) {
+  const half = SWATCH_STEPS.length * SWATCH_CELL;
+  const right = SWATCH_WIDTH - half;
+
+  for (let y = 0; y < SWATCH_HEIGHT; y++) {
     const colour = SWATCHES[Math.floor(y / SWATCH_CELL)]!;
-    for (let x = 0; x < width; x++) {
-      const step = SWATCH_STEPS[Math.floor(x / SWATCH_CELL)]!;
-      const at = y * width + x;
+    for (let x = 0; x < SWATCH_WIDTH; x++) {
+      // The gap between them stays black.
+      const eightBit = x < half;
+      const column = eightBit ? x : x - right;
+      if (!eightBit && x < right) continue;
+      const step = SWATCH_STEPS[Math.floor(column / SWATCH_CELL)]!;
+      const at = y * SWATCH_WIDTH + x;
       for (const [channel, plane] of [[0, 2], [1, 0], [2, 1]] as const) {
-        out[plane * pixels + at] = colour[channel]! * step;
+        const level = colour[channel]! * step;
+        out[plane * pixels + at] = eightBit ? Math.min(level, 1) : level;
       }
     }
   }
@@ -211,37 +239,15 @@ function swatchFrame(): Float32Array {
 }
 
 /**
- * One strip, from linear samples straight to a file.
- *
- * **Rec.709 primaries on both arms**, which is the one place these files differ from
- * every rendition the app writes. Converting the gamut first would take a saturated
- * Rec.709 red down to 0.65 of full scale before the transfer ever saw it, so the first
- * patch of the row would land at 130 nits where the strip says 203 - the HDR strip would
- * open dimmer than the 8-bit one and the whole comparison would read backwards. Skipping
- * the conversion makes 1.0 mean diffuse white exactly, and it costs nothing here: these
- * are flat sRGB colours with nothing outside 709 to carry.
- *
- * Lossless and 4:4:4 on both, because flat colour has no detail to trade away and a
- * quantiser on a hard edge between two saturated patches is visible where it is
- * invisible on a photograph. It is also why the swatches skip the Firefox rewrap on the
- * page, which needs 4:2:0 (§10.7).
- */
-/**
- * What the file has to declare about its own brightness, in nits.
- *
- * **Without this a browser has to guess, and it guesses the format's ceiling.** PQ can
- * carry 10,000 nits, so an untagged strip peaking at 1000 was being tone-mapped as if it
- * peaked at ten times that: measured off the canvas, the first patch - which is sitting
- * exactly on diffuse white - painted at 187 where the 8-bit strip beside it painted 255.
- * The reader sees an HDR strip that opens dimmer than the SDR one, which is the opposite
- * of the point.
+ * What the file declares about its own brightness, in nits.
  *
  * `MaxCLL` is the brightest single sample and `MaxPALL` the frame's average of the
  * per-pixel maximum, both computed off the samples rather than asserted, so they cannot
- * drift from what the strip actually holds.
+ * drift from what the strip actually holds. Measured, Chrome ignores it for stills - it
+ * paints a PQ file against a fixed white either way - but it is correct information the
+ * file was otherwise missing, and other engines do read it.
  */
-function contentLight(): string {
-  const samples = swatchFrame();
+function contentLight(samples: Float32Array): string {
   const pixels = samples.length / 3;
   let peak = 0;
   let total = 0;
@@ -254,27 +260,35 @@ function contentLight(): string {
   return `${nits(peak)},${nits(total / pixels)}`;
 }
 
-async function encodeSwatches(arm: 'sdr' | 'hdr'): Promise<void> {
-  const [width, height] = [SWATCH_STEPS.length * SWATCH_CELL, SWATCHES.length * SWATCH_CELL];
-  const hdr = arm === 'hdr';
-  const transfer = hdr ? `t=smpte2084:npl=${SETTINGS.hdr_reference_white_nits}` : 't=iec61966-2-1';
+/**
+ * The strip, from linear samples straight to one PQ file.
+ *
+ * **Rec.709 primaries**, which is the one place this file differs from every rendition
+ * the app writes. Converting the gamut first would take a saturated Rec.709 red down to
+ * 0.65 of full scale before the transfer ever saw it, so a patch meant to sit on diffuse
+ * white would land at 130 nits instead of 203. Skipping the conversion makes 1.0 mean
+ * white exactly, and it costs nothing: these are flat sRGB colours with nothing outside
+ * 709 to carry.
+ *
+ * Lossless and 4:4:4, because flat colour has no detail to trade away and a quantiser on
+ * a hard edge between two saturated patches is visible where it is invisible on a
+ * photograph. 4:4:4 also means Firefox will not composite it in HDR (§10.7); it degrades
+ * to the same picture flattened, which still shows the left half stopping.
+ */
+async function buildSwatches(): Promise<void> {
   const ffmpeg = spawn('ffmpeg', [
     '-y', '-hide_banner', '-loglevel', 'error',
-    '-f', 'rawvideo', '-pix_fmt', 'gbrpf32le', '-s', `${width}x${height}`, '-i', '-',
-    '-vf', `zscale=pin=bt709:tin=linear:min=bt709:p=bt709:m=bt709:r=limited:${transfer}`,
-    '-pix_fmt', hdr ? 'yuv444p10le' : 'yuv444p',
+    '-f', 'rawvideo', '-pix_fmt', 'gbrpf32le', '-s', `${SWATCH_WIDTH}x${SWATCH_HEIGHT}`, '-i', '-',
+    '-vf',
+    `zscale=pin=bt709:tin=linear:min=bt709:p=bt709:m=bt709:r=limited:t=smpte2084:npl=${SETTINGS.hdr_reference_white_nits}`,
+    '-pix_fmt', 'yuv444p10le',
     '-f', 'yuv4mpegpipe', '-strict', '-1', '-',
   ], { stdio: ['pipe', 'pipe', 'inherit'] });
   const samples = swatchFrame();
   Readable.from([Buffer.from(samples.buffer, samples.byteOffset, samples.byteLength)]).pipe(ffmpeg.stdin!);
-  const cicp = hdr ? '1/16/1' : '1/13/1';
-  const light = hdr ? ['--clli', contentLight()] : [];
-  await run('avifenc', ['--stdin', '--cicp', cicp, ...light, '--min', '0', '--max', '0', '-s', '4', outputPath('swatches', hdr)], ffmpeg.stdout!);
-}
-
-async function buildSwatches(): Promise<void> {
-  await encodeSwatches('hdr');
-  await encodeSwatches('sdr');
+  const out = join(OUT, 'swatches.avif');
+  await run('avifenc', ['--stdin', '--cicp', '1/16/1', '--clli', contentLight(samples), '--min', '0', '--max', '0', '-s', '4', out], ffmpeg.stdout!);
+  console.error(`[hdr-assets] swatches: ${(Bun.file(out).size / 1024).toFixed(0)}kB`);
 }
 
 async function build(scene: Scene): Promise<void> {
