@@ -537,8 +537,16 @@ test('opening a photo whose rendition is gone builds that rendition back', async
   rmSync(full, { force: true });
 
   await page.reload();
+  // The 404 is what starts the build, so while it runs the stage says a rendition is being
+  // made. It used to say "no rendition yet" for the whole render - the flag that covers the
+  // stage was raised only by a rendition the reader had chosen, and never by the one the
+  // photo opened at, which is the common way to meet a photo that has none.
+  await expect(page.locator('.stage__busy')).toContainText('Rendering');
+  await expect(page.locator('.stage__viewport .tile__pending')).toHaveCount(0);
+
   await expect.poll(() => existsSync(full), { timeout: 90_000 }).toBe(true);
   await expect(page.locator('.stage__viewport img.is-ready')).toBeVisible({ timeout: 60_000 });
+  await expect(page.locator('.stage__busy')).toBeHidden();
 });
 
 // The point of caching the renditions is that switching back to one already seen
@@ -590,6 +598,49 @@ test('a chosen rendition is cached on disk, and survives a tile rebuild', async 
   // Nothing at all: not the build, and not the detail fetch that used to be awaited before
   // the swap was allowed to happen even when there was no build to learn anything about.
   expect(asked, 'a swap between two renditions already built asks the server for nothing').toEqual([]);
+
+  // And not the frames either. Both renditions have now decoded, and both stay mounted, so
+  // going back to one is an opacity change on an element that never left the page. Marked
+  // rather than counted or timed: an <img> replaced by an identical <img> passes every
+  // assertion about the src, and is exactly the fetch and the decode this avoids. The
+  // warmed neighbours are aria-hidden and are not frames of this photo.
+  const frames = page.locator('.stage__viewport img:not([aria-hidden])');
+  await expect(frames).toHaveCount(2);
+  await frames.evaluateAll((imgs) => imgs.forEach((img) => img.setAttribute('data-held', '1')));
+
+  // The warmed neighbours are held the same way, and marked for the same reason. Kept only
+  // for the rendition on screen they were unmounted and re-mounted on every swap - the
+  // frames' own bug, one photo over - so stepping on after a comparison paid again for a
+  // file the page had already fetched.
+  const warm = page.locator('.stage__viewport img[aria-hidden]');
+  const warmed = await warm.count();
+  expect(warmed, 'a neighbour is being warmed at all').toBeGreaterThan(0);
+  await warm.evaluateAll((imgs) => imgs.forEach((img) => img.setAttribute('data-held', '1')));
+
+  // Requests as well, for whatever the marks cannot see. Chromium answers a hit in its own
+  // renderer's memory cache without reporting a request at all, so this can only
+  // under-count - which is why the marks above are what the swap is actually pinned on.
+  const fetched: string[] = [];
+  page.on('request', (request) => {
+    const { pathname } = new URL(request.url());
+    if (pathname.startsWith('/image/')) fetched.push(pathname);
+  });
+
+  await showRendition('Embedded JPEG');
+  await expect(renditionPanel.getByText('Embedded JPEG')).toBeVisible({ timeout: 60_000 });
+  await showRendition('Rendered RAW');
+  await expect(renditionPanel.getByText('Rendered RAW')).toBeVisible({ timeout: 60_000 });
+
+  await expect(page.locator('.stage__viewport img.is-ready')).toHaveAttribute('data-held', '1');
+  await expect(page.locator('.stage__viewport img[data-held]'), 'every frame and every warmed neighbour survives the swaps').toHaveCount(
+    2 + warmed,
+  );
+  expect(fetched, 'and nothing asks for image bytes again').toEqual([]);
+
+  // Both are up, so the panel can still say what the one on screen measured. A flip decodes
+  // nothing, so nothing reports a size on it: the dimensions have to come from what that
+  // frame measured when it first arrived.
+  await expect(renditionPanel).not.toContainText('loading');
 
   // The grid's rebuild is the grid tile and nothing else. It used to queue both
   // stages, which had the run sweep every rendition it did not itself write - so

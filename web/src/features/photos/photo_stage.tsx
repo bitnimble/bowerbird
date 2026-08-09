@@ -112,6 +112,12 @@ function noop(): void {
   /* a frame on its way off the stage reports to nobody */
 }
 
+// Two URLs for one photo's one rendition: the version is what a rebuild moves,
+// and everything before it is which file is being asked for.
+function sameFile(source: string): string {
+  return source.replace(/\?.*$/, '');
+}
+
 // One mounted frame, owning its own decode.
 //
 // A component per source rather than one effect over a list, because a decode is
@@ -257,6 +263,9 @@ export function PhotoStage({
   // RETIRED_FRAMES. Their rasters are the ones the browser already has, so they
   // are what shows through while the replacements' are being built.
   const [retiring, setRetiring] = useState<{ sources: readonly string[]; step: Step }>({ sources: [], step: null });
+  // The neighbours warmed so far for this photo, across every rendition it has
+  // been asked for at.
+  const [warmed, setWarmed] = useState<readonly string[]>([]);
   // The photo last promoted, which is what tells a step from a rendition swap or
   // a flip between a round's two frames. Not `painted`: that is dropped once it
   // goes stale, and a photo whose rendition had to be built is still a step from
@@ -367,6 +376,27 @@ export function PhotoStage({
   // photographs keeps every one of their sizes for the life of the page.
   useEffect(() => setNaturals((previous) => (previous.size === 0 ? previous : new Map())), [photoKey]);
 
+  // Every neighbour this photo has asked to warm, not just the ones for the
+  // rendition on screen. Which URLs those are moves with the rendition, and one
+  // dropped on a swap is fetched again on the way back - the same trap the frames
+  // themselves were in, one photo over, and it bit hardest exactly where the
+  // warming is for: stepping on after a comparison. Cleared on the photo, where
+  // these are different photographs and what is held is next to nothing.
+  const warming = preloadSrcs?.join(' ') ?? '';
+  useEffect(() => setWarmed((previous) => (previous.length === 0 ? previous : [])), [photoKey]);
+  useEffect(() => {
+    if (!ready || warming === '') return;
+    setWarmed((previous) => {
+      const added = warming.split(' ').filter((source) => !previous.includes(source));
+      if (added.length === 0) return previous;
+      // A neighbour rebuilt while it was warmed moves its URL (§13.5), so the
+      // element at the old one holds a file nothing will ask for again. Left in,
+      // sitting on one photo through an import collects one of those per rebuild.
+      const superseded = new Set(added.map(sameFile));
+      return [...previous.filter((source) => !superseded.has(sameFile(source))), ...added];
+    });
+  }, [ready, warming]);
+
   const onLoaded = useRef(onImageLoad);
   onLoaded.current = onImageLoad;
   const onMissing = useRef(onImageMissing);
@@ -386,12 +416,15 @@ export function PhotoStage({
   arrival.current = arrivedBy;
   const paintedRef = useRef(painted);
   paintedRef.current = painted;
+  const visibleRef = useRef(visible);
+  visibleRef.current = visible;
 
   // One rule for every promotion: a frame keeps its place if it is still being
   // asked for, and retires if it is not - whichever photo painted it. A photo step
-  // and a rendition swap retire everything, because none of those URLs is asked
-  // for any more; a decisive verdict holding its winner over keeps that frame,
-  // because it is the same URL and it already has a raster.
+  // retires everything, because none of those URLs is asked for any more; a
+  // decisive verdict holding its winner over keeps that frame, and so does a
+  // rendition swap, because both are still asked for and both already have a
+  // raster.
   //
   // Read through refs and applied outside the updater: `setPainted`'s updater must
   // stay pure, and StrictMode double-invokes it.
@@ -416,13 +449,23 @@ export function PhotoStage({
       stepped.current = photoKey;
 
       const asked = sourcesRef.current;
-      // Retiring is a visual courtesy and reads the ref; what is painted must not.
-      // Two frames of a round decode in the same batch whenever both are warm, and
-      // a ref only refreshes on render - so both promotions would read the same
-      // stale set and the second would overwrite the first, leaving one slot of
-      // the round unreachable for as long as it lasts.
+      // Held opaque under this one for a few frames: what nobody is asking for any
+      // more, and - asked for or not - whatever this frame is about to be revealed
+      // over. A frame that has just decoded has no raster yet, so dropping the
+      // picture beneath it in the same commit shows the stage background for
+      // exactly as long as building one takes. Which of these is actually on
+      // screen is settled at render, so one that stays visible is simply not
+      // covered.
+      //
+      // All of it a visual courtesy, which is why it may read the refs; what is
+      // painted must not. Two frames of a round decode in the same batch whenever
+      // both are warm, and a ref only refreshes on render - so both promotions
+      // would read the same stale set and the second would overwrite the first,
+      // leaving one slot of the round unreachable for as long as it lasts.
+      const outgoing = visibleRef.current;
       const dropped = (paintedRef.current?.sources ?? []).filter((frame) => !asked.includes(frame));
-      if (dropped.length > 0) setRetiring({ sources: dropped, step });
+      const covered = outgoing == null || dropped.includes(outgoing) ? dropped : [...dropped, outgoing];
+      if (covered.length > 0) setRetiring({ sources: covered, step });
 
       setPainted((previous) => {
         const kept = (previous?.sources ?? []).filter((frame) => asked.includes(frame));
@@ -498,13 +541,19 @@ export function PhotoStage({
 
 
   const transform = `translate(${view.x}px, ${view.y}px) scale(${view.scale})`;
-  // Switching back before the hold expires asks for a frame on its way out, and
-  // one source is one element: the hold is dropped rather than duplicated, which
-  // costs nothing - the frames it was covering are still what is on screen.
-  const retired = retiring.sources.filter((source) => !incoming.includes(source) && !paintedSources.includes(source));
+  // Still opaque under whatever replaced them. Not the frame on screen, which the
+  // hold may name when a promotion left it where it was; and not one being asked
+  // for again, since one source is one element and it has no raster to offer - the
+  // hold is dropped rather than duplicated, which costs nothing, because the frames
+  // it was covering are still what is on screen.
+  const covering = retiring.sources.filter((source) => source !== visible && !incoming.includes(source));
+  // Of those, the ones nothing else mounts: a frame held under its replacement is
+  // usually still painted, and keeps the slot it already had.
+  const retired = covering.filter((source) => !paintedSources.includes(source));
   // Bottom to top: the frames on their way out, the ones on screen, the ones being
   // prepared. Nothing here moves on promotion - a promoted source keeps the slot
-  // it already had - so no element is reinserted into the DOM mid-swap.
+  // it already had, and a promotion appends - so no element is reinserted into the
+  // DOM mid-swap, and the frame being covered is always under the one covering it.
   const mounted = [...retired, ...paintedSources, ...incoming.filter((source) => !paintedSources.includes(source))];
   const allFailed = sources.length > 0 && wanted.length === 0;
 
@@ -513,7 +562,7 @@ export function PhotoStage({
     // keep sliding the way the step that produced them went even if the next step
     // lands before they are done.
     if (source === visible) return contentClass('is-ready', painted?.step ?? null);
-    if (retired.includes(source)) return contentClass('is-retiring', retiring.step);
+    if (covering.includes(source)) return contentClass('is-retiring', retiring.step);
     // Painted but not showing: the other half of a pair. It keeps its raster on
     // its own layer so revealing it is an opacity change with no repaint - and it
     // does not slide, because a flip is not a step.
@@ -538,8 +587,11 @@ export function PhotoStage({
         {/* A frame that failed replaces the incoming one, not the picture already
             on screen: switching to a rendition that 404s should leave the one
             being compared against up, not blank the stage. Nothing to hold means
-            there is nothing to say but this. */}
-        {allFailed && painted == null ? (
+            there is nothing to say but this - unless the 404 is what started a
+            build, which is the usual way a photo with no rendition is opened, and
+            "no rendition yet" over a spinner already saying one is being made
+            reads as the opposite of what is happening. */}
+        {allFailed && painted == null && !busy ? (
           <span className="tile__pending">no rendition yet</span>
         ) : (
           mounted.map((source) => (
@@ -565,8 +617,12 @@ export function PhotoStage({
             earlier they compete for the connection with the one being waited on.
             Mounted rather than fetched into a detached Image for the same reason
             the swap above is - a decode is for the size an element is drawn at,
-            and these elements are the size those photos will be. */}
-        {ready && preloadSrcs?.map((source) => <img key={source} src={source} alt="" aria-hidden className="stage__content" />)}
+            and these elements are the size those photos will be. And every one
+            this photo has asked for, not only the rendition on screen: warming a
+            file and then dropping the element holding it is warming nothing. */}
+        {warmed.map((source) => (
+          <img key={source} src={source} alt="" aria-hidden className="stage__content" />
+        ))}
       </div>
 
       {busy && (
