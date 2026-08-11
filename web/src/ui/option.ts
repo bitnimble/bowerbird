@@ -15,4 +15,7 @@ export interface Option<T extends string> {
   // In a menu: red, and fenced off below a rule so it is not a neighbour of the
   // action above it.
   destructive?: boolean;
+  // For a control an e2e has to reach by name rather than by label, where the
+  // label is what a reader sees and free to be reworded.
+  testId?: string;
 }

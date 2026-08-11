@@ -179,7 +179,8 @@ test('the crop rectangle takes a drag, and the drag reaches the document', async
   await page.mouse.up();
 
   await expect.poll(async () => revision.textContent(), { timeout: 30_000 }).not.toBe(wasAt);
-  await page.getByTestId('raw-edit-crop').click();
+  // Leaving a mode is choosing another one, so the way out of the crop is the cursor.
+  await page.getByTestId('raw-edit-cursor').click();
   await expect(page.getByTestId('crop-rect')).toBeHidden();
 
   // Put the rectangle back. Left cropped, this photograph reaches the specs below as a

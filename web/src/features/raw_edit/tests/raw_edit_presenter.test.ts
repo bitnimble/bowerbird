@@ -416,9 +416,15 @@ describe('the shape the picture takes', () => {
 
   test('grows with a straighten, because the frame does', () => {
     presenter.settleStraighten(45);
-    // A 45-degree straighten on 4000x3000 needs a box of 4950 either way.
-    expect(store.output.width).toBe(4950);
-    expect(store.output.height).toBe(4950);
+    // A 45-degree straighten on 4000x3000 needs a box of 4950 either way, which is the frame
+    // the crop tool shows - the picture left over is the largest rectangle inside it, the
+    // straighten having cropped to fit as it moved.
+    presenter.setCropping(true);
+    expect(store.output).toEqual({ width: 4950, height: 4950 });
+
+    presenter.setCropping(false);
+    expect(store.output.width).toBeLessThan(4950);
+    expect(store.output.width).toBeGreaterThan(0);
   });
 
   test('shows the whole frame while the crop tool is open, cropped when it closes', () => {
@@ -431,6 +437,27 @@ describe('the shape the picture takes', () => {
     presenter.setCropping(false);
     expect(store.output.width).toBe(2000);
     expect(pipeline.geometry?.cropLeft).toBe(0.25);
+  });
+});
+
+// The header's selector, which is the two modes and the absence of both. One at a time is the
+// rule it exists to make visible: each tool shows the frame with different things taken off it,
+// so an overlay laid out under one is naming a different picture from the one under the other.
+describe('the tool the pointer is in', () => {
+  test('is whichever the selector names, and only ever one', () => {
+    expect(store.tool).toBe('cursor');
+
+    presenter.setTool('crop');
+    expect(store.tool).toBe('crop');
+    expect(store.keystoning).toBe(false);
+
+    presenter.setTool('perspective');
+    expect(store.tool).toBe('perspective');
+    expect(store.cropping).toBe(false);
+
+    presenter.setTool('cursor');
+    expect(store.cropping).toBe(false);
+    expect(store.keystoning).toBe(false);
   });
 });
 
@@ -464,9 +491,8 @@ describe('the white balance pair', () => {
 });
 
 describe('cropping to what the geometry left', () => {
-  test('does nothing to a frame with nothing to trim', () => {
-    expect(store.trimmable).toBe(false);
-    presenter.cropToBounds();
+  test('leaves a frame with nothing to trim whole', () => {
+    presenter.settleStraighten(0);
 
     expect(store.doc?.cropLeft).toBe(0);
     expect(store.doc?.cropRight).toBe(1);
@@ -474,9 +500,7 @@ describe('cropping to what the geometry left', () => {
 
   test('insets the crop after a straighten', () => {
     presenter.settleStraighten(6);
-    expect(store.trimmable).toBe(true);
 
-    presenter.cropToBounds();
     const doc = store.doc!;
     expect(doc.cropLeft).toBeGreaterThan(0);
     expect(doc.cropTop).toBeGreaterThan(0);
@@ -484,11 +508,49 @@ describe('cropping to what the geometry left', () => {
     expect(doc.cropBottom).toBeLessThan(1);
   });
 
+  // The toggle is the whole of whether any of this happens. Off, the reader owns the rectangle.
+  test('leaves the crop alone entirely when the habit is off', () => {
+    presenter.setCropToFit(false);
+    presenter.settleStraighten(6);
+
+    expect(store.doc?.cropAngle).toBe(6);
+    expect(store.doc?.cropLeft).toBe(0);
+    expect(store.doc?.cropRight).toBe(1);
+
+    // And turning it back on catches the crop up, rather than waiting for the next move.
+    presenter.setCropToFit(true);
+    expect(store.doc?.cropLeft).toBeGreaterThan(0);
+  });
+
+  // Nobody straightens a horizon in order to look at the wedges of blank it leaves, so the
+  // slider takes the crop with it - and gives the whole frame back on the way to zero.
+  test('crops to fit as the straighten moves, and hands the frame back at zero', () => {
+    presenter.settleStraighten(6);
+    expect(store.doc?.cropLeft).toBeGreaterThan(0);
+    expect(store.doc?.cropRight).toBeLessThan(1);
+
+    presenter.settleStraighten(0);
+    expect(store.doc?.cropLeft).toBe(0);
+    expect(store.doc?.cropTop).toBe(0);
+    expect(store.doc?.cropRight).toBe(1);
+    expect(store.doc?.cropBottom).toBe(1);
+  });
+
+  // The one place it must not: a rectangle being chosen by hand cannot be replaced under the
+  // hand choosing it.
+  test('leaves the rectangle alone while the crop tool is open', () => {
+    presenter.setCropping(true);
+    presenter.settleCrop({ left: 0.2, top: 0.2, right: 0.8, bottom: 0.8 });
+    presenter.settleStraighten(6);
+
+    expect(store.doc?.cropAngle).toBe(6);
+    expect(store.doc?.cropLeft).toBe(0.2);
+    expect(store.doc?.cropRight).toBe(0.8);
+  });
+
   test('insets the crop after a correction', () => {
     presenter.setGuides(LEANING, true);
-    expect(store.trimmable).toBe(true);
 
-    presenter.cropToBounds();
     const doc = store.doc!;
     expect((doc.cropRight - doc.cropLeft) * (doc.cropBottom - doc.cropTop)).toBeLessThan(1);
     expect((doc.cropRight - doc.cropLeft) * (doc.cropBottom - doc.cropTop)).toBeGreaterThan(0.3);

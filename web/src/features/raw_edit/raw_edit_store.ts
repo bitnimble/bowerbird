@@ -2,11 +2,28 @@ import { computed, observable } from 'mobx';
 import type { EditDoc } from '../../api/client';
 import { displaySize } from '../../../../src/schemas/display_size';
 import { turnedForDisplay, turnedPointForDisplay, type CropRect } from './crop_turn';
-import type { KeystoneGuide } from './keystone';
+import { isUpright, type KeystoneGuide } from './keystone';
 import { wholeFrameGeometry, type EditGeometry } from './gpu/shaders';
 import type { AsShot, Region } from './gpu/edit_pipeline';
 
 export type EditStatus = 'idle' | 'fetching' | 'preparing' | 'live' | 'failed';
+
+/**
+ * Which of the stage's modes the pointer is in.
+ *
+ * One value rather than the two booleans below it because that is what the header's selector
+ * is: a one-of-N, where "neither" is a choice a reader makes rather than a state they fall into.
+ */
+export type EditTool = 'cursor' | 'crop' | 'perspective';
+
+/**
+ * Which pair a guide belongs to: the edges that should have been upright, or the ones level.
+ *
+ * Not stored on the guide. A line's pair *is* its direction - `isUpright` - and a second copy
+ * of that on the document would be free to disagree with the line it describes. What the
+ * reader chooses is only what they are about to draw.
+ */
+export type GuideKind = 'vertical' | 'horizontal';
 
 /** Whether a save is in flight, and whether the last one was refused. */
 export type SaveStatus = 'clean' | 'saving' | 'conflict' | 'failed';
@@ -89,6 +106,26 @@ export class RawEditStore {
    */
   @observable accessor keystoning = false;
 
+  @computed get tool(): EditTool {
+    return this.cropping ? 'crop' : this.keystoning ? 'perspective' : 'cursor';
+  }
+
+  /**
+   * Whether a change of geometry takes the crop onto what it leaves showing.
+   *
+   * A straighten and a perspective correction both leave wedges of blank around the picture,
+   * and a reader who is levelling a horizon is not levelling it in order to look at those.
+   * Off for the reader who wants to choose the rectangle themselves - remembered across
+   * sessions, being a habit rather than a property of a photograph.
+   */
+  @observable accessor cropToFit = true;
+
+  /** Whether the straighten slider is being dragged, which is what the grid is drawn for. */
+  @observable accessor straightening = false;
+
+  /** Which pair the perspective tool adds next. The pairs are independent, so this is a choice. */
+  @observable accessor guideKind: GuideKind = 'vertical';
+
   /**
    * The exposure the tick draws at, in EV.
    *
@@ -148,21 +185,21 @@ export class RawEditStore {
     });
   }
 
+  /** The guides split into the two pairs, which is how the tool talks about them. */
+  @computed get guidePairs(): Record<GuideKind, { guide: KeystoneGuide; index: number }[]> {
+    const pairs: Record<GuideKind, { guide: KeystoneGuide; index: number }[]> = {
+      vertical: [],
+      horizontal: [],
+    };
+    this.guides.forEach((guide, index) => {
+      pairs[isUpright(guide) ? 'vertical' : 'horizontal'].push({ guide, index });
+    });
+    return pairs;
+  }
+
   /** Whether the photograph is carrying a correction, which is what the tool's label reads off. */
   @computed get keystoned(): boolean {
     return this.doc?.keystone != null;
-  }
-
-  /**
-   * Whether the geometry has left any blank around the picture for a crop to trim.
-   *
-   * A straighten and a perspective correction are the two that do; a quarter turn and a crop
-   * cannot. Nothing to trim is a disabled button rather than a hidden one, so the reader can
-   * see the tool exists before they have done the thing it is for.
-   */
-  @computed get trimmable(): boolean {
-    const doc = this.doc;
-    return doc != null && (doc.cropAngle !== 0 || doc.keystone != null);
   }
 
   /** What the region is a window on: the picture the geometry above produces. */
@@ -196,15 +233,25 @@ export class RawEditStore {
    * move is what turns the pair into stored numbers.
    */
   @computed get balance(): AsShot | null {
+    const neutral = this.asShotBalance;
+    if (neutral == null) return null;
+    return {
+      temperature: this.doc?.temperature ?? neutral.temperature,
+      tint: this.doc?.tint ?? neutral.tint,
+    };
+  }
+
+  /**
+   * Where the pair stands when nobody has moved it, which is what both sliders snap back to.
+   *
+   * Rounded, because the camera's illuminant is solved rather than chosen and comes back at
+   * 5487.3K. Only for the panel and for what a first move stores: the *tick* is told the
+   * header's own unrounded pair, so a photo nobody has balanced is graded at exactly the
+   * illuminant it was shot under rather than a fifth of a Kelvin off it.
+   */
+  @computed get asShotBalance(): AsShot | null {
     const asShot = this.asShot;
     if (asShot == null) return null;
-    // Rounded, because the camera's illuminant is solved rather than chosen and comes back at
-    // 5487.3K. Only for the panel and for what a first move stores: the *tick* is told the
-    // header's own unrounded pair, so a photo nobody has balanced is graded at exactly the
-    // illuminant it was shot under rather than a fifth of a Kelvin off it.
-    return {
-      temperature: this.doc?.temperature ?? Math.round(asShot.temperature),
-      tint: this.doc?.tint ?? Math.round(asShot.tint),
-    };
+    return { temperature: Math.round(asShot.temperature), tint: Math.round(asShot.tint) };
   }
 }

@@ -140,7 +140,7 @@ test('the crop rectangle takes a finger, and the stage does not pan under it', a
   await swipe(page, { x: overlay.x + overlay.width / 2, y: overlay.y + overlay.height - 4 }, -120);
   expect(await region.textContent()).toBe(still);
 
-  await page.getByTestId('raw-edit-crop').click();
+  await page.getByTestId('raw-edit-cursor').click();
 });
 
 test('the header keeps to one line, its menus folded into an overflow button', async ({ page }) => {

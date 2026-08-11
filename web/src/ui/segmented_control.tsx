@@ -35,6 +35,7 @@ export function SegmentedControl<T extends string>({
           value={option.value}
           aria-label={option.iconOnly === true ? option.label : undefined}
           title={option.iconOnly === true ? option.label : undefined}
+          data-testid={option.testId}
           className={`ui-btn ui-btn--seg${option.tone == null ? '' : ` ui-btn--${option.tone}`}${
             option.iconOnly === true ? ' ui-btn--icon' : ''
           }`}

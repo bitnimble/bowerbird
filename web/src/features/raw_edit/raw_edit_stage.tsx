@@ -92,6 +92,16 @@ export const RawEditStage = observer(function RawEditStage({
       {toolsInto == null ? <div className="stage__tools">{tools}</div> : createPortal(tools, toolsInto)}
       <div ref={viewport} className="stage__viewport" {...handlers}>
         <canvas ref={canvas} className="stage__content is-ready raw-edit__stage" />
+        {/* Only while the slider is under a finger. A horizon is levelled against something
+            straight, and the picture rarely offers one where it is needed - so the tool
+            brings its own, and takes it away again rather than living over the photograph. */}
+        {store.straightening && (
+          <div
+            className="straighten-grid"
+            data-testid="straighten-grid"
+            style={{ aspectRatio: `${natural.width} / ${natural.height}` }}
+          />
+        )}
         <CropOverlay store={store} presenter={presenter} viewport={box} />
         <KeystoneOverlay store={store} presenter={presenter} viewport={box} />
       </div>

@@ -19,7 +19,10 @@ import {
   editFeatures,
   editLimits,
 } from './gpu/edit_pipeline';
-import type { RawEditStore, SaveStatus } from './raw_edit_store';
+import { readSetting, writeSetting } from '../../app/local_setting';
+import type { EditTool, GuideKind, RawEditStore, SaveStatus } from './raw_edit_store';
+
+const CROP_TO_FIT_KEY = 'bowerbird.edit.cropToFit';
 
 /**
  * Whether the server refused a write because these edits moved under it.
@@ -73,7 +76,11 @@ export class RawEditPresenter {
    */
   private locallyEdited = false;
 
-  constructor(private readonly store: RawEditStore) {}
+  constructor(private readonly store: RawEditStore) {
+    // The habit the last session ended on. Read here rather than defaulted in the store,
+    // which holds data and does not go and get any.
+    store.cropToFit = readSetting(CROP_TO_FIT_KEY) !== '0';
+  }
 
   /**
    * The canvas the tick draws into, once React has mounted it.
@@ -401,14 +408,76 @@ export class RawEditPresenter {
     void this.commit();
   }
 
+  /**
+   * The header's tool selector, which is the two modes and the absence of both.
+   *
+   * Each setter already closes the other, so the order here only decides which of them does
+   * the closing; both arms end at `showGeometry`, so the stage is drawn for whichever won.
+   */
+  @action.bound
+  setTool(tool: EditTool): void {
+    this.setCropping(tool === 'crop');
+    this.setKeystoning(tool === 'perspective');
+  }
+
+  /**
+   * A change of geometry, with the crop moved onto what it leaves showing.
+   *
+   * A straighten and a perspective correction both leave the picture sitting in its frame as a
+   * quadrilateral with wedges of blank around it, and nobody levels a horizon in order to look
+   * at those - so the crop becomes the largest rectangle inside the picture, and the whole
+   * frame again where the geometry is back to nothing. One patch rather than two writes: two
+   * would be two entries in the history and a frame drawn between them showing the wedges.
+   *
+   * **Never while the crop tool is open**, whatever the toggle says. There the reader is
+   * choosing the rectangle by hand, and replacing it under them mid-gesture is the one thing
+   * that must not happen.
+   */
+  @action.bound
+  private fitted(patch: Partial<EditDoc>): Partial<EditDoc> {
+    const doc = this.store.doc;
+    if (doc == null || !this.store.cropToFit || this.store.cropping) return patch;
+    const next = { ...doc, ...patch };
+    const rect = insetCrop({
+      width: this.store.width,
+      height: this.store.height,
+      cropAngle: next.cropAngle,
+      keystone: next.keystone,
+    }) ?? { left: 0, top: 0, right: 1, bottom: 1 };
+    return {
+      ...patch,
+      cropLeft: rect.left,
+      cropTop: rect.top,
+      cropRight: rect.right,
+      cropBottom: rect.bottom,
+    };
+  }
+
+  /**
+   * Whether a geometry change takes the crop with it, and the crop caught up on the way in.
+   *
+   * Remembered across sessions rather than per photograph: it describes how the reader works,
+   * not what this frame is. Settled rather than previewed when it turns on, so the trim it
+   * performs is one step in the history like any other.
+   */
+  @action.bound
+  setCropToFit(on: boolean): void {
+    this.store.cropToFit = on;
+    writeSetting(CROP_TO_FIT_KEY, on ? '1' : '0');
+    if (on) this.settle(this.fitted({}));
+  }
+
   @action.bound
   previewStraighten(degrees: number): void {
-    this.preview({ cropAngle: Math.round(degrees * 100) / 100 });
+    this.store.straightening = true;
+    this.preview(this.fitted({ cropAngle: Math.round(degrees * 100) / 100 }));
   }
 
   @action.bound
   settleStraighten(degrees: number): void {
     this.previewStraighten(degrees);
+    // The grid is for the gesture, so it goes when the gesture does.
+    this.store.straightening = false;
     void this.commit();
   }
 
@@ -492,45 +561,34 @@ export class RawEditPresenter {
       const to = turnedPointForDocument({ x: guide.x2, y: guide.y2 }, doc.rotate);
       return { x1: from.x, y1: from.y, x2: to.x, y2: to.y };
     });
-    this.preview({
-      keystoneGuides: stored,
-      keystone: keystoneFromGuides(stored, { width: this.store.width, height: this.store.height }),
-    });
+    this.preview(
+      this.fitted({
+        keystoneGuides: stored,
+        keystone: keystoneFromGuides(stored, { width: this.store.width, height: this.store.height }),
+      }),
+    );
     if (settle) void this.commit();
   }
 
-  /**
-   * The crop that fits inside what the geometry left, with none of the blank in it.
-   *
-   * A straighten and a perspective correction both leave the picture sitting in its frame as a
-   * quadrilateral with wedges around it; this is the largest rectangle inside that. Its own
-   * button rather than something either tool does on the way out: a reader who is about to
-   * crop by eye does not want the frame moved under them first, and one who is not wants this.
-   */
+  /** Which pair the next line drawn on the picture belongs to. */
   @action.bound
-  cropToBounds(): void {
-    const doc = this.store.doc;
-    if (doc == null) return;
-    const rect = insetCrop({
-      width: this.store.width,
-      height: this.store.height,
-      cropAngle: doc.cropAngle,
-      keystone: doc.keystone,
-    });
-    if (rect == null) return;
-    this.preview({
-      cropLeft: rect.left,
-      cropTop: rect.top,
-      cropRight: rect.right,
-      cropBottom: rect.bottom,
-    });
-    void this.commit();
+  setGuideKind(kind: GuideKind): void {
+    this.store.guideKind = kind;
+  }
+
+  /** One guide, by the index the overlay and the panel both name it with. */
+  @action.bound
+  removeGuide(index: number): void {
+    this.setGuides(
+      this.store.guides.filter((_, at) => at !== index),
+      true,
+    );
   }
 
   /** Takes the correction off, guides and all, which is what a reader means by starting again. */
   @action.bound
   clearKeystone(): void {
-    this.preview({ keystone: null, keystoneGuides: [] });
+    this.preview(this.fitted({ keystone: null, keystoneGuides: [] }));
     void this.commit();
   }
 

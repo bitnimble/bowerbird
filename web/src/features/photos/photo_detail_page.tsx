@@ -12,11 +12,13 @@ import {
   Layers,
   Maximize2,
   RefreshCw,
+  Redo2,
   RotateCw,
   SlidersHorizontal,
   Sparkles,
   Star,
   Trash2,
+  Undo2,
   Wand2,
 } from 'lucide-react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
@@ -41,6 +43,7 @@ import { OverflowMenu } from '../../ui/overflow_menu';
 import { PopoverButton } from '../../ui/popover_button';
 import { Text } from '../../ui/text';
 import { TextArea } from '../../ui/text_area';
+import { EditToolbar, EditTurns } from '../raw_edit/edit_tools';
 import { RawEditPanel } from '../raw_edit/raw_edit_panel';
 import { RawEditPresenter } from '../raw_edit/raw_edit_presenter';
 import { RawEditStage } from '../raw_edit/raw_edit_stage';
@@ -200,7 +203,9 @@ const DetailNav = observer(function DetailNav({
   panelsOpen,
   onTogglePanels,
   onEdit,
+  onDone,
   editing,
+  edit,
 }: {
   photoId: string;
   /** Where the stage draws its own zoom and fullscreen controls. */
@@ -209,7 +214,10 @@ const DetailNav = observer(function DetailNav({
   panelsOpen: boolean | null;
   onTogglePanels: () => void;
   onEdit: () => void;
+  onDone: () => void;
   editing: boolean;
+  /** Null until the editor's own layout effect has built the pair, one render behind `editing`. */
+  edit: { store: RawEditStore; presenter: RawEditPresenter } | null;
 }): JSX.Element {
   const store = usePhotosStore();
   const { photos } = usePresenters();
@@ -229,46 +237,53 @@ const DetailNav = observer(function DetailNav({
   // construction (§19.6).
   // Under the same collection the viewer is, so the way back out of a triage
   // session lands in the grid the reader entered it from.
-  const stackPath = photo?.stack_id == null ? null : triagePath(photo.stack_id, store.source);
+  const stackPath = editing || photo?.stack_id == null ? null : triagePath(photo.stack_id, store.source);
 
   // Declared once and rendered either as a button each or as one overflow menu,
   // so a narrow screen cannot end up offering a different set of actions from a
   // wide one.
+  //
+  // Editing keeps the downloads and drops the other two: which rendition the viewer
+  // shows says nothing about the frame being graded, and every action in the second
+  // is either what the reader is already doing or a way of leaving the photograph
+  // in the middle of one.
   const menus = [
-    // Which of the three files is on screen: the comparison the detail view
-    // exists for, so it leads rather than sitting under the housekeeping.
-    menuSection({
-      label: 'Rendition',
-      icon: <ImageIcon size={ICON} />,
-      options: RENDITIONS,
-      toggles: [
-        {
-          label: 'Disable cache when changing rendition',
-          icon: <RefreshCw size={ICON} />,
-          checked: store.forceRebuild,
-          onChange: photos.setForceRebuild,
-        },
-      ],
-      onSelect: (rendition) => void photos.chooseRendition(photoId, rendition),
-    }),
-    menuSection({
-      label: 'Actions',
-      icon: <RefreshCw size={ICON} />,
-      // Edit is how you enter the grade; once in, Done on the panel is how you leave,
-      // so offering Edit again would only no-op.
-      options: editing ? ACTIONS.filter((a) => a.value !== 'edit') : ACTIONS,
-      onSelect: (action) => {
-        if (action === 'edit') {
-          onEdit();
-          return;
-        }
-        if (action === 'delete') {
-          void photos.deletePhotos({ photo_ids: [photoId] });
-          return;
-        }
-        void photos.refreshMetadata({ photo_ids: [photoId] });
-      },
-    }),
+    ...(editing
+      ? []
+      : [
+          // Which of the three files is on screen: the comparison the detail view
+          // exists for, so it leads rather than sitting under the housekeeping.
+          menuSection({
+            label: 'Rendition',
+            icon: <ImageIcon size={ICON} />,
+            options: RENDITIONS,
+            toggles: [
+              {
+                label: 'Disable cache when changing rendition',
+                icon: <RefreshCw size={ICON} />,
+                checked: store.forceRebuild,
+                onChange: photos.setForceRebuild,
+              },
+            ],
+            onSelect: (rendition) => void photos.chooseRendition(photoId, rendition),
+          }),
+          menuSection({
+            label: 'Actions',
+            icon: <RefreshCw size={ICON} />,
+            options: ACTIONS,
+            onSelect: (action) => {
+              if (action === 'edit') {
+                onEdit();
+                return;
+              }
+              if (action === 'delete') {
+                void photos.deletePhotos({ photo_ids: [photoId] });
+                return;
+              }
+              void photos.refreshMetadata({ photo_ids: [photoId] });
+            },
+          }),
+        ]),
     menuSection({
       label: 'Download',
       icon: <Download size={ICON} />,
@@ -277,27 +292,85 @@ const DetailNav = observer(function DetailNav({
     }),
   ];
 
-  return (
-    <div className="row detail__nav">
-      {/* Still a link, so it can be opened in a tab of its own; the cursor is put
-          on this photo on the way out so the grid comes back to it. */}
-      <Button render={<Link to={back.path} />} onClick={photos.focusOpenPhoto}>
-        <ArrowLeft size={ICON} />
-        {back.label}
-      </Button>
-      <Button iconOnly aria-label="Previous photo" title="Previous photo" disabled={prevId == null} onClick={() => step('prev')}>
-        <ChevronLeft size={ICON} />
-      </Button>
-      <Button iconOnly aria-label="Next photo" title="Next photo" disabled={nextId == null} onClick={() => step('next')}>
-        <ChevronRight size={ICON} />
-      </Button>
-      {/* The one thing in the bar that gives up width, so the controls stay on a
-          single line however long a path is. */}
-      <Text variant="mono" className="detail__path">
-        {photo?.file_path ?? ''}
-      </Text>
+  // A phone cannot hold the grade's bar on one line - the tools, the turns and the zoom are
+  // eight controls before the menus - so while editing it is allowed the second row rather
+  // than squeezing every button below its own label. Which also means dropping the centring:
+  // a spacer on a wrapped line pushes the toolbar to an edge instead of the middle.
+  const centred = editing && !mobile;
+  const tool = edit?.store.tool ?? 'cursor';
+  const leaveTool = (): void => edit?.presenter.setTool('cursor');
 
-      <div className="spacer" />
+  return (
+    <div className={`row detail__nav${editing ? ' detail__nav--editing' : ''}`}>
+      {/* The way out and the way back through the grade take the same corner: leaving is
+          what the reader reaches for in either mode, and stepping to another photograph
+          mid-edit is not something to leave one press away. */}
+      {editing ? (
+        <>
+          {/* Inside a geometry tool this leaves the *tool*, not the editor. Same corner and
+              same weight, because it is the same gesture as far as the reader is concerned -
+              finish what is open - and one that closed the whole grade from under a
+              half-drawn crop would be the wrong one to hit by habit. */}
+          <Button variant="primary" onClick={tool === 'cursor' ? onDone : leaveTool} data-testid="raw-edit-finish">
+            {tool === 'crop' ? 'Finish crop' : tool === 'perspective' ? 'Finish perspective' : 'Done'}
+          </Button>
+          <Button
+            iconOnly={mobile}
+            aria-label="Undo"
+            title="Undo"
+            disabled={edit == null || !edit.store.canUndo}
+            onClick={() => void edit?.presenter.undo()}
+            data-testid="raw-edit-undo"
+          >
+            <Undo2 size={ICON} />
+            {!mobile && 'Undo'}
+          </Button>
+          <Button
+            iconOnly={mobile}
+            aria-label="Redo"
+            title="Redo"
+            disabled={edit == null || !edit.store.canRedo}
+            onClick={() => void edit?.presenter.redo()}
+            data-testid="raw-edit-redo"
+          >
+            <Redo2 size={ICON} />
+            {!mobile && 'Redo'}
+          </Button>
+        </>
+      ) : (
+        <>
+          {/* Still a link, so it can be opened in a tab of its own; the cursor is put
+              on this photo on the way out so the grid comes back to it. */}
+          <Button render={<Link to={back.path} />} onClick={photos.focusOpenPhoto}>
+            <ArrowLeft size={ICON} />
+            {back.label}
+          </Button>
+          <Button iconOnly aria-label="Previous photo" title="Previous photo" disabled={prevId == null} onClick={() => step('prev')}>
+            <ChevronLeft size={ICON} />
+          </Button>
+          <Button iconOnly aria-label="Next photo" title="Next photo" disabled={nextId == null} onClick={() => step('next')}>
+            <ChevronRight size={ICON} />
+          </Button>
+          {/* The one thing in the bar that gives up width, so the controls stay on a
+              single line however long a path is. */}
+          <Text variant="mono" className="detail__path">
+            {photo?.file_path ?? ''}
+          </Text>
+        </>
+      )}
+
+      {(!editing || centred) && <div className="spacer" />}
+
+      {/* Between two spacers where there is room for them, so the toolbar sits in the middle
+          of the bar rather than on the end of whichever group happens to be longer. */}
+      {editing && edit != null && (
+        <>
+          <EditToolbar store={edit.store} presenter={edit.presenter} />
+          {centred && <div className="spacer" />}
+        </>
+      )}
+
+      {editing && edit != null && <EditTurns store={edit.store} presenter={edit.presenter} />}
 
       <div className="detail__tools" ref={toolsRef} />
 
@@ -905,9 +978,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   const expanded = !mobile && edge === 'beside';
 
   const metaPanels = editing ? (
-    session != null && (
-      <RawEditPanel store={session.store} presenter={session.presenter} onDone={stopEdit} />
-    )
+    session != null && <RawEditPanel store={session.store} presenter={session.presenter} />
   ) : (
     <>
       <NotesPanel photoId={photoId} />
@@ -964,7 +1035,9 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
         panelsOpen={mobile ? null : panelsOpen}
         onTogglePanels={togglePanels}
         onEdit={startEdit}
+        onDone={stopEdit}
         editing={editing}
+        edit={session}
       />
 
       <div

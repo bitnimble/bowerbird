@@ -1,24 +1,19 @@
 import { observer } from 'mobx-react-lite';
-import {
-  Fragment,
-  useEffect,
-  useRef,
-  type MouseEvent as ReactMouseEvent,
-  type PointerEvent as ReactPointerEvent,
-} from 'react';
+import { Fragment, useEffect, useRef, type PointerEvent as ReactPointerEvent } from 'react';
 import { fitScale, type Size } from '../photos/zoom_pan';
-import type { KeystoneGuide } from './keystone';
+import { isUpright, type KeystoneGuide } from './keystone';
 import type { RawEditPresenter } from './raw_edit_presenter';
 import type { RawEditStore } from './raw_edit_store';
 
 /**
- * How many lines the tool takes: two down the picture and two across it.
+ * How many lines a pair takes, which is two - and the pairs are what the geometry uses.
  *
- * Four is not a limit that was chosen, it is what the geometry uses. A pair of lines gives one
- * vanishing point and fixes one axis; a second pair fixes the other, and there is no third axis
- * in a photograph for a fifth line to be about.
+ * Two lines give one vanishing point and fix one axis; the second pair fixes the other, and
+ * there is no third axis in a photograph for a fifth line to be about. Per pair rather than a
+ * total of four, because four lines that all happen to be upright fix one axis twice and the
+ * other not at all - which the reader could reach, and which looked like the tool ignoring them.
  */
-const MOST_GUIDES = 4;
+const PAIR = 2;
 
 /** A line shorter than this is a tap that slipped, not a line. Fractions of the frame's diagonal. */
 const SHORTEST = 0.04;
@@ -129,7 +124,9 @@ export const KeystoneOverlay = observer(function KeystoneOverlay({
   /** A new line, drawn out of the picture itself rather than out of a button. */
   const draw = (event: ReactPointerEvent<HTMLDivElement>): void => {
     if (!event.isPrimary || held.current != null) return;
-    if (box.width === 0 || box.height === 0 || guides.length >= MOST_GUIDES) return;
+    // The pair the reader says they are drawing, and it has to have room. A third upright line
+    // fixes the vertical a second time and the horizontal not at all.
+    if (box.width === 0 || box.height === 0 || store.guidePairs[store.guideKind].length >= PAIR) return;
     event.preventDefault();
     event.stopPropagation();
     const surface = event.currentTarget;
@@ -156,6 +153,11 @@ export const KeystoneOverlay = observer(function KeystoneOverlay({
     });
     const longEnough = (guide: KeystoneGuide): boolean =>
       Math.hypot(guide.x2 - guide.x1, guide.y2 - guide.y1) >= SHORTEST;
+    // A line's pair is its own direction, so a drag that came out the other way joins the other
+    // pair - and is dropped where that one is already full rather than being kept as a fifth
+    // line the correction would ignore.
+    const roomFor = (guide: KeystoneGuide): boolean =>
+      store.guidePairs[isUpright(guide) ? 'vertical' : 'horizontal'].length < PAIR;
 
     // The lines that were already there when this one started. Held rather than re-read,
     // because every move of this gesture writes the drawn line into the list and re-reading
@@ -182,7 +184,7 @@ export const KeystoneOverlay = observer(function KeystoneOverlay({
       const drawn = line(client);
       // A tap that never travelled leaves the guides where they were rather than adding a line
       // of no length, which names no direction and would refuse the whole correction.
-      presenter.setGuides(drawnOver(longEnough(drawn) ? drawn : null), true);
+      presenter.setGuides(drawnOver(longEnough(drawn) && roomFor(drawn) ? drawn : null), true);
     };
     const onCancel = (): void => {
       release();
@@ -194,18 +196,6 @@ export const KeystoneOverlay = observer(function KeystoneOverlay({
     surface.addEventListener('pointercancel', onCancel);
     surface.addEventListener('lostpointercapture', onCancel);
   };
-
-  const remove = (index: number) => (event: ReactMouseEvent<HTMLButtonElement>): void => {
-    if (held.current != null) return;
-    event.preventDefault();
-    event.stopPropagation();
-    presenter.setGuides(
-      store.guides.filter((_, at) => at !== index),
-      true,
-    );
-  };
-
-  const percent = (value: number): string => `${value * 100}%`;
 
   /**
    * Where an end handle sits, in pixels, held inside the picture.
@@ -231,8 +221,11 @@ export const KeystoneOverlay = observer(function KeystoneOverlay({
       <svg className="keystone-overlay__lines" viewBox="0 0 100 100" preserveAspectRatio="none">
         {guides.map((guide, index) => (
           <Fragment key={index}>
+            {/* Coloured by the pair it is in, which is the one fact about a guide the reader
+                cannot read off the picture: two lines of one colour are what gets corrected
+                together, and a line that came out the other way changes colour as it is drawn. */}
             <line
-              className="keystone-overlay__line"
+              className={`keystone-overlay__line keystone-overlay__line--${isUpright(guide) ? 'vertical' : 'horizontal'}`}
               x1={guide.x1 * 100}
               y1={guide.y1 * 100}
               x2={guide.x2 * 100}
@@ -265,28 +258,18 @@ export const KeystoneOverlay = observer(function KeystoneOverlay({
           {([1, 2] as const).map((end) => (
             <div
               key={end}
-              className="keystone-overlay__end"
+              className={`keystone-overlay__end keystone-overlay__end--${isUpright(guide) ? 'vertical' : 'horizontal'}`}
               data-testid={`keystone-guide-${index}-${end}`}
               onPointerDown={drag(index, end)}
               style={placed(end === 1 ? guide.x1 : guide.x2, end === 1 ? guide.y1 : guide.y2)}
             />
           ))}
-          {/* On click rather than on pointer-down, and behind the ends rather than over them:
-              at the midpoint of a short guide this covers both of them, so pressing an end to
-              drag it was deleting the guide instead. */}
-          <button
-            type="button"
-            className="keystone-overlay__drop"
-            data-testid={`keystone-guide-${index}-drop`}
-            aria-label={`Remove guide ${index + 1}`}
-            onClick={remove(index)}
-            style={{ left: percent((guide.x1 + guide.x2) / 2), top: percent((guide.y1 + guide.y2) / 2) }}
-          >
-            ×
-          </button>
         </Fragment>
       ))}
-
+      {/* Removing a guide is the panel's, not the picture's. A × at the midpoint sat under both
+          end handles on a short guide - so it took the presses meant for them and never got the
+          ones meant for it - and it was a text node in the middle of a drag surface, which a
+          drag selected rather than moved. */}
     </div>
   );
 });
