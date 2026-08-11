@@ -87,8 +87,26 @@ const END_STOPS: f32 = 2.0;
 /// pivot, which is a strong but still photographic S.
 const CONTRAST_SLOPE: f32 = 0.6;
 
-/// The tonal sliders as one curve on luma.
-fn tone_adjusted(luma: f32) -> f32 {
+/// The tonal sliders as one curve on luma, with the middle pair reading the neighbourhood.
+///
+/// **Highlights and shadows ask how bright the *region* is; whites and blacks ask how bright
+/// the pixel is.** That split is the whole shape of the four, and it is not decoration:
+///
+///   - A pixel does not know whether it is a shadow. A dark pixel in the shaded side of a face
+///     and a dark pixel between two threads of a white shirt are the same number, and only one
+///     of them is what a reader means by "the shadows". Weighting the lift by the *neighbour-
+///     hood's* brightness separates them, and is why a locally adaptive shadows lifts a subject
+///     out of shade without also flattening every texture in the frame - which is what the
+///     pointwise version did, and what it looked like it was doing.
+///   - Whites and blacks are endpoints. They say where the range ends, which is a property of a
+///     value and not of a place, so they stay pointwise. Highlights and shadows then act inside
+///     the range those two set, rather than being four gains that merely sum.
+///
+/// `local_offset` is how far this pixel sits from its own neighbourhood, in stops, and the
+/// neighbourhood is the edge-aware one `detail.wgsl` fits - so the weighting does not bleed
+/// across a hard edge, which is the failure that makes a locally adaptive tone control halo.
+/// Zero where nothing has asked for the texture, which is exactly the pointwise curve.
+fn tone_adjusted(luma: f32, local_offset: f32) -> f32 {
   var l = luma;
 
   // Contrast first, as a power about the pivot: a straight line in log space, so it cannot
@@ -102,9 +120,15 @@ fn tone_adjusted(luma: f32) -> f32 {
   // order among them cannot matter - four gains that compose by multiplication are four
   // that commute, and nobody has to remember which the panel lists first.
   let at = stops_below_white(l);
+  // The neighbourhood in the graded frame's own stops. The pixel's deviation from its
+  // neighbourhood is the *same number* before the camera match and after it, and before the
+  // exposure and after it - both are gains, and a gain is additive in stops - so subtracting
+  // that deviation from the graded pixel gives the graded neighbourhood exactly, without this
+  // needing a second blur of the graded frame or any knowledge of what the match did.
+  let around = at - local_offset;
   var gain = 0.0;
-  gain += edit.highlights / 100.0 * ZONE_STOPS * zone(at, -1.0, 1.6);
-  gain += edit.shadows / 100.0 * ZONE_STOPS * zone(at, -4.0, 1.8);
+  gain += edit.highlights / 100.0 * ZONE_STOPS * zone(around, -1.0, 1.6);
+  gain += edit.shadows / 100.0 * ZONE_STOPS * zone(around, -4.0, 1.8);
   // The endpoints are one-sided, and centred where the reader thinks they are: `whites` at
   // diffuse white itself, `blacks` five stops under it rather than six and a half - which is
   // below where a photograph keeps anything a black point is meant to reach.
@@ -239,7 +263,11 @@ fn dehazed(colour: vec3f, dark_stops: f32) -> vec3f {
 /// Returns the colour untouched where nothing is set, which is the common case: an unedited
 /// photo, and every photo in a library nobody has opened the editor on.
 fn adjusted(colour: vec3f, base_luma: f32, uv: vec2f) -> vec3f {
-  let local = edit.texture_adjust != 0.0 || edit.clarity != 0.0 || edit.dehaze != 0.0;
+  // The neighbourhood is read for the middle pair of the tone group as well now, not only for
+  // the presence three: `tone_adjusted` weights highlights and shadows by how bright the region
+  // is rather than the pixel.
+  let local = edit.texture_adjust != 0.0 || edit.clarity != 0.0 || edit.dehaze != 0.0
+      || edit.highlights != 0.0 || edit.shadows != 0.0;
   // Off the frame rather than off the document: a photograph whose camera recorded no neutral
   // has nothing to balance against however the sliders are set, and one that does pays nine
   // multiplies through a matrix `white_balance.wgsl` has already made the identity where the
@@ -278,7 +306,13 @@ fn adjusted(colour: vec3f, base_luma: f32, uv: vec2f) -> vec3f {
   // either - every control below is a gain - so it is already the answer.
   if (luma <= 0.0) { return out; }
 
-  var toned_luma = tone_adjusted(luma);
+  // How far this pixel sits above its own neighbourhood, in stops, off the *base* - which is
+  // the only domain the two are comparable in, the blur being of the frame as it arrived. Zero
+  // where the neighbourhood was not read, which leaves the tone curve pointwise.
+  var offset = 0.0;
+  if (local) { offset = stops_below_white(base_luma) - blur.g; }
+
+  var toned_luma = tone_adjusted(luma, offset);
   if (edit.texture_adjust != 0.0 || edit.clarity != 0.0) {
     toned_luma = toned_luma * exp2(local_contrast(stops_below_white(base_luma), blur));
   }

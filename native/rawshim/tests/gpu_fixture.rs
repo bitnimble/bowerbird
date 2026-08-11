@@ -705,6 +705,34 @@ fn band(frame: &[u16], apart: usize) -> f64 {
     total / count
 }
 
+/// A frame in two halves, each with the same fine texture on a very different ground.
+///
+/// The left half sits deep in shadow and the right half near white, and the texture riding on
+/// both is identical in *stops* - a fixed ratio, so it is the same local contrast on each.
+///
+/// **A tenth of a stop either side, which is texture and not an edge.** The distinction is the
+/// guided filter's own and the number has to respect it: `GUIDE_EPS` calls four tenths of a
+/// stop of local variation the boundary, so a ripple near that is half kept as structure and
+/// the test below would be measuring the threshold rather than the locality. A surface under
+/// even light varies by about this much, which is what the tone group is supposed to leave
+/// alone.
+fn split_ground() -> Vec<u16> {
+    let mut samples = vec![0u16; BANDED * BANDED * 3];
+    for y in 0..BANDED {
+        for x in 0..BANDED {
+            let ground = if x < BANDED / 2 { 900.0 } else { 30000.0 };
+            // The same ratio either side, so the texture is the same number of stops on both.
+            let ripple = 1.0 + 0.08 * (((x + y) % 2) as f64 * 2.0 - 1.0);
+            let level = (ground * ripple).clamp(0.0, 65535.0) as u16;
+            let at = (y * BANDED + x) * 3;
+            samples[at] = level;
+            samples[at + 1] = level;
+            samples[at + 2] = level;
+        }
+    }
+    samples
+}
+
 /// The banded frame graded, which is what both of the tests below measure off.
 ///
 /// `Rolled` rather than PQ, so a difference in counts is a difference in light: the transfer
@@ -714,8 +742,16 @@ fn graded_banded(
     haze: f64,
     adjust: rawshim::gpu::Adjust,
 ) -> Vec<u16> {
+    graded_frame(gpu, banded(haze), adjust)
+}
+
+fn graded_frame(
+    gpu: &rawshim::gpu::Gpu,
+    frame: Vec<u16>,
+    adjust: rawshim::gpu::Adjust,
+) -> Vec<u16> {
     let grade = hdr::Grade { peak_nits: 1000.0, reference_white_nits: 203.0, white_quantile: 0.995 };
-    let mut samples = banded(haze);
+    let mut samples = frame;
     let levels = tone::levels(&samples, grade.white_quantile);
     tone::encode_base(&mut samples, levels.anchored(), grade.reference_white_nits);
     gpu.encode(
@@ -740,6 +776,79 @@ fn graded_banded(
             output: rawshim::gpu::Output::Rolled,
         },
     )
+}
+
+/// Shadows lifts a region without stretching the texture inside it, which is the whole of what
+/// reading the neighbourhood buys.
+///
+/// **A pixel does not know whether it is a shadow, and a pointwise curve has to pretend it
+/// does.** On the dim half of `split_ground` the texture rides a tenth of a stop either side of
+/// a ground five stops under white - so a curve evaluated per pixel gives the peak of each
+/// ripple a materially larger lift than the trough, the two sitting at different points on the
+/// zone's falling side. Measured against this frame: about a seventh of a stop of difference
+/// across a ripple two tenths of a stop wide, which is the same texture stretched by two thirds.
+/// Every flat surface in a shaded part of a photograph gets that, and it is why a pointwise
+/// shadows reads as scouring rather than as opening up.
+///
+/// Weighted by the *neighbourhood* the ripple is smaller than the guided filter's own edge
+/// threshold, so it is smoothed away from the weight entirely: every texel of the region takes
+/// one gain and the texture arrives at the top intact.
+///
+/// So the claim is scale-free on purpose - local contrast as a share of the mean, before and
+/// after. The lift itself is asserted first, because a control that did nothing would hold that
+/// share perfectly.
+#[test]
+fn shadows_lifts_a_region_without_stretching_the_texture_in_it() {
+    let Some(gpu) = rawshim::gpu::device() else {
+        eprintln!("SKIPPED: no adapter answered, so the tone group was not run.");
+        return;
+    };
+    let none = rawshim::gpu::Adjust::none();
+    let flat = graded_frame(gpu, split_ground(), none);
+    let lifted =
+        graded_frame(gpu, split_ground(), rawshim::gpu::Adjust { shadows: 100.0, ..none });
+
+    // Well inside the dim half, so nothing measured straddles the seam the filter is holding.
+    let (from, to) = (16usize, BANDED / 2 - 16);
+    let mean = |frame: &[u16]| {
+        let mut total = 0.0;
+        let mut count = 0.0;
+        for y in 0..BANDED {
+            for x in from..to {
+                total += f64::from(frame[(y * BANDED + x) * 3]);
+                count += 1.0;
+            }
+        }
+        total / count
+    };
+    // The ripple, as the mean step between neighbouring columns - which is what it is made of.
+    let ripple = |frame: &[u16]| {
+        let mut total = 0.0;
+        let mut count = 0.0;
+        for y in 0..BANDED {
+            for x in from..to - 1 {
+                let at = |x: usize| f64::from(frame[(y * BANDED + x) * 3]);
+                total += (at(x) - at(x + 1)).abs();
+                count += 1.0;
+            }
+        }
+        total / count
+    };
+
+    let (was, now) = (mean(&flat), mean(&lifted));
+    assert!(
+        now > was * 1.15,
+        "shadows at +100 took the dim region from {was:.0} to {now:.0}, which is not a lift",
+    );
+
+    let (before, after) = (ripple(&flat) / was, ripple(&lifted) / now);
+    assert!(
+        after < before * 1.12,
+        "shadows at +100 took the region's local contrast from {:.1}% of the mean to {:.1}%: it \
+         is weighting the pixel rather than the region",
+        before * 100.0,
+        after * 100.0,
+    );
 }
 
 /// The temperature and tint pair, against the direction and the anchor they promise.
