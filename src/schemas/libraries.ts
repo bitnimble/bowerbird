@@ -42,10 +42,10 @@ export const LibrarySchema = z.object({
   read_only: z.boolean().default(false),
   name: z.string().min(1),
   ordering: OrderingSchema,
-  // Matching the column defaults: the embedded JPEG needs no demosaic, and HDR
-  // is opt-in because it only applies to a render.
-  rendition_source: RenditionSourceSchema.default('embedded'),
-  rendition_hdr: z.boolean().default(false),
+  // Matching the column defaults: a render, in HDR, because that is what the RAW
+  // has and the embedded JPEG throws away.
+  rendition_source: RenditionSourceSchema.default('render'),
+  rendition_hdr: z.boolean().default(true),
   include_subfolders: z.boolean().default(true),
   mirror_shoots: z.boolean().default(true),
   // Automatic photo stacking (§19.4). Per library rather than global because one

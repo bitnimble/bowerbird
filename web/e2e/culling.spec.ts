@@ -23,11 +23,18 @@ test.describe.configure({ mode: 'serial' });
 // Where this library's renditions land. Generated files live outside every
 // library root now (§3) and the directory is keyed by the library's id, so the
 // path is asked for rather than built from the root the spec already holds.
+// The large renditions are filed under `<rendition>-hdr` when the library builds
+// them in HDR, so the directory is read off the library rather than assumed.
 async function renditionPath(request: APIRequestContext, rendition: string, photoId: string): Promise<string> {
-  const libraries = (await (await request.get(`${API_URL}/api/libraries`)).json()) as { id: string; root_path: string }[];
+  const libraries = (await (await request.get(`${API_URL}/api/libraries`)).json()) as {
+    id: string;
+    root_path: string;
+    rendition_hdr: boolean;
+  }[];
   const library = libraries.find((l) => l.root_path === CULL_PHOTOS_DIR);
   expect(library, 'the cull library is registered').toBeDefined();
-  return path.join(libraryDataDir(library!.id), 'renditions', rendition, `${photoId}.avif`);
+  const dir = library!.rendition_hdr ? `${rendition}-hdr` : rendition;
+  return path.join(libraryDataDir(library!.id), 'renditions', dir, `${photoId}.avif`);
 }
 
 // The first frame a stage shows is a rendition read off disk and decoded, on a machine

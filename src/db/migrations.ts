@@ -17,12 +17,12 @@ CREATE TABLE IF NOT EXISTS libraries (
   -- Where this library's renditions get their pixels, and whether the full-size
   -- one is HDR (§10.2). Per library rather than global: one catalogue may be
   -- scanned JPEGs where the camera's rendering is the point, another RAWs worth
-  -- demosaicing. 'embedded' is the default because it needs no demosaic.
-  rendition_source TEXT NOT NULL DEFAULT 'embedded'
+  -- demosaicing. 'render' is the default: it is the picture the RAW actually holds.
+  rendition_source TEXT NOT NULL DEFAULT 'render'
     CHECK (rendition_source IN ('embedded', 'render')),
   -- Only meaningful with 'render': an embedded JPEG is 8-bit SDR, so there is no
   -- headroom in it to carry.
-  rendition_hdr INTEGER NOT NULL DEFAULT 0,
+  rendition_hdr INTEGER NOT NULL DEFAULT 1,
   -- How much of the folder tree this library is, and whether its folders are
   -- shoots (§4.1). Standing rules, not import-time choices: a folder created
   -- next month is in or out for the same reason today's are.
@@ -549,7 +549,9 @@ export function runMigrations(db: Database): void {
   db.exec('CREATE INDEX IF NOT EXISTS idx_photos_deleted_batch ON photos(deleted_batch) WHERE deleted_batch IS NOT NULL');
   ensureColumn(db, 'libraries', 'last_synced_at', 'TEXT'); // §9.6
   // Per-library rendition settings, replacing the global import.thumbnail_source
-  // (§10.2). The default matches what that setting shipped with.
+  // (§10.2). Backfilled with what that setting shipped with rather than today's
+  // default, so a catalogue built from embedded JPEGs is not silently re-pointed
+  // at renders it never asked for.
   ensureColumn(db, 'libraries', 'rendition_source', "TEXT NOT NULL DEFAULT 'embedded'");
   ensureColumn(db, 'libraries', 'rendition_hdr', 'INTEGER NOT NULL DEFAULT 0');
   dropRenditionHdrVideo(db);

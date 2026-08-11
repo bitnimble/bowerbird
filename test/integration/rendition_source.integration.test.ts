@@ -39,20 +39,20 @@ test('the rendition settings live on the library and round-trip', () => {
   try {
     db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(id, '/tmp/x', 'lib', 'added_desc');
 
-    // The default is the embedded JPEG, which needs no demosaic, and HDR is off
-    // because it only means anything for a render.
+    // The default is a render, in HDR: the picture the RAW holds rather than the
+    // 8-bit SDR one the camera baked.
     const created = libraries.getById(id)!;
-    expect(created.rendition_source).toBe('embedded');
-    expect(created.rendition_hdr).toBe(false);
+    expect(created.rendition_source).toBe('render');
+    expect(created.rendition_hdr).toBe(true);
 
-    libraries.setRenditionSource(id, 'render');
-    libraries.setRenditionHdr(id, true);
-    const rendered = libraries.getById(id)!;
-    expect(rendered.rendition_source).toBe('render');
-    expect(rendered.rendition_hdr).toBe(true);
+    libraries.setRenditionSource(id, 'embedded');
+    libraries.setRenditionHdr(id, false);
+    const embedded = libraries.getById(id)!;
+    expect(embedded.rendition_source).toBe('embedded');
+    expect(embedded.rendition_hdr).toBe(false);
 
     // Stored as an integer, so it has to come back a boolean rather than 1.
-    expect(typeof rendered.rendition_hdr).toBe('boolean');
+    expect(typeof created.rendition_hdr).toBe('boolean');
   } finally {
     db.close();
   }
