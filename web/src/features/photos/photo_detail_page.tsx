@@ -46,6 +46,7 @@ import { RawEditPresenter } from '../raw_edit/raw_edit_presenter';
 import { RawEditStage } from '../raw_edit/raw_edit_stage';
 import { RawEditStore } from '../raw_edit/raw_edit_store';
 import { useHdrVideo } from './hdr_video';
+import { panelEdge } from './panel_edge';
 import { photoPath, sourceOfPath, triagePath } from './photos_store';
 import { renditionLabel } from './renditions';
 import { PhotoStage } from './photo_stage';
@@ -428,9 +429,10 @@ const DetailFrame = observer(function DetailFrame({ photoId, toolsInto }: { phot
     <PhotoStage
       photoKey={photoId}
       step={store.stepTo(photoId)}
-      // The panels decide which edge they take from this photo's shape, so until
-      // that is known from somewhere the stage is not the size it will be.
-      hold={store.photoFor(photoId) == null}
+      // Which edge the panels take is decided from this photo's shape and the
+      // box the page has, so until both are known the stage is not the size it
+      // will be.
+      hold={store.photoFor(photoId) == null || store.detailWidth === 0}
       busy={store.buildingRendition}
       retryEpoch={store.serverEpoch}
       sources={sources}
@@ -790,6 +792,10 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   // rather than a ref, because the stage has to render again once the slot
   // exists; the setter is stable, so neither part of the bar re-renders after.
   const [toolsSlot, setToolsSlot] = useState<HTMLDivElement | null>(null);
+  // State rather than a ref: the box is mounted and unmounted under this same
+  // component (the not-found branch below), and an effect keyed on a ref would
+  // not hear about it either way.
+  const [box, setBox] = useState<HTMLDivElement | null>(null);
   const { pathname, search } = useLocation();
   const navigate = useNavigate();
   // In the address rather than in state, because the address is the one thing stepping
@@ -809,6 +815,19 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
     void photos.openDetail(photoId, sourceOfPath(pathname));
     void appSettings.load();
   }, [photoId, pathname, photos, appSettings]);
+
+  // The one input `panelEdge` cannot get from the store. The box is the page's
+  // whole remaining space either way, so measuring it does not depend on which
+  // edge the panels were given and choosing an edge cannot move it.
+  useEffect(() => {
+    if (box == null) return;
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry == null) return;
+      photos.setDetailBox(entry.contentRect.width, entry.contentRect.height);
+    });
+    observer.observe(box);
+    return () => observer.disconnect();
+  }, [box, photos]);
 
   // Built only while editing. The pair owns a GPU device and the frame's texture, which
   // belong to this visit rather than to the session.
@@ -871,19 +890,19 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
     );
   }
 
-  // A wide photo wastes horizontal space if the panel sits beside it, and a tall
-  // one wastes vertical space if the panel sits under it. Put the panel on
-  // whichever edge leaves the photo biggest.
+  // Whichever edge leaves the photograph biggest in the box the two of them
+  // share. The photo's shape alone cannot answer it: a 3:2 frame has width to
+  // spare on a 16:9 screen and none at all in a portrait window.
   //
-  // From the loaded grid row when the detail has not arrived: the shape is all
-  // the layout needs, and waiting for the fetch to learn it costs a frame of
+  // The shape is off the loaded grid row when the detail has not arrived: it is
+  // all the layout needs, and waiting for the fetch to learn it costs a frame of
   // empty stage on every step, warmed neighbour or not.
   const shape = store.photoFor(photoId);
-  const landscape = shape == null || shape.width >= shape.height;
-  // Beside a portrait the column runs the full height of the page, so every row
-  // fits without scrolling; under a landscape it is a 34vh strip and does not,
-  // and neither does a phone's sheet.
-  const expanded = !mobile && !landscape;
+  const edge = shape == null ? 'beside' : panelEdge(shape.width / shape.height, store.detailWidth, store.detailHeight);
+  // Beside, the column runs the full height of the page, so every row fits
+  // without scrolling; below, it is a 34vh strip and does not, and neither does
+  // a phone's sheet.
+  const expanded = !mobile && edge === 'beside';
 
   const metaPanels = editing ? (
     session != null && (
@@ -949,9 +968,10 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
       />
 
       <div
-        className={`detail detail--${
-          mobile ? 'sheet' : !panelsOpen && !editing ? 'only' : landscape ? 'below' : 'beside'
-        }${session?.store.cropping || session?.store.keystoning ? ' detail--cropping' : ''}`}
+        ref={setBox}
+        className={`detail detail--${mobile ? 'sheet' : !panelsOpen && !editing ? 'only' : edge}${
+          session?.store.cropping || session?.store.keystoning ? ' detail--cropping' : ''
+        }`}
       >
         {editing && session != null ? (
           // The same slot the viewer's stage draws into, so the zoom control sits where it

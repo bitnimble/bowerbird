@@ -199,6 +199,12 @@ export class PhotosStore {
   @observable accessor viewportWidth = 0;
   @observable accessor viewportHeight = 0;
 
+  // The box the detail view's stage and panels share, written by the presenter
+  // from a ResizeObserver. Which edge the panels take is a question about this
+  // box (`panelEdge`), and it is never read back out of the DOM.
+  @observable accessor detailWidth = 0;
+  @observable accessor detailHeight = 0;
+
   // Where the scroller is scrolled to, inside a rail that is `RAIL_HEIGHT` tall
   // however long the collection is. The single truth for the element's `scrollTop`
   // in both directions: the scroll handler samples into it, and everything that

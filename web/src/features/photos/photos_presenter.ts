@@ -277,6 +277,13 @@ export class PhotosPresenter {
     this.store.viewportHeight = height;
   }
 
+  /** The space the detail view's stage and panels share. */
+  @action.bound
+  setDetailBox(width: number, height: number): void {
+    this.store.detailWidth = width;
+    this.store.detailHeight = height;
+  }
+
   /** Where the scroller has got to. */
   @action.bound
   setRailTop(top: number): void {
