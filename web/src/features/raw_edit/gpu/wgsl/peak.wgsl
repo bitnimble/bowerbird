@@ -198,30 +198,23 @@ fn remeasure(@builtin(global_invocation_id) id: vec3u) {
 /// sample or only its brightest: rank 100-from-the-top is rank 100-from-the-top either
 /// way, where rank 999,900-from-the-bottom is not.
 ///
-/// One invocation walking every bin was fine at 1024 and is not at 8192: that is 16,384
-/// dependent iterations on a single lane, each waiting on a global load, and it measured as
-/// most of what the peak pass costs. So the bins are summed in parallel first - a lane per
-/// chunk - and only the search across 256 partials and then within one chunk stays serial,
-/// which is 288 steps rather than 16,384.
-const CHUNKS: u32 = 256u;
-var<workgroup> partial: array<u32, 256>;
-
+/// **One lane, and no workgroup memory.** This summed the bins in parallel first - a lane per
+/// 32-bin chunk, then a search across the 256 partials and within the chosen chunk - which is
+/// 288 steps rather than the 8192 below. It also did not work: on one reader's GPU the
+/// partials read back as values no lane had written this dispatch, summing to 2.6x the counts
+/// actually in the histogram, so the chunk picked held nothing near the rank and the search
+/// inside it fell through to bin zero. That is a peak of one nit, which `rolled_off` clamps
+/// the whole frame to - a black picture, on about half the positions of the exposure slider.
+/// The barrier is legal WGSL and the driver is wrong, but a grade that depends on a barrier
+/// holding is not worth a fraction of a millisecond. Searching from the top breaks at the
+/// answer rather than walking every bin, so what it costs is the empty bins above the
+/// highlights.
 fn bin_value(bin: u32) -> f32 {
   return bin_centre(bin) * edit.reference;
 }
 
-@compute @workgroup_size(256)
-fn quantile(@builtin(local_invocation_id) local: vec3u) {
-  let width = BINS / CHUNKS;
-  let first = local.x * width;
-
-  var sum = 0u;
-  for (var b = first; b < first + width; b = b + 1u) { sum = sum + atomicLoad(&histogram[b]); }
-  partial[local.x] = sum;
-  workgroupBarrier();
-
-  if (local.x != 0u) { return; }
-
+@compute @workgroup_size(1)
+fn quantile() {
   // How far down from the brightest the answer sits, over the sample the CPU would have
   // taken. The same rank whether the histogram holds the whole sample or only the candidates,
   // because the candidates are read only when they are every pixel that cleared the
@@ -231,30 +224,31 @@ fn quantile(@builtin(local_invocation_id) local: vec3u) {
   // fair sample and it is not one: `collect` keeps whichever arrive first, in dispatch order,
   // so an overflow keeps the top rows of the frame rather than a spread of it - and the peak
   // it measures is that region's rather than the picture's.
-  var want = u32(max(1.0, (1.0 - QUANTILE) * f32(edit.peak_samples)));
+  let want = u32(max(1.0, (1.0 - QUANTILE) * f32(edit.peak_samples)));
 
-  // Unless the histogram holds fewer samples than that rank, which the candidates can: they
-  // are counted against `peak_samples`, and what is in here is only ever the brightest of
-  // them. No quantile is defined over a sample that short and the brightest of it is, so ask
-  // for that. **This is the difference between a photograph and a black rectangle**: neither
-  // search below could reach an unreachable rank, so both fell through with `found` at zero -
-  // a peak of one nit, which `rolled_off` clamps every pixel in the frame to.
-  var total = 0u;
-  for (var c = 0u; c < CHUNKS; c = c + 1u) { total = total + partial[c]; }
-  if (want > total) { want = 1u; }
-
-  // The chunk the quantile falls in, then the bin inside it, both from the top.
+  // The brightest bin holding anything, kept as the search passes it, for a histogram with
+  // fewer samples in it than the rank - which the candidates can be, since they are counted
+  // against `peak_samples` and hold only the brightest of them. No quantile is defined over a
+  // sample that short and the brightest of it is, so that is what an exhausted search answers.
+  // **This is the difference between a photograph and a black rectangle**: falling through to
+  // bin zero instead is a peak of one nit, and every pixel in the frame clamped to it.
   var seen = 0u;
-  var chunk = 0u;
-  for (var c = CHUNKS; c > 0u; c = c - 1u) {
-    if (seen + partial[c - 1u] >= want) { chunk = c - 1u; break; }
-    seen = seen + partial[c - 1u];
-  }
   var found = 0u;
-  for (var b = (chunk + 1u) * width; b > chunk * width; b = b - 1u) {
-    seen = seen + atomicLoad(&histogram[b - 1u]);
-    if (seen >= want) { found = b - 1u; break; }
+  var highest = 0u;
+  var occupied = false;
+  for (var b = BINS; b > 0u; b = b - 1u) {
+    let count = atomicLoad(&histogram[b - 1u]);
+    if (count > 0u && !occupied) {
+      highest = b - 1u;
+      occupied = true;
+    }
+    seen = seen + count;
+    if (seen >= want) {
+      found = b - 1u;
+      break;
+    }
   }
+  if (seen < want) { found = highest; }
 
   // The bin's centre, and never zero: a scene peak of zero would put the roll-off in a
   // division by it, which is the same guard `scene_peak_nits` applies by returning None.
