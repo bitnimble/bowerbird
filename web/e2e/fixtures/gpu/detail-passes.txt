@@ -1,0 +1,8 @@
+shrink
+moments_of
+box_x
+box_y
+coefficients
+box_x
+box_y
+apply_guided

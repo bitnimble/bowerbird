@@ -65,6 +65,36 @@ export const BALANCE = compose(prelude, edit,whiteBalance);
 // the picture each blur covers follows from it, and two hosts rounding it differently would
 // apply two different clarities to one photograph with nothing to say which was meant.
 
+/**
+ * The order `detail.wgsl`'s entry points run in, which both hosts have to agree on exactly.
+ *
+ * The guided filter is a sequence rather than a kernel - moments, box mean, fit, box mean,
+ * evaluate - and a host that ran it in a different order, or ran one box mean where the other
+ * ran two, would build a different neighbourhood from the same frame. The editor's clarity and
+ * the rendition's would then be different pictures, which is the divergence DESIGN 21.1 is
+ * about, and nothing in the graded fixtures could see it: those are pinned at every slider
+ * zero, where `adjusted` returns before it ever samples this texture.
+ *
+ * So it is stated once, here, as data. The ping-pong between the two 32-bit textures is
+ * *derived* from it on both sides - every pass reads what the one before it wrote - rather
+ * than written out, which is the half of this that could otherwise drift silently.
+ *
+ * `gpu_fixture.rs` writes the native side's copy to `fixtures/gpu/detail-passes.txt` and
+ * `tests/detail_passes.test.ts` holds this against it.
+ */
+export const DETAIL_PASSES = [
+  'shrink',
+  'moments_of',
+  'box_x',
+  'box_y',
+  'coefficients',
+  'box_x',
+  'box_y',
+  'apply_guided',
+] as const;
+
+export type DetailPass = (typeof DETAIL_PASSES)[number];
+
 /** Floats the balance pass writes: three rows of four, the fourth of each unread. */
 export const BALANCE_FLOATS = 12;
 

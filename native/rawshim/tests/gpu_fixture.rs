@@ -398,6 +398,29 @@ fn the_editor_puts_each_slider_where_this_host_does() {
     assert_eq!(committed, built, "how this host fills a Tick has moved");
 }
 
+/// The order this host runs `detail.wgsl` in, for the editor to be held against.
+///
+/// The guided filter is a sequence, not a kernel, and the two hosts run it separately. A host
+/// that reordered it - or ran one box mean where the other ran two - would build a different
+/// neighbourhood from the same frame, so the clarity in the editor and the clarity in the
+/// rendition would be different pictures. **Nothing else can see that.** The graded fixtures
+/// beside this one are pinned at every slider zero, where `adjusted` returns before it samples
+/// the texture at all, so a divergence here changes not one committed byte.
+#[test]
+fn the_editor_filters_detail_in_the_order_this_host_does() {
+    let built = format!("{}\n", rawshim::gpu::DETAIL_PASSES.join("\n"));
+    let path = fixture_dir().join("detail-passes.txt");
+    if std::env::var("BOWERBIRD_WRITE_FIXTURES").is_ok_and(|v| v == "1") {
+        std::fs::create_dir_all(fixture_dir()).expect("the fixture directory");
+        std::fs::write(&path, &built).expect("writing the passes");
+        return;
+    }
+    let committed = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+        panic!("{}: {e}. BOWERBIRD_WRITE_FIXTURES=1 writes it", path.display())
+    });
+    assert_eq!(committed, built, "how this host builds the detail texture has moved");
+}
+
 #[test]
 fn the_peak_reads_the_pixels_it_always_did() {
     let sizes: [(usize, usize); 8] = [

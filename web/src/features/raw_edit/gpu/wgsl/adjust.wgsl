@@ -158,10 +158,11 @@ const DETAIL_STOPS: f32 = 0.6;
 
 /// How far local contrast may move one pixel, in stops.
 ///
-/// A blurred neighbourhood is a poor predictor of the pixel exactly at a hard edge, where the
-/// difference between the two is the whole step rather than the texture in it. Unbounded, a
-/// specular highlight against a dark ground takes several stops of lift and solarises; the
-/// clamp turns that into a wide soft halo, which is what every unsharp mask trades for.
+/// A backstop rather than the mechanism it used to be. The neighbourhood is edge-aware now
+/// (`detail.wgsl`), so at a hard edge the reference follows the step instead of averaging
+/// across it and the difference this reads is the texture *in* the edge rather than the edge
+/// itself - which is what a halo was. What is left for a clamp is the pathological case the
+/// fit cannot describe, a specular against black, where an unbounded lift would solarise.
 const DETAIL_LIMIT: f32 = 2.0;
 
 /// Texture and clarity, as one gain in stops on the pixel's own band of detail.

@@ -163,10 +163,15 @@ pub struct Gpu {
     peak_measure: wgpu::ComputePipeline,
     peak_quantile: wgpu::ComputePipeline,
     detail_shrink_layout: wgpu::BindGroupLayout,
-    detail_blur_layout: wgpu::BindGroupLayout,
+    detail_moments_layout: wgpu::BindGroupLayout,
+    detail_box_layout: wgpu::BindGroupLayout,
+    detail_apply_layout: wgpu::BindGroupLayout,
     detail_shrink: wgpu::ComputePipeline,
-    detail_blur_x: wgpu::ComputePipeline,
-    detail_blur_y: wgpu::ComputePipeline,
+    detail_moments: wgpu::ComputePipeline,
+    detail_box_x: wgpu::ComputePipeline,
+    detail_box_y: wgpu::ComputePipeline,
+    detail_coefficients: wgpu::ComputePipeline,
+    detail_apply: wgpu::ComputePipeline,
     balance_layout: wgpu::BindGroupLayout,
     balance_pipeline: wgpu::ComputePipeline,
     sampler: wgpu::Sampler,
@@ -268,14 +273,22 @@ impl Gpu {
             })
         };
         let detail_shrink_layout = group_layout("detail shrink", &DETAIL_SHRINK_BINDINGS);
-        let detail_blur_layout = group_layout("detail blur", &DETAIL_BLUR_BINDINGS);
+        let detail_moments_layout = group_layout("detail moments", &DETAIL_MOMENTS_BINDINGS);
+        let detail_box_layout = group_layout("detail box", &DETAIL_BOX_BINDINGS);
+        let detail_apply_layout = group_layout("detail apply", &DETAIL_APPLY_BINDINGS);
         let detail_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("detail"),
             source: wgpu::ShaderSource::Wgsl(detail_source().into()),
         });
         let detail_shrink = compute("shrink", &detail_module, &detail_shrink_layout, "shrink");
-        let detail_blur_x = compute("blur_x", &detail_module, &detail_blur_layout, "blur_x");
-        let detail_blur_y = compute("blur_y", &detail_module, &detail_blur_layout, "blur_y");
+        let detail_moments =
+            compute("moments_of", &detail_module, &detail_moments_layout, "moments_of");
+        let detail_box_x = compute("box_x", &detail_module, &detail_box_layout, "box_x");
+        let detail_box_y = compute("box_y", &detail_module, &detail_box_layout, "box_y");
+        let detail_coefficients =
+            compute("coefficients", &detail_module, &detail_box_layout, "coefficients");
+        let detail_apply =
+            compute("apply_guided", &detail_module, &detail_apply_layout, "apply_guided");
 
         let balance_layout = group_layout("balance", &BALANCE_BINDINGS);
         let balance_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -339,10 +352,15 @@ impl Gpu {
             peak_measure,
             peak_quantile,
             detail_shrink_layout,
-            detail_blur_layout,
+            detail_moments_layout,
+            detail_box_layout,
+            detail_apply_layout,
             detail_shrink,
-            detail_blur_x,
-            detail_blur_y,
+            detail_moments,
+            detail_box_x,
+            detail_box_y,
+            detail_coefficients,
+            detail_apply,
             balance_layout,
             balance_pipeline,
             sampler,
@@ -417,8 +435,9 @@ const ENCODE_BINDINGS: [(u32, Binding); 14] = [
 const BALANCE_BINDINGS: [(u32, Binding); 2] =
     [(0, Binding::Uniform), (14, Binding::Storage { read_only: false })];
 
-/// `detail.wgsl`'s two entry-point shapes, on layouts of their own: the downscale reads the
-/// frame and the decode table, and the separable pair reads only the texture before it.
+/// `detail.wgsl`'s four entry-point shapes, on layouts of their own: the downscale reads the
+/// frame and the decode table, the moments read the working texture, the box means and the fit
+/// read only the 32-bit texture before them, and the last reads both.
 const DETAIL_SHRINK_BINDINGS: [(u32, Binding); 4] = [
     (0, Binding::Uniform),
     (1, Binding::Storage { read_only: true }),
@@ -426,7 +445,33 @@ const DETAIL_SHRINK_BINDINGS: [(u32, Binding); 4] = [
     (12, Binding::Storage { read_only: true }),
 ];
 
-const DETAIL_BLUR_BINDINGS: [(u32, Binding); 2] = [(2, Binding::Detail), (3, Binding::Written)];
+/// `DETAIL_PASSES` in `shaders.ts`: the order the guided filter's entry points run in.
+///
+/// Both hosts have to agree on it exactly - a different order, or one box mean where the other
+/// ran two, is a different neighbourhood from the same frame - and nothing in the graded
+/// fixtures could see a disagreement, since those are pinned at every slider zero where
+/// `adjusted` returns before it samples this texture at all. So it is stated as data on both
+/// sides and pinned by `fixtures/gpu/detail-passes.txt`.
+///
+/// The ping-pong between the two 32-bit textures is derived from this rather than written out:
+/// every pass reads what the one before it wrote.
+pub const DETAIL_PASSES: [&str; 8] = [
+    "shrink",
+    "moments_of",
+    "box_x",
+    "box_y",
+    "coefficients",
+    "box_x",
+    "box_y",
+    "apply_guided",
+];
+
+const DETAIL_MOMENTS_BINDINGS: [(u32, Binding); 2] = [(2, Binding::Detail), (16, Binding::Wrote32)];
+
+const DETAIL_BOX_BINDINGS: [(u32, Binding); 2] = [(15, Binding::Read32), (16, Binding::Wrote32)];
+
+const DETAIL_APPLY_BINDINGS: [(u32, Binding); 3] =
+    [(2, Binding::Detail), (15, Binding::Read32), (3, Binding::Written)];
 
 /// `peakLayout` on the client: the same colour bindings, and the histogram, the peak and the
 /// candidates all writable where the encode reads the peak and writes only the frame.
@@ -462,12 +507,16 @@ enum Binding {
     /// Declared by `frame.wgsl` and unread at `lod` 0, but an explicit layout has to supply
     /// everything the module declares.
     Pyramid,
-    /// `detail.wgsl`'s output: the fine blur, the coarse blur and the dark channel, all in
-    /// stops. Filterable, because the grade samples it at a frame coordinate rather than a
-    /// texel of it.
+    /// `detail.wgsl`'s output: the guide, the guided-filtered guide and the guided-filtered
+    /// dark channel, all in stops. Filterable, because the grade samples it at a frame
+    /// coordinate rather than a texel of it.
     Detail,
     /// The same texture where a pass is writing it.
     Written,
+    /// The guided filter's moments and coefficients. `rgba32float`, which is unfilterable
+    /// wherever it is read - and it is only ever loaded, never sampled.
+    Read32,
+    Wrote32,
 }
 
 impl Binding {
@@ -508,6 +557,16 @@ impl Binding {
             Binding::Written => wgpu::BindingType::StorageTexture {
                 access: wgpu::StorageTextureAccess::WriteOnly,
                 format: wgpu::TextureFormat::Rgba16Float,
+                view_dimension: wgpu::TextureViewDimension::D2,
+            },
+            Binding::Read32 => wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            Binding::Wrote32 => wgpu::BindingType::StorageTexture {
+                access: wgpu::StorageTextureAccess::WriteOnly,
+                format: wgpu::TextureFormat::Rgba32Float,
                 view_dimension: wgpu::TextureViewDimension::D2,
             },
         };
@@ -928,17 +987,22 @@ impl Gpu {
         balance
     }
 
-    /// The blur the presence sliders read, off the frame that is already up (`detail.wgsl`).
+    /// The neighbourhood the presence sliders read, off the frame that is already up
+    /// (`detail.wgsl`).
     ///
     /// Once per uploaded frame, like the scene peak beside it and for the same reason: it
     /// describes the photograph rather than the rendition, so every output off this frame has
     /// to read the same one. Unconditional, rather than skipped when the three sliders are
-    /// zero - it is one read of the frame and two Gaussians over a 512px texture against a job
-    /// that spends seconds in the decode and the encoder, and a resource that sometimes exists
-    /// is a bind group that sometimes does.
+    /// zero - it is one read of the frame and a handful of box means over a 512px texture
+    /// against a job that spends seconds in the decode and the encoder, and a resource that
+    /// sometimes exists is a bind group that sometimes does.
     ///
-    /// Three passes rather than one with three dispatches: the middle two read the texture the
-    /// one before them wrote, and a pass is where wgpu puts the barrier for that.
+    /// A pass each rather than one with several dispatches: every one of them reads the texture
+    /// the one before it wrote, and a pass is where wgpu puts the barrier for that.
+    ///
+    /// **Pass for pass what `EditPipeline.buildDetail` does**, because the two hosts have to
+    /// produce the same neighbourhood from the same frame or the editor's clarity and the
+    /// rendition's are different pictures.
     fn build_detail(
         &self,
         samples: &wgpu::Buffer,
@@ -946,7 +1010,7 @@ impl Gpu {
         size: DetailSize,
     ) -> wgpu::TextureView {
         let device = &self.device;
-        let texture = |label: &str| {
+        let texture = |label: &str, format: wgpu::TextureFormat| {
             device.create_texture(&wgpu::TextureDescriptor {
                 label: Some(label),
                 size: wgpu::Extent3d {
@@ -957,16 +1021,23 @@ impl Gpu {
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba16Float,
+                format,
                 usage: wgpu::TextureUsages::TEXTURE_BINDING
                     | wgpu::TextureUsages::STORAGE_BINDING,
                 view_formats: &[],
             })
         };
         let view = |t: &wgpu::Texture| t.create_view(&wgpu::TextureViewDescriptor::default());
-        // Ping-ponged, and the pass count is odd, so the result lands back in `detail`.
-        let detail = view(&texture("detail"));
-        let scratch = view(&texture("detail scratch"));
+        let half = wgpu::TextureFormat::Rgba16Float;
+        let full = wgpu::TextureFormat::Rgba32Float;
+        // The frame at working resolution, and what the grade ends up binding.
+        let base = view(&texture("detail base", half));
+        let detail = view(&texture("detail", half));
+        // The moments and the coefficients. 32 bits because a variance is a difference of two
+        // nearly equal averages (`detail.wgsl`), and ping-ponged because a separable box mean
+        // cannot read and write one texture in a pass.
+        let moments = view(&texture("detail moments", full));
+        let scratch = view(&texture("detail moments scratch", full));
 
         let edits = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("detail"),
@@ -981,7 +1052,7 @@ impl Gpu {
                 wgpu::BindGroupEntry { binding: 1, resource: samples.as_entire_binding() },
                 wgpu::BindGroupEntry {
                     binding: 3,
-                    resource: wgpu::BindingResource::TextureView(&detail),
+                    resource: wgpu::BindingResource::TextureView(&base),
                 },
                 wgpu::BindGroupEntry {
                     binding: 12,
@@ -989,32 +1060,80 @@ impl Gpu {
                 },
             ],
         });
-        let blur = |from: &wgpu::TextureView, to: &wgpu::TextureView| {
+        let pair = |label: &str,
+                    layout: &wgpu::BindGroupLayout,
+                    from: (u32, &wgpu::TextureView),
+                    to: (u32, &wgpu::TextureView)| {
             device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("detail blur"),
-                layout: &self.detail_blur_layout,
+                label: Some(label),
+                layout,
                 entries: &[
                     wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: wgpu::BindingResource::TextureView(from),
+                        binding: from.0,
+                        resource: wgpu::BindingResource::TextureView(from.1),
                     },
                     wgpu::BindGroupEntry {
-                        binding: 3,
-                        resource: wgpu::BindingResource::TextureView(to),
+                        binding: to.0,
+                        resource: wgpu::BindingResource::TextureView(to.1),
                     },
                 ],
             })
         };
-
+        let boxed = |from: &wgpu::TextureView, to: &wgpu::TextureView| {
+            pair("detail box", &self.detail_box_layout, (15, from), (16, to))
+        };
+        // The pair the 32-bit passes ping-pong through, swapped after each one, so which
+        // texture a pass reads follows from the sequence rather than being written beside it.
+        let mut held = &moments;
+        let mut spare = &scratch;
         let mut encoder = device.create_command_encoder(&Default::default());
-        for (pipeline, group) in [
-            (&self.detail_shrink, &shrink),
-            (&self.detail_blur_x, &blur(&detail, &scratch)),
-            (&self.detail_blur_y, &blur(&scratch, &detail)),
-        ] {
+        for name in DETAIL_PASSES {
+            let (pipeline, group) = match name {
+                "shrink" => (&self.detail_shrink, shrink.clone()),
+                "moments_of" => (
+                    &self.detail_moments,
+                    pair(
+                        "detail moments",
+                        &self.detail_moments_layout,
+                        (2, &base),
+                        (16, held),
+                    ),
+                ),
+                "apply_guided" => (
+                    &self.detail_apply,
+                    device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("detail apply"),
+                        layout: &self.detail_apply_layout,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 2,
+                                resource: wgpu::BindingResource::TextureView(&base),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 15,
+                                resource: wgpu::BindingResource::TextureView(held),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 3,
+                                resource: wgpu::BindingResource::TextureView(&detail),
+                            },
+                        ],
+                    }),
+                ),
+                other => {
+                    let pipeline = match other {
+                        "box_x" => &self.detail_box_x,
+                        "box_y" => &self.detail_box_y,
+                        _ => &self.detail_coefficients,
+                    };
+                    let group = boxed(held, spare);
+                    std::mem::swap(&mut held, &mut spare);
+                    (pipeline, group)
+                }
+            };
             let mut pass = encoder.begin_compute_pass(&Default::default());
             pass.set_pipeline(pipeline);
-            pass.set_bind_group(0, group, &[]);
+            pass.set_bind_group(0, &group, &[]);
             pass.dispatch_workgroups(size.width.div_ceil(8), size.height.div_ceil(8), 1);
         }
         self.queue.submit([encoder.finish()]);

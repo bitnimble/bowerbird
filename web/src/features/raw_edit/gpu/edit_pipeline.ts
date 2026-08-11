@@ -11,6 +11,7 @@ import {
   BALANCE_FLOATS,
   DECODE,
   DETAIL,
+  DETAIL_PASSES,
   FRAME,
   PEAK,
   PEAK_BINS,
@@ -22,7 +23,7 @@ import {
   edits,
   wholeFrameGeometry,
 } from './shaders';
-import type { DetailSize, EditAdjust, EditGeometry } from './shaders';
+import type { DetailPass, DetailSize, EditAdjust, EditGeometry } from './shaders';
 
 /**
  * Where each `Edit` field lives, by name. Computed once from the layout the shader declares.
@@ -256,11 +257,17 @@ export class EditPipeline {
   private readonly chromaLuma: GPUTexture;
   private readonly chromaTint: GPUTexture;
   /**
-   * The blur the presence sliders read, and the scratch the separable pair ping-pongs
-   * through. Three passes, so the result lands back in `detail` and only that one is bound.
+   * The neighbourhood the presence sliders read, and what building it takes.
+   *
+   * `base` is the frame at working resolution - the guide and the dark channel, unfiltered -
+   * and `detail` is what the grade binds. The two 32-bit textures are the guided filter's
+   * moments and coefficients, ping-ponged through the separable box means; they are scratch
+   * and die with the open, but they are held as fields so `destroy` can free them.
    */
+  private readonly base: GPUTexture;
   private readonly detail: GPUTexture;
-  private readonly detailScratch: GPUTexture;
+  private readonly moments: GPUTexture;
+  private readonly momentsScratch: GPUTexture;
   /** The reader's temperature and tint as one matrix, rewritten by the pass below per tick. */
   private readonly balance: GPUBuffer;
   private readonly balancePipeline: GPUComputePipeline;
@@ -469,15 +476,19 @@ export class EditPipeline {
     // filtering path the textures beside it are already proven on.
     this.chromaTint = this.lookup(size, '3d', 'rgba16float', 8, tints);
     const working = this.header.detail;
-    const detailTexture = (label: string) =>
+    const detailTexture = (label: string, format: GPUTextureFormat) =>
       device.createTexture({
         label,
         size: [working.width, working.height],
-        format: 'rgba16float',
+        format,
         usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING,
       });
-    this.detail = detailTexture('detail');
-    this.detailScratch = detailTexture('detail scratch');
+    this.base = detailTexture('detail base', 'rgba16float');
+    this.detail = detailTexture('detail', 'rgba16float');
+    // 32 bits, because a variance is a difference of two nearly equal averages and half
+    // precision keeps about two digits of it (`detail.wgsl`).
+    this.moments = detailTexture('detail moments', 'rgba32float');
+    this.momentsScratch = detailTexture('detail moments scratch', 'rgba32float');
     this.lerp = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
     this.matrix = this.upload(
       new Float32Array(colour ? colour.matrix.flat() : [1, 0, 0, 0, 1, 0, 0, 0, 1]),
@@ -637,16 +648,17 @@ export class EditPipeline {
   }
 
   /**
-   * The blur the presence sliders read, built once at the open (`detail.wgsl`).
+   * The neighbourhood the presence sliders read, built once at the open (`detail.wgsl`).
    *
    * Unconditional, rather than deferred until a reader touches one of the three. The frame is
-   * read once and the two Gaussians run over a 512px texture, which is a fraction of what
-   * `reduce` above already costs - against which the alternative is a lazily built resource
-   * whose absence a slider would have to notice mid-drag.
+   * read once and the rest runs over a 512px texture, which is a fraction of what `reduce`
+   * above already costs - against which the alternative is a lazily built resource whose
+   * absence a slider would have to notice mid-drag.
    *
-   * Ping-ponged so the result lands in `detail`: shrink writes it, the horizontal pass reads
-   * it into the scratch, and the vertical pass reads the scratch back into it. Three passes
-   * is odd, which is what makes that work.
+   * Eight passes rather than three, and every one of them is a barrier: each reads the texture
+   * the one before it wrote, which is what a compute pass boundary is for. The shape is the
+   * guided filter's - moments, box mean, fit, box mean, evaluate - and the ping-pong is the
+   * separable box mean's, which cannot read and write one texture in a pass.
    */
   private buildDetail(): void {
     const COMPUTE = GPUShaderStage.COMPUTE;
@@ -654,6 +666,22 @@ export class EditPipeline {
       binding: 3,
       visibility: COMPUTE,
       storageTexture: { access: 'write-only' as const, format: 'rgba16float' as const },
+    };
+    const wrote32 = {
+      binding: 16,
+      visibility: COMPUTE,
+      storageTexture: { access: 'write-only' as const, format: 'rgba32float' as const },
+    };
+    // Loaded rather than sampled everywhere below, so no sampler enters these passes - and
+    // binding 15 is declared for what an `rgba32float` view actually is, which is
+    // `unfilterable-float`. The default is `float`, and against this texture that is rejected
+    // where the bind group is built: asynchronously, to an uncaptured-error handler, rather
+    // than as an exception the open could catch.
+    const read16 = { binding: 2, visibility: COMPUTE, texture: {} };
+    const read32 = {
+      binding: 15,
+      visibility: COMPUTE,
+      texture: { sampleType: 'unfilterable-float' as const },
     };
     const shrinkLayout = this.device.createBindGroupLayout({
       entries: [
@@ -663,11 +691,9 @@ export class EditPipeline {
         { binding: 12, visibility: COMPUTE, buffer: { type: 'read-only-storage' } },
       ],
     });
-    // Loaded rather than sampled, so the view is declared for what an `rgba16float` texture is
-    // to `textureLoad` and no sampler enters this pass at all.
-    const blurLayout = this.device.createBindGroupLayout({
-      entries: [{ binding: 2, visibility: COMPUTE, texture: {} }, written],
-    });
+    const momentsLayout = this.device.createBindGroupLayout({ entries: [read16, wrote32] });
+    const boxLayout = this.device.createBindGroupLayout({ entries: [read32, wrote32] });
+    const applyLayout = this.device.createBindGroupLayout({ entries: [read16, read32, written] });
 
     const module = this.device.createShaderModule({ code: DETAIL, label: 'detail' });
     const pipelineFor = (entryPoint: string, layout: GPUBindGroupLayout) =>
@@ -675,9 +701,14 @@ export class EditPipeline {
         layout: this.device.createPipelineLayout({ bindGroupLayouts: [layout] }),
         compute: { module, entryPoint },
       });
-    const shrink = pipelineFor('shrink', shrinkLayout);
-    const blurX = pipelineFor('blur_x', blurLayout);
-    const blurY = pipelineFor('blur_y', blurLayout);
+    const pipelines: Record<DetailPass, GPUComputePipeline> = {
+      shrink: pipelineFor('shrink', shrinkLayout),
+      moments_of: pipelineFor('moments_of', momentsLayout),
+      box_x: pipelineFor('box_x', boxLayout),
+      box_y: pipelineFor('box_y', boxLayout),
+      coefficients: pipelineFor('coefficients', boxLayout),
+      apply_guided: pipelineFor('apply_guided', applyLayout),
+    };
 
     const working = this.header.detail;
     const [x, y] = this.groups(working.width, working.height);
@@ -694,20 +725,39 @@ export class EditPipeline {
       pass.end();
     };
 
-    run(shrink, shrinkLayout, [
-      { binding: 0, resource: { buffer: this.uniform } },
-      { binding: 1, resource: { buffer: this.frame } },
-      { binding: 3, resource: this.detail.createView() },
-      { binding: 12, resource: { buffer: this.nitsOfCode } },
-    ]);
-    run(blurX, blurLayout, [
-      { binding: 2, resource: this.detail.createView() },
-      { binding: 3, resource: this.detailScratch.createView() },
-    ]);
-    run(blurY, blurLayout, [
-      { binding: 2, resource: this.detailScratch.createView() },
-      { binding: 3, resource: this.detail.createView() },
-    ]);
+    // The pair the 32-bit passes ping-pong through, swapped after each one. Derived rather
+    // than written out per pass: every pass reads what the one before it wrote, so stating
+    // that once is what keeps the sequence and the plumbing from drifting apart.
+    let held = this.moments;
+    let spare = this.momentsScratch;
+    for (const name of DETAIL_PASSES) {
+      const pipeline = pipelines[name];
+      if (name === 'shrink') {
+        run(pipeline, shrinkLayout, [
+          { binding: 0, resource: { buffer: this.uniform } },
+          { binding: 1, resource: { buffer: this.frame } },
+          { binding: 3, resource: this.base.createView() },
+          { binding: 12, resource: { buffer: this.nitsOfCode } },
+        ]);
+      } else if (name === 'moments_of') {
+        run(pipeline, momentsLayout, [
+          { binding: 2, resource: this.base.createView() },
+          { binding: 16, resource: held.createView() },
+        ]);
+      } else if (name === 'apply_guided') {
+        run(pipeline, applyLayout, [
+          { binding: 2, resource: this.base.createView() },
+          { binding: 15, resource: held.createView() },
+          { binding: 3, resource: this.detail.createView() },
+        ]);
+      } else {
+        run(pipeline, boxLayout, [
+          { binding: 15, resource: held.createView() },
+          { binding: 16, resource: spare.createView() },
+        ]);
+        [held, spare] = [spare, held];
+      }
+    }
     this.device.queue.submit([encoder.finish()]);
   }
 
@@ -951,8 +1001,10 @@ export class EditPipeline {
       this.chroma,
       this.chromaLuma,
       this.chromaTint,
+      this.base,
       this.detail,
-      this.detailScratch,
+      this.moments,
+      this.momentsScratch,
     ]) {
       texture.destroy();
     }

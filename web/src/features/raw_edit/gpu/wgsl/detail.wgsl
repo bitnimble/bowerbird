@@ -2,52 +2,98 @@
 //
 // Texture, clarity and dehaze are the three adjustments that are not functions of the pixel:
 // each asks how the pixel compares to what surrounds it, at a different distance. So they
-// need a blur, and a blur is a pass rather than a term - which is why `adjust.wgsl` carried a
-// note saying they were missing rather than an approximation of them.
+// need a neighbourhood, and a neighbourhood is a pass rather than a term.
 //
-// **Built once, off the frame as it arrived, and never rebuilt.** The blur is of the base -
-// the demosaiced, lens-corrected, denoised samples in the buffer - before the camera match,
-// before the exposure and before every slider. That is what makes one build enough: the grade
-// uses `pixel_stops - blur_stops`, and the exposure is an *additive* constant in stops, so it
-// cancels out of the difference exactly. Blurring after the grade instead would put this pass
-// inside the tick, where it would run on every pointer move over a 61MP frame.
+// **Edge-aware, and that is the whole point of this file.** A Gaussian is not: it averages
+// straight across a hard edge, so the difference the grade reads is large on *both* sides of
+// one, with opposite signs - a bright rim on the light side and a dark rim on the dark side.
+// That is a halo, it is what an unsharp mask trades away, and it is why clarity and dehaze
+// stopped at the edges of objects rather than reaching into them. `adjust.wgsl`'s
+// `DETAIL_LIMIT` existed to turn the resulting solarisation into a *soft* halo instead.
 //
-// **Working resolution, not the frame's.** Two things follow from it. The blurs cost the same
+// What replaces it is the guided filter (He, Sun & Tang): over a window, fit the one linear
+// model `q = a*I + b` that best explains the input from the guide, then average the models
+// rather than the pixels. Where the window is flat the fit is a constant and the output is the
+// mean, which smooths; where it straddles an edge the variance is large, `a` goes to 1 and the
+// output follows the guide, which does not. Two box means and a division - O(1) per pixel
+// whatever the radius, no pyramid, and nothing that has to be searched.
+//
+// It is also what the dehaze literature prescribes for exactly this step. The dark channel
+// prior gives a piecewise-constant transmission that has to be refined against the image
+// before it means anything, and the reference refinement is soft matting, of which the guided
+// filter is the cheap and near-equal stand-in. A Gaussian there is not a stand-in for anything:
+// it smears the transmission across object boundaries, so near a high-contrast edge the
+// transmission belongs to neither side.
+//
+// **Built once, off the frame as it arrived, and never rebuilt.** The neighbourhood is of the
+// base - the demosaiced, lens-corrected, denoised samples in the buffer - before the camera
+// match, before the exposure and before every slider. That is what makes one build enough: the
+// grade uses `pixel_stops - neighbourhood_stops`, and the exposure is an *additive* constant in
+// stops, so it cancels out of the difference exactly. Building it after the grade instead would
+// put this inside the tick, where it would run on every pointer move over a 61MP frame.
+//
+// **Working resolution, not the frame's.** Two things follow from it. The passes cost the same
 // whatever the sensor is, which is what keeps this off the tick's budget; and a radius stated
 // as a fraction of *this* texture is a fraction of the picture, so the grid tile and the
 // full-size rendition of one photograph get the same clarity rather than the same pixel count
 // of it. A radius in frame pixels would make an 800px tile look nothing like the 3840px view
 // it is a thumbnail of.
-//
-// Three passes: an area-average down to working resolution, then a separable Gaussian across
-// and down. The separable pair is what makes the coarse radius affordable - 2*(3*sigma)+1
-// taps twice, rather than the square of it.
 
 /// The long edge of the working texture, and the whole of what the two hosts must agree on.
 ///
-/// Both allocate the texture themselves, and a host that sized it differently would blur at a
+/// Both allocate the texture themselves, and a host that sized it differently would filter at a
 /// different fraction of the picture - the editor's clarity and the rendition's would not be
 /// the same picture, which is the divergence DESIGN 21.1 is about. Declared here and pinned
 /// on both sides (`gpu.rs`'s shader-size test, `tests/peak_constants.test.ts`).
 ///
-/// 512 rather than something nearer a sensor: the coarse blur costs the *cube* of this - the
-/// texels grow as the square and the radius with it, the radius being a fixed fraction - and
-/// nothing below is a detail operator anyway. The finest band this can express is a 512th of
-/// the frame, already finer than a reader can see a texture slider act on.
+/// 512 rather than something nearer a sensor: nothing below is a detail operator - the finest
+/// band this can express is a 512th of the frame, already finer than a reader can see a texture
+/// slider act on - and the *difference* the grade reads is against the full-resolution pixel
+/// either way, so the detail in a texture slider comes from the pixel and not from here.
 const DETAIL_LONG: u32 = 512u;
 
-/// The two radii, as sigmas in fractions of the working texture's long edge.
+/// The fine reference's blur, as a sigma in fractions of the working texture's long edge.
 ///
-/// A decade apart on purpose, so the bands they define barely overlap: `texture` gets what is
-/// finer than the fine blur and `clarity` gets what lies between the two, rather than both
-/// lifting the same frequencies and a photograph with both up going twice as hard as either.
+/// **Not zero, and that is not obvious.** Where the frame is larger than the working texture
+/// the shrink below is already an area average over a wide footprint, so the texture slider's
+/// band - the pixel against this - exists without any blur here at all. Where it is *not*
+/// larger, which is every frame under 512px and so every grid tile, the footprint is one pixel
+/// and the reference would be the pixel itself: a difference of exactly zero, and a texture
+/// slider that does nothing on precisely the sizes a reader is most likely to be looking at.
+/// Floored at half a texel, which is where a Gaussian stops meaning anything on a grid.
 const FINE_SIGMA: f32 = 1.0 / 1024.0;
-const COARSE_SIGMA: f32 = 1.0 / 64.0;
+
+/// The guided filter's window, as a fraction of the working texture's long edge.
+///
+/// A 64th, which is the scale clarity has always acted at: coarse enough that what is left over
+/// is local contrast rather than noise, fine enough that it is not simply the exposure.
+const GUIDE_RADIUS: f32 = 1.0 / 64.0;
+
+/// How much local contrast the fit is allowed to call noise, in stops squared.
+///
+/// The guided filter's `eps`, and the only number in it with a photographic meaning: a window
+/// whose variance is below this is treated as flat and smoothed, and one above it as an edge
+/// and followed. 0.16 is (0.4 stops)^2 - four tenths of a stop of local variation is texture,
+/// and a step bigger than that is a thing in the photograph.
+///
+/// Too small and the filter becomes the identity and there is no detail to lift; too large and
+/// it becomes a box blur and the halos come back. It is the one dial to turn if either happens.
+const GUIDE_EPS: f32 = 0.16;
 
 @group(0) @binding(1) var<storage, read> frame: array<u32>;
 @group(0) @binding(2) var source: texture_2d<f32>;
 @group(0) @binding(3) var written: texture_storage_2d<rgba16float, write>;
 @group(0) @binding(12) var<storage, read> nits_of_code: array<f32>;
+/// The moments and the coefficients, at 32 bits.
+///
+/// **Not `rgba16float`, and this is not a style choice.** A variance is `mean(I*I) -
+/// mean(I)^2`, a difference of two numbers that are nearly equal and, in stops, as large as
+/// 256. At half precision that subtraction keeps about two digits, and the two digits it keeps
+/// are the ones that decide whether a window is an edge - so the filter would take flat sky for
+/// an edge in one tile and not the next. Loaded rather than sampled, so nothing here needs the
+/// format to be filterable.
+@group(0) @binding(15) var moments: texture_2d<f32>;
+@group(0) @binding(16) var moments_out: texture_storage_2d<rgba32float, write>;
 
 fn sample_at(index: u32) -> u32 {
   let word = frame[index / 2u];
@@ -77,6 +123,37 @@ fn stops(v: f32) -> f32 {
   return log2(max(v, 1.0 / 65536.0));
 }
 
+/// The box radius in texels, from the fraction above and whatever size the host allocated.
+fn guide_radius(size: vec2i) -> i32 {
+  let long = f32(max(size.x, size.y));
+  return max(i32(round(long * GUIDE_RADIUS)), 1);
+}
+
+/// The fine reference: a small Gaussian on the guide, for the band the texture slider reads.
+///
+/// Two-dimensional rather than separable, and that costs nothing: the working texture's long
+/// edge is `DETAIL_LONG` at most, so the sigma is at its half-texel floor and the radius is two
+/// - twenty-five taps, once, over half a megapixel.
+///
+/// Not edge-aware, and it does not need to be. A halo is what happens when a *wide* average
+/// crosses an edge and the difference against it is large on both sides; two texels of blur
+/// puts the rim inside the edge itself, which is what a sharpen is.
+fn fine_blurred(at: vec2i, size: vec2i) -> f32 {
+  let sigma = max(f32(max(size.x, size.y)) * FINE_SIGMA, 0.5);
+  let radius = i32(ceil(3.0 * sigma));
+  var sum = 0.0;
+  var weight = 0.0;
+  for (var dy = -radius; dy <= radius; dy = dy + 1) {
+    for (var dx = -radius; dx <= radius; dx = dx + 1) {
+      let tap = clamp(at + vec2i(dx, dy), vec2i(0), size - vec2i(1));
+      let near = exp(-0.5 * f32(dx * dx + dy * dy) / (sigma * sigma));
+      sum = sum + textureLoad(source, tap, 0).r * near;
+      weight = weight + near;
+    }
+  }
+  return sum / weight;
+}
+
 /// The frame at working resolution: luma in stops, and its dark channel.
 ///
 /// An area average over the whole footprint rather than a point sample, because a point
@@ -84,13 +161,11 @@ fn stops(v: f32) -> f32 {
 /// it is what the grade calls detail, so the aliased frequencies would come back as a
 /// texture slider that made noise.
 ///
-/// The third channel is the *minimum* over the footprint of the minimum of the three
-/// channels, which is the dark-channel prior dehaze is built on: a haze-free patch nearly
-/// always has some channel near black somewhere in it, so a patch whose darkest channel is
-/// bright is a patch full of airlight. Taken as a min here and smoothed by the coarse
-/// Gaussian below, which is the cheap stand-in for the soft matting the literature refines it
-/// with - a min filter alone is piecewise constant, and a piecewise constant transmission is a
-/// visible block edge in the sky.
+/// Beside it, the *minimum* over the footprint of the minimum of the three channels, which is
+/// the dark-channel prior dehaze is built on: a haze-free patch nearly always has some channel
+/// near black somewhere in it, so a patch whose darkest channel is bright is a patch full of
+/// airlight. A min filter alone is piecewise constant, and a piecewise constant transmission is
+/// a visible block edge in the sky - which is what the fit downstream is for.
 @compute @workgroup_size(8, 8)
 fn shrink(@builtin(global_invocation_id) id: vec3u) {
   let size = textureDimensions(written);
@@ -116,62 +191,112 @@ fn shrink(@builtin(global_invocation_id) id: vec3u) {
     }
   }
 
-  // The same value in both luma channels: the two blurs below read one each, and giving them
-  // separate inputs would mean two shrink passes for one downscale.
+  // The guide in `r`, the dark channel in `g`. What the filter makes of them lands in a
+  // texture of its own, so this one stays the unfiltered pair every later pass reads.
   let luma = stops(sum / max(count, 1.0));
-  textureStore(written, vec2i(i32(id.x), i32(id.y)), vec4f(luma, luma, stops(dark), 0.0));
+  textureStore(written, vec2i(i32(id.x), i32(id.y)), vec4f(luma, stops(dark), 0.0, 0.0));
 }
 
-/// One axis of both Gaussians, and of the dark channel's.
+/// The four products the two fits need, per texel, before any of them is averaged.
 ///
-/// One loop for both radii rather than two passes: the coarse one bounds the walk and the
-/// fine weight is added only where it is not already negligible, so the fine blur costs its
-/// own handful of taps and not the coarse one's.
+/// One texture for both filters because they share a guide: the self-guided one that smooths
+/// the luma needs `I` and `I*I`, and the one that refines the dark channel against that same
+/// luma needs `p` and `I*p` as well. Averaging four channels once is a box blur; averaging
+/// them separately would be two.
+@compute @workgroup_size(8, 8)
+fn moments_of(@builtin(global_invocation_id) id: vec3u) {
+  let size = textureDimensions(moments_out);
+  if (id.x >= size.x || id.y >= size.y) { return; }
+  let at = vec2i(i32(id.x), i32(id.y));
+  let pair = textureLoad(source, at, 0);
+  let guide = pair.r;
+  let dark = pair.g;
+  textureStore(moments_out, at, vec4f(guide, guide * guide, dark, guide * dark));
+}
+
+/// One axis of the box mean, over whatever four channels it is handed.
 ///
-/// Clamped at the edges rather than weighted for them. A frame's border is not a black
-/// surround, and a Gaussian that read one would darken the outermost band of every blur -
-/// which the grade would then read as detail and lift.
-fn blurred(at: vec2i, axis: vec2i) {
-  let size = vec2i(textureDimensions(written));
+/// Separable, so a radius costs `2r` taps rather than `r^2` - which is what makes the window
+/// free to be wide. Clamped at the edges rather than weighted for them: a frame's border is
+/// not a black surround, and a window that read one would drag the fit towards nothing across
+/// the outermost band of every filter.
+fn boxed(at: vec2i, axis: vec2i) {
+  let size = vec2i(textureDimensions(moments_out));
   if (at.x >= size.x || at.y >= size.y) { return; }
+  let radius = guide_radius(size);
 
-  let long = f32(max(size.x, size.y));
-  // Floored at half a texel, which is where a Gaussian stops meaning anything on a grid. It
-  // binds whenever the working texture is smaller than `DETAIL_LONG`, which is every frame
-  // narrower than that - the grid tile, mostly.
-  let fine = max(long * FINE_SIGMA, 0.5);
-  let coarse = max(long * COARSE_SIGMA, 1.0);
-  let radius = i32(ceil(3.0 * coarse));
-  let fine_radius = i32(ceil(3.0 * fine));
-
-  var fine_sum = 0.0;
-  var fine_weight = 0.0;
-  var coarse_sum = vec2f(0.0);
-  var coarse_weight = 0.0;
+  var sum = vec4f(0.0);
   for (var d = -radius; d <= radius; d = d + 1) {
-    let tap = clamp(at + axis * d, vec2i(0), size - vec2i(1));
-    let value = textureLoad(source, tap, 0);
-    let x = f32(d);
-    let weight = exp(-0.5 * x * x / (coarse * coarse));
-    coarse_sum = coarse_sum + value.gb * weight;
-    coarse_weight = coarse_weight + weight;
-    if (d >= -fine_radius && d <= fine_radius) {
-      let near = exp(-0.5 * x * x / (fine * fine));
-      fine_sum = fine_sum + value.r * near;
-      fine_weight = fine_weight + near;
-    }
+    sum = sum + textureLoad(moments, clamp(at + axis * d, vec2i(0), size - vec2i(1)), 0);
   }
-
-  let coarsened = coarse_sum / coarse_weight;
-  textureStore(written, at, vec4f(fine_sum / fine_weight, coarsened.x, coarsened.y, 0.0));
+  textureStore(moments_out, at, sum / f32(2 * radius + 1));
 }
 
 @compute @workgroup_size(8, 8)
-fn blur_x(@builtin(global_invocation_id) id: vec3u) {
-  blurred(vec2i(i32(id.x), i32(id.y)), vec2i(1, 0));
+fn box_x(@builtin(global_invocation_id) id: vec3u) {
+  boxed(vec2i(i32(id.x), i32(id.y)), vec2i(1, 0));
 }
 
 @compute @workgroup_size(8, 8)
-fn blur_y(@builtin(global_invocation_id) id: vec3u) {
-  blurred(vec2i(i32(id.x), i32(id.y)), vec2i(0, 1));
+fn box_y(@builtin(global_invocation_id) id: vec3u) {
+  boxed(vec2i(i32(id.x), i32(id.y)), vec2i(0, 1));
+}
+
+/// The two linear models, from the averaged moments.
+///
+/// `a = cov(I, p) / (var(I) + eps)` and `b = mean(p) - a * mean(I)`, which is the least-squares
+/// fit of `p` from `I` over the window with a ridge term. The ridge *is* the edge test: where
+/// the window is flat, `var` is small against `eps`, `a` collapses towards zero and `b` towards
+/// the mean, so the output is the mean and the detail is thrown away; where it straddles an
+/// edge, `var` dominates, `a` goes to `cov/var` and the output follows the guide over the step.
+///
+/// `var` is floored at zero before use. It is a difference of two averages that are equal in a
+/// flat window, and floating point does not always agree that they are - a negative variance
+/// there would flip the sign of `a` and put an inverted edge in the smoothed image.
+@compute @workgroup_size(8, 8)
+fn coefficients(@builtin(global_invocation_id) id: vec3u) {
+  let size = textureDimensions(moments_out);
+  if (id.x >= size.x || id.y >= size.y) { return; }
+  let at = vec2i(i32(id.x), i32(id.y));
+  let mean = textureLoad(moments, at, 0);
+
+  let variance = max(mean.y - mean.x * mean.x, 0.0);
+  let covariance = mean.w - mean.x * mean.z;
+  // The self-guided fit, where `p` is `I`: the covariance is the variance, so `a` is the one
+  // number below and `b` follows from it. Written out rather than reusing the pair arithmetic,
+  // because `cov(I, I)` computed as `mean(I*I) - mean(I)^2` and `var(I)` computed the same way
+  // are the same expression and the division would be `v / (v + eps)` either way.
+  let smooth_a = variance / (variance + GUIDE_EPS);
+  let smooth_b = mean.x * (1.0 - smooth_a);
+  let dark_a = covariance / (variance + GUIDE_EPS);
+  let dark_b = mean.z - dark_a * mean.x;
+  textureStore(moments_out, at, vec4f(smooth_a, smooth_b, dark_a, dark_b));
+}
+
+/// The models averaged and evaluated, which is the filter's output.
+///
+/// Averaging the coefficients rather than applying each window's own is what makes the result
+/// continuous: a pixel is inside many windows, each of which fitted a slightly different line,
+/// and the mean of those lines evaluated at the pixel is the filter. Applying one window's fit
+/// per pixel would leave the model's own discontinuities in the picture.
+///
+/// `r` is the fine reference and the other two are the fits, all evaluated here so the grade
+/// reads one texture: the pixel against `r` is texture's band, `r` against `g` is clarity's,
+/// and `b` is the transmission dehaze inverts.
+///
+/// Both fits are evaluated at the *unfiltered* guide, which is what they were fitted from -
+/// evaluating them at the fine blur instead would put half a texel of the model's own smoothing
+/// into a band it is meant to be the reference for.
+@compute @workgroup_size(8, 8)
+fn apply_guided(@builtin(global_invocation_id) id: vec3u) {
+  let size = vec2i(textureDimensions(written));
+  let at = vec2i(i32(id.x), i32(id.y));
+  if (at.x >= size.x || at.y >= size.y) { return; }
+  let guide = textureLoad(source, at, 0).r;
+  let fit = textureLoad(moments, at, 0);
+  textureStore(
+    written,
+    at,
+    vec4f(fine_blurred(at, size), fit.x * guide + fit.y, fit.z * guide + fit.w, 0.0),
+  );
 }
