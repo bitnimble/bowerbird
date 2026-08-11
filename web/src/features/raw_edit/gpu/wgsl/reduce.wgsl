@@ -32,9 +32,9 @@ fn sample_at(index: u32) -> u32 {
 
 /// The frame's levels at a pixel, held inside it.
 fn level_at(x: u32, y: u32) -> vec4u {
-  let cx = min(x, tick.width - 1u);
-  let cy = min(y, tick.height - 1u);
-  let base = (cy * tick.width + cx) * 3u;
+  let cx = min(x, edit.width - 1u);
+  let cy = min(y, edit.height - 1u);
+  let base = (cy * edit.width + cx) * 3u;
   return vec4u(sample_at(base), sample_at(base + 1u), sample_at(base + 2u), 65535u);
 }
 

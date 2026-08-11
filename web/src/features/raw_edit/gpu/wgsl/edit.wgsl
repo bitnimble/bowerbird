@@ -1,11 +1,11 @@
-// What every pass is told about the frame and the tick.
+// What every pass is told about the frame and the edit.
 //
 // One layout for all of them so a pass can be added without a second uniform to keep in
 // step. `std140`-ish by hand: everything is 4 bytes and the two-component members are
-// placed where 8-byte alignment already holds. `TICK_UNIFORM_FLOATS` in `shaders.ts`
+// placed where 8-byte alignment already holds. `EDIT_UNIFORM_FLOATS` in `shaders.ts`
 // writes it, field for field, in this order.
 
-struct Tick {
+struct Edit {
   width: u32,
   height: u32,
   // `tone::Levels` divided by the exposure, which is how the grade moves the anchor
@@ -101,8 +101,45 @@ struct Tick {
   /// Bit 0 for the temperature, bit 1 for the tint. Zero is "as shot", which is what an
   /// unedited photo carries.
   balance_set: u32,
+
+  /// The reader's crop, as fractions of the *straightened* frame - Camera Raw's definition
+  /// and `EditDocSchema`'s. Left, top, right, bottom.
+  crop_left: f32,
+  crop_top: f32,
+  crop_right: f32,
+  crop_bottom: f32,
+  /// The straighten, in degrees, and the quarter turn after it.
+  crop_angle: f32,
+  rotate: u32,
+  /// The size of the picture this produces, which is what the region is a window on.
+  ///
+  /// Sent rather than derived: it is `displaySize` on the client and `hdr::cropped_size`
+  /// natively, and the turn's own arithmetic reads the *output* grid's dimensions - so a
+  /// shader computing them again would be a third answer to a question two hosts already
+  /// agree on.
+  output_width: u32,
+  output_height: u32,
+
+  /// The perspective correction, row-major, the ninth element dropped because it is always 1.
+  ///
+  /// Corrected back to source and in fractions of the frame - the direction the draw reads and
+  /// the units that mean the same thing at every rendition size.
+  ///
+  /// Written out as scalars rather than held in an `array<f32, 8>` or a `mat3x3f`: a uniform
+  /// array of scalars is laid out at a sixteen-byte stride, and a matrix as three `vec4f`, so
+  /// either would put holes in the middle of a struct both hosts fill in a flat loop.
+  keystone_0: f32,
+  keystone_1: f32,
+  keystone_2: f32,
+  keystone_3: f32,
+  keystone_4: f32,
+  keystone_5: f32,
+  keystone_6: f32,
+  keystone_7: f32,
+  /// Whether there is one. Zero is a photograph nobody corrected, which is most of them.
+  has_keystone: u32,
 };
 
-@group(0) @binding(0) var<uniform> tick: Tick;
+@group(0) @binding(0) var<uniform> edit: Edit;
 
-fn at(x: u32, y: u32) -> u32 { return y * tick.width + x; }
+fn at(x: u32, y: u32) -> u32 { return y * edit.width + x; }

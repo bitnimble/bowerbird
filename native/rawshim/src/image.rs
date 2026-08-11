@@ -469,16 +469,27 @@ pub struct Geometry {
     pub crop: [f64; 4],
     pub angle_degrees: f64,
     pub rotate: u16,
+    /// The perspective correction, row-major with the ninth element dropped, or none.
+    ///
+    /// Corrected back to source and in fractions of the frame, which is the direction this
+    /// gather reads and the units that make it mean the same at every rendition size. Applied
+    /// under the straighten: it corrects where the camera stood, and the straighten and the crop
+    /// are choices made about the picture that comes out of that.
+    #[serde(default)]
+    pub keystone: Option<[f64; 8]>,
 }
 
 impl Geometry {
     /// The whole frame, upright: what a photo nobody has cropped asks for.
     pub fn none() -> Self {
-        Geometry { crop: [0.0, 0.0, 1.0, 1.0], angle_degrees: 0.0, rotate: 0 }
+        Geometry { crop: [0.0, 0.0, 1.0, 1.0], angle_degrees: 0.0, rotate: 0, keystone: None }
     }
 
     pub fn is_identity(&self) -> bool {
-        self.crop == [0.0, 0.0, 1.0, 1.0] && self.angle_degrees == 0.0 && self.rotate % 360 == 0
+        self.crop == [0.0, 0.0, 1.0, 1.0]
+            && self.angle_degrees == 0.0
+            && self.rotate % 360 == 0
+            && self.keystone.is_none()
     }
 }
 
@@ -504,6 +515,21 @@ pub struct PlanarWarp {
     plan: Plan,
 }
 
+/// A point of the corrected picture, back where it came from in the frame.
+///
+/// In and out as offsets from the frame's centre in pixels, which is the only thing `Plan::at`
+/// has to hand; the matrix itself is in fractions, so the frame's size goes on and comes back
+/// off around it. `geometry.wgsl` says this again in WGSL - it is four lines, and the probe
+/// holds the two together over every pixel of a frame.
+fn keystoned(matrix: [f64; 8], fx: f64, fy: f64, full: (f64, f64)) -> (f64, f64) {
+    let x = (fx + full.0 / 2.0) / full.0;
+    let y = (fy + full.1 / 2.0) / full.1;
+    let w = matrix[6] * x + matrix[7] * y + 1.0;
+    let sx = (matrix[0] * x + matrix[1] * y + matrix[2]) / w;
+    let sy = (matrix[3] * x + matrix[4] * y + matrix[5]) / w;
+    (sx * full.0 - full.0 / 2.0, sy * full.1 - full.1 / 2.0)
+}
+
 /// Output pixel to a position in the corrected frame, before the lens ratio is applied.
 #[derive(Clone, Copy)]
 struct Plan {
@@ -517,6 +543,8 @@ struct Plan {
     cos: f64,
     sin: f64,
     rotate: u16,
+    /// The perspective correction in *frame pixels*, or none. `Geometry` carries it in fractions.
+    keystone: Option<[f64; 8]>,
 }
 
 impl Plan {
@@ -529,20 +557,28 @@ impl Plan {
             cos: 1.0,
             sin: 0.0,
             rotate: 0,
+            keystone: None,
         }
     }
 
-    /// Where output pixel `(x, y)` sits in the corrected frame, as an offset from its centre
+    /// Where output position `(x, y)` sits in the corrected frame, as an offset from its centre
     /// normalised by the full frame's half-diagonal - which is what the ratio table indexes.
-    fn at(&self, x: usize, y: usize, out: (usize, usize)) -> (f64, f64) {
+    ///
+    /// **Continuous coordinates, not pixel indices**: pixel `k` covers `[k, k+1)` and its centre
+    /// is `k + 0.5`, at both ends. The turn's mirror is `span - c` in those units and would be
+    /// `span - 1 - i` in indices, so the two conventions differ by a whole pixel under a turn -
+    /// and `geometry.wgsl`, which has to work in the coordinates a fragment is given, can only
+    /// have the continuous one. A caller iterating pixels passes `i as f64 + 0.5` and takes the
+    /// half back off the frame position it gets.
+    fn at(&self, x: f64, y: f64, out: (usize, usize)) -> (f64, f64) {
         // The quarter turn first, because it is a relabelling of the output grid rather than
         // a transform of the picture: undoing it here means everything below works in the
         // straightened frame's own axes.
         let (u, v) = match self.rotate % 360 {
-            90 => (y as f64, (out.0 - 1) as f64 - x as f64),
-            180 => ((out.0 - 1) as f64 - x as f64, (out.1 - 1) as f64 - y as f64),
-            270 => ((out.1 - 1) as f64 - y as f64, x as f64),
-            _ => (x as f64, y as f64),
+            90 => (y, out.0 as f64 - x),
+            180 => (out.0 as f64 - x, out.1 as f64 - y),
+            270 => (out.1 as f64 - y, x),
+            _ => (x, y),
         };
 
         // Into the straightened frame, then back through the straighten to the corrected one.
@@ -555,6 +591,13 @@ impl Plan {
         let fx = rx * self.cos + ry * self.sin;
         let fy = -rx * self.sin + ry * self.cos;
 
+        // Last, so it is first on the way the picture actually travels: the reader straightened
+        // and cropped what they saw *after* the perspective was corrected.
+        let (fx, fy) = match self.keystone {
+            None => (fx, fy),
+            Some(matrix) => keystoned(matrix, fx, fy, self.full),
+        };
+
         (fx / self.half_full, fy / self.half_full)
     }
 
@@ -563,6 +606,60 @@ impl Plan {
         let (w, h) = self.full;
         (w * self.cos.abs() + h * self.sin.abs(), w * self.sin.abs() + h * self.cos.abs())
     }
+
+    /// The plan an output grid of `out` needs to show `geometry` of a frame of `full`.
+    ///
+    /// The one place the crop fractions become an origin and a stride. It was written out twice -
+    /// once in the gather, once in what the shader is checked against - and two copies of the
+    /// rule the whole probe exists to pin is the drift it was meant to catch.
+    fn for_geometry(full: (f64, f64), out: (usize, usize), geometry: Geometry) -> Plan {
+        let radians = geometry.angle_degrees.to_radians();
+        let mut plan = Plan {
+            half_full: ((full.0 / 2.0).powi(2) + (full.1 / 2.0).powi(2)).sqrt(),
+            full,
+            origin: (0.0, 0.0),
+            stride: (1.0, 1.0),
+            cos: radians.cos(),
+            sin: radians.sin(),
+            rotate: geometry.rotate,
+            keystone: geometry.keystone,
+        };
+
+        // The crop, in the straightened frame the fractions are defined against. The output
+        // grid spans exactly that rectangle, so its own size decides the stride.
+        let (sw, sh) = plan.straightened();
+        let [left, top, right, bottom] = geometry.crop;
+        // The turn permutes which output axis spans which, so the stride is computed against
+        // the grid before it - `Plan::at` undoes the turn first for the same reason.
+        let (span_x, span_y) = match geometry.rotate % 360 {
+            90 | 270 => (out.1, out.0),
+            _ => (out.0, out.1),
+        };
+        plan.origin = (left * sw, top * sh);
+        plan.stride = (
+            (right - left) * sw / span_x.max(1) as f64,
+            (bottom - top) * sh / span_y.max(1) as f64,
+        );
+        plan
+    }
+}
+
+/// Where output pixel `(x, y)` sits in a frame of `full`, under `geometry`.
+///
+/// The gather's own mapping, reachable without building a warp, for the probe that holds
+/// `geometry.wgsl` to it (`the_draw_places_a_pixel_where_the_gather_does`). The editor applies
+/// the same geometry in its draw and cannot share this code - it is a shader, and this runs on
+/// the CPU inside the lens correction - so the two are checked against each other instead.
+///
+/// In frame pixels, where [`Plan::at`] returns the normalised offset the ratio table indexes;
+/// the lens is the identity here, which is what the editor's already-warped frame has. Takes and
+/// returns [`Plan::at`]'s continuous coordinates, so the probe can hand the shader the very same
+/// numbers a fragment would carry.
+pub fn geometry_at(full: (usize, usize), out: (usize, usize), geometry: Geometry, x: f64, y: f64) -> (f64, f64) {
+    let (full_w, full_h) = (full.0 as f64, full.1 as f64);
+    let plan = Plan::for_geometry((full_w, full_h), out, geometry);
+    let (nx, ny) = plan.at(x, y, out);
+    (full_w / 2.0 + nx * plan.half_full, full_h / 2.0 + ny * plan.half_full)
 }
 
 impl PlanarWarp {
@@ -626,34 +723,7 @@ impl PlanarWarp {
             return None;
         }
 
-        let (full_w, full_h) = (full.0 as f64, full.1 as f64);
-        let half_full = ((full_w / 2.0).powi(2) + (full_h / 2.0).powi(2)).sqrt();
-        let radians = geometry.angle_degrees.to_radians();
-        let mut plan = Plan {
-            half_full,
-            full: (full_w, full_h),
-            origin: (0.0, 0.0),
-            stride: (1.0, 1.0),
-            cos: radians.cos(),
-            sin: radians.sin(),
-            rotate: geometry.rotate,
-        };
-
-        // The crop, in the straightened frame the fractions are defined against. The output
-        // grid spans exactly that rectangle, so its own size decides the stride.
-        let (sw, sh) = plan.straightened();
-        let [left, top, right, bottom] = geometry.crop;
-        // The turn permutes which output axis spans which, so the stride is computed against
-        // the grid before it - `Plan::at` undoes the turn first for the same reason.
-        let (span_x, span_y) = match geometry.rotate % 360 {
-            90 | 270 => (out.1, out.0),
-            _ => (out.0, out.1),
-        };
-        plan.origin = (left * sw, top * sh);
-        plan.stride = (
-            (right - left) * sw / span_x.max(1) as f64,
-            (bottom - top) * sh / span_y.max(1) as f64,
-        );
+        let plan = Plan::for_geometry((full.0 as f64, full.1 as f64), out, geometry);
 
         let (knots, crop, falloff, channels) = match lens {
             Some(lens) => (
@@ -682,8 +752,11 @@ impl PlanarWarp {
         );
         // `new` sized its step and half against the output grid, which is the crop rather than
         // the frame. The lens is defined over the frame, so both come from `full`.
-        warp.half = half_full;
-        warp.step = (half_full * (source_width as f64 / full_w), half_full * (source_height as f64 / full_h));
+        warp.half = plan.half_full;
+        warp.step = (
+            plan.half_full * (source_width as f64 / full.0 as f64),
+            plan.half_full * (source_height as f64 / full.1 as f64),
+        );
         warp.plan = plan;
         Some(warp)
     }
@@ -766,7 +839,9 @@ impl PlanarWarp {
         // `half` is not read here any more: the plan normalises by the *full* frame's
         // half-diagonal, which for a crop is not this grid's.
         let (step_x, step_y) = self.step;
-        let (centre_x, centre_y) = self.centre;
+        // Half a pixel back off, because `tap` reads a grid where an integer is a pixel's centre
+        // and the plan answers in the continuous coordinates the shader shares (`Plan::at`).
+        let (centre_x, centre_y) = (self.centre.0 - 0.5, self.centre.1 - 0.5);
         let (edge_x, edge_y) = self.edge;
         let lifts = lifts.as_deref();
         let sampling = self.sampling;
@@ -779,7 +854,7 @@ impl PlanarWarp {
                 // Where this output pixel sits in the corrected frame, as an offset from its
                 // centre over the frame's half-diagonal. The identity plan reduces to the
                 // `(x - width/2) / half` this replaced, so an uncropped gather is unchanged.
-                let (dx, dy) = plan.at(x, y, (width, height));
+                let (dx, dy) = plan.at(x as f64 + 0.5, y as f64 + 0.5, (width, height));
                 let dy2 = dy * dy;
                 let t = (dx * dx + dy2) * RATIO_TABLE_LAST as f64;
                 let slot = if t < RATIO_TABLE_LAST as f64 { t as usize } else { RATIO_TABLE_LAST - 1 };
@@ -2431,13 +2506,28 @@ mod geometry_tests {
     }
 
     #[test]
+    fn a_turn_mirrors_the_grid_by_its_width_not_its_last_index() {
+        // The half of this the GPU probe cannot reach: it skips itself where no adapter answers,
+        // and it compares two implementations rather than either against an answer. `span - 1 - i`
+        // reads right for indices and is a whole pixel out for the positions a fragment carries -
+        // the far edge folds past zero and clamps, so the first column is drawn twice and the
+        // last never is.
+        let geometry = Geometry { rotate: 180, ..Geometry::none() };
+        let full = (263usize, 171usize);
+        for (x, y, want) in [(0usize, 0usize, (262usize, 170usize)), (262, 170, (0, 0)), (7, 5, (255, 165))] {
+            let at = geometry_at(full, full, geometry, x as f64 + 0.5, y as f64 + 0.5);
+            assert_eq!((at.0.floor() as usize, at.1.floor() as usize), want, "output ({x}, {y})");
+        }
+    }
+
+    #[test]
     fn the_crop_is_a_fraction_of_the_straightened_frame() {
         // A 45-degree straighten on a square needs a box sqrt(2) wider, so a half-width crop
         // of *that* is wider than half the original. The alternative reading - fractions of
         // the frame before the straighten - would give 32 here and be wrong in the direction
         // nobody notices until a straightened crop comes out framed differently from the
         // editor's preview.
-        let geometry = Geometry { crop: [0.0, 0.0, 0.5, 1.0], angle_degrees: 45.0, rotate: 0 };
+        let geometry = Geometry { crop: [0.0, 0.0, 0.5, 1.0], angle_degrees: 45.0, ..Geometry::none() };
         assert_eq!(super::super::hdr::cropped_size(64, 64, geometry), (45, 91));
     }
 }

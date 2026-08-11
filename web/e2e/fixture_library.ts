@@ -21,9 +21,9 @@ export const PHONE_PHOTOS_DIR = path.join(E2E_ROOT, 'phone-photos');
 // Triage writes a verdict onto every member it judges, so it gets a library of
 // its own rather than leaving the stacks spec's frames triaged behind it.
 export const TRIAGE_PHOTOS_DIR = path.join(E2E_ROOT, 'triage-photos');
-// The editor reads one photo by id and writes nothing, but a root can only be
-// added once against the shared DB, so sharing another spec's would make the two
-// fight over which of them adds it.
+// The editor writes an exposure, a crop and a turn onto the photo it opens, and a
+// root can only be added once against the shared DB - so it gets its own rather
+// than leaving another spec's frames edited behind it.
 export const EDIT_PHOTOS_DIR = path.join(E2E_ROOT, 'edit-photos');
 // The read-only spec bins and restores, and its whole point is that the tree it
 // does that over is untouched afterwards - which another spec's frames moving

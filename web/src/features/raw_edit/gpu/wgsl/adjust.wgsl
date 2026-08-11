@@ -76,8 +76,8 @@ fn tone_adjusted(luma: f32) -> f32 {
 
   // Contrast first, as a power about the pivot: a straight line in log space, so it cannot
   // introduce an inflection the four zone gains would then have to fight.
-  if (tick.contrast != 0.0) {
-    let k = pow(2.0, -tick.contrast / 100.0 * CONTRAST_SLOPE);
+  if (edit.contrast != 0.0) {
+    let k = pow(2.0, -edit.contrast / 100.0 * CONTRAST_SLOPE);
     l = PIVOT * pow(max(l, 0.0) / PIVOT, 1.0 / k);
   }
 
@@ -86,12 +86,12 @@ fn tone_adjusted(luma: f32) -> f32 {
   // that commute, and nobody has to remember which the panel lists first.
   let at = stops_below_white(l);
   var gain = 0.0;
-  gain += tick.highlights / 100.0 * ZONE_STOPS * zone(at, -1.0, 1.6);
-  gain += tick.shadows / 100.0 * ZONE_STOPS * zone(at, -4.0, 1.8);
+  gain += edit.highlights / 100.0 * ZONE_STOPS * zone(at, -1.0, 1.6);
+  gain += edit.shadows / 100.0 * ZONE_STOPS * zone(at, -4.0, 1.8);
   // The endpoints are one-sided: a `whites` slider that lifted the midtones would be a
   // second exposure control, and `blacks` the same at the other end.
-  gain += tick.whites / 100.0 * END_STOPS * zone(at, 0.5, 1.4) * step(-1.5, at);
-  gain += tick.blacks / 100.0 * END_STOPS * zone(at, -6.5, 1.8) * (1.0 - step(-4.0, at));
+  gain += edit.whites / 100.0 * END_STOPS * zone(at, 0.5, 1.4) * step(-1.5, at);
+  gain += edit.blacks / 100.0 * END_STOPS * zone(at, -6.5, 1.8) * (1.0 - step(-4.0, at));
 
   return l * pow(2.0, gain);
 }
@@ -105,18 +105,18 @@ fn tone_adjusted(luma: f32) -> f32 {
 fn chroma_adjusted(colour: vec3f, luma: f32) -> vec3f {
   var out = colour;
 
-  if (tick.sat_adjust != 0.0) {
+  if (edit.sat_adjust != 0.0) {
     // -100 lands at 0, which is grey outright, and +100 at twice the distance from it.
-    let sat = 1.0 + tick.sat_adjust / 100.0;
+    let sat = 1.0 + edit.sat_adjust / 100.0;
     out = vec3f(luma) + (out - vec3f(luma)) * sat;
   }
 
-  if (tick.vibrance != 0.0) {
+  if (edit.vibrance != 0.0) {
     // Chroma relative to the colour's own brightness, so the weighting reads the same in a
     // shadow as in a highlight rather than treating every dark pixel as muted.
     let chroma = length(out - vec3f(luma)) / max(luma, 1.0 / 65536.0);
     let room = 1.0 / (1.0 + chroma * 2.0);
-    out = vec3f(luma) + (out - vec3f(luma)) * (1.0 + tick.vibrance / 100.0 * room);
+    out = vec3f(luma) + (out - vec3f(luma)) * (1.0 + edit.vibrance / 100.0 * room);
   }
 
   return out;
@@ -162,7 +162,7 @@ fn local_contrast(base_stops: f32, blur: vec3f) -> f32 {
   // shadow under black is clipping rather than contrast, and a clipped edge is exactly what
   // the eye reads as a halo. Broad enough to leave the midtones at full strength.
   let room = zone(base_stops, -2.5, 3.5);
-  return room * DETAIL_STOPS * (tick.texture_adjust * fine + tick.clarity * coarse) / 100.0;
+  return room * DETAIL_STOPS * (edit.texture_adjust * fine + edit.clarity * coarse) / 100.0;
 }
 
 /// The airlight dehaze subtracts, in the scene-relative units this file works in.
@@ -202,7 +202,7 @@ const DEHAZE_STRENGTH: f32 = 0.9;
 /// roll-off, which is the same thing that catches a bright scene. Worth knowing before reading
 /// a blown highlight there as a bug in the estimate.
 fn dehazed(colour: vec3f, dark_stops: f32) -> vec3f {
-  let omega = tick.dehaze / 100.0 * DEHAZE_STRENGTH;
+  let omega = edit.dehaze / 100.0 * DEHAZE_STRENGTH;
   let dark = clamp(exp2(dark_stops) / AIRLIGHT, 0.0, 1.0);
   // Floored well off zero: the model divides by this, and the estimate is a blurred prior
   // rather than a measurement, so the last stretch towards zero is noise gain.
@@ -220,15 +220,15 @@ fn dehazed(colour: vec3f, dark_stops: f32) -> vec3f {
 /// Returns the colour untouched where nothing is set, which is the common case: an unedited
 /// photo, and every photo in a library nobody has opened the editor on.
 fn adjusted(colour: vec3f, base_luma: f32, uv: vec2f) -> vec3f {
-  let local = tick.texture_adjust != 0.0 || tick.clarity != 0.0 || tick.dehaze != 0.0;
+  let local = edit.texture_adjust != 0.0 || edit.clarity != 0.0 || edit.dehaze != 0.0;
   // Off the frame rather than off the document: a photograph whose camera recorded no neutral
   // has nothing to balance against however the sliders are set, and one that does pays nine
   // multiplies through a matrix `white_balance.wgsl` has already made the identity where the
   // pair has not moved.
-  let rebalanced = tick.as_shot_temperature > 0.0;
-  if (!local && !rebalanced && tick.contrast == 0.0 && tick.highlights == 0.0
-      && tick.shadows == 0.0 && tick.whites == 0.0 && tick.blacks == 0.0
-      && tick.vibrance == 0.0 && tick.sat_adjust == 0.0) {
+  let rebalanced = edit.as_shot_temperature > 0.0;
+  if (!local && !rebalanced && edit.contrast == 0.0 && edit.highlights == 0.0
+      && edit.shadows == 0.0 && edit.whites == 0.0 && edit.blacks == 0.0
+      && edit.vibrance == 0.0 && edit.sat_adjust == 0.0) {
     return colour;
   }
 
@@ -252,7 +252,7 @@ fn adjusted(colour: vec3f, base_luma: f32, uv: vec2f) -> vec3f {
 
   // Dehaze next, because it is a claim about what the scene was before the air got in the
   // way; everything below is then grading the recovered scene rather than the veil.
-  if (tick.dehaze != 0.0) { out = dehazed(out, blur.b); }
+  if (edit.dehaze != 0.0) { out = dehazed(out, blur.b); }
 
   let luma = dot(LUMA, out);
   // Black has no ratios to carry and no luma to divide by. Nothing left can lift it off zero
@@ -260,7 +260,7 @@ fn adjusted(colour: vec3f, base_luma: f32, uv: vec2f) -> vec3f {
   if (luma <= 0.0) { return out; }
 
   var toned_luma = tone_adjusted(luma);
-  if (tick.texture_adjust != 0.0 || tick.clarity != 0.0) {
+  if (edit.texture_adjust != 0.0 || edit.clarity != 0.0) {
     toned_luma = toned_luma * exp2(local_contrast(stops_below_white(base_luma), blur));
   }
   let held = out * (toned_luma / luma);

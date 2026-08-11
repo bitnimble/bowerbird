@@ -177,7 +177,7 @@ impl Levels {
     ///
     /// It used to be floored at each of the three places that grade, in two spellings, with
     /// `encode_base` flooring again internally in case one of them forgot - so the invariant
-    /// that `tick.white` is the white the frame was *coded* against spanned four sites and was
+    /// that `edit.white` is the white the frame was *coded* against spanned four sites and was
     /// checked at none. The type carries it now: [`encode_base`] and [`SceneGrade::new`] take
     /// only this, so a caller cannot reach either with a raw quantile.
     ///

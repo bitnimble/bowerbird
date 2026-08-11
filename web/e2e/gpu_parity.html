@@ -2,13 +2,13 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>GPU tick parity</title>
+<title>GPU edit parity</title>
 </head>
 <body>
 <pre id="out">waiting</pre>
 <canvas id="stage" width="96" height="64"></canvas>
 <script type="module">
-// Drives the real `TickPipeline` against the frames `native/rawshim/tests/gpu_fixture.rs`
+// Drives the real `EditPipeline` against the frames `native/rawshim/tests/gpu_fixture.rs`
 // builds from the CPU.
 //
 // The shaders are a second implementation of the grade, so they are held to the first:
@@ -16,7 +16,7 @@
 // against (`docs/raw-edit-gpu.md` §6.3). The tick is the grade and the PQ encode alone now -
 // the filters run once at open, in `edit::open` - so this is owed exactness rather
 // than a tolerance, and the fixture's input is the already-filtered frame.
-import { TickPipeline, tickFeatures, tickLimits } from '/src/features/raw_edit/gpu/tick_pipeline.ts';
+import { EditPipeline, editFeatures, editLimits } from '/src/features/raw_edit/gpu/edit_pipeline.ts';
 
 const out = document.getElementById('out');
 
@@ -78,8 +78,8 @@ async function main() {
     return;
   }
   const device = await adapter.requestDevice({
-    requiredFeatures: tickFeatures(adapter),
-    requiredLimits: tickLimits(adapter),
+    requiredFeatures: editFeatures(adapter),
+    requiredLimits: editLimits(adapter),
   });
   device.addEventListener('uncapturederror', (event) => {
     out.textContent = JSON.stringify({ ok: false, error: String(event.error?.message ?? event.error) });
@@ -90,12 +90,12 @@ async function main() {
   context.configure({ device, format: 'rgba16float', alphaMode: 'opaque' });
 
   const names = new URLSearchParams(location.search).get('cases')?.split(',') ?? [
-    'tick-neutral-ev0',
-    'tick-neutral-ev1',
-    'tick-neutral-ev-1.5',
-    'tick-matched-ev0',
-    'tick-matched-ev1',
-    'tick-matched-ev-1.5',
+    'edit-neutral-ev0',
+    'edit-neutral-ev1',
+    'edit-neutral-ev-1.5',
+    'edit-matched-ev0',
+    'edit-matched-ev1',
+    'edit-matched-ev-1.5',
   ];
 
   const results = {};
@@ -104,7 +104,7 @@ async function main() {
     canvas.width = header.width;
     canvas.height = header.height;
     device.pushErrorScope('validation');
-    const pipeline = new TickPipeline(device, context, header, input);
+    const pipeline = new EditPipeline(device, context, header, input);
 
     pipeline.render(header.ev);
     const graded = await pipeline.readFrame();
@@ -118,7 +118,7 @@ async function main() {
     // stops into the range.
     let sweep = null;
     let readsCandidates = null;
-    if (name === 'tick-matched-ev0') {
+    if (name === 'edit-matched-ev0') {
       sweep = await pipeline.peakSweep([-5, -2, 0, 2, 3.5, 5]);
       // And that a tick is actually taking the shortcut those numbers are about. A frame is
       // read off the candidates only where they are every pixel that cleared the threshold;

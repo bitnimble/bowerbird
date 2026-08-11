@@ -1,7 +1,7 @@
 // The pan maths, which both surfaces share: the viewer's `<img>` under a transform and the
 // editor's canvas, which is told a region instead.
 import { describe, expect, test } from 'bun:test';
-import { clampPan, regionOf, type View } from '../zoom_pan';
+import { DOUBLE_SCALE, MIN_SCALE, clampPan, fitScale, nextStopAfter, regionOf, zoomAbout, type View } from '../zoom_pan';
 
 const NATURAL = { width: 6000, height: 4000 };
 const BOX = { width: 1000, height: 800 };
@@ -60,3 +60,69 @@ describe('regionOf', () => {
     }
   });
 });
+
+// The gesture as a whole, which was a Playwright click and drag over a real RAW: the region is
+// the only thing either of those produces, and it is arithmetic all the way down.
+describe('zooming about the point the reader asked for', () => {
+  const box = { left: 0, top: 0, width: BOX.width, height: BOX.height } as DOMRect;
+
+  test('leaves the region around that point rather than the middle', () => {
+    // A quarter in from the top left, which is where the click landed.
+    const view = clampPan(zoomAbout(FITTED_VIEW, 2, 8, box, { x: 250, y: 200 }), BOX, NATURAL);
+    const region = regionOf(view, BOX, NATURAL);
+
+    expect(region.width).toBeLessThan(NATURAL.width);
+    expect(region.height).toBeLessThan(NATURAL.height);
+    // Up and to the left of where a zoom about the centre would have left it.
+    expect(region.x).toBeLessThan((NATURAL.width - region.width) / 2);
+    expect(region.y).toBeLessThan((NATURAL.height - region.height) / 2);
+    expect(region.x).toBeGreaterThanOrEqual(0);
+    expect(region.y).toBeGreaterThanOrEqual(0);
+  });
+
+  test('a pan moves the window without resizing it', () => {
+    const zoomed = clampPan(zoomAbout(FITTED_VIEW, 2, 8, box, { x: 250, y: 200 }), BOX, NATURAL);
+    // The picture goes the other way to the pointer, so dragging left moves the window right.
+    const panned = clampPan({ ...zoomed, x: zoomed.x - 120 }, BOX, NATURAL);
+
+    const was = regionOf(zoomed, BOX, NATURAL);
+    const now = regionOf(panned, BOX, NATURAL);
+    expect(now.x).toBeGreaterThan(was.x);
+    expect(now.width).toBeCloseTo(was.width);
+    expect(now.height).toBeCloseTo(was.height);
+    expect(now.x + now.width).toBeLessThanOrEqual(NATURAL.width + 1);
+  });
+
+  test('climbs the ladder and turns around at the top', () => {
+    // Fitted, twice that, the frame's own pixels, and round to fitted again.
+    const native = 1 / fitScale(BOX, NATURAL);
+    expect(nextStopAfter(MIN_SCALE, native)).toBe(DOUBLE_SCALE);
+    expect(nextStopAfter(DOUBLE_SCALE, native)).toBeCloseTo(native);
+    expect(nextStopAfter(native, native)).toBe(MIN_SCALE);
+  });
+
+  test('takes 100% before twice-fitted where that is the nearer stop', () => {
+    // A render only a little larger than the stage: fitted, it is already most of the way to
+    // 1:1, so the 100% stop sits below twice-fitted and is reached first. This is what the
+    // ladder is sorted for rather than listed in order.
+    const nearly = { width: 1200, height: 900 };
+    const native = 1 / fitScale(BOX, nearly);
+    expect(native).toBeGreaterThan(MIN_SCALE);
+    expect(native).toBeLessThan(DOUBLE_SCALE);
+    expect(nextStopAfter(MIN_SCALE, native)).toBeCloseTo(native);
+    expect(nextStopAfter(native, native)).toBe(DOUBLE_SCALE);
+    expect(nextStopAfter(DOUBLE_SCALE, native)).toBe(MIN_SCALE);
+  });
+
+  test('has one stop where the frame is smaller than the stage', () => {
+    // Below 1:1 when fitted, so 100% is not a stop the reader can climb *to*: it is behind
+    // them. The ladder filters it rather than offering a zoom that shrinks the picture.
+    const small = { width: 400, height: 300 };
+    const native = 1 / fitScale(BOX, small);
+    expect(native).toBeLessThan(MIN_SCALE);
+    expect(nextStopAfter(MIN_SCALE, native)).toBe(DOUBLE_SCALE);
+    expect(nextStopAfter(DOUBLE_SCALE, native)).toBe(MIN_SCALE);
+  });
+});
+
+const FITTED_VIEW: View = { scale: 1, x: 0, y: 0 };

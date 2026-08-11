@@ -6,7 +6,10 @@ import { addLibrary, openLibrary, openPhoto, syncLibrary, waitForSyncSettled } f
 // which is what everything below is about.
 test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
 
-test.describe.configure({ mode: 'serial' });
+// Serial because the library is set up once, and long because one spec opens a RAW: the decode
+// is the same cold open `raw_editing.spec.ts` gives three minutes for, and the config's default
+// 60s would kill it however patient the poll inside it is.
+test.describe.configure({ mode: 'serial', timeout: 180_000 });
 
 // Playwright's touchscreen taps and nothing else, and a mouse drag is a mouse
 // however the context is configured, so a real finger is driven through CDP:
@@ -70,6 +73,74 @@ test('swiping the frame steps to the next photo and back', async ({ page }) => {
   await page.mouse.up();
   await expect(page).not.toHaveURL(first);
   await expect(page.locator('.stage--zoomed')).toHaveCount(0);
+});
+
+/**
+ * The crop tool under a finger, which is a different question from under a mouse.
+ *
+ * Three things a pointer test cannot ask. A grip has to be big enough to hit, and to be what a
+ * finger actually lands on - the edit panel is a sheet across the foot of the window and the
+ * grips a crop needs most are on the picture's bottom edge. The browser must not take the drag
+ * for a scroll or a pinch, which is `touch-action`. And the stage's own one-finger pan is the
+ * *same gesture* as dragging the rectangle, so it has to do nothing while the tool is open or
+ * the photograph slides out from under a rectangle laid out for a fitted view.
+ */
+test('the crop rectangle takes a finger, and the stage does not pan under it', async ({ page }) => {
+  await openFirstPhoto(page);
+  const photoId = new URL(page.url()).pathname.split('/').pop() ?? '';
+  await page.goto(`/photos/${photoId}?edit=1`);
+  await expect
+    .poll(async () => page.getByTestId('raw-edit-panel').getAttribute('data-status'), { timeout: 170_000 })
+    .toBe('live');
+
+  await page.getByTestId('raw-edit-crop').click();
+  const rect = page.getByTestId('crop-rect');
+  // Opening the tool re-lays the page out - the panel empties, the sheet joins the flow, the
+  // view resets - so the grip's box is only worth reading once that has happened.
+  await expect(rect).toBeVisible();
+  const grip = page.getByTestId('crop-grip-se');
+  const box = await grip.boundingBox();
+  if (box == null) throw new Error('the crop has no grip');
+  // The target, not the mark: 44px is the smallest thing a finger reliably lands on.
+  expect(box.width).toBeGreaterThanOrEqual(44);
+  expect(box.height).toBeGreaterThanOrEqual(44);
+
+  const was = await rect.boundingBox();
+  const from = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  // Nothing over it: the edit panel is a sheet across the foot of the window, and the grips a
+  // crop needs most are on the picture's bottom edge, under exactly that.
+  const at = await page.evaluate(
+    ([x, y]) => {
+      const el = document.elementFromPoint(x as number, y as number);
+      return el == null ? 'nothing' : `${el.tagName}.${el.className}`;
+    },
+    [from.x, from.y],
+  );
+  expect(at, `something covers the grip at ${from.x},${from.y}`).toContain('crop-overlay__grip');
+  await swipe(page, from, -120);
+
+  // The rectangle moved, which is only true if the touch reached the grip rather than being
+  // swallowed as a scroll.
+  await expect
+    .poll(async () => {
+      const now = await rect.boundingBox();
+      return now == null || was == null ? false : Math.abs(now.width - was.width) > 20;
+    }, { timeout: 15_000 })
+    .toBe(true);
+
+  // And the photograph did not move under it. A drag outside the rectangle is the stage's own
+  // pan gesture, which is the *same* one-finger drag the rectangle wants, so it has to do
+  // nothing while the tool is open - and the region the tick draws is what says so, since a pan
+  // is a change of region and nothing else.
+  const region = page.getByTestId('raw-edit-region');
+  const still = await region.textContent();
+  const overlay = await page.getByTestId('crop-overlay').boundingBox();
+  if (overlay == null) throw new Error('the crop has no overlay');
+  // In the shade the drag above just made, which is outside the rectangle by construction.
+  await swipe(page, { x: overlay.x + overlay.width / 2, y: overlay.y + overlay.height - 4 }, -120);
+  expect(await region.textContent()).toBe(still);
+
+  await page.getByTestId('raw-edit-crop').click();
 });
 
 test('the header keeps to one line, its menus folded into an overflow button', async ({ page }) => {

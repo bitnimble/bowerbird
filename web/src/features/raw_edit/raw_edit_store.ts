@@ -1,6 +1,10 @@
 import { computed, observable } from 'mobx';
 import type { EditDoc } from '../../api/client';
-import type { AsShot, Region } from './gpu/tick_pipeline';
+import { displaySize } from '../../../../src/schemas/display_size';
+import { turnedForDisplay, turnedPointForDisplay, type CropRect } from './crop_turn';
+import type { KeystoneGuide } from './keystone';
+import { wholeFrameGeometry, type EditGeometry } from './gpu/shaders';
+import type { AsShot, Region } from './gpu/edit_pipeline';
 
 export type EditStatus = 'idle' | 'fetching' | 'preparing' | 'live' | 'failed';
 
@@ -67,6 +71,25 @@ export class RawEditStore {
   }
 
   /**
+   * Whether the crop tool is open.
+   *
+   * It changes what the stage *shows*, not just what is drawn over it: a crop is chosen
+   * against the picture it is being taken out of, so while the tool is open the frame is
+   * straightened and turned but not cropped, and the rectangle is an overlay on that.
+   */
+  @observable accessor cropping = false;
+
+  /**
+   * Whether the keystone tool is open.
+   *
+   * Same idea as `cropping` and further: the guides are drawn down edges that are *leaning*, so
+   * the stage has to show the frame with the correction taken off - and with the crop and the
+   * straighten off too, because a guide runs to the edge of the photograph and the reader has
+   * to be able to reach the part of it a crop would have hidden.
+   */
+  @observable accessor keystoning = false;
+
+  /**
    * The exposure the tick draws at, in EV.
    *
    * Derived rather than stored beside the document. Holding both is two
@@ -75,6 +98,93 @@ export class RawEditStore {
    */
   @computed get exposureEv(): number {
     return this.doc?.exposure ?? 0;
+  }
+
+  /**
+   * The geometry the tick should draw with, which is not always the document's.
+   *
+   * Straightened and turned but uncropped while the tool is open - see `cropping` - and the
+   * document's own the rest of the time. Built through `displaySize`, the server's function,
+   * so the editor and the rendition agree on the shape without a second implementation.
+   */
+  @computed get geometry(): EditGeometry {
+    const doc = this.doc;
+    if (this.width === 0 || doc == null) return wholeFrameGeometry(Math.max(this.width, 1), Math.max(this.height, 1));
+    const uncropped = { ...doc, cropLeft: 0, cropTop: 0, cropRight: 1, cropBottom: 1 };
+    // The keystone tool needs the frame as the camera left it: the guides name what *should*
+    // have been parallel, so they are drawn on the lines that are not - and they are fractions
+    // of the frame, which the straighten would no longer be true of.
+    const shown: EditDoc = this.keystoning
+      ? { ...uncropped, cropAngle: 0, keystone: null }
+      : this.cropping
+        ? uncropped
+        : doc;
+    return {
+      cropLeft: shown.cropLeft,
+      cropTop: shown.cropTop,
+      cropRight: shown.cropRight,
+      cropBottom: shown.cropBottom,
+      cropAngle: shown.cropAngle,
+      rotate: shown.rotate,
+      output: displaySize(this.width, this.height, shown),
+      keystone: shown.keystone,
+    };
+  }
+
+  /**
+   * The guides as the overlay lays them out, which is the document's turned onto the screen.
+   *
+   * The document holds them in the frame's own fractions - the frame the correction is defined
+   * over - and the stage shows that frame after the quarter turn, so the turn is the whole of
+   * the mapping. The same split the crop rectangle has, and for the same reason.
+   */
+  @computed get guides(): KeystoneGuide[] {
+    const doc = this.doc;
+    if (doc == null) return [];
+    return doc.keystoneGuides.map((guide) => {
+      const from = turnedPointForDisplay({ x: guide.x1, y: guide.y1 }, doc.rotate);
+      const to = turnedPointForDisplay({ x: guide.x2, y: guide.y2 }, doc.rotate);
+      return { x1: from.x, y1: from.y, x2: to.x, y2: to.y };
+    });
+  }
+
+  /** Whether the photograph is carrying a correction, which is what the tool's label reads off. */
+  @computed get keystoned(): boolean {
+    return this.doc?.keystone != null;
+  }
+
+  /**
+   * Whether the geometry has left any blank around the picture for a crop to trim.
+   *
+   * A straighten and a perspective correction are the two that do; a quarter turn and a crop
+   * cannot. Nothing to trim is a disabled button rather than a hidden one, so the reader can
+   * see the tool exists before they have done the thing it is for.
+   */
+  @computed get trimmable(): boolean {
+    const doc = this.doc;
+    return doc != null && (doc.cropAngle !== 0 || doc.keystone != null);
+  }
+
+  /** What the region is a window on: the picture the geometry above produces. */
+  @computed get output(): { width: number; height: number } {
+    return this.geometry.output;
+  }
+
+  /**
+   * The crop as fractions of what the stage is showing, for the overlay to lay itself out on.
+   *
+   * The document's fractions are of the *straightened* frame, which is exactly what the stage
+   * shows while the tool is open - so they are the same numbers, and the overlay needs no
+   * geometry of its own. The quarter turn is the one thing it has to undo: the fractions are
+   * defined before the turn and the picture on screen is after it.
+   */
+  @computed get cropRect(): CropRect | null {
+    const doc = this.doc;
+    if (doc == null) return null;
+    return turnedForDisplay(
+      { left: doc.cropLeft, top: doc.cropTop, right: doc.cropRight, bottom: doc.cropBottom },
+      doc.rotate,
+    );
   }
 
   /**

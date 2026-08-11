@@ -15,7 +15,7 @@ Where the code went:
   so is the wasm32 target. The open is `native/rawshim/src/edit.rs`, called
   natively.
 - The tick is `web/src/features/raw_edit/gpu/`: `wgsl/` holds the shaders,
-  `tick_pipeline.ts` orchestrates them.
+  `edit_pipeline.ts` orchestrates them.
 - The three sinks, the interactive 960px preview, `Resolution`, and the
   `VideoFrame` / PNG / AVIF routing all went with §7; the canvas replaced them.
 

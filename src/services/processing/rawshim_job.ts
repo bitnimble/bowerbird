@@ -91,6 +91,13 @@ export interface JobGeometry {
   crop: [number, number, number, number];
   angleDegrees: number;
   rotate: number;
+  /**
+   * The perspective correction, corrected back to source in fractions of the frame, or null.
+   *
+   * Under the crop and the straighten in the gather, because it corrects the camera's angle to
+   * the subject rather than anything the reader chose about the framing.
+   */
+  keystone: number[] | null;
 }
 
 export interface JobAdjust {

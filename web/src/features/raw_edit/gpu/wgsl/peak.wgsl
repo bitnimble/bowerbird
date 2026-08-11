@@ -62,12 +62,20 @@ const LOG_HIGH: f32 = 14.0;
 const LOG_SPAN: f32 = LOG_HIGH - LOG_LOW;
 
 /// Which bin a value in units of reference white falls in.
+///
+/// Nothing reaches the `u32` conversion that it is not defined on, and that is the whole
+/// point of the shape below. WGSL leaves `u32(x)` undefined for a NaN and for anything past
+/// the range, so a pixel the colour transform returned as a NaN - or as an infinity - binned
+/// wherever the driver happened to put it, which is *not the same place on two hosts*. This
+/// is the one measurement a rendition and the editor have to agree on to the bin, and it
+/// feeds a value every pixel in the frame is then clamped to.
 fn bin_of(v: f32) -> u32 {
   // Below the range is the bottom bin rather than an error: a black pixel is a real sample
-  // and `log2(0)` is not a number to clamp.
-  let stops = log2(max(v, 1e-9));
-  let t = (stops - LOG_LOW) / LOG_SPAN;
-  return min(u32(max(t, 0.0) * f32(BINS)), BINS - 1u);
+  // and `log2(0)` is not a number to clamp. Written as "not above zero" so it catches a NaN
+  // too, which no comparison against one does.
+  if (!(v > 0.0)) { return 0u; }
+  let t = clamp((log2(v) - LOG_LOW) / LOG_SPAN, 0.0, 1.0);
+  return min(u32(t * f32(BINS)), BINS - 1u);
 }
 
 /// The value at a bin's own centre, in units of reference white.
@@ -85,13 +93,13 @@ const QUANTILE: f32 = 0.9999;
 
 /// What the quantile is taken of: the post-colour peak channel, in units of reference.
 fn measured(nits: vec3f, uv: vec2f) -> f32 {
-  let coloured = matched_nits(nits, uv) / tick.reference;
+  let coloured = matched_nits(nits, uv) / edit.reference;
   return max(coloured.r, max(coloured.g, coloured.b));
 }
 
 /// A pixel's own place in the frame, normalised, which the presence sliders read the blur at.
 fn uv_of(x: u32, y: u32) -> vec2f {
-  return (vec2f(f32(x), f32(y)) + vec2f(0.5)) / vec2f(f32(tick.width), f32(tick.height));
+  return (vec2f(f32(x), f32(y)) + vec2f(0.5)) / vec2f(f32(edit.width), f32(edit.height));
 }
 
 fn count_in(v: f32) {
@@ -100,12 +108,12 @@ fn count_in(v: f32) {
 
 /// The sampled row of the frame this invocation covers, or nothing.
 fn sampled(id: vec3u) -> vec2u {
-  let y = id.y * tick.row_stride;
-  if (id.x >= tick.width || y >= tick.height) { return vec2u(0u, 0xffffffffu); }
+  let y = id.y * edit.row_stride;
+  if (id.x >= edit.width || y >= edit.height) { return vec2u(0u, 0xffffffffu); }
   return vec2u(id.x, y);
 }
 
-/// About a million pixels, as whole rows. Runs at the open, not per tick.
+/// About a million pixels, as whole rows. Runs at the open, not per edit.
 ///
 /// Three shapes, and the reasoning matters more than the code. Reading every pixel was
 /// first, on the grounds that a shader has no reason to subsample - but this pass runs the
@@ -164,7 +172,7 @@ fn collect(@builtin(global_invocation_id) id: vec3u) {
   // to know where each one was - a candidate with no position would be graded against the
   // blur at the frame's top-left corner, so a strong clarity would move the roll-off knee
   // by however hazy that corner happened to be.
-  atomicStore(&candidates[base + 3u], at.y * tick.width + at.x);
+  atomicStore(&candidates[base + 3u], at.y * edit.width + at.x);
 }
 
 /// The tick's whole measurement: the kept candidates, at this exposure.
@@ -179,7 +187,7 @@ fn remeasure(@builtin(global_invocation_id) id: vec3u) {
       f32(atomicLoad(&candidates[base + 1u])),
       f32(atomicLoad(&candidates[base + 2u])),
     )),
-    uv_of(pixel % tick.width, pixel / tick.width),
+    uv_of(pixel % edit.width, pixel / edit.width),
   ));
 }
 
@@ -199,7 +207,7 @@ const CHUNKS: u32 = 256u;
 var<workgroup> partial: array<u32, 256>;
 
 fn bin_value(bin: u32) -> f32 {
-  return bin_centre(bin) * tick.reference;
+  return bin_centre(bin) * edit.reference;
 }
 
 @compute @workgroup_size(256)
@@ -223,7 +231,17 @@ fn quantile(@builtin(local_invocation_id) local: vec3u) {
   // fair sample and it is not one: `collect` keeps whichever arrive first, in dispatch order,
   // so an overflow keeps the top rows of the frame rather than a spread of it - and the peak
   // it measures is that region's rather than the picture's.
-  let want = u32(max(1.0, (1.0 - QUANTILE) * f32(tick.peak_samples)));
+  var want = u32(max(1.0, (1.0 - QUANTILE) * f32(edit.peak_samples)));
+
+  // Unless the histogram holds fewer samples than that rank, which the candidates can: they
+  // are counted against `peak_samples`, and what is in here is only ever the brightest of
+  // them. No quantile is defined over a sample that short and the brightest of it is, so ask
+  // for that. **This is the difference between a photograph and a black rectangle**: neither
+  // search below could reach an unreachable rank, so both fell through with `found` at zero -
+  // a peak of one nit, which `rolled_off` clamps every pixel in the frame to.
+  var total = 0u;
+  for (var c = 0u; c < CHUNKS; c = c + 1u) { total = total + partial[c]; }
+  if (want > total) { want = 1u; }
 
   // The chunk the quantile falls in, then the bin inside it, both from the top.
   var seen = 0u;

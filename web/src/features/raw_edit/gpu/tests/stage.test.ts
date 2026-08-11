@@ -1,6 +1,6 @@
 // The two pure decisions the open makes before a single dispatch is recorded.
 import { afterEach, describe, expect, test } from 'bun:test';
-import { SUPERSAMPLE, frameTooBig, stageResolution, tickFeatures } from '../tick_pipeline';
+import { SUPERSAMPLE, frameTooBig, stageResolution, editFeatures } from '../edit_pipeline';
 
 const global = globalThis as { devicePixelRatio?: number };
 const real = global.devicePixelRatio;
@@ -54,6 +54,16 @@ describe('stageResolution', () => {
     expect(stageResolution({ width: 20000, height: 20000 }, sensor, 16384).width).toBe(9504);
   });
 
+  // The limit binds on the long edge and nothing binds on the short one, which is where a
+  // per-axis clamp let the two come apart: 8192x6336 for a 3:2 frame is a picture stretched
+  // sixteen percent tall, on every adapter that reports 8192 and every 61MP file.
+  test('keeps the aspect when only one edge reaches the limit', () => {
+    global.devicePixelRatio = 4;
+    const sensor = { x: 0, y: 0, width: 9504, height: 6336 };
+    const size = stageResolution({ width: 20000, height: 20000 }, sensor, 8192);
+    expect(size.width / size.height).toBeCloseTo(sensor.width / sensor.height, 2);
+  });
+
   // A zero box arrives before layout, and a canvas of zero is a validation error rather than
   // an empty picture.
   test.each([
@@ -68,7 +78,7 @@ describe('stageResolution', () => {
   });
 });
 
-describe('tickFeatures', () => {
+describe('editFeatures', () => {
   const adapter = (features: string[]): GPUAdapter =>
     ({ features: new Set(features) }) as unknown as GPUAdapter;
 
@@ -76,19 +86,19 @@ describe('tickFeatures', () => {
   // every iPhone at the open - no Apple GPU filters 32-bit float - and asking for it where it
   // happens to exist would leave the two platforms reading a differently-quantised map.
   test('never asks for float32-filterable, even where it exists', () => {
-    expect(tickFeatures(adapter(['float32-filterable']))).toEqual([]);
+    expect(editFeatures(adapter(['float32-filterable']))).toEqual([]);
   });
 
   test('asks for the timer only where it exists', () => {
-    expect(tickFeatures(adapter([]))).toEqual([]);
-    expect(tickFeatures(adapter(['float32-filterable', 'timestamp-query']))).toEqual([
+    expect(editFeatures(adapter([]))).toEqual([]);
+    expect(editFeatures(adapter(['float32-filterable', 'timestamp-query']))).toEqual([
       'timestamp-query',
     ]);
   });
 });
 
 describe('frameTooBig', () => {
-  // What an adapter that raised its limits offers. `tickLimits` asks for the adapter's own
+  // What an adapter that raised its limits offers. `editLimits` asks for the adapter's own
   // maximum, and a desktop one answers in gigabytes.
   const ROOMY = {
     maxTextureDimension2D: 8192,

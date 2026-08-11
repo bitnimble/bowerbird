@@ -209,7 +209,7 @@ pub struct Prepared {
     pub width: usize,
     pub height: usize,
     /// The frame's own, read before the grade so exposure can move against them instead
-    /// of being folded into them (the `exposure` uniform in `tick.wgsl`).
+    /// of being folded into them (the `exposure` uniform in `edit.wgsl`).
     pub levels: tone::Levels,
 }
 
@@ -347,7 +347,7 @@ pub struct Cut {
 
 /// What a frame measures once the reader's geometry is applied to it.
 ///
-/// The Rust twin of `displaySize` in `schemas/photo_edits.ts`, and the same three steps in the
+/// The Rust twin of `displaySize` in `schemas/display_size.ts`, and the same three steps in the
 /// same order: straighten to the bounding box, crop as fractions of *that*, then the quarter
 /// turn. The two have to agree, because the catalogue lays a grid tile out on one and the
 /// encoder writes a file at the other - a disagreement is a tile that is the wrong shape for
@@ -483,7 +483,7 @@ pub fn graded_with(
 }
 
 /// `levels` are the frame's own, unexposed; `exposure` is the slider. Keeping them apart
-/// is what holds the colour still as it moves - see the `exposure` uniform in `tick.wgsl`.
+/// is what holds the colour still as it moves - see the `exposure` uniform in `edit.wgsl`.
 ///
 /// The frame must already be through the lens: the editor materialises that once into
 /// `Prepared`, and re-grades here on every slider tick.

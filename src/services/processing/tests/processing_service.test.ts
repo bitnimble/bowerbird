@@ -191,7 +191,31 @@ describe('ProcessingService.processUnprocessed', () => {
     // Left, top, right, bottom - the order `image::Geometry` destructures. A transposed
     // pair here is a crop of the wrong rectangle, which no type on either side would catch
     // because all four are the same shape.
-    expect(posted[0]?.geometry).toEqual({ crop: [0.2, 0.1, 0.9, 0.8], angleDegrees: 3, rotate: 90 });
+    expect(posted[0]?.geometry).toEqual({
+      crop: [0.2, 0.1, 0.9, 0.8],
+      angleDegrees: 3,
+      rotate: 90,
+      keystone: null,
+    });
+  });
+
+  it('carries the perspective correction the editor solved, in the order the gather reads it', async () => {
+    // The document's own eight, row-major. This is the only hop the correction takes to the
+    // renderer, and a rendition built without it is a differently-shaped photograph from the
+    // one the reader approved - which nothing downstream would report.
+    const keystone = [1.98, 0, 0, 0, 2.52, -0.27, 0, 1.09];
+    const repo = {
+      listPendingProcessing: jest.fn(() => [
+        { ...pending('a'), edits: JSON.stringify({ version: 1, keystone }) },
+      ]),
+      markTileBuilt: jest.fn(),
+      markRenditionsBuilt: jest.fn(),
+      markProcessingFailed: jest.fn(),
+    } as unknown as PhotosRepository;
+
+    await new ProcessingService(repo, settingsWith({})).processUnprocessed({ libraryId: 'lib' });
+
+    expect(posted[0]?.geometry.keystone).toEqual(keystone);
   });
 
   it('renders as metered where the photo has no edits, or a document it cannot read', async () => {

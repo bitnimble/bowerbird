@@ -153,6 +153,111 @@ const WhiteBalance = observer(function WhiteBalance({
   );
 });
 
+/**
+ * The crop, the straighten and the quarter turns.
+ *
+ * **The crop is a mode and the other two are not**, which is not an inconsistency: a rectangle
+ * has to be chosen against what is outside it, so opening the tool shows the frame uncropped,
+ * where a turn and a straighten are things you judge on the picture itself.
+ *
+ * The perspective correction is a mode too, and a stronger one: it takes the crop, the straighten
+ * and the correction itself off the stage, because a guide is laid along an edge that is still
+ * leaning. Lines rather than sliders - the reader says which edges should have been parallel and
+ * the geometry follows (`keystone.ts`), where a slider asks them to search for it by eye.
+ *
+ * The sidecar's own perspective sliders are still reported as unsupported on import: they are a
+ * different parameterisation, not this one, and a number read into the wrong one is a
+ * photograph bent by an amount nobody asked for.
+ */
+const Geometry = observer(function Geometry({
+  store,
+  presenter,
+}: {
+  store: RawEditStore;
+  presenter: RawEditPresenter;
+}): JSX.Element {
+  const doc = store.doc;
+  const cropped =
+    doc != null &&
+    (doc.cropLeft !== 0 || doc.cropTop !== 0 || doc.cropRight !== 1 || doc.cropBottom !== 1);
+
+  return (
+    <div className="raw-edit-panel__group" data-testid="raw-edit-geometry">
+      <Text variant="label" as="div">
+        Crop and rotate
+      </Text>
+
+      <div className="raw-edit-panel__history">
+        <Button
+          onClick={() => presenter.setCropping(!store.cropping)}
+          disabled={doc == null}
+          data-testid="raw-edit-crop"
+        >
+          {store.cropping ? 'Done cropping' : cropped ? 'Adjust crop' : 'Crop'}
+        </Button>
+        <Button onClick={() => presenter.turn(-90)} disabled={doc == null} data-testid="raw-edit-turn-left">
+          Rotate left
+        </Button>
+        <Button onClick={() => presenter.turn(90)} disabled={doc == null} data-testid="raw-edit-turn-right">
+          Rotate right
+        </Button>
+        <Button
+          onClick={presenter.cropToBounds}
+          disabled={doc == null || !store.trimmable}
+          data-testid="raw-edit-crop-to-bounds"
+        >
+          Crop to fit
+        </Button>
+      </div>
+
+      <div className="raw-edit-panel__history">
+        <Button
+          onClick={() => presenter.setKeystoning(!store.keystoning)}
+          disabled={doc == null}
+          data-testid="raw-edit-keystone"
+        >
+          {store.keystoning ? 'Done' : store.keystoned ? 'Adjust perspective' : 'Perspective'}
+        </Button>
+        {(store.keystoning || store.keystoned) && (
+          <Button
+            onClick={presenter.clearKeystone}
+            disabled={doc == null || (!store.keystoned && (doc?.keystoneGuides.length ?? 0) === 0)}
+            data-testid="raw-edit-keystone-clear"
+          >
+            Clear guides
+          </Button>
+        )}
+      </div>
+      {store.keystoning && (
+        <Text variant="muted" as="p">
+          {(doc?.keystoneGuides.length ?? 0) < 2
+            ? 'Draw a line along an edge that should be straight, then another along a second edge that is parallel to it in life.'
+            : store.keystoned
+              ? 'The picture is corrected so those edges come out parallel. Add a pair across the picture to level the horizontals too.'
+              : 'Those two are already parallel, so there is nothing to correct. Move one along an edge that leans.'}
+        </Text>
+      )}
+
+      <div className="raw-edit-panel__slider" data-testid="raw-edit-straighten">
+        <Text variant="label" as="span">
+          Straighten {(doc?.cropAngle ?? 0) > 0 ? '+' : ''}
+          {(doc?.cropAngle ?? 0).toFixed(2)}°
+        </Text>
+        <Slider
+          value={doc?.cropAngle ?? 0}
+          onChange={presenter.previewStraighten}
+          onCommit={presenter.settleStraighten}
+          min={-45}
+          max={45}
+          step={0.05}
+          label="Straighten"
+          disabled={doc == null}
+        />
+      </div>
+    </div>
+  );
+});
+
 export const RawEditPanel = observer(function RawEditPanel({
   store,
   presenter,
@@ -163,6 +268,8 @@ export const RawEditPanel = observer(function RawEditPanel({
   onDone: () => void;
 }): JSX.Element {
   const status = store.message !== '' ? `${store.status} - ${store.message}` : store.status;
+  // Either mode lays something out on the picture and needs the room for it.
+  const geometryOpen = store.cropping || store.keystoning;
 
   return (
     <div
@@ -195,39 +302,50 @@ export const RawEditPanel = observer(function RawEditPanel({
         )}
       </div>
 
-      <div className="raw-edit-panel__exposure">
-        <Text variant="label" as="span">
-          Exposure {store.exposureEv > 0 ? '+' : ''}
-          {store.exposureEv.toFixed(2)} EV
-        </Text>
-        <Slider
-          value={store.exposureEv}
-          onChange={presenter.previewExposure}
-          onCommit={presenter.settleExposure}
-          min={-EV_RANGE}
-          max={EV_RANGE}
-          step={0.01}
-          label="Exposure"
-          // Both conditions, not just `live`. The frame and the settings arrive
-          // separately, so a read that failed leaves a live pipeline with no
-          // document to write into - and `preview` returns early on that, which
-          // is a slider that moves and does nothing.
-          disabled={!store.live || store.doc == null}
-        />
-      </div>
-
-      <WhiteBalance store={store} presenter={presenter} />
-
-      {GROUPS.map((group) => (
-        <div key={group.title} className="raw-edit-panel__group">
-          <Text variant="label" as="div">
-            {group.title}
+      {/* A geometry tool is a mode, so it gets the panel to itself. Everything else is judged
+          on the picture, and on a phone the panel stands in the flow while one is open - a full
+          column of sliders would leave the picture a strip too small to take a finger. */}
+      {!geometryOpen && (
+        <div className="raw-edit-panel__exposure">
+          <Text variant="label" as="span">
+            Exposure {store.exposureEv > 0 ? '+' : ''}
+            {store.exposureEv.toFixed(2)} EV
           </Text>
-          {group.sliders.map((slider) => (
-            <EditSlider key={slider.key} store={store} presenter={presenter} slider={slider} />
-          ))}
+          <Slider
+            value={store.exposureEv}
+            onChange={presenter.previewExposure}
+            onCommit={presenter.settleExposure}
+            min={-EV_RANGE}
+            max={EV_RANGE}
+            step={0.01}
+            label="Exposure"
+            // Both conditions, not just `live`. The frame and the settings arrive
+            // separately, so a read that failed leaves a live pipeline with no
+            // document to write into - and `preview` returns early on that, which
+            // is a slider that moves and does nothing.
+            disabled={!store.live || store.doc == null}
+          />
         </div>
-      ))}
+      )}
+
+      <Geometry store={store} presenter={presenter} />
+
+      {!geometryOpen && (
+        <>
+          <WhiteBalance store={store} presenter={presenter} />
+
+          {GROUPS.map((group) => (
+            <div key={group.title} className="raw-edit-panel__group">
+              <Text variant="label" as="div">
+                {group.title}
+              </Text>
+              {group.sliders.map((slider) => (
+                <EditSlider key={slider.key} store={store} presenter={presenter} slider={slider} />
+              ))}
+            </div>
+          ))}
+        </>
+      )}
 
       {store.status !== 'live' && (
         <Text as="p" variant={store.status === 'failed' ? 'muted' : 'mono'} className="raw-edit-panel__status">

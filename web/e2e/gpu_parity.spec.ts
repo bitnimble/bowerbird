@@ -32,7 +32,7 @@ import { expect, test } from '@playwright/test';
 //
 // Chromium only. Firefox has WebGPU on Windows first and this box is Linux; the parity is
 // a property of the shaders rather than of the engine, so one runtime proves it.
-test.describe('GPU tick parity', () => {
+test.describe('GPU edit parity', () => {
   test.skip(({ browserName }) => browserName !== 'chromium', 'WebGPU, and one engine proves it');
   // Six fixtures, each a whole `finish` at 96x64, and a cold pipeline creation per case.
   test.setTimeout(180_000);
@@ -58,12 +58,12 @@ test.describe('GPU tick parity', () => {
     // Named, not counted: the loop below passes over an empty object, and over a report that
     // holds some other set of cases than the six the fixtures pin.
     expect(Object.keys(report.results ?? {}).sort()).toEqual([
-      'tick-matched-ev-1.5',
-      'tick-matched-ev0',
-      'tick-matched-ev1',
-      'tick-neutral-ev-1.5',
-      'tick-neutral-ev0',
-      'tick-neutral-ev1',
+      'edit-matched-ev-1.5',
+      'edit-matched-ev0',
+      'edit-matched-ev1',
+      'edit-neutral-ev-1.5',
+      'edit-neutral-ev0',
+      'edit-neutral-ev1',
     ]);
 
     for (const [name, result] of Object.entries<Record<string, number | string>>(report.results)) {
@@ -96,7 +96,7 @@ test.describe('GPU tick parity', () => {
     // with a full sample of the frame at every position of the slider, and neither may
     // saturate the histogram they are binned into - a fixed top made the peak stop climbing
     // a couple of stops up, which reads as the highlights suddenly clipping.
-    const sweep = report.results['tick-matched-ev0'].sweep as
+    const sweep = report.results['edit-matched-ev0'].sweep as
       | { ev: number; candidates: number; full: number }[]
       | undefined;
     expect(sweep, 'the matched fixture reports a peak sweep').toBeDefined();
@@ -110,7 +110,7 @@ test.describe('GPU tick parity', () => {
     // the answer has to be yes. If it silently became no the picture would be identical and
     // every tick would just pay the millisecond `collect` exists to save.
     expect(
-      report.results['tick-matched-ev0'].readsCandidates,
+      report.results['edit-matched-ev0'].readsCandidates,
       'the tick reads its peak off the candidates when they are exact',
     ).toBe(true);
 

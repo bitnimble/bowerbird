@@ -3,13 +3,22 @@ import { ApiError, api, preparedPath, type EditDoc, type EditState } from '../..
 import { send } from '../../api/transport';
 import { describe } from '../../errors';
 import {
-  TickPipeline,
+  draggedCrop,
+  turnedForDocument,
+  turnedPointForDocument,
+  type CropGrip,
+  type CropRect,
+} from './crop_turn';
+import { insetCrop } from './crop_to_bounds';
+import { keystoneFromGuides, type KeystoneGuide } from './keystone';
+import {
+  EditPipeline,
   type PreparedHeader,
   type Region,
   stageResolution,
-  tickFeatures,
-  tickLimits,
-} from './gpu/tick_pipeline';
+  editFeatures,
+  editLimits,
+} from './gpu/edit_pipeline';
 import type { RawEditStore, SaveStatus } from './raw_edit_store';
 
 /**
@@ -38,7 +47,7 @@ function conflicted(error: unknown): boolean {
  */
 export class RawEditPresenter {
   private device: GPUDevice | null = null;
-  private pipeline: TickPipeline | null = null;
+  private pipeline: EditPipeline | null = null;
   private canvas: HTMLCanvasElement | null = null;
   private viewport: ResizeObserver | null = null;
   private density: MediaQueryList | null = null;
@@ -88,7 +97,7 @@ export class RawEditPresenter {
       const box = entries[entries.length - 1]?.contentRect;
       if (box != null) {
         this.box = { width: box.width, height: box.height };
-        this.fitStage(box.width, box.height);
+        this.request(this.store.exposureEv);
       }
     });
     this.viewport.observe(canvas);
@@ -117,50 +126,57 @@ export class RawEditPresenter {
   private onDensity(): void {
     if (this.closed) return;
     this.watchPixelRatio();
-    const box = this.box;
-    if (box != null) this.fitStage(box.width, box.height);
+    this.request(this.store.exposureEv);
   }
 
   /**
-   * Sizes the canvas backing store for the viewport and redraws into it.
+   * Sizes the canvas backing store for the viewport and the region about to be drawn.
    *
    * Held to what the frame can actually fill, which is why it needs the region: on a
    * 61MP frame the whole picture is more than any display, and zoomed in far enough it is
    * fewer source pixels than the panel has.
+   *
+   * **In the frame that draws, and nowhere else.** The shader scales the region onto the
+   * canvas axis by axis, so a backing store whose shape disagrees with the region stretches
+   * the picture across it - and every write of the region is a new shape: a straighten, a
+   * turn, a crop, a step through the history. Sized from a separate effect this was a race
+   * against React's, and every frame that won it drew the photograph distorted.
    */
-  @action.bound
-  private fitStage(cssWidth: number, cssHeight: number): void {
+  private sizeStage(): void {
     const canvas = this.canvas;
     const device = this.device;
-    if (canvas == null || device == null || cssWidth === 0 || cssHeight === 0) return;
+    const box = this.box;
     const region = this.store.region;
-    if (region == null) return;
+    if (canvas == null || device == null || box == null || region == null) return;
+    if (box.width === 0 || box.height === 0) return;
 
-    const size = stageResolution({ width: cssWidth, height: cssHeight }, region, device.limits.maxTextureDimension2D);
+    const size = stageResolution(box, region, device.limits.maxTextureDimension2D);
     if (canvas.width === size.width && canvas.height === size.height) return;
     canvas.width = size.width;
     canvas.height = size.height;
-    this.request(this.store.exposureEv);
   }
 
   /**
    * Zoom and pan: the rectangle of the frame on screen, held inside the frame.
    *
-   * Re-fitted rather than only redrawn, because the region is half of what the stage's
-   * resolution is computed from: zoomed in, fewer source pixels have to cover the same box,
-   * so the backing store is capped by the region's own resolution rather than the panel's -
-   * past 1:1 there is nothing left to resolve and the compositor's upscale is the honest
-   * answer. Zoomed back out it has to grow again.
+   * The region is half of what the stage's resolution is computed from: zoomed in, fewer
+   * source pixels have to cover the same box, so the backing store is capped by the region's
+   * own resolution rather than the panel's - past 1:1 there is nothing left to resolve and the
+   * compositor's upscale is the honest answer. Zoomed back out it has to grow again. Which is
+   * `sizeStage`'s, on the frame this asks for.
    */
   @action.bound
   showRegion(region: Region): void {
-    const width = Math.min(Math.max(region.width, 1), this.store.width);
-    const height = Math.min(Math.max(region.height, 1), this.store.height);
+    // Held to the *picture*, not the frame: with a crop the two are different sizes, and a
+    // region clamped to the frame would let a zoomed-out view sit outside what is drawn.
+    const picture = this.store.output;
+    const width = Math.min(Math.max(region.width, 1), picture.width);
+    const height = Math.min(Math.max(region.height, 1), picture.height);
     const next = {
       width,
       height,
-      x: Math.min(Math.max(region.x, 0), this.store.width - width),
-      y: Math.min(Math.max(region.y, 0), this.store.height - height),
+      x: Math.min(Math.max(region.x, 0), picture.width - width),
+      y: Math.min(Math.max(region.y, 0), picture.height - height),
     };
     const held = this.store.region;
     if (
@@ -173,14 +189,6 @@ export class RawEditPresenter {
       return;
     }
     this.store.region = next;
-
-    const box = this.box;
-    if (box == null) {
-      this.request(this.store.exposureEv);
-      return;
-    }
-    // Which redraws, whether or not the backing store had to change.
-    this.fitStage(box.width, box.height);
     this.request(this.store.exposureEv);
   }
 
@@ -206,8 +214,8 @@ export class RawEditPresenter {
       // GPU that refused rather than against no GPU at all.
       this.describeAdapter(adapter);
       const device = await adapter.requestDevice({
-        requiredFeatures: tickFeatures(adapter),
-        requiredLimits: tickLimits(adapter),
+        requiredFeatures: editFeatures(adapter),
+        requiredLimits: editLimits(adapter),
       });
       // Destroyed here rather than left to `close`, which has already run and found no
       // device to take: leaving it would hold the adapter for the life of the page.
@@ -256,7 +264,7 @@ export class RawEditPresenter {
         toneMapping: { mode: 'extended' },
       } as GPUCanvasConfiguration);
 
-      this.pipeline = new TickPipeline(device, context, header, samples);
+      this.pipeline = new EditPipeline(device, context, header, samples);
       const refused = await device.popErrorScope();
       if (this.closed) return;
       if (refused != null) {
@@ -308,6 +316,9 @@ export class RawEditPresenter {
     const next = { ...doc, ...patch };
     this.store.doc = next;
     this.locallyEdited = true;
+    // The geometry before the grade, because it decides what the draw is even reading. The
+    // store works out whether the crop tool wants it whole (`store.geometry`).
+    this.followGeometry();
     // Everything but the exposure, which the tick carries as a gain. Pushed on every
     // move rather than on release so a drag shows what it is doing.
     this.pipeline?.setAdjust({
@@ -325,6 +336,202 @@ export class RawEditPresenter {
       tint: next.tint,
     });
     this.request(this.store.exposureEv);
+  }
+
+  /**
+   * Opens and closes the crop tool.
+   *
+   * The stage shows the frame uncropped while it is open, so leaving it is what makes the crop
+   * take visible effect. Refitting the view to the picture that just changed shape is the
+   * stage's, not this: the region follows the view.
+   */
+  @action.bound
+  setCropping(open: boolean): void {
+    if (this.store.cropping === open) return;
+    this.store.cropping = open;
+    // One tool at a time. Both open at once shows the frame with the crop *and* the straighten
+    // taken off, which is the keystone's stage - and the crop rectangle laid out on it would
+    // then be fractions of a different picture from the one it is being dragged over.
+    if (open) this.store.keystoning = false;
+    this.showGeometry();
+  }
+
+  /**
+   * A drag of the rectangle, from where it stood when the gesture began.
+   *
+   * The overlay says which grip and how far the pointer went as a share of the picture; what
+   * that does to four edges is `draggedCrop`. Settling on release writes one history entry for
+   * the drag, which is the seam every slider commits on.
+   */
+  @action.bound
+  dragCrop(from: CropRect, grip: CropGrip | null, by: { x: number; y: number }, settle: boolean): void {
+    this.previewCrop(draggedCrop(from, grip, by));
+    if (settle) void this.commit();
+  }
+
+  /** The crop rectangle, as fractions of the straightened frame the tool is showing. */
+  @action.bound
+  previewCrop(rect: CropRect): void {
+    const doc = this.store.doc;
+    if (doc == null) return;
+    // Undoing the turn the overlay laid itself out under (`store.cropRect` does the forward
+    // half), so the document keeps the fractions in the order Camera Raw defines them.
+    const crop = turnedForDocument(rect, doc.rotate);
+    this.preview({
+      cropLeft: crop.left,
+      cropTop: crop.top,
+      cropRight: crop.right,
+      cropBottom: crop.bottom,
+    });
+  }
+
+  @action.bound
+  settleCrop(rect: CropRect): void {
+    this.previewCrop(rect);
+    void this.commit();
+  }
+
+  /** A quarter turn, in the direction the button points. */
+  @action.bound
+  turn(by: 90 | -90): void {
+    const doc = this.store.doc;
+    if (doc == null) return;
+    const rotate = (((doc.rotate + by) % 360) + 360) % 360;
+    this.preview({ rotate: rotate as 0 | 90 | 180 | 270 });
+    void this.commit();
+  }
+
+  @action.bound
+  previewStraighten(degrees: number): void {
+    this.preview({ cropAngle: Math.round(degrees * 100) / 100 });
+  }
+
+  @action.bound
+  settleStraighten(degrees: number): void {
+    this.previewStraighten(degrees);
+    void this.commit();
+  }
+
+  /**
+   * Opens and closes the keystone tool.
+   *
+   * Closing is what makes the correction take effect on screen, because the stage shows the
+   * frame uncorrected while the guides are being drawn on it - the same shape the crop tool has,
+   * and for the same reason: you cannot line a guide up with an edge that has already been
+   * straightened.
+   */
+  @action.bound
+  setKeystoning(open: boolean): void {
+    if (this.store.keystoning === open) return;
+    this.store.keystoning = open;
+    if (open) this.store.cropping = false;
+    this.showGeometry();
+  }
+
+  /**
+   * The picture the region was last measured against, so a change of shape can be noticed.
+   *
+   * Not the region itself: a zoom moves the region within a picture that has not changed, and
+   * that is not what this is about.
+   */
+  private shown = { width: 0, height: 0 };
+
+  /**
+   * The geometry into the pipeline, and the region kept on the picture it now describes.
+   *
+   * **A region is in the *picture's* pixels, so a straighten invalidates it.** Every move of
+   * that slider grows the frame to a new bounding box, and the draw asked for on the next
+   * animation frame was reading a window measured against the last one - a sub-rectangle of a
+   * bigger picture, which is a clipped, zoomed-in frame. The stage does refit, but through a
+   * passive effect that React runs *after* the paint, so what the reader saw was the broken
+   * frame and the right one alternating for the length of the drag.
+   *
+   * Only when the shape actually moves. A slider that leaves the picture the size it was - the
+   * exposure, the tone, the colour - must not have the reader's zoom reset under it.
+   */
+  @action.bound
+  private followGeometry(): void {
+    this.pipeline?.setGeometry(this.store.geometry);
+    const { width, height } = this.store.output;
+    if (width === this.shown.width && height === this.shown.height) return;
+    this.shown = { width, height };
+    // The whole of it, which is what the stage's own refit settles on: it resets the view
+    // whenever the shape changes, and `showRegion` returns early on a region it agrees with.
+    this.store.region = { x: 0, y: 0, width, height };
+  }
+
+  /**
+   * What a tool opening or closing does to the picture: a different geometry, drawn.
+   *
+   * **The draw is the half that is easy to forget.** `setGeometry` is a setter, and the stage
+   * only redraws when the *shape* changes - which a crop does and a perspective correction, by
+   * design, does not. Closing the tool left the corrected picture unrendered until an unrelated
+   * slider happened to push a frame through.
+   */
+  @action.bound
+  private showGeometry(): void {
+    this.followGeometry();
+    this.request(this.store.exposureEv);
+  }
+
+  /**
+   * The guides, as the overlay holds them: in the frame the reader is looking at.
+   *
+   * Turned back into the frame's own fractions on the way in, and the correction recomputed from
+   * them here rather than anywhere else. **The matrix is derived once, on the writer's side**,
+   * so the document carries an answer both renderers read rather than a question each of them
+   * answers - which is the difference between a preview and a rendition agreeing by design and
+   * agreeing by luck.
+   */
+  @action.bound
+  setGuides(guides: readonly KeystoneGuide[], settle: boolean): void {
+    const doc = this.store.doc;
+    if (doc == null) return;
+    const stored = guides.map((guide) => {
+      const from = turnedPointForDocument({ x: guide.x1, y: guide.y1 }, doc.rotate);
+      const to = turnedPointForDocument({ x: guide.x2, y: guide.y2 }, doc.rotate);
+      return { x1: from.x, y1: from.y, x2: to.x, y2: to.y };
+    });
+    this.preview({
+      keystoneGuides: stored,
+      keystone: keystoneFromGuides(stored, { width: this.store.width, height: this.store.height }),
+    });
+    if (settle) void this.commit();
+  }
+
+  /**
+   * The crop that fits inside what the geometry left, with none of the blank in it.
+   *
+   * A straighten and a perspective correction both leave the picture sitting in its frame as a
+   * quadrilateral with wedges around it; this is the largest rectangle inside that. Its own
+   * button rather than something either tool does on the way out: a reader who is about to
+   * crop by eye does not want the frame moved under them first, and one who is not wants this.
+   */
+  @action.bound
+  cropToBounds(): void {
+    const doc = this.store.doc;
+    if (doc == null) return;
+    const rect = insetCrop({
+      width: this.store.width,
+      height: this.store.height,
+      cropAngle: doc.cropAngle,
+      keystone: doc.keystone,
+    });
+    if (rect == null) return;
+    this.preview({
+      cropLeft: rect.left,
+      cropTop: rect.top,
+      cropRight: rect.right,
+      cropBottom: rect.bottom,
+    });
+    void this.commit();
+  }
+
+  /** Takes the correction off, guides and all, which is what a reader means by starting again. */
+  @action.bound
+  clearKeystone(): void {
+    this.preview({ keystone: null, keystoneGuides: [] });
+    void this.commit();
   }
 
   /**
@@ -444,6 +651,13 @@ export class RawEditPresenter {
       this.saveStatus(conflicted(error) ? 'conflict' : 'failed');
     } finally {
       this.saving = false;
+      // A settle that arrived mid-step took `commit`'s "already saving" arm and left this set.
+      // Only `commit` drains it, so without this the document waits for some later save to
+      // notice - and that save then sends a second one nobody asked for.
+      if (this.pendingSave) {
+        this.pendingSave = false;
+        void this.commit();
+      }
     }
   }
 
@@ -457,7 +671,13 @@ export class RawEditPresenter {
   @action.bound
   private applyState(state: EditState, keepDoc = false): void {
     if (this.closed) return;
-    if (!keepDoc) this.store.doc = state.doc;
+    if (!keepDoc) {
+      this.store.doc = state.doc;
+      // An undo can move the crop, and the draw has to follow it rather than keep showing
+      // the shape the reader has just stepped away from - region and all, or the frame after
+      // the step is a window measured against the picture before it.
+      this.followGeometry();
+    }
     this.store.rev = state.rev;
     this.store.canUndo = state.canUndo;
     this.store.canRedo = state.canRedo;
@@ -502,6 +722,9 @@ export class RawEditPresenter {
    * A pointer emits far more positions than a display can show, and queueing them would
    * replay the drag in slow motion after the user let go. Only the latest is ever
    * outstanding.
+   *
+   * Everything that changes what is on screen ends here, the stage's own size included, so
+   * the whole state a frame is drawn from is read in one breath immediately before drawing it.
    */
   private request(ev: number): void {
     if (this.closed || this.pipeline == null) return;
@@ -512,6 +735,7 @@ export class RawEditPresenter {
       const next = this.pending;
       this.pending = null;
       if (next == null || this.closed || this.pipeline == null) return;
+      this.sizeStage();
       this.pipeline.render(next, this.store.region ?? this.pipeline.wholeFrame);
     });
   }
@@ -555,7 +779,11 @@ export class RawEditPresenter {
     this.store.height = header.height;
     this.store.matched = header.matched;
     this.store.asShot = header.asShot;
-    this.store.region = { x: 0, y: 0, width: header.width, height: header.height };
+    // Whatever the document already says - an imported sidecar routinely arrives cropped - so
+    // the first frame drawn is the picture rather than the frame it was taken out of. The frame
+    // has only just arrived, so this is the first shape there has been and it seeds the region.
+    this.shown = { width: 0, height: 0 };
+    this.followGeometry();
   }
 
   @action.bound

@@ -1,4 +1,4 @@
-//! The parity fixture the GPU tick is checked against, and the check that it is still current.
+//! The parity fixture the GPU grade is checked against, and the check that it is still current.
 //!
 //! The client runs a second implementation of the grade (`docs/raw-edit-gpu.md` §6.3), and a
 //! second implementation of a picture is exactly the divergence DESIGN §21.1 exists to
@@ -160,14 +160,14 @@ fn cases() -> Vec<Case> {
             // input is the frame the client is actually handed.
             filter_once(&mut prepared, &grade, strengths);
 
-            // The frame's own half of the uniform, from the one thing that builds a `Tick`. The
-            // browser harness drives a real `TickPipeline` off this header, so these words are
+            // The frame's own half of the uniform, from the one thing that builds a `Edit`. The
+            // browser harness drives a real `EditPipeline` off this header, so these words are
             // what it grades with - which is the whole of why parity means anything: a client
             // that rebuilt them from `colour` below could reproduce these bytes while
             // describing a different frame to itself on a photograph with a wider lattice.
             let identity = rawshim::hdr_fit::HdrColour::identity();
             let described = colour.as_ref();
-            let tick = rawshim::gpu::uniform_words(
+            let edits = rawshim::gpu::uniform_words(
                 &rawshim::gpu::Grade {
                     width: WIDTH,
                     height: HEIGHT,
@@ -194,13 +194,13 @@ fn cases() -> Vec<Case> {
                 "strengths": strengths,
                 "matched": colour.is_some(),
                 "asShot": serde_json::Value::Null,
-                "tick": tick,
+                "edits": edits,
                 "detail": rawshim::gpu::detail_size(WIDTH, HEIGHT),
                 "colour": colour.as_ref().map(describe),
             });
 
             out.push(Case {
-                stem: format!("tick-{name}-ev{ev}"),
+                stem: format!("edit-{name}-ev{ev}"),
                 header: header.to_string(),
                 input: le(&prepared.samples),
             });
@@ -287,23 +287,23 @@ fn le(samples: &[u16]) -> Vec<u8> {
 /// roll-off knee lands.
 ///
 /// The client used to hold a second copy of this rule and be held to the same table. It no
-/// longer has one: the stride travels in `PreparedHeader.tick`, where the shader also reads it,
-/// and `TickPipeline` sizes its dispatch off that word. What is left to guard is that *this*
+/// longer has one: the stride travels in `PreparedHeader.edits`, where the shader also reads it,
+/// and `EditPipeline` sizes its dispatch off that word. What is left to guard is that *this*
 /// rule has not moved. Sizes chosen for the boundaries: under the sample count, either side of
 /// it, odd dimensions, and the two sensors this is actually run on.
 /// The document's own words, slot for slot, against what the editor puts there.
 ///
-/// **The last thing about a `Tick` that is still written out twice.** Every *rule* has one
+/// **The last thing about a `Edit` that is still written out twice.** Every *rule* has one
 /// implementation now - the frame's half of the uniform is built here and copied there, and
 /// what a null or a stop means is the shader's - but which slot each slider lands in is a list
-/// of assignments in `gpu::uniform_words` and another in `tickWords`. Transposing a pair there
+/// of assignments in `gpu::uniform_words` and another in `edits`. Transposing a pair there
 /// is a photograph graded with the clarity somebody asked for as texture, on a path no parity
 /// fixture crosses: those are pinned at every slider zero, where a transposition is invisible.
 ///
 /// So every field is off zero and off every other field, which is what makes a swap fail. The
 /// view is left at rest because that half is the editor's alone and this side never fills it.
 ///
-/// `gpu/tests/tick_words.test.ts` reads the same file.
+/// `gpu/tests/edits.test.ts` reads the same file.
 #[test]
 fn the_editor_puts_each_slider_where_this_host_does() {
     let colour = HdrColour::identity();
@@ -386,7 +386,7 @@ fn the_editor_puts_each_slider_where_this_host_does() {
         .collect();
 
     let built = format!("{}\n", rows.join("\n"));
-    let path = fixture_dir().join("tick-words.txt");
+    let path = fixture_dir().join("edit-words.txt");
     if std::env::var("BOWERBIRD_WRITE_FIXTURES").is_ok_and(|v| v == "1") {
         std::fs::create_dir_all(fixture_dir()).expect("the fixture directory");
         std::fs::write(&path, &built).expect("writing the words");
@@ -485,7 +485,7 @@ fn the_committed_fixture_is_what_the_cpu_produces_now() {
 /// The same comparison `web/e2e/gpu_parity.spec.ts` makes, without the browser: it runs
 /// here in milliseconds where that costs a server, a Vite build and a Chromium, which is
 /// the difference between a loop you can work in and one you run before merging. That
-/// suite stays - it drives the real `TickPipeline` and gets its payload from the running
+/// suite stays - it drives the real `EditPipeline` and gets its payload from the running
 /// server, so it is the only thing that can catch the native library and the client
 /// disagreeing about the model. This links the crate directly and never would.
 ///
@@ -537,7 +537,7 @@ fn the_encode_pass_reproduces_the_cpu_frame() {
                 },
             );
 
-            let Some(want) = baseline(&format!("tick-{name}-ev{ev}"), "expected.bin", &le(&got))
+            let Some(want) = baseline(&format!("edit-{name}-ev{ev}"), "expected.bin", &le(&got))
             else {
                 continue;
             };
@@ -556,7 +556,7 @@ fn the_encode_pass_reproduces_the_cpu_frame() {
             // denoise the two accumulate differently and this fixture is already past it.
             assert!(
                 mean <= 0.5,
-                "tick-{name}-ev{ev}: the shader's frame is {mean:.4} counts from the CPU's on \
+                "edit-{name}-ev{ev}: the shader's frame is {mean:.4} counts from the CPU's on \
                  average, worst {worst}",
             );
         }
@@ -608,7 +608,7 @@ fn the_rolled_arm_reproduces_the_cpu_grade() {
                 },
             );
 
-            let Some(want) = baseline(&format!("tick-{name}-ev{ev}"), "rolled.bin", &le(&got))
+            let Some(want) = baseline(&format!("edit-{name}-ev{ev}"), "rolled.bin", &le(&got))
             else {
                 continue;
             };
@@ -915,7 +915,7 @@ fn the_encode_pass_reproduces_the_cpu_sdr_frame() {
         // The sRGB arm writes 8-bit in the low byte of each `u16`, so the committed answer is
         // bytes and this is the one place the two differ in width.
         let got: Vec<u8> = got.iter().map(|v| *v as u8).collect();
-        let Some(want) = baseline(&format!("tick-{name}-ev0"), "srgb.bin", &got) else {
+        let Some(want) = baseline(&format!("edit-{name}-ev0"), "srgb.bin", &got) else {
             continue;
         };
         let mut worst = 0i64;

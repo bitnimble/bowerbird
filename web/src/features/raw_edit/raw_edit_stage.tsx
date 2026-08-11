@@ -2,6 +2,8 @@ import { observer } from 'mobx-react-lite';
 import { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { ZoomControl } from '../photos/zoom_control';
+import { CropOverlay } from './crop_overlay';
+import { KeystoneOverlay } from './keystone_overlay';
 import { NO_SIZE, regionOf, useZoomPan } from '../photos/zoom_pan';
 import type { RawEditPresenter } from './raw_edit_presenter';
 import type { RawEditStore } from './raw_edit_store';
@@ -48,10 +50,27 @@ export const RawEditStage = observer(function RawEditStage({
     return () => presenter.attach(null);
   }, [presenter]);
 
-  const natural =
-    store.width === 0 ? NO_SIZE : { width: store.width, height: store.height };
-  const zoom = useZoomPan(viewport, stage, natural);
-  const { view, box, handlers, zoomed } = zoom;
+  // The *picture*, not the frame: a cropped photo is a different shape, and fitting the stage
+  // to the frame would letterbox the crop inside it.
+  const natural = store.width === 0 ? NO_SIZE : store.output;
+  // Zoom and pan are off under both geometry tools: each lays something out on the picture where
+  // a fitted view puts it, and a pan would slide the photograph out from under it.
+  const still = store.cropping || store.keystoning;
+  const zoom = useZoomPan(viewport, stage, natural, undefined, !still);
+  const { view, box, handlers, zoomed, reset } = zoom;
+
+  // **Back to a fitted view whenever the picture's shape changes**, and whenever either geometry
+  // tool opens. A turn or a straighten is a different picture, so a view held over from the last
+  // one is a window somewhere outside it; and both overlays lay themselves out on the *contained*
+  // canvas, which is only where the canvas is when the view is fitted - a rectangle or a guide
+  // drawn over a zoomed frame would name something other than what the reader is looking at.
+  //
+  // Here rather than on the presenter, and this is the only place: the region follows the view
+  // through the effect below, so a presenter that set the region itself would have this
+  // overwrite it on the next render - a straighten drag wrote two regions per move, alternating.
+  useEffect(() => {
+    reset();
+  }, [still, natural.width, natural.height, reset]);
 
   // The gesture is state in React and the region is state in the store, so one has to follow
   // the other. An effect rather than a call inside the handler, because the view settles
@@ -61,13 +80,20 @@ export const RawEditStage = observer(function RawEditStage({
     presenter.showRegion(regionOf(view, box, natural));
   }, [presenter, view, box, natural.width, natural.height]);
 
-  const tools = <ZoomControl zoom={zoom} variant={toolsInto == null ? 'ghost' : 'default'} />;
+  // **Zoom and pan are off while a geometry tool is open**, control and gestures both - the flag
+  // above turns the hook off, including the wheel, which is a native listener the handlers never
+  // covered. On a touch screen the pan is the same one-finger drag the rectangle and the guides
+  // themselves want. Nothing here needs zoom: both tools open fitted, which is the view a crop
+  // and a perspective are judged from.
+  const tools = still ? null : <ZoomControl zoom={zoom} variant={toolsInto == null ? 'ghost' : 'default'} />;
 
   return (
     <div ref={stage} className={`stage raw-edit-stage${zoomed ? ' stage--zoomed' : ''}`}>
       {toolsInto == null ? <div className="stage__tools">{tools}</div> : createPortal(tools, toolsInto)}
       <div ref={viewport} className="stage__viewport" {...handlers}>
         <canvas ref={canvas} className="stage__content is-ready raw-edit__stage" />
+        <CropOverlay store={store} presenter={presenter} viewport={box} />
+        <KeystoneOverlay store={store} presenter={presenter} viewport={box} />
       </div>
       {!store.live && store.status !== 'failed' && (
         <div className="stage__busy">

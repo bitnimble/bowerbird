@@ -59,12 +59,12 @@ fn sample_at(index: u32) -> u32 {
 /// The same units `adjust.wgsl` grades in, which is the point - what this pass writes is
 /// subtracted from a value the grade computes, so the two have to be anchored alike.
 fn scene_at(x: u32, y: u32) -> vec3f {
-  let base = (y * tick.width + x) * 3u;
+  let base = (y * edit.width + x) * 3u;
   return vec3f(
     nits_of_code[sample_at(base)],
     nits_of_code[sample_at(base + 1u)],
     nits_of_code[sample_at(base + 2u)],
-  ) / tick.reference;
+  ) / edit.reference;
 }
 
 /// Stops relative to diffuse white, floored so black is a number rather than -inf.
@@ -99,10 +99,10 @@ fn shrink(@builtin(global_invocation_id) id: vec3u) {
   // The footprint as a partition of the frame, so every source pixel belongs to exactly one
   // texel and none is read twice. At least one pixel wide: the host never scales up, but a
   // frame one pixel narrower than the working texture would otherwise leave a texel empty.
-  let x0 = (id.x * tick.width) / size.x;
-  let x1 = min(max(x0 + 1u, ((id.x + 1u) * tick.width) / size.x), tick.width);
-  let y0 = (id.y * tick.height) / size.y;
-  let y1 = min(max(y0 + 1u, ((id.y + 1u) * tick.height) / size.y), tick.height);
+  let x0 = (id.x * edit.width) / size.x;
+  let x1 = min(max(x0 + 1u, ((id.x + 1u) * edit.width) / size.x), edit.width);
+  let y0 = (id.y * edit.height) / size.y;
+  let y1 = min(max(y0 + 1u, ((id.y + 1u) * edit.height) / size.y), edit.height);
 
   var sum = 0.0;
   var count = 0.0;

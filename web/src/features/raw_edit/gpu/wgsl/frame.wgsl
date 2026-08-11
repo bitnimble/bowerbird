@@ -29,7 +29,7 @@ const R2020_TO_P3 = mat3x3f(
   vec3f(-0.061397, -0.010491,  1.016761),
 );
 
-// `tick.output`'s values. Named here so the host and the shader cannot disagree by a
+// `edit.output`'s values. Named here so the host and the shader cannot disagree by a
 // literal, in the pattern `PEAK_BINS` and its neighbours use.
 //
 // `ROLLED` stops where the CPU's grade stopped: the frame after the roll-off and before
@@ -56,19 +56,19 @@ const R2020_TO_SRGB = mat3x3f(
 );
 
 fn display_nits(nits: vec3f, uv: vec2f) -> vec3f {
-  return min(max(rolled_off(nits, uv), vec3f(0.0)), vec3f(tick.peak));
+  return min(max(rolled_off(nits, uv), vec3f(0.0)), vec3f(edit.peak));
 }
 
 /// The roll-off leaves the display's peak alone when the scene already fits inside it, so
 /// the clamp above is not redundant: a level past `source_level` comes back untouched.
 fn rolled_off(nits: vec3f, uv: vec2f) -> vec3f {
-  if (tick.matched == 0u) { return neutral_nits(nits, uv); }
+  if (edit.matched == 0u) { return neutral_nits(nits, uv); }
   let scene_peak = peak_out[0];
   // Clamped to the scene peak before the roll-off, because the CPU's roll table spans
   // 0..scene_peak and reads the top bin for anything past it. Without the clamp the
   // brightest pixels get a curve the CPU never evaluates.
   let coloured = min(max(matched_nits(nits, uv), vec3f(0.0)), vec3f(scene_peak));
-  return rolled(coloured, rolloff(scene_peak, tick.peak));
+  return rolled(coloured, rolloff(scene_peak, edit.peak));
 }
 
 /// The sRGB transfer with the sign carried, so an out-of-P3 component survives as a
@@ -107,20 +107,37 @@ fn transfer(v: f32) -> f32 {
 /// allocated for. The host picks the pipeline off the same ratio the shader computes.
 override FROM_FRAME: bool = true;
 
+/// Whether a tap landed off the frame, where there is no photograph to read.
+fn outside(sample: vec2f, last: vec2f) -> bool {
+  return sample.x < 0.0 || sample.y < 0.0 || floor(sample.x) > last.x || floor(sample.y) > last.y;
+}
+
 fn covered(pos: vec2f) -> vec3f {
-  let scale = tick.region_size / tick.canvas_size;
-  let lod = clamp(floor(log2(max(max(scale.x, scale.y), 1.0))), 0.0, f32(tick.max_lod));
+  let scale = edit.region_size / edit.canvas_size;
+  let lod = clamp(floor(log2(max(max(scale.x, scale.y), 1.0))), 0.0, f32(edit.max_lod));
   let shrink = exp2(lod);
   let step = scale / shrink;
-  let start = (tick.region_origin + (pos - vec2f(0.5)) * scale) / shrink;
+  // The region is a window on the *output* - what the crop and the turn produce - so the taps
+  // are laid out there and each is mapped into the frame. Mapped per tap rather than once at
+  // the centre because a straighten rotates the footprint, and averaging four points that were
+  // never rotated would soften an edge along one diagonal and not the other.
+  let start = edit.region_origin + (pos - vec2f(0.5)) * scale;
 
   var sum = vec3f(0.0);
   if (FROM_FRAME) {
-    let last = vec2f(f32(tick.width) - 1.0, f32(tick.height) - 1.0);
+    let last = vec2f(f32(edit.width) - 1.0, f32(edit.height) - 1.0);
     for (var ty = 0u; ty < 2u; ty = ty + 1u) {
       for (var tx = 0u; tx < 2u; tx = tx + 1u) {
-        let sample = start + (vec2f(f32(tx), f32(ty)) + 0.5) * 0.5 * step;
-        let coord = vec2u(clamp(floor(sample), vec2f(0.0), last));
+        let sample = geometry_at(start + (vec2f(f32(tx), f32(ty)) + 0.5) * 0.5 * scale) / shrink;
+        // **Nothing, rather than the nearest edge.** The gather leaves an output pixel black
+        // where its source falls outside the frame (`PlanarWarp::warp_planar`), and a geometry
+        // that reaches outside is no longer the exception: a straighten leaves wedges at the
+        // corners and a keystone leaves them down whole sides. Clamping smears the edge row
+        // across them, which is not what the rendition of the same edit shows.
+        if (outside(sample, last)) {
+          continue;
+        }
+        let coord = vec2u(floor(sample));
         sum = sum + nits_at(coord.x, coord.y);
       }
     }
@@ -131,8 +148,11 @@ fn covered(pos: vec2f) -> vec3f {
     let last = vec2f(textureDimensions(pyramid, level)) - vec2f(1.0);
     for (var ty = 0u; ty < 2u; ty = ty + 1u) {
       for (var tx = 0u; tx < 2u; tx = tx + 1u) {
-        let sample = start + (vec2f(f32(tx), f32(ty)) + 0.5) * 0.5 * step;
-        let coord = vec2u(clamp(floor(sample), vec2f(0.0), last));
+        let sample = geometry_at(start + (vec2f(f32(tx), f32(ty)) + 0.5) * 0.5 * scale) / shrink;
+        if (outside(sample, last)) {
+          continue;
+        }
+        let coord = vec2u(floor(sample));
         // The pyramid holds the frame's own coding, so this is decoded per tap too - the
         // levels it averaged are not linear in light and neither is a mean of them.
         let code = textureLoad(pyramid, coord, level);
@@ -153,9 +173,9 @@ fn covered(pos: vec2f) -> vec3f {
 /// blur whose finest band is a 512th of the frame, so a canvas pixel's own footprint is
 /// inside one texel of it at any zoom the reader can reach.
 fn frame_uv(pos: vec2f) -> vec2f {
-  let scale = tick.region_size / tick.canvas_size;
-  return (tick.region_origin + (pos - vec2f(0.5)) * scale + 0.5 * scale)
-    / vec2f(f32(tick.width), f32(tick.height));
+  let scale = edit.region_size / edit.canvas_size;
+  let centre = edit.region_origin + (pos - vec2f(0.5)) * scale + 0.5 * scale;
+  return geometry_at(centre) / vec2f(f32(edit.width), f32(edit.height));
 }
 
 @vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
@@ -167,26 +187,26 @@ fn frame_uv(pos: vec2f) -> vec2f {
 /// Rec.2020 PQ and handed to a compositor, where a canvas has neither Rec.2020 nor
 /// absolute luminance, so what the media path declares this has to compute (§7.1, §7.2).
 @fragment fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
-  let p3 = (R2020_TO_P3 * display_nits(covered(pos.xy), frame_uv(pos.xy))) / tick.sdr_white;
+  let p3 = (R2020_TO_P3 * display_nits(covered(pos.xy), frame_uv(pos.xy))) / edit.sdr_white;
   return vec4f(transfer(p3.r), transfer(p3.g), transfer(p3.b), 1.0);
 }
 
 /// One pixel of the frame as a rendition would hold it, in the `u16` counts every output
 /// stage of this shader ends in.
 fn coded_at(pixel: u32) -> vec3f {
-  let uv = (vec2f(f32(pixel % tick.width), f32(pixel / tick.width)) + vec2f(0.5))
-    / vec2f(f32(tick.width), f32(tick.height));
+  let uv = (vec2f(f32(pixel % edit.width), f32(pixel / edit.width)) + vec2f(0.5))
+    / vec2f(f32(edit.width), f32(edit.height));
   let nits = display_nits(nits_of_index(pixel), uv);
   // Through the `u16` the CPU writes between the grade and the transfer. Not incidental:
   // both of its output stages read that integer - the PQ one as a 65536-entry table keyed
   // by it, the sRGB one as the value it takes the primaries of - so a frame that skipped
   // the quantisation would not be the frame the fixture pins.
-  let quantised = round(min(nits / tick.peak, vec3f(1.0)) * 65535.0) / 65535.0;
+  let quantised = round(min(nits / edit.peak, vec3f(1.0)) * 65535.0) / 65535.0;
 
-  if (tick.output == OUTPUT_ROLLED) {
+  if (edit.output == OUTPUT_ROLLED) {
     return quantised * 65535.0;
   }
-  if (tick.output == OUTPUT_SRGB) {
+  if (edit.output == OUTPUT_SRGB) {
     // The primaries first, in the normalised graded domain, then the transfer at 8 bits.
     // Clamped rather than sign-carried - `transfer` keeps the sign for
     // the *draw*, where an out-of-P3 component is better seen than folded, but a file has
@@ -199,9 +219,9 @@ fn coded_at(pixel: u32) -> vec3f {
     ) * 255.0);
   }
   return round(vec3f(
-    pq(quantised.r * tick.peak),
-    pq(quantised.g * tick.peak),
-    pq(quantised.b * tick.peak),
+    pq(quantised.r * edit.peak),
+    pq(quantised.g * edit.peak),
+    pq(quantised.b * edit.peak),
   ) * 65535.0);
 }
 
@@ -230,7 +250,7 @@ fn coded_at(pixel: u32) -> vec3f {
 @compute @workgroup_size(64)
 fn encode(@builtin(global_invocation_id) id: vec3u, @builtin(num_workgroups) groups: vec3u) {
   let first = (id.y * groups.x * 64u + id.x) * 2u;
-  let pixels = tick.width * tick.height;
+  let pixels = edit.width * edit.height;
   if (first >= pixels) { return; }
 
   let a = coded_at(first);

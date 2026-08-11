@@ -1,4 +1,4 @@
-// The tick's shader modules, composed from `wgsl/`.
+// The grade's shader modules, composed from `wgsl/`.
 //
 // WGSL has no `#include`, so the sharing happens here: each module is a concatenation of
 // real `.wgsl` files, in dependency order, and a file states its own bindings. Kept as
@@ -9,20 +9,20 @@
 // What each file may assume of the ones before it:
 //
 //   prelude   nothing
-//   tick      nothing; declares `tick` at binding 0
-//   adjust    prelude and tick; declares bindings 13-14, and reads `lerp` from colour
-//   colour    prelude, tick and adjust; declares bindings 1-4, 7, 10-12
+//   edit      nothing; declares `edit` at binding 0
+//   adjust    prelude and edit; declares bindings 13-14, and reads `lerp` from colour
+//   colour    prelude, edit and adjust; declares bindings 1-4, 7, 10-12
 //   frame     all three; declares bindings 5-6 and 9
-//   peak      prelude, tick, colour; declares bindings 5-6 and 8
-//   reduce    tick; declares bindings 1-3, on a layout of its own
+//   peak      prelude, edit, colour; declares bindings 5-6 and 8
+//   reduce    edit; declares bindings 1-3, on a layout of its own
 //   decode    prelude; declares binding 12 writable, on a layout of its own
-//   detail    prelude and tick; declares bindings 1-3 and 12, on layouts of its own
-//   balance   prelude and tick; declares binding 14 writable, on a layout of its own
+//   detail    prelude and edit; declares bindings 1-3 and 12, on layouts of its own
+//   balance   prelude and edit; declares binding 14 writable, on a layout of its own
 //
 // `adjust` naming `lerp` before `colour` declares it is legal and deliberate: a WGSL
 // module-scope declaration is in scope for the whole program, so the order here is a
 // dependency order for readers rather than for the compiler. Moving the sampler earlier would
-// put a binding `reduce` never uses into the module it shares `tick` with.
+// put a binding `reduce` never uses into the module it shares `edit` with.
 //
 // Numbers that both sides need are declared in the `.wgsl` and pinned to the host's copy by a
 // test, rather than substituted into the source, so the files stay valid WGSL on their own. A
@@ -33,31 +33,32 @@ import colour from './wgsl/colour.wgsl?raw';
 import decodeSource from './wgsl/decode.wgsl?raw';
 import detailSource from './wgsl/detail.wgsl?raw';
 import frame from './wgsl/frame.wgsl?raw';
+import geometry from './wgsl/geometry.wgsl?raw';
 import peak from './wgsl/peak.wgsl?raw';
 import prelude from './wgsl/prelude.wgsl?raw';
 import reduceSource from './wgsl/reduce.wgsl?raw';
-import tick from './wgsl/tick.wgsl?raw';
+import edit from './wgsl/edit.wgsl?raw';
 import whiteBalance from './wgsl/white_balance.wgsl?raw';
 
 const compose = (...parts: string[]): string => parts.join('\n');
 
 /** Sensor levels to a canvas, and the same frame as a rendition would hold it. */
-export const FRAME = compose(prelude, tick, adjust, colour, frame);
+export const FRAME = compose(prelude, edit,adjust, colour, geometry, frame);
 
 /** The scene peak: a histogram over the whole frame, and the scan that reads it. */
-export const PEAK = compose(prelude, tick, adjust, colour, peak);
+export const PEAK = compose(prelude, edit,adjust, colour, peak);
 
 /** The pyramid the draw averages with, built once at the open. */
-export const REDUCE = compose(tick, reduceSource);
+export const REDUCE = compose(edit, reduceSource);
 
 /** The frame's coding undone, one entry per code. The same table for every photo. */
 export const DECODE = compose(prelude, decodeSource);
 
 /** The blur the presence sliders read, built once at the open. */
-export const DETAIL = compose(prelude, tick, detailSource);
+export const DETAIL = compose(prelude, edit,detailSource);
 
 /** The reader's temperature and tint, solved into one matrix. One invocation, per tick. */
-export const BALANCE = compose(prelude, tick, whiteBalance);
+export const BALANCE = compose(prelude, edit,whiteBalance);
 
 // The detail blur's working size used to be a rule here too, alongside `gpu::detail_size`, and
 // pinned to it by `DETAIL_LONG`. It arrives on `PreparedHeader.detail` now: how large a share of
@@ -77,7 +78,7 @@ export interface DetailSize {
 export const PQ_CODES = 65536;
 
 /**
- * `struct Tick` in `wgsl/tick.wgsl`, field for field and in its order.
+ * `struct Edit` in `wgsl/edit.wgsl`, field for field and in its order.
  *
  * The shader is the source of truth; this is the same declaration in a form the host can
  * index by. `writeUniform` wrote bare numbers into the buffer before - `values[22] = region.x`
@@ -86,10 +87,10 @@ export const PQ_CODES = 65536;
  * every suite green and drew the wrong rectangle of the frame, because the only thing that
  * reads the tail is the draw and no test looks at a drawn pixel.
  *
- * `gpu/tests/tick_uniform.test.ts` parses the struct out of the `.wgsl` and holds this
+ * `gpu/tests/edit_uniform.test.ts` parses the struct out of the `.wgsl` and holds this
  * against it, so the two cannot drift without something saying so.
  */
-export const TICK_LAYOUT = [
+export const EDIT_LAYOUT = [
   ['width', 'u32'],
   ['height', 'u32'],
   ['white', 'f32'],
@@ -138,9 +139,29 @@ export const TICK_LAYOUT = [
   ['tint', 'f32'],
   // Which halves of the pair the document actually held. The shader resolves the rest.
   ['balance_set', 'u32'],
+  // The crop, the straighten and the quarter turn, and the size they produce.
+  ['crop_left', 'f32'],
+  ['crop_top', 'f32'],
+  ['crop_right', 'f32'],
+  ['crop_bottom', 'f32'],
+  ['crop_angle', 'f32'],
+  ['rotate', 'u32'],
+  ['output_width', 'u32'],
+  ['output_height', 'u32'],
+  // The perspective correction, corrected back to source in fractions of the frame. Scalars
+  // rather than an array or a matrix, which a uniform lays out at a 16-byte stride.
+  ['keystone_0', 'f32'],
+  ['keystone_1', 'f32'],
+  ['keystone_2', 'f32'],
+  ['keystone_3', 'f32'],
+  ['keystone_4', 'f32'],
+  ['keystone_5', 'f32'],
+  ['keystone_6', 'f32'],
+  ['keystone_7', 'f32'],
+  ['has_keystone', 'u32'],
 ] as const;
 
-export type TickField = (typeof TICK_LAYOUT)[number][0];
+export type EditField = (typeof EDIT_LAYOUT)[number][0];
 
 /**
  * Where each field starts, in 4-byte words, under WGSL's uniform layout rules.
@@ -149,10 +170,10 @@ export type TickField = (typeof TICK_LAYOUT)[number][0];
  * whole is rounded up to a multiple of four. Computed rather than written down, because a
  * hand-written offset is the thing that went wrong.
  */
-export function tickOffsets(): { at: Record<TickField, number>; floats: number } {
-  const at = {} as Record<TickField, number>;
+export function editOffsets(): { at: Record<EditField, number>; floats: number } {
+  const at = {} as Record<EditField, number>;
   let next = 0;
-  for (const [name, type] of TICK_LAYOUT) {
+  for (const [name, type] of EDIT_LAYOUT) {
     if (type === 'vec2f') next = Math.ceil(next / 2) * 2;
     at[name] = next;
     next += type === 'vec2f' ? 2 : 1;
@@ -160,8 +181,8 @@ export function tickOffsets(): { at: Record<TickField, number>; floats: number }
   return { at, floats: Math.ceil(next / 4) * 4 };
 }
 
-/** How many 4-byte words `Tick` occupies, padded. The buffer `writeUniform` writes into. */
-export const TICK_UNIFORM_FLOATS = tickOffsets().floats;
+/** How many 4-byte words `Edit` occupies, padded. The buffer `writeUniform` writes into. */
+export const EDIT_UNIFORM_FLOATS = editOffsets().floats;
 
 /**
  * Every slider, on Camera Raw's own scales, as the document holds them.
@@ -169,7 +190,7 @@ export const TICK_UNIFORM_FLOATS = tickOffsets().floats;
  * Nulls included: what a missing half of the white balance pair means is
  * `white_balance.wgsl`'s to say, so this carries the absence rather than a stand-in.
  */
-export interface TickAdjust {
+export interface EditAdjust {
   contrast: number;
   highlights: number;
   shadows: number;
@@ -185,7 +206,7 @@ export interface TickAdjust {
 }
 
 /** What only the editor knows: the part of the frame on screen and the canvas showing it. */
-export interface TickView {
+export interface EditView {
   region: { x: number; y: number; width: number; height: number };
   canvas: { width: number; height: number };
   /** The coarsest mip the frame has, which is how far out the draw can average. */
@@ -193,25 +214,59 @@ export interface TickView {
 }
 
 /**
- * The uniform for one tick: the frame's own words, then what a tick owns.
+ * The reader's crop, straighten and turn, and the picture they produce.
+ *
+ * `output` is `displaySize` - the *server's* function, imported rather than copied - because
+ * the shader's turn arithmetic indexes the output grid and a third answer to its dimensions is
+ * a third thing to keep in step.
+ */
+export interface EditGeometry {
+  cropLeft: number;
+  cropTop: number;
+  cropRight: number;
+  cropBottom: number;
+  cropAngle: number;
+  rotate: number;
+  output: { width: number; height: number };
+  /** The perspective correction, or null where nobody corrected one. Eight, row-major. */
+  keystone: readonly number[] | null;
+}
+
+/** The whole frame, which is what a photo nobody has cropped shows. */
+export function wholeFrameGeometry(width: number, height: number): EditGeometry {
+  return {
+    cropLeft: 0,
+    cropTop: 0,
+    cropRight: 1,
+    cropBottom: 1,
+    cropAngle: 0,
+    rotate: 0,
+    output: { width, height },
+    keystone: null,
+  };
+}
+
+/**
+ * The reader's edits as the shader takes them: the frame's own words, then the document's.
  *
  * **A pure function so it can be compared against the native writer without a GPU.** Every
  * *rule* about a document is one implementation now - the shader's - but which slot each field
  * goes in is still written out twice, once here and once in `gpu::uniform_words`, and a
  * transposed pair there is a photograph graded with the clarity somebody asked for as texture.
- * `tests/tick_words.test.ts` holds this against a table the native side emits, which is the
+ * `tests/edits.test.ts` holds this against a table the native side emits, which is the
  * only thing that can see that.
  *
- * `frame` is `PreparedHeader.tick`, already carrying everything about the photograph.
+ * `frame` is `PreparedHeader.edits`, already carrying everything about the photograph.
  */
-export function tickWords(
+export function edits(
   frame: readonly number[],
-  adjust: TickAdjust,
+  adjust: EditAdjust,
   exposure: number,
-  view: TickView,
+  view: EditView,
+  geometry: EditGeometry,
 ): Float32Array<ArrayBuffer> {
-  const at = tickOffsets().at;
-  const values = new Float32Array(new ArrayBuffer(TICK_UNIFORM_FLOATS * 4));
+  const at = editOffsets().at;
+  const values = new Float32Array(new ArrayBuffer(EDIT_UNIFORM_FLOATS * 4));
   const ints = new Uint32Array(values.buffer);
   ints.set(frame);
 
@@ -243,6 +298,21 @@ export function tickWords(
   values[at.tint] = adjust.tint ?? 0;
   ints[at.balance_set] = (adjust.temperature == null ? 0 : 1) | (adjust.tint == null ? 0 : 2);
 
+  values[at.crop_left] = geometry.cropLeft;
+  values[at.crop_top] = geometry.cropTop;
+  values[at.crop_right] = geometry.cropRight;
+  values[at.crop_bottom] = geometry.cropBottom;
+  values[at.crop_angle] = geometry.cropAngle;
+  ints[at.rotate] = geometry.rotate;
+  ints[at.output_width] = geometry.output.width;
+  ints[at.output_height] = geometry.output.height;
+
+  const keystone = geometry.keystone;
+  ints[at.has_keystone] = keystone == null ? 0 : 1;
+  for (let element = 0; element < 8; element += 1) {
+    values[at.keystone_0 + element] = keystone?.[element] ?? 0;
+  }
+
   return values;
 }
 
@@ -269,6 +339,6 @@ export const PEAK_CANDIDATES = 16384;
 // is a divergence nothing could see - the parity fixtures are 6144 pixels, where both return a
 // stride of 1 and degenerate to reading every pixel.
 //
-// There is one rule now. The stride arrives in `PreparedHeader.tick`, where the shader also
-// reads it, and `TickPipeline` sizes its dispatch off that word. Nothing on this side computes
+// There is one rule now. The stride arrives in `PreparedHeader.edits`, where the shader also
+// reads it, and `EditPipeline` sizes its dispatch off that word. Nothing on this side computes
 // it, so nothing on this side can disagree about it.

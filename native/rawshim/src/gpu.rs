@@ -27,13 +27,19 @@ use wgpu::util::DeviceExt;
 /// has no include and the client's bundler does the same join.
 fn source(last: &str) -> String {
     format!(
-        "{}\n{}\n{}\n{}\n{last}",
+        "{}\n{}\n{}\n{}\n{}\n{last}",
         include_str!("../../../web/src/features/raw_edit/gpu/wgsl/prelude.wgsl"),
-        include_str!("../../../web/src/features/raw_edit/gpu/wgsl/tick.wgsl"),
+        include_str!("../../../web/src/features/raw_edit/gpu/wgsl/edit.wgsl"),
         include_str!("../../../web/src/features/raw_edit/gpu/wgsl/adjust.wgsl"),
         include_str!("../../../web/src/features/raw_edit/gpu/wgsl/colour.wgsl"),
+        GEOMETRY_WGSL,
     )
 }
+
+/// The crop, straighten and turn as a coordinate mapping. Composed into `FRAME` on both hosts,
+/// and into the probe that holds it against [`crate::image::geometry_at`].
+pub(crate) const GEOMETRY_WGSL: &str =
+    include_str!("../../../web/src/features/raw_edit/gpu/wgsl/geometry.wgsl");
 
 const FRAME_WGSL: &str = include_str!("../../../web/src/features/raw_edit/gpu/wgsl/frame.wgsl");
 const PEAK_WGSL: &str = include_str!("../../../web/src/features/raw_edit/gpu/wgsl/peak.wgsl");
@@ -44,7 +50,7 @@ fn detail_source() -> String {
     format!(
         "{}\n{}\n{DETAIL_WGSL}",
         include_str!("../../../web/src/features/raw_edit/gpu/wgsl/prelude.wgsl"),
-        include_str!("../../../web/src/features/raw_edit/gpu/wgsl/tick.wgsl"),
+        include_str!("../../../web/src/features/raw_edit/gpu/wgsl/edit.wgsl"),
     )
 }
 
@@ -91,7 +97,7 @@ fn balance_source() -> String {
     format!(
         "{}\n{}\n{}",
         include_str!("../../../web/src/features/raw_edit/gpu/wgsl/prelude.wgsl"),
-        include_str!("../../../web/src/features/raw_edit/gpu/wgsl/tick.wgsl"),
+        include_str!("../../../web/src/features/raw_edit/gpu/wgsl/edit.wgsl"),
         include_str!("../../../web/src/features/raw_edit/gpu/wgsl/white_balance.wgsl"),
     )
 }
@@ -126,7 +132,7 @@ impl ScenePeak {
 
 /// How the peak samples a frame: every nth row, for about `tone::QUANTILE_SAMPLES` pixels.
 ///
-/// `TickPipeline`'s `rowStride` and `sampledGroups`, arrived at the same way, because the two
+/// `EditPipeline`'s `rowStride` and `sampledGroups`, arrived at the same way, because the two
 /// hosts have to read the *same* pixels or they measure two different peaks off one photo.
 /// Whole rows rather than a scatter because `peak.wgsl` reads a frame: consecutive lanes stay
 /// adjacent, where a stride applied per pixel would take a cache line each and fetch the whole
@@ -226,7 +232,7 @@ impl Gpu {
         device.on_uncaptured_error(std::sync::Arc::new(|error| panic!("rawshim gpu: {error}")));
 
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("tick"),
+            label: Some("edit"),
             source: wgpu::ShaderSource::Wgsl(source(FRAME_WGSL).into()),
         });
         let peak_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -571,7 +577,7 @@ impl Adjust {
     }
 }
 
-/// `tick.output` in the shader, whose values these must match.
+/// `edit.output` in the shader, whose values these must match.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Output {
     /// Rec.2020 at 16 bits of PQ.
@@ -790,7 +796,7 @@ impl Gpu {
 
     /// The scene's own top end, in nits, off the same two passes the editor measures it with.
     ///
-    /// The lattice, split the way `tick_pipeline.ts` splits it: the 2x2 in one volume, and
+    /// The lattice, split the way `edit_pipeline.ts` splits it: the 2x2 in one volume, and
     /// the lightness gain's *deviation from 1* in another.
     ///
     /// Two volumes because four values fill an `rgba16float` texel and five do not, and the
@@ -890,7 +896,7 @@ impl Gpu {
     /// of the pass - both hosts need the same answer on every frame they grade, and two
     /// Robertson searches disagreeing by a few Kelvin would render as a picture rather than as
     /// an error.
-    fn build_balance(&self, tick: &[u8]) -> wgpu::Buffer {
+    fn build_balance(&self, edits: &[u8]) -> wgpu::Buffer {
         let device = &self.device;
         let balance = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("balance"),
@@ -898,16 +904,16 @@ impl Gpu {
             usage: wgpu::BufferUsages::STORAGE,
             mapped_at_creation: false,
         });
-        let tick = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let edits = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("balance"),
-            contents: tick,
+            contents: edits,
             usage: wgpu::BufferUsages::UNIFORM,
         });
         let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("balance"),
             layout: &self.balance_layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: tick.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 0, resource: edits.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 14, resource: balance.as_entire_binding() },
             ],
         });
@@ -936,7 +942,7 @@ impl Gpu {
     fn build_detail(
         &self,
         samples: &wgpu::Buffer,
-        tick: &[u8],
+        edits: &[u8],
         size: DetailSize,
     ) -> wgpu::TextureView {
         let device = &self.device;
@@ -962,16 +968,16 @@ impl Gpu {
         let detail = view(&texture("detail"));
         let scratch = view(&texture("detail scratch"));
 
-        let tick = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let edits = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("detail"),
-            contents: tick,
+            contents: edits,
             usage: wgpu::BufferUsages::UNIFORM,
         });
         let shrink = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("detail shrink"),
             layout: &self.detail_shrink_layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: tick.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 0, resource: edits.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 1, resource: samples.as_entire_binding() },
                 wgpu::BindGroupEntry {
                     binding: 3,
@@ -1045,7 +1051,7 @@ impl Uploaded<'_> {
     fn measure_peak(&self, grade: &Grade<'_>) {
         let device = &self.gpu.device;
         let described = grade.colour.unwrap_or(&self.identity);
-        let tick = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let edits = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("peak"),
             contents: &uniform(grade, described),
             usage: wgpu::BufferUsages::UNIFORM,
@@ -1054,7 +1060,7 @@ impl Uploaded<'_> {
             label: Some("peak"),
             layout: &self.gpu.peak_layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: tick.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 0, resource: edits.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 1, resource: self.samples.as_entire_binding() },
                 wgpu::BindGroupEntry {
                     binding: 2,
@@ -1133,8 +1139,8 @@ impl Uploaded<'_> {
         );
         let device = &self.gpu.device;
         let described = grade.colour.unwrap_or(&self.identity);
-        let tick = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("tick"),
+        let edits = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("edit"),
             contents: &uniform(grade, described),
             usage: wgpu::BufferUsages::UNIFORM,
         });
@@ -1142,7 +1148,7 @@ impl Uploaded<'_> {
             label: Some("encode"),
             layout: &self.gpu.layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: tick.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 0, resource: edits.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 1, resource: self.samples.as_entire_binding() },
                 wgpu::BindGroupEntry {
                     binding: 2,
@@ -1218,16 +1224,17 @@ impl Uploaded<'_> {
     }
 }
 
-/// `struct Tick`'s fields, in the order [`uniform`] writes them.
+/// `struct Edit`'s fields, in the order [`uniform`] writes them.
 ///
-/// The Rust twin of `TICK_LAYOUT` in `shaders.ts`, and here for the same reason that one
+/// The Rust twin of `EDIT_LAYOUT` in `shaders.ts`, and here for the same reason that one
 /// exists: the writer below is two dozen pushes into a flat buffer, and nothing about a
 /// push says which field it is. Swapping two of them leaves every suite green and grades
 /// the picture with one number where another belongs.
 ///
 /// `the_uniform_matches_the_shader_struct` parses the struct out of the `.wgsl` and holds
 /// this against it, so the shader stays the source of truth and this stays honest about it.
-const TICK_FIELDS: &[&str] = &[
+#[cfg(test)]
+const EDIT_FIELDS: &[&str] = &[
     "width",
     "height",
     "white",
@@ -1271,9 +1278,26 @@ const TICK_FIELDS: &[&str] = &[
     "temperature",
     "tint",
     "balance_set",
+    "crop_left",
+    "crop_top",
+    "crop_right",
+    "crop_bottom",
+    "crop_angle",
+    "rotate",
+    "output_width",
+    "output_height",
+    "keystone_0",
+    "keystone_1",
+    "keystone_2",
+    "keystone_3",
+    "keystone_4",
+    "keystone_5",
+    "keystone_6",
+    "keystone_7",
+    "has_keystone",
 ];
 
-/// `TICK_UNIFORM_FLOATS` in `shaders.ts`, field for field in `struct Tick`'s order.
+/// `EDIT_UNIFORM_FLOATS` in `shaders.ts`, field for field in `struct Edit`'s order.
 ///
 /// Flat rather than a builder so it can be read against the struct. The one subtlety is
 /// the unnamed word before `region_origin`: WGSL puts a `vec2f` on a multiple of eight and
@@ -1285,7 +1309,7 @@ fn uniform(grade: &Grade<'_>, colour: &HdrColour) -> Vec<u8> {
 
 /// The same words, before they are bytes, so the editor can be handed them.
 ///
-/// **This is the only thing that builds a `Tick`.** The client used to build its own from the
+/// **This is the only thing that builds a `Edit`.** The client used to build its own from the
 /// payload - re-deriving `curve_bins` from the curve it was sent, the seven lattice shape
 /// fields from the chroma map, `trust_ceiling`, `sdr_white`, and the peak's sampling stride -
 /// which is twenty-two words of one frame described twice in two languages. The shaders were
@@ -1293,7 +1317,7 @@ fn uniform(grade: &Grade<'_>, colour: &HdrColour) -> Vec<u8> {
 /// is a photograph graded with one number where another belongs, on a path no test crossed.
 ///
 /// So the frame's own words are built here, once, and travel on `edit::PreparedHeader`. What
-/// the editor still writes is only what a *tick* owns and this side cannot know: the exposure,
+/// the editor still writes is only what the *reader* owns and this side cannot know: the exposure,
 /// the sliders, the region on screen and the canvas showing it.
 pub fn uniform_words(grade: &Grade<'_>, colour: &HdrColour) -> Vec<u32> {
     let shape = colour.chroma.as_ref().map(|m| m.shape());
@@ -1341,7 +1365,7 @@ pub fn uniform_words(grade: &Grade<'_>, colour: &HdrColour) -> Vec<u32> {
     }
     w.push(0); // max_lod
     w.push(0); // pad
-    // The reader's sliders, in `struct Tick`'s order. Appended after `pad` there, so nothing
+    // The reader's sliders, in `struct Edit`'s order. Appended after `pad` there, so nothing
     // above this line moved when they were added.
     f(&mut w, grade.adjust.contrast);
     f(&mut w, grade.adjust.highlights);
@@ -1365,9 +1389,26 @@ pub fn uniform_words(grade: &Grade<'_>, colour: &HdrColour) -> Vec<u32> {
         u32::from(grade.adjust.temperature.is_some())
             | (u32::from(grade.adjust.tint.is_some()) << 1),
     );
+    // The geometry, always the identity here, and that is not an omission. A rendition's crop
+    // is applied in `image::PlanarWarp`'s gather - one pass rather than a warp and then a
+    // copy - so the frame this shader is handed is *already* cropped and turned, and applying
+    // it a second time would crop the crop. What the field is for is the editor, whose frame
+    // is the whole one: it patches these and sees what a rendition will produce without one
+    // being built. `frame.wgsl`'s `geometry_at` is the identity on these values.
+    for value in [0.0, 0.0, 1.0, 1.0, 0.0] {
+        f(&mut w, value);
+    }
+    w.push(0); // rotate
+    w.push(grade.width as u32);
+    w.push(grade.height as u32);
+    // The keystone, identity here for the reason above: the gather already applied it.
+    for _ in 0..8 {
+        f(&mut w, 0.0);
+    }
+    w.push(0); // has_keystone
     // WGSL rounds a uniform struct's size up to a multiple of 16 bytes, and binds it at that
     // size - so a buffer holding exactly the fields is rejected as too small, by however much
-    // the last few fields left over. `shaders.ts` does this in `tickOffsets`; here it was
+    // the last few fields left over. `shaders.ts` does this in `editOffsets`; here it was
     // implicit in the field count until a field was added, and then it was four bytes short.
     // Stated as the rule rather than as a spare word, so the next field cannot break it.
     while w.len() % 4 != 0 {
@@ -1384,6 +1425,38 @@ fn half(v: f32) -> [u8; 2] {
 #[cfg(test)]
 mod tests {
     use wgpu::util::DeviceExt;
+
+    /// Which word a `Edit` field starts at, under WGSL's uniform rules.
+    ///
+    /// `editOffsets` on the client, arrived at the same way: everything is a word except the
+    /// three `vec2f`, which take two and start on an even one. Written here rather than
+    /// counted by hand because the field *index* is not the word offset - three vec2f and the
+    /// alignment they force put the tail eight words along from where a naive count says, which
+    /// is exactly the mistake this test made first and caught itself on.
+    fn field_offset(name: &str) -> usize {
+        let mut next = 0usize;
+        for field in super::EDIT_FIELDS {
+            let pair = field.starts_with("region_") || *field == "canvas_size";
+            if pair {
+                next = next.div_ceil(2) * 2;
+            }
+            if *field == name {
+                return next;
+            }
+            next += if pair { 2 } else { 1 };
+        }
+        panic!("struct Edit has no {name}");
+    }
+
+    /// A `Geometry`, positionally, so a table of cases reads as a table.
+    fn geometry(
+        crop: [f64; 4],
+        angle_degrees: f64,
+        rotate: u16,
+        keystone: Option<[f64; 8]>,
+    ) -> crate::image::Geometry {
+        crate::image::Geometry { crop, angle_degrees, rotate, keystone }
+    }
 
     /// The shader's own sizes, against the buffers this host allocates for them.
     ///
@@ -1437,7 +1510,7 @@ mod tests {
         );
     }
 
-    /// `struct Tick` in the shader against the order and the size this host writes.
+    /// `struct Edit` in the shader against the order and the size this host writes.
     ///
     /// Two failures, both silent without this. A field inserted anywhere but the tail
     /// shifts every field after it, so the grade reads the exposure out of `peak` and the
@@ -1446,16 +1519,16 @@ mod tests {
     /// catch - but as "bound with size 156 where the shader expects 160", at the dispatch,
     /// which is a long way from the line that added the field.
     ///
-    /// The client pins the same thing in `gpu/tests/tick_uniform.test.ts`. Two hosts, two
+    /// The client pins the same thing in `gpu/tests/edit_uniform.test.ts`. Two hosts, two
     /// pins, one shader that is the source of truth for both.
     #[test]
     fn the_uniform_matches_the_shader_struct() {
-        let source = include_str!("../../../web/src/features/raw_edit/gpu/wgsl/tick.wgsl");
+        let source = include_str!("../../../web/src/features/raw_edit/gpu/wgsl/edit.wgsl");
         let body = source
-            .split_once("struct Tick {")
+            .split_once("struct Edit {")
             .and_then(|(_, rest)| rest.split_once("};"))
             .map(|(body, _)| body)
-            .expect("tick.wgsl declares struct Tick");
+            .expect("edit.wgsl declares struct Edit");
 
         let declared: Vec<&str> = body
             .lines()
@@ -1466,13 +1539,13 @@ mod tests {
             .collect();
 
         assert_eq!(
-            declared, super::TICK_FIELDS,
-            "struct Tick and gpu.rs's TICK_FIELDS have drifted",
+            declared, super::EDIT_FIELDS,
+            "struct Edit and gpu.rs's EDIT_FIELDS have drifted",
         );
 
         // And the buffer the writer produces is the size the binding wants: every field a
         // word, `vec2f` two, rounded up to four.
-        let words: usize = super::TICK_FIELDS
+        let words: usize = super::EDIT_FIELDS
             .iter()
             .map(|name| if name.starts_with("region_") || *name == "canvas_size" { 2 } else { 1 })
             .sum();
@@ -1511,7 +1584,7 @@ mod tests {
         const PROBE: &str = r#"
 @compute @workgroup_size(1)
 fn probe_xy() {
-  let xy = xy_of(tick.temperature, tick.tint);
+  let xy = xy_of(edit.temperature, edit.tint);
   balance_out[0] = xy.x;
   balance_out[1] = xy.y;
 }
@@ -1587,7 +1660,7 @@ fn probe_xy() {
                     as_shot: Some(asked),
                     output: super::Output::Pq,
                 };
-                let tick = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                let edits = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("probe_xy"),
                     contents: &super::uniform(&grade, &colour),
                     usage: wgpu::BufferUsages::UNIFORM,
@@ -1596,7 +1669,7 @@ fn probe_xy() {
                     label: Some("probe_xy"),
                     layout: &layout,
                     entries: &[
-                        wgpu::BindGroupEntry { binding: 0, resource: tick.as_entire_binding() },
+                        wgpu::BindGroupEntry { binding: 0, resource: edits.as_entire_binding() },
                         wgpu::BindGroupEntry { binding: 14, resource: out.as_entire_binding() },
                     ],
                 });
@@ -1651,6 +1724,217 @@ fn probe_xy() {
             "white balance round trip: worst {:.3}% on temperature, {worst_tint:.2} on tint",
             worst_temperature * 100.0,
         );
+    }
+
+    /// The editor's crop against the gather's, pixel for pixel.
+    ///
+    /// **The one mapping in this pipeline that genuinely exists twice.** A rendition crops
+    /// inside `image::PlanarWarp`'s gather, on the CPU, while it is correcting the lens; the
+    /// editor crops in its draw, over a frame already warped at the open. Neither can call the
+    /// other, so what stops them drifting is this - and drift here is a photograph whose
+    /// preview is not the picture the file gets, which is the whole complaint that made the
+    /// uniform one implementation in the first place.
+    ///
+    /// Every case moves something the arithmetic could get wrong: a crop off-centre, a
+    /// straighten in both directions, each quarter turn, and the two composed.
+    #[test]
+    fn the_draw_places_a_pixel_where_the_gather_does() {
+        const PROBE: &str = r#"
+@group(0) @binding(6) var<storage, read_write> probe_out: array<f32>;
+
+@compute @workgroup_size(64)
+fn probe_geometry(@builtin(global_invocation_id) id: vec3u) {
+  let out = vec2u(edit.output_width, edit.output_height);
+  if (id.x >= out.x * out.y) { return; }
+  // Pixel centres, which is what a fragment carries: `geometry_at` speaks in positions, and
+  // handing it indices would agree with a gather that had the same bug.
+  let at = geometry_at(vec2f(f32(id.x % out.x) + 0.5, f32(id.x / out.x) + 0.5));
+  probe_out[id.x * 2u] = at.x;
+  probe_out[id.x * 2u + 1u] = at.y;
+}
+"#;
+        let Some(gpu) = super::device() else {
+            eprintln!(
+                "SKIPPED: no adapter answered, so the editor's crop was not compared with the \
+                 gather's. Nothing else checks that the preview is the picture.",
+            );
+            return;
+        };
+        let device = &gpu.device;
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("probe_geometry"),
+            source: wgpu::ShaderSource::Wgsl(
+                format!(
+                    "{}\n{}\n{}\n{PROBE}",
+                    include_str!("../../../web/src/features/raw_edit/gpu/wgsl/prelude.wgsl"),
+                    include_str!("../../../web/src/features/raw_edit/gpu/wgsl/edit.wgsl"),
+                    super::GEOMETRY_WGSL,
+                )
+                .into(),
+            ),
+        });
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("probe_geometry"),
+            entries: &[
+                super::Binding::Uniform.entry(0),
+                super::Binding::Storage { read_only: false }.entry(6),
+            ],
+        });
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("probe_geometry"),
+            layout: Some(&device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("probe_geometry"),
+                bind_group_layouts: &[Some(&layout)],
+                ..Default::default()
+            })),
+            module: &module,
+            entry_point: Some("probe_geometry"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+
+        let colour = crate::hdr_fit::HdrColour::identity();
+        let full = (263usize, 171usize);
+        // A real correction, off `keystone.ts` for a pair of leaning uprights: asymmetric in
+        // both the projective terms, so a transposed row or a swapped pair shows up.
+        const LEANING: [f64; 8] = [
+            0.847_222_222_222_222_2,
+            0.0,
+            0.076_388_888_888_888_9,
+            0.0,
+            0.847_222_222_222_222_2,
+            0.076_388_888_888_888_9,
+            -0.083_333_333_333_333_3,
+            -0.125,
+        ];
+        let cases: [crate::image::Geometry; 10] = [
+            geometry([0.0, 0.0, 1.0, 1.0], 0.0, 0, None),
+            geometry([0.13, 0.07, 0.82, 0.91], 0.0, 0, None),
+            geometry([0.0, 0.0, 1.0, 1.0], 7.5, 0, None),
+            geometry([0.0, 0.0, 1.0, 1.0], -3.25, 0, None),
+            geometry([0.0, 0.0, 1.0, 1.0], 0.0, 90, None),
+            geometry([0.0, 0.0, 1.0, 1.0], 0.0, 270, None),
+            geometry([0.2, 0.1, 0.75, 0.66], 4.0, 180, None),
+            // A crop under a quarter turn, which is the only case where the stride's axes are
+            // swapped. The two turns above carry the identity crop, and that is invariant under
+            // the swap - so without this one the whole `span` permutation is unpinned.
+            geometry([0.2, 0.1, 0.75, 0.66], 4.0, 90, None),
+            // The keystone alone, and then under everything else: it is the one step that is
+            // not affine, so the order it composes in is visible in the answer and nowhere else.
+            geometry([0.0, 0.0, 1.0, 1.0], 0.0, 0, Some(LEANING)),
+            geometry([0.15, 0.2, 0.9, 0.8], -6.0, 270, Some(LEANING)),
+        ];
+
+        let mut worst = 0.0f64;
+        for geometry in cases {
+            let out = crate::hdr::cropped_size(full.0, full.1, geometry);
+            let pixels = out.0 * out.1;
+            let bytes = (pixels * 2 * 4) as u64;
+            let probe = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("probe_geometry"),
+                size: bytes,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+                mapped_at_creation: false,
+            });
+            let readback = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("probe_geometry"),
+                size: bytes,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+
+            let grade = super::Grade {
+                width: full.0,
+                height: full.1,
+                colour: None,
+                white: 1.0,
+                source_level: 1.0,
+                reference_nits: 203.0,
+                peak_nits: 1000.0,
+                exposure: 0.0,
+                adjust: super::Adjust::none(),
+                as_shot: None,
+                output: super::Output::Pq,
+            };
+            // The words the *editor* writes: `uniform_words` leaves the geometry at its
+            // identity for a rendition, whose frame is cropped before the shader sees it.
+            let mut words = super::uniform_words(&grade, &colour);
+            let at = field_offset("crop_left");
+            for (offset, value) in [
+                geometry.crop[0],
+                geometry.crop[1],
+                geometry.crop[2],
+                geometry.crop[3],
+                geometry.angle_degrees,
+            ]
+            .iter()
+            .enumerate()
+            {
+                words[at + offset] = (*value as f32).to_bits();
+            }
+            words[at + 5] = u32::from(geometry.rotate);
+            words[at + 6] = out.0 as u32;
+            words[at + 7] = out.1 as u32;
+            let keystone_at = field_offset("keystone_0");
+            for (offset, value) in geometry.keystone.unwrap_or_default().iter().enumerate() {
+                words[keystone_at + offset] = (*value as f32).to_bits();
+            }
+            words[field_offset("has_keystone")] = u32::from(geometry.keystone.is_some());
+
+            let edits = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("probe_geometry"),
+                contents: &words.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<u8>>(),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+            let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("probe_geometry"),
+                layout: &layout,
+                entries: &[
+                    wgpu::BindGroupEntry { binding: 0, resource: edits.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 6, resource: probe.as_entire_binding() },
+                ],
+            });
+
+            let mut encoder = device.create_command_encoder(&Default::default());
+            {
+                let mut pass = encoder.begin_compute_pass(&Default::default());
+                pass.set_pipeline(&pipeline);
+                pass.set_bind_group(0, &group, &[]);
+                pass.dispatch_workgroups(pixels.div_ceil(64) as u32, 1, 1);
+            }
+            encoder.copy_buffer_to_buffer(&probe, 0, &readback, 0, bytes);
+            gpu.queue.submit([encoder.finish()]);
+            let slice = readback.slice(..);
+            slice.map_async(wgpu::MapMode::Read, |_| {});
+            device.poll(wgpu::PollType::wait_indefinitely()).expect("the probe finished");
+            let got: Vec<f32> = {
+                let mapped = slice.get_mapped_range().expect("the readback mapped");
+                mapped
+                    .chunks_exact(4)
+                    .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+                    .collect()
+            };
+            readback.unmap();
+
+            for y in 0..out.1 {
+                for x in 0..out.0 {
+                    let want =
+                        crate::image::geometry_at(full, out, geometry, x as f64 + 0.5, y as f64 + 0.5);
+                    let index = (y * out.0 + x) * 2;
+                    let off = ((f64::from(got[index]) - want.0).powi(2)
+                        + (f64::from(got[index + 1]) - want.1).powi(2))
+                    .sqrt();
+                    // `max`, not `>`: a comparison against NaN is false, so a shader that
+                    // divided by a degenerate span would leave `worst` at zero and pass.
+                    assert!(off.is_finite(), "the draw put pixel ({x}, {y}) nowhere");
+                    worst = worst.max(off);
+                }
+            }
+        }
+        // In frame pixels, and generous only against `f32` against `f64` over coordinates in
+        // the hundreds - a real disagreement about the mapping is a pixel or far more, not a
+        // thousandth of one.
+        assert!(worst < 0.01, "the draw is {worst:.5} pixels from the gather at worst");
     }
 
     /// `R2020_TO_SRGB` in `frame.wgsl` against the matrix this crate derives.

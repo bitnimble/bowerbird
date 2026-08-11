@@ -9,7 +9,7 @@
 //
 // The inverse - what the *camera* balanced for, from its multipliers and its own matrix - is
 // `white_balance.rs`, and has no twin here: the client never sees a camera matrix, and the
-// answer is wanted once per open rather than once per tick.
+// answer is wanted once per open rather than once per edit.
 //
 // **What the frame already is.** The decode balanced it against the camera's own multipliers,
 // so a neutral surface under the as-shot illuminant comes out grey. Asking for a different
@@ -153,10 +153,10 @@ fn balance() {
 
   // **Where the document's nulls are resolved, and the only place they are.** A half the reader
   // has not moved is the frame's own, so it stands in here rather than in either host - see
-  // `balance_set` in `tick.wgsl` for what having each host decide it cost.
+  // `balance_set` in `edit.wgsl` for what having each host decide it cost.
   let asked_temperature =
-    select(tick.as_shot_temperature, tick.temperature, (tick.balance_set & 1u) != 0u);
-  let asked_tint = select(tick.as_shot_tint, tick.tint, (tick.balance_set & 2u) != 0u);
+    select(edit.as_shot_temperature, edit.temperature, (edit.balance_set & 1u) != 0u);
+  let asked_tint = select(edit.as_shot_tint, edit.tint, (edit.balance_set & 2u) != 0u);
 
   // A frame whose camera recorded no usable multipliers has no illuminant to move away from,
   // and says so with an as-shot temperature of zero. Identity rather than a guess.
@@ -167,9 +167,9 @@ fn balance() {
   // would make "As Shot" a *slightly* different picture from having never touched the slider.
   // It is the same illuminant; it has to be the same bytes.
   let moved =
-    asked_temperature != tick.as_shot_temperature || asked_tint != tick.as_shot_tint;
-  if (tick.as_shot_temperature > 0.0 && moved) {
-    let was = XYZ_TO_CONE * xyz_of(xy_of(tick.as_shot_temperature, tick.as_shot_tint));
+    asked_temperature != edit.as_shot_temperature || asked_tint != edit.as_shot_tint;
+  if (edit.as_shot_temperature > 0.0 && moved) {
+    let was = XYZ_TO_CONE * xyz_of(xy_of(edit.as_shot_temperature, edit.as_shot_tint));
     let wanted = XYZ_TO_CONE * xyz_of(xy_of(asked_temperature, asked_tint));
     let gain = was / wanted;
     let diagonal =

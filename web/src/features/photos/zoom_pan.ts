@@ -131,6 +131,25 @@ export function regionOf(view: View, box: Size, natural: Size): {
 
 export const NO_SIZE: Size = { width: 0, height: 0 };
 
+/**
+ * The stop a click or the zoom button moves to next: fitted, twice that, then the frame's own
+ * pixels, and round to fitted again.
+ *
+ * Sorted rather than listed in that order, because a render smaller than the stage is already
+ * past 1:1 once it is fitted and for those two the 100% stop is the nearer one.
+ *
+ * Out here rather than in the hook so the ladder can be climbed without a browser: what it is
+ * is arithmetic over two numbers, and it was only reachable through a Playwright click.
+ */
+export function nextStopAfter(scale: number, nativeScale: number): number {
+  return (
+    [DOUBLE_SCALE, nativeScale]
+      .filter((stop) => stop > MIN_SCALE)
+      .sort((a, b) => a - b)
+      .find((stop) => stop > scale + STOP_EPSILON) ?? MIN_SCALE
+  );
+}
+
 /** What a surface has to give this to be zoomable, and what it gets back. */
 export interface ZoomPan {
   view: View;
@@ -171,12 +190,17 @@ export interface ZoomPan {
  * `onGestureEnd` reports how far a completed gesture travelled, and whether it happened
  * zoomed - which is all the viewer needs to read a swipe out of one. What a swipe *means*
  * stays with the surface, because only it knows.
+ *
+ * `enabled` turns the gesture off without unmounting the surface, for a tool that wants the
+ * view held still under it. It has to be the hook's own: the wheel is a native listener on
+ * `gestures`, so a caller that only declines to spread `handlers` still zooms.
  */
 export function useZoomPan(
   viewport: React.RefObject<HTMLElement | null>,
   gestures: React.RefObject<HTMLElement | null>,
   size: Size,
   onGestureEnd?: (travel: { dx: number; dy: number; zoomed: boolean }) => void,
+  enabled = true,
 ): ZoomPan {
   // Held by its extent rather than by the object it arrived in. A caller that builds the
   // size inline - which is the natural way to write it from a store - hands over a new
@@ -243,23 +267,12 @@ export function useZoomPan(
     [natural, viewport],
   );
 
-  // Fitted, twice that, then the frame's own pixels, and round to fitted again.
-  // Sorted rather than listed in that order: a render smaller than the stage is
-  // already past 1:1 once it is fitted, so for those two the 100% stop is the
-  // nearer one.
-  const stopAfter = useCallback(
-    (scale: number): number =>
-      [DOUBLE_SCALE, nativeScale]
-        .filter((stop) => stop > MIN_SCALE)
-        .sort((a, b) => a - b)
-        .find((stop) => stop > scale + STOP_EPSILON) ?? MIN_SCALE,
-    [nativeScale],
-  );
+  const stopAfter = useCallback((scale: number): number => nextStopAfter(scale, nativeScale), [nativeScale]);
 
   // Non-passive so preventDefault actually stops the page scrolling underneath.
   useEffect(() => {
     const stage = gestures.current;
-    if (stage == null) return;
+    if (stage == null || !enabled) return;
 
     function onWheel(e: WheelEvent): void {
       e.preventDefault();
@@ -270,9 +283,10 @@ export function useZoomPan(
     }
     stage.addEventListener('wheel', onWheel, { passive: false });
     return () => stage.removeEventListener('wheel', onWheel);
-  }, [zoomTo, gestures]);
+  }, [zoomTo, gestures, enabled]);
 
   function onPointerDown(e: React.PointerEvent): void {
+    if (!enabled) return;
     // One gesture at a time: a second finger landing would otherwise restart the
     // one in flight from wherever it touched down, and lift into a step of its own.
     if (!e.isPrimary) return;
@@ -295,7 +309,10 @@ export function useZoomPan(
   // all this needs is the extent, which the observer already holds. `zoomTo` reads the rect
   // because it pins a point and so wants the origin too; this does not.
   function onPointerMove(e: React.PointerEvent): void {
-    if (!dragging) return;
+    // `enabled` as well as `dragging`, because a pan can already be in flight when it goes
+    // false: a second finger opening a geometry tool while the first is panning would otherwise
+    // keep sliding the photograph out from under a rectangle just laid out for a fitted view.
+    if (!enabled || !dragging) return;
     setView((currentView) =>
       clampPan(
         {
@@ -346,7 +363,7 @@ export function useZoomPan(
   // gesture it ends barely moved - a swipe that lands on the next photo must not
   // zoom it, and a pan must not un-zoom.
   function onClick(e: React.MouseEvent): void {
-    if (dragging || travelled.current > CLICK_SLOP_PX) return;
+    if (!enabled || dragging || travelled.current > CLICK_SLOP_PX) return;
     zoomTo(stopAfter, { x: e.clientX, y: e.clientY });
   }
 

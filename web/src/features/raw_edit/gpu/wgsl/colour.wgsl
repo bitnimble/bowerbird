@@ -15,7 +15,7 @@
 // weights and the blend as one instruction. The chroma map is the extreme case: eight
 // corners times four components was thirty-two dependent scalar loads for one trilinear
 // that `textureSampleLevel` performs in a single fetch, and it measured at 2.6ms of a
-// 15ms tick.
+// 15ms edit.
 //
 // The tone curve does NOT take that filter, and the difference is not luck. Hardware
 // filter weights carry about eight fractional bits; against a chroma correction that is
@@ -65,7 +65,7 @@ fn level_at(x: u32, y: u32) -> vec3f {
 
 /// A code back to the nits `tone::encode_base` coded, which is `level * reference / white`.
 ///
-/// So dividing by `tick.reference` gives the `level / white` every stage below wants, and the
+/// So dividing by `edit.reference` gives the `level / white` every stage below wants, and the
 /// frame's own diffuse white lands at 1.0 exactly as it did when the buffer held levels.
 ///
 /// Rounded rather than interpolated between entries: a code is what the buffer holds, and the
@@ -91,8 +91,8 @@ fn nits_of_index(pixel: u32) -> vec3f {
 /// A row per channel, and the interpolation written out rather than sampled, for the
 /// precision reason above.
 fn sample_curve(channel: u32, x: f32) -> f32 {
-  let bins = tick.curve_bins;
-  let t = clamp(x / tick.trust_ceiling, 0.0, 1.0) * f32(bins - 1u);
+  let bins = edit.curve_bins;
+  let t = clamp(x / edit.trust_ceiling, 0.0, 1.0) * f32(bins - 1u);
   let below = min(u32(t), bins - 2u);
   let row = i32(channel);
   let lo = textureLoad(curves, vec2i(i32(below), row), 0).r;
@@ -108,8 +108,8 @@ fn sample_curve(channel: u32, x: f32) -> f32 {
 /// that leaves highlights wrong by hundreds of counts, which is exactly where a grade is
 /// judged.
 fn curves_at(nits: vec3f, scale: f32) -> vec3f {
-  let scene = nits * scale / tick.reference;
-  let s = max(max(scene.r, max(scene.g, scene.b)) / tick.trust_ceiling, 1.0);
+  let scene = nits * scale / edit.reference;
+  let s = max(max(scene.r, max(scene.g, scene.b)) / edit.trust_ceiling, 1.0);
   return vec3f(
     sample_curve(0u, scene.r / s),
     sample_curve(1u, scene.g / s),
@@ -124,8 +124,8 @@ fn curves_at(nits: vec3f, scale: f32) -> vec3f {
 /// depends on the pixel's own luma, not as a global one.
 fn toned(nits: vec3f) -> vec3f {
   let base = curves_at(nits, 1.0);
-  if (tick.exposure == 0.0) { return base; }
-  let lit = curves_at(nits, exp2(tick.exposure));
+  if (edit.exposure == 0.0) { return base; }
+  let lit = curves_at(nits, exp2(edit.exposure));
   let base_luma = dot(LUMA, base);
   let lit_luma = dot(LUMA, lit);
   // Black has no ratios to hold and the two lumas vanish together, so the quotient there
@@ -150,9 +150,9 @@ fn correct(level: f32, d0: f32, d2: f32) -> vec3f {
   let at = vec3f(
     // A span per axis. Red-green and blue-yellow are not distributed alike in a frame, and
     // one span for both leaves the narrower axis' outer nodes permanently empty.
-    axis(d0, tick.chroma_count, tick.chroma_low, tick.chroma_scale),
-    axis(d2, tick.chroma_count, tick.chroma_low_by, tick.chroma_scale_by),
-    axis(sqrt(max(level, 0.0)), tick.level_count, 0.0, tick.level_scale),
+    axis(d0, edit.chroma_count, edit.chroma_low, edit.chroma_scale),
+    axis(d2, edit.chroma_count, edit.chroma_low_by, edit.chroma_scale_by),
+    axis(sqrt(max(level, 0.0)), edit.level_count, 0.0, edit.level_scale),
   );
   let cell = textureSampleLevel(chroma, lerp, at, 0.0);
   // The volume holds the gain's *deviation* from 1, and the 1 is added here. Half floats
@@ -181,9 +181,9 @@ fn correct(level: f32, d0: f32, d2: f32) -> vec3f {
 /// `hdr_fit::finish_chroma`, given a colour the matrix has already been through.
 fn finish_chroma(m: vec3f) -> vec3f {
   let l = dot(LUMA, m);
-  if (tick.has_chroma == 0u) {
-    if (tick.saturation == 1.0) { return m; }
-    return vec3f(l) + (m - vec3f(l)) * tick.saturation;
+  if (edit.has_chroma == 0u) {
+    if (edit.saturation == 1.0) { return m; }
+    return vec3f(l) + (m - vec3f(l)) * edit.saturation;
   }
   let d = correct(l, m.r - l, m.b - l);
   // The middle channel is not free: LUMA . d is zero by construction, so the two
@@ -211,7 +211,7 @@ fn apply_matrix(t: vec3f) -> vec3f {
 /// meaningful in. Both arms hand it to `adjusted` beside the graded colour, because the
 /// presence sliders act on the base's detail while everything else acts on the graded pixel.
 fn base_luma(nits: vec3f) -> f32 {
-  return dot(LUMA, nits) / tick.reference;
+  return dot(LUMA, nits) / edit.reference;
 }
 
 /// The matched colour in nits, before any roll-off. Shared with the peak pass so the two
@@ -227,7 +227,7 @@ fn base_luma(nits: vec3f) -> f32 {
 /// else does. Threaded rather than derived, because the three callers know it in three
 /// different ways - a raster index, a canvas position, a kept candidate.
 fn matched_nits(nits: vec3f, uv: vec2f) -> vec3f {
-  return adjusted(finish_chroma(apply_matrix(toned(nits))), base_luma(nits), uv) * tick.reference;
+  return adjusted(finish_chroma(apply_matrix(toned(nits))), base_luma(nits), uv) * edit.reference;
 }
 
 /// The neutral arm: one shared curve, so channel ratios survive whatever the input.
@@ -238,7 +238,7 @@ fn matched_nits(nits: vec3f, uv: vec2f) -> vec3f {
 /// here too: the ratio of the frame's peak to its own white is what the roll-off is against,
 /// and a gain moves both.
 fn neutral_nits(nits: vec3f, uv: vec2f) -> vec3f {
-  let source_peak = (tick.source_level / tick.white) * tick.reference;
+  let source_peak = (edit.source_level / edit.white) * edit.reference;
   // Adjusted in the same scene-relative space the matched arm uses, so one set of sliders
   // means one thing whether or not the fit landed.
   //
@@ -247,6 +247,6 @@ fn neutral_nits(nits: vec3f, uv: vec2f) -> vec3f {
   // catches that is `display_nits`' clamp - the top of the range rather than a curve into
   // it. Worth knowing before reaching for a big lift on a frame whose fit declined.
   let scene =
-    adjusted(nits * exp2(tick.exposure) / tick.reference, base_luma(nits), uv) * tick.reference;
-  return rolled(scene, rolloff(source_peak, tick.peak));
+    adjusted(nits * exp2(edit.exposure) / edit.reference, base_luma(nits), uv) * edit.reference;
+  return rolled(scene, rolloff(source_peak, edit.peak));
 }

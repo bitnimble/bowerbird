@@ -554,10 +554,26 @@ p.ui-text--mono {
 }
 
 .ui-slider__thumb {
+  position: relative;
   width: 11px;
   height: 11px;
   border-radius: 50%;
   background: var(--bone);
+}
+
+/* The grab, which is bigger than the dot. Pressing the track jumps the thumb to
+   the finger, so this is only about picking the thumb up where it stands - but at
+   11px that is a test of aim. Only where the pointer is a finger: at a cursor the
+   row is 30px and this would hang out of it over whatever sits alongside. */
+@media (pointer: coarse) {
+  .ui-slider__thumb::before {
+    content: '';
+    position: absolute;
+    /* Up and down only. Sideways it reached 21px past the end of a 110px track and, being in
+       the positioned layer, took the taps meant for whatever sits alongside - which on a phone
+       is the case this exists for. Vertically it stays inside the row. */
+    inset: -16px 0;
+  }
 }
 
 /* ---------- shell ---------- */
@@ -2428,6 +2444,29 @@ p.ui-text--mono {
     max-height: 60vh;
     margin-bottom: var(--sheet-pad);
   }
+
+  /* The one mode the sheet may not lie over. A crop rectangle's grips are on the
+     picture's own edges, so a sheet across the bottom of it is two corners no
+     finger can reach; here the sheet takes a row of the grid and the stage fits
+     into what is left. Affordable because the tool empties the panel down to the
+     geometry group. */
+  .detail--sheet.detail--cropping {
+    grid-template-rows: minmax(0, 1fr) auto;
+    padding-bottom: 0;
+  }
+
+  .detail--cropping .detail__sheet {
+    position: static;
+    /* Never more than a third of the window. A phone on its side is 390px tall, and the tool's
+       own controls are 200 of them - which left the photograph a 77px strip and the grips below
+       the size a finger can find, the opposite of what putting the sheet in the flow was for. */
+    max-height: 34vh;
+    overflow-y: auto;
+  }
+
+  .detail--cropping .detail__sheet .detail__panels {
+    max-height: none;
+  }
 }
 
 /* Stack triage (§20). One stack, judged two photos at a time: a header, the
@@ -2979,5 +3018,200 @@ p.ui-text--mono {
   .stops__count {
     text-align: left;
   }
+}
+
+
+/* The crop tool's rectangle, over a stage showing the frame straightened but uncropped.
+   Sized by aspect ratio and centred, which is `object-fit: contain` written out: the canvas
+   fills the viewport, the picture inside it is letterboxed, and a rectangle laid out on the
+   viewport would sit in the bars. */
+.crop-overlay {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  max-width: 100%;
+  max-height: 100%;
+  /* The browser must not take the gesture for a scroll or a pinch: a crop drag is a pointer
+     sequence and `none` is what stops the compositor claiming it mid-drag on a touch screen. */
+  touch-action: none;
+}
+
+/* Absorbing, not transparent. Below it is the stage's own pan and pinch, which would move the
+   picture out from under a rectangle laid out for a fitted view - so while the tool is open the
+   overlay is what a finger lands on, wherever it lands. */
+.crop-overlay__shade {
+  position: absolute;
+  background: rgb(0 0 0 / 55%);
+}
+
+.crop-overlay__rect {
+  position: absolute;
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 90%);
+  cursor: move;
+}
+
+/* Thin, and only inside the rectangle: they are for lining a horizon up, not for decoration. */
+.crop-overlay__third {
+  position: absolute;
+  background: rgb(255 255 255 / 30%);
+  pointer-events: none;
+}
+
+.crop-overlay__third--v {
+  top: 0;
+  bottom: 0;
+  width: 1px;
+}
+
+.crop-overlay__third--h {
+  left: 0;
+  right: 0;
+  height: 1px;
+}
+
+/* **Much bigger than they look, and entirely inside the rectangle.** The target is 44px, the
+   smallest thing a finger reliably hits; the mark is a 12px corner drawn just inside it.
+   Inside is the part that matters: centred on its corner - the obvious way to write this - half
+   of every target hangs outside the picture, and at a fitted view the picture meets the window's
+   own edge, so the outer half of the target is off-screen. The box hangs inwards from the edge
+   it belongs to and the mark sits at its outer corner. */
+.crop-overlay__grip {
+  position: absolute;
+  /* A third, so eight of them cannot collide however small the rectangle gets: the two corners
+     of an edge take a third each and the one between them is centred in what is left. At 44px
+     flat, a rectangle under 132px had grips lying over each other and the one last in the
+     source answered for all of them - which on a phone is an ordinary crop to a detail.
+     Floored at 24px, because a third of a *small* rectangle is nothing a finger can find: at
+     the 2% the drag allows, a bare third is two pixels and only Undo gets the crop back. Past
+     that floor the grips do overlap, but a rectangle that size is smaller than the finger
+     either way. */
+  width: clamp(24px, 33%, 44px);
+  height: clamp(24px, 33%, 44px);
+  /* Above the shade, which absorbs. */
+  z-index: 1;
+}
+
+.crop-overlay__grip::after {
+  content: '';
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  background: #fff;
+  border-radius: 1px;
+  box-shadow: 0 0 2px rgb(0 0 0 / 60%);
+}
+
+/* Centred by transform rather than a negative margin, which would have to name the box's
+   width and no longer knows it. */
+.crop-overlay__grip--n,
+.crop-overlay__grip--s {
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.crop-overlay__grip--e,
+.crop-overlay__grip--w {
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.crop-overlay__grip--nw { left: 0; top: 0; cursor: nwse-resize; }
+.crop-overlay__grip--nw::after { left: 2px; top: 2px; }
+
+.crop-overlay__grip--n { top: 0; cursor: ns-resize; }
+.crop-overlay__grip--n::after { left: calc(50% - 6px); top: 2px; }
+
+.crop-overlay__grip--ne { right: 0; top: 0; cursor: nesw-resize; }
+.crop-overlay__grip--ne::after { right: 2px; top: 2px; }
+
+.crop-overlay__grip--e { right: 0; cursor: ew-resize; }
+.crop-overlay__grip--e::after { right: 2px; top: calc(50% - 6px); }
+
+.crop-overlay__grip--se { right: 0; bottom: 0; cursor: nwse-resize; }
+.crop-overlay__grip--se::after { right: 2px; bottom: 2px; }
+
+.crop-overlay__grip--s { bottom: 0; cursor: ns-resize; }
+.crop-overlay__grip--s::after { left: calc(50% - 6px); bottom: 2px; }
+
+.crop-overlay__grip--sw { left: 0; bottom: 0; cursor: nesw-resize; }
+.crop-overlay__grip--sw::after { left: 2px; bottom: 2px; }
+
+.crop-overlay__grip--w { left: 0; cursor: ew-resize; }
+.crop-overlay__grip--w::after { left: 2px; top: calc(50% - 6px); }
+
+/* The perspective tool's guides. Laid out on the picture exactly as the crop rectangle is -
+   the same `object-fit: contain` box - because both name fractions of the same frame. */
+.keystone-overlay {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  max-width: 100%;
+  max-height: 100%;
+  /* Drawing a guide is a drag, and the compositor must not take it for a scroll. */
+  touch-action: none;
+  cursor: crosshair;
+}
+
+.keystone-overlay__lines {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  /* The lines are the drawing; the handles below them are what a pointer lands on. */
+  pointer-events: none;
+}
+
+.keystone-overlay__line {
+  stroke: #7dd3fc;
+  stroke-width: 2;
+  /* Dashed, so a guide reads as a thing the reader put there rather than as part of the
+     photograph - which matters most when it is lying exactly along an edge. */
+  stroke-dasharray: 7 5;
+}
+
+/* The line's own body, as a fat invisible stroke along it: a two-pixel diagonal is not
+   something a finger can hold, and a *box* around one is its whole bounding rectangle - which
+   covered a third of the picture for a single diagonal guide and took the hits meant for other
+   guides' ends. `pointer-events: stroke` is what makes only the line answer. */
+.keystone-overlay__grab {
+  stroke: transparent;
+  stroke-width: 22;
+  pointer-events: stroke;
+  cursor: move;
+}
+
+/* Placed in pixels by the overlay rather than centred on its point in percent, and held inside
+   the picture: a guide is laid along an edge, edges are at the frame's border, and a handle
+   centred there is half outside a stage that clips (`keystone_overlay.tsx`). */
+.keystone-overlay__end {
+  position: absolute;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  cursor: grab;
+}
+
+.keystone-overlay__end::after {
+  content: '';
+  position: absolute;
+  inset: 10px;
+  border-radius: 50%;
+  background: #7dd3fc;
+  box-shadow: 0 0 3px rgb(0 0 0 / 70%);
+}
+
+.keystone-overlay__drop {
+  position: absolute;
+  width: 22px;
+  height: 22px;
+  margin: -11px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgb(0 0 0 / 65%);
+  color: var(--bone);
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
 }
 

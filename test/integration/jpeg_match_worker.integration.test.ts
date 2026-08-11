@@ -84,7 +84,7 @@ async function render(
       temperature: null,
       tint: null,
     },
-    geometry: { crop: [0, 0, 1, 1], angleDegrees: 0, rotate: 0 },
+    geometry: { crop: [0, 0, 1, 1], angleDegrees: 0, rotate: 0, keystone: null },
     ...render,
   });
   expect(result.success).toBe(true);

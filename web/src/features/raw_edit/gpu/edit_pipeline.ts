@@ -17,19 +17,20 @@ import {
   PEAK_CANDIDATES,
   PQ_CODES,
   REDUCE,
-  TICK_UNIFORM_FLOATS,
-  tickOffsets,
-  tickWords,
+  EDIT_UNIFORM_FLOATS,
+  editOffsets,
+  edits,
+  wholeFrameGeometry,
 } from './shaders';
-import type { DetailSize, TickAdjust } from './shaders';
+import type { DetailSize, EditAdjust, EditGeometry } from './shaders';
 
 /**
- * Where each `Tick` field lives, by name. Computed once from the layout the shader declares.
+ * Where each `Edit` field lives, by name. Computed once from the layout the shader declares.
  *
- * One field's worth now: `tickWords` fills the uniform, and the only word this file reads for
+ * One field's worth now: `edits` fills the uniform, and the only word this file reads for
  * itself is the peak's stride, which sizes a dispatch rather than describing a picture.
  */
-const AT = tickOffsets().at;
+const AT = editOffsets().at;
 
 /**
  * Values per lattice node: a 2x2 on chroma, then a gain on luma.
@@ -69,13 +70,13 @@ export interface PreparedHeader {
   height: number;
   asShot: AsShot | null;
   /**
-   * `struct Tick` as `gpu::uniform_words` built it, with everything a tick owns left at rest.
+   * `struct Edit` as `gpu::uniform_words` built it, with everything a tick owns left at rest.
    *
    * Copied into the uniform rather than rebuilt from the fields below. The shaders were always
    * one implementation; what was two was the code that filled them, and this is what makes
    * that one as well.
    */
-  tick: number[];
+  edits: number[];
   /** The blur's working texture, sized by `gpu::detail_size` rather than by this side. */
   detail: DetailSize;
   white: number;
@@ -119,6 +120,12 @@ export const SUPERSAMPLE = 1.5;
  * the region's own resolution there is nothing left to resolve, and past
  * `maxTextureDimension2D` there is no canvas.
  *
+ * **All of it is one scale, applied to both axes.** Clamped per axis instead, a limit that
+ * binds on the long edge alone leaves the short one where it was, and the backing store stops
+ * being the region's shape - which is the one thing this function is for. A 61MP frame on an
+ * adapter capped at 8192 is exactly that case: 9504 clamps and 6336 does not, and the
+ * photograph came out sixteen percent tall.
+ *
  * Exported because sizing the canvas belongs to whoever owns the element, and reading a
  * layout box is not something the tick may do.
  */
@@ -129,14 +136,20 @@ export function stageResolution(
 ): { width: number; height: number } {
   const dpr = globalThis.devicePixelRatio || 1;
   const contain = Math.min(css.width / region.width, css.height / region.height);
-  const scale = contain * dpr * SUPERSAMPLE;
-  const fit = (source: number): number =>
-    Math.max(1, Math.min(Math.round(source * scale), Math.ceil(source), maxTexture));
-  return { width: fit(region.width), height: fit(region.height) };
+  const scale = Math.min(
+    contain * dpr * SUPERSAMPLE,
+    1,
+    maxTexture / region.width,
+    maxTexture / region.height,
+  );
+  return {
+    width: Math.max(1, Math.round(region.width * scale)),
+    height: Math.max(1, Math.round(region.height * scale)),
+  };
 }
 
 /**
- * What to ask `requestDevice` for before building a `TickPipeline` on it.
+ * What to ask `requestDevice` for before building a `EditPipeline` on it.
  *
  * Nothing required, and that is the point. This used to demand `float32-filterable` for the
  * chroma map, which no Apple GPU offers - Metal gates 32-bit float filtering behind
@@ -147,7 +160,7 @@ export function stageResolution(
  * `timestamp-query` is optional in the ordinary way: without it the readout loses its
  * per-pass milliseconds and the picture is identical.
  */
-export function tickFeatures(adapter: GPUAdapter): GPUFeatureName[] {
+export function editFeatures(adapter: GPUAdapter): GPUFeatureName[] {
   return (['timestamp-query'] as GPUFeatureName[]).filter((feature) =>
     adapter.features.has(feature),
   );
@@ -174,7 +187,7 @@ export function frameBytes(width: number, height: number): number {
  *
  * What such a frame needs instead is buffer capacity, and that is the check the side used to
  * stand in for: at 61MP the samples are 361MB against a 256MB default, and against whatever
- * the adapter itself will admit once `tickLimits` has asked for its maximum. Storage binding
+ * the adapter itself will admit once `editLimits` has asked for its maximum. Storage binding
  * as well as allocation, since the frame is bound to every pass that reads it.
  */
 export function frameTooBig(
@@ -207,12 +220,12 @@ export function frameTooBig(
  * Asked for as the adapter's own maximum rather than as a computed need, because the
  * alternative is re-requesting a device when a larger photograph is opened.
  */
-export function tickLimits(adapter: GPUAdapter): Record<string, number> {
+export function editLimits(adapter: GPUAdapter): Record<string, number> {
   const { maxTextureDimension2D, maxBufferSize, maxStorageBufferBindingSize } = adapter.limits;
   return { maxTextureDimension2D, maxBufferSize, maxStorageBufferBindingSize };
 }
 
-export class TickPipeline {
+export class EditPipeline {
   /**
    * One buffer, written once per submit and read by every pass in it.
    *
@@ -301,7 +314,8 @@ export class TickPipeline {
     this.timer = PassTimer.supported(device) ? new PassTimer(device) : null;
     this.width = header.width;
     this.height = header.height;
-    this.rowStride = header.tick[AT.row_stride] ?? 1;
+    this.rowStride = header.edits[AT.row_stride] ?? 1;
+    this.geometry = wholeFrameGeometry(this.width, this.height);
 
     const tooBig = frameTooBig(this.width, this.height, device.limits);
     if (tooBig != null) throw new Error(tooBig);
@@ -344,7 +358,7 @@ export class TickPipeline {
       });
 
     this.uniform = device.createBuffer({
-      size: TICK_UNIFORM_FLOATS * 4,
+      size: EDIT_UNIFORM_FLOATS * 4,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     this.histogram = storage(PEAK_BINS);
@@ -393,7 +407,7 @@ export class TickPipeline {
     // interpolating in the shader. Same coordinate for both, so the eight corners and the
     // weights are shared and the result equals the CPU's one interpolation.
     //
-    // Half floats because `f32` is not filterable on any Apple GPU (`tickFeatures`), and the
+    // Half floats because `f32` is not filterable on any Apple GPU (`editFeatures`), and the
     // 2^-11 that costs is measured rather than assumed: over the parity fixtures and over
     // every colour the lattice spans, the worst pixel moves 0.109 deltaE ITP, where 1.0 is
     // the threshold of visibility. The corrections multiply chroma differences, so the error
@@ -810,7 +824,10 @@ export class TickPipeline {
 
   /** The whole frame, which is what a fresh open shows. */
   get wholeFrame(): Region {
-    return { x: 0, y: 0, width: this.width, height: this.height };
+    // The whole *picture*, which is the cropped one where there is a crop: the region is a
+    // window on what the geometry produces, not on the frame behind it, so a fully zoomed-out
+    // view of a cropped photo is its crop rather than the frame with the crop somewhere in it.
+    return { x: 0, y: 0, width: this.geometry.output.width, height: this.geometry.output.height };
   }
 
   /**
@@ -986,36 +1003,61 @@ export class TickPipeline {
   }
 
   /**
-   * The uniform for this tick: the frame's own words as the native side built them, plus what a
+   * The reader's edits as the shader takes them: the frame's own words as the native side built them, plus what a
    * tick owns.
    *
    * **Nothing here describes the frame.** The levels, the camera match's shape, the peak's
-   * sampling stride, the reference white - all of it arrives in `header.tick`, built by
+   * sampling stride, the reference white - all of it arrives in `header.edits`, built by
    * `gpu::uniform_words`, and is copied rather than re-derived. That is what makes a rendition
    * and a tick one implementation rather than two that happen to agree: this used to rebuild
    * twenty-two words from `header.colour`, in a second language, with nothing comparing the
    * two, and a photograph graded with one number where another belongs looks like a
    * photograph.
    *
-   * What `tickWords` fills in is exactly the set the server cannot know: how far the reader has
+   * What `edits` fills in is exactly the set the server cannot know: how far the reader has
    * pushed each slider, and what part of the frame is on screen at what size. It is a pure
-   * function so that `tests/tick_words.test.ts` can hold it against the native writer without a
+   * function so that `tests/edits.test.ts` can hold it against the native writer without a
    * GPU - `output` among the rest, which stays as it arrived and is PQ.
    */
   private writeUniform(over: { exposure?: number; region?: Region } = {}): void {
     if (over.exposure != null) this.exposure = over.exposure;
     const canvas = this.context.canvas;
-    const words = tickWords(this.header.tick, this.adjust, this.exposure, {
-      region: over.region ?? this.wholeFrame,
-      canvas: { width: canvas.width, height: canvas.height },
-      // `lod` 0 is the frame itself, so the pyramid's levels are 1..levels.
-      maxLod: this.levels,
-    });
+    const words = edits(
+      this.header.edits,
+      this.adjust,
+      this.exposure,
+      {
+        region: over.region ?? this.wholeFrame,
+        canvas: { width: canvas.width, height: canvas.height },
+        // `lod` 0 is the frame itself, so the pyramid's levels are 1..levels.
+        maxLod: this.levels,
+      },
+      this.geometry,
+    );
     this.device.queue.writeBuffer(this.uniform, 0, words);
   }
 
   /** In stops, which is the document's unit and now the uniform's. `colour.wgsl` raises it. */
   private exposure = 0;
+
+  /**
+   * The reader's crop, straighten and turn.
+   *
+   * The whole frame until something sets it, which is what an uncropped photo shows and the
+   * arm `geometry_at` returns untouched. **The crop tool sets this to the whole frame while it
+   * is open**, whatever the document says: a crop is chosen against the picture it is being
+   * taken out of, so the stage has to show what is outside it.
+   */
+  private geometry: EditGeometry = wholeFrameGeometry(1, 1);
+
+  /** What the region is a window on: the cropped picture, or the frame where there is no crop. */
+  get output(): { width: number; height: number } {
+    return this.geometry.output;
+  }
+
+  setGeometry(next: EditGeometry): void {
+    this.geometry = next;
+  }
 
   /**
    * The tonal, presence and colour sliders, on Camera Raw's -100..100 scales.
@@ -1024,7 +1066,7 @@ export class TickPipeline {
    * tick happens per pointer move; `render` writes whatever is current. Zeroes mean the
    * camera's own rendering, which is what a photo nobody has edited grades to.
    */
-  private adjust: TickAdjust = {
+  private adjust: EditAdjust = {
     contrast: 0,
     highlights: 0,
     shadows: 0,
@@ -1131,7 +1173,9 @@ export class TickPipeline {
    */
   private chooseCandidates(): void {
     const encoder = this.device.createCommandEncoder();
-    this.writeUniform({ exposure: 1 });
+    // Zero stops. It read 1 while the uniform carried a gain, and the two units crossed here
+    // without anything noticing: the candidates were being chosen a stop up from neutral.
+    this.writeUniform({ exposure: 0 });
     this.writeBalance(encoder);
     encoder.clearBuffer(this.histogram);
     encoder.clearBuffer(this.candidates, 0, 16);

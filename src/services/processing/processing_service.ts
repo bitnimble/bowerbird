@@ -39,7 +39,12 @@ export const AS_METERED = {
     temperature: null,
     tint: null,
   },
-  geometry: { crop: [0, 0, 1, 1] as [number, number, number, number], angleDegrees: 0, rotate: 0 },
+  geometry: {
+    crop: [0, 0, 1, 1] as [number, number, number, number],
+    angleDegrees: 0,
+    rotate: 0,
+    keystone: null,
+  },
 } as const;
 
 /**
@@ -82,6 +87,7 @@ function developed(edits: string | null): { exposure: number; adjust: JobAdjust;
         crop: [doc.cropLeft, doc.cropTop, doc.cropRight, doc.cropBottom],
         angleDegrees: doc.cropAngle,
         rotate: doc.rotate,
+        keystone: doc.keystone,
       },
     };
   } catch {

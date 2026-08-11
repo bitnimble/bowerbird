@@ -1,4 +1,4 @@
-import { neutralEdits, type EditDoc } from '../../schemas/photo_edits';
+import { neutralEdits, sameEditValue, type EditDoc } from '../../schemas/photo_edits';
 import type { XmpSettings } from '../processing/xmp_schema';
 
 /**
@@ -111,6 +111,11 @@ export function editsFromXmp(settings: XmpSettings): XmpImport {
   if (geometry.hasCrop && geometry.cropUnits !== 0) {
     reasons.push('the crop is stated in absolute units, which this import cannot convert, so it was left uncropped');
   }
+  // Still unsupported with a perspective tool in the editor, and not an oversight. The sidecar
+  // states its correction as slider positions on a parameterisation of its own; this document
+  // holds the homography a pair of guides produced. There is no conversion without knowing what
+  // those sliders mean in degrees, and a number carried across on the strength of sharing a name
+  // is a photograph bent by an amount nobody asked for.
   if (geometry.perspectiveVertical !== 0 || geometry.perspectiveHorizontal !== 0 || geometry.perspectiveRotate !== 0) {
     unsupported.push('the perspective corrections');
   }
@@ -157,7 +162,7 @@ export function editsFromXmp(settings: XmpSettings): XmpImport {
   const moved = Object.keys(neutral).some(
     (key) =>
       key !== 'version' &&
-      (doc as Record<string, unknown>)[key] !== (neutral as Record<string, unknown>)[key],
+      !sameEditValue((doc as Record<string, unknown>)[key], (neutral as Record<string, unknown>)[key]),
   );
   // Ordered ahead of the process-version refusal on purpose. A sidecar holding a
   // rating and nothing else states no version either, so checking the era first

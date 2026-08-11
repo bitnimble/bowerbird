@@ -48,7 +48,7 @@ export const EditDocSchema = z
     clarity: z.number().int().min(-100).max(100).default(0),
     dehaze: z.number().min(-100).max(100).default(0),
     vibrance: z.number().int().min(-100).max(100).default(0),
-    // Named as Camera Raw names it. The tick's uniform already has a `saturation`
+    // Named as Camera Raw names it. The `Edit` uniform already has a `saturation`
     // that is the camera match's own fit multiplier around 1.0 and not a slider
     // (`colour.wgsl`), so the shader has to give this one a distinct uniform name -
     // renaming it *here* would cost the import its identity mapping instead.
@@ -87,6 +87,56 @@ export const EditDocSchema = z
      * re-read of the header corrected one of them.
      */
     rotate: z.union([z.literal(0), z.literal(90), z.literal(180), z.literal(270)]).default(0),
+
+    /**
+     * The perspective correction, row-major, the ninth element dropped because it is always 1.
+     *
+     * **Corrected back to source, in fractions of the frame**, which is the direction every
+     * gather here reads and the units that let one document drive a tile and a native-resolution
+     * rendition. Applied to the frame *before* the straighten and the crop: it is a correction
+     * of the camera's angle to the subject, so it belongs where the lens correction is, under
+     * everything the reader chose afterwards.
+     *
+     * Null, not the identity. A photo nobody has corrected holds no matrix at all, so a later
+     * change of convention cannot reinterpret one that was never meant.
+     *
+     * **The matrix is stored, not derived on read.** Deriving it needs the guides below and a
+     * page of projective geometry, and a renderer that re-derived would be a second answer free
+     * to disagree with the one the reader accepted - across two languages, at that. So the tool
+     * computes it once and the document carries the result.
+     */
+    keystone: z
+      .tuple([
+        z.number(),
+        z.number(),
+        z.number(),
+        z.number(),
+        z.number(),
+        z.number(),
+        z.number(),
+        z.number(),
+      ])
+      .nullable()
+      .default(null),
+
+    /**
+     * The lines the reader drew, kept so the tool can be reopened on them.
+     *
+     * Not what renders - `keystone` is - and deliberately: these are the *description* of the
+     * correction, in the reader's terms, and a photo can carry a correction with no guides at
+     * all if it arrived from somewhere else.
+     */
+    keystoneGuides: z
+      .array(
+        z.object({
+          x1: z.number(),
+          y1: z.number(),
+          x2: z.number(),
+          y2: z.number(),
+        }),
+      )
+      .max(4)
+      .default([]),
   })
   // Unknown keys are kept, not stripped. A document written by a newer build and
   // round-tripped through an older one would otherwise come back with its new
@@ -101,43 +151,9 @@ export function neutralEdits(): EditDoc {
   return EditDocSchema.parse({});
 }
 
-/**
- * What a photo *looks* like once its geometry is applied, given the file's own dimensions.
- *
- * The grid lays out on this rather than on `photos.width`/`height`, which stay the file's:
- * a cropped photo occupies a different shape on the wall, and a tile laid out at the file's
- * aspect would be letterboxed or stretched for the life of the library.
- *
- * Three steps, in the order the fractions are defined against (`EditDocSchema`):
- *
- *  1. the straighten, which grows the frame to the bounding box of the rotated rectangle -
- *     this is why a 1-degree straighten on a wide frame is not a no-op even uncropped;
- *  2. the crop, as fractions of *that*;
- *  3. the quarter turn, which swaps the pair.
- *
- * Rounded, and floored at one: a rendition of zero pixels is not a picture, and the crop
- * fractions are free to describe a rectangle narrower than a pixel at tile size.
- */
-export function displaySize(width: number, height: number, doc: EditDoc): { width: number; height: number } {
-  const radians = (Math.abs(doc.cropAngle) * Math.PI) / 180;
-  const cos = Math.cos(radians);
-  const sin = Math.sin(radians);
-  const straightened = {
-    width: width * cos + height * sin,
-    height: width * sin + height * cos,
-  };
-
-  const cropped = {
-    width: straightened.width * Math.max(doc.cropRight - doc.cropLeft, 0),
-    height: straightened.height * Math.max(doc.cropBottom - doc.cropTop, 0),
-  };
-
-  const turned = doc.rotate === 90 || doc.rotate === 270;
-  return {
-    width: Math.max(1, Math.round(turned ? cropped.height : cropped.width)),
-    height: Math.max(1, Math.round(turned ? cropped.width : cropped.height)),
-  };
-}
+// `displaySize` was here and is now `display_size.ts`, which imports `EditDoc` as a type and
+// nothing else. The page needs the function - the editor's stage is laid out on it - and this
+// module imports zod, which the page deliberately keeps out of its bundle.
 
 // The fields a delta names, on each side of it. A commit routinely moves several
 // at once - an import writes ten, a crop drag four - and a delta that could hold
@@ -185,20 +201,57 @@ export const StepEditsRequestSchema = z.object({ rev: z.number().int().min(0) })
 export type StepEditsRequest = z.infer<typeof StepEditsRequestSchema>;
 
 /**
+ * Whether one field of a document still holds what it held.
+ *
+ * `===` is what this was, and it is wrong for the keystone: an array is compared by identity, so
+ * a document that had been re-parsed - which every read does - held a *different* empty array
+ * from the one it was compared against, and every retried save appended a delta for a change
+ * nobody made. Exported because two callers ask this question, and one of them asking it the
+ * old way is a sidecar of nothing that reads as a sidecar of something.
+ *
+ * Structural, and only as deep as the document goes: numbers, and records of numbers.
+ */
+export function sameEditValue(was: unknown, now: unknown): boolean {
+  if (was === now) return true;
+  // Before the object arm below, which would otherwise call `[]` and `{}` the same thing: an
+  // array's keys are its indices, so a list and a record of the same numbers compare equal.
+  if (Array.isArray(was) !== Array.isArray(now)) return false;
+  if (Array.isArray(was) && Array.isArray(now)) {
+    return was.length === now.length && was.every((element, index) => sameEditValue(element, now[index]));
+  }
+  if (was == null || now == null || typeof was !== 'object' || typeof now !== 'object') return false;
+  const keys = Object.keys(was);
+  return (
+    keys.length === Object.keys(now).length &&
+    keys.every((key) =>
+      sameEditValue((was as Record<string, unknown>)[key], (now as Record<string, unknown>)[key]),
+    )
+  );
+}
+
+/**
  * Every field where `to` differs from `from`, on both sides.
  *
  * Returns null when nothing moved, which is what keeps a retried save from
  * appending a delta that undoes to the same picture it redoes to.
+ *
+ * **Over the keys the documents actually hold, not only the ones this build knows.** The schema
+ * is `.loose()` precisely so a newer client's parameter survives a round trip through an older
+ * server - and a diff blind to it made that survival worse than useless: a save that moved only
+ * such a field wrote nothing and answered 200, so the client marked itself clean and the edit
+ * was gone; a save that moved one alongside a known field stored it but left it out of the
+ * delta, so undo produced a document that never existed.
  */
 export function diffEdits(from: EditDoc, to: EditDoc): EditDelta | null {
   const before: Record<string, unknown> = {};
   const after: Record<string, unknown> = {};
   let moved = false;
-  for (const key of Object.keys(EditDocSchema.shape)) {
+  const named = new Set([...Object.keys(EditDocSchema.shape), ...Object.keys(from), ...Object.keys(to)]);
+  for (const key of named) {
     if (key === 'version') continue;
     const was = (from as Record<string, unknown>)[key];
     const now = (to as Record<string, unknown>)[key];
-    if (was === now) continue;
+    if (sameEditValue(was, now)) continue;
     before[key] = was;
     after[key] = now;
     moved = true;

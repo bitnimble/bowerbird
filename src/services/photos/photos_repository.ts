@@ -1,6 +1,7 @@
 import type { Database } from 'bun:sqlite';
 import { OrderingSchema, type Ordering } from '../../schemas/common';
-import { EditDocSchema, displaySize } from '../../schemas/photo_edits';
+import { EditDocSchema } from '../../schemas/photo_edits';
+import { displaySize } from '../../schemas/display_size';
 import type { PhotoDetail, PhotoSummary, Triage } from '../../schemas/photos';
 import type { ViewerRendition } from '../../schemas/settings';
 import type { RenditionSource } from '../processing/processing_types';

@@ -951,7 +951,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
       <div
         className={`detail detail--${
           mobile ? 'sheet' : !panelsOpen && !editing ? 'only' : landscape ? 'below' : 'beside'
-        }`}
+        }${session?.store.cropping || session?.store.keystoning ? ' detail--cropping' : ''}`}
       >
         {editing && session != null ? (
           // The same slot the viewer's stage draws into, so the zoom control sits where it

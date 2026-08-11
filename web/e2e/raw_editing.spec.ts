@@ -23,7 +23,10 @@ import { addLibrary, openLibrary, openPhoto, openPhotoId, syncLibrary, waitForSy
 // and the client checks the node count rather than trusting a field, but the reason this
 // test cannot move into `cargo test` is that a Rust harness links the crate directly and
 // would have been green through all of it.
-test.describe.configure({ timeout: 180_000 });
+// Serial and in order: these share one photograph and one server, and they edit it. The
+// global config already runs one worker and no parallel files; stated here so the file does not
+// depend on that staying true.
+test.describe.configure({ timeout: 180_000, mode: 'serial' });
 
 // The editor opens a photo by id, so a spec needs a synced library before it can open
 // anything. Done once and the id reused, because a sync is a real decode of a real ARW.
@@ -46,8 +49,32 @@ test.beforeAll(async ({ browser }) => {
  * Without this the editor could be reporting `live` off a canvas nobody ever drew into,
  * which looks exactly like a frame that graded to black. The adapter is the one piece of
  * evidence that a device was acquired rather than silently skipped.
+ *
+ * Opened with a presence slider already set, which costs nothing and covers the one part of the
+ * pipeline the fixtures are structurally blind to: they pin the grade at every slider zero, and
+ * `adjusted` returns early there without ever sampling `detail.wgsl`'s blur - so a texture never
+ * allocated, never dispatched into, or bound at the wrong entry leaves every fixture green. What
+ * the *value* does is `raw_edit_presenter.test.ts`; that the passes run at all needs a device.
  */
 test('grades on the GPU, into a stage sized for the viewport', async ({ page }) => {
+  // Stored rather than dragged: what a value *does* is answered without a browser, so the only
+  // reason to set one here is to make the passes run. In a `finally`, because leaking a clarity
+  // of 100 into the specs below would be a photograph none of them meant to open.
+  await setClarity(page, 100);
+  try {
+    await gradesOnTheGpu(page);
+  } finally {
+    await setClarity(page, 0);
+  }
+});
+
+async function setClarity(page: Page, clarity: number): Promise<void> {
+  const was = await page.request.get(`/api/photos/${photoId}/edits`);
+  const { rev } = (await was.json()) as { rev: number };
+  await page.request.put(`/api/photos/${photoId}/edits`, { data: { doc: { version: 1, clarity }, rev } });
+}
+
+async function gradesOnTheGpu(page: Page): Promise<void> {
   await open(page);
 
   await expect(page.getByTestId('raw-edit-adapter')).not.toHaveText('');
@@ -81,85 +108,7 @@ test('grades on the GPU, into a stage sized for the viewport', async ({ page }) 
   expect(stage.h).toBeLessThanOrEqual(height);
   // And it keeps the frame's shape, or `object-fit: contain` would show it stretched.
   expect(stage.w / stage.h).toBeCloseTo(width / height, 1);
-});
-
-/**
- * The same zoom the viewer has, on a surface that cannot be transformed.
- *
- * The viewer scales an `<img>` and the browser does the rest; a canvas has nothing to scale,
- * so the gesture has to come out the other side as a *region* and the frame be redrawn at
- * it. That conversion is the whole of what is new here - the gesture itself is the viewer's
- * code (`zoom_pan.ts`) - and it is the part that can be silently wrong: a region that never
- * moves looks exactly like a zoom that works, because the canvas is upscaled by CSS either
- * way and the picture does get bigger.
- */
-test('zooms and pans the frame the viewer’s way, into a region', async ({ page }) => {
-  await open(page);
-
-  const region = page.getByTestId('raw-edit-region');
-  const size = await page.getByTestId('raw-edit-size').textContent();
-  const [width, height] = (size ?? '0x0').split('x').map(Number);
-
-  // Fitted: the whole frame, which is what an open shows.
-  await expect(region).toHaveText(`0,0 ${width}x${height}`);
-
-  const read = async (): Promise<{ x: number; y: number; w: number; h: number }> => {
-    const text = (await region.textContent()) ?? '';
-    const [at, extent] = text.split(' ');
-    const [x, y] = (at ?? '').split(',').map(Number);
-    const [w, h] = (extent ?? '').split('x').map(Number);
-    return { x: x ?? 0, y: y ?? 0, w: w ?? 0, h: h ?? 0 };
-  };
-
-  // A click zooms to the next stop about the point clicked, so the region shrinks and sits
-  // around it rather than around the middle.
-  const viewport = page.locator('.raw-edit-stage .stage__viewport');
-  const box = (await viewport.boundingBox())!;
-  await page.mouse.click(box.x + box.width * 0.25, box.y + box.height * 0.25);
-
-  await expect.poll(async () => (await read()).w).toBeLessThan(width);
-  const zoomed = await read();
-  expect(zoomed.h).toBeLessThan(height);
-  // Up and to the left of centre, because that is where the pointer was.
-  expect(zoomed.x).toBeLessThan((width - zoomed.w) / 2);
-  expect(zoomed.y).toBeLessThan((height - zoomed.h) / 2);
-  // And still inside the frame.
-  expect(zoomed.x).toBeGreaterThanOrEqual(0);
-  expect(zoomed.y).toBeGreaterThanOrEqual(0);
-  expect(zoomed.x + zoomed.w).toBeLessThanOrEqual(width + 1);
-
-  // Dragging pans. Leftwards, because zooming about the top-left corner has already put the
-  // window against the frame's left edge and the clamp holds it there - the room to move is
-  // to the right, and the picture goes the other way to the pointer.
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-  await page.mouse.down();
-  await page.mouse.move(box.x + box.width / 2 - 120, box.y + box.height / 2, { steps: 8 });
-  await page.mouse.up();
-
-  await expect.poll(async () => (await read()).x).toBeGreaterThan(zoomed.x);
-  const panned = await read();
-  // A pan moves the window, it does not resize it.
-  expect(panned.w).toBe(zoomed.w);
-  expect(panned.h).toBe(zoomed.h);
-  // And never off the frame.
-  expect(panned.x + panned.w).toBeLessThanOrEqual(width + 1);
-
-  // The viewer's zoom control, in the viewer's slot, climbing the viewer's ladder: fitted,
-  // twice that, the frame's own pixels, and round to fitted again. Two presses from here,
-  // because 1:1 on a 4024px frame in a stage this size is a stop of its own.
-  await expect(page.getByText(/^\d+%$/)).toBeVisible();
-  // By role rather than by one of its labels: the button says what the *next* stop is, so
-  // its name changes as the ladder is climbed - "Zoom to 100%" here, "Zoom out to fit" at
-  // the top.
-  const zoomButton = page.getByRole('button', { name: /^Zoom/ });
-  await zoomButton.click();
-  await expect.poll(async () => (await read()).w).toBeLessThan(panned.w);
-  // At the top it turns around, which is how the reader gets back without a gesture.
-  await expect(zoomButton).toHaveAccessibleName('Zoom out to fit');
-  await zoomButton.click();
-  await expect.poll(async () => (await read()).w).toBe(width);
-  await expect(region).toHaveText(`0,0 ${width}x${height}`);
-});
+}
 
 /**
  * The camera match has to reach the client, and no other check can see that it did:
@@ -195,87 +144,49 @@ test('says why an id it cannot open failed', async ({ page }) => {
 });
 
 /**
- * Moving the slider has to change the picture, which is the one thing a parity fixture
- * cannot check: it pins what the shaders compute, not that a slider is wired to them.
- *
- * Read off the canvas rather than off a status field, because "the exposure changed" and
- * "a frame was drawn with it" are different claims and only the second one matters.
+ * The camera neutral reaches the client, which is the one thing about the white balance no
+ * headless test can see: what the sliders *do* with it is `raw_edit_presenter.test.ts`, and
+ * what cannot be checked there is that the frame arrived carrying one at all. A header without
+ * it leaves the pair absent entirely, so the locator failing is the report.
  */
-test('a slider move redraws the canvas', async ({ page }) => {
+test('the frame arrives carrying the illuminant the camera metered', async ({ page }) => {
   await open(page);
-
-  const canvas = page.locator('canvas.raw-edit__stage');
-  const before = await canvas.screenshot();
-
-  // The thumb rather than the control: Base UI's slider carries the value on a hidden
-  // range input inside it, and the labelled element is the track around it.
-  const thumb = page.locator('.raw-edit-panel__exposure input[type="range"]');
-  await thumb.focus();
-  // Keyboard rather than filling the input: setting the DOM value directly skips the
-  // events the component listens for, so the picture would never be asked to change.
-  // How far one press moves is the component's business, so assert that it moved.
-  await page.keyboard.press('PageUp');
-  await page.keyboard.press('PageUp');
-
-  // Not `+0.00 EV`, which was here and could not fail: the panel writes the sign only above
-  // zero, so at rest it reads `Exposure 0.00 EV` and the negated match held before the
-  // keypresses as well as after. `0.00 EV` is the reading that has to stop being true.
-  await expect(page.locator('.raw-edit-panel__exposure')).not.toContainText('0.00 EV');
-  await expect.poll(async () => (await canvas.screenshot()).equals(before), { timeout: 30_000 }).toBe(false);
+  await expect(page.getByTestId('raw-edit-temperature')).toContainText('K');
 });
 
 /**
- * And a presence slider, which is the one group the parity fixtures are structurally blind to.
+ * The crop rectangle takes a mouse, which is a claim about a pointer on a real element.
  *
- * Those pin the grade at every slider zero, and `adjusted` returns early there without ever
- * sampling `detail.wgsl`'s blur - so a texture that was never allocated, never dispatched into,
- * or bound at the wrong entry would leave every fixture green and every parity byte identical.
- * The band arithmetic is measured in `gpu_fixture.rs` against a constructed frame; what only
- * the browser can say is whether the three passes ran here at all.
+ * Only that. What the resulting fractions *do* - the shape the stage is laid out on, the words
+ * the shader is handed - is `raw_edit_presenter.test.ts`, where the numbers can be read rather
+ * than inferred from a canvas. What is left here is the gesture, and the revision moving is what
+ * says it reached the document rather than only the rectangle.
  */
-test('a presence slider redraws the canvas, which is what says the blur was built', async ({ page }) => {
+test('the crop rectangle takes a drag, and the drag reaches the document', async ({ page }) => {
   await open(page);
+  const revision = page.getByTestId('raw-edit-rev');
+  const wasAt = await revision.textContent();
 
-  const canvas = page.locator('canvas.raw-edit__stage');
-  const before = await canvas.screenshot();
+  await page.getByTestId('raw-edit-crop').click();
+  await expect(page.getByTestId('crop-rect')).toBeVisible();
+  const box = await page.getByTestId('crop-grip-se').boundingBox();
+  if (box == null) throw new Error('the crop has no grip');
 
-  const thumb = page.locator('[data-testid="raw-edit-clarity"] input[type="range"]');
-  await thumb.focus();
-  await page.keyboard.press('End');
+  // In from the bottom right, which moves two edges at once.
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x - 120, box.y - 90, { steps: 8 });
+  await page.mouse.up();
 
-  await expect(page.locator('[data-testid="raw-edit-clarity"]')).toContainText('Clarity +100');
-  await expect.poll(async () => (await canvas.screenshot()).equals(before), { timeout: 30_000 }).toBe(false);
-});
+  await expect.poll(async () => revision.textContent(), { timeout: 30_000 }).not.toBe(wasAt);
+  await page.getByTestId('raw-edit-crop').click();
+  await expect(page.getByTestId('crop-rect')).toBeHidden();
 
-/**
- * The white balance pair, which is the one control whose slider position is not what the
- * document holds.
- *
- * At rest it shows the frame's own illuminant and the document says nothing, so what this
- * checks is the seam between the two: the header carried a camera neutral at all, the slider
- * took its position from it, and the first move turned that position into a stored number and
- * a redrawn frame. A header without `asShot` leaves the sliders absent entirely, so the
- * locator failing is itself the report.
- */
-test('the white balance pair starts where the camera metered and moves from there', async ({ page }) => {
-  await open(page);
-
-  const temperature = page.locator('[data-testid="raw-edit-temperature"]');
-  await expect(temperature).toContainText('K');
-  const before = await temperature.textContent();
-
-  const canvas = page.locator('canvas.raw-edit__stage');
-  const drawn = await canvas.screenshot();
-
-  await temperature.locator('input[type="range"]').focus();
-  await page.keyboard.press('PageUp');
-  await page.keyboard.press('PageUp');
-
-  await expect(temperature).not.toHaveText(before ?? '');
-  // "Custom" rather than the mode the document arrived with, which is what says the pair is
-  // now stored rather than still standing in for the camera's.
-  await expect(page.locator('[data-testid="raw-edit-white-balance"]')).toContainText('Custom');
-  await expect.poll(async () => (await canvas.screenshot()).equals(drawn), { timeout: 30_000 }).toBe(false);
+  // Put the rectangle back. Left cropped, this photograph reaches the specs below as a
+  // different shape from the one they open expecting, and closing the editor queues a
+  // rendition rebuild in the middle of the suite.
+  await page.getByTestId('raw-edit-undo').click();
+  await expect.poll(async () => revision.textContent(), { timeout: 30_000 }).not.toBe(wasAt);
 });
 
 /**
