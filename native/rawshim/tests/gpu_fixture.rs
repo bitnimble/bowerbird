@@ -720,7 +720,11 @@ fn split_ground() -> Vec<u16> {
     let mut samples = vec![0u16; BANDED * BANDED * 3];
     for y in 0..BANDED {
         for x in 0..BANDED {
-            let ground = if x < BANDED / 2 { 900.0 } else { 30000.0 };
+            // Three stops under the bright half, which is where `shadows` is rolling off
+            // rather than flat. On the flat part every texel of a region takes the same weight
+            // whether that weight was read off the pixel or the neighbourhood, so a ground
+            // deep enough to be fully in would hide the difference this measures entirely.
+            let ground = if x < BANDED / 2 { 3750.0 } else { 30000.0 };
             // The same ratio either side, so the texture is the same number of stops on both.
             let ripple = 1.0 + 0.08 * (((x + y) % 2) as f64 * 2.0 - 1.0);
             let level = (ground * ripple).clamp(0.0, 65535.0) as u16;
@@ -841,13 +845,106 @@ fn shadows_lifts_a_region_without_stretching_the_texture_in_it() {
         "shadows at +100 took the dim region from {was:.0} to {now:.0}, which is not a lift",
     );
 
+    // Two-sided: on the roll-off's *upper* side the darker texel of each ripple takes the
+    // larger weight, so a pointwise curve compresses the texture rather than stretching it.
+    // Which way it goes depends on where the ground sits, and neither is what a shadows
+    // control should do to a surface it is lifting.
     let (before, after) = (ripple(&flat) / was, ripple(&lifted) / now);
     assert!(
-        after < before * 1.12,
+        after > before * 0.88 && after < before * 1.12,
         "shadows at +100 took the region's local contrast from {:.1}% of the mean to {:.1}%: it \
          is weighting the pixel rather than the region",
         before * 100.0,
         after * 100.0,
+    );
+}
+
+/// A frame in three flat bands: blown, midtone, and dark.
+///
+/// **The blown band is one row, and that is the whole trick.** Diffuse white is the frame's own
+/// 99.5th percentile (`tone::levels`), so a band big enough to contain that percentile *is*
+/// white however bright its samples are - a third of the frame at 60000 grades to zero stops,
+/// not to blown, and the test below would then be comparing white against a midtone rather than
+/// a blown sky against one. One row of 256 is 0.39% of the frame, which leaves the percentile
+/// in the midtone band and puts this row about three stops over it.
+fn three_grounds() -> Vec<u16> {
+    let mut samples = vec![0u16; BANDED * BANDED * 3];
+    for y in 0..BANDED {
+        for x in 0..BANDED {
+            // Four stops under the midtone band, which is where the trees in the scene this
+            // was reported against sit.
+            let level = if y == 0 {
+                60000.0
+            } else if y < BANDED / 2 {
+                8000.0
+            } else {
+                500.0
+            } as u16;
+            let at = (y * BANDED + x) * 3;
+            samples[at] = level;
+            samples[at + 1] = level;
+            samples[at + 2] = level;
+        }
+    }
+    samples
+}
+
+/// Highlights must reach hardest into what is *most* blown, which a bell cannot do.
+///
+/// **This is the failure the shape was changed for.** A Gaussian falls away on both sides of
+/// its centre, so the further above white a pixel sat, the less a highlights move did to it:
+/// on this frame the blown band took a smaller share of the change than the midtone band did,
+/// and pulling highlights down dimmed the subject while leaving the sky. Reported against a
+/// backlit scene as "lowering highlights lowers almost everything", which is exactly what a
+/// control weighted towards the midtones does.
+///
+/// So the claim is an ordering, not a value: the blown band moves, and it moves far more than
+/// a band four stops under white - which is where the trees were. The constants in
+/// `adjust.wgsl` are taste and are free to move under it.
+///
+/// The blown band is *not* compared against the midtone one, and that is not an omission. This
+/// measures graded counts, and the roll-off compresses the top of the range by design, so a
+/// scene gain of a stop and a half is worth fewer counts up there than it is in the middle
+/// however even the tone curve's own weighting is. That difference is the roll-off doing its
+/// job; the inversion this guards is in the weighting, and the dark band is where it shows.
+#[test]
+fn highlights_reaches_furthest_into_what_is_most_blown() {
+    let Some(gpu) = rawshim::gpu::device() else {
+        eprintln!("SKIPPED: no adapter answered, so the tone group was not run.");
+        return;
+    };
+    let none = rawshim::gpu::Adjust::none();
+    let flat = graded_frame(gpu, three_grounds(), none);
+    let pulled =
+        graded_frame(gpu, three_grounds(), rawshim::gpu::Adjust { highlights: -100.0, ..none });
+
+    // The blown band is row zero; the other two are read well inside themselves.
+    let band_at = |frame: &[u16], row: usize| f64::from(frame[(row * BANDED) * 3]);
+    let share = |row: usize| {
+        let (was, now) = (band_at(&flat, row), band_at(&pulled, row));
+        (was - now) / was
+    };
+    let (blown, mid, dark) = (share(0), share(BANDED / 4), share(BANDED * 3 / 4));
+
+    assert!(
+        blown > 0.05,
+        "highlights at -100 moved the blown band by {:.1}%, which is not a recovery",
+        blown * 100.0,
+    );
+    assert!(
+        blown > dark * 3.0,
+        "highlights at -100 moved the blown band {:.1}% and a band four stops under white \
+         {:.1}%: the weight is falling away above white, so the more blown a pixel is the less \
+         it moves - and pulling the highlights down dims the subject instead of the sky",
+        blown * 100.0,
+        dark * 100.0,
+    );
+    assert!(
+        dark < 0.05,
+        "highlights at -100 moved a band four stops under white by {:.1}%, which is the \
+         subject and not the highlights (the midtone band moved {:.1}%)",
+        dark * 100.0,
+        mid * 100.0,
     );
 }
 

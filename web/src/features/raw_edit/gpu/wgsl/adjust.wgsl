@@ -54,14 +54,20 @@ fn zone(at: f32, centre: f32, width: f32) -> f32 {
 
 /// A zone that acts from its centre outwards, and rolls off towards the midtones only.
 ///
-/// What the endpoints are. `whites` moves the white point and `blacks` the black point, so each
-/// must be flat past its own end - a specular is as much a white as diffuse white is - and must
-/// fade out before it reaches the middle, or it is a second exposure control.
+/// **All four of the tone group are this shape, and a Gaussian was wrong for every one of
+/// them.** Each names an end of the range - highlights and whites the top, shadows and blacks
+/// the bottom - and a bell falls away on *both* sides of its centre, so the further a pixel got
+/// towards the end its slider is named after, the less that slider did to it. Measured on the
+/// bell this replaced: a blown sky two stops over white took 3% of a highlights move, which is
+/// what a tree four stops *under* white was already taking. Pulling the highlights down dimmed
+/// the trees and left the sky. The same inversion at the other end left `shadows` doing
+/// nothing at all to the deepest part of a photograph.
 ///
-/// **Not a hard gate, which is what this replaced.** `zone(...) * step(-4.0, at)` cut `blacks`
-/// off dead at four stops under white: everything the reader would call a shadow got nothing,
-/// the slider at 100 moved the picture barely at all, and a gradient crossing that value showed
-/// the step. `away` is +1 for a zone flat above its centre and -1 for one flat below.
+/// Flat past the centre fixes that: everything at or beyond the end is fully in, and what the
+/// width now sets is only how far the control reaches back towards the middle - which is the
+/// dial anyone actually wants, and the one that decides whether a slider touches the subject.
+///
+/// `away` is +1 for a zone flat above its centre and -1 for one flat below.
 fn shoulder(at: f32, centre: f32, width: f32, away: f32) -> f32 {
   return select(zone(at, centre, width), 1.0, (at - centre) * away >= 0.0);
 }
@@ -127,13 +133,14 @@ fn tone_adjusted(luma: f32, local_offset: f32) -> f32 {
   // needing a second blur of the graded frame or any knowledge of what the match did.
   let around = at - local_offset;
   var gain = 0.0;
-  gain += edit.highlights / 100.0 * ZONE_STOPS * zone(around, -1.0, 1.6);
-  gain += edit.shadows / 100.0 * ZONE_STOPS * zone(around, -4.0, 1.8);
-  // The endpoints are one-sided, and centred where the reader thinks they are: `whites` at
-  // diffuse white itself, `blacks` five stops under it rather than six and a half - which is
-  // below where a photograph keeps anything a black point is meant to reach.
-  gain += edit.whites / 100.0 * END_STOPS * shoulder(at, 0.0, 1.6, 1.0);
-  gain += edit.blacks / 100.0 * END_STOPS * shoulder(at, -5.0, 2.6, -1.0);
+  // The inner pair reach further back towards the middle than the outer pair, which is the
+  // whole of the difference in where each turns: highlights recovers a *range* at the top and
+  // whites moves the point the range ends at, so the first starts a stop under white and rolls
+  // off slowly, and the second is held tight to white itself. The same at the other end.
+  gain += edit.highlights / 100.0 * ZONE_STOPS * shoulder(around, -1.0, 1.2, 1.0);
+  gain += edit.shadows / 100.0 * ZONE_STOPS * shoulder(around, -3.5, 1.6, -1.0);
+  gain += edit.whites / 100.0 * END_STOPS * shoulder(at, 0.0, 1.0, 1.0);
+  gain += edit.blacks / 100.0 * END_STOPS * shoulder(at, -5.5, 1.6, -1.0);
 
   return l * pow(2.0, gain);
 }
