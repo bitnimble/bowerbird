@@ -52,6 +52,20 @@ fn zone(at: f32, centre: f32, width: f32) -> f32 {
   return exp(-d * d);
 }
 
+/// A zone that acts from its centre outwards, and rolls off towards the midtones only.
+///
+/// What the endpoints are. `whites` moves the white point and `blacks` the black point, so each
+/// must be flat past its own end - a specular is as much a white as diffuse white is - and must
+/// fade out before it reaches the middle, or it is a second exposure control.
+///
+/// **Not a hard gate, which is what this replaced.** `zone(...) * step(-4.0, at)` cut `blacks`
+/// off dead at four stops under white: everything the reader would call a shadow got nothing,
+/// the slider at 100 moved the picture barely at all, and a gradient crossing that value showed
+/// the step. `away` is +1 for a zone flat above its centre and -1 for one flat below.
+fn shoulder(at: f32, centre: f32, width: f32, away: f32) -> f32 {
+  return select(zone(at, centre, width), 1.0, (at - centre) * away >= 0.0);
+}
+
 /// Middle grey, as a fraction of diffuse white.
 ///
 /// The pivot contrast turns about. A pivot at white would darken everything as contrast
@@ -60,11 +74,14 @@ const PIVOT: f32 = 0.18;
 
 /// What a slider at 100 is worth, in stops at its zone's centre.
 ///
-/// The highlight and shadow pair get more range than whites and blacks because they act on
-/// the midtones, where a photograph carries most of its information and where a correction
-/// is usually wanted; the endpoints are for trimming, and a stop is already a lot there.
+/// **The -100..100 range is Camera Raw's, because the document stores Camera Raw's numbers; what
+/// a 100 is worth is entirely ours, and these two are it.** So they are answerable to what the
+/// other program's 100 does rather than to arithmetic: at one stop, a Blacks pushed to the end
+/// moved a photograph less than a nudge of the exposure did, which is not a control anybody can
+/// use. Two stops at the endpoints, and the shoulders below reach the bottom of the histogram
+/// rather than the bottom of the range.
 const ZONE_STOPS: f32 = 1.5;
-const END_STOPS: f32 = 1.0;
+const END_STOPS: f32 = 2.0;
 
 /// How far contrast bends the curve. 0.6 puts a slider at 100 near a 1.5x slope through the
 /// pivot, which is a strong but still photographic S.
@@ -88,10 +105,11 @@ fn tone_adjusted(luma: f32) -> f32 {
   var gain = 0.0;
   gain += edit.highlights / 100.0 * ZONE_STOPS * zone(at, -1.0, 1.6);
   gain += edit.shadows / 100.0 * ZONE_STOPS * zone(at, -4.0, 1.8);
-  // The endpoints are one-sided: a `whites` slider that lifted the midtones would be a
-  // second exposure control, and `blacks` the same at the other end.
-  gain += edit.whites / 100.0 * END_STOPS * zone(at, 0.5, 1.4) * step(-1.5, at);
-  gain += edit.blacks / 100.0 * END_STOPS * zone(at, -6.5, 1.8) * (1.0 - step(-4.0, at));
+  // The endpoints are one-sided, and centred where the reader thinks they are: `whites` at
+  // diffuse white itself, `blacks` five stops under it rather than six and a half - which is
+  // below where a photograph keeps anything a black point is meant to reach.
+  gain += edit.whites / 100.0 * END_STOPS * shoulder(at, 0.0, 1.6, 1.0);
+  gain += edit.blacks / 100.0 * END_STOPS * shoulder(at, -5.0, 2.6, -1.0);
 
   return l * pow(2.0, gain);
 }
