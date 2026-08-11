@@ -746,12 +746,14 @@ fn graded_banded(
     haze: f64,
     adjust: rawshim::gpu::Adjust,
 ) -> Vec<u16> {
-    graded_frame(gpu, banded(haze), adjust)
+    graded_frame(gpu, banded(haze), BANDED, BANDED, adjust)
 }
 
 fn graded_frame(
     gpu: &rawshim::gpu::Gpu,
     frame: Vec<u16>,
+    width: usize,
+    height: usize,
     adjust: rawshim::gpu::Adjust,
 ) -> Vec<u16> {
     let grade = hdr::Grade { peak_nits: 1000.0, reference_white_nits: 203.0, white_quantile: 0.995 };
@@ -761,8 +763,8 @@ fn graded_frame(
     gpu.encode(
         &samples,
         &rawshim::gpu::Grade {
-            width: BANDED,
-            height: BANDED,
+            width,
+            height,
             colour: None,
             white: levels.white,
             source_level: levels.peak,
@@ -808,9 +810,14 @@ fn shadows_lifts_a_region_without_stretching_the_texture_in_it() {
         return;
     };
     let none = rawshim::gpu::Adjust::none();
-    let flat = graded_frame(gpu, split_ground(), none);
-    let lifted =
-        graded_frame(gpu, split_ground(), rawshim::gpu::Adjust { shadows: 100.0, ..none });
+    let flat = graded_frame(gpu, split_ground(), BANDED, BANDED, none);
+    let lifted = graded_frame(
+        gpu,
+        split_ground(),
+        BANDED,
+        BANDED,
+        rawshim::gpu::Adjust { shadows: 100.0, ..none },
+    );
 
     // Well inside the dim half, so nothing measured straddles the seam the filter is holding.
     let (from, to) = (16usize, BANDED / 2 - 16);
@@ -914,9 +921,14 @@ fn highlights_reaches_furthest_into_what_is_most_blown() {
         return;
     };
     let none = rawshim::gpu::Adjust::none();
-    let flat = graded_frame(gpu, three_grounds(), none);
-    let pulled =
-        graded_frame(gpu, three_grounds(), rawshim::gpu::Adjust { highlights: -100.0, ..none });
+    let flat = graded_frame(gpu, three_grounds(), BANDED, BANDED, none);
+    let pulled = graded_frame(
+        gpu,
+        three_grounds(),
+        BANDED,
+        BANDED,
+        rawshim::gpu::Adjust { highlights: -100.0, ..none },
+    );
 
     // The blown band is row zero; the other two are read well inside themselves.
     let band_at = |frame: &[u16], row: usize| f64::from(frame[(row * BANDED) * 3]);
@@ -946,6 +958,112 @@ fn highlights_reaches_furthest_into_what_is_most_blown() {
         dark * 100.0,
         mid * 100.0,
     );
+}
+
+/// A flat field with a dark, heavily textured block down its left. The rock and the sky.
+///
+/// Three properties, and the artefact needs all of them:
+///
+///   - **Wider than `DETAIL_LONG`.** The neighbourhood is fitted at a 512px working resolution,
+///     so on a frame at or under that the working texture *is* the frame and nothing is
+///     upsampled at all. At 1536 across, one working texel is three frame pixels.
+///   - **The dark side is textured and the bright side is not.** This is the part that is easy
+///     to leave out and fatal to leave out. With both sides flat the fit reproduces its input
+///     everywhere - `a` goes to one at the seam and to zero away from it, and the intercept
+///     makes up the difference exactly - so there is no band to find. Texture on one side gives
+///     those windows a slope of their own, and the intercept they carry is a share of the *dark*
+///     mean. Averaged into the coefficients of a bright pixel nearby, that is the band.
+///   - **The field sits where the tone control is rolling off.** On the flat part of a shoulder
+///     every neighbourhood lands on the same weight whatever it is, so the error would be
+///     invisible. One row of blown white anchors diffuse white two stops above the field.
+const EDGE_WIDE: usize = 1536;
+const EDGE_TALL: usize = 128;
+
+fn hard_edge() -> Vec<u16> {
+    let mut samples = vec![0u16; EDGE_WIDE * EDGE_TALL * 3];
+    for y in 0..EDGE_TALL {
+        for x in 0..EDGE_WIDE {
+            let level = if y == 0 {
+                60000.0
+            } else if x < EDGE_WIDE / 3 {
+                700.0 * (1.0 + 0.5 * (((x + y) % 2) as f64 * 2.0 - 1.0))
+            } else {
+                15000.0
+            } as u16;
+            let at = (y * EDGE_WIDE + x) * 3;
+            samples[at] = level;
+            samples[at + 1] = level;
+            samples[at + 2] = level;
+        }
+    }
+    samples
+}
+
+/// A tone control must not leave a band along an edge, which is what a halo is.
+///
+/// **The neighbourhood is fitted small and read large, and that is where a halo comes from.**
+/// The filter runs at a 512px working resolution with its coefficients averaged over about
+/// eight texels of it, so the field it produces has a transition a couple of hundred frame
+/// pixels wide around any strong edge. Read with a plain bilinear fetch, a pixel of the bright
+/// side inside that band gets a neighbourhood part bright and part dark, so its offset from
+/// that neighbourhood is non-zero where the offset further out is zero - and the two land on
+/// different tone weights. A strip of sky graded differently from the rest of the sky, which is
+/// exactly what was reported along a rock at highlights -100.
+///
+/// So: pull the highlights down hard and walk out from the edge. Every column of the bright
+/// side must land where the far side of it landed. The tolerance is in counts of the graded
+/// frame rather than a share, because what is being looked for is a visible band on a flat
+/// field and the eye finds those at well under a percent.
+#[test]
+fn a_tone_control_leaves_no_band_along_an_edge() {
+    let Some(gpu) = rawshim::gpu::device() else {
+        eprintln!("SKIPPED: no adapter answered, so the tone group was not run.");
+        return;
+    };
+    let none = rawshim::gpu::Adjust::none();
+    let pulled = graded_frame(
+        gpu,
+        hard_edge(),
+        EDGE_WIDE,
+        EDGE_TALL,
+        rawshim::gpu::Adjust { highlights: -100.0, ..none },
+    );
+
+    // Row zero is the strip that anchors white, so it is not part of the field being measured.
+    let column = |x: usize| {
+        let mut total = 0.0;
+        for y in 1..EDGE_TALL {
+            total += f64::from(pulled[(y * EDGE_WIDE + x) * 3]);
+        }
+        total / (EDGE_TALL - 1) as f64
+    };
+    // The far side of the bright field, which is what the rest of it should match.
+    let settled = column(EDGE_WIDE - 4);
+    // From a few columns clear of the seam outwards. The seam itself is left out: a working
+    // texel spans several frame pixels whatever the upsample does with them, so the columns
+    // adjacent to a hard edge are genuinely a mixture rather than a defect.
+    let mut worst = 0.0f64;
+    let mut worst_at = 0usize;
+    for x in (EDGE_WIDE / 3 + 6)..(EDGE_WIDE - 4) {
+        let off = (column(x) - settled).abs();
+        if off > worst {
+            worst = off;
+            worst_at = x;
+        }
+    }
+    if worst >= settled * 0.01 {
+        let profile: Vec<String> = (0..24)
+            .map(|i| {
+                let x = EDGE_WIDE / 3 + i * 4;
+                format!("{x}:{:.0}", column(x))
+            })
+            .collect();
+        panic!(
+            "highlights at -100 left column {worst_at} {worst:.0} counts off the {settled:.0} \
+             the rest of the flat side settled at: that is a band along the edge\n  {}",
+            profile.join(" "),
+        );
+    }
 }
 
 /// The temperature and tint pair, against the direction and the anchor they promise.

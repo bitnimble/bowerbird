@@ -85,11 +85,12 @@ export const BALANCE = compose(prelude, edit,whiteBalance);
 export const DETAIL_PASSES = [
   'shrink',
   'moments_of',
-  'box_x',
-  'box_y',
+  // Both means, and both bilateral: gathering the moments over a box and averaging the fitted
+  // models over a box are the two ways a dark surface's statistics reach the bright pixels
+  // beside it, which is a halo (`detail.wgsl`).
+  'window_mean',
   'coefficients',
-  'box_x',
-  'box_y',
+  'window_mean',
   'apply_guided',
 ] as const;
 

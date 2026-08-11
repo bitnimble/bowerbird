@@ -693,6 +693,9 @@ export class EditPipeline {
     });
     const momentsLayout = this.device.createBindGroupLayout({ entries: [read16, wrote32] });
     const boxLayout = this.device.createBindGroupLayout({ entries: [read32, wrote32] });
+    // The mean needs the guide as well as what it is averaging, to know which taps describe
+    // the same surface as the texel it is writing.
+    const meanLayout = this.device.createBindGroupLayout({ entries: [read16, read32, wrote32] });
     const applyLayout = this.device.createBindGroupLayout({ entries: [read16, read32, written] });
 
     const module = this.device.createShaderModule({ code: DETAIL, label: 'detail' });
@@ -704,9 +707,8 @@ export class EditPipeline {
     const pipelines: Record<DetailPass, GPUComputePipeline> = {
       shrink: pipelineFor('shrink', shrinkLayout),
       moments_of: pipelineFor('moments_of', momentsLayout),
-      box_x: pipelineFor('box_x', boxLayout),
-      box_y: pipelineFor('box_y', boxLayout),
       coefficients: pipelineFor('coefficients', boxLayout),
+      window_mean: pipelineFor('window_mean', meanLayout),
       apply_guided: pipelineFor('apply_guided', applyLayout),
     };
 
@@ -744,6 +746,13 @@ export class EditPipeline {
           { binding: 2, resource: this.base.createView() },
           { binding: 16, resource: held.createView() },
         ]);
+      } else if (name === 'window_mean') {
+        run(pipeline, meanLayout, [
+          { binding: 2, resource: this.base.createView() },
+          { binding: 15, resource: held.createView() },
+          { binding: 16, resource: spare.createView() },
+        ]);
+        [held, spare] = [spare, held];
       } else if (name === 'apply_guided') {
         run(pipeline, applyLayout, [
           { binding: 2, resource: this.base.createView() },

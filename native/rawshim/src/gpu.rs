@@ -165,12 +165,12 @@ pub struct Gpu {
     detail_shrink_layout: wgpu::BindGroupLayout,
     detail_moments_layout: wgpu::BindGroupLayout,
     detail_box_layout: wgpu::BindGroupLayout,
+    detail_mean_layout: wgpu::BindGroupLayout,
     detail_apply_layout: wgpu::BindGroupLayout,
     detail_shrink: wgpu::ComputePipeline,
     detail_moments: wgpu::ComputePipeline,
-    detail_box_x: wgpu::ComputePipeline,
-    detail_box_y: wgpu::ComputePipeline,
     detail_coefficients: wgpu::ComputePipeline,
+    detail_window_mean: wgpu::ComputePipeline,
     detail_apply: wgpu::ComputePipeline,
     balance_layout: wgpu::BindGroupLayout,
     balance_pipeline: wgpu::ComputePipeline,
@@ -275,6 +275,7 @@ impl Gpu {
         let detail_shrink_layout = group_layout("detail shrink", &DETAIL_SHRINK_BINDINGS);
         let detail_moments_layout = group_layout("detail moments", &DETAIL_MOMENTS_BINDINGS);
         let detail_box_layout = group_layout("detail box", &DETAIL_BOX_BINDINGS);
+        let detail_mean_layout = group_layout("detail fit", &DETAIL_MEAN_BINDINGS);
         let detail_apply_layout = group_layout("detail apply", &DETAIL_APPLY_BINDINGS);
         let detail_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("detail"),
@@ -283,10 +284,10 @@ impl Gpu {
         let detail_shrink = compute("shrink", &detail_module, &detail_shrink_layout, "shrink");
         let detail_moments =
             compute("moments_of", &detail_module, &detail_moments_layout, "moments_of");
-        let detail_box_x = compute("box_x", &detail_module, &detail_box_layout, "box_x");
-        let detail_box_y = compute("box_y", &detail_module, &detail_box_layout, "box_y");
         let detail_coefficients =
             compute("coefficients", &detail_module, &detail_box_layout, "coefficients");
+        let detail_window_mean =
+            compute("window_mean", &detail_module, &detail_mean_layout, "window_mean");
         let detail_apply =
             compute("apply_guided", &detail_module, &detail_apply_layout, "apply_guided");
 
@@ -354,12 +355,12 @@ impl Gpu {
             detail_shrink_layout,
             detail_moments_layout,
             detail_box_layout,
+            detail_mean_layout,
             detail_apply_layout,
             detail_shrink,
             detail_moments,
-            detail_box_x,
-            detail_box_y,
             detail_coefficients,
+            detail_window_mean,
             detail_apply,
             balance_layout,
             balance_pipeline,
@@ -455,14 +456,15 @@ const DETAIL_SHRINK_BINDINGS: [(u32, Binding); 4] = [
 ///
 /// The ping-pong between the two 32-bit textures is derived from this rather than written out:
 /// every pass reads what the one before it wrote.
-pub const DETAIL_PASSES: [&str; 8] = [
+pub const DETAIL_PASSES: [&str; 6] = [
     "shrink",
     "moments_of",
-    "box_x",
-    "box_y",
+    // Both means, and both bilateral: gathering the moments over a box and averaging the fitted
+    // models over a box are the two ways a dark surface's statistics reach the bright pixels
+    // beside it, which is a halo (`detail.wgsl`).
+    "window_mean",
     "coefficients",
-    "box_x",
-    "box_y",
+    "window_mean",
     "apply_guided",
 ];
 
@@ -472,6 +474,11 @@ const DETAIL_BOX_BINDINGS: [(u32, Binding); 2] = [(15, Binding::Read32), (16, Bi
 
 const DETAIL_APPLY_BINDINGS: [(u32, Binding); 3] =
     [(2, Binding::Detail), (15, Binding::Read32), (3, Binding::Written)];
+
+/// The mean, which needs the guide as well as what it is averaging: it has to know which taps
+/// describe the same surface as the texel it is writing.
+const DETAIL_MEAN_BINDINGS: [(u32, Binding); 3] =
+    [(2, Binding::Detail), (15, Binding::Read32), (16, Binding::Wrote32)];
 
 /// `peakLayout` on the client: the same colour bindings, and the histogram, the peak and the
 /// candidates all writable where the encode reads the peak and writes only the frame.
@@ -1079,9 +1086,6 @@ impl Gpu {
                 ],
             })
         };
-        let boxed = |from: &wgpu::TextureView, to: &wgpu::TextureView| {
-            pair("detail box", &self.detail_box_layout, (15, from), (16, to))
-        };
         // The pair the 32-bit passes ping-pong through, swapped after each one, so which
         // texture a pass reads follows from the sequence rather than being written beside it.
         let mut held = &moments;
@@ -1099,6 +1103,28 @@ impl Gpu {
                         (16, held),
                     ),
                 ),
+                "window_mean" => {
+                    let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("detail mean"),
+                        layout: &self.detail_mean_layout,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 2,
+                                resource: wgpu::BindingResource::TextureView(&base),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 15,
+                                resource: wgpu::BindingResource::TextureView(held),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 16,
+                                resource: wgpu::BindingResource::TextureView(spare),
+                            },
+                        ],
+                    });
+                    std::mem::swap(&mut held, &mut spare);
+                    (&self.detail_window_mean, group)
+                }
                 "apply_guided" => (
                     &self.detail_apply,
                     device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -1120,15 +1146,12 @@ impl Gpu {
                         ],
                     }),
                 ),
-                other => {
-                    let pipeline = match other {
-                        "box_x" => &self.detail_box_x,
-                        "box_y" => &self.detail_box_y,
-                        _ => &self.detail_coefficients,
-                    };
-                    let group = boxed(held, spare);
+                // The fit itself, which is pointwise over the moments and so needs no guide.
+                _ => {
+                    let group =
+                        pair("detail fit", &self.detail_box_layout, (15, held), (16, spare));
                     std::mem::swap(&mut held, &mut spare);
-                    (pipeline, group)
+                    (&self.detail_coefficients, group)
                 }
             };
             let mut pass = encoder.begin_compute_pass(&Default::default());

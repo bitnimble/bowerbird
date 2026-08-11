@@ -286,8 +286,14 @@ fn adjusted(colour: vec3f, base_luma: f32, uv: vec2f) -> vec3f {
     return colour;
   }
 
-  // Fetched once for all three, and only where one of them is set: the tonal sliders are far
-  // commoner and have no business paying for a texture read.
+  // Fetched once for all of them, and only where one is set: the exposure is far commoner and
+  // has no business paying for a texture read.
+  //
+  // One bilinear sample, and it can be: what makes the neighbourhood hold an edge is the fit
+  // that produced it (`detail.wgsl`), not how it is read. Upsampling it more cleverly was tried
+  // and measured - a joint bilateral fetch of nine texels moved the band this leaves along an
+  // edge by less than a count, because by then the error is already in the texture.
+  let base_stops = stops_below_white(base_luma);
   var blur = vec3f(0.0);
   if (local) { blur = textureSampleLevel(detail, lerp, uv, 0.0).rgb; }
 
@@ -317,11 +323,11 @@ fn adjusted(colour: vec3f, base_luma: f32, uv: vec2f) -> vec3f {
   // the only domain the two are comparable in, the blur being of the frame as it arrived. Zero
   // where the neighbourhood was not read, which leaves the tone curve pointwise.
   var offset = 0.0;
-  if (local) { offset = stops_below_white(base_luma) - blur.g; }
+  if (local) { offset = base_stops - blur.g; }
 
   var toned_luma = tone_adjusted(luma, offset);
   if (edit.texture_adjust != 0.0 || edit.clarity != 0.0) {
-    toned_luma = toned_luma * exp2(local_contrast(stops_below_white(base_luma), blur));
+    toned_luma = toned_luma * exp2(local_contrast(base_stops, blur));
   }
   let held = out * (toned_luma / luma);
   return chroma_adjusted(held, toned_luma);

@@ -1,8 +1,6 @@
 shrink
 moments_of
-box_x
-box_y
+window_mean
 coefficients
-box_x
-box_y
+window_mean
 apply_guided

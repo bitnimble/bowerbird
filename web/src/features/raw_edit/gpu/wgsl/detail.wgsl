@@ -214,32 +214,60 @@ fn moments_of(@builtin(global_invocation_id) id: vec3u) {
   textureStore(moments_out, at, vec4f(guide, guide * guide, dark, guide * dark));
 }
 
-/// One axis of the box mean, over whatever four channels it is handed.
+/// How far apart in stops two texels have to be before they stop being averaged together.
 ///
-/// Separable, so a radius costs `2r` taps rather than `r^2` - which is what makes the window
-/// free to be wide. Clamped at the edges rather than weighted for them: a frame's border is
-/// not a black surround, and a window that read one would drag the fit towards nothing across
-/// the outermost band of every filter.
-fn boxed(at: vec2i, axis: vec2i) {
+/// The range term of the mean below. Half a stop: further apart than any texture on one
+/// surface, closer than any boundary between two.
+const WINDOW_RANGE: f32 = 0.5;
+
+/// The mean the whole filter is built on: over the window, but only over what belongs to it.
+///
+/// **A box window is where the halo came from, and the fit was never the problem.** A guided
+/// filter is two means - one to gather the moments the model is fitted from, one to average the
+/// models afterwards - and both were boxes. So a texel of sky a few texels from a rock had its
+/// statistics taken over a window containing rock: the variance came out huge, `a` stayed near
+/// one instead of collapsing to zero, and the intercept it carries is a share of the *rock's*
+/// mean. The neighbourhood that texel reports is then darker than the sky it is in, the tone
+/// group weights it differently from the sky further out, and the reader gets a strip along the
+/// edge - measured on a hard edge at 6% of the flat side's value, decaying over fifty pixels,
+/// which is exactly what a halo looks like.
+///
+/// Weighting each tap by how near its own value is to this texel's fixes it at the source: a
+/// sky texel gathers sky and averages models fitted on sky, and never sees the rock, because
+/// the rock describes a brightness it does not have. Which is the intensity axis a bilateral
+/// grid separates on - done in place at working resolution, where the data and the bindings
+/// already are, rather than by building the grid and slicing it.
+///
+/// One entry point for both means because they are the same operation over the same four
+/// channels; only what is in them differs.
+///
+/// Not separable, so this is `(2r+1)^2` taps rather than `2(2r+1)`: a bilateral weight depends
+/// on the tap, so the two axes do not factor. At a 512px working texture and a radius of eight
+/// that is 289 taps a texel, twice, over a quarter of a megapixel - affordable exactly because
+/// it is not in the tick. Clamped at the frame's edges rather than weighted for them: a border
+/// is not a black surround, and a window that read one would drag the fit towards nothing along
+/// the outermost band of the picture.
+@compute @workgroup_size(8, 8)
+fn window_mean(@builtin(global_invocation_id) id: vec3u) {
   let size = vec2i(textureDimensions(moments_out));
+  let at = vec2i(i32(id.x), i32(id.y));
   if (at.x >= size.x || at.y >= size.y) { return; }
   let radius = guide_radius(size);
+  let here = textureLoad(source, at, 0).r;
 
   var sum = vec4f(0.0);
-  for (var d = -radius; d <= radius; d = d + 1) {
-    sum = sum + textureLoad(moments, clamp(at + axis * d, vec2i(0), size - vec2i(1)), 0);
+  var total = 0.0;
+  for (var dy = -radius; dy <= radius; dy = dy + 1) {
+    for (var dx = -radius; dx <= radius; dx = dx + 1) {
+      let tap = clamp(at + vec2i(dx, dy), vec2i(0), size - vec2i(1));
+      let apart = (here - textureLoad(source, tap, 0).r) / WINDOW_RANGE;
+      let agrees = exp(-0.5 * apart * apart);
+      sum = sum + textureLoad(moments, tap, 0) * agrees;
+      total = total + agrees;
+    }
   }
-  textureStore(moments_out, at, sum / f32(2 * radius + 1));
-}
-
-@compute @workgroup_size(8, 8)
-fn box_x(@builtin(global_invocation_id) id: vec3u) {
-  boxed(vec2i(i32(id.x), i32(id.y)), vec2i(1, 0));
-}
-
-@compute @workgroup_size(8, 8)
-fn box_y(@builtin(global_invocation_id) id: vec3u) {
-  boxed(vec2i(i32(id.x), i32(id.y)), vec2i(0, 1));
+  // The centre tap always agrees with itself, so the total is never zero.
+  textureStore(moments_out, at, sum / total);
 }
 
 /// The two linear models, from the averaged moments.
