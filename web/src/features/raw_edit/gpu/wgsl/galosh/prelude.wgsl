@@ -24,6 +24,18 @@ const P_S_MAX: i32 = 17;
 
 const FLT_MAX: f32 = 3.402823466e+38;
 
+/// One invocation's place in a flat sweep, over however many workgroups the host split it
+/// into.
+///
+/// A frame is more pixels than one dispatch dimension holds: at 24MP a 256-wide workgroup
+/// wants 94,690 of them against the 65,535 a single dimension allows. So the host spreads
+/// the count over two dimensions and the shader folds the second one back in here, which
+/// keeps how it was split entirely the host's business. `frame.wgsl`'s encode is laid out
+/// the same way for the same reason.
+fn flat_index(id: vec3u, groups: vec3u, per_group: u32) -> i32 {
+  return i32(id.y * groups.x * per_group + id.x);
+}
+
 /// Knuth TwoSum: `(s, c) += v`, where the sum's true value is `s + c`.
 ///
 /// Not decoration. The reference accumulated these sums in `f64` and needed `shaderFloat64`

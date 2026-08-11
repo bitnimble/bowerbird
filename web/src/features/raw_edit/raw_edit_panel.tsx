@@ -471,6 +471,9 @@ export const RawEditPanel = observer(function RawEditPanel({
               as="p"
               variant={store.status === 'failed' ? 'muted' : 'mono'}
               className="raw-edit-panel__status"
+              // Read by the e2e open: a failed status alone says a GPU refused the tick and
+              // not which of forty passes it refused, which is the only useful part.
+              data-testid="raw-edit-status"
             >
               {status}
             </Text>

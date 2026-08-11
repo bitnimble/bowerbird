@@ -52,12 +52,30 @@ class Pipeline {
   draws = 0;
   readonly wholeFrame = { x: 0, y: 0, width: 4000, height: 3000 };
 
+  /**
+   * The Detail pair, and how many times the chain behind it was asked to run.
+   *
+   * The count is the interesting half: the denoise is thirteen passes over the frame rather
+   * than a uniform word, so a control that re-ran it per tick would be a control that made
+   * the editor unusable while any *other* slider moved.
+   */
+  denoise: { luminance: number; colour: number } | null = null;
+  denoises = 0;
+
   setGeometry(next: EditGeometry): void {
     this.geometry = next;
   }
 
   setAdjust(next: Partial<EditAdjust>): void {
     this.adjust = { ...this.adjust, ...next };
+  }
+
+  setDenoise(next: { luminance: number; colour: number }): void {
+    if (this.denoise?.luminance === next.luminance && this.denoise.colour === next.colour) {
+      return;
+    }
+    this.denoise = next;
+    this.denoises++;
   }
 
   /**
@@ -285,6 +303,23 @@ describe('a slider reaching the picture', () => {
     expect(ints[at.balance_set]).toBe(3);
     expect(floats[at.temperature]).toBe(6000);
     expect(floats[at.tint]).toBe(11);
+  });
+
+  test('sends the Detail pair to the denoise, and only when one of them moves', () => {
+    presenter.preview({ luminanceNoise: 60, colourNoise: 20 });
+    expect(pipeline.denoise).toEqual({ luminance: 60, colour: 20 });
+
+    // Every other slider goes through the same `preview`, so the guard against re-running
+    // thirteen whole-frame passes has to be the *value*, not the call.
+    const ran = pipeline.denoises;
+    presenter.preview({ exposure: 1.2 });
+    presenter.preview({ contrast: 40 });
+    presenter.settleStraighten(3);
+    expect(pipeline.denoises).toBe(ran);
+
+    presenter.preview({ colourNoise: 21 });
+    expect(pipeline.denoises).toBe(ran + 1);
+    expect(pipeline.denoise).toEqual({ luminance: 60, colour: 21 });
   });
 
   test('sends the geometry the reader chose, not the one the tool is showing', () => {

@@ -14,8 +14,11 @@ struct Push {
 @group(0) @binding(20) var<uniform> pc: Push;
 
 @compute @workgroup_size(256)
-fn yuv_gat_fwd(@builtin(global_invocation_id) id: vec3u) {
-  let i = i32(id.x);
+fn yuv_gat_fwd(
+  @builtin(global_invocation_id) id: vec3u,
+  @builtin(num_workgroups) groups: vec3u,
+) {
+  let i = flat_index(id, groups, 256u);
   if (i >= pc.npix) { return; }
   let a = params[P_ALPHA];
   let c = 0.375 * a * a + params[P_SIGMA_SQ];

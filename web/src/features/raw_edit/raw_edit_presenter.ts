@@ -292,13 +292,14 @@ export class RawEditPresenter {
       // usable at neutral rather than refusing to open: the frame is the expensive
       // part and it is already here.
       const saved = await edits;
-      if (saved != null && !this.closed) {
-        this.applyState(saved);
-        // Through `preview` rather than `request` alone: the pipeline holds the sliders
-        // separately from the tick's exposure, and a saved document has to reach both or
-        // the frame opens graded by the exposure and nothing else.
-        this.preview({});
-      }
+      if (this.closed) return;
+      if (saved != null) this.applyState(saved);
+      // Through `preview` rather than `request` alone: the pipeline holds the sliders
+      // separately from the tick's exposure, so a document has to reach both or the frame
+      // opens graded by the exposure and nothing else. That now includes the denoise, which
+      // is a chain of passes rather than a uniform word. A read that failed leaves `doc`
+      // null and `preview` returns on it, which is the editor usable at neutral.
+      this.preview({});
     } catch (error) {
       if (!this.closed) this.fail(describe(error));
     }
@@ -341,6 +342,13 @@ export class RawEditPresenter {
       dehaze: next.dehaze,
       temperature: next.temperature,
       tint: next.tint,
+    });
+    // Not part of the uniform: the denoise is a chain of passes over the whole frame, so
+    // this re-runs it only when one of its two sliders has actually moved. Every other
+    // control reaches the picture through `setAdjust` above and costs nothing here.
+    this.pipeline?.setDenoise({
+      luminance: next.luminanceNoise,
+      colour: next.colourNoise,
     });
     this.request(this.store.exposureEv);
   }
@@ -845,7 +853,16 @@ export class RawEditPresenter {
   }
 
   @action.bound
+  /**
+   * The first failure wins, not the last.
+   *
+   * A GPU validation error cascades: the offending call is dropped, the encoder it was
+   * recorded into is poisoned, and the submit that follows reports "invalid due to a
+   * previous error" - which is what a reader and a stack trace both end up looking at. The
+   * one that says what actually happened is the first.
+   */
   private fail(message: string): void {
+    if (this.store.status === 'failed') return;
     this.store.status = 'failed';
     this.store.message = message;
   }

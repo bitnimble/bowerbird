@@ -40,6 +40,19 @@ import reduceSource from './wgsl/reduce.wgsl?raw';
 import edit from './wgsl/edit.wgsl?raw';
 import whiteBalance from './wgsl/white_balance.wgsl?raw';
 
+import galoshPrelude from './wgsl/galosh/prelude.wgsl?raw';
+import buildInvLut from './wgsl/galosh/build_inv_lut.wgsl?raw';
+import lutFinalize from './wgsl/galosh/lut_finalize.wgsl?raw';
+import pass12 from './wgsl/galosh/pass12.wgsl?raw';
+import yuvGatFwd from './wgsl/galosh/yuv_gat_fwd.wgsl?raw';
+import yuvJoin from './wgsl/galosh/yuv_join.wgsl?raw';
+import yuvLapMad from './wgsl/galosh/yuv_lap_mad.wgsl?raw';
+import yuvLoess from './wgsl/galosh/yuv_loess.wgsl?raw';
+import yuvMakitalo from './wgsl/galosh/yuv_makitalo.wgsl?raw';
+import yuvSigmaScale from './wgsl/galosh/yuv_sigma_scale.wgsl?raw';
+import yuvSplit from './wgsl/galosh/yuv_split.wgsl?raw';
+import yuvSynthAlpha from './wgsl/galosh/yuv_synth_alpha.wgsl?raw';
+
 const compose = (...parts: string[]): string => parts.join('\n');
 
 /** Sensor levels to a canvas, and the same frame as a rendition would hold it. */
@@ -59,6 +72,54 @@ export const DETAIL = compose(prelude, edit,detailSource);
 
 /** The reader's temperature and tint, solved into one matrix. One invocation, per tick. */
 export const BALANCE = compose(prelude, edit,whiteBalance);
+
+/**
+ * The denoise, a module per kernel.
+ *
+ * One module each rather than one composed source, because every one of them declares its
+ * buffers at the binding indices the reference's dispatch table lists - which is what makes
+ * the two hosts auditable against each other, and which two kernels cannot do in one module.
+ *
+ * Three of these are the *mosaic* denoise's own kernels, dispatched here unchanged: the
+ * shrinkage and the pair that builds its inverse table do not care which domain reached
+ * them. That is the reference's arrangement too (`native/rawshim/src/galosh.rs`).
+ */
+export const GALOSH = {
+  split: compose(galoshPrelude, yuvSplit),
+  lapMad: compose(galoshPrelude, yuvLapMad),
+  synthAlpha: compose(galoshPrelude, yuvSynthAlpha),
+  gatFwd: compose(galoshPrelude, yuvGatFwd),
+  sigmaScale: compose(galoshPrelude, yuvSigmaScale),
+  buildInvLut: compose(galoshPrelude, buildInvLut),
+  lutFinalize: compose(galoshPrelude, lutFinalize),
+  pass12: compose(galoshPrelude, pass12),
+  makitalo: compose(galoshPrelude, yuvMakitalo),
+  loess: compose(galoshPrelude, yuvLoess),
+  join: compose(galoshPrelude, yuvJoin),
+} as const;
+
+/**
+ * How the Detail sliders' 0-100 reach the kernels.
+ *
+ * The luma number is a shrinkage threshold in units of the frame's own fitted noise, so its
+ * top is where the reference's goes soft. The colour number is split in two: its first
+ * third mixes the regression in against the pixel's own chroma, and past that it widens the
+ * ridge the regression is damped by - which is what lets one control run from "none" to
+ * "as smooth as this window can make it" without a discontinuity where the two meet.
+ */
+export function denoiseAmounts(luminance: number, colour: number): {
+  luma: number;
+  blend: number;
+  chroma: number;
+} {
+  const l = Math.min(Math.max(luminance, 0), 100) / 100;
+  const c = Math.min(Math.max(colour, 0), 100) / 100;
+  return {
+    luma: l * 1.5,
+    blend: Math.min(c * 3, 1),
+    chroma: Math.max(c * 3, 1),
+  };
+}
 
 // The detail blur's working size used to be a rule here too, alongside `gpu::detail_size`, and
 // pinned to it by `DETAIL_LONG`. It arrives on `PreparedHeader.detail` now: how large a share of

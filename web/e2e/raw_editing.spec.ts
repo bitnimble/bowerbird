@@ -329,6 +329,17 @@ async function open(page: Page): Promise<void> {
 
   const panel = page.getByTestId('raw-edit-panel');
   await expect
-    .poll(async () => panel.getAttribute('data-status'), { timeout: 170_000 })
+    .poll(
+      async () => {
+        const status = await panel.getAttribute('data-status');
+        // The panel prints why it failed; polling the attribute alone reports only that it
+        // did, which on a GPU error is the one thing there is no way to guess.
+        if (status === 'failed') {
+          throw new Error(await panel.getByTestId('raw-edit-status').innerText());
+        }
+        return status;
+      },
+      { timeout: 170_000 },
+    )
     .toBe('live');
 }

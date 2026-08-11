@@ -19,10 +19,12 @@ import {
   PQ_CODES,
   REDUCE,
   EDIT_UNIFORM_FLOATS,
+  denoiseAmounts,
   editOffsets,
   edits,
   wholeFrameGeometry,
 } from './shaders';
+import { buildDenoiseChain, type DenoiseChain } from './denoise_chain';
 import type { DetailPass, DetailSize, EditAdjust, EditGeometry } from './shaders';
 
 /**
@@ -222,8 +224,30 @@ export function frameTooBig(
  * alternative is re-requesting a device when a larger photograph is opened.
  */
 export function editLimits(adapter: GPUAdapter): Record<string, number> {
-  const { maxTextureDimension2D, maxBufferSize, maxStorageBufferBindingSize } = adapter.limits;
-  return { maxTextureDimension2D, maxBufferSize, maxStorageBufferBindingSize };
+  const {
+    maxTextureDimension2D,
+    maxBufferSize,
+    maxStorageBufferBindingSize,
+    maxComputeWorkgroupStorageSize,
+  } = adapter.limits;
+  return {
+    maxTextureDimension2D,
+    maxBufferSize,
+    maxStorageBufferBindingSize,
+    // The denoise's shrinkage holds four tile planes in workgroup storage, 25.6KB of them,
+    // which is over the 16KB a WebGPU device is only required to offer. Asked for at the
+    // device rather than assumed: `denoiseSupported` declines where it is not granted, and
+    // the editor is a picture without a denoise rather than a failed open.
+    maxComputeWorkgroupStorageSize,
+  };
+}
+
+/** Workgroup storage `pass12` needs: four tile planes of 40x40 `f32`. */
+const DENOISE_WORKGROUP_STORAGE = 4 * 40 * 40 * 4;
+
+/** Whether this device can run the denoise at all. */
+export function denoiseSupported(device: GPUDevice): boolean {
+  return device.limits.maxComputeWorkgroupStorageSize >= DENOISE_WORKGROUP_STORAGE;
 }
 
 export class EditPipeline {
@@ -248,6 +272,19 @@ export class EditPipeline {
   private readonly matrix: GPUBuffer;
   /** The frame as it arrived: interleaved RGB `u16`, three to a pixel. */
   private readonly frame: GPUBuffer;
+  /**
+   * The frame the grade actually reads: `frame` with its noise removed.
+   *
+   * Everything downstream binds this rather than `frame` - the encode, the peak, the draw,
+   * and the neighbourhood `detail.wgsl` builds - so a Detail slider changes what all of
+   * them see without any of them knowing there is a denoise.
+   */
+  private readonly denoised: GPUBuffer;
+  /** The denoise's working planes, allocated with the pipeline that dispatches over them. */
+  private denoisePlanes: GPUBuffer[] = [];
+  private denoiseChain: DenoiseChain | null = null;
+  /** What `denoised` currently holds, so a tick that changes nothing re-runs nothing. */
+  private denoiseAt: { luminance: number; colour: number } | null = null;
   /** Half resolution and down. `lod` 0 is the frame; level L here is `lod` L + 1. */
   private readonly pyramid: GPUTexture;
   private readonly levels: number;
@@ -329,6 +366,16 @@ export class EditPipeline {
     // The frame as it arrived: interleaved RGB `u16`, no fourth component and no second
     // copy to add one. At 61MP that is 361MB rather than 481.
     this.frame = device.createBuffer({
+      size: frameBytes(this.width, this.height),
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
+    });
+    // And the frame with its noise taken out, which is what everything downstream reads.
+    //
+    // A second copy rather than in place, because the noise cannot be put back: the next
+    // move of a Detail slider has to denoise the *original* again, and at zero the picture
+    // has to be able to fall back to it. One frame more at the prepared size, which is the
+    // stage's rather than the sensor's.
+    this.denoised = device.createBuffer({
       size: frameBytes(this.width, this.height),
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
@@ -577,7 +624,7 @@ export class EditPipeline {
 
     this.colourEntries = [
       { binding: 0, resource: { buffer: this.uniform } },
-      { binding: 1, resource: { buffer: this.frame } },
+      { binding: 1, resource: { buffer: this.denoised } },
       { binding: 2, resource: this.curves.createView() },
       { binding: 3, resource: this.chroma.createView() },
       { binding: 4, resource: { buffer: this.matrix } },
@@ -607,6 +654,16 @@ export class EditPipeline {
       layout: this.peakLayout,
       entries: this.peakEntries,
     });
+
+    // The frame stands in for its denoised self until the reader's Detail settings arrive,
+    // which is one `setDenoise` away and happens before the first tick. Everything below
+    // binds `denoised`, so it has to hold a picture from here on rather than zeroes.
+    this.denoiseAt = { luminance: 0, colour: 0 };
+    {
+      const encoder = device.createCommandEncoder();
+      encoder.copyBufferToBuffer(this.frame, 0, this.denoised, 0, this.denoised.size);
+      device.queue.submit([encoder.finish()]);
+    }
 
     this.decode();
     this.reduce();
@@ -737,7 +794,7 @@ export class EditPipeline {
       if (name === 'shrink') {
         run(pipeline, shrinkLayout, [
           { binding: 0, resource: { buffer: this.uniform } },
-          { binding: 1, resource: { buffer: this.frame } },
+          { binding: 1, resource: { buffer: this.denoised } },
           { binding: 3, resource: this.base.createView() },
           { binding: 12, resource: { buffer: this.nitsOfCode } },
         ]);
@@ -823,7 +880,7 @@ export class EditPipeline {
             level === 0
               ? [
                   { binding: 0, resource: { buffer: this.uniform } },
-                  { binding: 1, resource: { buffer: this.frame } },
+                  { binding: 1, resource: { buffer: this.denoised } },
                   { binding: 3, resource: oneLevel(0) },
                 ]
               : [
@@ -1020,12 +1077,14 @@ export class EditPipeline {
     for (const buffer of [
       this.uniform,
       this.frame,
+      this.denoised,
       this.histogram,
       this.peak,
       this.candidates,
       this.matrix,
       this.nitsOfCode,
       this.balance,
+      ...this.denoisePlanes,
     ]) {
       buffer.destroy();
     }
@@ -1118,6 +1177,58 @@ export class EditPipeline {
 
   setGeometry(next: EditGeometry): void {
     this.geometry = next;
+  }
+
+  /**
+   * The Detail sliders, 0 to 100 each.
+   *
+   * Unlike every other control this is not a uniform write: the denoise is a chain of
+   * thirteen dispatches over the whole frame, so it runs when one of these two moves and
+   * not once per tick. Everything downstream reads `denoised`, so nothing else has to know.
+   *
+   * The neighbourhood the presence sliders read is rebuilt with it, because it is a blur of
+   * this frame and a denoise changes what is in it.
+   */
+  setDenoise(next: { luminance: number; colour: number }): void {
+    if (
+      this.denoiseAt != null &&
+      this.denoiseAt.luminance === next.luminance &&
+      this.denoiseAt.colour === next.colour
+    ) {
+      return;
+    }
+    this.denoiseAt = next;
+    this.runDenoise(next);
+    this.buildDetail();
+  }
+
+  /**
+   * The denoise, or a copy where there is nothing to do.
+   *
+   * The copy is not a special case worth avoiding: it is one `copyBufferToBuffer` against
+   * thirteen dispatches, and having `denoised` always be the thing to read is what keeps
+   * every consumer from carrying a branch.
+   */
+  private runDenoise({ luminance, colour }: { luminance: number; colour: number }): void {
+    const encoder = this.device.createCommandEncoder();
+    const chain = luminance > 0 || colour > 0 ? this.denoiseChainFor() : null;
+    if (chain == null) {
+      encoder.copyBufferToBuffer(this.frame, 0, this.denoised, 0, this.denoised.size);
+      this.device.queue.submit([encoder.finish()]);
+      return;
+    }
+    chain.record(encoder, denoiseAmounts(luminance, colour));
+    this.device.queue.submit([encoder.finish()]);
+  }
+
+  /** The pipelines and planes, built the first time a photo is actually denoised. */
+  private denoiseChainFor(): DenoiseChain | null {
+    if (this.denoiseChain != null) return this.denoiseChain;
+    if (!denoiseSupported(this.device)) return null;
+    const built = buildDenoiseChain(this.device, this.frame, this.denoised, this.width, this.height);
+    this.denoiseChain = built;
+    this.denoisePlanes = built.planes;
+    return built;
   }
 
   /**

@@ -18,8 +18,11 @@ struct Push {
 const LUT_SIZE: i32 = 4096;
 
 @compute @workgroup_size(256)
-fn yuv_makitalo(@builtin(global_invocation_id) id: vec3u) {
-  let i = i32(id.x);
+fn yuv_makitalo(
+  @builtin(global_invocation_id) id: vec3u,
+  @builtin(num_workgroups) groups: vec3u,
+) {
+  let i = flat_index(id, groups, 256u);
   if (i >= pc.npix) { return; }
 
   let d = d_stab[i];

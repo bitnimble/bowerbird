@@ -36,8 +36,11 @@ fn codes_of(at: i32) -> vec3f {
 }
 
 @compute @workgroup_size(256)
-fn yuv_join(@builtin(global_invocation_id) id: vec3u) {
-  let pair = i32(id.x);
+fn yuv_join(
+  @builtin(global_invocation_id) id: vec3u,
+  @builtin(num_workgroups) groups: vec3u,
+) {
+  let pair = flat_index(id, groups, 256u);
   let first = pair * 2;
   if (first >= pc.npix) { return; }
 

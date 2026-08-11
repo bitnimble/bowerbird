@@ -14,15 +14,21 @@ struct Push {
 @group(0) @binding(20) var<uniform> pc: Push;
 
 @compute @workgroup_size(256)
-fn yuv_sigma_norm(@builtin(global_invocation_id) id: vec3u) {
-  let i = i32(id.x);
+fn yuv_sigma_norm(
+  @builtin(global_invocation_id) id: vec3u,
+  @builtin(num_workgroups) groups: vec3u,
+) {
+  let i = flat_index(id, groups, 256u);
   if (i >= pc.npix) { return; }
   plane[i] /= max(params[pc.sigma_slot], 1e-6);
 }
 
 @compute @workgroup_size(256)
-fn yuv_sigma_denorm(@builtin(global_invocation_id) id: vec3u) {
-  let i = i32(id.x);
+fn yuv_sigma_denorm(
+  @builtin(global_invocation_id) id: vec3u,
+  @builtin(num_workgroups) groups: vec3u,
+) {
+  let i = flat_index(id, groups, 256u);
   if (i >= pc.npix) { return; }
   plane[i] *= params[pc.sigma_slot];
 }
