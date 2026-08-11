@@ -1,10 +1,14 @@
 //! Holds the WGSL port against the C reference it was transcribed from.
 //!
-//! The reference's own cross-vendor figure is 69.7-70.6 dB between its CPU FP32 build and
-//! its Vulkan one, so that is the bar: a compensated-summation pipeline of fifty dispatches
-//! is not bit-exact across two compilers, and asking it to be would be asking the wrong
-//! question. What this catches is the failure that actually happens in a transcription - a
-//! transposed index, a sign, a phase skipped - all of which land tens of dB below that.
+//! A compensated-summation pipeline of fifty dispatches is not bit-exact across two
+//! compilers, and asking it to be would be asking the wrong question. For scale: the
+//! reference reports 69.7-70.6 dB between its *own* CPU FP32 build and its Vulkan one, and
+//! this port measures 69.0-69.3 dB against that same CPU build - short of their figure by
+//! about a dB rather than level with it.
+//!
+//! What this catches is the failure that actually happens in a transcription - a transposed
+//! index, a sign, a phase skipped - all of which land tens of dB below either number. So
+//! the bar below is set where it separates those, not where it would certify the last dB.
 //!
 //! Not a test, because it needs the reference binary built:
 //!
