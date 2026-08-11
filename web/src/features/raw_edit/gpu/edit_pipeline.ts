@@ -371,10 +371,17 @@ export class EditPipeline {
     });
     // And the frame with its noise taken out, which is what everything downstream reads.
     //
-    // A second copy rather than in place, because the noise cannot be put back: the next
-    // move of a Detail slider has to denoise the *original* again, and at zero the picture
-    // has to be able to fall back to it. One frame more at the prepared size, which is the
-    // stage's rather than the sensor's.
+    // **Two buffers because the strength is a slider.** Denoising in place would be right if
+    // it happened once - and on the rendition path, where the amount is fixed before the
+    // decode runs, it does happen once and there is no second copy. Here the reader can move
+    // it, and a denoise cannot be undone: taking Luminance from 60 to 20 has to denoise the
+    // *original* at 20. In place, each move would denoise the previous result instead, so a
+    // drag would compound and there would be no way back to less.
+    //
+    // The alternative is holding the original in system memory and re-uploading it before
+    // each run, which is the same bytes crossing the bus on every frame of a drag rather
+    // than sitting in device memory. This is one frame at the *prepared* size - the stage's,
+    // not the sensor's - so a 61MP body costs what a 24MP one does.
     this.denoised = device.createBuffer({
       size: frameBytes(this.width, this.height),
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
