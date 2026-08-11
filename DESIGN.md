@@ -2279,17 +2279,17 @@ The falloff repeated the lesson at one remove, which is why the `Lens` exists ra
 
 ### 10.9 Denoise and sharpen
 
-Four settings - `raw_defringe`, `raw_denoise_luma`, `raw_denoise_chroma` and `raw_sharpen` - each off at 0 and all applied only where the RAW is actually **rendered**. A grid tile made from the camera's embedded JPEG gets none of them: the body has already denoised and sharpened it, and doing either again is doing it twice. The defringe is a lens correction rather than a cleanup and is documented in §10.8, but it runs here, first, as one of the four stages `image::finish` carries.
+**The denoise runs on the mosaic, before the demosaic, and it is a different implementation from everything else in this section.** It is documented in §10.9.1; what remains here are the two corrections that genuinely belong after a resample - `raw_defringe` and `raw_sharpen`, both library settings, both off at 0, and both applied only where the RAW is actually **rendered**. A grid tile made from the camera's embedded JPEG gets neither: the body has already sharpened it, and doing that again is doing it twice. The defringe is a lens correction rather than a cleanup and is documented in §10.8, but it runs here, first, as one of the two stages `image::finish` carries.
 
-**The two denoises are separate settings because they answer to different complaints.** Grain in luma reads as a photograph and is worth keeping some of, which is why the luma side is tuned short of what the metric would pick; colour mottle has no such defence and wants all the smoothing it can be given. One number could only ever be set to whichever of the two was more timid. They were a single `raw_denoise` before, so a database carrying it has that value copied onto both and renders exactly what it rendered before.
+Two settings stood here that no longer exist. `raw_denoise_luma` and `raw_denoise_chroma` drove a pair of guided filters on this side of the demosaic; the strength belongs to the photograph rather than to the library - a frame at 12800 and one at base ISO want different answers - so it lives in `EditDoc` now as the Detail panel's two sliders. Most of what follows about *where* the stages fall was written about those filters and still holds for the two that are left.
 
-**The stages straddle the geometric warp, and which side each falls on is measured rather than chosen.** The denoise and the defringe run on the coded base *before* the warp and before the fit; the sharpen runs after the warp and the fit-to-size, on the frame at the size it will be encoded at.
+**The stages straddle the geometric warp, and which side each falls on is measured rather than chosen.** The defringe runs on the coded base *before* the warp and before the fit; the sharpen runs after the warp and the fit-to-size, on the frame at the size it will be encoded at.
 
 The two that go first do so for two independent reasons that land in the same place.
 
 **The fit has to see the frame it will be applied to.** Fitted against the raw render instead, the colour transform is calibrated on colour the denoise then removes and nothing puts back - 22% of mean chroma, measured against the match alone - and the lateral tier measures a fringe the defringe also removes, so the two correct it twice. Reversed on IMG_8408 that overshoots from 4.22 to 84.44; fitted on the finished frame the lateral tier finds nothing left and declines by itself, and the fringe lands at 1.17 against 3.53 for the old arrangement.
 
-**And the noise is the sensor's, which the warp stops being true of.** Noise is generated at the sensor and so is spatially uniform in sensor space; the warp resamples non-uniformly by radius and breaks that, while `image::measure_noise` takes one global median and applies one sigma everywhere - an estimator for a uniform field. Measured on a synthetic flat field carrying uniform noise, median absolute high-pass on luma per radial band, corner against centre:
+**And the noise is the sensor's, which the warp stops being true of.** Noise is generated at the sensor and so is spatially uniform in sensor space; the warp resamples non-uniformly by radius and breaks that, while a global median applies one sigma everywhere - an estimator for a uniform field. Measured on a synthetic flat field carrying uniform noise, median absolute high-pass on luma per radial band, corner against centre:
 
 | | centre | mid | corner | corner/centre |
 |---|---|---|---|---|
@@ -2329,14 +2329,14 @@ That is also what lets the editor's tick be the grade alone, 16ms against 645ms:
 
 The **colour** half of the camera match still fits against the untouched linear plane. That is tolerable for one reason: `fit_plane` box-averages the decode down to twice the preview's width, which already removes most of the chroma noise a denoise would have. It is a smaller gap, not no gap.
 
-Four stages, and the order among them is not interchangeable either:
+Two stages, and the order between them is not interchangeable either:
 
-1. **Defringe**, before either denoise, because its regressor is the curvature of luma and its coefficient was fitted against the *raw* luma over the whole frame. Correcting against a cleaned one would apply a coefficient measured in one currency to a curvature denominated in another. The chroma denoise running two stages later is also where any noise a second difference amplifies gets taken back out.
-2. **Luma denoise**, a self-guided filter regularised by the frame's own measured noise, scaled by `raw_denoise_luma`.
-3. **Chroma denoise**, a guided filter on the colour differences with that cleaned luma as the guide, its radii scaled by `raw_denoise_chroma`. With stage 2 off the guide is the raw luma, which is the guided filter's ordinary case and costs only a noisier edge to follow.
-4. **Sharpen**, a Richardson-Lucy deconvolution of the cleaned luma.
+1. **Defringe**, first, because its regressor is the curvature of luma and its coefficient was fitted against the frame's luma over the whole of it. Correcting against a differently-filtered one would apply a coefficient measured in one currency to a curvature denominated in another.
+2. **Sharpen**, a Richardson-Lucy deconvolution of luma.
 
-All four run on perceptually-coded samples, never on linear ones: a difference taken in linear light is proportional to absolute luminance, so it treats a highlight and a shadow completely differently, and these all read differences. There is one coding and all four share it - normalised PQ against the frame's own diffuse white - so none of them converts anything. The first three run ahead of the warp on the shared base; the sharpen runs on the frame every rendition is cut from, after the warp and the fit-to-size that apply the blur it deconvolves and before any display's roll-off, which is what lets one sharpen serve every rendition of the photo.
+Both run on perceptually-coded samples, never on linear ones: a difference taken in linear light is proportional to absolute luminance, so it treats a highlight and a shadow completely differently, and both of these read differences. There is one coding and they share it - normalised PQ against the frame's own diffuse white - so neither converts anything. The defringe runs ahead of the warp on the shared base; the sharpen runs on the frame every rendition is cut from, after the warp and the fit-to-size that apply the blur it deconvolves and before any display's roll-off, which is what lets one sharpen serve every rendition of the photo.
+
+The denoise is upstream of all of this, on the mosaic, which is not a rearrangement of the order above but a different place in the pipeline entirely (§10.9.1). "Denoising first" was already load-bearing for the sharpen - Richardson-Lucy inverts grain as readily as blur - and it is now first by a wider margin than it was.
 
 **What that costs is that none of them run at each rendition's own output size.** They run at the largest one, so a smaller rendition inherits a filter calibrated for a bigger frame - and the chroma denoise's radii and the defringe's constants are in pixels of the frame they read. The smaller rendition is a grid tile, so the sharpen it inherits is one deconvolving a resample it did not have, softened by the downscale that follows. Nobody has measured it; it is the same trade the pre-split pipeline made when every SDR rendition came off one base.
 
@@ -2344,20 +2344,13 @@ All four run on perceptually-coded samples, never on linear ones: a difference t
 
 **Two caveats on the constants, both worth knowing before trusting them.** They were tuned on an sRGB rendition, and two of them - the coarse chroma cap and the chroma `eps` - are absolute fractions of full scale, which sRGB and PQ do not share: the HDR pair gets the same numbers and nobody has measured whether they are the right ones there. And the sharpen's point spread is justified by the resample, which the **`max` rendition never had** - it is native resolution, so a deconvolution modelled on a downscale is being applied to a frame that was not downscaled. Neither is a defect anyone has seen; both are claims this section has not earned.
 
-#### The guided filter, which is two of the three
+#### The guided filter, which was two of the four
 
-He, Sun and Tang's guided filter fits `q = a·guide + b` over every window, with `a = cov/(var + eps)`. Where the guide varies a lot - an edge - `a` goes to 1 and the output follows the guide; where it barely varies, `a` goes to 0 and the output is the local mean. The smoothing is **steered by structure rather than by distance**, which is what a Gaussian cannot do and a bilateral filter pays dearly for. It runs on box means, so it is **O(1) in the radius**: a radius-6 window costs what a radius-1 one does.
+He, Sun and Tang's guided filter fits `q = a·guide + b` over every window, with `a = cov/(var + eps)`: where the guide varies a lot the output follows it, and where it barely varies the output is the local mean. Two of the stages here used to be that filter - chroma guided by luma at two radii, and luma guided by itself - and neither exists any more. The code went with them.
 
-- **Chroma, guided by luma, at two radii.** The filter's canonical application, and it is what lets the radius grow. Luma is preserved *exactly*: red and blue are carried as differences against it and green is solved back out of the luma equation, which is YCbCr's own construction and makes "luma does not move" a property of the arithmetic rather than a hope.
-- **Luma, guided by itself.** Windows varying by less than the noise collapse to their mean; windows holding an edge keep it.
+**What it could not do is why.** It decides "signal or noise" from a *local variance*, and it can only protect an edge it can see: a red wall meeting a grey roof is a large step in colour and a small one in luma, so a 65-pixel window spanning both fitted one model across the pair and poured red onto the roof. That was bounded with an amplitude cap - the coarse pass could move a colour by no more than 2% of full scale - and bounded is not fixed. On real frames what survived the cap was a visible desaturation and a green fringe along every high-contrast edge, both at the shipped defaults, and both of them the same failure: a filter reasoning about colour it had already had smeared across neighbouring pixels by a demosaic.
 
-**Chroma noise has two scales and needs two passes.** The fine one is per-pixel speckle. The coarse one is low-frequency mottle - patches of green and magenta the size of a window - and a radius that clears the speckle cannot touch it: a 9-pixel window cannot average away a 40-pixel blotch. Radius 4 then 32, which is affordable *only* because the filter is O(1) in the radius. A Gaussian at 32 would be 97 taps a pixel and out of the question; this is most of why the filter underneath is the one it is.
-
-**The luma guide is not enough on its own at that radius, and finding out why is worth recording.** It can only protect an edge it can *see*. A red wall meeting a grey roof is a large step in colour and a small one in luma, so a 65-pixel window spanning both fits one linear model across the pair and pours red onto the roof - which is exactly what it did. Amplitude separates the two cases where the guide cannot: low-frequency chroma noise is a couple of percent, a wall against a roof is tens of percent. So the coarse pass may move a colour by no more than 2% of full scale. It removes a blotch and cannot restructure a picture - the same shape of guard as the deconvolution's anti-ringing clamp below, arrived at the same way. Measured on the roof, blotch-scale chroma energy falls 79% under the fine pass alone, 95% with the coarse pass unbounded and bleeding, and **91% bounded**.
-
-**The luma radius is set by statistics, not by composition** (`LUMA_DENOISE_RADIUS`). The filter blends on `var / (var + eps)`, so it decides "flat or detail" from a variance measured over its window - and a variance from n samples is itself uncertain by about `sqrt(2/n)`. Radius 2 is 25 samples and 29% uncertain, which lands as **patchy smoothing**: neighbouring parts of one roof come out blurred or grainy depending on which way the estimate fell, and that reads worse than the grain being removed. Radius 6 is 169 samples and 11%, and is uniform. A wider window does not blur more; what it cannot do is resolve detail narrower than itself, which is why it is not wider still.
-
-**It was tried for the sharpener too, and that is the instructive failure.** An edge-aware base layer for an unsharp mask is halo-free, which sounds like the answer - and it is halo-free *because* it keeps the edge in the base. What is left in `I − guided(I)` is texture and noise and no edge at all, so sharpening it sharpens everything except the thing that needed sharpening. The unit tests caught it before a picture did.
+**One finding from it is worth keeping.** It was tried for the sharpener too, and failed instructively: an edge-aware base layer for an unsharp mask is halo-free *because* it keeps the edge in the base, so what is left in `I − guided(I)` is texture and noise and no edge at all - sharpening everything except the thing that needed sharpening. The unit tests caught it before a picture did. That is the argument the deconvolution below rests on.
 
 #### Deconvolution, not an unsharp mask
 
@@ -2373,13 +2366,15 @@ Three things it needs to be usable here:
 
 #### The noise is measured, not predicted
 
-`image::noise_level` takes a high-pass residual and reads its **median** absolute value. The median is what makes it work on a photograph: edges and texture are a minority of pixels and arbitrarily large, so they drag a mean anywhere, while the median sits in the flat majority where the only signal is noise. It is the estimator wavelet shrinkage has used for thirty years, and it costs one box mean and a histogram.
+`image::sigma_from` takes a high-pass residual and reads its **median** absolute value. The median is what makes it work on a photograph: edges and texture are a minority of pixels and arbitrarily large, so they drag a mean anywhere, while the median sits in the flat majority where the only signal is noise. It is the estimator wavelet shrinkage has used for thirty years, and it costs one box mean and a histogram.
 
-**This replaced an ISO scaling, and is strictly better.** The ISO was there to solve a real problem - one number for a five-stop library is far too heavy at one end or does nothing at the other - but by the time the denoise runs, the frame has been demosaiced, resampled (which averages some of the noise away) and graded, possibly by several stops. None of that is in the ISO. Asking the pixels needs no reference ISO, no cap, and no special case for a body that records nothing. `the_noise_estimate_lands_where_a_real_frame_puts_it` holds the estimate to the range the filter's constants assume, on both fixtures, because an estimate an order of magnitude out would either do nothing or flatten the picture with nothing in between.
+It was the denoise's regularisation; what still asks is the **defringe**, which needs each channel's noise separately to debias its regression - green's noise enters the regressor and the response with opposite signs where red's enters only one, and a single luma figure cannot express that. The denoise fits its own model now, on the mosaic, against a physical noise process rather than against a residual (§10.9.1).
 
-#### What it is worth, per plane
+**It replaced an ISO scaling, and is strictly better.** The ISO was there to solve a real problem - one number for a five-stop library is far too heavy at one end or does nothing at the other - but by the time this runs, the frame has been demosaiced, resampled (which averages some of the noise away) and graded, possibly by several stops. None of that is in the ISO. Asking the pixels needs no reference ISO, no cap, and no special case for a body that records nothing.
 
-The metric is high-frequency energy - mean squared difference against a σ2 blur of the same crop - taken **separately on luma and chroma**, over two flat regions and one detailed one, on a 24MP EOS R10 frame shot at dusk at ISO 2000. Per-plane matters: an RGB measurement is dominated by luma, which is how an earlier version of this section certified a chroma denoise that had changed nothing visible.
+#### What the guided filters were worth, per plane
+
+**Historical: these are the numbers the denoise that used to live here scored, kept because they are what §10.9.1 has to beat and because the shape of the table is the argument.** The metric is high-frequency energy - mean squared difference against a σ2 blur of the same crop - taken **separately on luma and chroma**, over two flat regions and one detailed one, on a 24MP EOS R10 frame shot at dusk at ISO 2000. Per-plane matters: an RGB measurement is dominated by luma, which is how an earlier version of this section certified a chroma denoise that had changed nothing visible.
 
 | | flat sky | flat water | detailed roofline |
 |---|---|---|---|
@@ -2388,7 +2383,7 @@ The metric is high-frequency energy - mean squared difference against a σ2 blur
 
 That is the shape the whole section is trying to reach: noise gone from the flat regions in both planes, and the detailed one *up* despite the denoise having run over it. Decomposed on the roofline, luma HF goes 144 → 121 under the denoise alone and up to 171 once the sharpen runs - past where it started, and made of detail rather than grain.
 
-**The flat-water column is the tuning, and it is deliberately not the best number available.** At `LUMA_DENOISE_SIGMAS` 2 it reads −53% instead of −25%, and a dark roof at 100% has visibly lost its shingle texture. Grain reads as a photograph; smearing reads as a fault. The metric cannot see that difference, which is the whole reason the constant is set by looking and the number is recorded as the cost of doing so.
+**The flat-water column was the tuning, and deliberately not the best number available.** At twice the shrinkage it read −53% instead of −25%, and a dark roof at 100% had visibly lost its shingle texture. Grain reads as a photograph; smearing reads as a fault. The metric cannot see that difference, which is why the constant was set by looking and the number recorded as the cost of doing so - and it is the same reason the Detail sliders default where they do rather than higher.
 
 **This is the ceiling of the approach, and it is worth saying so.** Every artefact chased out of this chain was a local filter deciding "signal or noise" from a local statistic, and being wrong in a spatially varying way: patchy smoothing from an unstable variance, colour bleed from a guide that could not see an iso-luminant edge, ringing from a deconvolution with no noise model. Each has a guard now, and each guard is a constant that was tuned by looking. What remains on a dark roof at 100% is fine grain this class of filter cannot separate from the roof's own texture, because at that scale and amplitude there is nothing local to separate them by - and the settings are deliberately short of the point where it tries to, since the failure on that side is smearing and the failure on this side is grain.
 
@@ -2408,7 +2403,9 @@ Every stage here is *local with bounded reach*, so a strip that carries enough c
 | `full` at 3840 | 339MB | **339MB** |
 | `max` at native resolution | 540MB | **573MB** |
 
-At the rendition size it no longer costs anything measurable, and at native resolution it costs 33MB rather than a gigabyte. At `raw_denoise_chroma` 3, the schema's maximum, native resolution measures **563MB** - the same, where before the budget was solved properly it gained another ~205MB. The duplicated work at the seams - each strip also computes its halo and throws it away - is **~3%** of wall clock.
+At the rendition size it no longer costs anything measurable, and at native resolution it costs 33MB rather than a gigabyte. At the widest chroma radius the schema allowed, native resolution measured **563MB** - the same, where before the budget was solved properly it gained another ~205MB. The duplicated work at the seams - each strip also computes its halo and throws it away - is **~3%** of wall clock.
+
+The figures in this subsection were measured with the guided filters in the chain, and they were most of it: the halo is now the deconvolution's alone, so the strips are far taller and what they hold is far smaller. Nothing has re-measured them, and the machinery is unchanged - which is why they are still here rather than deleted, as an upper bound.
 
 One case the budget cannot honour: a very wide frame at a very high strength floors at `3 * halo` rows of planes, because a strip may never be thinner than its own halo. That is enforced in `finish_in_strips` rather than only where the caller picks the height, since a strip below the halo would silently take its context from rows an earlier strip had already written over - measured at an interior of 10, rows wrong by 257 counts with no panic and no seam loud enough for the equivalence test to notice.
 
@@ -2422,7 +2419,48 @@ That test is a seam check and **not** the halo's guard, which is worth stating b
 
 **~690ms for the pair, roughly doubling the job**, and the honest reading is that this is expensive - though it is time rather than memory, which the strips took care of. Two earlier versions were cheaper and worse: LibRaw's wavelet denoise cost ~400ms on its own and was invisible or waxy with nothing in between, and a chroma-only Gaussian with an unsharp mask cost ~200ms and left the luma grain that is most of what the eye objects to. The settings exist so a library that would rather have the throughput can say so.
 
-**Where the next win is, if it is ever wanted.** [GALOSH](https://arxiv.org/abs/2607.03768) (2026) is training-free and fits a Poisson-Gaussian noise model per image. It is the class of method that does not have the ceiling above, because it decides signal from noise against a fitted noise model rather than against a local variance. Its own reported figures put it ~8dB PSNR above CBM3D on SIDD sRGB and within about half a dB of trained networks on raw, at **2.5s CPU for a 15.8MP frame** - so roughly 1.6s for a 10MP rendition, two to three times this whole stage, for a stage that is already most of the job. Those are the paper's numbers rather than ones measured here, which is the standard the rest of this section is held to and this paragraph is not; it would need reproducing before anything was built on it. It would fit the on-demand `max` path far better than an import.
+**That is what §10.9.1 is.** The paragraph that stood here proposed [GALOSH](https://arxiv.org/abs/2607.03768) as "where the next win is, if it is ever wanted", on the paper's numbers rather than any measured here, and guessed it would cost two to three times this whole stage. It was built, and the guess was wrong in both directions: on a GPU it is faster than the filters it replaced, and it does not run on this side of the pipeline at all.
+
+### 10.9.1 The denoise, on the mosaic
+
+**Sensor noise is per-photosite, and a demosaic is the last moment that is true.** Interpolation averages neighbouring sites to invent the two colours each one did not record, which correlates the noise across pixels and turns a chroma error into a coloured smudge with real spatial extent. Everything §10.9 used to do about noise was downstream of that, reasoning about colour it had already had smeared - which is why the guided filters needed an amplitude cap to stop a red wall reaching a grey roof, and why a green fringe survived the cap on ordinary frames.
+
+GALOSH runs between LibRaw's `unpack` and its `dcraw_process`, on `rawdata.raw_image`, which is the only window in which the mosaic exists (`galosh::denoise`). Thirty-one WGSL compute kernels, transcribed from the reference's Vulkan port, driven by a host that follows the reference's own dispatch table.
+
+**Blind, so there is no profile to ship.** Phase 0 fits the sensor's Poisson-Gaussian model off the frame itself: the shot-noise slope from how per-block variance rises with per-block level, and the read-noise intercept from the Laplacians of the pixels the frame's own tenth percentile calls dark. darktable's equivalent is a per-camera database, which is GPL and could not be used here anyway; fitting per frame also answers the harder question, since two exposures from one body do not have the same noise.
+
+**Verified against the reference rather than by eye.** `examples/galosh_parity.rs` runs the same synthetic frame through this port and through the reference's C build at two strength pairs: **69.3 dB and 69.0 dB**, against the 69.7-70.6 dB the reference reports between its *own* CPU and Vulkan builds. Fifty dispatches of compensated summation are not bit-exact across two compilers and asking them to be would be asking the wrong question; what a transcription actually gets wrong - a transposed index, a sign, a phase skipped - lands tens of dB below that.
+
+#### One deviation, and it is the difference between shipping and not
+
+`pass12` is the shrinkage, and it is where the frame's time goes: sixteen cycle-spin phases, two passes, a 64-point transform per 8x8 block. Transcribed literally it ran a 12MP frame in **10.3s**, and a 24MP one lost the device to its watchdog.
+
+The cause is not the arithmetic. Its block lives in `float block[64]` and its median in a second 63-element array, and a GPU gives a **dynamically-indexed local array a scratch allocation in device memory** - then takes the rest of the kernel's working set with it, because they spill together. Every one of the ~2600 element accesses a block costs becomes an uncoalesced round trip. The reference's own answer is a subgroup kernel that spreads the 64 coefficients across 32 lanes; this port reaches the same place without needing subgroups, by making every index a constant: the block is sixteen `vec4f` registers, and the median is a binary search over IEEE bit patterns - exact, since the encoding of a non-negative float is monotonic in its value - rather than a partial sort.
+
+| | 12.6MP | 24MP |
+|---|---|---|
+| transcribed literally | 10.3s | device lost |
+| vector registers | **1.29s** | **2.38s** |
+
+with the parity figure unchanged. It is still ~70x off the reference's subgroup kernel, which is the next thing to do if this ever needs to be faster.
+
+Two smaller deviations, both for memory or latency rather than for speed. `k16_inverse_fused` folds the final chroma upsample into the inverse, which avoids materialising three *full-resolution* planes - 720MB at 61MP, every value of which is read once at the coordinate it was written. And `irls_seed` moves the reference's only mid-frame host readback onto the device, so a frame is one command buffer and one readback instead of three submissions with a pipeline stall between them.
+
+#### The strength belongs to the photograph
+
+`raw_denoise_luma` and `raw_denoise_chroma` were library settings. A frame at 12800 and one at base ISO want different answers, so a single setting could only ever be right for one of them: `EditDoc` carries **`luminanceNoise` and `colourNoise`** instead, 0 to 100, both defaulting to 33 - which is exactly the denoise the reference ships, and what the settings they replaced were tuned to.
+
+Separate, because the two answer to different complaints. Grain in luma reads as a photograph and is worth keeping some of; colour mottle has no such defence and wants all the smoothing it can be given. In the kernels they are genuinely different knobs rather than one scaled twice: the luma number is a shrinkage threshold in units of the frame's own fitted noise, and the colour number is a walk along four anchors - noisy, a half-resolution regression, a quarter-resolution level and an eighth - so its unit is *how far colour may be smoothed, in scales*.
+
+**X-Trans and Foveon get no denoise at all.** Every phase here pairs rows and columns into 2x2 CFA sites - the transform, the chroma extraction, the per-slot dark reference - and a 6x6 array is not that. Declining is the honest answer; a filter that assumed the wrong periodicity would produce a maze pattern rather than a denoise. The same is true of an adapter that cannot offer the 25.6KB of workgroup storage `pass12` needs, which is asked about rather than assumed, since a validation failure there would be fatal.
+
+#### The editor runs a different denoiser, deliberately
+
+The mosaic never crosses to the client. So a Detail slider cannot re-run *this*, and the editor runs the reference's **sRGB front-end** instead, on the prepared frame, per tick - nine small kernels plus the three heavy ones this path already has.
+
+**The two are not expected to agree.** The editor trades quality for latency: one measured sigma split by a fixed ratio where this fits shot and read noise separately, two chroma channels where this has three transform terms, no per-slot dark reference because a demosaiced frame has no slots. The preview is an honest approximation of the export, and where the difference matters the loupe is the place to show the real thing.
+
+That is a deliberate exception to the rule the rest of the pipeline is built on - one grade, one implementation, both hosts - and it is worth being explicit that it is an exception rather than an oversight. `gpu_parity` therefore compares the graded frame with **denoise off**; each denoiser is pinned against its own reference separately. A test asserting the two agree would be asserting something this section has decided is false.
 
 ---
 
@@ -2816,8 +2854,6 @@ the bounds; the reasoning behind each number lives beside it there.
 | `cors_origins` | `""` | Comma-separated origins allowed to call the API, or `*`. Empty means "any port on whatever host the request arrived at", so the client works on loopback and over the LAN without hardcoding an address, while an unrelated site on the internet is still refused. |
 | `processing_concurrency` | `4` | Number of worker threads for rendition generation |
 | `match_embedded_jpeg` | `true` | Give SDR renders the camera's own colour and lens correction, fitted per photo against the embedded JPEG; ~+2.4s on a 61MP frame (§10.8) |
-| `raw_denoise_luma` | `0.5` | Strength of the self-guided luma denoise on a rendered RAW, regularised by the frame's own measured noise. Half of what the metric tunes to, because at 1 fur and foliage lose the fine structure that makes them read as photographs; 0 is off (§10.9) |
-| `raw_denoise_chroma` | `1` | Radius scale for the luma-guided chroma denoise on a rendered RAW. Not halved alongside the luma side: that judgement was about brightness detail, which this filter never touches; 0 is off (§10.9) |
 | `raw_defringe` | `1` | Ceiling on the measured focus difference between channels, which is what a colour fringe at a hard edge is. The amount is fitted per frame, so a frame with the channels in focus is left untouched at any setting (§10.8) |
 | `raw_sharpen` | `0.6` | How much of a Richardson-Lucy deconvolution to blend in, once the render is at size; 0 is off, 1 is all of it (§10.9) |
 | `grid_rendition_size` | `800` | Longest edge in pixels for the grid rendition |
@@ -4286,7 +4322,7 @@ Toggling `+simd128` moves neither settle nor drag, and the reason is not that SI
 
 So the still route's 1.2s and the rewrap route's 1.7s are 80% and 60% one function, and the grade proper is a tenth of either. `finish` is not slow through carelessness - it is already rayon-parallel throughout - it is five guided-filter passes plus a Richardson-Lucy deconvolution over three f32 planes of 9.8M pixels, each allocating its own. Optimising the arithmetic of the grade, or vectorising it, addresses the 130ms.
 
-Two directions, neither taken yet and neither small: cut what `finish` costs (fewer passes, reused buffers, or the whole-frame `measure_noise` and `measure_defocus` reused across ticks instead of re-measured), or stop paying it per tick - emit the graded frame as soon as it exists and the finished one behind it, which leaves the resting picture identical and roughly quarters the perceived latency, at the price of two encodes per settle. The second is a change to the editor's contract rather than an optimisation, which is why it is written down here rather than done.
+Two directions, neither taken yet and neither small: cut what `finish` costs (fewer passes, reused buffers, or the whole-frame `measure_defocus` reused across ticks instead of re-measured), or stop paying it per tick - emit the graded frame as soon as it exists and the finished one behind it, which leaves the resting picture identical and roughly quarters the perceived latency, at the price of two encodes per settle. The second is a change to the editor's contract rather than an optimisation, which is why it is written down here rather than done.
 
 **There is no AVX to reach for, in any browser.** WebAssembly SIMD is 128-bit `v128` and nothing else; the 256-bit AVX intrinsics Emscripten documents are emulated as two 128-bit operations, which is source compatibility rather than width, and the proposal for genuinely wider vectors (flexible vectors) is unshipped everywhere. The one step up is relaxed SIMD - still 128-bit, mostly FMA and relaxed lane ops - and it is unavailable to us twice over: Safari does not support it (Chrome 114+, Firefox 146+), and Safari is a blessed platform, so the module would be refused outright there rather than degraded. Measured anyway: building with `+relaxed-simd` emits *zero* relaxed instructions and leaves the SIMD count byte-identical, so there is nothing in this module for it to improve.
 
