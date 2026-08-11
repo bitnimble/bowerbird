@@ -59,11 +59,11 @@ test('the denoise and the sharpen reach the HDR encode', () => {
   // constructed inputs; what cannot be checked there is whether anything calls them.
   const dir = mkdtempSync(path.join(tmpdir(), 'bb-hdr-finish-'));
   try {
-    const render = (name: string, denoise: number, sharpen: number): string => {
+    const render = (name: string, defringe: number, sharpen: number): string => {
       const still = path.join(dir, `${name}.avif`);
       _for_testing_encodeHdr(
         FIXTURE,
-        { outputPath: still, peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.99, crf: 40, preset: 12, maxEdge: MAX_EDGE, stillFullChroma: false, denoiseLuma: denoise, denoiseChroma: denoise, sharpen },
+        { outputPath: still, peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.99, crf: 40, preset: 12, maxEdge: MAX_EDGE, stillFullChroma: false, defringe, sharpen },
         { decodeSize: MAX_EDGE },
       );
       return still;

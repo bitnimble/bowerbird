@@ -73,8 +73,11 @@ export class QualityCheckApi {
         runJob({
           rawFilePath: getOriginalPath(library, photo.file_path),
           matchEmbeddedJpeg: settings.match_embedded_jpeg,
-          denoiseLuma: settings.raw_denoise_luma,
-          denoiseChroma: settings.raw_denoise_chroma,
+          // The document's defaults, for the same reason the exposure below is neutral:
+          // this page compares quantizers, and a denoise that varied with the library's
+          // settings would be a second variable in that measurement.
+          denoiseLuminance: 33,
+          denoiseColour: 33,
           sharpen: settings.raw_sharpen,
           defringe: settings.raw_defringe,
           // The scene as metered, deliberately. This page compares encoder settings

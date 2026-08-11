@@ -292,8 +292,9 @@ pub enum Command {
     DefringeSweep {
         path: String,
         amounts: Vec<f64>,
-        denoise_luma: f64,
-        denoise_chroma: f64,
+        /// The Detail sliders the decode denoises with, 0 to 100.
+        denoise_luminance: f64,
+        denoise_colour: f64,
         /// Long edge both the render and the preview are read at.
         size: u32,
     },
@@ -320,10 +321,6 @@ pub struct GradeSpec {
     /// they must do it to both. Used as given rather than scaled - a debug command names
     /// the numbers it wants applied.
     #[serde(default)]
-    pub denoise_luma: f64,
-    #[serde(default)]
-    pub denoise_chroma: f64,
-    #[serde(default)]
     pub sharpen: f64,
     #[serde(default)]
     pub defringe: f64,
@@ -332,8 +329,6 @@ pub struct GradeSpec {
 impl GradeSpec {
     fn strengths(&self) -> crate::image::Strengths {
         crate::image::Strengths {
-            luma: self.denoise_luma,
-            chroma: self.denoise_chroma,
             sharpen: self.sharpen,
             defringe: self.defringe,
         }
@@ -616,8 +611,10 @@ pub fn run(command: &Command) -> Result<Reply, String> {
                 ..Reply::default()
             })
         }
-        Command::DefringeSweep { path, amounts, denoise_luma, denoise_chroma, size } => {
-            defringe_sweep(path, amounts, *denoise_luma, *denoise_chroma, *size as usize)
+        Command::DefringeSweep { path, amounts, denoise_luminance, denoise_colour, size } => {
+            let denoise =
+                crate::galosh::Amounts::from_sliders(*denoise_luminance, *denoise_colour);
+            defringe_sweep(path, amounts, denoise, *size as usize)
         }
         Command::TileCrops { image_paths, output_path, window, scale } => {
             tile_crops(image_paths, output_path, *window as usize, *scale as usize)
@@ -731,11 +728,13 @@ fn changed_mask(quiet: crate::rgb::RgbRef<'_>, loud: crate::rgb::RgbRef<'_>) -> 
 fn defringe_sweep(
     path: &str,
     amounts: &[f64],
-    denoise_luma: f64,
-    denoise_chroma: f64,
+    denoise: crate::galosh::Amounts,
     size: usize,
 ) -> Result<Reply, String> {
-    let decoded = crate::decode_frame(path, 8, false, size as u32).ok_or("could not decode")?;
+    // Denoised in the decode, where production denoises: the defringe reads a second
+    // difference, so how much noise the frame still has changes what it measures.
+    let decoded = crate::decode_frame_denoised(path, 8, false, size as u32, denoise)
+        .ok_or("could not decode")?;
     let source = decoded.rgb8().ok_or("the sweep needs an 8-bit decode")?;
     // Resized here for the same reason `job.rs` does it before the finish: every constant
     // the stages use is in pixels of the frame they read.
@@ -754,12 +753,7 @@ fn defringe_sweep(
             &mut frame.data,
             frame.width,
             frame.height,
-            crate::image::Strengths {
-                luma: denoise_luma,
-                chroma: denoise_chroma,
-                sharpen: 0.0,
-                defringe: amount,
-            },
+            crate::image::Strengths { sharpen: 0.0, defringe: amount },
         );
         frame
     };

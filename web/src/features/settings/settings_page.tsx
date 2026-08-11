@@ -889,16 +889,6 @@ const AdvancedSettings = observer(function AdvancedSettings(): JSX.Element | nul
       <GroupTitle>Rendering a RAW</GroupTitle>
       <div className="panel">
         <NumberSetting
-          field="raw_denoise_luma"
-          label="Grain reduction (1 is normal, 0 is off)"
-          hint="Removes the fine grain in a dark area, and measures how much a photo actually has rather than guessing from its ISO, so a clean daylight frame is barely touched and a dusk one gets what it needs. Set on the cautious side: past about 1.5 it starts smoothing real texture, and a little grain looks better than that does."
-        />
-        <NumberSetting
-          field="raw_denoise_chroma"
-          label="Colour noise reduction (1 is normal, 0 is off)"
-          hint="Removes the blotchy colour speckle, following the brightness detail so a red wall does not bleed onto what is beside it. Safe to raise further than the grain setting: colour blotches are never something a photo wanted."
-        />
-        <NumberSetting
           field="raw_defringe"
           label="Colour fringe removal (1 is normal, 0 is off)"
           hint="Takes the purple or green rim off a hard edge. That rim is the lens focusing red, green and blue at slightly different distances, which no amount of aligning the colours can fix. How much each photo needs is measured from the photo itself, so this is a limit rather than an amount: a shot whose colours are all in focus is left alone whatever it is set to."

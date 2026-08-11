@@ -350,11 +350,10 @@ async function build(scene: Scene): Promise<void> {
     runJob({
       rawFilePath: raw,
       matchEmbeddedJpeg: SETTINGS.match_embedded_jpeg,
-      denoiseLuma: SETTINGS.raw_denoise_luma,
-      denoiseChroma: SETTINGS.raw_denoise_chroma,
       sharpen: SETTINGS.raw_sharpen,
       defringe: SETTINGS.raw_defringe,
-      // The page shows the shipped look, so the frames carry no develop settings.
+      // The page shows the shipped look, so the frames carry no develop settings - the
+      // denoise included, `AS_METERED` carrying the document's own defaults for it.
       ...AS_METERED,
       grade: {
         peakNits: SETTINGS.hdr_peak_nits,

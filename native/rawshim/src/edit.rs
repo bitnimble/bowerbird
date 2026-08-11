@@ -478,7 +478,7 @@ mod tests {
                 reference_white_nits: 203.0,
                 white_quantile: 0.995,
             },
-            strengths: Strengths { luma: 1.0, chroma: 1.0, sharpen: 1.0, defringe: 1.0 },
+            strengths: Strengths { sharpen: 1.0, defringe: 1.0 },
             matched,
             as_shot: Some(crate::white_balance::AsShot { temperature: 5200.0, tint: 4.0 }),
             // Long enough to weigh on the framing this test is about, and otherwise arbitrary:

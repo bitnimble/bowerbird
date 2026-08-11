@@ -40,6 +40,14 @@ interface SliderSpec {
   step: number;
   /** What the number reads in, where it is not a bare slider position. */
   unit?: string;
+  /**
+   * Where the reset arrow and the detent go, and what counts as untouched.
+   *
+   * Zero for every slider that runs either side of nothing. The Detail pair is what makes
+   * this a field: their document default is 33, so resetting them to 0 would hand back a
+   * picture with its noise in it and call that neutral.
+   */
+  neutral?: number;
 }
 
 /**
@@ -73,8 +81,24 @@ const EFFECTS: readonly SliderSpec[] = [
   { key: 'dehaze', label: 'Dehaze', min: -100, max: 100, step: 1 },
 ];
 
-function reading(value: number, step: number): string {
-  return `${value > 0 ? '+' : ''}${step < 1 ? value.toFixed(2) : value}`;
+/**
+ * The denoise, as Camera Raw's Detail panel names its two halves.
+ *
+ * **0 to 100 rather than -100 to 100**, unlike every slider above: there is no such thing as
+ * negative noise reduction, and a detent in the middle of a track whose left half does not
+ * exist would invite one. Their default is 33 and not 0, so the reset arrow on these two
+ * returns to a denoised picture rather than to a raw one.
+ */
+const DETAIL: readonly SliderSpec[] = [
+  { key: 'luminanceNoise', label: 'Luminance', min: 0, max: 100, step: 1, neutral: 33 },
+  { key: 'colourNoise', label: 'Colour', min: 0, max: 100, step: 1, neutral: 33 },
+];
+
+/// Signed only where the track has a negative half; `+33` on a 0-to-100 slider states a
+/// direction it has no opposite of.
+function reading(value: number, spec: SliderSpec): string {
+  const sign = spec.min < 0 && value > 0 ? '+' : '';
+  return `${sign}${spec.step < 1 ? value.toFixed(2) : value}`;
 }
 
 function Group({ title, children }: { title: string; children: React.ReactNode }): JSX.Element {
@@ -153,14 +177,15 @@ const EditSlider = observer(function EditSlider({
   presenter: RawEditPresenter;
   spec: SliderSpec;
 }): JSX.Element {
-  const value = Number(store.doc?.[spec.key] ?? 0);
+  const neutral = spec.neutral ?? 0;
+  const value = Number(store.doc?.[spec.key] ?? neutral);
 
   return (
     <EditControl
       label={spec.label}
-      value={`${reading(value, spec.step)}${spec.unit ?? ''}`}
-      dirty={value !== 0}
-      onReset={() => presenter.settle({ [spec.key]: 0 })}
+      value={`${reading(value, spec)}${spec.unit ?? ''}`}
+      dirty={value !== neutral}
+      onReset={() => presenter.settle({ [spec.key]: neutral })}
       testId={`raw-edit-${spec.key}`}
       // The exposure is what an e2e drags to prove a value reaches the server, and it needs a
       // handle on the row rather than on the panel.
@@ -173,7 +198,7 @@ const EditSlider = observer(function EditSlider({
         min={spec.min}
         max={spec.max}
         step={spec.step}
-        detent={0}
+        detent={neutral}
         label={spec.label}
         // Both conditions, not just `live`. The frame and the settings arrive separately, so a
         // read that failed leaves a live pipeline with no document to write into - and `preview`
@@ -478,6 +503,11 @@ export const RawEditPanel = observer(function RawEditPanel({
           </Group>
           <Group title="Effects">
             {EFFECTS.map((spec) => (
+              <EditSlider key={spec.key} store={store} presenter={presenter} spec={spec} />
+            ))}
+          </Group>
+          <Group title="Detail">
+            {DETAIL.map((spec) => (
               <EditSlider key={spec.key} store={store} presenter={presenter} spec={spec} />
             ))}
           </Group>

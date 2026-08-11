@@ -85,15 +85,17 @@ pub struct Target {
 pub struct Job {
     pub raw_file_path: String,
     pub match_embedded_jpeg: bool,
-    /// The two denoise strengths and the fraction of the deconvolution to blend in
-    /// (`raw_denoise_luma`, `raw_denoise_chroma`, `raw_sharpen`, §10.9). All three belong
-    /// to the render rather than to one rendition of it, so every target gets the same set.
+    /// The Detail panel's two sliders, 0 to 100, exactly as `EditDoc` stores them (§10.9).
     ///
-    /// None is scaled here. How much noise a frame actually has is measured off its
-    /// own pixels where the filters run (`image::measure_noise`), which is why nothing on
-    /// this side needs its ISO.
-    pub denoise_luma: f64,
-    pub denoise_chroma: f64,
+    /// They drive the denoise on the *mosaic*, inside the decode (`crate::galosh`), which
+    /// is why they are on the job rather than on a target: every rendition is cut from one
+    /// decode, so they could not differ between targets even if a caller asked.
+    ///
+    /// Nothing is scaled here or on the way in. How much noise the frame has is fitted off
+    /// its own photosites, which is why neither side needs its ISO.
+    pub denoise_luminance: f64,
+    pub denoise_colour: f64,
+    /// The fraction of the deconvolution to blend in (`raw_sharpen`, §10.9).
     pub sharpen: f64,
     /// How hard to take the colour off a fringing edge (`raw_defringe`, §10.9). Longitudinal
     /// aberration is a focus difference rather than a magnification one, so the warp cannot
@@ -133,11 +135,14 @@ fn upright() -> crate::image::Geometry {
 }
 
 impl Job {
+    /// The denoise, in the units its kernels read.
+    fn amounts(&self) -> crate::galosh::Amounts {
+        crate::galosh::Amounts::from_sliders(self.denoise_luminance, self.denoise_colour)
+    }
+
     /// Every stage's strength, as the library has them set.
     fn strengths(&self) -> Strengths {
         Strengths {
-            luma: self.denoise_luma,
-            chroma: self.denoise_chroma,
             sharpen: self.sharpen,
             defringe: self.defringe,
         }
@@ -253,8 +258,11 @@ struct Base {
 
 impl Base {
     fn build(job: &Job, size: u32) -> Result<Base, String> {
-        let frame = crate::decode_frame(&job.raw_file_path, 16, true, size)
-            .ok_or("could not decode the RAW scene-linear")?;
+        // Denoised inside the decode, on the mosaic, which is the only place the noise is
+        // still one photosite's own (`crate::galosh`).
+        let frame =
+            crate::decode_frame_denoised(&job.raw_file_path, 16, true, size, job.amounts())
+                .ok_or("could not decode the RAW scene-linear")?;
         let (width, height) = (frame.width, frame.height);
 
         // Fitted once, before anything is written: every rendition of one photo has to get

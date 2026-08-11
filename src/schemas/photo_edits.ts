@@ -54,6 +54,18 @@ export const EditDocSchema = z
     // renaming it *here* would cost the import its identity mapping instead.
     saturation: z.number().int().min(-100).max(100).default(0),
 
+    // Detail. Both are positions on a slider rather than a strength in anything: the
+    // rendition's denoise reads them as GALOSH's own two knobs (`galosh::Amounts`) and the
+    // editor's reads them as its cheaper sRGB-domain twin, so a single physical unit here
+    // would be a unit belonging to one of the two.
+    //
+    // **They default to on.** 33 is exactly the reference denoiser's own defaults - a luma
+    // shrinkage of 0.5 and a colour walk of 1.0 - which is where the setting these replaced
+    // was tuned to. Grain in luma reads as a photograph and is worth keeping some of, where
+    // colour mottle has no such defence, which is why the two are separate at all.
+    luminanceNoise: z.number().int().min(0).max(100).default(33),
+    colourNoise: z.number().int().min(0).max(100).default(33),
+
     // White balance. The mode is an open enum in the file - `As Shot`, `Auto`,
     // `Daylight`, `Custom` and a user preset name are all legal - so it is a string.
     whiteBalanceMode: WhiteBalanceModeSchema,

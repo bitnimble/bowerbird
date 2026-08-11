@@ -141,7 +141,7 @@ struct Case {
 
 fn cases() -> Vec<Case> {
     let grade = hdr::Grade { peak_nits: 1000.0, reference_white_nits: 203.0, white_quantile: 0.995 };
-    let strengths = Strengths { luma: 1.0, chroma: 1.0, sharpen: 1.0, defringe: 1.0 };
+    let strengths = Strengths { sharpen: 1.0, defringe: 1.0 };
     let samples = scene();
     let levels = tone::levels(&samples, grade.white_quantile);
 
@@ -524,7 +524,7 @@ fn the_encode_pass_reproduces_the_cpu_frame() {
 
     let grade =
         hdr::Grade { peak_nits: 1000.0, reference_white_nits: 203.0, white_quantile: 0.995 };
-    let strengths = Strengths { luma: 1.0, chroma: 1.0, sharpen: 1.0, defringe: 1.0 };
+    let strengths = Strengths { sharpen: 1.0, defringe: 1.0 };
     let samples = scene();
     let levels = tone::levels(&samples, grade.white_quantile);
 
@@ -601,7 +601,7 @@ fn the_rolled_arm_reproduces_the_cpu_grade() {
 
     let grade =
         hdr::Grade { peak_nits: 1000.0, reference_white_nits: 203.0, white_quantile: 0.995 };
-    let strengths = Strengths { luma: 1.0, chroma: 1.0, sharpen: 1.0, defringe: 1.0 };
+    let strengths = Strengths { sharpen: 1.0, defringe: 1.0 };
     let samples = scene();
     let levels = tone::levels(&samples, grade.white_quantile);
 
@@ -1233,7 +1233,7 @@ fn the_encode_pass_reproduces_the_cpu_sdr_frame() {
     // for an SDR target.
     let grade =
         hdr::Grade { peak_nits: 203.0, reference_white_nits: 203.0, white_quantile: 0.995 };
-    let strengths = Strengths { luma: 1.0, chroma: 1.0, sharpen: 1.0, defringe: 1.0 };
+    let strengths = Strengths { sharpen: 1.0, defringe: 1.0 };
     let samples = scene();
     let levels = tone::levels(&samples, grade.white_quantile);
 

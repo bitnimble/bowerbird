@@ -69,56 +69,24 @@ export const SettingsSchema = z.object({
   // wrong picture, and the cost is a fraction of the decode it rides along with.
   // Turn it off for an import where throughput matters more.
   match_embedded_jpeg: z.boolean().default(true),
-  // What every rendered RAW gets before any rendition is cut from it (§10.9). All
-  // are off when 0, and none touches a rendition made from the camera's own JPEG:
-  // that one arrives denoised and sharpened by the body already.
+  // What every rendered RAW gets before any rendition is cut from it (§10.9). Both are
+  // off when 0, and neither touches a rendition made from the camera's own JPEG: that one
+  // arrives sharpened by the body already.
   //
-  // The two denoises are strengths, 0 being off. They drive two guided filters:
-  // `raw_denoise_luma` regularises one on luma by the frame's **own measured noise**, and
-  // `raw_denoise_chroma` sets the radii of one on chroma guided by that cleaned luma.
-  // Colour noise is blotchy and takes a wide radius; luma noise is per-pixel grain and
-  // takes a narrow one, and guiding the colour by the luma is what lets its radius grow
-  // without washing a red wall onto the white window frames beside it.
-  //
-  // **Separate because the two answer to different complaints.** Grain in luma reads as
-  // a photograph and is worth keeping some of, where colour mottle has no such defence
-  // and wants all the smoothing it can be given - so the setting that has to stay timid
-  // is not the one that should be holding the other back.
-  //
-  // Which is why they default differently. The single knob they replaced was tuned to 1
-  // and then halved, on the judgement that fur and foliage lose the fine structure that
-  // makes them read as photographs - a complaint about *luma*, since the chroma filter
-  // moves no brightness at all. So the luma side inherits that halving and the chroma
-  // side keeps the tuned 1, which is what having two knobs was for.
-  //
-  // **No ISO scaling, because the noise is measured rather than predicted.** It was
-  // scaled by ISO first, and measurement answers the same question better: by the time
-  // this runs the frame has been demosaiced, resampled - which averages some of the
-  // noise away - and graded, possibly by several stops, and none of that is in the ISO.
+  // **The denoise is not here.** It belongs to the photograph rather than to the library -
+  // a frame at 12800 and one at base ISO want different answers, and a single setting
+  // could only ever be right for one of them - so it lives in the edit document as the
+  // Detail panel's two sliders. What it replaced was a pair of guided filters on the far
+  // side of the demosaic, tuned by two settings that stood here; the denoise runs on the
+  // mosaic now, where the noise is still one photosite's own.
   //
   // `raw_sharpen` blends in a **Richardson-Lucy deconvolution** of luma, applied last,
   // once the frame is at the size it will be encoded at. An unsharp mask has no model of
   // what softened the picture and gets its halo from the overshoot it leaves; this one
   // inverts the point spread the resample applied, so 1.0 is the deconvolution as
   // computed rather than an arbitrary gain. Denoising first is not optional - RL will
-  // invert grain as readily as blur.
-  //
-  // **The luma denoise is tuned short of what the metric would pick**, on purpose: set
-  // where a dark roof keeps its texture rather than where flat water is quietest, because
-  // grain reads as a photograph and smearing reads as a fault. Raise it above about 1.5
-  // and the second starts happening.
-  //
-  // The default is half of what that tuning landed on, which is a judgement about fur
-  // and foliage rather than about the metric: at 1 the frames this was checked against
-  // lose the fine structure that makes them read as photographs, and what the colour fit
-  // needs from a denoise it already has at 0.5.
-  //
-  // Two earlier versions are worth not repeating. LibRaw's wavelet denoise on the CFA had
-  // the better position in the pipeline and could not be made to work at any setting; and
-  // a chroma-only Gaussian blur, which fixed the colour mottle and left the luma grain
-  // that is most of what the eye objects to (§10.9).
-  raw_denoise_luma: z.number().min(0).max(3).default(0.5),
-  raw_denoise_chroma: z.number().min(0).max(3).default(1),
+  // invert grain as readily as blur - which is why the denoise is upstream of the whole
+  // of this.
   raw_sharpen: z.number().min(0).max(1).default(0.6),
   // A **ceiling** on the colour fringe correction, not the amount of it (§10.8).
   //

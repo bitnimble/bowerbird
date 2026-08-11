@@ -47,14 +47,19 @@ export interface Job {
   rawFilePath: string;
   matchEmbeddedJpeg: boolean;
   /**
-   * The base render, before any rendition of it (§10.9): the two denoise strengths, 1
-   * being the tuned default, and how much of a deconvolution to blend in for the
-   * sharpen, 0 to 1. All belong to the render rather than to a rendition, so every
-   * target shares them, and all are unitless - how much noise the frame has is measured
-   * off its own pixels on the far side, not passed in.
+   * The Detail panel's two sliders, 0 to 100, exactly as `EditDoc` stores them (§10.9).
+   *
+   * Positions rather than strengths, and carried unconverted for the same reason the
+   * exposure below is: the denoise that reads them is on the far side, it is a different
+   * denoise from the editor's, and a number converted here would be in one of their units.
    */
-  denoiseLuma: number;
-  denoiseChroma: number;
+  denoiseLuminance: number;
+  denoiseColour: number;
+  /**
+   * How much of a deconvolution to blend into the sharpen, 0 to 1. Belongs to the render
+   * rather than to a rendition, so every target shares it, and unitless - how much noise
+   * the frame has is measured off its own pixels on the far side, not passed in.
+   */
   sharpen: number;
   defringe: number;
   /**

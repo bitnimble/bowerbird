@@ -150,9 +150,9 @@ export class ImageApi {
         referenceWhiteNits: settings.hdr_reference_white_nits,
         whiteQuantile: settings.hdr_white_quantile,
       },
+      // No denoise: the frame the editor is handed carries its noise, and the client
+      // removes it in its own tick so the Detail sliders can move without a re-open.
       strengths: {
-        luma: settings.raw_denoise_luma,
-        chroma: settings.raw_denoise_chroma,
         sharpen: settings.raw_sharpen,
         defringe: settings.raw_defringe,
       },

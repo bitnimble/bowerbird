@@ -25,6 +25,10 @@ const WORKER_URL = new URL('./processing_worker.ts', import.meta.url).href;
 /** No exposure, no adjustment, whole frame: the picture as the camera made it. */
 export const AS_METERED = {
   exposure: 0,
+  // The document's own defaults rather than zero. A photo nobody has edited is denoised, as
+  // it was when this was a library-wide setting; "as metered" is about the *grade*.
+  denoiseLuminance: 33,
+  denoiseColour: 33,
   adjust: {
     contrast: 0,
     highlights: 0,
@@ -61,7 +65,13 @@ export const AS_METERED = {
  * rendition of the picture as the camera metered it is a worse rendition than the reader
  * asked for and a far better outcome than a photo that never builds one.
  */
-function developed(edits: string | null): { exposure: number; adjust: JobAdjust; geometry: JobGeometry } {
+function developed(edits: string | null): {
+  exposure: number;
+  denoiseLuminance: number;
+  denoiseColour: number;
+  adjust: JobAdjust;
+  geometry: JobGeometry;
+} {
   if (edits == null) return AS_METERED;
   try {
     const parsed = EditDocSchema.safeParse(JSON.parse(edits));
@@ -69,6 +79,8 @@ function developed(edits: string | null): { exposure: number; adjust: JobAdjust;
     const doc = parsed.data;
     return {
       exposure: doc.exposure,
+      denoiseLuminance: doc.luminanceNoise,
+      denoiseColour: doc.colourNoise,
       adjust: {
         contrast: doc.contrast,
         highlights: doc.highlights,
@@ -316,11 +328,14 @@ export class ProcessingService {
   }
 
   // What the render itself gets, before any rendition is cut from it (§10.9).
-  private render(): { denoiseLuma: number; denoiseChroma: number; sharpen: number; defringe: number } {
+  //
+  // The denoise is not here any more: it belongs to the photograph rather than to the
+  // library, since a frame at 12800 and one at base ISO want different answers and a single
+  // setting could only be right for one of them. It rides with the rest of the document,
+  // through `developed`.
+  private render(): { sharpen: number; defringe: number } {
     const settings = this.settings.get();
     return {
-      denoiseLuma: settings.raw_denoise_luma,
-      denoiseChroma: settings.raw_denoise_chroma,
       sharpen: settings.raw_sharpen,
       defringe: settings.raw_defringe,
     };

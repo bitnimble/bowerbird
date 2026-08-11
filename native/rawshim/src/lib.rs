@@ -62,6 +62,8 @@ pub mod edit;
 pub mod ffi;
 pub mod fit;
 pub mod frame;
+/// The denoise, on the mosaic, before anything has averaged a neighbour into it.
+pub mod galosh;
 pub mod gpu;
 pub mod hdr;
 pub mod hdr_args;
@@ -553,6 +555,30 @@ pub fn decode_frame(
         rec2020_linear,
         at_least_long_edge,
         false,
+        galosh::Amounts::default(),
+    )
+}
+
+/// The same decode, with the mosaic denoised before it is demosaiced.
+///
+/// Its own entry point rather than a parameter on every decode, because only a rendition
+/// asks for it: the editor's frame crosses to a client that denoises on its own, in its own
+/// domain and at whatever cost a tick can afford, and the two answers are deliberately not
+/// the same one (DESIGN 10.9).
+pub fn decode_frame_denoised(
+    path: &str,
+    depth: u32,
+    rec2020_linear: bool,
+    at_least_long_edge: u32,
+    amounts: galosh::Amounts,
+) -> Option<frame::Frame> {
+    decode_frame_via(
+        DecodeSource::Path(path),
+        depth,
+        rec2020_linear,
+        at_least_long_edge,
+        false,
+        amounts,
     )
 }
 
@@ -568,6 +594,7 @@ pub fn decode_frame_bytes(
         rec2020_linear,
         at_least_long_edge,
         false,
+        galosh::Amounts::default(),
     )
 }
 
@@ -596,6 +623,7 @@ pub fn _for_testing_decode_frame_reference(
         rec2020_linear,
         at_least_long_edge,
         true,
+        galosh::Amounts::default(),
     )
 }
 
@@ -605,6 +633,7 @@ fn decode_frame_via(
     rec2020_linear: bool,
     at_least_long_edge: u32,
     reference: bool,
+    amounts: galosh::Amounts,
 ) -> Option<frame::Frame> {
     if depth != 8 && depth != 16 {
         return None;
@@ -618,6 +647,7 @@ fn decode_frame_via(
                 rec2020_linear,
                 at_least_long_edge,
                 reference,
+                amounts,
             )
         }
         DecodeSource::Bytes(bytes) => decode_with_libraw(
@@ -626,6 +656,7 @@ fn decode_frame_via(
             rec2020_linear,
             at_least_long_edge,
             reference,
+            amounts,
         ),
     }
 }
@@ -633,6 +664,93 @@ fn decode_frame_via(
 enum Opened<'a> {
     Path(&'a std::ffi::CStr),
     Bytes(&'a [u8]),
+}
+
+/// The mosaic denoised in place, between LibRaw's unpack and its demosaic.
+///
+/// Declines rather than fails, in every case where it cannot help: no adapter, an adapter
+/// under the denoise's workgroup-storage floor, a sensor whose filter array does not tile
+/// into 2x2 sites, or a frame too small for the chroma pyramid. The photograph decodes
+/// either way; what changes is whether its noise came out with it.
+///
+/// **X-Trans and Foveon get nothing.** Every phase of GALOSH pairs rows and columns into
+/// 2x2 CFA sites - the transform, the chroma extraction, the per-slot dark reference - and
+/// a 6x6 array is not that. Declining is the honest answer; a filter that assumed the wrong
+/// periodicity would produce a maze pattern rather than a denoise.
+///
+/// # Safety
+/// `r` must be a live `libraw_data_t` with `unpack` already run and `dcraw_process` not.
+#[expect(unsafe_code)]
+unsafe fn denoise_mosaic(r: *mut raw::libraw_data_t, amounts: galosh::Amounts) {
+    if !amounts.does_anything() {
+        return;
+    }
+    let idata = &unsafe { (*r).idata };
+    // dcraw's own test: X-Trans reports 9, a full-colour sensor 0, and every Bayer array is
+    // a large bit pattern.
+    if idata.filters < 1000 || idata.colors != 3 {
+        return;
+    }
+
+    let sizes = &unsafe { (*r).sizes };
+    let stride = match sizes.raw_pitch {
+        0 => sizes.raw_width as usize,
+        pitch => pitch as usize / 2,
+    };
+    // Trimmed to whole sites. An odd last row or column keeps its noise, which beats
+    // denoising it against the wrong filter colour.
+    let width = (sizes.raw_width as usize) & !1;
+    let height = (sizes.raw_height as usize) & !1;
+    // Below the eighth-resolution chroma level the reference skips its own pyramid; there
+    // is no such frame in a photo library, so declining is simpler than the special case.
+    if width < 64 || height < 64 || stride < width {
+        return;
+    }
+
+    let image = unsafe { (*r).rawdata.raw_image };
+    if image.is_null() {
+        return;
+    }
+    let Some(gpu) = gpu::device() else {
+        return;
+    };
+    let Some(kernels) = galosh::device(gpu) else {
+        return;
+    };
+
+    // The window the samples are normalised into. GALOSH fits its own per-slot dark
+    // reference in Phase 2, so the *residue* of a black level that is not quite right is
+    // measured and removed rather than baked in - which is why one scalar is enough here
+    // where the demosaic downstream wants LibRaw's whole per-channel table.
+    let colour = &unsafe { (*r).color };
+    let black = colour.black + colour.cblack[..4].iter().copied().min().unwrap_or(0);
+    let white = colour.maximum;
+    if white <= black {
+        return;
+    }
+    let floor = black as f32;
+    let range = (white - black) as f32;
+
+    let mut mosaic = Vec::with_capacity(width * height);
+    for row in 0..height {
+        let line = unsafe { std::slice::from_raw_parts(image.add(row * stride), width) };
+        mosaic.extend(line.iter().map(|v| (f32::from(*v) - floor) / range));
+    }
+
+    galosh::denoise(gpu, kernels, &mut mosaic, width, height, amounts);
+
+    for row in 0..height {
+        let line = unsafe { std::slice::from_raw_parts_mut(image.add(row * stride), width) };
+        for (sample, denoised) in line.iter_mut().zip(&mosaic[row * width..]) {
+            // A sample at or above saturation is left exactly as it was. The denoise clamps
+            // its own output to the window, so passing a clipped highlight through it would
+            // pull it *down* to `maximum` and take the headroom the highlight recovery
+            // downstream reads with it.
+            if *sample < white as u16 {
+                *sample = (denoised * range + floor).round().clamp(0.0, 65535.0) as u16;
+            }
+        }
+    }
 }
 
 impl Opened<'_> {
@@ -654,6 +772,7 @@ fn decode_with_libraw(
     rec2020_linear: bool,
     at_least_long_edge: u32,
     reference: bool,
+    amounts: galosh::Amounts,
 ) -> Option<frame::Frame> {
     let r = unsafe { raw::libraw_init(0) };
     if r.is_null() {
@@ -700,7 +819,15 @@ fn decode_with_libraw(
                     (*r).params.output_color = OUTPUT_SRGB;
                 }
 
-                if raw::libraw_unpack(r) != 0 || raw::libraw_dcraw_process(r) != 0 {
+                if raw::libraw_unpack(r) != 0 {
+                    return None;
+                }
+                // Between the unpack and the demosaic, which is the only moment the mosaic
+                // exists: `dcraw_process` reads `rawdata.raw_image` into `imgdata.image`
+                // and interpolates it, and after that every sample is an average of its
+                // neighbours and the noise with it.
+                denoise_mosaic(r, amounts);
+                if raw::libraw_dcraw_process(r) != 0 {
                     return None;
                 }
 

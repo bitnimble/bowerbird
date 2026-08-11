@@ -13,9 +13,13 @@ import { ptr } from 'bun:ffi';
 import { shim } from './rawshim';
 import type { JobGrade } from './rawshim_job';
 
+/**
+ * What the open applies before the frame crosses.
+ *
+ * No denoise: it runs on the mosaic for a rendition and in the client's own tick for the
+ * editor, so a frame prepared here carries its noise deliberately.
+ */
 export interface EditStrengths {
-  luma: number;
-  chroma: number;
   sharpen: number;
   defringe: number;
 }

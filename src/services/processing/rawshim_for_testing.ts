@@ -140,11 +140,9 @@ export interface GradeSpec {
   stillFullChroma?: boolean;
   outputPath?: string;
   /**
-   * The render's denoises and sharpen (§10.9). Absent means none of them, which is what
-   * the pins want; a test that needs the HDR half of that stage exercised passes them.
+   * The render's sharpen and defringe (§10.9). Absent means neither, which is what the
+   * pins want; a test that needs the HDR half of that stage exercised passes them.
    */
-  denoiseLuma?: number;
-  denoiseChroma?: number;
   sharpen?: number;
   defringe?: number;
 }
@@ -206,11 +204,18 @@ export function _for_testing_tileCrops(
 export function _for_testing_defringeSweep(
   path: string,
   amounts: number[],
-  denoiseLuma: number,
-  denoiseChroma: number,
+  denoiseLuminance: number,
+  denoiseColour: number,
   size: number,
 ): DefringeSweep {
-  const reply = ask({ kind: 'defringeSweep', path, amounts, denoiseLuma, denoiseChroma, size });
+  const reply = ask({
+    kind: 'defringeSweep',
+    path,
+    amounts,
+    denoiseLuminance,
+    denoiseColour,
+    size,
+  });
   if (reply?.defringeSweep == null) throw new Error(`no sweep for ${path}`);
   return reply.defringeSweep;
 }

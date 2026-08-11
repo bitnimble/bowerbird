@@ -56,7 +56,7 @@ function runJob(job: RenditionJob): Promise<ProcessingResult> {
 async function render(
   matchEmbeddedJpeg: boolean,
   name: string,
-  render: { denoiseLuma: number; denoiseChroma: number; sharpen: number; defringe: number } = { denoiseLuma: 0, denoiseChroma: 0, sharpen: 0, defringe: 0 },
+  render: { denoiseLuminance: number; denoiseColour: number; sharpen: number; defringe: number } = { denoiseLuminance: 0, denoiseColour: 0, sharpen: 0, defringe: 0 },
 ): Promise<string> {
   const outputPath = path.join(root, `${name}.avif`);
   const result = await runJob({
@@ -129,7 +129,12 @@ test(
     // properly; what cannot be checked there is whether anything calls them.
     const [plain, processed] = await Promise.all([
       render(false, 'unprocessed'),
-      render(false, 'processed', { denoiseLuma: 1, denoiseChroma: 1, sharpen: 0.6, defringe: 1 }),
+      render(false, 'processed', {
+        denoiseLuminance: 100,
+        denoiseColour: 100,
+        sharpen: 0.6,
+        defringe: 1,
+      }),
     ]);
 
     expect(readFileSync(processed).equals(readFileSync(plain))).toBe(false);

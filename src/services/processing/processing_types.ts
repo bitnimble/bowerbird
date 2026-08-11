@@ -78,9 +78,12 @@ export interface RenditionJob {
    * Noise reduction and output sharpening for the render (§10.9), the same for every
    * target and for the same reason as `matchEmbeddedJpeg`: they describe the picture
    * this photo renders to, so the grid tile and the full view cannot disagree.
+   *
+   * The two denoise numbers are the Detail panel's slider positions, 0 to 100, and come
+   * from the photo's own document; the sharpen and the defringe are library settings.
    */
-  denoiseLuma: number;
-  denoiseChroma: number;
+  denoiseLuminance: number;
+  denoiseColour: number;
   sharpen: number;
   defringe: number;
   /**

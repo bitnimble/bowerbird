@@ -48,9 +48,9 @@ pub async fn prepared(path: &str) -> Result<Vec<u8>, String> {
             reference_white_nits: number(&settings, "hdr_reference_white_nits")?,
             white_quantile: number(&settings, "hdr_white_quantile")?,
         },
+        // No denoise here: the frame crosses to the webview carrying its noise, and the
+        // client removes it in its own tick so the Detail sliders move without a re-open.
         strengths: rawshim::image::Strengths {
-            luma: number(&settings, "raw_denoise_luma")?,
-            chroma: number(&settings, "raw_denoise_chroma")?,
             sharpen: number(&settings, "raw_sharpen")?,
             defringe: number(&settings, "raw_defringe")?,
         },
@@ -88,8 +88,8 @@ fn parse(path: &str) -> Result<(String, u32), String> {
 /// One setting, or a failed open.
 ///
 /// No fallback, deliberately. There were seven, and three of them had drifted from the
-/// schema that resolves these - `raw_denoise_luma` 1.0 against 0.5, `raw_sharpen` 1.0
-/// against 0.6, `hdr_white_quantile` 0.995 against 0.9 - so the shell and the library
+/// schema that resolves these - `raw_sharpen` 1.0 against 0.6, `hdr_white_quantile` 0.995
+/// against 0.9 - so the shell and the library
 /// could grade the same photograph differently and nothing would say so. `/api/settings`
 /// answers with every value already resolved, so a key missing here is a version
 /// disagreement worth reporting rather than a number worth guessing.
