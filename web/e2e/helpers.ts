@@ -36,6 +36,16 @@ export async function addLibrary(
   // flight together can land in either order and leave the setting wherever the
   // slower one put it.
   if (options.autoStack !== true) await setAutoStack(page, rootPath, false);
+  // Renditions default to a full HDR render, which is minutes of work per frame
+  // on the fixture and is not what most specs are looking at; they assert against
+  // the embedded JPEG, which the sync lifts straight out of the RAW. The specs
+  // that want the render switch back with `setRenditionSource`.
+  await setRenditionSource(page, rootPath, 'Embedded JPEG');
+  // Adding a library starts its import (§9.8), which is running under the library's
+  // defaults while the two settings above are being written. Stopped rather than
+  // waited out: what it was building is not what the spec asked for, and its own
+  // sync re-imports whatever this run did not reach.
+  await stopSync(page, rootPath);
 }
 
 // Folders / renditions / stacks sit behind this disclosure so Settings stays
@@ -78,6 +88,19 @@ export async function setViewerRendition(page: Page, rendition: string): Promise
 export async function syncLibrary(page: Page, rootPath: string): Promise<void> {
   await page.goto('/settings');
   await libraryRow(page, rootPath).getByRole('button', { name: /Sync/ }).click();
+}
+
+// Stops whatever the library is doing, and returns once the row offers Sync again
+// - the two share a slot, so a spec that clicked Sync while the run it stopped
+// was still settling would hit the Stop button instead.
+async function stopSync(page: Page, rootPath: string): Promise<void> {
+  const stop = libraryRow(page, rootPath).getByRole('button', { name: 'Stop' });
+  // The status is reported from the poll rather than from the create's answer, so
+  // the button takes a tick to appear. Not an assertion: a run short enough to be
+  // over before the first poll needs no stopping.
+  await stop.waitFor({ state: 'visible', timeout: 5_000 }).catch(() => {});
+  if (await stop.isVisible()) await stop.click();
+  await expect(libraryRow(page, rootPath).getByRole('button', { name: 'Sync now' })).toBeVisible({ timeout: 30_000 });
 }
 
 // Waits on the Settings page until the run has finished and the catalogue has

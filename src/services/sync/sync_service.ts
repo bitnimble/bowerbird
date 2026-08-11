@@ -80,7 +80,7 @@ interface ProcessingBatch {
 export type MetadataExtractor = (absPath: string) => Promise<FileMetadata>;
 
 /** Who asked for a run, so an unexplained sync in the log names its own cause. */
-export type SyncTrigger = 'api' | 'watcher' | 'daily';
+export type SyncTrigger = 'api' | 'watcher' | 'daily' | 'created';
 
 // Which shoots have to restate what they hold after mirroring made new ones, and
 // in which order. A shoot's claim covers its whole subtree, so an ancestor's is a
@@ -164,8 +164,16 @@ export class SyncService implements LibraryLifecycleListener {
     return libraryScope(library, this.folderRules.pathsWithRule(library.id, 'excluded'));
   }
 
-  onLibraryCreated(_library: Library): void {
-    // No action: sync is triggered on demand (POST /sync) or by the watcher.
+  // A library that has just been added holds nothing until something walks its
+  // tree, and the answer to "where are my photographs" cannot be a second button
+  // (§9.8). Not awaited: the create request answers as soon as the row exists,
+  // while the import - minutes on a first run - reports through the status
+  // endpoint like any other sync. The status is set before the first await, so a
+  // client that polls the moment its create returns sees the run, not 'idle'.
+  onLibraryCreated(library: Library): void {
+    void this.syncLibrary(library.id, undefined, 'created').catch((err: unknown) => {
+      log.error('the first sync of a new library failed', { library: library.id, err });
+    });
   }
 
   // Drop the deleted library's in-memory status/generation so those maps don't

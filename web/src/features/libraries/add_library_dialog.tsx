@@ -32,7 +32,7 @@ export const AddLibraryDialog = observer(function AddLibraryDialog({
   onOpenChange: (open: boolean) => void;
 }): JSX.Element {
   const store = useLibrariesStore();
-  const { libraries } = usePresenters();
+  const { libraries, sync } = usePresenters();
   const [browser, setBrowser] = useState(newBrowser);
   const [path, setPath] = useState('');
   const [name, setName] = useState('');
@@ -104,7 +104,12 @@ export const AddLibraryDialog = observer(function AddLibraryDialog({
     // the box is the answer, so tick it: the reader can press Add again rather
     // than work out what an error about permissions wants from them.
     if (readOnlyRoot) setReadOnly(true);
-    if (created) onOpenChange(false);
+    if (created == null) return;
+    onOpenChange(false);
+    // The server starts the import as the row lands (§9.8), so the strip is
+    // pointed at it rather than waiting for someone to press Sync at a run that
+    // is already going.
+    void sync.watch(created.id);
   }
 
   return (

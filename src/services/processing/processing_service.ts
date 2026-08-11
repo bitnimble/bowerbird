@@ -23,7 +23,7 @@ import { RENDITION_EXTENSION, renditionDirs, type Rendition } from './renditions
 const WORKER_URL = new URL('./processing_worker.ts', import.meta.url).href;
 
 /** No exposure, no adjustment, whole frame: the picture as the camera made it. */
-const AS_METERED = {
+export const AS_METERED = {
   exposure: 0,
   adjust: {
     contrast: 0,

@@ -33,6 +33,7 @@ import { join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 import { Readable } from 'node:stream';
 import { SettingsSchema } from '../src/schemas/settings';
+import { AS_METERED } from '../src/services/processing/processing_service';
 import { runJob, type JobTarget } from '../src/services/processing/rawshim_job';
 
 interface Scene {
@@ -82,7 +83,7 @@ function outputPath(slug: string, hdr: boolean): string {
 function target(slug: string): JobTarget {
   return {
     rendition: 'full',
-    hdr: true,
+    output: 'pq',
     outputPath: outputPath(slug, true),
     size: LONG_EDGE,
     source: 'render',
@@ -353,6 +354,8 @@ async function build(scene: Scene): Promise<void> {
       denoiseChroma: SETTINGS.raw_denoise_chroma,
       sharpen: SETTINGS.raw_sharpen,
       defringe: SETTINGS.raw_defringe,
+      // The page shows the shipped look, so the frames carry no develop settings.
+      ...AS_METERED,
       grade: {
         peakNits: SETTINGS.hdr_peak_nits,
         referenceWhiteNits: SETTINGS.hdr_reference_white_nits,
