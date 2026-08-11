@@ -1324,7 +1324,16 @@ mod hdr_grade {
             crate::tone::encode_base(&mut coded, levels, REFERENCE);
             let source =
                 crate::hdr::Source { samples: &coded, width: decoded.width, height: decoded.height };
-            let scene = crate::tone::SceneGrade::new(m.map(|m| &m.colour), levels, REFERENCE, 1.0);
+            // As the camera rendered it, and upright: this measures the resample, not anybody's
+            // edit of it.
+            let scene = crate::tone::SceneGrade::new(
+                m.map(|m| &m.colour),
+                levels,
+                REFERENCE,
+                1.0,
+                crate::gpu::Adjust::none(),
+                None,
+            );
             let sized = |edge: f64| {
                 crate::hdr_args::target_size(
                     frame.width as u32,
@@ -1335,10 +1344,11 @@ mod hdr_grade {
             let (large, small) = (sized(1600.0), sized(800.0));
 
             // Cut at 1600 and taken down, against cut at 800 outright.
-            let mut shared = crate::hdr::Cut::from_base(&source, m.map(|m| &m.lens), large);
+            let geometry = crate::image::Geometry::none();
+            let mut shared = crate::hdr::Cut::from_base(&source, m.map(|m| &m.lens), large, geometry);
             shared.sharpen(0.0);
             let shared = shared.downscale(small);
-            let mut own = crate::hdr::Cut::from_base(&source, m.map(|m| &m.lens), small);
+            let mut own = crate::hdr::Cut::from_base(&source, m.map(|m| &m.lens), small, geometry);
             own.sharpen(0.0);
 
             assert_eq!((shared.width, shared.height), (own.width, own.height));
