@@ -44,6 +44,39 @@ const BLOCK: usize = 8;
 /// neighbours instead.
 const MIN_BLOCKS: usize = 20;
 
+/// What a demosaiced frame's noise is worth against what a Laplacian reads off it.
+///
+/// **The estimator here and the threshold in `pass12` do not measure the same thing, and this is
+/// the ratio between them.** A three-tap Laplacian's MAD becomes a sigma through `0.6745 * √6`,
+/// which is derived for *independent* samples. Adjacent pixels of a demosaiced frame are not
+/// independent: two thirds of every pixel was interpolated from its neighbours, so they share
+/// noise and the Laplacian cancels much of it. The shrinkage has no such luck - it thresholds
+/// against the MAD of a block's Walsh-Hadamard coefficients, where the correlated part is
+/// present in full - so a sigma read this way is far below the noise the shrinkage is actually
+/// looking at, and a slider position that should have meant "remove all of it" removed a third.
+///
+/// Calibrated against the mosaic path rather than derived, because what it has to reproduce is
+/// that path's *answer*: at Detail 40, on 480px crops, the luma roughness the editor is left
+/// with against the rendition of the same crop.
+///
+/// | ISO | before | after | rendition |
+/// |---|---|---|---|
+/// | 25600 | 1.87 | 1.25 | 1.26 |
+/// | 2000 | 3.41 | 1.17 | 0.78 |
+/// | 100 | 0.82 | 0.65 | 0.35 |
+///
+/// It lands on the pushed frame and stays short on the clean ones, which is the direction to be
+/// wrong in twice over: the absolute noise there is nothing anybody is looking at, and a preview
+/// that under-denoises shows grain the export will not have where one that over-denoised would
+/// promise detail the export cannot keep.
+///
+/// **The gap that is left is not this constant's to close.** A mosaic is denoised before the
+/// demosaic correlates anything, so the rendition starts from a quieter frame than the editor
+/// can ever be handed - 3.11 against 4.79 on the ISO 2000 crop with the denoise off entirely.
+/// Raising this further only smears; the editor asymptotes around 1.0 there whatever it is set
+/// to.
+const DEMOSAIC_CORRELATION: f32 = 3.0;
+
 /// What a tick is told about its input's noise.
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -146,7 +179,12 @@ fn envelope(sigmas: &mut [f32]) -> Option<f32> {
 /// both run before this.
 pub fn measure(samples: &[u16], width: usize, height: usize) -> Noise {
     let (binned, alpha, sigma_sq) = sample(samples, width, height);
-    Noise { stabilised: typical(&binned), alpha, sigma_sq }
+    // Only `stabilised` is corrected. It is the one the shrinkage divides by, and so the one
+    // that has to be in the units `pass12` thresholds in; `alpha` and `sigma_sq` parameterise
+    // the transform the plane is measured *through*, and scaling those would move the domain
+    // rather than the threshold.
+    let stabilised = typical(&binned).map_or(1e-6, |sigma| (sigma * DEMOSAIC_CORRELATION).max(1e-6));
+    Noise { stabilised, alpha, sigma_sq }
 }
 
 /// One level bin: the noise of its quiet blocks, and how many blocks fell in it.
@@ -202,20 +240,23 @@ pub fn sample(samples: &[u16], width: usize, height: usize) -> (Vec<Bin>, f32, f
 /// magnitude from the low midtones to white, so an unweighted middle is a statement about the
 /// *scale* rather than about the photograph - a frame with a bright sky and a frame shot at
 /// night would get similar answers from it. Weighting puts the number where the content is.
-fn typical(binned: &[Bin]) -> f32 {
+/// `None` where no bin held enough blocks to measure, which is a frame the denoise declines
+/// rather than one whose noise is very small - the difference matters, because a floor that had
+/// been through [`DEMOSAIC_CORRELATION`] would no longer read as "nothing".
+fn typical(binned: &[Bin]) -> Option<f32> {
     let measured: Vec<&Bin> = binned.iter().filter(|bin| bin.sigma.is_some()).collect();
     let total: usize = measured.iter().map(|bin| bin.blocks).sum();
     if total == 0 {
-        return 1e-6;
+        return None;
     }
     let mut seen = 0usize;
     for bin in &measured {
         seen += bin.blocks;
         if seen * 2 >= total {
-            return bin.sigma.unwrap_or(1e-6).max(1e-6);
+            return bin.sigma;
         }
     }
-    1e-6
+    None
 }
 
 #[cfg(test)]

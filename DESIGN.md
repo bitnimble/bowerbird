@@ -2476,15 +2476,21 @@ The mosaic never crosses to the client. So a Detail slider cannot re-run *this*,
 
 What it buys is a sigma that **means something on this photograph**. The prepared frame is PQ-coded, and in PQ a frame's noise against level falls hard: on an ISO 25600 frame the stabilised sigma runs from 1.9 in the low midtones to under 0.01 near white, because PQ compresses the highlights faster than shot noise grows into them. A quantile over the whole frame - what the tick used to take - is therefore a quantile of nothing in particular, landing wherever that frame's histogram happens to sit. Binning by level and then collapsing by how many blocks each bin holds gives the noise of a *typical block* instead, with texture excluded inside each bin. On the ISO 25600 frame, as the luma roughness a 480px crop is left with:
 
-| Detail | the tick's own quantile | measured in prepare | the rendition |
+**And then the number has to be in the units the shrinkage thresholds in, which it was not.** A three-tap Laplacian's MAD becomes a sigma through a constant derived for *independent* samples, and adjacent pixels of a demosaiced frame are anything but - two thirds of every pixel was interpolated from its neighbours, so they share noise and the Laplacian cancels much of it. `pass12` has no such luck: it thresholds against the MAD of a block's Walsh-Hadamard coefficients, where the correlated part is there in full. So the sigma read off the frame was far below the noise the shrinkage was looking at, and "remove all of it" removed a third. `noise::DEMOSAIC_CORRELATION` is the ratio, calibrated against the mosaic path rather than derived from it.
+
+Luma roughness a 480px crop is left with at Detail 40, through `examples/renders`:
+
+| ISO | before | after | the rendition |
 |---|---|---|---|
-| 0 | 4.45 | 4.45 | 4.31 |
-| 40 | 4.06 | **1.30** | 1.48 |
-| 100 | 2.76 | **0.95** | 0.82 |
+| 25600 | 1.87 | **1.25** | 1.26 |
+| 2000 | 3.41 | **1.17** | 0.78 |
+| 100 | 0.82 | **0.65** | 0.35 |
 
-The preview was barely denoising and now lands beside the export, which is what a preview is for.
+It lands on the pushed frame and stays short on the clean ones, which is the direction to be wrong in twice over: the absolute noise there is nothing anybody is looking at, and a preview that under-denoises shows grain the export will not have, where one that over-denoised would promise detail the export cannot keep.
 
-**The level dependence is real and is deliberately not applied.** An intermediate version shipped the whole curve and divided the plane by the sigma of each pixel's own level, which is worse than useless: the divisor's spatial variation *is* the image's gradient, and writing it into the plane whose local deviation `pass12` then measures inflates `mad_sigma_y_sq`, inflates `sigma_x_sq` with it, and collapses lambda. At full strength that left 3.89 where one sigma of the same magnitude leaves 0.95 - it had stopped denoising. A per-level threshold has to reach `pass12` as a threshold chosen *per block*, against an unscaled plane. That is worth doing; it is not a change to make in passing, because the kernel is shared with the mosaic path and pinned against the reference.
+**The gap left on the quieter frames is not a tuning error.** A mosaic is denoised before the demosaic correlates anything, so a rendition starts from a quieter frame than the editor can ever be handed - 3.11 against 4.79 on the ISO 2000 crop with the denoise off entirely. The editor asymptotes near 1.0 there whatever the sigma is set to, and raising it further only smears.
+
+**The level dependence is real and is deliberately not applied.** An intermediate version shipped the whole curve and divided the plane by the sigma of each pixel's own level, which is worse than useless: the divisor's spatial variation *is* the image's gradient, and writing it into the plane whose local deviation `pass12` then measures inflates `mad_sigma_y_sq`, inflates `sigma_x_sq` with it, and collapses lambda. At full strength that left 3.89 where one sigma of the same magnitude leaves 0.95 on the same crop - it had stopped denoising. A per-level threshold has to reach `pass12` as a threshold chosen *per block*, against an unscaled plane. That is worth doing; it is not a change to make in passing, because the kernel is shared with the mosaic path and pinned against the reference.
 
 That is a deliberate exception to the rule the rest of the pipeline is built on - one grade, one implementation, both hosts - and it is worth being explicit that it is an exception rather than an oversight. `gpu_parity` therefore compares the graded frame with **denoise off**; each denoiser is pinned against its own reference separately. A test asserting the two agree would be asserting something this section has decided is false.
 

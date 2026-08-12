@@ -49,7 +49,7 @@ fn options() -> EncodeOptions {
 /// The rendition path: denoised inside the decode, on the mosaic, then fitted and graded.
 ///
 /// `job::Base::build` in miniature, at the sensor's own size.
-fn rendition(path: &str, detail: f64) -> (Vec<u8>, usize, usize) {
+fn rendition(path: &str, detail: f64, _sigma_scale: f32) -> (Vec<u8>, usize, usize) {
     let amounts = rawshim::galosh::Amounts::from_sliders(detail, detail);
     let frame = rawshim::decode_frame_denoised(path, 16, true, 0, amounts).expect("decode");
     let samples = frame.samples16().expect("16-bit").to_vec();
@@ -60,7 +60,7 @@ fn rendition(path: &str, detail: f64) -> (Vec<u8>, usize, usize) {
 ///
 /// The measurement is `crate::noise`'s, exactly as `edit::prepare` attaches it, because the tick
 /// is handed a sigma rather than measuring one.
-fn editor(path: &str, detail: f64) -> (Vec<u8>, usize, usize) {
+fn editor(path: &str, detail: f64, sigma_scale: f32) -> (Vec<u8>, usize, usize) {
     let frame = rawshim::decode_frame(path, 16, true, 0).expect("decode");
     let samples = frame.samples16().expect("16-bit");
     let source = Source { samples, width: frame.width, height: frame.height };
@@ -93,7 +93,13 @@ fn editor(path: &str, detail: f64) -> (Vec<u8>, usize, usize) {
     filter(&mut prepared, Strengths { sharpen: strengths().sharpen, ..Default::default() });
 
     // Handed a sigma rather than measuring one, which is what `edit::prepare` attaches.
-    let noise = rawshim::noise::measure(&prepared.samples, prepared.width, prepared.height);
+    //
+    // `--sigma-scale` multiplies it, which is how the two paths were calibrated against each
+    // other: the slider is a fraction *of this*, so what a position means depends entirely on
+    // it being right, and the way to find out what right is was to sweep it against the
+    // rendition rather than to reason about the estimator.
+    let mut noise = rawshim::noise::measure(&prepared.samples, prepared.width, prepared.height);
+    noise.stabilised *= sigma_scale;
     let gpu = rawshim::gpu::device().expect("an adapter");
     let chain = rawshim::galosh_srgb::device(gpu).expect("this adapter runs the editor's denoise");
     rawshim::galosh_srgb::denoise(
@@ -147,10 +153,14 @@ fn main() {
     let path = args.next().expect("a raw path");
     let out = args.next().expect("an output directory");
     let mut detail = 40.0;
+    let mut sigma_scale = 1.0f32;
     let mut crops: Vec<(usize, usize, usize)> = Vec::new();
     while let Some(flag) = args.next() {
         match flag.as_str() {
             "--detail" => detail = args.next().expect("a number").parse().expect("a number"),
+            "--sigma-scale" => {
+                sigma_scale = args.next().expect("a number").parse().expect("a number");
+            }
             "--crop" => {
                 let spec = args.next().expect("x,y,side");
                 let n: Vec<usize> =
@@ -163,12 +173,12 @@ fn main() {
     std::fs::create_dir_all(&out).expect("the output directory");
 
     for (name, render) in [
-        ("rendition", rendition as fn(&str, f64) -> (Vec<u8>, usize, usize)),
+        ("rendition", rendition as fn(&str, f64, f32) -> (Vec<u8>, usize, usize)),
         ("editor", editor),
     ] {
         eprintln!("{name} at detail {detail}:");
         let started = std::time::Instant::now();
-        let (data, width, height) = render(&path, detail);
+        let (data, width, height) = render(&path, detail, sigma_scale);
         eprintln!("  {width}x{height} in {}ms", started.elapsed().as_millis());
         let whole = rawshim::rgb::RgbRef { width, height, data: &data };
 
