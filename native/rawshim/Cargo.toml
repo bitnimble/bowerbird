@@ -100,3 +100,6 @@ codegen-units = 1
 
 [build-dependencies]
 bindgen = "0.72"
+
+[dev-dependencies]
+rawler = { path = "../vendor/dnglab/rawler" }

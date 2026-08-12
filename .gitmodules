@@ -1,0 +1,3 @@
+[submodule "native/vendor/dnglab"]
+	path = native/vendor/dnglab
+	url = https://github.com/bitnimble/dnglab.git
