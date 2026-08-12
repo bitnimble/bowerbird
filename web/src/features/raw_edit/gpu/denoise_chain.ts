@@ -34,8 +34,17 @@ const PASS12_TILE = 28;
 export interface DenoiseAmounts {
   luma: number;
   blend: number;
-  chroma: number;
 }
+
+/**
+ * The ridge the chroma regression is damped by, which is not a control.
+ *
+ * The reference calls it `loess_strength` and runs it at 1.0, which is where the damping
+ * matches the noise it fitted. The Colour slider mixes the regression's answer in against
+ * the pixel's own instead: how *far* to trust a fit is a different question from how well
+ * it is regularised, and only the first is a matter of taste.
+ */
+const LOESS_RIDGE = 1.0;
 
 export interface DenoiseChain {
   /** Everything to destroy with the pipeline. */
@@ -195,7 +204,7 @@ export function buildDenoiseChain(
       ints.set([npix, P_SIGMA_GAT], at(7));
       ints[at(8)] = npix;
       ints.set([width, height], at(9));
-      floats[at(9) + 2] = amounts.chroma;
+      floats[at(9) + 2] = LOESS_RIDGE;
       floats[at(9) + 3] = amounts.blend;
       ints[at(9) + 4] = LOESS_RADIUS;
       ints[at(10)] = npix;

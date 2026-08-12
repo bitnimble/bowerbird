@@ -101,24 +101,25 @@ export const GALOSH = {
 /**
  * How the Detail sliders' 0-100 reach the kernels.
  *
- * The luma number is a shrinkage threshold in units of the frame's own fitted noise, so its
- * top is where the reference's goes soft. The colour number is split in two: its first
- * third mixes the regression in against the pixel's own chroma, and past that it widens the
- * ridge the regression is damped by - which is what lets one control run from "none" to
- * "as smooth as this window can make it" without a discontinuity where the two meet.
+ * **Both are linear over the whole track, which took a rewrite to arrive at.** The first
+ * version split the colour control in two - a dry/wet mix over its first third, then a
+ * widening ridge - and the arithmetic of that put the entire usable range below 33: fully
+ * wet at a third of the way along, with the rest of the track doing damage. Measured on an
+ * ISO 25600 frame, everything past the first sixth of the track was smearing texture the
+ * picture needed. One number, one behaviour, monotone.
+ *
+ * `luma` is a shrinkage threshold in units of the frame's *own* fitted noise, since the
+ * plane is normalised to unit sigma before the shrinkage runs. That is worth knowing before
+ * choosing the top of its range: a fixed slider position is already ISO-adaptive, so 1.0
+ * would mean "throw away everything within one sigma" on a frame whose sigma is 3.5% of
+ * full scale. 0.4 is where the worst frame in the test library still keeps its texture.
  */
 export function denoiseAmounts(luminance: number, colour: number): {
   luma: number;
   blend: number;
-  chroma: number;
 } {
-  const l = Math.min(Math.max(luminance, 0), 100) / 100;
-  const c = Math.min(Math.max(colour, 0), 100) / 100;
-  return {
-    luma: l * 1.5,
-    blend: Math.min(c * 3, 1),
-    chroma: Math.max(c * 3, 1),
-  };
+  const on = (value: number) => Math.min(Math.max(value, 0), 100) / 100;
+  return { luma: on(luminance) * 0.4, blend: on(colour) };
 }
 
 // The detail blur's working size used to be a rule here too, alongside `gpu::detail_size`, and

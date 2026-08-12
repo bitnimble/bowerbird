@@ -681,15 +681,18 @@ enum Opened<'a> {
 /// # Safety
 /// `r` must be a live `libraw_data_t` with `unpack` already run and `dcraw_process` not.
 #[expect(unsafe_code)]
-unsafe fn denoise_mosaic(r: *mut raw::libraw_data_t, amounts: galosh::Amounts) {
+unsafe fn denoise_mosaic(
+    r: *mut raw::libraw_data_t,
+    amounts: galosh::Amounts,
+) -> Option<galosh::NoiseModel> {
     if !amounts.does_anything() {
-        return;
+        return None;
     }
     let idata = &unsafe { (*r).idata };
     // dcraw's own test: X-Trans reports 9, a full-colour sensor 0, and every Bayer array is
     // a large bit pattern.
     if idata.filters < 1000 || idata.colors != 3 {
-        return;
+        return None;
     }
 
     let sizes = &unsafe { (*r).sizes };
@@ -704,19 +707,15 @@ unsafe fn denoise_mosaic(r: *mut raw::libraw_data_t, amounts: galosh::Amounts) {
     // Below the eighth-resolution chroma level the reference skips its own pyramid; there
     // is no such frame in a photo library, so declining is simpler than the special case.
     if width < 64 || height < 64 || stride < width {
-        return;
+        return None;
     }
 
     let image = unsafe { (*r).rawdata.raw_image };
     if image.is_null() {
-        return;
+        return None;
     }
-    let Some(gpu) = gpu::device() else {
-        return;
-    };
-    let Some(kernels) = galosh::device(gpu) else {
-        return;
-    };
+    let gpu = gpu::device()?;
+    let kernels = galosh::device(gpu)?;
 
     // The window the samples are normalised into. GALOSH fits its own per-slot dark
     // reference in Phase 2, so the *residue* of a black level that is not quite right is
@@ -726,7 +725,7 @@ unsafe fn denoise_mosaic(r: *mut raw::libraw_data_t, amounts: galosh::Amounts) {
     let black = colour.black + colour.cblack[..4].iter().copied().min().unwrap_or(0);
     let white = colour.maximum;
     if white <= black {
-        return;
+        return None;
     }
     let floor = black as f32;
     let range = (white - black) as f32;
@@ -737,7 +736,7 @@ unsafe fn denoise_mosaic(r: *mut raw::libraw_data_t, amounts: galosh::Amounts) {
         mosaic.extend(line.iter().map(|v| (f32::from(*v) - floor) / range));
     }
 
-    galosh::denoise(gpu, kernels, &mut mosaic, width, height, amounts);
+    let model = galosh::denoise(gpu, kernels, &mut mosaic, width, height, amounts);
 
     for row in 0..height {
         let line = unsafe { std::slice::from_raw_parts_mut(image.add(row * stride), width) };
@@ -751,6 +750,7 @@ unsafe fn denoise_mosaic(r: *mut raw::libraw_data_t, amounts: galosh::Amounts) {
             }
         }
     }
+    Some(model)
 }
 
 impl Opened<'_> {
@@ -826,7 +826,7 @@ fn decode_with_libraw(
                 // exists: `dcraw_process` reads `rawdata.raw_image` into `imgdata.image`
                 // and interpolates it, and after that every sample is an average of its
                 // neighbours and the noise with it.
-                denoise_mosaic(r, amounts);
+                let noise = denoise_mosaic(r, amounts);
                 if raw::libraw_dcraw_process(r) != 0 {
                     return None;
                 }
@@ -905,6 +905,7 @@ fn decode_with_libraw(
                 // carry no trace of what was divided out of them.
                 built.as_shot =
                     white_balance::as_shot(&(*r).color.cam_mul, &(*r).color.cam_xyz);
+                built.noise = noise;
                 Some(built)
             }
         })()

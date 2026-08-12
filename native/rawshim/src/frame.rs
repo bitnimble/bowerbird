@@ -63,11 +63,18 @@ pub struct Frame {
     /// carry no trace of what was divided out of them. None where the file recorded
     /// nothing usable, which is the same case `camera_multipliers` declines.
     pub as_shot: Option<crate::white_balance::AsShot>,
+    /// The sensor's noise, as the denoise fitted it off this frame's mosaic.
+    ///
+    /// None where the decode did not denoise - no adapter, a filter array that does not
+    /// tile into 2x2 sites, or an amount of zero. It is the only physical description of
+    /// this photograph's noise anything downstream has, and unlike the ISO it can tell a
+    /// pushed exposure from a clean one.
+    pub noise: Option<crate::galosh::NoiseModel>,
 }
 
 impl Frame {
     pub fn new(width: usize, height: usize, pixels: Pixels) -> Frame {
-        Frame { width, height, pixels, halved: false, direct: false, as_shot: None }
+        Frame { width, height, pixels, halved: false, direct: false, as_shot: None, noise: None }
     }
 
     /// The 8-bit samples, borrowed. None for a 16-bit frame.

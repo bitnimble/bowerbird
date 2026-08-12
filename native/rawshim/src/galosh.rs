@@ -360,16 +360,41 @@ pub struct Amounts {
     pub colour: f32,
 }
 
+/// The sensor's noise, as Phase 0 fitted it off this frame.
+///
+/// A physical model rather than a slider position: the variance of a photosite reading a
+/// signal `s` is `alpha * s + sigma_sq`, shot noise and read noise, both in the units the
+/// mosaic was normalised into. Fitted from the frame's own statistics - the slope of
+/// per-block variance against per-block level, and the Laplacians of the pixels its own
+/// tenth percentile calls dark - so it needs no per-body profile and does not consult the
+/// ISO, which by itself cannot tell a pushed exposure from a clean one.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NoiseModel {
+    pub alpha: f32,
+    pub sigma_sq: f32,
+}
+
+impl NoiseModel {
+    /// The noise a mid-grey photosite carries, as a standard deviation in [0, 1].
+    ///
+    /// One number for "how noisy is this frame", at the level where a denoise is judged.
+    /// The reference uses the same statistic to decide a frame is clean enough to skip.
+    pub fn at_mid_grey(&self) -> f32 {
+        (self.alpha * 0.5 + self.sigma_sq).max(0.0).sqrt()
+    }
+}
+
 impl Amounts {
     /// The Detail panel's two sliders, 0 to 100, in the units the kernels read.
     ///
-    /// The two ends are the reference's own: its luma shrinkage is tuned around 0.5 and
-    /// goes soft past about 1.5, and its colour walk is defined on 0 to 3. So 33 - the
-    /// document's default - is exactly the denoise the reference ships.
+    /// Scaled so the document's default of 40 lands on exactly the denoise the reference
+    /// ships - a luma shrinkage of 0.5 and a colour walk of 1.0 - rather than putting that
+    /// at a third of the way along and leaving the rest of the track to overshoot it. The
+    /// top is 1.25 and 2.5, which is inside the range the reference tuned over.
     pub fn from_sliders(luminance: f64, colour: f64) -> Amounts {
         Amounts {
-            luma: (luminance.clamp(0.0, 100.0) / 100.0 * 1.5) as f32,
-            colour: (colour.clamp(0.0, 100.0) / 100.0 * 3.0) as f32,
+            luma: (luminance.clamp(0.0, 100.0) / 100.0 * 1.25) as f32,
+            colour: (colour.clamp(0.0, 100.0) / 100.0 * 2.5) as f32,
         }
     }
 
@@ -427,7 +452,7 @@ pub fn denoise(
     width: usize,
     height: usize,
     amounts: Amounts,
-) {
+) -> NoiseModel {
     assert!(width % 2 == 0 && height % 2 == 0, "the mosaic's dimensions pair into 2x2 sites");
     assert_eq!(mosaic.len(), width * height, "one sample per photosite");
 
@@ -478,7 +503,14 @@ pub fn denoise(
     let full_a = plane("galosh in_gat / L_cs_den", npix);
     let full_b = plane("galosh L_cs / L_pixel", npix);
 
-    let params = plane("galosh params", 32);
+    // Copied back with the frame: what Phase 0 fitted is the only physical description of
+    // this photograph's noise anything has, and a caller choosing an amount wants it.
+    let params = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("galosh params"),
+        size: 32 * 4,
+        usage: storage | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
     let lut_d = plane("galosh lut_d", 4096);
     let lut_x = plane("galosh lut_x", 4096);
     let lut_params = plane("galosh lut_params", 8);
@@ -525,6 +557,12 @@ pub fn denoise(
     let readback = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("galosh readback"),
         size: (npix * 4) as u64,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let fitted = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("galosh fitted model"),
+        size: 32 * 4,
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
@@ -801,10 +839,13 @@ pub fn denoise(
         run(&galosh.k16_inverse_fused, &g, k16_final, fx, fy);
     }
     encoder.copy_buffer_to_buffer(&raw, 0, &readback, 0, (npix * 4) as u64);
+    encoder.copy_buffer_to_buffer(&params, 0, &fitted, 0, 32 * 4);
     gpu.queue.submit([encoder.finish()]);
 
     let slice = readback.slice(..);
+    let model_slice = fitted.slice(..);
     slice.map_async(wgpu::MapMode::Read, |_| {});
+    model_slice.map_async(wgpu::MapMode::Read, |_| {});
     device.poll(wgpu::PollType::wait_indefinitely()).expect("the denoise finished");
     {
         let mapped = slice.get_mapped_range().expect("the readback mapped");
@@ -812,7 +853,17 @@ pub fn denoise(
             *sample = f32::from_ne_bytes([word[0], word[1], word[2], word[3]]);
         }
     }
+    let model = {
+        let mapped = model_slice.get_mapped_range().expect("the model mapped");
+        let at = |slot: usize| {
+            let word = &mapped[slot * 4..slot * 4 + 4];
+            f32::from_ne_bytes([word[0], word[1], word[2], word[3]])
+        };
+        NoiseModel { alpha: at(13), sigma_sq: at(14) }
+    };
     readback.unmap();
+    fitted.unmap();
+    model
 }
 
 #[cfg(test)]

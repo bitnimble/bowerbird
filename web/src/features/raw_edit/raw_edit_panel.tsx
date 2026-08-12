@@ -86,12 +86,12 @@ const EFFECTS: readonly SliderSpec[] = [
  *
  * **0 to 100 rather than -100 to 100**, unlike every slider above: there is no such thing as
  * negative noise reduction, and a detent in the middle of a track whose left half does not
- * exist would invite one. Their default is 33 and not 0, so the reset arrow on these two
+ * exist would invite one. Their default is 40 and not 0, so the reset arrow on these two
  * returns to a denoised picture rather than to a raw one.
  */
 const DETAIL: readonly SliderSpec[] = [
-  { key: 'luminanceNoise', label: 'Luminance', min: 0, max: 100, step: 1, neutral: 33 },
-  { key: 'colourNoise', label: 'Colour', min: 0, max: 100, step: 1, neutral: 33 },
+  { key: 'luminanceNoise', label: 'Luminance', min: 0, max: 100, step: 1, neutral: 40 },
+  { key: 'colourNoise', label: 'Colour', min: 0, max: 100, step: 1, neutral: 40 },
 ];
 
 /// Signed only where the track has a negative half; `+33` on a 0-to-100 slider states a
