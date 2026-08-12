@@ -46,6 +46,7 @@ recording pipeline that can build the uniform, and assertions on slots.
 Only claims that need the real thing:
 
 - **A GPU was acquired and drew** - `grades on the GPU`, and the camera match crossing to it.
+  That a frame *arrived*, not what it looks like: see below for looking at it.
 - **A pointer gesture on a real element** - the crop rectangle taking a drag, touch targets on a
   phone. These need hit-testing and a layout engine.
 - **The browser itself** - history entries, routing, reload, `?edit` handling.
@@ -54,6 +55,35 @@ Only claims that need the real thing:
 If a Playwright test's assertion could be written against a presenter, a store or a pure
 function, it belongs in `bun test` instead. Opening a RAW costs a native decode; the same claim
 usually costs a millisecond one layer down.
+
+### Looking at a picture never needs a browser
+
+**Do not open the editor in Playwright and screenshot the canvas.** Both the editor's view and a
+rendition are render specifications - a decode, a set of edits, a size - and both render natively:
+
+```
+cargo run --release --manifest-path native/rawshim/Cargo.toml --example renders -- \
+  <raw> <out-dir> --detail 40 --crop 3060,2254,480
+```
+
+It writes `rendition-*.jpg` and `editor-*.jpg` for the same frame coordinates at 1:1, with the
+luma roughness of each, in about ten seconds for the pair. The screenshot route costs a
+Playwright run, a zoom to 100% and a pan for every region, and then compares two pictures that
+were graded differently unless you were careful.
+
+What makes it possible is that nothing about either flow is the browser's:
+
+- `hdr::graded_as` is the rendition, exactly as `job::Base::build` assembles it.
+- `gpu.rs` runs the **same grade WGSL** the client does - `tests/gpu_fixture.rs` is the pin - so
+  `gpu.encode(frame, grade)` is the editor's tick. Note it takes a frame that is *already* coded
+  and warped; `graded_as` codes for itself, and handing it a prepared frame codes it twice and
+  gives a flat, lifted picture.
+- `galosh_srgb.rs` runs the **same denoise kernels** as `denoise_chain.ts`, so the editor's Detail
+  sliders are answerable here too.
+
+The editor path in `renders.rs` mirrors `edit::open` step for step - fit, code, filter, warp,
+sharpen, denoise - because skipping the warp compares two crops of two geometries, and that
+looks exactly like a denoise difference.
 
 ### Component tests
 

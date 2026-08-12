@@ -64,6 +64,7 @@ pub mod fit;
 pub mod frame;
 /// The denoise, on the mosaic, before anything has averaged a neighbour into it.
 pub mod galosh;
+pub mod galosh_srgb;
 pub mod gpu;
 pub mod hdr;
 pub mod hdr_args;
