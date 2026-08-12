@@ -57,6 +57,7 @@ pub mod avif;
 pub mod camera_match;
 #[cfg(feature = "renditions")]
 pub mod debug;
+pub mod decode_rawler;
 pub mod demosaic;
 /// The editor's open half. The tick that follows it is the client's GPU.
 pub mod edit;
@@ -653,6 +654,20 @@ fn decode_frame_cropped(
 ) -> Option<frame::Frame> {
     if depth != 8 && depth != 16 {
         return None;
+    }
+    // The decoder without LibRaw, where it has been asked for and can serve this call. It reads a
+    // path, produces 16-bit scene-linear, and demosaics on the GPU; the 8-bit sRGB route, the
+    // in-memory sources and the tile crop are still LibRaw's, so those fall through.
+    if decode_rawler::wanted()
+        && depth == 16
+        && rec2020_linear
+        && !reference
+        && crop.is_none()
+        && at_least_long_edge == 0
+        && let DecodeSource::Path(path) = source
+        && let Some(frame) = decode_rawler::decode(path, amounts)
+    {
+        return Some(frame);
     }
     match source {
         DecodeSource::Path(path) => {

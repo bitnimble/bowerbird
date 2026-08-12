@@ -60,6 +60,9 @@ required-features = ["renditions"]
 # (§0.2, §0.2.1, §0.2.3) and in DESIGN §10.3 and §10.9; the code is at `ef8dade`.
 
 [dependencies]
+# Our fork, vendored as a submodule. It reads every format the product imports and is the
+# decoder behind `BOWERBIRD_DECODER=rawler`.
+rawler = { path = "../vendor/dnglab/rawler" }
 fast_image_resize = "6.1.0"
 # The intermediate a photo's renditions share: nits between the colour transform and the
 # roll-off (`image::Sample for f16`). Conversion only - no feature of it is wanted.
@@ -102,4 +105,3 @@ codegen-units = 1
 bindgen = "0.72"
 
 [dev-dependencies]
-rawler = { path = "../vendor/dnglab/rawler" }
