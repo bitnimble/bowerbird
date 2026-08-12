@@ -174,3 +174,8 @@ web/src/wasm/
 # this keeps them out of commits, which a squash otherwise sweeps them into.
 .scratch-*
 
+# Rendered records used to hold one pipeline against another. Regenerable, and
+# large: `examples/baseline.rs` writes them.
+.baseline/
+OVERNIGHT_LOG.md
+

@@ -212,7 +212,8 @@ tQ(r, c) = E_P(r, c) / ( E_P(r, c) + E_Q(r, c) )        the diagonal field
 ```
 
 Both lie in `[0, 1]`. The naming reflects how they are consumed: **high energy in a direction means
-that direction is a bad one to interpolate along**, so `tH`, large when vertical energy dominates; is used as the weight of the *horizontal* estimate. Likewise `tQ` weights the *anti-diagonal*
+that direction is a bad one to interpolate along**, so `tH` (large when vertical energy dominates)
+is used as the weight of the *horizontal* estimate. Likewise `tQ` weights the *anti-diagonal*
 estimate. Every consumer of these fields blends as
 
 ```
@@ -562,7 +563,7 @@ biases the direction decision exactly where there is least evidence.
 |---|---|---|
 | Input (§2.2) | clamp below | 0 |
 | Directional energy (§3.3) | floor before forming the ratio | `ε² = 1e-10` |
-| Refined blend weight (§3.5) | clamp to `[0, 1]` |, |
+| Refined blend weight (§3.5) | clamp to `[0, 1]` | n/a |
 | Every gradient (§5.1, §6.1, §7.1) | additive term, making each ≥ `ε` and each denominator ≥ `2ε` | `ε = 1e-5` |
 | Low-pass ratio denominator (§5.2) | additive term | `ε = 1e-5` |
 | Stage outputs (§5.3, §6.2, §7.2) | clamp to `[0, 1]` | optional, see notes |
@@ -615,3 +616,28 @@ that a reimplementation's output can be reconciled with a reference:
    across from the position §3.3 specifies. This is a memory-layout shortcut, described in
    `rcd-optimisation-notes.md`; §3.3 as written here is the exact definition and is what a fresh
    implementation should do.
+
+---
+
+## 14. How this project uses it
+
+The specification above is complete on its own terms but leaves the surrounding pipeline open.
+These are this repository's answers, recorded here so the shader and its caller cannot drift apart.
+
+- **Black level is subtracted before RCD, white balance is applied after.** `M` is
+  `(raw − black) / (white − black)`, per-channel black (Bayer sensors report four), clamped at zero
+  per §2.2. White balance is a per-channel gain and applying it before demosaicing would break §4:
+  the low-pass kernel yields the same achromatic combination at every phase *only* because the
+  channels are on a common scale, and gains of 2:1:1.5 would put a CFA modulation back into `L`,
+  which is the one thing that must not happen to the value stage C divides by.
+- **`whitelevel` is a scalar** for this purpose: the largest of the per-channel white levels. It only
+  sets the scale at which `ε` means what §2.1 intends, and a per-channel value would reintroduce the
+  same modulation.
+- **Bayer only.** A non-Bayer CFA is refused rather than approximated. `denoise_mosaic` already
+  declines X-Trans and Foveon for the same reason, and the library this serves contains no such
+  files.
+- **The blend fields are zero-filled by the stage that writes them**, over the full frame, before
+  any values are computed. §10 requires it and leaves ownership open; putting it on the producer
+  means no consumer has to know where the valid region ends.
+- **Borders.** The outer 10 pixels are filled by bilinear interpolation of each channel over its own
+  samples, and RCD writes the interior. §10's margin analysis is what sets the 10.

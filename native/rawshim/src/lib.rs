@@ -57,6 +57,7 @@ pub mod avif;
 pub mod camera_match;
 #[cfg(feature = "renditions")]
 pub mod debug;
+pub mod demosaic;
 /// The editor's open half. The tick that follows it is the client's GPU.
 pub mod edit;
 #[cfg(feature = "renditions")]
