@@ -67,14 +67,15 @@ fn editor(path: &str, detail: f64) -> (Vec<u8>, usize, usize) {
     // `edit::open`'s own sequence, so the only thing left differing from the rendition is which
     // denoiser ran: code, filter, warp, sharpen. Skipping the warp here would compare two
     // crops of two geometries.
+    //
+    // **The levels and the scene are `graded_as`'s, to the letter.** They are what the grade
+    // divides by, so measuring them a little differently here - unfloored levels, or the
+    // camera's illuminant where that path deliberately passes none - is a brightness and a cast
+    // between the two renders, and it reads exactly like a denoiser difference.
     let matched = rawshim::fit_hdr_for(&frame, path, 0.995, None, strengths());
-    let mut prepared = hdr::prepare(&source, None, &grade());
-    let levels = prepared.levels;
-    rawshim::tone::encode_base(
-        &mut prepared.samples,
-        levels.anchored(),
-        grade().reference_white_nits,
-    );
+    let levels = rawshim::tone::levels(source.samples, grade().white_quantile).anchored();
+    let mut prepared = hdr::prepare_with(&source, None, *levels);
+    rawshim::tone::encode_base(&mut prepared.samples, levels, grade().reference_white_nits);
     let filter = |prepared: &mut hdr::Prepared, strengths: Strengths| {
         hdr::filter_base(&mut prepared.samples, prepared.width, prepared.height, strengths);
     };
@@ -109,21 +110,25 @@ fn editor(path: &str, detail: f64) -> (Vec<u8>, usize, usize) {
     // `encode` and not `graded_as`: the frame is coded and warped already, which is the state a
     // tick works from. `graded_as` measures levels and codes for itself, so handing it this
     // would code a coded frame - a flat, lifted picture that is not what anybody sees.
+    //
+    // The scene it grades through is assembled the way `graded_as` assembles its own, including
+    // the missing illuminant: as the camera rendered it, with nothing to balance away from.
+    let scene = rawshim::tone::SceneGrade::new(
+        matched.as_ref().map(|m| &m.colour),
+        levels,
+        grade().reference_white_nits,
+        1.0,
+        rawshim::gpu::Adjust::none(),
+        None,
+    );
     let coded = gpu.encode(
         &prepared.samples,
-        &rawshim::gpu::Grade {
-            width: prepared.width,
-            height: prepared.height,
-            colour: matched.as_ref().map(|m| &m.colour),
-            white: levels.white,
-            source_level: levels.peak,
-            reference_nits: grade().reference_white_nits,
-            peak_nits: grade().peak_nits,
-            exposure: 0.0,
-            adjust: rawshim::gpu::Adjust::none(),
-            as_shot: frame.as_shot,
-            output: rawshim::gpu::Output::Srgb,
-        },
+        &scene.gpu_grade(
+            prepared.width,
+            prepared.height,
+            grade().peak_nits,
+            rawshim::gpu::Output::Srgb,
+        ),
     );
     (coded.iter().map(|v| *v as u8).collect(), prepared.width, prepared.height)
 }
@@ -174,7 +179,14 @@ fn main() {
         }
         for (x, y, side) in &crops {
             let cut = cut(whole, *x, *y, *side);
-            eprintln!("    {x},{y} roughness {:.2}", roughness(cut.as_ref()));
+            // The mean beside the roughness, because the two renders are only comparable while
+            // they are graded alike - and a grade that has drifted reads as a denoiser that has.
+            // A pair whose means differ is a harness bug, not a finding.
+            eprintln!(
+                "    {x},{y} roughness {:.2} mean {:.1}",
+                roughness(cut.as_ref()),
+                mean(cut.as_ref()),
+            );
             write(&format!("{out}/{name}-{x}-{y}.jpg"), cut.as_ref());
         }
     }
@@ -211,6 +223,18 @@ fn roughness(image: rawshim::rgb::RgbRef<'_>) -> f64 {
     let mid = laps.len() / 2;
     laps.select_nth_unstable_by(mid, f64::total_cmp);
     laps[mid] / 1.6521
+}
+
+/// Mean luma, which says whether two renders were graded alike.
+fn mean(image: rawshim::rgb::RgbRef<'_>) -> f64 {
+    let sum: f64 = (0..image.width * image.height)
+        .map(|i| {
+            0.2126 * f64::from(image.data[i * 3])
+                + 0.7152 * f64::from(image.data[i * 3 + 1])
+                + 0.0722 * f64::from(image.data[i * 3 + 2])
+        })
+        .sum();
+    sum / (image.width * image.height) as f64
 }
 
 fn write(path: &str, image: rawshim::rgb::RgbRef<'_>) {
