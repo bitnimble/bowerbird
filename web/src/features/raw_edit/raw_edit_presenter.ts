@@ -48,6 +48,17 @@ const LOUPE_STEP = 1.25;
  */
 const DENOISE_QUIET_MS = 120;
 
+/**
+ * How long the loupe may be still before its tile is asked for.
+ *
+ * A tile is a tenth of a second of somebody's server, so it is worth rendering for a place the
+ * reader has stopped at and not for the ninety they swept through on the way. Longer than the
+ * denoise's, because the glass already shows the tick's own render of the same place - waiting
+ * costs sharpness the reader has not asked for yet, where waiting on the denoise costs them the
+ * answer to the slider they are holding.
+ */
+const TILE_QUIET_MS = 200;
+
 const CROP_TO_FIT_KEY = 'bowerbird.edit.cropToFit';
 
 /**
@@ -473,6 +484,10 @@ export class RawEditPresenter {
     }
     this.store.loupeAt = null;
     this.store.loupeTile = null;
+    // A tile owed to a glass nobody is holding any more.
+    if (this.tileTimer != null) clearTimeout(this.tileTimer);
+    this.tileTimer = null;
+    this.tiles?.clear();
   }
 
   /**
@@ -572,8 +587,22 @@ export class RawEditPresenter {
       return;
     }
     this.store.loupeTile = null;
-    tiles.want(tileFor(centre, span, frame));
+
+    // **Nothing is asked for while the pointer is moving.** Aborting the request in flight
+    // bounds what the server is working on to one, and does nothing about how many are *asked
+    // for*: a sweep from one corner to the other crosses a tile boundary every hundred pixels
+    // or so, and each crossing was a request the reader had already left behind by the time it
+    // answered. A tile is worth rendering for somewhere they have stopped, so this waits until
+    // they have.
+    const wanted = tileFor(centre, span, frame);
+    if (this.tileTimer != null) clearTimeout(this.tileTimer);
+    this.tileTimer = setTimeout(() => {
+      this.tileTimer = null;
+      this.tiles?.want(wanted);
+    }, TILE_QUIET_MS);
   }
+
+  private tileTimer: ReturnType<typeof setTimeout> | null = null;
 
   /**
    * What the held tiles were rendered against.
@@ -967,6 +996,9 @@ export class RawEditPresenter {
     if (this.denoiseTimer != null) clearTimeout(this.denoiseTimer);
     this.denoiseTimer = null;
     this.denoiseWanted = null;
+    if (this.tileTimer != null) clearTimeout(this.tileTimer);
+    this.tileTimer = null;
+    this.tiles?.clear();
     // Before the flag, and only where something was actually stored: this is what asks
     // the server to build the picture the reader ended up with. No write above rebuilds
     // anything, because a slider release says nothing about whether they are finished -
