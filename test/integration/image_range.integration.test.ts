@@ -64,7 +64,14 @@ beforeAll(() => {
   } as unknown as PhotosService;
 
   const app = new Hono();
-  app.route('/image', new ImageApi(photos, settingsForTest()).routes);
+  app.route(
+    '/image',
+    new ImageApi(photos, settingsForTest(), {
+      renderTile: () => {
+        throw new Error('this suite renders no tiles');
+      },
+    }).routes,
+  );
   applyErrorHandler(app);
 
   server = Bun.serve({ port: 0, fetch: app.fetch });

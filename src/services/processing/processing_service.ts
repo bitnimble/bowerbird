@@ -17,6 +17,7 @@ import type {
   RenditionWritten,
   RenditionSource,
 } from './processing_types';
+import { renderTile } from './rawshim_job';
 import type { JobAdjust, JobGeometry } from './rawshim_job';
 import { RENDITION_EXTENSION, renditionDirs, type Rendition } from './renditions';
 
@@ -260,6 +261,36 @@ export class ProcessingService {
       // And the same edits, for the same reason. This is the path a `max` export takes,
       // so without it the one rendition a reader asks for by name is the one that ignores
       // what they did to the picture.
+      ...developed(this.editsFor(photoId)),
+      ...this.render(),
+    });
+  }
+
+  /**
+   * One tile of a photograph, at the export's own quality, as PNG bytes.
+   *
+   * What the loupe magnifies. The reader's edits are the ones the export would use, from the
+   * same `developed` this path already reads them through, so the magnified crop is the
+   * photograph they are about to have rather than a second opinion on it.
+   *
+   * **Nothing is kept between calls.** A crop restricts the demosaic's own work and the mosaic
+   * denoise takes a window, so a tile is an unpack and two small pieces of work rather than a
+   * frame; because it caches nothing, a tile is a pure function of its arguments and there is
+   * no invalidation to get wrong when a slider moves.
+   *
+   * Synchronous, like `runJob` beside it: a tile is ~110ms where a rendition is seconds, and
+   * the caller is one request rather than an import queue.
+   *
+   * PNG rather than AVIF: the reader is judging noise and sharpness at 1:1, which is the one
+   * place a lossy encoder is answering a different question from the one being asked.
+   */
+  renderTile(rawFilePath: string, photoId: string, tile: [number, number, number, number]): Buffer {
+    return renderTile({
+      rawFilePath,
+      tile,
+      targets: [],
+      grade: this.grade(),
+      matchEmbeddedJpeg: this.settings.get().match_embedded_jpeg,
       ...developed(this.editsFor(photoId)),
       ...this.render(),
     });

@@ -40,6 +40,8 @@ const SYMBOLS = {
   // The whole boundary for a rendition job: JSON in, JSON out, no addresses either
   // way. Returns the byte length of the reply, or how big a buffer it needs.
   bb_run_job: { args: [FFIType.ptr, FFIType.u64, FFIType.ptr, FFIType.u64], returns: FFIType.i64 },
+  // One tile of a photograph, graded and handed back as bytes. Same job, same sizing protocol.
+  bb_render_tile: { args: [FFIType.ptr, FFIType.u64, FFIType.ptr, FFIType.u64], returns: FFIType.i64 },
   // Questions about pixels, for tests and pins. Same shape as bb_run_job.
   bb_for_testing_debug: { args: [FFIType.ptr, FFIType.u64, FFIType.ptr, FFIType.u64], returns: FFIType.i64 },
   // The editor's open: start it, be told when it is done, copy it out. Three calls rather

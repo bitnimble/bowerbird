@@ -47,6 +47,14 @@ export interface Job {
   rawFilePath: string;
   matchEmbeddedJpeg: boolean;
   /**
+   * One tile of the photograph rather than the whole of it: `[left, top, width, height]` in the
+   * decoded image's own pixels, and only for `renderTile`.
+   *
+   * What the loupe magnifies. The crop restricts the demosaic's own work and the mosaic denoise
+   * takes a window with it, so a tile is an unpack and two small pieces of work.
+   */
+  tile?: [number, number, number, number];
+  /**
    * The Detail panel's two sliders, 0 to 100, exactly as `EditDoc` stores them (§10.9).
    *
    * Positions rather than strengths, and carried unconverted for the same reason the
@@ -187,6 +195,32 @@ const TRANSCODE_CAPACITY = 32 * 1024 * 1024;
  * body, which is the exception the no-pixels rule was always stated with. Still no
  * address crosses: the bytes are copied into a buffer this side owns.
  */
+/**
+ * One tile of a photograph, graded and encoded, as JPEG bytes.
+ *
+ * The same `Job` a rendition takes, with `tile` set. Bytes back rather than a descriptor,
+ * because a tile is a response and not a file: writing one to disk to read it straight back is
+ * the only reason it would have a path.
+ *
+ * Sized the way `transcodeJpeg` beside it is, and generously, because the retry costs the
+ * *encode* again rather than the decode.
+ */
+export function renderTile(job: Job): Buffer {
+  const command = Buffer.from(JSON.stringify(job), 'utf8');
+  let out = new Uint8Array(TILE_CAPACITY);
+  let written = Number(shim().bb_render_tile(command, command.byteLength, ptr(out), out.byteLength));
+  if (written > out.byteLength) {
+    out = new Uint8Array(written);
+    written = Number(shim().bb_render_tile(command, command.byteLength, ptr(out), out.byteLength));
+  }
+  if (written < 0) throw new Error('rawshim could not render the tile');
+  return Buffer.from(out.subarray(0, written));
+}
+
+// A 700px JPEG at quality 96 is a few hundred kilobytes; 8MB is far past any tile this serves
+// and costs one allocation on a path that answers in about a tenth of a second.
+const TILE_CAPACITY = 8 * 1024 * 1024;
+
 export function transcodeJpeg(filePath: string, longEdge: number, quality: number): Buffer {
   const path = Buffer.from(`${filePath}\0`);
   let out = new Uint8Array(TRANSCODE_CAPACITY);

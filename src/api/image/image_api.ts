@@ -21,6 +21,18 @@ import type { PhotosService } from '../../services/photos/photos_service';
 // rendition on every rendition in the grid (§8.2 `locate`).
 type PathFor = (library: Library, photo: BasicPhoto) => string;
 
+/**
+ * One tile of a photograph, graded through the reader's own edits.
+ *
+ * Structural rather than the whole `ProcessingService`: this route wants one method, and a test
+ * that exercises it should not have to stand up an import queue to get it.
+ */
+type TileRenderer = (
+  rawFilePath: string,
+  photoId: string,
+  tile: [number, number, number, number],
+) => Uint8Array;
+
 const JPEG_QUALITY = 92;
 
 // What the editor asks for when the client names nothing: the sensor, whatever it is.
@@ -42,6 +54,12 @@ const DEFAULT_EDIT_EDGE = 0;
 // `longEdge=5000000000` used to spawn a thread, fail to parse the request inside it, and come
 // back a 500. The same answer, arrived at before any of that, and as the 400 it always was.
 const MAX_EDIT_EDGE = 100_000;
+
+// What a loupe tile's sides may be. The floor is the mosaic denoise's own: below 64 the chroma
+// pyramid has no eighth-resolution level to build. The ceiling is what keeps a tile a tile -
+// past this it is a rendition, it costs like one, and there is a route that caches those.
+const MIN_TILE = 64;
+const MAX_TILE = 2048;
 
 // The viewer reports the weight of the rendition it is showing, and reads it off
 // the response it already received rather than asking for a number the server
@@ -77,6 +95,8 @@ export class ImageApi {
   constructor(
     private readonly photos: PhotosService,
     private readonly settings: SettingsRepository,
+    /** Renders a loupe tile, which is the one thing here that needs the reader's own edits. */
+    private readonly processing: { renderTile: TileRenderer },
   ) {
     const app = new Hono();
     // One route for every stored rendition, named rather than spelled out per
@@ -103,7 +123,63 @@ export class ImageApi {
     // (`docs/raw-edit-gpu.md` §6, §10.2b). The desktop shell runs the same call in
     // process; this is the browser's transport for it.
     app.get('/:photoId/prepared', (c) => this.servePrepared(c));
+    // One tile of the photograph at rendition quality, which is what the loupe magnifies.
+    app.get('/:photoId/tile', (c) => this.serveTile(c));
     this.routes = app;
+  }
+
+  /**
+   * A crop of the photograph, decoded, denoised on the mosaic and graded - the export's own
+   * pipeline, on the part the reader is holding a magnifier over.
+   *
+   * **Nothing is kept between requests, and that is the design rather than a shortcut.**
+   * `params.cropbox` restricts the demosaic's own work and the mosaic denoise takes a window,
+   * so a tile is an unpack and two small pieces of work - about 110ms for a 400px tile of a
+   * 24MP frame, against 3.1 seconds for the whole of it. Because nothing is cached, a tile is a
+   * pure function of the query, so there is no invalidation to get wrong when a slider moves:
+   * the client keys its own cache on the same values and a stale one cannot be served.
+   *
+   * The editor keeps showing its own render underneath until this lands, so the latency is a
+   * sharpening rather than a wait.
+   */
+  private async serveTile(c: Context): Promise<Response> {
+    const photoId = c.req.param('photoId');
+    if (photoId == null) throw new AppError('NOT_FOUND', 'photo not found');
+    const { photo, library } = this.photos.locate(photoId);
+
+    const asked = ['left', 'top', 'width', 'height'].map((name) => Number(c.req.query(name)));
+    if (asked.some((value) => !Number.isFinite(value) || value < 0)) {
+      throw new AppError('VALIDATION_ERROR', 'a tile is left, top, width and height in pixels');
+    }
+    const [left, top, width, height] = asked.map(Math.round) as [number, number, number, number];
+    // Bounded here rather than several layers down, for the reason `servePrepared` gives: a
+    // size the native side will refuse still crosses the FFI and unpacks a RAW first.
+    if (width < MIN_TILE || height < MIN_TILE || width > MAX_TILE || height > MAX_TILE) {
+      throw new AppError(
+        'VALIDATION_ERROR',
+        `a tile's sides are between ${MIN_TILE} and ${MAX_TILE}: ${width}x${height}`,
+      );
+    }
+
+    const original = getOriginalPath(library, photo.file_path);
+    if (!(await Bun.file(original).exists())) {
+      throw new AppError('NOT_FOUND', `image not found on disk: ${photoId}`);
+    }
+
+    // Through the processing service, which is where the reader's stored edits already become
+    // job fields: a loupe showing anything else would be magnifying a photograph nobody is
+    // about to export.
+    const jpeg = this.processing.renderTile(original, photoId, [left, top, width, height]);
+
+    return new Response(new Uint8Array(jpeg), {
+      headers: {
+        'Content-Type': 'image/jpeg',
+        // The client caches these itself, keyed on the same values this is a function of, so
+        // there is nothing for a shared cache to get wrong or to hold.
+        'Cache-Control': 'no-store',
+        ...TIMING_ALLOW_ORIGIN,
+      },
+    });
   }
 
   // Seconds of work and hundreds of megabytes back, so it is a GET a client makes once per
