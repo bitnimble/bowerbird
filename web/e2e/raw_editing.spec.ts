@@ -269,6 +269,29 @@ test('stepping away from the editor and back does not reopen it', async ({ page 
 });
 
 /**
+ * A page that opens straight into the editor never shows a viewer frame, so it must not ask
+ * the server to make one.
+ *
+ * The editor is built in a layout effect, so for the render before it the viewer's stage was
+ * what stood in the slot. None of it was painted, but its elements had already asked for this
+ * photograph's rendition - a full-sensor render on a photo that has none yet - and the same
+ * stage warms both neighbours' as soon as a frame of its own decodes. Requests rather than
+ * pixels, because nothing about this is visible: the frame it costs is one nobody sees.
+ */
+test('opening straight into the editor asks for no viewer frames', async ({ page }) => {
+  const asked: string[] = [];
+  page.on('request', (request) => {
+    // Every frame but the editor's own, which is served from the same prefix.
+    const path = new URL(request.url()).pathname;
+    if (path.startsWith('/image/') && !path.endsWith('/prepared')) asked.push(path);
+  });
+
+  await open(page);
+
+  expect(asked).toEqual([]);
+});
+
+/**
  * Opening and closing the editor leaves the history where it found it.
  *
  * Edit mode is in the address now, so it can put entries there - and a version of this that

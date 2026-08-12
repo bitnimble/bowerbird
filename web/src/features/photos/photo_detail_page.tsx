@@ -1046,10 +1046,14 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
           session?.store.cropping || session?.store.keystoning ? ' detail--cropping' : ''
         }`}
       >
-        {editing && session != null ? (
+        {editing ? (
+          // Nothing until the pair exists, rather than the viewer's stage for the render
+          // before the layout effect runs: its elements ask for this photograph's rendition
+          // with nothing painted, and warm both neighbours' as soon as one of them decodes.
+          //
           // The same slot the viewer's stage draws into, so the zoom control sits where it
           // always sits rather than moving when the reader opens the editor.
-          <RawEditStage store={session.store} presenter={session.presenter} toolsInto={toolsSlot} />
+          session != null && <RawEditStage store={session.store} presenter={session.presenter} toolsInto={toolsSlot} />
         ) : (
           <DetailFrame photoId={photoId} toolsInto={toolsSlot} />
         )}
