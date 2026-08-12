@@ -637,6 +637,18 @@ fn decode_frame_via(
     reference: bool,
     amounts: galosh::Amounts,
 ) -> Option<frame::Frame> {
+    decode_frame_cropped(source, depth, rec2020_linear, at_least_long_edge, reference, amounts, None)
+}
+
+fn decode_frame_cropped(
+    source: DecodeSource<'_>,
+    depth: u32,
+    rec2020_linear: bool,
+    at_least_long_edge: u32,
+    reference: bool,
+    amounts: galosh::Amounts,
+    crop: Option<Tile>,
+) -> Option<frame::Frame> {
     if depth != 8 && depth != 16 {
         return None;
     }
@@ -650,6 +662,7 @@ fn decode_frame_via(
                 at_least_long_edge,
                 reference,
                 amounts,
+                crop,
             )
         }
         DecodeSource::Bytes(bytes) => decode_with_libraw(
@@ -659,14 +672,98 @@ fn decode_frame_via(
             at_least_long_edge,
             reference,
             amounts,
+            crop,
         ),
     }
+}
+
+/// One tile of a photograph, at rendition quality, with nothing kept between requests.
+///
+/// **The whole point is that this is a pure function of its arguments.** `params.cropbox`
+/// restricts the demosaic's own work rather than trimming its output - measured on a 24MP CR3,
+/// a 700px crop costs 65ms against 307ms for the frame - and the denoise takes a window, so a
+/// tile is an open, an unpack and two small pieces of work. Nothing is cached, so nothing has
+/// to be invalidated when an edit lands; the tile a reader sees is the tile their current
+/// settings describe.
+///
+/// The floor is `libraw_unpack` at around 70ms, which decompresses the whole stream whatever
+/// is asked of it afterwards. That is what a resident mosaic would buy back, and it is an
+/// optimisation rather than a requirement.
+///
+/// `crop` is in the decoded image's own pixels, which is the space `cropbox` and the editor's
+/// region both speak.
+pub fn decode_tile(
+    path: &str,
+    crop: Tile,
+    depth: u32,
+    rec2020_linear: bool,
+    amounts: galosh::Amounts,
+) -> Option<frame::Frame> {
+    decode_frame_cropped(
+        DecodeSource::Path(path),
+        depth,
+        rec2020_linear,
+        0,
+        false,
+        amounts,
+        Some(crop),
+    )
 }
 
 enum Opened<'a> {
     Path(&'a std::ffi::CStr),
     Bytes(&'a [u8]),
 }
+
+/// A rectangle of the mosaic, in the raw image's own pixels.
+#[derive(Clone, Copy)]
+pub struct Tile {
+    pub left: usize,
+    pub top: usize,
+    pub width: usize,
+    pub height: usize,
+}
+
+impl Tile {
+    /// The same rectangle, held inside a mosaic of `width` by `height` and aligned to whole
+    /// CFA sites.
+    ///
+    /// **The alignment is the part that matters.** Every phase of the denoise pairs rows and
+    /// columns into 2x2 sites off the array's own origin, so a window starting on an odd row
+    /// hands it the four filter colours transposed - green where it expects red - and what
+    /// comes back is a maze pattern rather than a photograph.
+    fn within(self, width: usize, height: usize) -> Tile {
+        let left = self.left.min(width.saturating_sub(2)) & !1;
+        let top = self.top.min(height.saturating_sub(2)) & !1;
+        Tile {
+            left,
+            top,
+            width: self.width.min(width - left) & !1,
+            height: self.height.min(height - top) & !1,
+        }
+    }
+
+    /// The window grown by `halo` on every side, which is what a tile needs.
+    ///
+    /// The denoise is local with a bounded reach - the chroma pyramid goes to an eighth of the
+    /// frame and the joint upsample reads a neighbourhood on the way back - so a tile denoised
+    /// on its own disagrees with its neighbour along the seam unless both were computed with
+    /// the context that reaches across it. The halo is trimmed off by the demosaic's own crop.
+    pub fn with_halo(self, halo: usize) -> Tile {
+        Tile {
+            left: self.left.saturating_sub(halo),
+            top: self.top.saturating_sub(halo),
+            width: self.width + halo * 2,
+            height: self.height + halo * 2,
+        }
+    }
+}
+
+/// How much context the mosaic denoise needs either side of a tile.
+///
+/// A multiple of eight, because the chroma pyramid's smallest level is an eighth of what it is
+/// given; 64 covers that and the joint upsample's own neighbourhood on the way back up.
+pub const TILE_HALO: usize = 64;
 
 /// The mosaic denoised in place, between LibRaw's unpack and its demosaic.
 ///
@@ -680,12 +777,15 @@ enum Opened<'a> {
 /// a 6x6 array is not that. Declining is the honest answer; a filter that assumed the wrong
 /// periodicity would produce a maze pattern rather than a denoise.
 ///
+/// `window` is the part of the mosaic to work on, which a tile takes and a rendition does not.
+///
 /// # Safety
 /// `r` must be a live `libraw_data_t` with `unpack` already run and `dcraw_process` not.
 #[expect(unsafe_code)]
 unsafe fn denoise_mosaic(
     r: *mut raw::libraw_data_t,
     amounts: galosh::Amounts,
+    window: Option<Tile>,
 ) -> Option<galosh::NoiseModel> {
     if !amounts.does_anything() {
         return None;
@@ -732,16 +832,27 @@ unsafe fn denoise_mosaic(
     let floor = black as f32;
     let range = (white - black) as f32;
 
+    // The part of the mosaic to denoise. A tile takes a window; a rendition takes the frame.
+    let cut = window.map_or(Tile { left: 0, top: 0, width, height }, |asked| {
+        asked.within(width, height)
+    });
+    if cut.width < 64 || cut.height < 64 {
+        return None;
+    }
+    let (width, height) = (cut.width, cut.height);
+    let start = cut.top * stride + cut.left;
+
     let mut mosaic = Vec::with_capacity(width * height);
     for row in 0..height {
-        let line = unsafe { std::slice::from_raw_parts(image.add(row * stride), width) };
+        let line = unsafe { std::slice::from_raw_parts(image.add(start + row * stride), width) };
         mosaic.extend(line.iter().map(|v| (f32::from(*v) - floor) / range));
     }
 
     let model = galosh::denoise(gpu, kernels, &mut mosaic, width, height, amounts);
 
     for row in 0..height {
-        let line = unsafe { std::slice::from_raw_parts_mut(image.add(row * stride), width) };
+        let line =
+            unsafe { std::slice::from_raw_parts_mut(image.add(start + row * stride), width) };
         for (sample, denoised) in line.iter_mut().zip(&mosaic[row * width..]) {
             // A sample at or above saturation is left exactly as it was. The denoise clamps
             // its own output to the window, so passing a clipped highlight through it would
@@ -775,6 +886,7 @@ fn decode_with_libraw(
     at_least_long_edge: u32,
     reference: bool,
     amounts: galosh::Amounts,
+    crop: Option<Tile>,
 ) -> Option<frame::Frame> {
     let r = unsafe { raw::libraw_init(0) };
     if r.is_null() {
@@ -821,6 +933,17 @@ fn decode_with_libraw(
                     (*r).params.output_color = OUTPUT_SRGB;
                 }
 
+                // `cropbox` restricts the demosaic's own work rather than trimming its output,
+                // which is what makes a tile affordable. Set before the unpack because LibRaw
+                // reads it while sizing what `raw2image` will build.
+                if let Some(asked) = crop {
+                    (*r).params.cropbox = [
+                        asked.left as u32,
+                        asked.top as u32,
+                        asked.width as u32,
+                        asked.height as u32,
+                    ];
+                }
                 if raw::libraw_unpack(r) != 0 {
                     return None;
                 }
@@ -828,7 +951,20 @@ fn decode_with_libraw(
                 // exists: `dcraw_process` reads `rawdata.raw_image` into `imgdata.image`
                 // and interpolates it, and after that every sample is an average of its
                 // neighbours and the noise with it.
-                let noise = denoise_mosaic(r, amounts);
+                // The crop is in the *image's* pixels and the mosaic still carries the sensor's
+                // margins, so the window is shifted past them before it names anything - and
+                // grown by the halo, since a tile denoised without the context that reaches
+                // across its seam disagrees with its neighbour along it.
+                let window = crop.map(|asked| {
+                    Tile {
+                        left: asked.left + (*r).sizes.left_margin as usize,
+                        top: asked.top + (*r).sizes.top_margin as usize,
+                        width: asked.width,
+                        height: asked.height,
+                    }
+                    .with_halo(TILE_HALO)
+                });
+                let noise = denoise_mosaic(r, amounts, window);
                 if raw::libraw_dcraw_process(r) != 0 {
                     return None;
                 }
@@ -1211,6 +1347,101 @@ mod fixture_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What a loupe tile would cost with no cache at all: open, unpack, demosaic and denoise,
+    /// every one of them per request.
+    ///
+    /// The question is whether `params.cropbox` restricts the *work* or only the output. If it
+    /// restricts the work, a tile is a request and nothing has to stay resident between them.
+    ///
+    /// Ignored by default: it wants a real RAW, which no fixture is.
+    ///
+    ///   BOWERBIRD_TILE_RAW=/path/to.CR3 cargo test --release --manifest-path \
+    ///     native/rawshim/Cargo.toml --lib tile_cost -- --nocapture --ignored
+    #[test]
+    #[ignore = "wants a real RAW on this machine"]
+    #[expect(unsafe_code)]
+    fn tile_cost() {
+        let Ok(path) = std::env::var("BOWERBIRD_TILE_RAW") else { return };
+        let file = std::ffi::CString::new(path.clone()).expect("a path");
+
+        // One stage at a time, each from a fresh processor, because `dcraw_process` runs once
+        // per handle and the earlier stages are what the later ones are being compared against.
+        let stage = |crop: Option<[u32; 4]>, process: bool| -> (u128, usize) {
+            let started = std::time::Instant::now();
+            unsafe {
+                let r = raw::libraw_init(0);
+                assert!(!r.is_null());
+                assert_eq!(raw::libraw_open_file(r, file.as_ptr()), 0, "opens");
+                (*r).params.user_qual = demosaic();
+                (*r).params.output_bps = 16;
+                (*r).params.output_color = OUTPUT_REC2020;
+                (*r).params.gamm[0] = 1.0;
+                (*r).params.gamm[1] = 1.0;
+                (*r).params.no_auto_bright = 1;
+                if let Some([left, top, width, height]) = crop {
+                    (*r).params.cropbox = [left, top, width, height];
+                }
+                assert_eq!(raw::libraw_unpack(r), 0, "unpacks");
+                let mut pixels = 0usize;
+                if process {
+                    assert_eq!(raw::libraw_dcraw_process(r), 0, "processes");
+                    pixels = (*r).sizes.iwidth as usize * (*r).sizes.iheight as usize;
+                }
+                raw::libraw_recycle(r);
+                raw::libraw_close(r);
+                (started.elapsed().as_millis(), pixels)
+            }
+        };
+
+        // From memory, to split the file read off the decompression: the library under test
+        // reads from a NAS as often as from a disk, and those want different answers.
+        let bytes = std::fs::read(&path).expect("reads");
+        let from_memory = {
+            let started = std::time::Instant::now();
+            unsafe {
+                let r = raw::libraw_init(0);
+                assert_eq!(
+                    raw::libraw_open_buffer(r, bytes.as_ptr().cast(), bytes.len()),
+                    0,
+                    "opens",
+                );
+                assert_eq!(raw::libraw_unpack(r), 0, "unpacks");
+                raw::libraw_recycle(r);
+                raw::libraw_close(r);
+            }
+            started.elapsed().as_millis()
+        };
+        println!("  bytes are {} MB", bytes.len() / (1 << 20));
+        println!("  open+unpack from memory {from_memory:>5}ms");
+
+        let (unpack_ms, _) = stage(None, false);
+        let (full_ms, full_pixels) = stage(None, true);
+        let (crop_ms, crop_pixels) = stage(Some([2000, 1400, 700, 700]), true);
+
+        println!("  open+unpack only        {unpack_ms:>5}ms");
+        println!("  + demosaic, whole       {full_ms:>5}ms  {full_pixels} px");
+        println!("  + demosaic, 700px crop  {crop_ms:>5}ms  {crop_pixels} px");
+
+        // And the thing itself: one tile, denoised and demosaiced, from nothing.
+        //
+        // Warmed first, because the pipelines and the adapter are built once per process and a
+        // loupe asks its second question with them already up.
+        let warm = Tile { left: 2000, top: 1400, width: 400, height: 400 };
+        decode_tile(&path, warm, 16, true, galosh::Amounts::from_sliders(40.0, 40.0));
+        for side in [400usize, 700] {
+            let crop = Tile { left: 2000, top: 1400, width: side, height: side };
+            let started = std::time::Instant::now();
+            let tile = decode_tile(&path, crop, 16, true, galosh::Amounts::from_sliders(40.0, 40.0));
+            let took = started.elapsed().as_millis();
+            let frame = tile.expect("the tile decodes");
+            println!(
+                "  whole tile, {side}px        {took:>5}ms  {}x{}",
+                frame.width, frame.height,
+            );
+            assert!(frame.width <= side + 8 && frame.height <= side + 8, "the crop is the tile");
+        }
+    }
 
     // Every orientation LibRaw can hand over, which the fixtures cannot give.
     //

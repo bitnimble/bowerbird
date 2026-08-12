@@ -85,6 +85,16 @@ pub struct Target {
 pub struct Job {
     pub raw_file_path: String,
     pub match_embedded_jpeg: bool,
+    /// One tile of the photograph rather than the whole of it: `[left, top, width, height]` in
+    /// the decoded image's own pixels.
+    ///
+    /// **What the loupe is served with.** `params.cropbox` restricts the demosaic's own work
+    /// rather than trimming its output and the mosaic denoise takes a window, so a tile costs an
+    /// unpack and two small pieces of work - measured at 109ms for a 400px tile of a 24MP CR3
+    /// against 3.1 seconds for the frame. Nothing is kept between requests, which is what makes
+    /// a tile a pure function of this job: there is no cache to invalidate when a slider moves.
+    #[serde(default)]
+    pub tile: Option<[usize; 4]>,
     /// The Detail panel's two sliders, 0 to 100, exactly as `EditDoc` stores them (§10.9).
     ///
     /// They drive the denoise on the *mosaic*, inside the decode (`crate::galosh`), which
@@ -260,9 +270,23 @@ impl Base {
     fn build(job: &Job, size: u32) -> Result<Base, String> {
         // Denoised inside the decode, on the mosaic, which is the only place the noise is
         // still one photosite's own (`crate::galosh`).
-        let frame =
-            crate::decode_frame_denoised(&job.raw_file_path, 16, true, size, job.amounts())
-                .ok_or("could not decode the RAW scene-linear")?;
+        //
+        // A tile takes the same route with the demosaic and the denoise both restricted to it,
+        // and at the sensor's own scale: a loupe is magnifying, so fitting the tile to a size
+        // would throw away the pixels it exists to show.
+        let frame = match job.tile {
+            Some([left, top, width, height]) => crate::decode_tile(
+                &job.raw_file_path,
+                crate::Tile { left, top, width, height },
+                16,
+                true,
+                job.amounts(),
+            ),
+            None => {
+                crate::decode_frame_denoised(&job.raw_file_path, 16, true, size, job.amounts())
+            }
+        }
+        .ok_or("could not decode the RAW scene-linear")?;
         let (width, height) = (frame.width, frame.height);
 
         // Fitted once, before anything is written: every rendition of one photo has to get
@@ -312,6 +336,46 @@ impl Base {
 /// to: a decode lives in a local, is borrowed by whatever needs it, and is dropped
 /// when nothing does. There is no list to forget to add to and no `finally` to skip,
 /// which were two of the three ways the old shape could leak a 366MB frame.
+/// One tile, graded and encoded, without a target or a file.
+///
+/// The same `Base` every rendition is cut from, with `job.tile` restricting the decode - so the
+/// pixels a reader magnifies are the pixels their export would have, through the same fit, the
+/// same mosaic denoise and the same grade shaders.
+///
+/// **JPEG at 96 rather than AVIF.** A loupe is looked at once and thrown away, so the encode is
+/// on the reader's critical path where a rendition's is not: measured on a 400px tile, AVIF at
+/// the shipping quantizer is most of the tile's own cost again, and at 1:1 neither encoder is
+/// what the reader would notice. Quality is high enough that the artefacts they *are* looking
+/// for - grain, ringing, smearing - are the photograph's rather than the encoder's.
+///
+/// No size fitting: a magnifier that resampled would be answering a different question.
+pub fn tile(job: &Job) -> Option<Vec<u8>> {
+    let Base { samples, width, height, levels, matched, as_shot } = Base::build(job, 0).ok()?;
+    let source = crate::hdr::Source { samples: &samples, width, height };
+    let scene = crate::tone::SceneGrade::new(
+        matched.as_ref().map(|m| &m.colour),
+        levels,
+        job.grade.reference_white_nits,
+        job.exposure,
+        job.adjust,
+        as_shot,
+    );
+    let (coded, out_width, out_height) = crate::hdr::graded_with(
+        &source,
+        &scene,
+        matched.as_ref().map(|m| &m.lens),
+        crate::hdr_args::Size { width: width as u32, height: height as u32 },
+        job.grade.peak_nits,
+        crate::gpu::Output::Srgb,
+    );
+    let bytes: Vec<u8> = coded.iter().map(|v| *v as u8).collect();
+    crate::jpeg::encode(
+        crate::rgb::RgbRef { width: out_width, height: out_height, data: &bytes },
+        96,
+    )
+    .ok()
+}
+
 pub fn run(job: &Job) -> Result<Outcome, String> {
     let mut outcome = Outcome::default();
 
