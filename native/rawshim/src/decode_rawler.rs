@@ -10,6 +10,7 @@
 //! so the two can be rendered side by side on the same file.
 
 use crate::frame::{Frame, Pixels};
+use rayon::prelude::*;
 
 /// Whether the caller asked for this path rather than LibRaw's.
 pub fn wanted() -> bool {
@@ -34,6 +35,17 @@ const XYZ_TO_REC2020: [[f32; 3]; 3] = [
 /// GALOSH is fitted to the sensor's own noise on the CFA, and a demosaic in front of it would
 /// correlate the samples it measures.
 pub fn decode(path: &str, amounts: crate::galosh::Amounts) -> Option<Frame> {
+    // Stage timings, for the benchmark that compares this against LibRaw. Off unless asked, and
+    // the clock reads are per decode rather than per pixel, so leaving it in costs nothing.
+    let profile = std::env::var_os("BOWERBIRD_DECODE_PROFILE").is_some();
+    let mut mark = std::time::Instant::now();
+    let mut lap = |name: &str| {
+        if profile {
+            eprintln!("  decode {name}: {}ms", mark.elapsed().as_millis());
+        }
+        mark = std::time::Instant::now();
+    };
+
     let source = rawler::rawsource::RawSource::new(std::path::Path::new(path)).ok()?;
     let decoder = rawler::get_decoder(&source).ok()?;
     let params = rawler::decoders::RawDecodeParams::default();
@@ -47,7 +59,9 @@ pub fn decode(path: &str, amounts: crate::galosh::Amounts) -> Option<Frame> {
         .and_then(|meta| meta.exif.orientation)
         .map_or(rawler::decoders::Orientation::Normal, rawler::decoders::Orientation::from_u16);
 
+    lap("open");
     let image = decoder.raw_image(&source, &params, false).ok()?;
+    lap("read");
     let (width, height) = (image.width, image.height);
 
     let cfa = [
@@ -74,20 +88,20 @@ pub fn decode(path: &str, amounts: crate::galosh::Amounts) -> Option<Frame> {
     let gains = white_balance_gains(&image);
 
     let mut mosaic = vec![0f32; width * height];
-    for row in 0..height {
-        for col in 0..width {
-            let at = row * width + col;
-            let colour = cfa[(row & 1) * 2 + (col & 1)] as usize;
-            let floor = black[colour.min(3)];
+    mosaic.par_chunks_mut(width).enumerate().for_each(|(row, out)| {
+        let from = &samples[row * width..(row + 1) * width];
+        for (col, (sample, slot)) in from.iter().zip(out).enumerate() {
+            let colour = cfa[(row & 1) * 2 + (col & 1)].min(3) as usize;
+            let floor = black[colour];
             let range = (white - floor).max(1.0);
             // Clamped at zero because §2.2 of the specification requires it: a negative sample in
             // the shadows can drive the low-pass sum the green stage divides by through zero, and
             // the epsilon there does not save it.
-            let value = (f32::from(samples[at]) - floor).max(0.0) / range;
-            mosaic[at] = value * gains[colour.min(3)];
+            *slot = (f32::from(*sample) - floor).max(0.0) / range * gains[colour];
         }
-    }
+    });
 
+    lap("condition");
     let gpu = crate::gpu::device()?;
     let noise = crate::galosh::device(gpu).and_then(|kernels| {
         if amounts.does_anything() {
@@ -97,10 +111,7 @@ pub fn decode(path: &str, amounts: crate::galosh::Amounts) -> Option<Frame> {
         }
     });
 
-    let rcd = crate::demosaic::device(gpu)?;
-    let rgb = crate::demosaic::demosaic(gpu, rcd, &mosaic, width, height, cfa)?;
-    drop(mosaic);
-
+    lap("denoise");
     let matrix = camera_to_rec2020(&image)?;
 
     // The sensor's readable area is larger than the picture: there are masked columns for the
@@ -111,7 +122,14 @@ pub fn decode(path: &str, amounts: crate::galosh::Amounts) -> Option<Frame> {
         .crop_area
         .map(|area| (area.p.x, area.p.y, area.d.w, area.d.h))
         .unwrap_or((0, 0, width, height));
-    let pixels = to_rec2020(&rgb, width, crop, matrix);
+
+    let rcd = crate::demosaic::device(gpu)?;
+    let pixels = crate::demosaic::demosaic_with(gpu, rcd, &mosaic, width, height, cfa, |rgb| {
+        to_rec2020(rgb, width, crop, matrix)
+    })?;
+    drop(mosaic);
+
+    lap("demosaic, colour, crop");
 
     // **The sensor reads in its own orientation; the photograph has another one.** LibRaw applies
     // this from `sizes.flip` and hands back an upright frame, so this must too - and not only
@@ -119,6 +137,8 @@ pub fn decode(path: &str, amounts: crate::galosh::Amounts) -> Option<Frame> {
     // against the camera's own embedded JPEG, which is always upright, so a frame left in sensor
     // orientation produces a fit against unrelated content and a grade built on it.
     let (pixels, out_w, out_h) = orient(pixels, crop.2, crop.3, upright);
+
+    lap("colour, crop, orient");
 
     Some(Frame {
         width: out_w,
@@ -176,10 +196,18 @@ fn white_balance_gains(image: &rawler::RawImage) -> [f32; 4] {
 /// **Not `xyz_to_cam`, which is dead.** That field is marked deprecated in rawler and comes back
 /// all zeros for at least the Canon bodies here, which makes `cam_to_xyz_normalized` return NaN
 /// and every pixel black. The live data is `color_matrix`, a flat row-major matrix per illuminant.
-/// Any of them will do for our purposes - the camera match fitted downstream absorbs the
-/// difference between illuminants, which is most of what it is for.
 fn xyz_to_cam_of(image: &rawler::RawImage) -> Option<[[f32; 3]; 4]> {
-    let flat = image.color_matrix.values().next()?;
+    // D65 to agree with LibRaw, which references its `cam_xyz` to daylight, and by the enum's
+    // ordering rather than the map's when there is no D65: `color_matrix` is a `HashMap` and its
+    // iteration order is seeded per process, so taking whatever came first made the decode differ
+    // between runs of the same binary on the same file.
+    let illuminant = image
+        .color_matrix
+        .keys()
+        .copied()
+        .find(|i| *i == rawler::imgop::xyz::Illuminant::D65)
+        .or_else(|| image.color_matrix.keys().copied().min_by_key(|i| *i as u16))?;
+    let flat = image.color_matrix.get(&illuminant)?;
     if flat.len() < 9 || flat.len() % 3 != 0 {
         return None;
     }
@@ -251,20 +279,23 @@ fn pseudoinverse(matrix: [[f32; 3]; 4]) -> [[f32; 3]; 3] {
 
 /// Applies the colour transform over the cropped region, quantising to the 16-bit scene-linear the
 /// rest of the pipeline reads. `crop` is (left, top, width, height) in the full frame's pixels.
-fn to_rec2020(rgb: &[f32], stride: usize, crop: (usize, usize, usize, usize), matrix: [[f32; 3]; 3]) -> Vec<u16> {
+///
+/// `rgb` is the demosaic's own output buffer: interleaved triples of native-endian `f32`, `stride`
+/// pixels to the row.
+fn to_rec2020(rgb: &[u8], stride: usize, crop: (usize, usize, usize, usize), matrix: [[f32; 3]; 3]) -> Vec<u16> {
     let (left, top, width, height) = crop;
+    let sample = |at: usize| f32::from_ne_bytes([rgb[at], rgb[at + 1], rgb[at + 2], rgb[at + 3]]);
     let mut out = vec![0u16; width * height * 3];
-    for row in 0..height {
-        for col in 0..width {
-            let from = ((top + row) * stride + left + col) * 3;
-            let to = (row * width + col) * 3;
-            let (r, g, b) = (rgb[from], rgb[from + 1], rgb[from + 2]);
-            for channel in 0..3 {
+    out.par_chunks_mut(width * 3).enumerate().for_each(|(row, line)| {
+        for (col, pixel) in line.chunks_exact_mut(3).enumerate() {
+            let from = ((top + row) * stride + left + col) * 12;
+            let (r, g, b) = (sample(from), sample(from + 4), sample(from + 8));
+            for (channel, slot) in pixel.iter_mut().enumerate() {
                 let value = matrix[channel][0] * r + matrix[channel][1] * g + matrix[channel][2] * b;
-                out[to + channel] = (value * 65535.0).clamp(0.0, 65535.0) as u16;
+                *slot = (value * 65535.0).clamp(0.0, 65535.0) as u16;
             }
         }
-    }
+    });
     out
 }
 

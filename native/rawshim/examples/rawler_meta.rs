@@ -15,6 +15,9 @@ fn main() {
         println!("   blacklevel  {:?}", image.blacklevel);
         println!("   whitelevel  {:?}", image.whitelevel);
         println!("   xyz_to_cam  {:?}", image.xyz_to_cam);
+        let mut illuminants: Vec<_> = image.color_matrix.keys().collect();
+        illuminants.sort_by_key(|i| **i as u16);
+        println!("   illuminants {illuminants:?}");
         println!("   cam_to_xyz  {:?}", image.cam_to_xyz_normalized());
         println!("   crop_area   {:?}", image.crop_area);
         println!("   active_area {:?}", image.active_area);
@@ -24,7 +27,7 @@ fn main() {
             let n = samples.len().min(image.width * image.height);
             let total: u64 = samples[..n].iter().map(|s| u64::from(*s)).sum();
             let peak = samples[..n].iter().copied().max().unwrap_or(0);
-            println!("   samples     mean {:.1}  peak {}", total as f64 / n as f64, peak);
+            println!("   samples     mean {:.1}  peak {}  sum {total}", total as f64 / n as f64, peak);
         }
     }
 }

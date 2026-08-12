@@ -112,7 +112,8 @@ impl Rcd {
     }
 }
 
-/// Demosaics a Bayer mosaic, returning interleaved RGB at the same dimensions.
+/// Demosaics a Bayer mosaic, handing `consume` the interleaved RGB as native-endian `f32` bytes,
+/// three per pixel, at the same dimensions.
 ///
 /// `mosaic` is expected already conditioned as the specification's §2.2 requires: black subtracted,
 /// clamped at zero and divided by the white level, so it sits in roughly the unit interval. That is
@@ -122,14 +123,15 @@ impl Rcd {
 /// `cfa` is the sensor's 2x2 pattern read row-major from the top-left of the frame, with 0 red,
 /// 1 green and 2 blue. Bayer only: a pattern that is not two greens on a diagonal is refused,
 /// because every stage here pairs rows and columns into 2x2 sites.
-pub fn demosaic(
+pub fn demosaic_with<T>(
     gpu: &crate::gpu::Gpu,
     rcd: &Rcd,
     mosaic: &[f32],
     width: usize,
     height: usize,
     cfa: [u32; 4],
-) -> Option<Vec<f32>> {
+    consume: impl FnOnce(&[u8]) -> T,
+) -> Option<T> {
     if width < (2 * MARGIN as usize) + 4 || height < (2 * MARGIN as usize) + 4 {
         return None;
     }
@@ -149,6 +151,15 @@ pub fn demosaic(
     if (a != 0 || b != 2) && (a != 2 || b != 0) {
         return None;
     }
+
+    let profile = std::env::var_os("BOWERBIRD_DECODE_PROFILE").is_some();
+    let mut mark = std::time::Instant::now();
+    let mut lap = |name: &str| {
+        if profile {
+            eprintln!("    rcd {name}: {}ms", mark.elapsed().as_millis());
+        }
+        mark = std::time::Instant::now();
+    };
 
     let device = &gpu.device;
     let pixels = width * height;
@@ -178,6 +189,7 @@ pub fn demosaic(
         }
         gpu.queue.write_buffer(&mosaic_buf, (at * CHUNK * 4) as u64, &bytes);
     }
+    lap("upload");
 
     let plane = |label: &str, bytes: u64| {
         device.create_buffer(&wgpu::BufferDescriptor {
@@ -194,6 +206,7 @@ pub fn demosaic(
     let red = plane("rcd red", plane_bytes);
     let blue = plane("rcd blue", plane_bytes);
     let rgb = plane("rcd rgb", plane_bytes * 3);
+    lap("allocate");
 
     let frame_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("rcd frame"),
@@ -247,13 +260,12 @@ pub fn demosaic(
     let slice = readback.slice(..);
     slice.map_async(wgpu::MapMode::Read, |_| {});
     device.poll(wgpu::PollType::wait_indefinitely()).ok()?;
-    let out: Vec<f32> = {
+    lap("dispatch");
+    let out = {
         let mapped = slice.get_mapped_range().ok()?;
-        mapped
-            .chunks_exact(4)
-            .map(|b| f32::from_ne_bytes([b[0], b[1], b[2], b[3]]))
-            .collect()
+        consume(&mapped)
     };
     readback.unmap();
+    lap("read back");
     Some(out)
 }
